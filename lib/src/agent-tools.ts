@@ -85,6 +85,7 @@ const BUILT_IN_ACTIONS: readonly string[] = [
  * the plugins' tool names; `agent-tools.plugins.test.ts` fails when a plugin adds an uncovered one.
  */
 export const RESERVED_TOOL_PREFIXES: readonly string[] = [
+  "autopilot_",
   "cad_",
   "claude_",
   "dep_",
