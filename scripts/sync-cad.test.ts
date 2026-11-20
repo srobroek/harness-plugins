@@ -2,7 +2,7 @@ import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { writeExecutable } from "../plugins/lib/src/executable-fixture.ts"
+import { writeExecutable } from "../lib/src/executable-fixture.ts"
 import {
   collect,
   composeAgent,
@@ -191,16 +191,16 @@ describe("readTree, writeTree and drift", () => {
       ["agents/cad-analyst.md", file("agent")],
     ])
     writeTree(dir, tree)
-    mkdirSync(path.join(dir, "skills/cad-flow/scripts/__pycache__"))
-    writeFileSync(path.join(dir, "skills/cad-flow/scripts/__pycache__/run.cpython-312.pyc"), "")
-    expect(statSync(path.join(dir, "skills/cad-flow/scripts/run.py")).mode & 0o777).toBe(0o755)
+    mkdirSync(path.join(dir, "common/skills/cad-flow/scripts/__pycache__"))
+    writeFileSync(path.join(dir, "common/skills/cad-flow/scripts/__pycache__/run.cpython-312.pyc"), "")
+    expect(statSync(path.join(dir, "common/skills/cad-flow/scripts/run.py")).mode & 0o777).toBe(0o755)
     expect(drift(tree, readTree(dir))).toEqual([])
   })
 
   test("writeTree replaces the owned directories and leaves the rest", () => {
     const dir = tmp()
-    mkdirSync(path.join(dir, "skills/cad-old"), { recursive: true })
-    writeFileSync(path.join(dir, "skills/cad-old/SKILL.md"), "old")
+    mkdirSync(path.join(dir, "common/skills/cad-old"), { recursive: true })
+    writeFileSync(path.join(dir, "common/skills/cad-old/SKILL.md"), "old")
     mkdirSync(path.join(dir, "formulas"))
     writeFileSync(path.join(dir, "formulas/cad-part.formula.toml"), "kept")
     writeTree(dir, new Map([["skills/cad-new/SKILL.md", file("new")]]))
@@ -234,8 +234,8 @@ describe("readTree symlinks", () => {
     const outside = path.join(tmp(), "run.py")
     writeFileSync(outside, "run")
     chmodSync(outside, 0o755) // check-test-executables: the file mode is what the sync check compares; a trampoline symlink has no mode of its own
-    mkdirSync(path.join(dir, "skills/cad-flow/scripts"), { recursive: true })
-    symlinkSync(outside, path.join(dir, "skills/cad-flow/scripts/run.py"))
+    mkdirSync(path.join(dir, "common/skills/cad-flow/scripts"), { recursive: true })
+    symlinkSync(outside, path.join(dir, "common/skills/cad-flow/scripts/run.py"))
     const expected: Tree = new Map([["skills/cad-flow/scripts/run.py", { data: Buffer.from("run"), executable: true }]])
     expect(drift(expected, readTree(dir))).toEqual(["symlink  skills/cad-flow/scripts/run.py must be a regular file or directory"])
   })
@@ -245,7 +245,8 @@ describe("readTree symlinks", () => {
     const outside = tmp()
     mkdirSync(path.join(outside, "cad-flow"))
     writeFileSync(path.join(outside, "cad-flow/SKILL.md"), "skill")
-    symlinkSync(outside, path.join(dir, "skills"))
+    mkdirSync(path.join(dir, "common"))
+    symlinkSync(outside, path.join(dir, "common/skills"))
     const expected: Tree = new Map([["skills/cad-flow/SKILL.md", { data: Buffer.from("skill"), executable: false }]])
     expect(drift(expected, readTree(dir))).toEqual([
       "symlink  skills must be a regular file or directory",
@@ -293,10 +294,10 @@ describe("sync", () => {
     const { repo, commit } = upstream("v1")
     const dir = plugin({ repository: repo, tag: "v1", commit })
     expect(sync([], dir, io().io)).toBe(0)
-    expect(readFileSync(path.join(dir, "skills/cad-flow/scripts/run.py"), "utf8")).toBe("run")
-    expect(existsSync(path.join(dir, "skills/cad-flow/tests"))).toBe(false)
+    expect(readFileSync(path.join(dir, "common/skills/cad-flow/scripts/run.py"), "utf8")).toBe("run")
+    expect(existsSync(path.join(dir, "common/skills/cad-flow/tests"))).toBe(false)
     expect(sync(["--check"], dir, io().io)).toBe(0)
-    writeFileSync(path.join(dir, "skills/cad-flow/scripts/run.py"), "edited")
+    writeFileSync(path.join(dir, "common/skills/cad-flow/scripts/run.py"), "edited")
     const out = io()
     expect(sync(["--check"], dir, out.io)).toBe(1)
     expect(out.lines.slice(1)).toEqual(["  changed  skills/cad-flow/scripts/run.py"])
@@ -312,7 +313,7 @@ describe("sync", () => {
       expect(out.lines).toEqual([`cad-agent v1 is ${run(["rev-parse", "v1"], repo)}, but cad-agent.json pins ${"0".repeat(40)}: a moved tag needs review`])
     }
     expect(readFileSync(path.join(dir, "cad-agent.json"), "utf8")).toBe(formatPin(pin))
-    expect(existsSync(path.join(dir, "skills"))).toBe(false)
+    expect(existsSync(path.join(dir, "common/skills"))).toBe(false)
   })
 
   test("--tag moves the pin to that tag's commit", () => {
@@ -327,7 +328,7 @@ describe("sync", () => {
       tag: "v2",
       commit: run(["rev-parse", "v2"], repo),
     })
-    expect(readFileSync(path.join(dir, "skills/cad-flow/scripts/run.py"), "utf8")).toBe("run v2")
+    expect(readFileSync(path.join(dir, "common/skills/cad-flow/scripts/run.py"), "utf8")).toBe("run v2")
   })
 
   /** Set `vars` on process.env, after this process started, for the length of `body`. */

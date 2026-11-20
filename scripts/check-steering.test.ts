@@ -93,20 +93,20 @@ describe("checkLocalLinks", () => {
 })
 
 describe("shippedMarkdown", () => {
-  test("collects markdown under skills/ and agents/ only", () => {
+  test("collects markdown under common/skills/ and common/agents/ only", () => {
     const dir = mkdtempSync(join(tmpdir(), "steering-"))
     try {
-      mkdirSync(join(dir, "a", "skills", "s", "references"), { recursive: true })
-      mkdirSync(join(dir, "a", "agents"))
+      mkdirSync(join(dir, "a", "common", "skills", "s", "references"), { recursive: true })
+      mkdirSync(join(dir, "a", "common", "agents"))
       writeFileSync(join(dir, "a", "README.md"), "skill://ignored")
-      writeFileSync(join(dir, "a", "skills", "s", "SKILL.md"), "")
-      writeFileSync(join(dir, "a", "skills", "s", "references", "r.md"), "")
-      writeFileSync(join(dir, "a", "skills", "s", "LICENSE"), "")
-      writeFileSync(join(dir, "a", "agents", "x.md"), "")
+      writeFileSync(join(dir, "a", "common", "skills", "s", "SKILL.md"), "")
+      writeFileSync(join(dir, "a", "common", "skills", "s", "references", "r.md"), "")
+      writeFileSync(join(dir, "a", "common", "skills", "s", "LICENSE"), "")
+      writeFileSync(join(dir, "a", "common", "agents", "x.md"), "")
       expect(shippedMarkdown(dir).map((file) => file.slice(dir.length + 1))).toEqual([
-        "a/skills/s/SKILL.md",
-        "a/skills/s/references/r.md",
-        "a/agents/x.md",
+        "a/common/skills/s/SKILL.md",
+        "a/common/skills/s/references/r.md",
+        "a/common/agents/x.md",
       ])
     } finally {
       rmSync(dir, { recursive: true, force: true })

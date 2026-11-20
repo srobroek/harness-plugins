@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import path from "node:path"
-import { DEFAULT_LEAN_AGENTS } from "../plugins/agent-efficiency/src/lean.ts"
-import { type AgentPermission, permissionEffect } from "../plugins/lib/src/agent-files.ts"
+import { type AgentPermission, permissionEffect } from "../lib/src/agent-files.ts"
+import { DEFAULT_LEAN_AGENTS } from "../plugins/agent-efficiency/opencode/src/lean.ts"
 
 const PLUGINS = path.join(import.meta.dir, "..", "plugins")
 const ROUTER_ROW = /^\|.*\|\s*`([\w-]+)`\s*\|\s*$/
@@ -60,21 +60,21 @@ const WRITERS = new Set(["shepherd"])
 type Agent = { plugin: string; id: string; hidden: boolean; rules: AgentPermission[] }
 
 function agents(): Agent[] {
-  return [...new Bun.Glob("*/agents/*.md").scanSync(PLUGINS)].sort().map((file) => {
+  return [...new Bun.Glob("*/common/agents/*.md").scanSync(PLUGINS)].filter((file) => !file.endsWith(".claude.md")).sort().map((file) => {
     const text = readFileSync(path.join(PLUGINS, file), "utf8")
     const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? ""
     const data = (Bun.YAML.parse(front) ?? {}) as { hidden?: boolean; permissions?: AgentPermission[] }
-    const [plugin = "", , name = ""] = file.split("/")
-    return { plugin, id: name.replace(/\.md$/, ""), hidden: data.hidden === true, rules: data.permissions ?? [] }
+    const [plugin = "", , , name = ""] = file.split("/")
+    return { plugin, id: name.replace(/(\.opencode)?\.md$/, ""), hidden: data.hidden === true, rules: data.permissions ?? [] }
   })
 }
 
-const skillFiles = () => [...new Bun.Glob("*/skills/*/SKILL.md").scanSync(PLUGINS)]
-const shipped = new Set(skillFiles().map((file) => file.split("/")[2] as string))
+const skillFiles = () => [...new Bun.Glob("*/common/skills/*/SKILL.md").scanSync(PLUGINS)]
+const shipped = new Set(skillFiles().map((file) => file.split("/")[3] as string))
 
 /** Upstream skills the design-upstream-preflight table routes to; design agents may allow them. */
 const upstream = new Set(
-  readFileSync(path.join(PLUGINS, "design/skills/design-upstream-preflight/SKILL.md"), "utf8")
+  readFileSync(path.join(PLUGINS, "design/common/skills/design-upstream-preflight/SKILL.md"), "utf8")
     .split("\n")
     .flatMap((line) => [...(UPSTREAM_ROW.exec(line)?.[1] ?? "").matchAll(/`([\w-]+)`/g)].map((match) => match[1] as string)),
 )
@@ -86,7 +86,7 @@ for (const file of skillFiles()) {
   if (!text.includes("| Load skill |")) continue
   for (const line of text.split("\n")) {
     const member = ROUTER_ROW.exec(line)?.[1]
-    if (member !== undefined) routerOf.set(member, file.split("/")[2] as string)
+    if (member !== undefined) routerOf.set(member, file.split("/")[3] as string)
   }
 }
 
@@ -131,6 +131,14 @@ test("an agent that may load a router member may load its router", () => {
       })
     }
   }
+})
+
+test("concept may load every skill that design-guide routes to", () => {
+  const concept = agents().find((agent) => agent.id === "concept") as Agent
+  const guide = readFileSync(path.join(PLUGINS, "design/common/skills/design-guide/SKILL.md"), "utf8")
+  const routed = [...guide.matchAll(/\|[^|]*\|\s*`([\w-]+)`\s*\|/g)].map((match) => match[1] as string)
+  expect(routed.length).toBeGreaterThan(10)
+  for (const skill of routed) expect({ skill, allowed: allows(concept, "skill", skill) }).toEqual({ skill, allowed: true })
 })
 
 test("execute, web access and hidden match each agent's profile", () => {

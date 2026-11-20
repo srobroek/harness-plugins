@@ -14,13 +14,13 @@ import {
 } from "./check-concerns.ts"
 
 const FIXTURE = path.join(import.meta.dir, "fixtures", "concerns", "valid")
-const REF = "plugins/toolchain/skills/toolchain-languages/references"
+const REF = "plugins/toolchain/common/skills/toolchain-languages/references"
 const SPEC = `${REF}/concerns.md`
 const SHARED = `${REF}/shared-tools.md`
-const PY_TESTING = "plugins/lang/skills/lang-x/references/testing.md"
-const PY_QUALITY = "plugins/lang/skills/lang-x/references/quality.md"
-const SH = "plugins/lang/skills/lang-sh/references/shell.md"
-const TF = "plugins/lang/skills/lang-tf/references/tf.md"
+const PY_TESTING = "plugins/lang/common/skills/lang-x/references/testing.md"
+const PY_QUALITY = "plugins/lang/common/skills/lang-x/references/quality.md"
+const SH = "plugins/lang/common/skills/lang-sh/references/shell.md"
+const TF = "plugins/lang/common/skills/lang-tf/references/tf.md"
 const SURFACES = `${REF}/surfaces.md`
 const TODAY = "2026-02-01"
 
@@ -139,7 +139,7 @@ describe("parseSpec and parseShared", () => {
     ["surface concern id clashing with a concern", "| e2e | End-to-end", "| unit | End-to-end", 'duplicate concern id "unit"'],
     ["duplicate surface id", "| HTTP API | api |", "| HTTP API | web |", 'duplicate surface id "web"'],
     ["unknown surface concern in N/A", "| HTTP API | api | visual |", "| HTTP API | api | ghost |", 'unknown surface concern "ghost" in N/A allowed for'],
-    ["no Surfaces file line", "Surfaces file: `plugins/toolchain/skills/toolchain-languages/references/surfaces.md`", "", "no `Surfaces file: `<path>`` line"],
+    ["no Surfaces file line", "Surfaces file: `plugins/toolchain/common/skills/toolchain-languages/references/surfaces.md`", "", "no `Surfaces file: `<path>`` line"],
     ["unknown language kind", "| shell | lang-sh |", "| ghost | lang-sh |", 'unknown kind "ghost"'],
   ])("spec: %s", (_name, from, to, reason) => {
     const edited = spec.replace(from, to)
@@ -304,14 +304,14 @@ describe("registration findings", () => {
     expect(reasons(root, "sh").some((r) => r.includes(`registered file ${SH} is missing`))).toBe(true)
   })
   test("file not linked from the skill", () => {
-    const root = repo({ "plugins/lang/skills/lang-sh/SKILL.md": ["[shell](references/shell.md)", "nothing"] })
+    const root = repo({ "plugins/lang/common/skills/lang-sh/SKILL.md": ["[shell](references/shell.md)", "nothing"] })
     expect(reasons(root, "sh").some((r) => r.startsWith(`${SH}:1: not linked`))).toBe(true)
   })
   test("file linked only through a second hop is not linked", () => {
     const root = repo({
-      "plugins/lang/skills/lang-x/references/more.md": ["[quality](quality.md)", "[deeper](deeper.md)"],
+      "plugins/lang/common/skills/lang-x/references/more.md": ["[quality](quality.md)", "[deeper](deeper.md)"],
     })
-    root.set("plugins/lang/skills/lang-x/references/deeper.md", "[quality](quality.md)\n")
+    root.set("plugins/lang/common/skills/lang-x/references/deeper.md", "[quality](quality.md)\n")
     expect(reasons(root, "py").some((r) => r.startsWith(`${PY_QUALITY}:1: not linked`))).toBe(true)
   })
   test("skill not found", () => {

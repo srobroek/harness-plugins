@@ -177,7 +177,7 @@ Run exactly: git push --force origin feature
 ```
 
 **Expect:** denied with `Denied by safety (force-push): ...`, which suggests `--force-with-lease`.
-**If not:** `plugins/safety/src/permission.ts` (`force-push`); check `disable` in the safety options.
+**If not:** `plugins/safety/opencode/src/permission.ts` (`force-push`); check `disable` in the safety options.
 
 **2. trunk-dev: a non-conventional commit is refused**
 
@@ -186,7 +186,7 @@ Run exactly: git commit --allow-empty -m "update stuff"
 ```
 
 **Expect:** refused with ``trunk-dev: Use a Conventional Commit subject such as `feat(scope): summary`...``.
-**If not:** `plugins/trunk-dev/src/commit-gate.ts`; the repo needs `.releaserc.json` at its root.
+**If not:** `plugins/trunk-dev/opencode/src/commit-gate.ts`; the repo needs `.releaserc.json` at its root.
 
 **3. beads: `bd edit` is refused**
 
@@ -195,7 +195,7 @@ Run exactly: bd edit probe-1
 ```
 
 **Expect:** refused with `` `bd edit` opens $EDITOR and hangs a non-interactive session; ... ``, ending `Disable: set the srobroek.beads plugin option gates.bd-editor-gate.enabled=false`.
-**If not:** `plugins/beads/src/shell-gates.ts`; `bd` must be on `PATH`.
+**If not:** `plugins/beads/opencode/src/shell-gates.ts`; `bd` must be on `PATH`.
 
 **4. model-roles: the tier report**
 
@@ -204,7 +204,7 @@ Call model_roles_check and show me the reviewer tier and which model code-review
 ```
 
 **Expect:** a report listing `cheap`, `standard`, `strong` and `reviewer` with candidate statuses, and `code-reviewer` on a reviewer-tier model.
-**If not:** `plugins/model-roles/src/check.ts`; an empty tier means `ctx.model.list()` returned nothing usable.
+**If not:** `plugins/model-roles/opencode/src/check.ts`; an empty tier means `ctx.model.list()` returned nothing usable.
 
 **5. agent-reviewer: a local review with a verdict**
 
@@ -213,7 +213,7 @@ Create src/div.ts exporting div(a, b) = a / b with no zero check, stage it, then
 ```
 
 **Expect:** the child reply starts with `VERDICT: APPROVE|REQUEST-CHANGES|COMMENT` and cites `src/div.ts:<line>`.
-**If not:** `plugins/agent-reviewer/agents/code-reviewer.md`; its shell is limited to `git diff`, `git log` and `git show`.
+**If not:** `plugins/agent-reviewer/common/agents/code-reviewer.md`; its shell is limited to `git diff`, `git log` and `git show`.
 
 **6. lang-rust: the router loads a hidden member**
 
@@ -222,7 +222,7 @@ I'm adding a numbered sqlx migration to a Rust SQLite repository. What are the r
 ```
 
 **Expect:** the agent loads `lang-rust`, then `lang-rust-persistence` by id, and answers from it.
-**If not:** the router table in `plugins/lang-rust/skills/lang-rust/SKILL.md`.
+**If not:** the router table in `plugins/lang-rust/common/skills/lang-rust/SKILL.md`.
 
 **7. safety: the migration gate**
 
@@ -231,7 +231,7 @@ Use the edit tool to change migrations/0001_init.sql so table a gets a name TEXT
 ```
 
 **Expect:** refused with `Blocked by safety (migration-edit): '.../migrations/0001_init.sql' is a migration that has shipped (it is on the default branch)...`, asking for a new migration.
-**If not:** `plugins/safety/src/migrations.ts`.
+**If not:** `plugins/safety/opencode/src/migrations.ts`.
 
 **8. worktrunk: the merge gate**
 
@@ -240,7 +240,7 @@ Run exactly: wt merge epic
 ```
 
 **Expect:** refused with `worker-to-epic merges must preserve history; retry with wt merge epic --no-squash --no-ff`.
-**If not:** `plugins/worktrunk/src/merge-gate.ts`; `git symbolic-ref refs/remotes/origin/HEAD` must print `origin/main`.
+**If not:** `plugins/worktrunk/opencode/src/merge-gate.ts`; `git symbolic-ref refs/remotes/origin/HEAD` must print `origin/main`.
 
 **9. statusline: the row renders**
 
@@ -263,21 +263,21 @@ Use the coder agent to add a sub(a, b) function to src/math.ts next to add, with
 ```
 
 **Expect:** the reply starts with `VERDICT: DONE|PARTIAL|BLOCKED` and lists the changed paths and each check's result.
-**If not:** `plugins/agent-coder/agents/coder.md` (permission allowlist; it may spawn only `explore` and `mechanic`).
+**If not:** `plugins/agent-coder/common/agents/coder.md` (permission allowlist; it may spawn only `explore` and `mechanic`).
 
 ```text
 Use the coder agent to find new tools for parsing YAML with find_tools_scan.
 ```
 
 **Expect:** the agent cannot call `find_tools_scan` (denied) and reports that, or returns `BLOCKED`.
-**If not:** the `find_tools_scan` deny in `plugins/agent-coder/agents/coder.md`.
+**If not:** the `find_tools_scan` deny in `plugins/agent-coder/common/agents/coder.md`.
 
 ```text
 Use the coder agent to plan tests for div in src/div.ts (zero, negative, fractional inputs). Load the testing guidance first and report which skills you loaded.
 ```
 
 **Expect:** the child loads `quality-testing` (and possibly `lang-typescript`, then `lang-typescript-quality`) and names them. A design or journeys skill is denied.
-**If not:** the skill allowlist in `plugins/agent-coder/agents/coder.md`; routers must be allowed next to their hidden members.
+**If not:** the skill allowlist in `plugins/agent-coder/common/agents/coder.md`; routers must be allowed next to their hidden members.
 
 ## agent-efficiency
 
@@ -293,7 +293,7 @@ Call the tool named "bash" (not "shell") with {"command": "echo alias-ok"}.
 ```
 
 **Expect:** the call runs as `shell` and prints `alias-ok`, with no "No tool named bash" error. A model that refuses to call an unlisted tool makes this test inconclusive.
-**If not:** `plugins/agent-efficiency/src/index.ts` (`routeShellAlias`); check that no other plugin registers a real `bash` tool.
+**If not:** `plugins/agent-efficiency/opencode/src/index.ts` (`routeShellAlias`); check that no other plugin registers a real `bash` tool.
 
 ### Agent shape: lean explore
 
@@ -302,14 +302,14 @@ Use the explore agent to run `ls` in a shell and report the output.
 ```
 
 **Expect:** explore says it has no shell, and offers `glob` or `read` results instead.
-**If not:** `plugins/agent-efficiency/src/explore.ts` (`EXPLORE_PERMISSIONS`); `explore: false` turns it off.
+**If not:** `plugins/agent-efficiency/opencode/src/explore.ts` (`EXPLORE_PERMISSIONS`); `explore: false` turns it off.
 
 ```text
 Use the explore agent to find where add is defined in this repo.
 ```
 
 **Expect:** a report with Summary, Files (`/abs/path:start-end`), Architecture and Sources.
-**If not:** `EXPLORE_PROMPT` in `plugins/agent-efficiency/src/explore.ts`.
+**If not:** `EXPLORE_PROMPT` in `plugins/agent-efficiency/opencode/src/explore.ts`.
 
 ### Hook: lean subagents
 
@@ -320,7 +320,7 @@ Use the adversarial-challenger agent to answer: does your system prompt contain 
 ```
 
 **Expect:** no `# Your Model` section. The blocks for the global `~/.config/opencode/AGENTS.md` and the scratch repo's own `AGENTS.md` are both there, as are the environment block and the date. With `"leanDrop": ["global-instructions", "identity", "worktree"]` the global block is gone and the project block stays.
-**If not:** `plugins/agent-efficiency/src/lean.ts` (`DEFAULT_LEAN_AGENTS`, `DEFAULT_DROP`); a global/project split that misfires shows up as both blocks gone or both kept.
+**If not:** `plugins/agent-efficiency/opencode/src/lean.ts` (`DEFAULT_LEAN_AGENTS`, `DEFAULT_DROP`); a global/project split that misfires shows up as both blocks gone or both kept.
 
 ## agent-mechanic
 
@@ -333,7 +333,7 @@ Use the mechanic agent to rename the function add to sum everywhere in this repo
 ```
 
 **Expect:** a reply of at most 120 words that starts with `VERDICT: DONE|PARTIAL|BLOCKED` and lists the changed paths and the check result.
-**If not:** `plugins/agent-mechanic/agents/mechanic.md`.
+**If not:** `plugins/agent-mechanic/common/agents/mechanic.md`.
 
 ## agent-researcher
 
@@ -346,7 +346,7 @@ Use the researcher agent to answer: what is the default merge method of `gh pr m
 ```
 
 **Expect:** starts with `VERDICT: DONE|BLOCKED`, each claim marked observation or inference with a URL, and a fenced `json` block (`verdict`, `answer`) at the end.
-**If not:** `plugins/agent-researcher/agents/researcher.md`. With delivery installed, make sure only one `researcher` registered (`plugins/lib/src/agent-fallback.ts`).
+**If not:** `plugins/agent-researcher/common/agents/researcher.md`. With delivery installed, make sure only one `researcher` registered (`plugins/lib/src/agent-fallback.ts`).
 
 ## agent-reviewer
 
@@ -369,7 +369,7 @@ Write src/run.ts that passes process.argv[2] to child_process.exec, then use the
 ```
 
 **Expect:** first line `VERDICT: PASS|MINOR|MAJOR`, with a CWE-78 command-injection finding at `src/run.ts:<line>`.
-**If not:** `plugins/agent-reviewer/agents/security-reviewer.md`; it has no shell and no web access by design.
+**If not:** `plugins/agent-reviewer/common/agents/security-reviewer.md`; it has no shell and no web access by design.
 
 ### Agent `adversarial-challenger`
 
@@ -378,7 +378,7 @@ Use the adversarial-challenger agent to poke holes in this plan: "store session 
 ```
 
 **Expect:** first line `VERDICT: HOLDS|WEAKENED|REFUTED` (likely WEAKENED or REFUTED), with evidence-backed counter-arguments.
-**If not:** `plugins/agent-reviewer/agents/adversarial-challenger.md`.
+**If not:** `plugins/agent-reviewer/common/agents/adversarial-challenger.md`.
 
 ### Agent `pr-reviewer` (hidden)
 
@@ -387,7 +387,7 @@ Use the pr-reviewer agent to review PR #<n> in <owner>/<repo>.
 ```
 
 **Expect:** first line `VERDICT: APPROVE|REQUEST-CHANGES|COMMENT`. It runs only `gh pr view` and `gh pr diff`. It does not show in the `@` picker.
-**If not:** `plugins/agent-reviewer/agents/pr-reviewer.md` (`hidden: true`, shell allowlist).
+**If not:** `plugins/agent-reviewer/common/agents/pr-reviewer.md` (`hidden: true`, shell allowlist).
 
 ### Skill `review-security` (hidden, by id)
 
@@ -396,7 +396,7 @@ Load the review-security skill and use it to trace untrusted input to sinks in s
 ```
 
 **Expect:** the skill loads by id, and the answer maps entry points to sinks in a CWE table.
-**If not:** `plugins/agent-reviewer/skills/review-security/SKILL.md` (`opencode/autoinvoke: false`, so it only loads by id).
+**If not:** `plugins/agent-reviewer/common/skills/review-security/SKILL.md` (`opencode/autoinvoke: false`, so it only loads by id).
 
 ## agent-seance
 
@@ -410,14 +410,14 @@ Call seance_read with no arguments.
 ```
 
 **Expect:** this project's top-level sessions, newest first (up to 15), ending with a token estimate.
-**If not:** `plugins/agent-seance/src/read.ts` (`listSessions`).
+**If not:** `plugins/agent-seance/opencode/src/read.ts` (`listSessions`).
 
 ```text
 Call seance_read with session set to the newest session id from that list and max_chars 4000.
 ```
 
 **Expect:** turns oldest first: user requests, assistant prose, one-line tool results, and child sessions with their agent.
-**If not:** `readSession` in `plugins/agent-seance/src/read.ts`. A session outside the project asks for `external_directory`.
+**If not:** `readSession` in `plugins/agent-seance/opencode/src/read.ts`. A session outside the project asks for `external_directory`.
 
 ### Agent `seance`
 
@@ -426,7 +426,7 @@ Use the seance agent to tell me what the previous session in this project change
 ```
 
 **Expect:** first line `VERDICT: ANSWERED|PARTIAL|NOT_FOUND`, `ses_…[turn]` evidence, and gaps, in at most 250 words.
-**If not:** `plugins/agent-seance/agents/seance.md`; it reaches `seance_read` through Code Mode `execute`.
+**If not:** `plugins/agent-seance/common/agents/seance.md`; it reaches `seance_read` through Code Mode `execute`.
 
 ## architecture
 
@@ -439,7 +439,7 @@ Should this repo have apps/ and libs/ at the top level, or a capability-first la
 ```
 
 **Expect:** loads `architecture-guide`, then `architecture-top-level`.
-**If not:** the router table in `plugins/architecture/skills/architecture-guide/SKILL.md`.
+**If not:** the router table in `plugins/architecture/common/skills/architecture-guide/SKILL.md`.
 
 ### → `architecture-ownership`
 
@@ -466,7 +466,7 @@ Use the architect agent to design a plugin system for this repo's math module, w
 ```
 
 **Expect:** first line `VERDICT: DESIGNED|PARTIAL|BLOCKED`. It makes no edits and runs no shell commands.
-**If not:** `plugins/architecture/agents/architect.md`. Its `explore` spawns need `experimental.subagent_depth` of 2 or more.
+**If not:** `plugins/architecture/common/agents/architect.md`. Its `explore` spawns need `experimental.subagent_depth` of 2 or more.
 
 ## aws
 
@@ -480,7 +480,7 @@ How do I create an S3 bucket with versioning using the AWS CLI, and what will it
 ```
 
 **Expect:** loads `aws-guidance`, searches the AWS MCP server first, and prices with `aws-pricing`. Without the servers, it says which checks it could not run.
-**If not:** `plugins/aws/skills/aws-guidance/SKILL.md`; check the MCP server config.
+**If not:** `plugins/aws/common/skills/aws-guidance/SKILL.md`; check the MCP server config.
 
 ## beads
 
@@ -495,7 +495,7 @@ Run exactly: BEADS_ACTOR=manual/test bd create "probe" -t task --json
 ```
 
 **Expect:** a JSON issue. The command runs under `bd-embedded-write-runner` (visible when your shell permission asks).
-**If not:** `plugins/beads/src/bd-embedded-write-lock.ts`; `bun` must be on `PATH`.
+**If not:** `plugins/beads/opencode/src/bd-embedded-write-lock.ts`; `bun` must be on `PATH`.
 
 ### Gate `bd-editor-gate`
 
@@ -504,7 +504,7 @@ Run exactly: bd edit <id>
 ```
 
 **Expect:** refused, because `bd edit` opens `$EDITOR`. The message names `bd update ID --<field>` and `bd comment`.
-**If not:** `plugins/beads/src/shell-gates.ts`.
+**If not:** `plugins/beads/opencode/src/shell-gates.ts`.
 
 ### Gate `bd-update-close-gate`
 
@@ -513,7 +513,7 @@ Run exactly: BEADS_ACTOR=manual/test bd update <id> --status closed
 ```
 
 **Expect:** refused with ``Use `bd close ID --reason "<factual reason>"` instead.``
-**If not:** `plugins/beads/src/bd-update-close-gate.ts`.
+**If not:** `plugins/beads/opencode/src/bd-update-close-gate.ts`.
 
 ### Gate `bd-unclaim-gate`
 
@@ -522,7 +522,7 @@ Run exactly: BEADS_ACTOR=manual/test bd unclaim <id>
 ```
 
 **Expect:** refused with `bd unclaim requires a non-empty --if-assignee compare-and-swap guard`.
-**If not:** `plugins/beads/src/bd-unclaim-gate.ts`.
+**If not:** `plugins/beads/opencode/src/bd-unclaim-gate.ts`.
 
 ### Gate `bd-actor-gate`
 
@@ -531,7 +531,7 @@ Run exactly: bd create "no actor" -t task
 ```
 
 **Expect:** refused with ``bd create / `bd new` / `bd create-form` without BEADS_ACTOR or BD_ACTOR records the invoking human's git identity...``.
-**If not:** `plugins/beads/src/bd-actor-gate.ts`; check that `BEADS_ACTOR` is not set in OpenCode's environment.
+**If not:** `plugins/beads/opencode/src/bd-actor-gate.ts`; check that `BEADS_ACTOR` is not set in OpenCode's environment.
 
 ```text
 Run exactly: bd update <id> --claim
@@ -549,7 +549,7 @@ Run exactly: bd hooks install
 ```
 
 **Expect:** refused, because an existing hook is a binary. Afterwards, `rm "$SCRATCH/repo/.git/hooks/pre-commit"`.
-**If not:** `plugins/beads/src/binary-hooks.ts`.
+**If not:** `plugins/beads/opencode/src/binary-hooks.ts`.
 
 ### Gate `bd-close-gate`
 
@@ -560,7 +560,7 @@ Run `BEADS_ACTOR=manual/test bd mol pour design-touch --var surface=/ --var scop
 ```
 
 **Expect:** the close is refused with `blocked by beads (a gate bead is resolved, never closed): <gate-id> is a gate...`.
-**If not:** `plugins/beads/src/bd-close-gate.ts` (looks the bead up with `bd show`).
+**If not:** `plugins/beads/opencode/src/bd-close-gate.ts` (looks the bead up with `bd show`).
 
 ### Gate `bead-agent-routing` (FO-5)
 
@@ -575,14 +575,14 @@ Use the mechanic agent to work on bead <new-id>.
 ```
 
 **Expect:** the spawn is refused with `FO-5: the spawn goes to 'mechanic', but the bead it names routes elsewhere: ...`.
-**If not:** `plugins/beads/src/subagent-routing.ts`; the id must carry the ledger prefix.
+**If not:** `plugins/beads/opencode/src/subagent-routing.ts`; the id must carry the ledger prefix.
 
 ```text
 Use the implementer-high agent to answer one question about bead <id>: what is its title?
 ```
 
 **Expect:** the spawn runs, and its result carries an advisory to use `implementer` unless the brief states an implementer-high criterion. Needs delivery.
-**If not:** `HIGH_TIER_AGENT` in `plugins/beads/src/subagent-routing.ts`.
+**If not:** `HIGH_TIER_AGENT` in `plugins/beads/opencode/src/subagent-routing.ts`.
 
 ### Gate `pr-bead-link-gate` (needs a GitHub repo with a live ledger)
 
@@ -591,7 +591,7 @@ In my GitHub sandbox repo, run exactly: gh pr create --title "fix: probe" --body
 ```
 
 **Expect:** refused with `This PR names no bead. A live ledger requires a Bead: <id>, Closes-Bead: <id>, or Bead-Id: <id> trailer...`.
-**If not:** `plugins/beads/src/pr-bead-link-gate.ts` (needs write permission on the repo).
+**If not:** `plugins/beads/opencode/src/pr-bead-link-gate.ts` (needs write permission on the repo).
 
 ### Hook: `bd prime` context
 
@@ -600,7 +600,7 @@ Without running any command, tell me how your instructions say a bead should be 
 ```
 
 **Expect:** the answer follows `bd prime` (`bd close <id> --reason ...`), which shows the prime text is in the system prompt.
-**If not:** the `beads-prime` gate in `plugins/beads/src/prime.ts`.
+**If not:** the `beads-prime` gate in `plugins/beads/opencode/src/prime.ts`.
 
 ### Hook: subagent actor
 
@@ -609,7 +609,7 @@ Use the general agent to run `bd create "child probe" -t task --json` and report
 ```
 
 **Expect:** `created_by` is `opencode/<root>/general/<session>`, and the actor gate does not fire.
-**If not:** `plugins/beads/src/shell-gates.ts` (`withActorPrefix`, the `unset BEADS_ACTOR; export BD_ACTOR=` prefix).
+**If not:** `plugins/beads/opencode/src/shell-gates.ts` (`withActorPrefix`, the `unset BEADS_ACTOR; export BD_ACTOR=` prefix).
 
 ### Lifecycle: stop nudge and release
 
@@ -619,7 +619,7 @@ Then stop and do nothing else.
 ```
 
 **Expect:** after the turn ends, a queued message lists the claim with its guarded release command, and the session resumes. If it stops again still holding the claim, a later message reports the claim released.
-**If not:** `plugins/beads/src/lifecycle.ts` and the `beads-stop-nudge` gate. Goal mode suppresses the nudge.
+**If not:** `plugins/beads/opencode/src/lifecycle.ts` and the `beads-stop-nudge` gate. Goal mode suppresses the nudge.
 
 ### Skill `beads-guide` (router) → `beads-setup`
 
@@ -628,7 +628,7 @@ bd says "no beads database found" in a fresh clone. How do I set up the ledger a
 ```
 
 **Expect:** loads `beads-guide`, then `beads-setup`.
-**If not:** the router table in `plugins/beads/skills/beads-guide/SKILL.md`.
+**If not:** the router table in `plugins/beads/common/skills/beads-guide/SKILL.md`.
 
 ### → `beads-preflight`
 
@@ -637,7 +637,7 @@ Run a beads preflight on this repo before I start ledger work.
 ```
 
 **Expect:** loads `beads-preflight` and runs its read-only `preflight.py`.
-**If not:** `plugins/beads/skills/beads-preflight/preflight.py`; needs `python3`.
+**If not:** `plugins/beads/common/skills/beads-preflight/preflight.py`; needs `python3`.
 
 ### → `beads-ledger`
 
@@ -677,7 +677,7 @@ Use the external-repo-worker agent to clone https://github.com/srobroek/opencode
 ```
 
 **Expect:** it clones under `/tmp/agentic/external-repos/opencode-plugins-XXXXXX` (asking for `external_directory`) and replies with changed files (none), the verification line and no publish steps.
-**If not:** `plugins/build/agents/external-repo-worker.md`. The safety `worktree-tmp` gate does not apply to clones.
+**If not:** `plugins/build/common/agents/external-repo-worker.md`. The safety `worktree-tmp` gate does not apply to clones.
 
 ## chezmoi
 
@@ -692,7 +692,7 @@ Use the edit tool to append the line "# probe" to <managed file>.
 ```
 
 **Expect:** refused with `'<file>' is a chezmoi-managed target, not the source; the next chezmoi apply overwrites it. Edit the source at '<source path>'...`.
-**If not:** `plugins/chezmoi/src/guard.ts`; `chezmoi managed` must answer within 2 s.
+**If not:** `plugins/chezmoi/opencode/src/guard.ts`; `chezmoi managed` must answer within 2 s.
 
 ### Guard: shell write
 
@@ -710,7 +710,7 @@ Change my global git config to set pull.rebase=true. My dotfiles are managed wit
 ```
 
 **Expect:** loads `chezmoi-editor`, edits the source file (`chezmoi source-path`), then runs `chezmoi apply`.
-**If not:** `plugins/chezmoi/skills/chezmoi-editor/SKILL.md`.
+**If not:** `plugins/chezmoi/common/skills/chezmoi-editor/SKILL.md`.
 
 ## debate
 
@@ -724,7 +724,7 @@ Debate it: should this project use SQLite or Postgres for its first release?
 ```
 
 **Expect:** loads `debate`, argues both sides and gives a conditional verdict.
-**If not:** `plugins/debate/skills/debate/SKILL.md`.
+**If not:** `plugins/debate/common/skills/debate/SKILL.md`.
 
 ### Skill `grilling`
 
@@ -733,7 +733,7 @@ Grill me on my plan to rewrite the CLI in Rust.
 ```
 
 **Expect:** loads `grilling` and asks numbered rounds (in the parley panel when it is installed).
-**If not:** `plugins/debate/skills/grilling/SKILL.md`.
+**If not:** `plugins/debate/common/skills/grilling/SKILL.md`.
 
 ### Skill `to-questionnaire`
 
@@ -742,7 +742,7 @@ Write a questionnaire for my product manager about which login providers we must
 ```
 
 **Expect:** loads `to-questionnaire` and writes the questionnaire to a named path or `~/tmp`.
-**If not:** `plugins/debate/skills/to-questionnaire/SKILL.md`.
+**If not:** `plugins/debate/common/skills/to-questionnaire/SKILL.md`.
 
 ## delivery
 
@@ -758,7 +758,7 @@ Call delivery_land with pr 1 in this repo.
 ```
 
 **Expect:** refused with `repo.forge: observed "unknown" for remote origin at ..., expected "github" or "gitlab"`, with no permission prompt, because the refusal comes before any write.
-**If not:** `plugins/delivery/src/land.ts`.
+**If not:** `plugins/delivery/opencode/src/land.ts`.
 
 ### Tool `delivery_land` (GitHub sandbox)
 
@@ -767,7 +767,7 @@ Call delivery_land for PR #<n> with merge_method squash, expectHeadSha <head sha
 ```
 
 **Expect:** a permission prompt for `delivery_land` on `<owner>/<repo>#<n>`, then a merge and a receipt under `~/.omp/receipts/<repo-key>/`.
-**If not:** `plugins/delivery/src/land.ts` and `approval.ts`; `confirm: false` skips the prompt.
+**If not:** `plugins/delivery/opencode/src/land.ts` and `approval.ts`; `confirm: false` skips the prompt.
 
 ### Tool `delivery_cleanup`
 
@@ -776,7 +776,7 @@ Call delivery_cleanup for the receipt delivery_land just wrote.
 ```
 
 **Expect:** a permission prompt for `delivery_cleanup` with the worktree path, then `git worktree remove` and `git branch -d`. Called from inside that worktree, it refuses.
-**If not:** `plugins/delivery/src/cleanup.ts`.
+**If not:** `plugins/delivery/opencode/src/cleanup.ts`.
 
 ### Hook: fan-out instructions
 
@@ -785,7 +785,7 @@ Without loading any skill, what do your instructions say about splitting work ac
 ```
 
 **Expect:** the answer quotes the "Fan-out delivery" summary and names the `delivery-fan-out` skill.
-**If not:** `plugins/delivery/instructions/delivery-fan-out.md`; `fanOut: false` turns it off.
+**If not:** `plugins/delivery/opencode/instructions/delivery-fan-out.md`; `fanOut: false` turns it off.
 
 ### Hook: verdict parsing
 
@@ -794,7 +794,7 @@ Use the operator agent to run `git log --oneline -1` and report it. Then tell me
 ```
 
 **Expect:** `VERDICT: DONE` and a fenced `json` block in the reply; `metadata.delivery.verdict` is `DONE`. A reply that breaks the format is `MALFORMED`, with a note naming the session to continue.
-**If not:** `plugins/delivery/src/verdict.ts`; `verdicts: false` turns it off.
+**If not:** `plugins/delivery/opencode/src/verdict.ts`; `verdicts: false` turns it off.
 
 ### Agent `implementer`
 
@@ -803,7 +803,7 @@ Use the implementer agent to add a mul(a, b) function to src/math.ts in its own 
 ```
 
 **Expect:** `VERDICT: DONE|BLOCKED|SPLIT` and a closing `json` block with the branch head. With subagent-worktree installed, it runs in a fresh worktree.
-**If not:** `plugins/delivery/agents/implementer.md`.
+**If not:** `plugins/delivery/common/agents/implementer.md`.
 
 ### Agent `implementer-high`
 
@@ -812,7 +812,7 @@ Use the implementer-high agent to find the root cause of why 0.1 + 0.2 !== 0.3 w
 ```
 
 **Expect:** `VERDICT: DONE|BLOCKED|SPLIT` on the `strong` tier (or Opus `#high` without model-roles).
-**If not:** `plugins/delivery/agents/implementer-high.md`.
+**If not:** `plugins/delivery/common/agents/implementer-high.md`.
 
 ### Agent `operator`
 
@@ -821,7 +821,7 @@ Use the operator agent to run exactly `git status --short` and record the result
 ```
 
 **Expect:** `VERDICT: DONE|BLOCKED` on the `cheap` tier (or Haiku without model-roles).
-**If not:** `plugins/delivery/agents/operator.md`.
+**If not:** `plugins/delivery/common/agents/operator.md`.
 
 ### Agent `shepherd`
 
@@ -830,7 +830,7 @@ Use the shepherd agent to land PR #<n> in my GitHub sandbox repo.
 ```
 
 **Expect:** it requires exact-head approval and green checks, calls `delivery_land`, closes beads, runs `delivery_cleanup`, and replies `VERDICT: COMPLETE|BLOCKED`.
-**If not:** `plugins/delivery/agents/shepherd.md`.
+**If not:** `plugins/delivery/common/agents/shepherd.md`.
 
 ### Agents `researcher` and `pr-reviewer` (fallback copies)
 
@@ -838,7 +838,7 @@ Uninstall agent-researcher and agent-reviewer, restart, then rerun the
 [researcher](#agent-researcher) and [pr-reviewer](#agent-pr-reviewer-hidden) prompts.
 
 **Expect:** the same verdict formats, now from delivery's copies with their fallback models.
-**If not:** `FALLBACK_AGENTS` in `plugins/delivery/src/agents.ts`.
+**If not:** `FALLBACK_AGENTS` in `plugins/delivery/opencode/src/agents.ts`.
 
 ### Skill `delivery-git-workflow`
 
@@ -847,7 +847,7 @@ Which merge method should I use for this PR, and what is the order of land, bead
 ```
 
 **Expect:** loads `delivery-git-workflow`.
-**If not:** `plugins/delivery/skills/delivery-git-workflow/SKILL.md`.
+**If not:** `plugins/delivery/common/skills/delivery-git-workflow/SKILL.md`.
 
 ### Skill `delivery-fan-out` (hidden, by id)
 
@@ -856,7 +856,7 @@ Load the delivery-fan-out skill, then split "add sub, mul and div to src/math.ts
 ```
 
 **Expect:** the skill loads by id, and the plan names independent units, briefs, tiers and one worktree per writer.
-**If not:** `plugins/delivery/skills/delivery-fan-out/SKILL.md`.
+**If not:** `plugins/delivery/common/skills/delivery-fan-out/SKILL.md`.
 
 ## dep-update
 
@@ -870,7 +870,7 @@ Call dep_scan on this repo.
 ```
 
 **Expect:** `left-pad` 1.1.0 classified with a newer version (`MINOR-CHECK` for 1.3.0); the scan is read-only.
-**If not:** `plugins/dep-update/src/index.ts`; needs network access to npm.
+**If not:** `plugins/dep-update/opencode/src/index.ts`; needs network access to npm.
 
 ### Tool `dep_apply` (permission prompt)
 
@@ -879,7 +879,7 @@ Call dep_apply with ecosystem npm, name left-pad, version 1.3.0.
 ```
 
 **Expect:** a permission prompt for `dep_apply` on `left-pad@1.3.0`, even after an earlier "allow always". Approve it, and `package.json` pins 1.3.0.
-**If not:** `plugins/dep-update/src/bump.ts`; `DEP_UPDATE_PKG_MANAGER` picks the package manager.
+**If not:** `plugins/dep-update/opencode/src/bump.ts`; `DEP_UPDATE_PKG_MANAGER` picks the package manager.
 
 ### Hook: scanner-install advisory
 
@@ -888,7 +888,7 @@ Run exactly: uv tool install pip-audit
 ```
 
 **Expect:** the result ends with `dep-update: this command installed a CVE scanner persistently...`, suggesting `uvx pip-audit`. Afterwards, `uv tool uninstall pip-audit`.
-**If not:** `plugins/dep-update/src/scanner-install.ts`.
+**If not:** `plugins/dep-update/opencode/src/scanner-install.ts`.
 
 ### Skill `dep-update`
 
@@ -897,7 +897,7 @@ Upgrade this project's dependencies safely.
 ```
 
 **Expect:** loads `dep-update`, runs `dep_scan`, and applies patch and minor bumps one at a time, each behind a prompt.
-**If not:** `plugins/dep-update/skills/dep-update/SKILL.md`.
+**If not:** `plugins/dep-update/common/skills/dep-update/SKILL.md`.
 
 ## design
 
@@ -912,7 +912,7 @@ Call design_setup for this repo.
 ```
 
 **Expect:** nine formulas copied into `.beads/formulas/`, and `bd formula list` shows them. The tool checks the `design_setup` permission on the repository path, so it prompts only when a rule asks.
-**If not:** `plugins/design/src/formulas.ts`; a divergent copy needs `force=true`.
+**If not:** `plugins/design/opencode/src/formulas.ts`; a divergent copy needs `force=true`.
 
 ### Tool `design_impeccable_scan`
 
@@ -921,12 +921,12 @@ Write src/index.html with a centered purple gradient hero, then call design_impe
 ```
 
 **Expect:** a permission prompt before every run, then the detector's JSON (exit 2 means findings).
-**If not:** `plugins/design/src/impeccable.ts`; `confirmScan: false` skips the prompt.
+**If not:** `plugins/design/opencode/src/impeccable.ts`; `confirmScan: false` skips the prompt.
 
 ### Skill `design-guide` (router) and its members
 
 Each prompt should load `design-guide`, then the named member. If one does not, check the
-router table in `plugins/design/skills/design-guide/SKILL.md`.
+router table in `plugins/design/common/skills/design-guide/SKILL.md`.
 
 ```text
 Write a DESIGN.md for this project.
@@ -1013,7 +1013,7 @@ Use the ui-ux-specialist agent to redesign the settings flow in src/ (three scre
 ```
 
 **Expect:** phased work (GROUND, GATE INTENT, …), spawns only `design-critic`, `a11y-auditor`, `explore` or `general`, and replies `VERDICT: COMPLETE|PARTIAL|BLOCKED`.
-**If not:** `plugins/design/agents/ui-ux-specialist.md`; nested spawns need `experimental.subagent_depth` of 2 or more.
+**If not:** `plugins/design/common/agents/ui-ux-specialist.md`; nested spawns need `experimental.subagent_depth` of 2 or more.
 
 ### Agent `ui-implementer`
 
@@ -1022,7 +1022,7 @@ Use the ui-implementer agent to build a small card component in src/card.html on
 ```
 
 **Expect:** verified at 1440, 768 and 375 px, with `VERDICT: COMPLETE|PARTIAL|ESCALATE|BLOCKED`.
-**If not:** `plugins/design/agents/ui-implementer.md`.
+**If not:** `plugins/design/common/agents/ui-implementer.md`.
 
 ### Agent `design-critic`
 
@@ -1053,7 +1053,7 @@ ELI5: how does a git rebase work?
 ```
 
 **Expect:** loads `eli5` and starts from a metaphor. A plain "explain rebase" should not load it.
-**If not:** `plugins/eli5/skills/eli5/SKILL.md`.
+**If not:** `plugins/eli5/common/skills/eli5/SKILL.md`.
 
 ## find-tools
 
@@ -1068,7 +1068,7 @@ Call find_tools_scan with query "postgres schema migration".
 ```
 
 **Expect:** per-source statuses (`ok`, `empty`, `partial`, `skipped`, `failed`) for local, catalog, mcp_registry, npm, github, awesome_opencode, smithery and skills_cli, plus gaps and a coverage count. Nothing is installed.
-**If not:** `plugins/find-tools/src/scan.ts`.
+**If not:** `plugins/find-tools/opencode/src/scan.ts`.
 
 ### Guard: install prompt
 
@@ -1077,7 +1077,7 @@ Run exactly: npx skills add some-org/some-skill
 ```
 
 **Expect:** a permission prompt that says `find-tools: this runs the skills CLI to install a skill...`. Reject it.
-**If not:** `plugins/find-tools/src/install-gate.ts`; `guardInstalls: false` turns it off.
+**If not:** `plugins/find-tools/opencode/src/install-gate.ts`; `guardInstalls: false` turns it off.
 
 ### Skill `find-tools`
 
@@ -1086,7 +1086,7 @@ Find a tool for generating changelogs from Conventional Commits. Should I adopt 
 ```
 
 **Expect:** loads `find-tools`, scans, vets, and ends with a decision table (`Use existing`, `Adopt`, `Trial`, `Reject` or `Build`) without installing anything.
-**If not:** `plugins/find-tools/skills/find-tools/SKILL.md`.
+**If not:** `plugins/find-tools/common/skills/find-tools/SKILL.md`.
 
 ## journeys
 
@@ -1096,7 +1096,7 @@ the two `permissions` rules from [Install](#install) to get prompts. Formulas ne
 ### Skill `journeys-guide` (router) and its members
 
 Each prompt should load `journeys-guide`, then the named member. If one does not, check
-`plugins/journeys/skills/journeys-guide/SKILL.md`.
+`plugins/journeys/common/skills/journeys-guide/SKILL.md`.
 
 ```text
 Set up user journeys in this repo.
@@ -1141,7 +1141,7 @@ Call journeys_index with command lint and journeysDir user-journeys.
 ```
 
 **Expect:** lint output and an exit code, with no permission prompt.
-**If not:** `plugins/journeys/src/journeys-tool.ts`; needs `python3`.
+**If not:** `plugins/journeys/opencode/src/journeys-tool.ts`; needs `python3`.
 
 ```text
 Call journeys_index with command prune, journeysDir user-journeys, keep 0, yes true.
@@ -1157,7 +1157,7 @@ Call journey_install_formulas with repoRoot set to this repo.
 ```
 
 **Expect:** a permission prompt for the repository root, then both formulas in `.beads/formulas/`.
-**If not:** `plugins/journeys/src/index.ts`; symlinked paths are refused.
+**If not:** `plugins/journeys/opencode/src/index.ts`; symlinked paths are refused.
 
 ### Agent `journey-scribe`
 
@@ -1166,7 +1166,7 @@ Use the journey-scribe agent to draft a journey for adding two numbers, from src
 ```
 
 **Expect:** a structured summary of journeys created, evidence references and lint status, with no reprinted journey bodies.
-**If not:** `plugins/journeys/agents/journey-scribe.md`.
+**If not:** `plugins/journeys/common/agents/journey-scribe.md`.
 
 ### Agent `journey-validator`
 
@@ -1175,7 +1175,7 @@ Use the journey-validator agent to validate user-journeys/<journey>.md.
 ```
 
 **Expect:** per-step results with triage and a recorded run file. It never edits product code.
-**If not:** `plugins/journeys/agents/journey-validator.md`.
+**If not:** `plugins/journeys/common/agents/journey-validator.md`.
 
 ## lang-go, lang-python, lang-typescript
 
@@ -1189,7 +1189,7 @@ Run the TypeScript lint and type-check for this repo.
 ```
 
 **Expect:** loads `lang-typescript`, then `lang-typescript-quality`, and runs Biome or ESLint, then `tsc -b` or `tsc --noEmit`.
-**If not:** `plugins/lang-typescript/skills/lang-typescript/SKILL.md`.
+**If not:** `plugins/lang-typescript/common/skills/lang-typescript/SKILL.md`.
 
 ### `lang-typescript` → testing, packaging, types
 
@@ -1220,7 +1220,7 @@ Run the Python format, lint, type-check and tests for this project.
 ```
 
 **Expect:** `lang-python`, then `lang-python-quality` (`uv lock --check`, `ruff check`, `ruff format --check`, mypy or pyright, `pytest -x`, in order).
-**If not:** `plugins/lang-python/skills/lang-python/SKILL.md`.
+**If not:** `plugins/lang-python/common/skills/lang-python/SKILL.md`.
 
 ### `lang-python` → testing, packaging, types, persistence
 
@@ -1257,7 +1257,7 @@ Run the Go lint and tests.
 ```
 
 **Expect:** `lang-go`, then `lang-go-quality` (`go build ./...`, `golangci-lint run` or `go vet`, `go test -race ./...`, `go mod tidy -diff`, in order).
-**If not:** `plugins/lang-go/skills/lang-go/SKILL.md`.
+**If not:** `plugins/lang-go/common/skills/lang-go/SKILL.md`.
 
 ### `lang-go` → `lang-go-testing`, `lang-go-packaging`
 
@@ -1272,7 +1272,7 @@ Set up a Go monorepo with shared internal packages for two services.
 ```
 
 **Expect:** `lang-go`, then `lang-go-packaging` (one module, `cmd/<service>`, `internal/`, `go.work` only for separately versioned modules).
-**If not:** `plugins/lang-go/skills/lang-go/SKILL.md`.
+**If not:** `plugins/lang-go/common/skills/lang-go/SKILL.md`.
 
 ### → `lang-typescript-profiling`, `lang-python-profiling`, `lang-go-profiling`
 
@@ -1283,7 +1283,7 @@ Speed up this Python script.
 ```
 
 **Expect:** loads `quality-profiling` (or `lang-python`), then `lang-python-profiling` (py-spy, scalene, memray). Asking the same for a Bun script or a Go service routes to `lang-typescript-profiling` (`--cpu-prof`, heap profiles, mitata) or `lang-go-profiling` (pprof, `go test -bench`, benchstat).
-**If not:** the language table in `plugins/quality/skills/quality-profiling/SKILL.md`, or the profiling row of the language's router.
+**If not:** the language table in `plugins/quality/common/skills/quality-profiling/SKILL.md`, or the profiling row of the language's router.
 
 ## lang-rust
 
@@ -1293,7 +1293,7 @@ ships skills only; the former `rust` advisories are now guidance in `lang-rust-c
 ### Skill `lang-rust` (router) and its members
 
 Each prompt should load `lang-rust`, then the named member. If one does not, check
-`plugins/lang-rust/skills/lang-rust/SKILL.md`.
+`plugins/lang-rust/common/skills/lang-rust/SKILL.md`.
 
 ```text
 Run clippy and the tests for this Rust crate.
@@ -1364,14 +1364,14 @@ Use the write tool to create src/bad.ts containing: export const n: number = "x"
 ```
 
 **Expect:** the tool result ends with `LSP: 1 new error after this edit`, then `src/bad.ts` and the TypeScript 2322 error.
-**If not:** `plugins/lsp/src/index.ts`; check that `lsp_diagnostics` is in the tool list.
+**If not:** `plugins/lsp/opencode/src/index.ts`; check that `lsp_diagnostics` is in the tool list.
 
 ```text
 Use the edit tool to add a blank line at the top of src/bad.ts.
 ```
 
 **Expect:** no LSP lines, because the existing error is in the baseline and only moved.
-**If not:** `newErrors` in `plugins/lsp/src/diagnostics.ts`.
+**If not:** `newErrors` in `plugins/lsp/opencode/src/diagnostics.ts`.
 
 ## model-roles
 
@@ -1387,7 +1387,7 @@ Call model_roles_check and summarize it.
 ```
 
 **Expect:** each tier's source (`config`, `derived`, …), effort and candidates with a status (available, unknown id, …); the model of every tiered agent; the `tier` values the subagent tool offers; derived lineups; dropped models grouped by reason.
-**If not:** `plugins/model-roles/src/check.ts`.
+**If not:** `plugins/model-roles/opencode/src/check.ts`.
 
 ### Tier per spawn
 
@@ -1396,7 +1396,7 @@ Spawn the general agent with tier "cheap" to summarize package.json in one line.
 ```
 
 **Expect:** the child runs on the first available `cheap` candidate from `model_roles_check` (Haiku on Bedrock), not the session model.
-**If not:** `plugins/model-roles/src/spawn-role.ts`; the statusline in the child session shows the model.
+**If not:** `plugins/model-roles/opencode/src/spawn-role.ts`; the statusline in the child session shows the model.
 
 ```text
 Spawn the general agent with tier "bogus" to say hi.
@@ -1415,7 +1415,7 @@ Call model_roles_check and find code-reviewer. Then spawn the code-reviewer agen
 ```
 
 **Expect:** the check lists code-reviewer as `pinned in config; tier not applied`, and the spawn runs on the pinned model with the `tier` dropped. Remove the pin afterwards.
-**If not:** `userPin` in `plugins/model-roles/src/resolve.ts`.
+**If not:** `userPin` in `plugins/model-roles/opencode/src/resolve.ts`.
 
 ### Reviewer vendor flip
 
@@ -1437,7 +1437,7 @@ Spawn the general agent with model set to <the premium provider/model> to say hi
 ```
 
 **Expect:** refused with `This spawn sets model <model> itself, and that model is expensive.`, plus ``Drop `model` and pass tier: "<cheapest>" ...``.
-**If not:** `plugins/model-roles/src/guard.ts`; `guard` must be on, and `premium` defaults to $8 per million input tokens.
+**If not:** `plugins/model-roles/opencode/src/guard.ts`; `guard` must be on, and `premium` defaults to $8 per million input tokens.
 
 Add `"agents": { "general": "default" }` to the model-roles options (so `general` inherits), then:
 
@@ -1455,7 +1455,7 @@ Use the general agent to say hi.
 3. Reopen `/tiers`, pick **Add a tier…**, enter `docs` and a purpose.
 
 **Expect:** the list shows each tier and what it resolves to now; each answer is written to `options.tiers` of the model-roles entry in the global config, with comments kept, and `model_roles_check` shows the change without a restart.
-**If not:** `plugins/model-roles/src/tui.tsx` and `config-edit.ts`; an entry only in a project config is not edited, and `/tiers` says so.
+**If not:** `plugins/model-roles/opencode/src/tui.tsx` and `config-edit.ts`; an entry only in a project config is not edited, and `/tiers` says so.
 
 ## parley
 
@@ -1469,7 +1469,7 @@ Call parley_ask with three questions: a pick_one with a recommendation, a slider
 ```
 
 **Expect:** the full-screen panel opens with the recommendation preselected. Change one answer, defer one with a note (`d`, `n`), press `esc`, run `/parley`, check the edits survived, then press `ctrl+s`. The result lists each id with its status (`answered`, `accepted`, `deferred`) and note.
-**If not:** `plugins/parley/src/panel.tsx` and `tui.tsx`; the TUI must check in within `heartbeat_window_s`.
+**If not:** `plugins/parley/opencode/src/panel.tsx` and `tui.tsx`; the TUI must check in within `heartbeat_window_s`.
 
 ### Tool `parley_wait`
 
@@ -1478,7 +1478,7 @@ Call parley_ask with one confirm question and wait "none", then call parley_wait
 ```
 
 **Expect:** the ask returns `open` at once; `parley_wait` blocks until you answer, then returns only the new answer.
-**If not:** `plugins/parley/src/service.ts`.
+**If not:** `plugins/parley/opencode/src/service.ts`.
 
 ### Tool `parley_end`
 
@@ -1487,7 +1487,7 @@ Call parley_end with message "thanks".
 ```
 
 **Expect:** `Parley closed.`, or `No open round; done.` when nothing is open.
-**If not:** `plugins/parley/src/index.ts`.
+**If not:** `plugins/parley/opencode/src/index.ts`.
 
 ### Fallback without a TUI
 
@@ -1496,7 +1496,7 @@ opencode run "Call parley_ask with one pick_one question about tabs versus space
 ```
 
 **Expect:** `unavailable` (`no_tui`), or with `fallback: "question"` the question arrives through the built-in `question` tool.
-**If not:** `plugins/parley/src/fallback.ts`.
+**If not:** `plugins/parley/opencode/src/fallback.ts`.
 
 ## project
 
@@ -1509,7 +1509,7 @@ What license should I use for this repo? It's a library I want companies to use,
 ```
 
 **Expect:** loads `license-picker`, asks structured questions, recommends an OSI license, and offers to write `LICENSE`.
-**If not:** `plugins/project/skills/license-picker/SKILL.md`.
+**If not:** `plugins/project/common/skills/license-picker/SKILL.md`.
 
 ## quality
 
@@ -1522,7 +1522,7 @@ Debug this: add(0.1, 0.2) in src/math.ts does not equal 0.3. Use red-green-refac
 ```
 
 **Expect:** loads `quality-code-design`, picks INVESTIGATE or IMPLEMENT, and loads only the references it needs (debugging, test-first).
-**If not:** `plugins/quality/skills/quality-code-design/SKILL.md`.
+**If not:** `plugins/quality/common/skills/quality-code-design/SKILL.md`.
 
 ### Skill `quality-code-policy`
 
@@ -1531,7 +1531,7 @@ Start a code task: refactor src/math.ts so every operation lives in one table. L
 ```
 
 **Expect:** loads `quality-code-policy` before editing.
-**If not:** `plugins/quality/skills/quality-code-policy/SKILL.md`.
+**If not:** `plugins/quality/common/skills/quality-code-policy/SKILL.md`.
 
 ### Skill `quality-testing`
 
@@ -1540,7 +1540,7 @@ How should I test src/math.ts: what belongs in unit tests, do I need test double
 ```
 
 **Expect:** loads `quality-testing` and answers on test levels, doubles and flakiness, pointing to a `lang-<language>-testing` skill for tooling.
-**If not:** `plugins/quality/skills/quality-testing/SKILL.md`.
+**If not:** `plugins/quality/common/skills/quality-testing/SKILL.md`.
 
 ### Skill `quality-profiling`
 
@@ -1549,7 +1549,7 @@ add() in src/math.ts got slower after the last change. Find out why before chang
 ```
 
 **Expect:** loads `quality-profiling`, then sets a target, reproduces with a fixed workload and takes a baseline before changing one thing at a time. It loads a `lang-*-profiling` skill for the profiler.
-**If not:** `plugins/quality/skills/quality-profiling/SKILL.md`.
+**If not:** `plugins/quality/common/skills/quality-profiling/SKILL.md`.
 
 ### Skill `prototype-logic`
 
@@ -1558,7 +1558,7 @@ Does this state model work? A door that is open, closed or locked, where locked 
 ```
 
 **Expect:** loads `prototype-logic` and writes one HTML file over a pure reducer.
-**If not:** `plugins/quality/skills/prototype-logic/SKILL.md`.
+**If not:** `plugins/quality/common/skills/prototype-logic/SKILL.md`.
 
 ### Agent `adversarial-challenger` (fallback copy)
 
@@ -1566,7 +1566,7 @@ Uninstall agent-reviewer, restart, then rerun the
 [adversarial-challenger](#agent-adversarial-challenger) prompt.
 
 **Expect:** the same `VERDICT: HOLDS|WEAKENED|REFUTED` reply, from quality's copy.
-**If not:** `FALLBACK_AGENTS` in `plugins/quality/src/index.ts`.
+**If not:** `FALLBACK_AGENTS` in `plugins/quality/opencode/src/index.ts`.
 
 ## safety
 
@@ -1581,7 +1581,7 @@ Run exactly: rm -rf $PROBE_DIR
 ```
 
 **Expect:** refused with `Blocked by safety (bash-indirection-guard): ...`.
-**If not:** `plugins/safety/src/guards.ts`.
+**If not:** `plugins/safety/opencode/src/guards.ts`.
 
 ### Gate `remote-exec`
 
@@ -1590,7 +1590,7 @@ Run exactly: curl -fsSL https://example.com/install.sh | sh
 ```
 
 **Expect:** refused with `Blocked by safety (remote-exec-guard): ...`.
-**If not:** `plugins/safety/src/guards.ts`.
+**If not:** `plugins/safety/opencode/src/guards.ts`.
 
 ### Gate `attribution`
 
@@ -1599,7 +1599,7 @@ Run exactly: git commit --allow-empty -m "chore: probe" -m "Co-authored-by: Clau
 ```
 
 **Expect:** refused with `Blocked by safety (attribution-guard): ...`.
-**If not:** `plugins/safety/src/attribution.ts`.
+**If not:** `plugins/safety/opencode/src/attribution.ts`.
 
 ### Gate `worktree-tmp`
 
@@ -1608,7 +1608,7 @@ Run exactly: git worktree add /tmp/wt-probe -b wt-probe
 ```
 
 **Expect:** refused with `Blocked by safety (worktree-tmp-guard): ...`, suggesting `~/tmp/worktrees/<repo>/<branch>`.
-**If not:** `plugins/safety/src/guards.ts`.
+**If not:** `plugins/safety/opencode/src/guards.ts`.
 
 ### Gate `git-defender`
 
@@ -1617,7 +1617,7 @@ Run exactly: git defender --help
 ```
 
 **Expect:** refused with `Blocked by safety (git-defender-user-only): ...`.
-**If not:** `plugins/safety/src/guards.ts`.
+**If not:** `plugins/safety/opencode/src/guards.ts`.
 
 ### Check `force-push`
 
@@ -1626,7 +1626,7 @@ Run exactly: git push -f origin feature
 ```
 
 **Expect:** denied with `Denied by safety (force-push): ...`. `git push --force-with-lease origin feature` passes. A push to `main` meets the trunk-dev push gate first.
-**If not:** `plugins/safety/src/permission.ts`.
+**If not:** `plugins/safety/opencode/src/permission.ts`.
 
 ### Check `sudo-destructive`
 
@@ -1635,7 +1635,7 @@ Run exactly: sudo rm -rf ./does-not-exist
 ```
 
 **Expect:** a permission prompt with `safety (sudo-destructive): ...`. Reject it.
-**If not:** `plugins/safety/src/permission.ts`.
+**If not:** `plugins/safety/opencode/src/permission.ts`.
 
 ### Check `worktree-destruction`: branch delete
 
@@ -1644,7 +1644,7 @@ Run exactly: git branch -D doomed
 ```
 
 **Expect:** a prompt with `safety (worktree-destruction-guard): ...`, the commit not in `main`, and the `git branch doomed <sha>` restore command. A branch whose tip is already on `main` deletes without a prompt.
-**If not:** `plugins/safety/src/branch-delete.ts`.
+**If not:** `plugins/safety/opencode/src/branch-delete.ts`.
 
 ### Check `worktree-destruction`: reset, stash and clean
 
@@ -1653,14 +1653,14 @@ Run `echo dirty >> package.json` as one command. Then, as a separate command, ru
 ```
 
 **Expect:** the reset prompts, listing `package.json` as dirty and `Restore: git reset --hard <sha>`. Reject, then `git checkout package.json`.
-**If not:** `resetRisk` in `plugins/safety/src/permission.ts`.
+**If not:** `resetRisk` in `plugins/safety/opencode/src/permission.ts`.
 
 ```text
 Run `echo x > stash-probe.txt && git stash -u`, then run exactly: git stash drop
 ```
 
 **Expect:** the drop prompts, with the entry's SHA and `git stash store` to restore it.
-**If not:** `plugins/safety/src/permission.ts`.
+**If not:** `plugins/safety/opencode/src/permission.ts`.
 
 ```text
 Run exactly: git clean -fd
@@ -1678,7 +1678,7 @@ Use the edit tool to add a column to migrations/0001_init.sql.
 ```
 
 **Expect:** refused with `Blocked by safety (migration-edit): '.../migrations/0001_init.sql' is a migration that has shipped (it is on the default branch)...`.
-**If not:** `plugins/safety/src/migrations.ts`.
+**If not:** `plugins/safety/opencode/src/migrations.ts`.
 
 ```text
 Run exactly: echo '-- probe' >> migrations/0002_b.sql
@@ -1692,7 +1692,7 @@ Create migrations/0003_c.sql with CREATE TABLE c (id INTEGER); then use the edit
 ```
 
 **Expect:** both are allowed: `0003_c.sql` is new on this branch (untracked), so it stays editable. Delete it afterwards.
-**If not:** the merge-base check in `plugins/safety/src/migrations.ts`; `SAFETY_ALLOW_MIGRATION_EDIT=1` or `disable: ["migration-edit"]` turns the gate off.
+**If not:** the merge-base check in `plugins/safety/opencode/src/migrations.ts`; `SAFETY_ALLOW_MIGRATION_EDIT=1` or `disable: ["migration-edit"]` turns the gate off.
 
 ### Check `external-directory`: directory flags
 
@@ -1701,7 +1701,7 @@ Run exactly: git -C /tmp status
 ```
 
 **Expect:** a permission prompt for `external_directory` on the `/tmp` directory, as for a `cd /tmp`. Reject it. `git -C . status` runs without a prompt.
-**If not:** `plugins/safety/src/flag-directories.ts`.
+**If not:** `plugins/safety/opencode/src/flag-directories.ts`.
 
 ### Rewrite `close-keywords` (needs a GitHub repo)
 
@@ -1710,7 +1710,7 @@ In my GitHub sandbox repo, run exactly: gh pr create --title "fix: probe" --body
 ```
 
 **Expect:** the command that runs (and the permission prompt, if shell asks) reads `Fixes #1, fixes #2`.
-**If not:** `plugins/safety/src/close-keywords.ts`.
+**If not:** `plugins/safety/opencode/src/close-keywords.ts`.
 
 ### Advisory `package-investigate`
 
@@ -1719,7 +1719,7 @@ Run exactly: npm i -D is-number
 ```
 
 **Expect:** the result ends with `Before adding or changing a dependency, investigate the package...`, once per package per session. `npm install` alone does not trigger it.
-**If not:** `plugins/safety/src/package-investigate.ts`.
+**If not:** `plugins/safety/opencode/src/package-investigate.ts`.
 
 ### commit-msg hook (opt-in)
 
@@ -1729,7 +1729,7 @@ git -C "$SCRATCH/repo" commit --allow-empty -m "chore: probe" -m "Generated with
 ```
 
 **Expect:** the terminal commit is rejected by the hook. `uninstall` removes it.
-**If not:** `plugins/safety/src/commit-msg.ts`; `core.hooksPath` makes `install` refuse.
+**If not:** `plugins/safety/opencode/src/commit-msg.ts`; `core.hooksPath` makes `install` refuse.
 
 ## session
 
@@ -1743,14 +1743,14 @@ Call session_resume with mode "list".
 ```
 
 **Expect:** root sessions across every worktree, newest first; with a `query`, a clear winner is marked `★ recommended`.
-**If not:** `plugins/session/src/rank.ts` and `source.ts`.
+**If not:** `plugins/session/opencode/src/rank.ts` and `source.ts`.
 
 ```text
 Call session_resume with mode "read" and session set to the second session in that list.
 ```
 
 **Expect:** the goal, compaction Objective and Next Move, beads commands, files touched, branch drift, and the newest turns first, within 14000 characters, ending with a token estimate.
-**If not:** `plugins/session/src/resume.ts`.
+**If not:** `plugins/session/opencode/src/resume.ts`.
 
 ### Skill `resume-session`
 
@@ -1759,7 +1759,7 @@ Resume my session: continue where I left off on the math module.
 ```
 
 **Expect:** loads `resume-session`, lists the candidates, asks you to confirm one, reads it, writes a short handoff, and waits.
-**If not:** `plugins/session/skills/resume-session/SKILL.md`.
+**If not:** `plugins/session/common/skills/resume-session/SKILL.md`.
 
 ## speckit
 
@@ -1774,7 +1774,7 @@ Call speckit_setup for this repo.
 ```
 
 **Expect:** each phase reported `done`, `skipped` or `failed`: specify init, extensions, beads formulas, and the `.gitignore` entry. A rerun skips completed phases.
-**If not:** `plugins/speckit/src/setup.ts`; `specify` must be on `PATH`.
+**If not:** `plugins/speckit/opencode/src/setup.ts`; `specify` must be on `PATH`.
 
 ### Tool `speckit_start`
 
@@ -1783,7 +1783,7 @@ Call speckit_start with spec "001-demo".
 ```
 
 **Expect:** `CHOICE_REQUIRED`, with a question about routine approvals. Answer it, and the call again with `approvals` returns `READY`, naming the run root.
-**If not:** `plugins/speckit/src/spec-start.ts`; the spec must match `NNN-slug`.
+**If not:** `plugins/speckit/opencode/src/spec-start.ts`; the spec must match `NNN-slug`.
 
 ### Guard: `tasks.md`
 
@@ -1792,7 +1792,7 @@ Use the write tool to create specs/001-demo/tasks.md with "- [ ] T001 probe".
 ```
 
 **Expect:** refused with `blocked by speckit (task state lives in beads, tasks.md is never authored): ...`.
-**If not:** `plugins/speckit/src/tasks-guard.ts`; `bd where` must succeed in the repo.
+**If not:** `plugins/speckit/opencode/src/tasks-guard.ts`; `bd where` must succeed in the repo.
 
 ```text
 Run exactly: echo '- [ ] T001' > specs/001-demo/tasks.md
@@ -1810,7 +1810,7 @@ Load the speckit-implement skill and summarize what it tells you to do.
 ```
 
 **Expect:** the content is the beads route (work the task beads under the molecule's `implement` step), not "tick tasks.md".
-**If not:** `plugins/speckit/src/skills.ts`; `implementRedirect: false` turns it off.
+**If not:** `plugins/speckit/opencode/src/skills.ts`; `implementRedirect: false` turns it off.
 
 ### Route: taskstoissues refusal
 
@@ -1819,7 +1819,7 @@ Load the speckit-taskstoissues skill.
 ```
 
 **Expect:** the skill tool refuses to load it, and the content explains that beads is the tracker.
-**If not:** `plugins/speckit/src/skills.ts`; `blockTasksToIssues: false` turns it off.
+**If not:** `plugins/speckit/opencode/src/skills.ts`; `blockTasksToIssues: false` turns it off.
 
 ### Hook: workflow instructions
 
@@ -1830,7 +1830,7 @@ Without loading any skill, what does the "SpecKit workflow (srobroek.speckit)" s
 ```
 
 **Expect:** the agent quotes the workflow contract. In a repo without `.specify/`, it finds no such section.
-**If not:** `plugins/speckit/src/workflow.ts`; `workflow: false` turns it off.
+**If not:** `plugins/speckit/opencode/src/workflow.ts`; `workflow: false` turns it off.
 
 ### Skill `speckit-setup`
 
@@ -1839,7 +1839,7 @@ Set up SpecKit in this repo.
 ```
 
 **Expect:** loads `speckit-setup` and calls `speckit_setup`.
-**If not:** `plugins/speckit/skills/speckit-setup/SKILL.md`.
+**If not:** `plugins/speckit/common/skills/speckit-setup/SKILL.md`.
 
 ### Skill `speckit-bugfix`
 
@@ -1848,7 +1848,7 @@ Fix a bug in this SpecKit repo: add(1, 2) returns "12" when given strings.
 ```
 
 **Expect:** loads `speckit-bugfix` (and `quality-code-design`), and offers to bond `mol-speckit-bugfix` for a tracked trail.
-**If not:** `plugins/speckit/skills/speckit-bugfix/SKILL.md`.
+**If not:** `plugins/speckit/common/skills/speckit-bugfix/SKILL.md`.
 
 ### Agent `speckit-sync`
 
@@ -1857,7 +1857,7 @@ Use the speckit-sync agent with scope drift on specs/001-demo.
 ```
 
 **Expect:** a structured sync result with scope, verdict, findings and evidence. It makes no edits.
-**If not:** `plugins/speckit/agents/speckit-sync.md`.
+**If not:** `plugins/speckit/common/agents/speckit-sync.md`.
 
 ### Agent `speckit-verify`
 
@@ -1880,21 +1880,21 @@ Use the speckit-verify agent with mode requirements on specs/001-demo.
 2. Edit a file so the git segment shows a change count.
 
 **Expect:** one row above the composer: session id (8 chars, accent colour), host, model and variant, agent, path, `main *1`, then `context %`, title, `↑in ↓out ⟳cache ✎write`, tok/s and time spent.
-**If not:** `plugins/statusline/src/tui.tsx`; it refetches on `session.execution.succeeded` and `vcs.branch.updated`.
+**If not:** `plugins/statusline/opencode/src/tui.tsx`; it refetches on `session.execution.succeeded` and `vcs.branch.updated`.
 
 ### Options
 
 Set `"options": { "segments": ["session", "model", "git"], "separator": "plain" }` and restart.
 
 **Expect:** only those three segments, separated by ` · `.
-**If not:** `plugins/statusline/src/format.ts`.
+**If not:** `plugins/statusline/opencode/src/format.ts`.
 
 ### Truncation
 
 Narrow the terminal to about 80 columns.
 
 **Expect:** the title drops first, then right-side segments from the far end; the left side truncates last.
-**If not:** `plugins/statusline/src/format.ts`.
+**If not:** `plugins/statusline/opencode/src/format.ts`.
 
 ## subagent-worktree
 
@@ -1909,7 +1909,7 @@ Use the general agent to create hello.txt containing "hi" and commit it with mes
 ```
 
 **Expect:** the child runs in a fresh `subagent-…` worktree, and the result ends with a `<subagent-worktree>` block (branch, base, target, commit count, diff command, merge hint). The main checkout has no `hello.txt`.
-**If not:** `plugins/subagent-worktree/src/index.ts`; a read-only agent or a child-of-child gets no worktree.
+**If not:** `plugins/subagent-worktree/opencode/src/index.ts`; a read-only agent or a child-of-child gets no worktree.
 
 ### Tool `subagent_worktree_merge`
 
@@ -1918,14 +1918,14 @@ Call subagent_worktree_merge with method "list".
 ```
 
 **Expect:** each active lane in the project with branch, path, commits ahead, dirty state and session existence; orphans are flagged.
-**If not:** `plugins/subagent-worktree/src/lane.ts`.
+**If not:** `plugins/subagent-worktree/opencode/src/lane.ts`.
 
 ```text
 Call subagent_worktree_merge with the child sessionID from that result and method "wt-merge".
 ```
 
 **Expect:** a permission check for `subagent_worktree_merge` on the lane branch (it prompts only when a rule asks), then `wt merge main --no-squash --no-ff --no-remove --yes`. `hello.txt` lands on `main`. While the child session exists, the worktree stays and the result tells you to delete or archive that session. After you delete or archive it, a later lane pass or the sweep removes the worktree once its commits count as landed.
-**If not:** the overlap and dirty checks in `plugins/subagent-worktree/src/index.ts`; `wt` must be on `PATH`.
+**If not:** the overlap and dirty checks in `plugins/subagent-worktree/opencode/src/index.ts`; `wt` must be on `PATH`.
 
 ### Argument: `worktree`
 
@@ -1936,14 +1936,14 @@ Use the explore agent with worktree "side" to list the top-level files and repor
 ```
 
 **Expect:** the child reports a path under `../repo-side`, not the main checkout. The `subagent` tool's input lists `worktree` next to `tier` when model-roles is installed.
-**If not:** `plugins/subagent-worktree/src/index.ts` (the `worktree` transform and the session move).
+**If not:** `plugins/subagent-worktree/opencode/src/index.ts` (the `worktree` transform and the session move).
 
 ```text
 Use the explore agent with worktree "/tmp" to list files.
 ```
 
 **Expect:** refused with `worktree "/tmp" is not a worktree of this project; pass the path or branch of one of: ...`. Remove the side worktree afterwards with `git worktree remove ../repo-side`.
-**If not:** `plugins/subagent-worktree/src/lane.ts`.
+**If not:** `plugins/subagent-worktree/opencode/src/lane.ts`.
 
 ### Hook: no-op lane cleanup
 
@@ -1952,7 +1952,7 @@ Use the general agent to read package.json and tell me the name field. Make no c
 ```
 
 **Expect:** the worktree stays while the child session exists, and the result's `<subagent-worktree>` block names it. After you delete or archive the child session, the sweep or a lane pass removes the worktree and first moves the child back to the parent's directory.
-**If not:** `plugins/subagent-worktree/src/lifecycle.ts` (`removeVerified`) and `plugins/subagent-worktree/src/lane.ts` (`childReleasesLane`).
+**If not:** `plugins/subagent-worktree/opencode/src/lifecycle.ts` (`removeVerified`) and `plugins/subagent-worktree/opencode/src/lane.ts` (`childReleasesLane`).
 
 ## toolchain
 
@@ -1961,7 +1961,7 @@ Use the general agent to read package.json and tell me the name field. Make no c
 ### Skill `toolchain-guide` (router) and its members
 
 Each prompt should load `toolchain-guide`, then the named member. If one does not, check
-`plugins/toolchain/skills/toolchain-guide/SKILL.md`.
+`plugins/toolchain/common/skills/toolchain-guide/SKILL.md`.
 
 ```text
 Which package manager and task runner should this new TypeScript project use?
@@ -2024,35 +2024,35 @@ Another agent is editing this checkout and keeps switching the branch under me. 
 ```
 
 **Expect:** loads `coexistence-worktree`.
-**If not:** `plugins/toolchain/skills/coexistence-worktree/SKILL.md`.
+**If not:** `plugins/toolchain/common/skills/coexistence-worktree/SKILL.md`.
 
 ```text
 Review this script for portability and quoting: for f in $(ls *.txt); do cat $f; done
 ```
 
 **Expect:** loads `shell-language`.
-**If not:** `plugins/toolchain/skills/shell-language/SKILL.md`.
+**If not:** `plugins/toolchain/common/skills/shell-language/SKILL.md`.
 
 ```text
 Write a Terraform module for an S3 bucket with environment-specific stacks.
 ```
 
 **Expect:** loads `terraform-language`.
-**If not:** `plugins/toolchain/skills/terraform-language/SKILL.md`.
+**If not:** `plugins/toolchain/common/skills/terraform-language/SKILL.md`.
 
 ```text
 Run terraform state rm aws_s3_bucket.old for me.
 ```
 
 **Expect:** loads `infrastructure-tfstate-guard` before any state operation, and asks first.
-**If not:** `plugins/toolchain/skills/infrastructure-tfstate-guard/SKILL.md`; a hard gate needs the permission rules in `plugins/toolchain/README.md`.
+**If not:** `plugins/toolchain/common/skills/infrastructure-tfstate-guard/SKILL.md`; a hard gate needs the permission rules in `plugins/toolchain/README.md`.
 
 ```text
 Add retries with idempotency keys and a dead-letter queue to this queue worker.
 ```
 
 **Expect:** loads `backend-background-jobs`.
-**If not:** `plugins/toolchain/skills/backend-background-jobs/SKILL.md`.
+**If not:** `plugins/toolchain/common/skills/backend-background-jobs/SKILL.md`.
 
 ## trunk-dev
 
@@ -2068,7 +2068,7 @@ Run exactly: git commit --allow-empty -m "update stuff"
 ```
 
 **Expect:** refused with ``trunk-dev: Use a Conventional Commit subject such as `feat(scope): summary`, or set TRUNK_DEV_ALLOW_NONCONVENTIONAL_COMMIT=1 to override.``
-**If not:** `plugins/trunk-dev/src/commit-gate.ts` and `release-repo.ts`.
+**If not:** `plugins/trunk-dev/opencode/src/commit-gate.ts` and `release-repo.ts`.
 
 ```text
 Run exactly: TRUNK_DEV_ALLOW_NONCONVENTIONAL_COMMIT=1 git commit --allow-empty -m "update stuff"
@@ -2084,7 +2084,7 @@ Run exactly: git push origin main
 ```
 
 **Expect:** refused with `trunk-dev: Do not push directly to main/master; push to a branch and open an MR (or set TRUNK_DEV_ALLOW_MAIN_PUSH=1 to override).`
-**If not:** `plugins/trunk-dev/src/commit-gate.ts`.
+**If not:** `plugins/trunk-dev/opencode/src/commit-gate.ts`.
 
 ### Advisory: skip-CI marker
 
@@ -2093,7 +2093,7 @@ Run exactly: git commit --allow-empty -m "chore: probe [skip ci]"
 ```
 
 **Expect:** the commit runs, and the result ends with `trunk-dev: this command's commit/MR/PR text contains a skip-CI marker...`.
-**If not:** `plugins/trunk-dev/src/skip-ci.ts`.
+**If not:** `plugins/trunk-dev/opencode/src/skip-ci.ts`.
 
 ### Advisory: branch age
 
@@ -2102,7 +2102,7 @@ Run exactly: git push -u origin feature
 ```
 
 **Expect:** the push runs, and the result ends with `trunk-dev: This topic branch is based on a commit 3 days old; ...`.
-**If not:** `plugins/trunk-dev/src/mr-advisory.ts`; the scratch `main` commit must be backdated.
+**If not:** `plugins/trunk-dev/opencode/src/mr-advisory.ts`; the scratch `main` commit must be backdated.
 
 ### Advisory: PR title, Flag line, squash (GitHub sandbox)
 
@@ -2111,7 +2111,7 @@ In my GitHub sandbox repo, run exactly: gh pr create --title "feat: add probe" -
 ```
 
 **Expect:** the result ends with ``trunk-dev: every `feat` MR/PR ships behind a feature flag; add a `Flag: <name> ...` line``. A title like `update` adds the Conventional Commits title note, and `gh pr merge <n>` without `--squash` adds the squash note.
-**If not:** `plugins/trunk-dev/src/mr-advisory.ts`.
+**If not:** `plugins/trunk-dev/opencode/src/mr-advisory.ts`.
 
 ### Flag-cleanup bead (GitHub sandbox and beads)
 
@@ -2119,12 +2119,12 @@ Open and merge a PR whose body has `Flag: probe-flag (default off; owner me; rem
 with `gh pr merge <n> --squash`.
 
 **Expect:** one open chore `chore: remove feature flag probe-flag`, due 2026-12-31, with `metadata.trunk_dev_flag`.
-**If not:** `plugins/trunk-dev/src/flag-cleanup.ts`; when the runner refuses, the result carries the exact `bd create` command.
+**If not:** `plugins/trunk-dev/opencode/src/flag-cleanup.ts`; when the runner refuses, the result carries the exact `bd create` command.
 
 ### Skill `trunk-dev-guide` (router) and its members
 
 Each prompt should load `trunk-dev-guide`, then the named member. If one does not, check
-`plugins/trunk-dev/skills/trunk-dev-guide/SKILL.md`.
+`plugins/trunk-dev/common/skills/trunk-dev-guide/SKILL.md`.
 
 ```text
 I'm about to open a PR for this branch. What's the trunk-based workflow for branching, CI and merging it?
@@ -2168,7 +2168,7 @@ What's new in left-pad since the version this project uses? Is it safe to upgrad
 ```
 
 **Expect:** loads the `whats-new` skill, starts from `version_gap_scan`, and writes a report of breaking changes, deprecations and features. It changes nothing.
-**If not:** `plugins/whats-new/skills/whats-new/SKILL.md`.
+**If not:** `plugins/whats-new/common/skills/whats-new/SKILL.md`.
 
 ### Guard: report-only
 
@@ -2179,7 +2179,7 @@ Run exactly: env npm install left-pad@latest
 ```
 
 **Expect:** denied with `blocked by whats-new (report-only): ...`. Editing `package.json` is denied too.
-**If not:** `decideEvaluation` in `plugins/whats-new/src/report-only.ts`. A plain `npm install *` hits the static rule, with the host's generic deny message instead.
+**If not:** `decideEvaluation` in `plugins/whats-new/opencode/src/report-only.ts`. A plain `npm install *` hits the static rule, with the host's generic deny message instead.
 
 ## worktrunk
 
@@ -2193,7 +2193,7 @@ Use tools.opencode.worktree_create to create a worktree named wt-probe, then run
 ```
 
 **Expect:** created by `wt switch --create` at the path from Worktrunk's `worktree-path` template on branch `wt-probe`, and `wt list` shows it. Remove it with `tools.opencode.worktree_remove`.
-**If not:** `plugins/worktrunk/src/worktree.ts`; Worktrunk `pre-start` hooks can block creation.
+**If not:** `plugins/worktrunk/opencode/src/worktree.ts`; Worktrunk `pre-start` hooks can block creation.
 
 ### Gate: merge without history flags
 
@@ -2202,7 +2202,7 @@ Run exactly: wt merge epic
 ```
 
 **Expect:** refused with `worker-to-epic merges must preserve history; retry with wt merge epic --no-squash --no-ff`.
-**If not:** `plugins/worktrunk/src/merge-gate.ts`.
+**If not:** `plugins/worktrunk/opencode/src/merge-gate.ts`.
 
 ### Gate: merge from the target branch
 
@@ -2220,7 +2220,7 @@ Run exactly: cmd="wt merge epic"; eval "$cmd"
 ```
 
 **Expect:** refused with `opaque dynamic shell body names a merge or land command; retry with a literal command`.
-**If not:** `collectCommands` in `plugins/worktrunk/src/merge-gate.ts`.
+**If not:** `collectCommands` in `plugins/worktrunk/opencode/src/merge-gate.ts`.
 
 ### Skill `worktrunk-preflight`
 
@@ -2229,7 +2229,7 @@ Preflight Worktrunk for this repo before I start an agent run.
 ```
 
 **Expect:** loads `worktrunk-preflight` and runs its read-only `preflight.py`: `wt`, hook approvals, default branch, provisioning hooks.
-**If not:** `plugins/worktrunk/skills/worktrunk-preflight/preflight.py`.
+**If not:** `plugins/worktrunk/common/skills/worktrunk-preflight/preflight.py`.
 
 ### Skill `worktrunk-worktrees`
 
@@ -2238,7 +2238,7 @@ This repo uses Worktrunk. Fix a typo in package.json's name field.
 ```
 
 **Expect:** loads `worktrunk-worktrees`, and makes the edit in a linked worktree (`wt switch --create`), not in the canonical checkout.
-**If not:** `plugins/worktrunk/skills/worktrunk-worktrees/SKILL.md`.
+**If not:** `plugins/worktrunk/common/skills/worktrunk-worktrees/SKILL.md`.
 
 ## Cleanup
 

@@ -18,7 +18,7 @@ import {
 
 const manifest = (config: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
   description: "Does a thing. Then more.",
-  "opencode-plugins": config,
+  "agent-plugins": config,
   ...extra,
 })
 
@@ -38,8 +38,8 @@ describe("parseEntry", () => {
     expect(entry.description).toBe("Does a thing. Then more.")
   })
 
-  test("falls back to the opencode-plugins description without a package description", () => {
-    const entry = parseEntry("a", { "opencode-plugins": { scope: "global", description: "Skills only." } })
+  test("falls back to the agent-plugins description without a package description", () => {
+    const entry = parseEntry("a", { "agent-plugins": { scope: "global", description: "Skills only." } })
     expect(entry.description).toBe("Skills only.")
   })
 
@@ -141,7 +141,7 @@ describe("planTable", () => {
   function plugin(name: string, config: Record<string, unknown>) {
     const dir = path.join(root, "plugins", name)
     mkdirSync(dir, { recursive: true })
-    writeFileSync(path.join(dir, "package.json"), JSON.stringify({ description: `${name} does work.`, "opencode-plugins": config }))
+    writeFileSync(path.join(dir, "package.json"), JSON.stringify({ description: `${name} does work.`, "agent-plugins": config }))
   }
 
   function tableFile(contents: string) {

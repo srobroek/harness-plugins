@@ -18,7 +18,7 @@ Nothing here is published: `examples/` is outside the workspace, the build and t
 ## Setup
 
 ```sh
-bun install && bun run build      # from the repo root, after changing plugins/parley/src
+bun install && bun run build      # from the repo root, after changing plugins/parley/opencode/src
 cd examples/parley-playground
 ./start.sh                        # TUI on a private server (--standalone)
 ```

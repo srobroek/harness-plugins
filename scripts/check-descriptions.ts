@@ -10,7 +10,7 @@
  *   `check-descriptions: direct <reason>` comment in the plugin's source;
  * - a skill description runs past SKILL_DESCRIPTION, or an agent description past
  *   AGENT_DESCRIPTION (both are listed on every request);
- * - an `instructions/*.md` block a context hook adds to the system prompt runs past
+ * - an `opencode/instructions/*.md` block a context hook adds to the system prompt runs past
  *   CONTEXT_BLOCK characters.
  *
  * Tools are read by running each plugin's `setup` against the in-memory fake context, so
@@ -22,8 +22,8 @@
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { parseSkillFile } from "../plugins/lib/src/skill-files.ts"
-import { createFakeContext } from "../plugins/lib/src/testing.ts"
+import { parseSkillFile } from "../lib/src/skill-files.ts"
+import { createFakeContext } from "../lib/src/testing.ts"
 
 export const TOOL_FIRST_LINE = 120
 export const SCHEMA = 1500
@@ -101,7 +101,7 @@ export function checkBlock(plugin: string, name: string, text: string): Finding[
     ? [
         {
           key: `block:${plugin}/${name}`,
-          where: `plugins/${plugin}/instructions/${name}`,
+          where: `plugins/${plugin}/opencode/instructions/${name}`,
           reason: `context block is ${length} characters (max ${CONTEXT_BLOCK}); move detail into a skill`,
         },
       ]
@@ -145,7 +145,7 @@ function complete(context: Record<string, unknown>): void {
 }
 
 async function pluginTools(root: string, plugin: string, directory: string): Promise<ToolInfo[]> {
-  const entry = path.join(root, plugin, "src", "index.ts")
+  const entry = path.join(root, plugin, "opencode", "src", "index.ts")
   if (!existsSync(entry)) return []
   const module = (await import(entry)) as { default?: { setup?: (context: unknown) => Promise<unknown> } }
   if (typeof module.default?.setup !== "function") return []
@@ -162,16 +162,16 @@ export async function checkPlugins(root: string): Promise<Finding[]> {
   const scratch = mkdtempSync(path.join(tmpdir(), "check-descriptions-"))
   try {
     for (const plugin of readdirSync(root).sort()) {
-      if (plugin === "lib" || !existsSync(path.join(root, plugin, "package.json"))) continue
-      const direct = sources(path.join(root, plugin, "src")).some((file) => DIRECT_COMMENT.test(readFileSync(file, "utf8")))
+      if (!existsSync(path.join(root, plugin, "package.json"))) continue
+      const direct = sources(path.join(root, plugin, "opencode", "src")).some((file) => DIRECT_COMMENT.test(readFileSync(file, "utf8")))
       for (const tool of await pluginTools(root, plugin, scratch)) findings.push(...checkTool(plugin, tool, direct))
-      for (const skill of files(path.join(root, plugin, "skills"), () => true)) {
+      for (const skill of files(path.join(root, plugin, "common", "skills"), () => true)) {
         const file = path.join(skill, "SKILL.md")
         if (existsSync(file)) findings.push(...checkSkill(file, readFileSync(file, "utf8")))
       }
-      for (const file of files(path.join(root, plugin, "agents"), (name) => name.endsWith(".md")))
+      for (const file of files(path.join(root, plugin, "common", "agents"), (name) => name.endsWith(".md") && !name.endsWith(".claude.md")))
         findings.push(...checkAgent(file, readFileSync(file, "utf8")))
-      for (const file of files(path.join(root, plugin, "instructions"), (name) => name.endsWith(".md")))
+      for (const file of files(path.join(root, plugin, "opencode", "instructions"), (name) => name.endsWith(".md")))
         findings.push(...checkBlock(plugin, path.basename(file), readFileSync(file, "utf8")))
     }
   } finally {

@@ -2,8 +2,23 @@
   "marketplace": {
     "name": "harness-plugins",
     "description": "Agent plugins for OpenCode and Claude Code.",
-    "owner": { "name": "Sjors Robroek" }
+    "owner": {
+      "name": "Sjors Robroek"
+    }
   },
-  "commonDirs": ["skills", "agents"],
-  "harnesses": ["opencode", "claude"]
+  "commonDirs": [
+    "skills",
+    "agents"
+  ],
+  "harnesses": [
+    "opencode",
+    "claude"
+  ],
+  "claude": {
+    "strict": true,
+    "author": {
+      "name": "Sjors Robroek"
+    },
+    "license": "Apache-2.0"
+  }
 }

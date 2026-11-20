@@ -11,18 +11,35 @@
     "node": ">=24.10"
   },
   "workspaces": [
-    "plugins/*"
+    "lib"
   ],
   "scripts": {
-    "build": "harness-kit build",
+    "build": "bun scripts/build.ts && harness-kit build",
+    "build:check": "bun scripts/build.ts --check",
     "check": "harness-kit check",
     "test": "bun test",
     "typecheck": "tsc",
+    "lint": "biome check --config-path biome.json --max-diagnostics=1000",
+    "plugin-table": "bun scripts/build-plugin-table.ts",
+    "plugin-table:check": "bun scripts/build-plugin-table.ts --check",
+    "steering": "bun scripts/check-steering.ts",
+    "pitfalls": "bun scripts/check-pitfalls.ts",
+    "agent-roles": "bun scripts/check-agent-roles.ts",
+    "descriptions": "bun scripts/check-descriptions.ts",
+    "concerns": "bun scripts/check-concerns.ts",
+    "cad:sync": "bun scripts/sync-cad.ts",
+    "cad:check": "bun scripts/sync-cad.ts --check",
     "release": "multi-semantic-release --no-ci"
   },
   "devDependencies": {
     "@anolilab/multi-semantic-release": "4.6.3",
     "@anthropic-ai/claude-code": "2.1.327",
+    "@biomejs/biome": "2.6.8",
+    "@opencode/client": "2.3.2",
+    "@opencode/plugin": "2.3.2",
+    "@opencode/theme": "2.3.2",
+    "@opentui/core": "0.9.3",
+    "@opentui/solid": "0.9.3",
     "@semantic-release/changelog": "7.0.0",
     "@semantic-release/exec": "7.1.0",
     "@semantic-release/git": "11.0.1",
@@ -32,7 +49,14 @@
     "@visulima/yaml": "2.0.0",
     "bun": "1.4.4",
     "conventional-changelog-conventionalcommits": "9.3.1",
+    "effect": "4.1.4",
+    "fast-xml-parser": "5.12.1",
+    "jsonc-parser": "3.3.1",
     "semantic-release": "25.0.9",
+    "solid-js": "1.9.19",
     "typescript": "7.0.2"
+  },
+  "overrides": {
+    "effect": "$effect"
   }
 }

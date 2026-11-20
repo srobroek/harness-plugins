@@ -1,6 +1,6 @@
 // PreToolUse hook that carries an OpenCode agent's resource-restricted `ask` rules into Claude Code.
 //
-// A plugin subagent's own `hooks:` are ignored by Claude Code, so scripts/build-marketplaces.ts
+// A plugin subagent's own `hooks:` are ignored by Claude Code, so scripts/build.ts
 // ships this file with each plugin that exports a guarded agent, transpiled to JavaScript and
 // with no imports beyond node:* and an unconditional entry point, next to `agent-guards.json` (agent id -> guards from
 // scripts/claude-agents.ts). It runs for every matched tool call and answers only for a call

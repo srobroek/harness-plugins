@@ -298,7 +298,7 @@ point them to `/sessions` or `--session <id>`.
 ### Code sketch (against @opencode/plugin 2.1.4)
 
 ```ts
-// plugins/session/src/index.ts
+// plugins/session/opencode/src/index.ts
 import { Plugin } from "@opencode/plugin"
 import type { Context } from "@opencode/plugin"
 import { buildHandoff, findSessions, neutralize, type Msg, type Info } from "./core.ts"
@@ -376,7 +376,7 @@ export default Plugin.define({
 ```
 
 ```ts
-// plugins/session/src/core.ts — pure, no ctx
+// plugins/session/opencode/src/core.ts — pure, no ctx
 import type { Context } from "@opencode/plugin"
 export type Info = Awaited<ReturnType<Context["session"]["get"]>>
 export type Msg = Awaited<ReturnType<Context["session"]["context"]>>[number]

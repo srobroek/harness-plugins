@@ -1,11 +1,11 @@
 // Vendors the CAD skills, the lamp-arm example and the worker agents from srobroek/cad-agent
 // into plugins/cad at the tag and commit pinned in plugins/cad/cad-agent.json.
 //
-// plugins/cad/skills/ and plugins/cad/examples/ are cad-agent's trees at the pin, without the
-// upstream test suites (cad-agent's CI runs them) and with the SKILL_DESCRIPTIONS overrides.
-// plugins/cad/agents/<id>.md is cad-agent's agents/<id>.md prompt under OpenCode frontmatter built
-// here from its capabilities, plus an OpenCode section. The plugin owns everything else: src/,
-// formulas/, README.md and the pin itself. Never edit the vendored files; change cad-agent, tag
+// plugins/cad/common/skills/ and plugins/cad/opencode/examples/ are cad-agent's skills/ and examples/
+// trees at the pin, without the upstream test suites (cad-agent's CI runs them) and with the
+// SKILL_DESCRIPTIONS overrides. plugins/cad/common/agents/<id>.md is cad-agent's agents/<id>.md prompt
+// under OpenCode frontmatter built here from its capabilities, plus an OpenCode section. The plugin
+// owns everything else: opencode/src/, opencode/formulas/, README.md and the pin itself. Never edit the vendored files; change cad-agent, tag
 // it, and move the pin.
 //
 //   bun scripts/sync-cad.ts                 vendor the pinned tag
@@ -19,13 +19,20 @@ import path from "node:path"
 
 export const PLUGIN_DIR = path.join(import.meta.dir, "..", "plugins", "cad")
 export const PIN_FILE = "cad-agent.json"
-/** The plugin directories this script owns; each is replaced as a whole. */
-export const OWNED = ["skills", "examples", "agents"] as const
+/** The upstream directories this script owns, with where each lives in the plugin; each is replaced as a whole. */
+export const OWNED = { skills: "common/skills", examples: "opencode/examples", agents: "common/agents" } as const
+const OWNED_NAMES = Object.keys(OWNED) as (keyof typeof OWNED)[]
+
+/** The path in the plugin of a tree key (an upstream path such as `skills/cad-flow/SKILL.md`). */
+function located(dir: string, key: string): string {
+  const [owned, ...rest] = key.split("/") as [keyof typeof OWNED, ...string[]]
+  return path.join(dir, OWNED[owned], ...rest)
+}
 
 export type Pin = { repository: string; tag: string; commit: string }
 /** A vendored file; `symlink` marks a symbolic link found in the plugin, which is never vendored. */
 export type File = { data: Buffer; executable: boolean; symlink?: true }
-/** Vendored files by their path relative to plugins/cad, with `/` separators. */
+/** Vendored files by their upstream path (`skills/…`, `examples/…`, `agents/…`), with `/` separators. */
 export type Tree = Map<string, File>
 
 export function parsePin(text: string): Pin {
@@ -239,7 +246,7 @@ export function readTree(dir: string): Tree {
   const tree: Tree = new Map()
   const link: File = { data: Buffer.alloc(0), executable: false, symlink: true }
   const walk = (relative: string) => {
-    const full = path.join(dir, relative)
+    const full = located(dir, relative)
     const stat = lstatSync(full, { throwIfNoEntry: false })
     if (stat === undefined) return
     if (stat.isSymbolicLink()) return void tree.set(relative, link)
@@ -252,7 +259,7 @@ export function readTree(dir: string): Tree {
     }
     tree.set(relative, { data: readFileSync(full), executable: (stat.mode & 0o111) !== 0 })
   }
-  for (const owned of OWNED) walk(owned)
+  for (const owned of OWNED_NAMES) walk(owned)
   return tree
 }
 
@@ -273,9 +280,9 @@ export function drift(expected: Tree, actual: Tree): string[] {
 
 /** Replace the owned directories of `dir` with `tree`. */
 export function writeTree(dir: string, tree: Tree): void {
-  for (const owned of OWNED) rmSync(path.join(dir, owned), { recursive: true, force: true })
+  for (const owned of OWNED_NAMES) rmSync(path.join(dir, OWNED[owned]), { recursive: true, force: true })
   for (const [file, { data, executable }] of tree) {
-    const full = path.join(dir, file)
+    const full = located(dir, file)
     mkdirSync(path.dirname(full), { recursive: true })
     writeFileSync(full, data)
     chmodSync(full, executable ? 0o755 : 0o644)

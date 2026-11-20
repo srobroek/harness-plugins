@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
-import { parseSkillFile } from "../plugins/lib/src/skill-files.ts"
+import { parseSkillFile } from "../lib/src/skill-files.ts"
 
 const PLUGINS = path.join(import.meta.dir, "..", "plugins")
 const ROUTER_ROW = /^\|.*\|\s*`([\w-]+)`\s*\|\s*$/
@@ -10,7 +10,7 @@ const ROUTER_ROW = /^\|.*\|\s*`([\w-]+)`\s*\|\s*$/
 function routers() {
   const out: { plugin: string; name: string; rows: string[]; text: string }[] = []
   for (const plugin of readdirSync(PLUGINS)) {
-    const dir = path.join(PLUGINS, plugin, "skills")
+    const dir = path.join(PLUGINS, plugin, "common", "skills")
     if (!existsSync(dir)) continue
     for (const name of readdirSync(dir)) {
       const file = path.join(dir, name, "SKILL.md")
@@ -35,17 +35,17 @@ test("each router is listed and routes only to hidden skills of its own plugin",
     expect(info.description?.length ?? 0, `${router.name} description`).toBeLessThanOrEqual(120)
     expect(router.rows.length).toBeGreaterThan(1)
     for (const id of router.rows) {
-      const file = path.join(PLUGINS, router.plugin, "skills", id, "SKILL.md")
+      const file = path.join(PLUGINS, router.plugin, "common", "skills", id, "SKILL.md")
       expect(existsSync(file), `${router.name} routes to missing ${router.plugin}/${id}`).toBe(true)
       expect(parseSkillFile(readFileSync(file, "utf8")).autoinvoke, `${router.name} member ${id} is still listed`).toBe(false)
     }
   }
 })
 
-test("a hidden member uses opencode metadata, so Claude Code and Codex can still invoke it", () => {
+test("a hidden member uses opencode metadata, so Claude Code can still invoke it", () => {
   for (const router of routers()) {
     for (const id of router.rows) {
-      const text = readFileSync(path.join(PLUGINS, router.plugin, "skills", id, "SKILL.md"), "utf8")
+      const text = readFileSync(path.join(PLUGINS, router.plugin, "common", "skills", id, "SKILL.md"), "utf8")
       expect(text, `${id} sets disable-model-invocation`).not.toMatch(/^disable-model-invocation:/m)
     }
   }

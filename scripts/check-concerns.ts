@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Check the toolchain concerns framework. The spec
- * (`plugins/toolchain/skills/toolchain-languages/references/concerns.md`) defines the concerns,
+ * (`plugins/toolchain/common/skills/toolchain-languages/references/concerns.md`) defines the concerns,
  * language kinds, run tokens and the language registry. Each registered language lists files whose
  * `## Concerns` tables must together cover every concern that applies to its kind, in spec order,
  * with well-formed Default, Maintenance, Alternatives and Run cells.
@@ -62,8 +62,8 @@ export type DefaultKind =
   | { type: "shared" | "inherits"; id: string }
   | { type: "unknown" }
 
-export const SPEC_FILE = "plugins/toolchain/skills/toolchain-languages/references/concerns.md"
-export const SHARED_FILE = "plugins/toolchain/skills/toolchain-languages/references/shared-tools.md"
+export const SPEC_FILE = "plugins/toolchain/common/skills/toolchain-languages/references/concerns.md"
+export const SHARED_FILE = "plugins/toolchain/common/skills/toolchain-languages/references/shared-tools.md"
 export const GROUPS = ["testing", "quality", "iac"]
 export const STATUSES = ["active", "maintenance", "beta", "pre-1.0", "preview"]
 export const LANGUAGE_HEADER = ["Concern", "Default", "Maintenance", "Install", "Alternatives", "Use both when", "Run", "Avoid"]
@@ -325,7 +325,7 @@ function skillPath(files: Files, root: string, skill: string): string | undefine
   const plugins = path.join(root, "plugins")
   if (!files.exists(plugins)) return undefined
   for (const plugin of files.entries(plugins)) {
-    const candidate = path.join(plugins, plugin, "skills", skill, "SKILL.md")
+    const candidate = path.join(plugins, plugin, "common", "skills", skill, "SKILL.md")
     if (files.exists(candidate)) return candidate
   }
   return undefined
@@ -352,7 +352,7 @@ export function checkLanguage(ctx: Context, languageId: string): Finding[] {
   const findings: Finding[] = []
   const owner = new Map<string, FileRow>()
   const skill = skillPath(ctx.files, ctx.root, lang.skill)
-  if (!skill) findings.push({ file: SPEC_FILE, line: lang.line, reason: `skill "${lang.skill}" not found in plugins/*/skills` })
+  if (!skill) findings.push({ file: SPEC_FILE, line: lang.line, reason: `skill "${lang.skill}" not found in plugins/*/common/skills` })
   const linked = skill ? reachableFrom(ctx.files, skill) : new Set<string>()
 
   for (const file of languageFiles(lang)) {

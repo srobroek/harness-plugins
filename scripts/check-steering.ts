@@ -106,7 +106,7 @@ export function shippedMarkdown(pluginsDir: string): string[] {
   const files: string[] = []
   for (const plugin of readdirSync(pluginsDir).sort()) {
     for (const sub of ["skills", "agents"]) {
-      const dir = path.join(pluginsDir, plugin, sub)
+      const dir = path.join(pluginsDir, plugin, "common", sub)
       if (existsSync(dir) && statSync(dir).isDirectory()) files.push(...walk(dir).sort())
     }
   }

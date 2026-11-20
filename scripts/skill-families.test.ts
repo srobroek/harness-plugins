@@ -42,7 +42,7 @@ const EXCEPTIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
 }
 
 const skillsOf = (plugin: string) => {
-  const dir = path.join(PLUGINS, plugin, "skills")
+  const dir = path.join(PLUGINS, plugin, "common", "skills")
   if (!existsSync(dir)) return []
   return readdirSync(dir).filter((name) => existsSync(path.join(dir, name, "SKILL.md")))
 }

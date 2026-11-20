@@ -15,7 +15,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { basename, join } from "node:path"
-import { isModelRole, MODEL_ROLE_HEADER, MODEL_TIERS, tierFor } from "../plugins/lib/src/model-roles.ts"
+import { isModelRole, MODEL_ROLE_HEADER, MODEL_TIERS, tierFor } from "../lib/src/model-roles.ts"
 
 export type Mode = "subagent" | "primary" | "all"
 export type Effect = "allow" | "ask" | "deny"

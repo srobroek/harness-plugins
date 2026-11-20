@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 /**
- * Fail when a shipped agent (`plugins/<name>/agents/*.md`) does not declare a model-roles
+ * Fail when a shipped agent (`plugins/<name>/common/agents/*.md`) does not declare a model-roles
  * tier in its `x-opencode-model-role` request header, declares a value that is neither a
  * tier nor an accepted old role name, or pins a model in a plugin that does not treat it as a fallback. A plugin's
- * `agents/roles.json` fragment, when present, must match the headers. Every agent must
+ * `common/agents/roles.json` fragment, when present, must match the headers. Every agent must
  * declare a positive integer `steps` limit.
  *
  *   bun scripts/check-agent-roles.ts           check plugins/*
@@ -12,7 +12,7 @@
 
 import { readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
-import { isModelRole, MODEL_ROLE_HEADER, MODEL_TIERS } from "../plugins/lib/src/model-roles.ts"
+import { isModelRole, MODEL_ROLE_HEADER, MODEL_TIERS } from "../lib/src/model-roles.ts"
 
 export type Finding = { file: string; reason: string }
 
@@ -45,7 +45,7 @@ export function checkAgent(file: string, text: string, allowModel: boolean): { r
   return { ...(isModelRole(role) ? { role } : {}), findings }
 }
 
-/** Compare a plugin's `agents/roles.json` fragment with the roles its agent files declare. */
+/** Compare a plugin's `common/agents/roles.json` fragment with the roles its agent files declare. */
 export function checkFragment(file: string, text: string, roles: Record<string, string>): Finding[] {
   const fragment = (JSON.parse(text) as { agents?: Record<string, string> }).agents ?? {}
   const findings: Finding[] = []
@@ -59,7 +59,7 @@ export function checkFragment(file: string, text: string, roles: Record<string, 
 function pluginOf(file: string): string {
   const parts = path.resolve(file).split(path.sep)
   const at = parts.lastIndexOf("agents")
-  return at > 0 ? (parts[at - 1] ?? "") : ""
+  return at > 1 ? (parts[at - 2] ?? "") : ""
 }
 
 export function checkFiles(root: string, files: readonly string[]): Finding[] {
@@ -71,11 +71,11 @@ export function checkFiles(root: string, files: readonly string[]): Finding[] {
     const result = checkAgent(name, readFileSync(file, "utf8"), FALLBACK_MODEL_PLUGINS.includes(plugin))
     findings.push(...result.findings)
     const roles = byPlugin.get(plugin) ?? {}
-    if (result.role) roles[path.basename(file, ".md")] = result.role
+    if (result.role) roles[path.basename(file).replace(/(\.opencode)?\.md$/, "")] = result.role
     byPlugin.set(plugin, roles)
   }
   for (const [plugin, roles] of byPlugin) {
-    const fragment = path.join(root, "plugins", plugin, "agents", "roles.json")
+    const fragment = path.join(root, "plugins", plugin, "common", "agents", "roles.json")
     const text = readIfPresent(fragment)
     if (text !== undefined) findings.push(...checkFragment(path.relative(root, fragment), text, roles))
   }
@@ -103,12 +103,12 @@ function entriesIfPresent(dir: string): string[] {
   }
 }
 
-/** Every `plugins/<name>/agents/*.md`, sorted. */
+/** Every OpenCode agent file in `plugins/<name>/common/agents/`, sorted. The translated `*.claude.md` files have no model tier. */
 export function shippedAgents(pluginsDir: string): string[] {
   const files: string[] = []
   for (const plugin of readdirSync(pluginsDir).sort()) {
-    const dir = path.join(pluginsDir, plugin, "agents")
-    for (const entry of entriesIfPresent(dir).sort()) if (entry.endsWith(".md")) files.push(path.join(dir, entry))
+    const dir = path.join(pluginsDir, plugin, "common", "agents")
+    for (const entry of entriesIfPresent(dir).sort()) if (entry.endsWith(".md") && !entry.endsWith(".claude.md")) files.push(path.join(dir, entry))
   }
   return files
 }

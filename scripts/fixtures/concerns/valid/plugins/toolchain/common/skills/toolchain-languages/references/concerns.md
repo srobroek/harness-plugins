@@ -20,7 +20,7 @@ Checked 2026-01-10.
 
 ## Surfaces
 
-Surfaces file: `plugins/toolchain/skills/toolchain-languages/references/surfaces.md`
+Surfaces file: `plugins/toolchain/common/skills/toolchain-languages/references/surfaces.md`
 
 | Surface | Id | N/A allowed for |
 |---|---|---|
@@ -40,9 +40,9 @@ Surfaces file: `plugins/toolchain/skills/toolchain-languages/references/surfaces
 
 | Language | Id | Kind | Skill | Files |
 |---|---|---|---|---|
-| Python | py | managed | lang-x | `plugins/lang/skills/lang-x/references/testing.md`, `plugins/lang/skills/lang-x/references/quality.md` |
-| Shell | sh | shell | lang-sh | `plugins/lang/skills/lang-sh/references/shell.md` |
-| Terraform | tf | iac | lang-tf | `plugins/lang/skills/lang-tf/references/tf.md` |
+| Python | py | managed | lang-x | `plugins/lang/common/skills/lang-x/references/testing.md`, `plugins/lang/common/skills/lang-x/references/quality.md` |
+| Shell | sh | shell | lang-sh | `plugins/lang/common/skills/lang-sh/references/shell.md` |
+| Terraform | tf | iac | lang-tf | `plugins/lang/common/skills/lang-tf/references/tf.md` |
 
 ## Run tokens
 

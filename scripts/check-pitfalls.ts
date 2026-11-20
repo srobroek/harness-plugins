@@ -56,7 +56,7 @@ function main(): number {
   const findings: Finding[] = []
   let count = 0
   for (const plugin of readdirSync(plugins).sort()) {
-    const skills = path.join(plugins, plugin, "skills")
+    const skills = path.join(plugins, plugin, "common", "skills")
     if (!existsSync(skills)) continue
     for (const skill of readdirSync(skills).sort()) {
       const dir = path.join(skills, skill)
