@@ -1,10 +1,10 @@
 # autopilot
 
 Runs an OpenCode session unattended. `/autopilot` asks its setup questions in
-one round and then arms the session. From then on the session asks no
-questions. It records decisions and blockers in a journal, and a 4-minute tick
-keeps it moving. The run stops on an explicit or an implicit condition and
-leaves a debrief and a handoff bead.
+one round and then arms the session. After that, the session asks no more
+questions. The session records decisions and blockers in a journal. A 4-minute
+tick keeps the session moving. The run stops on an explicit or an implicit
+condition and leaves a debrief and a handoff bead.
 
 ## Commands
 
@@ -15,80 +15,122 @@ leaves a debrief and a handoff bead.
 | `/autopilot review [run-id]` | Loads a stopped run's summary and asks one question per needs-input item. |
 | `/autopilot stop` | Stops the run in this session and writes the debrief. |
 
-Flags: `--full` or `--no-full`, `--allow merge,deploy` or `--allow none`,
-`--lanes N`, `--for 3h` or `--until-time 18:00`, and `--until "<condition>"`
-(`--until ""` for none). The setup round asks for
-each value that the command line leaves out. The number of parallel write lanes
-has no upper limit; the setup round recommends 3, and `--lanes N` skips the
-question. Read-only subagents such as `explore` and the reviewers do not take a
-lane.
+Flags:
 
-Only the user starts a run. The `autopilot` skill is not auto-invoked, and the
-hooks arm only through the command.
+- `--full` or `--no-full`
+- `--allow merge,deploy` or `--allow none`
+- `--lanes N`
+- `--for 3h` or `--until-time 18:00`
+- `--until "<condition>"`, or `--until ""` for no condition
 
-## What the plugin enforces while a run is armed
+The setup round asks for each value that the command-line flags leave out. The
+number of parallel write lanes has no upper limit. The setup round recommends 3
+lanes, and `--lanes N` skips that question. Read-only subagents, such as
+`explore` and the reviewers, take no lane.
 
-- It denies `question`, `parley_ask`, `parley_wait` and `parley_end` for the
-  lead session and every subagent under it.
+Only the user starts a run. OpenCode does not load the `autopilot` skill on its
+own, and only the command arms the hooks.
+
+## Rules while a run is armed
+
+The plugin enforces these rules for the lead session and every subagent under
+it:
+
+- The plugin denies these tools:
+  - `question`
+  - `parley_ask`
+  - `parley_wait`
+  - `parley_end`
 - When a turn ends with a question to the user, the plugin re-prompts the
   session to decide, log the decision and continue. After two re-prompts in a
-  row it logs an issue and waits for the next tick.
-- It answers permission `ask` prompts from the run's grants. Branch work,
-  feature-branch pushes, PRs, beads, dependency bumps and read-only AWS calls are
-  allowed. A merge or a deploy needs `--allow`. A command that discards work,
-  such as `git reset --hard` or `rm -r`, needs `--full`. A force push or a push
-  to the default branch is always denied. The plugin logs each denial as a
-  blocker.
-- After compaction, it queues a notice with the rules and a fresh status.
+  row, the plugin logs an issue and waits for the next tick.
+- The plugin answers each permission `ask` from the run's grants:
+  - It allows branch work, feature-branch pushes and pull requests.
+  - It allows beads, dependency bumps and read-only AWS calls.
+  - A merge or a deployment needs `--allow`.
+  - A command that discards work, such as `git reset --hard` or `rm -r`, needs
+    `--full`.
+  - The plugin always denies a force push and a push to the default branch.
+  - The plugin logs each denial as a blocker.
+- After compaction, the plugin queues a notice with the rules and a fresh
+  status.
 
-Armed runs are kept in plugin storage, so they survive a server restart.
+The plugin keeps armed runs in its storage, so a run survives a server restart.
 
 ## Tools
 
-- `autopilot_status`: rebuilds the run state from `bd`, git, child sessions
-  and the journal, with no model. It evaluates the stop conditions and returns
-  JSON, the ping line and the actions due. Its actions are `status`, `arm`,
-  `tick`, `fallback` and `stop`. Code Mode can call it, and the tick automation
-  does.
-- `autopilot_log`: appends one validated journal entry. Each entry has a type:
-  decision, blocker, issue, ambiguity, stop, progress or action. Without
-  `--full`, the tool also labels a blocked bead `human`.
+`autopilot_status` rebuilds the run state with no model. It reads these
+sources:
+
+- `bd`
+- git
+- child sessions
+- the journal
+
+The tool then evaluates the stop conditions. It returns JSON, the ping line and
+the actions due. Its actions are:
+
+- `status`
+- `arm`
+- `tick`
+- `fallback`
+- `stop`
+
+Code Mode can call `autopilot_status`, and the tick automation calls it.
+
+`autopilot_log` appends one validated journal entry. Each entry has one of
+these types:
+
+- decision
+- blocker
+- issue
+- ambiguity
+- stop
+- progress
+- action
+
+Without `--full`, `autopilot_log` also labels a blocked bead `human`.
 
 ## Tick
 
-When a run is armed, the agent creates an OpenCode automation with
-`tools.opencode.automation_create`, every 4 minutes until the deadline. It is a
-code action, so a tick runs no model. A tick calls `autopilot_status` and sends
-nothing while the lead session is busy, which it reads from the host's session
-record. Otherwise it sends a ping:
+When the agent arms a run, it creates an OpenCode automation with
+`tools.opencode.automation_create`. The automation runs every 4 minutes until
+the deadline. It is a code action, so a tick runs no model. A tick calls
+`autopilot_status`. The tick sends nothing while the host's session record
+shows the lead session as busy. Otherwise, the tick sends a ping:
 
 ```text
 ♥ 14:32 · 2/4 lanes · ready 4 · blocked 2 (+1 unblocked) · parked 1 · 1h12m left
 ```
 
-If the automation cannot be created, an in-process timer prompts the session
-instead. It is unref'd and shared across the process, and it also skips a tick
-while the session is busy.
+If `automation_create` fails, an in-process timer prompts the session instead.
+The plugin unrefs the timer and shares it across the process. The timer also
+skips a tick while the session is busy.
 
 ## Stop conditions
 
 Explicit conditions:
 
-- the scope is finished
-- the wall budget or the clock deadline is reached
-- the free-text condition holds
-- the user runs `/autopilot stop`
+- The scope has no open beads left.
+- The run reaches its wall budget or clock deadline.
+- The free-text condition holds.
+- The user runs `/autopilot stop`.
 
 Implicit conditions:
 
-- 6 ticks in a row pass without progress (a closed bead, a commit, a logged
-  progress entry or a finished subagent)
-- every remaining bead is blocked or parked
+- Six ticks in a row pass without progress. Progress means one of these:
+  - a closed bead
+  - a commit
+  - a logged progress entry
+  - a finished subagent
+- For a bead or queue scope, every remaining bead is blocked or parked.
 
-Some failures park an item without stopping the run. A bead that is
-attempted 3 times without closing is parked, and so is an item that hits the
-same error signature twice in a row. A lane that is silent for 12 minutes is
-nudged first, then restarted once, then parked.
+Some failures park an item and the run goes on:
+
+- A bead that the agents attempt 3 times without closing.
+- An item that hits the same error signature twice in a row.
+- A lane that stays silent for 12 minutes. The plugin first asks the lead to
+  nudge it, then to restart it once, and then parks it.
 
 ## Run directory
 
@@ -99,6 +141,6 @@ nudged first, then restarted once, then parked.
 - `summary.md`: the debrief, written at stop
 
 `autopilot/latest` links to the newest run. At stop, the plugin also creates a
-bead labelled `autopilot-handoff`. That bead links the run directory and lists
-the items that need input. The plugin's own `bd` writes take the embedded
-store's write lock, like the beads plugin's.
+bead with the label `autopilot-handoff`. That bead links the run directory and
+lists the items that need input. The plugin's own `bd` writes take the embedded
+store's write lock, as the beads plugin's writes do.

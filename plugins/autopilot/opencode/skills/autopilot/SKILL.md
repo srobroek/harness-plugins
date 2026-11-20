@@ -15,8 +15,11 @@ you to.
 
 1. The command prompt lists the values the command line gave and the values it
    left out. Ask every missing value in ONE `parley_ask` round. If parley is not
-   available, use the `question` tool. Give a recommendation for each value:
-   - scope: an epic id, a bead id, a goal in plain words, or the `bd ready` queue
+   available, use the `question` tool. Recommend an answer for each value:
+   - scope: one of these:
+     - an epic id or a bead id
+     - a goal in plain words
+     - the `bd ready` queue
    - `--full`: decide irreversible items too (recommend no)
    - permissions: `merge` and `deploy` grants (recommend none)
    - parallel write lanes: any whole number (recommend 3)
@@ -34,9 +37,12 @@ its subagents.
 
 ## Decision policy
 
-- Reversible: pick the most likely option, log it with `autopilot_log`
-  (`type: "decision"`, `chosen`, `alternatives`, `reversible: true`,
-  `confidence`), and continue.
+- Reversible: pick the most likely option and continue. Log it with
+  `autopilot_log` and these fields:
+  - `type: "decision"`
+  - `chosen` and `alternatives`
+  - `reversible: true`
+  - `confidence`
 - Irreversible or outward-facing: log a `blocker` with `parked: true`, park the
   item and move on. Outward-facing covers messages to people, releases and
   anything another team sees.
@@ -44,9 +50,13 @@ its subagents.
   Work beads that are already flagged `human` as well.
 - Without `--full`, `autopilot_log` flags the bead of each blocker or ambiguity
   with the `human` label.
-- Log each finished unit of work as `progress`: a closed bead, a commit, an
-  opened PR or a lane result. Ticks count progress. Six ticks in a row without
-  any progress stop the run.
+- Log each finished unit of work as `progress`. A unit of work is one of these:
+  - a closed bead
+  - a commit
+  - an opened PR
+  - a lane result
+
+  Ticks count progress. Six ticks in a row without any progress stop the run.
 - When an error repeats, give it a short stable `error` signature. The same
   signature twice in a row parks the item.
 
@@ -75,17 +85,22 @@ irreversible. When one needs approval, the plugin denies it and logs a blocker,
 unless the run is `--full`.
 
 `merge` needs `--allow merge`, an approve verdict from `code-reviewer` and
-green required checks. A deploy (stack create, update or delete) needs
+green required checks. A deployment (stack create, update or delete) needs
 `--allow deploy`. The plugin answers each permission `ask` from these grants,
 and it logs every denial as a blocker.
 
 ## Lanes
 
-- Write lanes are the lane count chosen at setup. There is no upper limit. Read-only
-  agents (explore, researcher, the reviewers, debug) do not use a lane, and the
-  ping counts only busy subagents that hold one.
-- Each writer gets its own Worktrunk worktree. The lead claims no beads. Each
-  lane claims its own bead, and the beads plugin renews the claim.
+- The number of write lanes is the count chosen at setup, with no upper limit.
+  Read-only agents take no lane. These agents are read-only:
+  - `explore` and `researcher`
+  - the reviewers
+  - `debug`
+
+  The ping counts only busy subagents that hold a lane.
+- Each writer gets its own Worktrunk worktree. Each lane claims its own bead,
+  and the beads plugin renews the claim. The lead leaves bead claims to the
+  lanes.
 - Stalled lanes follow the tick's `actions`: first `nudge`, then
   `respawn` (abort the lane and start it once more with journal context), then
   `park`.
@@ -111,8 +126,13 @@ The run stops when any of these happens:
 - six ticks pass without progress
 - everything left is blocked or parked
 
-To stop, call `autopilot_status` with `action: "stop"` and a `reason`. It
-writes `summary.md`, creates the `autopilot-handoff` bead and disarms the hooks.
+To stop, call `autopilot_status` with `action: "stop"` and a `reason`. The call
+does these things:
+
+- writes `summary.md`
+- creates the `autopilot-handoff` bead
+- disarms the hooks
+
 Delete the automation with `tools.opencode.automation_delete` when the result
 names one. Then print the summary and end the turn.
 
@@ -126,7 +146,7 @@ names one. Then print the summary and end the turn.
   question per needs-input item.
 
 The run directory is `$(git rev-parse --git-common-dir)/opencode-scratch/autopilot/<run-id>/`.
-It holds `journal.jsonl`, `state.json` and `summary.md`, and `autopilot/latest`
-links to the newest run.
+It holds `journal.jsonl`, `state.json` and `summary.md`. The `autopilot/latest`
+link points to the newest run.
 
 When a call here fails unexpectedly, read [references/pitfalls.md](references/pitfalls.md).
