@@ -23,10 +23,12 @@ let beads: { list: unknown[]; ready: unknown[]; blocked: unknown[] }
 let listGate: Promise<void> | undefined
 /** Called on each `git rev-parse`, the last host call `/autopilot` makes before it takes the run lock. */
 let onRevParse: (() => void) | undefined
-/** What `git symbolic-ref refs/remotes/<remote>/HEAD` answers, by remote; a missing remote fails. */
-let remoteHeads: Record<string, string>
 /** How many `bd create` calls fail before one succeeds. */
 let failCreates = 0
+/** How many handoff lookups (`bd list --label ...`) fail before one succeeds. */
+let failLookups = 0
+/** Called after a `bd create` succeeds. */
+let onCreated: (() => void) | undefined
 
 const run: Run = async (_cwd, command, args) => {
   calls.push({ command, args })
@@ -35,13 +37,14 @@ const run: Run = async (_cwd, command, args) => {
     onRevParse?.()
     return { ok: true, stdout: `${root}\n`, stderr: "" }
   }
-  if (command === "git" && args[0] === "symbolic-ref") {
-    const remote = /^refs\/remotes\/([^/]+)\/HEAD$/.exec(args.at(-1) ?? "")?.[1] ?? ""
-    const head = remoteHeads[remote]
-    return head ? { ok: true, stdout: `${head}\n`, stderr: "" } : { ok: false, stdout: "", stderr: "not a symbolic ref" }
-  }
-  if (command === "git" && args[0] === "ls-remote") return { ok: false, stdout: "", stderr: "offline" }
   if (command === "git") return { ok: true, stdout: "7\n", stderr: "" }
+  if (args[0] === "list" && args.includes("--label")) {
+    if (failLookups > 0) {
+      failLookups--
+      return { ok: false, stdout: "", stderr: "store locked" }
+    }
+    return json(beads.list)
+  }
   if (args[0] === "list") {
     await listGate
     return json(beads.list)
@@ -53,6 +56,8 @@ const run: Run = async (_cwd, command, args) => {
       failCreates--
       return { ok: false, stdout: "", stderr: "store busy" }
     }
+    beads.list.push({ id: "t-99", status: "open", title: args[1], labels: [args[args.indexOf("--labels") + 1]] })
+    onCreated?.()
     return json({ id: "t-99" })
   }
   return json({})
@@ -144,8 +149,9 @@ beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), "autopilot-test-"))
   calls = []
   locked = []
+  failLookups = 0
+  onCreated = undefined
   warnings = []
-  remoteHeads = { origin: "origin/main" }
   failCreates = 0
   beads = { list: [{ id: "p-1", status: "open" }], ready: [{ id: "p-1" }], blocked: [] }
   await start()
@@ -213,226 +219,44 @@ describe("tick", () => {
 })
 
 describe("permission asks while armed", () => {
-  const ask = (command: string, sessionID = "ses_child", action = "shell") =>
-    fake.fire.permission("evaluate", { sessionID, action, resources: [command], effect: "ask" as string, message: undefined as string | undefined })
+  const ask = (resource: string, sessionID = "ses_child", action = "shell", effect = "ask") =>
+    fake.fire.permission("evaluate", { sessionID, action, resources: [resource], effect, message: undefined as string | undefined })
 
-  type Grants = { allow?: ("merge" | "deploy")[]; full?: boolean }
-  const none: Grants = {}
-  const merge: Grants = { allow: ["merge"] }
-  const deploy: Grants = { allow: ["deploy"] }
-  const full: Grants = { full: true }
-  const all: Grants = { allow: ["merge", "deploy"], full: true }
+  const everything = { allow: ["merge", "deploy"], full: true }
 
-  // [command, grants, expected effect]
-  const table: [string, Grants, "allow" | "deny"][] = [
-    // git push: explicit feature branches only
-    ["git push -u origin feat/x", none, "allow"],
-    ["git push --force-with-lease origin feat/x", none, "allow"],
-    ["git -C repo push origin HEAD:feat/x", none, "deny"],
-    ["git push origin main-fix", none, "allow"],
-    ["git push origin main", all, "deny"],
-    ["git push origin HEAD:master", all, "deny"],
-    ["git push origin feat/x:refs/heads/master", all, "deny"],
-    ["git push origin 'HEAD:main'", all, "deny"],
-    ['git push origin "main"', all, "deny"],
-    ["git -C repo push origin main", all, "deny"],
-    ["git push --force origin feat/x", all, "deny"],
-    ["git push -f origin feat/x", all, "deny"],
-    ["git -C . push --force origin feat/x", all, "deny"],
-    ["git -c core.x=y push -f origin feat/x", all, "deny"],
-    ["git push origin +HEAD:feat/x", all, "deny"],
-    ["git push origin '+HEAD:feat/x'", all, "deny"],
-    ["git push origin +feat/x", all, "deny"],
-    ["git push --mirror origin", all, "deny"],
-    ["git push --all origin", all, "deny"],
-    ["git push origin", all, "deny"],
-    ["git push", all, "deny"],
-    ["git push --no-verify origin feat/x", all, "deny"],
-    ["git push '--force' origin feat/x", all, "deny"],
-    ["git --bogus push origin feat/x", all, "deny"],
-    ["git push origin --delete feat/old", none, "deny"],
-    ["git push origin --delete feat/old", full, "allow"],
-    ["git push origin :feat/old", none, "deny"],
-    // other git subcommands
-    ["git status && git log --oneline -3", none, "allow"],
-    ['git commit -m "fix: x"', none, "allow"],
-    ["git reset --hard origin/main", none, "deny"],
-    ["git reset --hard origin/main", full, "allow"],
-    ["git clean -fdx", none, "deny"],
-    ["git branch -D feat/old", none, "deny"],
-    ["git stash drop", none, "deny"],
-    ["git frobnicate", all, "deny"],
-    // gh and glab
-    ["gh pr create --draft --title t --body b", none, "allow"],
-    ["gh --repo owner/repo pr view 3", none, "allow"],
-    ["gh pr merge 12 --squash", none, "deny"],
-    ["gh pr merge 12 --squash", merge, "allow"],
-    ["gh --repo owner/repo pr merge 1", none, "deny"],
-    ["gh -R owner/repo pr merge 1", none, "deny"],
-    ["gh pr merge 12 --admin", merge, "deny"],
-    ["gh api repos/o/r/merges -f base=main", all, "deny"],
-    ["gh --hostname x pr view 1", all, "deny"],
-    ["glab mr merge 3", none, "deny"],
-    ["glab mr merge 3", merge, "allow"],
-    // aws
-    ["aws s3 ls", none, "allow"],
-    ["aws --region us-east-1 cloudformation describe-stacks", none, "allow"],
-    ["aws --region us-east-1 cloudformation delete-stack --stack-name x", none, "deny"],
-    ["aws --region us-east-1 cloudformation delete-stack --stack-name x", deploy, "allow"],
-    ["aws s3 rm s3://bucket/key", all, "deny"],
-    ["aws --bogus s3 ls", all, "deny"],
-    // deploy tools
-    ["npx cdk deploy MyStack", none, "deny"],
-    ["npx cdk deploy MyStack", deploy, "allow"],
-    ["terraform apply", none, "deny"],
-    ["terraform plan", none, "allow"],
-    // rm
-    ["rm notes.txt", none, "allow"],
-    ["rm -rf build", none, "deny"],
-    ["rm -rf build", full, "allow"],
-    ["rm '-rf' dir", all, "deny"],
-    ["rm --no-preserve-root -rf x", all, "deny"],
-    ["rm -rf *", all, "deny"],
-    // chains need every grant they touch
-    ["gh pr merge 12 --squash && rm -rf build", merge, "deny"],
-    ["gh pr merge 12 --squash && rm -rf build", { allow: ["merge"], full: true }, "allow"],
-    // beads, packages, plain tools
-    ["bd close p-1 && bd create task", none, "allow"],
-    ["bd delete p-1", none, "deny"],
-    ["npm install zod", none, "allow"],
-    ["printf '%s\\n' 'git push origin main' > commands.txt", none, "allow"],
-    // anything the gate cannot read is denied
-    ["echo $(git push -f origin feat/x)", all, "deny"],
-    ['git push origin "$BRANCH"', all, "deny"],
-    ["sh -c 'git push -f origin feat/x'", all, "deny"],
-    ["eval git push -f", all, "deny"],
-    ["'git' push origin feat/x", all, "deny"],
-    ["echo 'unterminated", all, "deny"],
-    ["frobnicate --now", all, "deny"],
-    // ANSI-C and locale quoting are denied wherever they appear
-    ["git push origin $'mai\\x6e'", all, "deny"],
-    ['git push origin $"feat/x"', all, "deny"],
-    ["echo $'hi'", all, "deny"],
-    ["git push \\-f origin feat/x", all, "deny"],
-    ["git push --for\\ce origin feat/x", all, "deny"],
-    // opaque execution: interpreters, package executors, git options that run commands
-    ["python -c 'print(1)'", all, "deny"],
-    ["python3 tools/run.py", all, "deny"],
-    ["node -e 1", all, "deny"],
-    ["node scripts/build.js", all, "deny"],
-    ["deno run x.ts", all, "deny"],
-    ["awk 'BEGIN { system(\"id\") }'", all, "deny"],
-    ["sed -n 1p notes.txt", all, "deny"],
-    ["npm exec some-tool", all, "deny"],
-    ["npm x some-tool", all, "deny"],
-    ["pnpm dlx some-tool", all, "deny"],
-    ["pnpm exec some-tool", all, "deny"],
-    ["yarn dlx some-tool", all, "deny"],
-    ["bunx some-tool", all, "deny"],
-    ["uvx ruff", all, "deny"],
-    ["uv tool run ruff", all, "deny"],
-    ["pipx run black", all, "deny"],
-    ["git -c core.pager=sh log", all, "deny"],
-    ["git fetch --upload-pack=evil origin", all, "deny"],
-    ["git rebase -x make main", all, "deny"],
-    ["git rebase --exec make main", all, "deny"],
-    // the repository's own scripts and test runners are known safe forms
-    ["npm test", none, "allow"],
-    ["npm run lint", none, "allow"],
-    ["bun test", none, "allow"],
-    ["bun run build", none, "allow"],
-    ["pnpm run typecheck", none, "allow"],
-    ["python3 -m pytest -q", none, "allow"],
-    ["uv run pytest", none, "allow"],
-    ["make test", none, "allow"],
-    ["npm run release", all, "deny"],
-    ["make deploy", all, "deny"],
-    // worktrunk
-    ["wt list", none, "allow"],
-    ["wt switch -c feat/x", none, "allow"],
-    ["wt switch -x make feat/x", all, "deny"],
-    ["wt merge main", none, "deny"],
-    ["wt merge main", merge, "allow"],
-    ["wt remove feat/x", none, "allow"],
-    ["wt remove -D feat/x", none, "deny"],
-    ["wt remove -D feat/x", full, "allow"],
-    ["wt step commit", all, "deny"],
-    // destructive switch, checkout and restore flags need --full
-    ["git switch feat/x", none, "allow"],
-    ["git switch -c feat/x", none, "allow"],
-    ["git switch --discard-changes feat/x", none, "deny"],
-    ["git switch --discard-changes feat/x", full, "allow"],
-    ["git switch -f feat/x", none, "deny"],
-    ["git switch -C feat/x", none, "deny"],
-    ["git checkout -B feat/x", none, "deny"],
-    ["git checkout --overwrite-ignore feat/x", none, "deny"],
-    ["git restore --staged notes.txt", none, "allow"],
-    ["git restore notes.txt", none, "deny"],
-  ]
-
-  test.each(table)("%p with %j → %s", async (command, grants, effect) => {
-    await armed({ allow: grants.allow ?? [], full: grants.full ?? false })
-    expect((await ask(command)).effect).toBe(effect)
-  })
-
+  // [permission kind, the command or pattern it asks about]
   test.each([
-    ["read", "allow"],
-    ["edit", "allow"],
-    ["glob", "allow"],
-    ["grep", "allow"],
-    ["webfetch", "allow"],
-    ["websearch", "allow"],
-    ["skill", "allow"],
-    ["subagent", "allow"],
-    ["todowrite", "allow"],
-    ["opencode_read_mcp_resource", "allow"],
-    ["safety_secret_command", "deny"],
-    ["external_directory", "deny"],
-    ["execute", "deny"],
-    ["experimental_image_generate", "deny"],
-    ["github_create_issue", "deny"],
-    ["delivery_land", "deny"],
-  ] as const)("permission kind %s → %s", async (action, effect) => {
-    await armed()
-    expect((await ask("x", "ses_child", action)).effect).toBe(effect)
+    ["shell", "git status"],
+    ["shell", "npm test"],
+    ["shell", "gh pr merge 12 --squash"],
+    ["edit", "src/index.ts"],
+    ["external_directory", "/tmp/elsewhere/*"],
+    ["delivery_land", "12"],
+    ["safety_secret_command", "deploy-token"],
+  ])("denies a %s ask for %p even with every grant, and journals a blocker naming both", async (action, resource) => {
+    await armed(everything)
+    expect(await ask(resource, "ses_child", action)).toMatchObject({ effect: "deny", message: expect.stringContaining("never approves") })
+    expect(journal().at(-1)).toMatchObject({ type: "blocker", summary: expect.stringContaining(action), evidence: resource })
   })
 
-  test("a merge tool runs with the merge grant", async () => {
-    await armed({ allow: ["merge"] })
-    expect((await ask("12", "ses_child", "delivery_land")).effect).toBe("allow")
-  })
-
-  test("an unknown permission kind is logged as a blocker", async () => {
-    await armed()
-    await ask("argv", "ses_child", "safety_secret_command")
-    expect(journal().at(-1)).toMatchObject({ type: "blocker", summary: expect.stringContaining("safety_secret_command") })
-  })
-
-  test.each([
-    ["the remote's resolved default branch", "git push origin trunk", { origin: "origin/trunk" }],
-    ["a remote whose default branch cannot be resolved", "git push upstream feat/x", { origin: "origin/main" }],
-  ])("denies a push to %s", async (_name, command, heads) => {
-    remoteHeads = heads
-    await armed()
-    expect((await ask(command)).effect).toBe("deny")
-  })
-
-  test("allows a feature push once the remote's default branch is known, and still never main", async () => {
-    remoteHeads = { origin: "origin/trunk" }
-    await armed()
-    expect((await ask("git push origin feat/x")).effect).toBe("allow")
-    expect((await ask("git push origin main")).effect).toBe("deny")
-  })
-
-  test("denies a push to the default branch and logs a blocker", async () => {
-    await armed()
-    expect(await ask("git push origin main")).toMatchObject({ effect: "deny" })
-    expect(journal().at(-1)).toMatchObject({ type: "blocker", summary: expect.stringContaining("shell denied") })
+  test("leaves rules the user already decided alone", async () => {
+    await armed(everything)
+    expect((await ask("git status", "ses_child", "shell", "allow")).effect).toBe("allow")
+    expect((await ask("rm -rf /", "ses_child", "shell", "deny")).effect).toBe("deny")
+    expect(journal().map((entry) => entry.type)).toEqual(["action"])
   })
 
   test("leaves sessions outside a run alone", async () => {
     await armed()
     expect((await ask("git push origin main", "ses_other")).effect).toBe("ask")
+  })
+
+  test("denies every ask while the run is stopping", async () => {
+    await armed()
+    failCreates = 1
+    await status({ action: "stop", reason: "done" })
+    expect(latestState().phase).toBe("stopping")
+    expect((await ask("git status")).effect).toBe("deny")
   })
 })
 
@@ -581,6 +405,17 @@ describe("fallback tick", () => {
     await status({ action: "fallback" })
     const storage = Object.fromEntries(fake.storage)
     await startWithClock(storage)
+    expect(timers.filter((timer) => !timer.cleared)).toHaveLength(1)
+  })
+
+  test("starts again after a server restart while the run is stopping", async () => {
+    await startWithClock()
+    await armed()
+    await status({ action: "fallback" })
+    failCreates = 1
+    await status({ action: "stop", reason: "done" })
+    expect(latestState().phase).toBe("stopping")
+    await startWithClock(Object.fromEntries(fake.storage))
     expect(timers.filter((timer) => !timer.cleared)).toHaveLength(1)
   })
 })
@@ -793,6 +628,27 @@ describe("a stop whose artifacts fail to write", () => {
     rmSync(join(latest(), "summary.md"), { recursive: true })
     expect(await status({ action: "stop", reason: "done" })).toMatchObject({ done: true })
     expect(readFileSync(join(latest(), "summary.md"), "utf8")).toContain("- Stopped: done")
+    expect(calls.filter((call) => call.args[0] === "create")).toHaveLength(1)
+  })
+
+  test("a lookup that fails after a lost state save leaves the handoff pending and never creates a second bead", async () => {
+    await armed()
+    const statePath = join(latest(), "state.json")
+    let saved = ""
+    // The bead is created, then the state save that records it fails.
+    onCreated = () => {
+      saved = readFileSync(statePath, "utf8")
+      rmSync(statePath)
+      mkdirSync(statePath)
+    }
+    expect(await status({ action: "stop", reason: "done" })).toHaveProperty("error")
+    rmSync(statePath, { recursive: true })
+    writeFileSync(statePath, saved)
+    expect(latestState().phase).toBe("stopping")
+    failLookups = 1
+    expect(await status(tickInput())).toMatchObject({ phase: "stopping", error: expect.stringContaining("look up") })
+    expect(calls.filter((call) => call.args[0] === "create")).toHaveLength(1)
+    expect(await status(tickInput())).toMatchObject({ done: true, handoff: "t-99" })
     expect(calls.filter((call) => call.args[0] === "create")).toHaveLength(1)
   })
 

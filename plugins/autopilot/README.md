@@ -23,7 +23,10 @@ Flags:
 - `--for 3h` or `--until-time 18:00`
 - `--until "<condition>"`, or `--until ""` for no condition
 
-The setup round asks for each value that the command-line flags leave out. The
+The setup round asks for each value that the command-line flags leave out.
+`--allow merge`, `--allow deploy` and `--full` govern what the agent decides to
+do on its own and what the plugin itself does. They never approve a
+permission prompt. The
 number of parallel write lanes has no upper limit. The setup round recommends 3
 lanes, and `--lanes N` skips that question. Read-only subagents, such as
 `explore` and the reviewers, take no lane.
@@ -44,36 +47,11 @@ it:
 - When a turn ends with a question to the user, the plugin re-prompts the
   session to decide, log the decision and continue. After two re-prompts in a
   row, the plugin logs an issue and waits for the next tick.
-- The plugin answers each permission `ask` from the run's grants. It fails
-  closed. It allows a shell command only when the shared shell parser reads the
-  whole command and every part of it is a known safe form:
-  - Branch work, pull requests, beads, dependency changes and read-only AWS
-    calls are safe forms.
-  - The repository's own scripts and test runners are safe forms: `npm test`,
-    `npm run <script>`, `bun test`, `make <target>`, `python3 -m pytest` and
-    similar. A script or target named like a release is denied.
-  - A push must name a remote and a feature branch, for example
-    `git push origin feat/x`.
-  - A merge or a deployment needs `--allow`. `wt merge` counts as a merge.
-  - A command that discards work needs `--full`. Examples are
-    `git reset --hard`, `git switch --discard-changes` and `rm -r`.
-  - The plugin always denies a force push and a mirror push. It also denies a
-    push to `main`, to `master` or to the remote's own default branch. The
-    plugin resolves that branch from `refs/remotes/<remote>/HEAD` or from the
-    remote. When it cannot resolve the branch, it denies the push.
-  - The plugin denies a command it cannot read. Examples are an unknown
-    command or flag, a quoted flag, an expansion and a command substitution.
-    `$'…'` and `$"…"` quoting are denied too.
-  - The plugin denies code it cannot read. Examples are an interpreter with
-    `-c`, `-e` or a script file, and a package executor such as `npx`,
-    `npm exec`, `pnpm dlx`, `bunx` or `uvx`.
-  - The plugin denies AWS calls that change resources, except the
-    CloudFormation operations that `--allow deploy` grants.
-  - The plugin allows other permission kinds only from a list of kinds that
-    act inside the run's location: read, edit, glob, grep, web fetch and
-    search, skills, subagents and MCP resource reads. It denies every other
-    kind, such as `external_directory`, `execute`, MCP tools and plugin tools.
-  - The plugin logs each denial as a blocker.
+- The plugin denies every permission `ask`. It approves nothing, whatever the
+  run's grants. Your own OpenCode permission rules already allow what you
+  trust, and an `ask` is exactly what you wanted to be asked about. Nobody is
+  there to answer it. The plugin journals each denied `ask` as a blocker, with
+  its permission kind and the command or pattern it asked about.
 - After compaction, the plugin queues a notice with the rules and a fresh
   status.
 
@@ -95,7 +73,7 @@ A stop first moves the run to `stopping`, and the plugin then writes
 `summary.md` and the handoff bead. If either write fails, the run stays
 `stopping`. The next tick or status call retries the missing one. The plugin
 looks up the handoff bead by title before it creates one, so it never creates
-two.
+two. When that lookup fails, the plugin creates nothing and retries later.
 
 ## Tools
 
