@@ -1,1 +1,86 @@
-{ "extends": ["github>srobroek/harness-kit"] }
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>srobroek/harness-kit"
+  ],
+  "customManagers": [
+    {
+      "description": "Exact PyPI pins in Markdown sources: uv run --with PKG==VER and uvx [--with X] PKG@VER",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^(docs|lib)\\/.+\\.md$/",
+        "/^plugins\\/[^/]+\\/README\\.md$/",
+        "/^plugins\\/[^/]+\\/(common|agents\\.src)\\/.+\\.md$/",
+        "/^plugins\\/[^/]+\\/opencode\\/src\\/.+\\.md$/"
+      ],
+      "matchStrings": [
+        "uv run --with (?<depName>[A-Za-z0-9._-]+)==(?<currentValue>\\d[\\w.+!-]*)",
+        "uvx\\s+(?:--with\\s+\\S+\\s+)?(?<depName>[A-Za-z0-9._-]+)@(?<currentValue>\\d[\\w.+!-]*)"
+      ],
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "pep440"
+    },
+    {
+      "description": "Exact npm pins in Markdown sources: npx [-y|--yes] PKG@X.Y.Z and npm:PKG@X.Y.Z",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^(docs|lib)\\/.+\\.md$/",
+        "/^plugins\\/[^/]+\\/README\\.md$/",
+        "/^plugins\\/[^/]+\\/(common|agents\\.src)\\/.+\\.md$/",
+        "/^plugins\\/[^/]+\\/opencode\\/src\\/.+\\.md$/"
+      ],
+      "matchStrings": [
+        "(?:npx\\s+(?:(?:-y|--yes)\\s+)?|npm:)(?<depName>(?:@[a-z0-9~-][a-z0-9._~-]*/)?[a-z0-9~-][a-z0-9._~-]*)@(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-[\\w.-]+)?)"
+      ],
+      "datasourceTemplate": "npm"
+    },
+    {
+      "description": "Exact PyPI pins in .mcp.json sources: uvx servers",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^plugins\\/[^/]+\\/common\\/\\.mcp\\.json$/"
+      ],
+      "matchStrings": [
+        "\\\"command\\\":\\s*\\\"uvx\\\",\\s*\\\"args\\\":\\s*\\[[^\\n]*?\\\"(?<depName>[A-Za-z0-9._-]+)@(?<currentValue>\\d[\\w.+!-]*)\\\""
+      ],
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "pep440"
+    },
+    {
+      "description": "Exact npm pins in .mcp.json sources: npx servers",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^plugins\\/[^/]+\\/common\\/\\.mcp\\.json$/"
+      ],
+      "matchStrings": [
+        "\\\"command\\\":\\s*\\\"npx\\\",\\s*\\\"args\\\":\\s*\\[[^\\n]*?\\\"(?<depName>(?:@[a-z0-9~-][a-z0-9._~-]*/)?[a-z0-9~-][a-z0-9._~-]*)@(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-[\\w.-]+)?)\""
+      ],
+      "datasourceTemplate": "npm"
+    },
+    {
+      "description": "The repomix runner pin in the plugin source",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^plugins\\/repomix\\/opencode\\/src\\/pack\\.ts$/"
+      ],
+      "matchStrings": [
+        "REPOMIX_VERSION = \\\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\\\""
+      ],
+      "depNameTemplate": "repomix",
+      "datasourceTemplate": "npm"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "cad common and opencode/examples are vendored from the cad-agent tag; never edit them (AGENTS.md)",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchFileNames": [
+        "plugins/cad/common/**",
+        "plugins/cad/opencode/**"
+      ],
+      "enabled": false
+    }
+  ]
+}
