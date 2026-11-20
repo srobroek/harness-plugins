@@ -17,6 +17,7 @@ The repository is a workspace of OpenCode V2 plugins written in TypeScript, and 
 | `effect` | 4.1.4 | `package.json` |
 | `smol-toml` | 1.9.1 | `lib/package.json`; `lib` and `safety` read TOML with it |
 | `jsonc-parser` | 3.3.1 | `package.json`; `model-roles` edits JSONC config files with it |
+| `spdx-expression-parse` | 5.0.0 | `package.json`; `code-challenge` parses SPDX licence expressions with it (types: `@types/spdx-expression-parse` 4.0.0) |
 | `@srobroek/harness-kit` | 1.4.0 | `package.json`, workflow tags in `.github/workflows` |
 
 `smol-toml` is a runtime `dependency` of `lib`, so it ships in the bundles that import it.
@@ -77,6 +78,18 @@ Move new shared code into `lib` instead of adding another edge.
 - Run storage: every run writes under `<git-dir>/code-challenge/<run-id>/`, outside the working tree (`intake.json`, `scan.json`, `findings.json`, `research.json`, `verdicts.json`, `decisions.jsonl`, `report.json`, `report.md`). `decisions.jsonl` is append-only. The directory is never committed.
 - Formulas: `challenge_setup` copies `code-challenge` (the full run), `mol-challenge-<phase>` for the seven phases and `mol-challenge-lens` into `.beads/formulas/`. The lead agent sequences the phases, dispatches subagents and writes every file, bead and log line. Only `mol-challenge-lens/analyse-lens` (to `code-challenger`) and `mol-challenge-refute/attack-findings` (to `refactor-challenger`) route to a subagent. Both agents are read-only; each routed step lists `requires_actions` and a test checks the agent's permissions allow them.
 - `challenge_setup` resolves the target workspace from the invoking session's directory and fails when it cannot read that session.
+
+### code-challenge `challenge_lib_facts`
+
+`plugins/code-challenge/opencode/src/lib-facts/` registers the `challenge_lib_facts` tool (`registerLibFacts(ctx)`). It returns facts about 1 to 6 packages (npm, PyPI, crates.io, Go) and no verdicts, and uses `fetch` with no HTTP library.
+
+- External sources, all HTTPS: `api.deps.dev` (v3, and v3alpha for dependents), `registry.npmjs.org`, `api.npmjs.org`, `pypi.org`, `pypistats.org`, `crates.io`, `proxy.golang.org`, `api.osv.dev` (`querybatch`) and `api.github.com`. Each source can fail alone; the failure is listed in the package's `missing`.
+- OSV is never cached. An OSV reply with a wrong result count, a continuation token or a malformed vulnerability list is a failure, so the CVE gate reads `null` instead of passing.
+- GitHub token boundary: the tool runs `gh auth token` itself (5 s timeout) and sends the token only as the `Authorization` header of requests to `api.github.com`. It is never logged, returned or cached. Redirects are followed by hand and only within the original host. Repository URLs come from publisher metadata, so only recognised github.com forms are used, `owner` and `repo` must match GitHub's charset, and each part is `encodeURIComponent`-ed into the path.
+- Input limits: package names are checked per ecosystem (no `?`, `#`, `..`, control characters or backslashes; at most 214 characters) and versions must be plain version strings.
+- Cache: one JSON file per request under `$XDG_CACHE_HOME/opencode/code-challenge/lib-facts` (`~/.cache/...` by default), 7-day TTL. GitHub replies are reduced to the public figures the tool reports before they are stored. An expired entry is deleted on read, the first write of each call sweeps expired files and trims the directory to 2000 entries, and an entry over 256 KiB is not stored.
+- Request limits: 6 requests in flight, a 10 s timeout each, 5 MiB per reply (checked while streaming, before `JSON.parse`) and 3 same-host redirects.
+- Licence gate: `ALLOWED_LICENCES` in `licence.ts` lists permissive and weak-copyleft SPDX ids. `spdx-expression-parse` evaluates expressions with grouping, `AND` and `OR`; it is a small, widely used parser (the one `npm` tooling uses) and replaces a hand-written grammar that mishandled parentheses. It is inlined into the bundle like `jsonc-parser`.
 
 ## Commands
 
