@@ -12,6 +12,7 @@
 - Tooling comes from `@srobroek/harness-kit`, pinned exactly in `package.json` and configured by `harness-kit.json`. Do not copy its scripts into this repository. `scripts/` holds what is specific to these plugins: bundling, agent composition and translation, and content checks.
 - The package version and the workflow tags (`srobroek/harness-kit/.github/workflows/*.yml@vX.Y.Z`) are the same version. Bump them together, run `npm run build`, and commit as `chore(deps): bump @srobroek/harness-kit to X.Y.Z`.
 - `bun` must be on `PATH` to run `harness-kit`.
+- Stack, toolchain versions, layout and CI: [docs/engineering.md](docs/engineering.md).
 
 ## Commands
 
