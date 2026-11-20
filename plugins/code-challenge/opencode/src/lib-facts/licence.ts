@@ -1,3 +1,5 @@
+import parse from "spdx-expression-parse"
+
 /** SPDX ids a dependency may carry without tripping the licence hard gate: permissive and weak copyleft. */
 export const ALLOWED_LICENCES: ReadonlySet<string> = new Set([
   "MIT",
@@ -21,12 +23,22 @@ export const ALLOWED_LICENCES: ReadonlySet<string> = new Set([
   "LGPL-3.0-or-later",
 ])
 
-/** One SPDX expression: `OR` is a choice, `AND` needs both sides, `WITH` exceptions are ignored. */
-function expressionAllowed(expression: string): boolean {
-  const alternatives = expression.replace(/[()]/g, " ").split(/\s+OR\s+/i)
-  return alternatives.some((alternative) =>
-    alternative.split(/\s+AND\s+/i).every((id) => ALLOWED_LICENCES.has(id.trim().replace(/\s+WITH\s+.*$/i, ""))),
-  )
+type Node = ReturnType<typeof parse>
+
+/** `OR` needs one side to pass, `AND` both. A `WITH` exception does not change the licence's own verdict. */
+function satisfied(node: Node): boolean {
+  if ("conjunction" in node)
+    return node.conjunction === "or" ? satisfied(node.left) || satisfied(node.right) : satisfied(node.left) && satisfied(node.right)
+  return ALLOWED_LICENCES.has(node.license)
+}
+
+/** One SPDX expression, with grouping. An expression that does not parse is not allowed. */
+export function expressionAllowed(expression: string): boolean {
+  try {
+    return satisfied(parse(expression))
+  } catch {
+    return false
+  }
 }
 
 /**

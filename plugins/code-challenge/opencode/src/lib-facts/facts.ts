@@ -2,12 +2,14 @@ import type { Http } from "./http.ts"
 import { licenceBlocked } from "./licence.ts"
 import {
   canonicalName,
+  type Downloads,
   depsDevDependencies,
   depsDevDependents,
   depsDevProject,
   depsDevVersion,
   depsDevVersions,
-  downloadStats,
+  downloadSources,
+  type GithubSlug,
   githubFacts,
   githubSlug,
   osvVulnerabilities,
@@ -41,6 +43,8 @@ export function pickLatest(versions: readonly VersionEntry[]): VersionEntry | un
   )
 }
 
+type Attempt = <T>(source: string, run: () => Promise<T>) => Promise<T | undefined>
+
 /** Gather every fact for one package. A failed source adds a `missing` entry and leaves its fields `null`. */
 export async function collectPackage(
   ecosystem: Ecosystem,
@@ -51,7 +55,7 @@ export async function collectPackage(
   const name = canonicalName(ecosystem, request.name)
   const requested = request.version ?? null
   const missing: string[] = []
-  const attempt = async <T>(source: string, run: () => Promise<T>): Promise<T | undefined> => {
+  const attempt: Attempt = async (source, run) => {
     try {
       return await run()
     } catch (error) {
@@ -60,11 +64,15 @@ export async function collectPackage(
     }
   }
 
-  const [versions, registry] = await Promise.all([
-    attempt("deps.dev packages", () => depsDevVersions(http, ecosystem, name)),
-    attempt("registry", () => registryFacts(http, ecosystem, name)),
-  ])
+  const versions = await attempt("deps.dev packages", () => depsDevVersions(http, ecosystem, name))
   const newest = versions ? pickLatest(versions) : undefined
+  // Registry metadata describes one version. Ask for the version deps.dev calls latest, and drop a
+  // reply for any other, so no field (the licence gate included) is read from a different release.
+  let registry = await attempt("registry", () => registryFacts(http, ecosystem, name, newest?.version || null))
+  if (registry && newest?.version && registry.version !== newest.version) {
+    missing.push(`registry: describes ${registry.version ?? "no version"}, not ${newest.version}`)
+    registry = undefined
+  }
   const version = newest?.version || registry?.version || null
   const publishedAt = newest?.publishedAt ?? registry?.publishedAt ?? null
 
@@ -76,23 +84,21 @@ export async function collectPackage(
     }
   }
 
-  const [detail, dependencies, dependents, stats, osv] = await Promise.all([
+  const [detail, dependencies, dependents, downloads, osv] = await Promise.all([
     attempt("deps.dev version", () => depsDevVersion(http, ecosystem, name, version)),
     attempt("deps.dev dependencies", () => depsDevDependencies(http, ecosystem, name, version)),
     attempt("deps.dev dependents", () => depsDevDependents(http, ecosystem, name, version)),
-    attempt("download stats", () => downloadStats(http, ecosystem, name)),
+    collectDownloads(http, ecosystem, name, registry?.downloads ?? null, attempt),
     attempt("osv", () => osvVulnerabilities(http, ecosystem, name, requested ? [version, requested] : [version])),
   ])
 
-  const repoUrl = detail?.repo ?? registry?.repo ?? null
-  const slug = githubSlug(repoUrl)
+  const slug = githubSlug(detail?.repo ?? registry?.repo ?? null)
   const repo = slug ? await repoFacts(slug, collector, attempt, missing) : null
 
   const licence = detail && detail.licences.length > 0 ? detail.licences : registry?.licence ? [registry.licence] : null
   const vulnerabilities = osv ? { latest: osv[0] ?? [], requested: requested ? (osv[1] ?? []) : null } : null
   const unpatchedCve = vulnerabilities ? vulnerabilities.latest.length > 0 : null
   const licenceNotAllowed = licenceBlocked(licence)
-  const downloads = stats ?? registry?.downloads ?? null
 
   return {
     name: request.name,
@@ -102,9 +108,9 @@ export async function collectPackage(
     deprecated: newest ? newest.isDeprecated || registry?.deprecated === true : (registry?.deprecated ?? null),
     yanked: registry?.yanked ?? null,
     licence,
-    downloads,
+    downloads: downloads ?? null,
     dependents: dependents ?? null,
-    repo: repo && repoUrl ? { url: repoUrl, ...repo } : null,
+    repo: repo && slug ? { url: `https://github.com/${slug.owner}/${slug.repo}`, ...repo } : null,
     dependencies: dependencies ?? null,
     size: registry ? sizeOf(registry) : null,
     types: registry?.types ?? null,
@@ -119,23 +125,41 @@ export async function collectPackage(
   }
 }
 
+/** Each download call runs and fails on its own; the figures that arrived are kept. */
+async function collectDownloads(
+  http: Http,
+  ecosystem: Ecosystem,
+  name: string,
+  fromRegistry: Downloads | null,
+  attempt: Attempt,
+): Promise<Downloads | null> {
+  const parts = await Promise.all(downloadSources(http, ecosystem, name).map((s) => attempt(s.label, s.run)))
+  const got = parts.filter((p): p is Partial<Downloads> => p !== undefined)
+  if (got.length === 0 && fromRegistry === null) return null
+  return Object.assign({ lastWeek: null, lastMonth: null, last90Days: null }, fromRegistry, ...got)
+}
+
 const sizeOf = (r: RegistryFacts) =>
   r.unpackedBytes === null && r.downloadBytes === null ? null : { unpackedBytes: r.unpackedBytes, downloadBytes: r.downloadBytes }
 
 async function repoFacts(
-  slug: string,
+  slug: GithubSlug,
   collector: Collector,
-  attempt: <T>(source: string, run: () => Promise<T>) => Promise<T | undefined>,
+  attempt: Attempt,
   missing: string[],
 ): Promise<Omit<NonNullable<PackageFacts["repo"]>, "url">> {
-  const token = await collector.token()
-  const github = await githubFacts(collector.http, slug, token)
+  const github = await githubFacts(collector.http, slug, await collector.token())
   missing.push(...github.failures)
   const facts = github.facts
   if (facts.stars !== null && facts.openIssues !== null) return facts
-  // GitHub gave no counts: deps.dev mirrors stars and open issues (issues and PRs together).
-  const fallback = await attempt("deps.dev project", () => depsDevProject(collector.http, `github.com/${slug}`))
-  return { ...facts, stars: facts.stars ?? fallback?.stars ?? null, openIssues: facts.openIssues ?? fallback?.openIssues ?? null }
+  // GitHub gave no counts. deps.dev mirrors stars and GitHub's open-issue count, which includes pull requests.
+  const fallback = await attempt("deps.dev project", () => depsDevProject(collector.http, slug))
+  const openIssues =
+    facts.openIssues ??
+    (fallback?.openIssues != null && facts.openPullRequests !== null
+      ? Math.max(0, fallback.openIssues - facts.openPullRequests)
+      : (fallback?.openIssues ?? null))
+  return { ...facts, stars: facts.stars ?? fallback?.stars ?? null, openIssues }
 }
 
 function blank(name: string, requestedVersion: string | null): Omit<PackageFacts, "gates" | "missing"> {

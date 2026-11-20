@@ -3,6 +3,7 @@ import type { Context } from "@opencode/plugin/promise/plugin"
 import { DiskCache, defaultCacheDir } from "./cache.ts"
 import { collectPackage } from "./facts.ts"
 import { Http } from "./http.ts"
+import { nameProblem, versionProblem } from "./names.ts"
 import { ECOSYSTEMS, type Ecosystem, type LibFacts, type PackageRequest } from "./types.ts"
 
 export { CACHE_TTL_MS, DiskCache, defaultCacheDir } from "./cache.ts"
@@ -50,9 +51,15 @@ export function readRequest(input: unknown): { ecosystem: Ecosystem; packages: P
   for (const entry of packages) {
     const { name, version } = (entry ?? {}) as { name?: unknown; version?: unknown }
     if (typeof name !== "string" || name.trim() === "") return "each package needs a non-empty name"
-    if (version !== undefined && (typeof version !== "string" || version.trim() === ""))
-      return "version must be a non-empty string"
-    parsed.push(version === undefined ? { name: name.trim() } : { name: name.trim(), version: (version as string).trim() })
+    const nameIssue = nameProblem(ecosystem as Ecosystem, name.trim())
+    if (nameIssue) return `${nameIssue}: ${JSON.stringify(name.slice(0, 80))}`
+    if (version === undefined) {
+      parsed.push({ name: name.trim() })
+      continue
+    }
+    if (typeof version !== "string" || versionProblem(version.trim()))
+      return `invalid version: ${JSON.stringify(String(version).slice(0, 80))}`
+    parsed.push({ name: name.trim(), version: version.trim() })
   }
   return { ecosystem: ecosystem as Ecosystem, packages: parsed }
 }
@@ -74,6 +81,8 @@ export type LibFactsOverrides = {
   token?: () => Promise<string | undefined>
   now?: () => Date
   timeoutMs?: number
+  maxBodyBytes?: number
+  concurrency?: number
 }
 
 export async function lookupLibFacts(
@@ -84,10 +93,19 @@ export async function lookupLibFacts(
 ): Promise<LibFacts> {
   const now = overrides.now ?? (() => new Date())
   const cache = new DiskCache(overrides.cacheDir ?? defaultCacheDir(), () => now().getTime())
-  const http = new Http({ fetch: overrides.fetch ?? fetch, cache, signal, timeoutMs: overrides.timeoutMs })
+  const http = new Http({
+    fetch: overrides.fetch ?? fetch,
+    cache,
+    signal,
+    timeoutMs: overrides.timeoutMs,
+    maxBodyBytes: overrides.maxBodyBytes,
+    concurrency: overrides.concurrency,
+  })
   let token: Promise<string | undefined> | undefined
   const collector = { http, now, token: () => (token ??= (overrides.token ?? ghToken)()) }
   const results = await Promise.all(packages.map((p) => collectPackage(ecosystem, p, collector)))
+  // A cancelled call is not a degraded one: stop rather than return facts built from aborted requests.
+  signal?.throwIfAborted()
   return { ecosystem, fetchedAt: now().toISOString(), packages: results }
 }
 

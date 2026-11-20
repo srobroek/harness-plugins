@@ -2,12 +2,16 @@ import type { DiskCache } from "./cache.ts"
 
 export const REQUEST_TIMEOUT_MS = 10_000
 export const CONCURRENCY = 6
+/** A reply larger than this is refused before any JSON is parsed. */
+export const MAX_BODY_BYTES = 5 * 1024 * 1024
+export const MAX_REDIRECTS = 3
 
 export type HttpOptions = {
   fetch: typeof fetch
   cache: DiskCache
   concurrency?: number
   timeoutMs?: number
+  maxBodyBytes?: number
   signal?: AbortSignal
 }
 
@@ -24,7 +28,7 @@ export class HttpError extends Error {
 
 const AGENT = { "user-agent": "opencode-code-challenge" }
 
-/** JSON over `fetch` with a shared concurrency limit, a per-request timeout and the disk cache. */
+/** JSON over `fetch` with a shared concurrency limit, a per-request timeout, a body cap and the disk cache. */
 export class Http {
   private active = 0
   private readonly waiting: Array<() => void> = []
@@ -45,21 +49,69 @@ export class Http {
     }
   }
 
+  /** Read at most `maxBodyBytes` of the body, then parse it. */
+  private async readJson(response: Response, url: string): Promise<unknown> {
+    const max = this.options.maxBodyBytes ?? MAX_BODY_BYTES
+    const tooLarge = () => new Error(`response too large ${new URL(url).host}`)
+    if (Number(response.headers.get("content-length")) > max) throw tooLarge()
+    const reader = response.body?.getReader()
+    if (!reader) return response.json()
+    const chunks: Uint8Array[] = []
+    let size = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value.byteLength
+      if (size > max) {
+        await reader.cancel().catch(() => {})
+        throw tooLarge()
+      }
+      chunks.push(value)
+    }
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"))
+  }
+
+  /**
+   * Redirects are followed by hand and only within the original host, so an `Authorization`
+   * header never leaves the host it was meant for.
+   */
   private send(url: string, init: RequestInit): Promise<Reply> {
     return this.slot(async () => {
       const timeout = AbortSignal.timeout(this.options.timeoutMs ?? REQUEST_TIMEOUT_MS)
       const signal = this.options.signal ? AbortSignal.any([timeout, this.options.signal]) : timeout
-      const response = await this.options.fetch(url, { ...init, signal })
-      if (!response.ok) throw new HttpError(response.status, url)
-      return { body: await response.json(), link: response.headers.get("link") }
+      const origin = new URL(url)
+      let target = url
+      try {
+        for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+          const response = await this.options.fetch(target, { ...init, signal, redirect: "manual" })
+          if (response.status >= 300 && response.status < 400) {
+            const location = response.headers.get("location")
+            const next = location ? new URL(location, target) : undefined
+            if (next?.protocol !== "https:" || next.host !== origin.host)
+              throw new Error(`redirect refused ${origin.host}`)
+            target = next.href
+            continue
+          }
+          if (!response.ok) throw new HttpError(response.status, target)
+          return { body: await this.readJson(response, target), link: response.headers.get("link") }
+        }
+        throw new Error(`too many redirects ${origin.host}`)
+      } catch (error) {
+        if (timeout.aborted && !this.options.signal?.aborted) throw new Error(`timed out ${origin.host}`)
+        throw error
+      }
     })
   }
 
-  /** GET JSON, cached for the TTL. `headers` (a token) are not part of the cache key. */
-  async get(url: string, headers: Record<string, string> = {}): Promise<Reply> {
+  /**
+   * GET JSON, cached for the TTL. `headers` (a token) are not part of the cache key. `project`
+   * reduces the reply to the public facts worth keeping; only its result is cached.
+   */
+  async get(url: string, headers: Record<string, string> = {}, project?: (reply: Reply) => unknown): Promise<Reply> {
     const hit = this.options.cache.get(url)
     if (hit) return hit
-    const reply = await this.send(url, { headers: { accept: "application/json", ...AGENT, ...headers } })
+    const raw = await this.send(url, { headers: { accept: "application/json", ...AGENT, ...headers } })
+    const reply: Reply = project ? { body: project(raw), link: null } : raw
     this.options.cache.put(url, reply)
     return reply
   }

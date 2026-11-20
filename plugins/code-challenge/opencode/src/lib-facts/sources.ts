@@ -1,4 +1,4 @@
-import type { Http } from "./http.ts"
+import type { Http, Reply } from "./http.ts"
 import type { Ecosystem } from "./types.ts"
 
 export const DEPS_DEV = "https://api.deps.dev"
@@ -23,6 +23,9 @@ export function canonicalName(ecosystem: Ecosystem, name: string): string {
 /** The module proxy lower-cases paths and escapes each capital as `!` plus the letter. */
 const goEscape = (path: string): string => path.replace(/[A-Z]/g, (c) => `!${c.toLowerCase()}`)
 
+/** An npm registry path: a scope keeps its `@` and encodes the slash (`@scope%2Fname`). */
+const npmPath = (name: string): string => encodeURIComponent(name).replace(/^%40/, "@")
+
 export type VersionEntry = { version: string; publishedAt: string | null; isDefault: boolean; isDeprecated: boolean }
 
 export async function depsDevVersions(http: Http, ecosystem: Ecosystem, name: string): Promise<VersionEntry[]> {
@@ -40,6 +43,9 @@ export async function depsDevVersions(http: Http, ecosystem: Ecosystem, name: st
 
 export type DepsDevVersion = { licences: string[]; repo: string | null }
 
+const versionUrl = (ecosystem: Ecosystem, name: string, version: string): string =>
+  `${DEPS_DEV}/v3/systems/${DEPS_SYSTEM[ecosystem]}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}`
+
 export async function depsDevVersion(http: Http, ecosystem: Ecosystem, name: string, version: string): Promise<DepsDevVersion> {
   const { body } = await http.get(versionUrl(ecosystem, name, version))
   const data = obj(body)
@@ -55,9 +61,6 @@ export async function depsDevVersion(http: Http, ecosystem: Ecosystem, name: str
   }
 }
 
-const versionUrl = (ecosystem: Ecosystem, name: string, version: string): string =>
-  `${DEPS_DEV}/v3/systems/${DEPS_SYSTEM[ecosystem]}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}`
-
 export async function depsDevDependencies(http: Http, ecosystem: Ecosystem, name: string, version: string) {
   const { body } = await http.get(`${versionUrl(ecosystem, name, version)}:dependencies`)
   const nodes = arr(obj(body).nodes).map(obj)
@@ -72,11 +75,13 @@ export async function depsDevDependents(http: Http, ecosystem: Ecosystem, name: 
   return num(obj(body).dependentCount)
 }
 
-export async function depsDevProject(http: Http, repo: string) {
-  const { body } = await http.get(`${DEPS_DEV}/v3/projects/${encodeURIComponent(repo)}`)
+export async function depsDevProject(http: Http, slug: GithubSlug) {
+  const { body } = await http.get(`${DEPS_DEV}/v3/projects/${encodeURIComponent(`github.com/${slug.owner}/${slug.repo}`)}`)
   const data = obj(body)
   return { stars: num(data.starsCount), openIssues: num(data.openIssuesCount) }
 }
+
+export type Downloads = { lastWeek: number | null; lastMonth: number | null; last90Days: number | null }
 
 export type RegistryFacts = {
   version: string | null
@@ -89,10 +94,10 @@ export type RegistryFacts = {
   types: boolean | null
   modules: "esm" | "cjs" | "dual" | null
   repo: string | null
-  downloads: { lastWeek: number | null; lastMonth: number | null; last90Days: number | null } | null
+  downloads: Downloads | null
 }
 
-const EMPTY: RegistryFacts = {
+export const EMPTY_REGISTRY: RegistryFacts = {
   version: null,
   publishedAt: null,
   licence: null,
@@ -128,6 +133,7 @@ export function npmFacts(manifest: Json): Partial<RegistryFacts> {
   }
 }
 
+/** A PyPI per-version document (`/pypi/{name}/{version}/json`), or the latest one. */
 export function pypiFacts(doc: Json): Partial<RegistryFacts> {
   const info = obj(doc.info)
   const files = arr(doc.urls).map(obj)
@@ -143,14 +149,15 @@ export function pypiFacts(doc: Json): Partial<RegistryFacts> {
   }
 }
 
-export function cratesFacts(doc: Json): Partial<RegistryFacts> {
+/** The crates.io document; `version` picks the entry whose licence, yank flag and size are reported. */
+export function cratesFacts(doc: Json, version: string | null): Partial<RegistryFacts> {
   const crate = obj(doc.crate)
-  const version = str(crate.max_stable_version) ?? str(crate.max_version)
+  const wanted = version ?? str(crate.max_stable_version) ?? str(crate.max_version)
   const entry = arr(doc.versions)
     .map(obj)
-    .find((v) => v.num === version)
+    .find((v) => v.num === wanted)
   return {
-    version,
+    version: entry ? wanted : null,
     publishedAt: str(entry?.created_at),
     licence: str(entry?.license),
     yanked: bool(entry?.yanked),
@@ -160,41 +167,63 @@ export function cratesFacts(doc: Json): Partial<RegistryFacts> {
   }
 }
 
-export async function registryFacts(http: Http, ecosystem: Ecosystem, name: string): Promise<RegistryFacts> {
-  const id = encodeURIComponent(name)
+/**
+ * Registry metadata for `version`, or for the registry's latest when `version` is `null`.
+ * The reply names the version it describes, so the caller can discard a mismatch.
+ */
+export async function registryFacts(http: Http, ecosystem: Ecosystem, name: string, version: string | null): Promise<RegistryFacts> {
   switch (ecosystem) {
-    case "npm":
-      return { ...EMPTY, ...npmFacts(obj((await http.get(`https://registry.npmjs.org/${id}/latest`)).body)) }
-    case "pypi":
-      return { ...EMPTY, ...pypiFacts(obj((await http.get(`https://pypi.org/pypi/${id}/json`)).body)) }
-    case "crates":
-      return { ...EMPTY, ...cratesFacts(obj((await http.get(`https://crates.io/api/v1/crates/${id}`)).body)) }
+    case "npm": {
+      const url = `https://registry.npmjs.org/${npmPath(name)}/${version ? encodeURIComponent(version) : "latest"}`
+      return { ...EMPTY_REGISTRY, ...npmFacts(obj((await http.get(url)).body)) }
+    }
+    case "pypi": {
+      const url = `https://pypi.org/pypi/${encodeURIComponent(name)}/${version ? `${encodeURIComponent(version)}/` : ""}json`
+      return { ...EMPTY_REGISTRY, ...pypiFacts(obj((await http.get(url)).body)) }
+    }
+    case "crates": {
+      const doc = obj((await http.get(`https://crates.io/api/v1/crates/${encodeURIComponent(name)}`)).body)
+      return { ...EMPTY_REGISTRY, ...cratesFacts(doc, version) }
+    }
     case "go": {
-      const latest = obj((await http.get(`https://proxy.golang.org/${goEscape(name)}/@latest`)).body)
-      return { ...EMPTY, version: str(latest.Version), publishedAt: str(latest.Time) }
+      const tail = version ? `@v/${goEscape(version)}.info` : "@latest"
+      const info = obj((await http.get(`https://proxy.golang.org/${goEscape(name)}/${tail}`)).body)
+      return { ...EMPTY_REGISTRY, version: str(info.Version), publishedAt: str(info.Time) }
     }
   }
 }
 
-/** Weekly and monthly downloads from the registry's stats service; crates reports them in its own document, Go has none. */
-export async function downloadStats(http: Http, ecosystem: Ecosystem, name: string): Promise<RegistryFacts["downloads"]> {
+/** One download figure group and the call that gets it; calls fail independently. */
+export type DownloadSource = { label: string; run: () => Promise<Partial<Downloads>> }
+
+/** Weekly and monthly downloads: two npm calls, one pypistats call; crates reports in its own document, Go has none. */
+export function downloadSources(http: Http, ecosystem: Ecosystem, name: string): DownloadSource[] {
   if (ecosystem === "npm") {
-    const id = encodeURIComponent(name).replace("%40", "@")
-    const [week, month] = await Promise.all(
-      ["last-week", "last-month"].map(async (period) =>
-        num(obj((await http.get(`https://api.npmjs.org/downloads/point/${period}/${id}`)).body).downloads),
-      ),
-    )
-    return { lastWeek: week ?? null, lastMonth: month ?? null, last90Days: null }
+    const period = (label: "last-week" | "last-month", key: "lastWeek" | "lastMonth"): DownloadSource => ({
+      label: `npm downloads ${label}`,
+      run: async () => ({
+        [key]: num(obj((await http.get(`https://api.npmjs.org/downloads/point/${label}/${npmPath(name)}`)).body).downloads),
+      }),
+    })
+    return [period("last-week", "lastWeek"), period("last-month", "lastMonth")]
   }
-  if (ecosystem === "pypi") {
-    const data = obj(obj((await http.get(`https://pypistats.org/api/packages/${encodeURIComponent(name)}/recent`)).body).data)
-    return { lastWeek: num(data.last_week), lastMonth: num(data.last_month), last90Days: null }
-  }
-  return null
+  if (ecosystem === "pypi")
+    return [
+      {
+        label: "pypistats",
+        run: async () => {
+          const data = obj(obj((await http.get(`https://pypistats.org/api/packages/${encodeURIComponent(name)}/recent`)).body).data)
+          return { lastWeek: num(data.last_week), lastMonth: num(data.last_month) }
+        },
+      },
+    ]
+  return []
 }
 
-/** One OSV batch for the latest version and, when asked, the requested one. Never cached. */
+/**
+ * One OSV batch for the given versions, never cached. The reply must hold one result per query
+ * and no continuation token; anything else throws, so a truncated answer never reads as "clean".
+ */
 export async function osvVulnerabilities(
   http: Http,
   ecosystem: Ecosystem,
@@ -203,12 +232,19 @@ export async function osvVulnerabilities(
 ): Promise<string[][]> {
   const queries = versions.map((version) => ({ package: { name, ecosystem: OSV_ECOSYSTEM[ecosystem] }, version }))
   const { body } = await http.post(OSV, { queries })
-  const results = arr(obj(body).results)
-  return versions.map((_, i) =>
-    arr(obj(results[i]).vulns)
-      .map((v) => str(obj(v).id))
-      .filter((id): id is string => id !== null),
-  )
+  const results = obj(body).results
+  if (!Array.isArray(results) || results.length !== versions.length) throw new Error("malformed response api.osv.dev")
+  return results.map((result) => {
+    const entry = obj(result)
+    if (entry.next_page_token !== undefined) throw new Error("truncated response api.osv.dev")
+    if (entry.vulns === undefined) return []
+    if (!Array.isArray(entry.vulns)) throw new Error("malformed response api.osv.dev")
+    return entry.vulns.map((v) => {
+      const id = str(obj(v).id)
+      if (id === null) throw new Error("malformed response api.osv.dev")
+      return id
+    })
+  })
 }
 
 export type GithubFacts = {
@@ -220,10 +256,36 @@ export type GithubFacts = {
   archived: boolean | null
 }
 
-/** `owner/repo` from a repository URL, or `null` when it is not on GitHub. */
-export function githubSlug(url: string | null): string | null {
-  const match = url?.match(/github\.com[/:]([^/\s]+)\/([^/\s#]+?)(?:\.git)?(?:[/#?].*)?$/i)
-  return match ? `${match[1]}/${match[2]}` : null
+export type GithubSlug = { owner: string; repo: string }
+
+const OWNER = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/
+const REPO = /^[A-Za-z0-9._-]{1,100}$/
+const TAIL = String.raw`(?:\.git)?\/?(?:(?:#|\/(?:tree|blob)\/)[^\s\\]*)?$`
+const FORMS = [
+  new RegExp(String.raw`^(?:git\+)?https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/#?]+?)${TAIL}`, "i"),
+  new RegExp(String.raw`^git:\/\/github\.com\/([^/]+)\/([^/#?]+?)${TAIL}`, "i"),
+  new RegExp(String.raw`^(?:git\+)?ssh:\/\/git@github\.com\/([^/]+)\/([^/#?]+?)${TAIL}`, "i"),
+  new RegExp(String.raw`^git@github\.com:([^/]+)\/([^/#?]+?)${TAIL}`, "i"),
+  new RegExp(String.raw`^github\.com\/([^/]+)\/([^/#?]+?)${TAIL}`, "i"),
+  new RegExp(String.raw`^github:([^/]+)\/([^/#?]+?)${TAIL}`, "i"),
+]
+
+/**
+ * `owner` and `repo` from a recognised github.com repository URL form, or `null`. Publisher
+ * metadata is untrusted: the whole string must match a known form, each part must use GitHub's
+ * own charset, and dot segments are refused, so nothing here can climb out of `/repos/{o}/{r}`.
+ */
+export function githubSlug(url: string | null): GithubSlug | null {
+  if (url === null) return null
+  for (const form of FORMS) {
+    const match = form.exec(url.trim())
+    const owner = match?.[1]
+    const repo = match?.[2]
+    if (owner === undefined || repo === undefined) continue
+    if (!OWNER.test(owner) || !REPO.test(repo) || repo === "." || repo === "..") return null
+    return { owner, repo }
+  }
+  return null
 }
 
 /** The page count of a `Link: <...&page=N>; rel="last"` header: with `per_page=1`, the item count. */
@@ -233,35 +295,45 @@ export function lastPage(link: string | null): number | null {
 }
 
 /** Repo metrics from the GitHub REST API. Each call degrades alone; `failures` lists the ones that failed. */
-export async function githubFacts(http: Http, slug: string, token: string | undefined) {
+export async function githubFacts(http: Http, slug: GithubSlug, token: string | undefined) {
   const headers: Record<string, string> = { accept: "application/vnd.github+json" }
   if (token) headers.authorization = `Bearer ${token}`
+  const base = `${GITHUB}/repos/${encodeURIComponent(slug.owner)}/${encodeURIComponent(slug.repo)}`
   const failures: string[] = []
-  const attempt = async <T>(label: string, run: () => Promise<T>): Promise<T | undefined> => {
+  const attempt = async <T>(label: string, url: string, project: (reply: Reply) => unknown): Promise<T | undefined> => {
     try {
-      return await run()
+      return (await http.get(url, headers, project)).body as T
     } catch (error) {
       failures.push(`github ${label}: ${error instanceof Error ? error.message : "failed"}`)
       return undefined
     }
   }
-  const [repo, pulls, commits, contributors] = await Promise.all([
-    attempt("repo", () => http.get(`${GITHUB}/repos/${slug}`, headers)),
-    attempt("pulls", () => http.get(`${GITHUB}/search/issues?q=${encodeURIComponent(`repo:${slug} type:pr state:open`)}&per_page=1`, headers)),
-    attempt("commits", () => http.get(`${GITHUB}/repos/${slug}/commits?per_page=1`, headers)),
-    attempt("contributors", () => http.get(`${GITHUB}/repos/${slug}/contributors?per_page=1&anon=true`, headers)),
+  // Each projection keeps only the public fact it needs, so the cache never holds a whole authenticated reply.
+  const [repo, pulls, commit, contributors] = await Promise.all([
+    attempt<{ stars: number | null; openAndPulls: number | null; archived: boolean | null }>("repo", base, ({ body }) => ({
+      stars: num(obj(body).stargazers_count),
+      openAndPulls: num(obj(body).open_issues_count),
+      archived: bool(obj(body).archived),
+    })),
+    attempt<number | null>(
+      "pulls",
+      `${GITHUB}/search/issues?q=${encodeURIComponent(`repo:${slug.owner}/${slug.repo} type:pr state:open`)}&per_page=1`,
+      ({ body }) => num(obj(body).total_count),
+    ),
+    attempt<string | null>("commits", `${base}/commits?per_page=1`, ({ body }) =>
+      str(obj(obj(obj(arr(body)[0]).commit).committer).date),
+    ),
+    attempt<number | null>("contributors", `${base}/contributors?per_page=1&anon=true`, ({ body, link }) => lastPage(link) ?? arr(body).length),
   ])
-  const meta = obj(repo?.body)
-  const openPullRequests = num(obj(pulls?.body).total_count)
-  const openAndPulls = num(meta.open_issues_count)
-  const firstCommit = obj(arr(commits?.body)[0])
+  const openPullRequests = pulls ?? null
   const facts: GithubFacts = {
-    stars: num(meta.stargazers_count),
-    openIssues: openAndPulls !== null && openPullRequests !== null ? Math.max(0, openAndPulls - openPullRequests) : null,
+    stars: repo?.stars ?? null,
+    openIssues:
+      repo?.openAndPulls != null && openPullRequests !== null ? Math.max(0, repo.openAndPulls - openPullRequests) : null,
     openPullRequests,
-    lastCommit: str(obj(obj(firstCommit.commit).committer).date),
-    contributors: contributors ? (lastPage(contributors.link) ?? arr(contributors.body).length) : null,
-    archived: bool(meta.archived),
+    lastCommit: commit ?? null,
+    contributors: contributors ?? null,
+    archived: repo?.archived ?? null,
   }
   return { facts, failures }
 }
