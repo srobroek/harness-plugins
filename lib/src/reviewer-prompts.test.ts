@@ -1,9 +1,14 @@
 import { describe, expect, test } from "bun:test"
-import { readFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 
-const plugins = join(import.meta.dir, "../..")
-const shipped = (plugin: string, agent: string): string => readFileSync(join(plugins, plugin, "agents", `${agent}.md`), "utf8")
+const plugins = join(import.meta.dir, "../../plugins")
+// A plugin that also ships to Claude Code keeps the OpenCode form as `<agent>.opencode.md`.
+const shipped = (plugin: string, agent: string): string => {
+  const directory = join(plugins, plugin, "common", "agents")
+  const file = [`${agent}.opencode.md`, `${agent}.md`].map((name) => join(directory, name)).find(existsSync)
+  return readFileSync(file ?? join(directory, `${agent}.md`), "utf8")
+}
 
 // The rules every reviewer applies (review-standards: rules), and the checklist the full reviewers add.
 const RULES = ["Standards check: load `lang-<language>`", "`quality-code-policy`", "A departure with no stated reason", "stack-changing diff"]

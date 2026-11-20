@@ -1,30 +1,21 @@
 {
-  "name": "@srobroek/opencode-claude-compat",
+  "name": "claude-compat",
   "version": "0.4.0",
   "description": "Load Claude Code plugin repos at runtime: skills, agents, commands, MCP servers and command hooks, per project.",
+  "private": true,
   "type": "module",
-  "exports": {
-    ".": "./dist/index.js"
-  },
-  "files": [
-    "dist",
-    "index.js"
-  ],
-  "peerDependencies": {
-    "@opencode/plugin": "^2.3.2"
-  },
-  "peerDependenciesMeta": {
-    "@opencode/plugin": {
-      "optional": true
-    }
-  },
-  "devDependencies": {
-    "@srobroek/opencode-lib": "workspace:*"
-  },
-  "opencode-plugins": {
+  "agent-plugins": {
+    "description": "Load Claude Code plugin repos at runtime: skills, agents, commands, MCP servers and command hooks, per project.",
+    "category": "development",
+    "harnesses": [
+      "opencode"
+    ],
     "scope": "project",
     "signals": [
       "Claude Code plugins to load from a repository"
-    ]
+    ],
+    "entries": {
+      "index": "index"
+    }
   }
 }

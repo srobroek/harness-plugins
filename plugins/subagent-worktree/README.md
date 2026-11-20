@@ -218,7 +218,7 @@ instance, so in-memory locks, generations and holds would coordinate nothing bet
 lives under `<git-common-dir>/opencode/`, shared by every instance of the repository:
 
 - `locks/<sha1 of the directory>.lock`: one lock per worktree, using the protocol the Beads embedded
-  write lock ships (`plugins/beads/src/bd-embedded-write-lock.ts`), reproduced in
+  write lock ships (`plugins/beads/opencode/src/bd-embedded-write-lock.ts`), reproduced in
   `plugins/lib/src/lease-lock.ts` because it is entangled with Beads' store resolution and writer
   registry there. A hold is an `O_EXCL`-created file with a token and a lease renewed on a heartbeat;
   a holder on this host whose pid is gone, or whose lease nobody renewed, is taken over under a steal

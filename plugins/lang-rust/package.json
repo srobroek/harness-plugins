@@ -1,29 +1,19 @@
 {
-  "name": "@srobroek/opencode-lang-rust",
+  "name": "lang-rust",
   "version": "0.6.0",
   "description": "Rust skills: fmt, clippy and test checks, testing with nextest, proptest and insta, crates and workspaces, CI, sqlx persistence, Tauri and profiling.",
   "private": true,
   "type": "module",
-  "exports": {
-    ".": "./dist/index.js"
-  },
-  "files": [
-    "dist",
-    "index.js",
-    "skills"
-  ],
-  "peerDependencies": {
-    "@opencode/plugin": "^2.3.2"
-  },
-  "peerDependenciesMeta": {
-    "@opencode/plugin": {
-      "optional": true
+  "agent-plugins": {
+    "description": "Rust skills: fmt, clippy and test checks, testing with nextest, proptest and insta, crates and workspaces, CI, sqlx persistence, Tauri and profiling.",
+    "category": "development",
+    "harnesses": [
+      "opencode",
+      "claude"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
     }
-  },
-  "devDependencies": {
-    "@srobroek/opencode-lib": "workspace:*"
-  },
-  "opencode-plugins": {
-    "scope": "global"
   }
 }

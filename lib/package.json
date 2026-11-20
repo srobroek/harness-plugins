@@ -13,8 +13,5 @@
   },
   "dependencies": {
     "smol-toml": "1.9.1"
-  },
-  "opencode-plugins": {
-    "scope": "internal"
   }
 }

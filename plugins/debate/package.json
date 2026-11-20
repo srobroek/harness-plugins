@@ -1,30 +1,19 @@
 {
-  "name": "@srobroek/opencode-debate",
+  "name": "debate",
   "version": "0.5.0",
   "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
   "private": true,
   "type": "module",
-  "exports": {
-    ".": "./dist/index.js"
-  },
-  "files": [
-    "dist",
-    "index.js",
-    "skills"
-  ],
-  "opencode-plugins": {
+  "agent-plugins": {
+    "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
     "category": "productivity",
-    "scope": "global"
-  },
-  "peerDependencies": {
-    "@opencode/plugin": "^2.3.2"
-  },
-  "peerDependenciesMeta": {
-    "@opencode/plugin": {
-      "optional": true
+    "harnesses": [
+      "opencode",
+      "claude"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
     }
-  },
-  "devDependencies": {
-    "@srobroek/opencode-lib": "workspace:*"
   }
 }

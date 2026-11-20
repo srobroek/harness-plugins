@@ -1,29 +1,18 @@
 {
-  "name": "@srobroek/opencode-agent-seance",
+  "name": "agent-seance",
   "version": "0.6.0",
   "description": "seance subagent and read-only seance_read tool: answer a question from a past session and its subagent transcripts.",
   "private": true,
   "type": "module",
-  "exports": {
-    ".": "./dist/index.js"
-  },
-  "files": [
-    "dist",
-    "index.js",
-    "agents"
-  ],
-  "peerDependencies": {
-    "@opencode/plugin": "^2.3.2"
-  },
-  "peerDependenciesMeta": {
-    "@opencode/plugin": {
-      "optional": true
+  "agent-plugins": {
+    "description": "seance subagent and read-only seance_read tool: answer a question from a past session and its subagent transcripts.",
+    "category": "development",
+    "harnesses": [
+      "opencode"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
     }
-  },
-  "devDependencies": {
-    "@srobroek/opencode-lib": "workspace:*"
-  },
-  "opencode-plugins": {
-    "scope": "global"
   }
 }

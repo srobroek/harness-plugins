@@ -1,7 +1,7 @@
 /**
  * A lease-based, cross-process file lock.
  *
- * The algorithm is the one `plugins/beads/src/bd-embedded-write-lock.ts` ships and has been
+ * The algorithm is the one `plugins/beads/opencode/src/bd-embedded-write-lock.ts` ships and has been
  * reviewed against (the embedded Dolt write lock), reproduced here for plugins that cannot import
  * beads. It was not extracted from that module because there it is interleaved with the Beads
  * store resolution, a process-global registry of nested owners, a ticket queue, the `bd` writer

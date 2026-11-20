@@ -1,29 +1,18 @@
 {
-  "name": "@srobroek/opencode-agent-efficiency",
+  "name": "agent-efficiency",
   "version": "0.11.0",
   "description": "Cut agent tokens: run bash calls as the built-in shell tool, narrow explore to search and web tools, and trim read-only subagent prompts.",
   "private": true,
   "type": "module",
-  "exports": {
-    ".": "./dist/index.js"
-  },
-  "files": [
-    "dist",
-    "index.js",
-    "instructions"
-  ],
-  "peerDependencies": {
-    "@opencode/plugin": "^2.3.2"
-  },
-  "peerDependenciesMeta": {
-    "@opencode/plugin": {
-      "optional": true
+  "agent-plugins": {
+    "description": "Cut agent tokens: run bash calls as the built-in shell tool, narrow explore to search and web tools, and trim read-only subagent prompts.",
+    "category": "development",
+    "harnesses": [
+      "opencode"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
     }
-  },
-  "devDependencies": {
-    "@srobroek/opencode-lib": "workspace:*"
-  },
-  "opencode-plugins": {
-    "scope": "global"
   }
 }

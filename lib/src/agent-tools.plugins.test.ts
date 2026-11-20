@@ -5,9 +5,9 @@ import { agentPaths } from "./agent-files.ts"
 import { MCP_EXCLUDED_AGENTS, MCP_TOOL_AGENTS, refusedTool } from "./agent-tools.ts"
 import { createFakeContext } from "./testing.ts"
 
-const PLUGINS = join(import.meta.dir, "../..")
+const PLUGINS = join(import.meta.dir, "../../plugins")
 const sources = (plugin: string) => {
-  const dir = join(PLUGINS, plugin, "src")
+  const dir = join(PLUGINS, plugin, "opencode", "src")
   try {
     return readdirSync(dir)
       .filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file))
@@ -29,7 +29,7 @@ function sourceToolNames(text: string): string[] {
 /** Tool names a plugin registers when set up against a fake host; plugins needing more host surface are skipped. */
 async function registeredToolNames(plugin: string): Promise<string[]> {
   try {
-    const mod = (await import(join(PLUGINS, plugin, "src/index.ts"))).default as {
+    const mod = (await import(join(PLUGINS, plugin, "opencode/src/index.ts"))).default as {
       setup: (ctx: unknown) => Promise<(() => unknown) | undefined>
     }
     const fake = createFakeContext()
@@ -43,7 +43,7 @@ async function registeredToolNames(plugin: string): Promise<string[]> {
 }
 
 describe("tools option refuses every tool a plugin in this repository registers", () => {
-  const plugins = readdirSync(PLUGINS).filter((name) => name !== "lib")
+  const plugins = readdirSync(PLUGINS)
 
   test("the scan finds the tools it should", () => {
     const found = plugins.flatMap((plugin) => sources(plugin).flatMap(sourceToolNames))
@@ -66,10 +66,12 @@ describe("MCP grant sets", () => {
   // Read the first rule as text: delivery's agents carry a `model` key that the shared parser refuses.
   const DENY_ALL_FIRST = /^permissions:\n {2}- action: "\*"\n {4}resource: "\*"\n {4}effect: deny$/m
   const shipped = readdirSync(PLUGINS)
-    .filter((name) => name !== "lib" && !VENDORED.includes(name))
+    .filter((name) => !VENDORED.includes(name))
     .flatMap((plugin) =>
-      agentPaths(join(PLUGINS, plugin, "agents")).map((path) => ({
-        id: basename(path, ".md"),
+      agentPaths(join(PLUGINS, plugin, "common", "agents"))
+        .filter((path) => !path.endsWith(".claude.md"))
+        .map((path) => ({
+        id: basename(path, ".md").replace(/\.opencode$/, ""),
         denyAll: DENY_ALL_FIRST.test(readFileSync(path, "utf8")),
       })),
     )

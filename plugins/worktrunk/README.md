@@ -96,7 +96,7 @@ resolve it as `../skills`. A skill with the same id that the host already has wi
 ## Smoke test
 
 ```sh
-bun plugins/worktrunk/scripts/smoke.ts
+bun plugins/worktrunk/opencode/scripts/smoke.ts
 ```
 
 Creates a scratch repository, then creates, lists, refuses to remove while dirty, force-removes and

@@ -1,0 +1,9 @@
+{
+  "name": "architecture",
+  "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
+  "version": "0.7.0",
+  "author": {
+    "name": "Sjors Robroek"
+  },
+  "license": "Apache-2.0"
+}

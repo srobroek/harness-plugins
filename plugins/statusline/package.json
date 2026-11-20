@@ -1,28 +1,18 @@
 {
-  "name": "@srobroek/opencode-statusline",
+  "name": "statusline",
   "version": "0.4.0",
   "description": "omp-style status line above the OpenCode session composer.",
   "private": true,
   "type": "module",
-  "exports": {
-    "./tui": "./dist/tui.js"
-  },
-  "files": [
-    "dist",
-    "tui.js"
-  ],
-  "peerDependencies": {
-    "@opencode/plugin": "^2.3.2"
-  },
-  "peerDependenciesMeta": {
-    "@opencode/plugin": {
-      "optional": true
+  "agent-plugins": {
+    "description": "omp-style status line above the OpenCode session composer.",
+    "category": "development",
+    "harnesses": [
+      "opencode"
+    ],
+    "scope": "global",
+    "entries": {
+      "tui": "tui"
     }
-  },
-  "devDependencies": {
-    "@srobroek/opencode-lib": "workspace:*"
-  },
-  "opencode-plugins": {
-    "scope": "global"
   }
 }

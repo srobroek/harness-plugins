@@ -359,7 +359,7 @@ The plugin registers these subagents from `agents/*.md` through
   `agents` fragment, for hosts that set tiers in config instead.
 
 The agents were converted with
-`bun scripts/convert-agent.ts --roles plugins/delivery/agents/roles.source.json`,
+`bun scripts/convert-agent.ts --roles plugins/delivery/common/agents/roles.source.json`,
 then edited by hand. The roles file is keyed by model-roles tier (`cheap`, `standard`,
 `strong`, `reviewer`); the omp names `smol`, `task` and `slow` resolve to the same keys. The edits removed omp-only references, slimmed the
 shepherd, and limited the reviewer's shell to `gh pr view` and `gh pr diff`.
