@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "harness_plugins",
+  "project_id": "a6a27bcc-224e-41da-8c86-48d2c4558c26"
+}
