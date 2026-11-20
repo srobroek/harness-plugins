@@ -261,6 +261,53 @@ function substitutionEnd(body, from) {
 }
 
 // lib/src/shell-command.ts
+function commandSegments(command) {
+  const out = [];
+  let start = 0;
+  let quote = null;
+  let escaped = false;
+  for (let i = 0;i < command.length; i++) {
+    const ch = command[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quote === "'") {
+      if (ch === "'")
+        quote = null;
+      continue;
+    }
+    if (quote === '"') {
+      if (ch === "\\")
+        escaped = true;
+      else if (ch === '"')
+        quote = null;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+    const two = command.slice(i, i + 2);
+    if (two === "&&" || two === "||") {
+      out.push(command.slice(start, i), two);
+      i++;
+      start = i + 1;
+      continue;
+    }
+    if (ch === ";" || ch === "&" || ch === "|" || ch === `
+` || ch === "(" || ch === ")" || ch === "{" || ch === "}") {
+      out.push(command.slice(start, i), ch);
+      start = i + 1;
+    }
+  }
+  out.push(command.slice(start));
+  return out;
+}
 function tokenize(segment) {
   return tokenizeShell(segment, { preserveBackslashes: true }).map(({ value, startsQuoted }) => ({
     value,
@@ -1152,22 +1199,32 @@ var DEPLOY = [
   /\bpulumi\s+(up|destroy)\b/,
   /\bsst\s+(deploy|remove)\b/
 ];
-var PUSH_DEFAULT = git(String.raw`push\b[^|;&]*\s\+?(\S+:)?(refs\/heads\/)?(main|master)(?=$|[\s;|&])`, "m");
-var FORCE = git(String.raw`push\b[^|;&]*\s(--force(?!-with-lease)\b|-f\b|\+\S)`);
+var PUSH_DEFAULT = git(String.raw`push\b[^|;&\n]*\s\+?(\S+:)?(refs\/heads\/)?(main|master)(?=$|[\s;|&])`, "m");
+var FORCE = git(String.raw`push\b[^|;&\n]*\s(--force(?!-with-lease)\b|-f\b|\+\S)`);
 var IRREVERSIBLE = [
-  git(String.raw`reset\b[^|;&]*\s--hard\b`),
-  git(String.raw`clean\b[^|;&]*\s-[a-z]*f`),
-  git(String.raw`branch\b[^|;&]*\s(-D\b|--delete\s+--force\b|-d\s+-f\b)`),
-  git(String.raw`push\b[^|;&]*\s(--delete\b|-d\b|\S+\s+:\S)`),
+  git(String.raw`reset\b[^|;&\n]*\s--hard\b`),
+  git(String.raw`clean\b[^|;&\n]*\s-[a-z]*f`),
+  git(String.raw`branch\b[^|;&\n]*\s(-D\b|--delete\s+--force\b|-d\s+-f\b)`),
+  git(String.raw`push\b[^|;&\n]*\s(--delete\b|-d\b|\S+\s+:\S)`),
   git(String.raw`stash\s+(drop|clear)\b`),
-  git(String.raw`worktree\s+remove\b[^|;&]*\s--force\b`),
+  git(String.raw`worktree\s+remove\b[^|;&\n]*\s--force\b`),
   /(^|[\s;&|(])rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\b/,
   /\bbd\s+(delete|purge)\b/
 ];
+function requestText(resources) {
+  const decoded = resources.flatMap((resource) => {
+    try {
+      return commandSegments(resource).map((segment) => tokenize(segment).map((token) => token.value).join(" "));
+    } catch {
+      return [];
+    }
+  });
+  return [...resources, ...decoded].join(`
+`);
+}
 function categories(action, resources) {
   const name = action.toLowerCase();
-  const text = resources.join(`
-`);
+  const text = requestText(resources);
   const found = [];
   if (FORCE.test(text))
     found.push("force-push");
@@ -1295,7 +1352,7 @@ function stopReason(state, snapshot, newEntries, parked) {
   const beadScope = state.scope.kind !== "goal" && snapshot.beadsRead;
   if (beadScope && open.length === 0)
     return "scope finished";
-  const busyChildren = snapshot.children.some((child) => child.busy);
+  const busyChildren = !snapshot.childrenComplete || snapshot.children.some((child) => child.busy);
   if (beadScope && open.length > 0 && !busyChildren && inProgress.every((id) => parked.has(id)) && ready.every((id) => parked.has(id)))
     return "everything left is blocked or parked";
   if (state.idleTicks >= MAX_IDLE_TICKS)
@@ -1629,20 +1686,23 @@ class RunDir {
 `);
   }
   #endsTorn() {
-    let fd;
+    let size;
     try {
-      const size = statSync3(this.journalPath).size;
-      if (size === 0)
+      size = statSync3(this.journalPath).size;
+    } catch (error) {
+      if (error.code === "ENOENT")
         return false;
-      fd = openSync3(this.journalPath, "r");
+      throw error;
+    }
+    if (size === 0)
+      return false;
+    const fd = openSync3(this.journalPath, "r");
+    try {
       const last = Buffer.alloc(1);
       readSync2(fd, last, 0, 1, size - 1);
       return last[0] !== 10;
-    } catch {
-      return false;
     } finally {
-      if (fd !== undefined)
-        closeSync3(fd);
+      closeSync3(fd);
     }
   }
   journal() {
@@ -1969,24 +2029,35 @@ class Autopilot {
       this.#children(state2.sessionID),
       this.leadBusy(state2.sessionID)
     ]);
-    const children = kids.filter((kid) => typeof kid?.id === "string").map((kid) => childFrom(kid, this.activity.lastSeen(kid.id), armedAt));
-    return { now, beads: beads.beads, ready: beads.ready, blocked: beads.blocked, beadsRead: beads.ok, commits, children, journal: dir.journal(), leadBusy };
+    const children = kids.sessions.filter((kid) => typeof kid?.id === "string").map((kid) => childFrom(kid, this.activity.lastSeen(kid.id), armedAt));
+    return {
+      now,
+      beads: beads.beads,
+      ready: beads.ready,
+      blocked: beads.blocked,
+      beadsRead: beads.ok,
+      commits,
+      children,
+      childrenComplete: kids.complete,
+      journal: dir.journal(),
+      leadBusy
+    };
   }
   async#children(sessionID) {
-    const all = [];
+    const sessions = [];
     let page = await this.ctx.session.list({ parentID: sessionID, limit: 100 }).catch(() => {
       return;
     });
     for (let pages = 0;page && pages < MAX_CHILD_PAGES; pages++) {
-      all.push(...page.data);
+      sessions.push(...page.data);
       const next = page.cursor?.next;
       if (!next)
-        break;
+        return { sessions, complete: true };
       page = await this.ctx.session.list({ cursor: next, limit: 100 }).catch(() => {
         return;
       });
     }
-    return all;
+    return { sessions, complete: false };
   }
   async leadBusy(sessionID) {
     const info = await this.ctx.session.get({ sessionID }).catch(() => {
@@ -2032,19 +2103,25 @@ class Autopilot {
       }
       case "resume": {
         const dir = findRun(root, invocation.runId);
-        const state2 = dir?.readState();
-        if (!dir || !state2)
+        if (!dir)
           return `autopilot: no run ${invocation.runId ?? "latest"} under ${root}.`;
-        if (state2.phase === "stopped")
-          return `autopilot: run ${state2.runId} already stopped (${state2.stopReason}); start a new one.`;
-        for (const [other, armed] of this.armed)
-          if (armed.runId === state2.runId && other !== sessionID)
-            await this.#disarm(other);
-        await this.#exclusive(dir.runId, async () => {
-          const current = dir.readState() ?? state2;
-          dir.writeState({ ...current, sessionID, phase: "running", tick: { kind: "none" } });
+        const bound = await this.#exclusive(dir.runId, async () => {
+          const state2 = dir.readState();
+          if (!state2)
+            return { ok: false, message: `autopilot: no run ${invocation.runId ?? "latest"} under ${root}.` };
+          if (state2.phase === "stopped")
+            return { ok: false, message: `autopilot: run ${state2.runId} already stopped (${state2.stopReason}); start a new one.` };
+          for (const [other, armed] of this.armed)
+            if (armed.runId === state2.runId && other !== sessionID)
+              await this.#disarm(other);
+          const resumed = { ...state2, sessionID, phase: "running", tick: { kind: "none" } };
+          dir.writeState(resumed);
+          await this.#arm(sessionID, { runId: state2.runId, root });
+          return { ok: true, state: resumed };
         });
-        await this.#arm(sessionID, { runId: state2.runId, root });
+        if (!bound.ok)
+          return bound.message;
+        const state2 = bound.state;
         const status = await this.status(sessionID, { action: "status", run: state2.runId });
         return [
           `Autopilot run ${state2.runId} resumed in this session. Load the ${SKILL} skill and follow it; no questions.`,

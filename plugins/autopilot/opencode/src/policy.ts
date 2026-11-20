@@ -1,5 +1,6 @@
 /** No-questions and permission policy while a run is armed. Pure. */
 
+import { commandSegments, tokenize } from "@srobroek/opencode-lib/shell-command"
 import type { Grant } from "./args.ts"
 
 /** Tools that ask the user something and wait. */
@@ -29,25 +30,40 @@ const DEPLOY = [
   /\bpulumi\s+(up|destroy)\b/,
   /\bsst\s+(deploy|remove)\b/,
 ]
-const PUSH_DEFAULT = git(String.raw`push\b[^|;&]*\s\+?(\S+:)?(refs\/heads\/)?(main|master)(?=$|[\s;|&])`, "m")
+const PUSH_DEFAULT = git(String.raw`push\b[^|;&\n]*\s\+?(\S+:)?(refs\/heads\/)?(main|master)(?=$|[\s;|&])`, "m")
 /** `--force`, `-f` or a `+` refspec; `--force-with-lease` is the safe form. */
-const FORCE = git(String.raw`push\b[^|;&]*\s(--force(?!-with-lease)\b|-f\b|\+\S)`)
+const FORCE = git(String.raw`push\b[^|;&\n]*\s(--force(?!-with-lease)\b|-f\b|\+\S)`)
 /** Commands that discard work or history and cannot be undone from the repository. */
 const IRREVERSIBLE = [
-  git(String.raw`reset\b[^|;&]*\s--hard\b`),
-  git(String.raw`clean\b[^|;&]*\s-[a-z]*f`),
-  git(String.raw`branch\b[^|;&]*\s(-D\b|--delete\s+--force\b|-d\s+-f\b)`),
-  git(String.raw`push\b[^|;&]*\s(--delete\b|-d\b|\S+\s+:\S)`),
+  git(String.raw`reset\b[^|;&\n]*\s--hard\b`),
+  git(String.raw`clean\b[^|;&\n]*\s-[a-z]*f`),
+  git(String.raw`branch\b[^|;&\n]*\s(-D\b|--delete\s+--force\b|-d\s+-f\b)`),
+  git(String.raw`push\b[^|;&\n]*\s(--delete\b|-d\b|\S+\s+:\S)`),
   git(String.raw`stash\s+(drop|clear)\b`),
-  git(String.raw`worktree\s+remove\b[^|;&]*\s--force\b`),
+  git(String.raw`worktree\s+remove\b[^|;&\n]*\s--force\b`),
   /(^|[\s;&|(])rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\b/,
   /\bbd\s+(delete|purge)\b/,
 ]
 
+/**
+ * The request as the patterns read it: the raw source, then each command's words after quote
+ * removal, one command per line, so `'HEAD:main'` and `"+x"` read as Git receives them.
+ */
+function requestText(resources: readonly string[]): string {
+  const decoded = resources.flatMap((resource) => {
+    try {
+      return commandSegments(resource).map((segment) => tokenize(segment).map((token) => token.value).join(" "))
+    } catch {
+      return []
+    }
+  })
+  return [...resources, ...decoded].join("\n")
+}
+
 /** Every category a permission request touches, most severe first; `other` when none applies. */
 export function categories(action: string, resources: readonly string[]): Category[] {
   const name = action.toLowerCase()
-  const text = resources.join("\n")
+  const text = requestText(resources)
   const found: Category[] = []
   if (FORCE.test(text)) found.push("force-push")
   if (PUSH_DEFAULT.test(text)) found.push("push-default")

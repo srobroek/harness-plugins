@@ -84,19 +84,23 @@ export class RunDir {
     appendFileSync(this.journalPath, `${this.#endsTorn() ? "\n" : ""}${JSON.stringify(entry)}\n`)
   }
 
+  /** Whether the journal ends mid-line. A missing journal is not torn; any other error is the caller's. */
   #endsTorn(): boolean {
-    let fd: number | undefined
+    let size: number
     try {
-      const size = statSync(this.journalPath).size
-      if (size === 0) return false
-      fd = openSync(this.journalPath, "r")
+      size = statSync(this.journalPath).size
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
+      throw error
+    }
+    if (size === 0) return false
+    const fd = openSync(this.journalPath, "r")
+    try {
       const last = Buffer.alloc(1)
       readSync(fd, last, 0, 1, size - 1)
       return last[0] !== 0x0a
-    } catch {
-      return false
     } finally {
-      if (fd !== undefined) closeSync(fd)
+      closeSync(fd)
     }
   }
 

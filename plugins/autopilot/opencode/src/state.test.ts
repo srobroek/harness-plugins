@@ -11,7 +11,7 @@ function running(scope: Scope, patch: Partial<RunState> = {}): RunState {
 }
 
 function snapshot(patch: Partial<Snapshot> = {}): Snapshot {
-  return { now: T0, beads: [], ready: [], blocked: [], beadsRead: true, commits: 10, children: [], journal: [], leadBusy: false, ...patch }
+  return { now: T0, beads: [], ready: [], blocked: [], beadsRead: true, commits: 10, children: [], childrenComplete: true, journal: [], leadBusy: false, ...patch }
 }
 
 const bead = (id: string, status: string, extra: Partial<Bead> = {}): Bead => ({ id, status, ...extra })
@@ -112,6 +112,11 @@ describe("stop conditions", () => {
 
   test("a busy lane keeps an all-blocked run going", () => {
     const result = tick(running({ kind: "queue" }, { beads: open(["a"]) }), snapshot({ beads: [bead("a", "open")], blocked: ["a"], children: [child("ses_lane", true, T0)] }))
+    expect(result.stop).toBeUndefined()
+  })
+
+  test("an incomplete child list keeps an all-blocked run going", () => {
+    const result = tick(running({ kind: "queue" }, { beads: open(["a"]) }), snapshot({ beads: [bead("a", "open")], blocked: ["a"], childrenComplete: false }))
     expect(result.stop).toBeUndefined()
   })
 
