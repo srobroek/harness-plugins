@@ -4,12 +4,14 @@ import { TICK_EVERY } from "./state.ts"
 
 /**
  * Runs with no model on every trigger, with `input = { state, now, runs, args }`. It asks
- * `autopilot_status` for one tick of `args.run`: a busy lead session skips (no send), a stopped
- * run ends the automation. A tool result may arrive as its `output` object or as JSON text.
+ * `autopilot_status` for one tick of `args.run`, passing the token and session the automation was
+ * created for: a busy lead session skips (no send), and a stopped run or a stale binding (the run
+ * was resumed elsewhere) ends the automation. A tool result may arrive as its `output` object or
+ * as JSON text.
  */
 export const TICK_CODE = [
   "const previous = (input && input.state) || {};",
-  "const raw = await tools.autopilot_status({ action: 'tick', run: input.args.run });",
+  "const raw = await tools.autopilot_status({ action: 'tick', run: input.args.run, token: input.args.token, session: input.args.session });",
   "let out = raw && typeof raw === 'object' && raw.output !== undefined ? raw.output : raw;",
   "if (typeof out === 'string') { try { out = JSON.parse(out); } catch { out = { error: out }; } }",
   "out = out || {};",
@@ -21,19 +23,22 @@ export const TICK_CODE = [
   "return { state: { ticks, skipped }, send: { prompt: out.prompt } };",
 ].join("\n")
 
+/** What a tick must carry to count: the token in `RunState.tick` and the run's bound session. */
+export type TickBinding = { token: string; session: string }
+
 export type AutomationRequest = {
   name: string
   trigger: { type: "every"; every: string }
-  action: { type: "code"; code: string; args: { run: string } }
+  action: { type: "code"; code: string; args: { run: string; token: string; session: string } }
   expires?: string
 }
 
-/** The `tools.opencode.automation_create` input for a run. */
-export function automationRequest(runId: string, deadline: number | undefined): AutomationRequest {
+/** The `tools.opencode.automation_create` input for a run bound to `binding`. */
+export function automationRequest(runId: string, deadline: number | undefined, binding: TickBinding): AutomationRequest {
   return {
     name: `autopilot ${runId}`,
     trigger: { type: "every", every: TICK_EVERY },
-    action: { type: "code", code: TICK_CODE, args: { run: runId } },
+    action: { type: "code", code: TICK_CODE, args: { run: runId, token: binding.token, session: binding.session } },
     ...(deadline !== undefined ? { expires: new Date(deadline + 60_000).toISOString() } : {}),
   }
 }

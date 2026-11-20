@@ -86,16 +86,28 @@ allows it only if it can read the whole command and every part is a known safe
 form. Write commands it can read:
 
 - Name the remote and the feature branch in every push:
-  `git push origin feat/x`, never a bare `git push` or `HEAD`.
+  `git push origin feat/x`, never a bare `git push` or `HEAD`. Push from the
+  session's own checkout, not with `git -C`. The gate resolves the remote's
+  default branch and denies a push to it, or any push when it cannot resolve it.
 - Use literal arguments. The gate denies a variable, a command substitution,
-  a glob in a restricted command, and a quoted flag.
+  a glob in a restricted command, a quoted flag, and `$'…'` or `$"…"` quoting.
 - Run commands directly. The gate denies a shell started with `-c`, the
   `xargs` and `sudo` wrappers, and any command that runs a string as code.
+- Run the repository's own scripts by name: `npm test`, `npm run <script>`,
+  `bun test`, `make <target>`, `python3 -m pytest`. The gate denies an
+  interpreter running a file or an inline program, and package executors such
+  as `npx`, `npm exec`, `pnpm dlx`, `bunx` and `uvx`.
+- Change branches with `git switch`. `git checkout` is allowed only as
+  `git checkout -b <branch>`.
+- `wt merge` is a merge: it needs `--allow merge`.
+- Other permission kinds are allowed only when they act inside the run's
+  location (read, edit, search, web, skills, subagents). The gate denies
+  `external_directory`, `execute` and MCP or plugin tools that ask.
 
 Commands that discard work (`git reset --hard`, `git clean -f`, `git branch -D`,
-deleting a remote branch, `git stash drop`, `rm -r`, `bd delete`) are
-irreversible. When one needs approval, the plugin denies it and logs a blocker,
-unless the run is `--full`.
+`git switch --discard-changes`, deleting a remote branch, `git stash drop`,
+`rm -r`, `bd delete`) are irreversible. When one needs approval, the plugin
+denies it and logs a blocker, unless the run is `--full`.
 
 `merge` needs `--allow merge`, an approve verdict from `code-reviewer` and
 green required checks. A deployment (stack create, update or delete) needs
@@ -154,7 +166,11 @@ names one. Then print the summary and end the turn.
 - After compaction, the plugin queues a notice with a fresh status. Reload this
   skill and continue.
 - `/autopilot resume [run-id]` arms a run again in a new session from its
-  `state.json`.
+  `state.json`. The resume prompt names the old tick automation: delete it,
+  then create the new one. The old automation's ticks are stale and end it.
+- If a stop reports `phase: "stopping"`, the summary or the handoff bead did not
+  land. The next tick retries; call `autopilot_status` with `action: "stop"` to
+  retry now. The run is stopped only when both exist.
 - `/autopilot review [run-id]`, in any session, loads the summary and asks one
   question per needs-input item.
 

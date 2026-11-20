@@ -35,24 +35,24 @@ const irreversible = (what: string): Need => ({ kind: "irreversible", what })
 
 const DEFAULT_BRANCHES: ReadonlySet<string> = new Set(["main", "master"])
 
-/** Tools whose arguments the gate does not interpret: they read, build, test or edit the checkout. */
+/** Tools whose arguments the gate does not interpret: they read the checkout, or check it with the repository's own config. */
 const PLAIN_TOOLS: ReadonlySet<string> = new Set([
-  "awk", "basename", "biome", "cat", "cd", "cmp", "cp", "cut", "date", "deno", "df", "diff", "dirname", "du",
-  "echo", "eslint", "false", "fd", "file", "grep", "head", "jq", "just", "less", "ln", "ls", "make", "mkdir",
-  "mv", "mypy", "node", "prettier", "printf", "pwd", "pyright", "pytest", "python", "python3", "readlink",
-  "realpath", "rg", "ruff", "sed", "sort", "stat", "tail", "tee", "test", "touch", "tr", "tree", "true", "tsc",
-  "type", "uniq", "wc", "which", "wt", "yq",
+  "basename", "biome", "cat", "cd", "cmp", "cp", "cut", "date", "df", "diff", "dirname", "du", "echo", "eslint",
+  "false", "fd", "file", "grep", "head", "jq", "less", "ln", "ls", "mkdir", "mv", "mypy", "prettier", "printf",
+  "pwd", "pyright", "pytest", "readlink", "realpath", "rg", "ruff", "sort", "stat", "tail", "tee", "test", "touch",
+  "tr", "tree", "true", "tsc", "type", "uniq", "wc", "which",
 ])
 
-/** Package managers: dependency changes are granted; publishing is outward-facing. */
-const PACKAGE_MANAGERS: ReadonlySet<string> = new Set(["bun", "cargo", "go", "npm", "pip", "pip3", "pnpm", "uv", "yarn"])
-const PUBLISHING = /^(publish|unpublish|deprecate|owner|dist-tag|yank|login|adduser|token)$/
 const RELEASE_SCRIPT = /deploy|release|publish/i
 
-/** Commands that run another command from their arguments, which the gate cannot read. */
+/**
+ * Commands that run code the gate cannot read. Interpreters (`python`, `node`, `deno`, `awk`,
+ * `sed`, ...) and package executors (`npx`, `bunx`, `uvx`, `pipx`, ...) are denied unless a
+ * handler below matches a known safe form, such as `python3 -m pytest` or `npm run <script>`.
+ */
 const INDIRECT: ReadonlySet<string> = new Set([
-  ".", "bash", "builtin", "command", "dash", "env", "eval", "exec", "fish", "ksh", "nohup", "sh", "source",
-  "sudo", "time", "timeout", "watch", "xargs", "zsh",
+  ".", "awk", "bash", "builtin", "command", "dash", "env", "eval", "exec", "fish", "gawk", "ksh", "mawk", "nohup",
+  "perl", "php", "pipx", "pnpx", "ruby", "sed", "sh", "source", "sudo", "time", "timeout", "uvx", "watch", "xargs", "zsh",
 ])
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/
@@ -80,30 +80,41 @@ function flagLetters(value: string): string[] {
   return value.startsWith("--") || value.length < 2 ? [value] : [...value.slice(1)].map((letter) => `-${letter}`)
 }
 
+/** Push destinations' default branches, by remote name, as the caller resolved them. */
+export type DefaultBranches = ReadonlyMap<string, string>
+
+/** What the gate knows about the run and the repository when it decides. */
+export type GateContext = { grants: readonly Grant[]; full: boolean; defaults: DefaultBranches }
+
+const NO_DEFAULTS: DefaultBranches = new Map()
+
 // --- git ------------------------------------------------------------------------------------------
 
-const GIT_GLOBAL_VALUE: ReadonlySet<string> = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace"])
+/** `-c` is not here: a config value such as `core.pager` or `core.sshCommand` runs a command. */
+const GIT_GLOBAL_VALUE: ReadonlySet<string> = new Set(["-C", "--git-dir", "--work-tree", "--namespace"])
 const GIT_GLOBAL_FLAG: ReadonlySet<string> = new Set(["--no-pager", "-P", "--no-optional-locks", "--literal-pathspecs", "--no-replace-objects"])
+/** Options that make a git subcommand run a command from their value. */
+const GIT_RUNS = /^--(upload-pack|receive-pack|exec|exec-path|ext-diff)(=|$)/
 
 const GIT_READ: ReadonlySet<string> = new Set([
   "blame", "cat-file", "describe", "diff", "fetch", "for-each-ref", "grep", "log", "ls-files", "ls-remote",
   "merge-base", "name-rev", "reflog", "rev-list", "rev-parse", "shortlog", "show", "show-ref", "status",
 ])
-const GIT_LOCAL: ReadonlySet<string> = new Set([
-  "add", "am", "apply", "cherry-pick", "commit", "init", "merge", "mv", "notes", "rebase", "remote", "revert",
-  "switch", "tag",
-])
+const GIT_LOCAL: ReadonlySet<string> = new Set(["add", "am", "apply", "cherry-pick", "commit", "init", "merge", "mv", "notes", "remote", "revert", "tag"])
 
-function git(list: Args): Need {
+function git(list: Args, context: GateContext): Need {
   const problem = unreadable(list)
   if (problem) return problem
   const values = list.values
   let index = 0
+  let elsewhere = false
   for (; index < values.length; index++) {
     const value = values[index] as string
     if (!value.startsWith("-")) break
     const name = value.includes("=") ? value.slice(0, value.indexOf("=")) : value
+    if (name === "-c") return unknown("git -c can run a command through a config value")
     if (GIT_GLOBAL_VALUE.has(name)) {
+      elsewhere = true
       if (!value.includes("=")) index++
       if (index >= values.length) return unknown(`git option ${value} has no value`)
       continue
@@ -114,24 +125,34 @@ function git(list: Args): Need {
   const sub = values[index]
   const rest = values.slice(index + 1)
   if (sub === undefined) return SAFE
+  const runs = rest.find((value) => GIT_RUNS.test(value))
+  if (runs !== undefined) return unknown(`git ${sub} ${runs} runs a command`)
   if (GIT_READ.has(sub) || GIT_LOCAL.has(sub)) return SAFE
+  const letters = rest.flatMap(flagLetters)
   switch (sub) {
     case "push":
-      return gitPush(rest)
+      return elsewhere ? never("git push with -C, --git-dir or --work-tree pushes from a repository the gate did not check") : gitPush(rest, context)
+    case "rebase":
+      return letters.includes("-x") ? unknown("git rebase -x runs a command") : SAFE
     case "reset":
       return rest.some((value) => value === "--hard" || value === "--merge" || value === "--keep") ? irreversible("git reset discards work") : SAFE
     case "clean":
       return rest.some((value) => value === "--force" || (!value.startsWith("--") && value.startsWith("-") && value.includes("f")))
         ? irreversible("git clean deletes untracked files")
         : SAFE
-    case "checkout":
-      return rest.some((value) => value === "--" || value === "." || value === "-f" || value === "--force" || value === "-p" || value === "--patch")
-        ? irreversible("git checkout discards changes")
+    case "switch":
+      return rest.some((value) => value === "--discard-changes" || value === "--force" || value === "--force-create") || letters.includes("-f") || letters.includes("-C")
+        ? irreversible("git switch discards changes or resets a branch")
         : SAFE
+    case "checkout":
+      // `git checkout <name>` cannot be told apart from `git checkout <path>`, which discards changes;
+      // only creating a branch is a known safe form. Use `git switch` to change branches.
+      return rest[0] === "-b" && rest.length >= 2 && rest.length <= 3 && rest.slice(1).every((value) => !value.startsWith("-") && value !== ".")
+        ? SAFE
+        : irreversible("git checkout can discard changes; use git switch")
     case "restore":
       return rest.includes("--staged") && !rest.some((value) => value === "--worktree" || value === "-W") ? SAFE : irreversible("git restore discards changes")
     case "branch": {
-      const letters = rest.flatMap(flagLetters)
       const deletes = letters.includes("-d") || letters.includes("--delete")
       const force = letters.includes("-f") || letters.includes("--force")
       if (letters.includes("-D") || letters.includes("-M") || letters.includes("-C") || (deletes && force)) return irreversible("git branch force-deletes or overwrites a branch")
@@ -152,8 +173,12 @@ const PUSH_FLAG: ReadonlySet<string> = new Set([
 ])
 const PUSH_VALUE: ReadonlySet<string> = new Set(["-o", "--push-option"])
 
-/** `git push <remote> <refspec>...`: explicit feature branches only. */
-function gitPush(rest: readonly string[]): Need {
+/**
+ * `git push <remote> <refspec>...`: explicit feature branches only. `main`, `master` and the
+ * remote's own default branch, as resolved by the caller, are never a target; a remote whose
+ * default branch is unknown cannot be pushed to.
+ */
+function gitPush(rest: readonly string[], context: GateContext): Need {
   const positionals: string[] = []
   let deleting = false
   for (let index = 0; index < rest.length; index++) {
@@ -190,6 +215,8 @@ function gitPush(rest: readonly string[]): Need {
   }
   const [remote, ...refspecs] = positionals
   if (remote === undefined || refspecs.length === 0) return never("git push must name a remote and a branch, for example `git push origin feat/x`")
+  const remoteDefault = context.defaults.get(remote)
+  if (remoteDefault === undefined) return never(`the default branch of remote ${remote} could not be resolved, so the push is denied`)
   let need: Need = SAFE
   for (const refspec of refspecs) {
     if (refspec.startsWith("+")) return never("autopilot never force-pushes; a `+` refspec forces the update")
@@ -197,7 +224,8 @@ function gitPush(rest: readonly string[]): Need {
     const source = colon < 0 ? refspec : refspec.slice(0, colon)
     const target = (colon < 0 ? refspec : refspec.slice(colon + 1)).replace(/^refs\/heads\//, "")
     if (target.includes("*")) return never(`git push refspec ${refspec} names branches by pattern`)
-    if (DEFAULT_BRANCHES.has(target)) return never("autopilot never pushes to the default branch; push a feature branch and open a PR")
+    if (DEFAULT_BRANCHES.has(target) || target === remoteDefault)
+      return never(`autopilot never pushes to the default branch (${remote}/${remoteDefault}); push a feature branch and open a PR`)
     if (target === "" || target === "HEAD") return never(`git push refspec ${refspec} does not name a branch`)
     if (deleting || source === "") need = irreversible(`git push deletes remote branch ${target}`)
   }
@@ -414,33 +442,185 @@ function find(list: Args): Need {
   return runs ? unknown(`find ${runs} deletes files or runs commands`) : SAFE
 }
 
-/** `npx [-y] <package> ...`: a known gated package is classified as itself; any other package is unknown. */
-function packageRunner(runner: string, list: Args): Need {
-  let index = 0
-  while (index < list.values.length && /^(-y|--yes|--no|-q|--quiet)$/.test(list.values[index] as string)) index++
-  const pkg = list.values[index]
-  if (pkg === undefined) return unknown(`${runner} names no package`)
-  if (list.words[index]?.quoted || list.words[index]?.expands) return unknown(`${runner} package name is quoted or expanded`)
-  const name = basename(pkg.replace(/(?<=.)@[^/]*$/, "")).replace(/^aws-cdk$/, "cdk")
-  const rest = args(list.words.slice(index + 1))
-  if (name in DEPLOY_TOOLS) return deployTool(name, rest)
-  if (PLAIN_TOOLS.has(name)) return SAFE
-  return unknown(`${runner} ${pkg} runs a package the gate does not know`)
+// --- package managers, script runners and interpreters ---------------------------------------------
+//
+// The rule: the gate allows the repository's own scripts and test runners by name
+// (`npm test`, `npm run <script>`, `bun test`, `make <target>`, `python3 -m pytest`, ...), and
+// dependency changes. It denies running a file, an inline program (`-c`, `-e`), a package
+// executor (`npx`, `npm exec`, `pnpm dlx`, `bunx`, `uvx`, ...) and a script or target whose name
+// looks like a release. The one executor form it reads is `npx cdk ...`, classified as `cdk`.
+
+const SCRIPT_NAME = /^[A-Za-z0-9][\w:.-]*$/
+
+/** `<runner> run <script>` / `<runner> <script>`: a script name of the repository, not a path or release. */
+function script(runner: string, name: string | undefined): Need {
+  if (name === undefined) return unknown(`${runner} run names no script`)
+  if (!SCRIPT_NAME.test(name) || name.includes("/")) return unknown(`${runner} runs \`${name}\`, which is not a script name`)
+  if (RELEASE_SCRIPT.test(name)) return unknown(`${runner} script ${name} looks like a release`)
+  return SAFE
 }
 
-function packageManager(name: string, list: Args): Need {
-  const [verb, script] = list.values
+type Verbs = { deps: ReadonlySet<string>; read: ReadonlySet<string>; tests: ReadonlySet<string>; run: ReadonlySet<string> }
+const verbs = (deps: string[], read: string[], tests: string[], run: string[]): Verbs => ({ deps: new Set(deps), read: new Set(read), tests: new Set(tests), run: new Set(run) })
+
+const JS_RUNNERS: Record<string, Verbs> = {
+  npm: verbs(["install", "i", "ci", "add", "uninstall", "remove", "rm", "update", "up", "dedupe", "prune"], ["ls", "list", "outdated", "audit", "view", "info", "why", "explain", "config", "root", "bin", "prefix"], ["test", "t"], ["run", "run-script"]),
+  pnpm: verbs(["install", "i", "add", "remove", "rm", "update", "up", "prune"], ["ls", "list", "outdated", "audit", "why", "root"], ["test", "t"], ["run"]),
+  yarn: verbs(["install", "add", "remove", "up", "upgrade"], ["list", "info", "why", "outdated"], ["test"], ["run"]),
+  bun: verbs(["install", "i", "add", "remove", "rm", "update", "pm"], ["outdated", "audit"], ["test"], ["run"]),
+}
+
+function jsRunner(name: string, list: Args): Need {
+  const problem = unreadable(list)
+  if (problem) return problem
+  const table = JS_RUNNERS[name] as Verbs
+  const first = list.values[0]
+  if (first?.startsWith("-")) return first === "--version" || first === "-v" ? SAFE : unknown(`unknown ${name} option ${first} before the command`)
+  const index = 0
+  const verb = list.values[index]
+  if (verb === undefined) return name === "yarn" ? SAFE : unknown(`${name} names no command`)
+  if (table.deps.has(verb) || table.read.has(verb) || table.tests.has(verb)) return SAFE
+  if (table.run.has(verb)) return script(`${name} run`, list.values.slice(index + 1).find((value) => !value.startsWith("-")))
+  if (name === "npm" && verb === "start") return SAFE
+  return unknown(`${name} ${verb} is not a command the gate knows`)
+}
+
+function cargo(list: Args): Need {
+  const problem = unreadable(list)
+  if (problem) return problem
+  const verb = list.values.find((value) => !value.startsWith("-"))
   if (verb === undefined) return SAFE
-  if (name === "bun" && verb === "x") return packageRunner("bun x", args(list.words.slice(1)))
-  if (PUBLISHING.test(verb)) return unknown(`${name} ${verb} is outward-facing`)
-  if ((verb === "run" || verb === "run-script") && script !== undefined && RELEASE_SCRIPT.test(script)) return unknown(`${name} run ${script} looks like a release script`)
+  if (/^(build|b|check|c|test|t|clippy|fmt|doc|bench|add|remove|rm|update|tree|metadata|fetch|run|r|nextest)$/.test(verb)) return SAFE
+  return unknown(`cargo ${verb} is not a command the gate knows`)
+}
+
+function goTool(list: Args): Need {
+  const problem = unreadable(list)
+  if (problem) return problem
+  const verb = list.values[0]
+  if (verb === undefined) return SAFE
+  if (/^(build|test|vet|fmt|mod|list|version|env|doc)$/.test(verb)) return SAFE
+  return unknown(`go ${verb} is not a command the gate knows (go run and go generate run code)`)
+}
+
+function pip(name: string, list: Args): Need {
+  const problem = unreadable(list)
+  if (problem) return problem
+  const verb = list.values[0]
+  return verb !== undefined && /^(install|uninstall|list|show|freeze|check)$/.test(verb) ? SAFE : unknown(`${name} ${verb ?? ""} is not a command the gate knows`)
+}
+
+/** The test and check tools a Python run may name: `python3 -m pytest`, `uv run ruff`. */
+const PY_TOOLS: ReadonlySet<string> = new Set(["pytest", "mypy", "ruff", "pyright", "unittest"])
+
+function uv(list: Args): Need {
+  const problem = unreadable(list)
+  if (problem) return problem
+  const [verb, ...rest] = list.values
+  if (verb === undefined) return SAFE
+  if (/^(sync|lock|add|remove|tree|venv|version)$/.test(verb)) return SAFE
+  if (verb === "pip") return pip("uv pip", args(list.words.slice(1)))
+  if (verb === "run") {
+    const tool = rest.find((value) => !value.startsWith("-"))
+    if (tool !== undefined && PY_TOOLS.has(tool)) return SAFE
+    return unknown(`uv run ${tool ?? ""} runs code the gate cannot read; only ${[...PY_TOOLS].join(", ")} are known forms`)
+  }
+  return unknown(`uv ${verb} is not a command the gate knows`)
+}
+
+function python(name: string, list: Args): Need {
+  const problem = unreadable(list)
+  if (problem) return problem
+  const [first, second] = list.values
+  if (first === "--version" || first === "-V") return SAFE
+  if (first === "-m" && second !== undefined && PY_TOOLS.has(second)) return SAFE
+  if (first === "-m" && second === "pip") return pip(`${name} -m pip`, args(list.words.slice(2)))
+  return unknown(`${name} runs a program the gate cannot read; only -m ${[...PY_TOOLS].join("|")} is a known form`)
+}
+
+function node(list: Args): Need {
+  return list.values.length === 1 && (list.values[0] === "--version" || list.values[0] === "-v") ? SAFE : unknown("node runs a program the gate cannot read")
+}
+
+function deno(list: Args): Need {
+  const problem = unreadable(list)
+  if (problem) return problem
+  const verb = list.values[0]
+  return verb !== undefined && /^(test|fmt|lint|check|--version)$/.test(verb) ? SAFE : unknown(`deno ${verb ?? ""} runs a program the gate cannot read`)
+}
+
+const MAKE_FLAG = /^-(j\d*|k|s|n|B|-keep-going|-silent|-dry-run|-always-make)$/
+
+/** `make <target>` / `just <recipe>`: the repository's own recipes, unless the name looks like a release. */
+function recipes(name: string, list: Args): Need {
+  const problem = unreadable(list)
+  if (problem) return problem
+  const targets: string[] = []
+  for (let index = 0; index < list.values.length; index++) {
+    const value = list.values[index] as string
+    if (value === "-C" && name === "make") {
+      index++
+      continue
+    }
+    if (value.startsWith("-")) {
+      if (MAKE_FLAG.test(value) && name === "make") continue
+      return unknown(`unknown ${name} option ${value}`)
+    }
+    if (value.includes("=")) return unknown(`${name} variable ${value} can change what a recipe runs`)
+    targets.push(value)
+  }
+  for (const target of targets) {
+    const need = script(name, target)
+    if (need.kind !== "safe") return need
+  }
   return SAFE
+}
+
+/** `npx [-y] cdk ...` only; every other package executor runs code the gate cannot read. */
+function packageRunner(runner: string, list: Args): Need {
+  let index = 0
+  while (index < list.values.length && /^(-y|--yes|--no)$/.test(list.values[index] as string)) index++
+  const pkg = list.values[index]
+  if (pkg === undefined || list.words[index]?.quoted || list.words[index]?.expands) return unknown(`${runner} names no plain package`)
+  const name = pkg === "aws-cdk" || pkg === "cdk" ? "cdk" : undefined
+  if (name === undefined) return unknown(`${runner} ${pkg} runs a package the gate cannot read`)
+  return deployTool(name, args(list.words.slice(index + 1)))
+}
+
+// --- worktrunk ------------------------------------------------------------------------------------
+
+const WT_SWITCH_FLAG: ReadonlySet<string> = new Set(["-c", "--create", "--no-cd", "--no-hooks", "--branches", "--remotes", "--prs", "-y", "--yes"])
+const WT_SWITCH_VALUE: ReadonlySet<string> = new Set(["-b", "--base", "--format"])
+const WT_REMOVE_FLAG: ReadonlySet<string> = new Set(["--no-delete-branch", "--foreground", "--no-hooks", "-y", "--yes"])
+const WT_MERGE_FLAG: ReadonlySet<string> = new Set(["--no-squash", "--no-remove", "--no-commit", "--no-rebase", "--no-hooks", "--no-verify", "-y", "--yes", "--squash"])
+
+function wt(list: Args): Need {
+  const problem = unreadable(list)
+  if (problem) return problem
+  const [verb, ...rest] = list.values
+  if (verb === undefined || verb === "list") return SAFE
+  if (verb === "switch") {
+    const flags = checkFlags(rest, WT_SWITCH_FLAG, WT_SWITCH_VALUE, "wt switch")
+    if (flags) return rest.some((value) => value === "-x" || value.startsWith("--execute")) ? unknown("wt switch -x runs a command") : flags
+    return rest.includes("--clobber") ? irreversible("wt switch --clobber replaces a directory") : SAFE
+  }
+  if (verb === "remove") {
+    if (rest.some((value) => value === "-D" || value === "--force-delete" || value === "-f" || value === "--force")) return irreversible("wt remove --force deletes unmerged work")
+    return checkFlags(rest, WT_REMOVE_FLAG, new Set(), "wt remove") ?? SAFE
+  }
+  if (verb === "merge") return checkFlags(rest, WT_MERGE_FLAG, new Set(), "wt merge") ?? grant("merge", "wt merge")
+  return unknown(`wt ${verb} is not a command the gate knows`)
 }
 
 // --- dispatch -------------------------------------------------------------------------------------
 
-/** What one simple command needs. */
-export function classifyCommand(command: SimpleCommand): Need {
+/** ANSI-C (`$'…'`) and locale (`$"…"`) quoting: the parser keeps their escapes, so the gate cannot read the word. */
+const DOLLAR_QUOTE = /\$['"]/
+
+/** What one simple command needs. `source` is the text the command was scanned from. */
+export function classifyCommand(command: SimpleCommand, source: string, context: GateContext = { grants: [], full: false, defaults: NO_DEFAULTS }): Need {
+  for (const word of [...command.words, ...command.redirects])
+    if (DOLLAR_QUOTE.test(source.slice(word.start, word.end))) return unknown(`\`${source.slice(word.start, word.end)}\` uses $'…' or $"…" quoting`)
   const words = command.words
   let index = 0
   while (index < words.length && !(words[index] as ShellWord).quoted && ASSIGNMENT.test((words[index] as ShellWord).value)) index++
@@ -449,10 +629,10 @@ export function classifyCommand(command: SimpleCommand): Need {
   if (head.quoted || head.expands) return unknown(`command name \`${head.value}\` is quoted or expanded`)
   const name = basename(head.value)
   const rest = args(words.slice(index + 1))
-  if (INDIRECT.has(name)) return unknown(`${name} runs a command the gate cannot read`)
+  if (INDIRECT.has(name)) return unknown(`${name} runs code the gate cannot read`)
   switch (name) {
     case "git":
-      return git(rest)
+      return git(rest, context)
     case "gh":
       return gh(rest)
     case "glab":
@@ -465,34 +645,90 @@ export function classifyCommand(command: SimpleCommand): Need {
       return bd(rest)
     case "find":
       return find(rest)
+    case "wt":
+      return wt(rest)
     case "npx":
-    case "bunx":
-    case "pnpx":
       return packageRunner(name, rest)
+    case "bunx":
+      return unknown("bunx runs a package the gate cannot read")
+    case "npm":
+    case "pnpm":
+    case "yarn":
+    case "bun":
+      return jsRunner(name, rest)
+    case "cargo":
+      return cargo(rest)
+    case "go":
+      return goTool(rest)
+    case "pip":
+    case "pip3":
+      return pip(name, rest)
+    case "uv":
+      return uv(rest)
+    case "python":
+    case "python3":
+      return python(name, rest)
+    case "node":
+      return node(rest)
+    case "deno":
+      return deno(rest)
+    case "make":
+    case "just":
+      return recipes(name, rest)
   }
   if (name in DEPLOY_TOOLS) return deployTool(name, rest)
-  if (PACKAGE_MANAGERS.has(name)) return packageManager(name, rest)
   if (PLAIN_TOOLS.has(name)) return SAFE
   return unknown(`${name} is not a command the gate knows`)
 }
 
 /** What a shell source needs, one entry per simple command; one `unknown` when it cannot be read. */
-export function classifyShell(source: string): Need[] {
+export function classifyShell(source: string, context?: GateContext): Need[] {
   const scan = scanShell(source)
   if (!scan.complete) return [unknown("the command does not parse: a quote, substitution or here-document is left open")]
   if (scan.substitutions.length > 0) return [unknown("the command uses command substitution, which the gate cannot read")]
-  const needs = scan.items.flatMap((item) => (item.kind === "command" ? [classifyCommand(item)] : []))
+  const needs = scan.items.flatMap((item) => (item.kind === "command" ? [classifyCommand(item, source, context)] : []))
   return needs.length > 0 ? needs : [unknown("the command is empty")]
+}
+
+/** The remotes the `git push` commands in a shell request push to, so the caller can resolve their default branches. */
+export function pushRemotes(action: string, resources: readonly string[]): string[] {
+  if (!SHELL_ACTIONS.has(action.toLowerCase())) return []
+  const remotes = new Set<string>()
+  for (const source of resources) {
+    const scan = scanShell(source)
+    for (const item of scan.items) {
+      if (item.kind !== "command") continue
+      const values = item.words.map((word) => word.value)
+      const at = values.indexOf("push")
+      if (at < 1 || basename(values[0] as string) !== "git") continue
+      const remote = values.slice(at + 1).find((value) => !value.startsWith("-"))
+      if (remote !== undefined) remotes.add(remote)
+    }
+  }
+  return [...remotes]
 }
 
 const SHELL_ACTIONS: ReadonlySet<string> = new Set(["shell", "bash"])
 
-/** What a permission request needs: shell requests by their commands, merge tools by name. */
-export function needsOf(action: string, resources: readonly string[]): Need[] {
+/**
+ * Permission kinds that act inside the run's location and are safe to approve: reading and
+ * editing files there, searching, fetching and searching the web, loading skills, starting
+ * subagents, keeping a todo list, and reading MCP resources. Every other kind is denied: shell
+ * goes through `classifyShell`, merge tools need the merge grant, and anything else
+ * (`external_directory`, `execute`, an MCP or plugin tool such as `safety_secret_command`) is unknown.
+ */
+const SAFE_ACTIONS: ReadonlySet<string> = new Set([
+  "read", "edit", "write", "patch", "glob", "grep", "list", "webfetch", "websearch", "skill", "subagent", "task",
+  "todowrite", "todoread", "opencode_list_mcp_resources", "opencode_read_mcp_resource",
+])
+
+/** What a permission request needs: shell requests by their commands, merge tools by grant, known kinds by name. */
+export function needsOf(action: string, resources: readonly string[], context?: GateContext): Need[] {
   const name = action.toLowerCase()
-  if (SHELL_ACTIONS.has(name)) return resources.length > 0 ? resources.flatMap(classifyShell) : [unknown("the shell request names no command")]
+  if (SHELL_ACTIONS.has(name)) return resources.length > 0 ? resources.flatMap((source) => classifyShell(source, context)) : [unknown("the shell request names no command")]
   if (name === "delivery_land" || name.endsWith("_merge")) return [grant("merge", action)]
-  return [SAFE]
+  if (SAFE_ACTIONS.has(name)) return [SAFE]
+  return [unknown(`permission kind ${action} is not one the gate approves`)]
 }
 
 /** The first need the run does not meet, as a deny reason, or `undefined` when all are met. */
@@ -513,10 +749,11 @@ function unmet(need: Need, grants: readonly Grant[], full: boolean): string | un
 
 /**
  * The answer to a permission `ask` while armed. Fail-closed: every command in the request must
- * be a known safe form, or need only grants the run has.
+ * be a known safe form, or need only grants the run has. `defaults` are the push remotes'
+ * resolved default branches; a push to a remote missing from it is denied.
  */
-export function decideAsk(action: string, resources: readonly string[], grants: readonly Grant[], full: boolean): AskDecision {
-  for (const need of needsOf(action, resources)) {
+export function decideAsk(action: string, resources: readonly string[], grants: readonly Grant[], full: boolean, defaults: DefaultBranches = NO_DEFAULTS): AskDecision {
+  for (const need of needsOf(action, resources, { grants, full, defaults })) {
     const reason = unmet(need, grants, full)
     if (reason !== undefined) return { effect: "deny", reason }
   }

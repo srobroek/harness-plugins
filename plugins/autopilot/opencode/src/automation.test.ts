@@ -13,14 +13,14 @@ async function runTick(result: unknown, state?: unknown) {
       return result
     },
   }
-  const output = await program({ state, now: 0, runs: 1, args: { run: "r1" } }, tools)
+  const output = await program({ state, now: 0, runs: 1, args: { run: "r1", token: "k1", session: "ses_lead" } }, tools)
   return { output, calls }
 }
 
 describe("tick program", () => {
   test("asks autopilot_status for one tick of the run named in args", async () => {
     const { calls } = await runTick({ output: { prompt: "p" } })
-    expect(calls).toEqual([{ action: "tick", run: "r1" }])
+    expect(calls).toEqual([{ action: "tick", run: "r1", token: "k1", session: "ses_lead" }])
   })
 
   test("sends the prompt and counts the tick", async () => {
@@ -54,15 +54,15 @@ describe("tick program", () => {
 describe("automationRequest", () => {
   test("ticks every 4 minutes and expires a minute after the deadline", () => {
     const deadline = Date.UTC(2026, 10, 20, 18, 0)
-    expect(automationRequest("r1", deadline)).toEqual({
+    expect(automationRequest("r1", deadline, { token: "k1", session: "ses_lead" })).toEqual({
       name: "autopilot r1",
       trigger: { type: "every", every: "4 minutes" },
-      action: { type: "code", code: TICK_CODE, args: { run: "r1" } },
+      action: { type: "code", code: TICK_CODE, args: { run: "r1", token: "k1", session: "ses_lead" } },
       expires: "2026-11-20T18:01:00.000Z",
     })
   })
 
   test("has no expiry without a deadline", () => {
-    expect(automationRequest("r1", undefined)).not.toHaveProperty("expires")
+    expect(automationRequest("r1", undefined, { token: "k1", session: "ses_lead" })).not.toHaveProperty("expires")
   })
 })

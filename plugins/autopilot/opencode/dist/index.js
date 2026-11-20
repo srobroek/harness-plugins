@@ -2040,7 +2040,7 @@ function runIdFor(now, random = Math.random) {
 // plugins/autopilot/opencode/src/automation.ts
 var TICK_CODE = [
   "const previous = (input && input.state) || {};",
-  "const raw = await tools.autopilot_status({ action: 'tick', run: input.args.run });",
+  "const raw = await tools.autopilot_status({ action: 'tick', run: input.args.run, token: input.args.token, session: input.args.session });",
   "let out = raw && typeof raw === 'object' && raw.output !== undefined ? raw.output : raw;",
   "if (typeof out === 'string') { try { out = JSON.parse(out); } catch { out = { error: out }; } }",
   "out = out || {};",
@@ -2052,11 +2052,11 @@ var TICK_CODE = [
   "return { state: { ticks, skipped }, send: { prompt: out.prompt } };"
 ].join(`
 `);
-function automationRequest(runId, deadline) {
+function automationRequest(runId, deadline, binding) {
   return {
     name: `autopilot ${runId}`,
     trigger: { type: "every", every: TICK_EVERY },
-    action: { type: "code", code: TICK_CODE, args: { run: runId } },
+    action: { type: "code", code: TICK_CODE, args: { run: runId, token: binding.token, session: binding.session } },
     ...deadline !== undefined ? { expires: new Date(deadline + 60000).toISOString() } : {}
   };
 }
@@ -2069,7 +2069,6 @@ var grant = (which, what) => ({ kind: "grant", grant: which, what });
 var irreversible = (what) => ({ kind: "irreversible", what });
 var DEFAULT_BRANCHES = new Set(["main", "master"]);
 var PLAIN_TOOLS = new Set([
-  "awk",
   "basename",
   "biome",
   "cat",
@@ -2078,7 +2077,6 @@ var PLAIN_TOOLS = new Set([
   "cp",
   "cut",
   "date",
-  "deno",
   "df",
   "diff",
   "dirname",
@@ -2091,27 +2089,21 @@ var PLAIN_TOOLS = new Set([
   "grep",
   "head",
   "jq",
-  "just",
   "less",
   "ln",
   "ls",
-  "make",
   "mkdir",
   "mv",
   "mypy",
-  "node",
   "prettier",
   "printf",
   "pwd",
   "pyright",
   "pytest",
-  "python",
-  "python3",
   "readlink",
   "realpath",
   "rg",
   "ruff",
-  "sed",
   "sort",
   "stat",
   "tail",
@@ -2125,15 +2117,12 @@ var PLAIN_TOOLS = new Set([
   "type",
   "uniq",
   "wc",
-  "which",
-  "wt",
-  "yq"
+  "which"
 ]);
-var PACKAGE_MANAGERS = new Set(["bun", "cargo", "go", "npm", "pip", "pip3", "pnpm", "uv", "yarn"]);
-var PUBLISHING = /^(publish|unpublish|deprecate|owner|dist-tag|yank|login|adduser|token)$/;
 var RELEASE_SCRIPT = /deploy|release|publish/i;
 var INDIRECT = new Set([
   ".",
+  "awk",
   "bash",
   "builtin",
   "command",
@@ -2142,13 +2131,22 @@ var INDIRECT = new Set([
   "eval",
   "exec",
   "fish",
+  "gawk",
   "ksh",
+  "mawk",
   "nohup",
+  "perl",
+  "php",
+  "pipx",
+  "pnpx",
+  "ruby",
+  "sed",
   "sh",
   "source",
   "sudo",
   "time",
   "timeout",
+  "uvx",
   "watch",
   "xargs",
   "zsh"
@@ -2170,8 +2168,10 @@ function unreadable(list) {
 function flagLetters(value) {
   return value.startsWith("--") || value.length < 2 ? [value] : [...value.slice(1)].map((letter) => `-${letter}`);
 }
-var GIT_GLOBAL_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace"]);
+var NO_DEFAULTS = new Map;
+var GIT_GLOBAL_VALUE = new Set(["-C", "--git-dir", "--work-tree", "--namespace"]);
 var GIT_GLOBAL_FLAG = new Set(["--no-pager", "-P", "--no-optional-locks", "--literal-pathspecs", "--no-replace-objects"]);
+var GIT_RUNS = /^--(upload-pack|receive-pack|exec|exec-path|ext-diff)(=|$)/;
 var GIT_READ = new Set([
   "blame",
   "cat-file",
@@ -2193,34 +2193,23 @@ var GIT_READ = new Set([
   "show-ref",
   "status"
 ]);
-var GIT_LOCAL = new Set([
-  "add",
-  "am",
-  "apply",
-  "cherry-pick",
-  "commit",
-  "init",
-  "merge",
-  "mv",
-  "notes",
-  "rebase",
-  "remote",
-  "revert",
-  "switch",
-  "tag"
-]);
-function git(list) {
+var GIT_LOCAL = new Set(["add", "am", "apply", "cherry-pick", "commit", "init", "merge", "mv", "notes", "remote", "revert", "tag"]);
+function git(list, context) {
   const problem = unreadable(list);
   if (problem)
     return problem;
   const values = list.values;
   let index = 0;
+  let elsewhere = false;
   for (;index < values.length; index++) {
     const value = values[index];
     if (!value.startsWith("-"))
       break;
     const name = value.includes("=") ? value.slice(0, value.indexOf("=")) : value;
+    if (name === "-c")
+      return unknown("git -c can run a command through a config value");
     if (GIT_GLOBAL_VALUE.has(name)) {
+      elsewhere = true;
       if (!value.includes("="))
         index++;
       if (index >= values.length)
@@ -2235,21 +2224,28 @@ function git(list) {
   const rest = values.slice(index + 1);
   if (sub === undefined)
     return SAFE;
+  const runs = rest.find((value) => GIT_RUNS.test(value));
+  if (runs !== undefined)
+    return unknown(`git ${sub} ${runs} runs a command`);
   if (GIT_READ.has(sub) || GIT_LOCAL.has(sub))
     return SAFE;
+  const letters = rest.flatMap(flagLetters);
   switch (sub) {
     case "push":
-      return gitPush(rest);
+      return elsewhere ? never("git push with -C, --git-dir or --work-tree pushes from a repository the gate did not check") : gitPush(rest, context);
+    case "rebase":
+      return letters.includes("-x") ? unknown("git rebase -x runs a command") : SAFE;
     case "reset":
       return rest.some((value) => value === "--hard" || value === "--merge" || value === "--keep") ? irreversible("git reset discards work") : SAFE;
     case "clean":
       return rest.some((value) => value === "--force" || !value.startsWith("--") && value.startsWith("-") && value.includes("f")) ? irreversible("git clean deletes untracked files") : SAFE;
+    case "switch":
+      return rest.some((value) => value === "--discard-changes" || value === "--force" || value === "--force-create") || letters.includes("-f") || letters.includes("-C") ? irreversible("git switch discards changes or resets a branch") : SAFE;
     case "checkout":
-      return rest.some((value) => value === "--" || value === "." || value === "-f" || value === "--force" || value === "-p" || value === "--patch") ? irreversible("git checkout discards changes") : SAFE;
+      return rest[0] === "-b" && rest.length >= 2 && rest.length <= 3 && rest.slice(1).every((value) => !value.startsWith("-") && value !== ".") ? SAFE : irreversible("git checkout can discard changes; use git switch");
     case "restore":
       return rest.includes("--staged") && !rest.some((value) => value === "--worktree" || value === "-W") ? SAFE : irreversible("git restore discards changes");
     case "branch": {
-      const letters = rest.flatMap(flagLetters);
       const deletes = letters.includes("-d") || letters.includes("--delete");
       const force = letters.includes("-f") || letters.includes("--force");
       if (letters.includes("-D") || letters.includes("-M") || letters.includes("-C") || deletes && force)
@@ -2281,7 +2277,7 @@ var PUSH_FLAG = new Set([
   "--force-if-includes"
 ]);
 var PUSH_VALUE = new Set(["-o", "--push-option"]);
-function gitPush(rest) {
+function gitPush(rest, context) {
   const positionals = [];
   let deleting = false;
   for (let index = 0;index < rest.length; index++) {
@@ -2323,6 +2319,9 @@ function gitPush(rest) {
   const [remote, ...refspecs] = positionals;
   if (remote === undefined || refspecs.length === 0)
     return never("git push must name a remote and a branch, for example `git push origin feat/x`");
+  const remoteDefault = context.defaults.get(remote);
+  if (remoteDefault === undefined)
+    return never(`the default branch of remote ${remote} could not be resolved, so the push is denied`);
   let need = SAFE;
   for (const refspec of refspecs) {
     if (refspec.startsWith("+"))
@@ -2332,8 +2331,8 @@ function gitPush(rest) {
     const target = (colon < 0 ? refspec : refspec.slice(colon + 1)).replace(/^refs\/heads\//, "");
     if (target.includes("*"))
       return never(`git push refspec ${refspec} names branches by pattern`);
-    if (DEFAULT_BRANCHES.has(target))
-      return never("autopilot never pushes to the default branch; push a feature branch and open a PR");
+    if (DEFAULT_BRANCHES.has(target) || target === remoteDefault)
+      return never(`autopilot never pushes to the default branch (${remote}/${remoteDefault}); push a feature branch and open a PR`);
     if (target === "" || target === "HEAD")
       return never(`git push refspec ${refspec} does not name a branch`);
     if (deleting || source === "")
@@ -2589,36 +2588,186 @@ function find(list) {
   const runs = list.values.find((value) => FIND_RUNS.test(value));
   return runs ? unknown(`find ${runs} deletes files or runs commands`) : SAFE;
 }
-function packageRunner(runner, list) {
-  let index = 0;
-  while (index < list.values.length && /^(-y|--yes|--no|-q|--quiet)$/.test(list.values[index]))
-    index++;
-  const pkg = list.values[index];
-  if (pkg === undefined)
-    return unknown(`${runner} names no package`);
-  if (list.words[index]?.quoted || list.words[index]?.expands)
-    return unknown(`${runner} package name is quoted or expanded`);
-  const name = basename2(pkg.replace(/(?<=.)@[^/]*$/, "")).replace(/^aws-cdk$/, "cdk");
-  const rest = args(list.words.slice(index + 1));
-  if (name in DEPLOY_TOOLS)
-    return deployTool(name, rest);
-  if (PLAIN_TOOLS.has(name))
-    return SAFE;
-  return unknown(`${runner} ${pkg} runs a package the gate does not know`);
-}
-function packageManager(name, list) {
-  const [verb, script] = list.values;
-  if (verb === undefined)
-    return SAFE;
-  if (name === "bun" && verb === "x")
-    return packageRunner("bun x", args(list.words.slice(1)));
-  if (PUBLISHING.test(verb))
-    return unknown(`${name} ${verb} is outward-facing`);
-  if ((verb === "run" || verb === "run-script") && script !== undefined && RELEASE_SCRIPT.test(script))
-    return unknown(`${name} run ${script} looks like a release script`);
+var SCRIPT_NAME = /^[A-Za-z0-9][\w:.-]*$/;
+function script(runner, name) {
+  if (name === undefined)
+    return unknown(`${runner} run names no script`);
+  if (!SCRIPT_NAME.test(name) || name.includes("/"))
+    return unknown(`${runner} runs \`${name}\`, which is not a script name`);
+  if (RELEASE_SCRIPT.test(name))
+    return unknown(`${runner} script ${name} looks like a release`);
   return SAFE;
 }
-function classifyCommand(command) {
+var verbs = (deps, read, tests, run) => ({ deps: new Set(deps), read: new Set(read), tests: new Set(tests), run: new Set(run) });
+var JS_RUNNERS = {
+  npm: verbs(["install", "i", "ci", "add", "uninstall", "remove", "rm", "update", "up", "dedupe", "prune"], ["ls", "list", "outdated", "audit", "view", "info", "why", "explain", "config", "root", "bin", "prefix"], ["test", "t"], ["run", "run-script"]),
+  pnpm: verbs(["install", "i", "add", "remove", "rm", "update", "up", "prune"], ["ls", "list", "outdated", "audit", "why", "root"], ["test", "t"], ["run"]),
+  yarn: verbs(["install", "add", "remove", "up", "upgrade"], ["list", "info", "why", "outdated"], ["test"], ["run"]),
+  bun: verbs(["install", "i", "add", "remove", "rm", "update", "pm"], ["outdated", "audit"], ["test"], ["run"])
+};
+function jsRunner(name, list) {
+  const problem = unreadable(list);
+  if (problem)
+    return problem;
+  const table = JS_RUNNERS[name];
+  const first = list.values[0];
+  if (first?.startsWith("-"))
+    return first === "--version" || first === "-v" ? SAFE : unknown(`unknown ${name} option ${first} before the command`);
+  const index = 0;
+  const verb = list.values[index];
+  if (verb === undefined)
+    return name === "yarn" ? SAFE : unknown(`${name} names no command`);
+  if (table.deps.has(verb) || table.read.has(verb) || table.tests.has(verb))
+    return SAFE;
+  if (table.run.has(verb))
+    return script(`${name} run`, list.values.slice(index + 1).find((value) => !value.startsWith("-")));
+  if (name === "npm" && verb === "start")
+    return SAFE;
+  return unknown(`${name} ${verb} is not a command the gate knows`);
+}
+function cargo(list) {
+  const problem = unreadable(list);
+  if (problem)
+    return problem;
+  const verb = list.values.find((value) => !value.startsWith("-"));
+  if (verb === undefined)
+    return SAFE;
+  if (/^(build|b|check|c|test|t|clippy|fmt|doc|bench|add|remove|rm|update|tree|metadata|fetch|run|r|nextest)$/.test(verb))
+    return SAFE;
+  return unknown(`cargo ${verb} is not a command the gate knows`);
+}
+function goTool(list) {
+  const problem = unreadable(list);
+  if (problem)
+    return problem;
+  const verb = list.values[0];
+  if (verb === undefined)
+    return SAFE;
+  if (/^(build|test|vet|fmt|mod|list|version|env|doc)$/.test(verb))
+    return SAFE;
+  return unknown(`go ${verb} is not a command the gate knows (go run and go generate run code)`);
+}
+function pip(name, list) {
+  const problem = unreadable(list);
+  if (problem)
+    return problem;
+  const verb = list.values[0];
+  return verb !== undefined && /^(install|uninstall|list|show|freeze|check)$/.test(verb) ? SAFE : unknown(`${name} ${verb ?? ""} is not a command the gate knows`);
+}
+var PY_TOOLS = new Set(["pytest", "mypy", "ruff", "pyright", "unittest"]);
+function uv(list) {
+  const problem = unreadable(list);
+  if (problem)
+    return problem;
+  const [verb, ...rest] = list.values;
+  if (verb === undefined)
+    return SAFE;
+  if (/^(sync|lock|add|remove|tree|venv|version)$/.test(verb))
+    return SAFE;
+  if (verb === "pip")
+    return pip("uv pip", args(list.words.slice(1)));
+  if (verb === "run") {
+    const tool = rest.find((value) => !value.startsWith("-"));
+    if (tool !== undefined && PY_TOOLS.has(tool))
+      return SAFE;
+    return unknown(`uv run ${tool ?? ""} runs code the gate cannot read; only ${[...PY_TOOLS].join(", ")} are known forms`);
+  }
+  return unknown(`uv ${verb} is not a command the gate knows`);
+}
+function python(name, list) {
+  const problem = unreadable(list);
+  if (problem)
+    return problem;
+  const [first, second] = list.values;
+  if (first === "--version" || first === "-V")
+    return SAFE;
+  if (first === "-m" && second !== undefined && PY_TOOLS.has(second))
+    return SAFE;
+  if (first === "-m" && second === "pip")
+    return pip(`${name} -m pip`, args(list.words.slice(2)));
+  return unknown(`${name} runs a program the gate cannot read; only -m ${[...PY_TOOLS].join("|")} is a known form`);
+}
+function node(list) {
+  return list.values.length === 1 && (list.values[0] === "--version" || list.values[0] === "-v") ? SAFE : unknown("node runs a program the gate cannot read");
+}
+function deno(list) {
+  const problem = unreadable(list);
+  if (problem)
+    return problem;
+  const verb = list.values[0];
+  return verb !== undefined && /^(test|fmt|lint|check|--version)$/.test(verb) ? SAFE : unknown(`deno ${verb ?? ""} runs a program the gate cannot read`);
+}
+var MAKE_FLAG = /^-(j\d*|k|s|n|B|-keep-going|-silent|-dry-run|-always-make)$/;
+function recipes(name, list) {
+  const problem = unreadable(list);
+  if (problem)
+    return problem;
+  const targets = [];
+  for (let index = 0;index < list.values.length; index++) {
+    const value = list.values[index];
+    if (value === "-C" && name === "make") {
+      index++;
+      continue;
+    }
+    if (value.startsWith("-")) {
+      if (MAKE_FLAG.test(value) && name === "make")
+        continue;
+      return unknown(`unknown ${name} option ${value}`);
+    }
+    if (value.includes("="))
+      return unknown(`${name} variable ${value} can change what a recipe runs`);
+    targets.push(value);
+  }
+  for (const target of targets) {
+    const need = script(name, target);
+    if (need.kind !== "safe")
+      return need;
+  }
+  return SAFE;
+}
+function packageRunner(runner, list) {
+  let index = 0;
+  while (index < list.values.length && /^(-y|--yes|--no)$/.test(list.values[index]))
+    index++;
+  const pkg = list.values[index];
+  if (pkg === undefined || list.words[index]?.quoted || list.words[index]?.expands)
+    return unknown(`${runner} names no plain package`);
+  const name = pkg === "aws-cdk" || pkg === "cdk" ? "cdk" : undefined;
+  if (name === undefined)
+    return unknown(`${runner} ${pkg} runs a package the gate cannot read`);
+  return deployTool(name, args(list.words.slice(index + 1)));
+}
+var WT_SWITCH_FLAG = new Set(["-c", "--create", "--no-cd", "--no-hooks", "--branches", "--remotes", "--prs", "-y", "--yes"]);
+var WT_SWITCH_VALUE = new Set(["-b", "--base", "--format"]);
+var WT_REMOVE_FLAG = new Set(["--no-delete-branch", "--foreground", "--no-hooks", "-y", "--yes"]);
+var WT_MERGE_FLAG = new Set(["--no-squash", "--no-remove", "--no-commit", "--no-rebase", "--no-hooks", "--no-verify", "-y", "--yes", "--squash"]);
+function wt(list) {
+  const problem = unreadable(list);
+  if (problem)
+    return problem;
+  const [verb, ...rest] = list.values;
+  if (verb === undefined || verb === "list")
+    return SAFE;
+  if (verb === "switch") {
+    const flags = checkFlags(rest, WT_SWITCH_FLAG, WT_SWITCH_VALUE, "wt switch");
+    if (flags)
+      return rest.some((value) => value === "-x" || value.startsWith("--execute")) ? unknown("wt switch -x runs a command") : flags;
+    return rest.includes("--clobber") ? irreversible("wt switch --clobber replaces a directory") : SAFE;
+  }
+  if (verb === "remove") {
+    if (rest.some((value) => value === "-D" || value === "--force-delete" || value === "-f" || value === "--force"))
+      return irreversible("wt remove --force deletes unmerged work");
+    return checkFlags(rest, WT_REMOVE_FLAG, new Set, "wt remove") ?? SAFE;
+  }
+  if (verb === "merge")
+    return checkFlags(rest, WT_MERGE_FLAG, new Set, "wt merge") ?? grant("merge", "wt merge");
+  return unknown(`wt ${verb} is not a command the gate knows`);
+}
+var DOLLAR_QUOTE = /\$['"]/;
+function classifyCommand(command, source, context = { grants: [], full: false, defaults: NO_DEFAULTS }) {
+  for (const word of [...command.words, ...command.redirects])
+    if (DOLLAR_QUOTE.test(source.slice(word.start, word.end)))
+      return unknown(`\`${source.slice(word.start, word.end)}\` uses $'\u2026' or $"\u2026" quoting`);
   const words = command.words;
   let index = 0;
   while (index < words.length && !words[index].quoted && ASSIGNMENT.test(words[index].value))
@@ -2631,10 +2780,10 @@ function classifyCommand(command) {
   const name = basename2(head.value);
   const rest = args(words.slice(index + 1));
   if (INDIRECT.has(name))
-    return unknown(`${name} runs a command the gate cannot read`);
+    return unknown(`${name} runs code the gate cannot read`);
   switch (name) {
     case "git":
-      return git(rest);
+      return git(rest, context);
     case "gh":
       return gh(rest);
     case "glab":
@@ -2647,36 +2796,100 @@ function classifyCommand(command) {
       return bd(rest);
     case "find":
       return find(rest);
+    case "wt":
+      return wt(rest);
     case "npx":
-    case "bunx":
-    case "pnpx":
       return packageRunner(name, rest);
+    case "bunx":
+      return unknown("bunx runs a package the gate cannot read");
+    case "npm":
+    case "pnpm":
+    case "yarn":
+    case "bun":
+      return jsRunner(name, rest);
+    case "cargo":
+      return cargo(rest);
+    case "go":
+      return goTool(rest);
+    case "pip":
+    case "pip3":
+      return pip(name, rest);
+    case "uv":
+      return uv(rest);
+    case "python":
+    case "python3":
+      return python(name, rest);
+    case "node":
+      return node(rest);
+    case "deno":
+      return deno(rest);
+    case "make":
+    case "just":
+      return recipes(name, rest);
   }
   if (name in DEPLOY_TOOLS)
     return deployTool(name, rest);
-  if (PACKAGE_MANAGERS.has(name))
-    return packageManager(name, rest);
   if (PLAIN_TOOLS.has(name))
     return SAFE;
   return unknown(`${name} is not a command the gate knows`);
 }
-function classifyShell(source) {
+function classifyShell(source, context) {
   const scan = scanShell(source);
   if (!scan.complete)
     return [unknown("the command does not parse: a quote, substitution or here-document is left open")];
   if (scan.substitutions.length > 0)
     return [unknown("the command uses command substitution, which the gate cannot read")];
-  const needs = scan.items.flatMap((item) => item.kind === "command" ? [classifyCommand(item)] : []);
+  const needs = scan.items.flatMap((item) => item.kind === "command" ? [classifyCommand(item, source, context)] : []);
   return needs.length > 0 ? needs : [unknown("the command is empty")];
 }
+function pushRemotes(action, resources) {
+  if (!SHELL_ACTIONS.has(action.toLowerCase()))
+    return [];
+  const remotes = new Set;
+  for (const source of resources) {
+    const scan = scanShell(source);
+    for (const item of scan.items) {
+      if (item.kind !== "command")
+        continue;
+      const values = item.words.map((word) => word.value);
+      const at = values.indexOf("push");
+      if (at < 1 || basename2(values[0]) !== "git")
+        continue;
+      const remote = values.slice(at + 1).find((value) => !value.startsWith("-"));
+      if (remote !== undefined)
+        remotes.add(remote);
+    }
+  }
+  return [...remotes];
+}
 var SHELL_ACTIONS = new Set(["shell", "bash"]);
-function needsOf(action, resources) {
+var SAFE_ACTIONS = new Set([
+  "read",
+  "edit",
+  "write",
+  "patch",
+  "glob",
+  "grep",
+  "list",
+  "webfetch",
+  "websearch",
+  "skill",
+  "subagent",
+  "task",
+  "todowrite",
+  "todoread",
+  "opencode_list_mcp_resources",
+  "opencode_read_mcp_resource"
+]);
+function needsOf(action, resources, context) {
   const name = action.toLowerCase();
   if (SHELL_ACTIONS.has(name))
-    return resources.length > 0 ? resources.flatMap(classifyShell) : [unknown("the shell request names no command")];
+    return resources.length > 0 ? resources.flatMap((source) => classifyShell(source, context)) : [unknown("the shell request names no command")];
   if (name === "delivery_land" || name.endsWith("_merge"))
     return [grant("merge", action)];
-  return [SAFE];
+  if (SAFE_ACTIONS.has(name))
+    return [SAFE];
+  return [unknown(`permission kind ${action} is not one the gate approves`)];
 }
 function unmet(need, grants, full) {
   switch (need.kind) {
@@ -2692,8 +2905,8 @@ function unmet(need, grants, full) {
       return `autopilot allows only commands it can read: ${need.reason}; logged as a blocker`;
   }
 }
-function decideAsk(action, resources, grants, full) {
-  for (const need of needsOf(action, resources)) {
+function decideAsk(action, resources, grants, full, defaults = NO_DEFAULTS) {
+  for (const need of needsOf(action, resources, { grants, full, defaults })) {
     const reason = unmet(need, grants, full);
     if (reason !== undefined)
       return { effect: "deny", reason };
@@ -2800,6 +3013,7 @@ import {
   writeFileSync,
   writeSync as writeSync3
 } from "fs";
+import { hostname as hostname3 } from "os";
 import { isAbsolute as isAbsolute3, join as join2, resolve as resolve3 } from "path";
 
 // plugins/autopilot/opencode/src/state-schema.ts
@@ -2830,13 +3044,17 @@ var RunStateSchema = Schema.Struct({
   runId: Schema.String,
   sessionID: Schema.String,
   directory: Schema.String,
-  phase: Schema.Literals(["setup", "running", "stopped"]),
+  phase: Schema.Literals(["setup", "running", "stopping", "stopped"]),
   options: OptionsSchema,
   scope: ScopeSchema,
   createdAt: Schema.Finite,
   armedAt: Schema.optionalKey(Schema.Finite),
   deadline: Schema.optionalKey(Schema.Finite),
-  tick: Schema.Struct({ kind: Schema.Literals(["none", "automation", "fallback"]), automationId: Schema.optionalKey(Schema.String) }),
+  tick: Schema.Struct({
+    kind: Schema.Literals(["none", "automation", "fallback"]),
+    automationId: Schema.optionalKey(Schema.String),
+    token: Schema.optionalKey(Schema.String)
+  }),
   ticks: Schema.Finite,
   idleTicks: Schema.Finite,
   beads: Schema.Struct({ open: Strings, ready: Strings, blocked: Strings, inProgress: Strings, closed: Strings }),
@@ -2848,7 +3066,12 @@ var RunStateSchema = Schema.Struct({
   parked: Strings,
   stopRequested: Schema.optionalKey(Schema.Boolean),
   stopReason: Schema.optionalKey(Schema.String),
-  stoppedAt: Schema.optionalKey(Schema.Finite)
+  stoppedAt: Schema.optionalKey(Schema.Finite),
+  stop: Schema.optionalKey(Schema.Struct({
+    journalLength: Schema.Finite,
+    summary: Schema.Boolean,
+    handoff: Schema.optionalKey(Schema.String)
+  }))
 });
 var decode = Schema.decodeUnknownExit(RunStateSchema);
 function decodeRunState(value) {
@@ -2873,8 +3096,8 @@ async function autopilotRoot(directory, run = runCommand) {
 class RunFileError extends Error {
   kind;
   path;
-  constructor(kind, path, detail) {
-    super(`${path}: ${detail}`);
+  constructor(kind, path, detail, cause) {
+    super(`${path}: ${detail}`, cause === undefined ? undefined : { cause });
     this.kind = kind;
     this.path = path;
   }
@@ -2887,13 +3110,17 @@ function readText(path) {
   } catch (error) {
     if (missing(error))
       return;
-    throw new RunFileError("io", path, describe(error));
+    throw new RunFileError("io", path, describe(error), error);
   }
 }
+var WRITE_LOCK_WAIT_MS = 30000;
+var WRITE_LOCK_STALE_MS = 10 * 60000;
+var WRITE_LOCK_POLL_MS = 10;
 
 class RunDir {
   root;
   runId;
+  leaseOwner;
   constructor(root, runId) {
     this.root = root;
     this.runId = runId;
@@ -2913,6 +3140,9 @@ class RunDir {
   get lockPath() {
     return join2(this.path, "run.lock");
   }
+  get writeLockPath() {
+    return `${this.statePath}.lock`;
+  }
   create() {
     mkdirSync(this.path, { recursive: true });
     if (!existsSync3(this.journalPath))
@@ -2929,35 +3159,106 @@ class RunDir {
     try {
       value = JSON.parse(text);
     } catch (error) {
-      throw new RunFileError("corrupt", this.statePath, `not JSON (${describe(error)})`);
+      throw new RunFileError("corrupt", this.statePath, `not JSON (${describe(error)})`, error);
     }
     const decoded = decodeRunState(value);
     if (!decoded.ok)
       throw new RunFileError("corrupt", this.statePath, `not a run state (${decoded.reason})`);
     return decoded.state;
   }
-  writeState(read, next) {
-    const current = this.readState();
-    const expected = read?.generation;
-    if (current !== undefined && current.generation !== expected)
-      throw new RunFileError("stale", this.statePath, `generation ${current.generation} on disk, this writer read ${expected ?? "nothing"}`);
-    const written = { ...next, generation: (current?.generation ?? -1) + 1 };
-    const temporary = `${this.statePath}.tmp`;
+  async writeState(read, next, options = {}) {
+    const release = await this.#takeWriteLock();
     try {
-      writeFileSync(temporary, `${JSON.stringify(written, null, 2)}
+      const current = this.readState();
+      const expected = read?.generation;
+      if (current !== undefined && current.generation !== expected)
+        throw new RunFileError("stale", this.statePath, `generation ${current.generation} on disk, this writer read ${expected ?? "nothing"}`);
+      this.#checkLease(options.leaseOwner ?? this.leaseOwner);
+      const written = { ...next, generation: (current?.generation ?? -1) + 1 };
+      const temporary = `${this.statePath}.tmp`;
+      try {
+        writeFileSync(temporary, `${JSON.stringify(written, null, 2)}
 `);
-      renameSync(temporary, this.statePath);
-    } catch (error) {
-      throw new RunFileError("io", this.statePath, describe(error));
+      } catch (error) {
+        throw new RunFileError("io", this.statePath, describe(error), error);
+      }
+      await options.beforeRename?.();
+      this.#checkLease(options.leaseOwner ?? this.leaseOwner);
+      try {
+        renameSync(temporary, this.statePath);
+      } catch (error) {
+        throw new RunFileError("io", this.statePath, describe(error), error);
+      }
+      return written;
+    } finally {
+      release();
     }
-    return written;
+  }
+  #checkLease(owner) {
+    if (owner === undefined)
+      return;
+    let holder;
+    try {
+      holder = JSON.parse(readFileSync3(this.lockPath, "utf8")).owner;
+    } catch (error) {
+      throw new RunFileError("stale", this.lockPath, `the run lease cannot be read (${describe(error)})`, error);
+    }
+    if (holder !== owner)
+      throw new RunFileError("stale", this.lockPath, `the run lease now belongs to ${String(holder)}`);
+  }
+  async#takeWriteLock() {
+    const path = this.writeLockPath;
+    const deadline = Date.now() + WRITE_LOCK_WAIT_MS;
+    for (;; ) {
+      try {
+        const fd = openSync4(path, "wx");
+        try {
+          writeSync3(fd, JSON.stringify({ host: hostname3(), pid: process.pid, taken: Date.now() }));
+        } finally {
+          closeSync4(fd);
+        }
+        return () => rmSync(path, { force: true });
+      } catch (error) {
+        if (error.code !== "EEXIST")
+          throw new RunFileError("io", path, describe(error), error);
+      }
+      if (this.#writeLockAbandoned(path)) {
+        rmSync(path, { force: true });
+        continue;
+      }
+      if (Date.now() >= deadline)
+        throw new RunFileError("io", path, `the state write lock stayed held for ${WRITE_LOCK_WAIT_MS / 1000}s`);
+      await new Promise((resolve) => setTimeout(resolve, WRITE_LOCK_POLL_MS));
+    }
+  }
+  #writeLockAbandoned(path) {
+    let holder;
+    try {
+      holder = JSON.parse(readFileSync3(path, "utf8"));
+    } catch {
+      try {
+        return Date.now() - statSync4(path).mtimeMs > WRITE_LOCK_STALE_MS;
+      } catch {
+        return false;
+      }
+    }
+    if (typeof holder.taken === "number" && Date.now() - holder.taken > WRITE_LOCK_STALE_MS)
+      return true;
+    if (holder.host !== hostname3() || typeof holder.pid !== "number")
+      return false;
+    try {
+      process.kill(holder.pid, 0);
+      return false;
+    } catch (error) {
+      return error.code === "ESRCH";
+    }
   }
   append(entry) {
     let fd;
     try {
       fd = openSync4(this.journalPath, "a+");
     } catch (error) {
-      throw new RunFileError("io", this.journalPath, describe(error));
+      throw new RunFileError("io", this.journalPath, describe(error), error);
     }
     try {
       const size = statSync4(this.journalPath).size;
@@ -2970,7 +3271,7 @@ class RunDir {
       writeSync3(fd, `${JSON.stringify(entry)}
 `);
     } catch (error) {
-      throw error instanceof RunFileError ? error : new RunFileError("io", this.journalPath, describe(error));
+      throw error instanceof RunFileError ? error : new RunFileError("io", this.journalPath, describe(error), error);
     } finally {
       closeSync4(fd);
     }
@@ -2988,7 +3289,7 @@ class RunDir {
       return readJournal(text);
     } catch (error) {
       if (error instanceof JournalCorrupt)
-        throw new RunFileError("corrupt", this.journalPath, error.message);
+        throw new RunFileError("corrupt", this.journalPath, error.message, error);
       throw error;
     }
   }
@@ -2996,7 +3297,7 @@ class RunDir {
     try {
       writeFileSync(this.summaryPath, text);
     } catch (error) {
-      throw new RunFileError("io", this.summaryPath, describe(error));
+      throw new RunFileError("io", this.summaryPath, describe(error), error);
     }
   }
   summary() {
@@ -3011,7 +3312,7 @@ function findRun(root, runId) {
     } catch (error) {
       if (missing(error))
         return;
-      throw new RunFileError("io", join2(root, "latest"), describe(error));
+      throw new RunFileError("io", join2(root, "latest"), describe(error), error);
     }
   }
   if (!/^[\w.-]+$/.test(id))
@@ -3147,14 +3448,36 @@ var STATUS_INPUT = {
       }
     },
     automation_id: { type: "string", description: "arm: the created automation id" },
-    reason: { type: "string", description: "stop: why" }
+    reason: { type: "string", description: "stop: why" },
+    token: { type: "string", description: "tick: the automation's binding token" },
+    session: { type: "string", description: "tick: the session the automation was created for" }
   }
 };
+function bindingOf(state2) {
+  return { token: state2.tick.token ?? "", session: state2.sessionID };
+}
+function staleTick(state2, input) {
+  if (state2.tick.token === undefined || input.token !== state2.tick.token)
+    return "this tick's automation is not the run's current one; it ends here";
+  if (input.session !== state2.sessionID)
+    return `the run is bound to ${state2.sessionID}, not ${input.session ?? "no session"}; this automation ends here`;
+  return;
+}
+var handoffTitle = (runId) => `Autopilot handoff: run ${runId}`;
+function parseId(stdout) {
+  try {
+    const value = JSON.parse(stdout.slice(Math.max(0, stdout.indexOf("{"))));
+    return typeof value.id === "string" ? value.id : undefined;
+  } catch {
+    return;
+  }
+}
 var MAX_REPROMPTS = 2;
 var MAX_CHILD_PAGES = 50;
 var embeddedLock = (cwd, owner, write) => withEmbeddedWriteLock(cwd, owner, write);
 var RUN_LOCK_WAIT_MS = 60000;
 var STORAGE_PAGE = 100;
+var DEFAULT_BRANCH_TTL_MS = 10 * 60000;
 
 class RunLockBusy extends Error {
 }
@@ -3244,6 +3567,7 @@ class Autopilot {
   #reprompts = new Map;
   #serial = new Map;
   #reported = new Set;
+  #defaults = new Map;
   constructor(ctx, deps = {}) {
     this.ctx = ctx;
     this.#run = deps.run ?? runCommand;
@@ -3273,7 +3597,7 @@ class Autopilot {
       try {
         const state2 = dir.readState();
         if (state2?.phase === "running" && state2.tick.kind === "fallback")
-          this.#startFallback(sessionID);
+          this.#startFallback(sessionID, state2.tick.token);
       } catch (error) {
         this.#report(dir, error);
       }
@@ -3333,7 +3657,7 @@ class Autopilot {
     } catch (error) {
       return { lead, dir, unreadable: this.#report(dir, error) };
     }
-    return state2?.phase === "running" ? { lead, dir, state: state2 } : undefined;
+    return state2?.phase === "running" || state2?.phase === "stopping" ? { lead, dir, state: state2 } : undefined;
   }
   #dirFor(sessionID, runId) {
     if (runId !== undefined) {
@@ -3414,7 +3738,7 @@ class Autopilot {
         const runId = runIdFor(now);
         const dir = new RunDir(root, runId);
         dir.create();
-        dir.writeState(undefined, newRunState({ runId, sessionID, directory, options: invocation.options, scope: classifyScope(invocation.options.scope), now }));
+        await dir.writeState(undefined, newRunState({ runId, sessionID, directory, options: invocation.options, scope: classifyScope(invocation.options.scope), now }));
         await this.#arm(sessionID, { runId, root });
         return setupPrompt(runId, invocation);
       }
@@ -3426,8 +3750,8 @@ class Autopilot {
           const state2 = dir.readState();
           if (!state2)
             return;
-          if (state2.phase !== "stopped")
-            dir.writeState(state2, { ...state2, stopRequested: true });
+          if (state2.phase === "running" || state2.phase === "setup")
+            await dir.writeState(state2, { ...state2, stopRequested: true });
           return state2.runId;
         });
         if (runId === undefined)
@@ -3442,14 +3766,14 @@ class Autopilot {
           const state2 = dir.readState();
           if (!state2)
             return { ok: false, message: `autopilot: no run ${invocation.runId ?? "latest"} under ${root}.` };
-          if (state2.phase === "stopped")
+          if (state2.phase === "stopped" || state2.phase === "stopping")
             return { ok: false, message: `autopilot: run ${state2.runId} already stopped (${state2.stopReason}); start a new one.` };
           for (const [other, armed] of this.armed)
             if (armed.runId === state2.runId && other !== sessionID)
               await this.#disarm(other);
-          const resumed = dir.writeState(state2, { ...state2, sessionID, phase: "running", tick: { kind: "none" } });
+          const resumed = await dir.writeState(state2, { ...state2, sessionID, phase: "running", tick: { kind: "none", token: randomUUID2() } });
           await this.#arm(sessionID, { runId: state2.runId, root });
-          return { ok: true, state: resumed };
+          return { ok: true, state: resumed, ...state2.tick.automationId ? { previous: state2.tick.automationId } : {} };
         });
         if (!bound.ok)
           return bound.message;
@@ -3457,7 +3781,8 @@ class Autopilot {
         const status = await this.status(sessionID, { action: "status", run: state2.runId });
         return [
           `Autopilot run ${state2.runId} resumed in this session. Load the ${SKILL} skill and follow it; no questions.`,
-          `Create the tick automation with tools.opencode.automation_create(${JSON.stringify(automationRequest(state2.runId, state2.deadline))}); on failure call autopilot_status with action "fallback".`,
+          ...bound.previous ? [`Delete the previous tick automation first: tools.opencode.automation_delete({ id: "${bound.previous}" }). Its ticks no longer count either way.`] : [],
+          `Create the tick automation with tools.opencode.automation_create(${JSON.stringify(automationRequest(state2.runId, state2.deadline, bindingOf(state2)))}), then call autopilot_status with action "arm" and its automation_id; on failure call autopilot_status with action "fallback".`,
           `Status: ${JSON.stringify(status)}`
         ].join(`
 `);
@@ -3490,7 +3815,15 @@ class Autopilot {
   }
   async#exclusive(dir, work) {
     const locked = async () => {
-      const held = await withLease(dir.lockPath, { owner: `${ID}/${process.pid}/${dir.runId}`, waitMs: RUN_LOCK_WAIT_MS }, work);
+      const owner = `${ID}/${process.pid}/${dir.runId}/${randomUUID2()}`;
+      const held = await withLease(dir.lockPath, { owner, waitMs: RUN_LOCK_WAIT_MS }, async () => {
+        dir.leaseOwner = owner;
+        try {
+          return await work();
+        } finally {
+          dir.leaseOwner = undefined;
+        }
+      });
       if (held.kind === "failed")
         throw new RunLockBusy(held.reason);
       return held.value;
@@ -3512,6 +3845,8 @@ class Autopilot {
   }
   async status(sessionID, input) {
     const dir = this.#dirFor(sessionID, input.run);
+    if (!dir && input.action === "tick")
+      return { done: true, stale: `run ${input.run ?? "?"} is not armed; this automation ends here` };
     if (!dir)
       return { error: "no autopilot run for this session; start one with /autopilot" };
     try {
@@ -3533,15 +3868,23 @@ class Autopilot {
     if (!state2)
       return { error: "no autopilot run for this session; start one with /autopilot" };
     const action = input.action ?? "status";
+    if (action === "tick") {
+      const stale = staleTick(state2, input);
+      if (stale !== undefined)
+        return { done: true, stale };
+    }
     if (action === "arm")
       return this.#armRun(dir, state2, input);
     if (state2.phase === "stopped")
       return { done: true, stopped: state2.stopReason, summary: dir.summaryPath };
+    if (state2.phase === "stopping")
+      return this.#finishStop(dir, state2);
     if (action === "stop")
-      return this.#stopLocked(dir, state2, input.reason ?? "stop requested");
+      return this.#beginStop(dir, state2, input.reason ?? "stop requested");
     if (action === "fallback") {
-      dir.writeState(state2, { ...state2, tick: { kind: "fallback" } });
-      this.#startFallback(state2.sessionID);
+      const token = state2.tick.token ?? randomUUID2();
+      await dir.writeState(state2, { ...state2, tick: { ...state2.tick, kind: "fallback", token } });
+      this.#startFallback(state2.sessionID, token);
       return { ok: true, tick: "fallback", every: TICK_MS };
     }
     if (state2.phase !== "running")
@@ -3550,7 +3893,7 @@ class Autopilot {
       return { skip: "lead session busy" };
     const result = tick(state2, await this.snapshot(state2, dir));
     if (action === "tick") {
-      dir.writeState(state2, result.state);
+      await dir.writeState(state2, result.state);
       for (const due of result.actions)
         if (due.kind === "park")
           dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: due.reason, bead: due.item, parked: true });
@@ -3571,9 +3914,13 @@ class Autopilot {
   }
   async#armRun(dir, state2, input) {
     if (state2.phase === "running") {
-      if (input.automation_id)
-        dir.writeState(state2, { ...state2, tick: { kind: "automation", automationId: input.automation_id } });
-      return { ok: true, phase: "running", automation: automationRequest(state2.runId, state2.deadline) };
+      let current = state2;
+      if (input.automation_id || state2.tick.token === undefined)
+        current = await dir.writeState(state2, {
+          ...state2,
+          tick: { ...state2.tick, token: state2.tick.token ?? randomUUID2(), ...input.automation_id ? { kind: "automation", automationId: input.automation_id } : {} }
+        });
+      return { ok: true, phase: "running", automation: automationRequest(current.runId, current.deadline, bindingOf(current)) };
     }
     if (state2.phase !== "setup")
       return { error: `run is ${state2.phase}` };
@@ -3588,54 +3935,83 @@ class Autopilot {
       armedAt: now,
       options: { ...options, allow: options.allow ?? [], lanes: options.lanes ?? 3, full: options.full ?? false },
       scope: classifyScope(options.scope),
+      tick: { kind: "none", token: randomUUID2() },
       ...deadline !== undefined ? { deadline } : {}
     };
     const first = tick(next, await this.snapshot(next, dir));
-    dir.writeState(state2, { ...first.state, ticks: 0, idleTicks: 0 });
+    const armed = await dir.writeState(state2, { ...first.state, ticks: 0, idleTicks: 0 });
     dir.append({ ts: new Date(now).toISOString(), type: "action", summary: `armed: ${JSON.stringify(next.options)}` });
     return {
       ok: true,
       phase: "running",
       ping: first.ping,
-      automation: automationRequest(state2.runId, deadline),
+      automation: automationRequest(armed.runId, deadline, bindingOf(armed)),
       next: 'Create the automation with tools.opencode.automation_create(automation), then call autopilot_status with action "arm" and automation_id. If creation fails, call action "fallback". No questions from now on.'
     };
   }
-  async#stopLocked(dir, state2, reason) {
+  async#beginStop(dir, state2, reason) {
     const now = this.#now();
     const fresh = await readBeads(state2.directory, this.#run);
     const beads = fresh.ok ? countBeads(fresh, state2.scope) : state2.beads;
     const stopReason = state2.stopReason ?? reason;
     dir.append({ ts: new Date(now).toISOString(), type: "stop", summary: stopReason });
-    const journal2 = dir.journal();
-    const stopped = dir.writeState(state2, { ...state2, beads, phase: "stopped", stopReason, stoppedAt: now });
-    const summary2 = renderSummary(stopped, journal2, dir.path);
-    dir.writeSummary(summary2);
-    const created = await this.#bdWrite(state2, [
-      "create",
-      `Autopilot handoff: run ${state2.runId}`,
-      "--labels",
-      HANDOFF_LABEL,
-      "-d",
-      handoffDescription(stopped, journal2, dir.path),
-      "--json"
-    ]);
-    let handoff;
-    try {
-      handoff = JSON.parse(created.stdout.slice(created.stdout.indexOf("{"))).id;
-    } catch {
-      handoff = undefined;
+    const journalLength = dir.journal().length;
+    const stopping = await dir.writeState(state2, { ...state2, beads, phase: "stopping", stopReason, stoppedAt: now, stop: { journalLength, summary: false } });
+    return this.#finishStop(dir, stopping);
+  }
+  async#finishStop(dir, stopping) {
+    let state2 = stopping;
+    const progress = state2.stop ?? { journalLength: dir.journal().length, summary: false };
+    const journal2 = dir.journal().slice(0, progress.journalLength);
+    const pending = (error) => ({
+      phase: "stopping",
+      error,
+      prompt: `Autopilot is stopping but could not finish: ${error}. It retries on the next tick; call autopilot_status with action "stop" to retry now.`
+    });
+    const summary2 = renderSummary(state2, journal2, dir.path);
+    if (!progress.summary) {
+      try {
+        dir.writeSummary(summary2);
+      } catch (error) {
+        return pending(this.#report(dir, error));
+      }
+      state2 = await dir.writeState(state2, { ...state2, stop: { ...progress, summary: true } });
     }
-    await this.#disarm(state2.sessionID);
+    let handoff = state2.stop?.handoff;
+    if (handoff === undefined) {
+      const title = handoffTitle(state2.runId);
+      handoff = await this.#findHandoff(state2, title);
+      if (handoff === undefined) {
+        const created = await this.#bdWrite(state2, ["create", title, "--labels", HANDOFF_LABEL, "-d", handoffDescription(state2, journal2, dir.path), "--json"]);
+        handoff = created.ok ? parseId(created.stdout) : undefined;
+        if (handoff === undefined)
+          return pending(`the handoff bead was not created: ${created.stderr.trim() || "bd create failed"}`);
+      }
+      state2 = await dir.writeState(state2, { ...state2, stop: { ...state2.stop ?? progress, summary: true, handoff } });
+    }
+    const stopped = await dir.writeState(state2, { ...state2, phase: "stopped" });
+    await this.#disarm(stopped.sessionID);
     return {
       done: true,
       stopped: stopped.stopReason,
       summaryPath: dir.summaryPath,
-      handoff: handoff ?? `not created: ${created.stderr.trim() || "bd create failed"}`,
-      automationId: state2.tick.automationId,
-      next: state2.tick.automationId ? `Delete the automation: tools.opencode.automation_delete({ id: "${state2.tick.automationId}" }). Then print the summary and end.` : "Print the summary and end.",
+      handoff,
+      automationId: stopped.tick.automationId,
+      next: stopped.tick.automationId ? `Delete the automation: tools.opencode.automation_delete({ id: "${stopped.tick.automationId}" }). Then print the summary and end.` : "Print the summary and end.",
       summary: summary2
     };
+  }
+  async#findHandoff(state2, title) {
+    const listed = await this.#run(state2.directory, "bd", ["list", "--all", "--label", HANDOFF_LABEL, "--json", "--limit", "0"], BD_READ_TIMEOUT_MS);
+    if (!listed.ok)
+      return;
+    try {
+      const items = JSON.parse(listed.stdout.slice(Math.max(0, listed.stdout.indexOf("["))));
+      const found = items.find((item) => item.title === title && Array.isArray(item.labels) && item.labels.includes(HANDOFF_LABEL));
+      return typeof found?.id === "string" ? found.id : undefined;
+    } catch {
+      return;
+    }
   }
   async log(sessionID, input) {
     const validated = validateEntry(input, new Date(this.#now()));
@@ -3659,7 +4035,7 @@ class Autopilot {
   async#logLocked(dir, entry) {
     const state2 = dir.readState();
     dir.append(entry);
-    if (state2?.phase === "stopped")
+    if (state2?.phase === "stopped" || state2?.phase === "stopping")
       return `logged ${entry.type} after the run stopped; it is in journal.jsonl but not in summary.md or the handoff bead`;
     if (entry.bead && (entry.type === "blocker" || entry.type === "ambiguity") && state2 && !state2.options.full) {
       const flagged = await this.#bdWrite(state2, ["update", entry.bead, "--add-label", "human", "--json"]);
@@ -3672,9 +4048,9 @@ class Autopilot {
     const held = await this.#lock(state2.directory, owner, () => this.#run(state2.directory, "bd", args, BD_READ_TIMEOUT_MS));
     return held.kind === "done" ? held.value : { ok: false, stdout: "", stderr: held.reason };
   }
-  #startFallback(sessionID) {
+  #startFallback(sessionID, token) {
     this.#ticks.start(sessionID, TICK_MS, async () => {
-      const result = await this.status(sessionID, { action: "tick" });
+      const result = await this.status(sessionID, { action: "tick", ...token !== undefined ? { token } : {}, session: sessionID });
       const prompt = typeof result.prompt === "string" ? result.prompt : undefined;
       if (result.done)
         this.#ticks.stop(sessionID);
@@ -3688,13 +4064,42 @@ class Autopilot {
     if (await this.runningFor(sessionID))
       throw new Error(DENY_QUESTION);
   }
+  async#defaultBranches(directory, remotes) {
+    const found = new Map;
+    for (const remote of remotes) {
+      if (!/^[\w.-]+$/.test(remote))
+        continue;
+      const key = `${directory}\x00${remote}`;
+      const cached = this.#defaults.get(key);
+      if (cached && this.#now() - cached.at < DEFAULT_BRANCH_TTL_MS) {
+        found.set(remote, cached.branch);
+        continue;
+      }
+      let branch;
+      const local = await this.#run(directory, "git", ["symbolic-ref", "--short", `refs/remotes/${remote}/HEAD`]);
+      if (local.ok)
+        branch = local.stdout.trim().replace(new RegExp(`^${remote.replace(/[.]/g, "\\.")}/`), "");
+      if (!branch) {
+        const asked = await this.#run(directory, "git", ["ls-remote", "--symref", remote, "HEAD"], 15000);
+        if (asked.ok)
+          branch = /^ref: refs\/heads\/(\S+)\s+HEAD$/m.exec(asked.stdout)?.[1];
+      }
+      if (!branch)
+        continue;
+      this.#defaults.set(key, { branch, at: this.#now() });
+      found.set(remote, branch);
+    }
+    return found;
+  }
   async evaluate(event) {
     if (event.effect !== "ask")
       return;
     const running = await this.runningFor(event.sessionID);
     if (!running)
       return;
-    const decision = running.state ? decideAsk(event.action, event.resources, running.state.options.allow, running.state.options.full) : { effect: "deny", reason: `autopilot cannot read its run state (${running.unreadable}); nothing is approved until it can` };
+    const remotes = pushRemotes(event.action, event.resources);
+    const defaults = remotes.length > 0 ? await this.#defaultBranches(await this.#sessionDirectory(event.sessionID), remotes) : undefined;
+    const decision = running.state ? decideAsk(event.action, event.resources, running.state.options.allow, running.state.options.full, defaults) : { effect: "deny", reason: `autopilot cannot read its run state (${running.unreadable}); nothing is approved until it can` };
     event.effect = decision.effect;
     if (decision.effect === "deny") {
       event.message = decision.reason;
@@ -3833,6 +4238,7 @@ export {
   applySetup,
   automationRequest,
   autopilotRoot,
+  bindingOf,
   childFrom,
   classifyCommand,
   classifyScope,
@@ -3848,6 +4254,7 @@ export {
   findRun,
   formatRemaining,
   handoffDescription,
+  handoffTitle,
   holdsLane,
   inScope,
   isAskTool,
@@ -3859,7 +4266,9 @@ export {
   parkedBeads,
   parseClock,
   parseDuration,
+  parseId,
   parseInvocation,
+  pushRemotes,
   readBeads,
   readJournal,
   renderPing,
@@ -3870,6 +4279,7 @@ export {
   sessionBusy,
   setupAutopilot,
   setupPrompt,
+  staleTick,
   stallStep,
   stopReason,
   tick,

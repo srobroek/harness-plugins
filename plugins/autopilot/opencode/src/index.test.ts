@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFakeContext, type FakeContext } from "@srobroek/opencode-lib/testing"
@@ -23,6 +23,10 @@ let beads: { list: unknown[]; ready: unknown[]; blocked: unknown[] }
 let listGate: Promise<void> | undefined
 /** Called on each `git rev-parse`, the last host call `/autopilot` makes before it takes the run lock. */
 let onRevParse: (() => void) | undefined
+/** What `git symbolic-ref refs/remotes/<remote>/HEAD` answers, by remote; a missing remote fails. */
+let remoteHeads: Record<string, string>
+/** How many `bd create` calls fail before one succeeds. */
+let failCreates = 0
 
 const run: Run = async (_cwd, command, args) => {
   calls.push({ command, args })
@@ -31,6 +35,12 @@ const run: Run = async (_cwd, command, args) => {
     onRevParse?.()
     return { ok: true, stdout: `${root}\n`, stderr: "" }
   }
+  if (command === "git" && args[0] === "symbolic-ref") {
+    const remote = /^refs\/remotes\/([^/]+)\/HEAD$/.exec(args.at(-1) ?? "")?.[1] ?? ""
+    const head = remoteHeads[remote]
+    return head ? { ok: true, stdout: `${head}\n`, stderr: "" } : { ok: false, stdout: "", stderr: "not a symbolic ref" }
+  }
+  if (command === "git" && args[0] === "ls-remote") return { ok: false, stdout: "", stderr: "offline" }
   if (command === "git") return { ok: true, stdout: "7\n", stderr: "" }
   if (args[0] === "list") {
     await listGate
@@ -38,7 +48,13 @@ const run: Run = async (_cwd, command, args) => {
   }
   if (args[0] === "ready") return json(beads.ready)
   if (args[0] === "blocked") return json(beads.blocked)
-  if (args[0] === "create") return json({ id: "t-99" })
+  if (args[0] === "create") {
+    if (failCreates > 0) {
+      failCreates--
+      return { ok: false, stdout: "", stderr: "store busy" }
+    }
+    return json({ id: "t-99" })
+  }
   return json({})
 }
 
@@ -108,7 +124,13 @@ async function settle(steps = 200): Promise<void> {
   for (let step = 0; step < steps; step++) await Promise.resolve()
 }
 
-const latestState = () => JSON.parse(readFileSync(join(latest(), "state.json"), "utf8")) as { phase: string; generation?: number }
+const latestState = () => JSON.parse(readFileSync(join(latest(), "state.json"), "utf8")) as { phase: string; generation?: number; runId: string; sessionID: string; tick: { token?: string } }
+
+/** A tick as the run's current automation sends it: with the token and session it is bound to. */
+function tickInput(): Record<string, unknown> {
+  const state = latestState()
+  return { action: "tick", run: state.runId, token: state.tick.token, session: state.sessionID }
+}
 
 const latest = () => join(root, "opencode-scratch", "autopilot", "latest")
 
@@ -123,6 +145,8 @@ beforeEach(async () => {
   calls = []
   locked = []
   warnings = []
+  remoteHeads = { origin: "origin/main" }
+  failCreates = 0
   beads = { list: [{ id: "p-1", status: "open" }], ready: [{ id: "p-1" }], blocked: [] }
   await start()
 })
@@ -163,13 +187,13 @@ describe("tick", () => {
   test("skips while the lead session executes", async () => {
     await armed()
     fake.sessions.set("ses_lead", lead({ busy: NOW - 1_000, idle: NOW - 60_000 }))
-    expect(await status({ action: "tick" })).toEqual({ skip: "lead session busy" })
+    expect(await status(tickInput())).toEqual({ skip: "lead session busy" })
   })
 
   test("sends the ping when the lead is idle, counting the busy writer lane", async () => {
     await armed()
     fake.sessions.set("ses_child", { id: "ses_child", parentID: "ses_lead", agent: "coder", time: { busy: NOW - 1_000 } })
-    const result = await status({ action: "tick" })
+    const result = await status(tickInput())
     expect(result.prompt).toBe("Autopilot tick. Post this ping verbatim, then continue:\n♥ 14:00 · 1/3 lanes · ready 1 · blocked 0 · parked 0 · 2h00m left\nNo actions due; keep working.")
   })
 
@@ -177,14 +201,14 @@ describe("tick", () => {
     await armed()
     for (let index = 0; index < 120; index++) fake.sessions.set(`ses_k${index}`, { id: `ses_k${index}`, parentID: "ses_lead", agent: "explore", time: { updated: 1_000 + index } })
     fake.sessions.set("ses_child", { id: "ses_child", parentID: "ses_lead", agent: "coder", time: { busy: NOW - 1_000, updated: 1 } })
-    const result = await status({ action: "tick" })
+    const result = await status(tickInput())
     expect(result.prompt).toContain("· 1/3 lanes ·")
   })
 
   test("ends the automation with a stop prompt when the scope is finished", async () => {
     await armed()
     beads = { list: [{ id: "p-1", status: "closed" }], ready: [], blocked: [] }
-    expect(await status({ action: "tick" })).toMatchObject({ done: true, stop: "scope finished" })
+    expect(await status(tickInput())).toMatchObject({ done: true, stop: "scope finished" })
   })
 })
 
@@ -204,7 +228,7 @@ describe("permission asks while armed", () => {
     // git push: explicit feature branches only
     ["git push -u origin feat/x", none, "allow"],
     ["git push --force-with-lease origin feat/x", none, "allow"],
-    ["git -C repo push origin HEAD:feat/x", none, "allow"],
+    ["git -C repo push origin HEAD:feat/x", none, "deny"],
     ["git push origin main-fix", none, "allow"],
     ["git push origin main", all, "deny"],
     ["git push origin HEAD:master", all, "deny"],
@@ -285,6 +309,65 @@ describe("permission asks while armed", () => {
     ["'git' push origin feat/x", all, "deny"],
     ["echo 'unterminated", all, "deny"],
     ["frobnicate --now", all, "deny"],
+    // ANSI-C and locale quoting are denied wherever they appear
+    ["git push origin $'mai\\x6e'", all, "deny"],
+    ['git push origin $"feat/x"', all, "deny"],
+    ["echo $'hi'", all, "deny"],
+    ["git push \\-f origin feat/x", all, "deny"],
+    ["git push --for\\ce origin feat/x", all, "deny"],
+    // opaque execution: interpreters, package executors, git options that run commands
+    ["python -c 'print(1)'", all, "deny"],
+    ["python3 tools/run.py", all, "deny"],
+    ["node -e 1", all, "deny"],
+    ["node scripts/build.js", all, "deny"],
+    ["deno run x.ts", all, "deny"],
+    ["awk 'BEGIN { system(\"id\") }'", all, "deny"],
+    ["sed -n 1p notes.txt", all, "deny"],
+    ["npm exec some-tool", all, "deny"],
+    ["npm x some-tool", all, "deny"],
+    ["pnpm dlx some-tool", all, "deny"],
+    ["pnpm exec some-tool", all, "deny"],
+    ["yarn dlx some-tool", all, "deny"],
+    ["bunx some-tool", all, "deny"],
+    ["uvx ruff", all, "deny"],
+    ["uv tool run ruff", all, "deny"],
+    ["pipx run black", all, "deny"],
+    ["git -c core.pager=sh log", all, "deny"],
+    ["git fetch --upload-pack=evil origin", all, "deny"],
+    ["git rebase -x make main", all, "deny"],
+    ["git rebase --exec make main", all, "deny"],
+    // the repository's own scripts and test runners are known safe forms
+    ["npm test", none, "allow"],
+    ["npm run lint", none, "allow"],
+    ["bun test", none, "allow"],
+    ["bun run build", none, "allow"],
+    ["pnpm run typecheck", none, "allow"],
+    ["python3 -m pytest -q", none, "allow"],
+    ["uv run pytest", none, "allow"],
+    ["make test", none, "allow"],
+    ["npm run release", all, "deny"],
+    ["make deploy", all, "deny"],
+    // worktrunk
+    ["wt list", none, "allow"],
+    ["wt switch -c feat/x", none, "allow"],
+    ["wt switch -x make feat/x", all, "deny"],
+    ["wt merge main", none, "deny"],
+    ["wt merge main", merge, "allow"],
+    ["wt remove feat/x", none, "allow"],
+    ["wt remove -D feat/x", none, "deny"],
+    ["wt remove -D feat/x", full, "allow"],
+    ["wt step commit", all, "deny"],
+    // destructive switch, checkout and restore flags need --full
+    ["git switch feat/x", none, "allow"],
+    ["git switch -c feat/x", none, "allow"],
+    ["git switch --discard-changes feat/x", none, "deny"],
+    ["git switch --discard-changes feat/x", full, "allow"],
+    ["git switch -f feat/x", none, "deny"],
+    ["git switch -C feat/x", none, "deny"],
+    ["git checkout -B feat/x", none, "deny"],
+    ["git checkout --overwrite-ignore feat/x", none, "deny"],
+    ["git restore --staged notes.txt", none, "allow"],
+    ["git restore notes.txt", none, "deny"],
   ]
 
   test.each(table)("%p with %j → %s", async (command, grants, effect) => {
@@ -292,9 +375,53 @@ describe("permission asks while armed", () => {
     expect((await ask(command)).effect).toBe(effect)
   })
 
-  test("denies a merge tool without the grant", async () => {
+  test.each([
+    ["read", "allow"],
+    ["edit", "allow"],
+    ["glob", "allow"],
+    ["grep", "allow"],
+    ["webfetch", "allow"],
+    ["websearch", "allow"],
+    ["skill", "allow"],
+    ["subagent", "allow"],
+    ["todowrite", "allow"],
+    ["opencode_read_mcp_resource", "allow"],
+    ["safety_secret_command", "deny"],
+    ["external_directory", "deny"],
+    ["execute", "deny"],
+    ["experimental_image_generate", "deny"],
+    ["github_create_issue", "deny"],
+    ["delivery_land", "deny"],
+  ] as const)("permission kind %s → %s", async (action, effect) => {
     await armed()
-    expect((await ask("12", "ses_child", "delivery_land")).effect).toBe("deny")
+    expect((await ask("x", "ses_child", action)).effect).toBe(effect)
+  })
+
+  test("a merge tool runs with the merge grant", async () => {
+    await armed({ allow: ["merge"] })
+    expect((await ask("12", "ses_child", "delivery_land")).effect).toBe("allow")
+  })
+
+  test("an unknown permission kind is logged as a blocker", async () => {
+    await armed()
+    await ask("argv", "ses_child", "safety_secret_command")
+    expect(journal().at(-1)).toMatchObject({ type: "blocker", summary: expect.stringContaining("safety_secret_command") })
+  })
+
+  test.each([
+    ["the remote's resolved default branch", "git push origin trunk", { origin: "origin/trunk" }],
+    ["a remote whose default branch cannot be resolved", "git push upstream feat/x", { origin: "origin/main" }],
+  ])("denies a push to %s", async (_name, command, heads) => {
+    remoteHeads = heads
+    await armed()
+    expect((await ask(command)).effect).toBe("deny")
+  })
+
+  test("allows a feature push once the remote's default branch is known, and still never main", async () => {
+    remoteHeads = { origin: "origin/trunk" }
+    await armed()
+    expect((await ask("git push origin feat/x")).effect).toBe("allow")
+    expect((await ask("git push origin main")).effect).toBe("deny")
   })
 
   test("denies a push to the default branch and logs a blocker", async () => {
@@ -312,7 +439,7 @@ describe("permission asks while armed", () => {
 test("the same error signature logged twice parks its bead on the next tick", async () => {
   await armed()
   for (let index = 0; index < 2; index++) expect(await log({ type: "issue", summary: "build fails", bead: "p-1", error: "TS2304 foo" })).toBe("logged issue")
-  const result = await status({ action: "tick" })
+  const result = await status(tickInput())
   expect(result.actions).toContainEqual({ kind: "park", item: "p-1", reason: "same error twice: TS2304 foo" })
 })
 
@@ -352,12 +479,12 @@ describe("run state transitions", () => {
     await armed()
     await log({ type: "stop", summary: "PR open" })
     await status({ action: "status" })
-    expect(await status({ action: "tick" })).toMatchObject({ done: true, stop: "logged: PR open" })
+    expect(await status(tickInput())).toMatchObject({ done: true, stop: "logged: PR open" })
   })
 
   test("a tick racing two stops leaves the run stopped with one handoff bead", async () => {
     await armed()
-    await Promise.all([status({ action: "tick" }), status({ action: "stop", reason: "a" }), status({ action: "stop", reason: "b" })])
+    await Promise.all([status(tickInput()), status({ action: "stop", reason: "a" }), status({ action: "stop", reason: "b" })])
     const state = JSON.parse(readFileSync(join(latest(), "state.json"), "utf8")) as { phase: string }
     expect(state.phase).toBe("stopped")
     expect(calls.filter((call) => call.args[0] === "create")).toHaveLength(1)
@@ -525,7 +652,7 @@ describe("two plugin instances on one run", () => {
     const cleanupB = await setupAutopilot(fakeB.context, { run: runB, now: () => NOW, lock, warn })
     const toolB = fakeB.tools.get("autopilot_status") as unknown as { execute: (input: unknown, context: unknown) => Promise<{ output: Record<string, unknown> }> }
     try {
-      const tickB = toolB.execute({ action: "tick" }, { sessionID: "ses_lead" })
+      const tickB = toolB.execute(tickInput(), { sessionID: "ses_lead" })
       await startedB
       const stopping = status({ action: "stop", reason: "done" })
       await settle()
@@ -546,8 +673,9 @@ describe("a run file that cannot be read", () => {
     ["has the wrong shape", JSON.stringify({ version: 1, runId: "x", phase: "bogus" })],
   ])("state.json that %s is reported and journaled, never read as an empty run", async (_name, text) => {
     await armed()
+    const input = tickInput()
     writeFileSync(join(latest(), "state.json"), text)
-    const result = await status({ action: "tick" })
+    const result = await status(input)
     expect(result).toMatchObject({ error: expect.stringContaining("state.json") })
     expect(result).not.toHaveProperty("done")
     expect(journal().at(-1)).toMatchObject({ type: "blocker", summary: expect.stringContaining("state.json") })
@@ -557,7 +685,7 @@ describe("a run file that cannot be read", () => {
     await armed()
     const path = join(latest(), "journal.jsonl")
     writeFileSync(path, `{"broken\n${readFileSync(path, "utf8")}`)
-    const result = await status({ action: "tick" })
+    const result = await status(tickInput())
     expect(result).toMatchObject({ error: expect.stringContaining("journal.jsonl") })
     const last = readFileSync(path, "utf8").trim().split("\n").at(-1) as string
     expect(JSON.parse(last)).toMatchObject({ type: "blocker", summary: expect.stringContaining("journal.jsonl") })
@@ -622,5 +750,56 @@ describe("stop and the journal", () => {
     await stopping
     expect(await logging).toContain("after the run stopped")
     expect(summaryText().includes("late key")).toBe(handoffText().includes("late key"))
+  })
+})
+
+describe("the tick automation after a resume", () => {
+  type Armed = { automation: { action: { args: { run: string; token: string; session: string } } } }
+
+  test("resume names the old automation for deletion and its ticks become no-ops that end it", async () => {
+    const armedResult = (await armed()) as unknown as Armed
+    const old = armedResult.automation.action.args
+    await status({ action: "arm", automation_id: "aut_old" })
+    const prompt = await command("resume", "ses_other")
+    expect(prompt).toContain('automation_delete({ id: "aut_old" })')
+    const before = latestState()
+    expect(await status({ action: "tick", ...old }, "ses_lead")).toMatchObject({ done: true, stale: expect.any(String) })
+    expect(latestState()).toEqual(before)
+  })
+
+  test("a tick for the current automation still runs", async () => {
+    const armedResult = (await armed()) as unknown as Armed
+    expect(await status({ action: "tick", ...armedResult.automation.action.args })).toHaveProperty("prompt")
+  })
+})
+
+describe("a stop whose artifacts fail to write", () => {
+  test("stays stopping, retries the handoff on the next tick and creates it once", async () => {
+    await armed()
+    failCreates = 1
+    expect(await status({ action: "stop", reason: "done" })).toMatchObject({ phase: "stopping" })
+    expect(latestState().phase).toBe("stopping")
+    expect(await denied("question", "ses_lead")).toBe(DENY_QUESTION)
+    expect(await status(tickInput())).toMatchObject({ done: true, handoff: "t-99" })
+    expect(latestState().phase).toBe("stopped")
+    expect(await status(tickInput())).toMatchObject({ done: true })
+    expect(calls.filter((call) => call.args[0] === "create")).toHaveLength(2)
+  })
+
+  test("retries summary.md after a failed write", async () => {
+    await armed()
+    mkdirSync(join(latest(), "summary.md"))
+    expect(await status({ action: "stop", reason: "done" })).toMatchObject({ phase: "stopping" })
+    rmSync(join(latest(), "summary.md"), { recursive: true })
+    expect(await status({ action: "stop", reason: "done" })).toMatchObject({ done: true })
+    expect(readFileSync(join(latest(), "summary.md"), "utf8")).toContain("- Stopped: done")
+    expect(calls.filter((call) => call.args[0] === "create")).toHaveLength(1)
+  })
+
+  test("finds a handoff bead an earlier attempt created before its state write failed", async () => {
+    await armed()
+    beads.list.push({ id: "t-42", status: "open", labels: [HANDOFF_LABEL], title: `Autopilot handoff: run ${latestState().runId}` })
+    expect(await status({ action: "stop", reason: "done" })).toMatchObject({ done: true, handoff: "t-42" })
+    expect(calls.filter((call) => call.args[0] === "create")).toHaveLength(0)
   })
 })
