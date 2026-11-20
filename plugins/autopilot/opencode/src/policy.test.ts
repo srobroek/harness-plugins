@@ -65,6 +65,10 @@ describe("decideAsk", () => {
     expect(decideAsk("shell", [command], ["merge", "deploy"], true).effect).toBe("deny")
   })
 
+  test("a quoted git command passed as data is not a push", () => {
+    expect(decideAsk("shell", ["printf '%s\\n' 'git push origin main' > commands.txt"], [], false).effect).toBe("allow")
+  })
+
   test("a compound command needs every grant it touches", () => {
     expect(decideAsk("shell", ["gh pr merge 12 --squash && rm -rf build"], ["merge"], false).effect).toBe("deny")
     expect(decideAsk("shell", ["gh pr merge 12 --squash && rm -rf build"], ["merge"], true).effect).toBe("allow")
