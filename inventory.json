@@ -244,6 +244,29 @@
       "scope": "global"
     },
     {
+      "name": "autopilot",
+      "version": "0.0.0",
+      "description": "Unattended runs: /autopilot arms a no-questions session with a journal, a 4-minute tick and stop conditions.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "autopilot"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
       "name": "aws",
       "version": "0.7.0",
       "description": "AWS working guidance: route AWS tasks through the AWS MCP Server's guided skills, verify against AWS documentation, and price with the AWS Pricing MCP server.",
