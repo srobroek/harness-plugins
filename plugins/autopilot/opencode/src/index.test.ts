@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFakeContext, type FakeContext } from "@srobroek/opencode-lib/testing"
@@ -652,6 +652,34 @@ describe("a stop whose artifacts fail to write", () => {
     expect(calls.filter((call) => call.args[0] === "create")).toHaveLength(1)
     expect(await status(tickInput())).toMatchObject({ done: true, handoff: "t-99" })
     expect(calls.filter((call) => call.args[0] === "create")).toHaveLength(1)
+  })
+
+  test("a stop whose state write loses to a competing writer returns stale, journals an issue and keeps the successor's state", async () => {
+    await armed()
+    let successorPath = ""
+    let successorText = ""
+    // Another writer creates the next generation while this stop is creating the handoff bead.
+    onCreated = () => {
+      const current = latestState()
+      const generation = (current.generation ?? 0) + 1
+      successorPath = join(latest(), `state.${generation}.json`)
+      successorText = `${JSON.stringify({ ...current, generation, ticks: 41 }, null, 2)}\n`
+      writeFileSync(successorPath, successorText)
+    }
+    const result = await status({ action: "stop", reason: "done" })
+    expect(result).toMatchObject({ stale: true, error: expect.stringContaining("state moved on") })
+    expect(result).not.toHaveProperty("done")
+    expect(journal().at(-1)).toMatchObject({ type: "issue", summary: expect.stringContaining("lost to another writer") })
+    expect(journal().some((entry) => entry.type === "blocker")).toBe(false)
+    expect(readFileSync(successorPath, "utf8")).toBe(successorText)
+    const highest = readdirSync(latest())
+      .map((name) => /^state\.(\d+)\.json$/.exec(name)?.[1])
+      .filter((value): value is string => value !== undefined)
+      .map(Number)
+      .sort((a, b) => a - b)
+      .at(-1)
+    expect(join(latest(), `state.${highest}.json`)).toBe(successorPath)
+    expect(JSON.parse(successorText)).toMatchObject({ phase: "stopping", ticks: 41 })
   })
 
   test.each([
