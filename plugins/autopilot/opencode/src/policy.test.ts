@@ -50,6 +50,23 @@ describe("decideAsk", () => {
   test("--full never allows a force push", () => {
     expect(decideAsk("shell", ["git push -f origin feat/x"], ["merge", "deploy"], true).effect).toBe("deny")
   })
+
+  test.each([
+    "git -C . push --force origin feat/x",
+    "git -c core.x=y push -f origin feat/x",
+    "git push origin +HEAD:feat/x",
+    "git push origin +feat/x",
+    "git -C repo push origin main",
+    "git push origin feat/x:refs/heads/master",
+  ])("denies %p even with every grant", (command) => {
+    expect(decideAsk("shell", [command], ["merge", "deploy"], true).effect).toBe("deny")
+  })
+
+  test("a compound command needs every grant it touches", () => {
+    expect(decideAsk("shell", ["gh pr merge 12 --squash && rm -rf build"], ["merge"], false).effect).toBe("deny")
+    expect(decideAsk("shell", ["gh pr merge 12 --squash && rm -rf build"], ["merge"], true).effect).toBe("allow")
+    expect(decideAsk("shell", ["npx cdk deploy S", "gh pr merge 3"], ["deploy"], false).effect).toBe("deny")
+  })
 })
 
 test("categorize ignores a push of a branch named like main-fix", () => {

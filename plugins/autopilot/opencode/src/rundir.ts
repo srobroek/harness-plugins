@@ -1,7 +1,21 @@
 /** The run directory under the git common dir: state.json, journal.jsonl, summary.md and the `latest` link. */
 
 import { execFile } from "node:child_process"
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readlinkSync,
+  readSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { isAbsolute, join, resolve } from "node:path"
 import { type JournalEntry, readJournal } from "./journal.ts"
 import type { RunState } from "./state.ts"
@@ -65,8 +79,25 @@ export class RunDir {
     renameSync(temporary, this.statePath)
   }
 
+  /** Append one line; a torn last line from a crash first gets its own line ending. */
   append(entry: JournalEntry): void {
-    appendFileSync(this.journalPath, `${JSON.stringify(entry)}\n`)
+    appendFileSync(this.journalPath, `${this.#endsTorn() ? "\n" : ""}${JSON.stringify(entry)}\n`)
+  }
+
+  #endsTorn(): boolean {
+    let fd: number | undefined
+    try {
+      const size = statSync(this.journalPath).size
+      if (size === 0) return false
+      fd = openSync(this.journalPath, "r")
+      const last = Buffer.alloc(1)
+      readSync(fd, last, 0, 1, size - 1)
+      return last[0] !== 0x0a
+    } catch {
+      return false
+    } finally {
+      if (fd !== undefined) closeSync(fd)
+    }
   }
 
   journal(): JournalEntry[] {

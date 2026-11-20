@@ -16,7 +16,11 @@ export const DENY_QUESTION =
 
 export type Category = "merge" | "deploy" | "push-default" | "force-push" | "irreversible" | "other"
 
-const MERGE = [/\bgh\s+pr\s+merge\b/, /\bglab\s+mr\s+merge\b/, /\bgit\s+merge\b.*\b(origin\/)?(main|master)\b/]
+/** `git`, its global options (`-C dir`, `-c key=value`, `--git-dir=…`), then the subcommand. */
+const GIT = String.raw`\bgit(?:\s+(?:-[cC]\s+\S+|--[\w-]+(?:=\S+)?))*\s+`
+const git = (rest: string, flags = "") => new RegExp(GIT + rest, flags)
+
+const MERGE = [/\bgh\s+pr\s+merge\b/, /\bglab\s+mr\s+merge\b/, git(String.raw`merge\b.*\b(origin\/)?(main|master)\b`)]
 const DEPLOY = [
   /\bcdk\s+(deploy|destroy)\b/,
   /\baws\s+cloudformation\s+(create-stack|update-stack|delete-stack|deploy|execute-change-set)\b/,
@@ -25,43 +29,42 @@ const DEPLOY = [
   /\bpulumi\s+(up|destroy)\b/,
   /\bsst\s+(deploy|remove)\b/,
 ]
-const PUSH_DEFAULT = /\bgit\s+push\b[^|;&]*\s(\S+:)?(refs\/heads\/)?(main|master)(?=$|[\s;|&])/m
-const FORCE = /\bgit\s+push\b[^|;&]*\s(--force(?!-with-lease)\b|-f\b)/
+const PUSH_DEFAULT = git(String.raw`push\b[^|;&]*\s\+?(\S+:)?(refs\/heads\/)?(main|master)(?=$|[\s;|&])`, "m")
+/** `--force`, `-f` or a `+` refspec; `--force-with-lease` is the safe form. */
+const FORCE = git(String.raw`push\b[^|;&]*\s(--force(?!-with-lease)\b|-f\b|\+\S)`)
 /** Commands that discard work or history and cannot be undone from the repository. */
 const IRREVERSIBLE = [
-  /\bgit\s+reset\b[^|;&]*\s--hard\b/,
-  /\bgit\s+clean\b[^|;&]*\s-[a-z]*f/,
-  /\bgit\s+branch\b[^|;&]*\s(-D\b|--delete\s+--force\b|-d\s+-f\b)/,
-  /\bgit\s+push\b[^|;&]*\s(--delete\b|-d\b|\S+\s+:\S)/,
-  /\bgit\s+stash\s+(drop|clear)\b/,
-  /\bgit\s+worktree\s+remove\b[^|;&]*\s--force\b/,
+  git(String.raw`reset\b[^|;&]*\s--hard\b`),
+  git(String.raw`clean\b[^|;&]*\s-[a-z]*f`),
+  git(String.raw`branch\b[^|;&]*\s(-D\b|--delete\s+--force\b|-d\s+-f\b)`),
+  git(String.raw`push\b[^|;&]*\s(--delete\b|-d\b|\S+\s+:\S)`),
+  git(String.raw`stash\s+(drop|clear)\b`),
+  git(String.raw`worktree\s+remove\b[^|;&]*\s--force\b`),
   /(^|[\s;&|(])rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\b/,
   /\bbd\s+(delete|purge)\b/,
 ]
 
-/** What a permission request would do, from its action and resources. */
-export function categorize(action: string, resources: readonly string[]): Category {
+/** Every category a permission request touches, most severe first; `other` when none applies. */
+export function categories(action: string, resources: readonly string[]): Category[] {
   const name = action.toLowerCase()
-  if (name === "delivery_land" || name.endsWith("_merge")) return "merge"
   const text = resources.join("\n")
-  if (FORCE.test(text)) return "force-push"
-  if (PUSH_DEFAULT.test(text)) return "push-default"
-  if (MERGE.some((pattern) => pattern.test(text))) return "merge"
-  if (DEPLOY.some((pattern) => pattern.test(text))) return "deploy"
-  if (IRREVERSIBLE.some((pattern) => pattern.test(text))) return "irreversible"
-  return "other"
+  const found: Category[] = []
+  if (FORCE.test(text)) found.push("force-push")
+  if (PUSH_DEFAULT.test(text)) found.push("push-default")
+  if (name === "delivery_land" || name.endsWith("_merge") || MERGE.some((pattern) => pattern.test(text))) found.push("merge")
+  if (DEPLOY.some((pattern) => pattern.test(text))) found.push("deploy")
+  if (IRREVERSIBLE.some((pattern) => pattern.test(text))) found.push("irreversible")
+  return found.length ? found : ["other"]
+}
+
+/** The most severe category a permission request touches. */
+export function categorize(action: string, resources: readonly string[]): Category {
+  return categories(action, resources)[0] as Category
 }
 
 export type AskDecision = { effect: "allow" } | { effect: "deny"; reason: string }
 
-/**
- * The answer to a permission `ask` while armed. Default grants cover branch work, pushes of
- * feature branches, PRs, beads, dependency bumps, read-only AWS and spikes; `merge` and `deploy`
- * need `--allow`. Commands that discard work are parked unless the run is `--full`. Force pushes
- * and pushes to the default branch are never granted.
- */
-export function decideAsk(action: string, resources: readonly string[], grants: readonly Grant[], full: boolean): AskDecision {
-  const category = categorize(action, resources)
+function decideCategory(category: Category, grants: readonly Grant[], full: boolean): AskDecision {
   switch (category) {
     case "force-push":
       return { effect: "deny", reason: "autopilot never force-pushes; use --force-with-lease on a feature branch" }
@@ -77,6 +80,21 @@ export function decideAsk(action: string, resources: readonly string[], grants: 
     case "other":
       return { effect: "allow" }
   }
+}
+
+/**
+ * The answer to a permission `ask` while armed. Default grants cover branch work, pushes of
+ * feature branches, PRs, beads, dependency bumps, read-only AWS and spikes; `merge` and `deploy`
+ * need `--allow`. Commands that discard work are parked unless the run is `--full`. Force pushes
+ * and pushes to the default branch are never granted. A request that touches several categories
+ * needs every one of them allowed.
+ */
+export function decideAsk(action: string, resources: readonly string[], grants: readonly Grant[], full: boolean): AskDecision {
+  for (const category of categories(action, resources)) {
+    const decision = decideCategory(category, grants, full)
+    if (decision.effect === "deny") return decision
+  }
+  return { effect: "allow" }
 }
 
 const ASKING = [/\?\s*$/, /\b(should I|shall I|do you want|would you like|let me know|which (one|option) do you)\b/i]

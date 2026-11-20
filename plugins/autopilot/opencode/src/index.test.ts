@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { createFakeContext, type FakeContext } from "@srobroek/opencode-lib/testing"
 import { DENY_QUESTION, HANDOFF_LABEL, MAX_REPROMPTS, REPROMPT, setupAutopilot, type WriteLock } from "./index.ts"
 import type { Run } from "./rundir.ts"
+import { type Clock, Ticks } from "./timer.ts"
 
 const NOW = new Date(2026, 10, 20, 14, 0).getTime()
 
@@ -138,6 +139,14 @@ describe("tick", () => {
     expect(result.prompt).toBe("Autopilot tick. Post this ping verbatim, then continue:\n♥ 14:00 · 1/3 lanes · ready 1 · blocked 0 · parked 0 · 2h00m left\nNo actions due; keep working.")
   })
 
+  test("counts a busy writer lane past the first page of children", async () => {
+    await armed()
+    for (let index = 0; index < 120; index++) fake.sessions.set(`ses_k${index}`, { id: `ses_k${index}`, parentID: "ses_lead", agent: "explore", time: { updated: 1_000 + index } })
+    fake.sessions.set("ses_child", { id: "ses_child", parentID: "ses_lead", agent: "coder", time: { busy: NOW - 1_000, updated: 1 } })
+    const result = await status({ action: "tick" })
+    expect(result.prompt).toContain("· 1/3 lanes ·")
+  })
+
   test("ends the automation with a stop prompt when the scope is finished", async () => {
     await armed()
     beads = { list: [{ id: "p-1", status: "closed" }], ready: [], blocked: [] }
@@ -163,6 +172,13 @@ describe("permission asks while armed", () => {
     await armed()
     expect((await ask("git push origin main", "ses_other")).effect).toBe("ask")
   })
+})
+
+test("the same error signature logged twice parks its bead on the next tick", async () => {
+  await armed()
+  for (let index = 0; index < 2; index++) expect(await log({ type: "issue", summary: "build fails", bead: "p-1", error: "TS2304 foo" })).toBe("logged issue")
+  const result = await status({ action: "tick" })
+  expect(result.actions).toContainEqual({ kind: "park", item: "p-1", reason: "same error twice: TS2304 foo" })
 })
 
 test("a blocker on a bead flags it human under the store's write lock", async () => {
@@ -193,6 +209,80 @@ describe("stop", () => {
     const prompt = await command("review", "ses_other")
     expect(prompt).toContain("# Autopilot run")
     expect(prompt).toContain("parley_ask")
+  })
+})
+
+describe("run state transitions", () => {
+  test("a status read leaves a logged stop for the next tick", async () => {
+    await armed()
+    await log({ type: "stop", summary: "PR open" })
+    await status({ action: "status" })
+    expect(await status({ action: "tick" })).toMatchObject({ done: true, stop: "logged: PR open" })
+  })
+
+  test("a tick racing two stops leaves the run stopped with one handoff bead", async () => {
+    await armed()
+    await Promise.all([status({ action: "tick" }), status({ action: "stop", reason: "a" }), status({ action: "stop", reason: "b" })])
+    const state = JSON.parse(readFileSync(join(latest(), "state.json"), "utf8")) as { phase: string }
+    expect(state.phase).toBe("stopped")
+    expect(calls.filter((call) => call.args[0] === "create")).toHaveLength(1)
+  })
+})
+
+test("/autopilot resume moves a run to the new session", async () => {
+  await armed()
+  const prompt = await command("resume", "ses_other")
+  expect(prompt).toContain("resumed in this session")
+  expect(prompt).toContain("automation_create")
+  expect(await denied("question", "ses_other")).toBe(DENY_QUESTION)
+  expect(await denied("question", "ses_lead")).toBeUndefined()
+})
+
+describe("fallback tick", () => {
+  type Timer = { callback: () => void; cleared: boolean }
+  const timers: Timer[] = []
+  const clock: Clock = {
+    setInterval: (callback) => {
+      const timer = { callback, cleared: false }
+      timers.push(timer)
+      return timer
+    },
+    clearInterval: (timer) => {
+      ;(timer as Timer).cleared = true
+    },
+  }
+
+  async function startWithClock(storage?: Record<string, unknown>) {
+    await cleanup?.()
+    fake.closeEvents()
+    fake = createFakeContext({ directory: "/repo", storage, sessions: [lead()] })
+    cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock, ticks: new Ticks(clock) })
+  }
+
+  const prompts = () => fake.calls.filter((call) => call.method === "session.prompt").map((call) => (call.input as { text: string }).text)
+
+  beforeEach(() => {
+    timers.length = 0
+  })
+
+  test("prompts the lead with the ping while it is idle and stops at the end of the run", async () => {
+    await startWithClock()
+    await armed()
+    await status({ action: "fallback" })
+    timers[0]?.callback()
+    for (let index = 0; index < 20 && prompts().length < 2; index++) await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(prompts().at(-1)).toStartWith("Autopilot tick.")
+    await status({ action: "stop", reason: "done" })
+    expect(timers[0]?.cleared).toBe(true)
+  })
+
+  test("starts again after a server restart", async () => {
+    await startWithClock()
+    await armed()
+    await status({ action: "fallback" })
+    const storage = Object.fromEntries(fake.storage)
+    await startWithClock(storage)
+    expect(timers.filter((timer) => !timer.cleared)).toHaveLength(1)
   })
 })
 
