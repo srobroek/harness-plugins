@@ -1,0 +1,29 @@
+{
+  "name": "speckit",
+  "version": "0.9.0",
+  "description": "SpecKit on beads for OpenCode: speckit_setup and speckit_start tools, a tasks.md guard, the implement and taskstoissues skill routes, workflow instructions, formulas, a primary spec agent, and the speckit-sync and speckit-verify subagents.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "SpecKit on beads: a tasks.md guard, setup and bugfix skills, formulas, and the speckit-sync and speckit-verify subagents.",
+    "category": "development",
+    "harnesses": [
+      "opencode",
+      "claude"
+    ],
+    "scope": "project",
+    "signals": [
+      ".specify/",
+      "specs/*/tasks.md"
+    ],
+    "requires": [
+      "beads"
+    ],
+    "entries": {
+      "index": "index"
+    },
+    "claudeEntries": {
+      "claude-hook": "claude-hook"
+    }
+  }
+}

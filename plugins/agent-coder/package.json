@@ -1,0 +1,18 @@
+{
+  "name": "agent-coder",
+  "version": "0.10.0",
+  "description": "coder subagent for any code development task (implement, fix, debug, test, build, profile, upgrade deps) with only coding tools and skills.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "coder subagent for any code development task (implement, fix, debug, test, build, profile, upgrade deps) with only coding tools and skills.",
+    "category": "development",
+    "harnesses": [
+      "opencode"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
+    }
+  }
+}

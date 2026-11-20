@@ -1,0 +1,10 @@
+{
+  "agents": {
+    "implementer": "standard",
+    "implementer-high": "strong",
+    "researcher": "standard",
+    "pr-reviewer": "reviewer",
+    "operator": "cheap",
+    "shepherd": "standard"
+  }
+}

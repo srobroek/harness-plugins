@@ -1,0 +1,28 @@
+{
+  "name": "beads",
+  "version": "0.7.0",
+  "description": "Beads issue tracking for OpenCode: shell gates, store pinning, subagent actors, claim tracking, stop nudge and guarded claim release, lease heartbeats, bd prime context and Beads skills.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "Beads issue tracking: bd prime session context, shell gates on bd, git and gh commands, store pinning and the Beads skills.",
+    "category": "development",
+    "harnesses": [
+      "opencode",
+      "claude"
+    ],
+    "scope": "project",
+    "signals": [
+      ".beads/ (skip under ~/pace, which inherits it, and with .beads/RETIRED)",
+      "every repository"
+    ],
+    "entries": {
+      "index": "index",
+      "embedded-write-runner": "bd-embedded-write-runner"
+    },
+    "claudeEntries": {
+      "claude-hook": "claude-hook",
+      "bd-embedded-write-runner": "bd-embedded-write-runner"
+    }
+  }
+}

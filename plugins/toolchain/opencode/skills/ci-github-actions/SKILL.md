@@ -1,0 +1,132 @@
+---
+name: ci-github-actions
+description: Use when writing GitHub Actions workflows, required checks, matrices, caches, action pinning or build attestation.
+metadata:
+  opencode/autoinvoke: false
+---
+
+# GitHub Actions CI defaults
+
+Language-neutral workflow structure. Language-specific cache and toolchain setup
+lives in the language plugin's skills when installed.
+
+## One required gate
+
+- Make one `ci-gate` job the only required status check. It runs `if: always()`,
+  `needs:` every other job, and fails unless they all passed or were allowed to skip:
+
+  ```yaml
+  ci-gate:
+    if: always()
+    needs: [lint, test, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: re-actors/alls-green@<sha> # release/v1
+        with:
+          jobs: ${{ toJSON(needs) }}
+          allowed-skips: build
+  ```
+
+  Branch protection then names one check, and adding or renaming jobs never
+  touches repository settings.
+- Never put `paths:` or `paths-ignore:` on the trigger of a workflow whose jobs are
+  required checks. A skipped required check stays pending and blocks the merge.
+  Skip work inside the workflow instead: a `dorny/paths-filter` job whose outputs
+  feed each job's `if:`, with `ci-gate` listing those jobs in `allowed-skips`.
+
+## Matrix and concurrency
+
+- Set `strategy.fail-fast: false` on OS or version matrices, so one failing cell
+  does not cancel the others and hide whether the failure is platform-specific.
+- Shard tests deterministically; collect first-attempt failures separately from
+  diagnostic retries. Retries must not erase failures; quarantine needs an owner
+  and expiry. Review snapshots explicitly, never auto-accept them in CI.
+- Cancel superseded runs on pull requests only. Main keeps a result for every commit,
+  so never cancel a `merge_group` run or a push to main.
+
+  ```yaml
+  concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  ```
+
+  On release, publish, or deploy workflows, omit `cancel-in-progress` (or set it
+  `false`); cancelling mid-upload leaves a half-published release.
+- When two or more agents land PRs in one repository, load `delivery-git-workflow`.
+  Its `repo-setup-parallel-agents.md` reference covers the merge queue and the CI lanes.
+
+## Scheduled workflows
+
+Long checks (full mutation, fuzz campaigns, shuffled or repeated test runs, drift,
+dependency rescans) live in their own `scheduled.yml`, never in `ci-gate`:
+
+```yaml
+on:
+  schedule:
+    - cron: "17 3 * * *"   # off the hour; UTC
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@<sha> # v4
+      - run: just mutate --shard ${{ matrix.shard }}/4
+      - uses: actions/upload-artifact@<sha> # v4
+        if: always()
+        with:
+          name: mutation-${{ matrix.shard }}
+          path: reports/
+```
+
+- Always offer `workflow_dispatch`; schedules run only on the default branch.
+- Shard with a matrix and `fail-fast: false`; upload reports, corpora and crashers with
+  `if: always()` so a failing run keeps its evidence.
+- Do not cancel an in-progress scheduled run; queue or skip the next one.
+- Set `permissions: contents: read` at the top; add `issues: write` only on the job that
+  files the failure. Pin every action by SHA. Drift jobs use a read-only OIDC role.
+- Give each job a `timeout-minutes`.
+
+## Supply chain
+
+- Pin every third-party action to a full commit SHA with the version in a comment
+  (`uses: actions/checkout@<40-char sha> # v4.2.2`). `pinact` or `ratchet` pins
+  existing workflows.
+- Let one updater own pins: configure Renovate action updates, or Dependabot's
+  `github-actions` ecosystem, with cooldowns. Do not add a second bot for the same pins.
+- Run `pinact run --check`, `actionlint` and `zizmor` when workflows exist. Review
+  transitive actions and downloaded artifacts too: downloads need separate version
+  pins. Verify their integrity against trusted release metadata; `Trivy`'s March
+  2026 compromise included retagged actions and malicious binaries/images.
+- Give each workflow `permissions: contents: read` at the top and widen per job.
+- Attest released artifacts with `actions/attest-build-provenance`; the job needs
+  `id-token: write` and `attestations: write`. Consumers verify with
+  `gh attestation verify`.
+- Prefer OIDC trusted publishing (npm/PyPI where supported) over long-lived tokens;
+  publish provenance and SBOM artifacts, and verify publisher/repository identity
+  when consuming attestations. Signatures do not prove code harmless.
+- Optional `step-security/harden-runner` monitors runner network access. Use
+  `Scorecard` or `poutine` for scheduled assessment, not every-commit gates.
+
+## Speed
+
+- Install tools from prebuilt binaries: the `setup-*` actions (`actions/setup-node`,
+  `astral-sh/setup-uv`, `oven-sh/setup-bun`, `jdx/mise-action`),
+  `taiki-e/install-action`, or `cargo binstall`. Do not compile tools from source on
+  every run (`cargo install`, `go install` of large tools, `pip install` from sdists).
+- Cache keys: include the OS, the toolchain version, and a hash of the lockfile
+  (`hashFiles('**/bun.lock')`). Never key on values that change every run (commit
+  SHA, timestamps) or on environment that differs between jobs sharing a cache, such
+  as compiler flags; each such value is a guaranteed miss. Use `restore-keys` for a
+  partial hit, and remember the 10 GB per-repository cache limit evicts old entries.
+- Prefer the setup action's built-in cache (`cache: npm`, `enable-cache: true`) over
+  a hand-written `actions/cache` step when it covers the need.

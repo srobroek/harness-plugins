@@ -1,0 +1,18 @@
+{
+  "name": "modes",
+  "version": "1.1.0",
+  "description": "Debug, refactor and concept agents with plan-style mode reminders: root-cause diagnosis in a scratch worktree, behaviour-preserving refactoring, and design iteration.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "Debug, refactor and concept agents with plan-style mode reminders: root-cause diagnosis in a scratch worktree, behaviour-preserving refactoring, and design iteration.",
+    "category": "development",
+    "harnesses": [
+      "opencode"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
+    }
+  }
+}

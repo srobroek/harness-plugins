@@ -1,0 +1,18 @@
+{
+  "name": "whats-new",
+  "version": "0.4.0",
+  "description": "Research breaking changes, deprecations and new features between two versions, report-only.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "Research breaking changes, deprecations and new features between two versions, report-only.",
+    "category": "development",
+    "harnesses": [
+      "opencode"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
+    }
+  }
+}

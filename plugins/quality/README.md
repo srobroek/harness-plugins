@@ -1,0 +1,148 @@
+# quality
+
+Code design and review guidance, a short code-quality policy, testing standards and an on-demand
+test audit with two helper tools, performance profiling, throwaway logic prototypes, and a read-only
+`adversarial-challenger` subagent.
+
+| Skill | When |
+| --- | --- |
+| `quality-code-policy` | The short policy: SOLID and invariants over YAGNI, DRY for knowledge that changes together, research first and compare with the library standards before building, middleware for cross-cutting concerns, Powertools on Lambda, OpenTelemetry by default, tests kept in step with the code, planning scaled by risk, a type check after multi-file or signature edits, refactors scoped to the change. It requires `quality-code-design` only for new behavior, refactors, hard bugs and reviews |
+| `quality-code-design` | Code design, investigation, implementation, refactoring, review, debugging or test-first work in any language. Picks IMPLEMENT, INVESTIGATE or REVIEW and loads only the references the task needs from `references/`, including `middleware.md` (handlers versus middleware, stack order, one error mapper), `telemetry.md` (OpenTelemetry setup and rules) and `feature-flags.md` (typed decisions, safe defaults, storage and removal) |
+| `quality-profiling` | Slow or memory-heavy code, endpoints, builds or CLIs: set a target, reproduce with a fixed workload, baseline with variance, pick the profiler, change one thing, re-measure, report before/after. hyperfine, Linux perf and macOS Instruments live in `references/`; language tooling is the `lang-<language>-profiling` skills in the `lang-<language>` plugins |
+| `quality-testing` | What to test and how many tests to keep. A workflow and five rules, with references for good and bad tests (`good-tests.md`, `bad-tests.md`), test levels (`what-to-test.md`), the test budget against sprawl (`test-budget.md`), maintenance and deletion with the code (`maintenance.md`), doubles (`doubles.md`), coverage and mutation signals (`signals.md`) and reviewing test changes (`review-tests.md`). Tool choices for coverage, mutation, property tests, fuzzing and flaky order come from the per-language concerns tables; the `lang-<language>-testing` skills and their `references/practice.md` give idioms |
+| `quality-test-audit` | Run on demand to audit one test scope. It takes a baseline of repeated random-order runs, coverage and mutation testing. It classifies tests to prune, assets to purge, tests to fix, speed up or simplify, and weak spots to strengthen with new or extended tests, and it recommends suite-level practices such as runner settings and CI lanes. A challenger checks the plan before you approve it, or you take the report only. Each applied batch must keep every mutant that the baseline killed, and each added test must fail first against a forced fault. Tool choices come from the per-language concerns tables, and a missing tool is installed only with your permission. `references/` holds the catalog, the commands per runner and the report template |
+| `prototype-logic` | A throwaway single-file HTML demo over a pure reducer or state machine, to test a state model before building it |
+
+Other plugins point at these: `architecture` and the `architect` agent load
+`quality-code-design` references, and `toolchain` defers language design guidance
+to it.
+
+## Engineering standards in the system prompt
+
+Every primary session, and the child sessions of `general` and `security-reviewer`, get three static blocks at the end of its system
+prompt, from the shared coding core (`plugins/lib/src/coding-core.md`):
+
+- `# Engineering standards`, the `standards` part. It tells the agent to research current
+  best practice and compare its plan with the `lang-<language>-libraries`, `toolchain-api`,
+  `aws-guidance` and `toolchain-languages` standards before it writes its own code, to
+  report each departure, to put cross-cutting concerns in middleware, to keep Lambda
+  handlers thin on Powertools for AWS Lambda, and to use OpenTelemetry.
+- `# Repository engineering doc`, the `repo-doc` part. It tells the agent to read
+  `docs/engineering.md` (or the path `AGENTS.md` names) first, to update it in the same
+  change as any stack change, and to report a missing or stale doc.
+- `# Testing standards`, the `testing` part. It tells the agent to list the behaviors a
+  change adds, changes or removes, to test each behavior once through the public
+  interface, to give each test a distinct risk, to change and delete tests with the code,
+  and never to write tests that only check removed code is gone or to weaken assertions
+  to pass.
+
+The `coder`, `implementer`, `implementer-high`, `ui-implementer`, `code-reviewer` and both
+`pr-reviewer` agents carry the same parts in their composed prompts, so they are not given them
+twice. `security-reviewer` carries only the review rules, so it gets the blocks. Each block is under
+1000 characters and never changes between requests, so the provider's prompt cache holds.
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `standards` | `true` | `false` turns both blocks off |
+| `standardsSubagents` | `["general", "security-reviewer"]` | Subagent ids whose child sessions also get the blocks; primary sessions always do |
+
+```jsonc
+{
+  "plugins": [{
+    "package": "github:srobroek/harness-plugins::path:plugins/quality/opencode",
+    "options": { "standardsSubagents": ["general", "my-writer"] }
+  }]
+}
+```
+
+## Always-on policy
+
+On omp `quality-code-design` was also an always-applied rule. OpenCode has no
+always-on skill, so the rule ships as the `quality-code-policy` skill, loaded when
+its description matches; the standards blocks above cover its research, library and testing
+rules in every session. To make the whole policy always on, copy its body into your
+global `AGENTS.md` or into a file listed under `instructions` in your config.
+
+## Test audit tools
+
+Two read-only tools back the `quality-test-audit` skill. Both refuse report paths outside
+the session directory and the OpenCode temp directory. Claude Code get the
+skill without the tools; it falls back to the shell commands in its `references/evidence.md`.
+
+| Tool | Does |
+| --- | --- |
+| `quality_test_summarize` | Read-only. Takes 1 to 50 JUnit XML paths, one per run in run order, and optional `exitCodes`. The agent runs the test command through the shell, one report per run. The tool reports flaky tests, tests that failed in every report, tests retried within a run, the 10 slowest by median time, unreadable or invalid reports and whether the exit codes agree (pytest, Vitest, bun test, gotestsum, cargo-nextest) |
+| `quality_test_compare` | Read-only. Compares a baseline and a candidate report: coverage (LCOV, Cobertura XML, Go cover profile) for lost lines and branches, or mutation (mutation-testing-report JSON from Stryker, cargo-mutants `outcomes.json`, Gremlins JSON) for mutants the baseline killed that now survive. Missing branch data is "not measured", not zero. mutmut is not supported: it exports summary counts only |
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `testAudit` | `true` | `false` turns both tools off; the skill then uses the shell commands |
+
+## Agent
+
+`adversarial-challenger` (mode `subagent`, steps 60) stress-tests a claim, plan, design or
+decision from a brief of observable facts and returns evidence-backed
+counter-arguments and alternatives, starting with `VERDICT: HOLDS|WEAKENED|REFUTED`.
+It belongs to the [`agent-reviewer`](../agent-reviewer/README.md) plugin, which
+documents its permissions and the shared review core. Quality ships an identical
+fallback copy, composed from `agents.src/adversarial-challenger.md`, and skips it when
+`plugin.list` reports `srobroek.agent-reviewer` or an earlier plugin already registered
+the id; if the copy loads first, agent-reviewer replaces it.
+
+It pins no model and declares the `reviewer` tier through the
+`x-opencode-model-role` request header; without model-roles it inherits the caller's
+model. Set `agent.adversarial-challenger.model` to pin one.
+
+## MCP tools
+
+The `adversarial-challenger` fallback copy (agent-reviewer's copy takes over when that plugin is installed, and uses its own `tools` option) cannot call MCP tools unless a rule allows them. The `tools` option adds allow rules for MCP tool patterns after the agent's own rules. OpenCode names an MCP tool's permission action `<server>_<tool>`, so `context7_*` allows every tool of the `context7` server and `context7_query-docs` allows one. Characters outside letters, digits, `_` and `-` become `_`.
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `tools` | `["context7_*", "aws-mcp_*"]` | An array of patterns replaces the defaults. `false` or `[]` adds no rules; the agent keeps its fixed allowlist. |
+
+```jsonc
+"options": { "tools": ["context7_*", "<server>_<tool>"] }
+```
+
+Patterns must name MCP server tools only (`<server>_<tool>`). The option refuses a pattern that could match a tool from a plugin in this repository or from OpenCode itself, such as `dep_*`, `delivery_*`, `quality_*`, `lsp_*` or `opencode_*`, and a pattern that starts with a wildcard, and logs a warning. Only add read-only tools: an allowed MCP tool runs without a prompt. The option refuses a pattern that matches a built-in action (`shell`, `edit`, `write`, `patch`, `external_directory`, `subagent`, `*` and the like) and logs a warning, so it cannot widen file or shell access.
+
+This agent denies `execute`, so OpenCode lists its allowed MCP tools directly, even for a server configured for Code Mode: with `execute` wholly denied, every tool left active becomes a direct tool (`packages/core/src/tool.ts:260-264`, OpenCode v2.2.6; an MCP tool's `codemode` flag is set at `packages/core/src/tool/mcp.ts:57`).
+
+## Not ported
+
+- `watchdog-files` and `advisor-resample`: they author and audit the omp advisor
+  (`WATCHDOG.yml`) and its transcripts, which OpenCode does not have.
+- `tests/code-design-eval`: development cases for tuning the steering, not shipped
+  content.
+
+## Text changes from omp
+
+References to other skills name the skill (`toolchain-languages`, `sniff`,
+`tune-model-prompt`, `design-prototype`); reference links inside a skill are
+relative paths; "Scouts" became read-only explore subagents; the review mode
+reports in the format the role or brief defines instead of an omp output schema.
+These are the authoritative copies; earlier ones under `~/.claude/skills` are gone.
+
+## Attribution
+
+Parts of this plugin derive from [mattpocock/skills](https://github.com/mattpocock/skills)
+1.2.3 under the MIT licence. `skills/prototype-logic` is vendored with its own
+LICENSE and NOTICE. Content folded into `quality-code-design` references is listed
+in `skills/quality-code-design/NOTICE`, with the licence text in
+`skills/quality-code-design/LICENSE-mattpocock-skills`.
+
+## Install
+
+```sh
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/quality/opencode'
+```
+
+Claude Code install the skills, not the agent, from this repository's
+marketplace:
+
+```sh
+claude plugin marketplace add srobroek/harness-plugins
+claude plugin install quality@harness-plugins
+
+```

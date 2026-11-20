@@ -1,0 +1,9 @@
+{
+  "name": "lang-typescript",
+  "description": "TypeScript and JavaScript skills: install, lint, tsc and test checks, testing, monorepo packaging, type safety and zod, and Bun and Node profiling.",
+  "version": "0.7.0",
+  "author": {
+    "name": "Sjors Robroek"
+  },
+  "license": "Apache-2.0"
+}

@@ -1,0 +1,19 @@
+{
+  "name": "lang-typescript",
+  "version": "0.7.0",
+  "description": "TypeScript and JavaScript skills: install, lint, tsc and test checks, testing, monorepo packaging, type safety and zod, and Bun and Node profiling.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "TypeScript and JavaScript skills: install, lint, tsc and test checks, testing, monorepo packaging, type safety and zod, and Bun and Node profiling.",
+    "category": "development",
+    "harnesses": [
+      "opencode",
+      "claude"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "dep-update",
+  "version": "0.6.0",
+  "description": "Classify dependency updates by semver safety and apply confirmed patch and minor bumps.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "Classify dependency updates by semver safety and apply confirmed patch and minor bumps.",
+    "category": "development",
+    "harnesses": [
+      "opencode"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
+    }
+  }
+}

@@ -1,3 +1,1489 @@
 {
-  "plugins": []
+  "plugins": [
+    {
+      "name": "agent-coder",
+      "version": "0.10.0",
+      "description": "coder subagent for any code development task (implement, fix, debug, test, build, profile, upgrade deps) with only coding tools and skills.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [],
+          "agents": [
+            "coder"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "agent-efficiency",
+      "version": "0.11.0",
+      "description": "Cut agent tokens: run bash calls as the built-in shell tool, narrow explore to search and web tools, and trim read-only subagent prompts.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "agent-mechanic",
+      "version": "0.6.0",
+      "description": "mechanic subagent: cheap, exact mechanical edits (renames, bulk edits, formatting, moving code) that run the given check.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [],
+          "agents": [
+            "mechanic"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "agent-researcher",
+      "version": "0.7.0",
+      "description": "The researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [],
+          "agents": [
+            "researcher"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "agent-reviewer",
+      "version": "0.9.0",
+      "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "review-security"
+          ],
+          "agents": [
+            "adversarial-challenger",
+            "code-reviewer",
+            "pr-reviewer",
+            "security-reviewer"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "review-security"
+          ],
+          "agents": [
+            "adversarial-challenger",
+            "code-reviewer",
+            "security-reviewer"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [
+            "PreToolUse"
+          ],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "agent-seance",
+      "version": "0.6.0",
+      "description": "seance subagent and read-only seance_read tool: answer a question from a past session and its subagent transcripts.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [],
+          "agents": [
+            "seance"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "architecture",
+      "version": "0.7.0",
+      "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "architecture-docs-files",
+            "architecture-guide",
+            "architecture-ownership",
+            "architecture-repositories",
+            "architecture-top-level"
+          ],
+          "agents": [
+            "architect"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "architecture-docs-files",
+            "architecture-guide",
+            "architecture-ownership",
+            "architecture-repositories",
+            "architecture-top-level"
+          ],
+          "agents": [
+            "architect"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [
+            "PreToolUse"
+          ],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "ast-grep",
+      "version": "1.2.0",
+      "description": "Structural code search with the ast-grep CLI, plus when to use Semgrep or rust-analyzer instead.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "ast-grep-search"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "ast-grep-search"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "aws",
+      "version": "0.7.0",
+      "description": "AWS working guidance: route AWS tasks through the AWS MCP Server's guided skills, verify against AWS documentation, and price with the AWS Pricing MCP server.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "aws-guidance"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": [
+            "aws-mcp",
+            "aws-pricing"
+          ]
+        },
+        "claude": {
+          "skills": [
+            "aws-guidance"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": [
+            "aws-mcp",
+            "aws-pricing"
+          ]
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "beads",
+      "version": "0.7.0",
+      "description": "Beads issue tracking: bd prime session context, shell gates on bd, git and gh commands, store pinning and the Beads skills.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "beads-contention-retry",
+            "beads-evidence",
+            "beads-guide",
+            "beads-ledger",
+            "beads-preflight",
+            "beads-setup"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "beads-contention-retry",
+            "beads-evidence",
+            "beads-guide",
+            "beads-ledger",
+            "beads-preflight",
+            "beads-setup"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [
+            "PreToolUse",
+            "SessionStart"
+          ],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "project"
+    },
+    {
+      "name": "build",
+      "version": "0.7.0",
+      "description": "External-repository worker subagent: clone, follow the target's conventions, edit, verify, and publish only when delegated.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [],
+          "agents": [
+            "external-repo-worker"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "project"
+    },
+    {
+      "name": "cad",
+      "version": "0.7.0",
+      "description": "Agent-assisted mechanical CAD from a rapid concept to a released STEP AP242 design: fifteen CAD skills with their Python scripts, six worker subagents, eleven beads formulas with a cad_setup installer, and the cad_run and cad_stop script tools.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "cad-analysis",
+            "cad-bom",
+            "cad-concept",
+            "cad-design",
+            "cad-drawings",
+            "cad-fits",
+            "cad-flow",
+            "cad-model",
+            "cad-motion",
+            "cad-recheck",
+            "cad-record",
+            "cad-render",
+            "cad-review-dfm",
+            "cad-review-mech",
+            "cad-viewer"
+          ],
+          "agents": [
+            "cad-analyst",
+            "cad-concept-designer",
+            "cad-dfm-reviewer",
+            "cad-mech-reviewer",
+            "cad-part-designer",
+            "cad-sourcing-researcher"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "project"
+    },
+    {
+      "name": "chezmoi",
+      "version": "0.5.0",
+      "description": "Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "chezmoi-editor"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "chezmoi-editor"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "claude-compat",
+      "version": "0.4.0",
+      "description": "Load Claude Code plugin repos at runtime: skills, agents, commands, MCP servers and command hooks, per project.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "project"
+    },
+    {
+      "name": "debate",
+      "version": "0.5.0",
+      "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
+      "category": "productivity",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "debate",
+            "grilling",
+            "to-questionnaire"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "debate",
+            "grilling",
+            "to-questionnaire"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "delivery",
+      "version": "0.9.0",
+      "description": "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "delivery-fan-out",
+            "delivery-git-workflow"
+          ],
+          "agents": [
+            "implementer",
+            "implementer-high",
+            "operator",
+            "pr-reviewer",
+            "researcher",
+            "shepherd"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "dep-update",
+      "version": "0.6.0",
+      "description": "Classify dependency updates by semver safety and apply confirmed patch and minor bumps.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "dep-update"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "design",
+      "version": "0.8.0",
+      "description": "UI and UX design skills: design-system audit, DESIGN.md, rendered-surface review, accessibility audit, motion, microcopy, prototypes, and wireframes.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "accessibility-audit",
+            "design-component-truth",
+            "design-evidence",
+            "design-guide",
+            "design-md",
+            "design-no-slop",
+            "design-prototype",
+            "design-system-audit",
+            "design-token-discipline",
+            "design-upstream-preflight",
+            "motion-design",
+            "ui-microcopy",
+            "ui-review",
+            "wireloom"
+          ],
+          "agents": [
+            "a11y-auditor",
+            "design-critic",
+            "ui-implementer",
+            "ui-ux-specialist"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": [
+            "accessibility-scanner",
+            "wire-dsl"
+          ]
+        },
+        "claude": {
+          "skills": [
+            "accessibility-audit",
+            "design-component-truth",
+            "design-evidence",
+            "design-guide",
+            "design-md",
+            "design-no-slop",
+            "design-prototype",
+            "design-system-audit",
+            "design-token-discipline",
+            "design-upstream-preflight",
+            "motion-design",
+            "ui-microcopy",
+            "ui-review",
+            "wireloom"
+          ],
+          "agents": [
+            "a11y-auditor",
+            "design-critic",
+            "ui-implementer",
+            "ui-ux-specialist"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [
+            "PreToolUse"
+          ],
+          "tools": [],
+          "extensions": [],
+          "mcp": [
+            "accessibility-scanner",
+            "wire-dsl"
+          ]
+        }
+      },
+      "scope": "project"
+    },
+    {
+      "name": "docs",
+      "version": "0.4.0",
+      "description": "Library and API documentation MCP servers for OpenCode: Context7, plus the OpenAI developer docs server on request.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "eli5",
+      "version": "0.5.0",
+      "description": "Explain a topic at five depth levels, from metaphor to frontier.",
+      "category": "productivity",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "eli5"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "eli5"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "find-tools",
+      "version": "0.4.0",
+      "description": "Discover and vet plugins, skills and MCP servers across local inventory, catalogs and public registries, without installing anything.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "find-tools"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "journeys",
+      "version": "0.5.0",
+      "description": "Author, validate and maintain user journeys: seven skills, the journeys.py helper, and the journey-scribe and journey-validator subagents.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "journey-campaign",
+            "journey-consolidate",
+            "journey-init",
+            "journey-verify",
+            "journey-verify-changed",
+            "journey-write",
+            "journeys-guide"
+          ],
+          "agents": [
+            "journey-scribe",
+            "journey-validator"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "journey-campaign",
+            "journey-consolidate",
+            "journey-init",
+            "journey-verify",
+            "journey-verify-changed",
+            "journey-write",
+            "journeys-guide"
+          ],
+          "agents": [
+            "journey-scribe",
+            "journey-validator"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [
+            "PreToolUse"
+          ],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "project"
+    },
+    {
+      "name": "lang-go",
+      "version": "0.6.0",
+      "description": "Go skills: build, lint, go test -race, tidy and govulncheck checks, testing and fuzzing, module and package layout, and pprof profiling.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "lang-go",
+            "lang-go-libraries",
+            "lang-go-packaging",
+            "lang-go-profiling",
+            "lang-go-quality",
+            "lang-go-testing"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "lang-go",
+            "lang-go-libraries",
+            "lang-go-packaging",
+            "lang-go-profiling",
+            "lang-go-quality",
+            "lang-go-testing"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "lang-python",
+      "version": "0.6.0",
+      "description": "Python skills: uv, ruff, mypy or pyright and pytest checks, testing, packaging, typing and pydantic, SQLAlchemy and Alembic, and profiling.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "lang-python",
+            "lang-python-libraries",
+            "lang-python-packaging",
+            "lang-python-persistence",
+            "lang-python-profiling",
+            "lang-python-quality",
+            "lang-python-testing",
+            "lang-python-types"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "lang-python",
+            "lang-python-libraries",
+            "lang-python-packaging",
+            "lang-python-persistence",
+            "lang-python-profiling",
+            "lang-python-quality",
+            "lang-python-testing",
+            "lang-python-types"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "lang-rust",
+      "version": "0.6.0",
+      "description": "Rust skills: fmt, clippy and test checks, testing with nextest, proptest and insta, crates and workspaces, CI, sqlx persistence, Tauri and profiling.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "lang-rust",
+            "lang-rust-ci",
+            "lang-rust-libraries",
+            "lang-rust-packaging",
+            "lang-rust-persistence",
+            "lang-rust-profiling",
+            "lang-rust-quality",
+            "lang-rust-tauri",
+            "lang-rust-testing"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "lang-rust",
+            "lang-rust-ci",
+            "lang-rust-libraries",
+            "lang-rust-packaging",
+            "lang-rust-persistence",
+            "lang-rust-profiling",
+            "lang-rust-quality",
+            "lang-rust-tauri",
+            "lang-rust-testing"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "lang-typescript",
+      "version": "0.7.0",
+      "description": "TypeScript and JavaScript skills: install, lint, tsc and test checks, testing, monorepo packaging, type safety and zod, and Bun and Node profiling.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "lang-typescript",
+            "lang-typescript-libraries",
+            "lang-typescript-packaging",
+            "lang-typescript-profiling",
+            "lang-typescript-quality",
+            "lang-typescript-testing",
+            "lang-typescript-types"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "lang-typescript",
+            "lang-typescript-libraries",
+            "lang-typescript-packaging",
+            "lang-typescript-profiling",
+            "lang-typescript-quality",
+            "lang-typescript-testing",
+            "lang-typescript-types"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "lsp",
+      "version": "0.5.0",
+      "description": "Append new LSP errors to edit, write and patch results, using the lsp-tools-mcp diagnostics tool.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "project"
+    },
+    {
+      "name": "model-roles",
+      "version": "0.8.0",
+      "description": "Give agents a model tier (cheap, standard, strong, reviewer) derived from the model catalog, and resolve each tier to the first available candidate.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index",
+            "tui"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "modes",
+      "version": "1.1.0",
+      "description": "Debug, refactor and concept agents with plan-style mode reminders: root-cause diagnosis in a scratch worktree, behaviour-preserving refactoring, and design iteration.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [],
+          "agents": [
+            "concept",
+            "debug",
+            "refactor"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "parley",
+      "version": "0.4.0",
+      "description": "Ask the user rounds of typed questions in a TUI panel, with recommended answers, notes and deferrals.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index",
+            "tui"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "plugin-audit",
+      "version": "0.2.0",
+      "description": "Audit this repository's OpenCode plugins for stale versions, docs drift, convention breaks, pending bumps and inconsistency.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "plugin-audit"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "project"
+    },
+    {
+      "name": "project",
+      "version": "0.8.0",
+      "description": "Project lifecycle: scaffold a project with /new-project, set up fnox and 1Password secrets, and pick an OSI-approved license.",
+      "category": "productivity",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "license-picker",
+            "project-scaffold",
+            "project-secrets"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "license-picker",
+            "project-scaffold",
+            "project-secrets"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "quality",
+      "version": "0.12.0",
+      "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "prototype-logic",
+            "quality-code-design",
+            "quality-code-policy",
+            "quality-profiling",
+            "quality-test-audit",
+            "quality-testing"
+          ],
+          "agents": [
+            "adversarial-challenger"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "prototype-logic",
+            "quality-code-design",
+            "quality-code-policy",
+            "quality-profiling",
+            "quality-test-audit",
+            "quality-testing"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "repomix",
+      "version": "0.4.0",
+      "description": "Pack a local or remote repo into one file with repomix for bulk context: external repos, module packs and version diffs.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "repomix"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "repomix"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "safety",
+      "version": "0.9.0",
+      "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help, redaction of secret environment values from tool output, and a tool that stores a secret without a shell.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "session",
+      "version": "0.4.0",
+      "description": "Read-only handoff from an earlier session: session_resume tool and resume-session skill.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "resume-session"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "speckit",
+      "version": "0.9.0",
+      "description": "SpecKit on beads: a tasks.md guard, setup and bugfix skills, formulas, and the speckit-sync and speckit-verify subagents.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "speckit-bugfix",
+            "speckit-setup"
+          ],
+          "agents": [
+            "spec",
+            "speckit-sync",
+            "speckit-verify"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "speckit-bugfix",
+            "speckit-setup"
+          ],
+          "agents": [
+            "speckit-sync",
+            "speckit-verify"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [
+            "PreToolUse"
+          ],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "project"
+    },
+    {
+      "name": "statusline",
+      "version": "0.4.0",
+      "description": "omp-style status line above the OpenCode session composer.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "tui"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "subagent-worktree",
+      "version": "0.4.0",
+      "description": "Runs opted-in subagents in their own git worktree and merges their branch back with wt merge.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "toolchain",
+      "version": "0.7.0",
+      "description": "Toolchain defaults as skills: stack, frontend, infrastructure, languages, observability, shell, Terraform, caches, background jobs and worktree coexistence.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "backend-background-jobs",
+            "ci-github-actions",
+            "coexistence-worktree",
+            "infrastructure-tfstate-guard",
+            "ops-no-global-cargo-target",
+            "ops-toolchain-cache-policy",
+            "shell-language",
+            "terraform-language",
+            "toolchain-api",
+            "toolchain-asset-ownership",
+            "toolchain-frontend",
+            "toolchain-guide",
+            "toolchain-infrastructure",
+            "toolchain-languages",
+            "toolchain-quality-observability",
+            "toolchain-stack-defaults"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "backend-background-jobs",
+            "ci-github-actions",
+            "coexistence-worktree",
+            "infrastructure-tfstate-guard",
+            "ops-no-global-cargo-target",
+            "ops-toolchain-cache-policy",
+            "shell-language",
+            "terraform-language",
+            "toolchain-api",
+            "toolchain-asset-ownership",
+            "toolchain-frontend",
+            "toolchain-guide",
+            "toolchain-infrastructure",
+            "toolchain-languages",
+            "toolchain-quality-observability",
+            "toolchain-stack-defaults"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "trunk-dev",
+      "version": "0.9.0",
+      "description": "Trunk-based delivery for OpenCode: a Conventional Commit and main-push gate, skip-CI and MR/PR advisories, a feature-flag cleanup bead after each flagged merge, and release-setup skills.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "trunk-dev-feature-flags",
+            "trunk-dev-guide",
+            "trunk-dev-release-setup",
+            "trunk-dev-workflow"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "trunk-dev-feature-flags",
+            "trunk-dev-guide",
+            "trunk-dev-release-setup",
+            "trunk-dev-workflow"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "whats-new",
+      "version": "0.4.0",
+      "description": "Research breaking changes, deprecations and new features between two versions, report-only.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "whats-new"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
+      "name": "worktrunk",
+      "version": "0.5.0",
+      "description": "Worktrunk (wt) skills: work in linked worktrees and run deterministic preflight checks before an agent run or merge.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "worktrunk-preflight",
+            "worktrunk-worktrees"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "worktrunk-preflight",
+            "worktrunk-worktrees"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "project"
+    }
+  ]
 }

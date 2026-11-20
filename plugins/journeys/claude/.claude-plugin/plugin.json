@@ -1,0 +1,9 @@
+{
+  "name": "journeys",
+  "description": "Author, validate and maintain user journeys: seven skills, the journeys.py helper, and the journey-scribe and journey-validator subagents.",
+  "version": "0.5.0",
+  "author": {
+    "name": "Sjors Robroek"
+  },
+  "license": "Apache-2.0"
+}

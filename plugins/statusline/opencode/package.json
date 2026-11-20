@@ -1,0 +1,18 @@
+{
+  "name": "statusline-opencode",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./tui": "./tui.js"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": ">=2.1.4 <3"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/plugin": {
+      "optional": true
+    }
+  }
+}

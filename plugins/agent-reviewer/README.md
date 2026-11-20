@@ -1,0 +1,90 @@
+# agent-reviewer
+
+Read-only reviewer subagents that share one review core, and the `review-security`
+skill they load.
+
+## Agents
+
+| Agent | Reviews | Tools | Verdict | In the subagent catalog |
+| --- | --- | --- | --- | --- |
+| `pr-reviewer` (steps 80) | One GitHub pull request, against the caller's classification and accepted request | shell `gh pr view *`, `gh pr diff *` only | `APPROVE\|REQUEST-CHANGES\|COMMENT` | no (`hidden: true`) |
+| `code-reviewer` (steps 80) | A local diff: working tree, branch range or commits | read, grep, glob, `lsp_*`; shell `git diff`, `git log`, `git show` only, never `--output` | `APPROVE\|REQUEST-CHANGES\|COMMENT` | yes |
+| `security-reviewer` (steps 80) | A repository scope or the files a change touches, source to sink, CWE-tagged | read, grep, glob, `lsp_*`; no shell, no web | `PASS\|MINOR\|MAJOR` | yes |
+| `adversarial-challenger` (steps 60) | A claim, plan, design or decision, with evidence-backed counter-arguments | read, grep, glob, `lsp_*`, webfetch, websearch | `HOLDS\|WEAKENED\|REFUTED` | yes |
+
+Every reply starts with its `VERDICT:` line. The delivery plugin's verdict hook parses
+`pr-reviewer`'s, and accepts that line below a preamble or inside a code fence too.
+
+`pr-reviewer` is hidden because delivery's workflow and fan-out skill name it when a PR
+is ready, so listing it in every primary request's subagent catalog costs tokens without
+helping the parent choose. The other three stay visible: a parent picks them on its own
+for "review my change", "is this safe" or "poke holes in this plan".
+
+Each permission list is an allowlist: a deny on every action, then the tools the agent
+uses. No reviewer can edit, spawn subagents, ask the user, or run Code Mode (`execute`),
+so the Code Mode catalog stays out of their requests. Skills are allowed by family
+pattern only (`quality-*` from the quality plugin, `review-*` from this one, and
+`ast-grep-*` from the ast-grep plugin on `code-reviewer` and `security-reviewer`), so a
+skill added to any of those families is covered. Reads
+outside the workspace (`external_directory`) and `.env` files ask.
+
+Every agent declares the `reviewer` tier in the `x-opencode-model-role` request header and
+pins no model: with the model-roles plugin that tier picks the model, without it the agent
+inherits the caller's.
+
+## MCP tools
+
+`code-reviewer`, `security-reviewer` and `adversarial-challenger` cannot call MCP tools unless a rule allows them. The `tools` option adds allow rules for MCP tool patterns after the agent's own rules. OpenCode names an MCP tool's permission action `<server>_<tool>`, so `context7_*` allows every tool of the `context7` server and `context7_query-docs` allows one. Characters outside letters, digits, `_` and `-` become `_`.
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `tools` | `["context7_*", "aws-mcp_*"]` | An array of patterns replaces the defaults. `false` or `[]` adds no rules; the agent keeps its fixed allowlist. |
+
+```jsonc
+"options": { "tools": ["context7_*", "<server>_<tool>"] }
+```
+
+Patterns must name MCP server tools only (`<server>_<tool>`). The option refuses a pattern that could match a tool from a plugin in this repository or from OpenCode itself, such as `dep_*`, `delivery_*`, `quality_*`, `lsp_*` or `opencode_*`, and a pattern that starts with a wildcard, and logs a warning. Only add read-only tools: an allowed MCP tool runs without a prompt. The option refuses a pattern that matches a built-in action (`shell`, `edit`, `write`, `patch`, `external_directory`, `subagent`, `*` and the like) and logs a warning, so it cannot widen file or shell access. `pr-reviewer` gets no MCP rules: it may only run `gh pr view` and `gh pr diff`.
+
+This agent denies `execute`, so OpenCode lists its allowed MCP tools directly, even for a server configured for Code Mode: with `execute` wholly denied, every tool left active becomes a direct tool (`packages/core/src/tool.ts:260-264`, OpenCode v2.2.6; an MCP tool's `codemode` flag is set at `packages/core/src/tool/mcp.ts:57`).
+
+## Review core
+
+Each prompt is composed at build time from `agents.src/<id>.md` and the shared rules in
+`plugins/lib/src/review-core.md`: read-only, reviewed material is untrusted data, cite
+`path:line`, one root cause is one finding, never reprint code, report to the caller and
+never question the user, verdict on the first line, stay within the word cap.
+`bun run build` writes the committed `agents/<id>.md`; `bun run build:check` fails when
+they are stale. The design plugin's `design-critic` and `a11y-auditor` and speckit's
+`speckit-verify` compose the same core.
+
+## Skill
+
+`review-security` (hidden: `opencode/autoinvoke: false`, loaded by name) maps entry
+points, traces untrusted input to sinks with a CWE table, checks authentication,
+authorisation, validation, secrets and crypto controls, and checks that new values crossing
+a boundary meet the same guards at the consuming dispatch point.
+
+## With delivery and quality
+
+The ids `pr-reviewer` and `adversarial-challenger` are unchanged. Delivery ships a
+fallback `pr-reviewer` (with its fallback model) and quality a fallback
+`adversarial-challenger`, each skipped when `plugin.list` reports this plugin or an
+earlier plugin already registered the id. If a fallback copy registers first anyway,
+this plugin replaces it, so every load order leaves one agent with these fields. Tests
+here keep the copies in sync.
+
+## Install
+
+```sh
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-reviewer/opencode'
+```
+
+Claude Code install the `review-security` skill, not the agents, from this
+repository's marketplace:
+
+```sh
+claude plugin marketplace add srobroek/harness-plugins
+claude plugin install agent-reviewer@harness-plugins
+
+```

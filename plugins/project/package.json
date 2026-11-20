@@ -1,0 +1,19 @@
+{
+  "name": "project",
+  "version": "0.8.0",
+  "description": "Project lifecycle: scaffold a project with /new-project, set up fnox and 1Password secrets, and pick an OSI-approved license.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "Project lifecycle: scaffold a project with /new-project, set up fnox and 1Password secrets, and pick an OSI-approved license.",
+    "category": "productivity",
+    "harnesses": [
+      "opencode",
+      "claude"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
+    }
+  }
+}

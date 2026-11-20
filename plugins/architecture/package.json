@@ -1,0 +1,19 @@
+{
+  "name": "architecture",
+  "version": "0.7.0",
+  "description": "Architecture skills (capability-first layout, ownership boundaries, durable docs/ knowledge) and a read-only architect subagent.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
+    "category": "development",
+    "harnesses": [
+      "opencode",
+      "claude"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
+    }
+  }
+}

@@ -11,4 +11,75 @@ permissions:
 jobs:
   check:
     # Same version as @srobroek/harness-kit in package.json; `harness-kit check` warns when they differ.
-    uses: srobroek/harness-kit/.github/workflows/check.yml@v1.3.0
+    uses: srobroek/harness-kit/.github/workflows/check.yml@v1.3.1
+
+  # The gates the reusable workflow does not run: lint, bundles, and the repository's content checks.
+  repo-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - name: Plugin bundles and composed agents are current
+        run: npm run build:check
+      - run: npm run plugin-table:check
+      - run: npm run steering
+      - run: npm run pitfalls
+      - run: npm run agent-roles
+      - run: npm run descriptions
+      - run: npm run concerns
+      - run: bun scripts/check-test-executables.ts
+      - name: Python tests of the shipped scripts
+        run: |
+          for dir in plugins/cad/common/formulas plugins/beads/common/skills/beads-preflight plugins/worktrunk/common/skills/worktrunk-preflight; do
+            python3 -B -m unittest discover -s "$dir" -p 'test_*.py' -v
+          done
+
+  # Actions has no job-level `paths` filter, so this job works out whether a push
+  # or pull request touched the files the path-filtered `cad` job covers.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      cad: ${{ steps.diff.outputs.cad }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          # A pull request is checked out as its merge commit, whose first parent is
+          # the base branch; a push compares against the commit it replaced.
+          BASE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || github.event.before }}
+        run: |
+          if ! git rev-parse --verify --quiet "$BASE^{commit}" >/dev/null; then
+            cad=true  # no base to compare against: a new branch or a force push
+          elif git diff --quiet "$BASE" HEAD -- plugins/cad scripts/sync-cad.ts .github/workflows/ci.yml; then
+            cad=false
+          else
+            cad=true
+          fi
+          echo "cad=$cad" >> "$GITHUB_OUTPUT"
+
+  # plugins/cad vendors its skills, example and agents from srobroek/cad-agent at
+  # the tag in plugins/cad/cad-agent.json; cad-agent's CI runs their test suites.
+  cad:
+    needs: changes
+    if: needs.changes.outputs.cad == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
+      - name: Vendored files match the pinned cad-agent tag
+        run: bun scripts/sync-cad.ts --check

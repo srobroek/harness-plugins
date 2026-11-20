@@ -1,0 +1,301 @@
+/**
+ * Pure subagent-model guard for `srobroek.model-roles`: deny a `subagent` spawn
+ * whose target agent would silently inherit an expensive session model.
+ */
+
+import {
+  type AvailableModel,
+  type HealthView,
+  type ModelRef,
+  modelText,
+  type Options,
+  parseCandidate,
+  resolveRole,
+  roleOf,
+} from "./resolve.ts"
+import { costLabel, isExpensiveClass, type ModelClass, rankOf } from "./tiers.ts"
+
+/** How many alternatives a deny message names. */
+export const CATALOG_LIMIT = 12
+
+/** How many pinned agents a deny message names when a cheaper role exists. */
+export const AGENT_HINT_LIMIT = 5
+
+/** Longest agent summary a deny message quotes. */
+export const SUMMARY_LIMIT = 80
+
+export type GuardOptions = {
+  /** `provider/model` references, or `"auto"`: premium models (at or above the `premium` price). */
+  expensive: string[] | "auto"
+  /** Agent ids allowed to inherit the session model. */
+  allowInherit: string[]
+  /** Expensive models a spawn may still name in its own `model` argument. */
+  allowModels: string[]
+  /** `"auto"` routes a spawn it would refuse through the auto decider instead. */
+  mode: "refuse" | "auto"
+  /** Refuse any spawn that would inherit the session model, whatever its price. */
+  requireExplicit: boolean
+  /** How long the session and agent lookups may take before the guard gives up on them. */
+  lookupTimeoutMs: number
+}
+
+/** Default bound on the guard's session and agent lookups. */
+export const GUARD_LOOKUP_TIMEOUT_MS = 5000
+
+/** Rejection of `withTimeout` when the work does not settle in time. */
+export class LookupTimeout extends Error {
+  constructor(ms: number) {
+    super(`lookup did not settle within ${ms} ms`)
+    this.name = "LookupTimeout"
+  }
+}
+
+/** Settle with `work`, or reject with `LookupTimeout` after `ms`. The timer is always cleared. */
+export async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new LookupTimeout(ms)), ms)
+  })
+  try {
+    return await Promise.race([work, late])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export type GuardAgent = {
+  id: string
+  model?: ModelRef
+  mode?: string
+  hidden?: boolean
+  description?: string
+  request?: { headers?: Readonly<Record<string, string>> }
+}
+
+export type GuardModel = AvailableModel & {
+  cost?: ReadonlyArray<{ tier?: unknown; input: number }>
+}
+
+export type GuardFacts = {
+  guard: GuardOptions
+  options: Options
+  /** The agent the spawn names. */
+  target: string
+  agents: ReadonlyArray<GuardAgent>
+  available: ReadonlyArray<GuardModel>
+  /** The calling session's model, when known. */
+  sessionModel: ModelRef | undefined
+  /** How the plugin resolves models right now; defaults to plain role resolution. */
+  health?: HealthView
+}
+
+export type GuardDecision = { allow: true } | { allow: false; reason: string }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((v): v is string => typeof v === "string" && v.trim() !== "").map((v) => v.trim()) : []
+
+/** Normalise the `guard` option. `undefined` means the guard is off; `true` means defaults. */
+export function parseGuard(raw: unknown): GuardOptions | undefined {
+  if (raw === undefined || raw === false || raw === null) return undefined
+  const input = isRecord(raw) ? raw : {}
+  if (input.enabled === false) return undefined
+  const list = typeof input.expensive === "string" && input.expensive !== "auto" ? [input.expensive] : strings(input.expensive)
+  const expensive = input.expensive === undefined || input.expensive === "auto" ? "auto" : list
+  const mode = input.mode === "auto" ? "auto" : "refuse"
+  return { expensive, allowInherit: strings(input.allowInherit), allowModels: strings(input.allowModels), mode, requireExplicit: input.requireExplicit === true,
+    lookupTimeoutMs:
+      typeof input.lookupTimeoutMs === "number" && Number.isFinite(input.lookupTimeoutMs) && input.lookupTimeoutMs > 0
+        ? input.lookupTimeoutMs
+        : GUARD_LOOKUP_TIMEOUT_MS,
+  }
+}
+
+/** The names a spawner picks from: the tier table, else every role. */
+export const tierNames = (options: Pick<Options, "roles" | "tiers">): string[] =>
+  options.tiers !== undefined ? Object.keys(options.tiers) : Object.keys(options.roles).sort()
+
+const key = (ref: ModelRef): string => `${ref.providerID}/${ref.id}`
+
+const label = modelText
+
+/** The base-tier input cost of `ref`, when the model list knows it. */
+export function inputCost(ref: ModelRef, available: ReadonlyArray<GuardModel>): number | undefined {
+  const model = available.find((m) => m.providerID === ref.providerID && m.id === ref.id)
+  const costs = model?.cost ?? []
+  const base = costs.find((c) => c.tier === undefined) ?? costs[0]
+  return typeof base?.input === "number" ? base.input : undefined
+}
+
+/**
+ * Whether `ref` is in the expensive set. `"auto"` reads the derived classes: premium
+ * models only, so strong models such as Opus are not guarded. A listed entry with a
+ * variant matches only that variant.
+ */
+export function isExpensive(ref: ModelRef, guard: GuardOptions, classes: Readonly<Record<string, ModelClass>> | undefined): boolean {
+  if (guard.expensive === "auto") return isExpensiveClass(ref, classes)
+  return guard.expensive.some((entry) => {
+    const candidate = parseCandidate(entry)
+    if (candidate?.kind !== "model") return false
+    if (key(candidate.ref) !== key(ref)) return false
+    return candidate.ref.variant === undefined || candidate.ref.variant === ref.variant
+  })
+}
+
+/** The model an agent runs on without inheriting: its own, or the one its role resolves to. */
+export function pinnedModel(
+  agent: GuardAgent,
+  facts: Pick<GuardFacts, "options" | "available" | "health">,
+): ModelRef | undefined {
+  if (agent.model !== undefined) return agent.model
+  const role = roleOf(agent, facts.options.agents, facts.options.implicit)
+  if (role === undefined) return undefined
+  return resolveRole(facts.options.roles, facts.available, role, facts.health).model
+}
+
+export type CheapRole = { role: string; model: ModelRef; cost: number | undefined; rank?: number; text?: string }
+
+export type CheapAgent = { id: string; model: ModelRef; summary?: string }
+
+/** The first sentence of an agent description's first line, capped at `SUMMARY_LIMIT`. */
+export function summarize(description: string | undefined): string | undefined {
+  const line = description?.trim().split("\n")[0]?.trim() ?? ""
+  const sentence = line.match(/^.*?[.!?](?=\s|$)/)?.[0] ?? line
+  const text = sentence.replace(/[.!?]$/, "")
+  if (text === "") return undefined
+  return text.length > SUMMARY_LIMIT ? `${text.slice(0, SUMMARY_LIMIT - 3).trimEnd()}...` : text
+}
+
+const agentText = (agent: CheapAgent, withSummary: boolean): string =>
+  withSummary && agent.summary !== undefined
+    ? `${agent.id} (${label(agent.model)}: ${agent.summary})`
+    : `${agent.id} (${label(agent.model)})`
+
+/** Spawnable agents and roles that run on a model outside the expensive set. Roles come cheapest first. */
+export function cheaperAlternatives(facts: GuardFacts): { agents: CheapAgent[]; roles: CheapRole[] } {
+  const agents: CheapAgent[] = []
+  for (const agent of facts.agents) {
+    if (agent.id === facts.target || agent.mode === "primary" || agent.hidden === true) continue
+    const model = pinnedModel(agent, facts)
+    if (model === undefined || isExpensive(model, facts.guard, facts.options.classes)) continue
+    const summary = summarize(agent.description)
+    agents.push(summary === undefined ? { id: agent.id, model } : { id: agent.id, model, summary })
+  }
+  const roles: CheapRole[] = []
+  for (const role of tierNames(facts.options)) {
+    const model = resolveRole(facts.options.roles, facts.available, role, facts.health).model
+    if (model === undefined || isExpensive(model, facts.guard, facts.options.classes)) continue
+    const known = facts.options.classes?.[key(model)]
+    const entry: CheapRole = { role, model, cost: known?.price ?? inputCost(model, facts.available) }
+    const rank = rankOf(model, facts.options.classes)
+    if (rank !== undefined) entry.rank = rank
+    if (known !== undefined) entry.text = costLabel(known)
+    roles.push(entry)
+  }
+  const inf = Number.POSITIVE_INFINITY
+  roles.sort((a, b) => (a.cost ?? inf) - (b.cost ?? inf) || (a.rank ?? inf) - (b.rank ?? inf))
+  agents.sort((a, b) => a.id.localeCompare(b.id))
+  return { agents: agents.slice(0, CATALOG_LIMIT), roles: roles.slice(0, CATALOG_LIMIT) }
+}
+
+const price = (role: Pick<CheapRole, "cost" | "text">): string =>
+  role.text ?? (role.cost === undefined ? "cost unknown" : `$${role.cost}/M input tokens`)
+
+/** The refusal under `guard.requireExplicit` when the guard cannot establish which model a spawn would run on. */
+export const UNVERIFIABLE_REASON =
+  "The guard could not verify which model this subagent would run on (a session or agent lookup failed or timed out, or the agent is not in the agent list), and guard.requireExplicit refuses spawns it cannot verify. Re-issue the spawn with tier or model."
+
+/** The refusal for `guard.requireExplicit`: names every tier with the model it resolves to. */
+function requireExplicitReason(facts: GuardFacts): string {
+  const session = facts.sessionModel === undefined ? "the session's model" : `this session's model ${label(facts.sessionModel)}`
+  const lines = [
+    `Subagent '${facts.target}' has no model and no resolvable tier, so it would inherit ${session}. guard.requireExplicit refuses every spawn that inherits.`,
+  ]
+  const known: string[] = []
+  for (const role of tierNames(facts.options)) {
+    const model = resolveRole(facts.options.roles, facts.available, role, facts.health).model
+    if (model !== undefined) known.push(`${role} → ${label(model)}`)
+  }
+  lines.push(known.length > 0 ? `Re-issue the spawn with tier: ${known.join("; ")}.` : "No model tier resolves right now.")
+  lines.push(
+    `Or add '${facts.target}' to the srobroek.model-roles option agents so it runs on a tier, or to guard.allowInherit if it should run on the session model.`,
+  )
+  return lines.join("\n")
+}
+
+/** Judge one spawn. Anything the guard cannot establish allows. */
+export function judgeSpawn(facts: GuardFacts): GuardDecision {
+  if (facts.guard.allowInherit.includes(facts.target)) return { allow: true }
+  const target = facts.agents.find((agent) => agent.id === facts.target)
+  if (target === undefined) return facts.guard.requireExplicit ? { allow: false, reason: UNVERIFIABLE_REASON } : { allow: true }
+  if (pinnedModel(target, facts) !== undefined) return { allow: true }
+  if (facts.guard.requireExplicit) return { allow: false, reason: requireExplicitReason(facts) }
+  if (facts.sessionModel === undefined) return { allow: true }
+  if (!isExpensive(facts.sessionModel, facts.guard, facts.options.classes)) return { allow: true }
+
+  const { agents, roles } = cheaperAlternatives(facts)
+  const lines = [
+    `Subagent '${facts.target}' has no model and no resolvable tier, so it would inherit this session's expensive model ${label(facts.sessionModel)}.`,
+  ]
+  const [cheapest, ...others] = roles
+  if (cheapest !== undefined) {
+    lines.push(
+      `Re-issue the spawn with tier: "${cheapest.role}" (runs ${label(cheapest.model)}, ${price(cheapest)}), or another tier that fits the task better.`,
+    )
+    if (others.length > 0)
+      lines.push(`Other cheaper tiers: ${others.map((r) => `${r.role} → ${label(r.model)} (${price(r)})`).join("; ")}`)
+  } else lines.push("No model tier resolves to a cheaper model right now.")
+  // With a role to pass, pinned agents are a side note: ids and models only.
+  const hinted = cheapest === undefined ? agents : agents.slice(0, AGENT_HINT_LIMIT)
+  const more = agents.length > hinted.length ? `; ${agents.length - hinted.length} more` : ""
+  if (hinted.length > 0)
+    lines.push(
+      `Or spawn an agent that pins a cheaper model: ${hinted.map((a) => agentText(a, cheapest === undefined)).join("; ")}${more}`,
+    )
+  lines.push(
+    `If '${facts.target}' should run on the session model, add it to the srobroek.model-roles option guard.allowInherit.`,
+  )
+  return { allow: false, reason: lines.join("\n") }
+}
+
+const listed = (ref: ModelRef, entries: ReadonlyArray<string>): boolean =>
+  entries.some((entry) => {
+    const candidate = parseCandidate(entry)
+    if (candidate?.kind !== "model" || key(candidate.ref) !== key(ref)) return false
+    return candidate.ref.variant === undefined || candidate.ref.variant === ref.variant
+  })
+
+/**
+ * Judge a spawn that names its own `model` (not one a `role` filled in). An expensive
+ * model is refused unless the target agent pins it anyway or `guard.allowModels`
+ * lists it: models set `model` despite the tool description telling them not to.
+ */
+export function judgeModelOverride(facts: GuardFacts & { model: ModelRef }): GuardDecision {
+  if (!isExpensive(facts.model, facts.guard, facts.options.classes)) return { allow: true }
+  if (listed(facts.model, facts.guard.allowModels)) return { allow: true }
+  const target = facts.agents.find((agent) => agent.id === facts.target)
+  const pinned = target === undefined ? undefined : pinnedModel(target, facts)
+  if (pinned !== undefined && key(pinned) === key(facts.model)) return { allow: true }
+  const { roles } = cheaperAlternatives(facts)
+  const lines = [`This spawn sets model ${label(facts.model)} itself, and that model is expensive.`]
+  const [cheapest] = roles
+  if (cheapest !== undefined)
+    lines.push(`Drop \`model\` and pass tier: "${cheapest.role}" (runs ${label(cheapest.model)}, ${price(cheapest)}), or another tier that fits the task.`)
+  const matching = tierNames(facts.options).filter((role) => {
+      const model = resolveRole(facts.options.roles, facts.available, role, facts.health).model
+      return model !== undefined && key(model) === key(facts.model)
+    })
+  if (matching.length > 0) lines.push(`If the task needs ${label(facts.model)}, pass tier: "${matching[0]}" instead; it resolves to that model.`)
+  lines.push(`If the user asked for ${label(facts.model)}, add it to the srobroek.model-roles option guard.allowModels.`)
+  return { allow: false, reason: lines.join("\n") }
+}
+
+/**
+ * Whether the guard lets the plugin itself pick `model` for a spawn (an exploration arm). Unlike
+ * `judgeModelOverride`, no pin exempts it: the model the plugin set on a tier's agent is not a
+ * user's pin, so an expensive model passes only when `guard.allowModels` lists it.
+ */
+export const allowsChosenModel = (guard: GuardOptions, options: Pick<Options, "classes">, model: ModelRef): boolean =>
+  !isExpensive(model, guard, options.classes) || listed(model, guard.allowModels)

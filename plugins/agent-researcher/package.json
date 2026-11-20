@@ -1,0 +1,18 @@
+{
+  "name": "agent-researcher",
+  "version": "0.7.0",
+  "description": "The researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "The researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one.",
+    "category": "development",
+    "harnesses": [
+      "opencode"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
+    }
+  }
+}

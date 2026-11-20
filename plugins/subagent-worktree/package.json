@@ -1,0 +1,18 @@
+{
+  "name": "subagent-worktree",
+  "version": "0.4.0",
+  "description": "Runs opted-in subagents in their own git worktree and merges their branch back with wt merge.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "Runs opted-in subagents in their own git worktree and merges their branch back with wt merge.",
+    "category": "development",
+    "harnesses": [
+      "opencode"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
+    }
+  }
+}

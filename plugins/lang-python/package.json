@@ -1,0 +1,19 @@
+{
+  "name": "lang-python",
+  "version": "0.6.0",
+  "description": "Python skills: uv, ruff, mypy or pyright and pytest checks, testing, packaging, typing and pydantic, SQLAlchemy and Alembic, and profiling.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "Python skills: uv, ruff, mypy or pyright and pytest checks, testing, packaging, typing and pydantic, SQLAlchemy and Alembic, and profiling.",
+    "category": "development",
+    "harnesses": [
+      "opencode",
+      "claude"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
+    }
+  }
+}

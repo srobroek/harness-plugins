@@ -1,0 +1,24 @@
+{
+  "name": "agent-reviewer",
+  "version": "0.9.0",
+  "description": "Read-only reviewer subagents (pull request, local diff, security, adversarial challenge) sharing one review core, and a security review skill.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
+    "category": "development",
+    "harnesses": [
+      "opencode",
+      "claude"
+    ],
+    "scope": "global",
+    "claudeAgents": [
+      "adversarial-challenger",
+      "code-reviewer",
+      "security-reviewer"
+    ],
+    "entries": {
+      "index": "index"
+    }
+  }
+}

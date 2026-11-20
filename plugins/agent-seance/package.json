@@ -1,0 +1,18 @@
+{
+  "name": "agent-seance",
+  "version": "0.6.0",
+  "description": "seance subagent and read-only seance_read tool: answer a question from a past session and its subagent transcripts.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "seance subagent and read-only seance_read tool: answer a question from a past session and its subagent transcripts.",
+    "category": "development",
+    "harnesses": [
+      "opencode"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
+    }
+  }
+}
