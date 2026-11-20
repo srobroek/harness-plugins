@@ -1,3 +1,9 @@
+## delivery [0.9.1](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.0...delivery--v0.9.1) (2026-11-20)
+
+### Bug Fixes
+
+* **delivery:** match cleanup receipts to the requested repo and scope bead reads ([078e864](https://github.com/srobroek/harness-plugins/commit/078e864482dda5829cfead1e10715b1a15a15ec3))
+
 # Changelog
 
 ## [0.9.0](https://github.com/srobroek/opencode-plugins/compare/delivery--v0.8.2...delivery--v0.9.0) (2026-11-20)
