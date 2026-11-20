@@ -23,7 +23,6 @@
 | design | 0.8.0 | development | project | opencode, claude |
 | docs | 0.4.0 | development | global | opencode |
 | eli5 | 0.5.0 | productivity | global | opencode, claude |
-| example | 0.3.0 | development | internal | opencode |
 | find-tools | 0.4.0 | development | global | opencode |
 | journeys | 0.5.0 | development | project | opencode, claude |
 | lang-go | 0.6.0 | development | global | opencode, claude |

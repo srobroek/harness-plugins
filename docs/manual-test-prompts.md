@@ -1,7 +1,7 @@
 # Manual test prompts
 
 Copy-paste prompts for testing every plugin in this repository by hand in a live
-OpenCode session. `lib` and `example` are not plugins and are skipped.
+OpenCode session. `lib` is not a plugin and is skipped.
 
 Each entry has three parts:
 

@@ -684,27 +684,6 @@
       "scope": "global"
     },
     {
-      "name": "example",
-      "version": "0.3.0",
-      "description": "Reference OpenCode V2 plugin: one tool and one tool hook.",
-      "category": "development",
-      "harnesses": {
-        "opencode": {
-          "skills": [],
-          "agents": [],
-          "commands": [],
-          "rules": [],
-          "hooks": [],
-          "tools": [],
-          "extensions": [
-            "index"
-          ],
-          "mcp": []
-        }
-      },
-      "scope": "internal"
-    },
-    {
       "name": "find-tools",
       "version": "0.4.0",
       "description": "Discover and vet plugins, skills and MCP servers across local inventory, catalogs and public registries, without installing anything.",

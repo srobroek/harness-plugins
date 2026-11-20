@@ -462,7 +462,7 @@ compaction (completed and running), synthetic, location-switched.
   - secret patterns are redacted;
   - list rows are neutralized too.
 - **Cost line** is present in both modes.
-- **setup**: a fake ctx in the `plugins/example` test pattern records the
+- **setup**: a fake ctx in the plugins' fake-context test pattern records the
   `transform`/`dispose` calls. `execute` with a fake `session.list` (two cursor pages),
   `get` and `context` returns a bounded handoff and never calls write methods (Proxy
   asserting only list, get and context are touched).
