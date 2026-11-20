@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   release:
-    uses: srobroek/harness-kit/.github/workflows/release.yml@v1.3.0
+    uses: srobroek/harness-kit/.github/workflows/release.yml@v1.3.1
     permissions:
       contents: write
       issues: write
