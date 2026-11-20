@@ -2079,7 +2079,9 @@ class Autopilot {
   async stop(dir, state2, reason) {
     const now = this.#now();
     const journal2 = dir.journal();
-    const stopped = { ...state2, phase: "stopped", stopReason: state2.stopReason ?? reason, stoppedAt: now };
+    const fresh = await readBeads(state2.directory, this.#run);
+    const beads = fresh.ok ? countBeads(fresh, state2.scope) : state2.beads;
+    const stopped = { ...state2, beads, phase: "stopped", stopReason: state2.stopReason ?? reason, stoppedAt: now };
     dir.append({ ts: new Date(now).toISOString(), type: "stop", summary: stopped.stopReason });
     dir.writeState(stopped);
     const summary2 = renderSummary(stopped, dir.journal(), dir.path);
