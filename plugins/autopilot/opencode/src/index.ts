@@ -497,11 +497,25 @@ export class Autopilot {
     } catch (error) {
       if (error instanceof RunLockBusy) return { error: `run lock busy: ${error.message}; try again on the next tick` }
       if (!(error instanceof RunFileError)) throw error
+      if (error.kind === "stale") {
+        // Another writer created this generation first. Nothing was overwritten; the transition is
+        // dropped and the next tick or call starts again from the latest state.
+        this.#journalIssue(dir, `a state write lost to another writer and was not applied: ${error.message}`)
+        return { error: `state moved on under this call (${error.message}); call again to act on the latest state`, stale: true }
+      }
       const message = this.#report(dir, error)
       return {
         error: message,
         prompt: `Autopilot cannot use its run files: ${message}. It logged this as a blocker. Do not treat the run as finished; fix or report the file, then continue.`,
       }
+    }
+  }
+
+  #journalIssue(dir: RunDir, summary: string): void {
+    try {
+      dir.append({ ts: new Date(this.#now()).toISOString(), type: "issue", summary })
+    } catch (error) {
+      this.#warn("could not journal an issue", { run: dir.runId, error: errorText(error) })
     }
   }
 

@@ -11,7 +11,7 @@ condition and leaves a debrief and a handoff bead.
 | Command | Does |
 | --- | --- |
 | `/autopilot [scope] [flags]` | Starts a run. The scope is an epic or bead id, a goal in plain words, or nothing for the `bd ready` queue. |
-| `/autopilot resume [run-id]` | Arms an unfinished run again in this session, from its `state.json`. |
+| `/autopilot resume [run-id]` | Arms an unfinished run again in this session, from its latest state file. |
 | `/autopilot review [run-id]` | Loads a stopped run's summary and asks one question per needs-input item. |
 | `/autopilot stop` | Stops the run in this session and writes the debrief. |
 
@@ -56,11 +56,13 @@ it:
   status.
 
 The plugin keeps armed runs in its storage, so a run survives a server restart.
-Every state change holds a lock file in the run directory. Every write of
-`state.json` holds a short write lock from its generation check to its rename,
-and the plugin checks the run lease again just before the rename. So a second
-plugin instance, or a writer that stalled and lost its lease, never overwrites
-a newer state. When a run file is missing, the plugin treats it as absent. When
+Every state change holds a lease file in the run directory, so two plugin
+instances take turns. The lease does not decide which write wins. Each state
+write creates a new numbered file, `state.<N>.json`, and never replaces an
+existing one. When two writers race for the same number, one of them wins and
+the other fails, and the losing call starts again from the latest state. So a
+second plugin instance, or a writer that stalled and lost its lease, never
+overwrites a newer state. When a run file is missing, the plugin treats it as absent. When
 a run file is unreadable or corrupt, the plugin reports the error and logs a
 blocker. The plugin never reads such a file as an empty run.
 
@@ -155,7 +157,11 @@ Some failures park an item and the run goes on:
 `$(git rev-parse --git-common-dir)/opencode-scratch/autopilot/<run-id>/` holds:
 
 - `journal.jsonl`: the append-only journal
-- `state.json`: the state after the last tick
+- `state.<N>.json`: the run state, one file per write. The highest number is
+  the state, and the plugin keeps the latest five. A corrupt latest file is a
+  blocker; the plugin never falls back to an older one.
+- `state.json`: a symlink to the latest `state.<N>.json`, for reading by hand.
+  The plugin never reads it.
 - `summary.md`: the debrief, written at stop
 
 `autopilot/latest` links to the newest run. At stop, the plugin also creates a

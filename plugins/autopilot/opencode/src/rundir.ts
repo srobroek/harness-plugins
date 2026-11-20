@@ -1,4 +1,4 @@
-/** The run directory under the git common dir: state.json, journal.jsonl, summary.md and the `latest` link. */
+/** The run directory under the git common dir: `state.<N>.json` generations, journal.jsonl, summary.md and the `latest` link. */
 
 import { execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
@@ -6,8 +6,10 @@ import {
   closeSync,
   existsSync,
   ftruncateSync,
+  linkSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   readSync,
@@ -18,7 +20,6 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs"
-import { hostname } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 import { JournalCorrupt, type JournalEntry, readJournal } from "./journal.ts"
 import type { RunState } from "./state.ts"
@@ -70,53 +71,23 @@ function readText(path: string): string | undefined {
   }
 }
 
-/** How long a writer waits for the per-write lock. A live writer's hold is never taken over, however old. */
-const WRITE_LOCK_WAIT_MS = 30_000
-const WRITE_LOCK_POLL_MS = 10
-/** A lock file with no readable record this old was left by a writer that died creating it. */
-const UNWRITTEN_RECORD_MS = 60_000
-/** A steal lock this old was left by a process that died inside the synchronous takeover. */
-const STEAL_STALE_MS = 10_000
-
-type LockRecord = { host?: unknown; pid?: unknown; token?: unknown }
-
-function readLockRecord(path: string): LockRecord | undefined {
-  try {
-    return JSON.parse(readFileSync(path, "utf8")) as LockRecord
-  } catch {
-    return undefined
-  }
-}
-
-function fileAge(path: string): number {
-  try {
-    return Date.now() - statSync(path).mtimeMs
-  } catch {
-    return 0
-  }
-}
-
-/** Whether the writer that holds the lock at `path` is gone; a holder on another host never is. */
-function lockAbandoned(path: string): boolean {
-  if (!existsSync(path)) return false
-  const holder = readLockRecord(path)
-  if (holder === undefined) return fileAge(path) > UNWRITTEN_RECORD_MS
-  if (holder.host !== hostname() || typeof holder.pid !== "number") return false
-  try {
-    process.kill(holder.pid, 0)
-    return false
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ESRCH"
-  }
-}
+/** A state generation file: `state.<generation>.json`. */
+const GENERATION_FILE = /^state\.(\d+)\.json$/
+/** How many state generations a run directory keeps; older ones are pruned after each successful write. */
+export const KEEP_GENERATIONS = 5
 
 export type WriteOptions = {
   /** The run lease owner this writer holds; the write is refused once `run.lock` names another. */
   leaseOwner?: string
-  /** Test seam: runs after the checks and before the rename, with the write lock held. */
-  beforeRename?: () => Promise<void>
+  /** Test seam: runs after the temporary file is written and before it is linked into place. */
+  beforeLink?: () => Promise<void>
 }
 
+/**
+ * A run directory. State is stored as versioned, create-exclusive files: generation `N` lives in
+ * `state.<N>.json`, and the highest generation is the state. `state.json` is a symlink to the
+ * latest generation for people and tools that read the directory; the plugin never reads it.
+ */
 export class RunDir {
   /** The run lease owner of the transition using this directory; writes check `run.lock` still names it. */
   leaseOwner: string | undefined
@@ -129,6 +100,7 @@ export class RunDir {
   get path(): string {
     return join(this.root, this.runId)
   }
+  /** A non-authoritative symlink to the latest generation. */
   get statePath(): string {
     return join(this.path, "state.json")
   }
@@ -138,13 +110,13 @@ export class RunDir {
   get summaryPath(): string {
     return join(this.path, "summary.md")
   }
-  /** The cross-process lock every state transition holds. */
+  /** The cross-process lease each state transition holds, for liveness; generation files decide who wins. */
   get lockPath(): string {
     return join(this.path, "run.lock")
   }
-  /** The short lock each `state.json` write holds from its checks to its rename. */
-  get writeLockPath(): string {
-    return `${this.statePath}.lock`
+
+  generationPath(generation: number): string {
+    return join(this.path, `state.${generation}.json`)
   }
 
   create(): void {
@@ -155,65 +127,112 @@ export class RunDir {
     symlinkSync(this.runId, link)
   }
 
-  /** The run state; `undefined` only when `state.json` does not exist. */
+  /** The generations on disk, ascending; empty when the run has no state yet. */
+  generations(): number[] {
+    let names: string[]
+    try {
+      names = readdirSync(this.path)
+    } catch (error) {
+      if (missing(error)) return []
+      throw new RunFileError("io", this.path, describe(error), error)
+    }
+    return names
+      .map((name) => GENERATION_FILE.exec(name)?.[1])
+      .filter((value): value is string => value !== undefined)
+      .map(Number)
+      .sort((a, b) => a - b)
+  }
+
+  /**
+   * The state: the highest generation, validated against the schema and against its file name.
+   * `undefined` only when the run has no generation yet. A latest generation that cannot be read
+   * or does not validate throws; an older generation never stands in for it.
+   */
   readState(): RunState | undefined {
-    const text = readText(this.statePath)
-    if (text === undefined) return undefined
+    const latest = this.generations().at(-1)
+    if (latest === undefined) return undefined
+    const path = this.generationPath(latest)
+    const text = readText(path)
+    if (text === undefined) throw new RunFileError("io", path, "the latest state generation disappeared while it was read")
     let value: unknown
     try {
       value = JSON.parse(text)
     } catch (error) {
-      throw new RunFileError("corrupt", this.statePath, `not JSON (${describe(error)})`, error)
+      throw new RunFileError("corrupt", path, `not JSON (${describe(error)})`, error)
     }
     const decoded = decodeRunState(value)
-    if (!decoded.ok) throw new RunFileError("corrupt", this.statePath, `not a run state (${decoded.reason})`)
+    if (!decoded.ok) throw new RunFileError("corrupt", path, `not a run state (${decoded.reason})`)
+    if (decoded.state.generation !== latest) throw new RunFileError("corrupt", path, `holds generation ${decoded.state.generation}`)
     return decoded.state
   }
 
   /**
-   * Write `next` as the state after `read`, refused when the file moved past the generation
-   * `read` came from or when the run lease now names another owner.
+   * Write `next` as the generation after `read`.
    *
-   * Why this is safe against a writer that stalls and loses its lease: every write holds the
-   * per-write lock (`state.json.lock`, created with `O_EXCL`) from its generation check to its
-   * rename, so no other write can land in between; the generation it checked is still the one on
-   * disk when it renames. The lease is checked again after the last `await` and before the
-   * synchronous rename, so a writer that paused and lost the lease meanwhile refuses. A successor
-   * that took the lease while this writer was renaming still needs the write lock to write, and
-   * then finds the generation moved on and refuses too.
-   *
-   * The write lock is never taken from a live writer, however long it has held it: a hold is
-   * taken over only when its process on this host is gone. Each write renames its own temporary
-   * file, so no other write's content can be renamed into place, and each write releases the
-   * lock only while the lock file still carries its own token.
+   * Why this cannot overwrite a newer state: the new generation is written to a temporary file of
+   * its own and then hard-linked to `state.<N+1>.json`. `link` creates the name or fails with
+   * EEXIST, atomically, and never replaces a file. Exactly one writer can create a generation; a
+   * writer whose read is older targets a generation that already exists, so it fails. A writer
+   * that stalls anywhere and resumes after its successor wrote therefore fails at the link and
+   * leaves the successor's file as it was. The caller gets a `stale` error and re-reads the latest
+   * state; nothing is ever replaced. The lease owner check and the up-front generation check only
+   * fail a doomed write early. A write that stalled across a prune can link a pruned name below a
+   * newer generation; it removes its own file and fails too.
    */
   async writeState(read: Pick<RunState, "generation"> | undefined, next: RunState, options: WriteOptions = {}): Promise<RunState> {
-    const token = randomUUID()
-    await this.#takeWriteLock(token)
-    const temporary = `${this.statePath}.${token}.tmp`
+    const expected = read?.generation
+    const latest = this.generations().at(-1)
+    if (latest !== expected) throw new RunFileError("stale", this.path, `generation ${latest ?? "none"} on disk, this writer read ${expected ?? "nothing"}`)
+    this.#checkLease(options.leaseOwner ?? this.leaseOwner)
+    const generation = (expected ?? -1) + 1
+    const written: RunState = { ...next, generation }
+    const target = this.generationPath(generation)
+    const temporary = `${target}.tmp-${randomUUID()}`
     try {
-      const current = this.readState()
-      const expected = read?.generation
-      if (current !== undefined && current.generation !== expected)
-        throw new RunFileError("stale", this.statePath, `generation ${current.generation} on disk, this writer read ${expected ?? "nothing"}`)
-      this.#checkLease(options.leaseOwner ?? this.leaseOwner)
-      const written: RunState = { ...next, generation: (current?.generation ?? -1) + 1 }
       try {
         writeFileSync(temporary, `${JSON.stringify(written, null, 2)}\n`, { flag: "wx" })
       } catch (error) {
-        throw new RunFileError("io", this.statePath, describe(error), error)
+        throw new RunFileError("io", target, describe(error), error)
       }
-      await options.beforeRename?.()
+      await options.beforeLink?.()
       this.#checkLease(options.leaseOwner ?? this.leaseOwner)
       try {
-        renameSync(temporary, this.statePath)
+        linkSync(temporary, target)
       } catch (error) {
-        throw new RunFileError("io", this.statePath, describe(error), error)
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new RunFileError("stale", target, `generation ${generation} was written first by another writer`, error)
+        throw new RunFileError("io", target, describe(error), error)
       }
-      return written
     } finally {
       rmSync(temporary, { force: true })
-      this.#releaseWriteLock(token)
+    }
+    const now = this.generations().at(-1) ?? generation
+    // The name was free only because it was never written or because it was pruned, and pruning
+    // keeps the latest KEEP_GENERATIONS. A gap that wide means this write landed in the pruned range
+    // below a newer state. A smaller gap means a successor already read this write and built on it.
+    if (now - generation >= KEEP_GENERATIONS) {
+      rmSync(target, { force: true })
+      throw new RunFileError("stale", target, `generation ${generation} landed below generation ${now}`)
+    }
+    if (now !== generation) return written
+    this.#prune(generation)
+    this.#pointLatest(generation)
+    return written
+  }
+
+  /** Remove generations older than the latest {@link KEEP_GENERATIONS}; called only after a successful link. */
+  #prune(latest: number): void {
+    for (const generation of this.generations()) if (generation <= latest - KEEP_GENERATIONS) rmSync(this.generationPath(generation), { force: true })
+  }
+
+  /** Point `state.json` at `generation` when it is still the latest. Best effort: the link is not the state. */
+  #pointLatest(generation: number): void {
+    if (this.generations().at(-1) !== generation) return
+    const temporary = `${this.statePath}.tmp-${randomUUID()}`
+    try {
+      symlinkSync(`state.${generation}.json`, temporary)
+      renameSync(temporary, this.statePath)
+    } catch {
+      rmSync(temporary, { force: true })
     }
   }
 
@@ -227,56 +246,6 @@ export class RunDir {
       throw new RunFileError("stale", this.lockPath, `the run lease cannot be read (${describe(error)})`, error)
     }
     if (holder !== owner) throw new RunFileError("stale", this.lockPath, `the run lease now belongs to ${String(holder)}`)
-  }
-
-  async #takeWriteLock(token: string): Promise<void> {
-    const path = this.writeLockPath
-    const deadline = Date.now() + WRITE_LOCK_WAIT_MS
-    for (;;) {
-      try {
-        const fd = openSync(path, "wx")
-        try {
-          writeSync(fd, JSON.stringify({ host: hostname(), pid: process.pid, token, taken: Date.now() }))
-        } finally {
-          closeSync(fd)
-        }
-        return
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw new RunFileError("io", path, describe(error), error)
-      }
-      this.#takeOverIfAbandoned(path)
-      if (Date.now() >= deadline) throw new RunFileError("io", path, `the state write lock stayed held for ${WRITE_LOCK_WAIT_MS / 1000}s`)
-      await new Promise((resolve) => setTimeout(resolve, WRITE_LOCK_POLL_MS))
-    }
-  }
-
-  /** Remove the write lock only while it still carries `token`. */
-  #releaseWriteLock(token: string): void {
-    if (readLockRecord(this.writeLockPath)?.token === token) rmSync(this.writeLockPath, { force: true })
-  }
-
-  /**
-   * Clear a write lock whose writer is gone: its process on this host no longer exists, or its
-   * record was never written and the file is older than a record takes to write. A holder on
-   * another host is never judged gone. The check and the unlink run under a steal lock, with the
-   * record read again there, so two waiters never remove each other's fresh lock.
-   */
-  #takeOverIfAbandoned(path: string): void {
-    if (!lockAbandoned(path)) return
-    const steal = `${path}.steal`
-    let fd: number
-    try {
-      fd = openSync(steal, "wx")
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST" && fileAge(steal) > STEAL_STALE_MS) rmSync(steal, { force: true })
-      return
-    }
-    try {
-      if (lockAbandoned(path)) rmSync(path, { force: true })
-    } finally {
-      closeSync(fd)
-      rmSync(steal, { force: true })
-    }
   }
 
   /** Append one line. A torn last line is an append that never completed: it is cut off first. */
@@ -348,5 +317,5 @@ export function findRun(root: string, runId?: string): RunDir | undefined {
   }
   if (!/^[\w.-]+$/.test(id)) return undefined
   const dir = new RunDir(root, id)
-  return existsSync(dir.statePath) ? dir : undefined
+  return dir.generations().length > 0 ? dir : undefined
 }

@@ -1768,8 +1768,10 @@ import {
   closeSync as closeSync4,
   existsSync as existsSync3,
   ftruncateSync,
+  linkSync,
   mkdirSync,
   openSync as openSync4,
+  readdirSync as readdirSync2,
   readFileSync as readFileSync3,
   readlinkSync,
   readSync as readSync3,
@@ -1780,7 +1782,6 @@ import {
   writeFileSync,
   writeSync as writeSync3
 } from "fs";
-import { hostname as hostname3 } from "os";
 import { isAbsolute as isAbsolute3, join as join2, resolve as resolve3 } from "path";
 
 // plugins/autopilot/opencode/src/state-schema.ts
@@ -1880,39 +1881,8 @@ function readText(path) {
     throw new RunFileError("io", path, describe(error), error);
   }
 }
-var WRITE_LOCK_WAIT_MS = 30000;
-var WRITE_LOCK_POLL_MS = 10;
-var UNWRITTEN_RECORD_MS = 60000;
-var STEAL_STALE_MS = 1e4;
-function readLockRecord(path) {
-  try {
-    return JSON.parse(readFileSync3(path, "utf8"));
-  } catch {
-    return;
-  }
-}
-function fileAge(path) {
-  try {
-    return Date.now() - statSync4(path).mtimeMs;
-  } catch {
-    return 0;
-  }
-}
-function lockAbandoned(path) {
-  if (!existsSync3(path))
-    return false;
-  const holder = readLockRecord(path);
-  if (holder === undefined)
-    return fileAge(path) > UNWRITTEN_RECORD_MS;
-  if (holder.host !== hostname3() || typeof holder.pid !== "number")
-    return false;
-  try {
-    process.kill(holder.pid, 0);
-    return false;
-  } catch (error) {
-    return error.code === "ESRCH";
-  }
-}
+var GENERATION_FILE = /^state\.(\d+)\.json$/;
+var KEEP_GENERATIONS = 5;
 
 class RunDir {
   root;
@@ -1937,8 +1907,8 @@ class RunDir {
   get lockPath() {
     return join2(this.path, "run.lock");
   }
-  get writeLockPath() {
-    return `${this.statePath}.lock`;
+  generationPath(generation) {
+    return join2(this.path, `state.${generation}.json`);
   }
   create() {
     mkdirSync(this.path, { recursive: true });
@@ -1948,49 +1918,92 @@ class RunDir {
     rmSync(link, { force: true });
     symlinkSync(this.runId, link);
   }
+  generations() {
+    let names;
+    try {
+      names = readdirSync2(this.path);
+    } catch (error) {
+      if (missing(error))
+        return [];
+      throw new RunFileError("io", this.path, describe(error), error);
+    }
+    return names.map((name) => GENERATION_FILE.exec(name)?.[1]).filter((value) => value !== undefined).map(Number).sort((a, b) => a - b);
+  }
   readState() {
-    const text = readText(this.statePath);
-    if (text === undefined)
+    const latest = this.generations().at(-1);
+    if (latest === undefined)
       return;
+    const path = this.generationPath(latest);
+    const text = readText(path);
+    if (text === undefined)
+      throw new RunFileError("io", path, "the latest state generation disappeared while it was read");
     let value;
     try {
       value = JSON.parse(text);
     } catch (error) {
-      throw new RunFileError("corrupt", this.statePath, `not JSON (${describe(error)})`, error);
+      throw new RunFileError("corrupt", path, `not JSON (${describe(error)})`, error);
     }
     const decoded = decodeRunState(value);
     if (!decoded.ok)
-      throw new RunFileError("corrupt", this.statePath, `not a run state (${decoded.reason})`);
+      throw new RunFileError("corrupt", path, `not a run state (${decoded.reason})`);
+    if (decoded.state.generation !== latest)
+      throw new RunFileError("corrupt", path, `holds generation ${decoded.state.generation}`);
     return decoded.state;
   }
   async writeState(read, next, options = {}) {
-    const token = randomUUID2();
-    await this.#takeWriteLock(token);
-    const temporary = `${this.statePath}.${token}.tmp`;
+    const expected = read?.generation;
+    const latest = this.generations().at(-1);
+    if (latest !== expected)
+      throw new RunFileError("stale", this.path, `generation ${latest ?? "none"} on disk, this writer read ${expected ?? "nothing"}`);
+    this.#checkLease(options.leaseOwner ?? this.leaseOwner);
+    const generation = (expected ?? -1) + 1;
+    const written = { ...next, generation };
+    const target = this.generationPath(generation);
+    const temporary = `${target}.tmp-${randomUUID2()}`;
     try {
-      const current = this.readState();
-      const expected = read?.generation;
-      if (current !== undefined && current.generation !== expected)
-        throw new RunFileError("stale", this.statePath, `generation ${current.generation} on disk, this writer read ${expected ?? "nothing"}`);
-      this.#checkLease(options.leaseOwner ?? this.leaseOwner);
-      const written = { ...next, generation: (current?.generation ?? -1) + 1 };
       try {
         writeFileSync(temporary, `${JSON.stringify(written, null, 2)}
 `, { flag: "wx" });
       } catch (error) {
-        throw new RunFileError("io", this.statePath, describe(error), error);
+        throw new RunFileError("io", target, describe(error), error);
       }
-      await options.beforeRename?.();
+      await options.beforeLink?.();
       this.#checkLease(options.leaseOwner ?? this.leaseOwner);
       try {
-        renameSync(temporary, this.statePath);
+        linkSync(temporary, target);
       } catch (error) {
-        throw new RunFileError("io", this.statePath, describe(error), error);
+        if (error.code === "EEXIST")
+          throw new RunFileError("stale", target, `generation ${generation} was written first by another writer`, error);
+        throw new RunFileError("io", target, describe(error), error);
       }
-      return written;
     } finally {
       rmSync(temporary, { force: true });
-      this.#releaseWriteLock(token);
+    }
+    const now = this.generations().at(-1) ?? generation;
+    if (now - generation >= KEEP_GENERATIONS) {
+      rmSync(target, { force: true });
+      throw new RunFileError("stale", target, `generation ${generation} landed below generation ${now}`);
+    }
+    if (now !== generation)
+      return written;
+    this.#prune(generation);
+    this.#pointLatest(generation);
+    return written;
+  }
+  #prune(latest) {
+    for (const generation of this.generations())
+      if (generation <= latest - KEEP_GENERATIONS)
+        rmSync(this.generationPath(generation), { force: true });
+  }
+  #pointLatest(generation) {
+    if (this.generations().at(-1) !== generation)
+      return;
+    const temporary = `${this.statePath}.tmp-${randomUUID2()}`;
+    try {
+      symlinkSync(`state.${generation}.json`, temporary);
+      renameSync(temporary, this.statePath);
+    } catch {
+      rmSync(temporary, { force: true });
     }
   }
   #checkLease(owner) {
@@ -2004,52 +2017,6 @@ class RunDir {
     }
     if (holder !== owner)
       throw new RunFileError("stale", this.lockPath, `the run lease now belongs to ${String(holder)}`);
-  }
-  async#takeWriteLock(token) {
-    const path = this.writeLockPath;
-    const deadline = Date.now() + WRITE_LOCK_WAIT_MS;
-    for (;; ) {
-      try {
-        const fd = openSync4(path, "wx");
-        try {
-          writeSync3(fd, JSON.stringify({ host: hostname3(), pid: process.pid, token, taken: Date.now() }));
-        } finally {
-          closeSync4(fd);
-        }
-        return;
-      } catch (error) {
-        if (error.code !== "EEXIST")
-          throw new RunFileError("io", path, describe(error), error);
-      }
-      this.#takeOverIfAbandoned(path);
-      if (Date.now() >= deadline)
-        throw new RunFileError("io", path, `the state write lock stayed held for ${WRITE_LOCK_WAIT_MS / 1000}s`);
-      await new Promise((resolve) => setTimeout(resolve, WRITE_LOCK_POLL_MS));
-    }
-  }
-  #releaseWriteLock(token) {
-    if (readLockRecord(this.writeLockPath)?.token === token)
-      rmSync(this.writeLockPath, { force: true });
-  }
-  #takeOverIfAbandoned(path) {
-    if (!lockAbandoned(path))
-      return;
-    const steal = `${path}.steal`;
-    let fd;
-    try {
-      fd = openSync4(steal, "wx");
-    } catch (error) {
-      if (error.code === "EEXIST" && fileAge(steal) > STEAL_STALE_MS)
-        rmSync(steal, { force: true });
-      return;
-    }
-    try {
-      if (lockAbandoned(path))
-        rmSync(path, { force: true });
-    } finally {
-      closeSync4(fd);
-      rmSync(steal, { force: true });
-    }
   }
   append(entry) {
     let fd;
@@ -2116,7 +2083,7 @@ function findRun(root, runId) {
   if (!/^[\w.-]+$/.test(id))
     return;
   const dir = new RunDir(root, id);
-  return existsSync3(dir.statePath) ? dir : undefined;
+  return dir.generations().length > 0 ? dir : undefined;
 }
 
 // plugins/autopilot/opencode/src/summary.ts
@@ -2652,11 +2619,22 @@ class Autopilot {
         return { error: `run lock busy: ${error.message}; try again on the next tick` };
       if (!(error instanceof RunFileError))
         throw error;
+      if (error.kind === "stale") {
+        this.#journalIssue(dir, `a state write lost to another writer and was not applied: ${error.message}`);
+        return { error: `state moved on under this call (${error.message}); call again to act on the latest state`, stale: true };
+      }
       const message = this.#report(dir, error);
       return {
         error: message,
         prompt: `Autopilot cannot use its run files: ${message}. It logged this as a blocker. Do not treat the run as finished; fix or report the file, then continue.`
       };
+    }
+  }
+  #journalIssue(dir, summary2) {
+    try {
+      dir.append({ ts: new Date(this.#now()).toISOString(), type: "issue", summary: summary2 });
+    } catch (error) {
+      this.#warn("could not journal an issue", { run: dir.runId, error: errorText(error) });
     }
   }
   async#statusLocked(dir, input) {
@@ -2990,6 +2968,7 @@ export {
   HANDOFF_LABEL,
   ID,
   JournalCorrupt,
+  KEEP_GENERATIONS,
   LOG_DESCRIPTION,
   LOG_INPUT_SCHEMA,
   MAX_ATTEMPTS,

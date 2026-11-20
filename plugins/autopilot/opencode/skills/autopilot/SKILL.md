@@ -148,7 +148,7 @@ names one. Then print the summary and end the turn.
 - After compaction, the plugin queues a notice with a fresh status. Reload this
   skill and continue.
 - `/autopilot resume [run-id]` arms a run again in a new session from its
-  `state.json`. The resume prompt names the old tick automation: delete it,
+  latest state file. The resume prompt names the old tick automation: delete it,
   then create the new one. The old automation's ticks are stale and end it.
 - If a stop reports `phase: "stopping"`, the summary or the handoff bead did not
   land. The next tick retries; call `autopilot_status` with `action: "stop"` to
@@ -157,7 +157,8 @@ names one. Then print the summary and end the turn.
   question per needs-input item.
 
 The run directory is `$(git rev-parse --git-common-dir)/opencode-scratch/autopilot/<run-id>/`.
-It holds `journal.jsonl`, `state.json` and `summary.md`. The `autopilot/latest`
-link points to the newest run.
+It holds `journal.jsonl`, the state files `state.<N>.json` (the highest number
+is the state; `state.json` links to it for reading by hand) and `summary.md`.
+The `autopilot/latest` link points to the newest run.
 
 When a call here fails unexpectedly, read [references/pitfalls.md](references/pitfalls.md).
