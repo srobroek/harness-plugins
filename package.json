@@ -11,7 +11,8 @@
     "node": ">=24.10"
   },
   "workspaces": [
-    "lib"
+    "lib",
+    "plugins/*"
   ],
   "scripts": {
     "build": "bun scripts/build.ts && harness-kit build",
