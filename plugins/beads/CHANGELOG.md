@@ -1,3 +1,9 @@
+## beads [0.7.1](https://github.com/srobroek/harness-plugins/compare/beads--v0.7.0...beads--v0.7.1) (2026-11-20)
+
+### Bug Fixes
+
+* **beads:** exempt main sessions from the actor advisory ([a1b92df](https://github.com/srobroek/harness-plugins/commit/a1b92df4c6dbd347c0d394c628f90058991ab486))
+
 # Changelog
 
 ## Unreleased
