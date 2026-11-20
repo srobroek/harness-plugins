@@ -1,19 +1,22 @@
+import { randomUUID } from "node:crypto"
 import { fileURLToPath } from "node:url"
 import { Plugin } from "@opencode/plugin"
 import type { Context } from "@opencode/plugin/promise/plugin"
+import { withEmbeddedWriteLock } from "@srobroek/opencode-lib/bd-embedded-write-lock"
 import { registerSkills } from "@srobroek/opencode-lib/skill-files"
 import { classifyScope, deadlineAt, type Invocation, parseInvocation, type RunOptions } from "./args.ts"
 import { automationRequest } from "./automation.ts"
-import { Activity, commitCount, readBeads } from "./gather.ts"
+import { Activity, BD_READ_TIMEOUT_MS, childFrom, commitCount, readBeads, type SessionView, sessionBusy } from "./gather.ts"
 import { LOG_INPUT_SCHEMA, validateEntry } from "./journal.ts"
 import { DENY_QUESTION, decideAsk, endsWithQuestion, isAskTool, REPROMPT } from "./policy.ts"
 import { autopilotRoot, findRun, RunDir, type Run, runCommand } from "./rundir.ts"
 import { newRunState, type RunState, runIdFor, type Snapshot, TICK_MS, tick, tickPrompt } from "./state.ts"
-import { handoffDescription, renderSummary } from "./summary.ts"
+import { HANDOFF_LABEL, handoffDescription, renderSummary } from "./summary.ts"
 import { Ticks } from "./timer.ts"
 
 export * from "./args.ts"
 export * from "./automation.ts"
+export * from "./gather.ts"
 export * from "./journal.ts"
 export * from "./policy.ts"
 export * from "./state.ts"
@@ -29,6 +32,8 @@ export const STATUS_DESCRIPTION =
   '"tick" is what the automation calls; "fallback" starts the in-process timer when automation_create failed; "stop" ends the run, writes summary.md and the handoff bead.'
 
 export const LOG_DESCRIPTION = "Append one validated entry (decision, blocker, issue, ambiguity, stop, progress, action) to the autopilot journal."
+
+export const COMMAND_DESCRIPTION = "Run this session unattended: /autopilot [scope] [flags] | resume | review | stop"
 
 const STATUS_INPUT = {
   type: "object",
@@ -65,7 +70,17 @@ type StatusInput = {
 
 type Armed = { runId: string; root: string }
 
-export type Deps = { run?: Run; now?: () => number; ticks?: Ticks }
+/** The permission hook's payload. */
+export type PermissionEvaluation = { sessionID: string; action: string; resources: ReadonlyArray<string>; effect: "allow" | "deny" | "ask"; message?: string }
+
+/** How many turns in a row that end in a question get a re-prompt before the plugin waits for the next tick. */
+export const MAX_REPROMPTS = 2
+
+export type WriteLock = <T>(cwd: string, owner: string, write: () => Promise<T>) => Promise<{ kind: "done"; value: T } | { kind: "failed"; reason: string }>
+
+const embeddedLock: WriteLock = (cwd, owner, write) => withEmbeddedWriteLock(cwd, owner, write)
+
+export type Deps = { run?: Run; now?: () => number; ticks?: Ticks; lock?: WriteLock }
 
 /** Text of the last assistant message in a session's context, best effort. */
 export function lastAssistantText(messages: unknown): string {
@@ -134,6 +149,8 @@ export class Autopilot {
   readonly #run: Run
   readonly #now: () => number
   readonly #ticks: Ticks
+  readonly #lock: WriteLock
+  readonly #reprompts = new Map<string, number>()
 
   constructor(
     readonly ctx: Context,
@@ -143,6 +160,7 @@ export class Autopilot {
     this.#now = deps.now ?? Date.now
     this.activity = new Activity(this.#now)
     this.#ticks = deps.ticks ?? new Ticks()
+    this.#lock = deps.lock ?? embeddedLock
   }
 
   async load(): Promise<void> {
@@ -179,7 +197,7 @@ export class Autopilot {
       if (this.armed.has(id)) return id
       let parent = this.activity.cachedParent(id)
       if (parent === undefined) {
-        const info = (await this.ctx.session.get({ sessionID: id } as never).catch(() => undefined)) as { parentID?: string | null } | undefined
+        const info: { parentID?: string } | undefined = await this.ctx.session.get({ sessionID: id }).catch(() => undefined)
         parent = typeof info?.parentID === "string" && info.parentID !== "" ? info.parentID : null
         this.activity.rememberParent(id, parent ?? undefined)
       }
@@ -208,15 +226,23 @@ export class Autopilot {
 
   async snapshot(state: RunState, dir: RunDir): Promise<Snapshot> {
     const now = this.#now()
-    const [beads, commits, kids] = await Promise.all([
+    const armedAt = state.armedAt ?? now
+    const [beads, commits, kids, leadBusy] = await Promise.all([
       readBeads(state.directory, this.#run),
       commitCount(state.directory, this.#run),
-      this.ctx.session.list({ parentID: state.sessionID, limit: 100 } as never).catch(() => undefined) as Promise<{ data?: { id?: string; title?: string }[] } | undefined>,
+      this.ctx.session.list({ parentID: state.sessionID, limit: 100 }).catch(() => undefined),
+      this.leadBusy(state.sessionID),
     ])
-    const children = (kids?.data ?? [])
-      .filter((kid): kid is { id: string; title?: string } => typeof kid?.id === "string")
-      .map((kid) => this.activity.child(kid.id, kid.title, state.armedAt ?? now))
-    return { now, beads: beads.beads, ready: beads.ready, blocked: beads.blocked, commits, children, journal: dir.journal(), leadBusy: this.activity.busy(state.sessionID) }
+    const children = ((kids?.data ?? []) as SessionView[])
+      .filter((kid): kid is SessionView & { id: string } => typeof kid?.id === "string")
+      .map((kid) => childFrom(kid, this.activity.lastSeen(kid.id), armedAt))
+    return { now, beads: beads.beads, ready: beads.ready, blocked: beads.blocked, commits, children, journal: dir.journal(), leadBusy }
+  }
+
+  /** Whether the lead session is executing, from the host's own record so it holds across restarts. */
+  async leadBusy(sessionID: string): Promise<boolean> {
+    const info = await this.ctx.session.get({ sessionID }).catch(() => undefined)
+    return sessionBusy(info as SessionView | undefined)
   }
 
   // --- commands -------------------------------------------------------------------------------
@@ -274,8 +300,8 @@ export class Autopilot {
   }
 
   async #sessionDirectory(sessionID: string): Promise<string> {
-    const info = (await this.ctx.session.get({ sessionID } as never).catch(() => undefined)) as { location?: { directory?: string }; directory?: string } | undefined
-    return info?.location?.directory ?? info?.directory ?? (this.ctx.location.directory as string)
+    const info = await this.ctx.session.get({ sessionID }).catch(() => undefined)
+    return info?.location?.directory ?? this.ctx.location.directory
   }
 
   // --- tools ----------------------------------------------------------------------------------
@@ -294,7 +320,7 @@ export class Autopilot {
       return { ok: true, tick: "fallback", every: TICK_MS }
     }
     if (state.phase !== "running") return { phase: state.phase, note: 'run is in setup: finish the setup round and call action "arm"' }
-    if (action === "tick" && this.activity.busy(state.sessionID)) return { skip: "lead session busy" }
+    if (action === "tick" && (await this.leadBusy(state.sessionID))) return { skip: "lead session busy" }
     const result = tick(state, await this.snapshot(state, dir))
     const kept = action === "tick" ? result.state : { ...result.state, ticks: state.ticks, idleTicks: state.idleTicks }
     dir.writeState(kept)
@@ -353,11 +379,11 @@ export class Autopilot {
     dir.writeState(stopped)
     const summary = renderSummary(stopped, dir.journal(), dir.path)
     dir.writeSummary(summary)
-    const created = await this.#run(state.directory, "bd", [
+    const created = await this.#bdWrite(state, [
       "create",
       `Autopilot handoff: run ${state.runId}`,
       "--labels",
-      "autopilot-handoff",
+      HANDOFF_LABEL,
       "-d",
       handoffDescription(stopped, journal, dir.path),
       "--json",
@@ -389,21 +415,27 @@ export class Autopilot {
     dir.append(entry)
     const state = running?.state ?? dir.readState()
     if (entry.bead && (entry.type === "blocker" || entry.type === "ambiguity") && state && !state.options.full) {
-      const flagged = await this.#run(state.directory, "bd", ["update", entry.bead, "--add-label", "human", "--json"])
+      const flagged = await this.#bdWrite(state, ["update", entry.bead, "--add-label", "human", "--json"])
       return `logged ${entry.type}${flagged.ok ? `; flagged ${entry.bead} human` : `; could not flag ${entry.bead}: ${flagged.stderr.trim()}`}`
     }
     return `logged ${entry.type}`
+  }
+
+  /** One `bd` mutation, as the embedded store's single writer when the store is embedded. */
+  async #bdWrite(state: RunState, args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+    const owner = `autopilot/${state.runId}/${randomUUID()}`
+    const held = await this.#lock(state.directory, owner, () => this.#run(state.directory, "bd", args, BD_READ_TIMEOUT_MS))
+    return held.kind === "done" ? held.value : { ok: false, stdout: "", stderr: held.reason }
   }
 
   // --- fallback timer -------------------------------------------------------------------------
 
   #startFallback(sessionID: string): void {
     this.#ticks.start(sessionID, TICK_MS, async () => {
-      if (this.activity.busy(sessionID)) return
       const result = await this.status(sessionID, { action: "tick" })
       const prompt = typeof result.prompt === "string" ? result.prompt : undefined
       if (result.done) this.#ticks.stop(sessionID)
-      if (prompt) await this.ctx.session.prompt({ sessionID, text: prompt } as never)
+      if (prompt) await this.ctx.session.prompt({ sessionID, text: prompt })
     })
   }
 
@@ -415,11 +447,11 @@ export class Autopilot {
     if (await this.runningFor(sessionID)) throw new Error(DENY_QUESTION)
   }
 
-  async evaluate(event: { sessionID: string; action: string; resources: ReadonlyArray<string>; effect: string; message?: string }): Promise<void> {
+  async evaluate(event: PermissionEvaluation): Promise<void> {
     if (event.effect !== "ask") return
     const running = await this.runningFor(event.sessionID)
     if (!running) return
-    const decision = decideAsk(event.action, event.resources, running.state.options.allow)
+    const decision = decideAsk(event.action, event.resources, running.state.options.allow, running.state.options.full)
     event.effect = decision.effect
     if (decision.effect === "deny") {
       event.message = decision.reason
@@ -427,13 +459,24 @@ export class Autopilot {
     }
   }
 
+  /** Re-prompts a lead whose turn ended in a question, at most {@link MAX_REPROMPTS} times in a row. */
   async idle(sessionID: string): Promise<void> {
     if (!this.armed.has(sessionID)) return
     const running = await this.runningFor(sessionID)
     if (!running) return
-    const messages = await this.ctx.session.context({ sessionID } as never).catch(() => [])
-    if (!endsWithQuestion(lastAssistantText(messages))) return
-    await this.ctx.session.synthetic({ sessionID, text: REPROMPT, delivery: "steer", metadata: { source: ID, kind: "reprompt" } } as never)
+    const messages = await this.ctx.session.context({ sessionID }).catch(() => [])
+    if (!endsWithQuestion(lastAssistantText(messages))) {
+      this.#reprompts.delete(sessionID)
+      return
+    }
+    const count = (this.#reprompts.get(sessionID) ?? 0) + 1
+    if (count > MAX_REPROMPTS) {
+      running.dir.append({ ts: new Date(this.#now()).toISOString(), type: "issue", summary: `the lead ended ${count} turns in a row with a question; left idle until the next tick` })
+      this.#reprompts.delete(sessionID)
+      return
+    }
+    this.#reprompts.set(sessionID, count)
+    await this.ctx.session.synthetic({ sessionID, text: REPROMPT, delivery: "steer", metadata: { source: ID, kind: "reprompt" } })
   }
 
   async compacted(sessionID: string): Promise<void> {
@@ -446,7 +489,7 @@ export class Autopilot {
       text: `Autopilot run ${running.state.runId} is still armed after compaction. Reload the ${SKILL} skill; never ask the user. Status: ${JSON.stringify(status)}`,
       delivery: "queue",
       metadata: { source: ID, kind: "compaction" },
-    } as never)
+    })
   }
 }
 
@@ -467,37 +510,33 @@ export async function setupAutopilot(ctx: Context, deps: Deps = {}): Promise<() 
           const output = await pilot.status(tool.sessionID, input as StatusInput)
           return { output, content: JSON.stringify(output, null, 2) }
         },
-      } as never)
+      })
       editor.add({
         name: "autopilot_log",
         description: LOG_DESCRIPTION,
         input: LOG_INPUT_SCHEMA,
         execute: async (input, tool) => ({ content: await pilot.log(tool.sessionID, input) }),
-      } as never)
+      })
     }),
   )
   registrations.push(
     await ctx.command.transform((editor) => {
       editor.add({
         name: "autopilot",
-        description: 'Run this session unattended: /autopilot [scope] [--full] [--allow merge,deploy] [--lanes N] [--for 3h|--until-time HH:MM] [--until "…"] | resume | review | stop',
-        execute: async (input: { sessionID: string; prompt: { text?: string }; delivery?: unknown }) => {
+        description: COMMAND_DESCRIPTION,
+        execute: async (input) => {
           const text = await pilot.command(input.sessionID, input.prompt.text ?? "")
-          await ctx.session.prompt({ ...input.prompt, sessionID: input.sessionID, text, delivery: input.delivery } as never)
+          await ctx.session.prompt({ ...input.prompt, sessionID: input.sessionID, text, delivery: input.delivery })
         },
-      } as never)
+      })
     }),
   )
   registrations.push(await ctx.tool.hook("execute.before", (event) => pilot.beforeTool(event.tool, event.sessionID)))
-  registrations.push(await ctx.permission.hook("evaluate", (event) => pilot.evaluate(event as never).catch(report("permission hook"))))
-  registrations.push(
-    await ctx.session.hook("experimental.idle" as never, (event: { sessionID: string }) => {
-      void pilot.idle(event.sessionID).catch(report("idle hook"))
-    }),
-  )
+  registrations.push(await ctx.permission.hook("evaluate", (event) => pilot.evaluate(event).catch(report("permission hook"))))
+  registrations.push(await ctx.session.hook("experimental.idle", (event) => pilot.idle(event.sessionID).catch(report("idle hook"))))
   registrations.push(await registerSkills(ctx.skill, [SKILL_FILE]))
   const abort = new AbortController()
-  const iterator = ctx.event.subscribe({ signal: abort.signal } as never)[Symbol.asyncIterator]()
+  const iterator = ctx.event.subscribe({ signal: abort.signal })[Symbol.asyncIterator]()
   void (async () => {
     for (;;) {
       const next = await iterator.next().catch(() => ({ done: true as const, value: undefined }))

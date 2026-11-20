@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { categorize, decideAsk, endsWithQuestion, isAskTool } from "./policy.ts"
+import { categorize, decideAsk, endsWithQuestion, holdsLane, isAskTool } from "./policy.ts"
 
 test.each([
   ["question", true],
@@ -17,6 +17,7 @@ describe("decideAsk", () => {
     ["shell", ["git push -u origin feat/x"], [], "allow"],
     ["shell", ["gh pr create --draft"], [], "allow"],
     ["shell", ["git push origin main"], ["merge"], "deny"],
+    ["shell", ["git push origin HEAD:master"], [], "deny"],
     ["shell", ["git push --force origin feat/x"], ["merge"], "deny"],
     ["shell", ["git push --force-with-lease origin feat/x"], [], "allow"],
     ["shell", ["gh pr merge 12 --squash"], [], "deny"],
@@ -26,16 +27,44 @@ describe("decideAsk", () => {
     ["shell", ["aws cloudformation delete-stack --stack-name s"], ["deploy"], "allow"],
     ["shell", ["aws s3 ls"], [], "allow"],
   ] as const)("%s %p with %p → %s", (action, resources, grants, effect) => {
-    expect(decideAsk(action, resources, grants).effect).toBe(effect)
+    expect(decideAsk(action, resources, grants, false).effect).toBe(effect)
   })
 
   test("names the missing grant", () => {
-    expect(decideAsk("shell", ["terraform apply"], [])).toEqual({ effect: "deny", reason: "deploy is not granted for this run (--allow deploy); logged as a blocker" })
+    expect(decideAsk("shell", ["terraform apply"], [], false)).toEqual({ effect: "deny", reason: "deploy is not granted for this run (--allow deploy); logged as a blocker" })
+  })
+
+  test.each([
+    "git reset --hard origin/main",
+    "git clean -fdx",
+    "git branch -D feat/old",
+    "git push origin --delete feat/old",
+    "git stash drop",
+    "rm -rf build",
+    "bd delete p-1",
+  ])("parks the irreversible %p unless --full", (command) => {
+    expect(decideAsk("shell", [command], [], false).effect).toBe("deny")
+    expect(decideAsk("shell", [command], [], true).effect).toBe("allow")
+  })
+
+  test("--full never allows a force push", () => {
+    expect(decideAsk("shell", ["git push -f origin feat/x"], ["merge", "deploy"], true).effect).toBe("deny")
   })
 })
 
 test("categorize ignores a push of a branch named like main-fix", () => {
   expect(categorize("shell", ["git push origin main-fix"])).toBe("other")
+})
+
+test.each([
+  ["explore", false],
+  ["code-reviewer", false],
+  ["researcher", false],
+  ["coder", true],
+  ["general", true],
+  [undefined, true],
+])("holdsLane(%p) is %p", (agent, expected) => {
+  expect(holdsLane(agent)).toBe(expected)
 })
 
 test.each([

@@ -3,16 +3,22 @@
 import { TICK_EVERY } from "./state.ts"
 
 /**
- * Runs with no model on every trigger. It asks `autopilot_status` for one tick of `args.run`:
- * a busy lead session skips (no send), a stopped run ends the automation.
+ * Runs with no model on every trigger, with `input = { state, now, runs, args }`. It asks
+ * `autopilot_status` for one tick of `args.run`: a busy lead session skips (no send), a stopped
+ * run ends the automation. A tool result may arrive as its `output` object or as JSON text.
  */
 export const TICK_CODE = [
-  "const r = await tools.autopilot_status({ action: 'tick', run: args.run });",
-  "const out = (r && r.output) || r || {};",
-  "const ticks = ((state && state.ticks) || 0) + 1;",
-  "if (out.skip) return { state: { ticks, skipped: ((state && state.skipped) || 0) + 1, last: out.skip } };",
+  "const previous = (input && input.state) || {};",
+  "const raw = await tools.autopilot_status({ action: 'tick', run: input.args.run });",
+  "let out = raw && typeof raw === 'object' && raw.output !== undefined ? raw.output : raw;",
+  "if (typeof out === 'string') { try { out = JSON.parse(out); } catch { out = { error: out }; } }",
+  "out = out || {};",
+  "const ticks = (previous.ticks || 0) + 1;",
+  "const skipped = previous.skipped || 0;",
   "if (out.done) return out.prompt ? { done: true, send: { prompt: out.prompt } } : { done: true };",
-  "return { state: { ticks, skipped: (state && state.skipped) || 0 }, send: { prompt: out.prompt } };",
+  "if (out.skip) return { state: { ticks, skipped: skipped + 1, last: out.skip } };",
+  "if (typeof out.prompt !== 'string') return { state: { ticks, skipped, last: String(out.error || 'no prompt') } };",
+  "return { state: { ticks, skipped }, send: { prompt: out.prompt } };",
 ].join("\n")
 
 export type AutomationRequest = {

@@ -3,6 +3,9 @@
 import type { JournalEntry } from "./journal.ts"
 import type { RunState } from "./state.ts"
 
+/** The label of the bead a stopped run leaves behind. */
+export const HANDOFF_LABEL = "autopilot-handoff"
+
 const line = (entry: JournalEntry) => {
   const tags = [entry.bead, entry.lane].filter(Boolean).join(", ")
   const evidence = entry.evidence ? ` (${entry.evidence})` : ""
