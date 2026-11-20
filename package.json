@@ -21,7 +21,7 @@
   },
   "devDependencies": {
     "@anthropic-ai/claude-code": "2.1.327",
-    "@srobroek/harness-kit": "1.0.0",
+    "@srobroek/harness-kit": "1.1.0",
     "@types/bun": "1.4.4",
     "bun": "1.4.4",
     "typescript": "5.9.3"
