@@ -11,4 +11,4 @@ permissions:
 jobs:
   check:
     # Same version as @srobroek/harness-kit in package.json; `harness-kit check` warns when they differ.
-    uses: srobroek/harness-kit/.github/workflows/check.yml@v1.0.0
+    uses: srobroek/harness-kit/.github/workflows/check.yml@v1.1.0

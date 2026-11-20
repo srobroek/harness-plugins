@@ -30,7 +30,7 @@ Edit `plugins/<name>/common/`, then run `npm run build` and commit the generated
 - `.github/workflows/ci.yml` calls the reusable `check.yml` of harness-kit: `harness-kit check`, `bun test` and `tsc`.
 - `.github/workflows/release.yml` calls the reusable `release.yml` (multi-semantic-release). It runs by hand until the first plugin exists.
 
-Both pin `srobroek/harness-kit` at `@v1.0.0`, the same version as the package in `package.json`. Renovate moves the package and the workflow tags in one pull request, using the preset in `renovate.json`. That pull request needs `npm run build` on its branch before it passes `harness-kit check`.
+Both pin `srobroek/harness-kit` at `@v1.1.0`, the same version as the package in `package.json`. Renovate moves the package and the workflow tags in one pull request, using the preset in `renovate.json`. That pull request needs `npm run build` on its branch before it passes `harness-kit check`.
 
 ## License
 
