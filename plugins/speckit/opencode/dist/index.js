@@ -64,6 +64,7 @@ var BUILT_IN_ACTIONS = [
   "todowrite"
 ];
 var RESERVED_TOOL_PREFIXES = [
+  "autopilot_",
   "cad_",
   "claude_",
   "dep_",
