@@ -7,6 +7,10 @@
  * `{{include <name>: <part> ...}}` the named parts in the order given. A fragment file is a
  * leading comment for maintainers, never included, then parts that each start with a
  * `<!-- part: <part> -->` line.
+ *
+ * `{{include shared/<id>}}` inlines `shared/agents/<id>.md` at the repository root: the body
+ * of an agent that several plugins ship, each with its own frontmatter. That body may itself
+ * include `lib/src` fragments, which are expanded in turn; other fragments do not nest.
  */
 
 import { existsSync, readFileSync } from "node:fs"
@@ -14,8 +18,10 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 export const FRAGMENTS_DIR = fileURLToPath(new URL(".", import.meta.url))
+export const SHARED_AGENTS_DIR = fileURLToPath(new URL("../../shared/agents/", import.meta.url))
+const SHARED_PREFIX = "shared/"
 
-const INCLUDE = /^\{\{include ([a-z][\w-]*)(?::([ \w-]*))?\}\}[ \t]*$/
+const INCLUDE = /^\{\{include ((?:shared\/)?[a-z][\w-]*)(?::([ \w-]*))?\}\}[ \t]*$/
 const PART = /^<!-- part: ([a-z][\w-]*) -->[ \t]*$/
 const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---\r?\n/
 
@@ -38,18 +44,22 @@ export function fragmentParts(name: string, text: string): Map<string, string> {
 
 /** Read fragment `name` from `directory`. */
 export function readFragment(name: string, directory = FRAGMENTS_DIR): string {
-  const file = join(directory, `${name}.md`)
+  const file = name.startsWith(SHARED_PREFIX) ? join(SHARED_AGENTS_DIR, `${name.slice(SHARED_PREFIX.length)}.md`) : join(directory, `${name}.md`)
   if (!existsSync(file)) throw new Error(`no fragment ${name} (${file})`)
   return readFileSync(file, "utf8")
 }
 
 /**
  * Compose an agent source: replace every include line with the fragment parts it names.
- * Includes only appear in the body, never in the frontmatter, and fragments do not nest.
+ * Includes only appear in the body, never in the frontmatter. `shared/` fragments may include
+ * `lib/src` fragments; no other fragment nests.
  */
 export function composeAgent(source: string, read: (name: string) => string = (name) => readFragment(name)): string {
   const head = FRONTMATTER.exec(source)?.[0] ?? ""
-  const body = source.slice(head.length)
+  return head + composeBody(source.slice(head.length), read, true)
+}
+
+function composeBody(body: string, read: (name: string) => string, allowShared: boolean): string {
   const cache = new Map<string, Map<string, string>>()
   const lines = body.split("\n").map((line) => {
     const include = INCLUDE.exec(line.replace(/\r$/, ""))
@@ -58,6 +68,8 @@ export function composeAgent(source: string, read: (name: string) => string = (n
       return line
     }
     const name = include[1] as string
+    const shared = name.startsWith(SHARED_PREFIX)
+    if (shared && !allowShared) throw new Error(`fragment ${name}: fragments do not nest`)
     let parts = cache.get(name)
     if (!parts) {
       parts = fragmentParts(name, read(name))
@@ -71,10 +83,11 @@ export function composeAgent(source: string, read: (name: string) => string = (n
       return part
     })
     const joined = text.join("\n")
+    if (shared) return composeBody(joined, read, false)
     if (joined.includes("{{include")) throw new Error(`fragment ${name}: fragments do not nest`)
     return joined
   })
-  return head + lines.join("\n")
+  return lines.join("\n")
 }
 
 /** The comment `scripts/build.ts` puts first in a composed agent's frontmatter. */

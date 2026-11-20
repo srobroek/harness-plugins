@@ -33,6 +33,23 @@ describe("listsPlugin", () => {
     expect(listsPlugin({ data: [{ id: "srobroek.delivery", source: { target: "x/delivery" } }] }, "agent-researcher")).toBe(false)
     expect(listsPlugin(undefined, "agent-researcher")).toBe(false)
   })
+
+  test.each([
+    ["harness-plugins git path", { source: { target: "github:srobroek/harness-plugins#main::path:plugins/agent-reviewer/opencode" } }],
+    ["harness-plugins git path at a tag", { source: { target: "github:srobroek/harness-plugins#v1.2.0::path:plugins/agent-reviewer/opencode" } }],
+    ["opencode-plugins git path", { source: { target: "github:srobroek/opencode-plugins#main::path:plugins/agent-reviewer" } }],
+    ["package named for the directory", { source: { target: "agent-reviewer" } }],
+    ["package with a version", { source: { target: "agent-reviewer@1.2.0" } }],
+    ["old opencode- package", { source: { target: "@srobroek/opencode-agent-reviewer" } }],
+    ["local install path", { source: { type: "local", path: "/home/u/.cache/plugins/agent-reviewer/opencode" } }],
+  ])("recognises the owner installed as a %s", (_, entry) => {
+    expect(listsPlugin([entry], "agent-reviewer")).toBe(true)
+  })
+
+  test("a plugin whose name only extends the owner's is not the owner", () => {
+    expect(listsPlugin([{ source: { target: "github:srobroek/harness-plugins#main::path:plugins/agent-reviewer-extra/opencode" } }], "agent-reviewer")).toBe(false)
+    expect(listsPlugin([{ source: { target: "agent-reviewer-extra" } }], "agent-reviewer")).toBe(false)
+  })
 })
 
 describe("fallback side", () => {

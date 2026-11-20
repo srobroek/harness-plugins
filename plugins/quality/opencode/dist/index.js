@@ -284,7 +284,7 @@ function listsPlugin(listed, name) {
   const entries = Array.isArray(listed) ? listed : listed?.data;
   if (!Array.isArray(entries))
     return false;
-  const target = new RegExp(`(^|[/:@])(opencode-)?${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+  const target = new RegExp(`(^|[/:@])(opencode-)?${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[@/#:.])`);
   const names = (value) => typeof value === "string" && target.test(value);
   return entries.some((entry) => entry?.id === `srobroek.${name}` || names(entry?.source?.target) || names(entry?.source?.path));
 }
@@ -504,6 +504,7 @@ pays for these lines on every request: keep the whole file near 1100 tokens. -->
 // lib/src/fragments.ts
 import { fileURLToPath as fileURLToPath2 } from "url";
 var FRAGMENTS_DIR = fileURLToPath2(new URL(".", import.meta.url));
+var SHARED_AGENTS_DIR = fileURLToPath2(new URL("../../shared/agents/", import.meta.url));
 var PART = /^<!-- part: ([a-z][\w-]*) -->[ \t]*$/;
 function fragmentParts(name, text) {
   const parts = new Map;

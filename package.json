@@ -45,7 +45,7 @@
     "@semantic-release/exec": "7.1.0",
     "@semantic-release/git": "11.0.1",
     "@semantic-release/github": "12.0.11",
-    "@srobroek/harness-kit": "1.3.1",
+    "@srobroek/harness-kit": "1.4.0",
     "@types/bun": "1.4.4",
     "@visulima/yaml": "2.0.0",
     "bun": "1.4.4",
