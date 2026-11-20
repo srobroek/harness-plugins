@@ -1,0 +1,33 @@
+{
+  "name": "@srobroek/opencode-quality",
+  "version": "0.12.0",
+  "description": "Code design and review guidance, a code-quality policy, testing standards with a test audit and its two tools, performance profiling, logic prototyping, and a read-only adversarial-challenger subagent.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "index.js",
+    "skills",
+    "agents"
+  ],
+  "opencode-plugins": {
+    "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
+    "claudeAgents": [],
+    "scope": "global"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": "^2.3.2"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/plugin": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@srobroek/opencode-lib": "workspace:*",
+    "fast-xml-parser": "5.12.1"
+  }
+}

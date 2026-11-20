@@ -1,0 +1,30 @@
+{
+  "name": "@srobroek/opencode-project",
+  "version": "0.8.0",
+  "description": "Project lifecycle: scaffold a project with /new-project, set up fnox and 1Password secrets, and pick an OSI-approved license.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "index.js",
+    "skills"
+  ],
+  "opencode-plugins": {
+    "category": "productivity",
+    "scope": "global"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": "^2.3.2"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/plugin": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@srobroek/opencode-lib": "workspace:*"
+  }
+}

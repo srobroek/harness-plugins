@@ -1,0 +1,37 @@
+# Changelog
+
+## [0.5.0](https://github.com/srobroek/opencode-plugins/compare/lsp--v0.4.0...lsp--v0.5.0) (2026-11-20)
+
+
+### Features
+
+* plugin scan fixes, wider agent access and the plugin-audit plugin ([9c71525](https://github.com/srobroek/opencode-plugins/commit/9c7152559776aaf80cfed9626d78bafdd845fa9a))
+
+## [0.4.0](https://github.com/srobroek/opencode-plugins/compare/lsp--v0.3.0...lsp--v0.4.0) (2026-11-12)
+
+
+### Features
+
+* **safety:** refuse direct 1Password reads and literal secrets in commands, pointing to fnox ([#131](https://github.com/srobroek/opencode-plugins/issues/131)) ([36cd391](https://github.com/srobroek/opencode-plugins/commit/36cd3912e954c1078b808802b069d7010d8f319f))
+
+## [0.3.0](https://github.com/srobroek/opencode-plugins/compare/lsp--v0.2.1...lsp--v0.3.0) (2026-11-11)
+
+
+### Features
+
+* **agent-efficiency:** add lead routing, a foreground sleep guard and subagent scratch reminders ([#122](https://github.com/srobroek/opencode-plugins/issues/122)) ([34bdb2d](https://github.com/srobroek/opencode-plugins/commit/34bdb2d512109065956f88397bd2dc8e6e99ecd3))
+
+## [0.2.1](https://github.com/srobroek/opencode-plugins/compare/lsp--v0.2.0...lsp--v0.2.1) (2026-10-27)
+
+
+### Documentation
+
+* **lsp:** mark opt-in, note stale diagnostics, suggest an LSP instruction ([59f9f8c](https://github.com/srobroek/opencode-plugins/commit/59f9f8c4f815126bcfc916eda48c3c5e86a0b339))
+
+## [0.2.0](https://github.com/srobroek/opencode-plugins/compare/lsp--v0.1.0...lsp--v0.2.0) (2026-10-27)
+
+
+### Features
+
+* **agent-efficiency:** run bash tool calls as the built-in shell tool ([bdca7d7](https://github.com/srobroek/opencode-plugins/commit/bdca7d779c47d9cd2cdc6db8d8a8d5f78a3ba8cc))
+* **lsp:** append new LSP errors to edit results via lsp-tools-mcp ([540427f](https://github.com/srobroek/opencode-plugins/commit/540427fda4640f35e13bc81c6db7bbe819eb4546))

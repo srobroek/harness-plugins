@@ -1,0 +1,30 @@
+{
+  "name": "@srobroek/opencode-ast-grep",
+  "version": "1.2.0",
+  "description": "Structural code search with the ast-grep CLI: a skill on patterns, Rust macro and Go call gotchas, bounded output, preview-only rewrites, and when to use Semgrep or rust-analyzer instead.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "index.js",
+    "skills"
+  ],
+  "opencode-plugins": {
+    "description": "Structural code search with the ast-grep CLI, plus when to use Semgrep or rust-analyzer instead.",
+    "scope": "global"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": "^2.3.2"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/plugin": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@srobroek/opencode-lib": "workspace:*"
+  }
+}

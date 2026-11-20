@@ -1,0 +1,53 @@
+# Changelog
+
+## [0.5.0](https://github.com/srobroek/opencode-plugins/compare/debate--v0.4.0...debate--v0.5.0) (2026-11-20)
+
+
+### Features
+
+* plugin scan fixes, wider agent access and the plugin-audit plugin ([9c71525](https://github.com/srobroek/opencode-plugins/commit/9c7152559776aaf80cfed9626d78bafdd845fa9a))
+* **plugin-audit:** add plugin_audit_scan tool and plugin-audit skill ([d400433](https://github.com/srobroek/opencode-plugins/commit/d4004330e9a922d8e832b6f3266502141eaea4a3))
+
+
+### Refactors
+
+* **lib:** one MCP tool grant table for the tools option ([f8cc1d8](https://github.com/srobroek/opencode-plugins/commit/f8cc1d817d62b211b712d1889200f7c91f049c89))
+
+## [0.4.0](https://github.com/srobroek/opencode-plugins/compare/debate--v0.3.0...debate--v0.4.0) (2026-11-19)
+
+
+### Features
+
+* **modes:** debug, refactor and concept agents ([6369b8a](https://github.com/srobroek/opencode-plugins/commit/6369b8ae6c4ca35c664f094b60c28d356cc13298))
+* **safety:** secret_store tool stores a generated or command-issued secret without a shell ([d84a1d2](https://github.com/srobroek/opencode-plugins/commit/d84a1d22b0ff6e72f327fb185c512b2296a80a1e))
+
+## [0.3.0](https://github.com/srobroek/opencode-plugins/compare/debate--v0.2.1...debate--v0.3.0) (2026-11-13)
+
+
+### Features
+
+* **agents:** a tools option that lets read-only and coding agents call allowed MCP tools ([70558c3](https://github.com/srobroek/opencode-plugins/commit/70558c30dc450faec7e6012cdb0f678f1ecd7f01))
+
+## [0.2.1](https://github.com/srobroek/opencode-plugins/compare/debate--v0.2.0...debate--v0.2.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **lib:** keep a shipped agent hidden when the host prefills hidden: false ([6156c94](https://github.com/srobroek/opencode-plugins/commit/6156c946f8a5265ff5498bb4062a9d822bbd0555))
+
+## [0.2.0](https://github.com/srobroek/opencode-plugins/compare/debate--v0.1.0...debate--v0.2.0) (2026-10-27)
+
+
+### Features
+
+* **debate:** add debate, grilling and to-questionnaire skills ([280d4d3](https://github.com/srobroek/opencode-plugins/commit/280d4d337bf33c8072693d890b536e16a0785133))
+* **debate:** ask grilling, debate and to-questionnaire rounds through parley ([d7dfd5c](https://github.com/srobroek/opencode-plugins/commit/d7dfd5cc8b5393526a7caaadd50c0b289c61f9e0))
+* **lib:** carry steps and the model-role header from shipped agent files ([7538ab1](https://github.com/srobroek/opencode-plugins/commit/7538ab1a05b3071564defb2ab11ce356245c3890))
+* **lib:** honour metadata opencode/autoinvoke in shipped SKILL.md files ([881e7df](https://github.com/srobroek/opencode-plugins/commit/881e7df220095d0155b07437e733fdb795d9279b))
+* **lib:** shared review core composed into agents at build time ([d79c79b](https://github.com/srobroek/opencode-plugins/commit/d79c79b48ba09d5770c7586799f856237f3b00af))
+
+
+### Performance
+
+* **parley:** route the parley tools through Code Mode and trim their schema ([85640c9](https://github.com/srobroek/opencode-plugins/commit/85640c9cd5f6a886c3518ba9d28885331358a868))
+* shorten skill descriptions and hide pure reference skills from the listing ([51841bd](https://github.com/srobroek/opencode-plugins/commit/51841bd68ae7fe809711430fe3430b75b63e81c0))

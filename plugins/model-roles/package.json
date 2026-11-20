@@ -1,0 +1,37 @@
+{
+  "name": "@srobroek/opencode-model-roles",
+  "version": "0.8.0",
+  "description": "Give agents a model tier (cheap, standard, strong, reviewer) derived from the model catalog, and resolve each tier to the first available candidate.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js",
+    "./tui": "./dist/tui.js"
+  },
+  "files": [
+    "dist",
+    "index.js",
+    "tui.js"
+  ],
+  "peerDependencies": {
+    "@opencode/plugin": "^2.3.2",
+    "effect": "^4.1.4"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/plugin": {
+      "optional": true
+    },
+    "effect": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "jsonc-parser": "3.3.1"
+  },
+  "devDependencies": {
+    "@srobroek/opencode-lib": "workspace:*"
+  },
+  "opencode-plugins": {
+    "scope": "global"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "name": "@srobroek/opencode-safety",
+  "version": "0.9.0",
+  "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help, redaction of secret environment values from tool output, and a tool that stores a secret without a shell.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./dist/index.js",
+    "./commit-msg": "./dist/commit-msg.js"
+  },
+  "files": [
+    "dist",
+    "index.js",
+    "commit-msg.js",
+    "hooks"
+  ],
+  "peerDependencies": {
+    "@opencode/plugin": "^2.3.2"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/plugin": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@srobroek/opencode-lib": "workspace:*",
+    "smol-toml": "1.9.1"
+  },
+  "opencode-plugins": {
+    "scope": "global"
+  }
+}
