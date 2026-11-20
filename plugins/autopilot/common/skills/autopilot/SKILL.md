@@ -89,7 +89,8 @@ form. Write commands it can read:
   `git push origin feat/x`, never a bare `git push` or `HEAD`.
 - Use literal arguments. The gate denies a variable, a command substitution,
   a glob in a restricted command, and a quoted flag.
-- Run commands directly. The gate denies `sh -c`, `eval`, `xargs` and `sudo`.
+- Run commands directly. The gate denies a shell started with `-c`, the
+  `xargs` and `sudo` wrappers, and any command that runs a string as code.
 
 Commands that discard work (`git reset --hard`, `git clean -f`, `git branch -D`,
 deleting a remote branch, `git stash drop`, `rm -r`, `bd delete`) are
