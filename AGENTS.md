@@ -28,7 +28,7 @@
 - `lib/` is the shared library, imported as `@srobroek/opencode-lib/<module>` and inlined into each bundle. No plugin imports another plugin. Code two plugins need goes into `lib/`, and a test that spans plugins goes into `tests/`.
 - Each plugin's `agent-plugins.entries` and `claudeEntries` name the bundles `scripts/build.ts` builds. `@opentui/*` and `solid-js` are host modules (`HOST_MODULES` in `scripts/build.ts`): OpenCode supplies them at runtime. Pin them in the root `package.json` to the version in the targeted OpenCode release.
 - Runtime `dependencies` of a bundle are inlined at build time, so they sit in the root `package.json`.
-- `{{include <fragment>}}` lines in `agents.src/<id>.md` inline `lib/src/<fragment>.md`.
+- `{{include <fragment>}}` lines in `agents.src/<id>.md` inline `lib/src/<fragment>.md`. `{{include shared/<id>}}` inlines `shared/agents/<id>.md`, the one body of an agent that several plugins ship; each plugin keeps its own frontmatter in `agents.src/<id>.md`.
 - Shipped agents name a model-roles tier (`cheap`, `standard`, `strong`, `reviewer`) in the `x-opencode-model-role` request header and pin no model. Only `delivery` keeps per-agent fallback models.
 - Exact version pins in skills, docs and `.mcp.json` (`uvx pkg@1.2.3`, `npx -y pkg@1.2.3`) keep the shapes Renovate's custom managers match.
 - Keep decision logic in pure exported functions and test them directly; keep `setup` a thin adapter over the plugin context. Return the cleanup function from `setup`.

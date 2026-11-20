@@ -27,12 +27,13 @@ type PluginEntry = { id?: unknown; source?: { target?: unknown; path?: unknown }
 /**
  * Whether a `plugin.list` result (a `{ data }` envelope or an array) includes the plugin
  * `srobroek.<name>`, by id, or by a package target or local path naming `<name>` or
- * `opencode-<name>`.
+ * `opencode-<name>`. The name ends the match at the end of the string or at one of `@ / # : .`,
+ * so `<name>-extra` is another plugin.
  */
 export function listsPlugin(listed: unknown, name: string): boolean {
   const entries = Array.isArray(listed) ? listed : (listed as { data?: unknown } | undefined)?.data
   if (!Array.isArray(entries)) return false
-  const target = new RegExp(`(^|[/:@])(opencode-)?${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`)
+  const target = new RegExp(`(^|[/:@])(opencode-)?${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[@/#:.])`)
   const names = (value: unknown) => typeof value === "string" && target.test(value)
   return (entries as PluginEntry[]).some(
     (entry) => entry?.id === `srobroek.${name}` || names(entry?.source?.target) || names(entry?.source?.path),

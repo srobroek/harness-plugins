@@ -281,7 +281,7 @@ function listsPlugin(listed, name) {
   const entries = Array.isArray(listed) ? listed : listed?.data;
   if (!Array.isArray(entries))
     return false;
-  const target = new RegExp(`(^|[/:@])(opencode-)?${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`);
+  const target = new RegExp(`(^|[/:@])(opencode-)?${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?=$|[@/#:.])`);
   const names = (value) => typeof value === "string" && target.test(value);
   return entries.some((entry) => entry?.id === `srobroek.${name}` || names(entry?.source?.target) || names(entry?.source?.path));
 }
