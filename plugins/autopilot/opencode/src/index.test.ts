@@ -176,9 +176,12 @@ describe("stop", () => {
   test("writes summary.md, leaves a handoff bead and disarms", async () => {
     await armed()
     await log({ type: "ambiguity", summary: "which region?" })
+    beads = { list: [{ id: "p-1", status: "closed" }], ready: [], blocked: [] }
     const result = await status({ action: "stop", reason: "scope finished" })
     expect(result).toMatchObject({ done: true, stopped: "scope finished", handoff: "t-99" })
-    expect(readFileSync(join(latest(), "summary.md"), "utf8")).toContain("## Needs input\n\n- which region?")
+    const summary = readFileSync(join(latest(), "summary.md"), "utf8")
+    expect(summary).toContain("closed beads: 1; open: 0")
+    expect(summary).toContain("## Needs input\n\n- which region?")
     expect(calls.find((call) => call.args[0] === "create")?.args).toContain(HANDOFF_LABEL)
     expect(await denied("question", "ses_lead")).toBeUndefined()
     expect([...fake.storage.keys()]).toEqual([])

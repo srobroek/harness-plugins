@@ -10,7 +10,7 @@ import { Activity, BD_READ_TIMEOUT_MS, childFrom, commitCount, readBeads, type S
 import { LOG_INPUT_SCHEMA, validateEntry } from "./journal.ts"
 import { DENY_QUESTION, decideAsk, endsWithQuestion, isAskTool, REPROMPT } from "./policy.ts"
 import { autopilotRoot, findRun, type Run, RunDir, runCommand } from "./rundir.ts"
-import { newRunState, type RunState, runIdFor, type Snapshot, TICK_MS, tick, tickPrompt } from "./state.ts"
+import { countBeads, newRunState, type RunState, runIdFor, type Snapshot, TICK_MS, tick, tickPrompt } from "./state.ts"
 import { HANDOFF_LABEL, handoffDescription, renderSummary } from "./summary.ts"
 import { Ticks } from "./timer.ts"
 
@@ -374,7 +374,9 @@ export class Autopilot {
   async stop(dir: RunDir, state: RunState, reason: string): Promise<Record<string, unknown>> {
     const now = this.#now()
     const journal = dir.journal()
-    const stopped: RunState = { ...state, phase: "stopped", stopReason: state.stopReason ?? reason, stoppedAt: now }
+    const fresh = await readBeads(state.directory, this.#run)
+    const beads = fresh.ok ? countBeads(fresh, state.scope) : state.beads
+    const stopped: RunState = { ...state, beads, phase: "stopped", stopReason: state.stopReason ?? reason, stoppedAt: now }
     dir.append({ ts: new Date(now).toISOString(), type: "stop", summary: stopped.stopReason as string })
     dir.writeState(stopped)
     const summary = renderSummary(stopped, dir.journal(), dir.path)
