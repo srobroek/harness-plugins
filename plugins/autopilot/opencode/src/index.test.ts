@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFakeContext, type FakeContext } from "@srobroek/opencode-lib/testing"
@@ -16,6 +16,8 @@ let fake: FakeContext
 let cleanup: (() => Promise<void>) | undefined
 let calls: Call[]
 let locked: string[]
+let warnings: string[]
+const warn = (message: string) => void warnings.push(message)
 let beads: { list: unknown[]; ready: unknown[]; blocked: unknown[] }
 /** While set, `bd list` waits for it: a test holds a run's critical section open with it. */
 let listGate: Promise<void> | undefined
@@ -53,7 +55,7 @@ async function start(storage?: Record<string, unknown>) {
     storage,
     sessions: [lead(), { id: "ses_child", parentID: "ses_lead", agent: "coder", time: {} }, { id: "ses_grand", parentID: "ses_child", time: {} }, { id: "ses_other", time: {} }],
   })
-  cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock })
+  cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock, warn })
 }
 
 async function command(text: string, sessionID = "ses_lead"): Promise<string> {
@@ -87,6 +89,27 @@ async function armed(setup: Record<string, unknown> = {}) {
   return status({ action: "arm", setup: { scope: "p-1", full: false, allow: [], lanes: 3, until: "", ...setup } })
 }
 
+/** Resolves with the input of the next `session.<method>` call the plugin makes. */
+function whenCalled(method: "prompt" | "synthetic" | "get"): Promise<unknown> {
+  const session = fake.context.session as unknown as Record<string, (input: unknown) => Promise<unknown>>
+  const original = session[method] as (input: unknown) => Promise<unknown>
+  return new Promise((resolve) => {
+    session[method] = async (input) => {
+      session[method] = original
+      const output = await original(input)
+      resolve(input)
+      return output
+    }
+  })
+}
+
+/** Settles every pending promise step, without waiting on a timer. */
+async function settle(steps = 200): Promise<void> {
+  for (let step = 0; step < steps; step++) await Promise.resolve()
+}
+
+const latestState = () => JSON.parse(readFileSync(join(latest(), "state.json"), "utf8")) as { phase: string; generation?: number }
+
 const latest = () => join(root, "opencode-scratch", "autopilot", "latest")
 
 const journal = () =>
@@ -99,6 +122,7 @@ beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), "autopilot-test-"))
   calls = []
   locked = []
+  warnings = []
   beads = { list: [{ id: "p-1", status: "open" }], ready: [{ id: "p-1" }], blocked: [] }
   await start()
 })
@@ -165,11 +189,112 @@ describe("tick", () => {
 })
 
 describe("permission asks while armed", () => {
-  const ask = (command: string, sessionID = "ses_child") => fake.fire.permission("evaluate", { sessionID, action: "shell", resources: [command], effect: "ask" as string, message: undefined as string | undefined })
+  const ask = (command: string, sessionID = "ses_child", action = "shell") =>
+    fake.fire.permission("evaluate", { sessionID, action, resources: [command], effect: "ask" as string, message: undefined as string | undefined })
 
-  test("allows a feature-branch push", async () => {
+  type Grants = { allow?: ("merge" | "deploy")[]; full?: boolean }
+  const none: Grants = {}
+  const merge: Grants = { allow: ["merge"] }
+  const deploy: Grants = { allow: ["deploy"] }
+  const full: Grants = { full: true }
+  const all: Grants = { allow: ["merge", "deploy"], full: true }
+
+  // [command, grants, expected effect]
+  const table: [string, Grants, "allow" | "deny"][] = [
+    // git push: explicit feature branches only
+    ["git push -u origin feat/x", none, "allow"],
+    ["git push --force-with-lease origin feat/x", none, "allow"],
+    ["git -C repo push origin HEAD:feat/x", none, "allow"],
+    ["git push origin main-fix", none, "allow"],
+    ["git push origin main", all, "deny"],
+    ["git push origin HEAD:master", all, "deny"],
+    ["git push origin feat/x:refs/heads/master", all, "deny"],
+    ["git push origin 'HEAD:main'", all, "deny"],
+    ['git push origin "main"', all, "deny"],
+    ["git -C repo push origin main", all, "deny"],
+    ["git push --force origin feat/x", all, "deny"],
+    ["git push -f origin feat/x", all, "deny"],
+    ["git -C . push --force origin feat/x", all, "deny"],
+    ["git -c core.x=y push -f origin feat/x", all, "deny"],
+    ["git push origin +HEAD:feat/x", all, "deny"],
+    ["git push origin '+HEAD:feat/x'", all, "deny"],
+    ["git push origin +feat/x", all, "deny"],
+    ["git push --mirror origin", all, "deny"],
+    ["git push --all origin", all, "deny"],
+    ["git push origin", all, "deny"],
+    ["git push", all, "deny"],
+    ["git push --no-verify origin feat/x", all, "deny"],
+    ["git push '--force' origin feat/x", all, "deny"],
+    ["git --bogus push origin feat/x", all, "deny"],
+    ["git push origin --delete feat/old", none, "deny"],
+    ["git push origin --delete feat/old", full, "allow"],
+    ["git push origin :feat/old", none, "deny"],
+    // other git subcommands
+    ["git status && git log --oneline -3", none, "allow"],
+    ['git commit -m "fix: x"', none, "allow"],
+    ["git reset --hard origin/main", none, "deny"],
+    ["git reset --hard origin/main", full, "allow"],
+    ["git clean -fdx", none, "deny"],
+    ["git branch -D feat/old", none, "deny"],
+    ["git stash drop", none, "deny"],
+    ["git frobnicate", all, "deny"],
+    // gh and glab
+    ["gh pr create --draft --title t --body b", none, "allow"],
+    ["gh --repo owner/repo pr view 3", none, "allow"],
+    ["gh pr merge 12 --squash", none, "deny"],
+    ["gh pr merge 12 --squash", merge, "allow"],
+    ["gh --repo owner/repo pr merge 1", none, "deny"],
+    ["gh -R owner/repo pr merge 1", none, "deny"],
+    ["gh pr merge 12 --admin", merge, "deny"],
+    ["gh api repos/o/r/merges -f base=main", all, "deny"],
+    ["gh --hostname x pr view 1", all, "deny"],
+    ["glab mr merge 3", none, "deny"],
+    ["glab mr merge 3", merge, "allow"],
+    // aws
+    ["aws s3 ls", none, "allow"],
+    ["aws --region us-east-1 cloudformation describe-stacks", none, "allow"],
+    ["aws --region us-east-1 cloudformation delete-stack --stack-name x", none, "deny"],
+    ["aws --region us-east-1 cloudformation delete-stack --stack-name x", deploy, "allow"],
+    ["aws s3 rm s3://bucket/key", all, "deny"],
+    ["aws --bogus s3 ls", all, "deny"],
+    // deploy tools
+    ["npx cdk deploy MyStack", none, "deny"],
+    ["npx cdk deploy MyStack", deploy, "allow"],
+    ["terraform apply", none, "deny"],
+    ["terraform plan", none, "allow"],
+    // rm
+    ["rm notes.txt", none, "allow"],
+    ["rm -rf build", none, "deny"],
+    ["rm -rf build", full, "allow"],
+    ["rm '-rf' dir", all, "deny"],
+    ["rm --no-preserve-root -rf x", all, "deny"],
+    ["rm -rf *", all, "deny"],
+    // chains need every grant they touch
+    ["gh pr merge 12 --squash && rm -rf build", merge, "deny"],
+    ["gh pr merge 12 --squash && rm -rf build", { allow: ["merge"], full: true }, "allow"],
+    // beads, packages, plain tools
+    ["bd close p-1 && bd create task", none, "allow"],
+    ["bd delete p-1", none, "deny"],
+    ["npm install zod", none, "allow"],
+    ["printf '%s\\n' 'git push origin main' > commands.txt", none, "allow"],
+    // anything the gate cannot read is denied
+    ["echo $(git push -f origin feat/x)", all, "deny"],
+    ['git push origin "$BRANCH"', all, "deny"],
+    ["sh -c 'git push -f origin feat/x'", all, "deny"],
+    ["eval git push -f", all, "deny"],
+    ["'git' push origin feat/x", all, "deny"],
+    ["echo 'unterminated", all, "deny"],
+    ["frobnicate --now", all, "deny"],
+  ]
+
+  test.each(table)("%p with %j → %s", async (command, grants, effect) => {
+    await armed({ allow: grants.allow ?? [], full: grants.full ?? false })
+    expect((await ask(command)).effect).toBe(effect)
+  })
+
+  test("denies a merge tool without the grant", async () => {
     await armed()
-    expect((await ask("git push -u origin feat/x")).effect).toBe("allow")
+    expect((await ask("12", "ses_child", "delivery_land")).effect).toBe("deny")
   })
 
   test("denies a push to the default branch and logs a blocker", async () => {
@@ -290,7 +415,7 @@ describe("fallback tick", () => {
     await cleanup?.()
     fake.closeEvents()
     fake = createFakeContext({ directory: "/repo", storage, sessions: [lead()] })
-    cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock, ticks: new Ticks(clock) })
+    cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock, warn, ticks: new Ticks(clock) })
   }
 
   const prompts = () => fake.calls.filter((call) => call.method === "session.prompt").map((call) => (call.input as { text: string }).text)
@@ -299,13 +424,26 @@ describe("fallback tick", () => {
     timers.length = 0
   })
 
+  test("sends nothing on a beat while the lead is busy", async () => {
+    await startWithClock()
+    await armed()
+    await status({ action: "fallback" })
+    fake.sessions.set("ses_lead", lead({ busy: NOW - 1_000, idle: NOW - 60_000 }))
+    const before = prompts().length
+    const skipped = whenCalled("get")
+    timers[0]?.callback()
+    await skipped
+    await status({ action: "status" })
+    expect(prompts()).toHaveLength(before)
+  })
+
   test("prompts the lead with the ping while it is idle and stops at the end of the run", async () => {
     await startWithClock()
     await armed()
     await status({ action: "fallback" })
+    const prompted = whenCalled("prompt")
     timers[0]?.callback()
-    for (let index = 0; index < 20 && prompts().length < 2; index++) await new Promise((resolve) => setTimeout(resolve, 5))
-    expect(prompts().at(-1)).toStartWith("Autopilot tick.")
+    expect(((await prompted) as { text: string }).text).toStartWith("Autopilot tick.")
     await status({ action: "stop", reason: "done" })
     expect(timers[0]?.cleared).toBe(true)
   })
@@ -351,9 +489,9 @@ describe("a turn that ends in a question", () => {
 
 test("after compaction the lead gets the rules and a fresh status as a queued message", async () => {
   await armed()
+  const sentPromise = whenCalled("synthetic")
   fake.emit({ type: "session.compaction.ended", data: { sessionID: "ses_lead", reason: "auto" } })
-  for (let index = 0; index < 20 && !fake.calls.some((call) => call.method === "session.synthetic"); index++) await new Promise((resolve) => setTimeout(resolve, 5))
-  const sent = fake.calls.find((call) => call.method === "session.synthetic")?.input as { text: string; delivery: string }
+  const sent = (await sentPromise) as { text: string; delivery: string }
   expect(sent.delivery).toBe("queue")
   expect(sent.text).toContain("still armed after compaction")
 })
@@ -363,4 +501,126 @@ test("cleanup disposes every registration", async () => {
   cleanup = undefined
   expect(fake.active()).toBe(0)
   expect(existsSync(root)).toBe(true)
+})
+
+describe("two plugin instances on one run", () => {
+  test("a stale instance never writes over a run another instance stopped", async () => {
+    await armed()
+    let releaseB: () => void = () => {}
+    const gateB = new Promise<void>((resolve) => {
+      releaseB = resolve
+    })
+    let readingB: () => void = () => {}
+    const startedB = new Promise<void>((resolve) => {
+      readingB = resolve
+    })
+    const runB: Run = async (cwd, command, args) => {
+      if (args[0] === "list") {
+        readingB()
+        await gateB
+      }
+      return run(cwd, command, args)
+    }
+    const fakeB = createFakeContext({ directory: "/repo", storage: Object.fromEntries(fake.storage), sessions: [lead()] })
+    const cleanupB = await setupAutopilot(fakeB.context, { run: runB, now: () => NOW, lock, warn })
+    const toolB = fakeB.tools.get("autopilot_status") as unknown as { execute: (input: unknown, context: unknown) => Promise<{ output: Record<string, unknown> }> }
+    try {
+      const tickB = toolB.execute({ action: "tick" }, { sessionID: "ses_lead" })
+      await startedB
+      const stopping = status({ action: "stop", reason: "done" })
+      await settle()
+      releaseB()
+      await Promise.all([tickB, stopping])
+      expect(latestState().phase).toBe("stopped")
+      expect(calls.filter((call) => call.args[0] === "create")).toHaveLength(1)
+    } finally {
+      await cleanupB()
+      fakeB.closeEvents()
+    }
+  })
+})
+
+describe("a run file that cannot be read", () => {
+  test.each([
+    ["is not JSON", "{ not json"],
+    ["has the wrong shape", JSON.stringify({ version: 1, runId: "x", phase: "bogus" })],
+  ])("state.json that %s is reported and journaled, never read as an empty run", async (_name, text) => {
+    await armed()
+    writeFileSync(join(latest(), "state.json"), text)
+    const result = await status({ action: "tick" })
+    expect(result).toMatchObject({ error: expect.stringContaining("state.json") })
+    expect(result).not.toHaveProperty("done")
+    expect(journal().at(-1)).toMatchObject({ type: "blocker", summary: expect.stringContaining("state.json") })
+  })
+
+  test("a corrupt line inside the journal is reported, not skipped", async () => {
+    await armed()
+    const path = join(latest(), "journal.jsonl")
+    writeFileSync(path, `{"broken\n${readFileSync(path, "utf8")}`)
+    const result = await status({ action: "tick" })
+    expect(result).toMatchObject({ error: expect.stringContaining("journal.jsonl") })
+    const last = readFileSync(path, "utf8").trim().split("\n").at(-1) as string
+    expect(JSON.parse(last)).toMatchObject({ type: "blocker", summary: expect.stringContaining("journal.jsonl") })
+    expect(warnings.at(-1)).toBe("run file error")
+  })
+
+  test("an unreadable summary is an error for /autopilot review, not a missing one", async () => {
+    await armed()
+    await status({ action: "stop", reason: "done" })
+    const path = join(latest(), "summary.md")
+    chmodSync(path, 0o200)
+    try {
+      expect(await command("review", "ses_other")).toContain("could not read")
+    } finally {
+      chmodSync(path, 0o600)
+    }
+  })
+})
+
+test("startup reads every page of armed runs from storage", async () => {
+  await armed()
+  const storage: Record<string, unknown> = Object.fromEntries(fake.storage)
+  for (let index = 0; index < 150; index++) storage[`armed/ses_a${String(index).padStart(3, "0")}`] = { runId: "gone", root }
+  await cleanup?.()
+  fake.closeEvents()
+  fake = createFakeContext({ directory: "/repo", storage, sessions: [lead()] })
+  // A host pages its scan at 100 keys whatever the caller asks for.
+  const host = fake.context.storage as unknown as { scan: (input: { prefix: string; after?: string; limit?: number }) => Promise<unknown> }
+  const scan = host.scan
+  host.scan = (input) => scan({ ...input, limit: Math.min(input.limit ?? 100, 100) })
+  cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock, warn })
+  expect(await denied("question", "ses_lead")).toBe(DENY_QUESTION)
+})
+
+describe("stop and the journal", () => {
+  const handoffText = () => {
+    const create = calls.find((call) => call.args[0] === "create")?.args ?? []
+    return create[create.indexOf("-d") + 1] ?? ""
+  }
+  const summaryText = () => readFileSync(join(latest(), "summary.md"), "utf8")
+
+  test("a blocker logged before the stop is in both the summary and the handoff bead", async () => {
+    await armed()
+    await log({ type: "blocker", summary: "needs a key", parked: true })
+    await status({ action: "stop", reason: "done" })
+    expect(summaryText()).toContain("needs a key")
+    expect(handoffText()).toContain("needs a key")
+  })
+
+  test("a blocker logged while the stop runs waits for it and says the summary is closed", async () => {
+    await armed()
+    let release: () => void = () => {}
+    listGate = new Promise((resolve) => {
+      release = resolve
+    })
+    const stopping = status({ action: "stop", reason: "done" })
+    await settle()
+    const logging = log({ type: "blocker", summary: "late key", parked: true })
+    await settle()
+    release()
+    listGate = undefined
+    await stopping
+    expect(await logging).toContain("after the run stopped")
+    expect(summaryText().includes("late key")).toBe(handoffText().includes("late key"))
+  })
 })

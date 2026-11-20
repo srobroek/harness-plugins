@@ -24,6 +24,8 @@ export type BeadCounts = { open: string[]; ready: string[]; blocked: string[]; i
 
 export type RunState = {
   version: 1
+  /** Bumped by every write; a writer whose read is older than the file is stale and is refused. */
+  generation: number
   runId: string
   sessionID: string
   directory: string
@@ -290,6 +292,7 @@ export function tickPrompt(result: Pick<TickResult, "ping" | "actions">): string
 export function newRunState(input: { runId: string; sessionID: string; directory: string; options: RunOptions; scope: Scope; now: number }): RunState {
   return {
     version: 1,
+    generation: 0,
     runId: input.runId,
     sessionID: input.sessionID,
     directory: input.directory,

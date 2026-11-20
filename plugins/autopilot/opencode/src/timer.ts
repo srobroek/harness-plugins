@@ -3,6 +3,8 @@
  * plugin instances in one process never tick a run twice. Used only when automation_create fails.
  */
 
+import type { Warn } from "@srobroek/opencode-lib/host-log"
+
 export type Clock = {
   setInterval: (callback: () => void, ms: number) => unknown
   clearInterval: (timer: unknown) => void
@@ -29,7 +31,10 @@ function registry(): Map<string, Entry> {
 
 export class Ticks {
   readonly #owner = {}
-  constructor(readonly clock: Clock = realClock) {}
+  constructor(
+    readonly clock: Clock = realClock,
+    readonly warn: Warn = () => {},
+  ) {}
 
   /** Start ticking `sessionID`; a session that already ticks in any instance is left alone. */
   start(sessionID: string, ms: number, beat: () => Promise<void>): void {
@@ -39,7 +44,7 @@ export class Ticks {
       if (entry.running) return
       entry.running = true
       beat()
-        .catch((error: unknown) => console.error("srobroek.autopilot: fallback tick failed", error))
+        .catch((error: unknown) => this.warn("fallback tick failed", { sessionID, error: error instanceof Error ? error.message : String(error) }))
         .finally(() => {
           entry.running = false
         })

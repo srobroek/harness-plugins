@@ -34,6 +34,11 @@ test("readJournal skips a torn last line", () => {
   expect(readJournal(text)).toHaveLength(1)
 })
 
+test("readJournal throws on a bad line that is not the torn tail", () => {
+  const text = `{"ts":"t","ty\n${JSON.stringify({ ts: "t", type: "progress", summary: "a" })}\n`
+  expect(() => readJournal(text)).toThrow("line 1 is not a journal entry")
+})
+
 test("needsInput and parkedBeads", () => {
   const entries = [
     { ts: "t", type: "blocker" as const, summary: "a", bead: "b-1", parked: true },

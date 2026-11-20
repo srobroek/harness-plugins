@@ -44,18 +44,32 @@ it:
 - When a turn ends with a question to the user, the plugin re-prompts the
   session to decide, log the decision and continue. After two re-prompts in a
   row, the plugin logs an issue and waits for the next tick.
-- The plugin answers each permission `ask` from the run's grants:
-  - It allows branch work, feature-branch pushes and pull requests.
-  - It allows beads, dependency bumps and read-only AWS calls.
+- The plugin answers each permission `ask` from the run's grants. It fails
+  closed. It allows a shell command only when the shared shell parser reads the
+  whole command and every part of it is a known safe form:
+  - Branch work, pull requests, beads, dependency changes and read-only AWS
+    calls are safe forms.
+  - A push must name a remote and a feature branch, for example
+    `git push origin feat/x`.
   - A merge or a deployment needs `--allow`.
   - A command that discards work, such as `git reset --hard` or `rm -r`, needs
     `--full`.
-  - The plugin always denies a force push and a push to the default branch.
+  - The plugin always denies a force push, a mirror push and a push to the
+    default branch.
+  - The plugin denies a command it cannot read: an unknown command or flag, a
+    quoted flag, an expansion, or a command substitution.
+  - The plugin denies AWS calls that change resources, except the
+    CloudFormation operations that `--allow deploy` grants.
   - The plugin logs each denial as a blocker.
 - After compaction, the plugin queues a notice with the rules and a fresh
   status.
 
 The plugin keeps armed runs in its storage, so a run survives a server restart.
+Every state change holds a lock file in the run directory, and every write of
+`state.json` checks a generation number, so a second plugin instance never
+overwrites a newer state. When a run file is missing, the plugin treats it as
+absent. When a run file is unreadable or corrupt, the plugin reports the error
+and logs a blocker. The plugin never reads such a file as an empty run.
 
 ## Tools
 

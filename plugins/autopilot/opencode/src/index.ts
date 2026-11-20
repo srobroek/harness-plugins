@@ -3,23 +3,29 @@ import { fileURLToPath } from "node:url"
 import { Plugin } from "@opencode/plugin"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import { withEmbeddedWriteLock } from "@srobroek/opencode-lib/bd-embedded-write-lock"
+import { hostWarn, type Warn } from "@srobroek/opencode-lib/host-log"
+import { withLease } from "@srobroek/opencode-lib/lease-lock"
 import { registerSkills } from "@srobroek/opencode-lib/skill-files"
 import { classifyScope, deadlineAt, type Invocation, parseInvocation, type RunOptions } from "./args.ts"
 import { automationRequest } from "./automation.ts"
+import { decideAsk } from "./gate.ts"
 import { Activity, BD_READ_TIMEOUT_MS, childFrom, commitCount, readBeads, type SessionView, sessionBusy } from "./gather.ts"
-import { LOG_INPUT_SCHEMA, validateEntry } from "./journal.ts"
-import { DENY_QUESTION, decideAsk, endsWithQuestion, isAskTool, REPROMPT } from "./policy.ts"
-import { autopilotRoot, findRun, type Run, RunDir, runCommand } from "./rundir.ts"
+import { type JournalEntry, LOG_INPUT_SCHEMA, validateEntry } from "./journal.ts"
+import { DENY_QUESTION, endsWithQuestion, isAskTool, REPROMPT } from "./policy.ts"
+import { autopilotRoot, findRun, type Run, RunDir, RunFileError, runCommand } from "./rundir.ts"
 import { countBeads, newRunState, type RunState, runIdFor, type Snapshot, TICK_MS, tick, tickPrompt } from "./state.ts"
 import { HANDOFF_LABEL, handoffDescription, renderSummary } from "./summary.ts"
-import { Ticks } from "./timer.ts"
+import { realClock, Ticks } from "./timer.ts"
 
 export * from "./args.ts"
 export * from "./automation.ts"
+export * from "./gate.ts"
 export * from "./gather.ts"
 export * from "./journal.ts"
 export * from "./policy.ts"
+export * from "./rundir.ts"
 export * from "./state.ts"
+export * from "./state-schema.ts"
 export * from "./summary.ts"
 
 export const ID = "srobroek.autopilot"
@@ -83,7 +89,18 @@ export type WriteLock = <T>(cwd: string, owner: string, write: () => Promise<T>)
 
 const embeddedLock: WriteLock = (cwd, owner, write) => withEmbeddedWriteLock(cwd, owner, write)
 
-export type Deps = { run?: Run; now?: () => number; ticks?: Ticks; lock?: WriteLock }
+export type Deps = { run?: Run; now?: () => number; ticks?: Ticks; lock?: WriteLock; warn?: Warn }
+
+/** How long a state transition waits for another instance's hold on the run lock. */
+const RUN_LOCK_WAIT_MS = 60_000
+
+/** The storage page size startup asks for; it follows `next` until the scan ends. */
+const STORAGE_PAGE = 100
+
+/** A run lock that could not be taken: the transition did not run. */
+class RunLockBusy extends Error {}
+
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 /** Text of the last assistant message in a session's context, best effort. */
 export function lastAssistantText(messages: unknown): string {
@@ -153,8 +170,11 @@ export class Autopilot {
   readonly #now: () => number
   readonly #ticks: Ticks
   readonly #lock: WriteLock
+  readonly #warn: Warn
   readonly #reprompts = new Map<string, number>()
   readonly #serial = new Map<string, Promise<unknown>>()
+  /** File errors already journaled, so a hook that fires on every call logs each one once. */
+  readonly #reported = new Set<string>()
 
   constructor(
     readonly ctx: Context,
@@ -162,21 +182,51 @@ export class Autopilot {
   ) {
     this.#run = deps.run ?? runCommand
     this.#now = deps.now ?? Date.now
+    this.#warn = deps.warn ?? (() => {})
     this.activity = new Activity(this.#now)
-    this.#ticks = deps.ticks ?? new Ticks()
+    this.#ticks = deps.ticks ?? new Ticks(realClock, this.#warn)
     this.#lock = deps.lock ?? embeddedLock
   }
 
+  /**
+   * Re-arm every run in storage. A storage failure throws: the plugin cannot enforce runs it
+   * cannot list. A run whose state cannot be read stays armed, so its hooks keep failing closed.
+   */
   async load(): Promise<void> {
-    const page = await this.ctx.storage.scan({ prefix: "armed/" }).catch(() => ({ entries: [] as { key: string; value: unknown }[] }))
-    for (const entry of page.entries) {
-      const value = entry.value as Partial<Armed> | null
-      if (typeof value?.runId === "string" && typeof value.root === "string") this.armed.set(entry.key.slice("armed/".length), { runId: value.runId, root: value.root })
+    let after: string | undefined
+    for (;;) {
+      const page = await this.ctx.storage.scan({ prefix: "armed/", limit: STORAGE_PAGE, ...(after !== undefined ? { after } : {}) })
+      for (const entry of page.entries) {
+        const value = entry.value as Partial<Armed> | null
+        if (typeof value?.runId === "string" && typeof value.root === "string") this.armed.set(entry.key.slice("armed/".length), { runId: value.runId, root: value.root })
+        else this.#warn("ignored an armed-run record with an unexpected shape", { key: entry.key })
+      }
+      if (page.next === undefined || page.entries.length === 0) break
+      after = page.next
     }
     for (const [sessionID, armed] of this.armed) {
-      const state = new RunDir(armed.root, armed.runId).readState()
-      if (state?.phase === "running" && state.tick.kind === "fallback") this.#startFallback(sessionID)
+      const dir = new RunDir(armed.root, armed.runId)
+      try {
+        const state = dir.readState()
+        if (state?.phase === "running" && state.tick.kind === "fallback") this.#startFallback(sessionID)
+      } catch (error) {
+        this.#report(dir, error)
+      }
     }
+  }
+
+  /** Journal a run file failure as a blocker once, and warn when even that fails. */
+  #report(dir: RunDir, error: unknown): string {
+    const message = errorText(error)
+    if (this.#reported.has(message)) return message
+    this.#reported.add(message)
+    this.#warn("run file error", { run: dir.runId, error: message })
+    try {
+      dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: `autopilot could not use its run files: ${message}`, parked: true })
+    } catch (appendError) {
+      this.#warn("could not journal a run file error", { run: dir.runId, error: errorText(appendError) })
+    }
+    return message
   }
 
   dispose(): void {
@@ -210,13 +260,21 @@ export class Autopilot {
     return undefined
   }
 
-  /** The running (not setup) run whose rules apply to `sessionID`. */
-  async runningFor(sessionID: string): Promise<{ lead: string; dir: RunDir; state: RunState } | undefined> {
+  /**
+   * The run whose rules apply to `sessionID`, when it is running. A run whose state cannot be
+   * read counts as running with `unreadable` set, so the hooks fail closed.
+   */
+  async runningFor(sessionID: string): Promise<{ lead: string; dir: RunDir; state?: RunState; unreadable?: string } | undefined> {
     const lead = await this.leadFor(sessionID)
     if (lead === undefined) return undefined
     const armed = this.armed.get(lead) as Armed
     const dir = new RunDir(armed.root, armed.runId)
-    const state = dir.readState()
+    let state: RunState | undefined
+    try {
+      state = dir.readState()
+    } catch (error) {
+      return { lead, dir, unreadable: this.#report(dir, error) }
+    }
     return state?.phase === "running" ? { lead, dir, state } : undefined
   }
 
@@ -276,6 +334,15 @@ export class Autopilot {
   // --- commands -------------------------------------------------------------------------------
 
   async command(sessionID: string, text: string): Promise<string> {
+    try {
+      return await this.#command(sessionID, text)
+    } catch (error) {
+      if (error instanceof RunFileError || error instanceof RunLockBusy) return `autopilot: could not read or update the run: ${errorText(error)}`
+      throw error
+    }
+  }
+
+  async #command(sessionID: string, text: string): Promise<string> {
     const invocation = parseInvocation(text)
     const directory = await this.#sessionDirectory(sessionID)
     const root = await autopilotRoot(directory, this.#run)
@@ -288,17 +355,17 @@ export class Autopilot {
         const runId = runIdFor(now)
         const dir = new RunDir(root, runId)
         dir.create()
-        dir.writeState(newRunState({ runId, sessionID, directory, options: invocation.options, scope: classifyScope(invocation.options.scope), now }))
+        dir.writeState(undefined, newRunState({ runId, sessionID, directory, options: invocation.options, scope: classifyScope(invocation.options.scope), now }))
         await this.#arm(sessionID, { runId, root })
         return setupPrompt(runId, invocation)
       }
       case "stop": {
         const dir = this.#dirFor(sessionID, undefined)
         if (!dir) return "autopilot: no run in this session."
-        const runId = await this.#exclusive(dir.runId, async () => {
+        const runId = await this.#exclusive(dir, async () => {
           const state = dir.readState()
           if (!state) return undefined
-          if (state.phase !== "stopped") dir.writeState({ ...state, stopRequested: true })
+          if (state.phase !== "stopped") dir.writeState(state, { ...state, stopRequested: true })
           return state.runId
         })
         if (runId === undefined) return "autopilot: no run in this session."
@@ -308,13 +375,12 @@ export class Autopilot {
         const dir = findRun(root, invocation.runId)
         if (!dir) return `autopilot: no run ${invocation.runId ?? "latest"} under ${root}.`
         // Validate and rebind inside the run's critical section, so a stop in flight wins.
-        const bound = await this.#exclusive(dir.runId, async (): Promise<{ ok: false; message: string } | { ok: true; state: RunState }> => {
+        const bound = await this.#exclusive(dir, async (): Promise<{ ok: false; message: string } | { ok: true; state: RunState }> => {
           const state = dir.readState()
           if (!state) return { ok: false, message: `autopilot: no run ${invocation.runId ?? "latest"} under ${root}.` }
           if (state.phase === "stopped") return { ok: false, message: `autopilot: run ${state.runId} already stopped (${state.stopReason}); start a new one.` }
           for (const [other, armed] of this.armed) if (armed.runId === state.runId && other !== sessionID) await this.#disarm(other)
-          const resumed: RunState = { ...state, sessionID, phase: "running", tick: { kind: "none" } }
-          dir.writeState(resumed)
+          const resumed = dir.writeState(state, { ...state, sessionID, phase: "running", tick: { kind: "none" } })
           await this.#arm(sessionID, { runId: state.runId, root })
           return { ok: true, state: resumed }
         })
@@ -329,7 +395,12 @@ export class Autopilot {
       }
       case "review": {
         const dir = findRun(root, invocation.runId)
-        const summary = dir?.summary()
+        let summary: string | undefined
+        try {
+          summary = dir?.summary()
+        } catch (error) {
+          return `autopilot: could not read the summary of run ${dir?.runId}: ${errorText(error)}`
+        }
         if (!dir || summary === undefined) return `autopilot: no summary for run ${invocation.runId ?? "latest"}.`
         return [
           `Review autopilot run ${dir.runId}. Summary from ${dir.summaryPath}:`,
@@ -348,28 +419,45 @@ export class Autopilot {
   // --- tools ----------------------------------------------------------------------------------
 
   /**
-   * Every read-modify-write of one run's state, in order: a tick that started before a stop
-   * cannot write its running state over the stopped one, and two stops cannot both hand off.
+   * Every read-modify-write of one run's state, in order. In this process a promise chain keeps
+   * them first-come first-served; across processes and plugin instances the lease file in the run
+   * directory does. Inside, each transition reads the state again and writes it fenced by its
+   * generation, so a tick that started before a stop never writes its running state over it.
    */
-  async #exclusive<T>(runId: string, work: () => Promise<T>): Promise<T> {
-    const before = this.#serial.get(runId) ?? Promise.resolve()
-    const turn = before.then(work, work)
+  async #exclusive<T>(dir: RunDir, work: () => Promise<T>): Promise<T> {
+    const locked = async (): Promise<T> => {
+      const held = await withLease(dir.lockPath, { owner: `${ID}/${process.pid}/${dir.runId}`, waitMs: RUN_LOCK_WAIT_MS }, work)
+      if (held.kind === "failed") throw new RunLockBusy(held.reason)
+      return held.value
+    }
+    const before = this.#serial.get(dir.runId) ?? Promise.resolve()
+    const turn = before.then(locked, locked)
     const settled = turn.then(
       () => undefined,
       () => undefined,
     )
-    this.#serial.set(runId, settled)
+    this.#serial.set(dir.runId, settled)
     try {
       return await turn
     } finally {
-      if (this.#serial.get(runId) === settled) this.#serial.delete(runId)
+      if (this.#serial.get(dir.runId) === settled) this.#serial.delete(dir.runId)
     }
   }
 
   async status(sessionID: string, input: StatusInput): Promise<Record<string, unknown>> {
     const dir = this.#dirFor(sessionID, input.run)
     if (!dir) return { error: "no autopilot run for this session; start one with /autopilot" }
-    return this.#exclusive(dir.runId, () => this.#statusLocked(dir, input))
+    try {
+      return await this.#exclusive(dir, () => this.#statusLocked(dir, input))
+    } catch (error) {
+      if (error instanceof RunLockBusy) return { error: `run lock busy: ${error.message}; try again on the next tick` }
+      if (!(error instanceof RunFileError)) throw error
+      const message = this.#report(dir, error)
+      return {
+        error: message,
+        prompt: `Autopilot cannot use its run files: ${message}. It logged this as a blocker. Do not treat the run as finished; fix or report the file, then continue.`,
+      }
+    }
   }
 
   async #statusLocked(dir: RunDir, input: StatusInput): Promise<Record<string, unknown>> {
@@ -378,9 +466,9 @@ export class Autopilot {
     const action = input.action ?? "status"
     if (action === "arm") return this.#armRun(dir, state, input)
     if (state.phase === "stopped") return { done: true, stopped: state.stopReason, summary: dir.summaryPath }
-    if (action === "stop") return this.stop(dir, state, input.reason ?? "stop requested")
+    if (action === "stop") return this.#stopLocked(dir, state, input.reason ?? "stop requested")
     if (action === "fallback") {
-      dir.writeState({ ...state, tick: { kind: "fallback" } })
+      dir.writeState(state, { ...state, tick: { kind: "fallback" } })
       this.#startFallback(state.sessionID)
       return { ok: true, tick: "fallback", every: TICK_MS }
     }
@@ -389,7 +477,7 @@ export class Autopilot {
     const result = tick(state, await this.snapshot(state, dir))
     // Only a tick advances the run; a status read reports and leaves every signal for the next tick.
     if (action === "tick") {
-      dir.writeState(result.state)
+      dir.writeState(state, result.state)
       for (const due of result.actions)
         if (due.kind === "park") dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: due.reason, bead: due.item, parked: true })
     }
@@ -410,7 +498,7 @@ export class Autopilot {
 
   async #armRun(dir: RunDir, state: RunState, input: StatusInput): Promise<Record<string, unknown>> {
     if (state.phase === "running") {
-      if (input.automation_id) dir.writeState({ ...state, tick: { kind: "automation", automationId: input.automation_id } })
+      if (input.automation_id) dir.writeState(state, { ...state, tick: { kind: "automation", automationId: input.automation_id } })
       return { ok: true, phase: "running", automation: automationRequest(state.runId, state.deadline) }
     }
     if (state.phase !== "setup") return { error: `run is ${state.phase}` }
@@ -427,7 +515,7 @@ export class Autopilot {
       ...(deadline !== undefined ? { deadline } : {}),
     }
     const first = tick(next, await this.snapshot(next, dir))
-    dir.writeState({ ...first.state, ticks: 0, idleTicks: 0 })
+    dir.writeState(state, { ...first.state, ticks: 0, idleTicks: 0 })
     dir.append({ ts: new Date(now).toISOString(), type: "action", summary: `armed: ${JSON.stringify(next.options)}` })
     return {
       ok: true,
@@ -438,15 +526,20 @@ export class Autopilot {
     }
   }
 
-  async stop(dir: RunDir, state: RunState, reason: string): Promise<Record<string, unknown>> {
+  /**
+   * Stop the run: one journal snapshot, taken after the stop entry, feeds both `summary.md` and
+   * the handoff bead. Callers hold the run lock, and `autopilot_log` takes the same lock, so an
+   * entry is either in that snapshot or written after the run is stopped.
+   */
+  async #stopLocked(dir: RunDir, state: RunState, reason: string): Promise<Record<string, unknown>> {
     const now = this.#now()
-    const journal = dir.journal()
     const fresh = await readBeads(state.directory, this.#run)
     const beads = fresh.ok ? countBeads(fresh, state.scope) : state.beads
-    const stopped: RunState = { ...state, beads, phase: "stopped", stopReason: state.stopReason ?? reason, stoppedAt: now }
-    dir.append({ ts: new Date(now).toISOString(), type: "stop", summary: stopped.stopReason as string })
-    dir.writeState(stopped)
-    const summary = renderSummary(stopped, dir.journal(), dir.path)
+    const stopReason = state.stopReason ?? reason
+    dir.append({ ts: new Date(now).toISOString(), type: "stop", summary: stopReason })
+    const journal = dir.journal()
+    const stopped = dir.writeState(state, { ...state, beads, phase: "stopped", stopReason, stoppedAt: now })
+    const summary = renderSummary(stopped, journal, dir.path)
     dir.writeSummary(summary)
     const created = await this.#bdWrite(state, [
       "create",
@@ -476,14 +569,25 @@ export class Autopilot {
   }
 
   async log(sessionID: string, input: unknown): Promise<string> {
-    const running = await this.runningFor(sessionID)
-    const dir = running?.dir ?? this.#dirFor(sessionID, undefined)
-    if (!dir) return "autopilot_log: no autopilot run for this session"
     const validated = validateEntry(input, new Date(this.#now()))
     if (!validated.ok) return `autopilot_log: ${validated.reason}`
-    const entry = validated.entry
+    const lead = await this.leadFor(sessionID)
+    const armed = lead === undefined ? undefined : this.armed.get(lead)
+    const dir = armed ? new RunDir(armed.root, armed.runId) : this.#dirFor(sessionID, undefined)
+    if (!dir) return "autopilot_log: no autopilot run for this session"
+    try {
+      return await this.#exclusive(dir, () => this.#logLocked(dir, validated.entry))
+    } catch (error) {
+      if (error instanceof RunLockBusy) return `autopilot_log: run lock busy (${error.message}); log the entry again`
+      if (!(error instanceof RunFileError)) throw error
+      return `autopilot_log: ${this.#report(dir, error)}`
+    }
+  }
+
+  async #logLocked(dir: RunDir, entry: JournalEntry): Promise<string> {
+    const state = dir.readState()
     dir.append(entry)
-    const state = running?.state ?? dir.readState()
+    if (state?.phase === "stopped") return `logged ${entry.type} after the run stopped; it is in journal.jsonl but not in summary.md or the handoff bead`
     if (entry.bead && (entry.type === "blocker" || entry.type === "ambiguity") && state && !state.options.full) {
       const flagged = await this.#bdWrite(state, ["update", entry.bead, "--add-label", "human", "--json"])
       return `logged ${entry.type}${flagged.ok ? `; flagged ${entry.bead} human` : `; could not flag ${entry.bead}: ${flagged.stderr.trim()}`}`
@@ -521,11 +625,17 @@ export class Autopilot {
     if (event.effect !== "ask") return
     const running = await this.runningFor(event.sessionID)
     if (!running) return
-    const decision = decideAsk(event.action, event.resources, running.state.options.allow, running.state.options.full)
+    const decision = running.state
+      ? decideAsk(event.action, event.resources, running.state.options.allow, running.state.options.full)
+      : ({ effect: "deny", reason: `autopilot cannot read its run state (${running.unreadable}); nothing is approved until it can` } as const)
     event.effect = decision.effect
     if (decision.effect === "deny") {
       event.message = decision.reason
-      running.dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: `${event.action} denied: ${decision.reason}`, evidence: event.resources.join(" ").slice(0, 300) })
+      try {
+        running.dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: `${event.action} denied: ${decision.reason}`, evidence: event.resources.join(" ").slice(0, 300) })
+      } catch (error) {
+        this.#warn("could not journal a denied permission", { run: running.dir.runId, error: errorText(error) })
+      }
     }
   }
 
@@ -533,7 +643,7 @@ export class Autopilot {
   async idle(sessionID: string): Promise<void> {
     if (!this.armed.has(sessionID)) return
     const running = await this.runningFor(sessionID)
-    if (!running) return
+    if (!running?.state) return
     const messages = await this.ctx.session.context({ sessionID }).catch(() => [])
     if (!endsWithQuestion(lastAssistantText(messages))) {
       this.#reprompts.delete(sessionID)
@@ -556,7 +666,7 @@ export class Autopilot {
     const status = await this.status(sessionID, { action: "status" })
     await this.ctx.session.synthetic({
       sessionID,
-      text: `Autopilot run ${running.state.runId} is still armed after compaction. Reload the ${SKILL} skill; never ask the user. Status: ${JSON.stringify(status)}`,
+      text: `Autopilot run ${running.dir.runId} is still armed after compaction. Reload the ${SKILL} skill; never ask the user. Status: ${JSON.stringify(status)}`,
       delivery: "queue",
       metadata: { source: ID, kind: "compaction" },
     })
@@ -564,10 +674,12 @@ export class Autopilot {
 }
 
 export async function setupAutopilot(ctx: Context, deps: Deps = {}): Promise<() => Promise<void>> {
-  const pilot = new Autopilot(ctx, deps)
+  // The host logger is bound to the fiber that runs setup, so take it before the first await.
+  const warn = deps.warn ?? hostWarn(ID)
+  const pilot = new Autopilot(ctx, { ...deps, warn })
   await pilot.load()
   const registrations: { dispose: () => Promise<void> }[] = []
-  const report = (what: string) => (error: unknown) => console.error(`${ID}: ${what} failed`, error)
+  const report = (what: string) => (error: unknown) => warn(`${what} failed`, { error: errorText(error) })
   registrations.push(
     await ctx.tool.transform((editor) => {
       editor.add({
