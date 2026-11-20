@@ -880,11 +880,28 @@ describe("prompts a subagent cannot answer", () => {
     expect((await ask(fake, "ses_grandchild", "read", [`${outside}/x`])).effect).toBe("deny")
   })
 
-  test("a teardown does not warn about the subscription it ended", async () => {
+  test.each([
+    ["ends", (done: () => void) => done()],
+    ["rejects", (_: () => void, fail: (error: Error) => void) => fail(new DOMException("aborted", "AbortError"))],
+  ])("a teardown that makes the subscription %s does not warn", async (_, settle) => {
     const warnings: string[] = []
-    const { cleanup } = await setup({}, (message) => void warnings.push(message))
+    let ended!: Promise<unknown>
+    const { cleanup } = await load({}, {
+      sessions: family,
+      warn: (message) => void warnings.push(message),
+      patch: (context) => {
+        context.event.subscribe = (input: { signal: AbortSignal }) => {
+          ended = new Promise<unknown>((resolve, reject) => {
+            input.signal.addEventListener("abort", () => settle(() => resolve({ done: true, value: undefined }), reject))
+          })
+          return { [Symbol.asyncIterator]: () => ({ next: () => ended, return: async () => ({ done: true }) }) }
+        }
+      },
+    })
     await cleanup?.()
-    await Promise.resolve()
+    await ended.catch(() => undefined)
+    // The watcher's continuation runs after the settled promise's own handlers.
+    await new Promise<void>((resolve) => queueMicrotask(resolve))
     expect(warnings.filter((message) => message.startsWith("permission prompt watch"))).toEqual([])
   })
 
