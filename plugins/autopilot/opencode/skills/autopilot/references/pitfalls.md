@@ -21,5 +21,11 @@
 ## autopilot_status reports that it cannot use its run files
 
 **Symptom:** `autopilot cannot use its run files: <path>: ...`
-**Cause:** `state.json`, `journal.jsonl` or `summary.md` exists but is unreadable or corrupt, or another plugin instance moved the state on (`generation ... on disk`).
-**Fix:** do not treat the run as finished. Check the file named in the message. For a generation conflict, call `autopilot_status` again; it reads the newer state. For a corrupt file, log the blocker and stop the run with `/autopilot stop` once the file is repaired.
+**Cause:** the latest `state.<N>.json`, `journal.jsonl` or `summary.md` exists but is unreadable or corrupt. A corrupt latest state file is never skipped for an older one.
+**Fix:** do not treat the run as finished. Check the file named in the message, log the blocker, and stop the run with `/autopilot stop` once the file is repaired.
+
+## autopilot_status reports that the state moved on under the call
+
+**Symptom:** `state moved on under this call (...)`, with `stale: true`.
+**Cause:** another writer, such as a second plugin instance or a stalled earlier call, created that state generation first. Nothing was overwritten, and the plugin journaled an `issue`.
+**Fix:** call `autopilot_status` again. It reads the latest state and acts on it.

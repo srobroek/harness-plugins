@@ -27,6 +27,8 @@ let onRevParse: (() => void) | undefined
 let failCreates = 0
 /** How many handoff lookups (`bd list --label ...`) fail before one succeeds. */
 let failLookups = 0
+/** When set, what a handoff lookup prints instead of the bead list. */
+let lookupStdout: string | undefined
 /** Called after a `bd create` succeeds. */
 let onCreated: (() => void) | undefined
 
@@ -43,6 +45,7 @@ const run: Run = async (_cwd, command, args) => {
       failLookups--
       return { ok: false, stdout: "", stderr: "store locked" }
     }
+    if (lookupStdout !== undefined) return { ok: true, stdout: lookupStdout, stderr: "" }
     return json(beads.list)
   }
   if (args[0] === "list") {
@@ -150,6 +153,7 @@ beforeEach(async () => {
   calls = []
   locked = []
   failLookups = 0
+  lookupStdout = undefined
   onCreated = undefined
   warnings = []
   failCreates = 0
@@ -506,14 +510,15 @@ describe("a run file that cannot be read", () => {
   test.each([
     ["is not JSON", "{ not json"],
     ["has the wrong shape", JSON.stringify({ version: 1, runId: "x", phase: "bogus" })],
-  ])("state.json that %s is reported and journaled, never read as an empty run", async (_name, text) => {
+  ])("a latest state generation that %s is reported and journaled, never read as an empty run", async (_name, text) => {
     await armed()
     const input = tickInput()
-    writeFileSync(join(latest(), "state.json"), text)
+    const latestFile = `state.${latestState().generation}.json`
+    writeFileSync(join(latest(), latestFile), text)
     const result = await status(input)
-    expect(result).toMatchObject({ error: expect.stringContaining("state.json") })
+    expect(result).toMatchObject({ error: expect.stringContaining(latestFile) })
     expect(result).not.toHaveProperty("done")
-    expect(journal().at(-1)).toMatchObject({ type: "blocker", summary: expect.stringContaining("state.json") })
+    expect(journal().at(-1)).toMatchObject({ type: "blocker", summary: expect.stringContaining(latestFile) })
   })
 
   test("a corrupt line inside the journal is reported, not skipped", async () => {
@@ -633,23 +638,31 @@ describe("a stop whose artifacts fail to write", () => {
 
   test("a lookup that fails after a lost state save leaves the handoff pending and never creates a second bead", async () => {
     await armed()
-    const statePath = join(latest(), "state.json")
-    let saved = ""
-    // The bead is created, then the state save that records it fails.
+    let blocked = ""
+    // The bead is created, then the state save that records it fails: its generation file cannot be created.
     onCreated = () => {
-      saved = readFileSync(statePath, "utf8")
-      rmSync(statePath)
-      mkdirSync(statePath)
+      blocked = join(latest(), `state.${(latestState().generation ?? 0) + 1}.json`)
+      mkdirSync(blocked)
     }
     expect(await status({ action: "stop", reason: "done" })).toHaveProperty("error")
-    rmSync(statePath, { recursive: true })
-    writeFileSync(statePath, saved)
+    rmSync(blocked, { recursive: true })
     expect(latestState().phase).toBe("stopping")
     failLookups = 1
     expect(await status(tickInput())).toMatchObject({ phase: "stopping", error: expect.stringContaining("look up") })
     expect(calls.filter((call) => call.args[0] === "create")).toHaveLength(1)
     expect(await status(tickInput())).toMatchObject({ done: true, handoff: "t-99" })
     expect(calls.filter((call) => call.args[0] === "create")).toHaveLength(1)
+  })
+
+  test.each([
+    ["is not JSON", "warning: ok\n{ not json ["],
+    ["is not a list", '{"id":"t-1"}'],
+  ])("a handoff lookup whose output %s leaves the stop pending and creates nothing", async (_name, stdout) => {
+    await armed()
+    lookupStdout = stdout
+    expect(await status({ action: "stop", reason: "done" })).toMatchObject({ phase: "stopping" })
+    expect(latestState().phase).toBe("stopping")
+    expect(calls.filter((call) => call.args[0] === "create")).toHaveLength(0)
   })
 
   test("finds a handoff bead an earlier attempt created before its state write failed", async () => {

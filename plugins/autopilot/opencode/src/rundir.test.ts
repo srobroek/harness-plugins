@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { appendFileSync, chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { appendFileSync, chmodSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { RunDir, RunFileError } from "./rundir.ts"
@@ -20,10 +20,16 @@ function runDir(id: string): RunDir {
 
 const fresh = (id: string): RunState => newRunState({ runId: id, sessionID: "s", directory: "/repo", options: {}, scope: { kind: "queue" }, now: 0 })
 
-/** Settles every pending promise step, without waiting on a timer. */
-async function settle(steps = 200): Promise<void> {
-  for (let step = 0; step < steps; step++) await Promise.resolve()
-}
+const stateFiles = (dir: RunDir) =>
+  readdirSync(dir.path)
+    .filter((name) => /^state\.\d+\.json$/.test(name))
+    .sort((a, b) => Number(a.split(".")[1]) - Number(b.split(".")[1]))
+
+const outcome = (write: Promise<unknown>) =>
+  write.then(
+    () => "written",
+    (error: unknown) => (error instanceof RunFileError ? error.kind : "other"),
+  )
 
 test("an entry appended after a torn last line still reads back", () => {
   const dir = runDir("r1")
@@ -33,7 +39,7 @@ test("an entry appended after a torn last line still reads back", () => {
   expect(dir.journal().map((entry) => entry.summary)).toEqual(["a", "b"])
 })
 
-test("a writer holding an older read of state.json is refused", async () => {
+test("a writer holding an older read is refused", async () => {
   const dir = runDir("r3")
   const first = await dir.writeState(undefined, fresh("r3"))
   const stale = dir.readState() as RunState
@@ -42,7 +48,7 @@ test("a writer holding an older read of state.json is refused", async () => {
   expect(dir.readState()?.phase).toBe("stopped")
 })
 
-test("a writer paused between its check and its rename holds off a successor, which is then refused", async () => {
+test("a stalled writer that resumes after its successor wrote fails, and the successor's state is intact", async () => {
   const dir = runDir("r4")
   const first = await dir.writeState(undefined, fresh("r4"))
   let resume: () => void = () => {}
@@ -50,91 +56,83 @@ test("a writer paused between its check and its rename holds off a successor, wh
     resume = resolve
   })
   let reached: () => void = () => {}
-  const atRename = new Promise<void>((resolve) => {
+  const atLink = new Promise<void>((resolve) => {
     reached = resolve
   })
-  const slow = dir.writeState(first, { ...first, ticks: 1 }, {
-    beforeRename: async () => {
-      reached()
-      await paused
-    },
-  })
-  await atRename
-  const successor = dir.writeState(first, { ...first, phase: "stopped" }).then(
-    () => "written",
-    (error: unknown) => (error instanceof RunFileError ? error.kind : "other"),
+  const stalled = outcome(
+    dir.writeState(first, { ...first, ticks: 1 }, {
+      beforeLink: async () => {
+        reached()
+        await paused
+      },
+    }),
   )
-  await settle()
-  expect(dir.readState()?.ticks).toBe(0)
+  await atLink
+  // The successor read the same generation and writes while the first writer is stalled.
+  expect(await outcome(dir.writeState(first, { ...first, phase: "stopped", ticks: 2 }))).toBe("written")
   resume()
-  await slow
-  expect(await successor).toBe("stale")
-  expect(dir.readState()).toMatchObject({ ticks: 1, phase: "setup" })
+  expect(await stalled).toBe("stale")
+  expect(dir.readState()).toMatchObject({ generation: 1, phase: "stopped", ticks: 2 })
 })
 
-/** A write paused before its rename, and how to let it go on. */
-function pausedWrite(dir: RunDir, read: RunState, next: RunState) {
+test("of two concurrent writers of the same generation, exactly one wins", async () => {
+  const dir = runDir("r5")
+  const first = await dir.writeState(undefined, fresh("r5"))
+  const results = await Promise.all([outcome(dir.writeState(first, { ...first, ticks: 1 })), outcome(dir.writeState(first, { ...first, ticks: 2 }))])
+  expect([...results].sort()).toEqual(["stale", "written"])
+  expect(dir.readState()?.ticks).toBe(results[0] === "written" ? 1 : 2)
+  expect(stateFiles(dir)).toEqual(["state.0.json", "state.1.json"])
+})
+
+test("a corrupt latest generation is an error, never skipped for an older one", async () => {
+  const dir = runDir("r6")
+  const first = await dir.writeState(undefined, fresh("r6"))
+  await dir.writeState(first, { ...first, ticks: 1 })
+  writeFileSync(join(dir.path, "state.1.json"), "{ torn")
+  expect(() => dir.readState()).toThrow(RunFileError)
+})
+
+test("keeps only the latest five generations", async () => {
+  const dir = runDir("r7")
+  let state = await dir.writeState(undefined, fresh("r7"))
+  for (let index = 1; index < 8; index++) state = await dir.writeState(state, { ...state, ticks: index })
+  expect(stateFiles(dir)).toEqual(["state.3.json", "state.4.json", "state.5.json", "state.6.json", "state.7.json"])
+  expect(dir.readState()).toMatchObject({ generation: 7, ticks: 7 })
+  expect(JSON.parse(readFileSync(dir.statePath, "utf8"))).toMatchObject({ generation: 7 })
+})
+
+test("a writer that stalls across a prune and links a pruned name fails and removes its file", async () => {
+  const dir = runDir("r10")
+  const first = await dir.writeState(undefined, fresh("r10"))
   let resume: () => void = () => {}
   const paused = new Promise<void>((resolve) => {
     resume = resolve
   })
   let reached: () => void = () => {}
-  const atRename = new Promise<void>((resolve) => {
+  const atLink = new Promise<void>((resolve) => {
     reached = resolve
   })
-  const done = dir.writeState(read, next, {
-    beforeRename: async () => {
-      reached()
-      await paused
-    },
-  })
-  return { atRename, resume, done }
-}
-
-test("a stalled writer that resumes after the takeover age keeps its lock, and its successor is refused", async () => {
-  const dir = runDir("r7")
-  const first = await dir.writeState(undefined, fresh("r7"))
-  const slow = pausedWrite(dir, first, { ...first, ticks: 1 })
-  await slow.atRename
-  // The hold looks ancient, but the writer that took it is alive.
-  const record = JSON.parse(readFileSync(dir.writeLockPath, "utf8")) as Record<string, unknown>
-  writeFileSync(dir.writeLockPath, JSON.stringify({ ...record, taken: 0 }))
-  let successorRenaming = false
-  const successor = dir
-    .writeState(first, { ...first, ticks: 2 }, {
-      beforeRename: async () => {
-        successorRenaming = true
+  const stalled = outcome(
+    dir.writeState(first, { ...first, ticks: 99 }, {
+      beforeLink: async () => {
+        reached()
+        await paused
       },
-    })
-    .then(
-      () => "written",
-      (error: unknown) => (error instanceof RunFileError ? error.kind : "other"),
-    )
-  await settle()
-  expect(successorRenaming).toBe(false)
-  slow.resume()
-  await slow.done
-  expect(await successor).toBe("stale")
-  expect(dir.readState()?.ticks).toBe(1)
-  expect(existsSync(dir.writeLockPath)).toBe(false)
+    }),
+  )
+  await atLink
+  let state = first
+  for (let index = 1; index <= 6; index++) state = await dir.writeState(state, { ...state, ticks: index })
+  expect(stateFiles(dir)).toEqual(["state.2.json", "state.3.json", "state.4.json", "state.5.json", "state.6.json"])
+  resume()
+  expect(await stalled).toBe("stale")
+  expect(stateFiles(dir)).toEqual(["state.2.json", "state.3.json", "state.4.json", "state.5.json", "state.6.json"])
+  expect(dir.readState()).toMatchObject({ generation: 6, ticks: 6 })
 })
 
-test("a writer releases only a write lock it still owns", async () => {
+test("a writer whose run lease another owner took over is refused before it links", async () => {
   const dir = runDir("r8")
   const first = await dir.writeState(undefined, fresh("r8"))
-  const slow = pausedWrite(dir, first, { ...first, ticks: 1 })
-  await slow.atRename
-  const record = JSON.parse(readFileSync(dir.writeLockPath, "utf8")) as Record<string, unknown>
-  const successor = JSON.stringify({ ...record, token: "successor" })
-  writeFileSync(dir.writeLockPath, successor)
-  slow.resume()
-  await slow.done.catch(() => undefined)
-  expect(readFileSync(dir.writeLockPath, "utf8")).toBe(successor)
-})
-
-test("a writer whose run lease another owner took over is refused at the rename", async () => {
-  const dir = runDir("r5")
-  const first = await dir.writeState(undefined, fresh("r5"))
   writeFileSync(dir.lockPath, JSON.stringify({ host: "h", pid: 1, owner: "successor", token: "t", taken: 0, expires: 0 }))
   await expect(dir.writeState(first, { ...first, ticks: 1 }, { leaseOwner: "me" })).rejects.toThrow(/lease/)
   expect(dir.readState()?.ticks).toBe(0)
@@ -152,9 +150,10 @@ test("append reports a journal it cannot read instead of guessing", () => {
 })
 
 test("a run file error keeps the error it wraps as its cause", async () => {
-  const dir = runDir("r6")
-  await dir.writeState(undefined, fresh("r6"))
-  chmodSync(dir.statePath, 0o200)
+  const dir = runDir("r9")
+  await dir.writeState(undefined, fresh("r9"))
+  const latest = join(dir.path, "state.0.json")
+  chmodSync(latest, 0o200)
   try {
     let caught: unknown
     try {
@@ -165,6 +164,6 @@ test("a run file error keeps the error it wraps as its cause", async () => {
     expect(caught).toBeInstanceOf(RunFileError)
     expect(((caught as Error).cause as NodeJS.ErrnoException).code).toBe("EACCES")
   } finally {
-    chmodSync(dir.statePath, 0o600)
+    chmodSync(latest, 0o600)
   }
 })
