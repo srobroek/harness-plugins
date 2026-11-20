@@ -17,13 +17,18 @@ let cleanup: (() => Promise<void>) | undefined
 let calls: Call[]
 let locked: string[]
 let beads: { list: unknown[]; ready: unknown[]; blocked: unknown[] }
+/** While set, `bd list` waits for it: a test holds a run's critical section open with it. */
+let listGate: Promise<void> | undefined
 
 const run: Run = async (_cwd, command, args) => {
   calls.push({ command, args })
   const json = (value: unknown) => ({ ok: true, stdout: JSON.stringify(value), stderr: "" })
   if (command === "git" && args[0] === "rev-parse") return { ok: true, stdout: `${root}\n`, stderr: "" }
   if (command === "git") return { ok: true, stdout: "7\n", stderr: "" }
-  if (args[0] === "list") return json(beads.list)
+  if (args[0] === "list") {
+    await listGate
+    return json(beads.list)
+  }
   if (args[0] === "ready") return json(beads.ready)
   if (args[0] === "blocked") return json(beads.blocked)
   if (args[0] === "create") return json({ id: "t-99" })
@@ -226,6 +231,24 @@ describe("run state transitions", () => {
     const state = JSON.parse(readFileSync(join(latest(), "state.json"), "utf8")) as { phase: string }
     expect(state.phase).toBe("stopped")
     expect(calls.filter((call) => call.args[0] === "create")).toHaveLength(1)
+  })
+
+  test("a resume that waits behind a stop does not bring the run back", async () => {
+    await armed()
+    let release: () => void = () => {}
+    listGate = new Promise((resolve) => {
+      release = resolve
+    })
+    const stopping = status({ action: "stop", reason: "done" })
+    const resuming = command("resume", "ses_other")
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    release()
+    listGate = undefined
+    await stopping
+    expect(await resuming).toContain("already stopped")
+    const state = JSON.parse(readFileSync(join(latest(), "state.json"), "utf8")) as { phase: string }
+    expect(state.phase).toBe("stopped")
+    expect(await denied("question", "ses_other")).toBeUndefined()
   })
 })
 

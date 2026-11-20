@@ -237,23 +237,34 @@ export class Autopilot {
       this.#children(state.sessionID),
       this.leadBusy(state.sessionID),
     ])
-    const children = kids
+    const children = kids.sessions
       .filter((kid): kid is SessionView & { id: string } => typeof kid?.id === "string")
       .map((kid) => childFrom(kid, this.activity.lastSeen(kid.id), armedAt))
-    return { now, beads: beads.beads, ready: beads.ready, blocked: beads.blocked, beadsRead: beads.ok, commits, children, journal: dir.journal(), leadBusy }
+    return {
+      now,
+      beads: beads.beads,
+      ready: beads.ready,
+      blocked: beads.blocked,
+      beadsRead: beads.ok,
+      commits,
+      children,
+      childrenComplete: kids.complete,
+      journal: dir.journal(),
+      leadBusy,
+    }
   }
 
-  /** Every direct child of `sessionID`, page by page; a failed page ends the list. */
-  async #children(sessionID: string): Promise<SessionView[]> {
-    const all: SessionView[] = []
+  /** Every direct child of `sessionID`, page by page, and whether the listing reached its end. */
+  async #children(sessionID: string): Promise<{ sessions: SessionView[]; complete: boolean }> {
+    const sessions: SessionView[] = []
     let page = await this.ctx.session.list({ parentID: sessionID, limit: 100 }).catch(() => undefined)
     for (let pages = 0; page && pages < MAX_CHILD_PAGES; pages++) {
-      all.push(...(page.data as SessionView[]))
+      sessions.push(...(page.data as SessionView[]))
       const next = page.cursor?.next
-      if (!next) break
+      if (!next) return { sessions, complete: true }
       page = await this.ctx.session.list({ cursor: next, limit: 100 }).catch(() => undefined)
     }
-    return all
+    return { sessions, complete: false }
   }
 
   /** Whether the lead session is executing, from the host's own record so it holds across restarts. */
@@ -295,15 +306,20 @@ export class Autopilot {
       }
       case "resume": {
         const dir = findRun(root, invocation.runId)
-        const state = dir?.readState()
-        if (!dir || !state) return `autopilot: no run ${invocation.runId ?? "latest"} under ${root}.`
-        if (state.phase === "stopped") return `autopilot: run ${state.runId} already stopped (${state.stopReason}); start a new one.`
-        for (const [other, armed] of this.armed) if (armed.runId === state.runId && other !== sessionID) await this.#disarm(other)
-        await this.#exclusive(dir.runId, async () => {
-          const current = dir.readState() ?? state
-          dir.writeState({ ...current, sessionID, phase: "running", tick: { kind: "none" } })
+        if (!dir) return `autopilot: no run ${invocation.runId ?? "latest"} under ${root}.`
+        // Validate and rebind inside the run's critical section, so a stop in flight wins.
+        const bound = await this.#exclusive(dir.runId, async (): Promise<{ ok: false; message: string } | { ok: true; state: RunState }> => {
+          const state = dir.readState()
+          if (!state) return { ok: false, message: `autopilot: no run ${invocation.runId ?? "latest"} under ${root}.` }
+          if (state.phase === "stopped") return { ok: false, message: `autopilot: run ${state.runId} already stopped (${state.stopReason}); start a new one.` }
+          for (const [other, armed] of this.armed) if (armed.runId === state.runId && other !== sessionID) await this.#disarm(other)
+          const resumed: RunState = { ...state, sessionID, phase: "running", tick: { kind: "none" } }
+          dir.writeState(resumed)
+          await this.#arm(sessionID, { runId: state.runId, root })
+          return { ok: true, state: resumed }
         })
-        await this.#arm(sessionID, { runId: state.runId, root })
+        if (!bound.ok) return bound.message
+        const state = bound.state
         const status = await this.status(sessionID, { action: "status", run: state.runId })
         return [
           `Autopilot run ${state.runId} resumed in this session. Load the ${SKILL} skill and follow it; no questions.`,

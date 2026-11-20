@@ -62,6 +62,8 @@ export type Snapshot = {
   beadsRead: boolean
   commits: number
   children: Child[]
+  /** Whether `children` is every direct child; a capped or failed listing is not. */
+  childrenComplete: boolean
   journal: JournalEntry[]
   leadBusy: boolean
 }
@@ -133,7 +135,7 @@ export function repeatedError(journal: readonly JournalEntry[]): string | undefi
  */
 export function stopReason(
   state: RunState,
-  snapshot: Pick<Snapshot, "now" | "children" | "beadsRead">,
+  snapshot: Pick<Snapshot, "now" | "children" | "childrenComplete" | "beadsRead">,
   newEntries: readonly JournalEntry[],
   parked: ReadonlySet<string>,
 ): string | undefined {
@@ -144,7 +146,7 @@ export function stopReason(
   const { open, ready, inProgress } = state.beads
   const beadScope = state.scope.kind !== "goal" && snapshot.beadsRead
   if (beadScope && open.length === 0) return "scope finished"
-  const busyChildren = snapshot.children.some((child) => child.busy)
+  const busyChildren = !snapshot.childrenComplete || snapshot.children.some((child) => child.busy)
   if (beadScope && open.length > 0 && !busyChildren && inProgress.every((id) => parked.has(id)) && ready.every((id) => parked.has(id)))
     return "everything left is blocked or parked"
   if (state.idleTicks >= MAX_IDLE_TICKS) return `${MAX_IDLE_TICKS} ticks without progress`

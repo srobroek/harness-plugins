@@ -58,6 +58,9 @@ describe("decideAsk", () => {
     "git push origin +feat/x",
     "git -C repo push origin main",
     "git push origin feat/x:refs/heads/master",
+    "git push origin '+HEAD:feat/x'",
+    "git push origin 'HEAD:main'",
+    'git push origin "main"',
   ])("denies %p even with every grant", (command) => {
     expect(decideAsk("shell", [command], ["merge", "deploy"], true).effect).toBe("deny")
   })
