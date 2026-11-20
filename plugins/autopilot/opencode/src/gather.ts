@@ -18,12 +18,15 @@ const ids = (items: unknown[]) => items.map((item) => (item as { id?: unknown })
 
 export type BeadView = { beads: Bead[]; ready: string[]; blocked: string[]; ok: boolean }
 
+/** A cold embedded store can take 30-50 s for one read. */
+export const BD_READ_TIMEOUT_MS = 90_000
+
 /** `bd list --all`, `bd ready` and `bd blocked`, as JSON. */
 export async function readBeads(directory: string, run: Run): Promise<BeadView> {
   const [list, ready, blocked] = await Promise.all([
-    run(directory, "bd", ["list", "--all", "--json", "--limit", "0"]),
-    run(directory, "bd", ["ready", "--json", "--limit", "0"]),
-    run(directory, "bd", ["blocked", "--json"]),
+    run(directory, "bd", ["list", "--all", "--brief", "--json", "--limit", "0"], BD_READ_TIMEOUT_MS),
+    run(directory, "bd", ["ready", "--brief", "--json", "--limit", "0"], BD_READ_TIMEOUT_MS),
+    run(directory, "bd", ["blocked", "--json"], BD_READ_TIMEOUT_MS),
   ])
   const beads = parseArray(list.stdout).flatMap((raw) => {
     const item = raw as Partial<Bead>
@@ -40,9 +43,38 @@ export async function commitCount(directory: string, run: Run): Promise<number> 
   return result.ok && Number.isFinite(count) ? count : 0
 }
 
-/** Activity per session, fed by the event stream. */
+/** The fields of a host `SessionInfo` a tick reads. */
+export type SessionView = { id?: unknown; title?: unknown; agent?: unknown; parentID?: unknown; time?: { updated?: unknown; busy?: unknown; idle?: unknown } }
+
+const finite = (value: unknown): number | undefined => (typeof value === "number" && Number.isFinite(value) ? value : undefined)
+
+/**
+ * Whether a session is executing. The host stamps `time.busy` when an execution starts and
+ * `time.idle` when it ends, and keeps both across restarts.
+ */
+export function sessionBusy(info: Pick<SessionView, "time"> | undefined): boolean {
+  const busy = finite(info?.time?.busy)
+  const idle = finite(info?.time?.idle)
+  return busy !== undefined && (idle === undefined || busy > idle)
+}
+
+/**
+ * A child session as a tick sees it. `lastSeen` is the newest event the plugin saw for it since
+ * load; without one, the session's own timestamps stand in. Nothing counts from before `armedAt`.
+ */
+export function childFrom(info: SessionView & { id: string }, lastSeen: number | undefined, armedAt: number): Child {
+  const stamped = Math.max(finite(info.time?.updated) ?? 0, finite(info.time?.busy) ?? 0)
+  return {
+    sessionID: info.id,
+    ...(typeof info.title === "string" && info.title ? { title: info.title } : {}),
+    ...(typeof info.agent === "string" && info.agent ? { agent: info.agent } : {}),
+    busy: sessionBusy(info),
+    lastActivity: Math.max(lastSeen ?? stamped, armedAt),
+  }
+}
+
+/** The last event time per session, fed by the event stream, and a parent cache. */
 export class Activity {
-  readonly #busy = new Map<string, boolean>()
   readonly #last = new Map<string, number>()
   readonly #parent = new Map<string, string | undefined>()
 
@@ -54,27 +86,17 @@ export class Activity {
     const type = record?.type
     const sessionID = record?.data?.sessionID
     if (typeof type !== "string" || typeof sessionID !== "string") return
-    this.#last.set(sessionID, this.now())
-    if (type === "session.execution.started") this.#busy.set(sessionID, true)
-    else if (type === "session.execution.succeeded" || type === "session.execution.failed" || type === "session.execution.interrupted")
-      this.#busy.set(sessionID, false)
-    else if (type === "session.deleted") {
-      this.#busy.delete(sessionID)
+    if (type === "session.deleted") {
       this.#last.delete(sessionID)
+      this.#parent.delete(sessionID)
+      return
     }
+    this.#last.set(sessionID, this.now())
   }
 
-  busy(sessionID: string): boolean {
-    return this.#busy.get(sessionID) === true
-  }
-
-  /** Last activity, or `fallback` for a session seen in no event since load. */
-  lastActivity(sessionID: string, fallback: number): number {
-    return this.#last.get(sessionID) ?? fallback
-  }
-
-  child(sessionID: string, title: string | undefined, fallback: number): Child {
-    return { sessionID, ...(title ? { title } : {}), busy: this.busy(sessionID), lastActivity: this.lastActivity(sessionID, fallback) }
+  /** The newest event time for `sessionID` since load, if any. */
+  lastSeen(sessionID: string): number | undefined {
+    return this.#last.get(sessionID)
   }
 
   cachedParent(sessionID: string): string | undefined | null {

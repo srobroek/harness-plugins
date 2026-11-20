@@ -14,7 +14,7 @@ export function isAskTool(tool: string): boolean {
 export const DENY_QUESTION =
   "autopilot is armed: never ask the user. Decide reversible items, log them with autopilot_log (type decision), park irreversible ones as a blocker, and continue."
 
-export type Category = "merge" | "deploy" | "push-default" | "force-push" | "other"
+export type Category = "merge" | "deploy" | "push-default" | "force-push" | "irreversible" | "other"
 
 const MERGE = [/\bgh\s+pr\s+merge\b/, /\bglab\s+mr\s+merge\b/, /\bgit\s+merge\b.*\b(origin\/)?(main|master)\b/]
 const DEPLOY = [
@@ -25,8 +25,19 @@ const DEPLOY = [
   /\bpulumi\s+(up|destroy)\b/,
   /\bsst\s+(deploy|remove)\b/,
 ]
-const PUSH_DEFAULT = /\bgit\s+push\b[^|;&]*\s(origin\s+)?(HEAD:)?(refs\/heads\/)?(main|master)\b/
+const PUSH_DEFAULT = /\bgit\s+push\b[^|;&]*\s(\S+:)?(refs\/heads\/)?(main|master)(?=$|[\s;|&])/m
 const FORCE = /\bgit\s+push\b[^|;&]*\s(--force(?!-with-lease)\b|-f\b)/
+/** Commands that discard work or history and cannot be undone from the repository. */
+const IRREVERSIBLE = [
+  /\bgit\s+reset\b[^|;&]*\s--hard\b/,
+  /\bgit\s+clean\b[^|;&]*\s-[a-z]*f/,
+  /\bgit\s+branch\b[^|;&]*\s(-D\b|--delete\s+--force\b|-d\s+-f\b)/,
+  /\bgit\s+push\b[^|;&]*\s(--delete\b|-d\b|\S+\s+:\S)/,
+  /\bgit\s+stash\s+(drop|clear)\b/,
+  /\bgit\s+worktree\s+remove\b[^|;&]*\s--force\b/,
+  /(^|[\s;&|(])rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\b/,
+  /\bbd\s+(delete|purge)\b/,
+]
 
 /** What a permission request would do, from its action and resources. */
 export function categorize(action: string, resources: readonly string[]): Category {
@@ -37,6 +48,7 @@ export function categorize(action: string, resources: readonly string[]): Catego
   if (PUSH_DEFAULT.test(text)) return "push-default"
   if (MERGE.some((pattern) => pattern.test(text))) return "merge"
   if (DEPLOY.some((pattern) => pattern.test(text))) return "deploy"
+  if (IRREVERSIBLE.some((pattern) => pattern.test(text))) return "irreversible"
   return "other"
 }
 
@@ -45,9 +57,10 @@ export type AskDecision = { effect: "allow" } | { effect: "deny"; reason: string
 /**
  * The answer to a permission `ask` while armed. Default grants cover branch work, pushes of
  * feature branches, PRs, beads, dependency bumps, read-only AWS and spikes; `merge` and `deploy`
- * need `--allow`. Force pushes and pushes to the default branch are never granted.
+ * need `--allow`. Commands that discard work are parked unless the run is `--full`. Force pushes
+ * and pushes to the default branch are never granted.
  */
-export function decideAsk(action: string, resources: readonly string[], grants: readonly Grant[]): AskDecision {
+export function decideAsk(action: string, resources: readonly string[], grants: readonly Grant[], full: boolean): AskDecision {
   const category = categorize(action, resources)
   switch (category) {
     case "force-push":
@@ -59,6 +72,8 @@ export function decideAsk(action: string, resources: readonly string[], grants: 
       return grants.includes(category)
         ? { effect: "allow" }
         : { effect: "deny", reason: `${category} is not granted for this run (--allow ${category}); logged as a blocker` }
+    case "irreversible":
+      return full ? { effect: "allow" } : { effect: "deny", reason: "irreversible command parked: it discards work; logged as a blocker (a --full run decides it)" }
     case "other":
       return { effect: "allow" }
   }
@@ -77,5 +92,21 @@ export function endsWithQuestion(text: string): boolean {
 export const REPROMPT =
   "autopilot is armed and the user is away: do not ask. Pick the most likely answer for anything reversible and log it with autopilot_log (type decision); log irreversible or outward-facing items as a blocker with parked: true. Then continue with the next item."
 
-/** Agents that hold a write lane. Read-only agents run without a lane. */
-export const WRITER_AGENTS: ReadonlySet<string> = new Set(["coder", "mechanic", "general", "build"])
+/** Agents that never write to a checkout, so they run without a write lane. */
+export const READ_ONLY_AGENTS: ReadonlySet<string> = new Set([
+  "explore",
+  "researcher",
+  "code-reviewer",
+  "pr-reviewer",
+  "security-reviewer",
+  "adversarial-challenger",
+  "seance",
+  "debug",
+  "operator",
+  "plan",
+])
+
+/** Whether a subagent of `agent` takes one of the run's write lanes. An unknown agent does. */
+export function holdsLane(agent: string | undefined): boolean {
+  return agent === undefined || !READ_ONLY_AGENTS.has(agent)
+}

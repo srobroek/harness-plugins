@@ -2,6 +2,7 @@
 
 import type { Grant, RunOptions, Scope } from "./args.ts"
 import { type JournalEntry, parkedBeads } from "./journal.ts"
+import { holdsLane } from "./policy.ts"
 
 export const TICK_EVERY = "4 minutes"
 export const TICK_MS = 4 * 60_000
@@ -49,7 +50,7 @@ export type RunState = {
 }
 
 export type Bead = { id: string; status: string; parent?: string | null; issue_type?: string; labels?: string[] | null }
-export type Child = { sessionID: string; title?: string; busy: boolean; lastActivity: number }
+export type Child = { sessionID: string; title?: string; agent?: string; busy: boolean; lastActivity: number }
 
 /** What one look at the world finds. */
 export type Snapshot = {
@@ -123,16 +124,25 @@ export function repeatedError(journal: readonly JournalEntry[]): string | undefi
   return last && before && last.error === before.error ? last.error : undefined
 }
 
-/** The reason to stop now, or `undefined`. Order: requested, logged, deadline, scope done, stuck, idle. */
-export function stopReason(state: RunState, snapshot: Pick<Snapshot, "now" | "children" | "journal">, parked: ReadonlySet<string>): string | undefined {
+/**
+ * The reason to stop now, or `undefined`. Order: requested, logged, deadline, scope done, stuck, idle.
+ * `newEntries` are the journal entries since the previous tick. A goal scope has no beads of its own,
+ * so the bead-based conditions apply to bead and queue scopes only.
+ */
+export function stopReason(
+  state: RunState,
+  snapshot: Pick<Snapshot, "now" | "children">,
+  newEntries: readonly JournalEntry[],
+  parked: ReadonlySet<string>,
+): string | undefined {
   if (state.stopRequested) return "stop requested"
-  const logged = snapshot.journal.slice(state.journalLength).find((entry) => entry.type === "stop")
+  const logged = newEntries.find((entry) => entry.type === "stop")
   if (logged) return `logged: ${logged.summary}`
   if (state.deadline !== undefined && snapshot.now >= state.deadline) return "budget or deadline reached"
   const { open, ready, inProgress } = state.beads
   if (state.scope.kind !== "goal" && open.length === 0) return "scope finished"
   const busyChildren = snapshot.children.some((child) => child.busy)
-  if (open.length > 0 && !busyChildren && inProgress.every((id) => parked.has(id)) && ready.every((id) => parked.has(id)))
+  if (state.scope.kind !== "goal" && open.length > 0 && !busyChildren && inProgress.every((id) => parked.has(id)) && ready.every((id) => parked.has(id)))
     return "everything left is blocked or parked"
   if (state.idleTicks >= MAX_IDLE_TICKS) return `${MAX_IDLE_TICKS} ticks without progress`
   return undefined
@@ -211,9 +221,9 @@ export function tick(previous: RunState, snapshot: Snapshot): TickResult {
     children,
     parked: [...parked].sort(),
   }
-  const stop = stopReason(state, snapshot, parked)
+  const stop = stopReason(state, snapshot, newEntries, parked)
   if (stop !== undefined) actions.push({ kind: "stop", reason: stop })
-  const busyLanes = snapshot.children.filter((child) => child.busy).length
+  const busyLanes = snapshot.children.filter((child) => child.busy && holdsLane(child.agent)).length
   const actedLine = actions.length ? actions.map(describeAction).join("; ") : undefined
   return {
     state,
