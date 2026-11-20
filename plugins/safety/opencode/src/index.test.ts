@@ -27,6 +27,8 @@ type Load = {
   sessions?: FakeSession[]
   skills?: FakeSkill[]
   warn?: (message: string, data?: Record<string, unknown>) => void
+  /** Replaces host methods on the fake context before the plugin sets up. */
+  patch?: (context: any) => void
 }
 
 async function load(options: Record<string, unknown> = {}, more: Load = {}) {
@@ -41,6 +43,7 @@ async function load(options: Record<string, unknown> = {}, more: Load = {}) {
     options,
     ...(more.assert ? { assert: more.assert } : {}),
   })
+  more.patch?.(fake.context)
   const cleanup = await createPlugin({
     review: { gh: async () => "[]", timeoutMs: 30_000, budgetMs: 120_000 },
     env: more.env ?? {},
@@ -794,10 +797,16 @@ describe("prompts a subagent cannot answer", () => {
     expect((await ask(fake, "ses_grandchild", "read", [resource()])).effect).toBe("deny")
   })
 
-  /** Resolves once `ready` holds, after the plugin's event handler has had its turns. */
-  const settle = async (ready: () => boolean) => {
-    for (let turn = 0; turn < 200 && !ready(); turn++) await Bun.sleep(1)
-  }
+  /** Resolves when the plugin has made `count` reply calls, after it handled the events that led to them. */
+  const repliesSeen = (fake: Awaited<ReturnType<typeof load>>["fake"], count: number) =>
+    new Promise<void>((done) => {
+      const reply = fake.context.permission.reply
+      let seen = 0
+      fake.context.permission.reply = async (input: Parameters<typeof reply>[0]) => {
+        await reply(input)
+        if (++seen === count) done()
+      }
+    })
   const asked = (id: string, sessionID: string) => ({
     type: "permission.asked",
     data: { id, sessionID, action: "deploy", resources: ["prod"], message: "Deploys need a human." },
@@ -816,8 +825,9 @@ describe("prompts a subagent cannot answer", () => {
       effect: "allow",
     } as Evaluation)
     expect(evaluation.effect).toBe("ask")
+    const replied = repliesSeen(fake, 1)
     fake.emit(asked("per_1", "ses_grandchild"))
-    await settle(() => fake.replies.length > 0)
+    await replied
     expect(fake.replies).toEqual([
       {
         sessionID: "ses_grandchild",
@@ -830,13 +840,76 @@ describe("prompts a subagent cannot answer", () => {
     ])
   })
 
+  /** Resolves with the data of the first warning whose message starts with `prefix`. */
+  const warned = (prefix: string) => {
+    let resolve!: (data: Record<string, unknown> | undefined) => void
+    const first = new Promise<Record<string, unknown> | undefined>((done) => (resolve = done))
+    const warn: Load["warn"] = (message, data) => {
+      if (message.startsWith(prefix)) resolve(data)
+    }
+    return { first, warn }
+  }
+  const failing = (next: () => Promise<unknown>) => (context: any) => {
+    context.event.subscribe = () => ({ [Symbol.asyncIterator]: () => ({ next }) })
+  }
+
+  test("a permission subscription that fails is warned about with the error name only, not swallowed", async () => {
+    const seen = warned("permission prompt watch")
+    await load({}, { sessions: family, warn: seen.warn, patch: failing(() => Promise.reject(new TypeError("leaks /home/x"))) })
+    expect(await seen.first).toEqual({ error: "TypeError" })
+  })
+
+  test("a permission subscription that ends without teardown is warned about", async () => {
+    const seen = warned("permission prompt watch")
+    await load({}, { sessions: family, warn: seen.warn, patch: failing(() => Promise.resolve({ done: true, value: undefined })) })
+    expect(await seen.first).toEqual({ error: "stream ended" })
+  })
+
+  test("a subscription that throws on creation does not fail setup, is warned about, and the evaluate hook still denies", async () => {
+    const seen = warned("permission prompt watch")
+    const { fake } = await load({}, {
+      sessions: family,
+      warn: seen.warn,
+      patch: (context) => {
+        context.event.subscribe = () => {
+          throw new RangeError("host refused")
+        }
+      },
+    })
+    expect(await seen.first).toEqual({ error: "RangeError" })
+    expect((await ask(fake, "ses_grandchild", "read", [`${outside}/x`])).effect).toBe("deny")
+  })
+
+  test("a teardown does not warn about the subscription it ended", async () => {
+    const warnings: string[] = []
+    const { cleanup } = await setup({}, (message) => void warnings.push(message))
+    await cleanup?.()
+    await Promise.resolve()
+    expect(warnings.filter((message) => message.startsWith("permission prompt watch"))).toEqual([])
+  })
+
+  test("a failed skill lookup keeps the prompt (never read as an empty skill list) and is warned about", async () => {
+    const seen = warned("skill lookup failed")
+    const { fake } = await load({}, {
+      sessions: family,
+      skills: [{ id: "review-core", name: "review-core", path: join(skillDir, "SKILL.md"), content: "" }],
+      warn: seen.warn,
+      patch: (context) => {
+        context.skill.list = () => Promise.reject(new TypeError("host down"))
+      },
+    })
+    expect((await ask(fake, "ses_1", "read", [`${skillDir}/references/x`])).effect).toBe("ask")
+    expect(await seen.first).toEqual({ sessionID: "ses_1", error: "TypeError" })
+  })
+
   test("leaves a root session's and an unknown session's raised prompts alone", async () => {
     const { fake } = await setup()
+    // Events are handled in order, so the child's reply, emitted last, proves the first two were passed over.
+    const replied = repliesSeen(fake, 1)
     fake.emit(asked("per_root", "ses_1"))
     fake.emit(asked("per_unknown", "ses_missing"))
     fake.emit(asked("per_child", "ses_child"))
-    await settle(() => fake.replies.length > 0)
-    await Bun.sleep(5)
+    await replied
     expect(fake.replies.map((reply) => reply.requestID)).toEqual(["per_child"])
   })
 

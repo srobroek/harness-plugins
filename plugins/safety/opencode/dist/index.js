@@ -6879,7 +6879,11 @@ function createPlugin(overrides = {}) {
         if (tool === undefined || !READ_ONLY_TOOLS.has(tool))
           return;
         const directory = await sessionDirectory(evaluation.sessionID);
-        const listed = await ctx.skill.list({ location: { directory } }).catch(() => {
+        const listed = await ctx.skill.list({ location: { directory } }).catch((error) => {
+          warn("skill lookup failed; the permission prompt stays", {
+            sessionID: evaluation.sessionID,
+            error: error instanceof Error ? error.name : typeof error
+          });
           return;
         });
         allowSkillReads(evaluation, skillDirectories(listedSkills(listed)));
@@ -6975,22 +6979,44 @@ function createPlugin(overrides = {}) {
         denyUnanswerable(evaluation, await sessionInfo(evaluation.sessionID));
       }) : undefined;
       const watching = new AbortController;
-      const asked = on("subagent-prompts") ? ctx.event.subscribe({ types: ["permission.asked"], signal: watching.signal })[Symbol.asyncIterator]() : undefined;
-      if (asked)
+      const errorName = (error) => error instanceof Error ? error.name : typeof error;
+      const watchFailed = (error) => {
+        if (watching.signal.aborted)
+          return;
+        warn("permission prompt watch stopped; prompts a later plugin raises in subagent sessions are no longer rejected", { error });
+      };
+      let asked;
+      if (on("subagent-prompts")) {
+        try {
+          asked = ctx.event.subscribe({ types: ["permission.asked"], signal: watching.signal })[Symbol.asyncIterator]();
+        } catch (error) {
+          watchFailed(errorName(error));
+        }
+      }
+      if (asked) {
+        const events = asked;
         (async () => {
           for (;; ) {
-            const next = await asked.next().catch(() => ({ done: true, value: undefined }));
-            if (next.done || watching.signal.aborted)
+            let next;
+            try {
+              next = await events.next();
+            } catch (error) {
+              return watchFailed(errorName(error));
+            }
+            if (next.done)
+              return watchFailed("stream ended");
+            if (watching.signal.aborted)
               return;
             const event = next.value;
             if (event.type !== "permission.asked" || event.data === undefined)
               continue;
             await rejectUnanswerable(event.data).catch((error) => warn("could not reject a subagent's permission prompt", {
               sessionID: event.data?.sessionID,
-              error: error instanceof Error ? error.name : typeof error
+              error: errorName(error)
             }));
           }
         })();
+      }
       async function rejectUnanswerable(request) {
         if (typeof request.sessionID !== "string" || typeof request.id !== "string")
           return;
