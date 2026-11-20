@@ -9,7 +9,7 @@ import { automationRequest } from "./automation.ts"
 import { Activity, BD_READ_TIMEOUT_MS, childFrom, commitCount, readBeads, type SessionView, sessionBusy } from "./gather.ts"
 import { LOG_INPUT_SCHEMA, validateEntry } from "./journal.ts"
 import { DENY_QUESTION, decideAsk, endsWithQuestion, isAskTool, REPROMPT } from "./policy.ts"
-import { autopilotRoot, findRun, RunDir, type Run, runCommand } from "./rundir.ts"
+import { autopilotRoot, findRun, type Run, RunDir, runCommand } from "./rundir.ts"
 import { newRunState, type RunState, runIdFor, type Snapshot, TICK_MS, tick, tickPrompt } from "./state.ts"
 import { HANDOFF_LABEL, handoffDescription, renderSummary } from "./summary.ts"
 import { Ticks } from "./timer.ts"
@@ -137,7 +137,7 @@ export function setupPrompt(runId: string, invocation: Extract<Invocation, { kin
     `Autopilot run ${runId} is in setup. Load the ${SKILL} skill and follow it.`,
     `Given on the command line: ${given}. Still to ask: ${missing}.`,
     invocation.missing.length
-      ? 'Ask every missing value in ONE parley_ask round (fall back to the question tool), with recommendations (lanes: 3). Then call autopilot_status with action "arm" and the answers in setup.'
+      ? 'Ask every missing value in ONE parley_ask round (fall back to the question tool), with a recommendation for each; lanes take any whole number, recommend 3. Then call autopilot_status with action "arm" and the answers in setup.'
       : 'Nothing to ask: call autopilot_status with action "arm" now.',
     "After arming, never ask the user anything until the run stops.",
   ].join("\n")

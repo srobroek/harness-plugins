@@ -69,6 +69,11 @@ and the run cannot stop as a success while one remains.
 
 Never allowed: a force push, or a push to the default branch.
 
+Commands that discard work (`git reset --hard`, `git clean -f`, `git branch -D`,
+deleting a remote branch, `git stash drop`, `rm -r`, `bd delete`) are
+irreversible. When one needs approval, the plugin denies it and logs a blocker,
+unless the run is `--full`.
+
 `merge` needs `--allow merge`, an approve verdict from `code-reviewer` and
 green required checks. A deploy (stack create, update or delete) needs
 `--allow deploy`. The plugin answers each permission `ask` from these grants,
@@ -76,8 +81,9 @@ and it logs every denial as a blocker.
 
 ## Lanes
 
-- Write lanes are the lane count chosen at setup. Read-only agents (explore,
-  researcher, reviewers) do not use a lane.
+- Write lanes are the lane count chosen at setup. There is no upper limit. Read-only
+  agents (explore, researcher, the reviewers, debug) do not use a lane, and the
+  ping counts only busy subagents that hold one.
 - Each writer gets its own Worktrunk worktree. The lead claims no beads. Each
   lane claims its own bead, and the beads plugin renews the claim.
 - Stalled lanes follow the tick's `actions`: first `nudge`, then

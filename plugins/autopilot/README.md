@@ -17,7 +17,10 @@ leaves a debrief and a handoff bead.
 
 Flags: `--full`, `--allow merge,deploy`, `--lanes N`, `--for 3h` or
 `--until-time 18:00`, and `--until "<condition>"`. The setup round asks for
-each value that the command line leaves out. It recommends 3 lanes.
+each value that the command line leaves out. The number of parallel write lanes
+has no upper limit; the setup round recommends 3, and `--lanes N` skips the
+question. Read-only subagents such as `explore` and the reviewers do not take a
+lane.
 
 Only the user starts a run. The `autopilot` skill is not auto-invoked, and the
 hooks arm only through the command.
@@ -27,11 +30,14 @@ hooks arm only through the command.
 - It denies `question`, `parley_ask`, `parley_wait` and `parley_end` for the
   lead session and every subagent under it.
 - When a turn ends with a question to the user, the plugin re-prompts the
-  session to decide, log the decision and continue.
+  session to decide, log the decision and continue. After two re-prompts in a
+  row it logs an issue and waits for the next tick.
 - It answers permission `ask` prompts from the run's grants. Branch work,
   feature-branch pushes, PRs, beads, dependency bumps and read-only AWS calls are
-  allowed. A merge or a deploy needs `--allow`. A force push or a push to the
-  default branch is always denied. The plugin logs each denial as a blocker.
+  allowed. A merge or a deploy needs `--allow`. A command that discards work,
+  such as `git reset --hard` or `rm -r`, needs `--full`. A force push or a push
+  to the default branch is always denied. The plugin logs each denial as a
+  blocker.
 - After compaction, it queues a notice with the rules and a fresh status.
 
 Armed runs are kept in plugin storage, so they survive a server restart.
@@ -52,7 +58,8 @@ Armed runs are kept in plugin storage, so they survive a server restart.
 When a run is armed, the agent creates an OpenCode automation with
 `tools.opencode.automation_create`, every 4 minutes until the deadline. It is a
 code action, so a tick runs no model. A tick calls `autopilot_status` and sends
-nothing while the lead session is busy. Otherwise it sends a ping:
+nothing while the lead session is busy, which it reads from the host's session
+record. Otherwise it sends a ping:
 
 ```text
 ♥ 14:32 · 2/4 lanes · ready 4 · blocked 2 (+1 unblocked) · parked 1 · 1h12m left
@@ -92,4 +99,5 @@ nudged first, then restarted once, then parked.
 
 `autopilot/latest` links to the newest run. At stop, the plugin also creates a
 bead labelled `autopilot-handoff`. That bead links the run directory and lists
-the items that need input.
+the items that need input. The plugin's own `bd` writes take the embedded
+store's write lock, like the beads plugin's.
