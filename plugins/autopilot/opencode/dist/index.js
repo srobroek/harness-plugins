@@ -965,10 +965,17 @@ function parseInvocation(text) {
       case "--full":
         options.full = true;
         break;
+      case "--no-full":
+        options.full = false;
+        break;
       case "--allow": {
         const raw = value();
         if (!raw)
-          return { kind: "error", message: "--allow needs a list, for example --allow merge,deploy" };
+          return { kind: "error", message: "--allow needs a list, for example --allow merge,deploy, or --allow none" };
+        if (raw === "none") {
+          options.allow = [];
+          break;
+        }
         const grants = raw.split(",").map((item) => item.trim()).filter(Boolean);
         const unknown = grants.filter((grant) => !GRANTS.includes(grant));
         if (unknown.length)
@@ -1000,8 +1007,8 @@ function parseInvocation(text) {
       }
       case "--until": {
         const raw = value();
-        if (!raw)
-          return { kind: "error", message: "--until needs a condition in quotes" };
+        if (raw === undefined)
+          return { kind: "error", message: '--until needs a condition in quotes, or "" for none' };
         options.until = raw;
         break;
       }

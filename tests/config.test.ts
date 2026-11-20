@@ -36,7 +36,7 @@ test("multi-semantic-release discovers every plugin and no other package", () =>
     .map((entry) => entry.name)
     .sort()
   expect(releasedPackages()).toEqual(plugins)
-  expect(plugins).toHaveLength(43)
+  expect(plugins).toHaveLength(44)
 })
 
 /** The commit-analyzer options of a release config. */
