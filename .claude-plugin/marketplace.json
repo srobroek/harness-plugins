@@ -1,0 +1,11 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "harness-plugins",
+  "owner": {
+    "name": "Sjors Robroek"
+  },
+  "metadata": {
+    "description": "Agent plugins for OpenCode and Claude Code."
+  },
+  "plugins": []
+}

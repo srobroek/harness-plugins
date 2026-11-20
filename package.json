@@ -1,0 +1,29 @@
+{
+  "name": "harness-plugins",
+  "private": true,
+  "description": "Public agent plugins for OpenCode and Claude Code. Plugins live in plugins/.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git"
+  },
+  "engines": {
+    "node": ">=24.10"
+  },
+  "workspaces": [
+    "plugins/*"
+  ],
+  "scripts": {
+    "build": "harness-kit build",
+    "check": "harness-kit check",
+    "test": "bun test",
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@anthropic-ai/claude-code": "2.1.327",
+    "@srobroek/harness-kit": "1.0.0",
+    "@types/bun": "1.4.4",
+    "bun": "1.4.4",
+    "typescript": "5.9.3"
+  }
+}

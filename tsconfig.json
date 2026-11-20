@@ -1,0 +1,4 @@
+{
+  "extends": "@srobroek/harness-kit/tsconfig.base.json",
+  "include": ["tests/*.ts"]
+}
