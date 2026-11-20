@@ -12,17 +12,11 @@
 **Cause:** the agent skipped the setup round, or the arm call failed validation.
 **Fix:** call `autopilot_status` with `action: "arm"` and the setup answers. Correct any `--for` or `--until-time` value that the call rejects.
 
-## A permission request is denied as irreversible
+## A permission request is denied while the run is armed
 
-**Symptom:** `irreversible command parked: it discards work; logged as a blocker`
-**Cause:** the command needed approval and matches a command that discards work, such as `git reset --hard` or `rm -r`. Only a `--full` run decides those commands.
-**Fix:** find a reversible way, for example a new branch or worktree in place of a reset. If none exists, move on to the next item; the blocker stays in the journal for the user.
-
-## A permission request is denied because autopilot cannot read it
-
-**Symptom:** `autopilot allows only commands it can read: ...; logged as a blocker`
-**Cause:** the command needed approval and the gate could not prove it safe. The message names the cause: an unknown command or flag, a quoted flag, a variable or command substitution, a wrapper such as `sh -c`, or a push without an explicit branch.
-**Fix:** rewrite the command in a plain, literal form, for example `git push origin feat/x`, and run it again. If no such form exists, leave the blocker for the user and move on to the next item.
+**Symptom:** `autopilot never approves a permission ask while the run is unattended; logged as a blocker`
+**Cause:** the user's permission rules ask about this call, and nobody is there to answer. The plugin denies every `ask` and journals the permission kind and the command or pattern.
+**Fix:** do not retry the call in another form to get around the prompt. Park the item, leave the blocker for the user, and move on to the next item.
 
 ## autopilot_status reports that it cannot use its run files
 

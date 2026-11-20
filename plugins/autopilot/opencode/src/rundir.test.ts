@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { appendFileSync, chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { appendFileSync, chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { RunDir, RunFileError } from "./rundir.ts"
@@ -70,6 +70,66 @@ test("a writer paused between its check and its rename holds off a successor, wh
   await slow
   expect(await successor).toBe("stale")
   expect(dir.readState()).toMatchObject({ ticks: 1, phase: "setup" })
+})
+
+/** A write paused before its rename, and how to let it go on. */
+function pausedWrite(dir: RunDir, read: RunState, next: RunState) {
+  let resume: () => void = () => {}
+  const paused = new Promise<void>((resolve) => {
+    resume = resolve
+  })
+  let reached: () => void = () => {}
+  const atRename = new Promise<void>((resolve) => {
+    reached = resolve
+  })
+  const done = dir.writeState(read, next, {
+    beforeRename: async () => {
+      reached()
+      await paused
+    },
+  })
+  return { atRename, resume, done }
+}
+
+test("a stalled writer that resumes after the takeover age keeps its lock, and its successor is refused", async () => {
+  const dir = runDir("r7")
+  const first = await dir.writeState(undefined, fresh("r7"))
+  const slow = pausedWrite(dir, first, { ...first, ticks: 1 })
+  await slow.atRename
+  // The hold looks ancient, but the writer that took it is alive.
+  const record = JSON.parse(readFileSync(dir.writeLockPath, "utf8")) as Record<string, unknown>
+  writeFileSync(dir.writeLockPath, JSON.stringify({ ...record, taken: 0 }))
+  let successorRenaming = false
+  const successor = dir
+    .writeState(first, { ...first, ticks: 2 }, {
+      beforeRename: async () => {
+        successorRenaming = true
+      },
+    })
+    .then(
+      () => "written",
+      (error: unknown) => (error instanceof RunFileError ? error.kind : "other"),
+    )
+  await settle()
+  expect(successorRenaming).toBe(false)
+  slow.resume()
+  await slow.done
+  expect(await successor).toBe("stale")
+  expect(dir.readState()?.ticks).toBe(1)
+  expect(existsSync(dir.writeLockPath)).toBe(false)
+})
+
+test("a writer releases only a write lock it still owns", async () => {
+  const dir = runDir("r8")
+  const first = await dir.writeState(undefined, fresh("r8"))
+  const slow = pausedWrite(dir, first, { ...first, ticks: 1 })
+  await slow.atRename
+  const record = JSON.parse(readFileSync(dir.writeLockPath, "utf8")) as Record<string, unknown>
+  const successor = JSON.stringify({ ...record, token: "successor" })
+  writeFileSync(dir.writeLockPath, successor)
+  slow.resume()
+  await slow.done.catch(() => undefined)
+  expect(readFileSync(dir.writeLockPath, "utf8")).toBe(successor)
 })
 
 test("a writer whose run lease another owner took over is refused at the rename", async () => {

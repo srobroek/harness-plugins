@@ -8,7 +8,6 @@ import { withLease } from "@srobroek/opencode-lib/lease-lock"
 import { registerSkills } from "@srobroek/opencode-lib/skill-files"
 import { classifyScope, deadlineAt, type Invocation, parseInvocation, type RunOptions } from "./args.ts"
 import { automationRequest, type TickBinding } from "./automation.ts"
-import { decideAsk, pushRemotes } from "./gate.ts"
 import { Activity, BD_READ_TIMEOUT_MS, childFrom, commitCount, readBeads, type SessionView, sessionBusy } from "./gather.ts"
 import { type JournalEntry, LOG_INPUT_SCHEMA, validateEntry } from "./journal.ts"
 import { DENY_QUESTION, endsWithQuestion, isAskTool, REPROMPT } from "./policy.ts"
@@ -19,7 +18,6 @@ import { realClock, Ticks } from "./timer.ts"
 
 export * from "./args.ts"
 export * from "./automation.ts"
-export * from "./gate.ts"
 export * from "./gather.ts"
 export * from "./journal.ts"
 export * from "./policy.ts"
@@ -126,9 +124,6 @@ const RUN_LOCK_WAIT_MS = 60_000
 /** The storage page size startup asks for; it follows `next` until the scan ends. */
 const STORAGE_PAGE = 100
 
-/** How long a resolved default branch is trusted before the hook asks git again. */
-const DEFAULT_BRANCH_TTL_MS = 10 * 60_000
-
 /** A run lock that could not be taken: the transition did not run. */
 class RunLockBusy extends Error {}
 
@@ -207,8 +202,6 @@ export class Autopilot {
   readonly #serial = new Map<string, Promise<unknown>>()
   /** File errors already journaled, so a hook that fires on every call logs each one once. */
   readonly #reported = new Set<string>()
-  /** Resolved default branches by directory and remote. */
-  readonly #defaults = new Map<string, { branch: string; at: number }>()
 
   constructor(
     readonly ctx: Context,
@@ -242,7 +235,8 @@ export class Autopilot {
       const dir = new RunDir(armed.root, armed.runId)
       try {
         const state = dir.readState()
-        if (state?.phase === "running" && state.tick.kind === "fallback") this.#startFallback(sessionID, state.tick.token)
+        // A stopping run still needs its ticks: they retry the stop artifacts that did not land.
+        if ((state?.phase === "running" || state?.phase === "stopping") && state.tick.kind === "fallback") this.#startFallback(sessionID, state.tick.token)
       } catch (error) {
         this.#report(dir, error)
       }
@@ -632,7 +626,10 @@ export class Autopilot {
     let handoff = state.stop?.handoff
     if (handoff === undefined) {
       const title = handoffTitle(state.runId)
-      handoff = await this.#findHandoff(state, title)
+      const lookup = await this.#findHandoff(state, title)
+      // A failed lookup cannot rule out a bead an earlier attempt created, so nothing is created.
+      if (!lookup.ok) return pending(`could not look up an existing handoff bead (${lookup.reason}); nothing was created`)
+      handoff = lookup.id
       if (handoff === undefined) {
         const created = await this.#bdWrite(state, ["create", title, "--labels", HANDOFF_LABEL, "-d", handoffDescription(state, journal, dir.path), "--json"])
         handoff = created.ok ? parseId(created.stdout) : undefined
@@ -653,17 +650,24 @@ export class Autopilot {
     }
   }
 
-  /** The id of an existing handoff bead for this run, so a retried stop never creates a second. */
-  async #findHandoff(state: RunState, title: string): Promise<string | undefined> {
+  /**
+   * The id of an existing handoff bead for this run (`undefined` when there is none), so a retried
+   * stop never creates a second. A lookup that fails or answers something unreadable is `ok: false`.
+   */
+  async #findHandoff(state: RunState, title: string): Promise<{ ok: true; id: string | undefined } | { ok: false; reason: string }> {
     const listed = await this.#run(state.directory, "bd", ["list", "--all", "--label", HANDOFF_LABEL, "--json", "--limit", "0"], BD_READ_TIMEOUT_MS)
-    if (!listed.ok) return undefined
+    if (!listed.ok) return { ok: false, reason: listed.stderr.trim() || "bd list failed" }
+    let items: unknown
     try {
-      const items = JSON.parse(listed.stdout.slice(Math.max(0, listed.stdout.indexOf("[")))) as { id?: unknown; title?: unknown; labels?: unknown }[]
-      const found = items.find((item) => item.title === title && Array.isArray(item.labels) && item.labels.includes(HANDOFF_LABEL))
-      return typeof found?.id === "string" ? found.id : undefined
-    } catch {
-      return undefined
+      items = JSON.parse(listed.stdout.slice(Math.max(0, listed.stdout.indexOf("["))))
+    } catch (error) {
+      return { ok: false, reason: `bd list answered something that is not JSON (${errorText(error)})` }
     }
+    if (!Array.isArray(items)) return { ok: false, reason: "bd list did not answer a list" }
+    const found = (items as { id?: unknown; title?: unknown; labels?: unknown }[]).find(
+      (item) => item?.title === title && Array.isArray(item.labels) && item.labels.includes(HANDOFF_LABEL),
+    )
+    return { ok: true, id: typeof found?.id === "string" ? found.id : undefined }
   }
 
   async log(sessionID: string, input: unknown): Promise<string> {
@@ -722,51 +726,23 @@ export class Autopilot {
   }
 
   /**
-   * Each remote's default branch, from `refs/remotes/<remote>/HEAD`, falling back to asking the
-   * remote (`git ls-remote --symref`). A remote neither answers is left out, and the gate denies
-   * pushes to it. Answers are kept for {@link DEFAULT_BRANCH_TTL_MS}.
+   * While a run is armed, every permission `ask` is denied and journaled as a blocker. The user's
+   * own permission rules already allow what they trust; an `ask` is what they wanted to be asked
+   * about, and nobody is there to answer. Effects the rules already decided are left alone.
    */
-  async #defaultBranches(directory: string, remotes: readonly string[]): Promise<Map<string, string>> {
-    const found = new Map<string, string>()
-    for (const remote of remotes) {
-      if (!/^[\w.-]+$/.test(remote)) continue
-      const key = `${directory}\u0000${remote}`
-      const cached = this.#defaults.get(key)
-      if (cached && this.#now() - cached.at < DEFAULT_BRANCH_TTL_MS) {
-        found.set(remote, cached.branch)
-        continue
-      }
-      let branch: string | undefined
-      const local = await this.#run(directory, "git", ["symbolic-ref", "--short", `refs/remotes/${remote}/HEAD`])
-      if (local.ok) branch = local.stdout.trim().replace(new RegExp(`^${remote.replace(/[.]/g, "\\.")}/`), "")
-      if (!branch) {
-        const asked = await this.#run(directory, "git", ["ls-remote", "--symref", remote, "HEAD"], 15_000)
-        if (asked.ok) branch = /^ref: refs\/heads\/(\S+)\s+HEAD$/m.exec(asked.stdout)?.[1]
-      }
-      if (!branch) continue
-      this.#defaults.set(key, { branch, at: this.#now() })
-      found.set(remote, branch)
-    }
-    return found
-  }
-
   async evaluate(event: PermissionEvaluation): Promise<void> {
     if (event.effect !== "ask") return
     const running = await this.runningFor(event.sessionID)
     if (!running) return
-    const remotes = pushRemotes(event.action, event.resources)
-    const defaults = remotes.length > 0 ? await this.#defaultBranches(await this.#sessionDirectory(event.sessionID), remotes) : undefined
-    const decision = running.state
-      ? decideAsk(event.action, event.resources, running.state.options.allow, running.state.options.full, defaults)
-      : ({ effect: "deny", reason: `autopilot cannot read its run state (${running.unreadable}); nothing is approved until it can` } as const)
-    event.effect = decision.effect
-    if (decision.effect === "deny") {
-      event.message = decision.reason
-      try {
-        running.dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: `${event.action} denied: ${decision.reason}`, evidence: event.resources.join(" ").slice(0, 300) })
-      } catch (error) {
-        this.#warn("could not journal a denied permission", { run: running.dir.runId, error: errorText(error) })
-      }
+    const asked = event.resources.join(" ").slice(0, 300)
+    event.effect = "deny"
+    event.message = running.state
+      ? `autopilot never approves a permission ask while the run is unattended; logged as a blocker for the user (${event.action}: ${asked})`
+      : `autopilot never approves a permission ask, and it cannot read its run state (${running.unreadable}); logged as a blocker`
+    try {
+      running.dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: `permission ask denied: ${event.action}`, evidence: asked })
+    } catch (error) {
+      this.#warn("could not journal a denied permission", { run: running.dir.runId, error: errorText(error) })
     }
   }
 

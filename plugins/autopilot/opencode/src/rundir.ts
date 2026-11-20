@@ -1,6 +1,7 @@
 /** The run directory under the git common dir: state.json, journal.jsonl, summary.md and the `latest` link. */
 
 import { execFile } from "node:child_process"
+import { randomUUID } from "node:crypto"
 import {
   closeSync,
   existsSync,
@@ -69,10 +70,45 @@ function readText(path: string): string | undefined {
   }
 }
 
-/** How long a writer waits for the per-write lock, and how old a hold must be before it is presumed dead. */
+/** How long a writer waits for the per-write lock. A live writer's hold is never taken over, however old. */
 const WRITE_LOCK_WAIT_MS = 30_000
-const WRITE_LOCK_STALE_MS = 10 * 60_000
 const WRITE_LOCK_POLL_MS = 10
+/** A lock file with no readable record this old was left by a writer that died creating it. */
+const UNWRITTEN_RECORD_MS = 60_000
+/** A steal lock this old was left by a process that died inside the synchronous takeover. */
+const STEAL_STALE_MS = 10_000
+
+type LockRecord = { host?: unknown; pid?: unknown; token?: unknown }
+
+function readLockRecord(path: string): LockRecord | undefined {
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as LockRecord
+  } catch {
+    return undefined
+  }
+}
+
+function fileAge(path: string): number {
+  try {
+    return Date.now() - statSync(path).mtimeMs
+  } catch {
+    return 0
+  }
+}
+
+/** Whether the writer that holds the lock at `path` is gone; a holder on another host never is. */
+function lockAbandoned(path: string): boolean {
+  if (!existsSync(path)) return false
+  const holder = readLockRecord(path)
+  if (holder === undefined) return fileAge(path) > UNWRITTEN_RECORD_MS
+  if (holder.host !== hostname() || typeof holder.pid !== "number") return false
+  try {
+    process.kill(holder.pid, 0)
+    return false
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH"
+  }
+}
 
 export type WriteOptions = {
   /** The run lease owner this writer holds; the write is refused once `run.lock` names another. */
@@ -144,12 +180,17 @@ export class RunDir {
    * disk when it renames. The lease is checked again after the last `await` and before the
    * synchronous rename, so a writer that paused and lost the lease meanwhile refuses. A successor
    * that took the lease while this writer was renaming still needs the write lock to write, and
-   * then finds the generation moved on and refuses too. A hold is taken over only when its
-   * process is gone (same host) or it is older than ten minutes, far past the run lease, so a
-   * live writer's hold is never stolen while its lease could still be valid.
+   * then finds the generation moved on and refuses too.
+   *
+   * The write lock is never taken from a live writer, however long it has held it: a hold is
+   * taken over only when its process on this host is gone. Each write renames its own temporary
+   * file, so no other write's content can be renamed into place, and each write releases the
+   * lock only while the lock file still carries its own token.
    */
   async writeState(read: Pick<RunState, "generation"> | undefined, next: RunState, options: WriteOptions = {}): Promise<RunState> {
-    const release = await this.#takeWriteLock()
+    const token = randomUUID()
+    await this.#takeWriteLock(token)
+    const temporary = `${this.statePath}.${token}.tmp`
     try {
       const current = this.readState()
       const expected = read?.generation
@@ -157,9 +198,8 @@ export class RunDir {
         throw new RunFileError("stale", this.statePath, `generation ${current.generation} on disk, this writer read ${expected ?? "nothing"}`)
       this.#checkLease(options.leaseOwner ?? this.leaseOwner)
       const written: RunState = { ...next, generation: (current?.generation ?? -1) + 1 }
-      const temporary = `${this.statePath}.tmp`
       try {
-        writeFileSync(temporary, `${JSON.stringify(written, null, 2)}\n`)
+        writeFileSync(temporary, `${JSON.stringify(written, null, 2)}\n`, { flag: "wx" })
       } catch (error) {
         throw new RunFileError("io", this.statePath, describe(error), error)
       }
@@ -172,7 +212,8 @@ export class RunDir {
       }
       return written
     } finally {
-      release()
+      rmSync(temporary, { force: true })
+      this.#releaseWriteLock(token)
     }
   }
 
@@ -188,48 +229,53 @@ export class RunDir {
     if (holder !== owner) throw new RunFileError("stale", this.lockPath, `the run lease now belongs to ${String(holder)}`)
   }
 
-  async #takeWriteLock(): Promise<() => void> {
+  async #takeWriteLock(token: string): Promise<void> {
     const path = this.writeLockPath
     const deadline = Date.now() + WRITE_LOCK_WAIT_MS
     for (;;) {
       try {
         const fd = openSync(path, "wx")
         try {
-          writeSync(fd, JSON.stringify({ host: hostname(), pid: process.pid, taken: Date.now() }))
+          writeSync(fd, JSON.stringify({ host: hostname(), pid: process.pid, token, taken: Date.now() }))
         } finally {
           closeSync(fd)
         }
-        return () => rmSync(path, { force: true })
+        return
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw new RunFileError("io", path, describe(error), error)
       }
-      if (this.#writeLockAbandoned(path)) {
-        rmSync(path, { force: true })
-        continue
-      }
+      this.#takeOverIfAbandoned(path)
       if (Date.now() >= deadline) throw new RunFileError("io", path, `the state write lock stayed held for ${WRITE_LOCK_WAIT_MS / 1000}s`)
       await new Promise((resolve) => setTimeout(resolve, WRITE_LOCK_POLL_MS))
     }
   }
 
-  #writeLockAbandoned(path: string): boolean {
-    let holder: { host?: unknown; pid?: unknown; taken?: unknown }
+  /** Remove the write lock only while it still carries `token`. */
+  #releaseWriteLock(token: string): void {
+    if (readLockRecord(this.writeLockPath)?.token === token) rmSync(this.writeLockPath, { force: true })
+  }
+
+  /**
+   * Clear a write lock whose writer is gone: its process on this host no longer exists, or its
+   * record was never written and the file is older than a record takes to write. A holder on
+   * another host is never judged gone. The check and the unlink run under a steal lock, with the
+   * record read again there, so two waiters never remove each other's fresh lock.
+   */
+  #takeOverIfAbandoned(path: string): void {
+    if (!lockAbandoned(path)) return
+    const steal = `${path}.steal`
+    let fd: number
     try {
-      holder = JSON.parse(readFileSync(path, "utf8")) as typeof holder
-    } catch {
-      try {
-        return Date.now() - statSync(path).mtimeMs > WRITE_LOCK_STALE_MS
-      } catch {
-        return false
-      }
-    }
-    if (typeof holder.taken === "number" && Date.now() - holder.taken > WRITE_LOCK_STALE_MS) return true
-    if (holder.host !== hostname() || typeof holder.pid !== "number") return false
-    try {
-      process.kill(holder.pid, 0)
-      return false
+      fd = openSync(steal, "wx")
     } catch (error) {
-      return (error as NodeJS.ErrnoException).code === "ESRCH"
+      if ((error as NodeJS.ErrnoException).code === "EEXIST" && fileAge(steal) > STEAL_STALE_MS) rmSync(steal, { force: true })
+      return
+    }
+    try {
+      if (lockAbandoned(path)) rmSync(path, { force: true })
+    } finally {
+      closeSync(fd)
+      rmSync(steal, { force: true })
     }
   }
 

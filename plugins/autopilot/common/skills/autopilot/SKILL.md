@@ -62,6 +62,13 @@ its subagents.
 
 ## Permissions
 
+These rules say what you may decide to do. They are not approvals: while the
+run is armed, the plugin denies every permission `ask` and logs it as a
+blocker. The user's own permission rules already allow what they trust, and an
+`ask` is what they wanted to be asked about. When a call is denied that way,
+log the item, park it, and move on. Do not retry it in another form to get
+around the prompt.
+
 Allowed by default:
 
 - commits on branches and worktrees, and pushes of feature branches
@@ -75,44 +82,19 @@ Spikes are throwaway AWS resources. Tag each one `autopilot-run=<run id>` and
 give it a TTL. Before you create a spike, create a teardown child bead that
 blocks its parent. Close that bead only with evidence: a tag query that returns
 0 resources. Sweep the tag before you stop. A leftover resource is a blocker,
-and the run cannot stop as a success while one remains. When an AWS call that
-creates a spike needs approval, the plugin denies it: it cannot check the tag
-before the call. Log the spike as a blocker for the user in that case.
+and the run cannot stop as a success while one remains.
 
-Never allowed: a force push, a mirror push, or a push to the default branch.
-
-The permission gate fails closed. When a command needs approval, the plugin
-allows it only if it can read the whole command and every part is a known safe
-form. Write commands it can read:
-
-- Name the remote and the feature branch in every push:
-  `git push origin feat/x`, never a bare `git push` or `HEAD`. Push from the
-  session's own checkout, not with `git -C`. The gate resolves the remote's
-  default branch and denies a push to it, or any push when it cannot resolve it.
-- Use literal arguments. The gate denies a variable, a command substitution,
-  a glob in a restricted command, a quoted flag, and `$'…'` or `$"…"` quoting.
-- Run commands directly. The gate denies a shell started with `-c`, the
-  `xargs` and `sudo` wrappers, and any command that runs a string as code.
-- Run the repository's own scripts by name: `npm test`, `npm run <script>`,
-  `bun test`, `make <target>`, `python3 -m pytest`. The gate denies an
-  interpreter running a file or an inline program, and package executors such
-  as `npx`, `npm exec`, `pnpm dlx`, `bunx` and `uvx`.
-- Change branches with `git switch`. `git checkout` is allowed only as
-  `git checkout -b <branch>`.
-- `wt merge` is a merge: it needs `--allow merge`.
-- Other permission kinds are allowed only when they act inside the run's
-  location (read, edit, search, web, skills, subagents). The gate denies
-  `external_directory`, `execute` and MCP or plugin tools that ask.
+Never do: a force push, a mirror push, or a push to the default branch.
 
 Commands that discard work (`git reset --hard`, `git clean -f`, `git branch -D`,
 `git switch --discard-changes`, deleting a remote branch, `git stash drop`,
-`rm -r`, `bd delete`) are irreversible. When one needs approval, the plugin
-denies it and logs a blocker, unless the run is `--full`.
+`rm -r`, `bd delete`) are irreversible. Run one only in a `--full` run.
+Otherwise, log it as a blocker and park the item.
 
-`merge` needs `--allow merge`, an approve verdict from `code-reviewer` and
+A merge needs `--allow merge`, an approve verdict from `code-reviewer` and
 green required checks. A deployment (stack create, update or delete) needs
-`--allow deploy`. The plugin answers each permission `ask` from these grants,
-and it logs every denial as a blocker.
+`--allow deploy`. These grants decide what you do. They never approve a
+permission prompt.
 
 ## Lanes
 
