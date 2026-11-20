@@ -1,3 +1,9 @@
+## subagent-worktree [0.5.0](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.4.0...subagent-worktree--v0.5.0) (2026-11-20)
+
+### Features
+
+* **lib:** add laneSessions and moveSessionsHome ([6374cb6](https://github.com/srobroek/harness-plugins/commit/6374cb6ec0b7eb39b3b2a1e59aeaedf0ef16f615))
+
 # Changelog
 
 ## [0.4.0](https://github.com/srobroek/opencode-plugins/compare/subagent-worktree--v0.3.0...subagent-worktree--v0.4.0) (2026-11-20)
