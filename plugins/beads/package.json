@@ -21,7 +21,8 @@
       "embedded-write-runner": "bd-embedded-write-runner"
     },
     "claudeEntries": {
-      "claude-hook": "claude-hook"
+      "claude-hook": "claude-hook",
+      "bd-embedded-write-runner": "bd-embedded-write-runner"
     }
   }
 }

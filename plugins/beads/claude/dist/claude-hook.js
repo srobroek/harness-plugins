@@ -2764,6 +2764,32 @@ function renewLease(lock, owner, token) {
     closeSync2(held.fd);
   } catch {}
 }
+async function attachWriter(store, owner, pid, waitMs = DEFAULT_WRITE_WAIT_MS) {
+  const lock = join(store, LOCK_NAME);
+  const held = registry().owned.get(lock);
+  if (held === undefined || !held.holders.has(owner))
+    return false;
+  const writerStart = processStartIdentity(pid);
+  const deadline = Date.now() + Math.max(0, waitMs);
+  while (true) {
+    const result = withOwnership(lock, held.token, () => {
+      const fd = openSync2(lock, "w");
+      try {
+        writeSync(fd, JSON.stringify(holderNow(owner, held.token, pid, writerStart)));
+      } finally {
+        closeSync2(fd);
+      }
+    });
+    if (result === "done") {
+      held.writer = pid;
+      held.writerStart = writerStart;
+      return true;
+    }
+    if (result === "lost" || Date.now() >= deadline)
+      return false;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(POLL_MS, deadline - Date.now())));
+  }
+}
 async function withEmbeddedWriteLock(cwd, owner, write, env = process.env, deadline, signal) {
   const store = embeddedStoreFor(cwd, env);
   if (store === undefined)
