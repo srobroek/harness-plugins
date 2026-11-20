@@ -15,8 +15,9 @@ leaves a debrief and a handoff bead.
 | `/autopilot review [run-id]` | Loads a stopped run's summary and asks one question per needs-input item. |
 | `/autopilot stop` | Stops the run in this session and writes the debrief. |
 
-Flags: `--full`, `--allow merge,deploy`, `--lanes N`, `--for 3h` or
-`--until-time 18:00`, and `--until "<condition>"`. The setup round asks for
+Flags: `--full` or `--no-full`, `--allow merge,deploy` or `--allow none`,
+`--lanes N`, `--for 3h` or `--until-time 18:00`, and `--until "<condition>"`
+(`--until ""` for none). The setup round asks for
 each value that the command line leaves out. The number of parallel write lanes
 has no upper limit; the setup round recommends 3, and `--lanes N` skips the
 question. Read-only subagents such as `explore` and the reviewers do not take a

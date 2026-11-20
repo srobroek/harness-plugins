@@ -14,6 +14,10 @@ describe("parseInvocation", () => {
     expect(parseInvocation("")).toEqual({ kind: "start", options: {}, missing: ["scope", "full", "allow", "lanes", "budget", "until"] })
   })
 
+  test("--no-full and --allow none answer those questions with no", () => {
+    expect(parseInvocation('p-1 --no-full --allow none --lanes 2 --for 1h --until ""')).toMatchObject({ options: { full: false, allow: [] }, missing: [] })
+  })
+
   test("joins free-text scope words", () => {
     const parsed = parseInvocation("fix the flaky tests --until-time 18:00")
     expect(parsed).toMatchObject({ kind: "start", options: { scope: "fix the flaky tests", untilTime: "18:00" } })
