@@ -1,0 +1,18 @@
+{
+  "name": "autopilot",
+  "version": "0.0.0",
+  "description": "Unattended runs: /autopilot arms a no-questions session with a journal, a 4-minute tick and stop conditions.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "Unattended runs: /autopilot arms a no-questions session with a journal, a 4-minute tick and stop conditions.",
+    "category": "development",
+    "harnesses": [
+      "opencode"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
+    }
+  }
+}
