@@ -1,3 +1,9 @@
+## delivery [0.9.2](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.1...delivery--v0.9.2) (2026-11-20)
+
+### Bug Fixes
+
+* **delivery:** dedup cleanup receipts by repository and PR ([3803bd9](https://github.com/srobroek/harness-plugins/commit/3803bd9b15c2f87fd9f7a15f4f9b6229f130b69e)), closes [#22](https://github.com/srobroek/harness-plugins/issues/22)
+
 ## delivery [0.9.1](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.0...delivery--v0.9.1) (2026-11-20)
 
 ### Bug Fixes

@@ -18,7 +18,7 @@
 | chezmoi | 0.5.0 | development | global | opencode, claude |
 | claude-compat | 0.4.0 | development | project | opencode |
 | debate | 0.5.0 | productivity | global | opencode, claude |
-| delivery | 0.9.1 | development | global | opencode |
+| delivery | 0.9.2 | development | global | opencode |
 | dep-update | 0.6.0 | development | global | opencode |
 | design | 0.8.0 | development | project | opencode, claude |
 | docs | 0.4.0 | development | global | opencode |
