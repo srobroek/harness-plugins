@@ -4,5 +4,6 @@
     "description": "Agent plugins for OpenCode and Claude Code.",
     "owner": { "name": "Sjors Robroek" }
   },
+  "commonDirs": ["skills", "agents"],
   "harnesses": ["opencode", "claude"]
 }
