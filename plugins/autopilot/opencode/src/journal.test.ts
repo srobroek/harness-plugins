@@ -4,7 +4,7 @@ import { needsInput, parkedBeads, readJournal, validateEntry } from "./journal.t
 const now = new Date("2026-11-20T14:00:00Z")
 
 test("validateEntry stamps and trims a valid entry", () => {
-  expect(validateEntry({ type: "decision", summary: " use bun ", chosen: "bun", alternatives: ["node"], reversible: true, confidence: "high" }, now)).toEqual({
+  expect(validateEntry({ type: "decision", summary: " use bun ", chosen: "bun", alternatives: ["node"], reversible: true, confidence: "high" }, now)).toEqual({ ok: true, entry: {
     ts: "2026-11-20T14:00:00.000Z",
     type: "decision",
     summary: "use bun",
@@ -12,7 +12,11 @@ test("validateEntry stamps and trims a valid entry", () => {
     alternatives: ["node"],
     reversible: true,
     confidence: "high",
-  })
+  } })
+})
+
+test("validateEntry keeps an error signature as data", () => {
+  expect(validateEntry({ type: "issue", summary: "build fails", error: "TS2304" }, now)).toMatchObject({ ok: true, entry: { error: "TS2304" } })
 })
 
 test.each([
@@ -21,8 +25,8 @@ test.each([
   [{ type: "decision", summary: "x" }, "a decision needs chosen"],
   [{ type: "issue", summary: "x", reversible: "yes" }, "reversible must be a boolean"],
   [{ type: "issue", summary: "x", alternatives: [1] }, "alternatives must be strings"],
-])("validateEntry rejects %p", (input, error) => {
-  expect(validateEntry(input, now)).toEqual({ error })
+])("validateEntry rejects %p", (input, reason) => {
+  expect(validateEntry(input, now)).toEqual({ ok: false, reason })
 })
 
 test("readJournal skips a torn last line", () => {

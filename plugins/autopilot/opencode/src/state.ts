@@ -58,6 +58,8 @@ export type Snapshot = {
   beads: Bead[]
   ready: string[]
   blocked: string[]
+  /** Whether every `bd` read succeeded; when not, the bead lists are empty, not facts. */
+  beadsRead: boolean
   commits: number
   children: Child[]
   journal: JournalEntry[]
@@ -127,11 +129,11 @@ export function repeatedError(journal: readonly JournalEntry[]): string | undefi
 /**
  * The reason to stop now, or `undefined`. Order: requested, logged, deadline, scope done, stuck, idle.
  * `newEntries` are the journal entries since the previous tick. A goal scope has no beads of its own,
- * so the bead-based conditions apply to bead and queue scopes only.
+ * so the bead-based conditions apply to bead and queue scopes only, and only after a complete `bd` read.
  */
 export function stopReason(
   state: RunState,
-  snapshot: Pick<Snapshot, "now" | "children">,
+  snapshot: Pick<Snapshot, "now" | "children" | "beadsRead">,
   newEntries: readonly JournalEntry[],
   parked: ReadonlySet<string>,
 ): string | undefined {
@@ -140,9 +142,10 @@ export function stopReason(
   if (logged) return `logged: ${logged.summary}`
   if (state.deadline !== undefined && snapshot.now >= state.deadline) return "budget or deadline reached"
   const { open, ready, inProgress } = state.beads
-  if (state.scope.kind !== "goal" && open.length === 0) return "scope finished"
+  const beadScope = state.scope.kind !== "goal" && snapshot.beadsRead
+  if (beadScope && open.length === 0) return "scope finished"
   const busyChildren = snapshot.children.some((child) => child.busy)
-  if (state.scope.kind !== "goal" && open.length > 0 && !busyChildren && inProgress.every((id) => parked.has(id)) && ready.every((id) => parked.has(id)))
+  if (beadScope && open.length > 0 && !busyChildren && inProgress.every((id) => parked.has(id)) && ready.every((id) => parked.has(id)))
     return "everything left is blocked or parked"
   if (state.idleTicks >= MAX_IDLE_TICKS) return `${MAX_IDLE_TICKS} ticks without progress`
   return undefined
@@ -150,8 +153,8 @@ export function stopReason(
 
 /** One tick: diff `snapshot` against `previous`, evaluate stalls and stops, render the ping. */
 export function tick(previous: RunState, snapshot: Snapshot): TickResult {
-  const beads = countBeads(snapshot, previous.scope)
-  const newlyUnblocked = beads.ready.filter((id) => previous.beads.blocked.includes(id))
+  const beads = snapshot.beadsRead ? countBeads(snapshot, previous.scope) : previous.beads
+  const newlyUnblocked = snapshot.beadsRead ? beads.ready.filter((id) => previous.beads.blocked.includes(id)) : []
   const newEntries = snapshot.journal.slice(previous.journalLength)
   const finishedChildren = Object.values(previous.children).filter((child) => child.done).length
   const children: Record<string, ChildState> = {}
@@ -233,6 +236,7 @@ export function tick(previous: RunState, snapshot: Snapshot): TickResult {
     ...(stop !== undefined ? { stop } : {}),
     ping:
       renderPing({ now: snapshot.now, busyLanes, lanes: state.options.lanes, beads, newlyUnblocked: newlyUnblocked.length, parked: state.parked.length, deadline: state.deadline }) +
+      (snapshot.beadsRead ? "" : " · beads unread") +
       (actedLine ? `\n↳ ${actedLine}` : ""),
   }
 }

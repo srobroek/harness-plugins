@@ -33,7 +33,7 @@ export async function readBeads(directory: string, run: Run): Promise<BeadView> 
     if (typeof item?.id !== "string" || typeof item.status !== "string") return []
     return [{ id: item.id, status: item.status, parent: item.parent ?? null, ...(item.issue_type ? { issue_type: item.issue_type } : {}), labels: item.labels ?? null }]
   })
-  return { beads, ready: ids(parseArray(ready.stdout)), blocked: ids(parseArray(blocked.stdout)), ok: list.ok }
+  return { beads, ready: ids(parseArray(ready.stdout)), blocked: ids(parseArray(blocked.stdout)), ok: list.ok && ready.ok && blocked.ok }
 }
 
 /** Commits reachable from any ref; a rising count means someone committed. */

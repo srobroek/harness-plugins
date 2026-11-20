@@ -41,34 +41,37 @@ export const LOG_INPUT_SCHEMA = {
 
 const STRING_FIELDS = ["bead", "lane", "chosen", "evidence", "error"] as const
 
+/** A validated entry, or why the input is not one. Disjoint from `JournalEntry`, whose `error` is data. */
+export type Validated = { ok: true; entry: JournalEntry } | { ok: false; reason: string }
+
 /** A validated entry stamped with `now`, or the reason the input is invalid. */
-export function validateEntry(input: unknown, now: Date): JournalEntry | { error: string } {
-  if (input === null || typeof input !== "object") return { error: "entry must be an object" }
+export function validateEntry(input: unknown, now: Date): Validated {
+  if (input === null || typeof input !== "object") return { ok: false, reason: "entry must be an object" }
   const raw = input as Record<string, unknown>
-  if (!ENTRY_TYPES.includes(raw.type as EntryType)) return { error: `type must be one of ${ENTRY_TYPES.join(", ")}` }
-  if (typeof raw.summary !== "string" || raw.summary.trim() === "") return { error: "summary is required" }
+  if (!ENTRY_TYPES.includes(raw.type as EntryType)) return { ok: false, reason: `type must be one of ${ENTRY_TYPES.join(", ")}` }
+  if (typeof raw.summary !== "string" || raw.summary.trim() === "") return { ok: false, reason: "summary is required" }
   const entry: JournalEntry = { ts: now.toISOString(), type: raw.type as EntryType, summary: raw.summary.trim() }
   for (const key of STRING_FIELDS) {
     const value = raw[key]
     if (value === undefined) continue
-    if (typeof value !== "string") return { error: `${key} must be a string` }
+    if (typeof value !== "string") return { ok: false, reason: `${key} must be a string` }
     if (value.trim() !== "") entry[key] = value.trim()
   }
   if (raw.alternatives !== undefined) {
-    if (!Array.isArray(raw.alternatives) || raw.alternatives.some((item) => typeof item !== "string")) return { error: "alternatives must be strings" }
+    if (!Array.isArray(raw.alternatives) || raw.alternatives.some((item) => typeof item !== "string")) return { ok: false, reason: "alternatives must be strings" }
     entry.alternatives = raw.alternatives as string[]
   }
   for (const key of ["reversible", "parked"] as const) {
     if (raw[key] === undefined) continue
-    if (typeof raw[key] !== "boolean") return { error: `${key} must be a boolean` }
+    if (typeof raw[key] !== "boolean") return { ok: false, reason: `${key} must be a boolean` }
     entry[key] = raw[key] as boolean
   }
   if (raw.confidence !== undefined) {
-    if (!["low", "medium", "high"].includes(raw.confidence as string)) return { error: "confidence must be low, medium or high" }
+    if (!["low", "medium", "high"].includes(raw.confidence as string)) return { ok: false, reason: "confidence must be low, medium or high" }
     entry.confidence = raw.confidence as JournalEntry["confidence"]
   }
-  if (entry.type === "decision" && entry.chosen === undefined) return { error: "a decision needs chosen" }
-  return entry
+  if (entry.type === "decision" && entry.chosen === undefined) return { ok: false, reason: "a decision needs chosen" }
+  return { ok: true, entry }
 }
 
 /** Parse journal.jsonl, skipping lines that do not parse. */

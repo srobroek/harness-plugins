@@ -50,3 +50,8 @@ test("readBeads parses bd JSON after a warning line and keeps the fields a tick 
     blocked: [],
   })
 })
+
+test.each(["list", "ready", "blocked"])("readBeads reports a failed bd %s as an incomplete read", async (failing) => {
+  const run: Run = async (_cwd, _command, args) => ({ ok: args[0] !== failing, stdout: "[]", stderr: "" })
+  expect((await readBeads("/repo", run)).ok).toBe(false)
+})

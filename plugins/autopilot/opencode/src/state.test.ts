@@ -11,7 +11,7 @@ function running(scope: Scope, patch: Partial<RunState> = {}): RunState {
 }
 
 function snapshot(patch: Partial<Snapshot> = {}): Snapshot {
-  return { now: T0, beads: [], ready: [], blocked: [], commits: 10, children: [], journal: [], leadBusy: false, ...patch }
+  return { now: T0, beads: [], ready: [], blocked: [], beadsRead: true, commits: 10, children: [], journal: [], leadBusy: false, ...patch }
 }
 
 const bead = (id: string, status: string, extra: Partial<Bead> = {}): Bead => ({ id, status, ...extra })
@@ -118,6 +118,14 @@ describe("stop conditions", () => {
   test("a goal run does not stop because unrelated beads are blocked", () => {
     const result = tick(running({ kind: "goal", text: "fix the flaky tests" }), snapshot({ beads: [bead("x-1", "open")], blocked: ["x-1"] }))
     expect(result.stop).toBeUndefined()
+  })
+
+  test("a failed bd read keeps the last counts and decides nothing from beads", () => {
+    const previous = running({ kind: "bead", id: "p-1" }, { beads: { open: ["p-1"], ready: ["p-1"], blocked: [], inProgress: [], closed: [] } })
+    const result = tick(previous, snapshot({ beadsRead: false }))
+    expect(result.stop).toBeUndefined()
+    expect(result.state.beads).toEqual(previous.beads)
+    expect(result.ping).toContain("beads unread")
   })
 })
 

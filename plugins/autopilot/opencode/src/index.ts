@@ -76,6 +76,9 @@ export type PermissionEvaluation = { sessionID: string; action: string; resource
 /** How many turns in a row that end in a question get a re-prompt before the plugin waits for the next tick. */
 export const MAX_REPROMPTS = 2
 
+/** A bound on child-session pages per tick (100 sessions each). */
+const MAX_CHILD_PAGES = 50
+
 export type WriteLock = <T>(cwd: string, owner: string, write: () => Promise<T>) => Promise<{ kind: "done"; value: T } | { kind: "failed"; reason: string }>
 
 const embeddedLock: WriteLock = (cwd, owner, write) => withEmbeddedWriteLock(cwd, owner, write)
@@ -151,6 +154,7 @@ export class Autopilot {
   readonly #ticks: Ticks
   readonly #lock: WriteLock
   readonly #reprompts = new Map<string, number>()
+  readonly #serial = new Map<string, Promise<unknown>>()
 
   constructor(
     readonly ctx: Context,
@@ -230,13 +234,26 @@ export class Autopilot {
     const [beads, commits, kids, leadBusy] = await Promise.all([
       readBeads(state.directory, this.#run),
       commitCount(state.directory, this.#run),
-      this.ctx.session.list({ parentID: state.sessionID, limit: 100 }).catch(() => undefined),
+      this.#children(state.sessionID),
       this.leadBusy(state.sessionID),
     ])
-    const children = ((kids?.data ?? []) as SessionView[])
+    const children = kids
       .filter((kid): kid is SessionView & { id: string } => typeof kid?.id === "string")
       .map((kid) => childFrom(kid, this.activity.lastSeen(kid.id), armedAt))
-    return { now, beads: beads.beads, ready: beads.ready, blocked: beads.blocked, commits, children, journal: dir.journal(), leadBusy }
+    return { now, beads: beads.beads, ready: beads.ready, blocked: beads.blocked, beadsRead: beads.ok, commits, children, journal: dir.journal(), leadBusy }
+  }
+
+  /** Every direct child of `sessionID`, page by page; a failed page ends the list. */
+  async #children(sessionID: string): Promise<SessionView[]> {
+    const all: SessionView[] = []
+    let page = await this.ctx.session.list({ parentID: sessionID, limit: 100 }).catch(() => undefined)
+    for (let pages = 0; page && pages < MAX_CHILD_PAGES; pages++) {
+      all.push(...(page.data as SessionView[]))
+      const next = page.cursor?.next
+      if (!next) break
+      page = await this.ctx.session.list({ cursor: next, limit: 100 }).catch(() => undefined)
+    }
+    return all
   }
 
   /** Whether the lead session is executing, from the host's own record so it holds across restarts. */
@@ -266,10 +283,15 @@ export class Autopilot {
       }
       case "stop": {
         const dir = this.#dirFor(sessionID, undefined)
-        const state = dir?.readState()
-        if (!dir || !state) return "autopilot: no run in this session."
-        dir.writeState({ ...state, stopRequested: true })
-        return `Autopilot stop requested for run ${state.runId}. Call autopilot_status with action "stop", delete the tick automation with tools.opencode.automation_delete if one exists, then print the summary and end.`
+        if (!dir) return "autopilot: no run in this session."
+        const runId = await this.#exclusive(dir.runId, async () => {
+          const state = dir.readState()
+          if (!state) return undefined
+          if (state.phase !== "stopped") dir.writeState({ ...state, stopRequested: true })
+          return state.runId
+        })
+        if (runId === undefined) return "autopilot: no run in this session."
+        return `Autopilot stop requested for run ${runId}. Call autopilot_status with action "stop", delete the tick automation with tools.opencode.automation_delete if one exists, then print the summary and end.`
       }
       case "resume": {
         const dir = findRun(root, invocation.runId)
@@ -277,7 +299,10 @@ export class Autopilot {
         if (!dir || !state) return `autopilot: no run ${invocation.runId ?? "latest"} under ${root}.`
         if (state.phase === "stopped") return `autopilot: run ${state.runId} already stopped (${state.stopReason}); start a new one.`
         for (const [other, armed] of this.armed) if (armed.runId === state.runId && other !== sessionID) await this.#disarm(other)
-        dir.writeState({ ...state, sessionID, phase: "running", tick: { kind: "none" } })
+        await this.#exclusive(dir.runId, async () => {
+          const current = dir.readState() ?? state
+          dir.writeState({ ...current, sessionID, phase: "running", tick: { kind: "none" } })
+        })
         await this.#arm(sessionID, { runId: state.runId, root })
         const status = await this.status(sessionID, { action: "status", run: state.runId })
         return [
@@ -306,10 +331,34 @@ export class Autopilot {
 
   // --- tools ----------------------------------------------------------------------------------
 
+  /**
+   * Every read-modify-write of one run's state, in order: a tick that started before a stop
+   * cannot write its running state over the stopped one, and two stops cannot both hand off.
+   */
+  async #exclusive<T>(runId: string, work: () => Promise<T>): Promise<T> {
+    const before = this.#serial.get(runId) ?? Promise.resolve()
+    const turn = before.then(work, work)
+    const settled = turn.then(
+      () => undefined,
+      () => undefined,
+    )
+    this.#serial.set(runId, settled)
+    try {
+      return await turn
+    } finally {
+      if (this.#serial.get(runId) === settled) this.#serial.delete(runId)
+    }
+  }
+
   async status(sessionID: string, input: StatusInput): Promise<Record<string, unknown>> {
     const dir = this.#dirFor(sessionID, input.run)
-    const state = dir?.readState()
-    if (!dir || !state) return { error: "no autopilot run for this session; start one with /autopilot" }
+    if (!dir) return { error: "no autopilot run for this session; start one with /autopilot" }
+    return this.#exclusive(dir.runId, () => this.#statusLocked(dir, input))
+  }
+
+  async #statusLocked(dir: RunDir, input: StatusInput): Promise<Record<string, unknown>> {
+    const state = dir.readState()
+    if (!state) return { error: "no autopilot run for this session; start one with /autopilot" }
     const action = input.action ?? "status"
     if (action === "arm") return this.#armRun(dir, state, input)
     if (state.phase === "stopped") return { done: true, stopped: state.stopReason, summary: dir.summaryPath }
@@ -322,10 +371,12 @@ export class Autopilot {
     if (state.phase !== "running") return { phase: state.phase, note: 'run is in setup: finish the setup round and call action "arm"' }
     if (action === "tick" && (await this.leadBusy(state.sessionID))) return { skip: "lead session busy" }
     const result = tick(state, await this.snapshot(state, dir))
-    const kept = action === "tick" ? result.state : { ...result.state, ticks: state.ticks, idleTicks: state.idleTicks }
-    dir.writeState(kept)
-    for (const action of result.actions)
-      if (action.kind === "park") dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: action.reason, bead: action.item, parked: true })
+    // Only a tick advances the run; a status read reports and leaves every signal for the next tick.
+    if (action === "tick") {
+      dir.writeState(result.state)
+      for (const due of result.actions)
+        if (due.kind === "park") dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: due.reason, bead: due.item, parked: true })
+    }
     const out = {
       ping: result.ping,
       progress: result.progress,
@@ -333,7 +384,7 @@ export class Autopilot {
       actions: result.actions,
       beads: result.state.beads,
       parked: result.state.parked,
-      idleTicks: kept.idleTicks,
+      idleTicks: action === "tick" ? result.state.idleTicks : state.idleTicks,
       ...(result.stop ? { stop: result.stop } : {}),
     }
     if (result.stop !== undefined && action === "tick")
@@ -412,8 +463,9 @@ export class Autopilot {
     const running = await this.runningFor(sessionID)
     const dir = running?.dir ?? this.#dirFor(sessionID, undefined)
     if (!dir) return "autopilot_log: no autopilot run for this session"
-    const entry = validateEntry(input, new Date(this.#now()))
-    if ("error" in entry) return `autopilot_log: ${entry.error}`
+    const validated = validateEntry(input, new Date(this.#now()))
+    if (!validated.ok) return `autopilot_log: ${validated.reason}`
+    const entry = validated.entry
     dir.append(entry)
     const state = running?.state ?? dir.readState()
     if (entry.bead && (entry.type === "blocker" || entry.type === "ambiguity") && state && !state.options.full) {

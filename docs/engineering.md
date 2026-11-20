@@ -58,6 +58,8 @@ Move new shared code into `lib` instead of adding another edge.
 
 `lib/src/session-lanes.ts` holds the lane session helpers (`laneSessions`, `moveSessionsHome`, `isSessionNotFound`) that `subagent-worktree` uses.
 
+`plugins/autopilot` owns two kinds of state. Run state (`state.json`, `journal.jsonl`, `summary.md`) lives under `<git common dir>/opencode-scratch/autopilot/<run-id>/`. The armed-session index lives in plugin storage (`armed/<sessionID>`). On load, the plugin re-arms from storage. `/autopilot resume` re-binds a run to a new session from `state.json`. Its tick is an OpenCode automation (a code action created through `tools.opencode.automation_create` that calls `autopilot_status`). An in-process timer covers hosts where that call fails. Its own `bd` writes take the embedded-store lock from `lib/src/bd-embedded-write-lock.ts`.
+
 ## Standards
 
 [AGENTS.md](../AGENTS.md) Conventions covers bundles, generated files, vendored `plugins/cad` files, agents, skills, pitfalls and descriptions. Checks enforce most of it. This page adds:

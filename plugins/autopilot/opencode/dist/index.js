@@ -1072,42 +1072,42 @@ var LOG_INPUT_SCHEMA = {
 var STRING_FIELDS = ["bead", "lane", "chosen", "evidence", "error"];
 function validateEntry(input, now) {
   if (input === null || typeof input !== "object")
-    return { error: "entry must be an object" };
+    return { ok: false, reason: "entry must be an object" };
   const raw = input;
   if (!ENTRY_TYPES.includes(raw.type))
-    return { error: `type must be one of ${ENTRY_TYPES.join(", ")}` };
+    return { ok: false, reason: `type must be one of ${ENTRY_TYPES.join(", ")}` };
   if (typeof raw.summary !== "string" || raw.summary.trim() === "")
-    return { error: "summary is required" };
+    return { ok: false, reason: "summary is required" };
   const entry = { ts: now.toISOString(), type: raw.type, summary: raw.summary.trim() };
   for (const key of STRING_FIELDS) {
     const value = raw[key];
     if (value === undefined)
       continue;
     if (typeof value !== "string")
-      return { error: `${key} must be a string` };
+      return { ok: false, reason: `${key} must be a string` };
     if (value.trim() !== "")
       entry[key] = value.trim();
   }
   if (raw.alternatives !== undefined) {
     if (!Array.isArray(raw.alternatives) || raw.alternatives.some((item) => typeof item !== "string"))
-      return { error: "alternatives must be strings" };
+      return { ok: false, reason: "alternatives must be strings" };
     entry.alternatives = raw.alternatives;
   }
   for (const key of ["reversible", "parked"]) {
     if (raw[key] === undefined)
       continue;
     if (typeof raw[key] !== "boolean")
-      return { error: `${key} must be a boolean` };
+      return { ok: false, reason: `${key} must be a boolean` };
     entry[key] = raw[key];
   }
   if (raw.confidence !== undefined) {
     if (!["low", "medium", "high"].includes(raw.confidence))
-      return { error: "confidence must be low, medium or high" };
+      return { ok: false, reason: "confidence must be low, medium or high" };
     entry.confidence = raw.confidence;
   }
   if (entry.type === "decision" && entry.chosen === undefined)
-    return { error: "a decision needs chosen" };
-  return entry;
+    return { ok: false, reason: "a decision needs chosen" };
+  return { ok: true, entry };
 }
 function readJournal(text) {
   const entries = [];
@@ -1141,7 +1141,9 @@ function isAskTool(tool) {
   return ASK_TOOLS.has(name);
 }
 var DENY_QUESTION = "autopilot is armed: never ask the user. Decide reversible items, log them with autopilot_log (type decision), park irreversible ones as a blocker, and continue.";
-var MERGE = [/\bgh\s+pr\s+merge\b/, /\bglab\s+mr\s+merge\b/, /\bgit\s+merge\b.*\b(origin\/)?(main|master)\b/];
+var GIT = String.raw`\bgit(?:\s+(?:-[cC]\s+\S+|--[\w-]+(?:=\S+)?))*\s+`;
+var git = (rest, flags = "") => new RegExp(GIT + rest, flags);
+var MERGE = [/\bgh\s+pr\s+merge\b/, /\bglab\s+mr\s+merge\b/, git(String.raw`merge\b.*\b(origin\/)?(main|master)\b`)];
 var DEPLOY = [
   /\bcdk\s+(deploy|destroy)\b/,
   /\baws\s+cloudformation\s+(create-stack|update-stack|delete-stack|deploy|execute-change-set)\b/,
@@ -1150,38 +1152,39 @@ var DEPLOY = [
   /\bpulumi\s+(up|destroy)\b/,
   /\bsst\s+(deploy|remove)\b/
 ];
-var PUSH_DEFAULT = /\bgit\s+push\b[^|;&]*\s(\S+:)?(refs\/heads\/)?(main|master)(?=$|[\s;|&])/m;
-var FORCE = /\bgit\s+push\b[^|;&]*\s(--force(?!-with-lease)\b|-f\b)/;
+var PUSH_DEFAULT = git(String.raw`push\b[^|;&]*\s\+?(\S+:)?(refs\/heads\/)?(main|master)(?=$|[\s;|&])`, "m");
+var FORCE = git(String.raw`push\b[^|;&]*\s(--force(?!-with-lease)\b|-f\b|\+\S)`);
 var IRREVERSIBLE = [
-  /\bgit\s+reset\b[^|;&]*\s--hard\b/,
-  /\bgit\s+clean\b[^|;&]*\s-[a-z]*f/,
-  /\bgit\s+branch\b[^|;&]*\s(-D\b|--delete\s+--force\b|-d\s+-f\b)/,
-  /\bgit\s+push\b[^|;&]*\s(--delete\b|-d\b|\S+\s+:\S)/,
-  /\bgit\s+stash\s+(drop|clear)\b/,
-  /\bgit\s+worktree\s+remove\b[^|;&]*\s--force\b/,
+  git(String.raw`reset\b[^|;&]*\s--hard\b`),
+  git(String.raw`clean\b[^|;&]*\s-[a-z]*f`),
+  git(String.raw`branch\b[^|;&]*\s(-D\b|--delete\s+--force\b|-d\s+-f\b)`),
+  git(String.raw`push\b[^|;&]*\s(--delete\b|-d\b|\S+\s+:\S)`),
+  git(String.raw`stash\s+(drop|clear)\b`),
+  git(String.raw`worktree\s+remove\b[^|;&]*\s--force\b`),
   /(^|[\s;&|(])rm\s+(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\b/,
   /\bbd\s+(delete|purge)\b/
 ];
-function categorize(action, resources) {
+function categories(action, resources) {
   const name = action.toLowerCase();
-  if (name === "delivery_land" || name.endsWith("_merge"))
-    return "merge";
   const text = resources.join(`
 `);
+  const found = [];
   if (FORCE.test(text))
-    return "force-push";
+    found.push("force-push");
   if (PUSH_DEFAULT.test(text))
-    return "push-default";
-  if (MERGE.some((pattern) => pattern.test(text)))
-    return "merge";
+    found.push("push-default");
+  if (name === "delivery_land" || name.endsWith("_merge") || MERGE.some((pattern) => pattern.test(text)))
+    found.push("merge");
   if (DEPLOY.some((pattern) => pattern.test(text)))
-    return "deploy";
+    found.push("deploy");
   if (IRREVERSIBLE.some((pattern) => pattern.test(text)))
-    return "irreversible";
-  return "other";
+    found.push("irreversible");
+  return found.length ? found : ["other"];
 }
-function decideAsk(action, resources, grants, full) {
-  const category = categorize(action, resources);
+function categorize(action, resources) {
+  return categories(action, resources)[0];
+}
+function decideCategory(category, grants, full) {
   switch (category) {
     case "force-push":
       return { effect: "deny", reason: "autopilot never force-pushes; use --force-with-lease on a feature branch" };
@@ -1195,6 +1198,14 @@ function decideAsk(action, resources, grants, full) {
     case "other":
       return { effect: "allow" };
   }
+}
+function decideAsk(action, resources, grants, full) {
+  for (const category of categories(action, resources)) {
+    const decision = decideCategory(category, grants, full);
+    if (decision.effect === "deny")
+      return decision;
+  }
+  return { effect: "allow" };
 }
 var ASKING = [/\?\s*$/, /\b(should I|shall I|do you want|would you like|let me know|which (one|option) do you)\b/i];
 function endsWithQuestion(text) {
@@ -1281,18 +1292,19 @@ function stopReason(state, snapshot, newEntries, parked) {
   if (state.deadline !== undefined && snapshot.now >= state.deadline)
     return "budget or deadline reached";
   const { open, ready, inProgress } = state.beads;
-  if (state.scope.kind !== "goal" && open.length === 0)
+  const beadScope = state.scope.kind !== "goal" && snapshot.beadsRead;
+  if (beadScope && open.length === 0)
     return "scope finished";
   const busyChildren = snapshot.children.some((child) => child.busy);
-  if (state.scope.kind !== "goal" && open.length > 0 && !busyChildren && inProgress.every((id) => parked.has(id)) && ready.every((id) => parked.has(id)))
+  if (beadScope && open.length > 0 && !busyChildren && inProgress.every((id) => parked.has(id)) && ready.every((id) => parked.has(id)))
     return "everything left is blocked or parked";
   if (state.idleTicks >= MAX_IDLE_TICKS)
     return `${MAX_IDLE_TICKS} ticks without progress`;
   return;
 }
 function tick(previous, snapshot) {
-  const beads = countBeads(snapshot, previous.scope);
-  const newlyUnblocked = beads.ready.filter((id) => previous.beads.blocked.includes(id));
+  const beads = snapshot.beadsRead ? countBeads(snapshot, previous.scope) : previous.beads;
+  const newlyUnblocked = snapshot.beadsRead ? beads.ready.filter((id) => previous.beads.blocked.includes(id)) : [];
   const newEntries = snapshot.journal.slice(previous.journalLength);
   const finishedChildren = Object.values(previous.children).filter((child) => child.done).length;
   const children = {};
@@ -1367,7 +1379,7 @@ function tick(previous, snapshot) {
     newlyUnblocked,
     actions,
     ...stop !== undefined ? { stop } : {},
-    ping: renderPing({ now: snapshot.now, busyLanes, lanes: state.options.lanes, beads, newlyUnblocked: newlyUnblocked.length, parked: state.parked.length, deadline: state.deadline }) + (actedLine ? `
+    ping: renderPing({ now: snapshot.now, busyLanes, lanes: state.options.lanes, beads, newlyUnblocked: newlyUnblocked.length, parked: state.parked.length, deadline: state.deadline }) + (snapshot.beadsRead ? "" : " \xB7 beads unread") + (actedLine ? `
 \u21B3 ${actedLine}` : "")
   };
 }
@@ -1487,7 +1499,7 @@ async function readBeads(directory, run) {
       return [];
     return [{ id: item.id, status: item.status, parent: item.parent ?? null, ...item.issue_type ? { issue_type: item.issue_type } : {}, labels: item.labels ?? null }];
   });
-  return { beads, ready: ids(parseArray(ready.stdout)), blocked: ids(parseArray(blocked.stdout)), ok: list.ok };
+  return { beads, ready: ids(parseArray(ready.stdout)), blocked: ids(parseArray(blocked.stdout)), ok: list.ok && ready.ok && blocked.ok };
 }
 async function commitCount(directory, run) {
   const result = await run(directory, "git", ["rev-list", "--all", "--count"]);
@@ -1544,7 +1556,21 @@ class Activity {
 
 // plugins/autopilot/opencode/src/rundir.ts
 import { execFile } from "child_process";
-import { appendFileSync, existsSync as existsSync3, mkdirSync, readFileSync as readFileSync3, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import {
+  appendFileSync,
+  closeSync as closeSync3,
+  existsSync as existsSync3,
+  mkdirSync,
+  openSync as openSync3,
+  readFileSync as readFileSync3,
+  readlinkSync,
+  readSync as readSync2,
+  renameSync,
+  rmSync,
+  statSync as statSync3,
+  symlinkSync,
+  writeFileSync
+} from "fs";
 import { isAbsolute as isAbsolute3, join as join2, resolve as resolve3 } from "path";
 var runCommand = (cwd, command, args, timeoutMs = 20000) => new Promise((done) => {
   execFile(command, args, { cwd, timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => done({ ok: error === null, stdout: String(stdout), stderr: String(stderr) }));
@@ -1598,8 +1624,26 @@ class RunDir {
     renameSync(temporary, this.statePath);
   }
   append(entry) {
-    appendFileSync(this.journalPath, `${JSON.stringify(entry)}
+    appendFileSync(this.journalPath, `${this.#endsTorn() ? `
+` : ""}${JSON.stringify(entry)}
 `);
+  }
+  #endsTorn() {
+    let fd;
+    try {
+      const size = statSync3(this.journalPath).size;
+      if (size === 0)
+        return false;
+      fd = openSync3(this.journalPath, "r");
+      const last = Buffer.alloc(1);
+      readSync2(fd, last, 0, 1, size - 1);
+      return last[0] !== 10;
+    } catch {
+      return false;
+    } finally {
+      if (fd !== undefined)
+        closeSync3(fd);
+    }
   }
   journal() {
     try {
@@ -1763,6 +1807,7 @@ var STATUS_INPUT = {
   }
 };
 var MAX_REPROMPTS = 2;
+var MAX_CHILD_PAGES = 50;
 var embeddedLock = (cwd, owner, write) => withEmbeddedWriteLock(cwd, owner, write);
 function lastAssistantText(messages) {
   if (!Array.isArray(messages))
@@ -1846,6 +1891,7 @@ class Autopilot {
   #ticks;
   #lock;
   #reprompts = new Map;
+  #serial = new Map;
   constructor(ctx, deps = {}) {
     this.ctx = ctx;
     this.#run = deps.run ?? runCommand;
@@ -1920,13 +1966,27 @@ class Autopilot {
     const [beads, commits, kids, leadBusy] = await Promise.all([
       readBeads(state2.directory, this.#run),
       commitCount(state2.directory, this.#run),
-      this.ctx.session.list({ parentID: state2.sessionID, limit: 100 }).catch(() => {
-        return;
-      }),
+      this.#children(state2.sessionID),
       this.leadBusy(state2.sessionID)
     ]);
-    const children = (kids?.data ?? []).filter((kid) => typeof kid?.id === "string").map((kid) => childFrom(kid, this.activity.lastSeen(kid.id), armedAt));
-    return { now, beads: beads.beads, ready: beads.ready, blocked: beads.blocked, commits, children, journal: dir.journal(), leadBusy };
+    const children = kids.filter((kid) => typeof kid?.id === "string").map((kid) => childFrom(kid, this.activity.lastSeen(kid.id), armedAt));
+    return { now, beads: beads.beads, ready: beads.ready, blocked: beads.blocked, beadsRead: beads.ok, commits, children, journal: dir.journal(), leadBusy };
+  }
+  async#children(sessionID) {
+    const all = [];
+    let page = await this.ctx.session.list({ parentID: sessionID, limit: 100 }).catch(() => {
+      return;
+    });
+    for (let pages = 0;page && pages < MAX_CHILD_PAGES; pages++) {
+      all.push(...page.data);
+      const next = page.cursor?.next;
+      if (!next)
+        break;
+      page = await this.ctx.session.list({ cursor: next, limit: 100 }).catch(() => {
+        return;
+      });
+    }
+    return all;
   }
   async leadBusy(sessionID) {
     const info = await this.ctx.session.get({ sessionID }).catch(() => {
@@ -1956,11 +2016,19 @@ class Autopilot {
       }
       case "stop": {
         const dir = this.#dirFor(sessionID, undefined);
-        const state2 = dir?.readState();
-        if (!dir || !state2)
+        if (!dir)
           return "autopilot: no run in this session.";
-        dir.writeState({ ...state2, stopRequested: true });
-        return `Autopilot stop requested for run ${state2.runId}. Call autopilot_status with action "stop", delete the tick automation with tools.opencode.automation_delete if one exists, then print the summary and end.`;
+        const runId = await this.#exclusive(dir.runId, async () => {
+          const state2 = dir.readState();
+          if (!state2)
+            return;
+          if (state2.phase !== "stopped")
+            dir.writeState({ ...state2, stopRequested: true });
+          return state2.runId;
+        });
+        if (runId === undefined)
+          return "autopilot: no run in this session.";
+        return `Autopilot stop requested for run ${runId}. Call autopilot_status with action "stop", delete the tick automation with tools.opencode.automation_delete if one exists, then print the summary and end.`;
       }
       case "resume": {
         const dir = findRun(root, invocation.runId);
@@ -1972,7 +2040,10 @@ class Autopilot {
         for (const [other, armed] of this.armed)
           if (armed.runId === state2.runId && other !== sessionID)
             await this.#disarm(other);
-        dir.writeState({ ...state2, sessionID, phase: "running", tick: { kind: "none" } });
+        await this.#exclusive(dir.runId, async () => {
+          const current = dir.readState() ?? state2;
+          dir.writeState({ ...current, sessionID, phase: "running", tick: { kind: "none" } });
+        });
         await this.#arm(sessionID, { runId: state2.runId, root });
         const status = await this.status(sessionID, { action: "status", run: state2.runId });
         return [
@@ -2003,10 +2074,31 @@ class Autopilot {
     });
     return info?.location?.directory ?? this.ctx.location.directory;
   }
+  async#exclusive(runId, work) {
+    const before = this.#serial.get(runId) ?? Promise.resolve();
+    const turn = before.then(work, work);
+    const settled = turn.then(() => {
+      return;
+    }, () => {
+      return;
+    });
+    this.#serial.set(runId, settled);
+    try {
+      return await turn;
+    } finally {
+      if (this.#serial.get(runId) === settled)
+        this.#serial.delete(runId);
+    }
+  }
   async status(sessionID, input) {
     const dir = this.#dirFor(sessionID, input.run);
-    const state2 = dir?.readState();
-    if (!dir || !state2)
+    if (!dir)
+      return { error: "no autopilot run for this session; start one with /autopilot" };
+    return this.#exclusive(dir.runId, () => this.#statusLocked(dir, input));
+  }
+  async#statusLocked(dir, input) {
+    const state2 = dir.readState();
+    if (!state2)
       return { error: "no autopilot run for this session; start one with /autopilot" };
     const action = input.action ?? "status";
     if (action === "arm")
@@ -2025,11 +2117,12 @@ class Autopilot {
     if (action === "tick" && await this.leadBusy(state2.sessionID))
       return { skip: "lead session busy" };
     const result = tick(state2, await this.snapshot(state2, dir));
-    const kept = action === "tick" ? result.state : { ...result.state, ticks: state2.ticks, idleTicks: state2.idleTicks };
-    dir.writeState(kept);
-    for (const action of result.actions)
-      if (action.kind === "park")
-        dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: action.reason, bead: action.item, parked: true });
+    if (action === "tick") {
+      dir.writeState(result.state);
+      for (const due of result.actions)
+        if (due.kind === "park")
+          dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: due.reason, bead: due.item, parked: true });
+    }
     const out = {
       ping: result.ping,
       progress: result.progress,
@@ -2037,7 +2130,7 @@ class Autopilot {
       actions: result.actions,
       beads: result.state.beads,
       parked: result.state.parked,
-      idleTicks: kept.idleTicks,
+      idleTicks: action === "tick" ? result.state.idleTicks : state2.idleTicks,
       ...result.stop ? { stop: result.stop } : {}
     };
     if (result.stop !== undefined && action === "tick")
@@ -2117,9 +2210,10 @@ class Autopilot {
     const dir = running?.dir ?? this.#dirFor(sessionID, undefined);
     if (!dir)
       return "autopilot_log: no autopilot run for this session";
-    const entry = validateEntry(input, new Date(this.#now()));
-    if ("error" in entry)
-      return `autopilot_log: ${entry.error}`;
+    const validated = validateEntry(input, new Date(this.#now()));
+    if (!validated.ok)
+      return `autopilot_log: ${validated.reason}`;
+    const entry = validated.entry;
     dir.append(entry);
     const state2 = running?.state ?? dir.readState();
     if (entry.bead && (entry.type === "blocker" || entry.type === "ambiguity") && state2 && !state2.options.full) {
@@ -2284,6 +2378,7 @@ export {
   TICK_MS,
   applySetup,
   automationRequest,
+  categories,
   categorize,
   childFrom,
   classifyScope,
