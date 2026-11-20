@@ -261,6 +261,24 @@ function substitutionEnd(body, from) {
 }
 
 // lib/src/shell-command.ts
+var WRAPPERS = {
+  mise: true,
+  env: true,
+  command: true,
+  exec: true,
+  nohup: true,
+  nice: true,
+  sudo: true,
+  xargs: true,
+  time: true,
+  "!": true,
+  if: true,
+  elif: true,
+  else: true,
+  while: true,
+  until: true,
+  do: true
+};
 function commandSegments(command) {
   const out = [];
   let start = 0;
@@ -313,6 +331,71 @@ function tokenize(segment) {
     value,
     quoted: startsQuoted
   }));
+}
+function invocation(segment, argv) {
+  const tokens = tokenize(segment);
+  const head = argv[0];
+  if (!head)
+    return null;
+  let start = 0;
+  while (start < tokens.length) {
+    const token = tokens[start];
+    if (!token || token.quoted)
+      return null;
+    const basename = token.value.split("/").pop() ?? token.value;
+    if (basename === head)
+      break;
+    if (basename === "env") {
+      start++;
+      while (start < tokens.length) {
+        const option = tokens[start];
+        if (!option || option.quoted)
+          return null;
+        const value = option.value;
+        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(value)) {
+          start++;
+          continue;
+        }
+        if (value === "--") {
+          start++;
+          break;
+        }
+        if (value === "-i" || value === "--ignore-environment") {
+          start++;
+          continue;
+        }
+        if (value === "-u" || value === "--unset") {
+          start++;
+          if (start >= tokens.length || tokens[start]?.quoted)
+            return null;
+          start++;
+          continue;
+        }
+        if (value.startsWith("--unset=") || value.startsWith("-u") && value.length > 2) {
+          start++;
+          continue;
+        }
+        if (value.startsWith("-")) {
+          start++;
+          continue;
+        }
+        break;
+      }
+      continue;
+    }
+    if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(token.value) && !token.value.startsWith("-") && WRAPPERS[basename] !== true)
+      return null;
+    start++;
+  }
+  for (const [offset, word] of argv.entries()) {
+    const token = tokens[start + offset];
+    if (!token || token.quoted)
+      return null;
+    const value = offset === 0 ? token.value.split("/").pop() ?? token.value : token.value;
+    if (value !== word)
+      return null;
+  }
+  return tokens.slice(start);
 }
 var INTERPRETERS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
 // lib/src/bd-actor-gate.ts
@@ -1214,7 +1297,10 @@ var IRREVERSIBLE = [
 function requestText(resources) {
   const decoded = resources.flatMap((resource) => {
     try {
-      return commandSegments(resource).map((segment) => tokenize(segment).map((token) => token.value).join(" "));
+      return commandSegments(resource).flatMap((segment) => {
+        const argv = invocation(segment, ["git"]);
+        return argv ? [argv.map((token) => token.value).join(" ")] : [];
+      });
     } catch {
       return [];
     }

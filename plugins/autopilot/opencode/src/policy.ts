@@ -1,6 +1,6 @@
 /** No-questions and permission policy while a run is armed. Pure. */
 
-import { commandSegments, tokenize } from "@srobroek/opencode-lib/shell-command"
+import { commandSegments, invocation } from "@srobroek/opencode-lib/shell-command"
 import type { Grant } from "./args.ts"
 
 /** Tools that ask the user something and wait. */
@@ -46,13 +46,17 @@ const IRREVERSIBLE = [
 ]
 
 /**
- * The request as the patterns read it: the raw source, then each command's words after quote
- * removal, one command per line, so `'HEAD:main'` and `"+x"` read as Git receives them.
+ * The request as the patterns read it: the raw source, then the words of each `git` command after
+ * quote removal, one command per line, so `'HEAD:main'` reads as Git receives it. Only segments
+ * whose command is `git` are decoded, so quoted text passed as data to another command stays data.
  */
 function requestText(resources: readonly string[]): string {
   const decoded = resources.flatMap((resource) => {
     try {
-      return commandSegments(resource).map((segment) => tokenize(segment).map((token) => token.value).join(" "))
+      return commandSegments(resource).flatMap((segment) => {
+        const argv = invocation(segment, ["git"])
+        return argv ? [argv.map((token) => token.value).join(" ")] : []
+      })
     } catch {
       return []
     }

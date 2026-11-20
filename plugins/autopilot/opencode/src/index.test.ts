@@ -19,11 +19,16 @@ let locked: string[]
 let beads: { list: unknown[]; ready: unknown[]; blocked: unknown[] }
 /** While set, `bd list` waits for it: a test holds a run's critical section open with it. */
 let listGate: Promise<void> | undefined
+/** Called on each `git rev-parse`, the last host call `/autopilot` makes before it takes the run lock. */
+let onRevParse: (() => void) | undefined
 
 const run: Run = async (_cwd, command, args) => {
   calls.push({ command, args })
   const json = (value: unknown) => ({ ok: true, stdout: JSON.stringify(value), stderr: "" })
-  if (command === "git" && args[0] === "rev-parse") return { ok: true, stdout: `${root}\n`, stderr: "" }
+  if (command === "git" && args[0] === "rev-parse") {
+    onRevParse?.()
+    return { ok: true, stdout: `${root}\n`, stderr: "" }
+  }
   if (command === "git") return { ok: true, stdout: "7\n", stderr: "" }
   if (args[0] === "list") {
     await listGate
@@ -239,9 +244,15 @@ describe("run state transitions", () => {
     listGate = new Promise((resolve) => {
       release = resolve
     })
+    const resumeReachedRoot = new Promise<void>((resolve) => {
+      onRevParse = resolve
+    })
     const stopping = status({ action: "stop", reason: "done" })
     const resuming = command("resume", "ses_other")
-    await new Promise((resolve) => setTimeout(resolve, 30))
+    await resumeReachedRoot
+    onRevParse = undefined
+    // From its rev-parse, resume takes only promise steps to reach the run lock; let them settle.
+    for (let step = 0; step < 50; step++) await Promise.resolve()
     release()
     listGate = undefined
     await stopping
