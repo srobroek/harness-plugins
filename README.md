@@ -150,7 +150,7 @@ strict YAML.
 - `.github/workflows/release.yml` calls the reusable `release.yml` (multi-semantic-release). It
   tags each plugin as `<name>--v<version>`.
 
-Both pin `srobroek/harness-kit` at `@v1.3.1`, the same version as the package in `package.json`.
+Both pin harness-kit at the version of the package in `package.json`: `srobroek/harness-kit/.github/workflows/check.yml@v1.4.0` and `srobroek/harness-kit/.github/workflows/release.yml@v1.4.0`.
 Renovate moves the package and the workflow tags in one pull request, using the preset in
 `renovate.json`. That pull request needs `npm run build` on its branch before it passes
 `harness-kit check`.
