@@ -570,7 +570,7 @@ function stashesOnBranch(subjects, branch) {
 // plugins/delivery/package.json
 var package_default = {
   name: "delivery",
-  version: "0.9.0",
+  version: "0.9.1",
   description: "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
   private: true,
   type: "module",
@@ -2405,9 +2405,10 @@ function describeSelector(selector, scope) {
 function selectReceipt(candidates, selector, scope = "this repository") {
   const seen = new Set;
   let pool = candidates.filter((c) => {
-    if (seen.has(c.receipt.pr.number))
+    const key = `${c.receipt.repo.nameWithOwner}#${c.receipt.pr.number}`;
+    if (seen.has(key))
       return false;
-    seen.add(c.receipt.pr.number);
+    seen.add(key);
     return true;
   });
   const explicit = selector.pr !== undefined || selector.branch !== undefined || selector.worktree !== undefined;

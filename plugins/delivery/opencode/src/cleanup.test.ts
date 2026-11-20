@@ -3839,12 +3839,12 @@ function candidate(
   pr: number,
   branch: string,
   oid: string,
-  options: { now?: number; removed?: boolean } = {},
+  options: { now?: number; removed?: boolean; nameWithOwner?: string } = {},
 ): ReceiptCandidate {
   const receipt = buildReceipt({
     now: options.now ?? NOW + pr,
     emitter: f.receipt.emitter,
-    repo: f.receipt.repo,
+    repo: { ...f.receipt.repo, nameWithOwner: options.nameWithOwner ?? f.receipt.repo.nameWithOwner },
     pr: { ...f.receipt.pr, number: pr, headRefName: branch, headRefOid: oid },
     branch: { ...f.receipt.branch, name: branch },
     worktree: {
@@ -3892,6 +3892,17 @@ describe("selectReceipt", () => {
   test("only the newest receipt of a PR counts, so a landed receipt superseded by its cleaned one is not a candidate", () => {
     const cleaned = candidate(f, 1, "feat/one", OID_A, { removed: true, now: NOW + 500 })
     expect(selectReceipt([cleaned, one, two], {})).toEqual({ ok: true, candidate: two })
+  })
+
+  test("receipts of the same PR number in two repositories both survive, so a repo selector finds the older one", () => {
+    const other = candidate(f, 1, "feat/one", OID_A, { nameWithOwner: "other/repo", now: NOW + 900 })
+    expect(selectReceipt([other, one], { pr: 1, repo: "owner/repo" })).toEqual({ ok: true, candidate: one })
+    expect(selectReceipt([other, one], { pr: 1, repo: "other/repo" })).toEqual({ ok: true, candidate: other })
+  })
+
+  test("a second receipt of the same PR in the same repository is still deduped to the newest", () => {
+    const newer = candidate(f, 1, "feat/one", OID_A, { now: NOW + 900 })
+    expect(selectReceipt([newer, one], { pr: 1 })).toEqual({ ok: true, candidate: newer })
   })
 
   test("the worktree's HEAD oid picks the receipt whose reviewed head it is", () => {

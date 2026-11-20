@@ -274,7 +274,7 @@ function describeSelector(selector: ReceiptSelector, scope: string): string {
 
 /**
  * Picks the one receipt a cleanup is about. `candidates` are validated receipts, newest first.
- * Only a PR's newest receipt counts, because a continuation supersedes the landing it continues.
+ * Only a PR's newest receipt in its repository counts, because a continuation supersedes the landing it continues.
  * With no selector at all uncleaned receipts are preferred, and exactly one must remain; with a
  * selector a cleaned receipt qualifies too, so a repeated cleanup finds its finished landing. `pr`,
  * `branch` and `worktree` must all match; `head` breaks a tie by reviewed head oid, then branch.
@@ -285,10 +285,11 @@ export function selectReceipt(
   selector: ReceiptSelector,
   scope = "this repository",
 ): ReceiptSelection {
-  const seen = new Set<number>()
+  const seen = new Set<string>()
   let pool = candidates.filter((c) => {
-    if (seen.has(c.receipt.pr.number)) return false
-    seen.add(c.receipt.pr.number)
+    const key = `${c.receipt.repo.nameWithOwner}#${c.receipt.pr.number}`
+    if (seen.has(key)) return false
+    seen.add(key)
     return true
   })
   const explicit = selector.pr !== undefined || selector.branch !== undefined || selector.worktree !== undefined
