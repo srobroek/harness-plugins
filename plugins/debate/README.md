@@ -25,27 +25,25 @@ The skills ask their question rounds through the first channel that works:
 2. The host's question tool (`question` in OpenCode, `AskUserQuestion` in Claude Code).
 3. A numbered markdown round in chat.
 
-parley is optional. Without it, and in Claude Code and Codex, the skills use the
+parley is optional. Without it, and in Claude Code, the skills use the
 question tool or chat. Install parley beside this plugin to get the panel:
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/parley'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/parley/opencode'
 ```
 
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/debate'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/debate/opencode'
 ```
 
-Claude Code and Codex install the same skills from this repository's marketplace:
+Claude Code install the same skills from this repository's marketplace:
 
 ```sh
-claude plugin marketplace add srobroek/opencode-plugins
-claude plugin install debate@srobroek-opencode
+claude plugin marketplace add srobroek/harness-plugins
+claude plugin install debate@harness-plugins
 
-codex plugin marketplace add srobroek/opencode-plugins
-codex plugin add debate@srobroek-opencode
 ```
 
 A skill you already have with the same name wins over the plugin's copy.

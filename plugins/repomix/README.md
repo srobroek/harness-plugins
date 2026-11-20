@@ -9,7 +9,7 @@ so it never lands in the context.
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/repomix'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/repomix/opencode'
 ```
 
 Install repomix globally (`mise use -g npm:repomix@1.18.1` or `npm i -g repomix`). Without
@@ -42,7 +42,7 @@ the plugin option `confirmPack: false` to leave that to your permission rules:
 ```jsonc
 {
   "plugins": [{
-    "package": "github:srobroek/opencode-plugins::path:plugins/repomix",
+    "package": "github:srobroek/harness-plugins::path:plugins/repomix/opencode",
     "options": { "confirmPack": false }
   }]
 }
@@ -56,7 +56,7 @@ is a prompt unless you configure otherwise. The shipped allowlist agents deny it
 
 `repomix` lists when packing beats grep and read, the recipes for each case, how to read
 a pack in slices, and when `compress` loses information. It also carries a CLI recipe,
-so it is exported to Claude Code and Codex.
+so it is exported to Claude Code.
 
 ## Optional: the repomix MCP server
 

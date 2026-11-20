@@ -19,17 +19,16 @@ or whose deciding word expands (`"$MSG"`, `$(…)`), is allowed.
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/trunk-dev'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/trunk-dev/opencode'
 ```
 
 Needs `git`. The flag-cleanup bead also needs `gh` or `glab`, `bd`, `bun`, and the
 `srobroek.beads` plugin installed beside this one.
 
-Claude Code and Codex install the skills from this repository's marketplace:
+Claude Code install the skills from this repository's marketplace:
 
 ```sh
-claude plugin install trunk-dev@srobroek-opencode
-codex plugin add trunk-dev@srobroek-opencode
+claude plugin install trunk-dev@harness-plugins
 ```
 
 There the skills have no gate or advisories behind them.
@@ -107,8 +106,7 @@ subagent's actor (the command names none). Every other failure is silent.
 
 Only `trunk-dev-guide` is listed to the model in OpenCode: it is a router whose body maps each
 situation to the skills below, which set `opencode/autoinvoke: false` and load by id. One listing
-entry instead of one per skill keeps the per-request skills listing short. Claude Code
-and Codex ignore that metadata, so there every skill is listed and triggers directly.
+entry instead of one per skill keeps the per-request skills listing short. Claude Code ignores that metadata, so there every skill is listed and triggers directly.
 
 Registered through `ctx.skill.transform` (a user skill of the same name wins):
 

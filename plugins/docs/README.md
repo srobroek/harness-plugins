@@ -26,7 +26,7 @@ called through `execute`, instead of each tool schema going into every request.
 ```jsonc
 {
   "plugins": [{
-    "package": "github:srobroek/opencode-plugins::path:plugins/docs",
+    "package": "github:srobroek/harness-plugins::path:plugins/docs/opencode",
     "options": {
       "mcp": "auto",                                    // "auto" (default) or "always" add the servers; "off" adds none
       "mcpServers": { "openaiDeveloperDocs": true }     // turn single servers on or off by name
@@ -47,8 +47,8 @@ to `false` in `mcpServers`.
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/docs'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/docs/opencode'
 ```
 
-The plugin is OpenCode-only and not in the Claude Code or Codex marketplace; Context7
+The plugin is OpenCode-only and not in the Claude Code marketplace; Context7
 ships its own plugins for those.

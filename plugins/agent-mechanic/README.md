@@ -24,7 +24,7 @@ its model; without it the agent inherits the caller's model.
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/agent-mechanic'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-mechanic/opencode'
 ```
 
-This plugin ships no skills, so it is not in the Claude Code or Codex marketplace.
+This plugin ships no skills, so it is not in the Claude Code marketplace.

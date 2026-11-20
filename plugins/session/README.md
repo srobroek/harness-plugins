@@ -34,5 +34,5 @@ The tool never writes: no compaction, fork, switch or view marking.
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/session'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/session/opencode'
 ```

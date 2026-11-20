@@ -12,7 +12,7 @@ Its remote owns `refs/dolt/data`, not the code remote. Then, in the code project
 `.opencode/opencode.json`, add:
 
 ```json
-{"plugins":[{"package":"github:srobroek/opencode-plugins#main::path:plugins/beads","options":{"store":"/absolute/path/to/ledger/.beads"}}]}
+{"plugins":[{"package":"github:srobroek/harness-plugins#main::path:plugins/beads/opencode","options":{"store":"/absolute/path/to/ledger/.beads"}}]}
 ```
 
 Match the inherited package target exactly. This entry REPLACES inherited options.
@@ -32,7 +32,7 @@ validation and precedence.
 Install the plugin with these two commands:
 
 ```text
-/plugin marketplace add srobroek/opencode-plugins
+/plugin marketplace add srobroek/harness-plugins
 /plugin install beads@srobroek-opencode
 ```
 

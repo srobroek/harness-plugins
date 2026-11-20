@@ -10,10 +10,10 @@ without `setup-tools`.
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/find-tools'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/find-tools/opencode'
 ```
 
-Not exported to Claude Code or Codex: the skill drives the `find_tools_scan` tool.
+Not exported to Claude Code: the skill drives the `find_tools_scan` tool.
 
 ## Tool
 
@@ -68,7 +68,7 @@ it leaves a configured `deny` alone. It is a prompt, not a sandbox.
 {
   "plugins": [
     {
-      "package": "github:srobroek/opencode-plugins::path:plugins/find-tools",
+      "package": "github:srobroek/harness-plugins::path:plugins/find-tools/opencode",
       "options": {
         "guardInstalls": true,
         "skillCatalogs": ["https://example.com/.well-known/skills/"]

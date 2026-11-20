@@ -12,22 +12,20 @@ Replaces the Python half of the former `languages` plugin, which ported the omp-
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/lang-python'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/lang-python/opencode'
 ```
 
-Claude Code and Codex install the same skills from this repository's marketplace:
+Claude Code install the same skills from this repository's marketplace:
 
 ```sh
-claude plugin install lang-python@srobroek-opencode
-codex plugin add lang-python@srobroek-opencode
+claude plugin install lang-python@harness-plugins
 ```
 
 ## Skills
 
 Only `lang-python` is listed to the model in OpenCode: it is a router whose body maps each
 situation to the skills below, which set `opencode/autoinvoke: false` and load by id. One listing
-entry instead of one per skill keeps the per-request skills listing short. Claude Code
-and Codex ignore that metadata, so there every skill is listed and triggers directly.
+entry instead of one per skill keeps the per-request skills listing short. Claude Code ignores that metadata, so there every skill is listed and triggers directly.
 The profiling skill is also reached through the `quality` plugin's `quality-profiling` skill.
 
 The plugin registers these skills from `skills/`, unless a skill with the same id

@@ -9,10 +9,10 @@ plugin: the formulas assume a beads workspace, and `build-formula` ships there.
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/speckit'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/speckit/opencode'
 ```
 
-Not exported to Claude Code or Codex: the skills lean on this plugin's tools,
+Not exported to Claude Code: the skills lean on this plugin's tools,
 formulas and subagents.
 
 ## Options
@@ -224,7 +224,7 @@ without it the skill reports the missing guidance.
 ## Claude Code
 
 The plugin is also in this repository's Claude Code marketplace as
-`speckit@srobroek-opencode`. It depends on `beads`, which Claude Code enables with it.
+`speckit@harness-plugins`. It depends on `beads`, which Claude Code enables with it.
 Claude Code gets these parts:
 
 - the `speckit-setup` and `speckit-bugfix` skills, with the manual steps for setup and

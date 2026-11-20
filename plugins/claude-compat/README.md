@@ -12,7 +12,7 @@ run on your machine, and their skills and agents are instructions the model foll
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/claude-compat'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/claude-compat/opencode'
 ```
 
 ## Configure
@@ -34,7 +34,7 @@ removing the entry.
    ```jsonc
    {
      "plugins": [{
-       "package": "github:srobroek/opencode-plugins::path:plugins/claude-compat",
+       "package": "github:srobroek/harness-plugins::path:plugins/claude-compat/opencode",
         "options": {
           "enabled": true,
          "sources": [{ "path": "~/src/pace-claude-plugins" }],

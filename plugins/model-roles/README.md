@@ -10,7 +10,7 @@ subscription at home.
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/model-roles'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/model-roles/opencode'
 ```
 
 Keep the options in your **global** config (`~/.config/opencode/opencode.json`),
@@ -25,7 +25,7 @@ writes them for you.
 ```jsonc
 {
   "plugins": [{
-    "package": "github:srobroek/opencode-plugins::path:plugins/model-roles",
+    "package": "github:srobroek/harness-plugins::path:plugins/model-roles/opencode",
     "options": {
       "tiers": {
         "cheap": { "model": "auto", "effort": "low" },

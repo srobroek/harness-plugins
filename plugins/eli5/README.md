@@ -15,17 +15,15 @@ earlier one under `~/.claude/skills` is gone.
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/eli5'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/eli5/opencode'
 ```
 
-Claude Code and Codex install the same skill from this repository's marketplace:
+Claude Code install the same skill from this repository's marketplace:
 
 ```sh
-claude plugin marketplace add srobroek/opencode-plugins
-claude plugin install eli5@srobroek-opencode
+claude plugin marketplace add srobroek/harness-plugins
+claude plugin install eli5@harness-plugins
 
-codex plugin marketplace add srobroek/opencode-plugins
-codex plugin add eli5@srobroek-opencode
 ```
 
 A skill you already have with the same name wins over the plugin's copy.

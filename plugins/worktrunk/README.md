@@ -13,20 +13,18 @@ It does three things:
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/worktrunk'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/worktrunk/opencode'
 ```
 
-Claude Code and Codex install the skills from this repository's marketplace:
+Claude Code install the skills from this repository's marketplace:
 
 ```sh
-claude plugin marketplace add srobroek/opencode-plugins
-claude plugin install worktrunk@srobroek-opencode
+claude plugin marketplace add srobroek/harness-plugins
+claude plugin install worktrunk@harness-plugins
 
-codex plugin marketplace add srobroek/opencode-plugins
-codex plugin add worktrunk@srobroek-opencode
 ```
 
-Claude Code and Codex get the two skills only; the worktree strategy and merge gate are OpenCode code.
+Claude Code get the two skills only; the worktree strategy and merge gate are OpenCode code.
 
 Needs `wt` and `git` on `PATH`. The preflight skill also needs `python3` (3.11 or later).
 

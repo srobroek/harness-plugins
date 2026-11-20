@@ -153,7 +153,7 @@ entry instead of one per skill keeps the per-request skills listing short.
 Registered through `ctx.skill.transform` from `skills/` (a user skill of the same
 name wins): `beads-ledger`, `beads-evidence`, `beads-setup`,
 `beads-contention-retry` and `beads-preflight` (a read-only `preflight.py`). They are
-not exported to the Claude Code and Codex marketplaces, because they describe this
+not exported to the Claude Code marketplaces, because they describe this
 plugin's write lock and prime context.
 
 ## Options
@@ -244,7 +244,7 @@ read, and a location without a store are all allowed. Gate name:
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/beads'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/beads/opencode'
 ```
 
 ## Claude Code
@@ -253,8 +253,8 @@ The plugin is also in this repository's Claude Code marketplace. Install it with
 two commands:
 
 ```text
-/plugin marketplace add srobroek/opencode-plugins
-/plugin install beads@srobroek-opencode
+/plugin marketplace add srobroek/harness-plugins
+/plugin install beads@harness-plugins
 ```
 
 It ships the skills and the two hooks in `hooks/claude-hooks.json`. Both hooks run

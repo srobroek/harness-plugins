@@ -63,7 +63,7 @@ src/main.ts
    ```
 
    ```sh
-   opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/lsp'
+   opencode plugin add 'github:srobroek/harness-plugins::path:plugins/lsp/opencode'
    ```
 
 The server name `lsp` makes the diagnostics tool `lsp_diagnostics`, which is

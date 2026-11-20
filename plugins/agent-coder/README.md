@@ -107,7 +107,7 @@ picks its model; without it the agent inherits the caller's model. Set
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/agent-coder'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-coder/opencode'
 ```
 
-This plugin ships no skills, so it is not in the Claude Code or Codex marketplace.
+This plugin ships no skills, so it is not in the Claude Code marketplace.

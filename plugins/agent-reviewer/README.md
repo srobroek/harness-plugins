@@ -77,16 +77,14 @@ here keep the copies in sync.
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/agent-reviewer'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-reviewer/opencode'
 ```
 
-Claude Code and Codex install the `review-security` skill, not the agents, from this
+Claude Code install the `review-security` skill, not the agents, from this
 repository's marketplace:
 
 ```sh
-claude plugin marketplace add srobroek/opencode-plugins
-claude plugin install agent-reviewer@srobroek-opencode
+claude plugin marketplace add srobroek/harness-plugins
+claude plugin install agent-reviewer@harness-plugins
 
-codex plugin marketplace add srobroek/opencode-plugins
-codex plugin add agent-reviewer@srobroek-opencode
 ```

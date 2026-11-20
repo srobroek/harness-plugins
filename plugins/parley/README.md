@@ -9,7 +9,7 @@ Inspired by [octto](https://github.com/vtemian/octto).
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/parley'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/parley/opencode'
 ```
 
 The package has a server entry (tools, RPC) and a TUI entry (`./tui`, the
@@ -25,7 +25,7 @@ Options:
 | `heartbeat_window_s` | `30` | How recently a TUI must have checked in to count as attached. |
 
 ```json
-{ "plugins": [{ "package": "github:srobroek/opencode-plugins::path:plugins/parley", "options": { "fallback": "question" } }] }
+{ "plugins": [{ "package": "github:srobroek/harness-plugins::path:plugins/parley/opencode", "options": { "fallback": "question" } }] }
 ```
 
 ## Tools

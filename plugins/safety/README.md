@@ -13,7 +13,7 @@ written to a file, a `bun -e` fixture) never trips a check. One run through `sud
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/safety'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/safety/opencode'
 ```
 
 Needs `git` on `PATH`. The branch check also uses `gh`. Without `gh`, the merged-PR signal is

@@ -9,14 +9,13 @@ Ported from the omp-plugins `chezmoi` plugin.
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/chezmoi'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/chezmoi/opencode'
 ```
 
-Claude Code and Codex install the skill from this repository's marketplace:
+Claude Code install the skill from this repository's marketplace:
 
 ```sh
-claude plugin install chezmoi@srobroek-opencode
-codex plugin add chezmoi@srobroek-opencode
+claude plugin install chezmoi@harness-plugins
 ```
 
 There the skill has no guard behind it.

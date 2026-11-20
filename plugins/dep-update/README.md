@@ -9,7 +9,7 @@ Ported from the omp-plugins `dep-update` plugin.
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/dep-update'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/dep-update/opencode'
 ```
 
 ## Tools

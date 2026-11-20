@@ -4,8 +4,7 @@ Architecture guidance as skills, plus a read-only `architect` subagent.
 
 Only `architecture-guide` is listed to the model in OpenCode: it is a router whose body maps each
 situation to the skills below, which set `opencode/autoinvoke: false` and load by id. One listing
-entry instead of one per skill keeps the per-request skills listing short. Claude Code
-and Codex ignore that metadata, so there every skill is listed and triggers directly.
+entry instead of one per skill keeps the per-request skills listing short. Claude Code ignores that metadata, so there every skill is listed and triggers directly.
 
 | Skill | When |
 | --- | --- |
@@ -42,16 +41,14 @@ set `agent.architect.model` in your config to pin one.
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/architecture'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/architecture/opencode'
 ```
 
-Claude Code and Codex install the skills, not the agent, from this repository's
+Claude Code install the skills, not the agent, from this repository's
 marketplace:
 
 ```sh
-claude plugin marketplace add srobroek/opencode-plugins
-claude plugin install architecture@srobroek-opencode
+claude plugin marketplace add srobroek/harness-plugins
+claude plugin install architecture@harness-plugins
 
-codex plugin marketplace add srobroek/opencode-plugins
-codex plugin add architecture@srobroek-opencode
 ```

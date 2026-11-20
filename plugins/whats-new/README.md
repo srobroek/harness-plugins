@@ -9,10 +9,10 @@ Ported from the omp-plugins `whats-new` plugin.
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/whats-new'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/whats-new/opencode'
 ```
 
-The plugin is OpenCode-only and is not exported to Claude Code or Codex: its skill depends on the `version_gap_scan` tool and the report-only `whats-new` agent.
+The plugin is OpenCode-only and is not exported to Claude Code: its skill depends on the `version_gap_scan` tool and the report-only `whats-new` agent.
 
 ## Agent
 

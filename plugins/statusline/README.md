@@ -51,7 +51,7 @@ TUI plugins are configured in `~/.config/opencode/cli.json`:
 
 ```json
 {
-  "plugins": ["github:srobroek/opencode-plugins::path:plugins/statusline"]
+  "plugins": ["github:srobroek/harness-plugins::path:plugins/statusline/opencode"]
 }
 ```
 
@@ -61,7 +61,7 @@ With options:
 {
   "plugins": [
     {
-      "package": "github:srobroek/opencode-plugins::path:plugins/statusline",
+      "package": "github:srobroek/harness-plugins::path:plugins/statusline/opencode",
       "options": {
         "segments": { "left": ["model", "git", "context_pct"], "right": ["token_in", "token_out", "session_name"] },
         "separator": "plain"

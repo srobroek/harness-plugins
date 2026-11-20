@@ -5,7 +5,7 @@ loads when the description matches.
 
 In OpenCode the `toolchain-*`, `ops-*` and `ci-*` skills set `opencode/autoinvoke: false` and are
 listed as one router, `toolchain-guide`, whose body maps each situation to the skill to load
-by id; the other skills stay listed. Claude Code and Codex ignore that metadata, so there
+by id; the other skills stay listed. Claude Code ignore that metadata, so there
 every skill is listed and triggers directly.
 
 | Skill | When |
@@ -63,15 +63,13 @@ triggers are gone.
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/toolchain'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/toolchain/opencode'
 ```
 
-Claude Code and Codex install the same skills from this repository's marketplace:
+Claude Code install the same skills from this repository's marketplace:
 
 ```sh
-claude plugin marketplace add srobroek/opencode-plugins
-claude plugin install toolchain@srobroek-opencode
+claude plugin marketplace add srobroek/harness-plugins
+claude plugin install toolchain@harness-plugins
 
-codex plugin marketplace add srobroek/opencode-plugins
-codex plugin add toolchain@srobroek-opencode
 ```

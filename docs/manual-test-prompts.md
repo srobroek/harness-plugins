@@ -104,11 +104,11 @@ merging with them. The options these tests use:
 {
   "plugins": [
     {
-      "package": "github:srobroek/opencode-plugins#main::path:plugins/model-roles",
+      "package": "github:srobroek/harness-plugins#main::path:plugins/model-roles/opencode",
       "options": { "guard": true }
     },
     {
-      "package": "github:srobroek/opencode-plugins#main::path:plugins/parley",
+      "package": "github:srobroek/harness-plugins#main::path:plugins/parley/opencode",
       "options": { "fallback": "question" }
     }
   ],
@@ -122,7 +122,7 @@ merging with them. The options these tests use:
 The statusline is a TUI plugin, configured in `~/.config/opencode/cli.json`:
 
 ```json
-{ "plugins": ["github:srobroek/opencode-plugins#main::path:plugins/statusline"] }
+{ "plugins": ["github:srobroek/harness-plugins#main::path:plugins/statusline/opencode"] }
 ```
 
 parley and model-roles also have a TUI entry (`./tui`). It loads from the same install.
@@ -253,7 +253,7 @@ Look above the composer.
 
 ## agent-coder
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/agent-coder'`. No
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/agent-coder/opencode'`. No
 options. Install the lang-<language> plugins, quality and toolchain too so its skill allowlist has content.
 
 ### Agent `coder`
@@ -281,7 +281,7 @@ Use the coder agent to plan tests for div in src/div.ts (zero, negative, fractio
 
 ## agent-efficiency
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/agent-efficiency'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/agent-efficiency/opencode'`.
 Options: `bashAlias`, `explore`, `leanSubagents` and `leanDrop`, all on by default. `leanDrop`
 defaults to `identity` and `worktree`. Add `global-instructions` or `project-instructions` (or
 use `instructions` for both) to drop an `AGENTS.md` too.
@@ -324,7 +324,7 @@ Use the adversarial-challenger agent to answer: does your system prompt contain 
 
 ## agent-mechanic
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/agent-mechanic'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/agent-mechanic/opencode'`.
 
 ### Agent `mechanic`
 
@@ -337,7 +337,7 @@ Use the mechanic agent to rename the function add to sum everywhere in this repo
 
 ## agent-researcher
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/agent-researcher'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/agent-researcher/opencode'`.
 
 ### Agent `researcher`
 
@@ -350,7 +350,7 @@ Use the researcher agent to answer: what is the default merge method of `gh pr m
 
 ## agent-reviewer
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/agent-reviewer'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/agent-reviewer/opencode'`.
 `pr-reviewer` needs `gh` and a GitHub PR.
 
 ### Agent `code-reviewer`
@@ -400,7 +400,7 @@ Load the review-security skill and use it to trace untrusted input to sinks in s
 
 ## agent-seance
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/agent-seance'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/agent-seance/opencode'`.
 Needs at least one earlier session in the project.
 
 ### Tool `seance_read`
@@ -430,7 +430,7 @@ Use the seance agent to tell me what the previous session in this project change
 
 ## architecture
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/architecture'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/architecture/opencode'`.
 
 ### Skill `architecture-guide` (router) → `architecture-top-level`
 
@@ -470,7 +470,7 @@ Use the architect agent to design a plugin system for this repo's math module, w
 
 ## aws
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/aws'`. Optional:
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/aws/opencode'`. Optional:
 the `aws-mcp` and `aws-pricing` servers from `plugins/aws/README.md`, `uv`, and AWS credentials.
 
 ### Skill `aws-guidance`
@@ -484,7 +484,7 @@ How do I create an S3 bucket with versioning using the AWS CLI, and what will it
 
 ## beads
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/beads'`. Needs
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/beads/opencode'`. Needs
 `bd` and `bun`. Every gate is on by default (`{ "gates": { "<gate>": { "enabled": false } } }`).
 Unset `BEADS_ACTOR` and `BD_ACTOR` before you start OpenCode, so the actor gate fires.
 
@@ -668,7 +668,7 @@ bd dolt push failed with "lock busy". What now?
 
 ## build
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/build'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/build/opencode'`.
 
 ### Agent `external-repo-worker`
 
@@ -681,7 +681,7 @@ Use the external-repo-worker agent to clone https://github.com/srobroek/opencode
 
 ## chezmoi
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/chezmoi'`. Needs
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/chezmoi/opencode'`. Needs
 `chezmoi`. Pick a managed file from `chezmoi managed --path-style=absolute | head`. If the
 guard fails and the write lands, restore the file with `chezmoi apply <file>`.
 
@@ -714,7 +714,7 @@ Change my global git config to set pull.rebase=true. My dotfiles are managed wit
 
 ## debate
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/debate'`. With
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/debate/opencode'`. With
 parley installed, question rounds open in the parley panel.
 
 ### Skill `debate`
@@ -746,7 +746,7 @@ Write a questionnaire for my product manager about which login providers we must
 
 ## delivery
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/delivery'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/delivery/opencode'`.
 Options: `confirm`, `receiptsDirectory`, `agents`, `models`, `fanOut` and `verdicts`. Nested
 spawns need `experimental.subagent_depth` of 2 or more. A real landing needs `gh` and a
 GitHub sandbox repo.
@@ -860,7 +860,7 @@ Load the delivery-fan-out skill, then split "add sub, mul and div to src/math.ts
 
 ## dep-update
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/dep-update'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/dep-update/opencode'`.
 Option `confirm` (default `true`). The scratch `package.json` pins `left-pad` `1.1.0`.
 
 ### Tool `dep_scan`
@@ -901,7 +901,7 @@ Upgrade this project's dependencies safely.
 
 ## design
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/design'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/design/opencode'`.
 Option `confirmScan` (default `true`). `design_setup` needs `.beads/`; the scan needs `npx`.
 The browser steps need the desktop browser tools, a browser MCP server or Playwright.
 
@@ -1044,7 +1044,7 @@ Use the a11y-auditor agent to audit src/index.html against WCAG 2.2 AA.
 
 ## eli5
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/eli5'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/eli5/opencode'`.
 
 ### Skill `eli5`
 
@@ -1057,7 +1057,7 @@ ELI5: how does a git rebase work?
 
 ## find-tools
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/find-tools'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/find-tools/opencode'`.
 Options `guardInstalls` (default `true`) and `skillCatalogs`. The `github` source needs
 `gh`; `smithery` needs `SMITHERY_API_KEY`.
 
@@ -1090,7 +1090,7 @@ Find a tool for generating changelogs from Conventional Commits. Should I adopt 
 
 ## journeys
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/journeys'`. Add
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/journeys/opencode'`. Add
 the two `permissions` rules from [Install](#install) to get prompts. Formulas need `.beads/`.
 
 ### Skill `journeys-guide` (router) and its members
@@ -1179,7 +1179,7 @@ Use the journey-validator agent to validate user-journeys/<journey>.md.
 
 ## lang-go, lang-python, lang-typescript
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/lang-<language>'` for
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/lang-/opencode<language>'` for
 `lang-go`, `lang-python` and `lang-typescript`. Each lists one router, `lang-<language>`.
 
 ### Skill `lang-typescript` (router) → `lang-typescript-quality`
@@ -1287,7 +1287,7 @@ Speed up this Python script.
 
 ## lang-rust
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/lang-rust'`. The plugin
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/lang-rust/opencode'`. The plugin
 ships skills only; the former `rust` advisories are now guidance in `lang-rust-ci`.
 
 ### Skill `lang-rust` (router) and its members
@@ -1354,7 +1354,7 @@ Profile this Rust binary and set up criterion benchmarks with a saved baseline.
 **Install:** a language server (`npm i -g typescript typescript-language-server`),
 lsp-tools-mcp at the pinned commit registered as MCP server `lsp` with `codemode: false`
 (see `plugins/lsp/README.md`), then
-`opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/lsp'`. Options:
+`opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/lsp/opencode'`. Options:
 `tool`, `timeout`, `maxLines` and `baseline`.
 
 ### Hook: new errors after an edit
@@ -1375,7 +1375,7 @@ Use the edit tool to add a blank line at the top of src/bad.ts.
 
 ## model-roles
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/model-roles'`,
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/model-roles/opencode'`,
 with `"guard": true` in its global options. Use a model catalog with at least two vendors
 (for example Bedrock Claude and GPT, or a Claude and a ChatGPT sign-in), and one premium
 model for the guard.
@@ -1459,7 +1459,7 @@ Use the general agent to say hi.
 
 ## parley
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/parley'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/parley/opencode'`.
 Options: `fallback` (`"none"` or `"question"`), `ui` and `heartbeat_window_s`.
 
 ### Tool `parley_ask` and the panel
@@ -1500,7 +1500,7 @@ opencode run "Call parley_ask with one pick_one question about tabs versus space
 
 ## project
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/project'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/project/opencode'`.
 
 ### Skill `license-picker`
 
@@ -1513,7 +1513,7 @@ What license should I use for this repo? It's a library I want companies to use,
 
 ## quality
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/quality'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/quality/opencode'`.
 
 ### Skill `quality-code-design`
 
@@ -1570,7 +1570,7 @@ Uninstall agent-reviewer, restart, then rerun the
 
 ## safety
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/safety'`. Needs
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/safety/opencode'`. Needs
 `git`; the branch check also uses `gh`. Option `disable`. Run these in the scratch repo. On
 an ask, reject unless the entry says otherwise.
 
@@ -1733,7 +1733,7 @@ git -C "$SCRATCH/repo" commit --allow-empty -m "chore: probe" -m "Generated with
 
 ## session
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/session'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/session/opencode'`.
 Options `api` and `omp`. Needs an earlier session in the project.
 
 ### Tool `session_resume`
@@ -1763,7 +1763,7 @@ Resume my session: continue where I left off on the math module.
 
 ## speckit
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/speckit'`,
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/speckit/opencode'`,
 next to beads. Needs `specify` for setup and `bd` for the guards. Options: `integration`,
 `tasksGuard`, `implementRedirect`, `blockTasksToIssues`, `workflow` and `agents`.
 
@@ -1870,7 +1870,7 @@ Use the speckit-verify agent with mode requirements on specs/001-demo.
 
 ## statusline
 
-**Install:** TUI only. Add `"github:srobroek/opencode-plugins#main::path:plugins/statusline"` to
+**Install:** TUI only. Add `"github:srobroek/harness-plugins#main::path:plugins/statusline/opencode"` to
 `plugins` in `~/.config/opencode/cli.json` and restart the TUI. Options: `segments`,
 `separator` and `pathMaxLength`.
 
@@ -1898,7 +1898,7 @@ Narrow the terminal to about 80 columns.
 
 ## subagent-worktree
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/subagent-worktree'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/subagent-worktree/opencode'`.
 Needs `git`; merging needs `wt`. Options `agents` (default `implementer`, `implementer-high`,
 `general`) and `base`.
 
@@ -1956,7 +1956,7 @@ Use the general agent to read package.json and tell me the name field. Make no c
 
 ## toolchain
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/toolchain'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/toolchain/opencode'`.
 
 ### Skill `toolchain-guide` (router) and its members
 
@@ -2056,7 +2056,7 @@ Add retries with idempotency keys and a dead-letter queue to this queue worker.
 
 ## trunk-dev
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/trunk-dev'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/trunk-dev/opencode'`.
 Needs `git`. The PR advisories need `gh` and a GitHub sandbox repo; the flag-cleanup bead
 also needs `bd`, `bun` and the beads plugin. Option
 `{ "disable": ["commit-gate", "skip-ci", "mr-advisory", "flag-cleanup"] }`.
@@ -2146,7 +2146,7 @@ Set up semantic-release on GitHub for this repo, with a stale-branch job.
 
 ## whats-new
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/whats-new'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/whats-new/opencode'`.
 
 ### Tool `version_gap_scan`
 
@@ -2183,7 +2183,7 @@ Run exactly: env npm install left-pad@latest
 
 ## worktrunk
 
-**Install:** `opencode plugin add 'github:srobroek/opencode-plugins#main::path:plugins/worktrunk'`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/worktrunk/opencode'`.
 Needs `wt`, `git` and `python3` 3.11+. Option `strategy` (default `true`).
 
 ### Worktree strategy

@@ -8,11 +8,11 @@ Ported from the omp-plugins `journeys` plugin.
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/journeys'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/journeys/opencode'
 ```
 
-The plugin is also in this repository's Claude Code and Codex marketplaces
-(`journeys@srobroek-opencode`). Both get the skills. Claude Code also gets the two
+The plugin is also in this repository's Claude Code marketplaces
+(`journeys@harness-plugins`). Both get the skills. Claude Code also gets the two
 subagents as `journeys:journey-scribe` and `journeys:journey-validator`. Without the
 tools, the skills run the copied `journeys.py` helper and copy the formulas by hand.
 

@@ -26,20 +26,18 @@ Prerequisites: `ast-grep` (`brew install ast-grep`, `mise use -g ast-grep`,
 (`-U`, `--update-all`, `-i`, `--autofix`) denied. `security-reviewer` has no shell, so it
 loads the skill and searches with grep.
 
-### Claude Code and Codex
+### Claude Code
 
 The marketplace export ships the same skill.
 
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/ast-grep'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/ast-grep/opencode'
 ```
 
 ```sh
-claude plugin marketplace add srobroek/opencode-plugins
-claude plugin install ast-grep@srobroek-opencode
+claude plugin marketplace add srobroek/harness-plugins
+claude plugin install ast-grep@harness-plugins
 
-codex plugin marketplace add srobroek/opencode-plugins
-codex plugin add ast-grep@srobroek-opencode
 ```

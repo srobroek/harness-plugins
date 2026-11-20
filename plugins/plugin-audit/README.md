@@ -17,7 +17,7 @@ categories:
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/plugin-audit'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/plugin-audit/opencode'
 ```
 
 ## Tools

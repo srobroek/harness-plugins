@@ -31,7 +31,7 @@ tier picks its model. Without it the agent inherits the caller's model; set
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/build'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/build/opencode'
 ```
 
-This plugin ships no skills, so it is not in the Claude Code or Codex marketplace.
+This plugin ships no skills, so it is not in the Claude Code marketplace.

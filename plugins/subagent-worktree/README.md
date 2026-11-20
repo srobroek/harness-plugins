@@ -6,7 +6,7 @@ Runs opted-in subagents in their own git worktree, then merges their branch back
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/subagent-worktree'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/subagent-worktree/opencode'
 ```
 
 Needs `git`. Merging needs `wt` on `PATH`. Worktrees come from OpenCode's active worktree strategy:

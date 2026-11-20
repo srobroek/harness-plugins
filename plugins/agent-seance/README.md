@@ -42,8 +42,8 @@ serves rather than the package name.
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/agent-seance'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-seance/opencode'
 ```
 
 The tool is OpenCode-only and the plugin ships no skills, so it is not in the Claude
-Code or Codex marketplace.
+Code marketplace.

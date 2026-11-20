@@ -16,7 +16,7 @@ The skills, the lamp-arm example and the worker agent prompts come from
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/cad'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/cad/opencode'
 ```
 
 Then install FreeCAD 1.1.4 (see the `cad-drawings` skill) and make sure `uv` is on `PATH`. Ask

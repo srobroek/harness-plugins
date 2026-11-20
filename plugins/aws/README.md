@@ -48,7 +48,7 @@ first marker to a new project.
 ```jsonc
 {
   "plugins": [{
-    "package": "github:srobroek/opencode-plugins::path:plugins/aws",
+    "package": "github:srobroek/harness-plugins::path:plugins/aws/opencode",
     "options": {
       "mcp": "always",                          // "auto" (default), "always", or "off" for no servers
       "mcpServers": { "aws-pricing": false }    // turn single servers off (or on) by name
@@ -61,12 +61,12 @@ A server under the same name in your `opencode.json` wins: the plugin leaves it 
 configured it. Use that to change flags or versions, for example to add `--profile`,
 or set `"disabled": true` to keep it configured but off.
 
-### Claude Code and Codex
+### Claude Code
 
 The marketplace export ships the same `.mcp.json`, so installing the plugin there
 starts both servers in every project; there is no project check. Disable them per
 project in that harness's MCP settings when they are not wanted. Neither file uses
-`${VAR}` substitution, which Codex does not expand in a plugin's `.mcp.json`.
+`${VAR}` substitution.
 
 ## Changes from omp
 
@@ -86,16 +86,14 @@ Both omp rules adapted the rules file from
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/aws'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/aws/opencode'
 ```
 
-Claude Code and Codex install the skill and both servers from this repository's
+Claude Code install the skill and both servers from this repository's
 marketplace:
 
 ```sh
-claude plugin marketplace add srobroek/opencode-plugins
-claude plugin install aws@srobroek-opencode
+claude plugin marketplace add srobroek/harness-plugins
+claude plugin install aws@harness-plugins
 
-codex plugin marketplace add srobroek/opencode-plugins
-codex plugin add aws@srobroek-opencode
 ```

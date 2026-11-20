@@ -49,7 +49,7 @@ twice. `security-reviewer` carries only the review rules, so it gets the blocks.
 ```jsonc
 {
   "plugins": [{
-    "package": "github:srobroek/opencode-plugins::path:plugins/quality",
+    "package": "github:srobroek/harness-plugins::path:plugins/quality/opencode",
     "options": { "standardsSubagents": ["general", "my-writer"] }
   }]
 }
@@ -66,7 +66,7 @@ global `AGENTS.md` or into a file listed under `instructions` in your config.
 ## Test audit tools
 
 Two read-only tools back the `quality-test-audit` skill. Both refuse report paths outside
-the session directory and the OpenCode temp directory. Claude Code and Codex get the
+the session directory and the OpenCode temp directory. Claude Code get the
 skill without the tools; it falls back to the shell commands in its `references/evidence.md`.
 
 | Tool | Does |
@@ -135,16 +135,14 @@ in `skills/quality-code-design/NOTICE`, with the licence text in
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/quality'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/quality/opencode'
 ```
 
-Claude Code and Codex install the skills, not the agent, from this repository's
+Claude Code install the skills, not the agent, from this repository's
 marketplace:
 
 ```sh
-claude plugin marketplace add srobroek/opencode-plugins
-claude plugin install quality@srobroek-opencode
+claude plugin marketplace add srobroek/harness-plugins
+claude plugin install quality@harness-plugins
 
-codex plugin marketplace add srobroek/opencode-plugins
-codex plugin add quality@srobroek-opencode
 ```

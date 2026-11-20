@@ -57,7 +57,7 @@ Reminders do not change the system prompt. Set `scratchReminder: false` to disab
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/agent-efficiency'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-efficiency/opencode'
 ```
 
 ## bash alias
@@ -183,7 +183,7 @@ starts with, rejects it. Moving the call into `workdir` does not help: OpenCode 
 {
   "plugins": [
     {
-      "package": "github:srobroek/opencode-plugins::path:plugins/agent-efficiency",
+      "package": "github:srobroek/harness-plugins::path:plugins/agent-efficiency/opencode",
       "options": { "leanSubagents": ["explore", "pr-reviewer"], "leanDrop": ["instructions", "identity"] }
     }
   ]

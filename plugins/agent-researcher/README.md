@@ -59,7 +59,7 @@ This agent allows `execute`, so it reaches MCP tools through Code Mode; each nes
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/agent-researcher'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-researcher/opencode'
 ```
 
-This plugin ships no skills, so it is not in the Claude Code or Codex marketplace.
+This plugin ships no skills, so it is not in the Claude Code marketplace.

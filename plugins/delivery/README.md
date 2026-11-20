@@ -11,7 +11,7 @@ means `delivery_cleanup` has not run yet (or `delivery_land` could not finish it
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/delivery'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/delivery/opencode'
 ```
 
 The implementer agents spawn `explore`, `operator` and `researcher`. Nested
@@ -435,7 +435,7 @@ This agent denies `execute`, so OpenCode lists its allowed MCP tools directly, e
 ```jsonc
 {
   "plugins": [{
-    "package": "github:srobroek/opencode-plugins::path:plugins/delivery",
+    "package": "github:srobroek/harness-plugins::path:plugins/delivery/opencode",
     "options": {
       "confirm": true,              // prompt for every land and cleanup
       "autoCleanup": true,          // delivery_land runs cleanup itself

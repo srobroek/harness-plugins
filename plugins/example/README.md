@@ -10,5 +10,5 @@ repository use:
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/example'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/example/opencode'
 ```

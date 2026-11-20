@@ -92,8 +92,8 @@ stays `ask`.
   its own generator; `scripts/sync-cad.ts` builds this plugin's agents from cad-agent's neutral
   `agents/` instead, because its OpenCode output grants a `uv *` shell and carries no model tier
   or step limit.
-- Claude Code and Codex export: cad-agent ships its own Claude Code plugin and installer, so
-  `package.json` keeps `"opencode-plugins": { "claude": false, "codex": false }`.
+- Claude Code export: cad-agent ships its own Claude Code plugin and installer, so
+  `package.json` lists only the `opencode` harness.
 - OMP `CHANGELOG.md`: release-please starts a new one.
 
 ## Tests and CI
@@ -111,4 +111,4 @@ stays `ask`.
 
 - OpenCode exposes a skill-directory variable to shell commands: `cad_run` could become prose.
 - OpenCode gains an exit event: stop viewers there instead of on dispose.
-- A Claude Code or Codex user needs the skills: add a launcher note per harness and export.
+- A Claude Code user needs the skills: add a launcher note per harness and export.

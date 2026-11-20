@@ -9,8 +9,7 @@ design MCP servers in frontend projects.
 
 Only `design-guide` is listed to the model in OpenCode: it is a router whose body maps each
 situation to every skill below, which set `opencode/autoinvoke: false` and load by id. One listing
-entry instead of one per skill keeps the per-request skills listing short. Claude Code
-and Codex ignore that metadata, so there every skill is listed and triggers directly.
+entry instead of one per skill keeps the per-request skills listing short. Claude Code ignores that metadata, so there every skill is listed and triggers directly.
 
 | Skill | Phase | When |
 | --- | --- | --- |
@@ -92,7 +91,7 @@ allows it, because npx may download impeccable and its engine; set the plugin op
 ```jsonc
 {
   "plugins": [{
-    "package": "github:srobroek/opencode-plugins::path:plugins/design",
+    "package": "github:srobroek/harness-plugins::path:plugins/design/opencode",
     "options": { "confirmScan": false }
   }]
 }
@@ -165,7 +164,7 @@ for a directory; run `/reload` after adding the first marker.
 ```jsonc
 {
   "plugins": [{
-    "package": "github:srobroek/opencode-plugins::path:plugins/design",
+    "package": "github:srobroek/harness-plugins::path:plugins/design/opencode",
     "options": {
       "mcp": "auto",                           // "auto" (default), "always", or "off" for no servers
       "mcpServers": { "storybook": true, "wire-dsl": false }
@@ -177,7 +176,7 @@ for a directory; run `/reload` after adding the first marker.
 A server under the same name in your `opencode.json` wins: the plugin leaves it as you
 configured it, so use that to change a version, a port or flags.
 
-Claude Code and Codex get the same `.mcp.json` from the marketplace, which there starts
+Claude Code get the same `.mcp.json` from the marketplace, which there starts
 `accessibility-scanner` and `wire-dsl` in every project, with no project check; disable
 what you do not use in that harness's MCP settings. Add `storybook` there yourself.
 
@@ -225,16 +224,14 @@ routes to are installed from their authors, never bundled; see
 ## Install
 
 ```sh
-opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/design'
+opencode plugin add 'github:srobroek/harness-plugins::path:plugins/design/opencode'
 ```
 
-Claude Code and Codex install the skills and MCP servers, not the agents, from this
+Claude Code install the skills and MCP servers, not the agents, from this
 repository's marketplace:
 
 ```sh
-claude plugin marketplace add srobroek/opencode-plugins
-claude plugin install design@srobroek-opencode
+claude plugin marketplace add srobroek/harness-plugins
+claude plugin install design@harness-plugins
 
-codex plugin marketplace add srobroek/opencode-plugins
-codex plugin add design@srobroek-opencode
 ```
