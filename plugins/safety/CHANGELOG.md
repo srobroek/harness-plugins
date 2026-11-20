@@ -1,3 +1,9 @@
+## safety [0.9.1](https://github.com/srobroek/harness-plugins/compare/safety--v0.9.0...safety--v0.9.1) (2026-11-20)
+
+### Bug Fixes
+
+* **safety:** fail fast on permission prompts a subagent cannot answer ([#273](https://github.com/srobroek/harness-plugins/issues/273)) ([77b75e9](https://github.com/srobroek/harness-plugins/commit/77b75e98a252f056a5005555a33b4165cca8d567))
+
 # Changelog
 
 ## [0.9.0](https://github.com/srobroek/opencode-plugins/compare/safety--v0.8.0...safety--v0.9.0) (2026-11-20)
