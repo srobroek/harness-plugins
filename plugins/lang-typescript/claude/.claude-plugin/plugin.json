@@ -3,7 +3,10 @@
   "description": "TypeScript and JavaScript skills: install, lint, tsc and test checks, testing, monorepo packaging, type safety and zod, and Bun and Node profiling.",
   "version": "0.7.0",
   "author": {
-    "name": "Sjors Robroek"
+    "name": "Sjors Robroek",
+    "url": "https://github.com/srobroek"
   },
+  "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/lang-typescript",
+  "repository": "https://github.com/srobroek/harness-plugins",
   "license": "Apache-2.0"
 }

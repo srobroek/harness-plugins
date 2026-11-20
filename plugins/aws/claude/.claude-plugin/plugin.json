@@ -3,7 +3,10 @@
   "description": "AWS working guidance: route AWS tasks through the AWS MCP Server's guided skills, verify against AWS documentation, and price with the AWS Pricing MCP server.",
   "version": "0.7.0",
   "author": {
-    "name": "Sjors Robroek"
+    "name": "Sjors Robroek",
+    "url": "https://github.com/srobroek"
   },
+  "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/aws",
+  "repository": "https://github.com/srobroek/harness-plugins",
   "license": "Apache-2.0"
 }

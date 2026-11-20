@@ -23,6 +23,9 @@
     "claudeEntries": {
       "claude-hook": "claude-hook",
       "bd-embedded-write-runner": "bd-embedded-write-runner"
+    },
+    "claude": {
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/beads"
     }
   }
 }

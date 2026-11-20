@@ -13,147 +13,189 @@
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "source": "./plugins/agent-reviewer/claude",
       "version": "0.9.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/agent-reviewer",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "architecture",
       "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
       "source": "./plugins/architecture/claude",
       "version": "0.7.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/architecture",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "ast-grep",
       "description": "Structural code search with the ast-grep CLI, plus when to use Semgrep or rust-analyzer instead.",
       "source": "./plugins/ast-grep/claude",
       "version": "1.2.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/ast-grep",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "aws",
       "description": "AWS working guidance: route AWS tasks through the AWS MCP Server's guided skills, verify against AWS documentation, and price with the AWS Pricing MCP server.",
       "source": "./plugins/aws/claude",
       "version": "0.7.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/aws",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "beads",
       "description": "Beads issue tracking: bd prime session context, shell gates on bd, git and gh commands, store pinning and the Beads skills.",
       "source": "./plugins/beads/claude",
       "version": "0.7.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/beads",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "chezmoi",
       "description": "Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill.",
       "source": "./plugins/chezmoi/claude",
       "version": "0.5.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/chezmoi",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "debate",
       "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
       "source": "./plugins/debate/claude",
       "version": "0.5.0",
-      "category": "productivity"
+      "category": "productivity",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/debate",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "design",
       "description": "UI and UX design skills: design-system audit, DESIGN.md, rendered-surface review, accessibility audit, motion, microcopy, prototypes, and wireframes.",
       "source": "./plugins/design/claude",
       "version": "0.8.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/design",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "eli5",
       "description": "Explain a topic at five depth levels, from metaphor to frontier.",
       "source": "./plugins/eli5/claude",
       "version": "0.5.0",
-      "category": "productivity"
+      "category": "productivity",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/eli5",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "journeys",
       "description": "Author, validate and maintain user journeys: seven skills, the journeys.py helper, and the journey-scribe and journey-validator subagents.",
       "source": "./plugins/journeys/claude",
       "version": "0.5.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/journeys",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "lang-go",
       "description": "Go skills: build, lint, go test -race, tidy and govulncheck checks, testing and fuzzing, module and package layout, and pprof profiling.",
       "source": "./plugins/lang-go/claude",
       "version": "0.6.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/lang-go",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "lang-python",
       "description": "Python skills: uv, ruff, mypy or pyright and pytest checks, testing, packaging, typing and pydantic, SQLAlchemy and Alembic, and profiling.",
       "source": "./plugins/lang-python/claude",
       "version": "0.6.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/lang-python",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "lang-rust",
       "description": "Rust skills: fmt, clippy and test checks, testing with nextest, proptest and insta, crates and workspaces, CI, sqlx persistence, Tauri and profiling.",
       "source": "./plugins/lang-rust/claude",
       "version": "0.6.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/lang-rust",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "lang-typescript",
       "description": "TypeScript and JavaScript skills: install, lint, tsc and test checks, testing, monorepo packaging, type safety and zod, and Bun and Node profiling.",
       "source": "./plugins/lang-typescript/claude",
       "version": "0.7.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/lang-typescript",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "project",
       "description": "Project lifecycle: scaffold a project with /new-project, set up fnox and 1Password secrets, and pick an OSI-approved license.",
       "source": "./plugins/project/claude",
       "version": "0.8.0",
-      "category": "productivity"
+      "category": "productivity",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/project",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "quality",
       "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
       "source": "./plugins/quality/claude",
       "version": "0.12.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/quality",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "repomix",
       "description": "Pack a local or remote repo into one file with repomix for bulk context: external repos, module packs and version diffs.",
       "source": "./plugins/repomix/claude",
       "version": "0.4.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/repomix",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "speckit",
       "description": "SpecKit on beads: a tasks.md guard, setup and bugfix skills, formulas, and the speckit-sync and speckit-verify subagents.",
       "source": "./plugins/speckit/claude",
       "version": "0.9.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/speckit",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "toolchain",
       "description": "Toolchain defaults as skills: stack, frontend, infrastructure, languages, observability, shell, Terraform, caches, background jobs and worktree coexistence.",
       "source": "./plugins/toolchain/claude",
       "version": "0.7.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/toolchain",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "trunk-dev",
       "description": "Trunk-based delivery for OpenCode: a Conventional Commit and main-push gate, skip-CI and MR/PR advisories, a feature-flag cleanup bead after each flagged merge, and release-setup skills.",
       "source": "./plugins/trunk-dev/claude",
       "version": "0.9.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/trunk-dev",
+      "repository": "https://github.com/srobroek/harness-plugins"
     },
     {
       "name": "worktrunk",
       "description": "Worktrunk (wt) skills: work in linked worktrees and run deterministic preflight checks before an agent run or merge.",
       "source": "./plugins/worktrunk/claude",
       "version": "0.5.0",
-      "category": "development"
+      "category": "development",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/worktrunk",
+      "repository": "https://github.com/srobroek/harness-plugins"
     }
   ]
 }

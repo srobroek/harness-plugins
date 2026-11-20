@@ -3,7 +3,10 @@
   "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
   "version": "0.7.0",
   "author": {
-    "name": "Sjors Robroek"
+    "name": "Sjors Robroek",
+    "url": "https://github.com/srobroek"
   },
+  "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/architecture",
+  "repository": "https://github.com/srobroek/harness-plugins",
   "license": "Apache-2.0"
 }

@@ -1,12 +1,17 @@
 name: release
 
-# multi-semantic-release, one release per plugin. Manual until the first plugin exists:
-# with no plugin, multi-semantic-release has nothing to release. Then add
-#   push: { branches: [main] }
-# (release.config.mjs is in place; see the harness-kit README, "Presets").
+# multi-semantic-release, one release per plugin, tagged <name>--v<version>. It authenticates with the
+# workflow's GITHUB_TOKEN. The release commit ([skip ci]) goes to main, so main must accept pushes from
+# github-actions.
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: write
