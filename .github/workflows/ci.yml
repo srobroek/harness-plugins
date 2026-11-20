@@ -30,6 +30,8 @@ jobs:
       - run: npm run lint
       - name: Plugin bundles and composed agents are current
         run: npm run build:check
+      - name: Release prepare step leaves bundles current
+        run: bun scripts/check-release-prepare.ts
       - run: npm run plugin-table:check
       - run: npm run steering
       - run: npm run pitfalls

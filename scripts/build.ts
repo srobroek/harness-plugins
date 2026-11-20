@@ -17,8 +17,9 @@
 // lib/src/<fragment>.md, and writes the Claude Code files of scripts/build-claude.ts.
 // It copies `common/.mcp.json` to each harness tree. `harness-kit build` then copies common/ into the harness trees.
 //
-//   bun scripts/build.ts          build all plugins
-//   bun scripts/build.ts --check  fail when committed output is stale
+//   bun scripts/build.ts                 build all plugins
+//   bun scripts/build.ts <name>...       build only the named plugins (the release uses this)
+//   bun scripts/build.ts --check [name]  fail when committed output is stale
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
@@ -203,12 +204,14 @@ export function stale(dir: string, outputs: readonly Output[]): string[] {
   return [...outputs.filter(differs).map((output) => output.file), ...extra]
 }
 
-async function main(check: boolean) {
+async function main(check: boolean, only: readonly string[]) {
   // Bun names source files relative to the working directory in its output.
   process.chdir(root)
   const dirs = readdirSync(pluginsDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
+    .filter((entry) => entry.isDirectory() && (only.length === 0 || only.includes(entry.name)))
     .map((entry) => path.join(pluginsDir, entry.name))
+  const unknown = only.filter((name) => !dirs.some((dir) => path.basename(dir) === name))
+  if (unknown.length > 0) throw new Error(`unknown plugin: ${unknown.join(", ")}`)
   const problems: string[] = []
   const warnings: string[] = []
   for (const dir of dirs) {
@@ -242,4 +245,7 @@ async function main(check: boolean) {
   }
 }
 
-if (import.meta.main) await main(process.argv.includes("--check"))
+if (import.meta.main) {
+  const args = process.argv.slice(2)
+  await main(args.includes("--check"), args.filter((arg) => !arg.startsWith("--")))
+}
