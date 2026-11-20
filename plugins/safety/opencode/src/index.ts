@@ -374,7 +374,14 @@ export function createPlugin(overrides: Overrides = {}) {
             const tool = source?.type === "tool" ? running.get(source.id)?.tool : undefined
             if (tool === undefined || !READ_ONLY_TOOLS.has(tool)) return
             const directory = await sessionDirectory(evaluation.sessionID)
-            const listed = await ctx.skill.list({ location: { directory } } as never).catch(() => undefined)
+            // A host error is not "no skills installed": the prompt stays (nothing is auto-allowed) and the failure is logged.
+            const listed = await ctx.skill.list({ location: { directory } } as never).catch((error: unknown) => {
+              warn("skill lookup failed; the permission prompt stays", {
+                sessionID: evaluation.sessionID,
+                error: error instanceof Error ? error.name : typeof error,
+              })
+              return undefined
+            })
             allowSkillReads(evaluation, skillDirectories(listedSkills(listed)))
           })
         : undefined
@@ -488,24 +495,44 @@ export function createPlugin(overrides: Overrides = {}) {
       // A plugin whose evaluate hook runs after this one can still raise a prompt in a subagent session,
       // so every prompt the host raises in this location is checked again and rejected through the reply API.
       const watching = new AbortController()
-      const asked = on("subagent-prompts")
-        ? ctx.event.subscribe({ types: ["permission.asked"], signal: watching.signal } as never)[Symbol.asyncIterator]()
-        : undefined
-      if (asked)
+      const errorName = (error: unknown) => (error instanceof Error ? error.name : typeof error)
+      // The evaluate hook above already denies a child's prompt; this watch is the second layer. When it
+      // cannot run, say so once: an abort is the teardown, anything else is a host failure.
+      const watchFailed = (error: string) => {
+        if (watching.signal.aborted) return
+        warn("permission prompt watch stopped; prompts a later plugin raises in subagent sessions are no longer rejected", { error })
+      }
+      let asked: AsyncIterator<unknown> | undefined
+      if (on("subagent-prompts")) {
+        try {
+          asked = ctx.event.subscribe({ types: ["permission.asked"], signal: watching.signal } as never)[Symbol.asyncIterator]()
+        } catch (error) {
+          watchFailed(errorName(error))
+        }
+      }
+      if (asked) {
+        const events = asked
         void (async () => {
-            for (;;) {
-              const next = await asked.next().catch(() => ({ done: true as const, value: undefined }))
-              if (next.done || watching.signal.aborted) return
-              const event = next.value as { type?: string; data?: AskedRequest }
-              if (event.type !== "permission.asked" || event.data === undefined) continue
-              await rejectUnanswerable(event.data).catch((error: unknown) =>
-                warn("could not reject a subagent's permission prompt", {
-                  sessionID: event.data?.sessionID,
-                  error: error instanceof Error ? error.name : typeof error,
-                }),
-              )
+          for (;;) {
+            let next: IteratorResult<unknown>
+            try {
+              next = await events.next()
+            } catch (error) {
+              return watchFailed(errorName(error))
             }
-          })()
+            if (next.done) return watchFailed("stream ended")
+            if (watching.signal.aborted) return
+            const event = next.value as { type?: string; data?: AskedRequest }
+            if (event.type !== "permission.asked" || event.data === undefined) continue
+            await rejectUnanswerable(event.data).catch((error: unknown) =>
+              warn("could not reject a subagent's permission prompt", {
+                sessionID: event.data?.sessionID,
+                error: errorName(error),
+              }),
+            )
+          }
+        })()
+      }
       async function rejectUnanswerable(request: AskedRequest): Promise<void> {
         if (typeof request.sessionID !== "string" || typeof request.id !== "string") return
         const message = unanswerableDenial(
