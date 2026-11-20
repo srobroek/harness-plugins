@@ -17,7 +17,7 @@ The plugins began in `srobroek/opencode-plugins`, whose history this repository 
 plugins/<name>/
   package.json     name (equal to the directory), version, and the "agent-plugins" key
   README.md        what the plugin does and how to install it
-  common/          skills/ and agents/ for every harness; x.opencode.md and x.claude.md replace x.md in one harness
+  common/          skills/, agents/ and formulas/ for every harness; x.opencode.md and x.claude.md replace x.md in one harness
   agents.src/      agent sources with {{include}} lines, composed into common/agents/
   opencode/        the OpenCode install tree: src/, the committed dist/ bundle and the root shims
   claude/          the Claude Code install tree: hooks, .mcp.json, the committed dist/ hook bundle

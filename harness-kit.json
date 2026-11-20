@@ -8,7 +8,8 @@
   },
   "commonDirs": [
     "skills",
-    "agents"
+    "agents",
+    "formulas"
   ],
   "harnesses": [
     "opencode",

@@ -39,7 +39,7 @@ jobs:
       - run: bun scripts/check-test-executables.ts
       - name: Python tests of the shipped scripts
         run: |
-          for dir in plugins/cad/opencode/formulas plugins/beads/common/skills/beads-preflight plugins/worktrunk/common/skills/worktrunk-preflight; do
+          for dir in plugins/cad/common/formulas plugins/beads/common/skills/beads-preflight plugins/worktrunk/common/skills/worktrunk-preflight; do
             python3 -B -m unittest discover -s "$dir" -p 'test_*.py' -v
           done
 

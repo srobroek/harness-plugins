@@ -13,7 +13,7 @@ const PLUGINS = path.resolve(import.meta.dir, "../plugins")
 type Step = { id: string; metadata?: Record<string, unknown> }
 
 const formulas = readdirSync(PLUGINS).flatMap((plugin) => {
-  const directory = path.join(PLUGINS, plugin, "opencode", "formulas")
+  const directory = path.join(PLUGINS, plugin, "common", "formulas")
   if (!existsSync(directory)) return []
   return readdirSync(directory)
     .filter((file) => file.endsWith(".formula.toml"))

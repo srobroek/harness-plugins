@@ -5,7 +5,7 @@
 // trees at the pin, without the upstream test suites (cad-agent's CI runs them) and with the
 // SKILL_DESCRIPTIONS overrides. plugins/cad/common/agents/<id>.md is cad-agent's agents/<id>.md prompt
 // under OpenCode frontmatter built here from its capabilities, plus an OpenCode section. The plugin
-// owns everything else: opencode/src/, opencode/formulas/, README.md and the pin itself. Never edit the vendored files; change cad-agent, tag
+// owns everything else: opencode/src/, common/formulas/, README.md and the pin itself. Never edit the vendored files; change cad-agent, tag
 // it, and move the pin.
 //
 //   bun scripts/sync-cad.ts                 vendor the pinned tag

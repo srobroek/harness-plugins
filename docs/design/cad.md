@@ -101,7 +101,7 @@ stays `ask`.
 - `bun test`: plugin registration, `cad_run` path checks, argv, environment, background start and
   stop, session cleanup on `session.deleted`, `cad_setup`, formula routing against the shipped
   agents and `decideRouting`, no `skill://` or OMP wording in formulas, and the sync script.
-- Python: `plugins/cad/opencode/formulas/test_formulas.py` checks the gate order of the formulas. The
+- Python: `plugins/cad/common/formulas/test_formulas.py` checks the gate order of the formulas. The
   skills' own suites run in cad-agent's CI and are not vendored.
 - CI: a `changes` job diffs `plugins/cad`, `scripts/sync-cad.ts` and the workflow; the `cad` job
   runs only when they changed. It runs `bun scripts/sync-cad.ts --check` against the pinned tag

@@ -152,5 +152,5 @@ tag no longer names the pinned commit. A new cad-agent agent needs an entry in t
 sync script. The formula ordering tests are Python:
 
 ```sh
-python3 -m unittest discover -s plugins/cad/opencode/formulas -p 'test_*.py' -v
+python3 -m unittest discover -s plugins/cad/common/formulas -p 'test_*.py' -v
 ```
