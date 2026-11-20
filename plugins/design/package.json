@@ -18,6 +18,9 @@
     ],
     "entries": {
       "index": "index"
+    },
+    "claude": {
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/design"
     }
   }
 }

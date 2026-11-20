@@ -155,6 +155,11 @@ Renovate moves the package and the workflow tags in one pull request, using the 
 `renovate.json`. That pull request needs `npm run build` on its branch before it passes
 `harness-kit check`.
 
+## Migration notes
+
+- The Codex marketplace of `srobroek/opencode-plugins` was dropped; only OpenCode and Claude Code are generated.
+- The stale-branches cron of `srobroek/opencode-plugins` was not carried over.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).

@@ -3,7 +3,10 @@
   "description": "Python skills: uv, ruff, mypy or pyright and pytest checks, testing, packaging, typing and pydantic, SQLAlchemy and Alembic, and profiling.",
   "version": "0.6.0",
   "author": {
-    "name": "Sjors Robroek"
+    "name": "Sjors Robroek",
+    "url": "https://github.com/srobroek"
   },
+  "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/lang-python",
+  "repository": "https://github.com/srobroek/harness-plugins",
   "license": "Apache-2.0"
 }

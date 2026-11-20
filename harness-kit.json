@@ -18,8 +18,11 @@
   "claude": {
     "strict": true,
     "author": {
-      "name": "Sjors Robroek"
+      "name": "Sjors Robroek",
+      "url": "https://github.com/srobroek"
     },
-    "license": "Apache-2.0"
+    "license": "Apache-2.0",
+    "homepage": "https://github.com/srobroek/harness-plugins",
+    "repository": "https://github.com/srobroek/harness-plugins"
   }
 }

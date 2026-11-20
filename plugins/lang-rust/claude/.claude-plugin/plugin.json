@@ -3,7 +3,10 @@
   "description": "Rust skills: fmt, clippy and test checks, testing with nextest, proptest and insta, crates and workspaces, CI, sqlx persistence, Tauri and profiling.",
   "version": "0.6.0",
   "author": {
-    "name": "Sjors Robroek"
+    "name": "Sjors Robroek",
+    "url": "https://github.com/srobroek"
   },
+  "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/lang-rust",
+  "repository": "https://github.com/srobroek/harness-plugins",
   "license": "Apache-2.0"
 }

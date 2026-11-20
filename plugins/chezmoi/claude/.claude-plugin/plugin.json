@@ -3,7 +3,10 @@
   "description": "Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill.",
   "version": "0.5.0",
   "author": {
-    "name": "Sjors Robroek"
+    "name": "Sjors Robroek",
+    "url": "https://github.com/srobroek"
   },
+  "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/chezmoi",
+  "repository": "https://github.com/srobroek/harness-plugins",
   "license": "Apache-2.0"
 }

@@ -24,6 +24,12 @@
     },
     "claudeEntries": {
       "claude-hook": "claude-hook"
+    },
+    "claude": {
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/speckit",
+      "dependencies": [
+        "beads"
+      ]
     }
   }
 }
