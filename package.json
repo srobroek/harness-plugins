@@ -24,6 +24,6 @@
     "@srobroek/harness-kit": "1.1.0",
     "@types/bun": "1.4.4",
     "bun": "1.4.4",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   }
 }
