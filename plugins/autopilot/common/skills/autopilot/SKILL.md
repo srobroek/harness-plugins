@@ -75,9 +75,21 @@ Spikes are throwaway AWS resources. Tag each one `autopilot-run=<run id>` and
 give it a TTL. Before you create a spike, create a teardown child bead that
 blocks its parent. Close that bead only with evidence: a tag query that returns
 0 resources. Sweep the tag before you stop. A leftover resource is a blocker,
-and the run cannot stop as a success while one remains.
+and the run cannot stop as a success while one remains. When an AWS call that
+creates a spike needs approval, the plugin denies it: it cannot check the tag
+before the call. Log the spike as a blocker for the user in that case.
 
-Never allowed: a force push, or a push to the default branch.
+Never allowed: a force push, a mirror push, or a push to the default branch.
+
+The permission gate fails closed. When a command needs approval, the plugin
+allows it only if it can read the whole command and every part is a known safe
+form. Write commands it can read:
+
+- Name the remote and the feature branch in every push:
+  `git push origin feat/x`, never a bare `git push` or `HEAD`.
+- Use literal arguments. The gate denies a variable, a command substitution,
+  a glob in a restricted command, and a quoted flag.
+- Run commands directly. The gate denies `sh -c`, `eval`, `xargs` and `sudo`.
 
 Commands that discard work (`git reset --hard`, `git clean -f`, `git branch -D`,
 deleting a remote branch, `git stash drop`, `rm -r`, `bd delete`) are

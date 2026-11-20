@@ -2,7 +2,8 @@ import { afterEach, expect, test } from "bun:test"
 import { appendFileSync, chmodSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { RunDir } from "./rundir.ts"
+import { RunDir, RunFileError } from "./rundir.ts"
+import { newRunState, type RunState } from "./state.ts"
 
 const roots: string[] = []
 afterEach(() => {
@@ -18,6 +19,18 @@ test("an entry appended after a torn last line still reads back", () => {
   appendFileSync(dir.journalPath, '{"ts":"t","ty')
   dir.append({ ts: "t", type: "progress", summary: "b" })
   expect(dir.journal().map((entry) => entry.summary)).toEqual(["a", "b"])
+})
+
+test("a writer holding an older read of state.json is refused", () => {
+  const root = mkdtempSync(join(tmpdir(), "autopilot-rundir-"))
+  roots.push(root)
+  const dir = new RunDir(root, "r3")
+  dir.create()
+  const first = dir.writeState(undefined, newRunState({ runId: "r3", sessionID: "s", directory: "/repo", options: {}, scope: { kind: "queue" }, now: 0 }))
+  const stale = dir.readState() as RunState
+  dir.writeState(first, { ...first, phase: "stopped" })
+  expect(() => dir.writeState(stale, { ...stale, phase: "running" })).toThrow(RunFileError)
+  expect(dir.readState()?.phase).toBe("stopped")
 })
 
 test("append reports a journal it cannot read instead of guessing", () => {

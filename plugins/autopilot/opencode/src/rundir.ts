@@ -2,9 +2,9 @@
 
 import { execFile } from "node:child_process"
 import {
-  appendFileSync,
   closeSync,
   existsSync,
+  ftruncateSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -15,10 +15,12 @@ import {
   statSync,
   symlinkSync,
   writeFileSync,
+  writeSync,
 } from "node:fs"
 import { isAbsolute, join, resolve } from "node:path"
-import { type JournalEntry, readJournal } from "./journal.ts"
+import { JournalCorrupt, type JournalEntry, readJournal } from "./journal.ts"
 import type { RunState } from "./state.ts"
+import { decodeRunState } from "./state-schema.ts"
 
 export type Run = (cwd: string, command: string, args: string[], timeoutMs?: number) => Promise<{ ok: boolean; stdout: string; stderr: string }>
 
@@ -35,6 +37,33 @@ export async function autopilotRoot(directory: string, run: Run = runCommand): P
   if (!result.ok) return undefined
   const common = result.stdout.trim()
   return join(isAbsolute(common) ? common : resolve(directory, common), "opencode-scratch", "autopilot")
+}
+
+/**
+ * A run file that exists but cannot be used: `io` when reading or writing it failed, `corrupt`
+ * when its content is not what the plugin wrote, `stale` when another writer moved it on.
+ */
+export class RunFileError extends Error {
+  constructor(
+    readonly kind: "io" | "corrupt" | "stale",
+    readonly path: string,
+    detail: string,
+  ) {
+    super(`${path}: ${detail}`)
+  }
+}
+
+const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT"
+const describe = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+/** The file's text, `undefined` when it does not exist; any other failure throws. */
+function readText(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8")
+  } catch (error) {
+    if (missing(error)) return undefined
+    throw new RunFileError("io", path, describe(error))
+  }
 }
 
 export class RunDir {
@@ -55,6 +84,10 @@ export class RunDir {
   get summaryPath(): string {
     return join(this.path, "summary.md")
   }
+  /** The cross-process lock every state transition holds. */
+  get lockPath(): string {
+    return join(this.path, "run.lock")
+  }
 
   create(): void {
     mkdirSync(this.path, { recursive: true })
@@ -64,64 +97,95 @@ export class RunDir {
     symlinkSync(this.runId, link)
   }
 
+  /** The run state; `undefined` only when `state.json` does not exist. */
   readState(): RunState | undefined {
+    const text = readText(this.statePath)
+    if (text === undefined) return undefined
+    let value: unknown
     try {
-      return JSON.parse(readFileSync(this.statePath, "utf8")) as RunState
-    } catch {
-      return undefined
-    }
-  }
-
-  /** Write through a temporary file so a crash never leaves half a state. */
-  writeState(state: RunState): void {
-    const temporary = `${this.statePath}.tmp`
-    writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`)
-    renameSync(temporary, this.statePath)
-  }
-
-  /** Append one line; a torn last line from a crash first gets its own line ending. */
-  append(entry: JournalEntry): void {
-    appendFileSync(this.journalPath, `${this.#endsTorn() ? "\n" : ""}${JSON.stringify(entry)}\n`)
-  }
-
-  /** Whether the journal ends mid-line. A missing journal is not torn; any other error is the caller's. */
-  #endsTorn(): boolean {
-    let size: number
-    try {
-      size = statSync(this.journalPath).size
+      value = JSON.parse(text)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false
-      throw error
+      throw new RunFileError("corrupt", this.statePath, `not JSON (${describe(error)})`)
     }
-    if (size === 0) return false
-    const fd = openSync(this.journalPath, "r")
+    const decoded = decodeRunState(value)
+    if (!decoded.ok) throw new RunFileError("corrupt", this.statePath, `not a run state (${decoded.reason})`)
+    return decoded.state
+  }
+
+  /**
+   * Write `next` as the state after `read`. The write is refused when the file has moved past the
+   * generation `read` came from, so a writer holding an old copy never overwrites a newer one.
+   * Callers hold the run lock; the generation check is the fence for a lock that was lost.
+   */
+  writeState(read: Pick<RunState, "generation"> | undefined, next: RunState): RunState {
+    const current = this.readState()
+    const expected = read?.generation
+    if (current !== undefined && current.generation !== expected)
+      throw new RunFileError("stale", this.statePath, `generation ${current.generation} on disk, this writer read ${expected ?? "nothing"}`)
+    const written: RunState = { ...next, generation: (current?.generation ?? -1) + 1 }
+    const temporary = `${this.statePath}.tmp`
     try {
-      const last = Buffer.alloc(1)
-      readSync(fd, last, 0, 1, size - 1)
-      return last[0] !== 0x0a
+      writeFileSync(temporary, `${JSON.stringify(written, null, 2)}\n`)
+      renameSync(temporary, this.statePath)
+    } catch (error) {
+      throw new RunFileError("io", this.statePath, describe(error))
+    }
+    return written
+  }
+
+  /** Append one line. A torn last line is an append that never completed: it is cut off first. */
+  append(entry: JournalEntry): void {
+    let fd: number
+    try {
+      fd = openSync(this.journalPath, "a+")
+    } catch (error) {
+      throw new RunFileError("io", this.journalPath, describe(error))
+    }
+    try {
+      const size = statSync(this.journalPath).size
+      if (size > 0) {
+        const last = Buffer.alloc(1)
+        readSync(fd, last, 0, 1, size - 1)
+        if (last[0] !== 0x0a) ftruncateSync(fd, this.#lastLineEnd(fd, size))
+      }
+      writeSync(fd, `${JSON.stringify(entry)}\n`)
+    } catch (error) {
+      throw error instanceof RunFileError ? error : new RunFileError("io", this.journalPath, describe(error))
     } finally {
       closeSync(fd)
     }
   }
 
+  /** The offset just after the last line ending in the first `size` bytes, or 0. */
+  #lastLineEnd(fd: number, size: number): number {
+    const buffer = Buffer.alloc(size)
+    readSync(fd, buffer, 0, size, 0)
+    return buffer.lastIndexOf(0x0a) + 1
+  }
+
+  /** The journal; empty only when `journal.jsonl` does not exist. */
   journal(): JournalEntry[] {
+    const text = readText(this.journalPath)
+    if (text === undefined) return []
     try {
-      return readJournal(readFileSync(this.journalPath, "utf8"))
-    } catch {
-      return []
+      return readJournal(text)
+    } catch (error) {
+      if (error instanceof JournalCorrupt) throw new RunFileError("corrupt", this.journalPath, error.message)
+      throw error
     }
   }
 
   writeSummary(text: string): void {
-    writeFileSync(this.summaryPath, text)
+    try {
+      writeFileSync(this.summaryPath, text)
+    } catch (error) {
+      throw new RunFileError("io", this.summaryPath, describe(error))
+    }
   }
 
+  /** The summary; `undefined` only when `summary.md` does not exist. */
   summary(): string | undefined {
-    try {
-      return readFileSync(this.summaryPath, "utf8")
-    } catch {
-      return undefined
-    }
+    return readText(this.summaryPath)
   }
 }
 
@@ -131,8 +195,9 @@ export function findRun(root: string, runId?: string): RunDir | undefined {
   if (id === undefined) {
     try {
       id = readlinkSync(join(root, "latest"))
-    } catch {
-      return undefined
+    } catch (error) {
+      if (missing(error)) return undefined
+      throw new RunFileError("io", join(root, "latest"), describe(error))
     }
   }
   if (!/^[\w.-]+$/.test(id)) return undefined

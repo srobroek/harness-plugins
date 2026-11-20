@@ -74,19 +74,37 @@ export function validateEntry(input: unknown, now: Date): Validated {
   return { ok: true, entry }
 }
 
-/** Parse journal.jsonl, skipping lines that do not parse. */
+/**
+ * Parse journal.jsonl. Only the last line may be torn (a crash mid-append, no line ending);
+ * any other line that is not an entry is corruption and throws, naming the line.
+ */
 export function readJournal(text: string): JournalEntry[] {
   const entries: JournalEntry[] = []
-  for (const line of text.split("\n")) {
-    if (line.trim() === "") continue
+  const lines = text.split("\n")
+  const tornTail = !text.endsWith("\n")
+  lines.forEach((line, index) => {
+    if (line.trim() === "") return
+    let value: Partial<JournalEntry> | undefined
     try {
-      const value = JSON.parse(line) as JournalEntry
-      if (typeof value?.type === "string" && typeof value.summary === "string") entries.push(value)
+      value = JSON.parse(line) as Partial<JournalEntry>
     } catch {
-      // A torn last line after a crash.
+      value = undefined
     }
-  }
+    if (typeof value?.type === "string" && typeof value.summary === "string") {
+      entries.push(value as JournalEntry)
+      return
+    }
+    if (tornTail && index === lines.length - 1) return
+    throw new JournalCorrupt(index + 1)
+  })
   return entries
+}
+
+/** A journal line that is neither an entry nor a torn last line. */
+export class JournalCorrupt extends Error {
+  constructor(readonly line: number) {
+    super(`line ${line} is not a journal entry`)
+  }
 }
 
 /** Items a human must look at: open blockers and ambiguities. */
