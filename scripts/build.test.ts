@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { agentTexts, buildPlugin, composeAgents, mcpCopies, orphanAgents, readBuild } from "./build.ts"
+import { agentTexts, buildPlugin, composeAgents, mcpCopies, orphanAgents, readBuild, selectPlugins } from "./build.ts"
 
 const plugins = path.resolve(import.meta.dir, "../plugins")
 const session = path.join(plugins, "session")
@@ -220,5 +220,21 @@ describe("mcpCopies", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe("selectPlugins", () => {
+  const dirs = ["/p/alpha", "/p/beta", "/p/gamma"]
+
+  test("keeps only the named plugins", () => {
+    expect(selectPlugins(dirs, ["beta"])).toEqual(["/p/beta"])
+  })
+
+  test("selects every plugin when none is named", () => {
+    expect(selectPlugins(dirs, [])).toEqual(dirs)
+  })
+
+  test("rejects an unknown name", () => {
+    expect(() => selectPlugins(dirs, ["beta", "nope"])).toThrow("unknown plugin: nope")
   })
 })

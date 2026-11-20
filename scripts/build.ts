@@ -204,17 +204,23 @@ export function stale(dir: string, outputs: readonly Output[]): string[] {
   return [...outputs.filter(differs).map((output) => output.file), ...extra]
 }
 
+/** The plugin directories named in `only`, or all of them when it is empty; an unknown name throws. */
+export function selectPlugins(dirs: readonly string[], only: readonly string[]): string[] {
+  const unknown = only.filter((name) => !dirs.some((dir) => path.basename(dir) === name))
+  if (unknown.length > 0) throw new Error(`unknown plugin: ${unknown.join(", ")}`)
+  return only.length === 0 ? [...dirs] : dirs.filter((dir) => only.includes(path.basename(dir)))
+}
+
 async function main(check: boolean, only: readonly string[]) {
   // Bun names source files relative to the working directory in its output.
   process.chdir(root)
   const dirs = readdirSync(pluginsDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && (only.length === 0 || only.includes(entry.name)))
+    .filter((entry) => entry.isDirectory())
     .map((entry) => path.join(pluginsDir, entry.name))
-  const unknown = only.filter((name) => !dirs.some((dir) => path.basename(dir) === name))
-  if (unknown.length > 0) throw new Error(`unknown plugin: ${unknown.join(", ")}`)
+  const selected = selectPlugins(dirs, only)
   const problems: string[] = []
   const warnings: string[] = []
-  for (const dir of dirs) {
+  for (const dir of selected) {
     const build = readBuild(dir)
     if (build === undefined) continue
     const composed = composeAgents(dir, build.claude)
