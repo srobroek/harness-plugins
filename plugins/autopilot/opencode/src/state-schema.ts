@@ -33,13 +33,17 @@ export const RunStateSchema = Schema.Struct({
   runId: Schema.String,
   sessionID: Schema.String,
   directory: Schema.String,
-  phase: Schema.Literals(["setup", "running", "stopped"]),
+  phase: Schema.Literals(["setup", "running", "stopping", "stopped"]),
   options: OptionsSchema,
   scope: ScopeSchema,
   createdAt: Schema.Finite,
   armedAt: Schema.optionalKey(Schema.Finite),
   deadline: Schema.optionalKey(Schema.Finite),
-  tick: Schema.Struct({ kind: Schema.Literals(["none", "automation", "fallback"]), automationId: Schema.optionalKey(Schema.String) }),
+  tick: Schema.Struct({
+    kind: Schema.Literals(["none", "automation", "fallback"]),
+    automationId: Schema.optionalKey(Schema.String),
+    token: Schema.optionalKey(Schema.String),
+  }),
   ticks: Schema.Finite,
   idleTicks: Schema.Finite,
   beads: Schema.Struct({ open: Strings, ready: Strings, blocked: Strings, inProgress: Strings, closed: Strings }),
@@ -52,6 +56,13 @@ export const RunStateSchema = Schema.Struct({
   stopRequested: Schema.optionalKey(Schema.Boolean),
   stopReason: Schema.optionalKey(Schema.String),
   stoppedAt: Schema.optionalKey(Schema.Finite),
+  stop: Schema.optionalKey(
+    Schema.Struct({
+      journalLength: Schema.Finite,
+      summary: Schema.Boolean,
+      handoff: Schema.optionalKey(Schema.String),
+    }),
+  ),
 })
 
 const decode = Schema.decodeUnknownExit(RunStateSchema)

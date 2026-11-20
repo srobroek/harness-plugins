@@ -10,7 +10,8 @@ export const STALL_MS = 12 * 60_000
 export const MAX_IDLE_TICKS = 6
 export const MAX_ATTEMPTS = 3
 
-export type Phase = "setup" | "running" | "stopped"
+/** `stopping`: the stop is decided and its artifacts (summary, handoff bead) are being written; see `RunState.stop`. */
+export type Phase = "setup" | "running" | "stopping" | "stopped"
 export type StallStep = "nudge" | "respawn" | "park"
 
 export type ChildState = {
@@ -35,7 +36,8 @@ export type RunState = {
   createdAt: number
   armedAt?: number
   deadline?: number
-  tick: { kind: "none" | "automation" | "fallback"; automationId?: string }
+  /** The tick bound to this run: its automation and the token its ticks must carry. A tick with another token is stale. */
+  tick: { kind: "none" | "automation" | "fallback"; automationId?: string; token?: string }
   ticks: number
   idleTicks: number
   beads: BeadCounts
@@ -49,6 +51,8 @@ export type RunState = {
   stopRequested?: boolean
   stopReason?: string
   stoppedAt?: number
+  /** While stopping: how much of the journal the summary and handoff render, and which of them exist. */
+  stop?: { journalLength: number; summary: boolean; handoff?: string }
 }
 
 export type Bead = { id: string; status: string; parent?: string | null; issue_type?: string; labels?: string[] | null }

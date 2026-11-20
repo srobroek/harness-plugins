@@ -17,6 +17,7 @@ import {
   writeFileSync,
   writeSync,
 } from "node:fs"
+import { hostname } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 import { JournalCorrupt, type JournalEntry, readJournal } from "./journal.ts"
 import type { RunState } from "./state.ts"
@@ -41,15 +42,17 @@ export async function autopilotRoot(directory: string, run: Run = runCommand): P
 
 /**
  * A run file that exists but cannot be used: `io` when reading or writing it failed, `corrupt`
- * when its content is not what the plugin wrote, `stale` when another writer moved it on.
+ * when its content is not what the plugin wrote, `stale` when another writer moved it on or took
+ * over the run lease. The underlying error, when there is one, is the `cause`.
  */
 export class RunFileError extends Error {
   constructor(
     readonly kind: "io" | "corrupt" | "stale",
     readonly path: string,
     detail: string,
+    cause?: unknown,
   ) {
-    super(`${path}: ${detail}`)
+    super(`${path}: ${detail}`, cause === undefined ? undefined : { cause })
   }
 }
 
@@ -62,11 +65,26 @@ function readText(path: string): string | undefined {
     return readFileSync(path, "utf8")
   } catch (error) {
     if (missing(error)) return undefined
-    throw new RunFileError("io", path, describe(error))
+    throw new RunFileError("io", path, describe(error), error)
   }
 }
 
+/** How long a writer waits for the per-write lock, and how old a hold must be before it is presumed dead. */
+const WRITE_LOCK_WAIT_MS = 30_000
+const WRITE_LOCK_STALE_MS = 10 * 60_000
+const WRITE_LOCK_POLL_MS = 10
+
+export type WriteOptions = {
+  /** The run lease owner this writer holds; the write is refused once `run.lock` names another. */
+  leaseOwner?: string
+  /** Test seam: runs after the checks and before the rename, with the write lock held. */
+  beforeRename?: () => Promise<void>
+}
+
 export class RunDir {
+  /** The run lease owner of the transition using this directory; writes check `run.lock` still names it. */
+  leaseOwner: string | undefined
+
   constructor(
     readonly root: string,
     readonly runId: string,
@@ -88,6 +106,10 @@ export class RunDir {
   get lockPath(): string {
     return join(this.path, "run.lock")
   }
+  /** The short lock each `state.json` write holds from its checks to its rename. */
+  get writeLockPath(): string {
+    return `${this.statePath}.lock`
+  }
 
   create(): void {
     mkdirSync(this.path, { recursive: true })
@@ -105,7 +127,7 @@ export class RunDir {
     try {
       value = JSON.parse(text)
     } catch (error) {
-      throw new RunFileError("corrupt", this.statePath, `not JSON (${describe(error)})`)
+      throw new RunFileError("corrupt", this.statePath, `not JSON (${describe(error)})`, error)
     }
     const decoded = decodeRunState(value)
     if (!decoded.ok) throw new RunFileError("corrupt", this.statePath, `not a run state (${decoded.reason})`)
@@ -113,24 +135,102 @@ export class RunDir {
   }
 
   /**
-   * Write `next` as the state after `read`. The write is refused when the file has moved past the
-   * generation `read` came from, so a writer holding an old copy never overwrites a newer one.
-   * Callers hold the run lock; the generation check is the fence for a lock that was lost.
+   * Write `next` as the state after `read`, refused when the file moved past the generation
+   * `read` came from or when the run lease now names another owner.
+   *
+   * Why this is safe against a writer that stalls and loses its lease: every write holds the
+   * per-write lock (`state.json.lock`, created with `O_EXCL`) from its generation check to its
+   * rename, so no other write can land in between; the generation it checked is still the one on
+   * disk when it renames. The lease is checked again after the last `await` and before the
+   * synchronous rename, so a writer that paused and lost the lease meanwhile refuses. A successor
+   * that took the lease while this writer was renaming still needs the write lock to write, and
+   * then finds the generation moved on and refuses too. A hold is taken over only when its
+   * process is gone (same host) or it is older than ten minutes, far past the run lease, so a
+   * live writer's hold is never stolen while its lease could still be valid.
    */
-  writeState(read: Pick<RunState, "generation"> | undefined, next: RunState): RunState {
-    const current = this.readState()
-    const expected = read?.generation
-    if (current !== undefined && current.generation !== expected)
-      throw new RunFileError("stale", this.statePath, `generation ${current.generation} on disk, this writer read ${expected ?? "nothing"}`)
-    const written: RunState = { ...next, generation: (current?.generation ?? -1) + 1 }
-    const temporary = `${this.statePath}.tmp`
+  async writeState(read: Pick<RunState, "generation"> | undefined, next: RunState, options: WriteOptions = {}): Promise<RunState> {
+    const release = await this.#takeWriteLock()
     try {
-      writeFileSync(temporary, `${JSON.stringify(written, null, 2)}\n`)
-      renameSync(temporary, this.statePath)
-    } catch (error) {
-      throw new RunFileError("io", this.statePath, describe(error))
+      const current = this.readState()
+      const expected = read?.generation
+      if (current !== undefined && current.generation !== expected)
+        throw new RunFileError("stale", this.statePath, `generation ${current.generation} on disk, this writer read ${expected ?? "nothing"}`)
+      this.#checkLease(options.leaseOwner ?? this.leaseOwner)
+      const written: RunState = { ...next, generation: (current?.generation ?? -1) + 1 }
+      const temporary = `${this.statePath}.tmp`
+      try {
+        writeFileSync(temporary, `${JSON.stringify(written, null, 2)}\n`)
+      } catch (error) {
+        throw new RunFileError("io", this.statePath, describe(error), error)
+      }
+      await options.beforeRename?.()
+      this.#checkLease(options.leaseOwner ?? this.leaseOwner)
+      try {
+        renameSync(temporary, this.statePath)
+      } catch (error) {
+        throw new RunFileError("io", this.statePath, describe(error), error)
+      }
+      return written
+    } finally {
+      release()
     }
-    return written
+  }
+
+  /** Throws `stale` unless `run.lock` still names `owner`; no owner means no lease to check. */
+  #checkLease(owner: string | undefined): void {
+    if (owner === undefined) return
+    let holder: unknown
+    try {
+      holder = (JSON.parse(readFileSync(this.lockPath, "utf8")) as { owner?: unknown }).owner
+    } catch (error) {
+      throw new RunFileError("stale", this.lockPath, `the run lease cannot be read (${describe(error)})`, error)
+    }
+    if (holder !== owner) throw new RunFileError("stale", this.lockPath, `the run lease now belongs to ${String(holder)}`)
+  }
+
+  async #takeWriteLock(): Promise<() => void> {
+    const path = this.writeLockPath
+    const deadline = Date.now() + WRITE_LOCK_WAIT_MS
+    for (;;) {
+      try {
+        const fd = openSync(path, "wx")
+        try {
+          writeSync(fd, JSON.stringify({ host: hostname(), pid: process.pid, taken: Date.now() }))
+        } finally {
+          closeSync(fd)
+        }
+        return () => rmSync(path, { force: true })
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw new RunFileError("io", path, describe(error), error)
+      }
+      if (this.#writeLockAbandoned(path)) {
+        rmSync(path, { force: true })
+        continue
+      }
+      if (Date.now() >= deadline) throw new RunFileError("io", path, `the state write lock stayed held for ${WRITE_LOCK_WAIT_MS / 1000}s`)
+      await new Promise((resolve) => setTimeout(resolve, WRITE_LOCK_POLL_MS))
+    }
+  }
+
+  #writeLockAbandoned(path: string): boolean {
+    let holder: { host?: unknown; pid?: unknown; taken?: unknown }
+    try {
+      holder = JSON.parse(readFileSync(path, "utf8")) as typeof holder
+    } catch {
+      try {
+        return Date.now() - statSync(path).mtimeMs > WRITE_LOCK_STALE_MS
+      } catch {
+        return false
+      }
+    }
+    if (typeof holder.taken === "number" && Date.now() - holder.taken > WRITE_LOCK_STALE_MS) return true
+    if (holder.host !== hostname() || typeof holder.pid !== "number") return false
+    try {
+      process.kill(holder.pid, 0)
+      return false
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code === "ESRCH"
+    }
   }
 
   /** Append one line. A torn last line is an append that never completed: it is cut off first. */
@@ -139,7 +239,7 @@ export class RunDir {
     try {
       fd = openSync(this.journalPath, "a+")
     } catch (error) {
-      throw new RunFileError("io", this.journalPath, describe(error))
+      throw new RunFileError("io", this.journalPath, describe(error), error)
     }
     try {
       const size = statSync(this.journalPath).size
@@ -150,7 +250,7 @@ export class RunDir {
       }
       writeSync(fd, `${JSON.stringify(entry)}\n`)
     } catch (error) {
-      throw error instanceof RunFileError ? error : new RunFileError("io", this.journalPath, describe(error))
+      throw error instanceof RunFileError ? error : new RunFileError("io", this.journalPath, describe(error), error)
     } finally {
       closeSync(fd)
     }
@@ -170,7 +270,7 @@ export class RunDir {
     try {
       return readJournal(text)
     } catch (error) {
-      if (error instanceof JournalCorrupt) throw new RunFileError("corrupt", this.journalPath, error.message)
+      if (error instanceof JournalCorrupt) throw new RunFileError("corrupt", this.journalPath, error.message, error)
       throw error
     }
   }
@@ -179,7 +279,7 @@ export class RunDir {
     try {
       writeFileSync(this.summaryPath, text)
     } catch (error) {
-      throw new RunFileError("io", this.summaryPath, describe(error))
+      throw new RunFileError("io", this.summaryPath, describe(error), error)
     }
   }
 
@@ -197,7 +297,7 @@ export function findRun(root: string, runId?: string): RunDir | undefined {
       id = readlinkSync(join(root, "latest"))
     } catch (error) {
       if (missing(error)) return undefined
-      throw new RunFileError("io", join(root, "latest"), describe(error))
+      throw new RunFileError("io", join(root, "latest"), describe(error), error)
     }
   }
   if (!/^[\w.-]+$/.test(id)) return undefined

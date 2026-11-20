@@ -49,27 +49,53 @@ it:
   whole command and every part of it is a known safe form:
   - Branch work, pull requests, beads, dependency changes and read-only AWS
     calls are safe forms.
+  - The repository's own scripts and test runners are safe forms: `npm test`,
+    `npm run <script>`, `bun test`, `make <target>`, `python3 -m pytest` and
+    similar. A script or target named like a release is denied.
   - A push must name a remote and a feature branch, for example
     `git push origin feat/x`.
-  - A merge or a deployment needs `--allow`.
-  - A command that discards work, such as `git reset --hard` or `rm -r`, needs
-    `--full`.
-  - The plugin always denies a force push, a mirror push and a push to the
-    default branch.
-  - The plugin denies a command it cannot read: an unknown command or flag, a
-    quoted flag, an expansion, or a command substitution.
+  - A merge or a deployment needs `--allow`. `wt merge` counts as a merge.
+  - A command that discards work needs `--full`. Examples are
+    `git reset --hard`, `git switch --discard-changes` and `rm -r`.
+  - The plugin always denies a force push and a mirror push. It also denies a
+    push to `main`, to `master` or to the remote's own default branch. The
+    plugin resolves that branch from `refs/remotes/<remote>/HEAD` or from the
+    remote. When it cannot resolve the branch, it denies the push.
+  - The plugin denies a command it cannot read. Examples are an unknown
+    command or flag, a quoted flag, an expansion and a command substitution.
+    `$'…'` and `$"…"` quoting are denied too.
+  - The plugin denies code it cannot read. Examples are an interpreter with
+    `-c`, `-e` or a script file, and a package executor such as `npx`,
+    `npm exec`, `pnpm dlx`, `bunx` or `uvx`.
   - The plugin denies AWS calls that change resources, except the
     CloudFormation operations that `--allow deploy` grants.
+  - The plugin allows other permission kinds only from a list of kinds that
+    act inside the run's location: read, edit, glob, grep, web fetch and
+    search, skills, subagents and MCP resource reads. It denies every other
+    kind, such as `external_directory`, `execute`, MCP tools and plugin tools.
   - The plugin logs each denial as a blocker.
 - After compaction, the plugin queues a notice with the rules and a fresh
   status.
 
 The plugin keeps armed runs in its storage, so a run survives a server restart.
-Every state change holds a lock file in the run directory, and every write of
-`state.json` checks a generation number, so a second plugin instance never
-overwrites a newer state. When a run file is missing, the plugin treats it as
-absent. When a run file is unreadable or corrupt, the plugin reports the error
-and logs a blocker. The plugin never reads such a file as an empty run.
+Every state change holds a lock file in the run directory. Every write of
+`state.json` holds a short write lock from its generation check to its rename,
+and the plugin checks the run lease again just before the rename. So a second
+plugin instance, or a writer that stalled and lost its lease, never overwrites
+a newer state. When a run file is missing, the plugin treats it as absent. When
+a run file is unreadable or corrupt, the plugin reports the error and logs a
+blocker. The plugin never reads such a file as an empty run.
+
+Each tick carries a token and the session that the run is bound to. After
+`/autopilot resume`, the old automation's ticks are stale. They do nothing and
+end that automation, and the resume prompt names the old automation for
+deletion.
+
+A stop first moves the run to `stopping`, and the plugin then writes
+`summary.md` and the handoff bead. If either write fails, the run stays
+`stopping`. The next tick or status call retries the missing one. The plugin
+looks up the handoff bead by title before it creates one, so it never creates
+two.
 
 ## Tools
 
