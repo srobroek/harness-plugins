@@ -1,3 +1,9 @@
+## safety [0.9.2](https://github.com/srobroek/harness-plugins/compare/safety--v0.9.1...safety--v0.9.2) (2026-11-20)
+
+### Bug Fixes
+
+* **safety:** surface permission-watch and skill-lookup host errors ([75a398c](https://github.com/srobroek/harness-plugins/commit/75a398cc7ded8494bd5bff026718e2925f246d63)), closes [#23](https://github.com/srobroek/harness-plugins/issues/23)
+
 ## safety [0.9.1](https://github.com/srobroek/harness-plugins/compare/safety--v0.9.0...safety--v0.9.1) (2026-11-20)
 
 ### Bug Fixes
