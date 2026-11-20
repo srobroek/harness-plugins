@@ -4,7 +4,7 @@
 //
 // The bundle is made stale first (a line appended to its dist), so the check passes only when the prepare step
 // rebuilds it, for a plugin whose bundle embeds its version and for one whose bundle does not.
-// The checkout is a detached git worktree under the system temp directory, removed in a `finally`; the real
+// The checkout is a detached git worktree under the system temp directory, removed whether the probe passes or fails; the real
 // checkout is not touched, and the script fails if its `git status` or index changes. It checks committed files: commit first.
 //
 //   bun scripts/check-release-prepare.ts [plugin...]   default: delivery (embeds its version) and cad (own release config)
@@ -18,17 +18,22 @@ const VERSION = "99.0.0"
 const root = path.resolve(import.meta.dir, "..")
 const plugins = process.argv.slice(2).length > 0 ? process.argv.slice(2) : ["delivery", "cad"]
 
-const git = (...args: string[]) => {
-  const result = spawnSync("git", args, { cwd: root, encoding: "utf8" })
-  if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`)
-  return result.stdout
+/** Runs a command and throws, keeping spawn's own error (a missing executable) as the cause. */
+function exec(command: string, args: string[], options: { cwd: string; inherit?: boolean; env?: NodeJS.ProcessEnv }): string {
+  const result = spawnSync(command, args, { cwd: options.cwd, env: options.env, encoding: "utf8", stdio: options.inherit ? "inherit" : "pipe" })
+  if (result.error !== undefined || result.status !== 0) {
+    const detail = result.error?.message ?? `exited ${result.status}: ${result.stderr ?? ""}`
+    throw new Error(`${command} ${args.join(" ")} ${detail}`, { cause: result.error })
+  }
+  return result.stdout ?? ""
 }
-const state = () => `${git("status", "--porcelain")}\n${git("diff", "--cached", "--name-only")}`
+const git = (...args: string[]) => exec("git", args, { cwd: root })
+// Status plus the index entries (mode, blob, stage, path), so a staged file that changes content shows.
+const state = () => `${git("status", "--porcelain")}\n${git("ls-files", "--stage")}`
 
 function run(command: string, args: string[], cwd: string, tree: string) {
   const env = { ...process.env, PATH: `${tree}/node_modules/.bin:${process.env.PATH}` }
-  const result = spawnSync(command, args, { cwd, stdio: "inherit", env })
-  if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} exited ${result.status}`)
+  exec(command, args, { cwd, env, inherit: true })
 }
 
 /** The prepareCmd of the release config multi-semantic-release uses for the plugin: its own file replaces the root one. */
@@ -44,17 +49,25 @@ async function prepareCommand(tree: string, plugin: string): Promise<string> {
 async function probe(plugin: string) {
   const before = state()
   const tree = mkdtempSync(path.join(tmpdir(), "release-prepare-"))
+  let failure: unknown
   try {
     git("worktree", "add", "--detach", "--quiet", tree, "HEAD")
     symlinkSync(path.join(root, "node_modules"), path.join(tree, "node_modules"))
     appendFileSync(path.join(tree, "plugins", plugin, "opencode/dist/index.js"), "// stale\n")
     run("bash", ["-c", await prepareCommand(tree, plugin)], path.join(tree, "plugins", plugin), tree)
     run("bun", ["scripts/build.ts", "--check", plugin], tree, tree)
-  } finally {
-    spawnSync("git", ["worktree", "remove", "--force", tree], { cwd: root })
-    rmSync(tree, { recursive: true, force: true })
-    spawnSync("git", ["worktree", "prune"], { cwd: root })
+  } catch (error) {
+    failure = error
   }
+  // Cleanup always runs; its own failure is reported unless the probe already failed, whose error comes first.
+  try {
+    git("worktree", "remove", "--force", tree)
+  } catch (error) {
+    failure ??= error
+  } finally {
+    rmSync(tree, { recursive: true, force: true })
+  }
+  if (failure !== undefined) throw failure
   if (state() !== before) throw new Error("the probe changed the real checkout")
   console.log(`release prepare for ${plugin}@${VERSION} rebuilds its stale bundle`)
 }
