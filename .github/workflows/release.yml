@@ -3,7 +3,7 @@ name: release
 # multi-semantic-release, one release per plugin. Manual until the first plugin exists:
 # with no plugin, multi-semantic-release has nothing to release. Then add
 #   push: { branches: [main] }
-# and a release.config.mjs (see the harness-kit README, "Presets").
+# (release.config.mjs is in place; see the harness-kit README, "Presets").
 
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   release:
-    uses: srobroek/harness-kit/.github/workflows/release.yml@v1.1.0
+    uses: srobroek/harness-kit/.github/workflows/release.yml@v1.3.0
     permissions:
       contents: write
       issues: write

@@ -1,0 +1,6 @@
+{
+  "ignorePrivate": false,
+  "ignorePackages": ["lib/**"],
+  "tagFormat": "${name}--v${version}",
+  "sequentialPrepare": true
+}
