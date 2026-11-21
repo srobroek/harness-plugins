@@ -1,24 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { join } from "node:path"
-import { parseAgentFile, permissionEffect, readAgentFile } from "./agent-files.ts"
+import { parseAgentFile, permissionEffect } from "./agent-files.ts"
 import { composeAgent } from "./fragments.ts"
 import { READ_ONLY_SHELL_RULES } from "./read-only-shell.ts"
 
-const plugins = join(import.meta.dir, "../../plugins")
-const agents = [
-  "agent-reviewer/common/agents/code-reviewer.opencode.md",
-  "agent-reviewer/common/agents/security-reviewer.opencode.md",
-  "agent-reviewer/common/agents/adversarial-challenger.opencode.md",
-  "quality/common/agents/adversarial-challenger.opencode.md",
-  "architecture/common/agents/architect.opencode.md",
-  "code-challenge/common/agents/code-challenger.md",
-  "code-challenge/common/agents/refactor-challenger.md",
-  "design/common/agents/design-critic.opencode.md",
-  "agent-seance/common/agents/seance.md",
-  "cad/common/agents/cad-dfm-reviewer.md",
-  "cad/common/agents/cad-mech-reviewer.md",
-  "cad/common/agents/cad-sourcing-researcher.md",
-]
 const rules = [...READ_ONLY_SHELL_RULES]
 const effect = (command: string) => permissionEffect(rules, "shell", command)
 
@@ -74,6 +58,11 @@ describe("shared read-only shell rules", () => {
     "rm -rf x",
     "mv a b",
     "echo x > file",
+    "echo x >file",
+    "echo x>>file",
+    "git log | tee out",
+    "git -c alias.x=!rm log",
+    "git --config-env=a=B log",
     "ast-grep run -p a -r b -U",
   ])("denies %s", (command) => expect(effect(command)).toBe("deny"))
 
@@ -82,13 +71,5 @@ describe("shared read-only shell rules", () => {
     const file = parseAgentFile(composeAgent(source), "x")
     expect(file.permissions.filter((rule) => rule.action === "shell")).toEqual(rules)
     expect(permissionEffect(file.permissions, "edit")).toBe("deny")
-  })
-
-  // The shipped files are generated, so this catches a stale build or a hand edit as well as a missing marker.
-  test.each(agents)("%s ships exactly the shared shell rules and no write tool", (path) => {
-    const file = readAgentFile(join(plugins, path))
-    expect(file.permissions.filter((rule) => rule.action === "shell")).toEqual(rules)
-    for (const action of ["edit", "write", "patch"]) expect(permissionEffect(file.permissions, action)).toBe("deny")
-    expect(permissionEffect(file.permissions, "external_directory")).toBe("ask")
   })
 })

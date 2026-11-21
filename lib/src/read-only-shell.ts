@@ -9,6 +9,10 @@
  * (they write only where the caller points them). `edit`, `write` and `patch` stay denied in
  * each agent's own rules.
  *
+ * This is best-effort, not a sandbox. The rules match command text by prefix and pattern, so an
+ * interpreter (`python -c`, `bash -c`, `node -e`), a nested shell or a form the patterns do not
+ * see can still write. The list stops accidental writes by a read-only agent, not a determined one.
+ *
  * Agent sources reference this list with a `# {{rules read-only-shell}}` comment line in the
  * frontmatter permissions; `composeAgent` expands it (see `fragments.ts`).
  */
@@ -39,7 +43,8 @@ export const READ_ONLY_SHELL_RULES: readonly ShellRule[] = [
   ...allow("*"),
   // files
   ...deny("rm*", "mv*", "cp*", "touch*", "tee*", "chmod*", "chown*", "ln*", "sudo*", "sed -i*", "sed * -i*", "find *-delete*", "find *-exec*"),
-  ...deny("* > *", "* >> *"),
+  // redirection and `tee` forms the matcher can see, with or without spaces (`2>&1` is denied too)
+  ...deny("*>*", "* | tee *", "* | tee"),
   // git: the working tree, refs, history and config
   ...deny(
     "git push*", "git commit*", "git reset*", "git checkout*", "git switch*", "git restore*", "git clean*", "git rebase*",
@@ -51,6 +56,8 @@ export const READ_ONLY_SHELL_RULES: readonly ShellRule[] = [
   ),
   ...allow("git stash list*", "git stash show*", "git config --get*", "git config --list*", "git config -l*"),
   ...deny("git * --output*"),
+  // config injected on the command line can define aliases and hooks that run anything
+  ...deny("git -c *", "git --config-env*"),
   // forges
   ...deny(
     "gh pr create*", "gh pr merge*", "gh pr close*", "gh pr edit*", "gh pr comment*", "gh pr review*", "gh pr ready*",
