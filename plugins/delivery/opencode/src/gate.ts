@@ -22,6 +22,16 @@ export function landGate(input: unknown): boolean {
   return typeof expectHeadSha === "string" && expectHeadSha.trim() !== "" && requireApproval === true && requireGreenChecks === true
 }
 
+/**
+ * What `delivery_land` itself proved before it asks: the gated input, and either a request that
+ * is already MERGED (nothing is merged, only the receipt is written) or an approval the forge
+ * showed for the exact head from a trusted identity. Green checks need no flag here: with
+ * `requireGreenChecks` set, a red or unreadable check refuses the call before this point.
+ */
+export function landAuthorizationGated(input: unknown, proof: { alreadyMerged: boolean; approvalTrusted: boolean }): boolean {
+  return landGate(input) && (proof.alreadyMerged || proof.approvalTrusted)
+}
+
 /** What `cleanupDelivery` hands `authorize` once every proof has passed. */
 export type CleanupAuthorization = {
   worktree: string

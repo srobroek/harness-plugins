@@ -1,10 +1,23 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
+import { execFileSync } from "node:child_process"
+import { mkdirSync } from "node:fs"
+import { join } from "node:path"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import type { CleanupDeps } from "./cleanup.ts"
-import * as realCleanup from "./cleanup.ts"
-import { cleanupGate, createGateRegistry, landGate } from "./gate.ts"
-import * as realLand from "./land.ts"
-import type { LandDeps } from "./land.ts"
+import { cleanupGate, createGateRegistry, landAuthorizationGated, landGate } from "./gate.ts"
+import { setupDelivery } from "./index.ts"
+import {
+  type Answers,
+  cleanupFixtures,
+  completed,
+  githubPr,
+  HEAD_OID,
+  linkedWorktree,
+  matchingVerbs,
+  mergedGithubPr,
+  repository,
+  runner,
+} from "./land-fixture.ts"
 
 const HEAD = "a".repeat(40)
 
@@ -72,41 +85,48 @@ describe("createGateRegistry", () => {
   })
 })
 
-// The tools run for real up to their authorize step; the forge and the repository are replaced.
-const originalCleanup = { ...realCleanup }
-const originalLand = { ...realLand }
-let receiptBound = true
+describe("landAuthorizationGated", () => {
+  const gated = { expectHeadSha: HEAD, requireApproval: true, requireGreenChecks: true }
+  test("needs the gated input and either a trusted approval or an already merged request", () => {
+    expect(landAuthorizationGated(gated, { alreadyMerged: false, approvalTrusted: true })).toBe(true)
+    expect(landAuthorizationGated(gated, { alreadyMerged: true, approvalTrusted: false })).toBe(true)
+    expect(landAuthorizationGated(gated, { alreadyMerged: false, approvalTrusted: false })).toBe(false)
+    expect(landAuthorizationGated({ ...gated, requireApproval: false }, { alreadyMerged: true, approvalTrusted: true })).toBe(false)
+  })
+})
 
-beforeAll(() => {
-  mock.module("./land.ts", () => ({
-    ...originalLand,
-    landPullRequest: async (_params: unknown, deps: LandDeps) => {
-      await deps.authorize?.({ resource: "o/r#7", forge: "github", head: HEAD, merge: "squash", setupAutoDelete: false })
-      return { ok: false, text: "stub: stopped after authorize", next: [] }
-    },
-  }))
-  mock.module("./cleanup.ts", () => ({
-    ...originalCleanup,
-    cleanupDelivery: async (_params: unknown, _cwd: string, deps: CleanupDeps) => {
-      await deps.authorize?.({ worktree: "/w/a", branch: "b", pr: 7, receiptBound })
-      return { ok: false, reason: "stub: stopped after authorize" }
-    },
-  }))
-})
-afterAll(() => {
-  mock.module("./land.ts", () => originalLand)
-  mock.module("./cleanup.ts", () => originalCleanup)
-})
-beforeEach(() => {
-  receiptBound = true
-})
+afterEach(cleanupFixtures)
 
 type Rule = "allow" | "deny"
 
-/** Plugin set up against a fake host that resolves every permission with `rule`, then the evaluate hook, as OpenCode does. */
-async function run(tool: string, rule: Rule, input: Record<string, unknown>) {
+const GATED = { pr: 470, expectHeadSha: HEAD_OID, requireApproval: true, requireGreenChecks: true }
+const greenRuns = completed(JSON.stringify({ total_count: 1, check_runs: [{ name: "ci", status: "completed", conclusion: "success" }] }))
+const approvedBy = (login: string) =>
+  completed(JSON.stringify({ author: { login: "author" }, reviews: [{ state: "APPROVED", author: { login }, commit: { oid: HEAD_OID } }], comments: [] }))
+const forge = (extra: Answers = {}): Answers => ({
+  prView: [completed(githubPr()), completed(mergedGithubPr())],
+  approval: approvedBy("reviewer"),
+  checkRuns: greenRuns,
+  ...extra,
+})
+
+/**
+ * The real plugin and the real `landPullRequest` over a scripted forge and git process boundary,
+ * against a fake host that resolves every permission with `rule`, then the evaluate hook, as OpenCode does.
+ */
+async function land(rule: Rule, input: Record<string, unknown>, answers: Answers, inline?: (deps: CleanupDeps) => Promise<void>) {
+  const { canonical, receipts } = repository()
+  // An active Beads ledger defers inline cleanup, so the inline cases run without one.
+  if (inline === undefined) mkdirSync(join(canonical, ".beads"))
+  // Ownership of the worktree is read with real git, so the inline cases need a real repository.
+  if (inline !== undefined) execFileSync("git", ["init", "-q", "-b", "main"], { cwd: canonical })
+  const worktree = inline === undefined ? {} : { worktree: linkedWorktree(canonical, "wt") }
+  const { run, calls } = runner(answers, canonical)
   const prompts: string[] = []
+  let inlineRan = false
   const fake: ReturnType<typeof createFakeContext> = createFakeContext({
+    directory: canonical,
+    options: { receiptsDirectory: receipts, autoCleanup: inline !== undefined },
     assert: async (call) => {
       const evaluation = { action: call.action, resources: call.resources, effect: rule as string }
       if (rule !== "deny") await fake.fire.permission("evaluate", evaluation)
@@ -114,51 +134,62 @@ async function run(tool: string, rule: Rule, input: Record<string, unknown>) {
       if (evaluation.effect === "deny") throw new Error(`${call.action} denied`)
     },
   })
-  const { default: plugin } = await import("./index.ts")
-  await plugin.setup(fake.context)
-  const execute = fake.tools.get(tool)?.execute as (i: unknown, c: unknown) => Promise<{ content: string }>
-  const outcome = await execute(input, { sessionID: "s", agent: "a", messageID: "m", id: "c", signal: new AbortController().signal }).then(
-    () => "ran",
+  const context = fake.context as unknown as { location: unknown }
+  context.location = { ...(context.location as object), project: { id: "prj" } }
+  await setupDelivery(fake.context, {
+    cleanup: { run: matchingVerbs(run) },
+    ...(inline === undefined
+      ? {}
+      : {
+          inlineCleanup: async (_params, _cwd, deps) => {
+            inlineRan = true
+            await inline(deps as CleanupDeps)
+            return { ok: false, reason: "stopped after authorize" }
+          },
+        }),
+  })
+  const execute = fake.tools.get("delivery_land")?.execute as (i: unknown, c: unknown) => Promise<{ output: { ok: boolean } }>
+  const outcome = await execute({ ...input, ...worktree }, { sessionID: "s", agent: "a", messageID: "m", id: "c", signal: new AbortController().signal }).then(
+    (result) => (result.output.ok ? "landed" : "refused"),
     (error: Error) => error.message,
   )
-  return { prompts, outcome }
+  return { prompts, outcome, inlineRan, merged: calls.some((call) => call.argv[1] === "pr" && call.argv[2] === "merge") }
 }
 
 describe("delivery_land permission", () => {
-  const gated = { pr: 7, expectHeadSha: HEAD, requireApproval: true, requireGreenChecks: true }
-
-  test("a fully gated land asks nothing when the rules allow", async () => {
-    expect((await run("delivery_land", "allow", gated)).prompts).toEqual([])
+  test("a gated land with an approval from a user with write access asks nothing and merges", async () => {
+    expect(await land("allow", GATED, forge())).toEqual({ prompts: [], outcome: "landed", inlineRan: false, merged: true })
   })
 
   test.each([
-    ["expectHeadSha", { ...gated, expectHeadSha: undefined }],
-    ["requireApproval", { ...gated, requireApproval: undefined }],
-    ["requireGreenChecks", { ...gated, requireGreenChecks: undefined }],
-    ["all gates", { pr: 7 }],
+    ["requireApproval", { ...GATED, requireApproval: undefined }],
+    ["requireGreenChecks", { ...GATED, requireGreenChecks: undefined }],
   ])("a land without %s still asks", async (_name, input) => {
-    expect((await run("delivery_land", "allow", input)).prompts).toEqual(["delivery_land o/r#7"])
+    const { prompts } = await land("allow", input, forge())
+    expect(prompts).toEqual(["delivery_land srobroek/omp-plugins#470"])
   })
 
-  test("a configured deny still wins for a fully gated land", async () => {
-    const { prompts, outcome } = await run("delivery_land", "deny", gated)
-    expect(prompts).toEqual([])
-    expect(outcome).toBe("delivery_land denied")
+  test("an approval from a user without write access keeps the prompt, and the merge still proceeds once confirmed", async () => {
+    const answers = forge({ permission: completed(JSON.stringify({ permission: "read", role_name: "read" })) })
+    expect(await land("allow", GATED, answers)).toEqual({ prompts: ["delivery_land srobroek/omp-plugins#470"], outcome: "landed", inlineRan: false, merged: true })
+  })
+
+  test("a configured deny still wins for a fully gated land and nothing is merged", async () => {
+    expect(await land("deny", GATED, forge())).toEqual({ prompts: [], outcome: "delivery_land denied", inlineRan: false, merged: false })
   })
 })
 
-describe("delivery_cleanup permission", () => {
-  test("a cleanup bound to a verified receipt asks nothing when the rules allow", async () => {
-    expect((await run("delivery_cleanup", "allow", { pr: 7 })).prompts).toEqual([])
+describe("the cleanup a land runs inline", () => {
+  const request = (receiptBound: boolean) => ({ worktree: "/w/a", branch: "b", pr: 470, receiptBound })
+  const inline = (receiptBound: boolean) => async (deps: CleanupDeps) => deps.authorize?.(request(receiptBound))
+
+  test("asks nothing when it acts on the receipt it just wrote", async () => {
+    const result = await land("allow", GATED, forge(), inline(true))
+    expect(result.inlineRan).toBe(true)
+    expect(result.prompts).toEqual([])
   })
 
-  test("a cleanup whose receipt does not bind the target worktree and branch still asks", async () => {
-    receiptBound = false
-    expect((await run("delivery_cleanup", "allow", { pr: 7 })).prompts).toEqual(["delivery_cleanup /w/a"])
-  })
-
-  test("a configured deny still wins for a bound cleanup", async () => {
-    const { outcome } = await run("delivery_cleanup", "deny", { pr: 7 })
-    expect(outcome).toBe("delivery_cleanup denied")
+  test("asks when the worktree is not bound to the receipt", async () => {
+    expect((await land("allow", GATED, forge(), inline(false))).prompts).toEqual(["delivery_cleanup /w/a"])
   })
 })

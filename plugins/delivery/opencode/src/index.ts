@@ -31,7 +31,7 @@ import {
   type HostWorktrees,
 } from "./cleanup.ts"
 import { MERGE_METHODS } from "./forge-adapter.ts"
-import { cleanupGate, createGateRegistry, type GateRegistry, landGate } from "./gate.ts"
+import { cleanupGate, createGateRegistry, type GateRegistry } from "./gate.ts"
 import { type LandOutcome, type LandParams, landPullRequest } from "./land.ts"
 import { CleanupDeferred, createPendingCleanup, type PendingDeps } from "./pending-cleanup.ts"
 import { malformedNote, parseVerdict } from "./verdict.ts"
@@ -339,7 +339,10 @@ async function isPrimary(ctx: Context, sessionID: string): Promise<boolean> {
 
 export async function setupDelivery(
   ctx: Context,
-  overrides: Pick<PendingDeps, "debounceMs" | "now" | "cleanup"> = {},
+  overrides: Pick<PendingDeps, "debounceMs" | "now" | "cleanup"> & {
+    /** Test seam: the cleanup the land tool runs inline, so a test can observe how it asks. */
+    inlineCleanup?: typeof cleanupDelivery
+  } = {},
 ): Promise<() => Promise<void>> {
   const options = parseOptions(ctx.options as Record<string, unknown>)
   const directory = ctx.location.directory
@@ -363,12 +366,12 @@ export async function setupDelivery(
       output: LAND_OUTPUT,
       execute: async (input, context) => {
         const ask = asserter(ctx, context, LAND_ACTION, gates)
-        const gated = landGate(input)
         const outcome = await landPullRequest(input as LandParams, {
+          ...(overrides.cleanup?.run === undefined ? {} : { run: overrides.cleanup.run }),
           cwd: directory,
           env: environment(options),
           signal: context.signal,
-          authorize: (request) => ask(request.resource, { ...request }, gated),
+          authorize: (request) => ask(request.resource, { ...request }, request.gated),
         })
         if (!outcome.ok) {
           const output = landOutput(outcome)
@@ -397,7 +400,8 @@ export async function setupDelivery(
         const cleanup: CleanupReport | undefined = decision.run
           ? await runInlineCleanup(() => {
               const askCleanup = asserter(ctx, context, CLEANUP_ACTION, gates)
-              return cleanupDelivery({ receipt: outcome.receiptPath }, directory, {
+              return (overrides.inlineCleanup ?? cleanupDelivery)({ receipt: outcome.receiptPath }, directory, {
+                ...overrides.cleanup,
                 env: environment(options),
                 signal: context.signal,
                 authorize: async (request) => {
@@ -437,6 +441,7 @@ export async function setupDelivery(
         let result: CleanupResult
         try {
           result = await cleanupDelivery(input as DeliveryCleanupParams, directory, {
+            ...overrides.cleanup,
             env: environment(options),
             signal: context.signal,
             ...pending.explicit((req) => ask(req.worktree, { ...req }, cleanupGate(req)), context.sessionID),

@@ -82,6 +82,7 @@ import { resolve } from "node:path"
 import { type GitPin, physical, verifyCheckout } from "@srobroek/opencode-lib/checkout-marker"
 import pkg from "../../package.json" with { type: "json" }
 import { readApproval, readChecks } from "./approval.ts"
+import { landAuthorizationGated } from "./gate.ts"
 import { parseWorktreeList, type WorktreeRecord } from "./cleanup.ts"
 import {
   allowMergeCommit,
@@ -238,6 +239,13 @@ export type LandAuthorization = {
   /** The merge method, or null when the request is already MERGED and nothing is merged. */
   merge: MergeMethod | null
   setupAutoDelete: boolean
+  /**
+   * The call proved what a person's confirmation would otherwise rest on, so the host need not
+   * ask: its input bound the head and required approval and checks, and the forge showed an
+   * approval for that head from a trusted identity plus green checks for that sha (or the request
+   * was already MERGED, which only writes the receipt). Anything unproved is false.
+   */
+  gated: boolean
 }
 
 /**
@@ -1465,6 +1473,7 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
   // The shepherd's preconditions, read from the forge for the head the merge is bound
   // to. Only a merge needs them: an already-MERGED request is proved, not approved.
   const preconditions: { approval?: Record<string, unknown>; checks?: Record<string, unknown> } = {}
+  let approvalTrusted = false
   if (!alreadyMerged && (params.requireApproval === true || params.requireGreenChecks === true)) {
     const bound = {
       forge,
@@ -1480,6 +1489,7 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
       const approval = await readApproval(run, bound)
       if (!approval.ok) return refuse(`${approval.reason}; no merge was issued and no receipt was written`)
       preconditions.approval = approval.evidence
+      approvalTrusted = approval.trusted?.trusted === true
     }
     if (params.requireGreenChecks === true) {
       const checks = await readChecks(run, bound)
@@ -1548,6 +1558,7 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
     head,
     merge: alreadyMerged ? null : landMethod,
     setupAutoDelete: params.setupAutoDelete === true,
+    gated: landAuthorizationGated(params, { alreadyMerged, approvalTrusted }),
   })
 
   const notes: string[] = []

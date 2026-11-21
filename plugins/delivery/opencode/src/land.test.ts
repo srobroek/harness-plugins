@@ -4,7 +4,6 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -13,7 +12,7 @@ import {
   watch,
   writeFileSync,
 } from "node:fs"
-import { devNull, tmpdir } from "node:os"
+import { devNull, } from "node:os"
 import { dirname, join } from "node:path"
 import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
 import pkg from "../../package.json" with { type: "json" }
@@ -31,6 +30,36 @@ import {
 } from "./land.ts"
 import { type LandingReceipt, RECEIPT_SCHEMA, readReceipt, repoKey, writeReceipt } from "./landing-receipt.ts"
 import { writePending } from "./merge-queue.ts"
+import {
+  type Answers,
+  BASE_BRANCH,
+  BASE_OID,
+  BRANCH,
+  type Call,
+  cleanupFixtures,
+  completed,
+  created,
+  FETCH_URL,
+  githubPr,
+  githubRef,
+  gitlabMr,
+  HEAD_OID,
+  LANDED_TREE,
+  linkedWorktree,
+  MERGE_OID,
+  mergedGithubPr,
+  NOW,
+  PARENT_TREE,
+  REMOTE_URL,
+  repository,
+  REVIEWED,
+  runner,
+  temporaryDirectory,
+  TIP_OID,
+  TITLE,
+} from "./land-fixture.ts"
+
+afterEach(cleanupFixtures)
 
 /** Every raw git argv the tool issued, before the safe-option prefix is stripped for the mocks. */
 const rawGitArgv: string[][] = []
@@ -75,258 +104,6 @@ function landPullRequest(params: LandParams, deps: LandDeps = {}) {
   return landPullRequestUnwrapped(params, { ...deps, run })
 }
 
-type Call = {
-  argv: string[]
-  cwd: string | undefined
-  timeoutMs: number
-  env: Readonly<Record<string, string>> | undefined
-}
-
-const MERGE_OID = "feedfacecafebabe0123456789abcdef01234567"
-const HEAD_OID = "0123456789abcdef0123456789abcdef01234567"
-const BASE_OID = "1111111111111111111111111111111111111111"
-const TIP_OID = "2222222222222222222222222222222222222222"
-const PARENT_TREE = "3333333333333333333333333333333333333333"
-const LANDED_TREE = "4444444444444444444444444444444444444444"
-const BASE_BRANCH = "omp/integration/omp-plugins-9ej3"
-const REMOTE_URL = "https://github.com/srobroek/omp-plugins.git"
-/** What a GitHub landing fetches from: the repository's HTTPS URL, built from its owner/name. */
-const FETCH_URL = "https://github.com/srobroek/omp-plugins.git"
-const BRANCH = "omp/agent/omp-plugins-9ej3.5"
-const NOW = 1_764_000_000_000
-const TITLE = "fix(delivery): land the reviewed head"
-
-/** The reviewed head a merging call must name; only an already-MERGED proof may omit it. */
-const REVIEWED = { expectHeadSha: HEAD_OID } as const
-
-const completed = (stdout: string, exitCode = 0, stderr = ""): CliResult => ({ ok: true, exitCode, stdout, stderr })
-
-/** A GitHub pull-request payload in `gh pr view --json` spelling. */
-const githubPr = (overrides: Record<string, unknown> = {}): string =>
-  JSON.stringify({
-    id: "PR_node_470",
-    number: 470,
-    url: "https://github.com/srobroek/omp-plugins/pull/470",
-    title: TITLE,
-    state: "OPEN",
-    baseRefName: BASE_BRANCH,
-    headRefName: BRANCH,
-    headRefOid: HEAD_OID,
-    mergeCommit: null,
-    mergedAt: null,
-    ...overrides,
-  })
-
-const mergedGithubPr = (overrides: Record<string, unknown> = {}): string =>
-  githubPr({ state: "MERGED", mergeCommit: { oid: MERGE_OID }, mergedAt: "2026-09-21T20:00:00Z", ...overrides })
-
-/** A GitHub GraphQL answer for one branch ref: present at `oid`, or an explicit null ref when `oid` is null. */
-const githubRef = (branch: string, oid: string | null, repo = "srobroek/omp-plugins"): string =>
-  JSON.stringify({
-    data: {
-      repository: {
-        nameWithOwner: repo,
-        ref: oid === null ? null : { prefix: "refs/heads/", name: branch, target: { __typename: "Commit", oid } },
-      },
-    },
-  })
-
-/** A GitLab merge request in `glab mr view --output json` spelling. */
-const gitlabMr = (overrides: Record<string, unknown> = {}): string =>
-  JSON.stringify({
-    iid: 12,
-    web_url: "https://gitlab.com/group/project/-/merge_requests/12",
-    title: TITLE,
-    state: "merged",
-    target_branch: "main",
-    source_branch: BRANCH,
-    sha: HEAD_OID,
-    merge_commit_sha: MERGE_OID,
-    merged_at: "2026-09-21T20:00:00Z",
-    ...overrides,
-  })
-
-/** Every fixture directory this file creates, so a test can prove none outlives its test. */
-const created: string[] = []
-/** The ones the running test created, removed once it ends. */
-const pending: string[] = []
-
-function temporaryDirectory(prefix: string): string {
-  const path = mkdtempSync(join(tmpdir(), prefix))
-  created.push(path)
-  pending.push(path)
-  return path
-}
-
-/** A linked worktree of `canonical`, as `git worktree add` lays it out: a `.git` file and an admin directory. */
-function linkedWorktree(canonical: string, name: string): string {
-  const path = join(temporaryDirectory("delivery-land-linked-"), name)
-  const admin = join(canonical, ".git", "worktrees", name)
-  mkdirSync(path, { recursive: true })
-  mkdirSync(admin, { recursive: true })
-  writeFileSync(join(path, ".git"), `gitdir: ${admin}\n`)
-  writeFileSync(join(admin, "commondir"), "../..\n")
-  return path
-}
-
-
-afterEach(() => {
-  for (const path of pending.splice(0)) rmSync(path, { recursive: true, force: true })
-})
-
-/**
- * A repository whose git reads answer from a real temporary directory.
- *
- * `repoKey` hashes the realpath of the git common directory, so the fixture
- * creates one: the receipt then carries a key that a reader could reproduce, and
- * `canonicalRoot` is the parent this landing was keyed from.
- */
-function repository(): { canonical: string; receipts: string } {
-  const canonical = temporaryDirectory("delivery-land-repo-")
-  mkdirSync(join(canonical, ".git", "objects"), { recursive: true })
-  return { canonical, receipts: temporaryDirectory("delivery-land-receipts-") }
-}
-
-type Answers = {
-  prView?: CliResult[]
-  merge?: CliResult
-  autoDelete?: CliResult
-  policy?: CliResult
-  enable?: CliResult
-  parents?: string
-  remoteUrl?: string
-  /** What `git rev-parse --verify HEAD^{commit}` answers inside a supplied worktree. */
-  worktreeHead?: CliResult
-  /** What `git worktree list --porcelain` prints in the repository; empty by default. */
-  worktrees?: string
-  /** Whether each `git cat-file -e <oid>^{commit}` finds the object, in call order; present once the list is spent. */
-  present?: boolean[]
-  /** What each `git fetch` answers, in call order; exit 0 once the list is spent. */
-  fetch?: CliResult[]
-  /** What the approval read (`gh pr view --json author,reviews,comments` or the GitLab approvals API) answers. */
-  approval?: CliResult
-  /** What the branch rules read (`gh api repos/<o>/<r>/rules/branches/<base>`) answers; no rules by default. */
-  rules?: CliResult
-  /** What each merge queue state read (`gh api graphql` query) answers, in call order; the last repeats. */
-  queueStates?: CliResult[]
-  /** Runs while queue state read `index` (0-based) is in flight; the read answers once it settles. */
-  duringQueueState?: (index: number) => Promise<void> | undefined
-  /** What the `enqueuePullRequest` mutation answers. */
-  enqueue?: CliResult
-  /** Runs while the `enqueuePullRequest` mutation is in flight, and supplies its answer. */
-  duringEnqueue?: () => Promise<CliResult>
-  /** What the forge's compare read (`compare/<oid>...<base>`) answers; "ahead" by default. */
-  compare?: CliResult
-  /** What the `mergeQueue(branch:)` read after a rules 404 answers. */
-  mergeQueueProbe?: CliResult
-  /** What the rulesets list read after a rules 404 answers. */
-  rulesets?: CliResult
-  /** What the GitHub GraphQL read of the base branch's ref answers; its tip is `TIP_OID` by default. GitLab's `ls-remote` always names `TIP_OID`. */
-  baseRef?: CliResult
-  /** What the GitHub GraphQL read of the head branch's ref answers; an explicit null (absent) by default. GitLab's `ls-remote` always answers absent. */
-  headRef?: CliResult
-  /** What `git rev-parse <landed>^{tree}` answers; the parent's tree is always `PARENT_TREE`. */
-  landedTree?: CliResult
-  /** What `git merge-tree --write-tree <parent> <head>` answers. */
-  mergeTree?: CliResult
-  /** What `git merge-base --is-ancestor` answers. */
-  ancestor?: CliResult
-  /** What `git merge-base --is-ancestor <landed> <base tip>` answers; `ancestor` when unset. */
-  onBase?: CliResult
-  /** The version `git --version` prints; 2.45.1 when unset. */
-  gitVersion?: string
-  /** What the checks read (`gh pr checks` or the GitLab merge request API) answers. */
-  checks?: CliResult
-}
-
-/**
- * One runner for every child process the tool may start, recording each argv.
- *
- * Recording all of them in one place is what makes "no merge argv was issued" and
- * "no bd argv was issued" observations rather than assertions about intent. An
- * unexpected command fails loudly instead of returning a plausible default.
- */
-function runner(answers: Answers, canonical: string): { run: CliRunner; calls: Call[] } {
-  const views = [...(answers.prView ?? [])]
-  const present = [...(answers.present ?? [])]
-  const fetches = [...(answers.fetch ?? [])]
-  const states = [...(answers.queueStates ?? [])]
-  let stateReads = 0
-  const calls: Call[] = []
-  const run: CliRunner = (argv, options) => {
-    calls.push({ argv: [...argv], cwd: options.cwd, timeoutMs: options.timeoutMs, env: options.env })
-    const command = argv.join(" ")
-    if (argv[0] === "git" && argv.at(-1) === "--version") return completed(`git version ${answers.gitVersion ?? "2.45.1"}\n`)
-    if (command.startsWith("git rev-parse --path-format=absolute --git-common-dir --show-toplevel")) {
-      return completed(`${join(canonical, ".git")}\n${canonical}\n`)
-    }
-    // What the isolated GitHub fetch reads about the checkout's objects.
-    if (command === "git rev-parse --show-object-format --git-path objects --git-path shallow --all")
-      return completed(`sha1\n${join(canonical, ".git", "objects")}\n${join(canonical, ".git", "shallow")}\n${BASE_OID}\n`)
-    if (argv[0] === "git" && argv.includes("show") && argv.includes("-s"))
-      return completed(`${answers.parents ?? BASE_OID}\n`)
-    const treeOf = argv.find((part) => part.endsWith("^{tree}"))
-    if (argv[0] === "git" && argv.includes("rev-parse") && treeOf !== undefined) {
-      const parent = (answers.parents ?? BASE_OID).split(" ")[0]
-      return treeOf.startsWith(`${parent}^`) ? completed(`${PARENT_TREE}\n`) : (answers.landedTree ?? completed(`${LANDED_TREE}\n`))
-    }
-    if (argv[0] === "git" && argv.includes("merge-tree")) return answers.mergeTree ?? completed(`${LANDED_TREE}\n`)
-    if (argv[0] === "git" && argv.includes("ls-remote") && argv.some((part) => part === `refs/heads/${BASE_BRANCH}` || part === "refs/heads/main"))
-      return completed(`${TIP_OID}\trefs/heads/${argv.find((part) => part.startsWith("refs/heads/"))?.slice(11)}\n`)
-    if (argv[0] === "git" && argv[1] === "cat-file" && argv[2] === "-e")
-      return (present.shift() ?? true) ? completed("") : completed("", 1, "fatal: not a commit")
-    if (argv[0] === "git" && argv.includes("fetch")) return fetches.shift() ?? completed("")
-    if (command === "git rev-parse --verify HEAD^{commit}") return answers.worktreeHead ?? completed(`${HEAD_OID}\n`)
-    if (command.startsWith("git remote get-url")) return completed(`${answers.remoteUrl ?? REMOTE_URL}\n`)
-    if (command === "git remote") return completed("origin\n")
-    if (command === "git worktree list --porcelain") return completed(answers.worktrees ?? "")
-    if (argv[1] === "pr" && argv[2] === "view" && argv.includes("author,reviews,comments"))
-      return answers.approval ?? completed("{}")
-    if (argv[1] === "pr" && argv[2] === "checks") return answers.checks ?? completed("[]")
-    if (argv[0] === "git" && argv.includes("merge-base") && argv.includes("--is-ancestor"))
-      return (argv.at(-1) === TIP_OID ? answers.onBase : undefined) ?? answers.ancestor ?? completed("")
-    // No fork point: the rebase proof that reads one is shown against real commits elsewhere.
-    if (argv[0] === "git" && argv.includes("merge-base")) return completed("", 1)
-    if (argv[1] === "api" && argv.some((part) => part.includes("/compare/")))
-      return answers.compare ?? completed("ahead\n")
-    if (argv[1] === "api" && argv.some((part) => part.includes("/rulesets")))
-      return answers.rulesets ?? completed("[]")
-    if (argv[1] === "api" && argv[2] === "graphql" && argv.some((part) => part.includes("mergeQueue(branch")))
-      return (
-        answers.mergeQueueProbe ??
-        completed(JSON.stringify({ data: { repository: { nameWithOwner: "srobroek/omp-plugins", mergeQueue: null } } }))
-      )
-    if (argv[1] === "api" && argv.some((part) => part.includes("/rules/branches/")))
-      return answers.rules ?? completed("[]")
-    if (argv[1] === "api" && argv[2] === "graphql" && argv.some((part) => part.includes("ref(qualifiedName"))) {
-      const branch = argv.find((part) => part.startsWith("ref=refs/heads/"))?.slice("ref=refs/heads/".length) ?? ""
-      return branch === BASE_BRANCH || branch === "main"
-        ? (answers.baseRef ?? completed(githubRef(branch, TIP_OID)))
-        : (answers.headRef ?? completed(githubRef(branch, null)))
-    }
-    if (argv[1] === "api" && argv[2] === "graphql") {
-      if (argv.some((part) => part.startsWith("query=mutation")))
-        return answers.duringEnqueue?.() ?? answers.enqueue ?? completed("{}")
-      const state = (states.length > 1 ? states.shift() : states[0]) ?? completed("{}")
-      const during = answers.duringQueueState?.(stateReads++)
-      return during === undefined ? state : during.then(() => state)
-    }
-    if (argv[1] === "api" && argv.some((part) => part.endsWith("/approvals")))
-      return answers.approval ?? completed("{}")
-    if (argv[1] === "api" && argv.some((part) => /\/merge_requests\/\d+$/.test(part)))
-      return answers.checks ?? completed("{}")
-    if (argv[1] === "pr" && argv[2] === "view") return views.shift() ?? completed(mergedGithubPr())
-    if (argv[1] === "mr" && argv[2] === "view") return views.shift() ?? completed(gitlabMr())
-    if (argv[1] === "api" && argv.includes(".allow_merge_commit")) return answers.policy ?? completed("true\n")
-    if (argv[1] === "api" && argv.includes("-X")) return answers.enable ?? completed("{}\n")
-    if (argv[1] === "api") return answers.autoDelete ?? completed("false\n")
-    if (argv[1] === "pr" && argv[2] === "merge") return answers.merge ?? completed("")
-    if (argv[1] === "mr" && argv[2] === "merge") return answers.merge ?? completed("")
-    if (argv.includes("ls-remote")) return { ok: true, exitCode: 2, stdout: "", stderr: "" }
-    throw new Error(`the tool issued an unexpected command: ${command}`)
-  }
-  return { run, calls }
-}
 async function land(
   answers: Answers,
   params: Partial<LandParams> = {},
@@ -3012,22 +2789,35 @@ describe("delivery_land approval and checks preconditions", () => {
         comments: [],
       }),
     )
-  const greenChecks = completed(JSON.stringify([{ name: "ci", state: "SUCCESS", bucket: "pass" }]))
+  const greenRuns = completed(JSON.stringify({ total_count: 1, check_runs: [{ name: "ci", status: "completed", conclusion: "success" }] }))
   const open = { prView: [completed(githubPr()), completed(mergedGithubPr())] }
 
   test("an approval for the exact head and green checks let the merge through, recorded as evidence", async () => {
     const { outcome, calls } = await land(
-      { ...open, approval: approvedReview(HEAD_OID), checks: greenChecks },
+      { ...open, approval: approvedReview(HEAD_OID), checkRuns: greenRuns },
       { ...REVIEWED, requireApproval: true, requireGreenChecks: true },
     )
     if (!outcome.ok) throw new Error(outcome.reason)
     expect(calls.filter((call) => merged(call.argv))).toHaveLength(1)
     expect(outcome.receipt.proof.evidence.preconditions).toEqual({
       approval: { kind: "review", reviewer: "reviewer", commit: HEAD_OID },
-      checks: { checks: 1 },
+      checks: { checks: 1, statuses: 0 },
     })
     const approvalRead = calls.find((call) => call.argv.includes("author,reviews,comments"))
     expect(approvalRead?.argv).toContain("github.com/srobroek/omp-plugins")
+  })
+
+  test("checks are read by the head commit's sha, not through the pull request", async () => {
+    const { calls } = await land(
+      { ...open, approval: approvedReview(HEAD_OID), checkRuns: greenRuns },
+      { ...REVIEWED, requireApproval: true, requireGreenChecks: true },
+    )
+    const reads = calls.filter((call) => call.argv[1] === "api" && call.argv.some((part) => part.includes("/commits/")))
+    expect(reads.map((call) => call.argv[2])).toEqual([
+      `repos/srobroek/omp-plugins/commits/${HEAD_OID}/check-runs?per_page=100`,
+      `repos/srobroek/omp-plugins/commits/${HEAD_OID}/status?per_page=100`,
+    ])
+    expect(calls.some((call) => call.argv[1] === "pr" && call.argv[2] === "checks")).toBe(false)
   })
 
   test("an approval for an older head refuses before the merge", async () => {
@@ -3044,11 +2834,11 @@ describe("delivery_land approval and checks preconditions", () => {
   })
 
   test("a failing check refuses before the merge, even though gh exits non-zero", async () => {
-    const red = completed(JSON.stringify([{ name: "ci", state: "FAILURE", bucket: "fail" }]), 1)
-    const { outcome, calls } = await land({ ...open, checks: red }, { ...REVIEWED, requireGreenChecks: true })
+    const red = completed(JSON.stringify({ total_count: 1, check_runs: [{ name: "ci", status: "completed", conclusion: "failure" }] }))
+    const { outcome, calls } = await land({ ...open, checkRuns: red }, { ...REVIEWED, requireGreenChecks: true })
     expect(outcome.ok).toBe(false)
     if (outcome.ok) return
-    expect(outcome.reason).toContain("ci=fail")
+    expect(outcome.reason).toContain("ci=failure")
     expect(calls.some((call) => merged(call.argv))).toBe(false)
   })
 
@@ -3058,7 +2848,7 @@ describe("delivery_land approval and checks preconditions", () => {
       { requireApproval: true, requireGreenChecks: true },
     )
     expect(outcome.ok).toBe(true)
-    expect(calls.some((call) => call.argv.includes("author,reviews,comments") || call.argv[2] === "checks")).toBe(false)
+    expect(calls.some((call) => call.argv.includes("author,reviews,comments") || call.argv.some((part) => part.includes("/check-runs")))).toBe(false)
   })
 
   test("authorize sees the resource before any write, and a refusal writes nothing", async () => {
@@ -3088,10 +2878,65 @@ describe("delivery_land approval and checks preconditions", () => {
         head: HEAD_OID,
         merge: "squash",
         setupAutoDelete: false,
+        gated: false,
       },
     ])
     expect(calls.some((call) => merged(call.argv))).toBe(false)
     expect(readdirSync(receipts)).toEqual([])
+  })
+
+  describe("the gated flag handed to authorize", () => {
+    const GATED = { ...REVIEWED, requireApproval: true, requireGreenChecks: true }
+    const review = (login: string, oid = HEAD_OID) =>
+      completed(JSON.stringify({ author: { login: "author" }, reviews: [{ state: "APPROVED", author: { login }, commit: { oid } }], comments: [] }))
+    const comment = (login: string) =>
+      completed(JSON.stringify({ author: { login: "author" }, reviews: [], comments: [{ author: { login }, body: `VERDICT: APPROVE ${HEAD_OID}` }] }))
+    const gatedFlag = async (answers: Answers, input: Record<string, unknown> = GATED) => {
+      const { canonical, receipts } = repository()
+      mkdirSync(join(canonical, ".beads"))
+      const { run } = runner({ ...open, checkRuns: greenRuns, ...answers }, canonical)
+      let gated: boolean | undefined
+      await landPullRequest(
+        { pr: 470, ...input },
+        {
+          run,
+          cwd: canonical,
+          now: () => NOW,
+          receiptsDirectory: receipts,
+          env: {},
+          authorize: async (request) => {
+            gated = request.gated
+            throw new Error("stop")
+          },
+        },
+      ).catch(() => {})
+      return gated
+    }
+    const permission = (role: string) => completed(JSON.stringify({ permission: role === "maintain" ? "write" : role, role_name: role }))
+
+    test("an exact-head review from a user with write access satisfies it", async () => {
+      expect(await gatedFlag({ approval: review("reviewer"), permission: permission("write") })).toBe(true)
+    })
+
+    test("a review from a user without write access keeps the prompt", async () => {
+      expect(await gatedFlag({ approval: review("drive-by"), permission: permission("read") })).toBe(false)
+    })
+
+    test("a review whose permission cannot be read keeps the prompt", async () => {
+      expect(await gatedFlag({ approval: review("reviewer"), permission: completed("", 1, "HTTP 404") })).toBe(false)
+    })
+
+    test("the author's VERDICT comment satisfies it only from the authenticated account", async () => {
+      expect(await gatedFlag({ approval: comment("author"), viewer: completed(JSON.stringify({ login: "author" })) })).toBe(true)
+      expect(await gatedFlag({ approval: comment("author"), viewer: completed(JSON.stringify({ login: "someone-else" })) })).toBe(false)
+      expect(await gatedFlag({ approval: comment("author"), viewer: completed("", 1, "not logged in") })).toBe(false)
+    })
+
+    test("a call missing a gate keeps the prompt even with a trusted approval", async () => {
+      const trusted = { approval: review("reviewer"), permission: permission("write") }
+      expect(await gatedFlag(trusted, { ...REVIEWED, requireApproval: true })).toBe(false)
+      expect(await gatedFlag(trusted, { ...REVIEWED, requireGreenChecks: true })).toBe(false)
+    })
   })
 })
 
