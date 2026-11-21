@@ -94,7 +94,7 @@ import {
   recordFailure,
 } from "./health.ts"
 import { createFirstTokenTracker, createLedgerStore, LEDGER_DISPOSE_TIMEOUT_MS, OUTCOME_KEY_PREFIX, readOutcome, type Usage } from "./ledger.ts"
-import { claimContextNotice, claimToolContextNotice, decideFailureNotice, decideRecovery, type FailureReport, forgetSession, NOTICE_DEDUPE_MS, newNoticeState, noticeResumes, type RequestLog, recordRequest, settleRequest, toolContextNoticeLive } from "./outage.ts"
+import { acquireNoticeState, claimContextNotice, claimEvent, claimToolContextNotice, decideFailureNotice, decideRecovery, type FailureReport, forgetSession, NOTICE_DEDUPE_MS, noticeResumes, OUTAGES_KEY, type RequestLog, recordRequest, releaseNoticeState, restoreOutages, settleRequest, snapshotOutages, toolContextNoticeLive } from "./outage.ts"
 import { explainSpawn, formatReceipts, pushReceipt, RECEIPTS_KEY, type Receipt, readReceipts, type SpawnRule, type SpawnSource } from "./receipt.ts"
 import { formatUsage, summarizeUsage } from "./report.ts"
 import {
@@ -191,6 +191,11 @@ const FAILED_EVENT = "session.execution.failed"
 const INTERRUPTED_EVENT = "session.execution.interrupted"
 const DELETED_EVENT = "session.deleted"
 /** When an event happened (`created`, ms), else unbounded, so every recorded request counts. */
+/** The host's id of an event, when it carries one. */
+const eventID = (event: unknown): string | undefined => {
+  const id = (event as { id?: unknown } | null)?.id
+  return typeof id === "string" && id !== "" ? id : undefined
+}
 const endedAt = (event: unknown): number => {
   const created = (event as { created?: unknown }).created
   return typeof created === "number" && Number.isFinite(created) ? created : Number.POSITIVE_INFINITY
@@ -351,7 +356,23 @@ export default Plugin.define({
     }
     const view = () => healthView(health, Date.now())
     const queue = serial()
-    const noticeState = newNoticeState()
+    const acquired = acquireNoticeState(globalThis as unknown as Record<symbol, unknown>)
+    const noticeState = acquired.state
+    if (acquired.first) {
+      try {
+        restoreOutages(noticeState, await ctx.storage.get(OUTAGES_KEY))
+      } catch {
+        // No stored outages: the next failure opens one afresh.
+      }
+    }
+    /** Keep the open outages across a reload. A failed write leaves the in-memory state in charge. */
+    const persistOutages = async () => {
+      try {
+        await ctx.storage.set(OUTAGES_KEY, snapshotOutages(noticeState) as never)
+      } catch {
+        // In-memory state still steers this process.
+      }
+    }
     /** When a child of each parent last reported a model failure through its own event. */
     const childFailures = new Map<string, number>()
 
@@ -636,6 +657,7 @@ export default Plugin.define({
     /** Tell `report.notifyTo` about a failure unless an outage or an earlier note already did. */
     const announce = async (report: FailureReport) => {
       const notice = decideFailureNotice(noticeState, report)
+      if (report.subagent !== undefined || failureScope(report.kind) === "provider") await persistOutages()
       if (notice === undefined) return
       await notify(notice.sessionID, notice.text, report.subagent === undefined ? "fallback" : "subagent-fallback")
     }
@@ -651,6 +673,7 @@ export default Plugin.define({
       forgetSession(noticeState, sessionID)
       if (model === undefined) return
       for (const notice of decideRecovery(noticeState, model)) await notify(notice.sessionID, notice.text, "recovery")
+      await persistOutages()
     }
 
     /**
@@ -2372,6 +2395,7 @@ export default Plugin.define({
       const message = event.error.message
       const kind = classifyFailure({ message })
       if (kind === undefined) return
+      if (!claimEvent(noticeState, `tool:${event.id}`, Date.now())) return
       const agentID = isRecord(event.input) && typeof event.input.agent === "string" ? event.input.agent : undefined
       try {
         await queue(async () => {
@@ -2419,7 +2443,7 @@ export default Plugin.define({
           await outcomes.signals(sessionID, NO_SIGNALS)
           await outcomes.end(sessionID, `failed:${classifyFailure(error) ?? "other"}`, finishedAt(event))
           pruneChildModels()
-          await queue(() => onSessionFailed(sessionID, error)).catch((error) =>
+          await queue(() => (claimEvent(noticeState, eventID(event), Date.now()) ? onSessionFailed(sessionID, error) : Promise.resolve())).catch((error) =>
             warn(`fallback after a failed execution did not complete`, { error: String(error) }),
           )
           continue
@@ -2543,8 +2567,7 @@ export default Plugin.define({
       await retries?.dispose()
       await registration.dispose()
       await references.dispose()
-      noticeState.outages.clear()
-      noticeState.notices.clear()
+      releaseNoticeState(globalThis as unknown as Record<symbol, unknown>)
       childFailures.clear()
       requestLog.clear()
       triedModels.clear()
