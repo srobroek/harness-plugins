@@ -30,7 +30,7 @@
       "name": "ast-grep",
       "description": "Structural code search with the ast-grep CLI, plus when to use Semgrep or rust-analyzer instead.",
       "source": "./plugins/ast-grep/claude",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/ast-grep",
       "repository": "https://github.com/srobroek/harness-plugins"

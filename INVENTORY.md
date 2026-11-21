@@ -10,7 +10,7 @@
 | agent-reviewer | 0.10.1 | development | global | opencode, claude |
 | agent-seance | 0.7.1 | development | global | opencode |
 | architecture | 0.8.1 | development | global | opencode, claude |
-| ast-grep | 1.2.0 | development | global | opencode, claude |
+| ast-grep | 1.2.1 | development | global | opencode, claude |
 | autopilot | 1.3.1 | development | global | opencode |
 | aws | 0.7.0 | development | global | opencode, claude |
 | beads | 0.8.4 | development | project | opencode, claude |
