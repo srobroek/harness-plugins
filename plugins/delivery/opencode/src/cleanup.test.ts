@@ -3988,6 +3988,26 @@ describe("delivery_cleanup receipt selection", () => {
 })
 
 describe("delivery_cleanup worktree acceptance", () => {
+  test("authorize is told the receipt binds the target only when the worktree is on the receipt branch", async () => {
+    const same = fixture("bound-same")
+    const seenSame: unknown[] = []
+    await invoke(same, undefined, {}, { authorize: async (request) => void seenSame.push(request.receiptBound) })
+    expect(seenSame).toEqual([true])
+
+    const renamed = fixture("bound-renamed")
+    git(renamed.linked, ["branch", "-m", "renamed-branch"])
+    const seenRenamed: unknown[] = []
+    await invoke(renamed, undefined, {}, { authorize: async (request) => void seenRenamed.push(request.receiptBound) })
+    expect(seenRenamed).toEqual([false])
+
+    const detached = fixture("bound-detached")
+    git(detached.linked, ["checkout", "-q", "--detach"])
+    git(detached.main, ["branch", "-D", detached.branch])
+    const seenDetached: unknown[] = []
+    await invoke(detached, undefined, {}, { authorize: async (request) => void seenDetached.push(request.receiptBound) })
+    expect(seenDetached).toEqual([false])
+  })
+
   test("a worktree renamed off the receipt branch at the reviewed head is removed and the leftover branch reported", async () => {
     const f = fixture("renamed")
     git(f.linked, ["branch", "-m", "renamed-branch"])
