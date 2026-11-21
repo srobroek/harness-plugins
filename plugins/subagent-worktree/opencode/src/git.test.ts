@@ -256,6 +256,57 @@ describe("createGit() in a checkout with hostile config", () => {
     expect(await ran(marker)).toBe(false)
   })
 
+  /** Run `work` with `vars` in the host environment that spawnRunner inherits, then restore it. */
+  const withEnv = async <T>(vars: Record<string, string>, work: () => Promise<T>): Promise<T> => {
+    const saved = Object.fromEntries(Object.keys(vars).map((name) => [name, env[name]]))
+    Object.assign(env, vars)
+    try {
+      return await work()
+    } finally {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete env[name]
+        else env[name] = value
+      }
+    }
+  }
+
+  test.each(reads)("%s runs no repository filter when the inherited GIT_CONFIG names an empty file", async (_, read) => {
+    const { repo, marker } = await repoWithEditedFile("a.txt filter=evil\n")
+    await sh(repo, "config", "filter.evil.clean", `touch '${marker}'; cat`)
+    const empty = join(repo, "..", `${repo.split("/").at(-1)}.empty-config`)
+    await writeFile(empty, "")
+    expect(await withEnv({ GIT_CONFIG: empty }, () => read(repo))).toBe(true)
+    expect(await ran(marker)).toBe(false)
+  })
+
+  // A clean checkout must read as clean whatever repository, work tree or index an inherited variable names.
+  test.each([
+    ["GIT_DIR", async (other: string) => join(other, ".git")],
+    ["GIT_WORK_TREE", async (other: string) => other],
+    ["GIT_INDEX_FILE", async (other: string) => join(other, "missing-index")],
+    ["GIT_COMMON_DIR", async (other: string) => join(other, ".git")],
+  ])("porcelain reads the checkout's own repository when %s is inherited", async (name, value) => {
+    const { repo } = await repoWithEditedFile()
+    await sh(repo, "checkout", "--quiet", "--", "a.txt")
+    const other = await mkdtemp(join(root, "other-"))
+    await sh(other, "init", "--quiet")
+    await writeFile(join(other, "b.txt"), "b\n")
+    await sh(other, "add", "b.txt")
+    await sh(other, "commit", "--quiet", "-m", "other")
+    expect(await withEnv({ [name]: await value(other) }, () => git.porcelain(repo))).toBe("")
+  })
+
+  test("trackedDirty sees a change when GIT_LITERAL_PATHSPECS is inherited", async () => {
+    const { repo } = await repoWithEditedFile()
+    expect(await withEnv({ GIT_LITERAL_PATHSPECS: "1" }, () => git.trackedDirty(repo))).toBe(true)
+  })
+
+  test("porcelain writes no trace file when GIT_TRACE is inherited", async () => {
+    const { repo, marker } = await repoWithEditedFile()
+    await withEnv({ GIT_TRACE: marker }, () => git.porcelain(repo))
+    expect(await ran(marker)).toBe(false)
+  })
+
   test("deleteBranchAt does not run the repository's hooks", async () => {
     const { repo, marker } = await repoWithEditedFile()
     await sh(repo, "branch", "doomed")
