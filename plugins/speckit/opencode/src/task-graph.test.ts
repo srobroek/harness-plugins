@@ -12,6 +12,7 @@ import { expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { scrubbedBeadsEnv } from "@srobroek/opencode-lib/testing"
 
 const BD_ON_PATH = Bun.which("bd") !== null
 const SPEC = "001-x"
@@ -20,9 +21,9 @@ test.skipIf(!BD_ON_PATH)(
   "a graph plan's node-level spec_id, acceptance and routing metadata persist on every task",
   () => {
     const repo = realpathSync(mkdtempSync(join(tmpdir(), "speckit-graph-")))
-    const env: Record<string, string> = { BD_NON_INTERACTIVE: "1", BD_NO_PAGER: "1" }
-    for (const [key, value] of Object.entries(process.env))
-      if (value !== undefined && !key.startsWith("BEADS_") && !key.startsWith("GIT_")) env[key] = value
+    // Beads variables inherited from another project's shell are dropped (BEADS_*, BD_*); GIT_* stays out too.
+    const env = scrubbedBeadsEnv({ BD_NON_INTERACTIVE: "1", BD_NO_PAGER: "1" })
+    for (const key of Object.keys(env)) if (key.startsWith("GIT_")) delete env[key]
     const run = (argv: string[]) => {
       const proc = Bun.spawnSync(argv, { cwd: repo, env, stdout: "pipe", stderr: "pipe" })
       if (proc.exitCode !== 0) throw new Error(`${argv.join(" ")}: ${proc.stderr.toString()}`)
