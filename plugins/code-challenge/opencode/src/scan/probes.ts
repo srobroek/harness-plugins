@@ -1,7 +1,7 @@
-import { readFileSync } from "node:fs"
+import { readBounded } from "@srobroek/opencode-lib/bounded-read"
 import { dirname, join } from "node:path"
 import type { Exec } from "./exec.ts"
-import { lstatOrNull, MAX_MARKER_BYTES } from "./files.ts"
+import { MAX_MARKER_BYTES } from "./files.ts"
 import type { Hit, Recipe } from "./types.ts"
 
 /** Whether the repo's own config enables a hit's rule: true, false, or null when that could not be told. */
@@ -18,9 +18,9 @@ export function nearestRuffConfig(root: string, file: string): string {
   for (;;) {
     for (const name of [".ruff.toml", "ruff.toml", "pyproject.toml"]) {
       const path = join(dir, name)
-      const stat = lstatOrNull(path)
-      if (stat === null || !stat.isFile() || stat.size > MAX_MARKER_BYTES) continue
-      if (name !== "pyproject.toml" || readFileSync(path, "utf8").includes("[tool.ruff")) return path
+      const read = readBounded(path, MAX_MARKER_BYTES)
+      if (read.kind !== "text") continue
+      if (name !== "pyproject.toml" || read.text.includes("[tool.ruff")) return path
     }
     if (dir === root || dirname(dir) === dir) return ""
     dir = dirname(dir)

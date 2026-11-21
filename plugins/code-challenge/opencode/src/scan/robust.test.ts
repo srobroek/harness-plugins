@@ -118,7 +118,7 @@ describe("malformed or missing output", () => {
       return exited("")
     }
     const report = await runScan({ root, languages: ["ts"] }, { exec, which: withTools("jscpd") })
-    expect(report.coverage.find((c) => c.recipe === "jscpd:duplication")?.reason).toBe("the report file jscpd-report.json is over 16 MiB")
+    expect(report.coverage.find((c) => c.recipe === "jscpd:duplication")?.reason).toBe("the report file jscpd-report.json is not a regular file under 16 MiB")
   })
 })
 
