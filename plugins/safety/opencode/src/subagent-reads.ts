@@ -5,9 +5,8 @@
  * anyway. Writers (`edit`, `write`, `patch`) keep the ask, and so does any secret location.
  */
 
-import { lstatSync } from "node:fs"
 import { homedir } from "node:os"
-import { basename, dirname, isAbsolute, join } from "node:path"
+import { basename, isAbsolute, join } from "node:path"
 import { inside, resolved } from "./scratch-dirs.ts"
 import { READ_ONLY_TOOLS } from "./skill-references.ts"
 
@@ -16,7 +15,7 @@ type Evaluation = { readonly action: string; readonly resources: ReadonlyArray<s
 /** Tools that run commands; the shell can read any path the user can. */
 export const SHELL_TOOLS: ReadonlySet<string> = new Set(["shell", "bash"])
 
-/** Where credentials live, relative to `~`. A request below one of these, or for a file listed here, stays an ask. */
+/** Where credentials live. A request below one of these, or for a folder that contains one, stays an ask. */
 export const SECRET_LOCATIONS: readonly string[] = [
   "~/.ssh",
   "~/.aws",
@@ -36,29 +35,23 @@ function expand(location: string, home: string): string {
   return location === "~" || location.startsWith("~/") ? join(home, location.slice(1)) : location
 }
 
-const isFile = (path: string): boolean => {
-  try {
-    return !lstatSync(path).isDirectory()
-  } catch {
-    return false
-  }
-}
-
 /**
- * Whether `resource` (an absolute path or a `dir/*` pattern) names a secret. A wildcard anywhere but
- * the end, a `..` segment or a relative path cannot be judged, so it counts as secret. Paths are resolved
- * through symlinks like `inside()` does. A secret that is a file also covers its folder's `dir/*` request.
+ * Whether `resource` (an absolute path or a `dir/*` pattern) overlaps a secret. A wildcard anywhere but
+ * the end, a `..` segment or a relative path cannot be judged, so it counts as secret. The path is resolved
+ * through symlinks first, and every check runs on the canonical path (and on the given name for `.env`
+ * files), so a harmless-looking link to a secret is caught. Overlap works both ways: a request for a
+ * folder that contains a secret (`~/*`, `~/.config/*`) counts too, since allowing it would expose the secret.
  */
 export function isSecretResource(resource: string, extra: readonly string[] = [], home: string = homedir()): boolean {
   const expanded = expand(resource, home)
   if (!isAbsolute(expanded)) return true
-  const path = expanded.replace(/\/\*{1,2}$/, "")
+  const path = expanded.replace(/\/\*{1,2}$/, "") || "/"
   if (/[*?[\]{}]/.test(path) || path.split("/").includes("..")) return true
-  if (ENV_FILE.test(basename(path))) return true
   const real = resolved(path)
+  if (ENV_FILE.test(basename(path)) || ENV_FILE.test(basename(real))) return true
   return [...SECRET_LOCATIONS, ...extra].some((location) => {
     const root = resolved(expand(location, home))
-    return inside(real, [root]) || (isFile(root) && dirname(root) === real)
+    return inside(real, [root]) || inside(root, [real])
   })
 }
 
