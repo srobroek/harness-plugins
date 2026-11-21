@@ -1,3 +1,9 @@
+## autopilot [1.1.1](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.1.0...autopilot--v1.1.1) (2026-11-21)
+
+### Bug Fixes
+
+* **autopilot:** journal a stale write from autopilot_log as an issue ([4f26159](https://github.com/srobroek/harness-plugins/commit/4f2615948c995b8ccd2f2f7672cc2a65fa2ae56e))
+
 ## autopilot [1.1.0](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.0.0...autopilot--v1.1.0) (2026-11-21)
 
 ### Features
