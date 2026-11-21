@@ -43,18 +43,20 @@ function fixture(source?: string) {
   return { dir, file }
 }
 
-function apply(dir: string, executable?: string) {
+function apply(dir: string, options: { chmod?: { name: string; executable: boolean }; mode?: "build" | "push"; renames?: boolean } = {}) {
   run(dir, ["git", "add", "--all"])
-  if (executable) run(dir, ["git", "update-index", "--chmod=+x", executable])
-  const patch = run(dir, ["git", "diff", "--cached", "--no-renames", "--full-index"])
-  run(dir, ["git", "reset", "--hard", "--quiet"])
-  run(dir, ["git", "clean", "-fd", "--quiet"])
+  if (options.chmod) run(dir, ["git", "update-index", `--chmod=${options.chmod.executable ? "+x" : "-x"}`, options.chmod.name])
+  const patch = run(dir, ["git", "diff", "--cached", options.renames ? "--find-renames" : "--no-renames", "--full-index"])
+  if (options.mode !== "build") {
+    run(dir, ["git", "reset", "--hard", "--quiet"])
+    run(dir, ["git", "clean", "-fd", "--quiet"])
+  }
   const patchPath = path.join(dir, ".git", "regenerated.patch")
   const output = path.join(dir, ".git", "step-output")
   writeFileSync(patchPath, patch)
   const result = Bun.spawnSync(["bash", "--noprofile", "--norc", "-e", "-c", validator], {
     cwd: dir,
-    env: { ...process.env, PATCH_PATH: patchPath, VALIDATE_MODE: "push", GITHUB_OUTPUT: output },
+    env: { ...process.env, PATCH_PATH: patchPath, VALIDATE_MODE: options.mode ?? "push", GITHUB_OUTPUT: output },
     stdout: "pipe",
     stderr: "pipe",
   })
@@ -67,7 +69,6 @@ test.each([
   "plugins/repomix/opencode/dist/index.js",
   "plugins/beads/claude/skills/beads-preflight/SKILL.md",
   "plugins/aws/opencode/package.json",
-  "plugins/example/common/agents/researcher.claude.md",
   "inventory.json",
 ])("applies a text patch to generated output %s", (name) => {
   const { dir, file } = fixture()
@@ -85,6 +86,8 @@ test.each([
   "plugins/aws/common/.mcp.json",
   "plugins/repomix/opencode/src/pack.ts",
   "plugins/aws/common/agents/hand-written.md",
+  "plugins/aws/common/agents/missing-source.claude.md",
+  "plugins/cad/common/agents/vendored.claude.md",
   "plugins/cad/opencode/examples/fixture.py",
 ])("rejects a source patch before applying %s", (name) => {
   const { dir, file } = fixture()
@@ -120,7 +123,7 @@ test("rejects an executable bundle", () => {
   const { dir, file } = fixture()
   const name = "plugins/repomix/opencode/dist/index.js"
   file(name, "executable bundle fixture\n")
-  const { result } = apply(dir, name)
+  const { result } = apply(dir, { chmod: { name, executable: true } })
   expect(result.exitCode).not.toBe(0)
   expect(result.stderr.toString()).toContain("executable copies must match")
   expect(run(dir, ["git", "status", "--porcelain"])).toBe("")
@@ -130,7 +133,7 @@ test("preserves the execute bit of a common script copied into a harness tree", 
   const { dir, file } = fixture("plugins/worktrunk/common/skills/worktrunk-preflight/preflight.py")
   const name = "plugins/worktrunk/opencode/skills/worktrunk-preflight/preflight.py"
   file(name, "executable copy fixture\n")
-  const { result } = apply(dir, name)
+  const { result } = apply(dir, { chmod: { name, executable: true } })
   expect(result.exitCode).toBe(0)
   expect(run(dir, ["git", "ls-files", "--stage", name])).toStartWith("100755 ")
 })
@@ -149,4 +152,66 @@ test("an empty patch requests no push", () => {
   const { result, output } = apply(dir)
   expect(result.exitCode).toBe(0)
   expect(readFileSync(output, "utf8")).toBe("changed=false\n")
+})
+
+test("build mode validates a generated patch", () => {
+  const { dir, file } = fixture()
+  file("plugins/aws/opencode/.mcp.json", "generated\n")
+  const { result, output } = apply(dir, { mode: "build" })
+  expect(result.exitCode).toBe(0)
+  expect(readFileSync(output, "utf8")).toBe("changed=true\n")
+})
+
+test("build mode rejects source changes", () => {
+  const { dir, file } = fixture()
+  file("plugins/aws/common/.mcp.json", "source edit\n")
+  const { result } = apply(dir, { mode: "build" })
+  expect(result.exitCode).not.toBe(0)
+  expect(result.stderr.toString()).toContain("non-generated path")
+})
+
+test("rejects an executable copy when its common source is not executable", () => {
+  const { dir, file } = fixture()
+  file("plugins/worktrunk/common/skills/worktrunk-preflight/preflight.py", "regular source\n")
+  run(dir, ["git", "add", "--all"])
+  run(dir, ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--quiet", "-m", "source"])
+  const name = "plugins/worktrunk/opencode/skills/worktrunk-preflight/preflight.py"
+  file(name, "copy\n")
+  const { result } = apply(dir, { chmod: { name, executable: true } })
+  expect(result.exitCode).not.toBe(0)
+  expect(result.stderr.toString()).toContain("executable copies must match")
+})
+
+test("rejects dropping the execute bit while the common source remains executable", () => {
+  const { dir, file } = fixture("plugins/worktrunk/common/skills/worktrunk-preflight/preflight.py")
+  const name = "plugins/worktrunk/opencode/skills/worktrunk-preflight/preflight.py"
+  file(name, "copy\n")
+  run(dir, ["git", "add", "--all"])
+  run(dir, ["git", "update-index", "--chmod=+x", name])
+  run(dir, ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--quiet", "-m", "copy"])
+  const { result } = apply(dir, { chmod: { name, executable: false } })
+  expect(result.exitCode).not.toBe(0)
+  expect(result.stderr.toString()).toContain("executable copies must match")
+})
+
+test("rejects rename metadata even between generated paths", () => {
+  const { dir, file } = fixture()
+  const old = "plugins/example/opencode/skills/old.md"
+  file(old, "generated fixture\n")
+  run(dir, ["git", "add", "--all"])
+  run(dir, ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--quiet", "-m", "old"])
+  rmSync(path.join(dir, old))
+  file("plugins/example/opencode/skills/new.md", "generated fixture\n")
+  const { result } = apply(dir, { renames: true })
+  expect(result.exitCode).not.toBe(0)
+  expect(result.stderr.toString()).toContain("rename")
+})
+
+test("accepts a translated agent with an existing OpenCode form", () => {
+  const { dir, file } = fixture()
+  file("plugins/example/common/agents/researcher.opencode.md", "OpenCode source\n")
+  run(dir, ["git", "add", "--all"])
+  run(dir, ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--quiet", "-m", "source"])
+  file("plugins/example/common/agents/researcher.claude.md", "translated\n")
+  expect(apply(dir).result.exitCode).toBe(0)
 })

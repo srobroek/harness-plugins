@@ -82,6 +82,8 @@ jobs:
               parts = name.split("/")
               if any(part in ("", ".", "..", ".git") or not re.fullmatch(r"[A-Za-z0-9_.-]+", part) for part in parts):
                   return False
+              if name.startswith("plugins/cad/common/"):
+                  return False
               if name in ("INVENTORY.md", "inventory.json", ".claude-plugin/marketplace.json"):
                   return True
               if re.fullmatch(r"plugins/[^/]+/INVENTORY\.md", name):
@@ -98,7 +100,11 @@ jobs:
               if match:
                   plugin, agent = match.groups()
                   if agent.endswith(".claude"):
-                      return True
+                      base = agent.removesuffix(".claude")
+                      return any(
+                          subprocess.run(["git", "cat-file", "-e", f"HEAD:plugins/{plugin}/common/agents/{base}{suffix}.md"], check=False, stderr=subprocess.DEVNULL).returncode == 0
+                          for suffix in (".opencode", "")
+                      )
                   source = f"plugins/{plugin}/agents.src/{agent.removesuffix('.opencode')}.md"
                   return subprocess.run(["git", "cat-file", "-e", f"HEAD:{source}"], check=False, stderr=subprocess.DEVNULL).returncode == 0
               return False
@@ -117,6 +123,8 @@ jobs:
           text = patch.read_bytes().decode("utf-8")
           if "\x00" in text or "\nGIT binary patch\n" in text:
               raise SystemExit("only plain text patches are allowed")
+          if re.search(r"^(rename from|rename to|copy from|copy to) ", text, re.MULTILINE):
+              raise SystemExit("rename and copy metadata are forbidden")
           if not text:
               with open(os.environ["GITHUB_OUTPUT"], "a") as output:
                   output.write("changed=false\n")
@@ -193,6 +201,7 @@ jobs:
         run: *validate-patch
       - name: Commit generated copies and dispatch CI on the new head
         if: steps.patch.outputs.changed == 'true'
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
