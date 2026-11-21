@@ -147,7 +147,7 @@ export const RETRY_DELAYS_MS: readonly number[] = [2000, 8000]
 const copyKey = (file: FileValue) => `${file.name}\u0000${file.data}`
 const basename = (name: string) => name.split(/[\\/]/).pop() || "upload"
 
-const filesOf = (answer: Answer): FileValue[] => {
+const filesOf = (answer: { readonly value?: unknown }): FileValue[] => {
   const files = (answer.value as { files?: unknown } | undefined)?.files
   return Array.isArray(files) ? (files as FileValue[]) : []
 }
@@ -346,9 +346,9 @@ export class Parley {
     const save = this.deps.save
     if (!save) return
     for (const [id, answer] of round.answers) {
-      const files = (answer.value as { files?: unknown } | undefined)?.files
-      if (!Array.isArray(files) || !files.some((file: FileValue) => file.data !== undefined && file.stored === undefined)) continue
-      const kept = (files as FileValue[]).map((file) => {
+      const files = filesOf(answer)
+      if (!files.some((file) => file.data !== undefined && file.stored === undefined)) continue
+      const kept = files.map((file) => {
         if (file.data === undefined || file.stored !== undefined) return file
         const stored = this.#copies.get(copyKey(file)) ?? save(file, round.id)
         return stored === undefined ? file : { ...file, stored }
@@ -364,9 +364,7 @@ export class Parley {
     const round = this.rounds.get(roundID)
     if (!save || round?.status !== "open") return { copies }
     for (const answer of answers) {
-      const files = (answer.value as { files?: unknown } | undefined)?.files
-      if (!Array.isArray(files)) continue
-      for (const raw of files) {
+      for (const raw of filesOf(answer)) {
         if (typeof raw !== "object" || raw === null || typeof raw.data !== "string" || typeof raw.name !== "string") continue
         const file = raw as FileValue
         if (copies.has(copyKey(file))) continue
@@ -389,9 +387,7 @@ export class Parley {
     const read = this.deps.readUpload
     if (!read) return
     for (const [id, answer] of round.answers) {
-      const files = (answer.value as { files?: unknown } | undefined)?.files
-      if (!Array.isArray(files)) continue
-      const loaded = (files as FileValue[]).map((file) => {
+      const loaded = filesOf(answer).map((file) => {
         if (file.data !== undefined || file.stored === undefined) return file
         const data = read(file.stored)
         return data === undefined ? file : { ...file, data }

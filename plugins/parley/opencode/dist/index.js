@@ -2409,8 +2409,8 @@ class Parley {
     if (!save)
       return;
     for (const [id, answer] of round.answers) {
-      const files = answer.value?.files;
-      if (!Array.isArray(files) || !files.some((file) => file.data !== undefined && file.stored === undefined))
+      const files = filesOf(answer);
+      if (!files.some((file) => file.data !== undefined && file.stored === undefined))
         continue;
       const kept = files.map((file) => {
         if (file.data === undefined || file.stored !== undefined)
@@ -2428,10 +2428,7 @@ class Parley {
     if (!save || round?.status !== "open")
       return { copies };
     for (const answer of answers) {
-      const files = answer.value?.files;
-      if (!Array.isArray(files))
-        continue;
-      for (const raw of files) {
+      for (const raw of filesOf(answer)) {
         if (typeof raw !== "object" || raw === null || typeof raw.data !== "string" || typeof raw.name !== "string")
           continue;
         const file = raw;
@@ -2457,10 +2454,7 @@ class Parley {
     if (!read)
       return;
     for (const [id, answer] of round.answers) {
-      const files = answer.value?.files;
-      if (!Array.isArray(files))
-        continue;
-      const loaded = files.map((file) => {
+      const loaded = filesOf(answer).map((file) => {
         if (file.data !== undefined || file.stored === undefined)
           return file;
         const data = read(file.stored);
