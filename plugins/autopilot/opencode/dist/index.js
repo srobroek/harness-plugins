@@ -2577,7 +2577,21 @@ var SHA2562 = /^[0-9a-f]{64}$/;
 var FULL_SHA2 = /^[0-9a-f]{40}$/;
 var hashText = (data) => createHash2("sha256").update(data).digest("hex");
 var reviewPointerKey = (lead, pr, sha) => `review-session/${lead}/${pr}@${sha}`;
-var reviewPointerPrefix = (lead) => `review-session/${lead}/`;
+var REVIEW_POINTER_ROOT = "review-session/";
+var reviewPointerPrefix = (lead) => `${REVIEW_POINTER_ROOT}${lead}/`;
+var reviewSweepKey = (lead) => `review-sweep/${lead}`;
+function countNameStatus(output) {
+  const fields = output.split("\x00");
+  let count = 0;
+  for (let index = 0;index < fields.length; index++) {
+    const status = fields[index];
+    if (status === undefined || status === "")
+      continue;
+    count++;
+    index += status.startsWith("R") || status.startsWith("C") ? 2 : 1;
+  }
+  return count;
+}
 var reviewMetadata = (pointer) => ({
   source: REVIEW_SOURCE,
   pr: pointer.pr,
@@ -3208,7 +3222,7 @@ function parseId(stdout) {
 var MAX_REPROMPTS = 2;
 var MAX_CHILD_PAGES = 50;
 var MAX_REVIEWS_REPORTED = 20;
-var MAX_REVIEW_PAGES = 50;
+var REVIEW_SWEEP = 25;
 var NO_LEDGER = "the run has no beads ledger to read or write";
 var embeddedLock = (cwd, owner, write, env) => withEmbeddedWriteLock(cwd, owner, write, env);
 var RUN_LOCK_WAIT_MS = 60000;
@@ -3323,6 +3337,7 @@ class Autopilot {
   #reprompts = new Map;
   #serial = new Map;
   #reported = new Set;
+  #storageIssues = new Map;
   constructor(ctx, deps = {}) {
     this.ctx = ctx;
     this.#run = deps.run ?? runCommand;
@@ -3358,6 +3373,43 @@ class Autopilot {
         this.#report(dir, error);
       }
     }
+  }
+  async#stored(dir, what, read) {
+    const issues = dir === undefined ? undefined : this.#storageIssues.get(dir.runId) ?? this.#storageIssues.set(dir.runId, new Map).get(dir.runId);
+    try {
+      const value = await read();
+      issues?.delete(what);
+      return { ok: true, value };
+    } catch (error) {
+      const reason = `plugin storage could not be read for ${what}: ${errorText(error)}`;
+      issues?.set(what, reason);
+      if (dir !== undefined && !this.#reported.has(`storage:${reason}`)) {
+        this.#reported.add(`storage:${reason}`);
+        try {
+          dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: reason, parked: true });
+        } catch (appendError) {
+          this.#warn("could not journal a storage failure", { error: errorText(appendError) });
+        }
+      }
+      return { ok: false, reason };
+    }
+  }
+  async#scanAll(dir, what, prefix) {
+    const entries = [];
+    let after;
+    for (;; ) {
+      const page = await this.#stored(dir, what, () => this.ctx.storage.scan({ prefix, limit: STORAGE_PAGE, ...after !== undefined ? { after } : {} }));
+      if (!page.ok)
+        return;
+      entries.push(...page.value.entries);
+      if (page.value.next === undefined || page.value.entries.length === 0 || page.value.next === after)
+        return entries;
+      after = page.value.next;
+    }
+  }
+  #dirOfLead(lead) {
+    const armed = this.armed.get(lead);
+    return armed ? new RunDir(armed.root, armed.runId) : undefined;
   }
   #report(dir, error) {
     const message = errorText(error);
@@ -3667,6 +3719,7 @@ class Autopilot {
           dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: due.reason, bead: due.item, parked: true });
     }
     const reviews = await this.#reviews(state2.sessionID);
+    const storageErrors = [...this.#storageIssues.get(dir.runId)?.values() ?? []];
     const out = {
       ping: result.ping,
       progress: result.progress,
@@ -3676,7 +3729,8 @@ class Autopilot {
       parked: result.state.parked,
       idleTicks: action === "tick" ? result.state.idleTicks : state2.idleTicks,
       ...result.stop ? { stop: result.stop } : {},
-      ...reviews.length ? { reviews } : {}
+      ...reviews.length ? { reviews } : {},
+      ...storageErrors.length ? { storageErrors } : {}
     };
     if (result.stop !== undefined && action === "tick")
       return { ...out, done: true, prompt: `Autopilot is stopping: ${result.stop}. Call autopilot_status with action "stop" and reason "${result.stop}", then print the summary and end.` };
@@ -3902,9 +3956,8 @@ class Autopilot {
     return ownWorktreeAsk({ ...asked, roots, canon: realPath });
   }
   async#currentExport(dir) {
-    const current = await this.ctx.storage.get(reviewCurrentKey(dir.runId)).catch(() => {
-      return;
-    });
+    const read = await this.#stored(dir, "the current export", () => this.ctx.storage.get(reviewCurrentKey(dir.runId)));
+    const current = read.ok ? read.value : undefined;
     if (typeof current?.head !== "string" || typeof current.manifestHash !== "string")
       return;
     const exported = exportDirFor(dir.path, current.head, current.manifestHash);
@@ -4041,12 +4094,30 @@ class Autopilot {
       if ("error" in claim)
         return `refused: could not take the review claim (${claim.error})`;
       const existing = await this.#resolveReview(lead, pr, sha);
+      if (existing?.state === "unreadable")
+        return JSON.stringify({ started: false, state: "unreadable", reason: existing.reason });
       const note = "this head already has a review; it is never reviewed twice";
       if (existing?.state === "done")
         return JSON.stringify({ started: false, state: "done", verdict: existing.record.verdict, reviewer: existing.record.reviewerSession, note });
       if (existing?.state === "void")
         return JSON.stringify({ started: false, state: "void", reason: existing.reason, note });
       return JSON.stringify({ started: false, state: "pending", note });
+    }
+    const giveBack = () => {
+      try {
+        releaseClaims(dir.root, names);
+      } catch (error) {
+        this.#journalIssue(dir, `could not release the review claim of #${pr} at ${sha}: ${errorText(error)}`);
+      }
+    };
+    const pointers = await this.#scanAll(dir, "the review pointers", REVIEW_POINTER_ROOT);
+    if (pointers === undefined) {
+      giveBack();
+      return "refused: plugin storage could not be read, so it is unknown whether this head was reviewed; the failure is logged as a blocker";
+    }
+    if (pointers.some((entry) => entry.key.endsWith(`@${sha}`))) {
+      giveBack();
+      return "refused: plugin storage already holds a review pointer for this head; it is never reviewed twice";
     }
     const hold = { keep: false };
     let result;
@@ -4057,13 +4128,8 @@ class Autopilot {
       this.#journalIssue(dir, `review of #${pr} at ${sha} failed unexpectedly and its claim was kept: ${errorText(error)}`);
       throw error;
     }
-    if (result.startsWith("refused:") && !hold.keep) {
-      try {
-        releaseClaims(dir.root, names);
-      } catch (error) {
-        this.#journalIssue(dir, `could not release the review claim of #${pr} at ${sha}: ${errorText(error)}`);
-      }
-    }
+    if (result.startsWith("refused:") && !hold.keep)
+      giveBack();
     return result;
   }
   async#startReview(input) {
@@ -4097,16 +4163,21 @@ class Autopilot {
     const changedFiles = typeof pull.changed_files === "number" ? pull.changed_files : undefined;
     if (changedFiles === undefined)
       return "refused: GitHub did not report how many files the PR changes";
-    if (changedFiles > 0 && (exported.mergeBase === exported.head || exported.files.length + exported.skipped.length === 0)) {
-      return `refused: the export is empty but GitHub reports ${changedFiles} changed files; the base is not the one GitHub diffs against`;
-    }
-    const recorded = await this.ctx.storage.get(reviewManifestKey(Number(pr), sha)).catch(() => {
-      return;
-    });
-    const manifestHash = typeof recorded?.manifestHash === "string" ? recorded.manifestHash : "";
+    const counted = await this.#run(state2.directory, "git", [...SAFE_GIT_ARGS, "diff", "--name-status", "-M", "-z", "--no-color", "--no-ext-diff", "--no-textconv", `${baseSha}...${sha}`, "--"], GH_TIMEOUT_MS);
+    if (!counted.ok)
+      return "refused: could not count the files the PR changes";
+    const ours = countNameStatus(counted.stdout);
+    if (ours !== changedFiles)
+      return `refused: the export changes ${ours} files but GitHub reports ${changedFiles}; the base is not the one GitHub diffs against`;
+    const recorded = await this.#stored(dir, "the export's manifest hash", () => this.ctx.storage.get(reviewManifestKey(Number(pr), sha)));
+    if (!recorded.ok)
+      return `refused: ${recorded.reason}`;
+    const manifestHash = typeof recorded.value?.manifestHash === "string" ? recorded.value.manifestHash : "";
     const checked = verifyExport(exported.dir, manifestHash);
     if (!checked.ok)
       return `refused: the export does not match its recorded hash (${checked.reason})`;
+    if (checked.manifest.diff.bytes === 0)
+      return `refused: the diff is empty, so there is nothing to review (GitHub reports ${changedFiles} changed files)`;
     const read = readBoundedBytes(join6(exported.dir, "round.diff"), MAX_REVIEW_DIFF_BYTES);
     if (read.kind === "unreadable" && read.reason === "too-large")
       return `refused: the diff is larger than the ${MAX_REVIEW_DIFF_BYTES} bytes a review prompt carries; narrow the round`;
@@ -4156,10 +4227,10 @@ class Autopilot {
     return JSON.stringify({ started: true, session: child.id, pr, sha, manifestHash, note: "returns at once; autopilot_status reports the verdict under reviews" });
   }
   async#resolveReview(lead, pr, sha) {
-    const stored = await this.ctx.storage.get(reviewPointerKey(lead, pr, sha)).catch(() => {
-      return;
-    });
-    const pointer = readPointer(stored, pr, sha);
+    const stored = await this.#stored(this.#dirOfLead(lead), "a review pointer", () => this.ctx.storage.get(reviewPointerKey(lead, pr, sha)));
+    if (!stored.ok)
+      return { state: "unreadable", reason: stored.reason };
+    const pointer = readPointer(stored.value, pr, sha);
     return pointer === undefined ? undefined : this.#resolvePointer(lead, pointer);
   }
   async#resolvePointer(lead, pointer) {
@@ -4178,33 +4249,38 @@ class Autopilot {
     return { state: "void", reason: "the reviewer passed its deadline and was interrupted" };
   }
   async#reviews(lead) {
+    const dir = this.#dirOfLead(lead);
     const prefix = reviewPointerPrefix(lead);
-    const pointers = [];
-    let after;
-    for (let pages = 0;pages < MAX_REVIEW_PAGES; pages++) {
-      const page = await this.ctx.storage.scan({ prefix, limit: STORAGE_PAGE, ...after !== undefined ? { after } : {} }).catch(() => {
-        return;
-      });
-      if (page === undefined)
-        break;
-      for (const entry of page.entries) {
-        const [pr, sha] = entry.key.slice(prefix.length).split("@");
-        const pointer = pr === undefined || sha === undefined ? undefined : readPointer(entry.value, pr, sha);
-        if (pointer !== undefined)
-          pointers.push(pointer);
-      }
-      if (page.next === undefined || page.entries.length === 0)
-        break;
-      after = page.next;
-    }
-    const out = [];
-    for (const pointer of pointers) {
+    const scanned = await this.#scanAll(dir, "the review pointers", prefix);
+    if (scanned === undefined)
+      return [];
+    const all = scanned.flatMap((entry) => {
+      const [pr, sha] = entry.key.slice(prefix.length).split("@");
+      const pointer = pr === undefined || sha === undefined ? undefined : readPointer(entry.value, pr, sha);
+      return pointer === undefined ? [] : [{ key: entry.key, pointer }];
+    });
+    const newest = [...all].sort((a, b) => b.pointer.at - a.pointer.at).slice(0, MAX_REVIEWS_REPORTED);
+    const byKey = [...all].sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+    const cursorKey = reviewSweepKey(lead);
+    const cursor = await this.#stored(dir, "the review sweep cursor", () => this.ctx.storage.get(cursorKey));
+    const after = cursor.ok && typeof cursor.value === "string" ? cursor.value : undefined;
+    const from = after === undefined ? 0 : Math.max(0, byKey.findIndex((entry) => entry.key > after));
+    const slice = byKey.slice(from, from + REVIEW_SWEEP);
+    const done = from + slice.length >= byKey.length;
+    const last = slice.at(-1);
+    await this.#stored(dir, "the review sweep cursor", () => done || last === undefined ? this.ctx.storage.remove(cursorKey) : this.ctx.storage.set(cursorKey, last.key));
+    const items = new Map;
+    for (const { key, pointer } of [...newest, ...slice]) {
+      if (items.has(key))
+        continue;
       const { pr, sha } = pointer;
       const resolution = await this.#resolvePointer(lead, pointer);
-      const item = resolution.state === "done" ? { pr, sha, state: "done", verdict: resolution.record.verdict, reviewer: resolution.record.reviewerSession } : resolution.state === "void" ? { pr, sha, state: "void", reason: resolution.reason } : { pr, sha, state: "pending" };
-      out.push({ at: pointer.at, item });
+      items.set(key, resolution.state === "done" ? { pr, sha, state: "done", verdict: resolution.record.verdict, reviewer: resolution.record.reviewerSession } : resolution.state === "void" ? { pr, sha, state: "void", reason: resolution.reason } : { pr, sha, state: "pending" });
     }
-    return out.sort((a, b) => b.at - a.at).slice(0, MAX_REVIEWS_REPORTED).map((entry) => entry.item);
+    return newest.flatMap((entry) => {
+      const item = items.get(entry.key);
+      return item === undefined ? [] : [item];
+    });
   }
   async idle(sessionID) {
     if (!this.armed.has(sessionID))
@@ -4354,6 +4430,7 @@ export {
   REVIEW_DEADLINE_MS,
   REVIEW_DESCRIPTION,
   REVIEW_DIR,
+  REVIEW_POINTER_ROOT,
   REVIEW_SOURCE,
   RunDir,
   RunFileError,
@@ -4374,6 +4451,7 @@ export {
   classifyScope,
   commitCount,
   countBeads,
+  countNameStatus,
   deadlineAt,
   decodeRunState,
   src_default as default,
@@ -4423,6 +4501,7 @@ export {
   reviewMetadata,
   reviewPointerKey,
   reviewPointerPrefix,
+  reviewSweepKey,
   rootIntact,
   runCommand,
   runIdFor,

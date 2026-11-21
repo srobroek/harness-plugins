@@ -155,7 +155,10 @@ Do not message the reviewer session: a follow-up voids the review, and a head
 that has a finished review is not reviewed again. Only an `approve` for exactly
 the head you merge replaces the GitHub approval; checks, required contexts and
 the base and head re-reads still apply, and branch protection that requires an
-approving review still refuses the merge.
+approving review still refuses the merge. This is weaker than a second
+GitHub account: writes by the same user to the scratch area, the host database
+or the server API are out of scope. A head is reviewed once; do not look for a
+second review of it.
 
 ## Lanes
 

@@ -34,7 +34,26 @@ export type ReviewResolution = { state: "pending" } | { state: "expired" } | { s
 
 /** Where plugin storage keeps the pointer of the review of one PR head started by one lead. */
 export const reviewPointerKey = (lead: string, pr: string, sha: string): string => `review-session/${lead}/${pr}@${sha}`
-export const reviewPointerPrefix = (lead: string): string => `review-session/${lead}/`
+export const REVIEW_POINTER_ROOT = "review-session/"
+export const reviewPointerPrefix = (lead: string): string => `${REVIEW_POINTER_ROOT}${lead}/`
+/** Where plugin storage keeps the key after which the next status sweep resumes. */
+export const reviewSweepKey = (lead: string): string => `review-sweep/${lead}`
+
+/**
+ * How many files `git diff --name-status -M -z` lists, a rename or copy being one file with two
+ * paths. GitHub counts a renamed file once, which is what `changed_files` reports.
+ */
+export function countNameStatus(output: string): number {
+  const fields = output.split("\0")
+  let count = 0
+  for (let index = 0; index < fields.length; index++) {
+    const status = fields[index]
+    if (status === undefined || status === "") continue
+    count++
+    index += status.startsWith("R") || status.startsWith("C") ? 2 : 1
+  }
+  return count
+}
 
 /** The metadata the child session is created with, which resolution requires to match. */
 export const reviewMetadata = (pointer: Pick<ReviewPointer, "pr" | "sha" | "nonce">): { source: string; pr: string; sha: string; nonce: string } => ({

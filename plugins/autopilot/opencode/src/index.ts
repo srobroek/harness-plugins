@@ -42,9 +42,11 @@ import { claimNames, releaseClaims, takeClaims } from "./review-claim.ts"
 import { type ExportResult, exportDirFor, exportReview, reviewCurrentKey, reviewManifestKey, verifyExport } from "./review-export.ts"
 import {
   buildReviewPrompt,
+  countNameStatus,
   hashText,
   MAX_REVIEW_DIFF_BYTES,
   REVIEW_AGENT,
+  REVIEW_POINTER_ROOT,
   type ReviewPointer,
   type ReviewResolution,
   readPointer,
@@ -52,6 +54,7 @@ import {
   reviewMetadata,
   reviewPointerKey,
   reviewPointerPrefix,
+  reviewSweepKey,
 } from "./review-session.ts"
 import { autopilotRoot, findRun, type Run, RunDir, RunFileError, runCommand } from "./rundir.ts"
 import { countBeads, newRunState, type RunState, runIdFor, type Snapshot, TICK_MS, tick, tickPrompt } from "./state.ts"
@@ -205,8 +208,8 @@ const MAX_CHILD_PAGES = 50
 /** How many reviews a status report shows. */
 const MAX_REVIEWS_REPORTED = 20
 
-/** A bound on storage pages (100 pointers each) one status report resolves. */
-const MAX_REVIEW_PAGES = 50
+/** How many pointers beyond the newest one status call resolves, so every deadline is enforced over successive calls. */
+const REVIEW_SWEEP = 25
 
 const NO_LEDGER = "the run has no beads ledger to read or write"
 
@@ -330,6 +333,8 @@ export class Autopilot {
   readonly #serial = new Map<string, Promise<unknown>>()
   /** File errors already journaled, so a hook that fires on every call logs each one once. */
   readonly #reported = new Set<string>()
+  /** Storage reads that failed, by run and what was read; cleared when the same read works again. Surfaced by status. */
+  readonly #storageIssues = new Map<string, Map<string, string>>()
 
   constructor(
     readonly ctx: Context,
@@ -370,6 +375,50 @@ export class Autopilot {
         this.#report(dir, error)
       }
     }
+  }
+
+  /**
+   * A plugin-storage read, with a failure recorded: journaled once as a blocker and kept for the
+   * status report until the same read works again. A failure is never an empty result.
+   */
+  async #stored<T>(dir: RunDir | undefined, what: string, read: () => Promise<T>): Promise<{ ok: true; value: T } | { ok: false; reason: string }> {
+    const issues = dir === undefined ? undefined : (this.#storageIssues.get(dir.runId) ?? this.#storageIssues.set(dir.runId, new Map()).get(dir.runId))
+    try {
+      const value = await read()
+      issues?.delete(what)
+      return { ok: true, value }
+    } catch (error) {
+      const reason = `plugin storage could not be read for ${what}: ${errorText(error)}`
+      issues?.set(what, reason)
+      if (dir !== undefined && !this.#reported.has(`storage:${reason}`)) {
+        this.#reported.add(`storage:${reason}`)
+        try {
+          dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: reason, parked: true })
+        } catch (appendError) {
+          this.#warn("could not journal a storage failure", { error: errorText(appendError) })
+        }
+      }
+      return { ok: false, reason }
+    }
+  }
+
+  /** Every entry under `prefix`, following `next` to the end; `undefined` (recorded) when any page cannot be read. */
+  async #scanAll(dir: RunDir | undefined, what: string, prefix: string): Promise<{ key: string; value: unknown }[] | undefined> {
+    const entries: { key: string; value: unknown }[] = []
+    let after: string | undefined
+    for (;;) {
+      const page = await this.#stored(dir, what, () => this.ctx.storage.scan({ prefix, limit: STORAGE_PAGE, ...(after !== undefined ? { after } : {}) }))
+      if (!page.ok) return undefined
+      entries.push(...page.value.entries)
+      if (page.value.next === undefined || page.value.entries.length === 0 || page.value.next === after) return entries
+      after = page.value.next
+    }
+  }
+
+  /** The run directory of an armed lead. */
+  #dirOfLead(lead: string): RunDir | undefined {
+    const armed = this.armed.get(lead)
+    return armed ? new RunDir(armed.root, armed.runId) : undefined
   }
 
   /** Journal a run file failure as a blocker once, and warn when even that fails. */
@@ -677,6 +726,7 @@ export class Autopilot {
         if (due.kind === "park") dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: due.reason, bead: due.item, parked: true })
     }
     const reviews = await this.#reviews(state.sessionID)
+    const storageErrors = [...(this.#storageIssues.get(dir.runId)?.values() ?? [])]
     const out = {
       ping: result.ping,
       progress: result.progress,
@@ -687,6 +737,7 @@ export class Autopilot {
       idleTicks: action === "tick" ? result.state.idleTicks : state.idleTicks,
       ...(result.stop ? { stop: result.stop } : {}),
       ...(reviews.length ? { reviews } : {}),
+      ...(storageErrors.length ? { storageErrors } : {}),
     }
     if (result.stop !== undefined && action === "tick")
       return { ...out, done: true, prompt: `Autopilot is stopping: ${result.stop}. Call autopilot_status with action "stop" and reason "${result.stop}", then print the summary and end.` }
@@ -946,7 +997,8 @@ export class Autopilot {
 
   /** The real path of the export directory the run made last, when it is still a plain directory. */
   async #currentExport(dir: RunDir): Promise<string | undefined> {
-    const current = (await this.ctx.storage.get(reviewCurrentKey(dir.runId)).catch(() => undefined)) as { head?: unknown; manifestHash?: unknown } | undefined
+    const read = await this.#stored(dir, "the current export", () => this.ctx.storage.get(reviewCurrentKey(dir.runId)))
+    const current = (read.ok ? read.value : undefined) as { head?: unknown; manifestHash?: unknown } | undefined
     if (typeof current?.head !== "string" || typeof current.manifestHash !== "string") return undefined
     const exported = exportDirFor(dir.path, current.head, current.manifestHash)
     return exported === undefined ? undefined : identifyRoot(exported, lstatProbe, realPath)?.real
@@ -1096,10 +1148,28 @@ export class Autopilot {
     if (!claim.ok) {
       if ("error" in claim) return `refused: could not take the review claim (${claim.error})`
       const existing = await this.#resolveReview(lead, pr, sha)
+      if (existing?.state === "unreadable") return JSON.stringify({ started: false, state: "unreadable", reason: existing.reason })
       const note = "this head already has a review; it is never reviewed twice"
       if (existing?.state === "done") return JSON.stringify({ started: false, state: "done", verdict: existing.record.verdict, reviewer: existing.record.reviewerSession, note })
       if (existing?.state === "void") return JSON.stringify({ started: false, state: "void", reason: existing.reason, note })
       return JSON.stringify({ started: false, state: "pending", note })
+    }
+    const giveBack = () => {
+      try {
+        releaseClaims(dir.root, names)
+      } catch (error) {
+        this.#journalIssue(dir, `could not release the review claim of #${pr} at ${sha}: ${errorText(error)}`)
+      }
+    }
+    // Second line, in plugin storage: any pointer for this head under any PR number or lead, whatever became of it.
+    const pointers = await this.#scanAll(dir, "the review pointers", REVIEW_POINTER_ROOT)
+    if (pointers === undefined) {
+      giveBack()
+      return "refused: plugin storage could not be read, so it is unknown whether this head was reviewed; the failure is logged as a blocker"
+    }
+    if (pointers.some((entry) => entry.key.endsWith(`@${sha}`))) {
+      giveBack()
+      return "refused: plugin storage already holds a review pointer for this head; it is never reviewed twice"
     }
     // The claim is given back only when this start was refused and left no reviewer behind.
     const hold = { keep: false }
@@ -1111,13 +1181,7 @@ export class Autopilot {
       this.#journalIssue(dir, `review of #${pr} at ${sha} failed unexpectedly and its claim was kept: ${errorText(error)}`)
       throw error
     }
-    if (result.startsWith("refused:") && !hold.keep) {
-      try {
-        releaseClaims(dir.root, names)
-      } catch (error) {
-        this.#journalIssue(dir, `could not release the review claim of #${pr} at ${sha}: ${errorText(error)}`)
-      }
-    }
+    if (result.startsWith("refused:") && !hold.keep) giveBack()
     return result
   }
 
@@ -1153,14 +1217,18 @@ export class Autopilot {
     if (exported.head !== sha) return `refused: ${sha} resolved to ${exported.head}`
     const changedFiles = typeof pull.changed_files === "number" ? pull.changed_files : undefined
     if (changedFiles === undefined) return "refused: GitHub did not report how many files the PR changes"
-    // The head already contained in the base while GitHub still reports a diff means the base is not the one GitHub diffed against.
-    if (changedFiles > 0 && (exported.mergeBase === exported.head || exported.files.length + exported.skipped.length === 0)) {
-      return `refused: the export is empty but GitHub reports ${changedFiles} changed files; the base is not the one GitHub diffs against`
-    }
-    const recorded = (await this.ctx.storage.get(reviewManifestKey(Number(pr), sha)).catch(() => undefined)) as { manifestHash?: unknown } | undefined
-    const manifestHash = typeof recorded?.manifestHash === "string" ? recorded.manifestHash : ""
+    // GitHub counts each changed path once and a rename as one file, which is `git diff --name-status -M`.
+    const counted = await this.#run(state.directory, "git", [...SAFE_GIT_ARGS, "diff", "--name-status", "-M", "-z", "--no-color", "--no-ext-diff", "--no-textconv", `${baseSha}...${sha}`, "--"], GH_TIMEOUT_MS)
+    if (!counted.ok) return "refused: could not count the files the PR changes"
+    const ours = countNameStatus(counted.stdout)
+    if (ours !== changedFiles) return `refused: the export changes ${ours} files but GitHub reports ${changedFiles}; the base is not the one GitHub diffs against`
+    const recorded = await this.#stored(dir, "the export's manifest hash", () => this.ctx.storage.get(reviewManifestKey(Number(pr), sha)))
+    if (!recorded.ok) return `refused: ${recorded.reason}`
+    const manifestHash = typeof (recorded.value as { manifestHash?: unknown } | undefined)?.manifestHash === "string" ? (recorded.value as { manifestHash: string }).manifestHash : ""
     const checked = verifyExport(exported.dir, manifestHash)
     if (!checked.ok) return `refused: the export does not match its recorded hash (${checked.reason})`
+    // What the recorded diff holds is what is reviewed: an empty one is nothing to review. A deletion-only PR has no files at head but a diff.
+    if (checked.manifest.diff.bytes === 0) return `refused: the diff is empty, so there is nothing to review (GitHub reports ${changedFiles} changed files)`
     const read = readBoundedBytes(join(exported.dir, "round.diff"), MAX_REVIEW_DIFF_BYTES)
     if (read.kind === "unreadable" && read.reason === "too-large") return `refused: the diff is larger than the ${MAX_REVIEW_DIFF_BYTES} bytes a review prompt carries; narrow the round`
     // The bytes the prompt carries must be the bytes the manifest recorded, not whatever the file holds now.
@@ -1217,10 +1285,11 @@ export class Autopilot {
     return JSON.stringify({ started: true, session: child.id, pr, sha, manifestHash, note: "returns at once; autopilot_status reports the verdict under reviews" })
   }
 
-  /** The review of one head started by `lead`, as the host's own record of the reviewer says; `undefined` when none was started. */
-  async #resolveReview(lead: string, pr: string, sha: string): Promise<ReviewResolution | undefined> {
-    const stored = await this.ctx.storage.get(reviewPointerKey(lead, pr, sha)).catch(() => undefined)
-    const pointer = readPointer(stored, pr, sha)
+  /** The review of one head started by `lead`, as the host's own record of the reviewer says; `undefined` when none was started, `unreadable` when storage could not say. */
+  async #resolveReview(lead: string, pr: string, sha: string): Promise<ReviewResolution | { state: "unreadable"; reason: string } | undefined> {
+    const stored = await this.#stored(this.#dirOfLead(lead), "a review pointer", () => this.ctx.storage.get(reviewPointerKey(lead, pr, sha)))
+    if (!stored.ok) return { state: "unreadable", reason: stored.reason }
+    const pointer = readPointer(stored.value, pr, sha)
     return pointer === undefined ? undefined : this.#resolvePointer(lead, pointer)
   }
 
@@ -1236,39 +1305,50 @@ export class Autopilot {
     return { state: "void", reason: "the reviewer passed its deadline and was interrupted" }
   }
 
-  /** The state of every review `lead` started, for the status report. */
+  /**
+   * The state of the newest reviews `lead` started, for the status report. Each call also resolves
+   * the next {@link REVIEW_SWEEP} pointers after a cursor kept in plugin storage (wrapping at the
+   * end), so every pointer meets its deadline within a few calls however many there are.
+   */
   async #reviews(lead: string): Promise<Record<string, unknown>[]> {
+    const dir = this.#dirOfLead(lead)
     const prefix = reviewPointerPrefix(lead)
-    const pointers: ReviewPointer[] = []
-    // Every pointer is resolved, so every deadline is enforced; the report shows only the newest few.
-    let after: string | undefined
-    for (let pages = 0; pages < MAX_REVIEW_PAGES; pages++) {
-      const page = await this.ctx.storage.scan({ prefix, limit: STORAGE_PAGE, ...(after !== undefined ? { after } : {}) }).catch(() => undefined)
-      if (page === undefined) break
-      for (const entry of page.entries) {
-        const [pr, sha] = entry.key.slice(prefix.length).split("@")
-        const pointer = pr === undefined || sha === undefined ? undefined : readPointer(entry.value, pr, sha)
-        if (pointer !== undefined) pointers.push(pointer)
-      }
-      if (page.next === undefined || page.entries.length === 0) break
-      after = page.next
-    }
-    const out: { at: number; item: Record<string, unknown> }[] = []
-    for (const pointer of pointers) {
+    const scanned = await this.#scanAll(dir, "the review pointers", prefix)
+    if (scanned === undefined) return []
+    const all = scanned.flatMap((entry) => {
+      const [pr, sha] = entry.key.slice(prefix.length).split("@")
+      const pointer = pr === undefined || sha === undefined ? undefined : readPointer(entry.value, pr, sha)
+      return pointer === undefined ? [] : [{ key: entry.key, pointer }]
+    })
+    const newest = [...all].sort((a, b) => b.pointer.at - a.pointer.at).slice(0, MAX_REVIEWS_REPORTED)
+    const byKey = [...all].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    const cursorKey = reviewSweepKey(lead)
+    const cursor = await this.#stored(dir, "the review sweep cursor", () => this.ctx.storage.get(cursorKey))
+    const after = cursor.ok && typeof cursor.value === "string" ? cursor.value : undefined
+    const from = after === undefined ? 0 : Math.max(0, byKey.findIndex((entry) => entry.key > after))
+    const slice = byKey.slice(from, from + REVIEW_SWEEP)
+    const done = from + slice.length >= byKey.length
+    const last = slice.at(-1)
+    await this.#stored(dir, "the review sweep cursor", () => (done || last === undefined ? this.ctx.storage.remove(cursorKey) : this.ctx.storage.set(cursorKey, last.key)))
+
+    const items = new Map<string, Record<string, unknown>>()
+    for (const { key, pointer } of [...newest, ...slice]) {
+      if (items.has(key)) continue
       const { pr, sha } = pointer
       const resolution = await this.#resolvePointer(lead, pointer)
-      const item =
+      items.set(
+        key,
         resolution.state === "done"
           ? { pr, sha, state: "done", verdict: resolution.record.verdict, reviewer: resolution.record.reviewerSession }
           : resolution.state === "void"
             ? { pr, sha, state: "void", reason: resolution.reason }
-            : { pr, sha, state: "pending" }
-      out.push({ at: pointer.at, item })
+            : { pr, sha, state: "pending" },
+      )
     }
-    return out
-      .sort((a, b) => b.at - a.at)
-      .slice(0, MAX_REVIEWS_REPORTED)
-      .map((entry) => entry.item)
+    return newest.flatMap((entry) => {
+      const item = items.get(entry.key)
+      return item === undefined ? [] : [item]
+    })
   }
 
   /** Re-prompts a lead whose turn ended in a question, at most {@link MAX_REPROMPTS} times in a row. */

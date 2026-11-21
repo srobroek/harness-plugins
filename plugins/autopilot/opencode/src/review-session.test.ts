@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { buildReviewPrompt, hashText, REVIEW_AGENT, type ReviewPointer, readPointer, resolveReview, reviewMetadata, reviewPointerKey } from "./review-session.ts"
+import { buildReviewPrompt, countNameStatus, hashText, REVIEW_AGENT, type ReviewPointer, readPointer, resolveReview, reviewMetadata, reviewPointerKey } from "./review-session.ts"
 
 const SHA = "a".repeat(40)
 const OTHER = "b".repeat(40)
@@ -155,5 +155,16 @@ describe("buildReviewPrompt", () => {
     expect(prompt).toContain(`VERDICT: APPROVE ${SHA}`)
     expect(prompt).toContain(`VERDICT: REQUEST_CHANGES ${SHA}`)
     expect(prompt).toContain("<<<BEGIN UNTRUSTED DIFF DIFF-1234>>>\n+ok\n\n<<<END UNTRUSTED DIFF DIFF-1234>>>")
+  })
+})
+
+describe("countNameStatus", () => {
+  test.each<[string, string, number]>([
+    ["nothing", "", 0],
+    ["add, modify, delete", "A\0a\0M\0b\0D\0c\0", 3],
+    ["a rename is one file", "R100\0old\0new\0M\0b\0", 2],
+    ["a copy is one file", "C75\0src\0dst\0", 1],
+  ])("%s", (_name, output, expected) => {
+    expect(countNameStatus(output)).toBe(expected)
   })
 })

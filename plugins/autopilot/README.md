@@ -239,7 +239,16 @@ last non-blank line of the reply. The base of the export is the base commit SHA
 GitHub reports for the PR, fetched if needed; the call refuses when it is
 missing or the export is empty while GitHub reports changed files.
 
-A head is reviewed at most once, however the review ends. Before any reviewer
+A head is reviewed at most once, however the review ends. Plugin storage backs
+the claim files: a start is also refused when storage holds a pointer for the
+head under any PR number or lead, and a storage read that fails refuses the
+start, is journaled as a blocker and appears as `storageErrors` in
+`autopilot_status`; it is never read as "no record". The export is also refused
+when its diff is empty or its changed-file count differs from the `changed_files`
+that GitHub reports (a rename counts once, as `git diff --name-status -M`
+lists it). Each status call resolves the newest 20 reviews and the next 25
+pointers after a cursor kept in plugin storage, so every deadline is enforced
+over successive calls. Before any reviewer
 exists the call creates claim files (`pr-<pr>@<sha>` and `head-<sha>`) in
 `<git common dir>/opencode-scratch/autopilot/review-claims/`, with the same
 create-exclusive link the run state uses. They are released only when the start
@@ -256,8 +265,12 @@ Residual risks:
 - Prompt injection through the diff can talk the reviewer into `APPROVE`. The
   delimiter and the fence-aware parse stop a forged verdict line, not a
   persuaded reviewer.
-- A process of the same user that can call the OpenCode server API can create
-  or edit sessions and forge a record the plugin accepts.
+- Same-user writes are out of scope: a process running as you can edit the
+  scratch area (claim files, run state), the host database
+  (`~/.local/share/opencode/opencode.db`) and call the OpenCode server API, and
+  so can create or edit sessions and forge a record the plugin accepts.
+- `--allow self-review` is weaker than a second GitHub account. The reviewer is
+  a model the same installation runs, with the same user and the same host.
 - Branch protection that requires approving reviews still refuses the merge:
   GitHub does not know about the plugin's review.
 

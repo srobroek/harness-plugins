@@ -1539,7 +1539,7 @@ describe("autopilot_review", () => {
   test("refuses an empty export when GitHub says the PR changes files", async () => {
     await armed({ allow: ["self-review"] })
     forge(headSha, { base: { sha: headSha, ref: "trunk" }, changed_files: 3 })
-    expect(await review()).toMatch(/^refused: .*empty/)
+    expect(await review()).toMatch(/^refused: .*GitHub reports/)
     expect(creates()).toEqual([])
   })
 
@@ -1600,6 +1600,134 @@ describe("autopilot_review", () => {
       expect(await review()).toStartWith("refused:")
       expect(journal().some((entry) => entry.type === "issue" && entry.summary.includes("remove failed"))).toBe(true)
       expect(await review()).toMatch(/already/)
+    })
+  })
+
+  describe("storage is the second line against a second review of a head", () => {
+    const claimDir = () => join(latest(), "..", "review-claims")
+    const dropClaims = () => {
+      for (const name of readdirSync(claimDir())) rmSync(join(claimDir(), name))
+    }
+
+    test("a head with a finished review is refused under any PR number even after the claim files are deleted", async () => {
+      await armed({ allow: ["self-review"] })
+      await review()
+      answer(`VERDICT: REQUEST_CHANGES ${headSha}`)
+      dropClaims()
+      expect(await review()).toMatch(/^refused: .*pointer/)
+      expect(await review({ pr: 13, sha: headSha })).toMatch(/^refused: .*pointer/)
+      expect(creates()).toHaveLength(1)
+      expect(fake.storage.has(pointerKey())).toBe(true)
+    })
+
+    test("a pointer another lead stored for the head also refuses", async () => {
+      await armed({ allow: ["self-review"] })
+      fake.storage.set(`review-session/ses_other/99@${headSha}`, { anything: true })
+      expect(await review()).toMatch(/^refused: .*pointer/)
+      expect(creates()).toEqual([])
+    })
+  })
+
+  describe("a storage read that fails", () => {
+    const failing = (op: "get" | "scan", match: (key: string) => boolean) => {
+      const storage = fake.context.storage as unknown as Record<string, (input: never) => Promise<unknown>>
+      const original = storage[op] as (input: never) => Promise<unknown>
+      let broken = true
+      storage[op] = async (input) => {
+        const key = typeof input === "string" ? input : (input as { prefix: string }).prefix
+        if (broken && match(key)) throw new Error("storage offline")
+        return original(input)
+      }
+      return () => {
+        broken = false
+      }
+    }
+    const blockers = () => journal().filter((entry) => entry.type === "blocker" && entry.summary.includes("storage"))
+
+    test("refuses a review start, journals a blocker, surfaces it in status, and lets a retry run once storage is back", async () => {
+      await armed({ allow: ["self-review"] })
+      const heal = failing("scan", (key) => key.startsWith("review-session/"))
+      expect(await review()).toMatch(/^refused: .*storage/)
+      expect(creates()).toEqual([])
+      expect(blockers()).toHaveLength(1)
+      expect((await status({ action: "status" })).storageErrors).toEqual([expect.stringContaining("storage offline")])
+      heal()
+      expect(JSON.parse(await review())).toMatchObject({ started: true })
+    })
+
+    test("is not read as no pointer when a merge looks for the approval", async () => {
+      await armed({ allow: ["merge", "self-review"] })
+      await review()
+      approve()
+      failing("get", (key) => key.startsWith("review-session/"))
+      expect(await merge()).toContain("approval")
+      expect(merged()).toEqual([])
+      expect(blockers()).toHaveLength(1)
+    })
+
+    test("is not read as the end of the scan when status sweeps the reviews", async () => {
+      await armed({ allow: ["self-review"] })
+      failing("scan", (key) => key.startsWith("review-session/ses_lead/"))
+      const out = await status({ action: "status" })
+      expect(out.storageErrors).toEqual([expect.stringContaining("storage offline")])
+      expect(blockers()).toHaveLength(1)
+    })
+
+    test("refuses a review start when the recorded manifest hash cannot be read", async () => {
+      await armed({ allow: ["self-review"] })
+      failing("get", (key) => key.startsWith("review/12@"))
+      expect(await review()).toMatch(/^refused: .*storage/)
+      expect(creates()).toEqual([])
+    })
+  })
+
+  describe("the changed-file count", () => {
+    const commitOnBase = (change: () => void) => {
+      git("reset", "-q", "--hard", baseSha)
+      change()
+      git("add", "-A")
+      git("commit", "-q", "-m", "change")
+      headSha = git("rev-parse", "HEAD")
+    }
+
+    test("a deletion-only PR is reviewed when the counts match", async () => {
+      await armed({ allow: ["self-review"] })
+      commitOnBase(() => rmSync(join(repo, "a.txt")))
+      forge()
+      expect(JSON.parse(await review())).toMatchObject({ started: true })
+      expect(prompts()[0]?.text).toContain("-one")
+    })
+
+    test("a rename counts as one file, as GitHub counts it", async () => {
+      await armed({ allow: ["self-review"] })
+      writeFileSync(join(repo, "a.txt"), `${"line\n".repeat(20)}`)
+      git("add", "-A")
+      git("commit", "-q", "-m", "longer base")
+      baseSha = git("rev-parse", "HEAD")
+      commitOnBase(() => git("mv", "a.txt", "renamed.txt"))
+      forge()
+      expect(JSON.parse(await review())).toMatchObject({ started: true })
+    })
+
+    test("a count that differs from GitHub's refuses, naming both numbers", async () => {
+      await armed({ allow: ["self-review"] })
+      forge(headSha, { changed_files: 2 })
+      expect(await review()).toMatch(/^refused: .*1 .*GitHub reports 2/)
+      expect(creates()).toEqual([])
+    })
+
+    test("a rename that GitHub counts as two is a mismatch", async () => {
+      await armed({ allow: ["self-review"] })
+      commitOnBase(() => git("mv", "a.txt", "renamed.txt"))
+      forge(headSha, { changed_files: 2 })
+      expect(await review()).toMatch(/^refused: .*GitHub reports 2/)
+    })
+
+    test("an empty diff with no changed files is nothing to review", async () => {
+      await armed({ allow: ["self-review"] })
+      forge(headSha, { base: { sha: headSha, ref: "trunk" }, changed_files: 0 })
+      expect(await review()).toMatch(/^refused: .*empty/)
+      expect(creates()).toEqual([])
     })
   })
 
@@ -1729,7 +1857,7 @@ describe("autopilot_review", () => {
       expect(fake.calls.filter((call) => call.method === "session.interrupt").map((call) => (call.input as { sessionID: string }).sessionID)).toEqual([pointer().session])
     })
 
-    test("resolves every review across pages, enforces every deadline, and shows at most 20", async () => {
+    test("enforces every deadline over successive status calls, resuming from a cursor kept in storage", async () => {
       await armed({ allow: ["self-review"] })
       for (let n = 0; n < 130; n++) {
         const sha = n.toString(16).padStart(40, "0")
@@ -1737,9 +1865,12 @@ describe("autopilot_review", () => {
         fake.sessions.set(session, { id: session, parentID: "ses_lead", agent: "code-reviewer", metadata: { source: "autopilot", pr: "5", sha, nonce: "n" } })
         fake.storage.set(`review-session/ses_lead/5@${sha}`, { pr: "5", sha, session, nonce: "n", promptHash: "a".repeat(64), manifestHash: "b".repeat(64), at: NOW - 31 * 60_000 })
       }
-      const out = (await status({ action: "status" })).reviews as unknown[]
-      expect(out).toHaveLength(20)
-      expect(fake.calls.filter((call) => call.method === "session.interrupt")).toHaveLength(130)
+      const interrupted = () => new Set(fake.calls.filter((call) => call.method === "session.interrupt").map((call) => (call.input as { sessionID: string }).sessionID)).size
+      expect(((await status({ action: "status" })).reviews as unknown[]).length).toBe(20)
+      expect(interrupted()).toBeLessThan(130)
+      expect(fake.storage.has("review-sweep/ses_lead")).toBe(true)
+      for (let call = 0; call < 6; call++) await status({ action: "status" })
+      expect(interrupted()).toBe(130)
     })
 
     test("reports no reviews when none was started", async () => {
