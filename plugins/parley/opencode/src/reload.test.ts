@@ -607,7 +607,8 @@ describe("uploads after a reload", () => {
     expect(answers?.get("name")?.value).toEqual({ text: "prod" })
     expect(answers?.get("host")?.value).toEqual({ selected: "b" })
     expect(answers?.get("tags")?.value).toEqual({ selected: ["x", "y"] })
-    expect((answers?.get("key")?.value as { files: unknown[] }).files[0]).toMatchObject({ name: "k.pub", stored: "/private/key-copy", data: "S0VZ" })
+    const key = answers?.get("key")?.value as { files: unknown[] } | undefined
+    expect(key?.files[0]).toMatchObject({ name: "k.pub", stored: "/private/key-copy", data: "S0VZ" })
   })
 
   test("uploads reach the session as text and file paths, never as bytes", async () => {
