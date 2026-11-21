@@ -1,3 +1,9 @@
+## speckit [0.10.0](https://github.com/srobroek/harness-plugins/compare/speckit--v0.9.1...speckit--v0.10.0) (2026-11-21)
+
+### Features
+
+* **autopilot:** autopilot_export_review for read-only reviewers ([353abe2](https://github.com/srobroek/harness-plugins/commit/353abe2355f824084499faebdb34734c3c40e26d))
+
 ## speckit [0.9.1](https://github.com/srobroek/harness-plugins/compare/speckit--v0.9.0...speckit--v0.9.1) (2026-11-21)
 
 ### Bug Fixes
