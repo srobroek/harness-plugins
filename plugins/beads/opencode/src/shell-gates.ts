@@ -27,7 +27,7 @@ import { decideBdUpdateCloseParsed } from "./bd-update-close-gate.ts"
 import { protectBinaryHookCommands } from "./binary-hooks.ts"
 import { admitBdMutation, type GateAdmitter } from "./gate-admission.ts"
 import { describeLedger, findLedger, ledgerRepoMismatch, sameStore, unplacedBdRefusal } from "./ledger-context.ts"
-import { decideCommandParsed, type RepositoryControl, repositoryControlFor } from "./pr-bead-link-gate.ts"
+import { bodyFileReader, decideCommandParsed, type RepositoryControl, repositoryControlFor } from "./pr-bead-link-gate.ts"
 
 /**
  * One budget for the whole call. OpenCode has no hook timeout, but a gate that waits
@@ -258,6 +258,7 @@ async function decide(original: string, cwd: string, deps: ShellGateDeps): Promi
         const ledger = findLedger(cwd)
         return ledger === undefined ? undefined : describeLedger(ledger)
       },
+      { readFile: bodyFileReader(cwd) },
     )
     if (decision) return block("pr-bead-link-gate", decision.reason, "add the bead trailer to the PR body and retry")
   }

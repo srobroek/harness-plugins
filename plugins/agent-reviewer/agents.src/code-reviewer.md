@@ -51,54 +51,7 @@ permissions:
   - action: skill
     resource: toolchain-guide
     effect: allow
-  - action: shell
-    resource: git diff
-    effect: allow
-  - action: shell
-    resource: "git diff *"
-    effect: allow
-  - action: shell
-    resource: "git log *"
-    effect: allow
-  - action: shell
-    resource: git show
-    effect: allow
-  - action: shell
-    resource: "git show *"
-    effect: allow
-  - action: shell
-    resource: "git * --output*"
-    effect: deny
-  - action: shell
-    resource: "ast-grep run *"
-    effect: allow
-  - action: shell
-    resource: "ast-grep scan *"
-    effect: allow
-  - action: shell
-    resource: "semgrep scan *"
-    effect: allow
-  - action: shell
-    resource: "head *"
-    effect: allow
-  - action: shell
-    resource: "ast-grep * -U*"
-    effect: deny
-  - action: shell
-    resource: "ast-grep *--update-all*"
-    effect: deny
-  - action: shell
-    resource: "ast-grep * -i*"
-    effect: deny
-  - action: shell
-    resource: "ast-grep *--interactive*"
-    effect: deny
-  - action: shell
-    resource: "semgrep *--autofix*"
-    effect: deny
-  - action: shell
-    resource: "semgrep *-a *"
-    effect: deny
+  # {{rules read-only-shell}}
   - action: external_directory
     resource: "*"
     effect: ask
@@ -109,7 +62,7 @@ You review one local change and find the bugs its author would want fixed before
 ## Task
 
 1. Take the scope from the caller: a range (`main...HEAD`), commits, or the working tree. With none, review `git diff HEAD` and say so.
-2. Read the patch with `git diff`, `git log` or `git show` -- one command each, no pipes, `cd` or `&&`. Then read each modified file around the hunks for full context.
+2. Read the patch with `git diff`, `git log` or `git show`. For a pull request, use `gh pr diff` and `gh pr view`, or fetch the head (`git fetch origin pull/<n>/head`) in the repository the caller names, or clone it into the OpenCode temp dir. Never guess a local clone path. If a commit is missing, fetch it; do not report "not reviewed". Then read each modified file around the hunks for full context.
 3. Report only issues that meet ALL of: provable impact on a named code path; a discrete fix; clearly unintentional; introduced by this patch, not pre-existing; no unstated assumption about the codebase or the author's intent. Test findings follow step 5 and standards findings step 7 instead.
 4. Cross-boundary check: for every type, variant, event, message or value the patch sends across a function or module boundary, find the consuming dispatch point (switch, router, handler registry, filter, loop) even outside the diff, and confirm it handles or forwards the new case. A silent drop or no-op is a defect.
 5. Test check: apply the test rules under Rules, with the `quality-testing` skill's `review-tests.md` for the full checklist. Rank blocking test findings P1, tests coupled to the implementation or left for removed behavior P2, and duplicates P3.
@@ -123,7 +76,7 @@ You review one local change and find the bugs its author would want fixed before
 {{include review-tests}}
 {{include coding-core: quality standards testing}}
 {{include review-standards}}
-MUST Run only `git diff`, `git log` and `git show`; never write output to a file or run a build or test. Name a command for the caller to run instead.
+MUST Keep the shell read-only: never modify the repository, a remote or the ledger, never write output to a file, and never run a build or test. Name a command for the caller to run instead.
 
 ## Output
 

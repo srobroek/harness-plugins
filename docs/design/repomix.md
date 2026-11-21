@@ -161,7 +161,7 @@ decisions:
   researcher. The same fields are in the tool metadata, with `runner`.
 - **Permission**: action `repomix_pack`, resource the absolute directory or `remote@ref`,
   metadata `runner: path|npx`. An `evaluate` hook turns an allowed npx run into a prompt
-  (`confirmPack: false` disables it). npx runs `repomix@1.18.1`.
+  (`confirmPack: false` disables it). The fallback runs `npx --yes repomix@1.18.1`.
 - **Skill**: exported to Claude Code, with a CLI recipe that keeps the same rules
   for hosts without the tool. Description: "Use to pack a repo into one file with repomix
   for bulk context: external repo APIs, module review, version diffs, docs."

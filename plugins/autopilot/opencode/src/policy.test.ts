@@ -156,6 +156,33 @@ test("a verdict comment by the author is not an approval", () => {
   expect(refusal({ view: withComment, reviews: [] })).toContain("approval")
 })
 
+describe("a witnessed review in place of the GitHub approval", () => {
+  const noApproval = { reviews: [] as unknown[] }
+  test("is accepted when the grant is set and the record approves exactly the merged head", () => {
+    expect(refusal({ ...noApproval, witnessed: { granted: true, approvedSha: SHA } })).toBeUndefined()
+  })
+
+  test.each<[string, { granted: boolean; approvedSha: string | undefined } | undefined]>([
+    ["no grant", { granted: false, approvedSha: SHA }],
+    ["no record", { granted: true, approvedSha: undefined }],
+    ["a record for another head", { granted: true, approvedSha: OTHER }],
+    ["no witness input", undefined],
+  ])("is refused with %s", (_name, witnessed) => {
+    expect(refusal({ ...noApproval, ...(witnessed ? { witnessed } : {}) })).toContain("approval")
+  })
+
+  test.each<[string, Partial<Input>, string]>([
+    ["a failing check", { runs: [{ check_runs: [{ name: "ci", status: "completed", conclusion: "failure" }] }] }, "checks"],
+    ["a missing required context", { protection: { contexts: ["ci", "deploy"] } }, "deploy"],
+    ["a moved head", { view: view({ headRefOid: OTHER }) }, "head"],
+    ["a merged PR", { view: view({ state: "MERGED" }) }, "state"],
+    ["a merge queue", { rules: [[{ type: "merge_queue", parameters: {} }]] }, "merge queues unsupported"],
+    ["a method the repository does not allow", { method: "rebase" }, "method"],
+  ])("still applies %s", (_name, over, word) => {
+    expect(refusal({ ...noApproval, ...over, witnessed: { granted: true, approvedSha: SHA } })).toContain(word)
+  })
+})
+
 test("mergeRefusal refuses a SHA that is not 40 hex digits", () => {
   expect(refusal({ sha: "abc", view: view({ headRefOid: "abc" }) })).toContain("sha")
 })

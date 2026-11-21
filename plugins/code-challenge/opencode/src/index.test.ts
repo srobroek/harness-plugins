@@ -85,15 +85,17 @@ test("challenge_scan fails closed when the session cannot be read", async () => 
   expect((error?.cause as Error | undefined)?.message).toContain("no session ses_1")
 })
 
-test("both challengers are read-only subagents that cannot edit, run a shell or spawn agents", async () => {
+test("both challengers are read-only subagents that cannot edit, change the repository or spawn agents", async () => {
   const fake = createFakeContext()
   await plugin.setup(fake.context)
   for (const id of ["code-challenger", "refactor-challenger"]) {
     const agent = fake.agents.get(id)
     expect(agent?.mode).toBe("subagent")
     const rules = (agent?.permissions ?? []) as AgentPermission[]
-    for (const action of ["edit", "write", "shell", "subagent", "challenge_setup"])
+    for (const action of ["edit", "write", "subagent", "challenge_setup"])
       expect(permissionEffect(rules, action, "*")).not.toBe("allow")
+    expect(permissionEffect(rules, "shell", "git log -3")).toBe("allow")
+    expect(permissionEffect(rules, "shell", "git push")).toBe("deny")
     expect(permissionEffect(rules, "challenge_scan", "*")).toBe("allow")
     expect(permissionEffect(rules, "challenge_lib_facts", "*")).toBe("allow")
   }

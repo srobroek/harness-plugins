@@ -62,20 +62,13 @@ describe("agent-reviewer", () => {
     for (const skill of ["quality-code-design", "lang-rust", "review-security"]) expect(permissionEffect(pr, "skill", skill)).toBe("allow")
   })
 
-  test("code-reviewer runs only git diff, log and show, and never writes their output", async () => {
+  test("code-reviewer has the read-only shell: inspection and fetches run, mutations do not", async () => {
     const fake = createFakeContext()
     await plugin.setup(fake.context)
     const code = rules(fake, "code-reviewer")
-    for (const command of ["git diff", "git diff main...HEAD", "git log --oneline -5", "git show HEAD", "git show"])
+    for (const command of ["git diff main...HEAD", "git log --oneline -5", "git status", "git fetch origin pull/7/head", "gh pr diff 1", "gh pr view 1"])
       expect(permissionEffect(code, "shell", command)).toBe("allow")
-    for (const command of [
-      "git diff --output=x",
-      "git log -p --output x",
-      "git status",
-      "git commit -m x",
-      "rm -rf .",
-      "gh pr diff 1",
-    ])
+    for (const command of ["git diff --output=x", "git log -p --output x", "git commit -m x", "rm -rf .", "gh pr merge 1", "bd close bd-1"])
       expect(permissionEffect(code, "shell", command)).toBe("deny")
     for (const action of ["read", "grep", "glob", "lsp_diagnostics"]) expect(permissionEffect(code, action)).toBe("allow")
     for (const action of ["webfetch", "websearch"]) expect(permissionEffect(code, action)).toBe("deny")
@@ -84,12 +77,14 @@ describe("agent-reviewer", () => {
     expect(permissionEffect(code, "skill", "delivery-git-workflow")).toBe("allow")
   })
 
-  test("security-reviewer reads code only: no shell, no web", async () => {
+  test("security-reviewer reads code with a read-only shell and no web", async () => {
     const fake = createFakeContext()
     await plugin.setup(fake.context)
     const security = rules(fake, "security-reviewer")
     for (const action of ["read", "grep", "glob", "lsp_hover"]) expect(permissionEffect(security, action)).toBe("allow")
-    for (const action of ["shell", "webfetch", "websearch"]) expect(permissionEffect(security, action)).toBe("deny")
+    for (const action of ["webfetch", "websearch"]) expect(permissionEffect(security, action)).toBe("deny")
+    expect(permissionEffect(security, "shell", "git log -3")).toBe("allow")
+    expect(permissionEffect(security, "shell", "git push")).toBe("deny")
     expect(permissionEffect(security, "skill", "review-security")).toBe("allow")
     for (const skill of ["quality-code-design", "lang-rust"]) expect(permissionEffect(security, "skill", skill)).toBe("allow")
     expect(permissionEffect(security, "skill", "ast-grep-search")).toBe("allow")
@@ -98,13 +93,14 @@ describe("agent-reviewer", () => {
     expect(file("security-reviewer").system).toContain("VERDICT: PASS|MINOR|MAJOR")
   })
 
-  test("adversarial-challenger keeps web reads for cited sources and drops shell", async () => {
+  test("adversarial-challenger keeps web reads for cited sources and a read-only shell", async () => {
     const fake = createFakeContext()
     await plugin.setup(fake.context)
     const challenger = rules(fake, "adversarial-challenger")
     for (const action of ["read", "grep", "glob", "lsp_hover", "webfetch", "websearch"])
       expect(permissionEffect(challenger, action)).toBe("allow")
-    expect(permissionEffect(challenger, "shell")).toBe("deny")
+    expect(permissionEffect(challenger, "shell", "git log -3")).toBe("allow")
+    expect(permissionEffect(challenger, "shell", "git push")).toBe("deny")
   })
 })
 

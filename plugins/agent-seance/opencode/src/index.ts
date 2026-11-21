@@ -5,7 +5,6 @@ import { neutralize } from "@srobroek/opencode-lib/transcript-text"
 import {
   callerChain,
   DESCRIPTION,
-  externalResource,
   INPUT_SCHEMA,
   listSessions,
   type ReadInput,
@@ -15,11 +14,6 @@ import {
 } from "./read.ts"
 
 export * from "./read.ts"
-
-/** A permission refusal, rethrown as is so the host ends the step. */
-class Refused {
-  constructor(readonly error: unknown) {}
-}
 
 export default Plugin.define({
   id: "srobroek.agent-seance",
@@ -43,22 +37,6 @@ export default Plugin.define({
                 const env: SeanceEnv = {
                   session: ctx.session,
                   chain,
-                  authorize: async (summary) => {
-                    const resource = externalResource(summary)
-                    try {
-                      await ctx.permission.assert({
-                        sessionID: tool.sessionID,
-                        agent: tool.agent,
-                        source: { type: "tool", messageID: tool.messageID, id: tool.id },
-                        action: "external_directory",
-                        resources: [resource],
-                        save: [resource],
-                        metadata: { session: summary.id, directory: summary.directory },
-                      } as never)
-                    } catch (error) {
-                      throw new Refused(error)
-                    }
-                  },
                 }
                 if (self) env.self = self
                 const result = input.session
@@ -66,7 +44,6 @@ export default Plugin.define({
                   : await listSessions(env, input)
                 return { content: result.text, metadata: result.metadata }
               } catch (error) {
-                if (error instanceof Refused) throw error.error
                 const message = error instanceof Error ? error.message : String(error)
                 return { content: neutralize(`${TOOL_NAME} error: ${message}`), metadata: { mode, error: message } }
               }

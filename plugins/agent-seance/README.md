@@ -29,9 +29,8 @@ and `context`:
   child (subagent) sessions with their agent. Pass a child id as `session` to read it.
   `from` pages by turn index, `match` keeps only turns containing a text, `max_chars`
   bounds the output (default 24000) and `reasoning` adds reasoning.
-- A session outside the caller's project is read only after an `external_directory`
-  check on its directory (`<dir>/*`). The `seance` agent asks; allow a directory with
-  an `external_directory` rule under `agents.seance.permissions`.
+- A session outside the caller's project is read like any other: the tool never asks
+  for `external_directory`, because reading the user's own sessions is its purpose.
 - Every output escapes recorded `<tag` markup, redacts obvious secrets and ends with a
   token estimate.
 

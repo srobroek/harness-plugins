@@ -11,3 +11,4 @@ one of these sets its Status to "Superseded by NNNN" rather than rewriting it.
 | 0003 | [Statusline parity through a TUI plugin](0003-statusline-parity.md) | Accepted |
 | 0004 | [LSP through an MCP bridge plus a diagnostics plugin](0004-lsp-bridge.md) | Implemented |
 | 0005 | [Questionnaires through a TUI panel, not a browser](0005-questionnaire-ui.md) | Decided, not built |
+| 0006 | [bun for installs and scripts, never npm; just as task runner](0006-bun-and-just.md) | Accepted |
