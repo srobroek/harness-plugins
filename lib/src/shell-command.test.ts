@@ -118,6 +118,30 @@ test("finds an invocation behind env and wrapper prefixes, never behind a quoted
   expect(invocation("echo git push", ["git", "push"])).toBeNull()
 })
 
+test.each([
+  ["env -C sub git push origin"],
+  ["env --chdir sub git push origin"],
+  ["env --chdir=sub git push origin"],
+  ["env -Csub git push origin"],
+  ["env -iC sub git push origin"],
+  ["env -u HOME git push origin"],
+  ["env --unset HOME git push origin"],
+  ["env -uHOME git push origin"],
+  ["env -S 'git push' origin"],
+  ["env --split-string='git push' origin"],
+  ["env -S'FOO=1 git push' origin"],
+  ["env -C 'my dir' -u HOME FOO=1 git push origin"],
+])("consumes the operands of env options in %s", (command) => {
+  expect(invocation(command, ["git", "push"])?.map((token) => token.value)).toEqual(["git", "push", "origin"])
+})
+
+test.each([["env -C"], ["env --chdir"], ["env -u"], ["env -S"], ["env -C sub"], ["env -C sub echo git push"]])(
+  "does not find git push behind %s",
+  (command) => {
+    expect(invocation(command, ["git", "push"])).toBeNull()
+  },
+)
+
 test("resolves a leading literal cd against cwd", () => {
   expect(leadingCdCwd("cd sub && ls", "/repo")).toBe("/repo/sub")
   expect(leadingCdCwd("cd /abs && ls", "/repo")).toBe("/abs")

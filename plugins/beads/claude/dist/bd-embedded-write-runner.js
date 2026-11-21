@@ -344,6 +344,32 @@ function tokenize(segment) {
     quoted: startsQuoted
   }));
 }
+function readEnvOption(tokens, at) {
+  const word = tokens[at].value;
+  if (word.startsWith("--")) {
+    const eq = word.indexOf("=");
+    const name = eq === -1 ? word : word.slice(0, eq);
+    if (name !== "--unset" && name !== "--chdir" && name !== "--split-string")
+      return { span: 1 };
+    const value = eq === -1 ? tokens[at + 1]?.value : word.slice(eq + 1);
+    if (value === undefined)
+      return null;
+    const span = eq === -1 ? 2 : 1;
+    return name === "--split-string" ? { span, split: value } : { span };
+  }
+  for (let j = 1;j < word.length; j++) {
+    const name = word[j];
+    if (name !== "u" && name !== "C" && name !== "S")
+      continue;
+    const attached = word.slice(j + 1);
+    const value = attached || tokens[at + 1]?.value;
+    if (value === undefined)
+      return null;
+    const span = attached ? 1 : 2;
+    return name === "S" ? { span, split: value } : { span };
+  }
+  return { span: 1 };
+}
 function invocation(segment, argv) {
   const tokens = tokenize(segment);
   const head = argv[0];
@@ -361,37 +387,30 @@ function invocation(segment, argv) {
       start++;
       while (start < tokens.length) {
         const option = tokens[start];
-        if (!option || option.quoted)
+        if (!option)
           return null;
         const value = option.value;
         if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(value)) {
-          start++;
-          continue;
-        }
-        if (value === "--") {
-          start++;
-          break;
-        }
-        if (value === "-i" || value === "--ignore-environment") {
-          start++;
-          continue;
-        }
-        if (value === "-u" || value === "--unset") {
-          start++;
-          if (start >= tokens.length || tokens[start]?.quoted)
+          if (option.quoted)
             return null;
           start++;
           continue;
         }
-        if (value.startsWith("--unset=") || value.startsWith("-u") && value.length > 2) {
+        if (option.quoted)
+          return null;
+        if (value === "--") {
           start++;
-          continue;
+          break;
         }
-        if (value.startsWith("-")) {
-          start++;
-          continue;
-        }
-        break;
+        if (!value.startsWith("-") || value === "-")
+          break;
+        const read = readEnvOption(tokens, start);
+        if (read === null)
+          return null;
+        if (read.split !== undefined)
+          tokens.splice(start, read.span, ...tokenize(read.split));
+        else
+          start += read.span;
       }
       continue;
     }

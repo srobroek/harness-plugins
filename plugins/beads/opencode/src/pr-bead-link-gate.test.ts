@@ -3,14 +3,17 @@ import { spawnSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { parse } from "@srobroek/opencode-lib/beads-shell"
 import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
 
 import {
+  type BodyFile,
   beadsActive,
   bodyFileReader,
   bodyOfGhCreate,
   controlledByViewerPermission,
   decideCommand,
+  decideCommandParsed,
   decidePrCreate,
   REASON,
   repositoryControlled,
@@ -295,11 +298,43 @@ describe("short flag clusters", () => {
 })
 
 describe("body sources are judged alike", () => {
-  const readFile = (files: Record<string, string>) => (path: string) => files[path]
+  const readFile =
+    (files: Record<string, string>) =>
+    (path: string): BodyFile => {
+      const text = files[path]
+      return text === undefined ? { problem: "no such file" } : { text }
+    }
 
   test("reads a bead trailer through $'...' quoting, whose \\n is a newline to the shell", () => {
     expect(decideCommand("gh pr create --body $'Summary\\n\\nBead: omp-1'", true)).toBeNull()
     expect(decideCommand("gh pr create --body $'Summary\\n\\nno trailer'", true)).not.toBeNull()
+  })
+
+  // bash cuts a $'...' word at its first NUL, so what gh receives has no trailer after it.
+  test.each([
+    ["\\0"],
+    ["\\00"],
+    ["\\000"],
+    ["\\x00"],
+    ["\\x0"],
+    ["\\u0000"],
+    ["\\U00000000"],
+    ["\\c@"],
+  ])("refuses a $'...' body whose %s cuts off the trailer", (nul) => {
+    expect(decideCommand(`gh pr create --body $'Summary${nul}\\n\\nBead: omp-1'`, true)).not.toBeNull()
+  })
+
+  test("keeps a $'...' trailer that a NUL does not precede, and reads the other escapes", () => {
+    expect(decideCommand("gh pr create --body $'Summary\\n\\x42ead: omp-1'", true)).toBeNull()
+    expect(decideCommand("gh pr create --body $'Summary\\n\\102ead: omp-1'", true)).toBeNull()
+    expect(decideCommand("gh pr create --body $'it\\'s\\n\\u0042ead: omp-1'", true)).toBeNull()
+    // The cut applies to one $'...' part; bash joins the parts around it.
+    expect(decideCommand("gh pr create --body $'a'$'\\0'$'\\nBead: omp-1'", true)).toBeNull()
+  })
+
+  test("a literal \\n in an ordinary quote is not a newline", () => {
+    expect(decideCommand("gh pr create --body 'Summary\\nBead: omp-1'", true)).not.toBeNull()
+    expect(decideCommand('gh pr create --body "Summary\\nBead: omp-1"', true)).not.toBeNull()
   })
 
   test.each([
@@ -311,9 +346,21 @@ describe("body sources are judged alike", () => {
     expect(decideCommand(command, true, undefined, { readFile: readFile({ [path]: "no trailer\n" }) })).not.toBeNull()
   })
 
-  test("lets an unreadable or stdin body file through, as before", () => {
+  test("refuses a body file it cannot read, and says why", () => {
     const none = { readFile: readFile({}) }
-    expect(decideCommand("gh pr create --body-file missing.md", true, undefined, none)).toBeNull()
+    const missing = decideCommand("gh pr create --body-file missing.md", true, undefined, none)
+    expect(missing?.reason).toContain("Could not read --body-file missing.md: no such file")
+    expect(missing?.reason).toContain("refuses")
+  })
+
+  test("leaves an unreadable body file alone where the gate does not apply", () => {
+    const none = { readFile: readFile({}) }
+    expect(decideCommand("gh pr create --body-file missing.md", false, undefined, none)).toBeNull()
+    expect(decideCommand("gh pr create --body-file missing.md", { kind: "uncontrolled" }, undefined, none)).toBeNull()
+  })
+
+  test("lets a stdin body file, and a call with no reader, through", () => {
+    const none = { readFile: readFile({}) }
     expect(decideCommand("gh pr create --body-file -", true, undefined, none)).toBeNull()
     expect(decideCommand("gh pr create --body-file b.md", true)).toBeNull()
   })
@@ -358,17 +405,17 @@ describe("body files on disk", () => {
     withDir((dir) => {
       mkdirSync(join(dir, "sub"))
       writeFileSync(join(dir, "sub", "b.md"), "no trailer\n")
-      expect(decide("gh pr create -F sub/b.md", dir)).not.toBeNull()
-      expect(decide("gh pr create -F sub/b.md", join(dir, "sub"))).toBeNull()
+      expect(decide("gh pr create -F sub/b.md", dir)?.reason).toContain("Looked at --body-file sub/b.md")
+      expect(decide("gh pr create -F sub/b.md", join(dir, "sub"))?.reason).toContain("Could not read --body-file sub/b.md")
     })
   })
 
-  test("passes an oversized file, directly or through a symlink", () => {
+  test("refuses an oversized file, directly or through a symlink", () => {
     withDir((dir) => {
       writeFileSync(join(dir, "big.md"), "x".repeat(OVER_CAP))
       symlinkSync(join(dir, "big.md"), join(dir, "link.md"))
-      expect(decide("gh pr create --body-file big.md", dir)).toBeNull()
-      expect(decide("gh pr create --body-file link.md", dir)).toBeNull()
+      expect(decide("gh pr create --body-file big.md", dir)?.reason).toContain("larger than 64000 bytes")
+      expect(decide("gh pr create --body-file link.md", dir)?.reason).toContain("larger than 64000 bytes")
     })
   })
 
@@ -379,16 +426,139 @@ describe("body files on disk", () => {
     })
   })
 
-  test("passes a directory and a missing path", () => {
+  test("refuses a directory and a missing path", () => {
     withDir((dir) => {
       mkdirSync(join(dir, "d"))
-      expect(decide("gh pr create --body-file d", dir)).toBeNull()
-      expect(decide("gh pr create --body-file nope.md", dir)).toBeNull()
+      expect(decide("gh pr create --body-file d", dir)?.reason).toContain("Could not read --body-file d: it is not a regular file")
+      expect(decide("gh pr create --body-file nope.md", dir)?.reason).toContain("Could not read --body-file nope.md: ENOENT")
+    })
+  })
+
+  test.each([
+    ["env --chdir=sub gh pr create --body-file b.md"],
+    ["env --chdir sub gh pr create --body-file b.md"],
+    ["env -C sub gh pr create --body-file b.md"],
+    ["env -Csub gh pr create --body-file b.md"],
+    ["env -u HOME -C sub FOO=1 gh pr create --body-file b.md"],
+  ])("reads a relative body file from the directory of %s", (command) => {
+    withDir((dir) => {
+      mkdirSync(join(dir, "sub"))
+      // The file in the tool's directory names a bead, the one gh will read does not.
+      writeFileSync(join(dir, "b.md"), "Bead: omp-1\n")
+      writeFileSync(join(dir, "sub", "b.md"), "no trailer\n")
+      expect(decide(command, dir)?.reason).toContain("Looked at --body-file b.md")
+      // And the other way round: a refusal here would be a false one.
+      writeFileSync(join(dir, "b.md"), "no trailer\n")
+      writeFileSync(join(dir, "sub", "b.md"), "Bead: omp-1\n")
+      expect(decide(command, dir)).toBeNull()
+      expect(decide("gh pr create --body-file b.md", dir)).not.toBeNull()
+    })
+  })
+
+  test("refuses when a wrapper directory does not exist", () => {
+    withDir((dir) => {
+      writeFileSync(join(dir, "b.md"), "Bead: omp-1\n")
+      expect(decide("env -C nowhere gh pr create --body-file b.md", dir)?.reason).toContain("Could not read --body-file b.md")
+    })
+  })
+
+  describe("nested scripts inherit the wrappers' directories", () => {
+    const decideParsed = (command: string, cwd: string) =>
+      decideCommandParsed(parse(command) as Parameters<typeof decideCommandParsed>[0], true, undefined, {
+        readFile: bodyFileReader(cwd),
+      })
+
+    test.each([
+      ["env --chdir=sub sh -c 'gh pr create --body-file body.md'"],
+      ["env -C sub bash -c 'gh pr create --body-file body.md'"],
+    ])("reads %s from sub/", (command) => {
+      withDir((dir) => {
+        mkdirSync(join(dir, "sub"))
+        writeFileSync(join(dir, "body.md"), "Bead: omp-1\n")
+        writeFileSync(join(dir, "sub", "body.md"), "no trailer\n")
+        expect(decideParsed(command, dir)?.reason).toContain("Looked at --body-file body.md")
+        writeFileSync(join(dir, "body.md"), "no trailer\n")
+        writeFileSync(join(dir, "sub", "body.md"), "Bead: omp-1\n")
+        expect(decideParsed(command, dir)).toBeNull()
+      })
+    })
+
+    test("composes two nested directories, each relative to the one before", () => {
+      withDir((dir) => {
+        mkdirSync(join(dir, "a", "b"), { recursive: true })
+        mkdirSync(join(dir, "b"))
+        const command = `env -C a sh -c "env -C b gh pr create --body-file body.md"`
+        writeFileSync(join(dir, "a", "b", "body.md"), "no trailer\n")
+        // Wrong places: the tool's directory, a/ and ./b/ all name a bead.
+        for (const wrong of [join(dir, "body.md"), join(dir, "a", "body.md"), join(dir, "b", "body.md")])
+          writeFileSync(wrong, "Bead: omp-1\n")
+        expect(decideParsed(command, dir)?.reason).toContain("Looked at --body-file body.md")
+        writeFileSync(join(dir, "a", "b", "body.md"), "Bead: omp-1\n")
+        expect(decideParsed(command, dir)).toBeNull()
+      })
+    })
+
+    test("a nested absolute path ignores the directories", () => {
+      withDir((dir) => {
+        writeFileSync(join(dir, "abs.md"), "Bead: omp-1\n")
+        const command = `env -C /nonexistent sh -c 'gh pr create --body-file ${join(dir, "abs.md")}'`
+        expect(decideParsed(command, dir)).toBeNull()
+      })
+    })
+
+    test.each([
+      [`env -C "$WORK" sh -c 'gh pr create --body-file body.md'`],
+      [`env -C ~/work sh -c 'gh pr create --body-file body.md'`],
+      [`env -C sub eval 'gh pr create --body-file body.md'`],
+      [`env -C sub echo $(gh pr create --body-file body.md)`],
+    ])("refuses a relative body file when the directory cannot be worked out: %s", (command) => {
+      withDir((dir) => {
+        writeFileSync(join(dir, "body.md"), "Bead: omp-1\n")
+        expect(decideParsed(command, dir)?.reason).toContain("cannot be worked out")
+      })
+    })
+  })
+
+  describe("bytes, not characters", () => {
+    test.each([["$'\\xc3\\xa9.md'"], ["$'\\303\\251.md'"], ["$'\\u00e9.md'"], ["$'\\xc3'$'\\xa9.md'"]])(
+      "reads %s as the file bash opens, not the mis-decoded name",
+      (word) => {
+        withDir((dir) => {
+          // `Ã©` is what decoding each byte as a character would give.
+          writeFileSync(join(dir, "é.md"), "no trailer\n")
+          writeFileSync(join(dir, "Ã©.md"), "Bead: omp-1\n")
+          expect(decide(`gh pr create --body-file ${word}`, dir)?.reason).toContain("Looked at --body-file é.md")
+          writeFileSync(join(dir, "é.md"), "Bead: omp-1\n")
+          expect(decide(`gh pr create --body-file ${word}`, dir)).toBeNull()
+        })
+      },
+    )
+
+    test("reads a name that is not valid UTF-8 byte for byte", () => {
+      withDir((dir) => {
+        writeFileSync(Buffer.concat([Buffer.from(`${dir}/`), Buffer.from([0xff]), Buffer.from(".md")]), "no trailer\n")
+        // Linked decoys at the names a lossy decoding would pick.
+        writeFileSync(join(dir, "\ufffd.md"), "Bead: omp-1\n")
+        writeFileSync(join(dir, "ÿ.md"), "Bead: omp-1\n")
+        const refusal = decide("gh pr create --body-file $'\\xff.md'", dir)
+        expect(refusal?.reason).toContain("Looked at --body-file")
+        expect(refusal?.reason).not.toContain("Could not read")
+      })
+    })
+  })
+
+  test("keeps the underlying error as the cause of a refusal", () => {
+    withDir((dir) => {
+      const refusal = decide("gh pr create --body-file nope.md", dir)
+      expect(refusal?.reason).toContain("Could not read --body-file nope.md: ENOENT")
+      expect(refusal?.cause).toBeInstanceOf(Error)
+      const cause: NodeJS.ErrnoException | undefined = refusal?.cause as NodeJS.ErrnoException | undefined
+      expect(cause?.code).toBe("ENOENT")
     })
   })
 
   // The test took 0.16-0.25 s alone (3 runs); 15 s covers the 10 s child deadline plus load.
-  test("passes a FIFO without blocking", { timeout: 15_000 }, () => {
+  test("refuses a FIFO without blocking", { timeout: 15_000 }, () => {
     withDir((dir) => {
       const made = spawnSync("mkfifo", [join(dir, "pipe")])
       if (made.status !== 0) {
@@ -400,7 +570,7 @@ describe("body files on disk", () => {
 console.log(JSON.stringify(decideCommand("gh pr create --body-file pipe", true, undefined, { readFile: bodyFileReader(process.env.DIR ?? "") })))`
       const child = spawnSync(process.execPath, ["-e", script], { env: { ...process.env, DIR: dir }, timeout: 10_000, encoding: "utf8" })
       expect(child.error).toBeUndefined()
-      expect(child.stdout.trim()).toBe("null")
+      expect(child.stdout).toContain("not a regular file")
     })
   })
 })
