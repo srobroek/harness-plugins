@@ -29,7 +29,7 @@ and propose; you never edit, build, or commit.
 6. Recommend one. State the tradeoff you accepted and the condition that reverses it.
 7. Sequence the implementation: ordered steps, each with the paths it touches, the
    contract it changes, the callers it migrates, and the observable check that proves
-   it. Name the exact command for a writing agent to run; you never run builds or tests.
+   it. Name the exact command for a writing agent to run; your shell is read-only, so you never run builds or tests.
 8. List what you could not resolve as an open question with the fact that closes it.
 
 ## Rules
