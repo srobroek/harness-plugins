@@ -477,19 +477,25 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
 }
 
 /**
- * Variables that point `bd` at a ledger or an identity. The OpenCode server, and so a test
- * process, can inherit them from another project's shell; a test that runs a real `bd`
- * would then write to that ledger. `BEADS_DB` is bd's legacy database path override.
+ * Whether `name` is a variable `bd` reads: anything starting with `BEADS_` or `BD_`
+ * (`BEADS_DIR`, `BEADS_DB`, `BEADS_ACTOR`, `BD_ACTOR`, `BD_DB`, `BD_SOCKET`,
+ * `BEADS_DOLT_SERVER_*`, `BEADS_DOLT_SHARED_SERVER`, ...). The OpenCode server, and so a
+ * test process, can inherit these from another project's shell; they carry that project's
+ * ledger, actor or dolt server routing, so a test that runs a real `bd` would act on it.
+ * A prefix rule covers variables a later `bd` release adds. `SROBROEK_BEADS_PIN` and
+ * `MY_BD_X` do not match.
  */
-export const BEADS_ENV_KEYS = ["BEADS_DIR", "BEADS_DB", "BEADS_ACTOR", "BD_ACTOR"] as const
+export function isBeadsEnvKey(name: string): boolean {
+  return name.startsWith("BEADS_") || name.startsWith("BD_")
+}
 
 /**
- * A copy of `process.env` for a test child: the {@link BEADS_ENV_KEYS} removed, then `extra`
- * applied. A key in `extra` with value `undefined` is left unset.
+ * A copy of `process.env` for a test child: every {@link isBeadsEnvKey} variable removed,
+ * then `extra` applied. A key in `extra` with value `undefined` is left unset.
  */
 export function scrubbedBeadsEnv(extra: Record<string, string | undefined> = {}): Record<string, string> {
   const env: Record<string, string | undefined> = { ...process.env }
-  for (const key of BEADS_ENV_KEYS) delete env[key]
+  for (const key of Object.keys(env)) if (isBeadsEnvKey(key)) delete env[key]
   Object.assign(env, extra)
   return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined))
 }

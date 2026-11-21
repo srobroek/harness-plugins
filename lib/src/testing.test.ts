@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Plugin } from "@opencode/plugin"
 
-import { createFakeContext, scrubbedBeadsEnv } from "./testing.ts"
+import { createFakeContext, isBeadsEnvKey, scrubbedBeadsEnv } from "./testing.ts"
 
 const plugin = Plugin.define({
   id: "srobroek.lib-test",
@@ -212,17 +212,26 @@ describe("createFakeContext", () => {
 })
 
 describe("scrubbedBeadsEnv", () => {
+  const leaked = ["BEADS_DIR", "BEADS_DB", "BEADS_ACTOR", "BD_ACTOR", "BD_DB", "BD_SOCKET", "BEADS_DOLT_SERVER_PORT"]
+  const kept = ["BEADSX", "MY_BD_X", "KEEP_ME"]
+
+  test("isBeadsEnvKey matches the BEADS_ and BD_ prefixes only", () => {
+    expect(leaked.every(isBeadsEnvKey)).toBe(true)
+    expect(kept.some(isBeadsEnvKey)).toBe(false)
+  })
+
   test("drops inherited beads variables, keeps the rest and applies extra", () => {
     const saved = { ...process.env }
-    Object.assign(process.env, { BEADS_DIR: "/foreign", BEADS_DB: "/foreign/db", BEADS_ACTOR: "x", BD_ACTOR: "y", KEEP_ME: "1" })
+    for (const key of [...leaked, ...kept]) process.env[key] = "foreign"
     try {
-      const env = scrubbedBeadsEnv({ BEADS_DIR: "/mine", BEADS_ACTOR: undefined })
+      const env = scrubbedBeadsEnv({ BEADS_DIR: "/mine", BD_ACTOR: undefined, BD_SOCKET: "/mine.sock" })
       expect(env.BEADS_DIR).toBe("/mine")
-      expect(env.KEEP_ME).toBe("1")
-      for (const key of ["BEADS_DB", "BEADS_ACTOR", "BD_ACTOR"]) expect(key in env).toBe(false)
-      expect(process.env.BEADS_DIR).toBe("/foreign")
+      expect(env.BD_SOCKET).toBe("/mine.sock")
+      for (const key of leaked.filter((key) => !["BEADS_DIR", "BD_SOCKET"].includes(key))) expect(key in env).toBe(false)
+      for (const key of kept) expect(env[key]).toBe("foreign")
+      expect(process.env.BEADS_DIR).toBe("foreign")
     } finally {
-      for (const key of ["BEADS_DIR", "BEADS_DB", "BEADS_ACTOR", "BD_ACTOR", "KEEP_ME"]) delete process.env[key]
+      for (const key of [...leaked, ...kept]) delete process.env[key]
       Object.assign(process.env, saved)
     }
   })

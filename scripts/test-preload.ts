@@ -10,12 +10,13 @@
  * child in the environment the process started with and do not see them. A test or
  * production path that builds its own environment still controls it.
  *
- * Beads: the OpenCode server, and so a test process, can inherit `BEADS_DIR`, `BEADS_DB`,
- * `BEADS_ACTOR` and `BD_ACTOR` from another project's shell. A test that runs a real `bd`,
- * or reads the environment, would then act on that project's ledger and identity. They are
- * deleted before any test runs; a test that needs one sets it itself. Tests that start a
- * real `bd` also build the child environment with `scrubbedBeadsEnv` (`lib/src/testing.ts`),
- * so they stay safe without this preload.
+ * Beads: the OpenCode server, and so a test process, can inherit `BEADS_*` and `BD_*`
+ * variables (`BEADS_DIR`, `BEADS_ACTOR`, `BD_ACTOR`, `BEADS_DB`, `BD_SOCKET`,
+ * `BEADS_DOLT_SERVER_*`, ...) from another project's shell. They carry that project's
+ * ledger, actor or dolt server routing, so a test that runs a real `bd` would act on it.
+ * Every variable with those prefixes is deleted before any test runs; a test that needs
+ * one sets it itself. Tests that start a real `bd` also build the child environment with
+ * `scrubbedBeadsEnv` (`lib/src/testing.ts`), so they stay safe without this preload.
  *
  * Solid: `@opentui/solid/preload` imports Babel when it registers its JSX transform,
  * which costs seconds per test process even when no file has JSX. This registers the
@@ -23,12 +24,12 @@
  */
 
 import { devNull } from "node:os"
-import { BEADS_ENV_KEYS } from "@srobroek/opencode-lib/testing"
+import { isBeadsEnvKey } from "@srobroek/opencode-lib/testing"
 import { type OnLoadArgs, type OnLoadResult, plugin } from "bun"
 
 process.env.GIT_CONFIG_GLOBAL = devNull
 process.env.GIT_CONFIG_NOSYSTEM = "1"
-for (const key of BEADS_ENV_KEYS) delete process.env[key]
+for (const key of Object.keys(process.env)) if (isBeadsEnvKey(key)) delete process.env[key]
 
 /**
  * The files `@opentui/solid`'s Bun plugin handles: JSX sources, and the `solid-js`
