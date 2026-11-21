@@ -203,6 +203,28 @@ async function start(
   }
   const common = options.common ?? makeCommon()
   if (!options.common && !options.mainCheckout) COMMONS.push(common)
+  // Counts the events the plugin has handled: its loop handles each event synchronously, then asks for the next one.
+  const events = { handled: 0 }
+  const event = fake.context.event as unknown as { subscribe: (input: unknown) => AsyncIterable<unknown> }
+  const subscribe = event.subscribe.bind(event)
+  event.subscribe = (input) => {
+    const iterable = subscribe(input)
+    return {
+      [Symbol.asyncIterator]: () => {
+        const iterator = iterable[Symbol.asyncIterator]()
+        let holding = false
+        return {
+          next: async () => {
+            if (holding) events.handled++
+            const result = await iterator.next()
+            holding = !result.done
+            return result
+          },
+          return: async () => (await iterator.return?.()) ?? { done: true as const, value: undefined },
+        }
+      },
+    }
+  }
   const log: string[][] = []
   const plugin = createPlugin({
     commonDir: async () => common,
@@ -221,7 +243,7 @@ async function start(
     ...(options.sweepDelayMs === undefined ? {} : { sweepDelayMs: options.sweepDelayMs }),
   })
   const cleanup = (await plugin.setup(fake.context)) as () => Promise<void>
-  return { fake, state, worktree, log, cleanup, common }
+  return { fake, state, worktree, log, cleanup, common, events }
 }
 
 const stored = (fake: Fake, child = CHILD) => fake.storage.get(laneKey(child)) as Lane
@@ -253,6 +275,12 @@ const laneWrites = (fake: Fake, child = CHILD) => {
 const decision = async (states: string[]) => {
   await until(() => states.includes("removing") && states.length > states.indexOf("removing") + 1)
   return states.slice(states.indexOf("removing"), states.indexOf("removing") + 2)
+}
+/** Emit `event` and wait until the plugin has handled it. */
+const deliver = async (fake: Fake, events: { handled: number }, event: unknown) => {
+  const before = events.handled
+  fake.emit(event)
+  await until(() => events.handled > before)
 }
 
 describe("lane sync on a landing", () => {
@@ -2543,20 +2571,18 @@ describe("finalize: a resume and late changes fence the removal", () => {
   })
 
   test("an execution that starts during the final git probe keeps the lane and its worktree", async () => {
-    const { fake, state, worktree, cleanup } = await start(empty)
-    // `stash list` is read once by the checks and once more right before the host removal.
+    const { fake, state, worktree, cleanup, events } = await start(empty)
+    const states = laneWrites(fake)
+    // `stash list` is read once by the checks and once more by the tree proof right before the host removal.
     let stashReads = 0
     state.onGit = async (cmd) => {
       if (!cmd.startsWith("stash list") || ++stashReads !== 2) return
-      fake.emit({ type: "session.execution.started", data: { sessionID: CHILD } })
-      await settle(20)
+      await deliver(fake, events, { type: "session.execution.started", data: { sessionID: CHILD } })
     }
     fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
-    await until(() => stashReads >= 2)
-    await settle(150)
+    expect(await decision(states)).toEqual(["removing", "active"])
     expect(stashReads).toBeGreaterThanOrEqual(2)
     expect(worktree.filter((entry) => entry.method === "remove")).toEqual([])
-    expect(stored(fake).state).toBe("active")
     await cleanup()
   })
 })
@@ -2586,21 +2612,21 @@ describe("finalize: the lane's descendants in the worktree protect it", () => {
     ],
   ])("a %s grandchild in the worktree keeps the lane when its root ended", async (_name, arrange) => {
     const { fake, worktree, cleanup } = await start(empty, noGates)
+    const states = laneWrites(fake)
     arrange(fake)
     fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
-    await settle(150)
+    expect(await decision(states)).toEqual(["removing", "active"])
     expect(removes(worktree)).toBe(0)
-    expect(stored(fake).state).toBe("active")
     await cleanup()
   })
 
   test("a lane whose sessions cannot all be listed keeps its worktree", async () => {
     const { fake, worktree, cleanup } = await start(empty, noGates)
+    const states = laneWrites(fake)
     api(fake).list = () => Promise.reject(new Error("listing down"))
     fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
-    await settle(150)
+    expect(await decision(states)).toEqual(["removing", "active"])
     expect(removes(worktree)).toBe(0)
-    expect(stored(fake).state).toBe("active")
     await cleanup()
   })
 
@@ -2626,22 +2652,21 @@ describe("finalize: the lane's descendants in the worktree protect it", () => {
   })
 
   test("an execution that starts while the descendants are listed keeps the lane", async () => {
-    const { fake, worktree, cleanup } = await start(empty, noGates)
+    const { fake, worktree, cleanup, events } = await start(empty, noGates)
+    const states = laneWrites(fake)
     const original = api(fake).list.bind(fake.context.session)
     let fired = false
     api(fake).list = async (input) => {
       if (!fired && input.parentID === CHILD && removes(worktree) === 0) {
         fired = true
-        fake.emit({ type: "session.execution.started", data: { sessionID: CHILD } })
-        await settle(20)
+        await deliver(fake, events, { type: "session.execution.started", data: { sessionID: CHILD } })
       }
       return original(input)
     }
     fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
-    await until(() => fired)
-    await settle(150)
+    expect(await decision(states)).toEqual(["removing", "active"])
+    expect(fired).toBe(true)
     expect(removes(worktree)).toBe(0)
-    expect(stored(fake).state).toBe("active")
     await cleanup()
   })
 })
