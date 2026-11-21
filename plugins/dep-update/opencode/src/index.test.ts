@@ -36,6 +36,13 @@ describe("setup", () => {
     expect(fake.skills.size).toBe(0)
   })
 
+  test.each(["false", "true", 1, "yes"])("a non-boolean confirm %p registers no gate and keeps an allow", async (value) => {
+    const { fake } = await load({ options: { confirm: value } })
+    expect(fake.hooks("permission")).toEqual([])
+    const evaluation = await fake.fire.permission("evaluate", { action: "dep_apply", resources: ["x@1.0.0"], effect: "allow" })
+    expect(evaluation.effect).toBe("allow")
+  })
+
   test("the confirm option turns the gate on", async () => {
     const { fake } = await load({ options: { confirm: true } })
     expect(fake.hooks("permission")).toEqual(["evaluate"])
