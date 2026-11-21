@@ -243,7 +243,10 @@ A head is reviewed at most once, however the review ends. Plugin storage backs
 the claim files: a start is also refused when storage holds a pointer for the
 head under any PR number or lead, and a storage read that fails refuses the
 start, is journaled as a blocker and appears as `storageErrors` in
-`autopilot_status`; it is never read as "no record". The export is also refused
+`autopilot_status`, labelled by operation and resource and cleared only by the
+same operation on the same resource succeeding (a sweep cursor that cannot be
+read stops the sweep, and a merge under the grant refuses when the review record
+cannot be read); it is never read as "no record". The export is also refused
 when its diff is empty or its changed-file count differs from the `changed_files`
 that GitHub reports (a rename counts once, as `git diff --name-status -M`
 lists it). Each status call resolves the newest 20 reviews and the next 25

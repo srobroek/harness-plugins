@@ -3374,15 +3374,16 @@ class Autopilot {
       }
     }
   }
-  async#stored(dir, what, read) {
+  async#stored(dir, label, read, options = {}) {
     const issues = dir === undefined ? undefined : this.#storageIssues.get(dir.runId) ?? this.#storageIssues.set(dir.runId, new Map).get(dir.runId);
     try {
       const value = await read();
-      issues?.delete(what);
+      if (options.clear !== false)
+        issues?.delete(label);
       return { ok: true, value };
     } catch (error) {
-      const reason = `plugin storage could not be read for ${what}: ${errorText(error)}`;
-      issues?.set(what, reason);
+      const reason = `plugin storage failed (${label}): ${errorText(error)}`;
+      issues?.set(label, reason);
       if (dir !== undefined && !this.#reported.has(`storage:${reason}`)) {
         this.#reported.add(`storage:${reason}`);
         try {
@@ -3394,16 +3395,20 @@ class Autopilot {
       return { ok: false, reason };
     }
   }
-  async#scanAll(dir, what, prefix) {
+  async#scanAll(dir, prefix) {
+    const label = `scan:${prefix}`;
     const entries = [];
     let after;
     for (;; ) {
-      const page = await this.#stored(dir, what, () => this.ctx.storage.scan({ prefix, limit: STORAGE_PAGE, ...after !== undefined ? { after } : {} }));
+      const page = await this.#stored(dir, label, () => this.ctx.storage.scan({ prefix, limit: STORAGE_PAGE, ...after !== undefined ? { after } : {} }), { clear: false });
       if (!page.ok)
         return;
       entries.push(...page.value.entries);
-      if (page.value.next === undefined || page.value.entries.length === 0 || page.value.next === after)
+      if (page.value.next === undefined || page.value.entries.length === 0 || page.value.next === after) {
+        if (dir !== undefined)
+          this.#storageIssues.get(dir.runId)?.delete(label);
         return entries;
+      }
       after = page.value.next;
     }
   }
@@ -3956,7 +3961,7 @@ class Autopilot {
     return ownWorktreeAsk({ ...asked, roots, canon: realPath });
   }
   async#currentExport(dir) {
-    const read = await this.#stored(dir, "the current export", () => this.ctx.storage.get(reviewCurrentKey(dir.runId)));
+    const read = await this.#stored(dir, `get:${reviewCurrentKey(dir.runId)}`, () => this.ctx.storage.get(reviewCurrentKey(dir.runId)));
     const current = read.ok ? read.value : undefined;
     if (typeof current?.head !== "string" || typeof current.manifestHash !== "string")
       return;
@@ -4038,6 +4043,8 @@ class Autopilot {
     const running = await this.runningFor(sessionID);
     const granted = running?.state?.options.allow.includes("self-review") === true;
     const witness = granted && running ? await this.#resolveReview(running.lead, pr, sha) : undefined;
+    if (witness?.state === "unreadable")
+      return refuse(`the plugin review record could not be read, so the merge cannot rest on it (${witness.reason})`);
     const witnessed = { granted, approvedSha: witness?.state === "done" && witness.record.verdict === "approve" ? witness.record.sha : undefined };
     const refusal = mergeRefusal({ sha, method, view, reviews, runs, status, protection, rules, repo, witnessed });
     if (refusal !== undefined)
@@ -4110,7 +4117,7 @@ class Autopilot {
         this.#journalIssue(dir, `could not release the review claim of #${pr} at ${sha}: ${errorText(error)}`);
       }
     };
-    const pointers = await this.#scanAll(dir, "the review pointers", REVIEW_POINTER_ROOT);
+    const pointers = await this.#scanAll(dir, REVIEW_POINTER_ROOT);
     if (pointers === undefined) {
       giveBack();
       return "refused: plugin storage could not be read, so it is unknown whether this head was reviewed; the failure is logged as a blocker";
@@ -4169,7 +4176,7 @@ class Autopilot {
     const ours = countNameStatus(counted.stdout);
     if (ours !== changedFiles)
       return `refused: the export changes ${ours} files but GitHub reports ${changedFiles}; the base is not the one GitHub diffs against`;
-    const recorded = await this.#stored(dir, "the export's manifest hash", () => this.ctx.storage.get(reviewManifestKey(Number(pr), sha)));
+    const recorded = await this.#stored(dir, `get:${reviewManifestKey(Number(pr), sha)}`, () => this.ctx.storage.get(reviewManifestKey(Number(pr), sha)));
     if (!recorded.ok)
       return `refused: ${recorded.reason}`;
     const manifestHash = typeof recorded.value?.manifestHash === "string" ? recorded.value.manifestHash : "";
@@ -4227,7 +4234,7 @@ class Autopilot {
     return JSON.stringify({ started: true, session: child.id, pr, sha, manifestHash, note: "returns at once; autopilot_status reports the verdict under reviews" });
   }
   async#resolveReview(lead, pr, sha) {
-    const stored = await this.#stored(this.#dirOfLead(lead), "a review pointer", () => this.ctx.storage.get(reviewPointerKey(lead, pr, sha)));
+    const stored = await this.#stored(this.#dirOfLead(lead), `get:${reviewPointerKey(lead, pr, sha)}`, () => this.ctx.storage.get(reviewPointerKey(lead, pr, sha)));
     if (!stored.ok)
       return { state: "unreadable", reason: stored.reason };
     const pointer = readPointer(stored.value, pr, sha);
@@ -4251,7 +4258,7 @@ class Autopilot {
   async#reviews(lead) {
     const dir = this.#dirOfLead(lead);
     const prefix = reviewPointerPrefix(lead);
-    const scanned = await this.#scanAll(dir, "the review pointers", prefix);
+    const scanned = await this.#scanAll(dir, prefix);
     if (scanned === undefined)
       return [];
     const all = scanned.flatMap((entry) => {
@@ -4262,13 +4269,18 @@ class Autopilot {
     const newest = [...all].sort((a, b) => b.pointer.at - a.pointer.at).slice(0, MAX_REVIEWS_REPORTED);
     const byKey = [...all].sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
     const cursorKey = reviewSweepKey(lead);
-    const cursor = await this.#stored(dir, "the review sweep cursor", () => this.ctx.storage.get(cursorKey));
-    const after = cursor.ok && typeof cursor.value === "string" ? cursor.value : undefined;
-    const from = after === undefined ? 0 : Math.max(0, byKey.findIndex((entry) => entry.key > after));
-    const slice = byKey.slice(from, from + REVIEW_SWEEP);
-    const done = from + slice.length >= byKey.length;
-    const last = slice.at(-1);
-    await this.#stored(dir, "the review sweep cursor", () => done || last === undefined ? this.ctx.storage.remove(cursorKey) : this.ctx.storage.set(cursorKey, last.key));
+    const cursor = await this.#stored(dir, `get:${cursorKey}`, () => this.ctx.storage.get(cursorKey));
+    let slice = [];
+    if (cursor.ok) {
+      const after = typeof cursor.value === "string" ? cursor.value : undefined;
+      const from = after === undefined ? 0 : Math.max(0, byKey.findIndex((entry) => entry.key > after));
+      slice = byKey.slice(from, from + REVIEW_SWEEP);
+      const last = slice.at(-1);
+      if (from + slice.length >= byKey.length || last === undefined)
+        await this.#stored(dir, `remove:${cursorKey}`, () => this.ctx.storage.remove(cursorKey));
+      else
+        await this.#stored(dir, `set:${cursorKey}`, () => this.ctx.storage.set(cursorKey, last.key));
+    }
     const items = new Map;
     for (const { key, pointer } of [...newest, ...slice]) {
       if (items.has(key))

@@ -1650,7 +1650,7 @@ describe("autopilot_review", () => {
       expect(await review()).toMatch(/^refused: .*storage/)
       expect(creates()).toEqual([])
       expect(blockers()).toHaveLength(1)
-      expect((await status({ action: "status" })).storageErrors).toEqual([expect.stringContaining("storage offline")])
+      expect((await status({ action: "status" })).storageErrors).toEqual([expect.stringContaining("(scan:review-session/)"), expect.stringContaining("(scan:review-session/ses_lead/)")])
       heal()
       expect(JSON.parse(await review())).toMatchObject({ started: true })
     })
@@ -1660,7 +1660,7 @@ describe("autopilot_review", () => {
       await review()
       approve()
       failing("get", (key) => key.startsWith("review-session/"))
-      expect(await merge()).toContain("approval")
+      expect(await merge()).toContain("plugin review record could not be read")
       expect(merged()).toEqual([])
       expect(blockers()).toHaveLength(1)
     })
@@ -1671,6 +1671,66 @@ describe("autopilot_review", () => {
       const out = await status({ action: "status" })
       expect(out.storageErrors).toEqual([expect.stringContaining("storage offline")])
       expect(blockers()).toHaveLength(1)
+    })
+
+    const seedOld = (count: number) => {
+      for (let n = 0; n < count; n++) {
+        const sha = n.toString(16).padStart(40, "0")
+        const session = `ses_old${n}`
+        fake.sessions.set(session, { id: session, parentID: "ses_lead", agent: "code-reviewer", metadata: { source: "autopilot", pr: "5", sha, nonce: "n" } })
+        fake.storage.set(`review-session/ses_lead/5@${sha}`, { pr: "5", sha, session, nonce: "n", promptHash: "a".repeat(64), manifestHash: "b".repeat(64), at: NOW - 31 * 60_000 })
+      }
+    }
+    const interruptedCount = () => new Set(fake.calls.filter((call) => call.method === "session.interrupt").map((call) => (call.input as { sessionID: string }).sessionID)).size
+
+    test("a sweep cursor that cannot be read stops the sweep: nothing beyond the newest is swept and no cursor is written", async () => {
+      await armed({ allow: ["self-review"] })
+      seedOld(130)
+      failing("get", (key) => key.startsWith("review-sweep/"))
+      for (let call = 0; call < 3; call++) {
+        const out = await status({ action: "status" })
+        expect(out.storageErrors).toEqual([expect.stringContaining("(get:review-sweep/ses_lead)")])
+      }
+      expect(interruptedCount()).toBeLessThanOrEqual(20)
+      expect(fake.storage.has("review-sweep/ses_lead")).toBe(false)
+      expect(blockers().length).toBeGreaterThan(0)
+    })
+
+    test("a failure is labelled by operation and resource, and a lead-local scan that works does not clear a failed global scan", async () => {
+      await armed({ allow: ["self-review"] })
+      failing("scan", (key) => key === "review-session/")
+      expect(await review()).toMatch(/^refused: .*storage/)
+      const out = await status({ action: "status" })
+      expect(out.storageErrors).toEqual([expect.stringContaining("(scan:review-session/)")])
+    })
+
+    test("a merge refuses when the plugin review record cannot be read, even with a valid GitHub approval", async () => {
+      await armed({ allow: ["merge", "self-review"] })
+      await review()
+      approve()
+      ghReplies["pulls/12/reviews"] = ok([[{ user: { login: "rev" }, state: "APPROVED", commit_id: headSha }]])
+      failing("get", (key) => key.startsWith("review-session/"))
+      expect(await merge()).toMatch(/plugin review record could not be read/)
+      expect(merged()).toEqual([])
+    })
+
+    test("a repeated review call with unreadable storage reports unreadable, not pending", async () => {
+      await armed({ allow: ["self-review"] })
+      await review()
+      failing("get", (key) => key.startsWith("review-session/"))
+      expect(JSON.parse(await review())).toMatchObject({ started: false, state: "unreadable" })
+      expect(creates()).toHaveLength(1)
+    })
+
+    test("a current-export lookup that fails denies the reviewer's directory ask, journals a blocker and shows in status", async () => {
+      await armed({ allow: ["self-review"] })
+      const started = JSON.parse(await review()) as { manifestHash: string }
+      const exported = join(realpathSync(latest()), "review", headSha, started.manifestHash)
+      failing("get", (key) => key.startsWith("review-current/"))
+      const asked = await fake.fire.permission("evaluate", { sessionID: "ses_child", action: "external_directory", resources: [`${exported}/*`], effect: "ask", message: undefined as string | undefined })
+      expect(asked.effect).toBe("deny")
+      expect(blockers().some((entry) => entry.summary.includes("(get:review-current/"))).toBe(true)
+      expect((await status({ action: "status" })).storageErrors).toEqual([expect.stringContaining("(get:review-current/")])
     })
 
     test("refuses a review start when the recorded manifest hash cannot be read", async () => {
