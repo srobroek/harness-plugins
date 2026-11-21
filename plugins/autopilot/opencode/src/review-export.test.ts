@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
+import { SAFE_GIT_ARGS } from "@srobroek/opencode-lib/safe-git"
 import { exportReview, revRefusal, safeRepoPath, verifyExport } from "./review-export.ts"
 import { type Run, runCommand } from "./rundir.ts"
 
@@ -234,6 +235,23 @@ describe("exportReview", () => {
   })
 })
 
+describe("every git call", () => {
+  test("starts with the shared safe global options, and the diffs keep --no-ext-diff and --no-textconv", async () => {
+    const calls: string[][] = []
+    const run: Run = (cwd, command, args, timeout) => {
+      if (command === "git") calls.push(args)
+      return runCommand(cwd, command, args, timeout)
+    }
+    const result = await exportReview({ run, cwd: repo, runDir: mkdtempSync(join(work, "run-")), base: baseSha, head: headSha })
+    expect(result.ok).toBe(true)
+    expect(calls.length).toBeGreaterThanOrEqual(7)
+    for (const args of calls) expect(args.slice(0, SAFE_GIT_ARGS.length)).toEqual([...SAFE_GIT_ARGS])
+    const diffs = calls.filter((args) => args.includes("diff"))
+    expect(diffs).toHaveLength(3)
+    for (const args of diffs) expect(args).toEqual(expect.arrayContaining(["--no-ext-diff", "--no-textconv"]))
+  })
+})
+
 describe("a repository that configures programs or holds a submodule", () => {
   const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" }
   const gitIn = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", env }).trim()
@@ -387,11 +405,46 @@ describe("verifyExport", () => {
     expect(verifyExport(dir, manifestHash)).toMatchObject({ ok: false, reason: expect.stringContaining("manifest") })
   })
 
-  test("refuses an export directory that is a symlink", async () => {
+  test("refuses an export directory that is a symlink to the real, correctly named export", async () => {
     const { dir, manifestHash } = await fresh()
-    const link = `${dir}-link`
-    symlinkSync(dir, link)
-    expect(verifyExport(link, manifestHash).ok).toBe(false)
+    renameSync(dir, `${dir}.real`)
+    symlinkSync(`${dir}.real`, dir)
+    expect(verifyExport(`${dir}.real`, manifestHash)).toMatchObject({ ok: false })
+    expect(verifyExport(dir, manifestHash)).toMatchObject({ ok: false, reason: expect.stringContaining("not a plain directory") })
+  })
+
+  // A model can put anything where a file was. Each of these must be refused promptly: a FIFO must not
+  // block the open, and a file far larger than recorded must be refused before it is allocated (8 GiB
+  // sparse, so an unbounded read would exhaust memory rather than pass).
+  const HUGE = 8 * 1024 * 1024 * 1024
+  const replaced: [string, string[]][] = [
+    ["manifest.json", ["manifest.json"]],
+    ["round.diff", ["round.diff"]],
+    ["diffstat.txt", ["diffstat.txt"]],
+    ["an exported file", ["files", "a.txt"]],
+  ]
+  test.each(replaced)("refuses a FIFO in place of %s without blocking", async (_name, parts) => {
+    const { dir, manifestHash } = await fresh()
+    rmSync(join(dir, ...parts))
+    execFileSync("mkfifo", [join(dir, ...parts)])
+    expect(verifyExport(dir, manifestHash)).toMatchObject({ ok: false, reason: expect.stringContaining("not a regular file") })
+  })
+
+  test.each(replaced)("refuses a file far larger than recorded in place of %s before reading it", async (_name, parts) => {
+    const { dir, manifestHash } = await fresh()
+    truncateSync(join(dir, ...parts), HUGE)
+    expect(verifyExport(dir, manifestHash)).toMatchObject({ ok: false, reason: expect.stringContaining("larger than") })
+  })
+
+  test("a re-export over a published export whose manifest was replaced by a FIFO completes and publishes a fresh one", async () => {
+    const runDir = mkdtempSync(join(work, "run-"))
+    const first = await exportInto(runDir)
+    rmSync(join(first.dir, "manifest.json"))
+    execFileSync("mkfifo", [join(first.dir, "manifest.json")])
+    const again = await exportInto(runDir)
+    expect(again.dir).toBe(first.dir)
+    expect(verifyExport(again.dir, again.manifestHash).ok).toBe(true)
+    expect(readdirSync(join(runDir, "review", headSha)).filter((name) => name.startsWith(".rejected-"))).toHaveLength(1)
   })
 
   test("refuses a missing directory and a recorded hash that is not a lowercase SHA-256", async () => {

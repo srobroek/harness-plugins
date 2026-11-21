@@ -14,8 +14,10 @@
  */
 
 import { createHash, randomUUID } from "node:crypto"
-import { closeSync, constants, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { lstatSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { basename, dirname, join, sep } from "node:path"
+import { readBoundedBytes } from "@srobroek/opencode-lib/bounded-read"
+import { SAFE_GIT_ARGS } from "@srobroek/opencode-lib/safe-git"
 import type { Run } from "./rundir.ts"
 
 export const REVIEW_DIR = "review"
@@ -108,7 +110,7 @@ const diagnostic = (stderr: string) => stderr.trim().slice(0, 300)
 
 /** The full object id `rev` names as a commit, or a refusal. */
 async function resolveCommit(run: Run, cwd: string, name: string, rev: string): Promise<{ ok: true; sha: string } | Refusal> {
-  const result = await run(cwd, "git", ["rev-parse", "--verify", "--quiet", `${rev}^{commit}`], GIT_TIMEOUT_MS)
+  const result = await run(cwd, "git", [...SAFE_GIT_ARGS, "rev-parse", "--verify", "--quiet", `${rev}^{commit}`], GIT_TIMEOUT_MS)
   const sha = result.stdout.trim()
   if (!result.ok || !FULL_OBJECT_ID.test(sha)) return refuse(`${name} "${rev}" is not a commit in this repository`)
   return { ok: true, sha }
@@ -117,7 +119,7 @@ async function resolveCommit(run: Run, cwd: string, name: string, rev: string): 
 /** The tree entries of `paths` at `head`, or a refusal carrying git's diagnostic. Literal pathspecs: a file named like a pathspec (":(top)x") is a name here, not magic. */
 async function listTree(run: Run, cwd: string, head: string, paths: string[]): Promise<{ ok: true; tree: Map<string, TreeEntry> } | Refusal> {
   if (paths.length === 0) return { ok: true, tree: new Map() }
-  const listed = await run(cwd, "git", ["--literal-pathspecs", "ls-tree", "-z", "-l", head, "--", ...paths], GIT_TIMEOUT_MS)
+  const listed = await run(cwd, "git", [...SAFE_GIT_ARGS, "--literal-pathspecs", "ls-tree", "-z", "-l", head, "--", ...paths], GIT_TIMEOUT_MS)
   return listed.ok ? { ok: true, tree: parseLsTree(listed.stdout) } : refuse(`git ls-tree failed: ${diagnostic(listed.stderr)}`)
 }
 
@@ -159,21 +161,21 @@ export async function exportReview(input: ExportInput): Promise<ExportResult> {
   const head = await resolveCommit(run, cwd, "head", input.head as string)
   if (!head.ok) return head
 
-  const merge = await run(cwd, "git", ["merge-base", base.sha, head.sha], GIT_TIMEOUT_MS)
+  const merge = await run(cwd, "git", [...SAFE_GIT_ARGS, "merge-base", base.sha, head.sha], GIT_TIMEOUT_MS)
   const mergeBase = merge.stdout.trim()
   if (!merge.ok || !FULL_OBJECT_ID.test(mergeBase)) return refuse(`base ${base.sha} and head ${head.sha} have no merge base`)
 
   const range = `${base.sha}...${head.sha}`
-  const names = await run(cwd, "git", ["diff", "--name-only", "-z", "--diff-filter=d", ...DIFF_FLAGS, range, "--"], GIT_TIMEOUT_MS)
+  const names = await run(cwd, "git", [...SAFE_GIT_ARGS, "diff", "--name-only", "-z", "--diff-filter=d", ...DIFF_FLAGS, range, "--"], GIT_TIMEOUT_MS)
   if (!names.ok) return refuse(`git diff failed: ${diagnostic(names.stderr)}`)
   const changed = names.stdout.split("\0").filter((name) => name !== "")
   if (changed.length > limits.files) return refuse(`${changed.length} changed files, above the cap of ${limits.files}; review a smaller range`)
 
-  const diff = await run(cwd, "git", ["diff", ...DIFF_FLAGS, range, "--"], GIT_TIMEOUT_MS)
+  const diff = await run(cwd, "git", [...SAFE_GIT_ARGS, "diff", ...DIFF_FLAGS, range, "--"], GIT_TIMEOUT_MS)
   if (!diff.ok) return refuse(`git diff failed: ${diagnostic(diff.stderr)}`)
   const diffBytes = Buffer.byteLength(diff.stdout)
   if (diffBytes > limits.diffBytes) return refuse(`diff is ${diffBytes} bytes, above the cap of ${limits.diffBytes}; review a smaller range`)
-  const stat = await run(cwd, "git", ["diff", "--stat=160,120", ...DIFF_FLAGS, range, "--"], GIT_TIMEOUT_MS)
+  const stat = await run(cwd, "git", [...SAFE_GIT_ARGS, "diff", "--stat=160,120", ...DIFF_FLAGS, range, "--"], GIT_TIMEOUT_MS)
   if (!stat.ok) return refuse(`git diff --stat failed: ${diagnostic(stat.stderr)}`)
 
   const skipped: SkippedFile[] = []
@@ -197,7 +199,7 @@ export async function exportReview(input: ExportInput): Promise<ExportResult> {
 
   const contents: { path: string; text: string }[] = []
   for (const { path } of wanted) {
-    const shown = await run(cwd, "git", ["show", "--no-textconv", `${head.sha}:${path}`], GIT_TIMEOUT_MS)
+    const shown = await run(cwd, "git", [...SAFE_GIT_ARGS, "show", "--no-textconv", `${head.sha}:${path}`], GIT_TIMEOUT_MS)
     if (!shown.ok) return refuse(`git show failed for ${path}: ${diagnostic(shown.stderr)}`)
     if (shown.stdout.includes("\0")) skipped.push({ path, reason: "binary" })
     else contents.push({ path, text: shown.stdout })
@@ -308,18 +310,19 @@ function readManifest(value: unknown): { ok: true; manifest: Manifest } | Refusa
   return { ok: true, manifest: value as unknown as Manifest }
 }
 
-/** The bytes of a regular file read without following a symlink, or `undefined`. */
-function readRegular(path: string): Buffer | undefined {
-  try {
-    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
-    try {
-      return readFileSync(fd)
-    } finally {
-      closeSync(fd)
-    }
-  } catch {
-    return undefined
-  }
+/** A manifest this large is not one `exportReview` wrote: 300 files at a few hundred bytes each. */
+const MAX_MANIFEST_BYTES = 1024 * 1024
+
+/**
+ * The bytes of `name` at `path`, read through the shared bounded reader: a FIFO, device or symlink is
+ * refused without being opened, and a file above `maxBytes` is refused before any buffer is allocated.
+ * The directory is model-writable, so neither a blocking open nor a huge allocation may be possible.
+ */
+function readExact(path: string, name: string, maxBytes: number): { ok: true; bytes: Buffer } | Refusal {
+  const read = readBoundedBytes(path, maxBytes)
+  if (read.kind === "bytes") return { ok: true, bytes: read.bytes }
+  if (read.kind === "absent") return refuse(`${name} is missing`)
+  return refuse(read.reason === "too-large" ? `${name} is larger than the ${maxBytes} bytes allowed` : `${name} is not a regular file`)
 }
 
 /**
@@ -337,8 +340,9 @@ export function verifyExport(dir: string, recordedHash: string): VerifyResult {
   const root = lstatOrUndefined(dir)
   if (root === undefined) return refuse(`${dir} does not exist`)
   if (!root.isDirectory()) return refuse(`${dir} is not a plain directory (a symlink or a file)`)
-  const manifestBytes = readRegular(join(dir, MANIFEST))
-  if (manifestBytes === undefined) return refuse(`${MANIFEST} is missing or is not a regular file`)
+  const manifestRead = readExact(join(dir, MANIFEST), MANIFEST, MAX_MANIFEST_BYTES)
+  if (!manifestRead.ok) return manifestRead
+  const manifestBytes = manifestRead.bytes
   if (sha256(manifestBytes) !== recordedHash) return refuse("manifest hash differs from the recorded one: the export was changed or replaced")
   let parsed: unknown
   try {
@@ -362,8 +366,9 @@ export function verifyExport(dir: string, recordedHash: string): VerifyResult {
   for (const name of top) if (lstatOrUndefined(join(dir, name)) === undefined) return refuse(`${name} is missing`)
 
   for (const [name, recorded] of [["round.diff", manifest.diff], ["diffstat.txt", manifest.diffstat]] as const) {
-    const bytes = readRegular(join(dir, name))
-    if (bytes === undefined) return refuse(`${name} is missing or is not a regular file`)
+    const read = readExact(join(dir, name), name, recorded.bytes)
+    if (!read.ok) return read
+    const { bytes } = read
     if (bytes.length !== recorded.bytes || sha256(bytes) !== recorded.sha256) return refuse(`${name} differs from its recorded SHA-256`)
   }
 
@@ -390,8 +395,9 @@ export function verifyExport(dir: string, recordedHash: string): VerifyResult {
   if (walked) return walked
   for (const file of manifest.files) {
     if (!found.has(file.path)) return refuse(`missing file ${file.path}`)
-    const bytes = readRegular(join(filesRoot, file.path))
-    if (bytes === undefined) return refuse(`${file.path} is not a regular file`)
+    const read = readExact(join(filesRoot, file.path), file.path, file.bytes)
+    if (!read.ok) return read
+    const { bytes } = read
     if (bytes.length !== file.bytes || sha256(bytes) !== file.sha256) return refuse(`${file.path} differs from its recorded SHA-256`)
   }
   return { ok: true, manifest, manifestHash: recordedHash }

@@ -1697,15 +1697,17 @@ function isDir(path) {
 // lib/src/bounded-read.ts
 import { closeSync, constants, fstatSync, lstatSync as lstatSync2, openSync, readSync } from "fs";
 var MAX_LEDGER_FILE_BYTES = 64 * 1024;
-function readBounded(path) {
+function readBoundedBytes(path, maxBytes) {
   let fd;
   try {
     if (!lstatSync2(path).isFile())
-      return { kind: "unreadable" };
+      return { kind: "unreadable", reason: "not-regular" };
     fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const info = fstatSync(fd);
-    if (!info.isFile() || info.size > MAX_LEDGER_FILE_BYTES)
-      return { kind: "unreadable" };
+    if (!info.isFile())
+      return { kind: "unreadable", reason: "not-regular" };
+    if (info.size > maxBytes)
+      return { kind: "unreadable", reason: "too-large" };
     const buffer = Buffer.alloc(info.size);
     let offset = 0;
     while (offset < buffer.length) {
@@ -1714,13 +1716,22 @@ function readBounded(path) {
         break;
       offset += read;
     }
-    return { kind: "text", text: buffer.toString("utf8", 0, offset) };
+    return { kind: "bytes", bytes: offset === buffer.length ? buffer : buffer.subarray(0, offset) };
   } catch (error) {
-    return error.code === "ENOENT" ? { kind: "absent" } : { kind: "unreadable" };
+    const code = error.code;
+    if (code === "ENOENT")
+      return { kind: "absent" };
+    return { kind: "unreadable", reason: code === "ELOOP" ? "not-regular" : "io" };
   } finally {
     if (fd !== undefined)
       closeSync(fd);
   }
+}
+function readBounded(path) {
+  const read = readBoundedBytes(path, MAX_LEDGER_FILE_BYTES);
+  if (read.kind === "absent")
+    return { kind: "absent" };
+  return read.kind === "bytes" ? { kind: "text", text: read.bytes.toString("utf8") } : { kind: "unreadable" };
 }
 function readSmallRegularFile(path) {
   const read = readBounded(path);

@@ -54,11 +54,10 @@ let onGh: ((line: string, reply: { ok: boolean; stdout: string; stderr: string }
 
 /** When set, the git calls `autopilot_export_review` makes run for real in this repository. */
 let realRepo: string | undefined
-const EXPORT_GIT = new Set(["diff", "ls-tree", "show", "merge-base", "--literal-pathspecs"])
 
 const run: Run = async (_cwd, command, args, _timeout, env) => {
   calls.push({ command, args, ...(env ? { env } : {}) })
-  if (realRepo !== undefined && command === "git" && (EXPORT_GIT.has(args[0] ?? "") || (args[0] === "rev-parse" && args.includes("--verify")))) return runCommand(realRepo, command, args)
+  if (realRepo !== undefined && command === "git" && args.includes("--no-optional-locks")) return runCommand(realRepo, command, args)
   const json = (value: unknown) => ({ ok: true, stdout: JSON.stringify(value), stderr: "" })
   if (command === "gh") {
     const line = args.join(" ")
