@@ -5968,12 +5968,25 @@ var src_default = Plugin.define({
     const classified = {};
     const unclassifiable = new Set;
     const classifying = new Set;
+    const snapshotOptions = () => ({ agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes, implicit: options.implicit });
+    let committed = snapshotOptions();
+    let tentative = false;
+    const commit = () => {
+      committed = snapshotOptions();
+    };
+    const setImplicit = (implicit) => {
+      options.implicit = implicit;
+      if (!tentative)
+        committed = { ...committed, implicit };
+    };
     const rebuild = () => {
       const set = buildTiers(settings, available, refs);
       options.roles = set.roles;
       options.tiers = set.tiers;
       options.classes = set.classes;
       derived = set.derived;
+      if (!tentative)
+        commit();
     };
     const references = await ctx.model.transform((editor) => {
       try {
@@ -6020,7 +6033,7 @@ ${refs.size}`;
         failed: unclassifiable,
         autoGeneral: auto2 !== undefined
       });
-      options.implicit = plan.implicit;
+      setImplicit(plan.implicit);
       if (plan.pending.length > 0)
         scheduleClassify(plan.pending);
       const desired = desiredModels(editor.list(), options, available, healthView(health2, Date.now()));
@@ -6127,7 +6140,7 @@ ${refs.size}`;
         failed: unclassifiable,
         autoGeneral: auto2 !== undefined
       });
-      options.implicit = { ...options.implicit, ...late.implicit };
+      setImplicit({ ...options.implicit, ...late.implicit });
       if (late.pending.length > 0)
         scheduleClassify(late.pending);
       const desired = desiredModels(agents, options, available, view());
@@ -6419,7 +6432,7 @@ ${refs.size}`;
       const stored = await ctx.storage.get(`${SPAWN_ROLE_KEY_PREFIX}${childID}`).catch(() => {
         return;
       });
-      return typeof stored === "string" && Object.hasOwn(options.roles, stored) ? stored : undefined;
+      return typeof stored === "string" && Object.hasOwn(committed.roles, stored) ? stored : undefined;
     };
     const childModels = new Map;
     const snapshotOf = async (childID) => {
@@ -6665,6 +6678,7 @@ ${refs.size}`;
       warn(`session ${event.sessionID}: ${modelLabel(failed)} failed (${kind}); retrying it in ${duration(delay)}.`);
     };
     const triedModels = new Map;
+    const retryQueue = serial();
     const retries = runtime.runtimeFallback ? await ctx.session.hook("retry", async (event) => {
       if (event.attempt <= 2)
         triedModels.delete(event.sessionID);
@@ -6678,17 +6692,29 @@ ${refs.size}`;
         return keepOnModel(event, kind, failed);
       if (switching.has(event.sessionID))
         return keepOnModel(event, kind, failed);
+      let abandoned = false;
+      const live = () => !abandoned && !controller.signal.aborted;
+      const stay = () => {
+        if (live())
+          keepOnModel(event, kind, failed);
+      };
       try {
-        await queue(async () => {
+        await retryQueue(() => withTimeout((async () => {
           const cooldownMs = await markFailed(failed, kind, error);
+          if (!live())
+            return;
           const agent = (await listAgents()).find((a) => a.id === event.agent);
+          if (!live())
+            return;
           const spawnRole = await spawnRoleOf(event.sessionID);
-          const role = spawnRole ?? (agent === undefined ? undefined : roleOf(agent, options.agents, options.implicit));
+          if (!live())
+            return;
+          const role = spawnRole ?? (agent === undefined ? undefined : roleOf(agent, committed.agents, committed.implicit));
           const tried = triedModels.get(event.sessionID) ?? new Set;
           triedModels.set(event.sessionID, tried.add(healthKey(failed)));
           const recent = healthView(health2, Date.now(), RECENT_MS);
           const target = retryTarget({
-            options,
+            options: { ...options, ...committed },
             available,
             health: (ref) => tried.has(healthKey(ref)) ? 0 : recent(ref),
             role,
@@ -6698,18 +6724,25 @@ ${refs.size}`;
             hostRetries: runtime.hostRetries
           });
           if (target === undefined)
-            return keepOnModel(event, kind, failed);
+            return stay();
+          if (!live())
+            return;
           const outcome = await switchWithin(event.sessionID, target.model, spawnRole);
           const note = switchNote({ failed, kind, cooldownMs, target });
-          if (outcome === "switched") {
+          if (outcome === "switched" && live()) {
             event.decision = { retry: true, delay: 0 };
             warn(`session ${event.sessionID}: ${note}`);
             return;
           }
           warn(`session ${event.sessionID}: switching to ${target.model.providerID}/${target.model.id} ${outcome === "late" ? "is still pending" : "failed"}.`);
-          keepOnModel(event, kind, failed);
-        });
+          stay();
+        })(), runtime.switchTimeoutMs + lookupBound()).catch((error) => {
+          abandoned = true;
+          throw error;
+        }));
       } catch (error) {
+        if (error instanceof LookupTimeout && !controller.signal.aborted)
+          keepOnModel(event, kind, failed);
         warn(`could not switch the failing request to another model`, { error: String(error) });
       }
     }) : undefined;
@@ -7526,15 +7559,17 @@ ${refs.size}`;
       if (tiers2 === undefined ? !agentsChanged : !force && key === fileTiers && !agentsChanged)
         return;
       await exclusive(async () => {
-        const previous = { settings, agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes, derived };
+        const previous = { settings, agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes, implicit: options.implicit, derived };
         const restore = () => {
           settings = previous.settings;
           options.agents = previous.agents;
           options.roles = previous.roles;
           options.tiers = previous.tiers;
           options.classes = previous.classes;
+          options.implicit = previous.implicit;
           derived = previous.derived;
         };
+        tentative = true;
         try {
           if (tiers2 !== undefined)
             settings = parseTierSettings({ ...pluginOptions, tiers: tiers2 });
@@ -7544,8 +7579,12 @@ ${refs.size}`;
           attempts = 0;
           await check2(true, true);
           await refreshSubagentTool(true);
+          tentative = false;
+          commit();
         } catch (error) {
+          tentative = false;
           restore();
+          commit();
           attempts = 0;
           restoreFailed = true;
           await check2(true, true).catch(async () => {

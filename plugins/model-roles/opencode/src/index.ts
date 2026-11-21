@@ -305,12 +305,29 @@ export default Plugin.define({
     const unclassifiable = new Set<string>()
     const classifying = new Set<string>()
 
+    /**
+     * The tier state the retry hook resolves against. It follows `options` except while a reload has
+     * published tentative tiers it has not yet registered: a retry on its own queue never sees those, so a
+     * failed registration cannot leave a session switched to a tier that was rolled back.
+     */
+    const snapshotOptions = () => ({ agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes, implicit: options.implicit })
+    let committed = snapshotOptions()
+    let tentative = false
+    const commit = () => {
+      committed = snapshotOptions()
+    }
+    /** Implicit assignments follow the committed snapshot too, except while a reload's registration has them tentative. */
+    const setImplicit = (implicit: typeof options.implicit) => {
+      options.implicit = implicit
+      if (!tentative) committed = { ...committed, implicit }
+    }
     const rebuild = () => {
       const set = buildTiers(settings, available as CatalogModel[], refs)
       options.roles = set.roles
       options.tiers = set.tiers
       options.classes = set.classes
       derived = set.derived
+      if (!tentative) commit()
     }
 
     // models.dev first-party records (anthropic, openai, google), connected or not, price
@@ -367,7 +384,7 @@ export default Plugin.define({
         failed: unclassifiable,
         autoGeneral: auto !== undefined,
       })
-      options.implicit = plan.implicit
+      setImplicit(plan.implicit)
       if (plan.pending.length > 0) scheduleClassify(plan.pending)
       const desired = desiredModels(editor.list(), options, available, healthView(health, Date.now()))
       for (const [id, ref] of desired) {
@@ -497,7 +514,7 @@ export default Plugin.define({
         failed: unclassifiable,
         autoGeneral: auto !== undefined,
       })
-      options.implicit = { ...options.implicit, ...late.implicit }
+      setImplicit({ ...options.implicit, ...late.implicit })
       if (late.pending.length > 0) scheduleClassify(late.pending)
       const desired: Map<string, ModelRef> = desiredModels(agents, options, available, view())
       const stale = staleAgents(agents, desired)
@@ -893,7 +910,7 @@ export default Plugin.define({
       const known = childRoles.get(childID)
       if (known !== undefined) return known
       const stored = await ctx.storage.get(`${SPAWN_ROLE_KEY_PREFIX}${childID}`).catch(() => undefined)
-      return typeof stored === "string" && Object.hasOwn(options.roles, stored) ? stored : undefined
+      return typeof stored === "string" && Object.hasOwn(committed.roles, stored) ? stored : undefined
     }
 
     /** The model each child resolved to, by child id; storage keeps it across reloads. */
@@ -1188,6 +1205,8 @@ export default Plugin.define({
      * request never goes back to one, however slowly they fail, so switching ends.
      */
     const triedModels = new Map<string, Set<string>>()
+    /** The retry hook's own queue, apart from `queue`, so a stalled retry and a stalled event cannot block each other. */
+    const retryQueue = serial()
 
     const retries = runtime.runtimeFallback ? await ctx.session.hook("retry", async (event) => {
       // The first retry of a request starts a fresh run.
@@ -1201,17 +1220,28 @@ export default Plugin.define({
       if (staysOnModel(kind, event.attempt, runtime.hostRetries)) return keepOnModel(event, kind, failed)
       // A switch from an earlier retry is still landing: the host's next attempt reloads it.
       if (switching.has(event.sessionID)) return keepOnModel(event, kind, failed)
+      // Set once the wait below gave up: the host has its decision by then, so a late body must not change it.
+      let abandoned = false
+      const live = () => !abandoned && !controller.signal.aborted
+      const stay = () => {
+        if (live()) keepOnModel(event, kind, failed)
+      }
       try {
-        await queue(async () => {
+        // Each task is bounded inside the queue, so a host call that never answers frees it when the time
+        // is up; abandoned or disposed work never starts a switch.
+        await retryQueue(() => withTimeout((async () => {
           const cooldownMs = await markFailed(failed, kind, error)
+          if (!live()) return
           const agent = (await listAgents()).find((a) => a.id === event.agent)
+          if (!live()) return
           const spawnRole = await spawnRoleOf(event.sessionID)
-          const role = spawnRole ?? (agent === undefined ? undefined : roleOf(agent, options.agents, options.implicit))
+          if (!live()) return
+          const role = spawnRole ?? (agent === undefined ? undefined : roleOf(agent, committed.agents, committed.implicit))
           const tried = triedModels.get(event.sessionID) ?? new Set<string>()
           triedModels.set(event.sessionID, tried.add(healthKey(failed)))
           const recent = healthView(health, Date.now(), RECENT_MS)
           const target = retryTarget({
-            options,
+            options: { ...options, ...committed },
             available,
             health: (ref) => (tried.has(healthKey(ref)) ? 0 : recent(ref)),
             role,
@@ -1220,10 +1250,11 @@ export default Plugin.define({
             attempt: event.attempt,
             hostRetries: runtime.hostRetries,
           })
-          if (target === undefined) return keepOnModel(event, kind, failed)
+          if (target === undefined) return stay()
+          if (!live()) return
           const outcome = await switchWithin(event.sessionID, target.model, spawnRole)
           const note = switchNote({ failed, kind, cooldownMs, target })
-          if (outcome === "switched") {
+          if (outcome === "switched" && live()) {
             event.decision = { retry: true, delay: 0 }
             warn(`session ${event.sessionID}: ${note}`)
             return
@@ -1232,10 +1263,14 @@ export default Plugin.define({
             `session ${event.sessionID}: switching to ${target.model.providerID}/${target.model.id} ${outcome === "late" ? "is still pending" : "failed"}.`,
           )
           // The switch did not happen this time: a transient failure still gets its retry.
-          keepOnModel(event, kind, failed)
-        })
+          stay()
+        })(), runtime.switchTimeoutMs + lookupBound()).catch((error) => {
+          abandoned = true
+          throw error
+        }))
       } catch (error) {
-        // The host's own retry decision stands.
+        // The host's own retry decision stands; a transient failure still gets its retry on its model.
+        if (error instanceof LookupTimeout && !controller.signal.aborted) keepOnModel(event, kind, failed)
         warn(`could not switch the failing request to another model`, { error: String(error) })
       }
     }) : undefined
@@ -2150,15 +2185,17 @@ export default Plugin.define({
       const key = tiers === undefined ? fileTiers : JSON.stringify(tiers)
       if (tiers === undefined ? !agentsChanged : !force && key === fileTiers && !agentsChanged) return
       await exclusive(async () => {
-        const previous = { settings, agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes, derived }
+        const previous = { settings, agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes, implicit: options.implicit, derived }
         const restore = () => {
           settings = previous.settings
           options.agents = previous.agents
           options.roles = previous.roles
           options.tiers = previous.tiers
           options.classes = previous.classes
+          options.implicit = previous.implicit
           derived = previous.derived
         }
+        tentative = true
         try {
           // Spawns wait in `exclusive`, so they see either the old tiers or the new ones once agents and tools follow.
           if (tiers !== undefined) settings = parseTierSettings({ ...pluginOptions, tiers })
@@ -2167,8 +2204,12 @@ export default Plugin.define({
           attempts = 0
           await check(true, true)
           await refreshSubagentTool(true)
+          tentative = false
+          commit()
         } catch (error) {
+          tentative = false
           restore()
+          commit()
           attempts = 0
           restoreFailed = true
           // The agents go back to the restored tiers even when the lookup in `check` stalls: the transform needs no lookup.
