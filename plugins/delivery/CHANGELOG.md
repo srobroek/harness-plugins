@@ -1,3 +1,9 @@
+## delivery [0.9.4](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.3...delivery--v0.9.4) (2026-11-21)
+
+### Bug Fixes
+
+* **autopilot:** review-only approval, bound worktree identity, full checks and explicit merge method ([a888673](https://github.com/srobroek/harness-plugins/commit/a888673f410701b98818d437fb5f22984bac0ed8))
+
 ## delivery [0.9.3](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.2...delivery--v0.9.3) (2026-11-21)
 
 ### Bug Fixes
