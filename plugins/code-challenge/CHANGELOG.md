@@ -1,3 +1,9 @@
+## code-challenge [1.3.1](https://github.com/srobroek/harness-plugins/compare/code-challenge--v1.3.0...code-challenge--v1.3.1) (2026-11-21)
+
+### Bug Fixes
+
+* **code-challenge:** close dogfood friction in skill, schema and validation ([043a8b3](https://github.com/srobroek/harness-plugins/commit/043a8b39057ec8fca54d09adebb0532c2154e330))
+
 ## code-challenge [1.3.0](https://github.com/srobroek/harness-plugins/compare/code-challenge--v1.2.0...code-challenge--v1.3.0) (2026-11-21)
 
 ### Features
