@@ -3730,31 +3730,38 @@ describe("pending cleanup: one remover per worktree", () => {
     })
   })
 
-  test("a denial recorded while any repository observation of the final check runs keeps the worktree", async () => {
+  test.each([
+    ["a denial is recorded", "cleanup was denied"],
+    ["a session in the worktree starts running", "a session is running"],
+  ] as const)("%s while any repository observation of the final check runs: the worktree is kept", async (event, reason) => {
     // Every Git observation the final check makes is a wait in which another call can record a
-    // denial. The denial has to be seen whichever of those waits it lands in.
+    // denial or a session can start. The change has to be seen whichever of those waits it lands in.
     let observations = 0
-    let denyAt = 0
-    let deny: () => void = () => {}
+    let fireAt = 0
+    let fire: () => void = () => {}
+    let busy = false
     const observe: GitRunner = (argv, cwd, timeoutMs, signal) => {
       observations++
-      if (observations === denyAt) deny()
+      if (observations === fireAt) fire()
       return spawnGit(argv, cwd, timeoutMs, signal)
     }
-    const dry = await harness("final-check-count", { observe })
+    const list = async () => ({ data: busy ? [{ time: { busy: 2, idle: 1 } }] : [] })
+    const dry = await harness("final-check-count", { observe, list })
     expect(await dry.pending.removalFor("ses_lead").finalCheck(dry.f.linked)).toBeUndefined()
     const total = observations
     await dry.finish()
     expect(total).toBeGreaterThan(0)
     for (let at = 1; at <= total; at++) {
-      const h = await harness(`final-check-denial-${at}`, { observe })
+      const h = await harness(`final-check-${reason.split(" ")[1]}-${at}`, { observe, list })
       let recorded: Promise<void> = Promise.resolve()
-      deny = () => {
-        recorded = h.pending.record(h.f.receipt, "ses_other", { denied: true })
+      busy = false
+      fire = () => {
+        if (event === "a denial is recorded") recorded = h.pending.record(h.f.receipt, "ses_other", { denied: true })
+        else busy = true
       }
       observations = 0
-      denyAt = at
-      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("cleanup was denied")
+      fireAt = at
+      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain(reason)
       await recorded
       await h.finish()
     }

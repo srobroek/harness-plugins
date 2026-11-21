@@ -241,11 +241,13 @@ export function createPendingCleanup(deps: PendingDeps) {
     (await repositoryContext(cwd, deps.observe, observationMs))?.commonDir ?? null
 
   /** Who may remove `path`: a lane's claim means its owner only; an unreadable claim means no one. */
-  const ownership = async (path: string): Promise<Ownership> => {
-    const common = await commonDir()
+  const ownershipAt = (common: string | null, path: string): Ownership => {
     if (common === null) return { owner: "unknown", reason: "the git common directory could not be resolved" }
     return ownershipOf(readClaim(common, path))
   }
+
+  /** {@link ownershipAt}, with the common directory observed now. */
+  const ownership = async (path: string): Promise<Ownership> => ownershipAt(await commonDir(), path)
 
   /** Landing records by receipt id; `unreadable` when any record could not be read. */
   const landings = async (): Promise<{ byReceipt: Map<string, LandingRecord>; unreadable: boolean; common: string | null }> => {
@@ -370,14 +372,14 @@ export function createPendingCleanup(deps: PendingDeps) {
   /**
    * Whether `path` may be removed by delivery right now: no lane claims it (or can be read to
    * say so) and no session is running in it. Every page of the sessions is read; a lookup that
-   * fails or is incomplete holds. Returns the reason to hold, or undefined.
+   * fails or is incomplete holds. Returns the reason to hold, or undefined. `common` is the git
+   * common directory the caller observed before this check, so the session listing is its only wait.
    */
-  const holdFor = async (path: string): Promise<string | undefined> => {
-    const owned = ownershipDeferral(await ownership(path))
+  const holdAt = async (common: string | null, path: string): Promise<string | undefined> => {
+    const owned = ownershipDeferral(ownershipAt(common, path))
     if (owned !== undefined) return owned
     // Background work any idle gate (this plugin's or the lane owner's) recorded for this directory,
     // and whether the store those records live in can be written at all.
-    const common = await commonDir()
     if (common === null) return "the git common directory could not be resolved"
     const failed = unsafe.get(canonicalDirectory(path))
     if (failed !== undefined) return failed
@@ -409,9 +411,8 @@ export function createPendingCleanup(deps: PendingDeps) {
     }
   }
 
-  /** A denial recorded for `path`, or records that cannot be read, read fresh. */
-  const landingBlock = async (path: string): Promise<string | undefined> => {
-    const common = await commonDir()
+  /** A denial recorded for `path`, or records that cannot be read, read fresh from `common`. */
+  const landingBlockAt = (common: string | null, path: string): string | undefined => {
     if (common === null) return "the git common directory could not be resolved"
     const listed = listLandings(common)
     if (listed.unreadable) return "the landing records could not be read"
@@ -435,15 +436,23 @@ export function createPendingCleanup(deps: PendingDeps) {
     const common = await commonDir()
     if (common === null) return { ok: false, reason: "worktree.held: observed the git common directory could not be resolved, expected a coordination store; nothing was removed" }
     const outcome = await lockedWorktreeRemoval(common, worktree, { sessionID: "delivery", now, ...deps.lock }, {
-      recheck: async () => (await holdFor(worktree)) ?? (await landingBlock(worktree)),
+      recheck: () => holdCheck(worktree),
       remove: run,
     })
     if (outcome.removed) return outcome.value
     return { ok: false, reason: `worktree.held: observed ${outcome.reason}, expected no owner, hold, denial or competing remover; nothing was removed` }
   }
 
-  /** The last look before the removal call itself (claims, holds, sessions, denials), read fresh. */
-  const holdCheck = async (worktree: string): Promise<string | undefined> => (await holdFor(worktree)) ?? (await landingBlock(worktree))
+  /** The hold and the denials for `worktree`, both read after the one observation of the common directory. */
+  const holdCheckAt = async (common: string | null, worktree: string): Promise<string | undefined> =>
+    (await holdAt(common, worktree)) ?? landingBlockAt(common, worktree)
+
+  /**
+   * The last look before the removal call itself (claims, holds, sessions, denials), read fresh. The
+   * common directory is observed first, so no Git wait sits between these reads and the removal: a
+   * session that starts or a denial recorded during such a wait would go unseen.
+   */
+  const holdCheck = async (worktree: string): Promise<string | undefined> => holdCheckAt(await commonDir(), worktree)
 
   /**
    * The removal dependencies every delivery remover passes to `cleanupDelivery`. The worktree goes
@@ -462,10 +471,8 @@ export function createPendingCleanup(deps: PendingDeps) {
     return {
       removalSection: section,
       finalCheck: async (worktree: string): Promise<string | undefined> => {
-        // The common directory is observed first: no wait may sit between the hold and denial check
-        // and the removal, or a denial recorded during it would go unseen.
         const common = await commonDir()
-        const held = await holdCheck(worktree)
+        const held = await holdCheckAt(common, worktree)
         if (held !== undefined) return held
         const recorded = common === null ? [] : landingsFor(listLandings(common).records, worktree).map((entry) => entry.sessionID)
         roots = [...new Set([...sessionIDs, ...recorded].filter((id): id is string => typeof id === "string"))]
@@ -547,7 +554,7 @@ export function createPendingCleanup(deps: PendingDeps) {
       const meta = recorded.byReceipt.get(receipt.receiptId)
       const recentlyTried = now() - (retriedAt.get(receipt.receiptId) ?? Number.NEGATIVE_INFINITY) < RETRY_WINDOW_MS
       const worktree = receipt.worktree.path as string
-      const hold = await holdFor(worktree)
+      const hold = await holdAt(await commonDir(), worktree)
       const beads = hold !== undefined || recentlyTried ? "unknown" : await ledgerState(receipt, cwd, path, deps.cleanup?.run, undefined, observationMs, deps.observe)
       const decision = pendingCleanupAction(receipt, {
         worktreeGone: false,

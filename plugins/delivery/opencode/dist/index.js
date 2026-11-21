@@ -5932,12 +5932,12 @@ function createPendingCleanup(deps) {
     return next;
   };
   const commonDir = async () => (await repositoryContext(cwd, deps.observe, observationMs))?.commonDir ?? null;
-  const ownership = async (path) => {
-    const common = await commonDir();
+  const ownershipAt = (common, path) => {
     if (common === null)
       return { owner: "unknown", reason: "the git common directory could not be resolved" };
     return ownershipOf(readClaim(common, path));
   };
+  const ownership = async (path) => ownershipAt(await commonDir(), path);
   const landings = async () => {
     const common = await commonDir();
     if (common === null)
@@ -6036,11 +6036,10 @@ function createPendingCleanup(deps) {
       await write(entry.receiptId, entry.worktree, () => rest, { clearDenial: true });
     }
   };
-  const holdFor = async (path) => {
-    const owned = ownershipDeferral(await ownership(path));
+  const holdAt = async (common, path) => {
+    const owned = ownershipDeferral(ownershipAt(common, path));
     if (owned !== undefined)
       return owned;
-    const common = await commonDir();
     if (common === null)
       return "the git common directory could not be resolved";
     const failed = unsafe.get(canonicalDirectory(path));
@@ -6077,8 +6076,7 @@ function createPendingCleanup(deps) {
       return `the sessions in ${path} could not be listed`;
     }
   };
-  const landingBlock = async (path) => {
-    const common = await commonDir();
+  const landingBlockAt = (common, path) => {
     if (common === null)
       return "the git common directory could not be resolved";
     const listed = listLandings(common);
@@ -6096,14 +6094,15 @@ function createPendingCleanup(deps) {
     if (common === null)
       return { ok: false, reason: "worktree.held: observed the git common directory could not be resolved, expected a coordination store; nothing was removed" };
     const outcome = await lockedWorktreeRemoval(common, worktree, { sessionID: "delivery", now, ...deps.lock }, {
-      recheck: async () => await holdFor(worktree) ?? await landingBlock(worktree),
+      recheck: () => holdCheck(worktree),
       remove: run
     });
     if (outcome.removed)
       return outcome.value;
     return { ok: false, reason: `worktree.held: observed ${outcome.reason}, expected no owner, hold, denial or competing remover; nothing was removed` };
   };
-  const holdCheck = async (worktree) => await holdFor(worktree) ?? await landingBlock(worktree);
+  const holdCheckAt = async (common, worktree) => await holdAt(common, worktree) ?? landingBlockAt(common, worktree);
+  const holdCheck = async (worktree) => holdCheckAt(await commonDir(), worktree);
   const removalFor = (...sessionIDs) => {
     const client = ctx.session;
     let roots = [];
@@ -6112,7 +6111,7 @@ function createPendingCleanup(deps) {
       removalSection: section,
       finalCheck: async (worktree) => {
         const common = await commonDir();
-        const held = await holdCheck(worktree);
+        const held = await holdCheckAt(common, worktree);
         if (held !== undefined)
           return held;
         const recorded = common === null ? [] : landingsFor(listLandings(common).records, worktree).map((entry) => entry.sessionID);
@@ -6183,7 +6182,7 @@ function createPendingCleanup(deps) {
       const meta = recorded.byReceipt.get(receipt.receiptId);
       const recentlyTried = now() - (retriedAt.get(receipt.receiptId) ?? Number.NEGATIVE_INFINITY) < RETRY_WINDOW_MS;
       const worktree = receipt.worktree.path;
-      const hold = await holdFor(worktree);
+      const hold = await holdAt(await commonDir(), worktree);
       const beads = hold !== undefined || recentlyTried ? "unknown" : await ledgerState(receipt, cwd, path, deps.cleanup?.run, undefined, observationMs, deps.observe);
       const decision = pendingCleanupAction(receipt, {
         worktreeGone: false,
