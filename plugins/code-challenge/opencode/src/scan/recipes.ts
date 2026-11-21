@@ -40,7 +40,7 @@ export const RECIPES: readonly Recipe[] = [
     binary: "biome",
     install: "bunx",
     package: "@biomejs/biome",
-    args: ["lint", "--config-path={cfg}", "--reporter=json", "--max-diagnostics=1000", "{files}"],
+    args: ["lint", "--config-path={cfg}", "--reporter=json", "--max-diagnostics=1000", "--", "{files}"],
     // vcs.useIgnoreFile makes biome fail outside a git repository or without a .gitignore.
     configFiles: ({ hasGitignore }) => ({
       "biome.json": JSON.stringify({
@@ -68,7 +68,7 @@ export const RECIPES: readonly Recipe[] = [
     install: "bunx",
     package: "oxlint",
     // `-c` with an empty config isolates from .oxlintrc.json; -A all then -D picks the categories.
-    args: ["-c", "{cfg}/oxlintrc.json", "-A", "all", "-D", "perf", "-D", "correctness", "-f", "json", "{files}"],
+    args: ["-c", "{cfg}/oxlintrc.json", "-A", "all", "-D", "perf", "-D", "correctness", "-f", "json", "--", "{files}"],
     configFiles: () => ({ "oxlintrc.json": OXLINT_CONFIG }),
     needsBuild: false,
     acceptedExitCodes: [0, 1],
@@ -89,7 +89,7 @@ export const RECIPES: readonly Recipe[] = [
     install: "tool-dir",
     package: "eslint",
     // @e18e/eslint-plugin replaces eslint-plugin-depend (its ban-dependencies rule); 0.8.1 verified.
-    args: ["--no-config-lookup", "-c", "{cfg}/eslint.config.mjs", "-f", "json", "{files}"],
+    args: ["--no-config-lookup", "-c", "{cfg}/eslint.config.mjs", "-f", "json", "--", "{files}"],
     configFiles: () => ({
       "eslint.config.mjs": 'import e18e from "@e18e/eslint-plugin"\nexport default [e18e.configs.recommended]\n',
     }),
@@ -162,7 +162,8 @@ export const RECIPES: readonly Recipe[] = [
       "--preview",
       "--output-format",
       "json",
-      "{files}",
+      "--force-exclude",
+      "--", "{files}",
     ],
     needsBuild: false,
     acceptedExitCodes: [0, 1],
@@ -178,7 +179,7 @@ export const RECIPES: readonly Recipe[] = [
     binary: "vulture",
     install: "uvx",
     package: "vulture",
-    args: ["--min-confidence", "80", "{files}"],
+    args: ["--min-confidence", "80", "--", "{files}"],
     needsBuild: false,
     acceptedExitCodes: [0, 3],
     parser: "vulture-text",
@@ -321,7 +322,7 @@ export const RECIPES: readonly Recipe[] = [
     binary: "lizard",
     install: "uvx",
     package: "lizard",
-    args: ["--csv", "-x", "*/node_modules/*", "-x", "*/.git/*", "-x", "*/dist/*", "-x", "*/target/*", "{files}"],
+    args: ["--csv", "-x", "*/node_modules/*", "-x", "*/.git/*", "-x", "*/dist/*", "-x", "*/target/*", "--", "{files}"],
     needsBuild: false,
     acceptedExitCodes: [0, 1],
     parser: "lizard-csv",
@@ -336,7 +337,7 @@ export const RECIPES: readonly Recipe[] = [
     binary: "jscpd",
     install: "bunx",
     package: "jscpd",
-    args: ["--min-lines", "5", "--min-tokens", "50", "--reporters", "json", "--output", "{out}", "--silent", "{files}"],
+    args: ["--min-lines", "5", "--min-tokens", "50", "--reporters", "json", "--output", "{out}", "--silent", "--", "{files}"],
     outputFile: "jscpd-report.json",
     needsBuild: false,
     acceptedExitCodes: [0, 1],
