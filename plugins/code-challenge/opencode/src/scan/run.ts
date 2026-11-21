@@ -329,6 +329,8 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
       // eslint resolves its plugin from the config's own location, so that config sits in the tools directory.
       const cfg = recipe.install === "tool-dir" ? ensureToolsDir(p) : ensureDir(base, "cfg", name)
       const out = ensureDir(base, "out", name)
+      // A reused runId keeps the previous run's report; a tool that exits cleanly without writing one must not be read as current.
+      if (recipe.outputFile) rmSync(join(out, recipe.outputFile), { recursive: true, force: true })
       for (const [file, content] of Object.entries(
         recipe.configFiles?.({ root, hasGitignore: p.hasGitignore, toolsDir: p.toolsDir, fromConfigDir }) ?? {},
       )) {

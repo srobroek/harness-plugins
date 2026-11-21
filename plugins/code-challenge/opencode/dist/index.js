@@ -3842,6 +3842,8 @@ async function runScan(input, deps = {}, signal) {
       }
       const cfg = recipe.install === "tool-dir" ? ensureToolsDir(p) : ensureDir(base, "cfg", name);
       const out = ensureDir(base, "out", name);
+      if (recipe.outputFile)
+        rmSync(join11(out, recipe.outputFile), { recursive: true, force: true });
       for (const [file, content] of Object.entries(recipe.configFiles?.({ root, hasGitignore: p.hasGitignore, toolsDir: p.toolsDir, fromConfigDir }) ?? {})) {
         writeFileNoFollow(join11(cfg, file), content);
       }
