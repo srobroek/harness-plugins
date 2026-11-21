@@ -1774,14 +1774,14 @@ function isDir(path) {
 // lib/src/bounded-read.ts
 import { closeSync, constants, fstatSync, lstatSync as lstatSync2, openSync, readSync } from "fs";
 var MAX_LEDGER_FILE_BYTES = 64 * 1024;
-function readBounded(path) {
+function readBounded(path, maxBytes = MAX_LEDGER_FILE_BYTES) {
   let fd;
   try {
     if (!lstatSync2(path).isFile())
       return { kind: "unreadable" };
     fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const info = fstatSync(fd);
-    if (!info.isFile() || info.size > MAX_LEDGER_FILE_BYTES)
+    if (!info.isFile() || info.size > maxBytes)
       return { kind: "unreadable" };
     const buffer = Buffer.alloc(info.size);
     let offset = 0;

@@ -1452,8 +1452,12 @@ import { rm } from "fs/promises";
 import { join as join3 } from "path";
 
 // lib/src/checkout-marker.ts
-import { closeSync as closeSync2, constants as constants4, fstatSync as fstatSync2, lstatSync as lstatSync2, openSync as openSync2, readlinkSync, readSync as readSync2 } from "fs";
-var MAX_MARKER_BYTES = 64 * 1024;
+import { lstatSync as lstatSync2, readlinkSync } from "fs";
+
+// lib/src/bounded-read.ts
+var MAX_LEDGER_FILE_BYTES = 64 * 1024;
+
+// lib/src/checkout-marker.ts
 var MAX_LINKS = 40;
 function physical(path) {
   const pending = (path.startsWith("/") ? path : `${process.cwd()}/${path}`).split("/").reverse();

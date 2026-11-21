@@ -424,15 +424,18 @@ function textAfterCleanup(text, report) {
 }
 
 // plugins/delivery/opencode/src/cleanup.ts
-import { existsSync as existsSync2, lstatSync as lstatSync3, realpathSync as realpathSync3 } from "fs";
+import { existsSync as existsSync2, lstatSync as lstatSync4, realpathSync as realpathSync3 } from "fs";
 import { basename as basename3, dirname as dirname4, isAbsolute as isAbsolute2, join as join4, resolve as resolve4, sep as sep2 } from "path";
 import { isDeepStrictEqual } from "util";
 
 // lib/src/checkout-marker.ts
-import { closeSync, constants, fstatSync, lstatSync, openSync, readlinkSync, readSync } from "fs";
+import { lstatSync as lstatSync2, readlinkSync } from "fs";
 import { dirname, join } from "path";
-var MAX_MARKER_BYTES = 64 * 1024;
-function readBounded(path, maxBytes = MAX_MARKER_BYTES) {
+
+// lib/src/bounded-read.ts
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "fs";
+var MAX_LEDGER_FILE_BYTES = 64 * 1024;
+function readBounded(path, maxBytes = MAX_LEDGER_FILE_BYTES) {
   let fd;
   try {
     if (!lstatSync(path).isFile())
@@ -457,6 +460,8 @@ function readBounded(path, maxBytes = MAX_MARKER_BYTES) {
       closeSync(fd);
   }
 }
+
+// lib/src/checkout-marker.ts
 var MAX_LINKS = 40;
 function physical(path) {
   const pending = (path.startsWith("/") ? path : `${process.cwd()}/${path}`).split("/").reverse();
@@ -475,7 +480,7 @@ function physical(path) {
     }
     const candidate = `${resolved}/${part}`;
     try {
-      const stat = lstatSync(candidate);
+      const stat = lstatSync2(candidate);
       if (!stat.isSymbolicLink()) {
         resolved = candidate;
         isDirectory = stat.isDirectory();
@@ -511,7 +516,7 @@ function verifyCheckout(checkout, commonDir) {
   const workTree = checkout;
   let stat;
   try {
-    stat = lstatSync(entry);
+    stat = lstatSync2(entry);
   } catch (error) {
     const code = error.code;
     return { state: code === "ENOENT" || code === "ENOTDIR" ? "absent" : "unsafe" };
@@ -1573,7 +1578,7 @@ import {
   fchmodSync,
   fstatSync as fstatSync2,
   linkSync,
-  lstatSync as lstatSync2,
+  lstatSync as lstatSync3,
   mkdirSync as mkdirSync2,
   opendirSync,
   openSync as openSync2,
@@ -1625,7 +1630,7 @@ var REPOSITORY_OBSERVATION_ARGS = [
 function physicalDirectory(path) {
   try {
     const real = realpathSync2(path);
-    return lstatSync2(real).isDirectory() ? real : null;
+    return lstatSync3(real).isDirectory() ? real : null;
   } catch {
     return null;
   }
@@ -1633,7 +1638,7 @@ function physicalDirectory(path) {
 function checkoutGitDirectory(checkout) {
   const marker = join3(checkout, ".git");
   try {
-    const stat = lstatSync2(marker);
+    const stat = lstatSync3(marker);
     if (stat.isDirectory())
       return physicalDirectory(marker);
     if (!stat.isFile() || stat.size > 4096)
@@ -1711,14 +1716,14 @@ function ledgerActive(dir) {
   const beads = join3(resolve2(dir), ".beads");
   let beadsStat;
   try {
-    beadsStat = lstatSync2(beads);
+    beadsStat = lstatSync3(beads);
   } catch (error) {
     return error.code !== "ENOENT";
   }
   if (!beadsStat.isDirectory())
     return true;
   try {
-    return !lstatSync2(join3(beads, "RETIRED")).isFile();
+    return !lstatSync3(join3(beads, "RETIRED")).isFile();
   } catch {
     return true;
   }
@@ -1754,7 +1759,7 @@ function provenReceiptDirectory(env, key) {
   for (const at of [root, dirname3(directory), directory]) {
     let stat;
     try {
-      stat = lstatSync2(at);
+      stat = lstatSync3(at);
     } catch (error) {
       return { ok: false, reason: missing(error), at, directory };
     }
@@ -2118,7 +2123,7 @@ function publish(temporary, target, payload) {
   }
   let safeMetadata = false;
   try {
-    const stat = lstatSync2(target);
+    const stat = lstatSync3(target);
     safeMetadata = !stat.isSymbolicLink() && stat.isFile() && (stat.mode & 511) === 384;
   } catch {}
   const existing = safeMetadata ? readBounded2(target) : null;
@@ -2656,7 +2661,7 @@ function canonicalReceiptPath(raw, cwd, directory) {
   const target = join4(directory, basename3(supplied));
   let stat;
   try {
-    stat = lstatSync3(target);
+    stat = lstatSync4(target);
   } catch {
     return refuse2("receipt.path", target, "an existing canonical non-symlink receipt file");
   }
@@ -2751,7 +2756,7 @@ async function runGit(run, cwd, args, timeoutMs, pin) {
 function worktreePathState(path) {
   let stat;
   try {
-    stat = lstatSync3(path);
+    stat = lstatSync4(path);
   } catch (error) {
     return error.code === "ENOENT" ? "absent" : "unsafe";
   }
@@ -3054,7 +3059,7 @@ async function registrationAbsence(cwd, trustedPath, run, refReadMs, pin) {
 }
 function pathAbsence(path) {
   try {
-    lstatSync3(path);
+    lstatSync4(path);
     return "present";
   } catch (error) {
     return error.code === "ENOENT" ? "absent" : "unknown";
@@ -5360,7 +5365,7 @@ import { join as join7 } from "path";
 // lib/src/lease-lock.ts
 import { AsyncLocalStorage } from "async_hooks";
 import { randomUUID } from "crypto";
-import { closeSync as closeSync3, constants as constants4, fstatSync as fstatSync3, lstatSync as lstatSync4, openSync as openSync3, readSync as readSync3, statSync, unlinkSync as unlinkSync2, writeSync } from "fs";
+import { closeSync as closeSync3, constants as constants4, fstatSync as fstatSync3, lstatSync as lstatSync5, openSync as openSync3, readSync as readSync3, statSync, unlinkSync as unlinkSync2, writeSync } from "fs";
 import { hostname } from "os";
 var LEASE_MS = 120000;
 var RENEW_MS = 20000;
@@ -5396,7 +5401,7 @@ function leaseAbandoned(record, facts) {
 function readBounded3(path) {
   let fd;
   try {
-    if (!lstatSync4(path).isFile())
+    if (!lstatSync5(path).isFile())
       return { kind: "unreadable" };
     fd = openSync3(path, constants4.O_RDONLY | constants4.O_NOFOLLOW | constants4.O_NONBLOCK);
     const info = fstatSync3(fd);

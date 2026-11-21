@@ -18,13 +18,14 @@ export const MAX_LEDGER_FILE_BYTES = 64 * 1024
  */
 export type BoundedRead = { kind: "absent" } | { kind: "unreadable" } | { kind: "text"; text: string }
 
-export function readBounded(path: string): BoundedRead {
+/** `maxBytes` defaults to the ledger bound; callers with a different bound pass their own. */
+export function readBounded(path: string, maxBytes: number = MAX_LEDGER_FILE_BYTES): BoundedRead {
   let fd: number | undefined
   try {
     if (!lstatSync(path).isFile()) return { kind: "unreadable" }
     fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
     const info = fstatSync(fd)
-    if (!info.isFile() || info.size > MAX_LEDGER_FILE_BYTES) return { kind: "unreadable" }
+    if (!info.isFile() || info.size > maxBytes) return { kind: "unreadable" }
     const buffer = Buffer.alloc(info.size)
     let offset = 0
     while (offset < buffer.length) {
