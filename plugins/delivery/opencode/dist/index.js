@@ -6441,7 +6441,7 @@ function parseOptions(raw) {
     }
   }
   return {
-    confirm: options.confirm !== false,
+    confirm: options.confirm === true,
     receiptsDirectory: typeof options.receiptsDirectory === "string" ? options.receiptsDirectory : undefined,
     agents: options.agents !== false,
     models,

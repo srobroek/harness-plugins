@@ -56,7 +56,7 @@ export const FAN_OUT_SKILL_PATH = fileURLToPath(new URL("../skills/delivery-fan-
 export const FAN_OUT_PATH = fileURLToPath(new URL("../instructions/delivery-fan-out.md", import.meta.url))
 
 export type DeliveryOptions = {
-  /** Ask before every land and cleanup even when the permission policy allows them. Default true. */
+  /** Ask before every land and cleanup even when the permission policy allows them. Opt-in; default false. */
   confirm: boolean
   /** Receipts root; default `$DELIVERY_RECEIPTS_DIR`, then `~/.omp/receipts`. */
   receiptsDirectory?: string
@@ -95,7 +95,7 @@ export function parseOptions(raw: Record<string, unknown> | undefined): Delivery
     }
   }
   return {
-    confirm: options.confirm !== false,
+    confirm: options.confirm === true,
     receiptsDirectory: typeof options.receiptsDirectory === "string" ? options.receiptsDirectory : undefined,
     agents: options.agents !== false,
     models,

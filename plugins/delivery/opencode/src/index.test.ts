@@ -40,10 +40,10 @@ async function load(options: FakeContextOptions = {}) {
 }
 
 describe("setup", () => {
-  test("registers both tools, the gate, the agents, the verdict hook, fan-out and the skill, and disposes them all", async () => {
+  test("registers both tools, no confirm gate, the agents, the verdict hook, fan-out and the skill, and disposes them all", async () => {
     const { fake, cleanup } = await load()
     expect([...fake.tools.keys()]).toEqual([LAND_ACTION, CLEANUP_ACTION])
-    expect(fake.hooks("permission")).toEqual(["evaluate"])
+    expect(fake.hooks("permission")).toEqual([])
     expect(fake.hooks("tool")).toEqual(["execute.after"])
     expect(fake.hooks("session")).toEqual(["experimental.idle", "context", "compaction", "generate"])
     expect([...fake.agents.keys()].sort()).toEqual([...AGENT_IDS].sort())
@@ -55,7 +55,7 @@ describe("setup", () => {
   })
 
   test("options turn each part off", async () => {
-    const { fake } = await load({ options: { confirm: false, agents: false, verdicts: false, fanOut: false, autoCleanup: false } })
+    const { fake } = await load({ options: { agents: false, verdicts: false, fanOut: false, autoCleanup: false } })
     expect(fake.hooks("permission")).toEqual([])
     expect(fake.hooks("tool")).toEqual([])
     expect(fake.hooks("session")).toEqual([])
@@ -73,7 +73,7 @@ describe("setup", () => {
 
   test("parseOptions defaults", () => {
     expect(parseOptions(undefined)).toEqual({
-      confirm: true,
+      confirm: false,
       receiptsDirectory: undefined,
       agents: true,
       models: {},
@@ -184,10 +184,26 @@ describe("confirmDelivery", () => {
   })
 })
 
-describe("confirm hook", () => {
+describe("confirm option", () => {
+  test("is off by default and opt-in with confirm: true", () => {
+    expect(parseOptions({}).confirm).toBe(false)
+    expect(parseOptions({ confirm: false }).confirm).toBe(false)
+    expect(parseOptions({ confirm: true }).confirm).toBe(true)
+  })
+  test("with no options, no evaluate hook turns land or cleanup into an ask", async () => {
+    const { fake } = await load({ sessions: [{ id: "root" }] })
+    for (const action of [LAND_ACTION, CLEANUP_ACTION]) {
+      const evaluation = { sessionID: "root", action, resources: ["x"], effect: "allow" } as { effect: string }
+      await fake.fire.permission("evaluate", evaluation as never)
+      expect(evaluation.effect).toBe("allow")
+    }
+  })
+})
+
+describe("confirm hook (confirm: true)", () => {
   const sessions = [{ id: "root" }, { id: "sub", parentID: "root" }]
   const fire = async (sessionID: string, action: string, effect: string) => {
-    const { fake } = await load({ sessions })
+    const { fake } = await load({ sessions, options: { confirm: true } })
     const evaluation = { sessionID, action, resources: ["x"], effect } as { effect: string }
     await fake.fire.permission("evaluate", evaluation as never)
     return evaluation.effect

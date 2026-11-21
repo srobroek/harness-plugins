@@ -325,16 +325,15 @@ the directory is already gone.
 `delivery_land` asks permission for action `delivery_land` with resource
 `<owner>/<name>#<number>`. It asks after every read has passed and before the
 first write. `delivery_cleanup` asks for action `delivery_cleanup` with the
-worktree path, right before the removal. The plugin turns an allowed request for
-either action into `ask`, so every call in a root session prompts. A deny rule
-still wins. A subagent session (one with a parent) is not prompted, because it
-cannot answer: an allowed request stays allowed. If the session lookup fails, the
-prompt stays. A subagent is still gated by its own `delivery_land` and
+worktree path, right before the removal. Your permission rules decide: an
+allowed request runs without a prompt, and a deny or ask rule always wins. Set the
+`confirm` option to `true` to make the plugin turn an allowed request into `ask`
+in a root session; a subagent session (one with a parent) keeps its allow, because it
+cannot answer, and a failed session lookup keeps the prompt. A subagent is still gated by its own `delivery_land` and
 `delivery_cleanup` permission, and by `delivery_land`'s own checks: a call that
 would merge must pass `expectHeadSha` naming the PR head, and it merges at most
 once. Approval and green checks are required only when the call sets
 `requireApproval` and `requireGreenChecks`; the `shepherd` agent always sets both.
-Set the `confirm` option to `false` to let your permission rules decide on their own.
 
 ## Receipts
 
@@ -469,7 +468,7 @@ This agent denies `execute`, so OpenCode lists its allowed MCP tools directly, e
   "plugins": [{
     "package": "github:srobroek/harness-plugins::path:plugins/delivery/opencode",
     "options": {
-      "confirm": true,              // prompt for every land and cleanup
+      "confirm": false,             // true: prompt for every land and cleanup (default false)
       "autoCleanup": true,          // delivery_land runs cleanup itself
       "receiptsDirectory": null,    // default $DELIVERY_RECEIPTS_DIR, then ~/.omp/receipts
       "agents": true,               // register the delivery agents
