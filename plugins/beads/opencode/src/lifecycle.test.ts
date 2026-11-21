@@ -1250,3 +1250,26 @@ describe("the reconcile record of a subagent", () => {
     await t.cleanup()
   })
 })
+
+describe("heartbeat failures", () => {
+  test("a rejected beat is logged when the host injects no detach", async () => {
+    const root = sid("hbfail")
+    const errors: unknown[][] = []
+    const original = console.error
+    console.error = (...args: unknown[]) => void errors.push(args)
+    try {
+      const t = await start([{ id: root }], { run: async () => ({ failure: "bd down" }), detach: undefined })
+      t.fake.storage.set(`leases/${root}`, { k: { id: "proj-1", actor: "me/main", store: "/repo/.beads" } })
+      // The failed beat drops the lease through storage; make that write reject.
+      t.fake.context.storage.set = async () => {
+        throw new Error("storage down")
+      }
+      await t.emit("session.execution.started", root, {}, false)
+      for (let attempt = 0; attempt < 50 && errors.length === 0; attempt++) await Bun.sleep(10)
+      expect(errors.map((args) => String(args[0]))).toEqual(["srobroek.beads: detached task failed"])
+      await t.cleanup()
+    } finally {
+      console.error = original
+    }
+  })
+})

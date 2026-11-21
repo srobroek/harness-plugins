@@ -6572,11 +6572,8 @@ async function setupBeads(ctx, deps = {}) {
   const pins = new Map;
   const queue = keyedQueue();
   const run = deps.run ?? runBdResult;
-  const detached = new Set;
   const detach = deps.detach ?? ((task) => {
-    const settled = task.catch((error) => console.error("srobroek.beads: detached task failed", error));
-    detached.add(settled);
-    settled.finally(() => detached.delete(settled));
+    task.catch((error) => console.error("srobroek.beads: detached task failed", error));
   });
   const heartbeatNoticed = new Set;
   const heartbeats = new Heartbeats(async (sessionID, key, lease) => {
@@ -6604,7 +6601,7 @@ async function setupBeads(ctx, deps = {}) {
     }).catch(() => {
       return;
     });
-  }, deps.clock, deps.detach);
+  }, deps.clock, detach);
   const lifecycle = new Lifecycle({
     ctx,
     run,

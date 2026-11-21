@@ -160,13 +160,10 @@ export async function setupBeads(ctx: Context, deps: AdapterDeps = {}): Promise<
   const pins = new Map<string, { at: number; pin: string | undefined }>()
   const queue = keyedQueue()
   const run = deps.run ?? runBdResult
-  const detached = new Set<Promise<unknown>>()
   const detach =
     deps.detach ??
     ((task: Promise<unknown>) => {
-      const settled = task.catch((error) => console.error("srobroek.beads: detached task failed", error))
-      detached.add(settled)
-      void settled.finally(() => detached.delete(settled))
+      void task.catch((error) => console.error("srobroek.beads: detached task failed", error))
     })
   const heartbeatNoticed = new Set<string>()
   const heartbeats = new Heartbeats(async (sessionID, key, lease) => {
@@ -192,7 +189,7 @@ export async function setupBeads(ctx: Context, deps: AdapterDeps = {}): Promise<
         metadata: { source: BEADS_SOURCE, kind: "heartbeat" },
       } as never)
       .catch(() => undefined)
-  }, deps.clock, deps.detach)
+  }, deps.clock, detach)
   const lifecycle = new Lifecycle({
     ctx,
     run,
