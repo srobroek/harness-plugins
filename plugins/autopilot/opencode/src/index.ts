@@ -22,9 +22,11 @@ import {
   type Lstat,
   MERGE_ACTION,
   MERGE_METHODS,
+  mergeDrift,
   mergeOutcome,
   mergeRefusal,
   mergeResource,
+  mergeResponse,
   ownWorktreeAsk,
   REPROMPT,
   type RootIdentity,
@@ -920,17 +922,16 @@ export class Autopilot {
     ])
     const refusal = mergeRefusal({ sha, method, view, reviews, runs, status, protection, rules, repo })
     if (refusal !== undefined) return refuse(refusal)
-    const flag = `--${method}`
-    const merged = await this.#run(cwd, "gh", ["pr", "merge", pr, "--match-head-commit", sha, flag], GH_TIMEOUT_MS)
-    if (!merged.ok) return refuse(`gh pr merge failed: ${merged.stderr.trim().slice(0, 300)}`)
-    // gh pr merge can succeed by queueing the merge for later; only the PR itself says what happened.
+    // Re-read right before merging: a retarget or a push since the reads above voids them.
+    const drift = mergeDrift({ view: await this.#gh(cwd, ["pr", "view", pr, "--json", "baseRefName,headRefOid"]), base, sha })
+    if (drift !== undefined) return refuse(drift)
+    // The synchronous REST merge: GitHub answers merged or refuses, and never defers to auto-merge or a queue.
+    const put = mergeResponse(await this.#run(cwd, "gh", ["api", "-X", "PUT", `repos/{owner}/{repo}/pulls/${pr}/merge`, "-f", `sha=${sha}`, "-f", `merge_method=${method}`], GH_TIMEOUT_MS))
+    if (!put.ok) return refuse(put.reason)
     const outcome = mergeOutcome(await this.#gh(cwd, ["pr", "view", pr, "--json", "state,headRefOid,mergeCommit,autoMergeRequest"]), sha)
-    if (!outcome.ok) {
-      if (outcome.disableAuto) await this.#run(cwd, "gh", ["pr", "merge", pr, "--disable-auto"], GH_TIMEOUT_MS)
-      return refuse(outcome.reason)
-    }
-    await journal({ type: "action", summary: `merged #${pr} at ${sha} (${method})`, evidence: sha })
-    return `merged #${pr} at ${sha} with ${flag}`
+    if (!outcome.ok) return refuse(outcome.reason)
+    await journal({ type: "action", summary: `merged #${pr} at ${sha} (${method}) as ${put.sha}`, evidence: sha })
+    return `merged #${pr} at ${sha} with ${method}`
   }
 
   /** Re-prompts a lead whose turn ended in a question, at most {@link MAX_REPROMPTS} times in a row. */

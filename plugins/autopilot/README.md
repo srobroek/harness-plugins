@@ -141,14 +141,20 @@ these hold:
   queues are unsupported and the tool refuses, journaling an issue.
 - `method` (`squash`, `rebase` or `merge`) is one the repository allows.
 
-It then runs `gh pr merge <pr> --match-head-commit <sha> --<method>` as an
-argument array with no shell, no `--admin` and never `--auto`, so GitHub
-enforces its own protection. It then re-reads the PR
-(`state,headRefOid,mergeCommit,autoMergeRequest`) and reports success only when
-the PR is `MERGED` at `sha` with a merge commit and no auto-merge request. In
-any other case it runs `gh pr merge <pr> --disable-auto` when the PR is open or
-has an auto-merge request, and refuses. It journals the result: an `action` on
-success, an `issue` on a refusal. GitHub only. The approval and check judgments live in
+Just before merging, it re-reads the PR's base branch and head. It refuses if
+the base is not the one whose protection and rulesets it read, or if the head is
+not `sha`. It then merges through the synchronous REST endpoint, as an
+argument array with no shell:
+`gh api -X PUT repos/{owner}/{repo}/pulls/<pr>/merge -f sha=<sha> -f merge_method=<method>`.
+It never calls `gh pr merge`, so it can neither enable auto-merge nor use
+`--admin`, and GitHub enforces its own protection. Success needs a response
+with `merged: true` and a `sha`. Any non-2xx response is a refusal, for example
+405 for a queue-required or protected branch and 409 for a head mismatch; the
+journal issue carries the status and message. As a final check, the tool
+re-reads the PR (`state,headRefOid,mergeCommit,autoMergeRequest`) and reports
+success only when it is `MERGED` at `sha` with a merge commit and no auto-merge
+request. It journals the result: an `action` on success, an `issue` on a
+refusal. GitHub only. The approval and check judgments live in
 `lib/src/pr-approval.ts`, which `delivery_land` shares.
 
 ## Tick

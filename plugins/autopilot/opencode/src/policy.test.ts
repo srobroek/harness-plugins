@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { endsWithQuestion, grantedMergeAsk, holdsLane, identifyRoot, isAskTool, mergeOutcome, mergeRefusal, mergeResource, ownWorktreeAsk, recordableLane, rootIntact } from "./policy.ts"
+import { endsWithQuestion, grantedMergeAsk, holdsLane, identifyRoot, isAskTool, mergeDrift, mergeOutcome, mergeRefusal, mergeResource, mergeResponse, ownWorktreeAsk, recordableLane, rootIntact } from "./policy.ts"
 
 test.each([
   ["question", true],
@@ -225,14 +225,49 @@ describe("mergeOutcome", () => {
   test("a merged PR at the reviewed head with a merge commit is success", () => {
     expect(mergeOutcome(after(), SHA)).toEqual({ ok: true })
   })
-  test.each<[string, unknown, boolean]>([
-    ["auto-merge was enabled and the PR is still open", after({ state: "OPEN", mergeCommit: null, autoMergeRequest: { enabledAt: "now" } }), true],
-    ["the PR is still open without auto-merge (a queue or a silent no-op)", after({ state: "OPEN", mergeCommit: null }), true],
-    ["the PR is merged but auto-merge is still recorded", after({ autoMergeRequest: { enabledAt: "now" } }), true],
-    ["the PR merged at another head", after({ headRefOid: OTHER }), false],
-    ["the PR merged without a merge commit", after({ mergeCommit: null }), false],
-    ["the PR cannot be read", undefined, true],
-  ])("refuses when %s (disable auto-merge: %p)", (_name, view, disableAuto) => {
-    expect(mergeOutcome(view, SHA)).toMatchObject({ ok: false, disableAuto, reason: expect.any(String) })
+  test.each<[string, unknown]>([
+    ["the PR is still open with an auto-merge request", after({ state: "OPEN", mergeCommit: null, autoMergeRequest: { enabledAt: "now" } })],
+    ["the PR is still open", after({ state: "OPEN", mergeCommit: null })],
+    ["the PR is merged but auto-merge is still recorded", after({ autoMergeRequest: { enabledAt: "now" } })],
+    ["the PR merged at another head", after({ headRefOid: OTHER })],
+    ["the PR merged without a merge commit", after({ mergeCommit: null })],
+    ["the PR cannot be read", undefined],
+  ])("refuses when %s", (_name, view) => {
+    expect(mergeOutcome(view, SHA)).toEqual({ ok: false, reason: expect.any(String) })
+  })
+})
+
+describe("mergeDrift (the re-read just before the PUT)", () => {
+  const now = (over: Record<string, unknown> = {}) => ({ baseRefName: "main", headRefOid: SHA, ...over })
+  test("the same base and head is no drift", () => {
+    expect(mergeDrift({ view: now(), base: "main", sha: SHA })).toBeUndefined()
+  })
+  test.each([
+    ["the PR was retargeted", now({ baseRefName: "release" }), "base"],
+    ["the head moved", now({ headRefOid: OTHER }), "head"],
+    ["the read failed", undefined, "unreadable"],
+  ])("refuses when %s", (_name, view, word) => {
+    expect(mergeDrift({ view, base: "main", sha: SHA })).toContain(word)
+  })
+})
+
+describe("mergeResponse (gh api -X PUT .../merge)", () => {
+  const MERGE = "f".repeat(40)
+  const reply = (ok: boolean, stdout: unknown, stderr = "") => ({ ok, stdout: typeof stdout === "string" ? stdout : JSON.stringify(stdout), stderr })
+  test("merged true with a sha is success", () => {
+    expect(mergeResponse(reply(true, { merged: true, sha: MERGE, message: "Pull Request successfully merged" }))).toEqual({ ok: true, sha: MERGE })
+  })
+  test.each([
+    ["a 405 for a queue-required or protected branch", reply(false, { message: "Merge queue required" }, "gh: Merge queue required (HTTP 405)"), "405"],
+    ["a 409 for a head mismatch", reply(false, { message: "Head branch was modified" }, "gh: Head branch was modified (HTTP 409)"), "409"],
+    ["a 2xx without merged true", reply(true, { merged: false, message: "Queued" }), "merged"],
+    ["a 2xx without a sha", reply(true, { merged: true }), "sha"],
+    ["a 2xx that is not JSON", reply(true, "ok"), "unreadable"],
+    ["a failure with no status", reply(false, "", "network down"), "network down"],
+  ])("refuses %s", (_name, result, word) => {
+    expect(mergeResponse(result)).toMatchObject({ ok: false, reason: expect.stringContaining(word) })
+  })
+  test("a non-2xx refusal carries the status and the message", () => {
+    expect(mergeResponse(reply(false, { message: "Merge queue required" }, "gh: Merge queue required (HTTP 405)"))).toEqual({ ok: false, reason: "merge refused by GitHub (HTTP 405): Merge queue required" })
   })
 })
