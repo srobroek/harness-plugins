@@ -125,6 +125,29 @@ describe("runScan", () => {
     expect(report.coverage.find((c) => c.recipe === "vulture:dead")).toMatchObject({ status: "ran" })
   })
 
+  test("an analyzer that floods its output is a gap naming the stream", async () => {
+    const root = pythonRepo()
+    const exec: Exec = async (argv) =>
+      argv.includes("--isolated") ? { kind: "overflow", stream: "stdout", stdout: "", stderr: "" } : exited("")
+    const report = await runScan({ root, languages: ["python"] }, { exec, which: withTools("ruff") })
+    expect(report.coverage.find((c) => c.recipe === "ruff:lenses")).toMatchObject({
+      status: "gap",
+      reason: "stdout exceeded 16 MiB; the tool was ended",
+    })
+    expect(report.candidates).toEqual([])
+  })
+
+  test("the per-analyzer timeout is capped", async () => {
+    const root = pythonRepo()
+    const seen: number[] = []
+    const exec: Exec = async (_argv, options) => {
+      seen.push(options.timeoutMs)
+      return exited("")
+    }
+    await runScan({ root, languages: ["python"], timeoutSeconds: 86_400 }, { exec, which: withTools("ruff") })
+    expect(Math.max(...seen)).toBe(900_000)
+  })
+
   test("a file list scopes the scan and filters whole-repo recipes to those files", async () => {
     const root = temp()
     writeFileSync(join(root, "go.mod"), "module x\n")
