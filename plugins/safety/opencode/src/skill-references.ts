@@ -5,6 +5,7 @@
  * never the cache as a whole.
  */
 
+import { realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, relative } from "node:path"
 import { inside } from "./scratch-dirs.ts"
@@ -14,16 +15,30 @@ type Evaluation = { readonly action: string; readonly resources: ReadonlyArray<s
 /** Tools that only read the path they were given. */
 export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(["read", "glob", "grep", "list"])
 
+/** `path` with every symlink resolved, or undefined when it does not resolve. */
+function real(path: string): string | undefined {
+  try {
+    return realpathSync(path)
+  } catch {
+    return undefined
+  }
+}
+
 /**
- * The directory of each skill's `SKILL.md`. A directory that is the filesystem root, the home folder or
- * one of its parents is skipped: a stray `SKILL.md` there would open the whole tree.
+ * The real directory of each skill's `SKILL.md`. It skips a directory that is the filesystem root, the
+ * home folder or one of its parents, because a stray `SKILL.md` there would open the whole tree. It
+ * compares real paths, because `inside` resolves symlinks too. It skips any skill when its directory or
+ * the home folder does not resolve.
  */
 export function skillDirectories(skills: ReadonlyArray<{ readonly path?: unknown }>, home: string = homedir()): string[] {
+  const realHome = real(home)
+  if (realHome === undefined) return []
   const dirs = new Set<string>()
   for (const skill of skills) {
     if (typeof skill.path !== "string" || !skill.path.startsWith("/") || basename(skill.path) !== "SKILL.md") continue
-    const dir = dirname(skill.path)
-    const toHome = relative(dir, home)
+    const dir = real(dirname(skill.path))
+    if (dir === undefined) continue
+    const toHome = relative(dir, realHome)
     if (dir === "/" || !(toHome === ".." || toHome.startsWith("../"))) continue
     dirs.add(dir)
   }
