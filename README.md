@@ -109,7 +109,7 @@ bun scripts/convert-agent.ts --out .opencode/agents \
 ```
 
 - The omp `@role` becomes the `x-opencode-model-role` request header with the model-roles tier
-  it stands for (`cheap`, `standard`, `strong`, `reviewer`). Old role names map to their tier:
+  it stands for (`cheap`, `standard`, `strong`, `reviewer`, `orchestrate`). Old role names map to their tier:
   `smol`, `commit` and `tiny` to `cheap`, `task` to `standard`, `slow`, `plan`, `architect` and
   `designer` to `strong`, `challenger` and `judge` to `reviewer`. `default` writes no header.
   `--role-map map.json` renames roles first. Anything else gets no header and a warning.

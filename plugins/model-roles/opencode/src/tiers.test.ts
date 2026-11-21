@@ -76,7 +76,7 @@ describe("buildTiers", () => {
     expect(set.roles.task).toEqual(["@standard"])
     expect(set.roles.challenger).toEqual(["@reviewer"])
     expect(set.roles.tiny).toEqual([bedrock("anthropic.claude-haiku-5-5", "none"), bedrock("openai.gpt-6-luna", "none")])
-    expect(Object.keys(set.tiers)).toEqual(["cheap", "standard", "strong", "reviewer"])
+    expect(Object.keys(set.tiers)).toEqual(["cheap", "standard", "strong", "reviewer", "orchestrate"])
     expect(set.tiers.cheap).toEqual({
       purpose: TIER_PURPOSE.cheap as string,
       distinctVendor: false,
@@ -87,6 +87,21 @@ describe("buildTiers", () => {
     })
     expect(set.tiers.reviewer?.distinctVendor).toBe(true)
     expect(set.tiers.reviewer?.source).toBe("strong")
+  })
+
+  test("orchestrate with no model of its own borrows strong's candidates at high effort", () => {
+    const set = build({})
+    expect(set.roles.orchestrate).toEqual(set.roles.strong)
+    expect(set.tiers.orchestrate?.source).toBe("strong")
+    expect(set.tiers.orchestrate?.distinctVendor).toBe(false)
+    expect(set.tiers.orchestrate?.effort).toBe("high")
+    expect(set.tiers.orchestrate?.purpose).toBe(TIER_PURPOSE.orchestrate as string)
+  })
+
+  test("a configured orchestrate list wins over the strong fallback", () => {
+    const set = build({ tiers: { orchestrate: [bedrock("anthropic.claude-sonnet-5-5")] } })
+    expect(set.roles.orchestrate).toEqual([bedrock("anthropic.claude-sonnet-5-5", "high")])
+    expect(set.tiers.orchestrate?.source).toBe("config")
   })
 
   test("a configured list wins, its #effort over the tier effort; a custom tier borrows standard", () => {
@@ -100,7 +115,7 @@ describe("buildTiers", () => {
     expect(set.roles.strong).toEqual([bedrock("openai.gpt-6.1-sol", "xhigh"), bedrock("anthropic.claude-opus-5-5", "max")])
     expect(set.roles.reviewer).toEqual([bedrock("openai.gpt-6.1-sol", "high"), bedrock("anthropic.claude-opus-5-5", "high")])
     expect(set.roles.docs).toEqual([bedrock("openai.gpt-6.1-sol", "low"), bedrock("anthropic.claude-sonnet-5-5", "low")])
-    expect(Object.keys(set.tiers)).toEqual(["cheap", "standard", "strong", "reviewer", "docs", "notes"])
+    expect(Object.keys(set.tiers)).toEqual(["cheap", "standard", "strong", "reviewer", "orchestrate", "docs", "notes"])
     expect(set.tiers.docs?.purposeMissing).toBe(true)
     expect(set.tiers.notes?.purpose).toBe("writing release notes")
     expect(set.tiers.strong?.source).toBe("config")
@@ -167,7 +182,7 @@ describe("buildTiers", () => {
     expect(set.tiers.cheap?.purpose).toBe("quick things")
     expect(set.tiers.cheap?.effort).toBeUndefined()
     expect(set.tiers.web?.purpose).toBe("web lookups")
-    expect(Object.keys(set.tiers)).toEqual(["cheap", "standard", "strong", "reviewer", "web"])
+    expect(Object.keys(set.tiers)).toEqual(["cheap", "standard", "strong", "reviewer", "orchestrate", "web"])
   })
 
   test("classes: only premium models are expensive; ranks follow the lineup", () => {

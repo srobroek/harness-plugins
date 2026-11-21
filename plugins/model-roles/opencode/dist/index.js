@@ -92,7 +92,8 @@ var DEFAULT_TIER_EFFORT = {
   cheap: "low",
   standard: "medium",
   strong: "high",
-  reviewer: "high"
+  reviewer: "high",
+  orchestrate: "high"
 };
 var EFFORT_SCALE = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 var DEFAULT_PREMIUM = 8;
@@ -821,12 +822,13 @@ function contextNote(failed, limit, tier) {
 }
 
 // plugins/model-roles/opencode/src/tiers.ts
-var BUILTIN_TIERS = ["cheap", "standard", "strong", "reviewer"];
+var BUILTIN_TIERS = ["cheap", "standard", "strong", "reviewer", "orchestrate"];
 var TIER_PURPOSE = {
   cheap: "cheap and fast: lookups, summaries, log and diff reading, mechanical edits",
   standard: "everyday implementation and investigation",
   strong: "hard reasoning: design, root-cause debugging, subtle concurrency or data-integrity work",
-  reviewer: "an independent second opinion or review, from another model vendor than yours when one is available"
+  reviewer: "an independent second opinion or review, from another model vendor than yours when one is available",
+  orchestrate: "planning and coordinating other agents: decomposing work, routing it and judging results"
 };
 var TIER_ALIASES = {
   smol: { tier: "cheap" },
@@ -910,7 +912,7 @@ var tierOf = (name) => TIER_ALIASES[name]?.tier ?? name;
 function baseTier(name) {
   if (DERIVED_TIERS.includes(name))
     return;
-  return name === "reviewer" ? "strong" : "standard";
+  return name === "reviewer" || name === "orchestrate" ? "strong" : "standard";
 }
 function tierEffort(settings, name) {
   const own = settings.tiers[name]?.effort;
@@ -1050,7 +1052,7 @@ function buildTiers(settings, models, refs) {
   };
   for (const name of ["cheap", "standard", "strong"])
     roles[name] = own(name) ?? [];
-  for (const name of ["reviewer", ...custom]) {
+  for (const name of ["reviewer", "orchestrate", ...custom]) {
     const list = own(name);
     if (list !== undefined) {
       roles[name] = list;

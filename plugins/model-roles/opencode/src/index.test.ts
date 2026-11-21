@@ -928,7 +928,7 @@ describe("subagent role parameter", () => {
     const host = createHost({ agents: [{ id: "general" }], models, options })
     const cleanup = await setup(host)
     const role = roleOf(host)
-    expect(role?.enum).toEqual(["cheap", "standard", "strong", "reviewer", "fake"])
+    expect(role?.enum).toEqual(["cheap", "standard", "strong", "reviewer", "orchestrate", "fake"])
     expect(role?.description).toContain("- 'cheap': cheap and fast")
     expect(role?.description).toContain("- 'fake': work that suits the 'fake' tier (no model available now")
     expect(host.subagent().description).toContain("Set `tier` on every new spawn")
@@ -1062,7 +1062,7 @@ describe("subagent role parameter", () => {
       model: "amazon-bedrock/claude-sonnet#high",
     })
     await expect(host.spawn("subagent", { agent: "general", prompt: "x", role: "huge" })).rejects.toThrow(
-      "Unknown model tier 'huge'. Pass one of: cheap, standard, strong, reviewer, fake.",
+      "Unknown model tier 'huge'. Pass one of: cheap, standard, strong, reviewer, orchestrate, fake.",
     )
     host.close()
     await cleanup()
@@ -2817,7 +2817,7 @@ describe("tiers rpc", () => {
       const host = createHost({ agents: [], models: work as unknown as Model[], references: reference as unknown as Model[], options: {} })
       const cleanup = await setup(host)
       const state = (await host.rpc("state")) as { tiers: Array<{ name: string; resolved?: string }>; models: unknown[]; config?: string }
-      expect(state.tiers.map((t) => t.name)).toEqual(["cheap", "standard", "strong", "reviewer"])
+      expect(state.tiers.map((t) => t.name)).toEqual(["cheap", "standard", "strong", "reviewer", "orchestrate"])
       expect(state.tiers[0]?.resolved).toBe("amazon-bedrock/global.anthropic.claude-haiku-5-5#low")
       expect(state.models.length).toBeGreaterThan(100)
       expect(state.config).toBe(path.join(dir, "opencode.jsonc"))
