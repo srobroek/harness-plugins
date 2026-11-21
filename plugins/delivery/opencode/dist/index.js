@@ -5919,6 +5919,8 @@ function createPendingCleanup(deps) {
   const observationMs = deps.cleanup?.bounds?.refReadMs ?? CLEANUP_BOUNDS.refReadMs;
   const unsafe = new Map;
   const deniedInMemory = new Map;
+  const deniedWorktrees = new Set;
+  let holdReportsInFlight = 0;
   const doneIds = new Set;
   const retriedAt = new Map;
   const attemptedAt = new Map;
@@ -6018,6 +6020,7 @@ function createPendingCleanup(deps) {
     return pendingReceipts(listReceipts(resolve8(receiptDirectory(env, key)))).filter((receipt) => receipt.worktree.path !== null && canonicalDirectory(receipt.worktree.path) === want);
   };
   const deny = async (worktree, sessionID) => {
+    deniedWorktrees.add(canonicalDirectory(worktree));
     for (const receipt of await receiptsFor(worktree))
       await record(receipt, sessionID, { denied: true });
     for (const entry of landingsFor([...(await landings()).byReceipt.values()], worktree)) {
@@ -6028,6 +6031,7 @@ function createPendingCleanup(deps) {
     for (const [id, where] of deniedInMemory)
       if (where === canonicalDirectory(worktree))
         deniedInMemory.delete(id);
+    deniedWorktrees.delete(canonicalDirectory(worktree));
     const { byReceipt } = await landings();
     for (const entry of landingsFor([...byReceipt.values()], worktree)) {
       if (entry.denied === undefined)
@@ -6082,8 +6086,9 @@ function createPendingCleanup(deps) {
     const listed = listLandings(common);
     if (listed.unreadable)
       return "the landing records could not be read";
-    if ([...deniedInMemory.values()].includes(canonicalDirectory(path)))
+    if ([...deniedInMemory.values()].includes(canonicalDirectory(path)) || deniedWorktrees.has(canonicalDirectory(path))) {
       return "cleanup was denied; an explicit delivery_cleanup re-arms it";
+    }
     if (landingsFor(listed.records, path).some((entry) => entry.denied !== undefined)) {
       return "cleanup was denied; an explicit delivery_cleanup re-arms it";
     }
@@ -6101,7 +6106,7 @@ function createPendingCleanup(deps) {
       return outcome.value;
     return { ok: false, reason: `worktree.held: observed ${outcome.reason}, expected no owner, hold, denial or competing remover; nothing was removed` };
   };
-  const holdCheckAt = async (common, worktree) => await holdAt(common, worktree) ?? landingBlockAt(common, worktree);
+  const holdCheckAt = async (common, worktree) => await holdAt(common, worktree) ?? landingBlockAt(common, worktree) ?? (holdReportsInFlight > 0 ? "running work reported by an idle session is still being recorded" : undefined);
   const holdCheck = async (worktree) => holdCheckAt(await commonDir(), worktree);
   const removalFor = (...sessionIDs) => {
     const client = ctx.session;
@@ -6240,6 +6245,16 @@ function createPendingCleanup(deps) {
       schedule(sessionID, false);
   };
   const recordHolds = async (sessionID, background) => {
+    if (background.length === 0)
+      return writeHolds(sessionID, background);
+    holdReportsInFlight++;
+    try {
+      await writeHolds(sessionID, background);
+    } finally {
+      holdReportsInFlight--;
+    }
+  };
+  const writeHolds = async (sessionID, background) => {
     const common = await commonDir();
     const key = await repoKey(cwd, deps.observe, observationMs);
     if (common === null || key === null)

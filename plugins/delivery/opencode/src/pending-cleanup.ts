@@ -223,6 +223,10 @@ export function createPendingCleanup(deps: PendingDeps) {
   const unsafe = new Map<string, string>()
   /** Denials that could not be written to disk, until an authorized re-arm. */
   const deniedInMemory = new Map<string, string>()
+  /** Worktrees an explicit `delivery_cleanup` was refused for, published before any wait; cleared only by `arm`. */
+  const deniedWorktrees = new Set<string>()
+  /** Idle-hook reports of running work whose holds are not written yet; any one keeps every worktree. */
+  let holdReportsInFlight = 0
   const doneIds = new Set<string>()
   const retriedAt = new Map<string, number>()
   const attemptedAt = new Map<string, number>()
@@ -351,6 +355,8 @@ export function createPendingCleanup(deps: PendingDeps) {
 
   /** An explicit `delivery_cleanup` for `worktree` was refused: that is a (new) denial, whatever came before. */
   const deny = async (worktree: string, sessionID: string) => {
+    // Visible to every final check from here on, before any wait, and kept whether or not the records below are written.
+    deniedWorktrees.add(canonicalDirectory(worktree))
     for (const receipt of await receiptsFor(worktree)) await record(receipt, sessionID, { denied: true })
     // A record that exists without a pending receipt in view (for example after a restart) is denied too.
     for (const entry of landingsFor([...(await landings()).byReceipt.values()], worktree)) {
@@ -361,6 +367,7 @@ export function createPendingCleanup(deps: PendingDeps) {
   /** An explicit `delivery_cleanup` for `worktree` was authorized: only now is an earlier denial cleared. */
   const arm = async (worktree: string) => {
     for (const [id, where] of deniedInMemory) if (where === canonicalDirectory(worktree)) deniedInMemory.delete(id)
+    deniedWorktrees.delete(canonicalDirectory(worktree))
     const { byReceipt } = await landings()
     for (const entry of landingsFor([...byReceipt.values()], worktree)) {
       if (entry.denied === undefined) continue
@@ -416,7 +423,9 @@ export function createPendingCleanup(deps: PendingDeps) {
     if (common === null) return "the git common directory could not be resolved"
     const listed = listLandings(common)
     if (listed.unreadable) return "the landing records could not be read"
-    if ([...deniedInMemory.values()].includes(canonicalDirectory(path))) return "cleanup was denied; an explicit delivery_cleanup re-arms it"
+    if ([...deniedInMemory.values()].includes(canonicalDirectory(path)) || deniedWorktrees.has(canonicalDirectory(path))) {
+      return "cleanup was denied; an explicit delivery_cleanup re-arms it"
+    }
     if (landingsFor(listed.records, path).some((entry) => entry.denied !== undefined)) {
       return "cleanup was denied; an explicit delivery_cleanup re-arms it"
     }
@@ -443,9 +452,15 @@ export function createPendingCleanup(deps: PendingDeps) {
     return { ok: false, reason: `worktree.held: observed ${outcome.reason}, expected no owner, hold, denial or competing remover; nothing was removed` }
   }
 
-  /** The hold and the denials for `worktree`, both read after the one observation of the common directory. */
+  /**
+   * The hold and the denials for `worktree`, both read after the one observation of the common
+   * directory. Vetoes still being written (an idle report of running work) are read last, with no
+   * wait after them.
+   */
   const holdCheckAt = async (common: string | null, worktree: string): Promise<string | undefined> =>
-    (await holdAt(common, worktree)) ?? landingBlockAt(common, worktree)
+    (await holdAt(common, worktree)) ??
+    landingBlockAt(common, worktree) ??
+    (holdReportsInFlight > 0 ? "running work reported by an idle session is still being recorded" : undefined)
 
   /**
    * The last look before the removal call itself (claims, holds, sessions, denials), read fresh. The
@@ -624,6 +639,18 @@ export function createPendingCleanup(deps: PendingDeps) {
    * worktree, or any job of a session that works in it. A session with none clears its own entry.
    */
   const recordHolds = async (sessionID: string, background: ReadonlyArray<BackgroundJob>) => {
+    // Until every hold below is written (or the worktree is marked unsafe), the report itself keeps
+    // every worktree: the waits before the writes must not let a remover miss this running work.
+    if (background.length === 0) return writeHolds(sessionID, background)
+    holdReportsInFlight++
+    try {
+      await writeHolds(sessionID, background)
+    } finally {
+      holdReportsInFlight--
+    }
+  }
+
+  const writeHolds = async (sessionID: string, background: ReadonlyArray<BackgroundJob>) => {
     const common = await commonDir()
     const key = await repoKey(cwd, deps.observe, observationMs)
     if (common === null || key === null) return

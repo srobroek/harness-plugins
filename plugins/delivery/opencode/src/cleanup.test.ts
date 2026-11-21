@@ -3767,6 +3767,58 @@ describe("pending cleanup: one remover per worktree", () => {
     }
   })
 
+  describe("a veto that is still being written is honoured by the final check", () => {
+    // The next repository observation waits until released, so the call that makes it is caught
+    // in the middle of publishing its veto.
+    let gate: { started: () => void; wait: Promise<void> } | undefined
+    const observe: GitRunner = async (argv, cwd, timeoutMs, signal) => {
+      const held = gate
+      gate = undefined
+      if (held !== undefined) {
+        held.started()
+        await held.wait
+      }
+      return spawnGit(argv, cwd, timeoutMs, signal)
+    }
+    const holdNextObservation = () => {
+      const started = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      gate = { started: started.resolve, wait: release.promise }
+      return { started: started.promise, release: release.resolve }
+    }
+
+    test("a refused explicit cleanup keeps the worktree while its denial is being recorded", async () => {
+      const h = await harness("veto-deny", { observe })
+      const held = holdNextObservation()
+      const refused = h.pending
+        .explicit(() => Promise.reject(new Error("rejected")), "ses_other")
+        .authorize({ worktree: h.f.linked })
+        .catch(() => {})
+      await held.started
+      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("cleanup was denied")
+      held.release()
+      await refused
+      await h.finish()
+    })
+
+    test("a background shell reported by the idle hook keeps the worktree while its hold is being recorded", async () => {
+      const h = await harness("veto-hold", { observe })
+      await h.pending.start()
+      const held = holdNextObservation()
+      const reported = h.fake.fire.session("experimental.idle", {
+        sessionID: "ses_x",
+        background: [{ kind: "shell", sessionID: "ses_x", shellID: "sh1", command: `cd ${h.f.linked} && make test` }],
+      } as never)
+      await held.started
+      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("running work")
+      held.release()
+      await reported
+      await h.pending.settle()
+      expect(removed(h)).toBe(false)
+      await h.finish()
+    })
+  })
+
   describe("the repository observations follow the cleanup bound", () => {
     // A git that needs about 6 s: it answers only when allowed at least that long.
     const slowGit: GitRunner = (argv, cwd, timeoutMs) => {
