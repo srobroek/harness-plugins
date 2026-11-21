@@ -1,7 +1,7 @@
 name: ci-publish
 
 on:
-  workflow_run:
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- Default-branch script only; no checkout or artifacts.
     workflows: [ci]
     types: [in_progress, completed]
 
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:
-      group: ci-publish-${{ github.event.workflow_run.event }}-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+      group: ci-publish-${{ github.event.workflow_run.id }}
       cancel-in-progress: false
     permissions:
       actions: read
@@ -82,6 +82,8 @@ jobs:
           }
           const fresh = await api(`/actions/runs/${RUN_ID}`);
           if (fresh.run_attempt !== run.run_attempt || fresh.status !== run.status) return;
+          const stillLatest = await api(`/actions/workflows/ci.yml/runs?event=workflow_dispatch&head_sha=${run.head_sha}&branch=${encodeURIComponent(run.head_branch)}&per_page=1`);
+          if (stillLatest.workflow_runs[0]?.id !== run.id) return;
           for (const context of contexts) {
             await api(`/statuses/${run.head_sha}`, {
               context, state,

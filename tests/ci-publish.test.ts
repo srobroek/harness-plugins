@@ -44,7 +44,8 @@ function fixture() {
     }
     if (key === "/actions/runs/123/jobs") expect(new URL(url).searchParams.get("filter")).toBe("latest")
     if (!(key in responses)) throw new Error(`Unexpected API request: ${endpoint}`)
-    return new Response(JSON.stringify(responses[key]))
+    const response = responses[key]
+    return response instanceof Response ? response : new Response(JSON.stringify(response))
   }
   const env = { GITHUB_TOKEN: "fixture-token", GITHUB_REPOSITORY: "owner/repo", GITHUB_SHA: "b".repeat(40), RUN_ID: "123" }
   return { run, pr, jobs, responses, statuses, execute: () => execute({ env }, fetch) }
@@ -126,8 +127,8 @@ test.each(["success", "skipped", "failure"])("includes the optional cad result i
 
 test("does not publish when a GitHub API read fails", async () => {
   const f = fixture()
-  delete f.responses["/actions/runs/123/jobs"]
-  await expect(f.execute()).rejects.toThrow("Unexpected API request")
+  f.responses["/actions/runs/123/jobs"] = new Response("Not found", { status: 404 })
+  await expect(f.execute()).rejects.toThrow("GitHub API /actions/runs/123/jobs?filter=latest&per_page=100: 404")
   expect(f.statuses).toEqual([])
 })
 
@@ -171,4 +172,27 @@ test.each(["harness-kit", "action"])("allows a version-only update to an approve
   f.responses[`/contents/.github/workflows/ci.yml?ref=${f.run.head_sha}`] = definition(updated, "updated-pins")
   await f.execute()
   expect(f.statuses.map((status) => status.state)).toEqual(["success", "success", "success"])
+})
+
+test.each([
+  ["another action owner", (text: string) => text.replace("actions/checkout@", "someone/checkout@")],
+  ["another action", (text: string) => text.replace("actions/checkout@", "actions/upload-artifact@")],
+  ["mutable workflow ref", (text: string) => text.replace(/check.yml@v\d+\.\d+\.\d+/, "check.yml@main")],
+  ["another reusable workflow", (text: string) => text.replace("workflows/check.yml@", "workflows/other.yml@")],
+  ["missing step", (text: string) => text.replace(/^\s+- uses: actions\/checkout@[^\n]+\n/m, "")],
+])("rejects CI dependency changes outside the version allowlist: %s", async (_reason, edit) => {
+  const f = fixture()
+  f.responses[`/contents/.github/workflows/ci.yml?ref=${f.run.head_sha}`] = definition(edit(trustedCi), "unapproved-change")
+  await expect(f.execute()).rejects.toThrow("CI definition differs")
+  expect(f.statuses).toEqual([])
+})
+
+test("does not publish if a newer dispatch starts during evaluation", async () => {
+  const f = fixture()
+  let reads = 0
+  Object.defineProperty(f.responses, "/actions/workflows/ci.yml/runs", {
+    get: () => ({ workflow_runs: [++reads === 1 ? f.run : { ...f.run, id: 124 }] }),
+  })
+  await f.execute()
+  expect(f.statuses).toEqual([])
 })
