@@ -2957,11 +2957,11 @@ describe("pending cleanup: one remover per worktree", () => {
       bounds?: Partial<CleanupBounds>
       observe?: GitRunner
       lock?: Record<string, unknown>
-      authorize?: (sessionID: string, request: { worktree: string; receiptBound?: boolean }) => Promise<void>
+      authorize?: (sessionID: string, request: { worktree: string; receiptBound?: boolean }, agent?: string) => Promise<void>
     } = {},
   ) {
     const f = fixture(name)
-    const asked: Array<{ sessionID: string; worktree: string; receiptBound?: boolean }> = []
+    const asked: Array<{ sessionID: string; worktree: string; agent?: string; receiptBound?: boolean }> = []
     const options: RunnerOptions = { beadStatus: over.beadStatus ?? "closed", ...(over.before ? { before: over.before } : {}) }
     const scripted = runner(f, options)
     const fake = createFakeContext({ directory: f.main })
@@ -2978,9 +2978,9 @@ describe("pending cleanup: one remover per worktree", () => {
       cwd: f.main,
       env: f.env,
       host: () => undefined,
-      authorize: async (sessionID, request) => {
-        asked.push({ sessionID, worktree: request.worktree, ...(request.receiptBound === undefined ? {} : { receiptBound: request.receiptBound }) })
-        await over.authorize?.(sessionID, request)
+      authorize: async (sessionID, request, agent) => {
+        asked.push({ sessionID, worktree: request.worktree, ...(agent === undefined ? {} : { agent }), ...(request.receiptBound === undefined ? {} : { receiptBound: request.receiptBound }) })
+        await over.authorize?.(sessionID, request, agent)
       },
       debounceMs: 1,
       ...(over.maxPerPass === undefined ? {} : { maxPerPass: over.maxPerPass }),
@@ -3033,6 +3033,17 @@ describe("pending cleanup: one remover per worktree", () => {
     await h.pending.start()
     await h.idle()
     expect(h.asked).toEqual([{ sessionID: "ses_lead", worktree: real, receiptBound: true }])
+    await h.finish()
+  })
+
+  test("a retry asks as the agent that landed, so that agent's own permission rules apply", async () => {
+    const h = await harness("pending-retry-agent")
+    await h.pending.record(h.f.receipt, "ses_lead", { agent: "shepherd" })
+    // A later plain record for the same receipt keeps the originating agent.
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    await h.idle()
+    expect(h.asked.map((entry) => entry.agent)).toEqual(["shepherd"])
     await h.finish()
   })
 

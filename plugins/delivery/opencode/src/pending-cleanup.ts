@@ -208,7 +208,7 @@ export type PendingDeps = {
    * (and receipt-bound exemption) an explicit `delivery_cleanup` gets. A throw is a denial: the
    * retry stops and the denial is recorded, so it is not tried again without a new explicit call.
    */
-  authorize: (sessionID: string, request: ExplicitRequest) => Promise<void>
+  authorize: (sessionID: string, request: ExplicitRequest, agent?: string) => Promise<void>
   /** Test seam: the runner, bounds and clock the cleanup proofs use. */
   cleanup?: Pick<CleanupDeps, "run" | "bounds" | "now">
   /** Test seam: the git runner the repository observations use. */
@@ -324,21 +324,25 @@ export function createPendingCleanup(deps: PendingDeps) {
     })
 
   /** `delivery_land` finished without removing the worktree: record the landing for whoever removes it. */
-  const record = async (receipt: LandingReceipt, sessionID: string, outcome: { denied?: boolean } = {}) => {
+  const record = async (receipt: LandingReceipt, sessionID: string, outcome: { denied?: boolean; agent?: string } = {}) => {
     const path = receipt.worktree.path
     if (path === null) return
     // If the denial cannot be written to disk (the lock is busy, the store is unwritable), it is still
     // remembered here: the retry must never remove what was denied just because the record is missing.
     if (outcome.denied) deniedInMemory.set(receipt.receiptId, canonicalDirectory(path))
-    await write(receipt.receiptId, path, (existing) => ({
-      receiptId: receipt.receiptId,
-      worktree: path,
-      headRefOid: receipt.pr.headRefOid,
-      sessionID,
-      landedAt: existing?.landedAt ?? now(),
-      ...(existing?.nudged ? { nudged: true } : {}),
-      ...(outcome.denied ? { denied: { at: now(), sessionID } } : existing?.denied ? { denied: existing.denied } : {}),
-    }))
+    await write(receipt.receiptId, path, (existing) => {
+      const agent = outcome.agent ?? existing?.agent
+      return {
+        receiptId: receipt.receiptId,
+        worktree: path,
+        headRefOid: receipt.pr.headRefOid,
+        sessionID,
+        landedAt: existing?.landedAt ?? now(),
+        ...(agent === undefined ? {} : { agent }),
+        ...(existing?.nudged ? { nudged: true } : {}),
+        ...(outcome.denied ? { denied: { at: now(), sessionID } } : existing?.denied ? { denied: existing.denied } : {}),
+      }
+    })
   }
 
   /** Receipts, newest first, whose worktree is `path`. */
@@ -557,7 +561,7 @@ export function createPendingCleanup(deps: PendingDeps) {
             ...removal,
             authorize: async (request) => {
               try {
-                await deps.authorize(sessionID, request)
+                await deps.authorize(sessionID, request, meta?.agent)
               } catch (error) {
                 // A refused retry is a denial like a refused explicit call: recorded, never retried unasked.
                 await deny(request.worktree, sessionID).catch(() => {})

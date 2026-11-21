@@ -3389,6 +3389,8 @@ function landGate(input) {
   return typeof expectHeadSha === "string" && expectHeadSha.trim() !== "" && requireApproval === true && requireGreenChecks === true;
 }
 function landAuthorizationGated(input, proof) {
+  if (typeof input === "object" && input !== null && input.setupAutoDelete === true)
+    return false;
   return landGate(input) && (proof.alreadyMerged || proof.approvalTrusted);
 }
 function cleanupGate(request) {
@@ -3576,9 +3578,11 @@ function gitlabApproval(approvals, head) {
   const names = Array.isArray(by) ? by.map((entry) => str(own2(entry, "user"), "username")).filter(Boolean) : [];
   return { ok: true, evidence: { kind: "gitlab-approvals", approvedBy: names } };
 }
-function gitlabTrust(approvals, head, access) {
+function gitlabTrust(approvals, head, access, resetOnPush) {
   if (own2(approvals, "approved") !== true)
     return { trusted: false, reason: "approval: observed approved false" };
+  if (resetOnPush !== true)
+    return { trusted: false, reason: "approval: the project does not provably reset approvals on push, so the approval is not bound to the head" };
   const sha = str(approvals, "sha")?.trim().toLowerCase();
   if (sha !== head)
     return { trusted: false, reason: `approval: observed sha ${sha ?? "none"}, expected an approval bound to head ${head}` };
@@ -3644,7 +3648,9 @@ async function readApproval(run, bound) {
     const level = read.ok ? own2(read.value, "access_level") : null;
     access[id] = typeof level === "number" ? level : null;
   }
-  return { ...result, trusted: gitlabTrust(payload.value, bound.head, access) };
+  const settings = await readJson(run, ["glab", "api", `projects/${project}/approvals`, ...host], bound);
+  const reset = settings.ok ? own2(settings.value, "reset_approvals_on_push") : undefined;
+  return { ...result, trusted: gitlabTrust(payload.value, bound.head, access, typeof reset === "boolean" ? reset : null) };
 }
 async function readChecks(run, bound) {
   if (bound.forge === "github") {
@@ -4806,17 +4812,17 @@ async function landPullRequest(params, deps = {}) {
     return refuse(`${unnamed}; no merge was issued and no receipt was written`);
   const preconditions = {};
   let approvalTrusted = false;
+  const bound = {
+    forge,
+    cliRepo,
+    nameWithOwner,
+    forgeHost,
+    number,
+    head,
+    env: forgeCommandEnv,
+    timeoutMs: FORGE_TIMEOUT_MS
+  };
   if (!alreadyMerged && (params.requireApproval === true || params.requireGreenChecks === true)) {
-    const bound = {
-      forge,
-      cliRepo,
-      nameWithOwner,
-      forgeHost,
-      number,
-      head,
-      env: forgeCommandEnv,
-      timeoutMs: FORGE_TIMEOUT_MS
-    };
     if (params.requireApproval === true) {
       const approval = await readApproval(run, bound);
       if (!approval.ok)
@@ -4871,14 +4877,21 @@ async function landPullRequest(params, deps = {}) {
   const unasked = interrupted("before authorization; nothing was merged or written");
   if (unasked !== null)
     return unasked;
+  const gated = landAuthorizationGated(params, { alreadyMerged, approvalTrusted });
   await deps.authorize?.({
     resource: `${nameWithOwner}#${number}`,
     forge,
     head,
     merge: alreadyMerged ? null : landMethod,
     setupAutoDelete: params.setupAutoDelete === true,
-    gated: landAuthorizationGated(params, { alreadyMerged, approvalTrusted })
+    gated
   });
+  const stillTrusted = async () => {
+    if (!gated || alreadyMerged)
+      return null;
+    const again = await readApproval(run, bound);
+    return again.ok && again.trusted?.trusted === true ? null : `the approval is no longer trusted for ${head} (${again.ok ? again.trusted?.trusted === false ? again.trusted.reason : "not provable" : again.reason}); the call ran without a prompt on that approval, so nothing was merged or enqueued and no receipt was written. Call delivery_land again to be asked`;
+  };
   const notes = [];
   if (planGated) {
     notes.push(`No merge queue was found: the branch rules of ${first.pr.baseRefName} are plan-gated (HTTP 403, "${PLAN_GATE_MESSAGE}"), so merge queues are unavailable on this repository and the merge was direct.`);
@@ -5034,6 +5047,9 @@ async function landPullRequest(params, deps = {}) {
         const unenqueued = interrupted("before the enqueue; nothing was enqueued and no receipt was written");
         if (unenqueued !== null)
           return unenqueued;
+        const untrustedEnqueue = await stillTrusted();
+        if (untrustedEnqueue !== null)
+          return refuse(untrustedEnqueue);
         const generation = newGeneration();
         const claimed = recordEnqueue(generation);
         if (typeof claimed !== "string")
@@ -5102,6 +5118,9 @@ async function landPullRequest(params, deps = {}) {
     const unmerged = interrupted("before the merge; no merge was issued and no receipt was written");
     if (unmerged !== null)
       return unmerged;
+    const untrustedMerge = await stillTrusted();
+    if (untrustedMerge !== null)
+      return refuse(untrustedMerge);
     merging = true;
     const mergeFailure = cliFailure(mergeArgv, await run(mergeArgv, { cwd, timeoutMs: FORGE_TIMEOUT_MS, env: forgeCommandEnv }));
     if (mergeFailure !== null)
@@ -5372,6 +5391,7 @@ function parseLanding(value) {
     headRefOid,
     sessionID,
     landedAt,
+    ...text3(value.agent) === undefined ? {} : { agent: text3(value.agent) },
     ...deniedAt !== undefined && deniedBy ? { denied: { at: deniedAt, sessionID: deniedBy } } : {},
     ...value.nudged === true ? { nudged: true } : {}
   };
@@ -6083,15 +6103,19 @@ function createPendingCleanup(deps) {
       return;
     if (outcome.denied)
       deniedInMemory.set(receipt.receiptId, canonicalDirectory(path));
-    await write(receipt.receiptId, path, (existing) => ({
-      receiptId: receipt.receiptId,
-      worktree: path,
-      headRefOid: receipt.pr.headRefOid,
-      sessionID,
-      landedAt: existing?.landedAt ?? now(),
-      ...existing?.nudged ? { nudged: true } : {},
-      ...outcome.denied ? { denied: { at: now(), sessionID } } : existing?.denied ? { denied: existing.denied } : {}
-    }));
+    await write(receipt.receiptId, path, (existing) => {
+      const agent = outcome.agent ?? existing?.agent;
+      return {
+        receiptId: receipt.receiptId,
+        worktree: path,
+        headRefOid: receipt.pr.headRefOid,
+        sessionID,
+        landedAt: existing?.landedAt ?? now(),
+        ...agent === undefined ? {} : { agent },
+        ...existing?.nudged ? { nudged: true } : {},
+        ...outcome.denied ? { denied: { at: now(), sessionID } } : existing?.denied ? { denied: existing.denied } : {}
+      };
+    });
   };
   const receiptsFor = (path) => {
     const key = repoKey(cwd, deps.observe, observationMs);
@@ -6271,7 +6295,7 @@ function createPendingCleanup(deps) {
             ...removal,
             authorize: async (request) => {
               try {
-                await deps.authorize(sessionID, request);
+                await deps.authorize(sessionID, request, meta?.agent);
               } catch (error) {
                 await deny(request.worktree, sessionID).catch(() => {});
                 throw error;
@@ -6728,7 +6752,7 @@ async function setupDelivery(ctx, overrides = {}) {
     cwd: directory,
     env: environment(options),
     host: () => hostWorktrees(ctx),
-    authorize: (sessionID, request) => asserter(ctx, { sessionID }, CLEANUP_ACTION, gates)(request.worktree, { ...request }, cleanupGate(request)),
+    authorize: (sessionID, request, agent) => asserter(ctx, { sessionID, ...agent === undefined ? {} : { agent } }, CLEANUP_ACTION, gates)(request.worktree, { ...request }, cleanupGate(request)),
     ...overrides
   });
   const tools = await ctx.tool.transform((editor) => {
@@ -6783,7 +6807,7 @@ async function setupDelivery(ctx, overrides = {}) {
         if (denied && cleanup !== undefined)
           cleanup.denied = true;
         if (cleanup?.ok !== true) {
-          await pending.record(outcome.receipt, context.sessionID, { denied }).catch(() => {});
+          await pending.record(outcome.receipt, context.sessionID, { denied, ...context.agent === undefined ? {} : { agent: context.agent } }).catch(() => {});
         }
         const output = landOutput(outcome, cleanup);
         const content = cleanup === undefined ? outcome.text : textAfterCleanup(outcome.text, cleanup);

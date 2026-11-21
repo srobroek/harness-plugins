@@ -363,8 +363,13 @@ export async function setupDelivery(
     cwd: directory,
     env: environment(options),
     host: () => hostWorktrees(ctx),
-    authorize: (sessionID, request) =>
-      asserter(ctx, { sessionID: sessionID as ToolContext["sessionID"] }, CLEANUP_ACTION, gates)(request.worktree, { ...request }, cleanupGate(request)),
+    authorize: (sessionID, request, agent) =>
+      asserter(
+        ctx,
+        { sessionID: sessionID as ToolContext["sessionID"], ...(agent === undefined ? {} : { agent: agent as ToolContext["agent"] }) },
+        CLEANUP_ACTION,
+        gates,
+      )(request.worktree, { ...request }, cleanupGate(request)),
     ...overrides,
   })
 
@@ -434,7 +439,7 @@ export async function setupDelivery(
         if (denied && cleanup !== undefined) cleanup.denied = true
         // Cleanup that did not finish stays pending: delivery retries it when a turn ends.
         if (cleanup?.ok !== true) {
-          await pending.record(outcome.receipt, context.sessionID, { denied }).catch(() => {})
+          await pending.record(outcome.receipt, context.sessionID, { denied, ...(context.agent === undefined ? {} : { agent: context.agent }) }).catch(() => {})
         }
         const output = landOutput(outcome, cleanup)
         const content = cleanup === undefined ? outcome.text : textAfterCleanup(outcome.text, cleanup)
