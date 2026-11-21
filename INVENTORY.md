@@ -14,7 +14,7 @@
 | autopilot | 1.3.2 | development | global | opencode |
 | aws | 0.7.1 | development | global | opencode, claude |
 | beads | 0.8.5 | development | project | opencode, claude |
-| build | 0.7.0 | development | project | opencode |
+| build | 0.7.1 | development | project | opencode |
 | cad | 0.8.0 | development | project | opencode |
 | chezmoi | 0.6.0 | development | global | opencode, claude |
 | claude-compat | 0.4.0 | development | project | opencode |
