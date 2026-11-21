@@ -310,10 +310,16 @@ export default Plugin.define({
      * published tentative tiers it has not yet registered: a retry on its own queue never sees those, so a
      * failed registration cannot leave a session switched to a tier that was rolled back.
      */
-    let committed = { agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes }
+    const snapshotOptions = () => ({ agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes, implicit: options.implicit })
+    let committed = snapshotOptions()
     let tentative = false
     const commit = () => {
-      committed = { agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes }
+      committed = snapshotOptions()
+    }
+    /** Implicit assignments follow the committed snapshot too, except while a reload's registration has them tentative. */
+    const setImplicit = (implicit: typeof options.implicit) => {
+      options.implicit = implicit
+      if (!tentative) committed = { ...committed, implicit }
     }
     const rebuild = () => {
       const set = buildTiers(settings, available as CatalogModel[], refs)
@@ -378,7 +384,7 @@ export default Plugin.define({
         failed: unclassifiable,
         autoGeneral: auto !== undefined,
       })
-      options.implicit = plan.implicit
+      setImplicit(plan.implicit)
       if (plan.pending.length > 0) scheduleClassify(plan.pending)
       const desired = desiredModels(editor.list(), options, available, healthView(health, Date.now()))
       for (const [id, ref] of desired) {
@@ -508,7 +514,7 @@ export default Plugin.define({
         failed: unclassifiable,
         autoGeneral: auto !== undefined,
       })
-      options.implicit = { ...options.implicit, ...late.implicit }
+      setImplicit({ ...options.implicit, ...late.implicit })
       if (late.pending.length > 0) scheduleClassify(late.pending)
       const desired: Map<string, ModelRef> = desiredModels(agents, options, available, view())
       const stale = staleAgents(agents, desired)
@@ -904,7 +910,7 @@ export default Plugin.define({
       const known = childRoles.get(childID)
       if (known !== undefined) return known
       const stored = await ctx.storage.get(`${SPAWN_ROLE_KEY_PREFIX}${childID}`).catch(() => undefined)
-      return typeof stored === "string" && Object.hasOwn(options.roles, stored) ? stored : undefined
+      return typeof stored === "string" && Object.hasOwn(committed.roles, stored) ? stored : undefined
     }
 
     /** The model each child resolved to, by child id; storage keeps it across reloads. */
@@ -1230,7 +1236,7 @@ export default Plugin.define({
           if (!live()) return
           const spawnRole = await spawnRoleOf(event.sessionID)
           if (!live()) return
-          const role = spawnRole ?? (agent === undefined ? undefined : roleOf(agent, committed.agents, options.implicit))
+          const role = spawnRole ?? (agent === undefined ? undefined : roleOf(agent, committed.agents, committed.implicit))
           const tried = triedModels.get(event.sessionID) ?? new Set<string>()
           triedModels.set(event.sessionID, tried.add(healthKey(failed)))
           const recent = healthView(health, Date.now(), RECENT_MS)
@@ -2179,13 +2185,14 @@ export default Plugin.define({
       const key = tiers === undefined ? fileTiers : JSON.stringify(tiers)
       if (tiers === undefined ? !agentsChanged : !force && key === fileTiers && !agentsChanged) return
       await exclusive(async () => {
-        const previous = { settings, agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes, derived }
+        const previous = { settings, agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes, implicit: options.implicit, derived }
         const restore = () => {
           settings = previous.settings
           options.agents = previous.agents
           options.roles = previous.roles
           options.tiers = previous.tiers
           options.classes = previous.classes
+          options.implicit = previous.implicit
           derived = previous.derived
         }
         tentative = true

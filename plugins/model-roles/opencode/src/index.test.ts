@@ -3890,6 +3890,63 @@ describe("tiers rpc", () => {
     )
   })
 
+  test("an implicit-assignment change during a failing setAgent reload does not move a retry off the committed tier", async () => {
+    await withConfig(
+      async (host) => {
+        const original = host.context.tool.transform
+        const failedModel = { providerID: "amazon-bedrock", id: "global.anthropic.claude-haiku-5-5", variant: "low" }
+        const error = { type: "provider.internal", message: "Service Unavailable", status: 503 }
+        let decision: unknown
+        let first = true
+        host.context.tool.transform = async (callback) => {
+          if (first) {
+            first = false
+            // The forward registration has dropped general's implicit standard assignment (it is now configured as strong).
+            decision = await host.fireRetry({ sessionID: "w1", agent: "general", model: failedModel, error, attempt: 4 })
+            throw new Error("tool refresh refused")
+          }
+          return original(callback)
+        }
+        await expect(host.rpc("setAgent", { agent: "general", tier: "strong" })).rejects.toThrow(/not applied: tool refresh refused/)
+        // general is still on standard in the committed state, so the retry moves to standard's next candidate.
+        expect(decision).toEqual({ retry: true, delay: 0 })
+        expect(host.calls.filter((c) => c.method === "switchModel").map((c) => c.input)).toEqual([
+          { sessionID: "w1", model: { providerID: "amazon-bedrock", id: "global.openai.gpt-6.1-sol", variant: "medium" } },
+        ])
+      },
+      [{ id: "general" }],
+    )
+  })
+
+  test("removing a custom tier during a failing reload keeps a restarted child's binding for its retry", async () => {
+    const custom = [`amazon-bedrock/${haikuId}#low`, `amazon-bedrock/${sonnetId}#low`]
+    await withConfig(
+      async (host) => {
+        const original = host.context.tool.transform
+        const failedModel = { providerID: "amazon-bedrock", id: haikuId, variant: "low" }
+        const error = { type: "provider.internal", message: "Service Unavailable", status: 503 }
+        let decision: unknown
+        let first = true
+        host.context.tool.transform = async (callback) => {
+          if (first) {
+            first = false
+            // The reload has published tiers without "custom"; the child's stored binding names it.
+            decision = await host.fireRetry({ sessionID: "c1", agent: "worker", model: failedModel, error, attempt: 4 })
+            throw new Error("tool refresh refused")
+          }
+          return original(callback)
+        }
+        await expect(host.rpc("set", { tier: "custom", value: null })).rejects.toThrow(/not applied: tool refresh refused/)
+        expect(decision).toEqual({ retry: true, delay: 0 })
+        expect(host.calls.filter((c) => c.method === "switchModel").map((c) => c.input)).toEqual([
+          { sessionID: "c1", model: { providerID: "amazon-bedrock", id: sonnetId, variant: "low" } },
+        ])
+      },
+      worker,
+      { options: { tiers: { custom: { model: custom } } }, fileText: tierEntry({ custom: { model: custom } }), seed: (host) => host.storage.set("spawn-role:c1", "custom") },
+    )
+  })
+
   test("a reload whose agent update fails restores the previous tiers", async () => {
     await withConfig(
       async (host) => {
