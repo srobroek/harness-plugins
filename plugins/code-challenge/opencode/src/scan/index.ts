@@ -4,10 +4,10 @@ import type { Context } from "@opencode/plugin/promise/plugin"
 import { consentRisks, type Risk, runScan, type ScanDeps, validRunId } from "./run.ts"
 import { DEPTHS, LANGUAGES, LENSES, type ScanInput, type ScanReport } from "./types.ts"
 
+export { spawnTool } from "./exec.ts"
 export { parseOutput } from "./parsers.ts"
 export { RECIPES } from "./recipes.ts"
 export type { Exec, ScanDeps } from "./run.ts"
-export { spawnTool } from "./exec.ts"
 export { consentRisks, detectLanguages, expandFiles, resolveTool, runScan } from "./run.ts"
 export * from "./types.ts"
 
@@ -32,7 +32,7 @@ export const SCAN_INPUT = {
     languages: { type: "array", items: { enum: [...LANGUAGES] }, description: "Languages; auto-detected by default" },
     lenses: { type: "array", items: { enum: [...LENSES] }, description: "Lenses to keep; all by default" },
     depth: { enum: [...DEPTHS], description: "quick skips analyzers that need a build; default standard" },
-    timeoutSeconds: { type: "number", description: "Per-analyzer timeout in seconds; default 120" },
+    timeoutSeconds: { type: "number", maximum: 900, description: "Per-analyzer timeout in seconds; default 120, at most 900" },
     runId: { type: "string", description: "Run id; raw outputs go to <git-dir>/code-challenge/<runId>/scan/" },
   },
   additionalProperties: false,
