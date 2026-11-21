@@ -762,6 +762,11 @@ export class Autopilot {
     } catch (error) {
       if (error instanceof RunLockBusy) return `autopilot_log: run lock busy (${error.message}); log the entry again`
       if (!(error instanceof RunFileError)) throw error
+      if (error.kind === "stale") {
+        // Losing a create-exclusive race drops the write; it is an issue, never a parking blocker.
+        this.#journalIssue(dir, `a write lost to another writer and was not applied: ${error.message}`)
+        return `autopilot_log: state moved on under this call (${error.message}); log the entry again`
+      }
       return `autopilot_log: ${this.#report(dir, error)}`
     }
   }
