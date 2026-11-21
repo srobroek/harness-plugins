@@ -1,3 +1,9 @@
+## beads [0.8.2](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.1...beads--v0.8.2) (2026-11-21)
+
+### Bug Fixes
+
+* **beads:** read body files and ANSI-C bodies in the PR bead gate ([e49e31e](https://github.com/srobroek/harness-plugins/commit/e49e31e73297ce5a2b7ee18b2df46410c521a7cc)), closes [srobroek/opencode-plugins#293](https://github.com/srobroek/opencode-plugins/issues/293)
+
 ## beads [0.8.1](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.0...beads--v0.8.1) (2026-11-21)
 
 ### Bug Fixes
