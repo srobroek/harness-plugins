@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,6 +20,20 @@ SPEC.loader.exec_module(preflight)
 
 
 class BeadsPreflightRegressionTests(unittest.TestCase):
+    def test_missing_bd_remedy_keeps_path_outside_single_quotes(self) -> None:
+        with patch.object(preflight.shutil, "which", return_value=None):
+            outcome = preflight.check_bd_available({})
+        self.assertEqual(outcome["status"], "fail")
+        remedy = outcome["fix"].replace("<directory-containing-bd>", "/opt/bd")
+        expanded = subprocess.run(
+            ["/bin/sh", "-c", remedy + '; printf %s "$PATH"'],
+            env={"PATH": "/usr/bin"},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        self.assertEqual(expanded, "/opt/bd:/usr/bin")
+
     def test_path_remedy_quotes_the_directory_and_expands_path(self) -> None:
         self.assertEqual(
             preflight.path_remedy("/opt/my tools/bin"),
