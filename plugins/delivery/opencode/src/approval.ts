@@ -194,11 +194,18 @@ export function githubReviewEnforcement(rules: unknown, protection: unknown): En
 }
 
 /**
- * GitLab: the merge request's effective approval rules (`merge_requests/<n>/approval_state`, which
- * lists only the rules that apply to this request's target branch) hold at least one mandatory rule
+ * GitLab: the merge request's effective approval rules hold at least one mandatory rule
  * (`approvals_required >= 1`), approvals reset on push, and merge requests may not change the
- * approvers. A project rule scoped to another branch therefore never counts. Pure: takes
- * `projects/<id>/approvals` and the approval state, each `undefined` when unreadable.
+ * approvers.
+ *
+ * Why `approval_state`: GitLab's docs say "To get the rules that apply, use
+ * GET /projects/:id/merge_requests/:merge_request_iid/approval_state"; the `approval_rules` list
+ * "can include stored rules that do not apply" (https://docs.gitlab.com/api/merge_request_approvals/).
+ * Why the lock: a merge request uses the project rules instead of its own regular and any_approver
+ * rules only if the project prevents editing them in merge requests, which is
+ * `disable_overriding_approvers_per_merge_request: true` in `GET /projects/:id/approvals`; otherwise
+ * the author can lower `approvals_required`. Pure: takes that settings payload and the approval
+ * state, each `undefined` when unreadable (which keeps the prompt).
  */
 export function gitlabReviewEnforcement(settings: unknown, state: unknown): Enforcement {
   const rules = own(state, "rules")

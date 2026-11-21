@@ -191,7 +191,7 @@ describe("githubReviewEnforcement", () => {
 describe("gitlabReviewEnforcement", () => {
   const settings = { reset_approvals_on_push: true, disable_overriding_approvers_per_merge_request: true }
   const state = (...required: number[]) => ({ rules: required.map((approvals_required) => ({ approvals_required })) })
-  test("needs an applicable mandatory rule, reset on push, and no per-MR override of the approvers", () => {
+  test("needs the applicable rules from approval_state (GitLab API docs), reset on push, and disable_overriding_approvers_per_merge_request", () => {
     expect(gitlabReviewEnforcement(settings, state(1)).enforced).toBe(true)
     expect(gitlabReviewEnforcement(settings, state(0, 2)).enforced).toBe(true)
   })
@@ -199,7 +199,9 @@ describe("gitlabReviewEnforcement", () => {
     ["no applicable rules (a rule scoped to another branch is absent from the state)", settings, state()],
     ["rules requiring nothing", settings, state(0)],
     ["approvals that survive pushes", { ...settings, reset_approvals_on_push: false }, state(1)],
-    ["approvers editable per merge request", { ...settings, disable_overriding_approvers_per_merge_request: false }, state(1)],
+    ["approvers editable per merge request (the author could lower approvals_required)", { ...settings, disable_overriding_approvers_per_merge_request: false }, state(1)],
+    ["a settings payload without the override field", { reset_approvals_on_push: true }, state(1)],
+    ["a non-boolean override field", { ...settings, disable_overriding_approvers_per_merge_request: "true" }, state(1)],
     ["unreadable settings", undefined, state(1)],
     ["an unreadable state", settings, undefined],
     ["a state without rules", settings, {}],

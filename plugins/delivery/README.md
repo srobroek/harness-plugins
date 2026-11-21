@@ -341,7 +341,9 @@ confirmation would rest on:
   head from the account that is both the authenticated `gh` user and the PR author (a
   changes request vetoes it too). On GitLab it means an approvals payload bound to the head
   sha with an approver of Developer access or above. The tool re-reads the approval before
-  the merge; the forge's own enforcement is the atomic guarantee. An approval that cannot be
+  the merge; the forge's head-bound merge refuses a moved head or a dismissed approval, but
+  nothing binds the target branch to the merge call, so a retarget after the final re-read
+  is a residual awaiting the owner's decision. An approval that cannot be
   tied to the head or to a trusted identity leaves the prompt in place; the merge can still
   go ahead once someone confirms.
 - **Receipt cleanup.** The tool read a landing receipt, verified it, and is removing
