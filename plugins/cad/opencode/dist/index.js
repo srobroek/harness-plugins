@@ -152,11 +152,14 @@ function parseAgentFile(text, id) {
   return agent;
 }
 function directoryReadRules(directory) {
-  const dirs = new Set([directory]);
+  const dirs = [directory];
   try {
-    dirs.add(realpathSync(directory));
+    dirs.push(realpathSync(directory));
   } catch {}
-  return [...dirs].map((dir) => ({ action: "external_directory", resource: join(dir, "*"), effect: "allow" }));
+  return directoryReadRulesFor(dirs);
+}
+function directoryReadRulesFor(directories) {
+  return [...new Set(directories)].map((dir) => ({ action: "external_directory", resource: join(dir, "*"), effect: "allow" }));
 }
 function readAgentFile(path) {
   return parseAgentFile(readFileSync(path, "utf8"), basename(path, ".md"));

@@ -139,13 +139,19 @@ export function permissionEffect(
 // `registerAgents`' `extra`. Both the directory and its real path are granted, because the host may report either.
 // A missing directory grants only the path as given.
 export function directoryReadRules(directory: string): AgentPermission[] {
-  const dirs = new Set([directory])
+  const dirs = [directory]
   try {
-    dirs.add(realpathSync(directory))
+    dirs.push(realpathSync(directory))
   } catch {
     // A missing directory is reported by whatever registers its content.
   }
-  return [...dirs].map((dir) => ({ action: "external_directory", resource: join(dir, "*"), effect: "allow" }))
+  return directoryReadRulesFor(dirs)
+}
+
+// The same rules for directories the caller has already resolved and checked. It never touches the file system,
+// so no later resolution can change which patterns are granted.
+export function directoryReadRulesFor(directories: readonly string[]): AgentPermission[] {
+  return [...new Set(directories)].map((dir) => ({ action: "external_directory", resource: join(dir, "*"), effect: "allow" }))
 }
 
 /** Read `<path>` and parse it as the agent named by its file name. */

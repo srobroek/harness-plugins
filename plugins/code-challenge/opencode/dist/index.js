@@ -1331,12 +1331,8 @@ function parseAgentFile(text, id) {
   flush();
   return agent;
 }
-function directoryReadRules(directory) {
-  const dirs = new Set([directory]);
-  try {
-    dirs.add(realpathSync(directory));
-  } catch {}
-  return [...dirs].map((dir) => ({ action: "external_directory", resource: join(dir, "*"), effect: "allow" }));
+function directoryReadRulesFor(directories) {
+  return [...new Set(directories)].map((dir) => ({ action: "external_directory", resource: join(dir, "*"), effect: "allow" }));
 }
 function readAgentFile(path) {
   return parseAgentFile(readFileSync(path, "utf8"), basename(path, ".md"));
@@ -2352,14 +2348,14 @@ function registerLibFacts(ctx, overrides = {}) {
 import { realpathSync as realpathSync2 } from "fs";
 import { join as join6 } from "path";
 import { fileURLToPath as fileURLToPath3 } from "url";
-function referenceReadRules(moduleUrl, warn = console.warn) {
+function referenceReadRules(moduleUrl, warn = console.warn, resolve = realpathSync2) {
   const skills = fileURLToPath3(new URL("../skills", moduleUrl));
   const references = join6(skills, "code-challenge", "references");
   try {
-    const expected = join6(realpathSync2(skills), "code-challenge", "references");
-    const actual = realpathSync2(references);
+    const expected = join6(resolve(skills), "code-challenge", "references");
+    const actual = resolve(references);
     if (actual === expected)
-      return directoryReadRules(references);
+      return directoryReadRulesFor([references, expected]);
     warn(`srobroek.code-challenge: ${references} resolves to ${actual}, not ${expected}; no read grant for the references`);
   } catch (error) {
     warn(`srobroek.code-challenge: cannot resolve ${references} (${error.code ?? "error"}); no read grant for the references`);
