@@ -185,6 +185,15 @@ describe("confirmDelivery", () => {
 })
 
 describe("confirm option", () => {
+  test.each(["false", "true", 1, "yes"])("non-boolean %p leaves land and cleanup unprompted", async (value) => {
+    const { fake } = await load({ sessions: [{ id: "root" }], options: { confirm: value } })
+    expect(fake.hooks("permission")).toEqual([])
+    for (const action of [LAND_ACTION, CLEANUP_ACTION]) {
+      const evaluation = { sessionID: "root", action, resources: ["x"], effect: "allow" } as { effect: string }
+      await fake.fire.permission("evaluate", evaluation as never)
+      expect(evaluation.effect).toBe("allow")
+    }
+  })
   test("is off by default and opt-in with confirm: true", () => {
     expect(parseOptions({}).confirm).toBe(false)
     expect(parseOptions({ confirm: false }).confirm).toBe(false)
