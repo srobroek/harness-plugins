@@ -17,6 +17,7 @@ import { basename, join } from "path";
 var MCP_TOOL_AGENTS = new Set([
   "adversarial-challenger",
   "architect",
+  "code-challenger",
   "code-reviewer",
   "coder",
   "concept",
@@ -26,6 +27,7 @@ var MCP_TOOL_AGENTS = new Set([
   "implementer",
   "implementer-high",
   "refactor",
+  "refactor-challenger",
   "researcher",
   "security-reviewer",
   "spec",

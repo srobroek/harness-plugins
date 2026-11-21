@@ -21,6 +21,8 @@ const PROFILES: Readonly<Record<string, Profile>> = {
   mechanic: { hidden: false, codeMode: [], web: false },
   researcher: { hidden: false, codeMode: ["repomix_pack"], web: true },
   "adversarial-challenger": { hidden: false, codeMode: [], web: true },
+  "code-challenger": { hidden: false, codeMode: ["challenge_scan", "challenge_lib_facts"], web: true },
+  "refactor-challenger": { hidden: false, codeMode: ["challenge_scan", "challenge_lib_facts"], web: true },
   "code-reviewer": { hidden: false, codeMode: [], web: false },
   "pr-reviewer": { hidden: true, codeMode: [], web: false },
   "security-reviewer": { hidden: false, codeMode: [], web: false },
