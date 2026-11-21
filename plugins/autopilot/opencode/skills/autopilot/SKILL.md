@@ -68,7 +68,8 @@ blocker. The user's own permission rules already allow what they trust, and an
 `ask` is what they wanted to be asked about. When a call is denied that way,
 log the item, park it, and move on. Do not retry it in another form to get
 around the prompt. The two exceptions are your own lanes' worktrees (the
-plugin allows `<root>/*` for a lane directory it recorded at a tick) and
+plugin allows `<root>/*` for a writer lane's linked worktree that it recorded at a tick
+and still finds unchanged) and
 `autopilot_merge` under `--allow merge`.
 
 Allowed by default:
@@ -93,11 +94,17 @@ Commands that discard work (`git reset --hard`, `git clean -f`, `git branch -D`,
 `rm -r`, `bd delete`) are irreversible. Run one only in a `--full` run.
 Otherwise, log it as a blocker and park the item.
 
-A merge needs `--allow merge`, an approve verdict from `code-reviewer` and
-green required checks. Merge only through `autopilot_merge({ pr, sha })` with
-the SHA the reviewer approved; never run `gh pr merge` in a shell, because the
-plugin denies that ask. The tool refuses when the head moved, the approval is
-for another SHA or a check is not green: then re-review the new head. A
+A merge needs `--allow merge`, a GitHub review in state `APPROVED` on the
+exact head SHA from an account other than the PR author (ask `code-reviewer`
+to submit it with `gh pr review --approve`; a comment verdict does not count),
+and green checks. Merge only through `autopilot_merge({ pr, sha, method })`
+with the SHA the reviewer approved; never run `gh pr merge` in a shell,
+because the plugin denies that ask. Pass the repository's documented merge
+method (see AGENTS.md, CONTRIBUTING or the README; `squash`, `rebase` or
+`merge`), never a guess: the tool refuses a method the repository does not
+allow. It also refuses when the head moved, the approval is for another SHA or
+a required check is not green: then re-review the new head. When the only
+reviewer is the PR author's own account, log a blocker and park the item. A
 deployment (stack create, update or delete) needs `--allow deploy`; that grant
 decides what you do and never approves a permission prompt.
 

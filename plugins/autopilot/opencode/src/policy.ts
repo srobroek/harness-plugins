@@ -1,5 +1,7 @@
 /** No-questions policy and write lanes while a run is armed. Pure. */
 
+import { commitChecks, own, reviewApproval, str } from "@srobroek/opencode-lib/pr-approval"
+
 /** Tools that ask the user something and wait. */
 export const ASK_TOOLS: ReadonlySet<string> = new Set(["question", "parley_ask", "parley_wait", "parley_end", "ask_user", "ask_followup_question"])
 
@@ -88,54 +90,70 @@ export function grantedMergeAsk(input: { action: string; effect: Effect; resourc
   return rest.length === 0 && resource !== undefined && /^\d+@[0-9a-f]{40}$/.test(resource)
 }
 
-function own(holder: unknown, key: string): unknown {
-  return typeof holder === "object" && holder !== null && !Array.isArray(holder) ? (holder as Record<string, unknown>)[key] : undefined
-}
+const text = (holder: unknown, key: string): string | undefined => str(holder, key) ?? undefined
 
-const text = (holder: unknown, key: string): string | undefined => {
-  const value = own(holder, key)
-  return typeof value === "string" ? value : undefined
-}
+export const MERGE_METHODS = ["squash", "rebase", "merge"] as const
+export type MergeMethod = (typeof MERGE_METHODS)[number]
 
-const loginOf = (holder: unknown) => text(own(holder, "author"), "login")
-
-/** Whether the PR carries an approval for exactly `sha`: an APPROVED review of that commit, or the author's `VERDICT: APPROVE` comment naming it. */
-function approvedAt(view: unknown, sha: string): boolean {
-  const reviews = own(view, "reviews")
-  const comments = own(view, "comments")
-  if (Array.isArray(reviews) && reviews.some((review) => text(review, "state") === "APPROVED" && text(own(review, "commit"), "oid")?.toLowerCase() === sha)) return true
-  const author = loginOf(view)
-  if (author === undefined || !Array.isArray(comments)) return false
-  return comments.some((comment) => {
-    const body = text(comment, "body") ?? ""
-    return loginOf(comment) === author && /^VERDICT:\s*APPROVE\b/.test(body.split(/\r?\n/, 1)[0]?.trim() ?? "") && body.toLowerCase().includes(sha)
-  })
+/** Why `method` may not be used on the repository, from `gh repo view --json squashMergeAllowed,rebaseMergeAllowed,mergeCommitAllowed`. */
+function methodRefusal(repo: unknown, method: string): string | undefined {
+  if (!(MERGE_METHODS as readonly string[]).includes(method)) return `method must be one of ${MERGE_METHODS.join(", ")}`
+  const flag = { squash: "squashMergeAllowed", rebase: "rebaseMergeAllowed", merge: "mergeCommitAllowed" }[method as MergeMethod]
+  return own(repo, flag) === true ? undefined : `method ${method} is not allowed by the repository (or its settings were unreadable)`
 }
 
 /**
- * Why a PR may not be merged at `sha`, or `undefined` when it may. `view` is `gh pr view --json
- * state,headRefOid,author,reviews,comments`; `checks` is `gh pr checks --json name,state,bucket`.
- * Anything unreadable refuses: an unknown approval is not an approval.
+ * Why a PR may not be merged at `sha` with `method`, or `undefined` when it may. `view` is `gh pr
+ * view --json state,headRefOid,baseRefName,author`; `reviews`, `runs` and `status` are the REST
+ * payloads for the PR's reviews and the commit's check runs and status; `required` is the required
+ * status contexts or `undefined` when unreadable. Approval is a review by someone other than the
+ * author, on exactly `sha`; comments never count. Anything unreadable refuses.
  */
-export function mergeRefusal(input: { sha: string; view: unknown; checks: unknown }): string | undefined {
+export function mergeRefusal(input: { sha: string; method: string; view: unknown; reviews: unknown; runs: unknown; status: unknown; required: readonly string[] | undefined; repo: unknown }): string | undefined {
   const sha = input.sha.toLowerCase()
   if (!FULL_SHA.test(sha)) return "sha must be the full 40-digit head commit"
   const head = text(input.view, "headRefOid")?.toLowerCase()
   if (head !== sha) return `PR head is ${head ?? "unreadable"}, not the reviewed ${sha}; review the new head first`
   const state = text(input.view, "state")
   if (state !== "OPEN") return `PR state is ${state ?? "unreadable"}, expected OPEN`
-  if (!approvedAt(input.view, sha)) return `no approval for ${sha}: expected an APPROVED review of that commit or a VERDICT: APPROVE comment by the author naming it`
-  const checks = input.checks
-  if (!Array.isArray(checks) || checks.length === 0) return "checks unreadable or none ran; expected every check on the head to pass"
-  const bad = checks.filter((check) => !["pass", "skipping"].includes(text(check, "bucket") ?? ""))
-  if (bad.length > 0) return `checks not green: ${bad.slice(0, 8).map((check) => `${text(check, "name") ?? "?"}=${text(check, "bucket") ?? text(check, "state") ?? "?"}`).join(", ")}`
-  return undefined
+  const method = methodRefusal(input.repo, input.method)
+  if (method !== undefined) return method
+  const approval = reviewApproval(input.reviews, text(own(input.view, "author"), "login") ?? null, sha)
+  if (!approval.ok) return approval.reason
+  const checks = commitChecks({ runs: input.runs, status: input.status, required: input.required })
+  return checks.ok ? undefined : checks.reason
 }
 
-/** The `gh pr merge` method flag the repository allows (squash, then rebase, then merge), from `gh repo view --json squashMergeAllowed,rebaseMergeAllowed,mergeCommitAllowed`. */
-export function mergeMethodFlag(repo: unknown): "--squash" | "--rebase" | "--merge" | undefined {
-  if (own(repo, "squashMergeAllowed") === true) return "--squash"
-  if (own(repo, "rebaseMergeAllowed") === true) return "--rebase"
-  if (own(repo, "mergeCommitAllowed") === true) return "--merge"
-  return undefined
+// --- recorded worktree roots -------------------------------------------------------------------
+
+/** A recorded worktree root: where it was, what it resolved to, and which inode it was. */
+export type RootIdentity = { path: string; real: string; dev: string; ino: string }
+
+/** What `lstat` says about a path (the last component is not followed). */
+export type Probe = { isDirectory: boolean; isSymbolicLink: boolean; dev: string; ino: string }
+export type Lstat = (path: string) => Probe | undefined
+
+/** The identity of `path` when it is a plain directory (not a symlink), else `undefined`. */
+export function identifyRoot(path: string, lstat: Lstat, canon: Canon): RootIdentity | undefined {
+  const stat = lstat(path)
+  const resolved = canon(path)
+  if (stat === undefined || resolved === undefined || !stat.isDirectory || stat.isSymbolicLink) return undefined
+  return { path, real: resolved, dev: stat.dev, ino: stat.ino }
+}
+
+/** Whether `root` is still the directory that was recorded: same inode, same device, same real path, still not a symlink. */
+export function rootIntact(root: RootIdentity, lstat: Lstat, canon: Canon): boolean {
+  const now = identifyRoot(root.path, lstat, canon)
+  return now !== undefined && now.real === root.real && now.dev === root.dev && now.ino === root.ino
+}
+
+/**
+ * Whether a child session's directory is a worktree the run may record: the child can write
+ * (not a read-only agent), the project lists the directory, it is not the primary checkout, and it
+ * carries the linked-worktree marker.
+ */
+export function recordableLane(input: { agent: string | undefined; directory: string; listed: ReadonlySet<string>; primary: ReadonlySet<string>; canon: Canon; linked: (directory: string) => boolean }): boolean {
+  if (!holdsLane(input.agent)) return false
+  const resolved = input.canon(input.directory)
+  return resolved !== undefined && input.listed.has(resolved) && !input.primary.has(resolved) && input.linked(input.directory)
 }

@@ -1,5 +1,6 @@
 /** Reading the world for one tick: beads, git and child sessions. */
 
+import type { RootIdentity } from "./policy.ts"
 import type { Run } from "./rundir.ts"
 import type { Bead, Child } from "./state.ts"
 
@@ -62,13 +63,13 @@ export function sessionBusy(info: Pick<SessionView, "time"> | undefined): boolea
  * A child session as a tick sees it. `lastSeen` is the newest event the plugin saw for it since
  * load; without one, the session's own timestamps stand in. Nothing counts from before `armedAt`.
  */
-export function childFrom(info: SessionView & { id: string }, lastSeen: number | undefined, armedAt: number): Child {
+export function childFrom(info: SessionView & { id: string }, lastSeen: number | undefined, armedAt: number, worktree?: RootIdentity): Child {
   const stamped = Math.max(finite(info.time?.updated) ?? 0, finite(info.time?.busy) ?? 0)
   return {
     sessionID: info.id,
     ...(typeof info.title === "string" && info.title ? { title: info.title } : {}),
     ...(typeof info.agent === "string" && info.agent ? { agent: info.agent } : {}),
-    ...(typeof info.location?.directory === "string" && info.location.directory ? { directory: info.location.directory } : {}),
+    ...(worktree !== undefined ? { worktree } : {}),
     busy: sessionBusy(info),
     lastActivity: Math.max(lastSeen ?? stamped, armedAt),
   }

@@ -2,7 +2,7 @@
 
 import type { Grant, RunOptions, Scope } from "./args.ts"
 import { type JournalEntry, parkedBeads } from "./journal.ts"
-import { holdsLane } from "./policy.ts"
+import { holdsLane, type RootIdentity } from "./policy.ts"
 
 export const TICK_EVERY = "4 minutes"
 export const TICK_MS = 4 * 60_000
@@ -49,7 +49,7 @@ export type RunState = {
   /** Items parked by the plugin itself (attempts, repeated error, stalled lane). */
   parked: string[]
   /** Worktree roots the run's lanes work in, as the host reported them; the permission hook may allow `<root>/*`. */
-  worktrees?: string[]
+  worktrees?: RootIdentity[]
   stopRequested?: boolean
   stopReason?: string
   stoppedAt?: number
@@ -58,7 +58,7 @@ export type RunState = {
 }
 
 export type Bead = { id: string; status: string; parent?: string | null; issue_type?: string; labels?: string[] | null }
-export type Child = { sessionID: string; title?: string; agent?: string; directory?: string; busy: boolean; lastActivity: number }
+export type Child = { sessionID: string; title?: string; agent?: string; worktree?: RootIdentity; busy: boolean; lastActivity: number }
 
 /** What one look at the world finds. */
 export type Snapshot = {
@@ -330,9 +330,9 @@ export function runIdFor(now: number, random: () => number = Math.random): strin
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}-${suffix}`
 }
 
-/** The run's recorded worktree roots plus the directory of each child that works outside the run's own. */
-export function recordWorktrees(state: Pick<RunState, "directory" | "worktrees">, children: readonly Pick<Child, "directory">[]): string[] {
-  const roots = new Set(state.worktrees ?? [])
-  for (const child of children) if (child.directory !== undefined && child.directory !== state.directory) roots.add(child.directory)
-  return [...roots].sort()
+/** The run's recorded worktrees plus those of children not recorded yet. The first identity recorded for a real path stays: a replacement is not the same directory. */
+export function recordWorktrees(state: Pick<RunState, "worktrees">, children: readonly Pick<Child, "worktree">[]): RootIdentity[] {
+  const roots = new Map((state.worktrees ?? []).map((root) => [root.real, root]))
+  for (const child of children) if (child.worktree !== undefined && !roots.has(child.worktree.real)) roots.set(child.worktree.real, child.worktree)
+  return [...roots.values()].sort((a, b) => a.real.localeCompare(b.real))
 }

@@ -52,12 +52,17 @@ it:
   OpenCode permission rules already allow what you trust, and an `ask` is what
   you wanted to be asked about. Nobody is there to answer it. Two asks are
   exceptions, and only an `ask` is ever changed:
-  - An `external_directory` ask for exactly `<root>/*`, where `<root>` is the
-    directory of a lane session the run observed, `worktree.list` still shows
-    for this project, and no wildcard appears in. The plugin compares real
-    paths, so a symlink alias of the root matches and a sibling, a
-    subdirectory or a symlink leading elsewhere does not. A lane is recorded at
-    the first tick after it starts.
+  - An `external_directory` ask for exactly `<root>/*`. At a tick, the plugin
+    records the directory of each writer lane (not `explore`, the reviewers,
+    `debug` or another read-only agent) when it is a linked, non-primary
+    worktree that `worktree.list` shows for this project. It stores the real
+    path with the device and inode. When the ask arrives, the plugin checks
+    that the path is still a plain directory, not a symlink, with the same
+    device, inode and real path, and that the project still lists it. No
+    wildcard may appear in `<root>`. A symlink alias of the root matches. A
+    sibling, a subdirectory, a symlink leading elsewhere, or a root that was
+    removed and recreated does not. A lane is recorded at the first tick after
+    it starts.
   - An `autopilot_merge` ask for one PR and SHA, under `--allow merge`.
   Shell, edit, MCP and deploy asks stay denied.
 - After compaction, the plugin queues a notice with the rules and a fresh
@@ -119,15 +124,26 @@ these types:
 
 Without `--full`, `autopilot_log` also labels a blocked bead `human`.
 
-`autopilot_merge({ pr, sha })` merges one PR. It asks the host for the action
-`autopilot_merge` on `<pr>@<sha>`, which the hook allows only under
-`--allow merge`. The tool then reads the PR from `gh` and refuses unless the PR
-is open, its head is `sha`, an `APPROVED` review of that commit or the author's
-`VERDICT: APPROVE` comment naming it exists, and every check passed. It then
-runs `gh pr merge <pr> --match-head-commit <sha>` with the repository's
-squash, rebase or merge method (first one allowed), as an argument array with
-no shell. It journals the result: an `action` on success, an `issue` on a
-refusal. GitHub only.
+`autopilot_merge({ pr, sha, method })` merges one PR. It asks the host for the
+action `autopilot_merge` on `<pr>@<sha>`, which the hook allows only under
+`--allow merge`. The tool then reads the PR from `gh` and refuses unless all of
+these hold:
+
+- The PR is open and its head is `sha`.
+- A GitHub review in state `APPROVED` on commit `sha` exists from an account
+  other than the PR author, and no reviewer's latest review requests changes.
+  A comment never counts.
+- Every check run and status on `sha` is success, neutral or skipped, and at
+  least one exists. When branch protection or rulesets are readable, each
+  required context is also present and passing. When they are unreadable, the
+  all-green rule stands alone.
+- `method` (`squash`, `rebase` or `merge`) is one the repository allows.
+
+It then runs `gh pr merge <pr> --match-head-commit <sha> --<method>` as an
+argument array with no shell and no `--admin`, so GitHub enforces its own
+protection. It journals the result: an `action` on success, an `issue` on a
+refusal. GitHub only. The approval and check judgments live in
+`lib/src/pr-approval.ts`, which `delivery_land` shares.
 
 ## Tick
 
