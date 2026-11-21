@@ -22,12 +22,14 @@ const SESSION_LEDGER = "/ledgers/session/.beads"
 const OTHER_LEDGER = "/ledgers/other/.beads"
 /** The session ledger's routes.jsonl, when a test sets one. */
 let routesText: string | undefined
+/** While set, the session ledger's routes.jsonl exists but cannot be read safely. */
+let routesUnreadable = false
 const ledgerHost: LedgerHost = {
   sessionLedger: () => SESSION_LEDGER,
   isLedger: (path) => path === SESSION_LEDGER || path === OTHER_LEDGER,
   canonical: (path) => path,
-  readRoutes: () => routesText,
-  readRedirect: () => undefined,
+  readRoutes: () => (routesUnreadable ? { kind: "unreadable" } : routesText === undefined ? { kind: "absent" } : { kind: "text", text: routesText }),
+  readRedirect: () => ({ kind: "absent" }),
 }
 let warnings: string[]
 const warn = (message: string) => void warnings.push(message)
@@ -177,6 +179,7 @@ beforeEach(async () => {
   locked = []
   lockEnvs = []
   routesText = undefined
+  routesUnreadable = false
   failLookups = 0
   lookupStdout = undefined
   onCreated = undefined
@@ -693,6 +696,66 @@ describe("the run's ledger", () => {
     expect(bdCalls().map((call) => call.args[0])).toContain("create")
     for (const call of bdCalls()) expect(call.env).toEqual({ BEADS_DIR: OTHER_LEDGER })
     expect(lockEnvs.map((env) => env?.BEADS_DIR)).toEqual([OTHER_LEDGER])
+  })
+
+  test("a routes file that cannot be read refuses the arm", async () => {
+    routesUnreadable = true
+    await command("--for 2h")
+    const result = await status({ action: "arm", setup: { scope: "p-1", full: false, allow: [], lanes: 3, until: "" } })
+    expect(result).toHaveProperty("error")
+    expect(latestState().phase).toBe("setup")
+    expect(bdCalls()).toEqual([])
+  })
+
+  test("a write is refused while the run's routes cannot be read", async () => {
+    await armed()
+    routesUnreadable = true
+    calls.length = 0
+    expect(await log({ type: "blocker", summary: "needs a key", bead: "p-1", parked: true })).toContain("could not flag p-1")
+    expect(bdCalls()).toEqual([])
+    expect(locked).toEqual([])
+  })
+
+  describe("a run whose state has no ledger (armed before it was recorded)", () => {
+    /** Rewrite the run's latest state without `ledger`, as an older plugin version left it. */
+    async function dropLedger(): Promise<void> {
+      const dir = new RunDir(join(root, "opencode-scratch", "autopilot"), latestState().runId)
+      const { ledger: _ledger, ...older } = dir.readState() as NonNullable<ReturnType<RunDir["readState"]>>
+      await dir.writeState(dir.readState(), older)
+    }
+
+    test("a tick reads the ledger arming would derive for its scope, here a routed one", async () => {
+      routesText = '{"prefix":"oth-","path":"../other"}'
+      await armed({ scope: "oth-1" })
+      await dropLedger()
+      expect(latestState()).not.toHaveProperty("ledger")
+      calls.length = 0
+      await status(tickInput())
+      expect(bdCalls().length).toBeGreaterThan(0)
+      for (const call of bdCalls()) expect(call.env).toEqual({ BEADS_DIR: OTHER_LEDGER })
+    })
+
+    test("stop creates the handoff in that ledger, under a lock for that ledger", async () => {
+      routesText = '{"prefix":"oth-","path":"../other"}'
+      await armed({ scope: "oth-1" })
+      await dropLedger()
+      calls.length = 0
+      lockEnvs.length = 0
+      await status({ action: "stop", reason: "done" })
+      expect(bdCalls().map((call) => call.args[0])).toContain("create")
+      for (const call of bdCalls()) expect(call.env).toEqual({ BEADS_DIR: OTHER_LEDGER })
+      expect(lockEnvs.map((env) => env?.BEADS_DIR)).toEqual([OTHER_LEDGER])
+    })
+
+    test("with routing unreadable it neither reads nor writes any ledger", async () => {
+      await armed()
+      await dropLedger()
+      routesUnreadable = true
+      calls.length = 0
+      await status({ action: "stop", reason: "done" })
+      expect(bdCalls()).toEqual([])
+      expect(locked).toEqual([])
+    })
   })
 
   test("a write naming a bead of another ledger is refused and never reaches bd", async () => {

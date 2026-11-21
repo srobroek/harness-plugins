@@ -1,15 +1,18 @@
 import { describe, expect, test } from "bun:test"
+import type { BoundedRead } from "@srobroek/opencode-lib/bounded-read"
 import { followRedirect, foreignBead, type LedgerHost, parseRoutes, resolveLedger } from "./ledger.ts"
 
 const SESSION = "/town/rig/.beads"
 const OTHER = "/town/other/.beads"
 
+const text = (value: string | undefined): BoundedRead => (value === undefined ? { kind: "absent" } : { kind: "text", text: value })
+
 const host = (over: Partial<LedgerHost> & { ledgers?: string[]; routes?: string; redirects?: Record<string, string>; routesOf?: Record<string, string> } = {}): LedgerHost => ({
   sessionLedger: () => SESSION,
   isLedger: (path) => (over.ledgers ?? [SESSION, OTHER]).includes(path),
   canonical: (path) => path,
-  readRoutes: (ledger) => over.routesOf?.[ledger] ?? over.routes,
-  readRedirect: (ledger) => over.redirects?.[ledger],
+  readRoutes: (ledger) => text(over.routesOf?.[ledger] ?? over.routes),
+  readRedirect: (ledger) => text(over.redirects?.[ledger]),
   ...over,
 })
 
@@ -23,24 +26,24 @@ describe("parseRoutes", () => {
 })
 
 describe("followRedirect", () => {
-  const redirected = (text: string) => followRedirect(SESSION, host({ redirects: { [SESSION]: text } }))
+  const redirected = (content: string) => followRedirect(SESSION, host({ redirects: { [SESSION]: content } }))
 
   test("follows the first line that is no comment, relative to the directory holding the .beads", () => {
-    expect(redirected("# moved\n\n../other/.beads\n")).toBe(OTHER)
+    expect(redirected("# moved\n\n../other/.beads\n")).toEqual({ ok: true, ledger: OTHER })
   })
 
   test("follows an absolute target", () => {
-    expect(redirected(OTHER)).toBe(OTHER)
+    expect(redirected(OTHER)).toEqual({ ok: true, ledger: OTHER })
   })
 
   test("stays put with no redirect, an empty one, or a target that is no ledger", () => {
-    expect(followRedirect(SESSION, host())).toBe(SESSION)
-    expect(redirected("# nothing\n")).toBe(SESSION)
-    expect(redirected("../gone/.beads")).toBe(SESSION)
+    expect(followRedirect(SESSION, host())).toEqual({ ok: true, ledger: SESSION })
+    expect(redirected("# nothing\n")).toEqual({ ok: true, ledger: SESSION })
+    expect(redirected("../gone/.beads")).toEqual({ ok: true, ledger: SESSION })
   })
 
   test("follows one level only", () => {
-    expect(followRedirect(SESSION, host({ redirects: { [SESSION]: "../other/.beads", [OTHER]: "../rig/.beads" } }))).toBe(OTHER)
+    expect(followRedirect(SESSION, host({ redirects: { [SESSION]: "../other/.beads", [OTHER]: "../rig/.beads" } }))).toEqual({ ok: true, ledger: OTHER })
   })
 })
 

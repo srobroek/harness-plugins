@@ -6,7 +6,7 @@
 import { realpathSync, statSync } from "node:fs"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 import { sessionPinFor } from "@srobroek/opencode-lib/beads-store"
-import { readBounded } from "@srobroek/opencode-lib/bounded-read"
+import { type BoundedRead, readBounded } from "@srobroek/opencode-lib/bounded-read"
 import type { Scope } from "./args.ts"
 
 export type LedgerHost = {
@@ -16,10 +16,10 @@ export type LedgerHost = {
   isLedger(path: string): boolean
   /** The canonical spelling of `path`. */
   canonical(path: string): string
-  /** The text of the `routes.jsonl` in `ledger`, if it has one. */
-  readRoutes(ledger: string): string | undefined
-  /** The text of the `redirect` file in `ledger`, if it has one. */
-  readRedirect(ledger: string): string | undefined
+  /** The `routes.jsonl` in `ledger`: absent, unreadable (a symlink, FIFO or oversized file) or its text. */
+  readRoutes(ledger: string): BoundedRead
+  /** The `redirect` file in `ledger`, read the same way. */
+  readRedirect(ledger: string): BoundedRead
 }
 
 export type LedgerResult = { ok: true; ledger: string } | { ok: false; error: string }
@@ -43,32 +43,42 @@ export function parseRoutes(text: string): Map<string, string> {
   return routes
 }
 
+const unreadable = (file: string, ledger: string): LedgerResult => ({ ok: false, error: `${file} in ${ledger} cannot be read safely (a symlink, a special file or too large), so routing cannot be checked; fix it or pass setup.ledger` })
+
 /**
  * Follow `ledger`'s `redirect` file as bd does: the first line that is not blank or a comment names
  * the target, relative to the directory that holds the `.beads`. One level only; a target that is
- * no ledger leaves `ledger` as it is.
+ * no ledger leaves `ledger` as it is. A redirect that cannot be read is an error, never "no redirect".
  */
-export function followRedirect(ledger: string, host: LedgerHost): string {
-  const text = host.readRedirect(ledger)
-  const line = text?.split("\n").map((entry) => entry.trim()).find((entry) => entry !== "" && !entry.startsWith("#"))
-  if (line === undefined) return ledger
+export function followRedirect(ledger: string, host: LedgerHost): LedgerResult {
+  const read = host.readRedirect(ledger)
+  if (read.kind === "absent") return { ok: true, ledger }
+  if (read.kind === "unreadable") return unreadable("redirect", ledger)
+  const line = read.text.split("\n").map((entry) => entry.trim()).find((entry) => entry !== "" && !entry.startsWith("#"))
+  if (line === undefined) return { ok: true, ledger }
   const target = host.canonical(isAbsolute(line) ? line : resolve(dirname(ledger), line))
-  return host.isLedger(target) ? target : ledger
+  return { ok: true, ledger: host.isLedger(target) ? target : ledger }
 }
 
+type Routed = { ok: true; ledger: string | null } | { ok: false; error: string }
+
 /**
- * The ledger the routes of `ledger` assign to `id` (the longest matching prefix wins), `null` when
- * none does, or `undefined` when the route leads nowhere. Only `ledger`'s own `routes.jsonl` is
- * read; parent directories are never searched. The target is followed through its own redirect.
+ * The ledger the routes of `ledger` assign to `id` (the longest matching prefix wins), `ledger: null`
+ * when none does. A route that leads nowhere, or a routes file or redirect that cannot be read, is an
+ * error. Only `ledger`'s own `routes.jsonl` is read; parent directories are never searched. The
+ * target is followed through its own redirect.
  */
-function routedLedger(ledger: string, id: string, host: LedgerHost): string | null | undefined {
-  const text = host.readRoutes(ledger)
-  if (text === undefined) return null
+function routedLedger(ledger: string, id: string, host: LedgerHost): Routed {
+  const read = host.readRoutes(ledger)
+  if (read.kind === "absent") return { ok: true, ledger: null }
+  if (read.kind === "unreadable") return unreadable("routes.jsonl", ledger)
   let best: { prefix: string; path: string } | undefined
-  for (const [prefix, path] of parseRoutes(text)) if (id.startsWith(prefix) && (best === undefined || prefix.length > best.prefix.length)) best = { prefix, path }
-  if (best === undefined) return null
+  for (const [prefix, path] of parseRoutes(read.text)) if (id.startsWith(prefix) && (best === undefined || prefix.length > best.prefix.length)) best = { prefix, path }
+  if (best === undefined) return { ok: true, ledger: null }
   const target = host.canonical(join(resolve(dirname(ledger), best.path), ".beads"))
-  return host.isLedger(target) ? followRedirect(target, host) : undefined
+  if (!host.isLedger(target)) return { ok: false, error: `the route for ${id} in ${ledger} leads to no ledger (${target})` }
+  const followed = followRedirect(target, host)
+  return followed
 }
 
 /**
@@ -79,23 +89,24 @@ function routedLedger(ledger: string, id: string, host: LedgerHost): string | nu
 export function resolveLedger(input: { explicit?: string; scope: Scope; directory: string }, host: LedgerHost): LedgerResult {
   if (input.explicit !== undefined && input.explicit.trim() !== "") {
     const path = resolve(input.directory, input.explicit.trim())
-    for (const candidate of [path, join(path, ".beads")]) if (host.isLedger(candidate)) return { ok: true, ledger: followRedirect(host.canonical(candidate), host) }
+    for (const candidate of [path, join(path, ".beads")]) if (host.isLedger(candidate)) return followRedirect(host.canonical(candidate), host)
     return { ok: false, error: `setup.ledger ${input.explicit} is not a beads ledger (a .beads directory, or the checkout that holds one)` }
   }
   const session = host.sessionLedger(input.directory)
   if (session === undefined) return { ok: false, error: `no beads ledger found for ${input.directory}; pass setup.ledger` }
-  const base = followRedirect(host.canonical(session), host)
-  if (input.scope.kind !== "bead") return { ok: true, ledger: base }
-  const routed = routedLedger(base, input.scope.id, host)
-  if (routed === undefined) return { ok: false, error: `the route for ${input.scope.id} in ${base} leads to no ledger; pass setup.ledger` }
-  return { ok: true, ledger: routed ?? base }
+  const resolved = followRedirect(host.canonical(session), host)
+  if (!resolved.ok || input.scope.kind !== "bead") return resolved
+  const routed = routedLedger(resolved.ledger, input.scope.id, host)
+  if (!routed.ok) return routed
+  return { ok: true, ledger: routed.ledger ?? resolved.ledger }
 }
 
 /** Why a write naming `beadId` would leave `ledger`, or `undefined` when it stays. */
 export function foreignBead(ledger: string, beadId: string, host: LedgerHost): string | undefined {
   const routed = routedLedger(ledger, beadId, host)
-  if (routed === null || routed === ledger) return undefined
-  return routed === undefined ? `${beadId} routes to no ledger` : `${beadId} belongs to ${routed}, not this run's ledger ${ledger}`
+  if (!routed.ok) return routed.error
+  if (routed.ledger === null || routed.ledger === ledger) return undefined
+  return `${beadId} belongs to ${routed.ledger}, not this run's ledger ${ledger}`
 }
 
 /** The environment a `bd` run for `ledger` gets: its ledger, whatever the session inherited. */
@@ -120,12 +131,6 @@ export const fsLedgerHost: LedgerHost = {
       return resolve(path)
     }
   },
-  readRoutes: (ledger) => {
-    const read = readBounded(join(ledger, "routes.jsonl"))
-    return read.kind === "text" ? read.text : undefined
-  },
-  readRedirect: (ledger) => {
-    const read = readBounded(join(ledger, "redirect"))
-    return read.kind === "text" ? read.text : undefined
-  },
+  readRoutes: (ledger) => readBounded(join(ledger, "routes.jsonl")),
+  readRedirect: (ledger) => readBounded(join(ledger, "redirect")),
 }

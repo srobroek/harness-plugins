@@ -796,11 +796,11 @@ export class Autopilot {
     return `logged ${entry.type}`
   }
 
-  /** The run's ledger; runs armed before the ledger was recorded use the session directory's. */
+  /** The run's ledger; runs armed before the ledger was recorded derive it as arming would, or have none. */
   #ledgerOf(state: RunState): string | undefined {
     if (state.ledger !== undefined) return state.ledger
-    const session = this.#ledgers.sessionLedger(state.directory)
-    return session === undefined ? undefined : this.#ledgers.canonical(session)
+    const legacy = resolveLedger({ scope: state.scope, directory: state.directory }, this.#ledgers)
+    return legacy.ok ? legacy.ledger : undefined
   }
 
   async #readBeads(state: RunState): Promise<BeadView> {
