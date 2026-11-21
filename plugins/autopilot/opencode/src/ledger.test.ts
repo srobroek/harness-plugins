@@ -1,34 +1,46 @@
 import { describe, expect, test } from "bun:test"
-import { beadPrefix, foreignBead, type LedgerHost, parseRoutes, resolveLedger } from "./ledger.ts"
+import { followRedirect, foreignBead, type LedgerHost, parseRoutes, resolveLedger } from "./ledger.ts"
 
 const SESSION = "/town/rig/.beads"
 const OTHER = "/town/other/.beads"
 
-const host = (over: Partial<LedgerHost> & { ledgers?: string[]; routes?: string } = {}): LedgerHost => ({
+const host = (over: Partial<LedgerHost> & { ledgers?: string[]; routes?: string; redirects?: Record<string, string>; routesOf?: Record<string, string> } = {}): LedgerHost => ({
   sessionLedger: () => SESSION,
   isLedger: (path) => (over.ledgers ?? [SESSION, OTHER]).includes(path),
   canonical: (path) => path,
-  readRoutes: () => over.routes,
+  readRoutes: (ledger) => over.routesOf?.[ledger] ?? over.routes,
+  readRedirect: (ledger) => over.redirects?.[ledger],
   ...over,
 })
 
-describe("beadPrefix", () => {
-  test.each([
-    ["opencode-plugins-74r", "opencode-plugins"],
-    ["p-1", "p"],
-    ["p-1.2.3", "p"],
-    ["nodash", undefined],
-    ["", undefined],
-  ])("%p -> %p", (id, prefix) => expect(beadPrefix(id)).toBe(prefix))
+// Route rules follow bd's docs/multi-agent/routing.md (gastownhall/beads), "Looking up a bead in
+// another store by prefix".
+describe("parseRoutes", () => {
+  test("keeps entries whose prefix ends in a hyphen and drops junk and hyphenless prefixes", () => {
+    const text = ['{"prefix":"gt-","path":"mayor/rig"}', "not json", '{"prefix":"hq","path":"."}', '{"prefix":5}', '{"prefix":"x-","path":""}', ""].join("\n")
+    expect([...parseRoutes(text)]).toEqual([["gt-", "mayor/rig"]])
+  })
 })
 
-describe("parseRoutes", () => {
-  test("reads prefix/path lines, with or without the trailing dash, and skips junk", () => {
-    const text = ['{"prefix":"gt-","path":"mayor/rig"}', "not json", '{"prefix":"hq","path":"."}', '{"prefix":5}', ""].join("\n")
-    expect([...parseRoutes(text)]).toEqual([
-      ["gt", "mayor/rig"],
-      ["hq", "."],
-    ])
+describe("followRedirect", () => {
+  const redirected = (text: string) => followRedirect(SESSION, host({ redirects: { [SESSION]: text } }))
+
+  test("follows the first line that is no comment, relative to the directory holding the .beads", () => {
+    expect(redirected("# moved\n\n../other/.beads\n")).toBe(OTHER)
+  })
+
+  test("follows an absolute target", () => {
+    expect(redirected(OTHER)).toBe(OTHER)
+  })
+
+  test("stays put with no redirect, an empty one, or a target that is no ledger", () => {
+    expect(followRedirect(SESSION, host())).toBe(SESSION)
+    expect(redirected("# nothing\n")).toBe(SESSION)
+    expect(redirected("../gone/.beads")).toBe(SESSION)
+  })
+
+  test("follows one level only", () => {
+    expect(followRedirect(SESSION, host({ redirects: { [SESSION]: "../other/.beads", [OTHER]: "../rig/.beads" } }))).toBe(OTHER)
   })
 })
 
@@ -66,6 +78,36 @@ describe("resolveLedger", () => {
     expect(resolveLedger({ scope: { kind: "bead", id: "gone-1" }, directory: "/town/rig" }, host({ routes }))).toMatchObject({ ok: false })
   })
 
+  test("the longest matching prefix wins over a shorter one", () => {
+    const routes = ['{"prefix":"hq-","path":"../rig"}', '{"prefix":"hq-cv-","path":"../other"}'].join("\n")
+    expect(resolveLedger({ scope: { kind: "bead", id: "hq-cv-sub-1" }, directory: "/town/rig" }, host({ routes }))).toEqual({ ok: true, ledger: OTHER })
+    expect(resolveLedger({ scope: { kind: "bead", id: "hq-2" }, directory: "/town/rig" }, host({ routes }))).toEqual({ ok: true, ledger: SESSION })
+  })
+
+  test("a route whose prefix lacks the trailing hyphen matches nothing", () => {
+    expect(resolveLedger({ scope: { kind: "bead", id: "oth-1" }, directory: "/town/rig" }, host({ routes: '{"prefix":"oth","path":"../other"}' }))).toEqual({ ok: true, ledger: SESSION })
+  })
+
+  test("a prefix is matched on the id, not on a stem derived from it", () => {
+    const routes = '{"prefix":"oth-sub-","path":"../other"}'
+    expect(resolveLedger({ scope: { kind: "bead", id: "oth-sub-x-1" }, directory: "/town/rig" }, host({ routes }))).toEqual({ ok: true, ledger: OTHER })
+  })
+
+  test("routes are read from the redirect's target, not the redirecting ledger", () => {
+    const redirects = { [SESSION]: "../other/.beads" }
+    const routesOf = { [SESSION]: '{"prefix":"p-","path":"../third"}', [OTHER]: '{"prefix":"p-","path":"."}' }
+    expect(resolveLedger({ scope: { kind: "bead", id: "p-1" }, directory: "/town/rig" }, host({ redirects, routesOf }))).toEqual({ ok: true, ledger: OTHER })
+  })
+
+  test("a routed target that redirects is followed", () => {
+    const third = "/town/third/.beads"
+    const result = resolveLedger(
+      { scope: { kind: "bead", id: "oth-1" }, directory: "/town/rig" },
+      host({ ledgers: [SESSION, OTHER, third], routes: '{"prefix":"oth-","path":"../other"}', redirects: { [OTHER]: "../third/.beads" } }),
+    )
+    expect(result).toEqual({ ok: true, ledger: third })
+  })
+
   test("with no explicit ledger and no ledger for the directory the arm is refused", () => {
     expect(resolveLedger({ scope: queue, directory: "/town/rig" }, host({ sessionLedger: () => undefined }))).toMatchObject({ ok: false })
   })
@@ -78,6 +120,7 @@ describe("foreignBead", () => {
 
   test("a bead with no route, or routed to this ledger, is the run's", () => {
     expect(foreignBead(SESSION, "p-1", host())).toBeUndefined()
+    expect(foreignBead(SESSION, "oth-1", host({ routes: '{"prefix":"oth","path":"../other"}' }))).toBeUndefined()
     expect(foreignBead(SESSION, "rig-1", host({ routes: '{"prefix":"rig-","path":"."}' }))).toBeUndefined()
   })
 })

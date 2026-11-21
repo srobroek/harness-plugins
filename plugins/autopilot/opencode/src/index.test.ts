@@ -27,6 +27,7 @@ const ledgerHost: LedgerHost = {
   isLedger: (path) => path === SESSION_LEDGER || path === OTHER_LEDGER,
   canonical: (path) => path,
   readRoutes: () => routesText,
+  readRedirect: () => undefined,
 }
 let warnings: string[]
 const warn = (message: string) => void warnings.push(message)

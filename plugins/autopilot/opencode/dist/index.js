@@ -1944,11 +1944,6 @@ function automationRequest(runId, deadline, binding) {
 // plugins/autopilot/opencode/src/ledger.ts
 import { realpathSync as realpathSync3, statSync as statSync4 } from "fs";
 import { dirname as dirname3, isAbsolute as isAbsolute3, join as join2, resolve as resolve3 } from "path";
-function beadPrefix(id) {
-  const base = id.replace(/(\.\d+)+$/, "");
-  const dash = base.lastIndexOf("-");
-  return dash > 0 ? base.slice(0, dash) : undefined;
-}
 function parseRoutes(text) {
   const routes = new Map;
   for (const line of text.split(`
@@ -1960,44 +1955,54 @@ function parseRoutes(text) {
       continue;
     }
     const { prefix, path } = value ?? {};
-    if (typeof prefix === "string" && prefix !== "" && typeof path === "string" && path !== "")
-      routes.set(prefix.replace(/-$/, ""), path);
+    if (typeof prefix === "string" && prefix.endsWith("-") && typeof path === "string" && path !== "")
+      routes.set(prefix, path);
   }
   return routes;
 }
-function routedLedger(ledger, prefix, host) {
+function followRedirect(ledger, host) {
+  const text = host.readRedirect(ledger);
+  const line = text?.split(`
+`).map((entry) => entry.trim()).find((entry) => entry !== "" && !entry.startsWith("#"));
+  if (line === undefined)
+    return ledger;
+  const target = host.canonical(isAbsolute3(line) ? line : resolve3(dirname3(ledger), line));
+  return host.isLedger(target) ? target : ledger;
+}
+function routedLedger(ledger, id, host) {
   const text = host.readRoutes(ledger);
-  const path = text === undefined ? undefined : parseRoutes(text).get(prefix);
-  if (path === undefined)
+  if (text === undefined)
     return null;
-  const target = host.canonical(join2(resolve3(dirname3(ledger), path), ".beads"));
-  return host.isLedger(target) ? target : undefined;
+  let best;
+  for (const [prefix, path] of parseRoutes(text))
+    if (id.startsWith(prefix) && (best === undefined || prefix.length > best.prefix.length))
+      best = { prefix, path };
+  if (best === undefined)
+    return null;
+  const target = host.canonical(join2(resolve3(dirname3(ledger), best.path), ".beads"));
+  return host.isLedger(target) ? followRedirect(target, host) : undefined;
 }
 function resolveLedger(input, host) {
   if (input.explicit !== undefined && input.explicit.trim() !== "") {
     const path = resolve3(input.directory, input.explicit.trim());
     for (const candidate of [path, join2(path, ".beads")])
       if (host.isLedger(candidate))
-        return { ok: true, ledger: host.canonical(candidate) };
+        return { ok: true, ledger: followRedirect(host.canonical(candidate), host) };
     return { ok: false, error: `setup.ledger ${input.explicit} is not a beads ledger (a .beads directory, or the checkout that holds one)` };
   }
   const session = host.sessionLedger(input.directory);
   if (session === undefined)
     return { ok: false, error: `no beads ledger found for ${input.directory}; pass setup.ledger` };
-  const base = host.canonical(session);
+  const base = followRedirect(host.canonical(session), host);
   if (input.scope.kind !== "bead")
     return { ok: true, ledger: base };
-  const prefix = beadPrefix(input.scope.id);
-  const routed = prefix === undefined ? null : routedLedger(base, prefix, host);
+  const routed = routedLedger(base, input.scope.id, host);
   if (routed === undefined)
     return { ok: false, error: `the route for ${input.scope.id} in ${base} leads to no ledger; pass setup.ledger` };
   return { ok: true, ledger: routed ?? base };
 }
 function foreignBead(ledger, beadId, host) {
-  const prefix = beadPrefix(beadId);
-  if (prefix === undefined)
-    return;
-  const routed = routedLedger(ledger, prefix, host);
+  const routed = routedLedger(ledger, beadId, host);
   if (routed === null || routed === ledger)
     return;
   return routed === undefined ? `${beadId} routes to no ledger` : `${beadId} belongs to ${routed}, not this run's ledger ${ledger}`;
@@ -2012,7 +2017,7 @@ var isDir2 = (path) => {
 };
 var fsLedgerHost = {
   sessionLedger: (directory) => sessionPinFor(directory),
-  isLedger: (path) => isAbsolute3(path) && isDir2(path) && (isDir2(join2(path, "embeddeddolt")) || readBounded(join2(path, "metadata.json")).kind === "text" || readBounded(join2(path, "config.yaml")).kind === "text"),
+  isLedger: (path) => isAbsolute3(path) && isDir2(path) && (isDir2(join2(path, "embeddeddolt")) || readBounded(join2(path, "metadata.json")).kind === "text" || readBounded(join2(path, "config.yaml")).kind === "text" || readBounded(join2(path, "redirect")).kind === "text"),
   canonical: (path) => {
     try {
       return realpathSync3(path);
@@ -2022,6 +2027,10 @@ var fsLedgerHost = {
   },
   readRoutes: (ledger) => {
     const read = readBounded(join2(ledger, "routes.jsonl"));
+    return read.kind === "text" ? read.text : undefined;
+  },
+  readRedirect: (ledger) => {
+    const read = readBounded(join2(ledger, "redirect"));
     return read.kind === "text" ? read.text : undefined;
   }
 };
