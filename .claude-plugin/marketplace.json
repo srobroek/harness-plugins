@@ -57,7 +57,7 @@
       "name": "chezmoi",
       "description": "Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill.",
       "source": "./plugins/chezmoi/claude",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/chezmoi",
       "repository": "https://github.com/srobroek/harness-plugins"
