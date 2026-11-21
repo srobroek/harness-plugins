@@ -30,8 +30,16 @@ On every `shell` call (`tool.hook("execute.before")`), in this order, with one
    no `options.store`, so a ledger in another repository needs the literal `BEADS_DIR=`
    there. A `bd` the gate cannot place (behind `exec`, `env`, `xargs`, a shell string or a
    substitution, quoted or not) is refused too while the default ledger is foreign, because it
-   may be a write. Run each `bd` as its own simple command. The `bd-embedded-write-lock` gate
-   controls this check.
+   may be a write. The same holds for a command that defines an `alias` or a shell function.
+   It also holds for a command name spelled with quotes or a backslash (`"b"d`, `\bd`).
+   Run each `bd` as its own simple command. The `bd-embedded-write-lock` gate controls this check. Only a `bd` in command
+   position counts as launched: `git diff -- bd` names it and passes.
+
+   Threat model: this gate stops a ledger inherited by accident, such as a `BEADS_DIR`
+   that leaked from the shell that started the server. It does not stop deliberate shell
+   obfuscation. Out of scope are `eval`, indirect expansion, sourced scripts, aliases
+   defined outside the command and unknown wrapper binaries. The real fix is a clean
+   server environment.
 10. `gh pr create` without a `Bead:`, `Closes-Bead:` or `Bead-Id:` trailer is
    refused in a repository with a live ledger that you can write to.
 11. Each `bd` write to an embedded store is rewritten to run under

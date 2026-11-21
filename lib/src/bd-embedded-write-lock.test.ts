@@ -42,6 +42,7 @@ const host = hostname().split(".")[0] ?? "localhost"
 const BD_ON_PATH = Bun.which("bd") !== null
 /** The runner's store flags, as the gate writes them: the real path held, the path as named. */
 const runnerStore = (store: string): string[] => ["--beads-store", realpathSync(store), "--beads-store-selected", store]
+}
 test("resolves mise-only Bun and completes a real runner write", () => {
   const root = mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "beads-lock-mise-"))
   const marker = join(root, "written")
@@ -759,7 +760,7 @@ describe("compound commands", () => {
       const command = await rewritten("bd update bd-1 --claim | bd update bd-2 --claim; bd close bd-3 && echo ok", real)
       const run = Bun.spawnSync(["/bin/sh", "-c", command], {
         cwd: root,
-        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
+        env: scrubbedBeadsEnv({ PATH: `${bin}:${process.env.PATH ?? ""}` }),
         stdout: "pipe",
         stderr: "pipe",
       })
@@ -1145,5 +1146,84 @@ describe("who chose the ledger a write lands in", () => {
     const command = "bd update proj-1 --status open; BEADS_DIR=/x/.beads bd update proj-1 --status open"
     planEmbeddedWrites(command, "/work", { BEADS_DIR: "/x/.beads" }, { classify: false, observe: (t) => seen.push(t.beadsDirAssigned) })
     expect(seen).toEqual([false, true])
+  })
+
+  /** Reasons the planner reports as unplaced for `command`, and the writes it observes. */
+  const plan = (command: string, env: NodeJS.ProcessEnv = { BEADS_DIR: "/x/.beads" }) => {
+    const reasons: string[] = []
+    const writes: Array<{ verb: string; assigned: boolean }> = []
+    planEmbeddedWrites(command, "/work", env, {
+      classify: false,
+      unplaced: (reason) => reasons.push(reason),
+      observe: (target) => writes.push({ verb: target.invocation.verb, assigned: target.beadsDirAssigned }),
+    })
+    return { reasons, writes }
+  }
+
+  test.each([['"b"d create --title t'], ["b''d create --title t"], ["\\bd create --title t"]])(
+    "a quote-split or escaped bd (%s) is placed as a bd write even though the text holds no bare bd word",
+    (command) => {
+      expect(plan(command).writes.map((w) => w.verb)).toEqual(["create"])
+    },
+  )
+
+  test('exec "b"d create is a launcher even though the text holds no bare bd word', () => {
+    expect(plan('exec "b"d create --title t').reasons.join("\n")).toContain("launched through")
+  })
+
+  test.each([['"b"d list'], ["b''d list"], ["\\bd list"]])("%s is reported as an obfuscated command name", (command) => {
+    expect(plan(command).reasons.join("\n")).toContain("quote-split or escaped")
+  })
+
+  test.each([["bd create --title t"], ["'bd' create --title t"], ['"bd" create --title t']])(
+    "%s, a bd whose quotes wrap the whole name, is placed normally",
+    (command) => {
+      const { reasons, writes } = plan(command)
+      expect(reasons).toEqual([])
+      expect(writes.map((w) => w.verb)).toEqual(["create"])
+    },
+  )
+
+  test.each([
+    ["alias b=bd\nb create --title t", "alias"],
+    ["alias b=bd; b create --title t", "alias"],
+    ["f() { bd create --title t; }; f", "shell function"],
+    ["f ()\n{\n bd create --title t\n}\nf", "shell function"],
+    ["function f { bd create --title t; }; f", "shell function"],
+  ])("%j is reported as unplaced (%s)", (command, what) => {
+    expect(plan(command).reasons.join("\n")).toContain(what)
+  })
+
+  test.each([
+    ["f() { export BEADS_DIR=/y/.beads; }; f; bd create --title t"],
+    ["function f { export BEADS_DIR=/y/.beads; }\nbd create --title t"],
+    ["f() { :; }; export BEADS_DIR=/y/.beads; bd create --title t"],
+  ])("a function definition in the command voids every BEADS_DIR provenance: %j", (command) => {
+    expect(plan(command).writes.map((w) => w.assigned)).toEqual([false])
+  })
+
+  test.each([
+    ["git diff -- 'bd'"],
+    ["git log -- bd"],
+    ["grep -r 'bd' ."],
+    ["xargs grep bd"],
+    ["gh label create 'bd'"],
+    ["sudo -u build ls bd"],
+  ])("%s names bd as an operand, not as a command", (command) => {
+    expect(plan(command).reasons).toEqual([])
+  })
+
+  test.each([
+    ["exec 'bd' close x"],
+    ["sudo -u build bd close x"],
+    ["sudo -u build 'bd' close x"],
+    ["env A=1 bd close x"],
+    ["timeout 60 bd close x"],
+    ["nice -n 5 bd close x"],
+    ["xargs -n1 bd close"],
+    ["nohup exec bd close x"],
+    ["find . -exec bd close {} \\;"],
+  ])("%s runs bd behind a recognised wrapper", (command) => {
+    expect(plan(command).reasons.join("\n")).toContain("launched through")
   })
 })

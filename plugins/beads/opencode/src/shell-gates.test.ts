@@ -202,6 +202,60 @@ describe("decideShell", () => {
       expect(decision.cause).toContain("its own simple command")
     })
 
+    test.each([
+      ['"b"d create --title t'],
+      ["b''d create --title t"],
+      ["\\bd create --title t"],
+      ['"b"d list'],
+      ["alias b=bd\nb create --title t"],
+      ["alias b=bd; b create --title t"],
+      ["f() { bd create --title t; }; f"],
+      ["function f { bd create --title t; }; f"],
+      ["f() { export BEADS_DIR=__B__; }; f; bd create --title t"],
+      ["f() { :; }; export BEADS_DIR=__B__; bd create --title t"],
+    ])("an alias, a function or a quote-split name is refused outright while the ambient ledger is foreign: %j", async (template) => {
+      const command = template.replaceAll("__B__", join(repoB, ".beads"))
+      const decision = await decideShell(command, repoA, deps({ env: leaked() }))
+      if (decision.kind !== "block") throw new Error(JSON.stringify(decision))
+      expect(decision.gate).toBe("bd-embedded-write-lock")
+      expect(decision.cause).toContain(realpathSync(join(repoB, ".beads")))
+    })
+
+    test.each([
+      ['"b"d create --title t'],
+      ["b''d create --title t"],
+      ["\\bd create --title t"],
+      ["alias b=bd\nb create --title t"],
+      ["f() { bd create --title t; }; f"],
+    ])("the same shapes are not refused by the foreign-ledger gate in the own-ledger case: %j", (command) => {
+      const own = { PATH: process.env.PATH, BEADS_DIR: join(repoA, ".beads") }
+      expect(ledgerWriteRefusal(command, repoA, own)).toBeUndefined()
+      const configuredStore = join(repoB, ".beads")
+      expect(ledgerWriteRefusal(command, repoA, leaked(), { configuredStore })).toBeUndefined()
+    })
+
+    test.each([['"b"d list'], ["alias b=bd\nb list"], ["f() { bd list; }; f"]])(
+      "while the ambient ledger is foreign these shapes are refused even for a read, with the reason named: %j",
+      (command) => {
+        const refusal = ledgerWriteRefusal(command, repoA, leaked())
+        expect(refusal).toContain("its own simple command")
+        expect(refusal).toMatch(/quote-split|alias|shell function/)
+      },
+    )
+
+    test("a literal BEADS_DIR= does not excuse a quote-split name: the name is refused outright", () => {
+      const command = `BEADS_DIR=${join(repoB, ".beads")} "b"d create --title t`
+      expect(ledgerWriteRefusal(command, repoA, leaked())).toContain("quote-split")
+    })
+
+    test.each([["git diff -- 'bd'"], ["git log -- bd"], ["grep -r 'bd' ."]])(
+      "a command that only names bd as an operand is allowed in an own-ledger repository: %j",
+      async (command) => {
+        const own = { PATH: process.env.PATH, BEADS_DIR: join(repoA, ".beads") }
+        expect((await decideShell(command, repoA, deps({ env: own }))).kind).toBe("allow")
+      },
+    )
+
     test("the gate itself refuses a quoted xargs launcher the shell parser would also refuse", () => {
       const foreign = { PATH: process.env.PATH, BEADS_DIR: join(repoB, ".beads") }
       expect(ledgerWriteRefusal("echo proj-1 | xargs 'bd' close", repoA, foreign)).toContain("its own simple command")

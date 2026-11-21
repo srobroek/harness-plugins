@@ -171,5 +171,5 @@ export function unplacedBdRefusal(input: {
 }): string | undefined {
   const foreign = foreignLedger(input)
   if (foreign === undefined) return undefined
-  return `Refused: this command runs \`bd\` where the gate cannot place it (${input.reason}), and the ledger it would reach by default, ${JSON.stringify(foreign.store)}, belongs to ${JSON.stringify(foreign.ledgerRoot)}, not to the git repository you are in (${JSON.stringify(input.cwd)}). Run each \`bd\` as its own simple command, directly, with no launcher, shell string or substitution around it. If that is the wrong project, ${WRONG_PROJECT}. If you really mean to use that ledger, write \`BEADS_DIR=<path> bd <verb> ...\` in the command line itself.`
+  return `Refused: this command runs \`bd\` where the gate cannot place it (${input.reason}), and the ledger it would reach by default, ${JSON.stringify(foreign.store)}, belongs to ${JSON.stringify(foreign.ledgerRoot)}, not to the git repository you are in (${JSON.stringify(input.cwd)}). Run each \`bd\` as its own simple command, spelled plainly, with no launcher, alias, function, shell string, substitution or quote-split name around it. If that is the wrong project, ${WRONG_PROJECT}. If you really mean to use that ledger, write \`BEADS_DIR=<path> bd <verb> ...\` in the command line itself.`
 }

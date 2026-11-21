@@ -2068,6 +2068,9 @@ function embeddedStoreFor(cwd, env = process.env) {
 var DEFERRED_VALUE = /[$`~*?[\]]/;
 var STORE_FLAGS = ["-C", "--directory", "--db", "--database"];
 var BD_WORD = /(?<![\w.-])bd(?![\w-]|\.\w)/;
+function mentionsBd(source) {
+  return BD_WORD.test(source) || BD_WORD.test(source.replace(/["'\\]/g, ""));
+}
 var ASSIGNMENT3 = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
 var BEADS_DIR_ASSIGNMENT = /^BEADS_DIR(\+?)=/;
 var LIST_PREFIXES = new Set(["then", "else", "do"]);
@@ -2160,7 +2163,7 @@ function resolveBdTargets(command, cwd, env) {
 function planEmbeddedWrites(command, cwd, env, options = {}) {
   const { observe, unresolved, unplaced, classify = true } = options;
   const embeddedStore = (store) => classify && embedded(store);
-  if (!BD_WORD.test(command))
+  if (!mentionsBd(command))
     return { kind: "writes", writes: [] };
   const scan = scanShell(command);
   const writes = [];
@@ -2186,6 +2189,9 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
     { cwd: { kind: "known", cwd, certain: true, changed: false }, beadsDir: { kind: "known", value: env.BEADS_DIR, assigned: false } }
   ];
   const { items } = scan;
+  const definesFunction = hasFunctionDefinition(items);
+  if (definesFunction)
+    unplaced?.("the command defines a shell function, whose body the gate does not follow");
   let compound = 0;
   let unresolvedWrite = false;
   for (const [index, item] of items.entries()) {
@@ -2205,7 +2211,11 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
     else if (COMPOUND_CLOSERS[first] === true)
       compound = Math.max(0, compound - 1);
     const shape = shapeOf(item, command);
-    if (shape.kind !== "bd" && item.hereDocuments.some((document) => BD_WORD.test(document.body))) {
+    if (shape.kind === "other" && shape.head !== undefined && !shape.head.quoted && shape.head.value === "alias")
+      unplaced?.("the command defines an `alias`, which can rename `bd`");
+    if (shape.kind === "bd" && obfuscatedName(command.slice(shape.head.start, shape.head.end)))
+      unplaced?.('its command name is quote-split or escaped (for example `"b"d` or `\\bd`)');
+    if (shape.kind !== "bd" && item.hereDocuments.some((document) => mentionsBd(document.body))) {
       const runner = pipelineSourceRunner(items, index, command);
       if (runner !== undefined)
         refuse({ part: `a here-document fed to \`${runner}\` mentions \`bd\``, fix: SOURCE_FIX });
@@ -2239,7 +2249,7 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
           fix: "Write the plain `bd` command and let the lock generate the runner form."
         }, resolved.store);
       } else if (state.cwd.kind === "known")
-        observe?.({ invocation: child, cwd: state.cwd.cwd, store: resolved.store, ...beadsDirOf(resolved) });
+        observe?.({ invocation: child, cwd: state.cwd.cwd, store: resolved.store, ...beadsDirOf(resolved, definesFunction) });
       continue;
     }
     const invocation = invocationFromArgv(shape.args.map((word) => word.value));
@@ -2254,7 +2264,7 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
     }
     const store = resolved.store;
     if (state.cwd.kind === "known")
-      observe?.({ invocation, store, cwd: state.cwd.cwd, ...beadsDirOf(resolved) });
+      observe?.({ invocation, store, cwd: state.cwd.cwd, ...beadsDirOf(resolved, definesFunction) });
     else
       unresolved?.(invocation);
     if (store === undefined || !embeddedStore(store))
@@ -2343,7 +2353,7 @@ function isWrite(invocation, args) {
   return writesStore(invocation) || WRITE_FLAGS[invocation.verb] !== undefined && args.some((word) => word.expands);
 }
 function runsBd(source) {
-  if (!BD_WORD.test(source))
+  if (!mentionsBd(source))
     return false;
   const scan = scanShell(source);
   if (!scan.complete || scan.substitutions.some(runsBd))
@@ -2354,7 +2364,7 @@ function runsBd(source) {
     const shape = shapeOf(item, source);
     if (shape.kind !== "other" || launchOf(shape, item, source) !== undefined)
       return true;
-    return item.hereDocuments.some((document) => BD_WORD.test(document.body)) && pipelineSourceRunner(scan.items, index, source) !== undefined;
+    return item.hereDocuments.some((document) => mentionsBd(document.body)) && pipelineSourceRunner(scan.items, index, source) !== undefined;
   });
 }
 function sourceRunner(shape) {
@@ -2387,12 +2397,61 @@ function pipelineSourceRunner(items, index, source) {
   }
   return;
 }
+var LAUNCHERS = {
+  chronic: true,
+  chrt: true,
+  command: true,
+  doas: true,
+  env: true,
+  exec: true,
+  flock: true,
+  ionice: true,
+  nice: true,
+  nohup: true,
+  setsid: true,
+  stdbuf: true,
+  sudo: true,
+  taskset: true,
+  time: true,
+  timeout: true,
+  unbuffer: true,
+  xargs: true
+};
+var FIND_EXEC = { "-exec": true, "-execdir": true, "-ok": true, "-okdir": true };
+function runsBdBehind(head, args) {
+  const name = commandName(head);
+  if (name === "find") {
+    return args.some((word, i) => {
+      const next = args[i + 1];
+      return FIND_EXEC[word.value] === true && next !== undefined && !next.expands && commandName(next) === "bd";
+    });
+  }
+  if (LAUNCHERS[name] !== true)
+    return false;
+  let afterOption = false;
+  for (const [i, word] of args.entries()) {
+    if (word.expands)
+      return false;
+    if (commandName(word) === "bd")
+      return true;
+    if (word.value.startsWith("-")) {
+      afterOption = true;
+      continue;
+    }
+    if (afterOption || ASSIGNMENT3.test(word.value) || /^[0-9.]+[smhd]?$/.test(word.value)) {
+      afterOption = false;
+      continue;
+    }
+    return runsBdBehind(word, args.slice(i + 1));
+  }
+  return false;
+}
 function launchOf(shape, command, source) {
   const { head, args } = shape;
   if (head === undefined)
     return;
   if (head.expands) {
-    if (!BD_WORD.test(source))
+    if (!mentionsBd(source))
       return;
     return {
       part: `its command word \`${source.slice(head.start, head.end)}\` is expanded at run time, so whether it runs \`bd\` is unknown`,
@@ -2409,7 +2468,7 @@ function launchOf(shape, command, source) {
   const name = commandName(head);
   if (NAME_ONLY[name] === true || name === "command" && /^-[vV]$/.test(args[0]?.value ?? ""))
     return;
-  if (!args.some((word) => !word.expands && commandName(word) === "bd"))
+  if (!runsBdBehind(head, args))
     return;
   return {
     part: `\`bd\` is launched through \`${head.value}\`, which hides the invocation from the lock`,
@@ -2482,7 +2541,23 @@ function assignBeadsDir(state, word, source, scoped) {
   const literal = !scoped && match[1] === "" && !word.expands && !DEFERRED_VALUE.test(value);
   state.beadsDir = literal ? { kind: "known", value, assigned: true } : { kind: "unknown", cause: source.slice(word.start, word.end) };
 }
-var beadsDirOf = ({ beadsDir, beadsDirAssigned }) => ({ beadsDir, beadsDirAssigned });
+var beadsDirOf = ({ beadsDir, beadsDirAssigned }, definesFunction) => ({
+  beadsDir,
+  beadsDirAssigned: beadsDirAssigned && !definesFunction
+});
+function hasFunctionDefinition(items) {
+  return items.some((item, index) => {
+    if (item.kind !== "command")
+      return false;
+    const head = item.words[0];
+    if (head !== undefined && !head.quoted && head.value === "function")
+      return true;
+    return operatorAt(items, index + 1) === "(" && operatorAt(items, index + 2) === ")";
+  });
+}
+function obfuscatedName(source) {
+  return /["'\\]/.test(source) && !/^(["'])[^"'\\]*\1$/.test(source);
+}
 function resolveWrite(invocation, assignments, state, env, source) {
   const write = `\`bd ${invocation.verb}\``;
   for (const flag of STORE_FLAGS) {

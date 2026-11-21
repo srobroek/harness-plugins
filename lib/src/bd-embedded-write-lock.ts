@@ -568,6 +568,14 @@ const STORE_FLAGS = ["-C", "--directory", "--db", "--database"]
 /** `bd` as a whole word: not part of an id such as `bd-12` or a name such as `.bd` or `bd.log`. */
 const BD_WORD = /(?<![\w.-])bd(?![\w-]|\.\w)/
 
+/**
+ * Whether shell source can run `bd`. Quotes and backslashes are removed first, because the
+ * shell removes them from a command name: `"b"d`, `b''d` and `\bd` all run `bd`.
+ */
+function mentionsBd(source: string): boolean {
+  return BD_WORD.test(source) || BD_WORD.test(source.replace(/["'\\]/g, ""))
+}
+
 /** A `NAME=` or `NAME+=` assignment, matched on the word's source so the name is unquoted. */
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*\+?=/
 
@@ -824,7 +832,7 @@ export function planEmbeddedWrites(
 ): WritePlan {
   const { observe, unresolved, unplaced, classify = true } = options
   const embeddedStore = (store: string): boolean => classify && embedded(store)
-  if (!BD_WORD.test(command)) return { kind: "writes", writes: [] }
+  if (!mentionsBd(command)) return { kind: "writes", writes: [] }
   const scan = scanShell(command)
   const writes: EmbeddedWrite[] = []
   let problem: Problem | undefined
@@ -849,6 +857,10 @@ export function planEmbeddedWrites(
     { cwd: { kind: "known", cwd, certain: true, changed: false }, beadsDir: { kind: "known", value: env.BEADS_DIR, assigned: false } },
   ]
   const { items } = scan
+  // A function body is not run where it is defined, so none of its effects can be followed; the
+  // command is reported as unplaced and no `BEADS_DIR` assignment in it counts as a choice.
+  const definesFunction = hasFunctionDefinition(items)
+  if (definesFunction) unplaced?.("the command defines a shell function, whose body the gate does not follow")
   // Inside `if`/`case`/a loop, or behind `&&`/`||`, a command may not run at all.
   let compound = 0
   let unresolvedWrite = false
@@ -865,7 +877,11 @@ export function planEmbeddedWrites(
     if (COMPOUND_OPENERS[first] === true) compound++
     else if (COMPOUND_CLOSERS[first] === true) compound = Math.max(0, compound - 1)
     const shape = shapeOf(item, command)
-    if (shape.kind !== "bd" && item.hereDocuments.some((document) => BD_WORD.test(document.body))) {
+    if (shape.kind === "other" && shape.head !== undefined && !shape.head.quoted && shape.head.value === "alias")
+      unplaced?.("the command defines an `alias`, which can rename `bd`")
+    if (shape.kind === "bd" && obfuscatedName(command.slice(shape.head.start, shape.head.end)))
+      unplaced?.("its command name is quote-split or escaped (for example `\"b\"d` or `\\bd`)")
+    if (shape.kind !== "bd" && item.hereDocuments.some((document) => mentionsBd(document.body))) {
       const runner = pipelineSourceRunner(items, index, command)
       if (runner !== undefined)
         refuse({ part: `a here-document fed to \`${runner}\` mentions \`bd\``, fix: SOURCE_FIX })
@@ -901,7 +917,7 @@ export function planEmbeddedWrites(
           resolved.store,
         )
       } else if (state.cwd.kind === "known")
-        observe?.({ invocation: child, cwd: state.cwd.cwd, store: resolved.store, ...beadsDirOf(resolved) })
+        observe?.({ invocation: child, cwd: state.cwd.cwd, store: resolved.store, ...beadsDirOf(resolved, definesFunction) })
       continue
     }
     const invocation = invocationFromArgv(shape.args.map((word) => word.value))
@@ -915,7 +931,7 @@ export function planEmbeddedWrites(
       continue
     }
     const store = resolved.store
-    if (state.cwd.kind === "known") observe?.({ invocation, store, cwd: state.cwd.cwd, ...beadsDirOf(resolved) })
+    if (state.cwd.kind === "known") observe?.({ invocation, store, cwd: state.cwd.cwd, ...beadsDirOf(resolved, definesFunction) })
     else unresolved?.(invocation)
     if (store === undefined || !embeddedStore(store)) continue
     if (shape.condition !== undefined) {
@@ -1018,7 +1034,7 @@ function isWrite(invocation: BdInvocation, args: ShellWord[]): boolean {
 
 /** Shell source a substitution runs: does it run `bd` anywhere the scan can see? */
 function runsBd(source: string): boolean {
-  if (!BD_WORD.test(source)) return false
+  if (!mentionsBd(source)) return false
   const scan = scanShell(source)
   if (!scan.complete || scan.substitutions.some(runsBd)) return true
   return scan.items.some((item, index) => {
@@ -1026,7 +1042,7 @@ function runsBd(source: string): boolean {
     const shape = shapeOf(item, source)
     if (shape.kind !== "other" || launchOf(shape, item, source) !== undefined) return true
     return (
-      item.hereDocuments.some((document) => BD_WORD.test(document.body)) &&
+      item.hereDocuments.some((document) => mentionsBd(document.body)) &&
       pipelineSourceRunner(scan.items, index, source) !== undefined
     )
   })
@@ -1060,12 +1076,69 @@ function pipelineSourceRunner(items: ShellScan["items"], index: number, source: 
   return undefined
 }
 
+/** Wrappers that run the command after their own options: `exec bd`, `env A=1 bd`, `timeout 60 bd`. */
+const LAUNCHERS: Record<string, true> = {
+  chronic: true,
+  chrt: true,
+  command: true,
+  doas: true,
+  env: true,
+  exec: true,
+  flock: true,
+  ionice: true,
+  nice: true,
+  nohup: true,
+  setsid: true,
+  stdbuf: true,
+  sudo: true,
+  taskset: true,
+  time: true,
+  timeout: true,
+  unbuffer: true,
+  xargs: true,
+}
+
+/** `find` options that run a command. */
+const FIND_EXEC: Record<string, true> = { "-exec": true, "-execdir": true, "-ok": true, "-okdir": true }
+
+/**
+ * Whether `head args...` runs `bd` as a command: `bd` is the command word of a recognised
+ * wrapper, quoted or not. Options, assignments, durations and the value after an option are
+ * skipped; the first other word is the wrapped command, which is followed when it is a wrapper
+ * too. An operand of any other command (`git diff -- bd`) is not a launch.
+ */
+function runsBdBehind(head: ShellWord, args: ShellWord[]): boolean {
+  const name = commandName(head)
+  if (name === "find") {
+    return args.some((word, i) => {
+      const next = args[i + 1]
+      return FIND_EXEC[word.value] === true && next !== undefined && !next.expands && commandName(next) === "bd"
+    })
+  }
+  if (LAUNCHERS[name] !== true) return false
+  let afterOption = false
+  for (const [i, word] of args.entries()) {
+    if (word.expands) return false
+    if (commandName(word) === "bd") return true
+    if (word.value.startsWith("-")) {
+      afterOption = true
+      continue
+    }
+    if (afterOption || ASSIGNMENT.test(word.value) || /^[0-9.]+[smhd]?$/.test(word.value)) {
+      afterOption = false
+      continue
+    }
+    return runsBdBehind(word, args.slice(i + 1))
+  }
+  return false
+}
+
 /** Why a non-`bd` command may still run `bd` where the lock cannot see it, if it may. */
 function launchOf(shape: OtherShape, command: SimpleCommand, source: string): Problem | undefined {
   const { head, args } = shape
   if (head === undefined) return undefined
   if (head.expands) {
-    if (!BD_WORD.test(source)) return undefined
+    if (!mentionsBd(source)) return undefined
     return {
       part: `its command word \`${source.slice(head.start, head.end)}\` is expanded at run time, so whether it runs \`bd\` is unknown`,
       fix: "Spell `bd` literally as the command word.",
@@ -1080,8 +1153,8 @@ function launchOf(shape: OtherShape, command: SimpleCommand, source: string): Pr
   }
   const name = commandName(head)
   if (NAME_ONLY[name] === true || (name === "command" && /^-[vV]$/.test(args[0]?.value ?? ""))) return undefined
-  // A quoted `'bd'` is the same program as a bare one: `exec 'bd' create` runs `bd`.
-  if (!args.some((word) => !word.expands && commandName(word) === "bd")) return undefined
+  // Only a `bd` in command position is a launch; `git diff -- 'bd'` merely names it.
+  if (!runsBdBehind(head, args)) return undefined
   return {
     part: `\`bd\` is launched through \`${head.value}\`, which hides the invocation from the lock`,
     fix: 'Call `bd` directly as its own simple command instead of through a launcher such as `env`, `xargs`, `timeout` or `find -exec`; to act on a list of ids, pass them to one `bd` call or loop with `while read -r id; do bd ... "$id"; done`.',
@@ -1179,7 +1252,25 @@ function assignBeadsDir(state: ShellState, word: ShellWord, source: string, scop
 
 type ResolvedWriteTarget = Pick<ResolvedWrite, "store" | "beadsDir" | "beadsDirAssigned"> & { selected: string | undefined }
 
-const beadsDirOf = ({ beadsDir, beadsDirAssigned }: ResolvedWriteTarget) => ({ beadsDir, beadsDirAssigned })
+const beadsDirOf = ({ beadsDir, beadsDirAssigned }: ResolvedWriteTarget, definesFunction: boolean) => ({
+  beadsDir,
+  beadsDirAssigned: beadsDirAssigned && !definesFunction,
+})
+
+/** `name()` or `function name`: a definition whose body this scan would otherwise read as run. */
+function hasFunctionDefinition(items: ShellScan["items"]): boolean {
+  return items.some((item, index) => {
+    if (item.kind !== "command") return false
+    const head = item.words[0]
+    if (head !== undefined && !head.quoted && head.value === "function") return true
+    return operatorAt(items, index + 1) === "(" && operatorAt(items, index + 2) === ")"
+  })
+}
+
+/** A command name written with quotes or backslashes inside it, not wrapped whole (`'bd'` is plain). */
+function obfuscatedName(source: string): boolean {
+  return /["'\\]/.test(source) && !/^(["'])[^"'\\]*\1$/.test(source)
+}
 
 /** The store a `bd` write in this shell state lands in, or what keeps it unknown. */
 function resolveWrite(
