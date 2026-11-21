@@ -1089,6 +1089,8 @@ describe("a rewrite the walker cannot fully parse is refused", () => {
     ["a rewrite as the value of -B", "git grep -B update-ref x"],
     ["a rewrite as the value of -C in a cluster", "git grep -nC filter-branch x"],
     ["a rewrite as the value of -f in a cluster", "rg -nf git-filter-repo x ."],
+    ["--pre after a -g glob", "rg -g x --pre='git update-ref -d refs/heads/main' x ."],
+    ["a rewrite as the value of -f after a -g option", "rg -g x -f git-filter-repo ."],
     ["git launched after a valued option", "uv run --package billing git update-ref -d refs/heads/main"],
     ["git filter-branch launched after --with", "uv run --with x git filter-branch --env-filter true"],
     ["a script that is handed a filter-repo word", "python3 script.py git-filter-repo --force"],
@@ -1139,6 +1141,7 @@ describe("a rewrite the walker cannot fully parse is refused", () => {
     "grep -r --exclude-dir git-filter-repo TODO .",
     "grep -r --include-dir=git-filter-repo TODO .",
     "rg -g '*git-filter-repo*' --glob '!git-filter-repo' TODO .",
+    "rg -gf git-filter-repo .",
   ])("allows the mention in %s", (command) => {
     expect(run(command, "canonical")).toBeUndefined()
   })
