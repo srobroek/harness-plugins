@@ -316,8 +316,14 @@ the directory is already gone.
 `<owner>/<name>#<number>`. It asks after every read has passed and before the
 first write. `delivery_cleanup` asks for action `delivery_cleanup` with the
 worktree path, right before the removal. The plugin turns an allowed request for
-either action into `ask`, so every call prompts. A deny rule still wins. Set the
-`confirm` option to `false` to let your permission rules decide on their own.
+either action into `ask`, so every call in a root session prompts. A deny rule
+still wins. A subagent session (one with a parent) is not prompted, because it
+cannot answer: an allowed request stays allowed. If the session lookup fails, the
+prompt stays. A subagent is still gated by its own `delivery_land` and
+`delivery_cleanup` permission, and `delivery_land` still checks that
+`requireApproval` names the head SHA, that the checks are green, and that it
+merges at most once. Set the `confirm` option to `false` to let your permission
+rules decide on their own.
 
 ## Receipts
 
