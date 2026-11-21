@@ -1261,7 +1261,7 @@ describe("heartbeat failures", () => {
       const t = await start([{ id: root }], { run: async () => ({ failure: "bd down" }), detach: undefined })
       t.fake.storage.set(`leases/${root}`, { k: { id: "proj-1", actor: "me/main", store: "/repo/.beads" } })
       // The failed beat drops the lease through storage; make that write reject.
-      t.fake.context.storage.set = async () => {
+      ;(t.fake.context.storage as { set: unknown }).set = async () => {
         throw new Error("storage down")
       }
       await t.emit("session.execution.started", root, {}, false)
