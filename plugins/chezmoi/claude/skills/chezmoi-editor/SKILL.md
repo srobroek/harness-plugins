@@ -6,7 +6,8 @@ description: Edits chezmoi-managed dotfiles at their source; use when changing d
 # Chezmoi Editor
 
 Use this skill when a task changes files managed by chezmoi. Resolve the managed
-source first; do not edit the rendered live target as the durable fix.
+source first; do not edit the rendered live target of a continuously managed file as
+the durable fix (live-owned targets: see Rules).
 
 In OpenCode, the chezmoi plugin refuses `edit`, `write` and `patch` calls that
 target a managed file, and common literal shell writes (`>`/`>>` redirects, `tee`,
@@ -20,7 +21,8 @@ literal words only: writes through `sh -c`, the shell eval builtin, scripts, var
    - `chezmoi managed`
    - `chezmoi source-path <target>` when a specific target is known
    - existing symlink/source layout when chezmoi cannot resolve it directly
-2. Edit the source under the chezmoi source tree, not `$HOME` runtime output.
+2. Edit the source under the chezmoi source tree, not `$HOME` runtime output, unless
+   the target is live-owned (see Rules).
 3. Use native chezmoi names for dotfiles, executables, private files, readonly
    files, symlinks, scripts, and templates.
 4. Never write a credential in plaintext. Read it at apply time with
@@ -39,9 +41,14 @@ literal words only: writes through `sh -c`, the shell eval builtin, scripts, var
 - A one-off change to hosts that already exist, such as adding or removing one entry
   or fixing one live key, gets no reconcile machinery: no `run_once_` or
   `run_onchange_` script, retirement list entry, or declared key that only exists so a
-  reconcile script carries it. Edit the live file on each affected host directly, and
-  change the source only where newly seeded hosts should differ. Reconcile code is for
-  state that must keep converging on every apply.
+  reconcile script carries it. This applies only to live-owned targets: seed-once
+  `create_` files, and files that a reconcile script or the user owns on the host after
+  seeding. Edit those live files on each affected host directly, and change the source
+  only where newly seeded hosts should differ. Reconcile code is for state that must
+  keep converging on every apply.
+- Continuously managed files and templates are not live-owned. A host-specific change to
+  one still goes in the source (use the template's host conditionals); a live edit is
+  refused by the OpenCode guard and overwritten by the next `chezmoi apply`.
 - Temporary runtime experiments are allowed only when the user explicitly asks
   for them; record how to promote the result into source.
 - Resolve locations only through `chezmoi source-path` and `chezmoi managed`.
