@@ -195,7 +195,7 @@ export async function runScan(
 
 type Evaluation = { action: string; resources: ReadonlyArray<string>; effect: string; message?: string }
 
-/** Turn an allowed scan into a prompt: npx may fetch and run code from the network. */
+/** Opt-in (`confirmScan: true`): turn an allowed scan into a prompt, because npx may fetch and run code from the network. */
 export function confirmScan(evaluation: Evaluation): void {
   if (evaluation.effect !== "allow" || evaluation.action !== SCAN_TOOL) return
   evaluation.effect = "ask"

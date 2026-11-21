@@ -1000,7 +1000,7 @@ var SETUP_INPUT = {
 };
 var STORYBOOK_MCP = { storybook: { type: "http", url: "http://localhost:6006/mcp" } };
 function parseOptions(options) {
-  return { confirmScan: options?.confirmScan !== false };
+  return { confirmScan: options?.confirmScan === true };
 }
 async function setupDesign(ctx, moduleUrl, overrides = {}) {
   const options = parseOptions(ctx.options);

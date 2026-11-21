@@ -84,15 +84,16 @@ tools, a browser MCP server, or Playwright through the shell. The `ui-review` sk
 | `design_setup` | Copies the nine formulas into a beads workspace's `.beads/formulas/`. Identical copies stay; a divergent copy is refused unless `force=true`; a symlinked `.beads` or formulas path is refused. The workspace needs `.beads/` already (`bd init`). |
 | `design_impeccable_scan` | Runs `npx --yes impeccable detect --json` over files, directories or a URL (optional `viewport`, `noConfig`, `timeoutSeconds`) and returns the JSON. Exit 0 is clean, 2 is findings, 1 is a target it could not scan. |
 
-Both ask permission. `design_impeccable_scan` asks before every run even when a rule
-allows it, because npx may download impeccable and its engine; set the plugin option
-`confirmScan: false` to leave it to your permission rules:
+Both tools run under your permission rules: an allowed call runs without a prompt, and a
+deny or ask rule always wins. `design_impeccable_scan` runs npx, which may download
+impeccable and its engine. To prompt before every run even when a rule allows it, set the
+plugin option `confirmScan` to `true` (default `false`):
 
 ```jsonc
 {
   "plugins": [{
     "package": "github:srobroek/harness-plugins::path:plugins/design/opencode",
-    "options": { "confirmScan": false }
+    "options": { "confirmScan": true }
   }]
 }
 ```
