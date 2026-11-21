@@ -67,7 +67,9 @@ run is armed, the plugin denies every permission `ask` and logs it as a
 blocker. The user's own permission rules already allow what they trust, and an
 `ask` is what they wanted to be asked about. When a call is denied that way,
 log the item, park it, and move on. Do not retry it in another form to get
-around the prompt.
+around the prompt. The two exceptions are your own lanes' worktrees (the
+plugin allows `<root>/*` for a lane directory it recorded at a tick) and
+`autopilot_merge` under `--allow merge`.
 
 Allowed by default:
 
@@ -92,9 +94,12 @@ Commands that discard work (`git reset --hard`, `git clean -f`, `git branch -D`,
 Otherwise, log it as a blocker and park the item.
 
 A merge needs `--allow merge`, an approve verdict from `code-reviewer` and
-green required checks. A deployment (stack create, update or delete) needs
-`--allow deploy`. These grants decide what you do. They never approve a
-permission prompt.
+green required checks. Merge only through `autopilot_merge({ pr, sha })` with
+the SHA the reviewer approved; never run `gh pr merge` in a shell, because the
+plugin denies that ask. The tool refuses when the head moved, the approval is
+for another SHA or a check is not green: then re-review the new head. A
+deployment (stack create, update or delete) needs `--allow deploy`; that grant
+decides what you do and never approves a permission prompt.
 
 ## Lanes
 

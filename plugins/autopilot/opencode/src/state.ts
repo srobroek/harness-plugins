@@ -48,6 +48,8 @@ export type RunState = {
   children: Record<string, ChildState>
   /** Items parked by the plugin itself (attempts, repeated error, stalled lane). */
   parked: string[]
+  /** Worktree roots the run's lanes work in, as the host reported them; the permission hook may allow `<root>/*`. */
+  worktrees?: string[]
   stopRequested?: boolean
   stopReason?: string
   stoppedAt?: number
@@ -56,7 +58,7 @@ export type RunState = {
 }
 
 export type Bead = { id: string; status: string; parent?: string | null; issue_type?: string; labels?: string[] | null }
-export type Child = { sessionID: string; title?: string; agent?: string; busy: boolean; lastActivity: number }
+export type Child = { sessionID: string; title?: string; agent?: string; directory?: string; busy: boolean; lastActivity: number }
 
 /** What one look at the world finds. */
 export type Snapshot = {
@@ -231,6 +233,7 @@ export function tick(previous: RunState, snapshot: Snapshot): TickResult {
     attempts,
     children,
     parked: [...parked].sort(),
+    worktrees: recordWorktrees(previous, snapshot.children),
   }
   const stop = stopReason(state, snapshot, newEntries, parked)
   if (stop !== undefined) actions.push({ kind: "stop", reason: stop })
@@ -325,4 +328,11 @@ export function runIdFor(now: number, random: () => number = Math.random): strin
     .toString(16)
     .padStart(4, "0")
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}-${suffix}`
+}
+
+/** The run's recorded worktree roots plus the directory of each child that works outside the run's own. */
+export function recordWorktrees(state: Pick<RunState, "directory" | "worktrees">, children: readonly Pick<Child, "directory">[]): string[] {
+  const roots = new Set(state.worktrees ?? [])
+  for (const child of children) if (child.directory !== undefined && child.directory !== state.directory) roots.add(child.directory)
+  return [...roots].sort()
 }
