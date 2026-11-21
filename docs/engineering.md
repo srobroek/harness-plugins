@@ -18,7 +18,8 @@ The repository is a workspace of OpenCode V2 plugins written in TypeScript, and 
 | `smol-toml` | 1.9.1 | `lib/package.json`; `lib` and `safety` read TOML with it |
 | `jsonc-parser` | 3.3.1 | `package.json`; `model-roles` edits JSONC config files with it |
 | `spdx-expression-parse` | 5.0.0 | `package.json`; `code-challenge` parses SPDX licence expressions with it (types: `@types/spdx-expression-parse` 4.0.0) |
-| `@srobroek/harness-kit` | 1.4.0 | `package.json`, workflow tags in `.github/workflows` |
+| just | 1.59.0 | `.mise.toml`; task runner, `justfile` |
+| `@srobroek/harness-kit` | 1.5.0 | `package.json`, workflow tags in `.github/workflows` |
 
 `smol-toml` is a runtime `dependency` of `lib`, so it ships in the bundles that import it.
 
@@ -66,7 +67,7 @@ Move new shared code into `lib` instead of adding another edge.
 [AGENTS.md](../AGENTS.md) Conventions covers bundles, generated files, vendored `plugins/cad` files, agents, skills, pitfalls and descriptions. Checks enforce most of it. This page adds:
 
 - Renovate (`renovate.json`) extends the `srobroek/harness-kit` preset and adds five regex custom managers. Two read exact PyPI and npm pins in Markdown sources: `uv run --with PKG==VER`, `uvx PKG@VER`, `npx [-y] PKG@X.Y.Z` and `npm:PKG@X.Y.Z`. Two read the same pins in `plugins/<name>/common/.mcp.json`. One reads `REPOMIX_VERSION` in `plugins/repomix/opencode/src/pack.ts`. The Markdown managers select source files only: `docs/` and `lib/`, plugin READMEs, `common/` and `agents.src/`, and `opencode/src/` Markdown. Copies that `harness-kit build` writes are not selected. A package rule disables these managers for the vendored `plugins/cad/common` and `plugins/cad/opencode`. Version pins in skills and docs use the shapes these managers match.
-- The preset also moves `@srobroek/harness-kit` (package pin), the `srobroek/harness-kit` workflow tags and the versions quoted in any Markdown file (`srobroek/harness-kit/.github/workflows/<file>.yml@vX.Y.Z`, `@srobroek/harness-kit@X.Y.Z`) in one `harness-kit` group. `.github/workflows/renovate-regenerate.yml` runs `npm run build` on same-repository Renovate PRs to regenerate the copies.
+- The preset also moves `@srobroek/harness-kit` (package pin), the `srobroek/harness-kit` workflow tags and the versions quoted in any Markdown file (`srobroek/harness-kit/.github/workflows/<file>.yml@vX.Y.Z`, `@srobroek/harness-kit@X.Y.Z`) in one `harness-kit` group. `.github/workflows/renovate-regenerate.yml` runs `bun run build` on same-repository Renovate PRs to regenerate the copies.
 - Approved departures:
   - `code-challenge` names its tool `challenge_setup`, not `code_challenge_setup` as `<name>_<verb>` would give. The skill's other two tools, `challenge_lib_facts` and `challenge_scan`, share the same `challenge_` namespace, so one short prefix (reserved in `RESERVED_TOOL_PREFIXES`) covers the family and the agents' permission rules.
 
@@ -100,14 +101,14 @@ Move new shared code into `lib` instead of adding another edge.
 
 ## Commands
 
-AGENTS.md Commands lists every script. `npm run check` is `harness-kit check`: `build --check` for the generated files, then validation of each Claude Code tree. It does not run typecheck, lint, tests or the content checks. The `cad:*` scripts need network.
+AGENTS.md Commands lists every script. The `justfile` has one recipe per script, and `just verify` runs every gate CI runs ([decision 0006](decisions/0006-bun-and-just.md)): installs use `bun install --frozen-lockfile` and the lockfile is `bun.lock`, never npm. `bun run check` is `harness-kit check`: `build --check` for the generated files, then validation of each Claude Code tree. It does not run typecheck, lint, tests or the content checks. The `cad:*` scripts need network.
 
 ## CI
 
 `.github/workflows/ci.yml` runs on pushes to `main`, pull requests and `workflow_dispatch`:
 
-- `check` calls the reusable harness-kit workflow, pinned to the same tag as the package. It runs `npm ci`, `harness-kit check`, `bun test` and `tsc`.
-- `repo-checks` runs `npm ci`, then lint, `build:check`, `plugin-table:check`, `steering`, `pitfalls`, `agent-roles`, `descriptions`, `concerns`, `scripts/check-release-prepare.ts` (in a temporary checkout, makes the delivery and cad bundles stale, runs each release prepare step and fails if a bundle is still stale), `scripts/check-test-executables.ts` and the Python unit tests of the shipped scripts.
+- `check` calls the reusable harness-kit workflow, pinned to the same tag as the package. It runs `bun install --frozen-lockfile`, `harness-kit check`, `bun test` and `tsc`.
+- `repo-checks` runs `bun install --frozen-lockfile`, then lint, `build:check`, `plugin-table:check`, `steering`, `pitfalls`, `agent-roles`, `descriptions`, `concerns`, `scripts/check-release-prepare.ts` (in a temporary checkout, makes the delivery and cad bundles stale, runs each release prepare step and fails if a bundle is still stale), `scripts/check-test-executables.ts` and the Python unit tests of the shipped scripts.
 - `cad` runs `cad:check` when `plugins/cad`, `scripts/sync-cad.ts` or the workflow changes.
 
 `renovate-regenerate.yml` accepts only `opened` and `synchronize` events from `renovate[bot]`, for that bot's same-repository PRs on `renovate/` branches. Both job guards reject forks. It skips heads whose commit subject is `chore(deps): regenerate generated copies`.

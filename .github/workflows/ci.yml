@@ -12,7 +12,7 @@ permissions:
 jobs:
   check:
     # Same version as @srobroek/harness-kit in package.json; `harness-kit check` warns when they differ.
-    uses: srobroek/harness-kit/.github/workflows/check.yml@v1.4.0
+    uses: srobroek/harness-kit/.github/workflows/check.yml@v1.5.0
 
   # The gates the reusable workflow does not run: lint, bundles, and the repository's content checks.
   repo-checks:
@@ -27,18 +27,18 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.4.5"
-      - run: npm ci --no-audit --no-fund
-      - run: npm run lint
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
       - name: Plugin bundles and composed agents are current
-        run: npm run build:check
+        run: bun run build:check
       - name: Release prepare step leaves bundles current
         run: bun scripts/check-release-prepare.ts
-      - run: npm run plugin-table:check
-      - run: npm run steering
-      - run: npm run pitfalls
-      - run: npm run agent-roles
-      - run: npm run descriptions
-      - run: npm run concerns
+      - run: bun run plugin-table:check
+      - run: bun run steering
+      - run: bun run pitfalls
+      - run: bun run agent-roles
+      - run: bun run descriptions
+      - run: bun run concerns
       - run: bun scripts/check-test-executables.ts
       - name: Python tests of the shipped scripts
         run: |

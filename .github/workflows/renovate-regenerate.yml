@@ -48,11 +48,11 @@ jobs:
         with:
           bun-version: "1.4.5"
       - if: steps.head.outputs.regenerate == 'true'
-        run: npm ci --no-audit --no-fund
+        run: bun install --frozen-lockfile
       - if: steps.head.outputs.regenerate == 'true'
-        run: npm run build
+        run: bun run build
       - if: steps.head.outputs.regenerate == 'true'
-        run: npm run check
+        run: bun run check
       - name: Capture generated changes
         if: steps.head.outputs.regenerate == 'true'
         env:
