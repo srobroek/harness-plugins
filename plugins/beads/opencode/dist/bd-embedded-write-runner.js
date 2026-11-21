@@ -1231,7 +1231,14 @@ var CONTROL_PREFIXES = {
   until: true,
   do: true
 };
-var TRANSPARENT_WRAPPERS = { command: true, env: true, sudo: true, time: true };
+var TRANSPARENT_WRAPPERS = {
+  command: true,
+  env: true,
+  exec: true,
+  nohup: true,
+  sudo: true,
+  time: true
+};
 var WRAPPER_VALUE_FLAGS = {
   "-C": true,
   "--chdir": true,
@@ -1947,13 +1954,23 @@ var READS = {
   where: true,
   config: { get: true, list: true },
   dep: { list: true, tree: true },
-  dolt: { status: true },
+  backup: { status: true },
+  dolt: { status: true, show: true, test: true },
+  epic: { status: true },
+  federation: { "list-peers": true, status: true },
   formula: { list: true, show: true },
   gate: { list: true, show: true },
+  hooks: { list: true },
   kv: { get: true, list: true },
-  mol: { show: true },
-  swarm: { list: true }
+  label: { list: true, "list-all": true },
+  mol: { show: true, current: true, progress: true, ready: true, stale: true },
+  repo: { list: true },
+  swarm: { list: true },
+  todo: { list: true },
+  vc: { status: true },
+  worktree: { info: true, list: true }
 };
+var NESTED_READS = { dolt: { remote: { list: true } } };
 var WRITE_FLAGS = {
   orphans: ["--fix", "-f"],
   preflight: ["--fix"],
@@ -1981,10 +1998,16 @@ function writesStore(invocation) {
   const writeFlags = WRITE_FLAGS[verb];
   if (writeFlags !== undefined && flagEnabled(args, writeFlags))
     return true;
-  const subaction = args.find((arg) => !arg.startsWith("-"));
+  const positional = args.filter((arg) => !arg.startsWith("-"));
+  const subaction = positional[0];
   if (rule === true)
     return false;
-  return subaction === undefined || rule[subaction] !== true;
+  if (subaction === undefined)
+    return true;
+  const nested = NESTED_READS[verb]?.[subaction];
+  if (nested !== undefined)
+    return nested[positional[1] ?? ""] !== true;
+  return rule[subaction] !== true;
 }
 function storeFor(globals, cwd, env) {
   return canonicalStore(selectedStoreFor(globals, cwd, env));
@@ -2045,6 +2068,9 @@ function embeddedStoreFor(cwd, env = process.env) {
 var DEFERRED_VALUE = /[$`~*?[\]]/;
 var STORE_FLAGS = ["-C", "--directory", "--db", "--database"];
 var BD_WORD = /(?<![\w.-])bd(?![\w-]|\.\w)/;
+function mentionsBd(source) {
+  return BD_WORD.test(source) || BD_WORD.test(source.replace(/["'\\]/g, ""));
+}
 var ASSIGNMENT3 = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
 var BEADS_DIR_ASSIGNMENT = /^BEADS_DIR(\+?)=/;
 var LIST_PREFIXES = new Set(["then", "else", "do"]);
@@ -2135,15 +2161,17 @@ function resolveBdTargets(command, cwd, env) {
   return { get: (invocation) => targets.get(targetKey(invocation)), plan };
 }
 function planEmbeddedWrites(command, cwd, env, options = {}) {
-  const { observe, unresolved, classify = true } = options;
+  const { observe, unresolved, unplaced, classify = true } = options;
   const embeddedStore = (store) => classify && embedded(store);
-  if (!BD_WORD.test(command))
+  if (!mentionsBd(command))
     return { kind: "writes", writes: [] };
   const scan = scanShell(command);
   const writes = [];
   let problem;
   let problemStore;
-  const refuse = (found, store) => {
+  const refuse = (found, store, report = true) => {
+    if (report)
+      unplaced?.("exact" in found ? found.exact : found.part);
     problem ??= found;
     problemStore ??= store;
   };
@@ -2159,9 +2187,12 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
     });
   }
   const scopes = [
-    { cwd: { kind: "known", cwd, certain: true, changed: false }, beadsDir: { kind: "known", value: env.BEADS_DIR } }
+    { cwd: { kind: "known", cwd, certain: true, changed: false }, beadsDir: { kind: "known", value: env.BEADS_DIR, assigned: false } }
   ];
   const { items } = scan;
+  const definesFunction = hasFunctionDefinition(items);
+  if (definesFunction)
+    unplaced?.("the command defines a shell function, whose body the gate does not follow");
   let compound = 0;
   let unresolvedWrite = false;
   for (const [index, item] of items.entries()) {
@@ -2181,7 +2212,11 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
     else if (COMPOUND_CLOSERS[first] === true)
       compound = Math.max(0, compound - 1);
     const shape = shapeOf(item, command);
-    if (shape.kind !== "bd" && item.hereDocuments.some((document) => BD_WORD.test(document.body))) {
+    if (shape.kind === "other" && shape.head !== undefined && !shape.head.quoted && shape.head.value === "alias")
+      unplaced?.("the command defines an `alias`, which can rename `bd`");
+    if (shape.kind === "bd" && obfuscatedName(command.slice(shape.head.start, shape.head.end)))
+      unplaced?.('its command name is quote-split or escaped (for example `"b"d` or `\\bd`)');
+    if (shape.kind !== "bd" && item.hereDocuments.some((document) => mentionsBd(document.body))) {
       const runner = pipelineSourceRunner(items, index, command);
       if (runner !== undefined)
         refuse({ part: `a here-document fed to \`${runner}\` mentions \`bd\``, fix: SOURCE_FIX });
@@ -2189,7 +2224,12 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
     if (shape.kind === "other") {
       const launch = launchOf(shape, item, command);
       if (launch !== undefined)
-        refuse(launch);
+        refuse(launch, undefined, !namesLiteralBeadsDir(shape));
+      else {
+        const wrapper = wrapperNamesBd(shape);
+        if (wrapper !== undefined)
+          unplaced?.(`\`bd\` follows the wrapper \`${wrapper}\``);
+      }
       const before = operatorAt(items, index - 1);
       const after = operatorAt(items, index + 1);
       applyEffects(shape, state, command, {
@@ -2215,7 +2255,7 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
           fix: "Write the plain `bd` command and let the lock generate the runner form."
         }, resolved.store);
       } else if (state.cwd.kind === "known")
-        observe?.({ invocation: child, store: resolved.store, cwd: state.cwd.cwd, beadsDir: resolved.beadsDir });
+        observe?.({ invocation: child, cwd: state.cwd.cwd, store: resolved.store, ...beadsDirOf(resolved, definesFunction) });
       continue;
     }
     const invocation = invocationFromArgv(shape.args.map((word) => word.value));
@@ -2230,7 +2270,7 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
     }
     const store = resolved.store;
     if (state.cwd.kind === "known")
-      observe?.({ invocation, store, cwd: state.cwd.cwd, beadsDir: resolved.beadsDir });
+      observe?.({ invocation, store, cwd: state.cwd.cwd, ...beadsDirOf(resolved, definesFunction) });
     else
       unresolved?.(invocation);
     if (store === undefined || !embeddedStore(store))
@@ -2319,7 +2359,7 @@ function isWrite(invocation, args) {
   return writesStore(invocation) || WRITE_FLAGS[invocation.verb] !== undefined && args.some((word) => word.expands);
 }
 function runsBd(source) {
-  if (!BD_WORD.test(source))
+  if (!mentionsBd(source))
     return false;
   const scan = scanShell(source);
   if (!scan.complete || scan.substitutions.some(runsBd))
@@ -2330,7 +2370,7 @@ function runsBd(source) {
     const shape = shapeOf(item, source);
     if (shape.kind !== "other" || launchOf(shape, item, source) !== undefined)
       return true;
-    return item.hereDocuments.some((document) => BD_WORD.test(document.body)) && pipelineSourceRunner(scan.items, index, source) !== undefined;
+    return item.hereDocuments.some((document) => mentionsBd(document.body)) && pipelineSourceRunner(scan.items, index, source) !== undefined;
   });
 }
 function sourceRunner(shape) {
@@ -2363,12 +2403,49 @@ function pipelineSourceRunner(items, index, source) {
   }
   return;
 }
+var LAUNCHERS = {
+  chronic: true,
+  chrt: true,
+  command: true,
+  doas: true,
+  env: true,
+  exec: true,
+  flock: true,
+  ionice: true,
+  nice: true,
+  nohup: true,
+  setsid: true,
+  stdbuf: true,
+  sudo: true,
+  taskset: true,
+  time: true,
+  timeout: true,
+  unbuffer: true,
+  xargs: true
+};
+var FIND_EXEC = { "-exec": true, "-execdir": true, "-ok": true, "-okdir": true };
+function wrapperNamesBd(shape) {
+  const { head, args } = shape;
+  if (head === undefined || head.expands)
+    return;
+  const name = commandName(head);
+  const wraps = LAUNCHERS[name] === true || name === "find" && args.some((word) => FIND_EXEC[word.value] === true);
+  if (!wraps || !args.some((word) => !word.expands && commandName(word) === "bd"))
+    return;
+  return namesLiteralBeadsDir(shape) ? undefined : name;
+}
+function namesLiteralBeadsDir({ assignments, args }) {
+  return [...assignments, ...args].some((word) => {
+    const match = BEADS_DIR_ASSIGNMENT.exec(word.value);
+    return match !== null && match[1] === "" && !word.expands && !DEFERRED_VALUE.test(word.value.slice(match[0].length));
+  });
+}
 function launchOf(shape, command, source) {
   const { head, args } = shape;
   if (head === undefined)
     return;
   if (head.expands) {
-    if (!BD_WORD.test(source))
+    if (!mentionsBd(source))
       return;
     return {
       part: `its command word \`${source.slice(head.start, head.end)}\` is expanded at run time, so whether it runs \`bd\` is unknown`,
@@ -2442,7 +2519,7 @@ function applyEffects(shape, state, source, context) {
   }
   if (name === "unset") {
     if (args.some((word) => word.value === "BEADS_DIR") && !args.some((word) => word.value === "-f")) {
-      state.beadsDir = uncertain ? { kind: "unknown", cause: "unset BEADS_DIR" } : { kind: "known", value: undefined };
+      state.beadsDir = uncertain ? { kind: "unknown", cause: "unset BEADS_DIR" } : { kind: "known", value: undefined, assigned: false };
     }
     return;
   }
@@ -2456,7 +2533,24 @@ function assignBeadsDir(state, word, source, scoped) {
     return;
   const value = word.value.slice(match[0].length);
   const literal = !scoped && match[1] === "" && !word.expands && !DEFERRED_VALUE.test(value);
-  state.beadsDir = literal ? { kind: "known", value } : { kind: "unknown", cause: source.slice(word.start, word.end) };
+  state.beadsDir = literal ? { kind: "known", value, assigned: true } : { kind: "unknown", cause: source.slice(word.start, word.end) };
+}
+var beadsDirOf = ({ beadsDir, beadsDirAssigned }, definesFunction) => ({
+  beadsDir,
+  beadsDirAssigned: beadsDirAssigned && !definesFunction
+});
+function hasFunctionDefinition(items) {
+  return items.some((item, index) => {
+    if (item.kind !== "command")
+      return false;
+    const head = item.words[0];
+    if (head !== undefined && !head.quoted && head.value === "function")
+      return true;
+    return operatorAt(items, index + 1) === "(" && operatorAt(items, index + 2) === ")";
+  });
+}
+function obfuscatedName(source) {
+  return /["'\\]/.test(source) && !/^(["'])[^"'\\]*\1$/.test(source);
 }
 function resolveWrite(invocation, assignments, state, env, source) {
   const write = `\`bd ${invocation.verb}\``;
@@ -2477,7 +2571,7 @@ function resolveWrite(invocation, assignments, state, env, source) {
     if (match === null)
       continue;
     const value = word.value.slice(match[0].length);
-    beadsDir = match[1] === "" && !word.expands && !DEFERRED_VALUE.test(value) ? { kind: "known", value } : { kind: "unknown", cause: source.slice(word.start, word.end) };
+    beadsDir = match[1] === "" && !word.expands && !DEFERRED_VALUE.test(value) ? { kind: "known", value, assigned: true } : { kind: "unknown", cause: source.slice(word.start, word.end) };
   }
   const directory = globalValue(invocation.globals, ["-C", "--directory"]);
   const db = globalValue(invocation.globals, ["--db"]);
@@ -2502,7 +2596,12 @@ function resolveWrite(invocation, assignments, state, env, source) {
   }
   const value = beadsDir.kind === "known" ? beadsDir.value : undefined;
   const selected = selectedStoreFor(invocation.globals, state.cwd.cwd, { ...env, BEADS_DIR: value });
-  return { store: canonicalStore(selected), selected, beadsDir: value };
+  return {
+    store: canonicalStore(selected),
+    selected,
+    beadsDir: value,
+    beadsDirAssigned: beadsDir.kind === "known" && beadsDir.assigned
+  };
 }
 function namedStore(command, cwd, env) {
   const words = tokenize(command).flatMap((token) => token.quoted ? tokenize(token.value).map((inner) => inner.value) : [token.value]);
