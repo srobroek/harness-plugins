@@ -10,8 +10,8 @@ export const MAX_OUTPUT_CHARS = 60_000
 
 export const SCAN_DESCRIPTION =
   "Run impeccable's deterministic design detector over files, directories or a URL; returns JSON findings.\n" +
-  "Runs npx --yes impeccable detect --json. Asks before every run, because npx may download impeccable and its " +
-  "engine. Findings are a coarse corroborating signal: HTML-engine findings can carry line 0, so confirm each one " +
+  "Runs npx --yes impeccable detect --json. Your permission config controls the run; the boolean option confirmScan: true adds a prompt, because npx " +
+  "may download impeccable and its engine. Findings are a coarse corroborating signal: HTML-engine findings can carry line 0, so confirm each one " +
   "on the rendered surface before citing it."
 
 export const SCAN_INPUT = {

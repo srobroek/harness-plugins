@@ -55,6 +55,14 @@ test("confirmScan=true registers the prompt; an allowed scan asks and a deny sta
   expect((await fake.fire.permission("evaluate", { ...scan, effect: "deny" })).effect).toBe("deny")
 })
 
+test.each(["false", "true", 1, "yes"])("a non-boolean confirmScan %p registers no prompt and keeps an allow", async (value) => {
+  const fake = createFakeContext({ options: { confirmScan: value } })
+  await plugin.setup(fake.context)
+  expect(fake.hooks("permission")).toEqual([])
+  const evaluation = await fake.fire.permission("evaluate", { action: SCAN_TOOL, resources: ["src"], effect: "allow" })
+  expect(evaluation.effect).toBe("allow")
+})
+
 test("without options an allowed scan stays allowed", async () => {
   const fake = createFakeContext()
   await plugin.setup(fake.context)
