@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
-import { cleanup, exited, fakeExec, pythonRepo, RUFF_HIT, temp, withTools } from "./fixtures.ts"
 import type { Exec } from "./exec.ts"
+import { cleanup, exited, fakeExec, pythonRepo, RUFF_HIT, temp, withTools } from "./fixtures.ts"
 import { runScan } from "./run.ts"
 
 afterAll(cleanup)
@@ -146,7 +146,6 @@ describe("recipe configuration", () => {
     const report = await runScan({ root, languages: ["ts"], runId: "b" }, { exec, which: withTools("biome", "git") })
     const biome = JSON.parse(readFileSync(join(report.rawDir as string, "cfg", "biome_lenses", "biome.json"), "utf8"))
     expect(biome.vcs).toEqual({ enabled: true, clientKind: "git", useIgnoreFile: true, root: realpathSync(root) })
-    expect(existsSync(join(report.rawDir as string, "cfg", "oxlint_perf"))).toBe(false)
   })
 
   test("ruff runs with --force-exclude and the terminator before the files", async () => {

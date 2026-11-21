@@ -65,10 +65,11 @@ Move new shared code into `lib` instead of adding another edge.
 
 [AGENTS.md](../AGENTS.md) Conventions covers bundles, generated files, vendored `plugins/cad` files, agents, skills, pitfalls and descriptions. Checks enforce most of it. This page adds:
 
-- Renovate (`renovate.json`) extends the `srobroek/harness-kit` preset and adds five regex custom managers. Two read exact PyPI and npm pins in Markdown sources: `uv run --with PKG==VER`, `uvx PKG@VER`, `npx [-y] PKG@X.Y.Z` and `npm:PKG@X.Y.Z`. Two read the same pins in `plugins/<name>/common/.mcp.json`. One reads `REPOMIX_VERSION` in `plugins/repomix/opencode/src/pack.ts`. The Markdown managers select source files only: `docs/` and `lib/`, plugin READMEs, `common/` and `agents.src/`, and `opencode/src/` Markdown. Copies that `harness-kit build` writes are not selected. A package rule disables these managers for the vendored `plugins/cad/common` and `plugins/cad/opencode`. Version pins in skills and docs use the shapes these managers match.
+- Renovate (`renovate.json`) extends the `srobroek/harness-kit` preset and adds six regex custom managers. Two read exact PyPI and npm pins in Markdown sources: `uv run --with PKG==VER`, `uvx PKG@VER`, `npx [-y] PKG@X.Y.Z` and `npm:PKG@X.Y.Z`. Two read the same pins in `plugins/<name>/common/.mcp.json`. One reads `REPOMIX_VERSION` in `plugins/repomix/opencode/src/pack.ts`. One reads the exact analyzer pins in `plugins/code-challenge/opencode/src/scan/pins.ts` (see Code-challenge scan below); each pin sits on the line after a `// renovate: datasource=<npm|pypi|go> depName=<package>` annotation, and a test keeps the manager's regex and the file in step. The Markdown managers select source files only: `docs/` and `lib/`, plugin READMEs, `common/` and `agents.src/`, and `opencode/src/` Markdown. Copies that `harness-kit build` writes are not selected. A package rule disables these managers for the vendored `plugins/cad/common` and `plugins/cad/opencode`. Version pins in skills and docs use the shapes these managers match.
 - The preset also moves `@srobroek/harness-kit` (package pin), the `srobroek/harness-kit` workflow tags and the versions quoted in any Markdown file (`srobroek/harness-kit/.github/workflows/<file>.yml@vX.Y.Z`, `@srobroek/harness-kit@X.Y.Z`) in one `harness-kit` group. Renovate does not run `harness-kit build`, so a Renovate PR that changes a source needs `npm run build` on its branch to regenerate the copies; `npm run check` fails until then.
 - Approved departures:
   - `code-challenge` names its tool `challenge_setup`, not `code_challenge_setup` as `<name>_<verb>` would give. The skill's other two tools, `challenge_lib_facts` and `challenge_scan`, share the same `challenge_` namespace, so one short prefix (reserved in `RESERVED_TOOL_PREFIXES`) covers the family and the agents' permission rules.
+  - `code-challenge` `challenge_scan` runs analyzers without a sandbox, by user decision. It discloses the risk and asks for consent instead (see Code-challenge scan below).
 
 ## code-challenge
 
@@ -90,6 +91,29 @@ Move new shared code into `lib` instead of adding another edge.
 - Cache: one JSON file per request under `$XDG_CACHE_HOME/opencode/code-challenge/lib-facts` (`~/.cache/...` by default), 7-day TTL. GitHub replies are reduced to the public figures the tool reports before they are stored, and a cached value of any other shape is a miss. File names carry a schema version (`v2-`); files of any other version are never read and the sweep deletes them. A file over 256 KiB (measured in UTF-8 bytes) is neither written nor read, and an entry that fails its shape check is deleted. An expired entry is deleted on read, and the first write of each call sweeps expired files and trims the directory to 2000 entries.
 - Request limits: 6 requests in flight, a 10 s timeout each, 5 MiB per reply (checked while streaming, before `JSON.parse`) and 3 same-host redirects.
 - Licence gate: `ALLOWED_LICENCES` in `licence.ts` lists permissive and weak-copyleft SPDX ids. `spdx-expression-parse` evaluates expressions with grouping, `AND` and `OR`; it is a small, widely used parser (the one `npm` tooling uses) and replaces a hand-written grammar that mishandled parentheses. It is inlined into the bundle like `jsonc-parser`.
+
+## Code-challenge scan
+
+`plugins/code-challenge/opencode/src/scan/` is the `challenge_scan` tool module of the SCAN phase. `registerScanTool(ctx)` in `scan/index.ts` registers the tool and a permission hook, and returns one dispose function. The module adds no runtime dependency.
+
+- `recipes.ts` is the recipe table: for each existing analyzer, its language, lenses, arguments, accepted exit codes, parser, whether it needs a build (quick depth skips those), how it is installed and whether it runs repository code. It uses no custom rules. `parsers.ts` turns each tool's output into hits; output that is not in the tool's format is a coverage gap, never "no findings".
+- `run.ts` plans (language, lens, depth, repository markers, tool resolution, consent), then executes each recipe and returns candidates, coverage (`ran`, `skipped`, `gap`) and per-tool timings. `probes.ts` computes `ruleEnabledInRepo` for ruff (one `--show-settings` per config) and golangci-lint; every other tool reports null.
+- Each lens profile ignores the repository's rule selection (`--isolated`, `--no-config`, a temporary config, or `-A clippy::all`) but keeps `.gitignore` and inline suppressions. Biome ignores `--config-path` when the root has a `biome.json`, so then it runs from its own config directory on an explicit list of files that git does not ignore.
+
+### Provisioning and pins
+
+- Nothing installs globally. A recipe uses the binary on `PATH`, else a one-off `bunx -p`, `uvx --from` or `go run` of an exact pinned version from `scan/pins.ts`. A missing tool is a coverage gap.
+- `eslint` and `@e18e/eslint-plugin` must sit side by side, because the plugin resolves from the config file. The scan never installs them: it reports the pinned `bun add` command and looks in `<git-dir>/code-challenge/tools`, where it also writes the eslint config.
+- Renovate moves the pins through the manager for `pins.ts`. Bump a pin together with a run of the recipe's command, because a flag can change between versions.
+
+### Trust and consent
+
+- There is no sandbox, by user decision. The scan discloses what it runs and asks for consent, per canonical root, before it runs anything that is not static analysis: clippy (build scripts and proc macros, writes `target/`), golangci-lint and deadcode (compile Go, may fetch modules), knip and import-linter (load repository config code), and every one-off `bunx`, `uvx` or `go run`. Without consent those recipes are coverage gaps with the reason; recipes that run no repository code still run.
+- The consent flag is host-side only (`ScanDeps.consent`, set from the permission answer); tool input cannot set it. `confirmScan` turns an allowed scan with risky recipes into a prompt that lists them.
+- Analyzer processes get an allowlisted environment (`env.ts`): `PATH`, `HOME`, `TMPDIR`, locale, toolchain and cache variables, proxy and CA variables. Variables whose names look like credentials, and `AWS_*`, `GH_*` and `GITHUB_*`, are dropped, even under an allowed prefix such as `UV_`.
+- File names reach tools as absolute paths after `--`. Every named path and glob is resolved with `realpath` and must stay inside the canonical root. Symlinks met while walking or globbing are skipped. A run id is one path segment (`^\w[\w.-]{0,63}$`).
+- Output directories are created one real directory at a time, files are written with `O_NOFOLLOW`, and a symlink in the way is refused.
+- Captured stdout (16 MiB) and stderr (1 MiB) are capped and an overflow ends the tool's process group; report files and marker files are `lstat`ed and size-capped; the per-tool timeout is capped at 900 s.
 
 ## Commands
 

@@ -134,7 +134,8 @@ describe("the permission prompt", () => {
     const root = pythonRepo()
     await registerScanTool(fake.context as never, { exec: fakeExec({ "check --isolated": exited("[]") }), which: withTools("ruff") })
     type Execute = (i: unknown, c: unknown) => Promise<unknown>
-    await (fake.tools.get(SCAN_TOOL)?.execute as Execute)({ root, languages: ["python"], lenses: ["performance"] }, { sessionID: "s" })
+    const execute = fake.tools.get(SCAN_TOOL)?.execute as Execute
+    await execute({ root, languages: ["python"], lenses: ["performance"] }, { sessionID: "s" })
     expect(fake.asserts).toEqual([])
   })
 })

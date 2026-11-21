@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs"
+import { lstatSync, readdirSync, readFileSync, realpathSync, type Stats, statSync } from "node:fs"
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { LANGUAGES, type Language } from "./types.ts"
 
@@ -111,14 +111,10 @@ export function missingMarker(root: string, markers: readonly string[] | undefin
 
 export const MAX_MARKER_BYTES = 1024 * 1024
 
-export function lstatOrNull(path: string): ReturnType<typeof lstatSync> | null {
-  try {
-    return lstatSync(path)
-  } catch {
-    return null
-  }
+/** `lstat` that follows no symlink and returns null when nothing is there. */
+export function lstatOrNull(path: string): Stats | null {
+  return lstatSync(path, { throwIfNoEntry: false }) ?? null
 }
-
 
 /** Files git lists as tracked or untracked-but-not-ignored (NUL separated), as root-relative paths. */
 export function parseListing(stdout: string): string[] {
