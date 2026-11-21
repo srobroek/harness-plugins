@@ -126,7 +126,7 @@ export async function collectPackage(
 }
 
 /** Deprecated if any source says so, not deprecated if one says so and none disagrees, unknown if none can say. */
-function deprecation(answers: ReadonlyArray<boolean | null | undefined>): boolean | null {
+export function deprecation(answers: ReadonlyArray<boolean | null | undefined>): boolean | null {
   const known = answers.filter((a): a is boolean => typeof a === "boolean")
   return known.length === 0 ? null : known.some(Boolean)
 }
