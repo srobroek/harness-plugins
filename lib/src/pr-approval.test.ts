@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { commitChecks, githubApproval, requiredContexts, reviewApproval, usesMergeQueue } from "./pr-approval.ts"
+import { approversAt, changesRequested, commitChecks, githubApproval, requiredContexts, reviewApproval, usesMergeQueue } from "./pr-approval.ts"
 
 const SHA = "a".repeat(40)
 const OLD = "b".repeat(40)
@@ -7,6 +7,23 @@ const OLD = "b".repeat(40)
 const review = (user: string, state: string, commit = SHA) => ({ user: { login: user }, state, commit_id: commit })
 
 describe("reviewApproval (strict, review-only)", () => {
+  test("only an eligible approver counts, but anyone's changes request still vetoes", () => {
+    const eligible = (who: string) => who === "writer"
+    expect(reviewApproval([review("drive-by", "APPROVED")], "bot", SHA, { eligible }).ok).toBe(false)
+    expect(reviewApproval([review("drive-by", "APPROVED"), review("writer", "APPROVED")], "bot", SHA, { eligible }).ok).toBe(true)
+    expect(reviewApproval([review("writer", "APPROVED"), review("anyone", "CHANGES_REQUESTED")], "bot", SHA, { eligible }).ok).toBe(false)
+  })
+
+  test("approversAt lists the non-author reviewers whose latest decisive review approves the sha", () => {
+    const reviews = [review("a", "APPROVED"), review("B", "APPROVED"), review("c", "APPROVED", OLD), review("d", "APPROVED"), review("d", "DISMISSED"), review("bot", "APPROVED")]
+    expect(approversAt(reviews, "bot", SHA)).toEqual(["a", "b"])
+    expect(approversAt({ message: "Not Found" }, "bot", SHA)).toBeUndefined()
+  })
+
+  test("changesRequested lists everyone whose latest decisive review requests changes", () => {
+    expect(changesRequested([review("a", "CHANGES_REQUESTED"), review("b", "CHANGES_REQUESTED"), review("b", "APPROVED")])).toEqual(["a"])
+  })
+
   test.each([
     ["an approval of the sha by someone else", [review("rev", "APPROVED")], "bot", true],
     ["an approval spread over pages", [[review("x", "COMMENTED")], [review("rev", "APPROVED")]], "bot", true],

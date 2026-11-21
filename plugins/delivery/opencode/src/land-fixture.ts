@@ -150,6 +150,8 @@ export type Answers = {
   approval?: CliResult
   /** The approval read once per entry, in call order; the last repeats. Wins over `approval`. */
   approvals?: CliResult[]
+  /** The REST review list (`pulls/<n>/reviews`); by default the `gh pr view` approval's reviews in REST spelling. */
+  reviews?: CliResult
   /** The reviewer permission read once per entry, in call order; the last repeats. Wins over `permission`. */
   permissions?: CliResult[]
   /** GitLab `projects/<id>/approvals` (the project's approval settings); resets on push by default. */
@@ -205,11 +207,22 @@ export type Answers = {
  * "no bd argv was issued" observations rather than assertions about intent. An
  * unexpected command fails loudly instead of returning a plausible default.
  */
+/** The `gh pr view` reviews of an approval answer, as the REST review list spells them. */
+export function restReviews(answer: CliResult | undefined): unknown[] {
+  try {
+    const view = JSON.parse(answer?.stdout ?? "{}") as { reviews?: Array<{ state: string; author: { login: string }; commit: { oid: string } }> }
+    return (view.reviews ?? []).map((review) => ({ user: { login: review.author.login }, state: review.state, commit_id: review.commit.oid }))
+  } catch {
+    return []
+  }
+}
+
 export function runner(answers: Answers, canonical: string): { run: CliRunner; calls: Call[] } {
   const views = [...(answers.prView ?? [])]
   const present = [...(answers.present ?? [])]
   const fetches = [...(answers.fetch ?? [])]
   const approvals = [...(answers.approvals ?? [])]
+  let lastApproval: CliResult | undefined
   const permissions = [...(answers.permissions ?? [])]
   /** The next scripted answer; the last one repeats. */
   const next = (queue: CliResult[]): CliResult | undefined => (queue.length > 1 ? queue.shift() : queue[0])
@@ -243,15 +256,19 @@ export function runner(answers: Answers, canonical: string): { run: CliRunner; c
     if (command.startsWith("git remote get-url")) return completed(`${answers.remoteUrl ?? REMOTE_URL}\n`)
     if (command === "git remote") return completed("origin\n")
     if (command === "git worktree list --porcelain") return completed(answers.worktrees ?? "")
-    if (argv[1] === "pr" && argv[2] === "view" && argv.includes("author,reviews,comments"))
-      return next(approvals) ?? answers.approval ?? completed("{}")
+    if (argv[1] === "pr" && argv[2] === "view" && argv.includes("author,reviews,comments")) {
+      lastApproval = next(approvals) ?? answers.approval ?? completed("{}")
+      return lastApproval
+    }
+    if (argv[1] === "api" && argv.some((part) => /\/pulls\/\d+\/reviews/.test(part)))
+      return answers.reviews ?? completed(JSON.stringify([restReviews(lastApproval ?? answers.approval)]))
     if (argv[1] === "api" && argv[2] === "user") return answers.viewer ?? completed(JSON.stringify({ login: "author" }))
     if (argv[1] === "api" && argv.some((part) => part.includes("/collaborators/")))
       return next(permissions) ?? answers.permission ?? completed(JSON.stringify({ permission: "write", role_name: "write" }))
     if (argv[1] === "api" && argv.some((part) => part.includes("/check-runs")))
       return answers.checkRuns ?? completed(JSON.stringify({ total_count: 0, check_runs: [] }))
     if (argv[1] === "api" && argv.some((part) => /\/commits\/[0-9a-f]+\/status/.test(part)))
-      return answers.commitStatus ?? completed(JSON.stringify({ state: "pending", total_count: 0 }))
+      return answers.commitStatus ?? completed(JSON.stringify({ state: "pending", total_count: 0, statuses: [] }))
     if (argv[0] === "git" && argv.includes("merge-base") && argv.includes("--is-ancestor"))
       return (argv.at(-1) === TIP_OID ? answers.onBase : undefined) ?? answers.ancestor ?? completed("")
     // No fork point: the rebase proof that reads one is shown against real commits elsewhere.

@@ -8,7 +8,18 @@
  * read, refuses: an unknown approval is not an approval.
  */
 
-import { githubChecks, login, own, type Precondition, githubApproval as sharedApproval, str } from "@srobroek/opencode-lib/pr-approval"
+import {
+  approversAt,
+  changesRequested,
+  commitChecks,
+  githubChecks,
+  login,
+  own,
+  type Precondition,
+  githubApproval as sharedApproval,
+  reviewApproval,
+  str,
+} from "@srobroek/opencode-lib/pr-approval"
 import type { CliResult, CliRunner } from "./forge-adapter.ts"
 
 export { githubChecks, type Precondition }
@@ -51,39 +62,11 @@ function parse(argv: readonly string[], result: CliResult, allowExit = false): P
 /** GitHub approval for exactly `head`: an `APPROVED` review of it, or the author's `VERDICT: APPROVE` comment naming it (GitHub refuses a self-approval). */
 export const githubApproval = (payload: unknown, head: string): Precondition => sharedApproval(payload, head, { commentVerdict: true })
 
-/**
- * GitHub checks for the head commit, read by its immutable sha and not through the PR: every
- * check run completed as success, neutral or skipped, the combined status is success when
- * there are statuses, and at least one run or status exists. A list the API truncated refuses.
- * Pure: takes `commits/<sha>/check-runs` and `commits/<sha>/status`.
- */
-export function githubHeadChecks(checkRuns: unknown, status: unknown): Precondition {
-  const runs = own(checkRuns, "check_runs")
-  const total = own(checkRuns, "total_count")
-  const statusTotal = own(status, "total_count")
-  if (!Array.isArray(runs) || typeof total !== "number" || typeof statusTotal !== "number")
-    return { ok: false, reason: "checks: observed no check-run or status payload, expected commits/<sha>/check-runs and /status output" }
-  if (total > runs.length)
-    return { ok: false, reason: `checks: observed ${runs.length} of ${total} check runs, expected the whole list` }
-  const bad = runs.filter(
-    (run) => str(run, "status") !== "completed" || !["success", "neutral", "skipped"].includes(str(run, "conclusion") ?? ""),
-  )
-  if (bad.length > 0) {
-    const listed = bad.slice(0, 8).map((run) => `${str(run, "name") ?? "?"}=${str(run, "conclusion") ?? str(run, "status") ?? "?"}`)
-    return { ok: false, reason: `checks: observed ${listed.join(", ")}, expected every check to pass` }
-  }
-  if (statusTotal > 0 && str(status, "state") !== "success")
-    return { ok: false, reason: `checks: observed combined status ${JSON.stringify(str(status, "state"))}, expected "success"` }
-  if (runs.length === 0 && statusTotal === 0)
-    return { ok: false, reason: "checks: observed no checks, expected at least one passing check for the head" }
-  return { ok: true, evidence: { checks: runs.length, statuses: statusTotal } }
-}
-
 /** The identities a GitHub approval trust decision rests on, each read from the forge. */
 export type GithubIdentity = {
   /** The authenticated account (`gh api user`), or null when it could not be read. */
   viewer: string | null
-  /** The repository role of each approving login, or null when it could not be read. */
+  /** The repository role of each approving login (lower-case), or null when it could not be read. */
   permissions: Readonly<Record<string, string | null | undefined>>
 }
 
@@ -97,40 +80,27 @@ export function githubPermissionAllows(payload: unknown): boolean {
   return permission === "admin" || permission === "write"
 }
 
-/** Logins (not the PR author) whose latest review is an APPROVED one for exactly `head`. Pure. */
-export function githubApprovers(payload: unknown, head: string): string[] {
-  const author = login(payload)
-  const reviews = own(payload, "reviews")
-  if (!Array.isArray(reviews)) return []
-  const latest = new Map<string, unknown>()
-  for (const review of reviews) {
-    const who = login(review)
-    const state = str(review, "state")
-    // A comment-only review leaves the reviewer's verdict unchanged.
-    if (who !== null && state !== null && state !== "COMMENTED" && state !== "PENDING") latest.set(who, review)
-  }
-  return [...latest]
-    .filter(([who, review]) => who !== author && str(review, "state") === "APPROVED")
-    .filter(([, review]) => str(own(review, "commit"), "oid")?.trim().toLowerCase() === head)
-    .map(([who]) => who)
-}
-
 export type Trust = { trusted: true; by: string } | { trusted: false; reason: string }
 
 /**
- * Whether the GitHub approval may stand in for a person's confirmation: an exact-head
- * approving review from a user with write access, or the same-account case the skill describes
- * (a `VERDICT: APPROVE` comment naming the head, by the authenticated account that is also the
- * PR author). Anything not proved is untrusted. Pure.
+ * Whether the GitHub approval may stand in for a person's confirmation. It is the shared strict
+ * review judgment (`reviewApproval`: exact head, not the PR author, and nobody's latest decisive
+ * review requests changes), narrowed to approvers with write access; or the same-account case the
+ * skill describes (a `VERDICT: APPROVE` comment naming the head, by the authenticated account that
+ * is also the PR author), which a changes request vetoes too. Anything not proved is untrusted. Pure.
+ *
+ * `reviews` is the REST list (`pulls/{n}/reviews`), `view` the `gh pr view --json author,comments` payload.
  */
-export function githubTrust(payload: unknown, head: string, identity: GithubIdentity): Trust {
-  for (const who of githubApprovers(payload, head)) {
-    const role = identity.permissions[who]
-    if (typeof role === "string" && WRITE_ROLES.has(role)) return { trusted: true, by: who }
-  }
-  const author = login(payload)
-  const comments = own(payload, "comments")
-  if (author !== null && identity.viewer === author && Array.isArray(comments)) {
+export function githubTrust(reviews: unknown, view: unknown, head: string, identity: GithubIdentity): Trust {
+  const author = login(view)
+  const blocking = changesRequested(reviews)
+  if (blocking.length > 0) return { trusted: false, reason: `${blocking.join(", ")} requested changes and has not approved since` }
+  const strict = reviewApproval(reviews, author, head, {
+    eligible: (who) => WRITE_ROLES.has(identity.permissions[who.toLowerCase()] ?? ""),
+  })
+  if (strict.ok) return { trusted: true, by: String(strict.evidence.reviewer) }
+  const comments = own(view, "comments")
+  if (author !== null && identity.viewer === author && Array.isArray(comments) && approversAt(reviews, author, head) !== undefined) {
     for (const comment of comments) {
       if (login(comment) !== author) continue
       const body = str(comment, "body") ?? ""
@@ -217,10 +187,13 @@ export async function readApproval(run: CliRunner, bound: Bound): Promise<Approv
     const result = githubApproval(payload.value, bound.head)
     if (!result.ok) return result
     const host = ["--hostname", bound.forgeHost]
+    // The strict judgment reads the REST review list (commit ids, and every reviewer's latest decision).
+    const reviews = await readJson(run, ["gh", "api", "--paginate", "--slurp", `repos/${bound.nameWithOwner}/pulls/${bound.number}/reviews?per_page=100`, ...host], bound)
+    if (!reviews.ok) return { ...result, trusted: { trusted: false, reason: reviews.reason } }
     const viewer = await readJson(run, ["gh", "api", "user", ...host], bound)
     const permissions: Record<string, string | null> = {}
     // Five approvers is more than the gate needs; one trusted approver is enough.
-    for (const who of githubApprovers(payload.value, bound.head).slice(0, 5)) {
+    for (const who of (approversAt(reviews.value, login(payload.value), bound.head) ?? []).slice(0, 5)) {
       const read = await readJson(
         run,
         ["gh", "api", `repos/${bound.nameWithOwner}/collaborators/${encodeURIComponent(who)}/permission`, ...host],
@@ -228,7 +201,7 @@ export async function readApproval(run: CliRunner, bound: Bound): Promise<Approv
       )
       permissions[who] = read.ok && githubPermissionAllows(read.value) ? (str(read.value, "role_name") ?? str(read.value, "permission")) : null
     }
-    const trust = githubTrust(payload.value, bound.head, { viewer: viewer.ok ? str(viewer.value, "login") : null, permissions })
+    const trust = githubTrust(reviews.value, payload.value, bound.head, { viewer: viewer.ok ? str(viewer.value, "login") : null, permissions })
     return { ...result, trusted: trust }
   }
   const project = encodeURIComponent(bound.nameWithOwner)
@@ -257,11 +230,12 @@ export async function readChecks(run: CliRunner, bound: Bound): Promise<Precondi
     // By the commit, not the PR: the PR can move to another head between this read and the merge.
     const base = `repos/${bound.nameWithOwner}/commits/${bound.head}`
     const host = ["--hostname", bound.forgeHost]
-    const runs = await readJson(run, ["gh", "api", `${base}/check-runs?per_page=100`, ...host], bound)
+    const pagesOf = (value: unknown): unknown => (Array.isArray(value) ? value : [value])
+    const runs = await readJson(run, ["gh", "api", "--paginate", "--slurp", `${base}/check-runs?per_page=100`, ...host], bound)
     if (!runs.ok) return runs
-    const status = await readJson(run, ["gh", "api", `${base}/status?per_page=100`, ...host], bound)
+    const status = await readJson(run, ["gh", "api", "--paginate", "--slurp", `${base}/status?per_page=100`, ...host], bound)
     if (!status.ok) return status
-    return githubHeadChecks(runs.value, status.value)
+    return commitChecks({ runs: pagesOf(runs.value), status: pagesOf(status.value), required: undefined })
   }
   const project = encodeURIComponent(bound.nameWithOwner)
   const argv = ["glab", "api", `projects/${project}/merge_requests/${bound.number}`, "--hostname", bound.forgeHost]

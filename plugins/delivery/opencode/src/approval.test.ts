@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
   githubApproval,
-  githubHeadChecks,
   githubPermissionAllows,
   githubTrust,
   gitlabApproval,
@@ -72,36 +71,51 @@ describe("gitlab", () => {
 })
 
 describe("githubTrust", () => {
-  const review = (login: string, state = "APPROVED", oid = HEAD) => ({ state, author: { login }, commit: { oid } })
-  const payload = (reviews: unknown[], comments: unknown[] = []) => ({ author: { login: "me" }, reviews, comments })
+  const rest = (login: string, state = "APPROVED", commit = HEAD) => ({ user: { login }, state, commit_id: commit })
+  const view = (comments: unknown[] = []) => ({ author: { login: "me" }, comments })
   const none = { viewer: null, permissions: {} }
 
   test("an exact-head APPROVED review counts only from a user with write, maintain or admin", () => {
     for (const role of ["admin", "maintain", "write"])
-      expect(githubTrust(payload([review("you")]), HEAD, { viewer: "bot", permissions: { you: role } }).trusted).toBe(true)
+      expect(githubTrust([rest("you")], view(), HEAD, { viewer: "bot", permissions: { you: role } }).trusted).toBe(true)
     for (const role of ["read", "triage", "none", null])
-      expect(githubTrust(payload([review("you")]), HEAD, { viewer: "bot", permissions: { you: role } }).trusted).toBe(false)
+      expect(githubTrust([rest("you")], view(), HEAD, { viewer: "bot", permissions: { you: role } }).trusted).toBe(false)
   })
 
   test("a reviewer whose permission was not read does not count", () => {
-    expect(githubTrust(payload([review("you")]), HEAD, none).trusted).toBe(false)
+    expect(githubTrust([rest("you")], view(), HEAD, none).trusted).toBe(false)
   })
 
-  test("a reviewer's later non-approving review withdraws the approval", () => {
-    const reviews = [review("you"), review("you", "CHANGES_REQUESTED")]
-    expect(githubTrust(payload(reviews), HEAD, { viewer: null, permissions: { you: "write" } }).trusted).toBe(false)
+  test("one trusted approver is not enough while another reviewer's latest decisive review requests changes", () => {
+    const reviews = [rest("you"), rest("other", "CHANGES_REQUESTED")]
+    const identity = { viewer: "bot", permissions: { you: "write", other: "write" } }
+    const result = githubTrust(reviews, view(), HEAD, identity)
+    expect(result.trusted).toBe(false)
+    expect(githubTrust([...reviews, rest("other")], view(), HEAD, identity).trusted).toBe(true)
   })
 
-  test("the author's own review does not count", () => {
-    expect(githubTrust(payload([review("me")]), HEAD, { viewer: null, permissions: { me: "admin" } }).trusted).toBe(false)
+  test("a changes request also vetoes the same-account VERDICT comment", () => {
+    const comment = view([{ author: { login: "me" }, body: `VERDICT: APPROVE ${HEAD}` }])
+    expect(githubTrust([], comment, HEAD, { viewer: "me", permissions: {} }).trusted).toBe(true)
+    expect(githubTrust([rest("other", "CHANGES_REQUESTED")], comment, HEAD, { viewer: "me", permissions: {} }).trusted).toBe(false)
+  })
+
+  test("a reviewer's later non-approving decisive review withdraws the approval, and the author's own review never counts", () => {
+    const identity = { viewer: null, permissions: { you: "write", me: "admin" } }
+    expect(githubTrust([rest("you"), rest("you", "DISMISSED")], view(), HEAD, identity).trusted).toBe(false)
+    expect(githubTrust([rest("me")], view(), HEAD, identity).trusted).toBe(false)
+  })
+
+  test("an unreadable review list is untrusted", () => {
+    expect(githubTrust({ message: "Not Found" }, view(), HEAD, { viewer: "me", permissions: {} }).trusted).toBe(false)
   })
 
   test("a VERDICT comment counts only when its author is the authenticated account and the PR author", () => {
-    const comment = (login: string) => payload([], [{ author: { login }, body: `VERDICT: APPROVE ${HEAD}` }])
-    expect(githubTrust(comment("me"), HEAD, { viewer: "me", permissions: {} }).trusted).toBe(true)
-    expect(githubTrust(comment("me"), HEAD, { viewer: "other", permissions: {} }).trusted).toBe(false)
-    expect(githubTrust(comment("me"), HEAD, none).trusted).toBe(false)
-    expect(githubTrust(comment("someone"), HEAD, { viewer: "someone", permissions: {} }).trusted).toBe(false)
+    const comment = (login: string) => view([{ author: { login }, body: `VERDICT: APPROVE ${HEAD}` }])
+    expect(githubTrust([], comment("me"), HEAD, { viewer: "me", permissions: {} }).trusted).toBe(true)
+    expect(githubTrust([], comment("me"), HEAD, { viewer: "other", permissions: {} }).trusted).toBe(false)
+    expect(githubTrust([], comment("me"), HEAD, none).trusted).toBe(false)
+    expect(githubTrust([], comment("someone"), HEAD, { viewer: "someone", permissions: {} }).trusted).toBe(false)
   })
 })
 
@@ -136,33 +150,5 @@ describe("gitlabTrust", () => {
   test("an approval without a sha is not bound to the head", () => {
     expect(gitlabTrust(approvals(), HEAD, { 5: 40 }, true).trusted).toBe(false)
     expect(gitlabTrust(approvals(OLD), HEAD, { 5: 40 }, true).trusted).toBe(false)
-  })
-})
-
-describe("githubHeadChecks", () => {
-  const run = (conclusion: string | null, status = "completed") => ({ name: "ci", status, conclusion })
-  const runs = (check_runs: unknown[], total = check_runs.length) => ({ total_count: total, check_runs })
-  const statuses = (state: string, total = 1) => ({ state, total_count: total })
-
-  test("check runs that completed with success, neutral or skipped, and no failing status, are green", () => {
-    expect(githubHeadChecks(runs([run("success"), run("skipped"), run("neutral")]), statuses("pending", 0))).toEqual({ ok: true, evidence: { checks: 3, statuses: 0 } })
-    expect(githubHeadChecks(runs([]), statuses("success"))).toEqual({ ok: true, evidence: { checks: 0, statuses: 1 } })
-  })
-
-  test.each([
-    ["a failed run", runs([run("failure")]), statuses("success", 0)],
-    ["an unfinished run", runs([run(null, "in_progress")]), statuses("success", 0)],
-    ["a cancelled run", runs([run("cancelled")]), statuses("success", 0)],
-    ["a failing status", runs([run("success")]), statuses("failure")],
-    ["a pending status", runs([run("success")]), statuses("pending")],
-    ["no checks and no statuses", runs([]), statuses("pending", 0)],
-    ["a truncated run list", runs([run("success")], 150), statuses("success", 0)],
-  ])("%s refuses", (_name, checkRuns, status) => {
-    expect(githubHeadChecks(checkRuns, status).ok).toBe(false)
-  })
-
-  test("unreadable payloads refuse", () => {
-    expect(githubHeadChecks(null, null).ok).toBe(false)
-    expect(githubHeadChecks({}, {}).ok).toBe(false)
   })
 })

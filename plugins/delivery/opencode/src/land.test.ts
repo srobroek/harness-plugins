@@ -2801,7 +2801,7 @@ describe("delivery_land approval and checks preconditions", () => {
     expect(calls.filter((call) => merged(call.argv))).toHaveLength(1)
     expect(outcome.receipt.proof.evidence.preconditions).toEqual({
       approval: { kind: "review", reviewer: "reviewer", commit: HEAD_OID },
-      checks: { checks: 1, statuses: 0 },
+      checks: { checks: 1, required: null },
     })
     const approvalRead = calls.find((call) => call.argv.includes("author,reviews,comments"))
     expect(approvalRead?.argv).toContain("github.com/srobroek/omp-plugins")
@@ -2813,7 +2813,7 @@ describe("delivery_land approval and checks preconditions", () => {
       { ...REVIEWED, requireApproval: true, requireGreenChecks: true },
     )
     const reads = calls.filter((call) => call.argv[1] === "api" && call.argv.some((part) => part.includes("/commits/")))
-    expect(reads.map((call) => call.argv[2])).toEqual([
+    expect(reads.map((call) => call.argv.find((part) => part.includes("/commits/")))).toEqual([
       `repos/srobroek/omp-plugins/commits/${HEAD_OID}/check-runs?per_page=100`,
       `repos/srobroek/omp-plugins/commits/${HEAD_OID}/status?per_page=100`,
     ])
@@ -2930,6 +2930,16 @@ describe("delivery_land approval and checks preconditions", () => {
       expect(await gatedFlag({ approval: comment("author"), viewer: completed(JSON.stringify({ login: "author" })) })).toBe(true)
       expect(await gatedFlag({ approval: comment("author"), viewer: completed(JSON.stringify({ login: "someone-else" })) })).toBe(false)
       expect(await gatedFlag({ approval: comment("author"), viewer: completed("", 1, "not logged in") })).toBe(false)
+    })
+
+    test("a second reviewer's changes request keeps the prompt even with a trusted approval", async () => {
+      const rest = (login: string, state: string) => ({ user: { login }, state, commit_id: HEAD_OID })
+      const vetoed = completed(JSON.stringify([[rest("reviewer", "APPROVED"), rest("other", "CHANGES_REQUESTED")]]))
+      expect(await gatedFlag({ approval: review("reviewer"), permission: permission("write"), reviews: vetoed })).toBe(false)
+    })
+
+    test("a review list that cannot be read keeps the prompt", async () => {
+      expect(await gatedFlag({ approval: review("reviewer"), permission: permission("write"), reviews: completed("", 1, "HTTP 502") })).toBe(false)
     })
 
     test("a call missing a gate keeps the prompt even with a trusted approval", async () => {

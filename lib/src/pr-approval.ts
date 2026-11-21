@@ -87,28 +87,56 @@ export function pages(payload: unknown, pick: (page: unknown) => unknown): unkno
   return out
 }
 
-/**
- * Strict approval from the reviews REST list (`pulls/{n}/reviews`): a reviewer other than the PR
- * author whose latest decisive review is `APPROVED` on commit `sha`, and nobody whose latest
- * decisive review requests changes. Comments never count.
- */
-export function reviewApproval(reviewsPayload: unknown, prAuthor: string | null, sha: string): Precondition {
+type Decisive = { state: string; commit: string | null }
+
+/** Each reviewer's latest decisive (approved, changes requested, dismissed) review, keyed by lower-case login. `undefined` for an unreadable list. */
+function latestDecisive(reviewsPayload: unknown): Map<string, Decisive> | undefined {
   const reviews = pages(reviewsPayload, (page) => own(page, "reviews"))
-  if (reviews === undefined) return { ok: false, reason: "approval: observed no review list, expected gh api pulls/{n}/reviews output" }
-  if (prAuthor === null) return { ok: false, reason: "approval: observed no PR author, expected one to rule out a self-approval" }
-  const latest = new Map<string, { state: string; commit: string | null }>()
+  if (reviews === undefined) return undefined
+  const latest = new Map<string, Decisive>()
   for (const review of reviews) {
     const state = str(review, "state")
     const who = str(own(review, "user"), "login")
     if (who === null || state === null || !["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(state)) continue
     latest.set(who.toLowerCase(), { state, commit: str(review, "commit_id")?.trim().toLowerCase() ?? null })
   }
-  const blocking = [...latest].filter(([, review]) => review.state === "CHANGES_REQUESTED").map(([who]) => who)
+  return latest
+}
+
+/** Everyone whose latest decisive review requests changes (lower-case); empty for an unreadable list. */
+export function changesRequested(reviewsPayload: unknown): string[] {
+  return [...(latestDecisive(reviewsPayload) ?? [])].filter(([, review]) => review.state === "CHANGES_REQUESTED").map(([who]) => who)
+}
+
+/** Reviewers other than `prAuthor` whose latest decisive review is `APPROVED` on `sha` (lower-case). `undefined` for an unreadable list. */
+export function approversAt(reviewsPayload: unknown, prAuthor: string | null, sha: string): string[] | undefined {
+  const latest = latestDecisive(reviewsPayload)
+  if (latest === undefined) return undefined
+  return [...latest]
+    .filter(([who, review]) => review.state === "APPROVED" && review.commit === sha && who !== prAuthor?.toLowerCase())
+    .map(([who]) => who)
+}
+
+/**
+ * Strict approval from the reviews REST list (`pulls/{n}/reviews`): a reviewer other than the PR
+ * author whose latest decisive review is `APPROVED` on commit `sha`, and nobody whose latest
+ * decisive review requests changes. Comments never count. With `eligible`, only approvers it
+ * accepts count; the changes-requested veto still applies to every reviewer.
+ */
+export function reviewApproval(
+  reviewsPayload: unknown,
+  prAuthor: string | null,
+  sha: string,
+  options: { eligible?: (login: string) => boolean } = {},
+): Precondition {
+  const approvers = approversAt(reviewsPayload, prAuthor, sha)
+  if (approvers === undefined) return { ok: false, reason: "approval: observed no review list, expected gh api pulls/{n}/reviews output" }
+  if (prAuthor === null) return { ok: false, reason: "approval: observed no PR author, expected one to rule out a self-approval" }
+  const blocking = changesRequested(reviewsPayload)
   if (blocking.length > 0) return { ok: false, reason: `approval: ${blocking.join(", ")} requested changes and has not approved since` }
-  for (const [who, review] of latest) {
-    if (review.state === "APPROVED" && review.commit === sha && who !== prAuthor.toLowerCase()) return { ok: true, evidence: { kind: "review", reviewer: who, commit: sha } }
-  }
-  return { ok: false, reason: `approval: observed no APPROVED review of ${sha} by someone other than the PR author ${prAuthor}; comments do not count` }
+  const who = approvers.find((login) => options.eligible?.(login) ?? true)
+  if (who !== undefined) return { ok: true, evidence: { kind: "review", reviewer: who, commit: sha } }
+  return { ok: false, reason: `approval: observed no ${options.eligible === undefined ? "" : "eligible "}APPROVED review of ${sha} by someone other than the PR author ${prAuthor}; comments do not count` }
 }
 
 const PASSING_RUN = new Set(["success", "neutral", "skipped"])
