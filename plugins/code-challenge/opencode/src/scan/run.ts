@@ -35,10 +35,11 @@ export type ScanDeps = {
   toolsDir?: string
   now?: () => number
   /**
-   * The caller consented to run recipes that execute repository or downloaded code for this
-   * root. Without it those recipes are coverage gaps. It is host-side only: tool input cannot set it.
+   * Ids of the risky recipes the caller approved for this exact plan. A recipe that executes repository
+   * or downloaded code and is not in the set is a coverage gap, including one that only became risky
+   * since the plan was approved. Host-side only: tool input cannot set it.
    */
-  consent?: boolean
+  approved?: ReadonlySet<string>
 }
 
 const DEFAULT_TIMEOUT_SECONDS = 120
@@ -293,8 +294,8 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
         entry(item.status, item.reason)
         continue
       }
-      if (item.risks.length > 0 && deps.consent !== true) {
-        entry("gap", `not run without consent: ${item.risks.join("; ")}`)
+      if (item.risks.length > 0 && deps.approved?.has(recipe.id) !== true) {
+        entry("gap", `${deps.approved === undefined ? "not run without consent" : "not approved for this run"}: ${item.risks.join("; ")}`)
         continue
       }
       if (signal?.aborted) {

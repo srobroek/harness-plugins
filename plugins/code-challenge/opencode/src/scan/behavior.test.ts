@@ -39,7 +39,7 @@ describe.skipIf(!installed("biome"))("biome (isolated lens profile)", () => {
 
   test("reports a rule the repo disabled, but honours .gitignore and inline suppressions", async () => {
     const root = repo(files)
-    const report = await runScan({ root, languages: ["ts"], lenses: ["performance"] }, { consent: false })
+    const report = await runScan({ root, languages: ["ts"], lenses: ["performance"] }, {})
     const biome = only(report, "biome")
     expect(biome.map((c) => [c.file, c.rule, c.ruleEnabledInRepo])).toEqual([["bad.ts", "performance/noAccumulatingSpread", null]])
     expect(where(report)).not.toContain("ignored.ts")
@@ -59,7 +59,7 @@ describe.skipIf(!installed("ruff"))("ruff (isolated lens profile)", () => {
 
   test("reports a rule the repo did not select, but honours .gitignore and noqa", async () => {
     const root = repo(files)
-    const report = await runScan({ root, languages: ["python"], lenses: ["observability"] }, { consent: false })
+    const report = await runScan({ root, languages: ["python"], lenses: ["observability"] }, {})
     expect(only(report, "ruff").map((c) => [c.file, c.rule, c.ruleEnabledInRepo])).toEqual([["bad.py", "T201", false]])
   })
 
@@ -67,7 +67,7 @@ describe.skipIf(!installed("ruff"))("ruff (isolated lens profile)", () => {
     const root = repo(files)
     const report = await runScan(
       { root, files: ["bad.py", "ignored.py", "suppressed.py"], lenses: ["observability"] },
-      { consent: false },
+      {},
     )
     expect(only(report, "ruff").map((c) => c.file)).toEqual(["bad.py"])
   })
@@ -85,7 +85,7 @@ describe.skipIf(!installed("golangci-lint") || !installed("go"))("golangci-lint 
 
   test("reports a linter the repo did not enable, but honours //nolint", async () => {
     const root = repo(files)
-    const report = await runScan({ root, languages: ["go"], lenses: ["dead-code"] }, { consent: true })
+    const report = await runScan({ root, languages: ["go"], lenses: ["dead-code"] }, { approved: new Set(["golangci:lenses", "deadcode:go"]) })
     const hits = only(report, "golangci-lint")
     expect(hits.map((c) => [c.file, c.rule, c.ruleEnabledInRepo])).toEqual([["main.go", "unused", false]])
     expect(hits[0]?.message).toContain("unusedBad")
