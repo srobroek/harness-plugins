@@ -8,6 +8,7 @@
  * sets `BEADS_DIR` in the child's environment.
  */
 
+import { resolve } from "node:path"
 import { bdInvocations, decideActorParsed, flagEnabled, globalValue } from "@srobroek/opencode-lib/bd-actor-gate"
 import {
   decideEmbeddedWrite,
@@ -20,7 +21,6 @@ import {
 import { type Gate, gateEnabled, type Options } from "@srobroek/opencode-lib/beads-host"
 import { type ParsedCommand, parse } from "@srobroek/opencode-lib/beads-shell"
 import { repoIdentity } from "@srobroek/opencode-lib/beads-store"
-import { resolve } from "node:path"
 import { decideBdCloseParsed } from "./bd-close-gate.ts"
 import { decideBdUnclaimParsed } from "./bd-unclaim-gate.ts"
 import { decideBdUpdateCloseParsed } from "./bd-update-close-gate.ts"
