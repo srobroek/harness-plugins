@@ -61,8 +61,9 @@ export function readBoundedBytes(path: string, maxBytes: number): BoundedBytes {
   }
 }
 
-export function readBounded(path: string): BoundedRead {
-  const read = readBoundedBytes(path, MAX_LEDGER_FILE_BYTES)
+/** `maxBytes` defaults to the ledger bound; callers with a different bound pass their own. */
+export function readBounded(path: string, maxBytes: number = MAX_LEDGER_FILE_BYTES): BoundedRead {
+  const read = readBoundedBytes(path, maxBytes)
   if (read.kind === "absent") return { kind: "absent" }
   return read.kind === "bytes" ? { kind: "text", text: read.bytes.toString("utf8") } : { kind: "unreadable" }
 }

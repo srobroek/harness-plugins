@@ -465,21 +465,14 @@ function readBoundedBytes(path, maxBytes) {
       closeSync(fd);
   }
 }
-function readBounded(path) {
-  const read = readBoundedBytes(path, MAX_LEDGER_FILE_BYTES);
+function readBounded(path, maxBytes = MAX_LEDGER_FILE_BYTES) {
+  const read = readBoundedBytes(path, maxBytes);
   if (read.kind === "absent")
     return { kind: "absent" };
   return read.kind === "bytes" ? { kind: "text", text: read.bytes.toString("utf8") } : { kind: "unreadable" };
 }
 
 // lib/src/checkout-marker.ts
-var MAX_MARKER_BYTES = 64 * 1024;
-function readBounded2(path, maxBytes = MAX_MARKER_BYTES) {
-  const read = readBoundedBytes(path, maxBytes);
-  if (read.kind === "absent")
-    return { kind: "absent" };
-  return read.kind === "bytes" ? { kind: "text", text: read.bytes.toString("utf8") } : { kind: "unreadable" };
-}
 var MAX_LINKS = 40;
 function physical(path) {
   const pending = (path.startsWith("/") ? path : `${process.cwd()}/${path}`).split("/").reverse();
@@ -548,7 +541,7 @@ function verifyCheckout(checkout, commonDir) {
   }
   if (!stat.isFile())
     return { state: "unsafe" };
-  const marker = readBounded2(entry);
+  const marker = readBounded(entry);
   if (marker.kind !== "text")
     return { state: "unsafe" };
   const named = gitFileValue(marker.text);
@@ -556,7 +549,7 @@ function verifyCheckout(checkout, commonDir) {
   if (gitDir === null)
     return { state: "unsafe" };
   let claimed = gitDir;
-  const commondir = readBounded2(join(gitDir, "commondir"));
+  const commondir = readBounded(join(gitDir, "commondir"));
   if (commondir.kind === "unreadable")
     return { state: "unsafe" };
   if (commondir.kind === "text") {
@@ -1364,7 +1357,7 @@ function readCheckoutObjects(stdout, cwd, commonDir) {
   } catch {
     return { reason: `${label}: observed a shallow path ${shallowFile} whose directory does not resolve` };
   }
-  const read = within(common, physicalShallow) ? readBounded2(physicalShallow, MAX_SHALLOW_BYTES) : { kind: "unreadable" };
+  const read = within(common, physicalShallow) ? readBounded(physicalShallow, MAX_SHALLOW_BYTES) : { kind: "unreadable" };
   if (read.kind === "unreadable") {
     return {
       reason: `${label}: observed a shallow file ${shallowFile} that is not a regular file of at most ${MAX_SHALLOW_BYTES} bytes inside ${common}`
@@ -2102,7 +2095,7 @@ function validateReceipt(value) {
   }
   return { ok: true, receipt: value };
 }
-function readBounded3(path) {
+function readBounded2(path) {
   let fd;
   try {
     fd = openSync2(path, constants3.O_RDONLY | constants3.O_NONBLOCK | constants3.O_NOFOLLOW);
@@ -2144,7 +2137,7 @@ function publish(temporary, target, payload) {
     const stat = lstatSync3(target);
     safeMetadata = !stat.isSymbolicLink() && stat.isFile() && (stat.mode & 511) === 384;
   } catch {}
-  const existing = safeMetadata ? readBounded3(target) : null;
+  const existing = safeMetadata ? readBounded2(target) : null;
   if (existing?.ok && existing.text === payload)
     return;
   const detail = existing === null ? "unsafe metadata" : existing.ok ? "different content" : `unreadable content (${existing.reason})`;
@@ -2229,7 +2222,7 @@ function readReceipt(path) {
   if (!RECEIPT_FILE.test(name)) {
     return refuse("path", path, "a canonical receiptId.json basename");
   }
-  const read = readBounded3(path);
+  const read = readBounded2(path);
   if (!read.ok)
     return read;
   let parsed;

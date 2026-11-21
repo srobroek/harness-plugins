@@ -259,8 +259,8 @@ function readBoundedBytes(path, maxBytes) {
       closeSync(fd);
   }
 }
-function readBounded(path) {
-  const read = readBoundedBytes(path, MAX_LEDGER_FILE_BYTES);
+function readBounded(path, maxBytes = MAX_LEDGER_FILE_BYTES) {
+  const read = readBoundedBytes(path, maxBytes);
   if (read.kind === "absent")
     return { kind: "absent" };
   return read.kind === "bytes" ? { kind: "text", text: read.bytes.toString("utf8") } : { kind: "unreadable" };
@@ -1461,7 +1461,6 @@ import { join as join3 } from "path";
 
 // lib/src/checkout-marker.ts
 import { lstatSync as lstatSync2, readlinkSync } from "fs";
-var MAX_MARKER_BYTES = 64 * 1024;
 var MAX_LINKS = 40;
 function physical(path) {
   const pending = (path.startsWith("/") ? path : `${process.cwd()}/${path}`).split("/").reverse();
