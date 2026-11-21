@@ -1082,7 +1082,7 @@ var require_spdx_expression_parse = __commonJS(function(exports, module) {
 });
 
 // plugins/code-challenge/opencode/src/index.ts
-import { resolve as resolve2 } from "path";
+import { resolve as resolve6 } from "path";
 import { Plugin as Plugin2 } from "@opencode/plugin";
 
 // lib/src/agent-files.ts
@@ -2341,6 +2341,1717 @@ function registerLibFacts(ctx, overrides = {}) {
   });
 }
 
+// plugins/code-challenge/opencode/src/scan/index.ts
+import { realpathSync as realpathSync3 } from "fs";
+import { isAbsolute as isAbsolute4, resolve as resolve5 } from "path";
+
+// plugins/code-challenge/opencode/src/session-directory.ts
+async function sessionDirectory(ctx, sessionID, tool) {
+  const session = await ctx.session.get({ sessionID }).catch((cause) => {
+    throw new Error(`${tool}: cannot read session ${sessionID} to find its directory`, { cause });
+  });
+  const found = session.location?.directory;
+  if (typeof found !== "string" || found === "")
+    throw new Error(`${tool}: session ${sessionID} has no directory`);
+  return found;
+}
+
+// plugins/code-challenge/opencode/src/scan/run.ts
+import { existsSync as existsSync3, mkdtempSync, realpathSync as realpathSync2, rmSync, statSync as statSync3 } from "fs";
+import { tmpdir } from "os";
+import { extname as extname2, join as join11, resolve as resolve4 } from "path";
+
+// lib/src/subprocess.ts
+import { constants } from "os";
+var EXIT_GRACE_MS = 2000;
+var EXIT_POLL_MS = 100;
+function goneWatch(graceMs, pollMs) {
+  const polls = Math.max(1, Math.ceil(graceMs / Math.max(1, pollMs)));
+  let since = null;
+  let seen = 0;
+  return (alive) => {
+    if (alive) {
+      since = null;
+      seen = 0;
+      return false;
+    }
+    since ??= Date.now();
+    seen++;
+    return seen > polls && Date.now() - since >= graceMs;
+  };
+}
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+function killChild(child, group) {
+  if (group) {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+      return;
+    } catch {}
+  }
+  try {
+    child.kill("SIGKILL");
+  } catch {}
+}
+function unref(timer) {
+  timer.unref?.();
+}
+function capture(stream) {
+  if (!(stream instanceof ReadableStream))
+    return { text: Promise.resolve(""), snapshot: () => "", cancel: () => {} };
+  const reader = stream.getReader();
+  const decoder = new TextDecoder;
+  let collected = "";
+  const text = (async () => {
+    try {
+      for (;; ) {
+        const chunk = await reader.read();
+        if (chunk.done)
+          break;
+        collected += decoder.decode(chunk.value, { stream: true });
+      }
+    } catch {}
+    collected += decoder.decode();
+    return collected;
+  })();
+  const cancel = () => {
+    try {
+      reader.cancel().catch(() => {
+        return;
+      });
+    } catch {}
+  };
+  return { text, snapshot: () => collected, cancel };
+}
+function supervise(child, options = {}) {
+  const grace = Math.max(0, options.graceMs ?? EXIT_GRACE_MS);
+  const pollMs = Math.max(1, options.pollMs ?? EXIT_POLL_MS);
+  const alive = options.alive ?? processAlive;
+  const group = options.group ?? false;
+  const { signal, timeoutMs } = options;
+  const out = capture(child.stdout);
+  const err = capture(child.stderr);
+  return new Promise((resolve) => {
+    let ended = null;
+    let exitSeen = false;
+    let settled = false;
+    const gone = goneWatch(grace, pollMs);
+    let deadline;
+    let graceTimer;
+    const settle = (run) => {
+      if (settled)
+        return;
+      settled = true;
+      clearTimeout(deadline);
+      clearTimeout(graceTimer);
+      clearInterval(poller);
+      signal?.removeEventListener("abort", onAbort);
+      resolve(run);
+    };
+    const end = (cause) => {
+      if (ended !== null || settled)
+        return;
+      ended = cause;
+      if (cause !== "lost" || group)
+        killChild(child, group);
+      out.cancel();
+      err.cancel();
+      graceTimer = setTimeout(() => settle({ kind: cause, stdout: out.snapshot(), stderr: err.snapshot() }), grace);
+      if (options.unref)
+        unref(graceTimer);
+    };
+    const onAbort = () => end("aborted");
+    const poller = setInterval(() => {
+      if (exitSeen || ended !== null || settled)
+        return;
+      if (gone(alive(child.pid)))
+        end("lost");
+    }, pollMs);
+    unref(poller);
+    if (timeoutMs !== undefined && timeoutMs > 0 && Number.isFinite(timeoutMs)) {
+      deadline = setTimeout(() => end("timeout"), timeoutMs);
+      if (options.unref)
+        unref(deadline);
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted)
+      onAbort();
+    child.exited.then(() => {
+      exitSeen = true;
+    }, () => {
+      return;
+    });
+    Promise.all([child.exited, out.text, err.text]).then(([exitCode, stdout, stderr]) => {
+      if (ended !== null)
+        settle({ kind: ended, stdout, stderr });
+      else
+        settle({ kind: "exited", exitCode, signalCode: signalName(child.signalCode), stdout, stderr });
+    }, () => end("lost"));
+  });
+}
+function signalName(code) {
+  if (code === null || code === undefined)
+    return null;
+  if (typeof code === "string")
+    return code;
+  return Object.entries(constants.signals).find(([, n]) => n === code)?.[0] ?? String(code);
+}
+
+// plugins/code-challenge/opencode/src/scan/env.ts
+var ALLOWED = new Set([
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TERM",
+  "TZ",
+  "LANG",
+  "LANGUAGE",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "CARGO_HOME",
+  "RUSTUP_HOME",
+  "RUSTUP_TOOLCHAIN",
+  "GOPATH",
+  "GOROOT",
+  "GOCACHE",
+  "GOMODCACHE",
+  "GOFLAGS",
+  "GOPROXY",
+  "GONOPROXY",
+  "GONOSUMDB",
+  "GOSUMDB",
+  "GOTOOLCHAIN",
+  "BUN_INSTALL",
+  "BUN_INSTALL_CACHE_DIR",
+  "NPM_CONFIG_CACHE",
+  "npm_config_cache",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY",
+  "ALL_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+  "all_proxy",
+  "SSL_CERT_FILE",
+  "SSL_CERT_DIR",
+  "NODE_EXTRA_CA_CERTS",
+  "REQUESTS_CA_BUNDLE",
+  "CURL_CA_BUNDLE"
+]);
+var ALLOWED_PREFIXES = ["LC_", "UV_"];
+var SECRET_NAME = /(TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|AUTH)/i;
+var SECRET_PREFIX = /^(AWS_|GH_|GITHUB_)/i;
+function stripUserinfo(value) {
+  return value.replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^/\s@,]*@/gi, "$1");
+}
+function childEnv(source = Bun.env, extra = { NO_COLOR: "1", FORCE_COLOR: "0" }) {
+  const env = {};
+  for (const [name, value] of Object.entries(source)) {
+    if (value === undefined)
+      continue;
+    if (SECRET_NAME.test(name) || SECRET_PREFIX.test(name))
+      continue;
+    if (ALLOWED.has(name) || ALLOWED_PREFIXES.some((p) => name.startsWith(p)))
+      env[name] = stripUserinfo(value);
+  }
+  return { ...env, ...extra };
+}
+
+// plugins/code-challenge/opencode/src/scan/exec.ts
+var MAX_STDOUT_BYTES = 16 * 1024 * 1024;
+var MAX_STDERR_BYTES = 1024 * 1024;
+function bounded(source, max, onOverflow) {
+  if (!(source instanceof ReadableStream))
+    return source;
+  const reader = source.getReader();
+  let total = 0;
+  return new ReadableStream({
+    async pull(controller) {
+      const chunk = await reader.read().catch(() => ({ done: true, value: undefined }));
+      if (chunk.done)
+        return controller.close();
+      total += chunk.value.byteLength;
+      if (total > max) {
+        onOverflow();
+        reader.cancel().catch(() => {
+          return;
+        });
+        return controller.close();
+      }
+      controller.enqueue(chunk.value);
+    },
+    cancel: () => reader.cancel().catch(() => {
+      return;
+    })
+  });
+}
+var spawnTool = async (argv, options) => {
+  const { cwd, timeoutMs, signal } = options;
+  try {
+    const child = Bun.spawn(argv, { cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: childEnv(), detached: true });
+    const state = { overflow: null };
+    const over = (stream) => () => {
+      state.overflow ??= stream;
+      killChild(child, true);
+    };
+    const guarded = {
+      pid: child.pid,
+      exited: child.exited,
+      get signalCode() {
+        return child.signalCode;
+      },
+      kill: (s) => child.kill(s),
+      stdout: bounded(child.stdout, options.maxStdoutBytes ?? MAX_STDOUT_BYTES, over("stdout")),
+      stderr: bounded(child.stderr, options.maxStderrBytes ?? MAX_STDERR_BYTES, over("stderr"))
+    };
+    const run = await supervise(guarded, { timeoutMs, signal, group: true });
+    return state.overflow === null ? run : { kind: "overflow", stream: state.overflow, stdout: "", stderr: "" };
+  } catch (error) {
+    return { kind: "exited", exitCode: 127, signalCode: null, stdout: "", stderr: String(error) };
+  }
+};
+
+// plugins/code-challenge/opencode/src/scan/files.ts
+import { lstatSync as lstatSync3, readdirSync as readdirSync4, realpathSync, statSync as statSync2 } from "fs";
+import { extname, isAbsolute as isAbsolute2, join as join6, relative, resolve as resolve2, sep } from "path";
+
+// lib/src/bounded-read.ts
+import { closeSync, constants as constants2, fstatSync, lstatSync as lstatSync2, openSync, readSync } from "fs";
+var MAX_LEDGER_FILE_BYTES = 64 * 1024;
+function readBoundedBytes(path, maxBytes) {
+  let fd;
+  try {
+    if (!lstatSync2(path).isFile())
+      return { kind: "unreadable", reason: "not-regular" };
+    fd = openSync(path, constants2.O_RDONLY | constants2.O_NOFOLLOW | constants2.O_NONBLOCK);
+    const info = fstatSync(fd);
+    if (!info.isFile())
+      return { kind: "unreadable", reason: "not-regular" };
+    if (info.size > maxBytes)
+      return { kind: "unreadable", reason: "too-large" };
+    const buffer = Buffer.alloc(info.size);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const read = readSync(fd, buffer, offset, buffer.length - offset, offset);
+      if (read === 0)
+        break;
+      offset += read;
+    }
+    return { kind: "bytes", bytes: offset === buffer.length ? buffer : buffer.subarray(0, offset) };
+  } catch (error) {
+    const code = error.code;
+    if (code === "ENOENT")
+      return { kind: "absent" };
+    return { kind: "unreadable", reason: code === "ELOOP" ? "not-regular" : "io" };
+  } finally {
+    if (fd !== undefined)
+      closeSync(fd);
+  }
+}
+
+// plugins/code-challenge/opencode/src/scan/read.ts
+function readText(path, maxBytes) {
+  const read = readBoundedBytes(path, maxBytes);
+  if (read.kind === "bytes")
+    return { kind: "text", text: read.bytes.toString("utf8") };
+  return { kind: read.kind };
+}
+
+// plugins/code-challenge/opencode/src/scan/types.ts
+var LANGUAGES = ["ts", "python", "go", "rust"];
+var DEPTHS2 = ["quick", "standard", "deep"];
+
+// plugins/code-challenge/opencode/src/scan/files.ts
+var SKIP_DIRS = new Set([".git", "node_modules", "dist", "target", ".venv", "venv", "__pycache__"]);
+var EXTENSION_LANGUAGE = {
+  ".ts": "ts",
+  ".tsx": "ts",
+  ".js": "ts",
+  ".jsx": "ts",
+  ".mjs": "ts",
+  ".cjs": "ts",
+  ".mts": "ts",
+  ".cts": "ts",
+  ".py": "python",
+  ".go": "go",
+  ".rs": "rust"
+};
+var MARKER_LANGUAGE = [
+  ["package.json", "ts"],
+  ["tsconfig.json", "ts"],
+  ["pyproject.toml", "python"],
+  ["setup.py", "python"],
+  ["requirements.txt", "python"],
+  ["go.mod", "go"],
+  ["Cargo.toml", "rust"]
+];
+function detectLanguages(root, files) {
+  const found = new Set;
+  if (files.length > 0) {
+    for (const file of files) {
+      const language = EXTENSION_LANGUAGE[extname(file)];
+      if (language)
+        found.add(language);
+    }
+  } else {
+    for (const [marker, language] of MARKER_LANGUAGE)
+      if (lstatOrNull(join6(root, marker)) !== null)
+        found.add(language);
+  }
+  return LANGUAGES.filter((l) => found.has(l));
+}
+function inside(root, abs) {
+  const rel = relative(root, abs);
+  return rel === "" || rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute2(rel);
+}
+var outside = (pattern) => new Error(`challenge_scan: path is outside the root: ${pattern}`);
+function realOrNull(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return null;
+  }
+}
+function walk(dir, root, out) {
+  for (const entry of readdirSync4(dir, { withFileTypes: true })) {
+    if (entry.isSymbolicLink())
+      continue;
+    if (entry.isDirectory()) {
+      if (!SKIP_DIRS.has(entry.name))
+        walk(join6(dir, entry.name), root, out);
+    } else
+      out.add(relative(root, join6(dir, entry.name)));
+  }
+}
+function expandFiles(root, patterns) {
+  const found = new Set;
+  for (const pattern of patterns) {
+    const isGlob = /[*?[{]/.test(pattern);
+    if (isGlob && (isAbsolute2(pattern) || pattern.split("/").includes("..")))
+      throw outside(pattern);
+    const abs = resolve2(root, pattern);
+    if (!isGlob) {
+      if (!inside(root, abs))
+        throw outside(pattern);
+      const real = realOrNull(abs);
+      if (real === null)
+        continue;
+      if (!inside(root, real))
+        throw outside(pattern);
+      if (statSync2(real).isDirectory())
+        walk(real, root, found);
+      else
+        found.add(relative(root, real));
+      continue;
+    }
+    for (const match of new Bun.Glob(pattern).scanSync({ cwd: root, onlyFiles: true })) {
+      if (match.split("/").some((part) => SKIP_DIRS.has(part)))
+        continue;
+      const real = realOrNull(join6(root, match));
+      if (real !== null && inside(root, real))
+        found.add(relative(root, real));
+    }
+  }
+  return [...found].sort();
+}
+function missingMarker(root, markers) {
+  if (!markers)
+    return null;
+  for (const spec of markers) {
+    const [name = "", needle] = spec.split(":");
+    const read = readText(join6(root, name), MAX_MARKER_BYTES);
+    if (read.kind !== "text")
+      continue;
+    if (needle === undefined || read.text.includes(needle))
+      return null;
+  }
+  return `no ${markers.map((m) => m.replace(":", " containing ")).join(" or ")} in the repository`;
+}
+var MAX_MARKER_BYTES = 1024 * 1024;
+function lstatOrNull(path) {
+  return lstatSync3(path, { throwIfNoEntry: false }) ?? null;
+}
+function parseListing(stdout) {
+  return stdout.split("\x00").filter((f) => f !== "");
+}
+function contained(root, files) {
+  return files.filter((f) => {
+    const abs = join6(root, f);
+    if (!lstatOrNull(abs)?.isFile())
+      return false;
+    const real = realOrNull(abs);
+    return real !== null && inside(root, real);
+  });
+}
+
+// plugins/code-challenge/opencode/src/scan/git.ts
+import { lstatSync as lstatSync4 } from "fs";
+import { join as join7 } from "path";
+var GIT_SAFE = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"];
+var LIST_TIMEOUT_MS = 30000;
+function hasDotGit(root) {
+  return lstatSync4(join7(root, ".git"), { throwIfNoEntry: false }) !== undefined;
+}
+async function gitState(root, exec, which, signal) {
+  const git = which("git");
+  if (!git)
+    return hasDotGit(root) ? { kind: "error", reason: "git is not installed" } : { kind: "none" };
+  const run = await exec([git, ...GIT_SAFE, "rev-parse", "--absolute-git-dir"], { cwd: root, timeoutMs: 1e4, signal });
+  if (run.kind !== "exited")
+    return { kind: "error", reason: `git rev-parse ${run.kind === "timeout" ? "timed out" : "did not finish"}` };
+  if (run.exitCode === 0) {
+    const dir = run.stdout.trim();
+    return dir === "" ? { kind: "error", reason: "git rev-parse printed no git directory" } : { kind: "repo", dir };
+  }
+  return run.exitCode === 128 && /not a git repository/i.test(run.stderr) ? { kind: "none" } : { kind: "error", reason: `git rev-parse exited ${run.exitCode}` };
+}
+async function list(git, root, exec, args, signal) {
+  const run = await exec([git, ...GIT_SAFE, "ls-files", "-z", ...args], { cwd: root, timeoutMs: LIST_TIMEOUT_MS, signal });
+  if (run.kind !== "exited")
+    return `git ls-files ${run.kind === "timeout" ? "timed out" : run.kind === "overflow" ? "output was too large" : "did not finish"}`;
+  if (run.exitCode !== 0)
+    return `git ls-files exited ${run.exitCode}`;
+  return parseListing(run.stdout);
+}
+async function gitListing(root, state, exec, which, signal) {
+  if (state.kind === "none")
+    return { kind: "none" };
+  if (state.kind === "error")
+    return state;
+  const git = which("git");
+  if (!git)
+    return { kind: "error", reason: "git is not installed" };
+  const known = await list(git, root, exec, ["--cached", "--others", "--exclude-standard"], signal);
+  if (typeof known === "string")
+    return { kind: "error", reason: known };
+  const ignored = await list(git, root, exec, ["--cached", "--ignored", "--exclude-standard"], signal);
+  if (typeof ignored === "string")
+    return { kind: "error", reason: ignored };
+  const drop = new Set(ignored);
+  return { kind: "files", files: contained(root, [...new Set(known)].filter((f) => !drop.has(f))) };
+}
+
+// plugins/code-challenge/opencode/src/scan/parsers.ts
+import { lstatSync as lstatSync5 } from "fs";
+import { isAbsolute as isAbsolute3, join as join8, relative as relative2, resolve as resolve3 } from "path";
+var obj2 = (v) => typeof v === "object" && v !== null ? v : {};
+var arr2 = (v) => Array.isArray(v) ? v : [];
+var str2 = (v, fallback = "") => typeof v === "string" ? v : fallback;
+var num2 = (v) => typeof v === "number" && Number.isFinite(v) ? v : null;
+
+class OutputError extends Error {
+}
+function parseJson(text) {
+  const trimmed = text.trim();
+  if (trimmed === "")
+    return null;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const start = trimmed.search(/[[{]/);
+    if (start < 0)
+      return null;
+    try {
+      return JSON.parse(trimmed.slice(start));
+    } catch {
+      return null;
+    }
+  }
+}
+function payload(text, kind) {
+  const value = parseJson(text);
+  const ok = kind === "array" ? Array.isArray(value) : typeof value === "object" && value !== null && !Array.isArray(value);
+  if (!ok)
+    throw new OutputError(`expected a JSON ${kind}, got ${text.trim() === "" ? "empty output" : `"${text.trim().slice(0, 60)}"`}`);
+  return value;
+}
+function collection(owner, key, where = key, allowNull = false) {
+  const value = obj2(owner)[key];
+  if (Array.isArray(value))
+    return value;
+  if (allowNull && value === null)
+    return [];
+  throw new OutputError(`expected "${where}" to be a list, got ${value === undefined ? "nothing" : typeof value}`);
+}
+function relativeTo(root, file, cwd = root) {
+  const abs = isAbsolute3(file) ? file : resolve3(cwd, file);
+  const rel = relative2(root, abs);
+  return rel === "" ? "." : rel;
+}
+var MODULE_ROOTS = ["", "src"];
+function biome(text) {
+  return collection(payload(text, "object"), "diagnostics").flatMap((d) => {
+    const diag = obj2(d);
+    const category = str2(diag.category);
+    if (!category.startsWith("lint/"))
+      return [];
+    const location = obj2(diag.location);
+    const path = typeof location.path === "string" ? location.path : str2(obj2(location.path).file);
+    return [{ rule: category.slice(5), file: path, line: num2(obj2(location.start).line), message: str2(diag.message) }];
+  });
+}
+function oxlint(text) {
+  return collection(payload(text, "object"), "diagnostics").map((d) => {
+    const diag = obj2(d);
+    const label = obj2(arr2(diag.labels)[0]);
+    return {
+      rule: str2(diag.code),
+      file: str2(diag.filename),
+      line: num2(obj2(label.span).line),
+      message: str2(diag.message)
+    };
+  });
+}
+function eslint(text) {
+  return arr2(payload(text, "array")).flatMap((f) => {
+    const file = obj2(f);
+    return arr2(file.messages).map((m) => {
+      const msg = obj2(m);
+      return { rule: str2(msg.ruleId, "eslint"), file: str2(file.filePath), line: num2(msg.line), message: str2(msg.message) };
+    });
+  });
+}
+var KNIP_KEYS = [
+  "files",
+  "dependencies",
+  "devDependencies",
+  "optionalPeerDependencies",
+  "unlisted",
+  "unresolved",
+  "binaries",
+  "exports",
+  "types",
+  "duplicates",
+  "enumMembers",
+  "namespaceMembers"
+];
+function knip(text) {
+  return collection(payload(text, "object"), "issues").flatMap((i) => {
+    const issue = obj2(i);
+    const file = str2(issue.file);
+    return KNIP_KEYS.flatMap((key) => arr2(issue[key]).map((entry) => {
+      const e = obj2(entry);
+      const name = str2(e.name, file);
+      return { rule: `knip/${key}`, file, line: num2(e.line), message: `${key}: ${name}` };
+    }));
+  });
+}
+function jscpd(text) {
+  return collection(payload(text, "object"), "duplicates").map((d) => {
+    const dup = obj2(d);
+    const first = obj2(dup.firstFile);
+    const second = obj2(dup.secondFile);
+    const lines = num2(dup.lines) ?? 0;
+    return {
+      rule: "duplication",
+      file: str2(first.name),
+      line: num2(first.start),
+      message: `${lines} duplicated lines also in ${str2(second.name)}:${num2(second.start) ?? "?"}`
+    };
+  });
+}
+function depcruise(text) {
+  return collection(obj2(payload(text, "object")).summary, "violations", "summary.violations").map((v) => {
+    const violation = obj2(v);
+    const cycle = arr2(violation.cycle).map((c) => str2(obj2(c).name));
+    const detail = cycle.length > 0 ? `${str2(violation.from)} -> ${cycle.join(" -> ")}` : `${str2(violation.from)} -> ${str2(violation.to)}`;
+    return { rule: str2(obj2(violation.rule).name, "depcruise"), file: str2(violation.from), line: null, message: detail };
+  });
+}
+function ruff(text) {
+  return arr2(payload(text, "array")).map((d) => {
+    const diag = obj2(d);
+    return {
+      rule: str2(diag.code),
+      file: str2(diag.filename),
+      line: num2(obj2(diag.location).row),
+      message: str2(diag.message)
+    };
+  });
+}
+function vulture(text) {
+  const hits = [];
+  for (const line of text.split(`
+`)) {
+    const m = /^(.+?):(\d+): (.+) \((\d+)% confidence\)$/.exec(line.trim());
+    if (m)
+      hits.push({ rule: "vulture", file: m[1] ?? "", line: Number(m[2]), message: `${m[3]} (${m[4]}% confidence)` });
+  }
+  return hits;
+}
+function moduleFile(root, module) {
+  const path = module.replaceAll(".", "/");
+  for (const base of MODULE_ROOTS) {
+    for (const candidate of [`${path}.py`, `${path}/__init__.py`]) {
+      const rel = base === "" ? candidate : `${base}/${candidate}`;
+      if (lstatSync5(join8(root, rel), { throwIfNoEntry: false })?.isFile())
+        return rel;
+    }
+  }
+  return null;
+}
+function importLinter(text, ctx) {
+  const hits = [];
+  const broken = text.split(/^-+\nBroken contracts\n-+\n/m)[1];
+  if (broken === undefined)
+    return hits;
+  let contract = "";
+  let heading = "";
+  for (const raw of broken.split(`
+`)) {
+    const line = raw.trimEnd();
+    if (/^-+$/.test(line))
+      continue;
+    const next = /^- (\S+) -> (\S+) \(l\.(\d+)\)/.exec(line.trim());
+    if (next) {
+      const module = next[1] ?? "";
+      const file = moduleFile(ctx.root, module);
+      hits.push({
+        rule: contract || "import-linter",
+        file,
+        line: file === null ? null : Number(next[3]),
+        message: `${heading || `${module} imports ${next[2]}`} (${module} -> ${next[2]})`
+      });
+    } else if (/ is not allowed to import /.test(line))
+      heading = line.replace(/:$/, "");
+    else if (line !== "" && !line.startsWith(" ") && !line.startsWith("-") && !line.includes(" -> "))
+      contract = line;
+  }
+  return hits;
+}
+function golangci(text) {
+  return collection(payload(text, "object"), "Issues", "Issues", true).map((i) => {
+    const issue = obj2(i);
+    const pos = obj2(issue.Pos);
+    return { rule: str2(issue.FromLinter), file: str2(pos.Filename), line: num2(pos.Line), message: str2(issue.Text) };
+  });
+}
+function deadcode(text) {
+  if (text.trim() === "" || text.trim() === "null")
+    return [];
+  return arr2(payload(text, "array")).flatMap((p) => arr2(obj2(p).Funcs).map((f) => {
+    const fn = obj2(f);
+    const pos = obj2(fn.Position);
+    return { rule: "deadcode", file: str2(pos.File), line: num2(pos.Line), message: `unreachable function ${str2(fn.Name)}` };
+  }));
+}
+function clippy(text) {
+  const hits = [];
+  for (const line of text.split(`
+`)) {
+    if (!line.startsWith("{"))
+      continue;
+    const event = obj2(parseJson(line));
+    if (event.reason !== "compiler-message")
+      continue;
+    const message = obj2(event.message);
+    const code = str2(obj2(message.code).code);
+    if (code === "")
+      continue;
+    const span = arr2(message.spans).map(obj2).find((s) => s.is_primary === true);
+    if (!span)
+      continue;
+    hits.push({ rule: code, file: str2(span.file_name), line: num2(span.line_start), message: str2(message.message) });
+  }
+  return hits;
+}
+function machete(text) {
+  const hits = [];
+  let manifest = "";
+  for (const line of text.split(`
+`)) {
+    const header = /^\S.* -- (.+Cargo\.toml):$/.exec(line);
+    if (header)
+      manifest = header[1] ?? "";
+    else if (manifest !== "" && /^\s+\S+$/.test(line)) {
+      hits.push({ rule: "unused-dependency", file: manifest, line: null, message: `unused dependency ${line.trim()}` });
+    }
+  }
+  return hits;
+}
+function csvRow(row) {
+  const fields = [];
+  let current = "";
+  let quoted = false;
+  for (const ch of row) {
+    if (ch === '"')
+      quoted = !quoted;
+    else if (ch === "," && !quoted) {
+      fields.push(current);
+      current = "";
+    } else
+      current += ch;
+  }
+  fields.push(current);
+  return fields;
+}
+var LIZARD_LIMITS = { ccn: 10, nloc: 50, params: 5 };
+function lizard(text) {
+  const hits = [];
+  for (const row of text.split(`
+`)) {
+    const f = csvRow(row.trim());
+    if (f.length < 10)
+      continue;
+    const nloc = Number(f[0]);
+    const ccn = Number(f[1]);
+    const params = Number(f[3]);
+    if (![nloc, ccn, params].every(Number.isFinite))
+      continue;
+    const file = f[6] ?? "";
+    const line = Number(f[9]);
+    const where = { file, line: Number.isFinite(line) ? line : null };
+    const name = f[7] ?? "";
+    if (ccn > LIZARD_LIMITS.ccn)
+      hits.push({ rule: "lizard/ccn", ...where, message: `${name} has cyclomatic complexity ${ccn}` });
+    if (nloc > LIZARD_LIMITS.nloc)
+      hits.push({ rule: "lizard/nloc", ...where, message: `${name} has ${nloc} lines of code` });
+    if (params > LIZARD_LIMITS.params)
+      hits.push({ rule: "lizard/params", ...where, message: `${name} takes ${params} parameters` });
+  }
+  return hits;
+}
+var PARSERS = {
+  "biome-json": biome,
+  "oxlint-json": oxlint,
+  "eslint-json": eslint,
+  "knip-json": knip,
+  "jscpd-json": jscpd,
+  "depcruise-json": depcruise,
+  "ruff-json": ruff,
+  "vulture-text": vulture,
+  "import-linter-text": importLinter,
+  "golangci-json": golangci,
+  "deadcode-json": deadcode,
+  "clippy-json": clippy,
+  "machete-text": machete,
+  "lizard-csv": lizard
+};
+function parseOutput(parser, text, ctx) {
+  return PARSERS[parser](text, ctx).map((hit) => ({ ...hit, file: hit.file === null ? null : relativeTo(ctx.root, hit.file, ctx.cwd) }));
+}
+
+// plugins/code-challenge/opencode/src/scan/pins.ts
+var PINS = {
+  "@biomejs/biome": "2.6.8",
+  oxlint: "1.94.0",
+  knip: "6.47.0",
+  "dependency-cruiser": "18.8.0",
+  jscpd: "5.4.3",
+  eslint: "10.15.0",
+  "@e18e/eslint-plugin": "0.8.1",
+  ruff: "0.17.6",
+  vulture: "2.16",
+  "import-linter": "2.17",
+  lizard: "1.26.1",
+  "golang.org/x/tools": "v0.53.0"
+};
+function pinOf(pkg) {
+  const version = PINS[pkg];
+  if (version === undefined)
+    throw new Error(`challenge_scan: no pinned version for ${pkg}`);
+  return version;
+}
+
+// plugins/code-challenge/opencode/src/scan/probes.ts
+import { dirname as dirname2, join as join9 } from "path";
+var UNKNOWN = () => null;
+function nearestRuffConfig(root, file) {
+  let dir = dirname2(join9(root, file));
+  for (;; ) {
+    for (const name of [".ruff.toml", "ruff.toml", "pyproject.toml"]) {
+      const path = join9(dir, name);
+      const read = readText(path, MAX_MARKER_BYTES);
+      if (read.kind !== "text")
+        continue;
+      if (name !== "pyproject.toml" || read.text.includes("[tool.ruff"))
+        return path;
+    }
+    if (dir === root || dirname2(dir) === dir)
+      return "";
+    dir = dirname2(dir);
+  }
+}
+async function ruffSettings(env, file) {
+  const run = await env.exec([...env.prefix, "check", "--show-settings", join9(env.root, file)], {
+    cwd: env.root,
+    timeoutMs: env.timeoutMs,
+    signal: env.signal
+  });
+  if (run.kind !== "exited" || run.exitCode !== 0)
+    return null;
+  const start = run.stdout.indexOf("linter.rules.enabled = [");
+  if (start < 0)
+    return null;
+  const end = run.stdout.indexOf(`
+]`, start);
+  const block = run.stdout.slice(start, end < 0 ? undefined : end);
+  return new Set([...block.matchAll(/\(([A-Z]+[0-9]+)\)/g)].map((m) => m[1] ?? ""));
+}
+async function golangciEnabled(env) {
+  const run = await env.exec([...env.prefix, "linters", "--json"], { cwd: env.root, timeoutMs: env.timeoutMs, signal: env.signal });
+  if (run.kind !== "exited" || run.exitCode !== 0)
+    return null;
+  try {
+    const parsed = JSON.parse(run.stdout);
+    if (!Array.isArray(parsed.Enabled))
+      return null;
+    return new Set(parsed.Enabled.flatMap((l) => l.name ? [l.name] : []));
+  } catch {
+    return null;
+  }
+}
+function probeFor(recipe, env) {
+  if (recipe.tool === "ruff") {
+    return async (hits) => {
+      const byConfig = new Map;
+      const keyOf = new Map;
+      for (const hit of hits) {
+        if (hit.file === null)
+          continue;
+        const key = nearestRuffConfig(env.root, hit.file);
+        keyOf.set(hit, key);
+        if (!byConfig.has(key))
+          byConfig.set(key, hit.file);
+      }
+      const settings = new Map;
+      for (const [key, file] of byConfig)
+        settings.set(key, await ruffSettings(env, file));
+      return (hit) => {
+        const key = keyOf.get(hit);
+        const enabled = key === undefined ? null : settings.get(key);
+        return enabled ? enabled.has(hit.rule) : null;
+      };
+    };
+  }
+  if (recipe.tool === "golangci-lint") {
+    return async () => {
+      const enabled = await golangciEnabled(env);
+      return enabled ? (hit) => enabled.has(hit.rule) : UNKNOWN;
+    };
+  }
+  return null;
+}
+
+// plugins/code-challenge/opencode/src/scan/recipes.ts
+var TS_EXT = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"];
+var LIZARD_EXT = [
+  ...TS_EXT,
+  ".py",
+  ".go",
+  ".rs",
+  ".java",
+  ".c",
+  ".cc",
+  ".cpp",
+  ".h",
+  ".hpp",
+  ".rb",
+  ".php",
+  ".swift"
+];
+var OXLINT_CONFIG = `{}
+`;
+var RECIPES = [
+  {
+    id: "biome:lenses",
+    tool: "biome",
+    language: "ts",
+    lenses: ["simplification", "performance", "stability"],
+    lensRules: [
+      [/^performance\//, "performance"],
+      [/^complexity\//, "simplification"],
+      [/^suspicious\//, "stability"]
+    ],
+    binary: "biome",
+    install: "bunx",
+    package: "@biomejs/biome",
+    args: ["lint", "--config-path={cfg}", "--reporter=json", "--max-diagnostics=1000", "--", "{files}"],
+    configFiles: ({ root, hasGitignore, fromConfigDir }) => ({
+      "biome.json": JSON.stringify({
+        root: true,
+        linter: { enabled: true, rules: { recommended: false, complexity: "on", performance: "on", suspicious: "on" } },
+        ...hasGitignore && !fromConfigDir ? { vcs: { enabled: true, clientKind: "git", useIgnoreFile: true, root } } : {}
+      })
+    }),
+    repoConfigNames: ["biome.json", "biome.jsonc"],
+    needsBuild: false,
+    acceptedExitCodes: [0, 1],
+    parser: "biome-json",
+    scope: "files",
+    extensions: TS_EXT
+  },
+  {
+    id: "oxlint:perf",
+    tool: "oxlint",
+    language: "ts",
+    lenses: ["performance", "stability"],
+    lensRules: [
+      [/no-accumulating-spread|no-array-index-key|no-map-spread/, "performance"],
+      [/^eslint\(|^oxc\(/, "stability"]
+    ],
+    binary: "oxlint",
+    install: "bunx",
+    package: "oxlint",
+    args: ["-c", "{cfg}/oxlintrc.json", "-A", "all", "-D", "perf", "-D", "correctness", "-f", "json", "--", "{files}"],
+    configFiles: () => ({ "oxlintrc.json": OXLINT_CONFIG }),
+    needsBuild: false,
+    acceptedExitCodes: [0, 1],
+    parser: "oxlint-json",
+    scope: "files",
+    extensions: TS_EXT
+  },
+  {
+    id: "eslint:e18e",
+    tool: "eslint",
+    language: "ts",
+    lenses: ["hand-rolled-stdlib", "hand-rolled-library"],
+    lensRules: [
+      [/ban-dependencies/, "hand-rolled-library"],
+      [/^e18e\/prefer-/, "hand-rolled-stdlib"]
+    ],
+    binary: "eslint",
+    install: "tool-dir",
+    package: "eslint",
+    args: ["--no-config-lookup", "-c", "{cfg}/eslint.config.mjs", "-f", "json", "--", "{files}"],
+    configFiles: () => ({
+      "eslint.config.mjs": `import e18e from "@e18e/eslint-plugin"
+export default [{ ignores: ["**/node_modules/**", "**/dist/**", "**/build/**", "**/coverage/**"] }, e18e.configs.recommended]
+`
+    }),
+    needsBuild: false,
+    acceptedExitCodes: [0, 1],
+    parser: "eslint-json",
+    scope: "files",
+    extensions: TS_EXT
+  },
+  {
+    id: "knip:unused",
+    tool: "knip",
+    language: "ts",
+    lenses: ["dead-code"],
+    binary: "knip",
+    install: "bunx",
+    package: "knip",
+    args: ["--reporter", "json", "--no-progress", "--include", "files,exports,types,dependencies"],
+    executes: "loads and executes the repository's knip and tool config files (JS/TS) and plugin code",
+    needsBuild: false,
+    acceptedExitCodes: [0, 1],
+    parser: "knip-json",
+    scope: "repo",
+    requiresMarker: ["package.json"]
+  },
+  {
+    id: "depcruise:cycles",
+    tool: "dependency-cruiser",
+    language: "ts",
+    lenses: ["structure"],
+    binary: "depcruise",
+    install: "bunx",
+    package: "dependency-cruiser",
+    args: ["--config", "{cfg}/dc.json", "--output-type", "json", "."],
+    configFiles: () => ({
+      "dc.json": JSON.stringify({
+        forbidden: [
+          { name: "no-circular", severity: "warn", from: {}, to: { circular: true } },
+          { name: "no-orphans", severity: "info", from: { orphan: true, pathNot: "\\.d\\.ts$" }, to: {} }
+        ],
+        options: { doNotFollow: { path: "node_modules" }, tsPreCompilationDeps: true }
+      })
+    }),
+    needsBuild: false,
+    acceptedExitCodes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    parser: "depcruise-json",
+    scope: "repo",
+    requiresMarker: ["package.json"]
+  },
+  {
+    id: "ruff:lenses",
+    tool: "ruff",
+    language: "python",
+    lenses: ["simplification", "performance", "stability", "dead-code", "observability", "hand-rolled-stdlib"],
+    lensRules: [
+      [/^PERF/, "performance"],
+      [/^(F401|F841|ERA)/, "dead-code"],
+      [/^(T20|LOG|G\d)/, "observability"],
+      [/^(BLE|TRY|ASYNC)/, "stability"],
+      [/^(FURB|UP)/, "hand-rolled-stdlib"]
+    ],
+    binary: "ruff",
+    install: "uvx",
+    package: "ruff",
+    args: [
+      "check",
+      "--isolated",
+      "--select",
+      "SIM,PERF,FURB,UP,C4,PIE,RET,TRY,BLE,ASYNC,LOG,G,T20,ERA,F401,F841",
+      "--preview",
+      "--output-format",
+      "json",
+      "--force-exclude",
+      "--",
+      "{files}"
+    ],
+    needsBuild: false,
+    acceptedExitCodes: [0, 1],
+    parser: "ruff-json",
+    scope: "files",
+    extensions: [".py"]
+  },
+  {
+    id: "vulture:dead",
+    tool: "vulture",
+    language: "python",
+    lenses: ["dead-code"],
+    binary: "vulture",
+    install: "uvx",
+    package: "vulture",
+    args: ["--min-confidence", "80", "--", "{files}"],
+    needsBuild: false,
+    acceptedExitCodes: [0, 3],
+    parser: "vulture-text",
+    scope: "files",
+    extensions: [".py"]
+  },
+  {
+    id: "import-linter:contracts",
+    tool: "import-linter",
+    language: "python",
+    lenses: ["structure"],
+    binary: "lint-imports",
+    install: "uvx",
+    package: "import-linter",
+    args: ["--no-cache"],
+    executes: "imports custom contract classes named in the repository's import-linter config",
+    needsBuild: false,
+    acceptedExitCodes: [0, 1],
+    parser: "import-linter-text",
+    scope: "repo",
+    requiresMarker: [".importlinter", "setup.cfg:importlinter", "pyproject.toml:importlinter", "tox.ini:importlinter"]
+  },
+  {
+    id: "golangci:lenses",
+    tool: "golangci-lint",
+    language: "go",
+    lenses: ["simplification", "performance", "stability", "dead-code", "observability", "hand-rolled-stdlib"],
+    lensRules: [
+      [/^(prealloc|perfsprint|bodyclose)$/, "performance"],
+      [/^(unused)$/, "dead-code"],
+      [/^sloglint$/, "observability"],
+      [/^(modernize|usestdlibvars)$/, "hand-rolled-stdlib"],
+      [/^errorlint$/, "stability"]
+    ],
+    binary: "golangci-lint",
+    install: "local",
+    args: [
+      "run",
+      "--no-config",
+      "--default",
+      "none",
+      "--enable",
+      "staticcheck,unused,prealloc,perfsprint,gocritic,bodyclose,errorlint,modernize,usestdlibvars,sloglint",
+      "--output.json.path",
+      "stdout",
+      "--output.text.path",
+      "/dev/null",
+      "--show-stats=false",
+      "./..."
+    ],
+    executes: "compiles the module (cgo may run C compilers), may fetch modules or a Go toolchain; writes the Go build and module caches",
+    needsBuild: true,
+    acceptedExitCodes: [0, 1],
+    parser: "golangci-json",
+    scope: "repo",
+    requiresMarker: ["go.mod"]
+  },
+  {
+    id: "deadcode:go",
+    tool: "deadcode",
+    language: "go",
+    lenses: ["dead-code"],
+    binary: "deadcode",
+    install: "go-run",
+    package: "golang.org/x/tools",
+    subpath: "cmd/deadcode",
+    args: ["-json", "./..."],
+    executes: "compiles the module (cgo may run C compilers), may fetch modules or a Go toolchain; writes the Go build and module caches",
+    needsBuild: true,
+    acceptedExitCodes: [0],
+    parser: "deadcode-json",
+    scope: "repo",
+    requiresMarker: ["go.mod"]
+  },
+  {
+    id: "clippy:lenses",
+    tool: "clippy",
+    language: "rust",
+    lenses: ["performance", "simplification", "dead-code"],
+    lensRules: [
+      [/clippy::(perf|redundant_clone|useless_vec|manual_memcpy)/, "performance"],
+      [/^dead_code$|unused/, "dead-code"],
+      [/^clippy::(manual_|needless_|too_many|cognitive)/, "simplification"]
+    ],
+    binary: "cargo",
+    install: "local",
+    args: [
+      "clippy",
+      "--message-format=json",
+      "--",
+      "-A",
+      "clippy::all",
+      "-W",
+      "clippy::perf",
+      "-W",
+      "clippy::complexity",
+      "-W",
+      "clippy::suspicious",
+      "-W",
+      "clippy::needless_range_loop",
+      "-W",
+      "clippy::manual_map",
+      "-W",
+      "clippy::manual_filter_map",
+      "-W",
+      "clippy::manual_find",
+      "-W",
+      "clippy::manual_flatten",
+      "-W",
+      "clippy::manual_retain",
+      "-W",
+      "clippy::manual_ok_or"
+    ],
+    executes: "builds the crate: runs its build scripts and procedural macros, fetches crates; writes target/ and the cargo caches",
+    needsBuild: true,
+    acceptedExitCodes: [0],
+    parser: "clippy-json",
+    scope: "repo",
+    requiresMarker: ["Cargo.toml"]
+  },
+  {
+    id: "machete:rust",
+    tool: "cargo-machete",
+    language: "rust",
+    lenses: ["dead-code"],
+    binary: "cargo-machete",
+    install: "local",
+    args: ["."],
+    needsBuild: false,
+    acceptedExitCodes: [0, 1],
+    parser: "machete-text",
+    scope: "repo",
+    requiresMarker: ["Cargo.toml"]
+  },
+  {
+    id: "lizard:complexity",
+    tool: "lizard",
+    language: "any",
+    lenses: ["simplification", "over-engineering"],
+    lensRules: [[/lizard\/(params|nloc)/, "over-engineering"]],
+    binary: "lizard",
+    install: "uvx",
+    package: "lizard",
+    args: ["--csv", "-x", "*/node_modules/*", "-x", "*/.git/*", "-x", "*/dist/*", "-x", "*/target/*", "--", "{files}"],
+    needsBuild: false,
+    acceptedExitCodes: [0, 1],
+    parser: "lizard-csv",
+    scope: "files",
+    extensions: LIZARD_EXT
+  },
+  {
+    id: "jscpd:duplication",
+    tool: "jscpd",
+    language: "any",
+    lenses: ["structure"],
+    binary: "jscpd",
+    install: "bunx",
+    package: "jscpd",
+    args: ["--min-lines", "5", "--min-tokens", "50", "--reporters", "json", "--output", "{out}", "--silent", "--", "{files}"],
+    outputFile: "jscpd-report.json",
+    needsBuild: false,
+    acceptedExitCodes: [0, 1],
+    parser: "jscpd-json",
+    scope: "files",
+    extensions: LIZARD_EXT
+  }
+];
+
+// plugins/code-challenge/opencode/src/scan/safe.ts
+import { closeSync as closeSync2, constants as constants3, lstatSync as lstatSync6, mkdirSync as mkdirSync3, openSync as openSync2, writeSync } from "fs";
+import { join as join10 } from "path";
+function ensureDir(base, ...segments) {
+  let current = base;
+  for (const segment of ["", ...segments]) {
+    current = segment === "" ? base : join10(current, segment);
+    try {
+      mkdirSync3(current, { mode: 448 });
+    } catch (error) {
+      if (error.code !== "EEXIST")
+        throw error;
+    }
+    if (!lstatSync6(current).isDirectory())
+      throw new Error(`challenge_scan: refusing to use ${current}: not a real directory`);
+  }
+  return current;
+}
+function writeFileNoFollow(path, data) {
+  const fd = openSync2(path, constants3.O_WRONLY | constants3.O_CREAT | constants3.O_TRUNC | constants3.O_NOFOLLOW, 384);
+  try {
+    writeSync(fd, data);
+  } finally {
+    closeSync2(fd);
+  }
+}
+
+// plugins/code-challenge/opencode/src/scan/run.ts
+var DEFAULT_TIMEOUT_SECONDS = 120;
+var MAX_TIMEOUT_SECONDS = 900;
+function validRunId(runId) {
+  return /^\w[\w.-]{0,63}$/.test(runId);
+}
+function resolveTool(recipe, which, toolsDir) {
+  if (recipe.install === "tool-dir") {
+    if (toolsDir === "")
+      return { gap: `${recipe.tool} needs a tools directory under the git dir, and the root is not a git repository` };
+    const bin = join11(toolsDir, "node_modules", ".bin", recipe.binary);
+    return existsSync3(bin) ? { prefix: [bin], oneOff: false } : {
+      gap: `${recipe.tool} is not provisioned; run "bun add eslint@${pinOf("eslint")} @e18e/eslint-plugin@${pinOf("@e18e/eslint-plugin")}" in ${toolsDir}`
+    };
+  }
+  const local = which(recipe.binary);
+  if (local)
+    return { prefix: [local], oneOff: false };
+  const pkg = recipe.package ?? recipe.binary;
+  if (recipe.install === "bunx") {
+    const bunx = which("bunx");
+    if (bunx)
+      return { prefix: [bunx, "-p", `${pkg}@${pinOf(pkg)}`, recipe.binary], oneOff: true };
+  } else if (recipe.install === "uvx") {
+    const uvx = which("uvx");
+    if (uvx)
+      return { prefix: [uvx, "--from", `${pkg}==${pinOf(pkg)}`, recipe.binary], oneOff: true };
+  } else if (recipe.install === "go-run") {
+    const go = which("go");
+    if (go)
+      return { prefix: [go, "run", `${recipe.subpath ? `${pkg}/${recipe.subpath}` : pkg}@${pinOf(pkg)}`], oneOff: true };
+  }
+  const runner = recipe.install === "local" ? "" : ` and no ${recipe.install} runner is on PATH`;
+  return { gap: `${recipe.binary} is not installed${runner}` };
+}
+var RUNNER_NAME = { bunx: "bunx", uvx: "uvx", "go-run": "go run" };
+function risksOf(recipe, resolved) {
+  const risks = [];
+  if (recipe.executes)
+    risks.push(recipe.executes);
+  if (resolved.oneOff && recipe.install !== "local" && recipe.install !== "tool-dir") {
+    const pkg = recipe.package ?? recipe.binary;
+    const spec = recipe.install === "uvx" ? `${pkg}==${pinOf(pkg)}` : `${pkg}@${pinOf(pkg)}`;
+    risks.push(`downloads and runs ${spec} with ${RUNNER_NAME[recipe.install]}; writes the package cache`);
+  }
+  return risks;
+}
+function expandArgs(recipe, cfg, out, files, root) {
+  return recipe.args.flatMap((arg) => {
+    if (arg === "{files}")
+      return files.length > 0 ? files.map((f) => join11(root, f)) : ["."];
+    return [arg.replaceAll("{cfg}", cfg).replaceAll("{out}", out)];
+  });
+}
+function lensOf(recipe, rule) {
+  for (const [pattern, lens] of recipe.lensRules ?? [])
+    if (pattern.test(rule))
+      return lens;
+  return recipe.lenses[0] ?? "simplification";
+}
+var firstLine = (text) => text.trim().split(`
+`)[0]?.slice(0, 200) ?? "";
+var slug = (id) => id.replace(/[^\w.-]/g, "_");
+async function prepare(input, deps, signal) {
+  const root = realpathSync2(resolve4(input.root ?? process.cwd()));
+  if (!statSync3(root).isDirectory())
+    throw new Error(`challenge_scan: root is not a directory: ${root}`);
+  const exec = deps.exec ?? spawnTool;
+  const which = deps.which ?? ((b) => Bun.which(b));
+  if (input.runId !== undefined && !validRunId(input.runId))
+    throw new Error(`challenge_scan: invalid runId "${input.runId}"`);
+  const requested = input.files !== undefined && input.files.length > 0;
+  let files = requested ? expandFiles(root, input.files ?? []) : [];
+  const nothing = requested && files.length === 0;
+  const git = nothing ? { kind: "none" } : await gitState(root, exec, which, signal);
+  let listed;
+  const listing = () => {
+    listed ??= gitListing(root, git, exec, which, signal);
+    return listed;
+  };
+  let ignoreError = null;
+  if (files.length > 0) {
+    const known = await listing();
+    if (known.kind === "files") {
+      const set = new Set(known.files);
+      files = files.filter((f) => set.has(f));
+    } else if (known.kind === "error")
+      ignoreError = known.reason;
+  }
+  return {
+    root,
+    exec,
+    which,
+    now: deps.now ?? Date.now,
+    depth: input.depth ?? "standard",
+    lenses: input.lenses && input.lenses.length > 0 ? input.lenses : LENSES,
+    timeoutMs: Math.min(input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000,
+    files,
+    languages: input.languages && input.languages.length > 0 ? input.languages : detectLanguages(root, files),
+    git,
+    toolsDir: deps.toolsDir ?? (git.kind === "repo" ? join11(git.dir, "code-challenge", "tools") : ""),
+    hasGitignore: lstatOrNull(join11(root, ".gitignore"))?.isFile() === true,
+    emptySelection: requested && files.length === 0,
+    listing,
+    ignoreError,
+    signal
+  };
+}
+function plan(p) {
+  const items = [];
+  for (const recipe of RECIPES) {
+    if (recipe.language !== "any" && !p.languages.includes(recipe.language))
+      continue;
+    if (recipe.language === "any" && p.languages.length === 0)
+      continue;
+    const skip = (reason) => items.push({ recipe, status: "skipped", reason });
+    if (!recipe.lenses.some((l) => p.lenses.includes(l))) {
+      skip("serves none of the requested lenses");
+      continue;
+    }
+    if (p.depth === "quick" && recipe.needsBuild) {
+      skip("needs a build; skipped at quick depth");
+      continue;
+    }
+    const missing = missingMarker(p.root, recipe.requiresMarker);
+    if (missing) {
+      skip(missing);
+      continue;
+    }
+    let scoped = [];
+    if (recipe.scope === "files" && p.files.length > 0) {
+      if (p.ignoreError) {
+        items.push({ recipe, status: "gap", reason: `the repository's ignore files could not be applied to the named files: ${p.ignoreError}` });
+        continue;
+      }
+      scoped = p.files.filter((f) => !recipe.extensions || recipe.extensions.includes(extname2(f)));
+      if (scoped.length === 0) {
+        skip("no matching files in the file list");
+        continue;
+      }
+    }
+    const resolved = resolveTool(recipe, p.which, p.toolsDir);
+    if ("gap" in resolved) {
+      items.push({ recipe, status: "gap", reason: resolved.gap });
+      continue;
+    }
+    items.push({ recipe, status: "ready", resolved, scoped, risks: risksOf(recipe, resolved) });
+  }
+  return items;
+}
+async function consentRisks(input, deps = {}, signal) {
+  const prepared = await prepare(input, deps, signal);
+  if (prepared.emptySelection)
+    return [];
+  return plan(prepared).flatMap((item) => item.status === "ready" && item.risks.length > 0 ? [{ recipe: item.recipe.id, tool: item.recipe.tool, reasons: item.risks }] : []);
+}
+function ensureToolsDir(p) {
+  return p.git.kind === "repo" && p.toolsDir === join11(p.git.dir, "code-challenge", "tools") ? ensureDir(p.git.dir, "code-challenge", "tools") : ensureDir(p.toolsDir);
+}
+var MiB = 1024 * 1024;
+var MAX_ARGV_BYTES = 256 * 1024;
+function readReport(path, name) {
+  const read = readText(path, MAX_STDOUT_BYTES);
+  if (read.kind === "text")
+    return { text: read.text };
+  return {
+    gap: read.kind === "absent" ? `the report file ${name} was not written` : `the report file ${name} is not a regular file under ${MAX_STDOUT_BYTES / MiB} MiB`
+  };
+}
+async function runScan(input, deps = {}, signal) {
+  const p = await prepare(input, deps, signal);
+  const { root, exec, depth } = p;
+  if (p.emptySelection) {
+    const coverage = [
+      { recipe: "*", tool: "-", language: "-", status: "skipped", reason: "the file list matched no files" }
+    ];
+    return { root, languages: [], depth, candidates: [], coverage, timings: [], rawDir: null };
+  }
+  if (input.runId !== undefined && p.git.kind !== "repo") {
+    throw new Error(`challenge_scan: runId needs a git repository for the output directory${p.git.kind === "error" ? ` (${p.git.reason})` : ""}`);
+  }
+  const base = input.runId !== undefined && p.git.kind === "repo" ? ensureDir(p.git.dir, "code-challenge", input.runId, "scan") : mkdtempSync(join11(tmpdir(), "code-challenge-scan-"));
+  const rawDir = input.runId !== undefined && p.git.kind === "repo" ? base : null;
+  const fileSet = new Set(p.files);
+  const coverage = [];
+  const timings = [];
+  const candidates = [];
+  try {
+    for (const item of plan(p)) {
+      const { recipe } = item;
+      const entry = (status, reason) => {
+        coverage.push({ recipe: recipe.id, tool: recipe.tool, language: recipe.language, status, ...reason ? { reason } : {} });
+      };
+      if (item.status !== "ready") {
+        entry(item.status, item.reason);
+        continue;
+      }
+      if (item.risks.length > 0 && deps.approved?.has(recipe.id) !== true) {
+        entry("gap", `${deps.approved === undefined ? "not run without consent" : "not approved for this run"}: ${item.risks.join("; ")}`);
+        continue;
+      }
+      if (signal?.aborted) {
+        entry("skipped", "scan aborted");
+        continue;
+      }
+      const name = slug(recipe.id);
+      const fromConfigDir = (recipe.repoConfigNames ?? []).some((n) => lstatOrNull(join11(root, n)) !== null);
+      let files = item.scoped;
+      if (fromConfigDir) {
+        const known = await p.listing();
+        if (known.kind === "error") {
+          entry("gap", `the repository's ignore files could not be applied: ${known.reason}`);
+          continue;
+        }
+        const all = known.kind === "files" ? known.files : expandFiles(root, ["."]);
+        files = p.files.length > 0 ? item.scoped : all.filter((f) => !recipe.extensions || recipe.extensions.includes(extname2(f)));
+        if (files.length === 0) {
+          entry("skipped", "no matching files outside the repo's ignore files");
+          continue;
+        }
+        if (files.reduce((n, f) => n + root.length + f.length + 2, 0) > MAX_ARGV_BYTES) {
+          entry("gap", `too many files to name on one command line in isolated mode (${files.length}); pass a narrower file list`);
+          continue;
+        }
+      }
+      const cfg = recipe.install === "tool-dir" ? ensureToolsDir(p) : ensureDir(base, "cfg", name);
+      const out = ensureDir(base, "out", name);
+      if (recipe.outputFile)
+        rmSync(join11(out, recipe.outputFile), { recursive: true, force: true });
+      for (const [file, content] of Object.entries(recipe.configFiles?.({ root, hasGitignore: p.hasGitignore, toolsDir: p.toolsDir, fromConfigDir }) ?? {})) {
+        writeFileNoFollow(join11(cfg, file), content);
+      }
+      const argv = [...item.resolved.prefix, ...expandArgs(recipe, cfg, out, files, root)];
+      const started = p.now();
+      const run = await exec(argv, { cwd: fromConfigDir ? cfg : root, timeoutMs: p.timeoutMs, signal });
+      timings.push({ recipe: recipe.id, tool: recipe.tool, ms: p.now() - started, exitCode: run.kind === "exited" ? run.exitCode : null });
+      writeFileNoFollow(join11(base, `${name}.stdout`), run.stdout);
+      writeFileNoFollow(join11(base, `${name}.stderr`), run.stderr);
+      if (run.kind === "timeout") {
+        entry("gap", `timed out after ${p.timeoutMs / 1000}s`);
+        continue;
+      }
+      if (run.kind === "aborted") {
+        entry("skipped", "scan aborted");
+        continue;
+      }
+      if (run.kind === "overflow") {
+        const cap = run.stream === "stdout" ? MAX_STDOUT_BYTES : MAX_STDERR_BYTES;
+        entry("gap", `${run.stream} exceeded ${cap / MiB} MiB; the tool was ended`);
+        continue;
+      }
+      if (run.kind === "lost") {
+        entry("gap", "the process vanished without an exit status");
+        continue;
+      }
+      if (!recipe.acceptedExitCodes.includes(run.exitCode)) {
+        entry("gap", `exit ${run.exitCode}: ${firstLine(run.stderr || run.stdout)}`);
+        continue;
+      }
+      let text = run.stdout;
+      if (recipe.outputFile) {
+        const report = readReport(join11(out, recipe.outputFile), recipe.outputFile);
+        if ("gap" in report) {
+          entry("gap", report.gap);
+          continue;
+        }
+        text = report.text;
+      }
+      let hits;
+      try {
+        hits = parseOutput(recipe.parser, text, { root, cwd: root });
+      } catch (error) {
+        if (!(error instanceof OutputError))
+          throw error;
+        entry("gap", `unparseable output: ${error.message}`);
+        continue;
+      }
+      if (fileSet.size > 0 && recipe.scope === "repo")
+        hits = hits.filter((h) => h.file !== null && fileSet.has(h.file));
+      const probe = hits.length > 0 ? probeFor(recipe, { root, prefix: item.resolved.prefix, exec, timeoutMs: p.timeoutMs, signal }) : null;
+      const enabled = probe ? await probe(hits) : null;
+      for (const hit of hits) {
+        const lens = lensOf(recipe, hit.rule);
+        if (!p.lenses.includes(lens))
+          continue;
+        candidates.push({
+          lens,
+          tool: recipe.tool,
+          rule: hit.rule,
+          file: hit.file,
+          line: hit.line,
+          message: hit.message,
+          ruleEnabledInRepo: enabled ? enabled(hit) : null
+        });
+      }
+      entry("ran");
+    }
+  } finally {
+    if (rawDir === null)
+      rmSync(base, { recursive: true, force: true });
+  }
+  const byFile = (a, b) => (a.file ?? "").localeCompare(b.file ?? "") || (a.line ?? 0) - (b.line ?? 0) || a.rule.localeCompare(b.rule);
+  candidates.sort(byFile);
+  return { root, languages: p.languages, depth, candidates, coverage, timings, rawDir };
+}
+
+// plugins/code-challenge/opencode/src/scan/index.ts
+var SCAN_TOOL = "challenge_scan";
+var MAX_INLINE_CANDIDATES = 500;
+var SCAN_DESCRIPTION = `Run existing static analyzers in a lens profile and return normalised code-challenge candidates.
+` + "Not read-only: clippy builds the crate (build scripts, proc macros; writes target/), golangci-lint and deadcode " + "compile Go, knip and import-linter load repo config code, and one-off bunx/uvx/go runs download and run pinned " + "packages. Those recipes run only after the user approves them (staticOnly skips them without asking). " + "Hits carry lens, tool, rule, file, line, message, ruleEnabledInRepo. Quick depth skips build-backed analyzers. " + "With runId, raw output goes to <git-dir>/code-challenge/<runId>/scan/.";
+var SCAN_INPUT = {
+  type: "object",
+  properties: {
+    root: { type: "string", description: "Target root; defaults to the session directory" },
+    files: { type: "array", items: { type: "string" }, description: "Files, directories or globs to scope the scan" },
+    languages: { type: "array", items: { enum: [...LANGUAGES] }, description: "Languages; auto-detected by default" },
+    lenses: { type: "array", items: { enum: [...LENSES] }, description: "Lenses to keep; all by default" },
+    depth: { enum: [...DEPTHS2], description: "quick skips analyzers that need a build; default standard" },
+    timeoutSeconds: { type: "number", maximum: 900, description: "Per-analyzer timeout in seconds; default 120, at most 900" },
+    runId: { type: "string", description: "Run id; raw outputs go to <git-dir>/code-challenge/<runId>/scan/" },
+    staticOnly: { type: "boolean", description: "Run only analyzers that execute no repo or downloaded code; ask nothing" }
+  },
+  additionalProperties: false
+};
+function pick(name, value, allowed) {
+  if (value === undefined)
+    return;
+  const known = (v) => typeof v === "string" && allowed.includes(v);
+  if (!Array.isArray(value) || !value.every(known))
+    return `${name} must be a list of: ${allowed.join(", ")}`;
+  return value;
+}
+function readScanInput(raw, base) {
+  const input = typeof raw === "object" && raw !== null ? raw : {};
+  const root = typeof input.root === "string" && input.root !== "" ? input.root : base;
+  const timeout = input.timeoutSeconds;
+  if (timeout !== undefined && (typeof timeout !== "number" || !(timeout > 0)))
+    return "timeoutSeconds must be a positive number";
+  if (input.runId !== undefined && (typeof input.runId !== "string" || !validRunId(input.runId))) {
+    return "runId must be 1-64 characters of letters, digits, underscore, dot or dash, starting with a letter, digit or underscore";
+  }
+  if (input.depth !== undefined && !DEPTHS2.includes(input.depth))
+    return `depth must be one of ${DEPTHS2.join(", ")}`;
+  const languages = pick("languages", input.languages, LANGUAGES);
+  if (typeof languages === "string")
+    return languages;
+  const lenses = pick("lenses", input.lenses, LENSES);
+  if (typeof lenses === "string")
+    return lenses;
+  const files = Array.isArray(input.files) ? input.files.filter((f) => typeof f === "string") : undefined;
+  return {
+    root: isAbsolute4(root) ? root : resolve5(base, root),
+    files,
+    languages,
+    lenses,
+    depth: input.depth,
+    timeoutSeconds: timeout,
+    runId: input.runId,
+    staticOnly: input.staticOnly === true ? true : undefined
+  };
+}
+function formatScan(report) {
+  const truncated = report.candidates.length > MAX_INLINE_CANDIDATES;
+  const shown = truncated ? report.candidates.slice(0, MAX_INLINE_CANDIDATES) : report.candidates;
+  return JSON.stringify({ ...report, candidates: shown, candidateCount: report.candidates.length, truncated }, null, 1);
+}
+function planResource(root, risks) {
+  return `${root} [${risks.map((r) => r.recipe).sort().join(", ")}]`;
+}
+function confirmScan(evaluation) {
+  if (evaluation.action !== SCAN_TOOL || evaluation.effect !== "allow")
+    return;
+  const recipes = evaluation.metadata?.recipes ?? [];
+  if (!Array.isArray(recipes) || recipes.length === 0)
+    return;
+  evaluation.effect = "ask";
+  evaluation.message = `challenge_scan in ${String(evaluation.metadata?.root ?? evaluation.resources.join(", "))} will run code that is not static analysis. ` + "There is no sandbox: these recipes run with your user's permissions. Approving covers exactly these recipes; " + `pass staticOnly to scan without them.
+` + recipes.map((r) => `- ${r.recipe}: ${r.reasons.join("; ")}`).join(`
+`);
+}
+async function registerScanTool(ctx, deps = {}) {
+  const registrations = [];
+  const cleanup = async () => {
+    for (const registration of registrations.reverse())
+      await registration.dispose();
+  };
+  try {
+    registrations.push(await ctx.tool.transform((editor) => {
+      editor.add({
+        name: SCAN_TOOL,
+        description: SCAN_DESCRIPTION,
+        input: SCAN_INPUT,
+        execute: async (raw, context) => {
+          const base = await sessionDirectory(ctx, context.sessionID, SCAN_TOOL);
+          const parsed = readScanInput(raw, base);
+          if (typeof parsed === "string")
+            return { content: `${SCAN_TOOL}: ${parsed}`, metadata: { ok: false } };
+          let input;
+          let risks;
+          try {
+            input = { ...parsed, root: realpathSync3(parsed.root ?? base) };
+            risks = parsed.staticOnly ? [] : await consentRisks(input, deps, context.signal);
+          } catch (error) {
+            return { content: `${SCAN_TOOL}: ${error.message}`, metadata: { ok: false } };
+          }
+          let approved = deps.approved ?? new Set;
+          if (risks.length > 0 && deps.approved === undefined) {
+            const root = input.root ?? base;
+            await ctx.permission.assert({
+              sessionID: context.sessionID,
+              agent: context.agent,
+              source: { type: "tool", messageID: context.messageID, id: context.id },
+              action: SCAN_TOOL,
+              resources: [planResource(root, risks)],
+              save: [planResource(root, risks)],
+              metadata: { root, depth: input.depth ?? "standard", recipes: risks }
+            });
+            approved = new Set(risks.map((r) => r.recipe));
+          }
+          try {
+            const report = await runScan(input, { ...deps, approved }, context.signal);
+            return { content: formatScan(report), metadata: { ok: true, candidates: report.candidates.length, coverage: report.coverage } };
+          } catch (error) {
+            return { content: `${SCAN_TOOL}: ${error.message}`, metadata: { ok: false } };
+          }
+        }
+      });
+    }));
+    registrations.push(await ctx.permission.hook("evaluate", confirmScan));
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
+  return cleanup;
+}
+
 // plugins/code-challenge/opencode/src/index.ts
 var ID = "srobroek.code-challenge";
 var SETUP_DESCRIPTION = `Copy the code-challenge beads formulas into a beads workspace's .beads/formulas/.
@@ -2360,15 +4071,7 @@ async function setupCodeChallenge(ctx, moduleUrl) {
     for (const registration of registrations.reverse())
       await registration.dispose();
   };
-  const directory = async (sessionID) => {
-    const session = await ctx.session.get({ sessionID }).catch((cause) => {
-      throw new Error(`${SETUP_TOOL}: cannot read session ${sessionID} to find its directory`, { cause });
-    });
-    const found = session.location?.directory;
-    if (typeof found !== "string" || found === "")
-      throw new Error(`${SETUP_TOOL}: session ${sessionID} has no directory`);
-    return found;
-  };
+  const directory = (sessionID) => sessionDirectory(ctx, sessionID, SETUP_TOOL);
   const assert = (context, action, resources, metadata) => ctx.permission.assert({
     sessionID: context.sessionID,
     agent: context.agent,
@@ -2389,7 +4092,7 @@ async function setupCodeChallenge(ctx, moduleUrl) {
           if (workspace !== undefined && (typeof workspace !== "string" || workspace === ""))
             return { content: `${SETUP_TOOL}: workspace must be a non-empty string`, metadata: { ok: false } };
           const cwd = await directory(context.sessionID);
-          const target = resolve2(cwd, typeof workspace === "string" ? workspace : ".");
+          const target = resolve6(cwd, typeof workspace === "string" ? workspace : ".");
           await assert(context, SETUP_TOOL, [target], { workspace: target, force: force === true });
           const result = installFormulas2(target, cwd, force === true);
           return {
@@ -2400,6 +4103,7 @@ async function setupCodeChallenge(ctx, moduleUrl) {
       });
     }));
     registrations.push(await registerLibFacts(ctx));
+    registrations.push({ dispose: await registerScanTool(ctx) });
     registrations.push(await ctx.command.transform((editor) => editor.add({
       name: COMMAND,
       description: "challenge code for simplification, performance and structure: [auto] [quick|standard|deep] [target]",
@@ -2434,6 +4138,7 @@ export {
   LENSES,
   LIB_FACTS_TOOL,
   PHASES,
+  SCAN_TOOL,
   SETUP_DESCRIPTION,
   SETUP_TOOL,
   SKILL,

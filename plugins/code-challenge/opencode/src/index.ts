@@ -9,11 +9,14 @@ import { registerSkills } from "@srobroek/opencode-lib/skill-files"
 import { COMMAND, challengePrompt } from "./command.ts"
 import { installFormulas, SETUP_TOOL } from "./formulas.ts"
 import { registerLibFacts } from "./lib-facts/index.ts"
+import { registerScanTool } from "./scan/index.ts"
+import { sessionDirectory } from "./session-directory.ts"
 
 export { COMMAND, challengePrompt, parseInvocation, SKILL } from "./command.ts"
 export { FORMULAS, installFormulas, SETUP_TOOL } from "./formulas.ts"
 export { DEPTHS, LENSES, PHASES } from "./lenses.ts"
 export { LIB_FACTS_TOOL } from "./lib-facts/index.ts"
+export { SCAN_TOOL } from "./scan/index.ts"
 
 export const ID = "srobroek.code-challenge"
 
@@ -37,16 +40,7 @@ export async function setupCodeChallenge(ctx: Context, moduleUrl: string) {
   const cleanup = async () => {
     for (const registration of registrations.reverse()) await registration.dispose()
   }
-  // Fail closed: a session we cannot resolve must not make the tool write into the plugin's own base directory.
-  const directory = async (sessionID: string): Promise<string> => {
-    const session = await ctx.session.get({ sessionID }).catch((cause: unknown) => {
-      throw new Error(`${SETUP_TOOL}: cannot read session ${sessionID} to find its directory`, { cause })
-    })
-    const found = session.location?.directory
-    if (typeof found !== "string" || found === "")
-      throw new Error(`${SETUP_TOOL}: session ${sessionID} has no directory`)
-    return found
-  }
+  const directory = (sessionID: string) => sessionDirectory(ctx, sessionID, SETUP_TOOL)
   const assert = (context: ToolContext, action: string, resources: string[], metadata: Record<string, unknown>) =>
     ctx.permission.assert({
       sessionID: context.sessionID,
@@ -82,6 +76,7 @@ export async function setupCodeChallenge(ctx: Context, moduleUrl: string) {
       }),
     )
     registrations.push(await registerLibFacts(ctx))
+    registrations.push({ dispose: await registerScanTool(ctx) })
     registrations.push(
       await ctx.command.transform((editor) =>
         editor.add({
