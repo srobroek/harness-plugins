@@ -55,6 +55,17 @@ installed plugin's skill in the plugin cache. Writes, shell commands and other p
 ask, or fail at once in a subagent. The check ignores a skill whose directory is the filesystem root,
 the home folder or a parent of it. Turn it off with `{ "disable": ["skill-references"] }`.
 
+Three more checks turn an `external_directory` ask into an allow. Each applies to an `ask` only, never
+overrides a deny, behaves the same in root and subagent sessions, and runs before `subagent-prompts`:
+
+| Id | Allows |
+| --- | --- |
+| `steering-dirs` | `read`, `glob`, `grep` and `list` inside the `steeringDirs` option (default `["~/.config/opencode/steering"]`; a list replaces the default). Each directory is resolved with realpath and must exist, hold no symlink component and belong to the current user. A symlink inside that leaves the directory still asks. |
+| `scratch-shell` | The `shell` tool when every `external_directory` resource of the evaluation lies in a pinned scratch root (the OpenCode temp folder, the project's worktree folder). One resource outside the roots, such as a `git -C`, `make -C` or `--prefix` directory, keeps the ask. Part of the `scratchDirs` check: `scratchDirs: false` turns it off too. |
+| `repo-worktrees` | `read`, `glob`, `grep` and `list` inside any worktree `git worktree list` reports for the session's directory (run with `core.fsmonitor=false`, `core.hooksPath=/dev/null` and a 3 s timeout; cached 30 s per directory). Paths are canonicalised, so a symlink out of a worktree still asks. No writes, no shell. |
+
+Turn each off with `{ "disable": ["steering-dirs"] }`, `["scratch-shell"]` or `["repo-worktrees"]`.
+
 These checks run in this plugin's `permission.hook("evaluate")` in plugin order. A plugin loaded after
 `safety` can still turn an allow into a prompt. As a backstop, the plugin watches each
 `permission.asked` event in its location. When the session has a parent, it rejects the request at

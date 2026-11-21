@@ -61,6 +61,15 @@ Move new shared code into `lib` instead of adding another edge.
 
 `plugins/autopilot` owns two kinds of state. Run state (`state.<N>.json` generations, `journal.jsonl`, `summary.md`) lives under `<git common dir>/opencode-scratch/autopilot/<run-id>/`. The armed-session index lives in plugin storage (`armed/<sessionID>`). On load, the plugin re-arms from storage. `/autopilot resume` re-binds a run to a new session from its latest state generation. Its tick is an OpenCode automation (a code action created through `tools.opencode.automation_create` that calls `autopilot_status`). An in-process timer covers hosts where that call fails. Its own `bd` writes take the embedded-store lock from `lib/src/bd-embedded-write-lock.ts`. Every run state transition holds the lease lock from `lib/src/lease-lock.ts` at `<run-id>/run.lock`, for liveness only. Lease releases check the owner token. State files are versioned and created exclusively: a write of generation N+1 writes its own temporary file and `link`s it to `state.<N+1>.json`, which fails with `EEXIST` when that generation exists. The losing writer journals an issue and the call returns `stale`; nothing is ever overwritten, and there is no write lock or age-based clearing. Readers take the highest generation and validate it with `effect/Schema` (the host's `effect`); a corrupt latest generation is a blocker, never skipped. After a successful link the writer prunes all but the latest five generations. `state.json` is a symlink to the latest generation for people reading the directory; the plugin never reads it. A stop passes through a `stopping` phase until `summary.md` and the handoff bead both exist. Ticks carry a binding token, so a resumed run's old automation goes stale. While a run is armed, its permission hook denies every `ask` and journals it as a blocker; it approves nothing.
 
+## safety permission relaxations
+
+`plugins/safety` turns some `external_directory` asks into allows in `permission.hook("evaluate")` hooks that run before `denyUnanswerable`, because a subagent cannot answer a prompt. Each hook acts only on an `ask`, never overrides a deny, and has a pure decision function tested directly (`scratch-dirs.ts`, `skill-references.ts`, `steering-dirs.ts`, `repo-worktrees.ts`). A hook can be switched off through the plugin's `disable` list:
+
+- `scratch-dirs.ts`: the OpenCode temp folder and the project's worktree folder, for direct file tools and (`scratch-shell`) the `shell` tool when every resource is inside a pinned root.
+- `skill-references.ts` (`skill-references`): read-only tools inside listed skills' directories.
+- `steering-dirs.ts` (`steering-dirs`): read-only tools inside the `steeringDirs` option, default `~/.config/opencode/steering`, realpath-resolved, user-owned.
+- `repo-worktrees.ts` (`repo-worktrees`): read-only tools inside the worktrees `git worktree list --porcelain -z` reports for the session directory, cached 30 s per directory.
+
 ## Standards
 
 [AGENTS.md](../AGENTS.md) Conventions covers bundles, generated files, vendored `plugins/cad` files, agents, skills, pitfalls and descriptions. Checks enforce most of it. This page adds:

@@ -13,6 +13,7 @@ import { decideToolCall, type MigrationOptions, migrationOverride } from "./migr
 import { createPackageAdvisor } from "./package-investigate.ts"
 import { type Decision, type DecisionID, type ReviewOptions, reviewPermission } from "./permission.ts"
 import { createRedactor, type RedactOptions, readRedactOptions } from "./redact.ts"
+import { allowWorktreeReads, createWorktreeLister, type GitRun } from "./repo-worktrees.ts"
 import { allowScratch, scratchRoots } from "./scratch-dirs.ts"
 import {
   COMMAND_ACTION,
@@ -24,6 +25,7 @@ import {
   storeSecret,
 } from "./secret-store.ts"
 import { allowSkillReads, listedSkills, READ_ONLY_TOOLS, skillDirectories } from "./skill-references.ts"
+import { allowSteeringReads, readSteeringDirs, steeringRoots } from "./steering-dirs.ts"
 import { denyUnanswerable, type SessionInfo, unanswerableDenial } from "./subagent-prompts.ts"
 
 export { normalize as normalizeCloseKeywords, rewriteCloseKeywords } from "./close-keywords.ts"
@@ -52,6 +54,9 @@ export type FeatureID =
   | "migration-edit"
   | "external-directory"
   | "skill-references"
+  | "steering-dirs"
+  | "scratch-shell"
+  | "repo-worktrees"
   | "subagent-prompts"
 
 export const FEATURE_IDS: readonly FeatureID[] = [
@@ -64,6 +69,9 @@ export const FEATURE_IDS: readonly FeatureID[] = [
   "migration-edit",
   "external-directory",
   "skill-references",
+  "steering-dirs",
+  "scratch-shell",
+  "repo-worktrees",
   "subagent-prompts",
 ]
 
@@ -72,12 +80,17 @@ export type SafetyOptions = {
   redact: RedactOptions
   opAllow: string[]
   scratchDirs: boolean
+  steeringDirs: string[]
 }
 
 /**
  * `{ disable: ["git-defender", …] }` turns features off; unknown ids are ignored.
  * `opAllow` lists extra `op` subcommand prefixes the op-guard allows.
  * `scratchDirs: false` stops allowing the OpenCode temp folder and the project's worktree folder.
+ * `steeringDirs` lists the directories whose files the read-only tools may read without a prompt (default
+ * `["~/.config/opencode/steering"]`; a list replaces the default); `disable: ["steering-dirs"]` stops it.
+ * `disable: ["scratch-shell"]` stops allowing shell calls whose directories are all scratch folders, and
+ * `disable: ["repo-worktrees"]` stops allowing reads in the session repository's other worktrees.
  * `disable: ["skill-references"]` stops allowing reads in installed skills' directories, and
  * `disable: ["subagent-prompts"]` lets a subagent session's asks prompt instead of failing at once.
  * `redactSecrets`, `redactNames` and `redactExclude` configure secret redaction.
@@ -87,7 +100,10 @@ export function readOptions(options: Readonly<Record<string, unknown>> | undefin
   const list = Array.isArray(raw) ? raw.filter((id): id is FeatureID => FEATURE_IDS.includes(id as FeatureID)) : []
   const allow = options?.opAllow
   const opAllow = Array.isArray(allow) ? allow.filter((entry): entry is string => typeof entry === "string") : []
-  return { disabled: new Set(list), redact: readRedactOptions(options), opAllow, scratchDirs: options?.scratchDirs !== false }
+  return { disabled: new Set(list), redact: readRedactOptions(options), opAllow,
+    scratchDirs: options?.scratchDirs !== false,
+    steeringDirs: readSteeringDirs(options?.steeringDirs),
+  }
 }
 
 /** The directory a shell call runs in: its `workdir`, resolved against the session's directory. */
@@ -162,6 +178,8 @@ export type Overrides = {
   env?: NodeJS.ProcessEnv
   guard?: Pick<GuardOptions, "read" | "analyzeOp" | "providerTypes">
   scratch?: { roots?: readonly string[] }
+  steering?: { home?: string }
+  worktrees?: { run?: GitRun; ttlMs?: number }
   secretStore?: Partial<Pick<StoreDeps, "run" | "which" | "env" | "home">>
   warn?: Warn
 }
@@ -250,7 +268,7 @@ export function createPlugin(overrides: Overrides = {}) {
     async setup(ctx) {
       // Bound before the first await, while the fiber still carries the host's logger.
       const warn = overrides.warn ?? hostWarn("srobroek.safety")
-      const { disabled, redact, opAllow, scratchDirs } = readOptions(ctx.options)
+      const { disabled, redact, opAllow, scratchDirs, steeringDirs } = readOptions(ctx.options)
       const on = (id: FeatureID) => !disabled.has(id)
       const guardOptions = {
         env: overrides.env ?? process.env,
@@ -356,7 +374,9 @@ export function createPlugin(overrides: Overrides = {}) {
             // direct file tools qualify; an unknown source stays an ask.
             const source = evaluation.source
             const tool = source?.type === "tool" ? running.get(source.id)?.tool : undefined
-            if (tool === undefined || !DIRECT_FILE_TOOLS.has(tool)) return
+            // A shell call qualifies only because every resource must lie in a pinned root; a flag directory
+            // (`git -C`, `--prefix`) outside the roots keeps the ask.
+            if (tool === undefined || !(DIRECT_FILE_TOOLS.has(tool) || (on("scratch-shell") && isShellTool(tool)))) return
             const roots =
               overrides.scratch?.roots ??
               (await ctx.session
@@ -383,6 +403,27 @@ export function createPlugin(overrides: Overrides = {}) {
               return undefined
             })
             allowSkillReads(evaluation, skillDirectories(listedSkills(listed)))
+          })
+        : undefined
+
+      const steering = on("steering-dirs")
+        ? await ctx.permission.hook("evaluate", async (evaluation) => {
+            if (evaluation.action !== "external_directory" || evaluation.effect !== "ask") return
+            const source = evaluation.source
+            const tool = source?.type === "tool" ? running.get(source.id)?.tool : undefined
+            if (tool === undefined || !READ_ONLY_TOOLS.has(tool)) return
+            allowSteeringReads(evaluation, steeringRoots(steeringDirs, overrides.steering?.home))
+          })
+        : undefined
+
+      const worktreeRoots = createWorktreeLister(overrides.worktrees)
+      const repoWorktrees = on("repo-worktrees")
+        ? await ctx.permission.hook("evaluate", async (evaluation) => {
+            if (evaluation.action !== "external_directory" || evaluation.effect !== "ask") return
+            const source = evaluation.source
+            const tool = source?.type === "tool" ? running.get(source.id)?.tool : undefined
+            if (tool === undefined || !READ_ONLY_TOOLS.has(tool)) return
+            allowWorktreeReads(evaluation, await worktreeRoots(await sessionDirectory(evaluation.sessionID)))
           })
         : undefined
 
@@ -576,6 +617,8 @@ export function createPlugin(overrides: Overrides = {}) {
         await confirmCommand.dispose()
         await secretTool.dispose()
         await after.dispose()
+        await repoWorktrees?.dispose()
+        await steering?.dispose()
         await skillReads?.dispose()
         await scratch?.dispose()
         await gate.dispose()
