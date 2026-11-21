@@ -34,7 +34,7 @@ describe("path containment", () => {
     const report = await runScan({ root, files: ["src"] }, { exec: fakeExec({}, calls), which: ALL_TOOLS })
     const ruff = calls.find((c) => c.argv.includes("--isolated"))?.argv ?? []
     expect(ruff.slice(ruff.indexOf("--") + 1)).toEqual([join(report.root, "src", "ok.py")])
-    const globbed = await runScan({ root, files: ["src/*.py"] }, { exec: fakeExec({}, calls), which: ALL_TOOLS })
+    const globbed = await runScan({ root, files: ["src/*.py"] }, { exec: fakeExec({ "--isolated": exited("[]") }, calls), which: ALL_TOOLS })
     expect(globbed.coverage.find((c) => c.recipe === "ruff:lenses")?.status).toBe("ran")
   })
 

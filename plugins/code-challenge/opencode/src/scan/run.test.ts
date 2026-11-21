@@ -117,7 +117,7 @@ describe("runScan", () => {
       ],
     })
     const exec = fakeExec({ "--no-config": exited(hits, 1), "linters --json": exited('{"Enabled":[{"name":"unused"}]}') })
-    const report = await runScan({ root, files: ["main.go"] }, { exec, which: withTools("golangci-lint") })
+    const report = await runScan({ root, files: ["main.go"] }, { exec, which: withTools("golangci-lint"), consent: true })
     expect(report.languages).toEqual(["go"])
     expect(report.candidates.map((c) => [c.file, c.ruleEnabledInRepo])).toEqual([["main.go", true]])
   })
@@ -173,7 +173,7 @@ describe("runScan", () => {
     writeFileSync(join(root, ".gitignore"), "dist\n")
     const withIgnore = await runScan({ root, languages: ["ts"], runId: "cfg2" }, { exec, which })
     const biome = JSON.parse(readFileSync(join(withIgnore.rawDir as string, "cfg", "biome_lenses", "biome.json"), "utf8"))
-    expect(biome.vcs).toEqual({ enabled: true, clientKind: "git", useIgnoreFile: true })
+    expect(biome.vcs).toEqual({ enabled: true, clientKind: "git", useIgnoreFile: true, root: realpathSync(root) })
   })
 })
 
@@ -236,7 +236,7 @@ describe("tool registration", () => {
     expect(fake.tools.has(SCAN_TOOL)).toBe(false)
   })
 
-  test("the tool asks permission, then returns the report as JSON", async () => {
+  test("the tool returns the report as JSON without asking when nothing risky runs", async () => {
     const fake = createFakeContext()
     const root = pythonRepo()
     const exec = fakeExec({ "check --isolated": exited(RUFF_HIT, 1), "--show-settings": exited("") })
@@ -246,6 +246,7 @@ describe("tool registration", () => {
     const result = await execute({ root, languages: ["python"] }, { sessionID: "s", agent: "a", messageID: "m", id: "t" })
     expect(result.metadata.ok).toBe(true)
     expect(JSON.parse(result.content).candidates).toHaveLength(2)
-    expect(fake.asserts.map((a) => [a.action, a.resources])).toEqual([[SCAN_TOOL, [root]]])
+    // ruff runs locally and executes no repository code, so nothing needs approval.
+    expect(fake.asserts).toEqual([])
   })
 })
