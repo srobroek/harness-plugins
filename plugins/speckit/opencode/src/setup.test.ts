@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, setSystemTime, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
@@ -96,6 +96,57 @@ describe("ensureGitignore + formulas", () => {
     for (const name of FORMULAS) {
       expect(readFileSync(join(dir, ".beads/formulas", `${name}.formula.toml`), "utf8")).toBe("formula = true\n")
     }
+  })
+})
+
+describe("installFormulas and symlinks", () => {
+  let dir: string
+  let src: string
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(SAFE_TMPDIR, "sk-"))
+    src = join(dir, "src-formulas")
+    mkdirSync(src)
+    for (const name of FORMULAS) writeFileSync(join(src, `${name}.formula.toml`), "formula = true\n")
+  })
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  test("installs into a repo reached through a symlinked ancestor", () => {
+    const real = join(dir, "real")
+    mkdirSync(join(real, "repo"), { recursive: true })
+    symlinkSync(real, join(dir, "link"))
+    expect(installFormulas(join(dir, "link", "repo"), src)).toHaveLength(FORMULAS.length)
+    expect(existsSync(join(real, "repo", ".beads", "formulas", `${FORMULAS[0]}.formula.toml`))).toBe(true)
+  })
+
+  test("installs from a formulas directory reached through a symlinked ancestor", () => {
+    const repo = join(dir, "repo")
+    mkdirSync(repo)
+    symlinkSync(dir, join(dir, "link"))
+    expect(installFormulas(repo, join(dir, "link", "src-formulas"))).toHaveLength(FORMULAS.length)
+  })
+
+  test.each([[".beads"], [join(".beads", "formulas")]])("refuses a repo %s that is a symlink", (rel) => {
+    const repo = join(dir, "repo")
+    const outside = join(dir, "outside")
+    mkdirSync(join(repo, ".beads"), { recursive: true })
+    mkdirSync(outside)
+    rmSync(join(repo, rel), { recursive: true, force: true })
+    symlinkSync(outside, join(repo, rel))
+    expect(() => installFormulas(repo, src)).toThrow("unsafe symlink")
+    expect(existsSync(join(outside, `${FORMULAS[0]}.formula.toml`))).toBe(false)
+  })
+
+  test("refuses a formula source that is a symlink", () => {
+    const repo = join(dir, "repo")
+    mkdirSync(repo)
+    const target = join(dir, "elsewhere.toml")
+    writeFileSync(target, "formula = true\n")
+    rmSync(join(src, `${FORMULAS[0]}.formula.toml`))
+    symlinkSync(target, join(src, `${FORMULAS[0]}.formula.toml`))
+    expect(() => installFormulas(repo, src)).toThrow("unsafe symlink")
   })
 })
 
