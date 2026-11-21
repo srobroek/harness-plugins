@@ -1457,12 +1457,10 @@ function pages(payload, pick) {
   }
   return out;
 }
-function reviewApproval(reviewsPayload, prAuthor, sha) {
+function latestDecisive(reviewsPayload) {
   const reviews = pages(reviewsPayload, (page) => own(page, "reviews"));
   if (reviews === undefined)
-    return { ok: false, reason: "approval: observed no review list, expected gh api pulls/{n}/reviews output" };
-  if (prAuthor === null)
-    return { ok: false, reason: "approval: observed no PR author, expected one to rule out a self-approval" };
+    return;
   const latest = new Map;
   for (const review of reviews) {
     const state = str(review, "state");
@@ -1471,14 +1469,30 @@ function reviewApproval(reviewsPayload, prAuthor, sha) {
       continue;
     latest.set(who.toLowerCase(), { state, commit: str(review, "commit_id")?.trim().toLowerCase() ?? null });
   }
-  const blocking = [...latest].filter(([, review]) => review.state === "CHANGES_REQUESTED").map(([who]) => who);
+  return latest;
+}
+function changesRequested(reviewsPayload) {
+  return [...latestDecisive(reviewsPayload) ?? []].filter(([, review]) => review.state === "CHANGES_REQUESTED").map(([who]) => who);
+}
+function approversAt(reviewsPayload, prAuthor, sha) {
+  const latest = latestDecisive(reviewsPayload);
+  if (latest === undefined)
+    return;
+  return [...latest].filter(([who, review]) => review.state === "APPROVED" && review.commit === sha && who !== prAuthor?.toLowerCase()).map(([who]) => who);
+}
+function reviewApproval(reviewsPayload, prAuthor, sha, options = {}) {
+  const approvers = approversAt(reviewsPayload, prAuthor, sha);
+  if (approvers === undefined)
+    return { ok: false, reason: "approval: observed no review list, expected gh api pulls/{n}/reviews output" };
+  if (prAuthor === null)
+    return { ok: false, reason: "approval: observed no PR author, expected one to rule out a self-approval" };
+  const blocking = changesRequested(reviewsPayload);
   if (blocking.length > 0)
     return { ok: false, reason: `approval: ${blocking.join(", ")} requested changes and has not approved since` };
-  for (const [who, review] of latest) {
-    if (review.state === "APPROVED" && review.commit === sha && who !== prAuthor.toLowerCase())
-      return { ok: true, evidence: { kind: "review", reviewer: who, commit: sha } };
-  }
-  return { ok: false, reason: `approval: observed no APPROVED review of ${sha} by someone other than the PR author ${prAuthor}; comments do not count` };
+  const who = approvers.find((login) => options.eligible?.(login) ?? true);
+  if (who !== undefined)
+    return { ok: true, evidence: { kind: "review", reviewer: who, commit: sha } };
+  return { ok: false, reason: `approval: observed no ${options.eligible === undefined ? "" : "eligible "}APPROVED review of ${sha} by someone other than the PR author ${prAuthor}; comments do not count` };
 }
 var PASSING_RUN = new Set(["success", "neutral", "skipped"]);
 function commitChecks(input) {

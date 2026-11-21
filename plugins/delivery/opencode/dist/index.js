@@ -3483,7 +3483,97 @@ function githubApproval(payload, head, options) {
     reason: `approval: observed ${stale} APPROVED review(s), none for head ${head}${options.commentVerdict ? ', and no author "VERDICT: APPROVE" comment naming it' : ""}; expected an approval artifact on the PR for the exact head`
   };
 }
+function pages(payload, pick) {
+  if (!Array.isArray(payload))
+    return;
+  const out = [];
+  for (const page of payload) {
+    const items = Array.isArray(page) ? page : pick(page);
+    if (Array.isArray(items))
+      out.push(...items);
+    else if (page !== null && typeof page === "object")
+      out.push(page);
+    else
+      return;
+  }
+  return out;
+}
+function latestDecisive(reviewsPayload) {
+  const reviews = pages(reviewsPayload, (page) => own2(page, "reviews"));
+  if (reviews === undefined)
+    return;
+  const latest = new Map;
+  for (const review of reviews) {
+    const state = str(review, "state");
+    const who = str(own2(review, "user"), "login");
+    if (who === null || state === null || !["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(state))
+      continue;
+    latest.set(who.toLowerCase(), { state, commit: str(review, "commit_id")?.trim().toLowerCase() ?? null });
+  }
+  return latest;
+}
+function changesRequested(reviewsPayload) {
+  return [...latestDecisive(reviewsPayload) ?? []].filter(([, review]) => review.state === "CHANGES_REQUESTED").map(([who]) => who);
+}
+function approversAt(reviewsPayload, prAuthor, sha) {
+  const latest = latestDecisive(reviewsPayload);
+  if (latest === undefined)
+    return;
+  return [...latest].filter(([who, review]) => review.state === "APPROVED" && review.commit === sha && who !== prAuthor?.toLowerCase()).map(([who]) => who);
+}
+function reviewApproval(reviewsPayload, prAuthor, sha, options = {}) {
+  const approvers = approversAt(reviewsPayload, prAuthor, sha);
+  if (approvers === undefined)
+    return { ok: false, reason: "approval: observed no review list, expected gh api pulls/{n}/reviews output" };
+  if (prAuthor === null)
+    return { ok: false, reason: "approval: observed no PR author, expected one to rule out a self-approval" };
+  const blocking = changesRequested(reviewsPayload);
+  if (blocking.length > 0)
+    return { ok: false, reason: `approval: ${blocking.join(", ")} requested changes and has not approved since` };
+  const who = approvers.find((login) => options.eligible?.(login) ?? true);
+  if (who !== undefined)
+    return { ok: true, evidence: { kind: "review", reviewer: who, commit: sha } };
+  return { ok: false, reason: `approval: observed no ${options.eligible === undefined ? "" : "eligible "}APPROVED review of ${sha} by someone other than the PR author ${prAuthor}; comments do not count` };
+}
 var PASSING_RUN = new Set(["success", "neutral", "skipped"]);
+function commitChecks(input) {
+  const runs = pages(input.runs, (page) => own2(page, "check_runs"));
+  const statusPages = Array.isArray(input.status) ? input.status : [input.status];
+  const statuses = statusPages.flatMap((page) => {
+    const list = own2(page, "statuses");
+    return Array.isArray(list) ? list : [];
+  });
+  if (runs === undefined || !statusPages.every((page) => Array.isArray(own2(page, "statuses")))) {
+    return { ok: false, reason: "checks: observed an unreadable check-run or status list, expected the commit's check-runs and status" };
+  }
+  const green = new Set;
+  const bad = [];
+  for (const run of runs) {
+    const name = str(run, "name") ?? "?";
+    const conclusion = str(run, "conclusion");
+    if (str(run, "status") === "completed" && conclusion !== null && PASSING_RUN.has(conclusion))
+      green.add(name);
+    else
+      bad.push(`${name}=${conclusion ?? str(run, "status") ?? "?"}`);
+  }
+  for (const status of statuses) {
+    const name = str(status, "context") ?? "?";
+    if (str(status, "state") === "success")
+      green.add(name);
+    else
+      bad.push(`${name}=${str(status, "state") ?? "?"}`);
+  }
+  if (runs.length + statuses.length === 0)
+    return { ok: false, reason: "checks: observed no check runs or statuses, expected at least one passing check for the head" };
+  if (bad.length > 0)
+    return { ok: false, reason: `checks: observed ${bad.slice(0, 8).join(", ")}, expected every check to pass` };
+  if (input.requireKnown && input.required === undefined)
+    return { ok: false, reason: "checks: branch protection or rulesets unreadable, so the required contexts are unknown; refusing" };
+  const missing = (input.required ?? []).filter((context) => !green.has(context));
+  if (missing.length > 0)
+    return { ok: false, reason: `checks: required ${missing.join(", ")} not present and passing` };
+  return { ok: true, evidence: { checks: runs.length + statuses.length, required: input.required?.length ?? null } };
+}
 
 // plugins/delivery/opencode/src/approval.ts
 function parse(argv, result, allowExit = false) {
@@ -3504,25 +3594,6 @@ function parse(argv, result, allowExit = false) {
   }
 }
 var githubApproval2 = (payload, head) => githubApproval(payload, head, { commentVerdict: true });
-function githubHeadChecks(checkRuns, status) {
-  const runs = own2(checkRuns, "check_runs");
-  const total = own2(checkRuns, "total_count");
-  const statusTotal = own2(status, "total_count");
-  if (!Array.isArray(runs) || typeof total !== "number" || typeof statusTotal !== "number")
-    return { ok: false, reason: "checks: observed no check-run or status payload, expected commits/<sha>/check-runs and /status output" };
-  if (total > runs.length)
-    return { ok: false, reason: `checks: observed ${runs.length} of ${total} check runs, expected the whole list` };
-  const bad = runs.filter((run) => str(run, "status") !== "completed" || !["success", "neutral", "skipped"].includes(str(run, "conclusion") ?? ""));
-  if (bad.length > 0) {
-    const listed = bad.slice(0, 8).map((run) => `${str(run, "name") ?? "?"}=${str(run, "conclusion") ?? str(run, "status") ?? "?"}`);
-    return { ok: false, reason: `checks: observed ${listed.join(", ")}, expected every check to pass` };
-  }
-  if (statusTotal > 0 && str(status, "state") !== "success")
-    return { ok: false, reason: `checks: observed combined status ${JSON.stringify(str(status, "state"))}, expected "success"` };
-  if (runs.length === 0 && statusTotal === 0)
-    return { ok: false, reason: "checks: observed no checks, expected at least one passing check for the head" };
-  return { ok: true, evidence: { checks: runs.length, statuses: statusTotal } };
-}
 var WRITE_ROLES = new Set(["admin", "maintain", "write"]);
 function githubPermissionAllows(payload) {
   const role = str(payload, "role_name");
@@ -3531,29 +3602,18 @@ function githubPermissionAllows(payload) {
   const permission = str(payload, "permission");
   return permission === "admin" || permission === "write";
 }
-function githubApprovers(payload, head) {
-  const author = login(payload);
-  const reviews = own2(payload, "reviews");
-  if (!Array.isArray(reviews))
-    return [];
-  const latest = new Map;
-  for (const review of reviews) {
-    const who = login(review);
-    const state = str(review, "state");
-    if (who !== null && state !== null && state !== "COMMENTED" && state !== "PENDING")
-      latest.set(who, review);
-  }
-  return [...latest].filter(([who, review]) => who !== author && str(review, "state") === "APPROVED").filter(([, review]) => str(own2(review, "commit"), "oid")?.trim().toLowerCase() === head).map(([who]) => who);
-}
-function githubTrust(payload, head, identity) {
-  for (const who of githubApprovers(payload, head)) {
-    const role = identity.permissions[who];
-    if (typeof role === "string" && WRITE_ROLES.has(role))
-      return { trusted: true, by: who };
-  }
-  const author = login(payload);
-  const comments = own2(payload, "comments");
-  if (author !== null && identity.viewer === author && Array.isArray(comments)) {
+function githubTrust(reviews, view, head, identity) {
+  const author = login(view);
+  const blocking = changesRequested(reviews);
+  if (blocking.length > 0)
+    return { trusted: false, reason: `${blocking.join(", ")} requested changes and has not approved since` };
+  const strict = reviewApproval(reviews, author, head, {
+    eligible: (who) => WRITE_ROLES.has(identity.permissions[who.toLowerCase()] ?? "")
+  });
+  if (strict.ok)
+    return { trusted: true, by: String(strict.evidence.reviewer) };
+  const comments = own2(view, "comments");
+  if (author !== null && identity.viewer === author && Array.isArray(comments) && approversAt(reviews, author, head) !== undefined) {
     for (const comment of comments) {
       if (login(comment) !== author)
         continue;
@@ -3598,6 +3658,32 @@ function gitlabTrust(approvals, head, access, resetOnPush) {
   }
   return { trusted: false, reason: "approval: observed no approver with Developer access or above" };
 }
+var count = (value) => typeof value === "number" && Number.isFinite(value) ? value : 0;
+function githubReviewEnforcement(rules, protection) {
+  const pullRequestRules = (pages(rules, () => {
+    return;
+  }) ?? []).filter((rule) => str(rule, "type") === "pull_request");
+  const parameters = pullRequestRules.map((rule) => own2(rule, "parameters"));
+  const required = parameters.some((entry) => count(own2(entry, "required_approving_review_count")) >= 1) || count(own2(protection, "required_approving_review_count")) >= 1;
+  const dismisses = parameters.some((entry) => own2(entry, "dismiss_stale_reviews_on_push") === true) || own2(protection, "dismiss_stale_reviews") === true;
+  if (required && dismisses)
+    return { enforced: true, via: pullRequestRules.length > 0 ? "ruleset" : "branch protection" };
+  return {
+    enforced: false,
+    reason: `the base branch does not provably require an approving review and dismiss stale reviews on push (approving review required: ${required}, stale reviews dismissed: ${dismisses})`
+  };
+}
+function gitlabReviewEnforcement(settings, rules) {
+  const required = Array.isArray(rules) && rules.some((rule) => count(own2(rule, "approvals_required")) >= 1);
+  const resets = own2(settings, "reset_approvals_on_push") === true;
+  const locked = own2(settings, "disable_overriding_approvers_per_merge_request") === true;
+  if (required && resets && locked)
+    return { enforced: true, via: "project approval rules" };
+  return {
+    enforced: false,
+    reason: `the project does not provably require an approval, reset approvals on push and lock the approvers (approval required: ${required}, reset on push: ${resets}, approvers locked: ${locked})`
+  };
+}
 function gitlabChecks(mr, head) {
   const pipeline = own2(mr, "head_pipeline");
   const status = str(pipeline, "status");
@@ -3621,14 +3707,23 @@ async function readApproval(run, bound) {
     if (!result.ok)
       return result;
     const host = ["--hostname", bound.forgeHost];
+    const reviews = await readJson(run, ["gh", "api", "--paginate", "--slurp", `repos/${bound.nameWithOwner}/pulls/${bound.number}/reviews?per_page=100`, ...host], bound);
+    if (!reviews.ok)
+      return { ...result, trusted: { trusted: false, reason: reviews.reason } };
     const viewer = await readJson(run, ["gh", "api", "user", ...host], bound);
     const permissions = {};
-    for (const who of githubApprovers(payload.value, bound.head).slice(0, 5)) {
+    for (const who of (approversAt(reviews.value, login(payload.value), bound.head) ?? []).slice(0, 5)) {
       const read = await readJson(run, ["gh", "api", `repos/${bound.nameWithOwner}/collaborators/${encodeURIComponent(who)}/permission`, ...host], bound);
       permissions[who] = read.ok && githubPermissionAllows(read.value) ? str(read.value, "role_name") ?? str(read.value, "permission") : null;
     }
-    const trust = githubTrust(payload.value, bound.head, { viewer: viewer.ok ? str(viewer.value, "login") : null, permissions });
-    return { ...result, trusted: trust };
+    const trust = githubTrust(reviews.value, payload.value, bound.head, { viewer: viewer.ok ? str(viewer.value, "login") : null, permissions });
+    if (!trust.trusted)
+      return { ...result, trusted: trust };
+    const branch = encodeURIComponent(bound.base);
+    const rules = await readJson(run, ["gh", "api", "--paginate", "--slurp", `repos/${bound.nameWithOwner}/rules/branches/${branch}?per_page=100`, ...host], bound);
+    const protection = await readJson(run, ["gh", "api", `repos/${bound.nameWithOwner}/branches/${branch}/protection/required_pull_request_reviews`, ...host], bound);
+    const enforcement = githubReviewEnforcement(rules.ok ? rules.value : undefined, protection.ok ? protection.value : undefined);
+    return { ...result, trusted: enforcement.enforced ? trust : { trusted: false, reason: enforcement.reason } };
   }
   const project = encodeURIComponent(bound.nameWithOwner);
   const host = ["--hostname", bound.forgeHost];
@@ -3650,19 +3745,25 @@ async function readApproval(run, bound) {
   }
   const settings = await readJson(run, ["glab", "api", `projects/${project}/approvals`, ...host], bound);
   const reset = settings.ok ? own2(settings.value, "reset_approvals_on_push") : undefined;
-  return { ...result, trusted: gitlabTrust(payload.value, bound.head, access, typeof reset === "boolean" ? reset : null) };
+  const trust = gitlabTrust(payload.value, bound.head, access, typeof reset === "boolean" ? reset : null);
+  if (!trust.trusted)
+    return { ...result, trusted: trust };
+  const approvalRules = await readJson(run, ["glab", "api", `projects/${project}/approval_rules`, ...host], bound);
+  const enforcement = gitlabReviewEnforcement(settings.ok ? settings.value : undefined, approvalRules.ok ? approvalRules.value : undefined);
+  return { ...result, trusted: enforcement.enforced ? trust : { trusted: false, reason: enforcement.reason } };
 }
 async function readChecks(run, bound) {
   if (bound.forge === "github") {
     const base = `repos/${bound.nameWithOwner}/commits/${bound.head}`;
     const host = ["--hostname", bound.forgeHost];
-    const runs = await readJson(run, ["gh", "api", `${base}/check-runs?per_page=100`, ...host], bound);
+    const pagesOf = (value) => Array.isArray(value) ? value : [value];
+    const runs = await readJson(run, ["gh", "api", "--paginate", "--slurp", `${base}/check-runs?per_page=100`, ...host], bound);
     if (!runs.ok)
       return runs;
-    const status = await readJson(run, ["gh", "api", `${base}/status?per_page=100`, ...host], bound);
+    const status = await readJson(run, ["gh", "api", "--paginate", "--slurp", `${base}/status?per_page=100`, ...host], bound);
     if (!status.ok)
       return status;
-    return githubHeadChecks(runs.value, status.value);
+    return commitChecks({ runs: pagesOf(runs.value), status: pagesOf(status.value), required: undefined });
   }
   const project = encodeURIComponent(bound.nameWithOwner);
   const argv = ["glab", "api", `projects/${project}/merge_requests/${bound.number}`, "--hostname", bound.forgeHost];
@@ -4817,6 +4918,7 @@ async function landPullRequest(params, deps = {}) {
     cliRepo,
     nameWithOwner,
     forgeHost,
+    base: first.pr.baseRefName,
     number,
     head,
     env: forgeCommandEnv,
@@ -5391,7 +5493,6 @@ function parseLanding(value) {
     headRefOid,
     sessionID,
     landedAt,
-    ...text3(value.agent) === undefined ? {} : { agent: text3(value.agent) },
     ...deniedAt !== undefined && deniedBy ? { denied: { at: deniedAt, sessionID: deniedBy } } : {},
     ...value.nudged === true ? { nudged: true } : {}
   };
@@ -6001,6 +6102,7 @@ function explicitDeferral(ownership) {
     return;
   return ownership.owner === "lane" ? `${why}; removed by its owner once finished` : `${why}; not removed until it can be read`;
 }
+var retryAgentKey = (receiptId) => `retry-agent/${receiptId}`;
 async function authorizeExplicit(pending, ask, sessionID, request) {
   try {
     await ask(request);
@@ -6103,19 +6205,40 @@ function createPendingCleanup(deps) {
       return;
     if (outcome.denied)
       deniedInMemory.set(receipt.receiptId, canonicalDirectory(path));
-    await write(receipt.receiptId, path, (existing) => {
-      const agent = outcome.agent ?? existing?.agent;
-      return {
+    if (outcome.agent !== undefined) {
+      await ctx.storage.set(retryAgentKey(receipt.receiptId), {
         receiptId: receipt.receiptId,
-        worktree: path,
-        headRefOid: receipt.pr.headRefOid,
-        sessionID,
-        landedAt: existing?.landedAt ?? now(),
-        ...agent === undefined ? {} : { agent },
-        ...existing?.nudged ? { nudged: true } : {},
-        ...outcome.denied ? { denied: { at: now(), sessionID } } : existing?.denied ? { denied: existing.denied } : {}
-      };
-    });
+        agent: outcome.agent,
+        worktree: canonicalDirectory(path),
+        headRefOid: receipt.pr.headRefOid
+      });
+    }
+    await write(receipt.receiptId, path, (existing) => ({
+      receiptId: receipt.receiptId,
+      worktree: path,
+      headRefOid: receipt.pr.headRefOid,
+      sessionID,
+      landedAt: existing?.landedAt ?? now(),
+      ...existing?.nudged ? { nudged: true } : {},
+      ...outcome.denied ? { denied: { at: now(), sessionID } } : existing?.denied ? { denied: existing.denied } : {}
+    }));
+  };
+  const attributedAgent = async (receipt) => {
+    const path = receipt.worktree.path;
+    if (path === null)
+      return;
+    let stored;
+    try {
+      stored = await ctx.storage.get(retryAgentKey(receipt.receiptId));
+    } catch {
+      return;
+    }
+    if (typeof stored !== "object" || stored === null)
+      return;
+    const entry = stored;
+    const agent = entry.agent;
+    const matches = entry.receiptId === receipt.receiptId && entry.worktree === canonicalDirectory(path) && entry.headRefOid === receipt.pr.headRefOid;
+    return matches && typeof agent === "string" && agent !== "" ? agent : undefined;
   };
   const receiptsFor = (path) => {
     const key = repoKey(cwd, deps.observe, observationMs);
@@ -6287,6 +6410,11 @@ function createPendingCleanup(deps) {
           await markNudged(receipt.receiptId, meta.worktree);
       } else if (decision.action === "retry") {
         retriedAt.set(receipt.receiptId, now());
+        const agent = await attributedAgent(receipt);
+        if (agent === undefined) {
+          await deny(worktree, sessionID).catch(() => {});
+          continue;
+        }
         let result;
         try {
           result = await cleanupDelivery({ receipt: path }, cwd, {
@@ -6295,7 +6423,7 @@ function createPendingCleanup(deps) {
             ...removal,
             authorize: async (request) => {
               try {
-                await deps.authorize(sessionID, request, meta?.agent);
+                await deps.authorize(sessionID, request, agent);
               } catch (error) {
                 await deny(request.worktree, sessionID).catch(() => {});
                 throw error;
@@ -6752,7 +6880,7 @@ async function setupDelivery(ctx, overrides = {}) {
     cwd: directory,
     env: environment(options),
     host: () => hostWorktrees(ctx),
-    authorize: (sessionID, request, agent) => asserter(ctx, { sessionID, ...agent === undefined ? {} : { agent } }, CLEANUP_ACTION, gates)(request.worktree, { ...request }, cleanupGate(request)),
+    authorize: (sessionID, request, agent) => asserter(ctx, { sessionID, agent }, CLEANUP_ACTION, gates)(request.worktree, { ...request }, cleanupGate(request)),
     ...overrides
   });
   const tools = await ctx.tool.transform((editor) => {

@@ -104,7 +104,6 @@ function parseLanding(value) {
     headRefOid,
     sessionID,
     landedAt,
-    ...text(value.agent) === undefined ? {} : { agent: text(value.agent) },
     ...deniedAt !== undefined && deniedBy ? { denied: { at: deniedAt, sessionID: deniedBy } } : {},
     ...value.nudged === true ? { nudged: true } : {}
   };

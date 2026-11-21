@@ -330,18 +330,26 @@ confirmation would rest on:
 
 - **Gated land.** The validated input sets `expectHeadSha`, `requireApproval: true` and
   `requireGreenChecks: true`, and the forge shows (a) an approval for exactly that head
-  from a trusted identity and (b) green checks for that head's sha. Trusted means, on
-  GitHub, an `APPROVED` review from a user with write, maintain or admin permission on
-  the repository, or a `VERDICT: APPROVE` comment naming the head from the account that
-  is both the authenticated `gh` user and the PR author. On GitLab it means an
-  approvals payload bound to the head sha with an approver of Developer access or above.
-  An approval that cannot be tied to the head or to a trusted identity leaves the
-  prompt in place; the merge can still go ahead once someone confirms.
+  from a trusted identity, (b) green checks for that head's sha, and (c) a base branch
+  whose protection or rulesets make the forge itself refuse a merge without a current
+  approving review: at least one approving review required and stale reviews dismissed on
+  push (GitLab: an approval rule, reset on push, approvers locked). If that cannot be read
+  or is not set, the prompt stays. Trusted means, on GitHub, an `APPROVED` review from a
+  user with write, maintain or admin permission on the repository, with nobody else's
+  latest decisive review requesting changes, or a `VERDICT: APPROVE` comment naming the
+  head from the account that is both the authenticated `gh` user and the PR author (a
+  changes request vetoes it too). On GitLab it means an approvals payload bound to the head
+  sha with an approver of Developer access or above. The tool re-reads the approval before
+  the merge; the forge's own enforcement is the atomic guarantee. An approval that cannot be
+  tied to the head or to a trusted identity leaves the prompt in place; the merge can still
+  go ahead once someone confirms.
 - **Receipt cleanup.** The tool read a landing receipt, verified it, and is removing
   exactly that receipt's worktree on that receipt's branch. A renamed or detached checkout
   is not bound to the receipt and prompts; so does any change of branch between the
   authorization and the removal (the removal is refused). Delivery's retries of a pending
-  cleanup ask the same permission before they remove anything, and a denial stops them.
+  cleanup ask the same permission, as the agent that ran the land (kept in plugin storage,
+  not in the repository), before they remove anything; a retry with no matching attribution
+  is refused and recorded as a denial, and a denial stops them.
 
 Every other root-session call prompts as before. The decisions come from validated tool
 input and the tool's own proofs, never from free text (`opencode/src/gate.ts`). The
