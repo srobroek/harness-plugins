@@ -507,6 +507,69 @@ pays for these lines on every request: keep the whole file near 1100 tokens. -->
 
 // lib/src/fragments.ts
 import { fileURLToPath as fileURLToPath2 } from "url";
+
+// lib/src/read-only-shell.ts
+var deny = (...resources) => resources.map((resource) => ({ action: "shell", resource, effect: "deny" }));
+var allow = (...resources) => resources.map((resource) => ({ action: "shell", resource, effect: "allow" }));
+var WRITE_METHODS = ["POST", "PUT", "PATCH", "DELETE"];
+var forgeApi = (cli) => [
+  ...deny(`${cli} api *-f *`, `${cli} api *-F *`, `${cli} api *--field*`, `${cli} api *--raw-field*`, `${cli} api *--input*`),
+  ...deny(`${cli} api *-X*`, `${cli} api *--method*`),
+  ...allow(`${cli} api *-X GET*`, `${cli} api *--method GET*`),
+  ...deny(...WRITE_METHODS.flatMap((m) => [`${cli} api *-X ${m}*`, `${cli} api *--method ${m}*`]))
+];
+var BD_READS = [
+  "show",
+  "list",
+  "ready",
+  "search",
+  "query",
+  "count",
+  "blocked",
+  "children",
+  "graph",
+  "history",
+  "status",
+  "stale",
+  "types",
+  "statuses",
+  "where",
+  "info",
+  "context",
+  "ping",
+  "memories",
+  "recall",
+  "find-duplicates",
+  "lint",
+  "events",
+  "diff",
+  "dep list",
+  "dep tree",
+  "dep cycles",
+  "label list",
+  "config get",
+  "config list",
+  "epic status",
+  "state"
+];
+var READ_ONLY_SHELL_RULES = [
+  ...allow("*"),
+  ...deny("rm*", "mv*", "cp*", "touch*", "tee*", "chmod*", "chown*", "ln*", "sudo*", "sed -i*", "sed * -i*", "find *-delete*", "find *-exec*"),
+  ...deny("* > *", "* >> *"),
+  ...deny("git push*", "git commit*", "git reset*", "git checkout*", "git switch*", "git restore*", "git clean*", "git rebase*", "git merge*", "git pull*", "git cherry-pick*", "git revert*", "git apply*", "git am*", "git add*", "git rm*", "git mv*", "git branch -d*", "git branch -D*", "git branch --delete*", "git branch -m*", "git branch -M*", "git branch --move*", "git branch -f*", "git branch --force*", "git tag -d*", "git tag --delete*", "git stash*", "git worktree remove*", "git worktree prune*", "git update-ref*", "git remote add*", "git remote remove*", "git remote rm*", "git remote set-url*", "git remote rename*", "git config*", "git gc*"),
+  ...allow("git stash list*", "git stash show*", "git config --get*", "git config --list*", "git config -l*"),
+  ...deny("git * --output*"),
+  ...deny("gh pr create*", "gh pr merge*", "gh pr close*", "gh pr edit*", "gh pr comment*", "gh pr review*", "gh pr ready*", "gh pr reopen*", "gh issue create*", "gh issue close*", "gh issue edit*", "gh issue comment*", "gh issue reopen*", "gh release*", "gh repo delete*", "gh repo create*", "gh repo edit*", "gh * delete*", "gh workflow run*", "gh run rerun*", "glab mr create*", "glab mr merge*", "glab mr close*", "glab mr note*", "glab mr approve*", "glab mr update*", "glab mr reopen*", "glab issue create*", "glab issue close*", "glab issue note*", "glab issue update*", "glab release*", "glab repo delete*", "glab * delete*"),
+  ...forgeApi("gh"),
+  ...deny("gh api *graphql*"),
+  ...forgeApi("glab"),
+  ...deny("bd*"),
+  ...allow(...BD_READS.flatMap((verb) => [`bd ${verb}*`, `bd --json ${verb}*`]), "bd --version*", "bd --help*", "bd * --help*"),
+  ...deny("bd comments add*", "bd config set*", "bd label add*", "bd dep add*"),
+  ...deny("ast-grep * -U*", "ast-grep *--update-all*", "ast-grep * -i*", "ast-grep *--interactive*", "semgrep *--autofix*", "semgrep *-a *")
+];
+
+// lib/src/fragments.ts
 var FRAGMENTS_DIR = fileURLToPath2(new URL(".", import.meta.url));
 var SHARED_AGENTS_DIR = fileURLToPath2(new URL("../../shared/agents/", import.meta.url));
 var PART = /^<!-- part: ([a-z][\w-]*) -->[ \t]*$/;
