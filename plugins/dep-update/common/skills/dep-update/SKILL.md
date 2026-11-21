@@ -52,8 +52,8 @@ name: old → new (PATCH|MINOR)  [cite]
 ```
 
 Then run the `dep_apply` tool (`ecosystem`, `name`, `version`, optional `path`).
-It raises one permission prompt naming that exact bump (`<name>@<version>`); that
-prompt is the approval, so do not ask a separate chat `[Y/n]` first. A rejection
+The user's permission rules decide whether it runs, asks (one prompt naming that
+exact bump, `<name>@<version>`) or is denied; do not ask a separate chat `[Y/n]` first. A rejection
 with feedback, or a permission rule that denies `dep_apply`, comes back as a tool
 error: record the bump as skipped and follow the feedback. A plain rejection ends
 the step: stop the loop and wait for the user.
@@ -90,7 +90,7 @@ the install.
 | Tool | Purpose |
 |------|---------|
 | `dep_scan` | Enumerate deps, query PyPI/npm, classify bumps. Transitive lockfile entries are listed, not queried. |
-| `dep_apply` | Apply one bump via the package manager after one exact-bump permission prompt, then verify the manifest. |
+| `dep_apply` | Apply one bump via the package manager under the user's permission rules, then verify the manifest. |
 
 `references/recipes.md` holds what the tools do not: the Go proxy and crates.io
 endpoints, the advisory-only apply commands, and the changelog fetch order.

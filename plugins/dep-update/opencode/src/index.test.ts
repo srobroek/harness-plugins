@@ -23,10 +23,10 @@ async function load(options: FakeContextOptions = {}) {
 }
 
 describe("setup", () => {
-  test("registers both tools, the confirm gate, the advisory and the skill, and disposes them all", async () => {
+  test("registers both tools, no confirm gate, the advisory and the skill, and disposes them all", async () => {
     const { fake, cleanup } = await load()
     expect([...fake.tools.keys()]).toEqual(["dep_scan", "dep_apply"])
-    expect(fake.hooks("permission")).toEqual(["evaluate"])
+    expect(fake.hooks("permission")).toEqual([])
     expect(fake.hooks("tool")).toEqual(["execute.after"])
     expect(fake.skills.get("dep-update")).toMatchObject({ id: "dep-update", path: SKILL_PATH })
     expect(String(fake.skills.get("dep-update")?.content)).not.toMatch(/skill:\/\/|rule:\/\//)
@@ -36,9 +36,16 @@ describe("setup", () => {
     expect(fake.skills.size).toBe(0)
   })
 
-  test("the confirm option turns the gate off", async () => {
-    const { fake } = await load({ options: { confirm: false } })
+  test.each(["false", "true", 1, "yes"])("a non-boolean confirm %p registers no gate and keeps an allow", async (value) => {
+    const { fake } = await load({ options: { confirm: value } })
     expect(fake.hooks("permission")).toEqual([])
+    const evaluation = await fake.fire.permission("evaluate", { action: "dep_apply", resources: ["x@1.0.0"], effect: "allow" })
+    expect(evaluation.effect).toBe("allow")
+  })
+
+  test("the confirm option turns the gate on", async () => {
+    const { fake } = await load({ options: { confirm: true } })
+    expect(fake.hooks("permission")).toEqual(["evaluate"])
   })
 
   test("tool inputs are JSON Schema; the fixture seam is not a parameter", async () => {
@@ -201,14 +208,21 @@ describe("confirmBump", () => {
     }
   })
 
-  test("fires through the registered hook", async () => {
+  test("with confirm: true an allowed dep_apply asks and a deny stays a deny", async () => {
+    const { fake } = await load({ options: { confirm: true } })
+    const bump = { action: "dep_apply", resources: ["x@1.0.0"] }
+    expect((await fake.fire.permission("evaluate", { ...bump, effect: "allow" })).effect).toBe("ask")
+    expect((await fake.fire.permission("evaluate", { ...bump, effect: "deny" })).effect).toBe("deny")
+  })
+
+  test("by default nothing turns an allowed dep_apply into an ask", async () => {
     const { fake } = await load()
     const evaluation = await fake.fire.permission("evaluate", {
       action: "dep_apply",
       resources: ["x@1.0.0"],
       effect: "allow",
     })
-    expect(evaluation.effect).toBe("ask")
+    expect(evaluation.effect).toBe("allow")
   })
 })
 

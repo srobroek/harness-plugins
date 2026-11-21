@@ -34,7 +34,7 @@ export {
 export type RepomixOptions = { confirmPack: boolean }
 
 export function parseOptions(options: Record<string, unknown> | undefined): RepomixOptions {
-  return { confirmPack: options?.confirmPack !== false }
+  return { confirmPack: options?.confirmPack === true }
 }
 
 /** Test seam; the host never passes it. */
