@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
+import { cacheFileName } from "./cache.ts"
 import { type LibFactsOverrides, licenceBlocked, registerLibFacts } from "./index.ts"
 import { githubSlug } from "./sources.ts"
 import type { LibFacts } from "./types.ts"
@@ -215,12 +217,49 @@ describe("challenge_lib_facts on npm", () => {
     expect(facts?.missing).toEqual(["npm downloads last-week: 500 api.npmjs.org"])
   })
 
+  test.each([
+    ["a legacy-format file", (key: string) => `${createHash("sha256").update(key).digest("hex")}.json`],
+    ["a current-format file holding a whole reply", (key: string) => cacheFileName(key)],
+  ])("never serves %s from the cache", async (_name, fileFor) => {
+    const { fetch, calls } = fakeFetch(npmDemo())
+    const cacheDir = mkdtempSync(join(tmpdir(), "lib-facts-"))
+    const url = `${GH}/repos/acme/demo`
+    const whole = { at: NOW.getTime(), body: { stargazers_count: 5, node_id: "LEGACY-SENTINEL" }, link: null }
+    writeFileSync(join(cacheDir, fileFor(url)), JSON.stringify(whole))
+    const { facts, result } = await run(demo, { fetch }, { cacheDir })
+    expect(calls.urls).toContain(`GET ${url}`)
+    expect(facts?.repo?.stars).toBe(1234)
+    expect(result.content).not.toContain("SENTINEL")
+  })
+
   test("a failed source leaves only its own fields null", async () => {
     const { fetch } = fakeFetch(npmDemo({ "https://api.deps.dev/v3alpha/systems/NPM/packages/demo/versions/2.0.0:dependents": status(500) }))
     const { facts } = await run(demo, { fetch })
     expect(facts?.dependents).toBeNull()
     expect(facts?.missing).toEqual(["deps.dev dependents: 500 api.deps.dev"])
     expect(facts?.downloads?.lastWeek).toBe(10)
+  })
+
+  test.each([
+    ["both GitHub counts fail", { [`${GH}/repos/acme/demo`]: status(403), [`${GH}/search/issues?q=repo%3Aacme%2Fdemo%20type%3Apr%20state%3Aopen&per_page=1`]: status(500) }],
+    ["only the pull request count fails", { [`${GH}/search/issues?q=repo%3Aacme%2Fdemo%20type%3Apr%20state%3Aopen&per_page=1`]: status(500) }],
+  ])("reports no open-issue count when %s, rather than one that includes pull requests", async (_name, routes) => {
+    const { fetch } = fakeFetch(npmDemo(routes))
+    const { facts } = await run(demo, { fetch })
+    expect(facts?.repo?.openIssues).toBeNull()
+  })
+
+  test.each([
+    ["deps.dev says the version is deprecated", { isDeprecated: true }, true, true],
+    ["deps.dev says it is not deprecated and the registry fails", { isDeprecated: false }, false, false],
+    ["neither deps.dev nor the registry can say", {}, false, null],
+  ])("deprecated when %s", async (_name, versionDoc, registryWorks, expected) => {
+    const routes = npmDemo({
+      [`${DEPS}/NPM/packages/demo/versions/2.0.0`]: { licenses: ["MIT"], ...versionDoc },
+      ...(registryWorks ? {} : { "https://registry.npmjs.org/demo/2.0.0": status(500) }),
+    })
+    const { facts } = await run(demo, { fetch: fakeFetch(routes).fetch })
+    expect(facts?.deprecated).toBe(expected)
   })
 
   test("falls back to deps.dev counts when GitHub refuses, without counting pull requests as issues", async () => {
@@ -286,6 +325,9 @@ describe("hard gates", () => {
     ["a continuation token", () => ({ results: [{ vulns: [{ id: "A" }], next_page_token: "more" }, {}] })],
     ["vulns that is not a list", () => ({ results: [{ vulns: "none" }, {}] })],
     ["a vuln without an id", () => ({ results: [{ vulns: [{}] }, {}] })],
+    ["a null result entry", () => ({ results: [null, {}] })],
+    ["a scalar result entry", () => ({ results: [{}, 5] })],
+    ["an array result entry", () => ({ results: [[], {}] })],
   ])("an OSV reply with %s never reads as a clean pass", async (_name, reply) => {
     const { fetch } = fakeFetch(npmDemo(), reply)
     const { facts } = await run(demo, { fetch })

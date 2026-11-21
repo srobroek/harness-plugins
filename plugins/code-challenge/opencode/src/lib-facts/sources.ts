@@ -1,4 +1,4 @@
-import type { Http, Reply } from "./http.ts"
+import type { Http, Projection } from "./http.ts"
 import type { Ecosystem } from "./types.ts"
 
 export const DEPS_DEV = "https://api.deps.dev"
@@ -26,7 +26,7 @@ const goEscape = (path: string): string => path.replace(/[A-Z]/g, (c) => `!${c.t
 /** An npm registry path: a scope keeps its `@` and encodes the slash (`@scope%2Fname`). */
 const npmPath = (name: string): string => encodeURIComponent(name).replace(/^%40/, "@")
 
-export type VersionEntry = { version: string; publishedAt: string | null; isDefault: boolean; isDeprecated: boolean }
+export type VersionEntry = { version: string; publishedAt: string | null; isDefault: boolean; isDeprecated: boolean | null }
 
 export async function depsDevVersions(http: Http, ecosystem: Ecosystem, name: string): Promise<VersionEntry[]> {
   const { body } = await http.get(`${DEPS_DEV}/v3/systems/${DEPS_SYSTEM[ecosystem]}/packages/${encodeURIComponent(name)}`)
@@ -36,12 +36,12 @@ export async function depsDevVersions(http: Http, ecosystem: Ecosystem, name: st
       version: str(obj(v.versionKey).version) ?? "",
       publishedAt: str(v.publishedAt),
       isDefault: v.isDefault === true,
-      isDeprecated: v.isDeprecated === true,
+      isDeprecated: bool(v.isDeprecated),
     }
   })
 }
 
-export type DepsDevVersion = { licences: string[]; repo: string | null }
+export type DepsDevVersion = { licences: string[]; repo: string | null; isDeprecated: boolean | null }
 
 const versionUrl = (ecosystem: Ecosystem, name: string, version: string): string =>
   `${DEPS_DEV}/v3/systems/${DEPS_SYSTEM[ecosystem]}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}`
@@ -58,6 +58,7 @@ export async function depsDevVersion(http: Http, ecosystem: Ecosystem, name: str
   return {
     licences: arr(data.licenses).filter((l): l is string => typeof l === "string"),
     repo: related ?? str(repoLink?.url),
+    isDeprecated: bool(data.isDeprecated),
   }
 }
 
@@ -235,6 +236,8 @@ export async function osvVulnerabilities(
   const results = obj(body).results
   if (!Array.isArray(results) || results.length !== versions.length) throw new Error("malformed response api.osv.dev")
   return results.map((result) => {
+    // A null, scalar or array entry is not an answer: it must never pass as "no vulnerabilities".
+    if (result === null || typeof result !== "object" || Array.isArray(result)) throw new Error("malformed response api.osv.dev")
     const entry = obj(result)
     if (entry.next_page_token !== undefined) throw new Error("truncated response api.osv.dev")
     if (entry.vulns === undefined) return []
@@ -294,36 +297,55 @@ export function lastPage(link: string | null): number | null {
   return match ? Number(match[1]) : null
 }
 
+const nullable = (value: unknown, type: "number" | "string" | "boolean"): boolean => value === null || typeof value === type
+const hasOnly = (value: unknown, keys: string[]): boolean => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false
+  const found = Object.keys(value)
+  return found.length === keys.length && keys.every((key) => found.includes(key))
+}
+
 /** Repo metrics from the GitHub REST API. Each call degrades alone; `failures` lists the ones that failed. */
 export async function githubFacts(http: Http, slug: GithubSlug, token: string | undefined) {
   const headers: Record<string, string> = { accept: "application/vnd.github+json" }
   if (token) headers.authorization = `Bearer ${token}`
   const base = `${GITHUB}/repos/${encodeURIComponent(slug.owner)}/${encodeURIComponent(slug.repo)}`
   const failures: string[] = []
-  const attempt = async <T>(label: string, url: string, project: (reply: Reply) => unknown): Promise<T | undefined> => {
+  const attempt = async <T>(label: string, url: string, projection: Projection): Promise<T | undefined> => {
     try {
-      return (await http.get(url, headers, project)).body as T
+      return (await http.get(url, headers, projection)).body as T
     } catch (error) {
       failures.push(`github ${label}: ${error instanceof Error ? error.message : "failed"}`)
       return undefined
     }
   }
-  // Each projection keeps only the public fact it needs, so the cache never holds a whole authenticated reply.
+  // Each projection keeps only the public fact it needs, so the cache never holds a whole authenticated
+  // reply, and `valid` rejects a cached value of any other shape.
   const [repo, pulls, commit, contributors] = await Promise.all([
-    attempt<{ stars: number | null; openAndPulls: number | null; archived: boolean | null }>("repo", base, ({ body }) => ({
-      stars: num(obj(body).stargazers_count),
-      openAndPulls: num(obj(body).open_issues_count),
-      archived: bool(obj(body).archived),
-    })),
+    attempt<{ stars: number | null; openAndPulls: number | null; archived: boolean | null }>("repo", base, {
+      project: ({ body }) => ({
+        stars: num(obj(body).stargazers_count),
+        openAndPulls: num(obj(body).open_issues_count),
+        archived: bool(obj(body).archived),
+      }),
+      valid: (v) =>
+        hasOnly(v, ["stars", "openAndPulls", "archived"]) &&
+        nullable(obj(v).stars, "number") &&
+        nullable(obj(v).openAndPulls, "number") &&
+        nullable(obj(v).archived, "boolean"),
+    }),
     attempt<number | null>(
       "pulls",
       `${GITHUB}/search/issues?q=${encodeURIComponent(`repo:${slug.owner}/${slug.repo} type:pr state:open`)}&per_page=1`,
-      ({ body }) => num(obj(body).total_count),
+      { project: ({ body }) => num(obj(body).total_count), valid: (v) => nullable(v, "number") },
     ),
-    attempt<string | null>("commits", `${base}/commits?per_page=1`, ({ body }) =>
-      str(obj(obj(obj(arr(body)[0]).commit).committer).date),
-    ),
-    attempt<number | null>("contributors", `${base}/contributors?per_page=1&anon=true`, ({ body, link }) => lastPage(link) ?? arr(body).length),
+    attempt<string | null>("commits", `${base}/commits?per_page=1`, {
+      project: ({ body }) => str(obj(obj(obj(arr(body)[0]).commit).committer).date),
+      valid: (v) => nullable(v, "string"),
+    }),
+    attempt<number | null>("contributors", `${base}/contributors?per_page=1&anon=true`, {
+      project: ({ body, link }) => lastPage(link) ?? arr(body).length,
+      valid: (v) => nullable(v, "number"),
+    }),
   ])
   const openPullRequests = pulls ?? null
   const facts: GithubFacts = {

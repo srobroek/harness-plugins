@@ -105,7 +105,7 @@ export async function collectPackage(
     requestedVersion: requested,
     latest: { version, publishedAt },
     releases: versions ? cadence(versions, collector.now()) : null,
-    deprecated: newest ? newest.isDeprecated || registry?.deprecated === true : (registry?.deprecated ?? null),
+    deprecated: deprecation([detail?.isDeprecated, newest?.isDeprecated, registry?.deprecated]),
     yanked: registry?.yanked ?? null,
     licence,
     downloads: downloads ?? null,
@@ -123,6 +123,12 @@ export async function collectPackage(
     },
     missing,
   }
+}
+
+/** Deprecated if any source says so, not deprecated if one says so and none disagrees, unknown if none can say. */
+function deprecation(answers: ReadonlyArray<boolean | null | undefined>): boolean | null {
+  const known = answers.filter((a): a is boolean => typeof a === "boolean")
+  return known.length === 0 ? null : known.some(Boolean)
 }
 
 /** Each download call runs and fails on its own; the figures that arrived are kept. */
@@ -152,13 +158,14 @@ async function repoFacts(
   missing.push(...github.failures)
   const facts = github.facts
   if (facts.stars !== null && facts.openIssues !== null) return facts
-  // GitHub gave no counts. deps.dev mirrors stars and GitHub's open-issue count, which includes pull requests.
+  // GitHub gave no counts. deps.dev mirrors stars and GitHub's open-issue count, which includes pull
+  // requests; without the pull request count that number cannot be turned into an issue count.
   const fallback = await attempt("deps.dev project", () => depsDevProject(collector.http, slug))
   const openIssues =
     facts.openIssues ??
     (fallback?.openIssues != null && facts.openPullRequests !== null
       ? Math.max(0, fallback.openIssues - facts.openPullRequests)
-      : (fallback?.openIssues ?? null))
+      : null)
   return { ...facts, stars: facts.stars ?? fallback?.stars ?? null, openIssues }
 }
 

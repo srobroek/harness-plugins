@@ -4,10 +4,12 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 
 export const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
-/** One cached entry past this size is not stored; every entry is a trimmed fact set. */
+/** One cached entry past this many UTF-8 bytes is neither stored nor read; every entry is a trimmed fact set. */
 export const MAX_ENTRY_BYTES = 256 * 1024
-/** The sweep keeps the newest entries up to this count. */
+/** The sweep keeps the newest entries up to this count, counting the one being written. */
 export const MAX_ENTRIES = 2000
+/** Bump when what an entry holds changes: files of any other version are never read and the sweep deletes them. */
+export const CACHE_SCHEMA = "v2"
 
 export type Cached = { body: unknown; link: string | null }
 
@@ -16,10 +18,30 @@ export function defaultCacheDir(xdgCacheHome: string | undefined = process.env.X
   return join(xdgCacheHome || join(homedir(), ".cache"), "opencode", "code-challenge", "lib-facts")
 }
 
+export function cacheFileName(key: string): string {
+  return `${CACHE_SCHEMA}-${createHash("sha256").update(key).digest("hex")}.json`
+}
+
+const isEntry = (value: unknown): value is { at: number } & Cached => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false
+  const entry = value as Record<string, unknown>
+  return Number.isFinite(entry.at) && "body" in entry && (entry.link === null || typeof entry.link === "string")
+}
+
+function remove(file: string): void {
+  try {
+    unlinkSync(file)
+  } catch {
+    // Already gone, or another process removed it.
+  }
+}
+
 /**
- * A JSON-per-key disk cache with a time-to-live. Every failure reads as a miss. An expired
- * entry is deleted when read, and the first write of an instance sweeps expired files and
- * trims the directory to {@link MAX_ENTRIES}. A file's mtime is its write time.
+ * A JSON-per-key disk cache with a time-to-live. Every failure reads as a miss. A file is read
+ * only when it has the current schema name, is within {@link MAX_ENTRY_BYTES} and has the right
+ * shape; one that fails is deleted. An expired entry is deleted when read, and the first write
+ * of an instance sweeps expired and other-schema files and trims the directory to `maxEntries`.
+ * A file's mtime is its write time.
  */
 export class DiskCache {
   private swept = false
@@ -28,31 +50,33 @@ export class DiskCache {
     private readonly dir: string,
     private readonly now: () => number = Date.now,
     private readonly ttlMs = CACHE_TTL_MS,
+    private readonly maxEntries = MAX_ENTRIES,
   ) {}
 
-  private file(key: string): string {
-    return join(this.dir, `${createHash("sha256").update(key).digest("hex")}.json`)
-  }
-
-  get(key: string): Cached | undefined {
-    const file = this.file(key)
+  /**
+   * `valid` checks the body a caller expects (a trimmed projection, not a whole reply); a body
+   * that fails it is a miss.
+   */
+  get(key: string, valid: (body: unknown) => boolean = () => true): Cached | undefined {
+    const file = join(this.dir, cacheFileName(key))
     try {
-      const entry = JSON.parse(readFileSync(file, "utf8")) as { at: number } & Cached
-      if (this.now() - entry.at < this.ttlMs) return { body: entry.body, link: entry.link }
-      unlinkSync(file)
+      if (statSync(file).size > MAX_ENTRY_BYTES) throw new Error("oversized")
+      const entry: unknown = JSON.parse(readFileSync(file, "utf8"))
+      if (isEntry(entry) && this.now() - entry.at < this.ttlMs && valid(entry.body)) return { body: entry.body, link: entry.link }
     } catch {
-      // A missing or unreadable entry is a miss.
+      // Missing, oversized or unparsable: a miss.
     }
+    remove(file)
     return undefined
   }
 
   put(key: string, value: Cached): void {
     try {
       const text = JSON.stringify({ at: this.now(), ...value })
-      if (text.length > MAX_ENTRY_BYTES) return
+      if (Buffer.byteLength(text) > MAX_ENTRY_BYTES) return
       mkdirSync(this.dir, { recursive: true })
       this.sweep()
-      const target = this.file(key)
+      const target = join(this.dir, cacheFileName(key))
       const temp = `${target}.${process.pid}.tmp`
       writeFileSync(temp, text)
       utimesSync(temp, this.now() / 1000, this.now() / 1000)
@@ -70,19 +94,14 @@ export class DiskCache {
       const file = join(this.dir, name)
       try {
         const at = statSync(file).mtimeMs
-        if (this.now() - at >= this.ttlMs) unlinkSync(file)
+        const otherSchema = name.endsWith(".json") && !name.startsWith(`${CACHE_SCHEMA}-`)
+        if (otherSchema || this.now() - at >= this.ttlMs) remove(file)
         else if (name.endsWith(".json")) live.push({ file, at })
       } catch {
         // Another process may have removed it.
       }
     }
     live.sort((a, b) => a.at - b.at)
-    for (const { file } of live.slice(0, Math.max(0, live.length - MAX_ENTRIES))) {
-      try {
-        unlinkSync(file)
-      } catch {
-        // Already gone.
-      }
-    }
+    for (const { file } of live.slice(0, Math.max(0, live.length - (this.maxEntries - 1)))) remove(file)
   }
 }

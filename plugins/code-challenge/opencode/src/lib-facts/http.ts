@@ -17,6 +17,9 @@ export type HttpOptions = {
 
 export type Reply = { body: unknown; link: string | null }
 
+/** What to keep of a reply, and how to recognise a kept value when it comes back from the cache. */
+export type Projection = { project: (reply: Reply) => unknown; valid: (body: unknown) => boolean }
+
 export class HttpError extends Error {
   constructor(
     readonly status: number,
@@ -97,21 +100,22 @@ export class Http {
         }
         throw new Error(`too many redirects ${origin.host}`)
       } catch (error) {
-        if (timeout.aborted && !this.options.signal?.aborted) throw new Error(`timed out ${origin.host}`)
+        if (timeout.aborted && !this.options.signal?.aborted) throw new Error(`timed out ${origin.host}`, { cause: error })
         throw error
       }
     })
   }
 
   /**
-   * GET JSON, cached for the TTL. `headers` (a token) are not part of the cache key. `project`
-   * reduces the reply to the public facts worth keeping; only its result is cached.
+   * GET JSON, cached for the TTL. `headers` (a token) are not part of the cache key. A
+   * `projection` reduces the reply to the public facts worth keeping: only its result is cached,
+   * and a cached body that fails `valid` is a miss, so what comes back always has the projected shape.
    */
-  async get(url: string, headers: Record<string, string> = {}, project?: (reply: Reply) => unknown): Promise<Reply> {
-    const hit = this.options.cache.get(url)
+  async get(url: string, headers: Record<string, string> = {}, projection?: Projection): Promise<Reply> {
+    const hit = this.options.cache.get(url, projection?.valid)
     if (hit) return hit
     const raw = await this.send(url, { headers: { accept: "application/json", ...AGENT, ...headers } })
-    const reply: Reply = project ? { body: project(raw), link: null } : raw
+    const reply: Reply = projection ? { body: projection.project(raw), link: null } : raw
     this.options.cache.put(url, reply)
     return reply
   }
