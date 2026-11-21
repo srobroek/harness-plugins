@@ -1,3 +1,9 @@
+## model-roles [0.9.0](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.8.2...model-roles--v0.9.0) (2026-11-21)
+
+### Features
+
+* **model-roles:** add orchestrate as a built-in tier ([6895cf0](https://github.com/srobroek/harness-plugins/commit/6895cf053c03f5c1aa27854f9023fffc8955d6b8))
+
 ## model-roles [0.8.2](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.8.1...model-roles--v0.8.2) (2026-11-21)
 
 ### Bug Fixes
