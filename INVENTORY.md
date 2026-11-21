@@ -28,7 +28,7 @@
 | find-tools | 0.4.0 | development | global | opencode |
 | journeys | 0.5.0 | development | project | opencode, claude |
 | lang-go | 0.6.1 | development | global | opencode, claude |
-| lang-python | 0.6.0 | development | global | opencode, claude |
+| lang-python | 0.6.1 | development | global | opencode, claude |
 | lang-rust | 0.6.0 | development | global | opencode, claude |
 | lang-typescript | 0.7.0 | development | global | opencode, claude |
 | lsp | 0.5.0 | development | project | opencode |
