@@ -4,6 +4,7 @@ import type { Context } from "@opencode/plugin/promise/plugin"
 import type { SessionRetry } from "@opencode/plugin/promise/session"
 import { hostWarn } from "@srobroek/opencode-lib/host-log"
 import { BACKGROUND_HOLD_MS, type HoldTimer, IdleReports, SYSTEM_HOLD_TIMER } from "@srobroek/opencode-lib/idle-background"
+import { parseVerdict } from "@srobroek/opencode-lib/review-verdict"
 import { ASSESS_INTERVAL_MS, announceFindings, createThrottle, current, FINDINGS_KEY, markSeen, readFindings, unseen } from "./announce.ts"
 import { ADOPTIONS_KEY, type Adoption, type AgentAssessment, addAdoption, assess, assessmentStats, assessmentText, formatAssessments, readAdoptions, readAdoptRequest, stale, staleText } from "./assess.ts"
 import {
@@ -117,7 +118,7 @@ import {
 } from "./resolve.ts"
 import { resumeGuard, tierModels } from "./resume-guard.ts"
 import { TiersRpc } from "./rpc.ts"
-import { exitStatusOf, parseEvaluate, parseVerdict, testRun, touchesTests } from "./signals.ts"
+import { exitStatusOf, parseEvaluate, testRun, touchesTests } from "./signals.ts"
 import { configRevision, hasOverflowed, type ModelSnapshot, readSnapshot, SNAPSHOT_LIMIT, SNAPSHOT_MAX_AGE_MS, SPAWN_MODEL_KEY_PREFIX, snapshotModel, staleSnapshots, unavailableReason } from "./snapshot.ts"
 import {
   applyFrozenTierParam,

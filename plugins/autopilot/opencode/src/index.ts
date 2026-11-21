@@ -5,10 +5,12 @@ import { fileURLToPath } from "node:url"
 import { Plugin } from "@opencode/plugin"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import { withEmbeddedWriteLock } from "@srobroek/opencode-lib/bd-embedded-write-lock"
+import { readBoundedBytes } from "@srobroek/opencode-lib/bounded-read"
 import { hostWarn, type Warn } from "@srobroek/opencode-lib/host-log"
 import { withLease } from "@srobroek/opencode-lib/lease-lock"
+import { SAFE_GIT_ARGS } from "@srobroek/opencode-lib/safe-git"
 import { registerSkills } from "@srobroek/opencode-lib/skill-files"
-import { classifyScope, deadlineAt, type Invocation, parseInvocation, type RunOptions } from "./args.ts"
+import { classifyScope, deadlineAt, GRANTS, type Grant, type Invocation, parseInvocation, type RunOptions } from "./args.ts"
 import { automationRequest, type TickBinding } from "./automation.ts"
 import { Activity, BD_READ_TIMEOUT_MS, type BeadView, childFrom, commitCount, readBeads, type SessionView, sessionBusy } from "./gather.ts"
 import { type JournalEntry, LOG_INPUT_SCHEMA, validateEntry } from "./journal.ts"
@@ -34,8 +36,26 @@ import {
   recordableLane,
   reviewExportAsk,
   rootIntact,
+  type Witnessed,
 } from "./policy.ts"
-import { exportDirFor, exportReview, reviewCurrentKey, reviewManifestKey } from "./review-export.ts"
+import { claimNames, releaseClaims, takeClaims } from "./review-claim.ts"
+import { type ExportResult, exportDirFor, exportReview, reviewCurrentKey, reviewManifestKey, verifyExport } from "./review-export.ts"
+import {
+  buildReviewPrompt,
+  countNameStatus,
+  hashText,
+  MAX_REVIEW_DIFF_BYTES,
+  REVIEW_AGENT,
+  REVIEW_POINTER_ROOT,
+  type ReviewPointer,
+  type ReviewResolution,
+  readPointer,
+  resolveReview,
+  reviewMetadata,
+  reviewPointerKey,
+  reviewPointerPrefix,
+  reviewSweepKey,
+} from "./review-session.ts"
 import { autopilotRoot, findRun, type Run, RunDir, RunFileError, runCommand } from "./rundir.ts"
 import { countBeads, newRunState, type RunState, runIdFor, type Snapshot, TICK_MS, tick, tickPrompt } from "./state.ts"
 import { HANDOFF_LABEL, handoffDescription, renderSummary } from "./summary.ts"
@@ -46,7 +66,9 @@ export * from "./automation.ts"
 export * from "./gather.ts"
 export * from "./journal.ts"
 export * from "./policy.ts"
+export * from "./review-claim.ts"
 export * from "./review-export.ts"
+export * from "./review-session.ts"
 export * from "./rundir.ts"
 export * from "./state.ts"
 export * from "./state-schema.ts"
@@ -71,6 +93,10 @@ export const EXPORT_REVIEW_DESCRIPTION =
   "Export a review round for reviewers that cannot run git while the run is armed.\n" +
   "Writes the base...head diff, a diffstat, the changed files at head and a hash manifest under the run's review directory; give reviewers the returned dir and manifestHash."
 
+export const REVIEW_DESCRIPTION =
+  "Start a plugin-run review of one PR head by a code-reviewer session; returns at once.\n" +
+  "Under --allow self-review a merge may rest on its APPROVE for that exact head; autopilot_status reports the verdict."
+
 export const COMMAND_DESCRIPTION = "Run this session unattended: /autopilot [scope] [flags] | resume | review | stop"
 
 const STATUS_INPUT = {
@@ -87,7 +113,7 @@ const STATUS_INPUT = {
         scope: { type: "string" },
         ledger: { type: "string", description: "the beads ledger (.beads directory) this run reads and writes; default: derived from the scope or the session directory" },
         full: { type: "boolean" },
-        allow: { type: "array", items: { type: "string", enum: ["merge", "deploy"] } },
+        allow: { type: "array", items: { type: "string", enum: [...GRANTS] } },
         lanes: { type: "integer", minimum: 1 },
         for: { type: "string", description: "duration such as 3h" },
         until_time: { type: "string", description: "HH:MM" },
@@ -112,6 +138,16 @@ const MERGE_INPUT = {
   },
 } as const
 
+const REVIEW_INPUT = {
+  type: "object",
+  additionalProperties: false,
+  required: ["pr", "sha"],
+  properties: {
+    pr: { type: ["integer", "string"], description: "PR number" },
+    sha: { type: "string", description: "the full 40-digit head commit to review" },
+  },
+} as const
+
 const EXPORT_REVIEW_INPUT = {
   type: "object",
   additionalProperties: false,
@@ -126,7 +162,7 @@ const EXPORT_REVIEW_INPUT = {
 type StatusInput = {
   action?: "status" | "arm" | "tick" | "fallback" | "stop"
   run?: string
-  setup?: { scope?: string; ledger?: string; full?: boolean; allow?: ("merge" | "deploy")[]; lanes?: number; for?: string; until_time?: string; until?: string }
+  setup?: { scope?: string; ledger?: string; full?: boolean; allow?: Grant[]; lanes?: number; for?: string; until_time?: string; until?: string }
   automation_id?: string
   reason?: string
   token?: string
@@ -168,6 +204,12 @@ export const MAX_REPROMPTS = 2
 
 /** A bound on child-session pages per tick (100 sessions each). */
 const MAX_CHILD_PAGES = 50
+
+/** How many reviews a status report shows. */
+const MAX_REVIEWS_REPORTED = 20
+
+/** How many pointers beyond the newest one status call resolves, so every deadline is enforced over successive calls. */
+const REVIEW_SWEEP = 25
 
 const NO_LEDGER = "the run has no beads ledger to read or write"
 
@@ -291,6 +333,8 @@ export class Autopilot {
   readonly #serial = new Map<string, Promise<unknown>>()
   /** File errors already journaled, so a hook that fires on every call logs each one once. */
   readonly #reported = new Set<string>()
+  /** Storage reads that failed, by run and what was read; cleared when the same read works again. Surfaced by status. */
+  readonly #storageIssues = new Map<string, Map<string, string>>()
 
   constructor(
     readonly ctx: Context,
@@ -331,6 +375,56 @@ export class Autopilot {
         this.#report(dir, error)
       }
     }
+  }
+
+  /**
+   * A plugin-storage operation, with a failure recorded: journaled once as a blocker and kept for
+   * the status report until the same operation on the same resource works again. `label` names both
+   * (`get:<key>`, `scan:<prefix>`, `set:<key>`, `remove:<key>`). A failure is never an empty result.
+   * A caller that works in several steps passes `clear: false` and clears the label itself once it is done.
+   */
+  async #stored<T>(dir: RunDir | undefined, label: string, read: () => Promise<T>, options: { clear?: boolean } = {}): Promise<{ ok: true; value: T } | { ok: false; reason: string }> {
+    const issues = dir === undefined ? undefined : (this.#storageIssues.get(dir.runId) ?? this.#storageIssues.set(dir.runId, new Map()).get(dir.runId))
+    try {
+      const value = await read()
+      if (options.clear !== false) issues?.delete(label)
+      return { ok: true, value }
+    } catch (error) {
+      const reason = `plugin storage failed (${label}): ${errorText(error)}`
+      issues?.set(label, reason)
+      if (dir !== undefined && !this.#reported.has(`storage:${reason}`)) {
+        this.#reported.add(`storage:${reason}`)
+        try {
+          dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: reason, parked: true })
+        } catch (appendError) {
+          this.#warn("could not journal a storage failure", { error: errorText(appendError) })
+        }
+      }
+      return { ok: false, reason }
+    }
+  }
+
+  /** Every entry under `prefix`, following `next` to the end; `undefined` (recorded) when any page cannot be read. Its failure clears only when this same scan completes. */
+  async #scanAll(dir: RunDir | undefined, prefix: string): Promise<{ key: string; value: unknown }[] | undefined> {
+    const label = `scan:${prefix}`
+    const entries: { key: string; value: unknown }[] = []
+    let after: string | undefined
+    for (;;) {
+      const page = await this.#stored(dir, label, () => this.ctx.storage.scan({ prefix, limit: STORAGE_PAGE, ...(after !== undefined ? { after } : {}) }), { clear: false })
+      if (!page.ok) return undefined
+      entries.push(...page.value.entries)
+      if (page.value.next === undefined || page.value.entries.length === 0 || page.value.next === after) {
+        if (dir !== undefined) this.#storageIssues.get(dir.runId)?.delete(label)
+        return entries
+      }
+      after = page.value.next
+    }
+  }
+
+  /** The run directory of an armed lead. */
+  #dirOfLead(lead: string): RunDir | undefined {
+    const armed = this.armed.get(lead)
+    return armed ? new RunDir(armed.root, armed.runId) : undefined
   }
 
   /** Journal a run file failure as a blocker once, and warn when even that fails. */
@@ -637,6 +731,8 @@ export class Autopilot {
       for (const due of result.actions)
         if (due.kind === "park") dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: due.reason, bead: due.item, parked: true })
     }
+    const reviews = await this.#reviews(state.sessionID)
+    const storageErrors = [...(this.#storageIssues.get(dir.runId)?.values() ?? [])]
     const out = {
       ping: result.ping,
       progress: result.progress,
@@ -646,6 +742,8 @@ export class Autopilot {
       parked: result.state.parked,
       idleTicks: action === "tick" ? result.state.idleTicks : state.idleTicks,
       ...(result.stop ? { stop: result.stop } : {}),
+      ...(reviews.length ? { reviews } : {}),
+      ...(storageErrors.length ? { storageErrors } : {}),
     }
     if (result.stop !== undefined && action === "tick")
       return { ...out, done: true, prompt: `Autopilot is stopping: ${result.stop}. Call autopilot_status with action "stop" and reason "${result.stop}", then print the summary and end.` }
@@ -905,7 +1003,8 @@ export class Autopilot {
 
   /** The real path of the export directory the run made last, when it is still a plain directory. */
   async #currentExport(dir: RunDir): Promise<string | undefined> {
-    const current = (await this.ctx.storage.get(reviewCurrentKey(dir.runId)).catch(() => undefined)) as { head?: unknown; manifestHash?: unknown } | undefined
+    const read = await this.#stored(dir, `get:${reviewCurrentKey(dir.runId)}`, () => this.ctx.storage.get(reviewCurrentKey(dir.runId)))
+    const current = (read.ok ? read.value : undefined) as { head?: unknown; manifestHash?: unknown } | undefined
     if (typeof current?.head !== "string" || typeof current.manifestHash !== "string") return undefined
     const exported = exportDirFor(dir.path, current.head, current.manifestHash)
     return exported === undefined ? undefined : identifyRoot(exported, lstatProbe, realPath)?.real
@@ -988,7 +1087,12 @@ export class Autopilot {
       api(`rules/branches/${base}`),
       this.#gh(cwd, ["repo", "view", "--json", "squashMergeAllowed,rebaseMergeAllowed,mergeCommitAllowed"]),
     ])
-    const refusal = mergeRefusal({ sha, method, view, reviews, runs, status, protection, rules, repo })
+    const running = await this.runningFor(sessionID)
+    const granted = running?.state?.options.allow.includes("self-review") === true
+    const witness = granted && running ? await this.#resolveReview(running.lead, pr, sha) : undefined
+    if (witness?.state === "unreadable") return refuse(`the plugin review record could not be read, so the merge cannot rest on it (${witness.reason})`)
+    const witnessed: Witnessed = { granted, approvedSha: witness?.state === "done" && witness.record.verdict === "approve" ? witness.record.sha : undefined }
+    const refusal = mergeRefusal({ sha, method, view, reviews, runs, status, protection, rules, repo, witnessed })
     if (refusal !== undefined) return refuse(refusal)
     // Re-read right before merging: a retarget or a push since the reads above voids them.
     const drift = mergeDrift({ view: await this.#gh(cwd, ["pr", "view", pr, "--json", "baseRefName,headRefOid"]), base, sha })
@@ -998,7 +1102,8 @@ export class Autopilot {
     if (!put.ok) return refuse(put.reason)
     const outcome = mergeOutcome(await this.#gh(cwd, ["pr", "view", pr, "--json", "state,headRefOid,mergeCommit,autoMergeRequest"]), sha)
     if (!outcome.ok) return refuse(outcome.reason)
-    await journal({ type: "action", summary: `merged #${pr} at ${sha} (${method}) as ${put.sha}`, evidence: sha })
+    const note = witness?.state === "done" && witnessed.approvedSha === sha ? `; plugin review ${witness.record.reviewerSession} approved this head` : ""
+    await journal({ type: "action", summary: `merged #${pr} at ${sha} (${method}) as ${put.sha}${note}`, evidence: sha })
     return `merged #${pr} at ${sha} with ${method}`
   }
 
@@ -1012,15 +1117,249 @@ export class Autopilot {
     if (!running?.state) return "refused: no running autopilot run for this session"
     const pr = String(input.pr ?? "").trim()
     if (!/^\d{1,9}$/.test(pr) || Number(pr) < 1) return "refused: pr must be a positive PR number"
-    const result = await exportReview({ run: this.#run, cwd: running.state.directory, runDir: running.dir.path, base: input.base, head: input.head })
-    if (!result.ok) return `refused: ${result.reason}`
+    const result = await this.#publishExport({ dir: running.dir, state: running.state }, pr, input.base, input.head)
+    return result.ok ? JSON.stringify(result.exported, null, 2) : `refused: ${result.reason}`
+  }
+
+  /** Export a round and record its manifest hash by PR and head, and as the run's current export. */
+  async #publishExport(running: { dir: RunDir; state: RunState }, pr: string, base: unknown, head: unknown): Promise<{ ok: true; exported: Extract<ExportResult, { ok: true }> } | { ok: false; reason: string }> {
+    const result = await exportReview({ run: this.#run, cwd: running.state.directory, runDir: running.dir.path, base, head })
+    if (!result.ok) return result
     try {
       await this.ctx.storage.set(reviewManifestKey(Number(pr), result.head), { manifestHash: result.manifestHash })
       await this.ctx.storage.set(reviewCurrentKey(running.dir.runId), { head: result.head, manifestHash: result.manifestHash })
     } catch (error) {
-      return `refused: the export was written but its manifest hash could not be recorded (${errorText(error)}); export again`
+      return { ok: false, reason: `the export was written but its manifest hash could not be recorded (${errorText(error)}); export again` }
     }
-    return JSON.stringify(result, null, 2)
+    return { ok: true, exported: result }
+  }
+
+  // --- plugin-run review ----------------------------------------------------------------------
+
+  /**
+   * Start a review of one PR head by a `code-reviewer` child session the plugin creates, and return
+   * at once. The export is verified against its stored manifest hash right before the prompt, and
+   * only a pointer to the child is kept; the verdict is derived later by {@link resolveReview}.
+   */
+  async review(sessionID: string, input: { pr?: unknown; sha?: unknown }): Promise<string> {
+    const running = await this.runningFor(sessionID)
+    if (!running?.state) return "refused: no running autopilot run for this session"
+    const pr = String(input.pr ?? "").trim()
+    const sha = String(input.sha ?? "").trim().toLowerCase()
+    if (!/^\d{1,9}$/.test(pr) || Number(pr) < 1) return "refused: pr must be a positive PR number"
+    if (!/^[0-9a-f]{40}$/.test(sha)) return "refused: sha must be the full 40-digit head commit"
+    const { lead, dir, state } = running as typeof running & { state: RunState }
+    // Before anything else, and before any reviewer session exists: a head is reviewed at most once.
+    const names = claimNames(pr, sha)
+    const claim = takeClaims(dir.root, names, `${ID}/${dir.runId}/${randomUUID()}`)
+    if (!claim.ok) {
+      if ("error" in claim) return `refused: could not take the review claim (${claim.error})`
+      const existing = await this.#resolveReview(lead, pr, sha)
+      if (existing?.state === "unreadable") return JSON.stringify({ started: false, state: "unreadable", reason: existing.reason })
+      const note = "this head already has a review; it is never reviewed twice"
+      if (existing?.state === "done") return JSON.stringify({ started: false, state: "done", verdict: existing.record.verdict, reviewer: existing.record.reviewerSession, note })
+      if (existing?.state === "void") return JSON.stringify({ started: false, state: "void", reason: existing.reason, note })
+      return JSON.stringify({ started: false, state: "pending", note })
+    }
+    const giveBack = () => {
+      try {
+        releaseClaims(dir.root, names)
+      } catch (error) {
+        this.#journalIssue(dir, `could not release the review claim of #${pr} at ${sha}: ${errorText(error)}`)
+      }
+    }
+    // Second line, in plugin storage: any pointer for this head under any PR number or lead, whatever became of it.
+    const pointers = await this.#scanAll(dir, REVIEW_POINTER_ROOT)
+    if (pointers === undefined) {
+      giveBack()
+      return "refused: plugin storage could not be read, so it is unknown whether this head was reviewed; the failure is logged as a blocker"
+    }
+    if (pointers.some((entry) => entry.key.endsWith(`@${sha}`))) {
+      giveBack()
+      return "refused: plugin storage already holds a review pointer for this head; it is never reviewed twice"
+    }
+    // The claim is given back only when this start was refused and left no reviewer behind.
+    const hold = { keep: false }
+    let result: string
+    try {
+      result = await this.#startReview({ lead, dir, state, sessionID, pr, sha, hold })
+    } catch (error) {
+      hold.keep = true
+      this.#journalIssue(dir, `review of #${pr} at ${sha} failed unexpectedly and its claim was kept: ${errorText(error)}`)
+      throw error
+    }
+    if (result.startsWith("refused:") && !hold.keep) giveBack()
+    return result
+  }
+
+  async #startReview(input: { lead: string; dir: RunDir; state: RunState; sessionID: string; pr: string; sha: string; hold: { keep: boolean } }): Promise<string> {
+    const { lead, dir, state, sessionID, pr, sha, hold } = input
+    const agent = await this.ctx.agent.get({ agentID: REVIEW_AGENT } as never).then(
+      (output) => {
+        const value = output as unknown as { data?: { id?: unknown } } | { id?: unknown } | undefined
+        return (value && "data" in value ? value.data : (value as { id?: unknown } | undefined))?.id === REVIEW_AGENT
+      },
+      () => false,
+    )
+    if (!agent) return `refused: the ${REVIEW_AGENT} agent is not available`
+
+    // GitHub's own account of the PR: its state, head, and the base commit its diff is against.
+    const cwd = await this.#sessionDirectory(sessionID)
+    const pull = (await this.#gh(cwd, ["api", `repos/{owner}/{repo}/pulls/${pr}`])) as
+      | { state?: unknown; head?: { sha?: unknown }; base?: { sha?: unknown }; changed_files?: unknown }
+      | undefined
+    if (pull?.state !== "open") return `refused: PR state is ${String(pull?.state ?? "unreadable")}, expected open`
+    const headSha = typeof pull.head?.sha === "string" ? pull.head.sha.toLowerCase() : undefined
+    if (headSha !== sha) return `refused: PR head is ${headSha ?? "unreadable"}, not ${sha}`
+    const baseSha = typeof pull.base?.sha === "string" ? pull.base.sha.toLowerCase() : ""
+    if (!/^[0-9a-f]{40}$/.test(baseSha)) return "refused: GitHub did not report the PR's base commit"
+    // A fetch that fails is not fatal by itself: the commit may already be here. Presence is what counts.
+    await this.#run(state.directory, "git", [...SAFE_GIT_ARGS, "fetch", "--no-tags", "--quiet", "origin", baseSha], GH_TIMEOUT_MS)
+    const present = await this.#run(state.directory, "git", [...SAFE_GIT_ARGS, "rev-parse", "--verify", "--quiet", `${baseSha}^{commit}`], GH_TIMEOUT_MS)
+    if (!present.ok) return `refused: the base commit ${baseSha} is not present locally and could not be fetched`
+
+    const published = await this.#publishExport({ dir, state }, pr, baseSha, sha)
+    if (!published.ok) return `refused: ${published.reason}`
+    const { exported } = published
+    if (exported.head !== sha) return `refused: ${sha} resolved to ${exported.head}`
+    const changedFiles = typeof pull.changed_files === "number" ? pull.changed_files : undefined
+    if (changedFiles === undefined) return "refused: GitHub did not report how many files the PR changes"
+    // GitHub counts each changed path once and a rename as one file, which is `git diff --name-status -M`.
+    const counted = await this.#run(state.directory, "git", [...SAFE_GIT_ARGS, "diff", "--name-status", "-M", "-z", "--no-color", "--no-ext-diff", "--no-textconv", `${baseSha}...${sha}`, "--"], GH_TIMEOUT_MS)
+    if (!counted.ok) return "refused: could not count the files the PR changes"
+    const ours = countNameStatus(counted.stdout)
+    if (ours !== changedFiles) return `refused: the export changes ${ours} files but GitHub reports ${changedFiles}; the base is not the one GitHub diffs against`
+    const recorded = await this.#stored(dir, `get:${reviewManifestKey(Number(pr), sha)}`, () => this.ctx.storage.get(reviewManifestKey(Number(pr), sha)))
+    if (!recorded.ok) return `refused: ${recorded.reason}`
+    const manifestHash = typeof (recorded.value as { manifestHash?: unknown } | undefined)?.manifestHash === "string" ? (recorded.value as { manifestHash: string }).manifestHash : ""
+    const checked = verifyExport(exported.dir, manifestHash)
+    if (!checked.ok) return `refused: the export does not match its recorded hash (${checked.reason})`
+    // What the recorded diff holds is what is reviewed: an empty one is nothing to review. A deletion-only PR has no files at head but a diff.
+    if (checked.manifest.diff.bytes === 0) return `refused: the diff is empty, so there is nothing to review (GitHub reports ${changedFiles} changed files)`
+    const read = readBoundedBytes(join(exported.dir, "round.diff"), MAX_REVIEW_DIFF_BYTES)
+    if (read.kind === "unreadable" && read.reason === "too-large") return `refused: the diff is larger than the ${MAX_REVIEW_DIFF_BYTES} bytes a review prompt carries; narrow the round`
+    // The bytes the prompt carries must be the bytes the manifest recorded, not whatever the file holds now.
+    if (read.kind !== "bytes" || hashText(read.bytes) !== checked.manifest.diff.sha256) return "refused: the exported diff could not be read as recorded"
+    const diff = read.bytes.toString("utf8")
+    const delimiter = randomUUID().replaceAll("-", "")
+    if (diff.includes(delimiter)) return "refused: the diff contains the prompt delimiter; start again"
+    const nonce = randomUUID()
+    const prompt = buildReviewPrompt({ pr, sha, dir: exported.dir, manifestHash, nonce, delimiter, diff })
+
+    const key = reviewPointerKey(lead, pr, sha)
+    const child = await this.ctx.session
+      .create({
+        parentID: lead,
+        agent: REVIEW_AGENT,
+        title: `autopilot review of #${pr}`,
+        location: { directory: cwd },
+        metadata: reviewMetadata({ pr, sha, nonce }),
+        // The agent already denies all but reads; these hold if its rules are looser.
+        permissions: ["edit", "shell", "subagent", "autopilot_*"].map((action) => ({ action, resource: "*", effect: "deny" as const })),
+      })
+      .catch((error: unknown) => errorText(error))
+    if (typeof child === "string") return `refused: could not create the reviewer session (${child})`
+    const pointer: ReviewPointer = { pr, sha, session: child.id, nonce, promptHash: hashText(prompt), manifestHash, at: this.#now() }
+    // A refused start removes the pointer and the session. A removal that fails is journaled and the
+    // claim is kept, since a reviewer may still exist.
+    const abandon = async (reason: string): Promise<string> => {
+      const failures: string[] = []
+      await Promise.resolve()
+        .then(() => this.ctx.storage.remove(key))
+        .catch((error: unknown) => void failures.push(`pointer ${key}: ${errorText(error)}`))
+      await Promise.resolve()
+        .then(() => this.ctx.session.remove({ sessionID: child.id }))
+        .catch((error: unknown) => void failures.push(`session ${child.id}: ${errorText(error)}`))
+      if (failures.length > 0) {
+        hold.keep = true
+        this.#journalIssue(dir, `review of #${pr} at ${sha} was refused (${reason}) but cleanup failed: ${failures.join("; ")}`)
+      }
+      return `refused: ${reason}`
+    }
+    try {
+      await this.ctx.storage.set(key, pointer)
+    } catch (error) {
+      return abandon(`could not record the review (${errorText(error)})`)
+    }
+    // Immediately before the prompt: a change to the export since the check above refuses the review.
+    const again = verifyExport(exported.dir, manifestHash)
+    if (!again.ok) return abandon(`the export changed before the prompt (${again.reason})`)
+    try {
+      await this.ctx.session.prompt({ sessionID: child.id, text: prompt, metadata: reviewMetadata(pointer) })
+    } catch (error) {
+      return abandon(`could not prompt the reviewer (${errorText(error)})`)
+    }
+    return JSON.stringify({ started: true, session: child.id, pr, sha, manifestHash, note: "returns at once; autopilot_status reports the verdict under reviews" })
+  }
+
+  /** The review of one head started by `lead`, as the host's own record of the reviewer says; `undefined` when none was started, `unreadable` when storage could not say. */
+  async #resolveReview(lead: string, pr: string, sha: string): Promise<ReviewResolution | { state: "unreadable"; reason: string } | undefined> {
+    const stored = await this.#stored(this.#dirOfLead(lead), `get:${reviewPointerKey(lead, pr, sha)}`, () => this.ctx.storage.get(reviewPointerKey(lead, pr, sha)))
+    if (!stored.ok) return { state: "unreadable", reason: stored.reason }
+    const pointer = readPointer(stored.value, pr, sha)
+    return pointer === undefined ? undefined : this.#resolvePointer(lead, pointer)
+  }
+
+  /** Re-read the reviewer from the host, never from a file; a reviewer past its deadline is interrupted. */
+  async #resolvePointer(lead: string, pointer: ReviewPointer): Promise<ReviewResolution> {
+    const [session, messages] = await Promise.all([
+      this.ctx.session.get({ sessionID: pointer.session }).catch(() => undefined),
+      this.ctx.session.context({ sessionID: pointer.session }).catch(() => undefined),
+    ])
+    const resolution = resolveReview({ pointer, lead, session, messages, now: this.#now() })
+    if (resolution.state !== "expired") return resolution
+    await this.ctx.session.interrupt({ sessionID: pointer.session }).catch((error: unknown) => this.#warn("could not interrupt a reviewer past its deadline", { error: errorText(error) }))
+    return { state: "void", reason: "the reviewer passed its deadline and was interrupted" }
+  }
+
+  /**
+   * The state of the newest reviews `lead` started, for the status report. Each call also resolves
+   * the next {@link REVIEW_SWEEP} pointers after a cursor kept in plugin storage (wrapping at the
+   * end), so every pointer meets its deadline within a few calls however many there are.
+   */
+  async #reviews(lead: string): Promise<Record<string, unknown>[]> {
+    const dir = this.#dirOfLead(lead)
+    const prefix = reviewPointerPrefix(lead)
+    const scanned = await this.#scanAll(dir, prefix)
+    if (scanned === undefined) return []
+    const all = scanned.flatMap((entry) => {
+      const [pr, sha] = entry.key.slice(prefix.length).split("@")
+      const pointer = pr === undefined || sha === undefined ? undefined : readPointer(entry.value, pr, sha)
+      return pointer === undefined ? [] : [{ key: entry.key, pointer }]
+    })
+    const newest = [...all].sort((a, b) => b.pointer.at - a.pointer.at).slice(0, MAX_REVIEWS_REPORTED)
+    const byKey = [...all].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    const cursorKey = reviewSweepKey(lead)
+    // A cursor that cannot be read stops the sweep: no default to the start, and no write over it.
+    const cursor = await this.#stored(dir, `get:${cursorKey}`, () => this.ctx.storage.get(cursorKey))
+    let slice: typeof byKey = []
+    if (cursor.ok) {
+      const after = typeof cursor.value === "string" ? cursor.value : undefined
+      const from = after === undefined ? 0 : Math.max(0, byKey.findIndex((entry) => entry.key > after))
+      slice = byKey.slice(from, from + REVIEW_SWEEP)
+      const last = slice.at(-1)
+      if (from + slice.length >= byKey.length || last === undefined) await this.#stored(dir, `remove:${cursorKey}`, () => this.ctx.storage.remove(cursorKey))
+      else await this.#stored(dir, `set:${cursorKey}`, () => this.ctx.storage.set(cursorKey, last.key))
+    }
+
+    const items = new Map<string, Record<string, unknown>>()
+    for (const { key, pointer } of [...newest, ...slice]) {
+      if (items.has(key)) continue
+      const { pr, sha } = pointer
+      const resolution = await this.#resolvePointer(lead, pointer)
+      items.set(
+        key,
+        resolution.state === "done"
+          ? { pr, sha, state: "done", verdict: resolution.record.verdict, reviewer: resolution.record.reviewerSession }
+          : resolution.state === "void"
+            ? { pr, sha, state: "void", reason: resolution.reason }
+            : { pr, sha, state: "pending" },
+      )
+    }
+    return newest.flatMap((entry) => {
+      const item = items.get(entry.key)
+      return item === undefined ? [] : [item]
+    })
   }
 
   /** Re-prompts a lead whose turn ended in a question, at most {@link MAX_REPROMPTS} times in a row. */
@@ -1088,6 +1427,12 @@ export async function setupAutopilot(ctx: Context, deps: Deps = {}): Promise<() 
         description: MERGE_DESCRIPTION,
         input: MERGE_INPUT,
         execute: async (input, tool) => ({ content: await pilot.merge(tool.sessionID, input as { pr?: unknown; sha?: unknown; method?: unknown }) }),
+      })
+      editor.add({
+        name: "autopilot_review",
+        description: REVIEW_DESCRIPTION,
+        input: REVIEW_INPUT,
+        execute: async (input, tool) => ({ content: await pilot.review(tool.sessionID, input as { pr?: unknown; sha?: unknown }) }),
       })
       editor.add({
         name: "autopilot_export_review",

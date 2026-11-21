@@ -26,6 +26,8 @@ you to.
      directory, and refuses to arm when it cannot. Pass it as `setup.ledger`.
    - `--full`: decide irreversible items too (recommend no)
    - permissions: `merge` and `deploy` grants (recommend none)
+   - `self-review` (recommend no): lets a merge rest on the plugin-run review
+     (`autopilot_review`) instead of a GitHub approval
    - parallel write lanes: any whole number (recommend 3)
    - budget: a duration (`3h`) or a clock time (`18:00`)
    - a free-text stop condition (optional)
@@ -142,6 +144,21 @@ when the tool says merged; the tool re-reads the PR to confirm it. When the only
 reviewer is the PR author's own account, log a blocker and park the item. A
 deployment (stack create, update or delete) needs `--allow deploy`; that grant
 decides what you do and never approves a permission prompt.
+
+Under `--allow self-review` a merge may rest on a review the plugin runs itself.
+Call `autopilot_review({ pr, sha })` with the PR head; it returns at once. The
+plugin exports the round, starts a `code-reviewer` session and sends it one
+prompt. Read the verdict under `reviews` in `autopilot_status`: `pending`,
+`done` with `approve` or `request-changes`, or `void` with a reason. The verdict
+comes from the host's record of that session, so you cannot write or edit it.
+Do not message the reviewer session: a follow-up voids the review, and a head
+that has a finished review is not reviewed again. Only an `approve` for exactly
+the head you merge replaces the GitHub approval; checks, required contexts and
+the base and head re-reads still apply, and branch protection that requires an
+approving review still refuses the merge. This is weaker than a second
+GitHub account: writes by the same user to the scratch area, the host database
+or the server API are out of scope. A head is reviewed once; do not look for a
+second review of it.
 
 ## Lanes
 

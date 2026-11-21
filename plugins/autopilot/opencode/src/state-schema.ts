@@ -14,7 +14,7 @@ const ScopeSchema = Schema.Union([
 const OptionsSchema = Schema.Struct({
   scope: Schema.optionalKey(Schema.String),
   full: Schema.Boolean,
-  allow: Schema.Array(Schema.Literals(["merge", "deploy"])),
+  allow: Schema.Array(Schema.Literals(["merge", "deploy", "self-review"])),
   lanes: Schema.Finite,
   forMs: Schema.optionalKey(Schema.Finite),
   untilTime: Schema.optionalKey(Schema.String),
