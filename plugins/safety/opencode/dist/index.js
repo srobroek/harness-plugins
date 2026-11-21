@@ -6059,7 +6059,7 @@ function createRedactor(env, options = DEFAULT_REDACT) {
 }
 
 // plugins/safety/opencode/src/scratch-dirs.ts
-import { existsSync as existsSync4, lstatSync as lstatSync2, realpathSync as realpathSync6 } from "fs";
+import { existsSync as existsSync4, lstatSync as lstatSync2, readlinkSync, realpathSync as realpathSync6 } from "fs";
 import { homedir as homedir6, tmpdir as tmpdir2 } from "os";
 import { basename as basename4, dirname as dirname5, isAbsolute as isAbsolute9, join as join8, relative as relative3, sep } from "path";
 function scratchRoots(projectID, where = {}) {
@@ -6084,14 +6084,28 @@ function realRoots(directories) {
   }
   return roots;
 }
-function resolved(path) {
+var MAX_LINKS = 40;
+function resolved(path, links = 0) {
   const missing = [];
   let at = path;
-  while (!existsSync4(at) && dirname5(at) !== at) {
+  while (!present(at) && dirname5(at) !== at) {
     missing.unshift(basename4(at));
     at = dirname5(at);
   }
-  return join8(realpathSync6(at), ...missing);
+  if (existsSync4(at))
+    return join8(realpathSync6(at), ...missing);
+  if (links >= MAX_LINKS)
+    throw new Error(`too many symbolic links: ${path}`);
+  const target = readlinkSync(at);
+  return join8(resolved(isAbsolute9(target) ? target : join8(dirname5(at), target), links + 1), ...missing);
+}
+function present(path) {
+  try {
+    lstatSync2(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 function inside(resource, roots) {
   const expanded = resource === "~" || resource.startsWith("~/") ? join8(homedir6(), resource.slice(1)) : resource;
