@@ -1,3 +1,9 @@
+## code-challenge [1.3.0](https://github.com/srobroek/harness-plugins/compare/code-challenge--v1.2.0...code-challenge--v1.3.0) (2026-11-21)
+
+### Features
+
+* **code-challenge:** challenge_scan analyzer recipes and runner ([73df850](https://github.com/srobroek/harness-plugins/commit/73df850a716a6e3aa2dbbb2f70227031d52302c3))
+
 ## code-challenge [1.2.0](https://github.com/srobroek/harness-plugins/compare/code-challenge--v1.1.0...code-challenge--v1.2.0) (2026-11-21)
 
 ### Features
