@@ -1,3 +1,9 @@
+## delivery [0.9.3](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.2...delivery--v0.9.3) (2026-11-21)
+
+### Bug Fixes
+
+* **delivery:** refuse already-cleaned when a worktree reappeared at the recorded path ([360d865](https://github.com/srobroek/harness-plugins/commit/360d865a2008522c134d13b898767086892c0da4))
+
 ## delivery [0.9.2](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.1...delivery--v0.9.2) (2026-11-20)
 
 ### Bug Fixes
