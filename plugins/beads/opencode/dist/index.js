@@ -3944,13 +3944,14 @@ function beadIdCandidates(command) {
   return ids;
 }
 function optionValue(args, names) {
-  for (const name of names) {
-    const index = args.indexOf(name);
-    if (index >= 0)
-      return args[index + 1];
-    const inline = args.find((arg) => arg.startsWith(`${name}=`));
-    if (inline !== undefined)
-      return inline.slice(name.length + 1);
+  for (let index = 0;index < args.length; index++) {
+    const token = args[index] ?? "";
+    const name = token.split("=", 1)[0] ?? token;
+    const inline = token.includes("=");
+    if (names.includes(name))
+      return inline ? token.slice(name.length + 1) : args[index + 1];
+    if (!inline && TRANSITION_VALUE_FLAGS[name] === true)
+      index++;
   }
   return;
 }

@@ -72,6 +72,15 @@ describe("which claims are renewed", () => {
     expect(leaseEndingIds(bdInvocations("bd update hb-1 --priority 2 --status blocked"))).toEqual(["hb-1"])
   })
 
+  test("flag-looking text after a value flag is a value, not an option", () => {
+    // `--title` takes the next word whatever it looks like, so no status or assignee is set here.
+    expect(leaseEndingIds(bdInvocations("bd update hb-1 --title --status --json"))).toEqual([])
+    expect(leaseEndingIds(bdInvocations("bd update hb-1 --notes -s open"))).toEqual([])
+    const claimed = claims(["bd update hb-1 --claim"])
+    const retitled = claims(["bd update hb-1 --claim", "bd update hb-1 --title --assignee someone", "bd update hb-1 --notes --status closed"])
+    expect(Object.keys(retitled.claims)).toEqual(Object.keys(claimed.claims))
+  })
+
   test("a claim whose actor is unknown is not renewed", () => {
     const state = readClaimState({ claims: { k: { id: "hb-1", actor: null, store: "/repo/.beads" } }, actors: [] })
     expect(nextLeases({}, readClaimState(undefined), state, [])).toEqual({})
