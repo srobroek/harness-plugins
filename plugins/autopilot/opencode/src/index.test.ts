@@ -413,7 +413,8 @@ describe("autopilot_merge", () => {
   const ok = (value: unknown) => ({ ok: true, stdout: JSON.stringify(value), stderr: "" })
   const ready = () => {
     ghReplies = {
-      "pr view": ok({ state: "OPEN", headRefOid: SHA, baseRefName: "main", author: { login: "bot" } }),
+      baseRefName: ok({ state: "OPEN", headRefOid: SHA, baseRefName: "main", author: { login: "bot" } }),
+      "mergeCommit,autoMergeRequest": ok({ state: "MERGED", headRefOid: SHA, mergeCommit: { oid: "f".repeat(40) }, autoMergeRequest: null }),
       "pulls/12/reviews": ok([[{ user: { login: "rev" }, state: "APPROVED", commit_id: SHA }]]),
       "/check-runs": ok([{ check_runs: [{ name: "ci", status: "completed", conclusion: "success" }] }]),
       "/status": ok([{ state: "success", statuses: [] }]),
@@ -422,7 +423,8 @@ describe("autopilot_merge", () => {
       "repo view": ok({ squashMergeAllowed: true, rebaseMergeAllowed: false, mergeCommitAllowed: true }),
     }
   }
-  const merged = () => calls.filter((call) => call.command === "gh" && call.args[1] === "merge")
+  const merged = () => calls.filter((call) => call.command === "gh" && call.args.includes("--match-head-commit"))
+  const disabled = () => calls.filter((call) => call.command === "gh" && call.args.includes("--disable-auto"))
   const ask = (resource: string, action = "autopilot_merge") =>
     fake.fire.permission("evaluate", { sessionID: "ses_lead", action, resources: [resource], effect: "ask", message: undefined as string | undefined })
 
@@ -467,7 +469,7 @@ describe("autopilot_merge", () => {
   })
 
   const refused: [string, () => void, string][] = [
-    ["the PR head is not the given SHA", () => (ghReplies["pr view"] = ok({ state: "OPEN", headRefOid: "d".repeat(40), baseRefName: "main", author: { login: "bot" } })), "head"],
+    ["the PR head is not the given SHA", () => (ghReplies.baseRefName = ok({ state: "OPEN", headRefOid: "d".repeat(40), baseRefName: "main", author: { login: "bot" } })), "head"],
     ["the only approval is a verdict comment", () => (ghReplies["pulls/12/reviews"] = ok([[]])), "approval"],
     ["the only approval is the author's own", () => (ghReplies["pulls/12/reviews"] = ok([[{ user: { login: "bot" }, state: "APPROVED", commit_id: SHA }]])), "approval"],
     ["the approval is for an older commit", () => (ghReplies["pulls/12/reviews"] = ok([[{ user: { login: "rev" }, state: "APPROVED", commit_id: "e".repeat(40) }]])), "approval"],
@@ -485,12 +487,78 @@ describe("autopilot_merge", () => {
     expect(journal().at(-1)).toMatchObject({ type: "issue", summary: expect.stringContaining("#12") })
   })
 
-  test("unreadable protection falls back to the all-green rule and merges", async () => {
+  test("a branch with no protection (404 Branch not protected) and no rules merges", async () => {
     await armed({ allow: ["merge"] })
     ready()
-    ghReplies.required_status_checks = { ok: false, stdout: "", stderr: "HTTP 404" }
-    ghReplies["rules/branches"] = { ok: false, stdout: "", stderr: "HTTP 403" }
+    ghReplies.required_status_checks = { ok: false, stdout: "", stderr: "gh: Branch not protected (HTTP 404)" }
     expect((await merge()).content).toContain("merged #12")
+  })
+
+  test.each([
+    ["the rulesets cannot be read", () => (ghReplies["rules/branches"] = { ok: false, stdout: "", stderr: "HTTP 403" })],
+    ["branch protection cannot be read", () => (ghReplies.required_status_checks = { ok: false, stdout: "", stderr: "HTTP 403: Resource not accessible" })],
+  ])("refuses when %s, and merges nothing", async (_name, unread) => {
+    await armed({ allow: ["merge"] })
+    ready()
+    unread()
+    expect((await merge()).content).toContain("unreadable")
+    expect(merged()).toEqual([])
+    expect(journal().at(-1)).toMatchObject({ type: "issue" })
+  })
+
+  test("refuses a base branch behind a merge queue, journals it, and never merges or passes --auto", async () => {
+    await armed({ allow: ["merge"] })
+    ready()
+    ghReplies["rules/branches"] = ok([[{ type: "merge_queue", parameters: {} }]])
+    expect((await merge()).content).toContain("merge queues unsupported")
+    expect(merged()).toEqual([])
+    expect(journal().at(-1)).toMatchObject({ type: "issue", summary: expect.stringContaining("merge queues unsupported") })
+  })
+
+  test("never passes --auto or --admin to gh pr merge", async () => {
+    await armed({ allow: ["merge"] })
+    ready()
+    await merge()
+    expect(merged().flatMap((call) => call.args)).not.toContain("--auto")
+    expect(merged().flatMap((call) => call.args)).not.toContain("--admin")
+  })
+
+  test("re-reads the PR after merging and reports success only from that read", async () => {
+    await armed({ allow: ["merge"] })
+    ready()
+    await merge()
+    const last = calls.filter((call) => call.command === "gh").at(-1)
+    expect(last?.args).toEqual(["pr", "view", "12", "--json", "state,headRefOid,mergeCommit,autoMergeRequest"])
+  })
+
+  test("auto-merge enabled instead of a merge: disables it, refuses and journals an issue", async () => {
+    await armed({ allow: ["merge"] })
+    ready()
+    ghReplies["mergeCommit,autoMergeRequest"] = ok({ state: "OPEN", headRefOid: SHA, mergeCommit: null, autoMergeRequest: { enabledAt: "now" } })
+    const result = await merge()
+    expect(result.content).toContain("refused")
+    expect(result.content).not.toContain("merged #12")
+    expect(disabled()).toEqual([{ command: "gh", args: ["pr", "merge", "12", "--disable-auto"] }])
+    expect(journal().at(-1)).toMatchObject({ type: "issue", summary: expect.stringContaining("#12") })
+  })
+
+  test("a PR merged at a different head is not reported as merged", async () => {
+    await armed({ allow: ["merge"] })
+    ready()
+    ghReplies["mergeCommit,autoMergeRequest"] = ok({ state: "MERGED", headRefOid: "9".repeat(40), mergeCommit: { oid: "f".repeat(40) }, autoMergeRequest: null })
+    const result = await merge()
+    expect(result.content).toContain("refused")
+    expect(result.content).not.toContain("merged #12")
+    expect(journal().at(-1)).toMatchObject({ type: "issue", summary: expect.stringContaining("#12") })
+    expect(journal().some((entry) => entry.type === "action" && entry.summary.includes("merged #12"))).toBe(false)
+  })
+
+  test("a PR that is still open after gh pr merge is refused and cancelled", async () => {
+    await armed({ allow: ["merge"] })
+    ready()
+    ghReplies["mergeCommit,autoMergeRequest"] = ok({ state: "OPEN", headRefOid: SHA, mergeCommit: null, autoMergeRequest: null })
+    expect((await merge()).content).toContain("refused")
+    expect(disabled()).toHaveLength(1)
   })
 
   test("a rebase merge passes the method through", async () => {

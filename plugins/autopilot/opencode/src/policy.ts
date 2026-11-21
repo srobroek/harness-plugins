@@ -1,6 +1,6 @@
 /** No-questions policy and write lanes while a run is armed. Pure. */
 
-import { commitChecks, own, reviewApproval, str } from "@srobroek/opencode-lib/pr-approval"
+import { commitChecks, own, requiredContexts, reviewApproval, str, usesMergeQueue } from "@srobroek/opencode-lib/pr-approval"
 
 /** Tools that ask the user something and wait. */
 export const ASK_TOOLS: ReadonlySet<string> = new Set(["question", "parley_ask", "parley_wait", "parley_end", "ask_user", "ask_followup_question"])
@@ -105,11 +105,11 @@ function methodRefusal(repo: unknown, method: string): string | undefined {
 /**
  * Why a PR may not be merged at `sha` with `method`, or `undefined` when it may. `view` is `gh pr
  * view --json state,headRefOid,baseRefName,author`; `reviews`, `runs` and `status` are the REST
- * payloads for the PR's reviews and the commit's check runs and status; `required` is the required
- * status contexts or `undefined` when unreadable. Approval is a review by someone other than the
+ * payloads for the PR's reviews and the commit's check runs and status; `protection` and `rules` are
+ * the base branch's required-status-checks protection and rulesets, `undefined` when unreadable (which refuses). Approval is a review by someone other than the
  * author, on exactly `sha`; comments never count. Anything unreadable refuses.
  */
-export function mergeRefusal(input: { sha: string; method: string; view: unknown; reviews: unknown; runs: unknown; status: unknown; required: readonly string[] | undefined; repo: unknown }): string | undefined {
+export function mergeRefusal(input: { sha: string; method: string; view: unknown; reviews: unknown; runs: unknown; status: unknown; protection: unknown; rules: unknown; repo: unknown }): string | undefined {
   const sha = input.sha.toLowerCase()
   if (!FULL_SHA.test(sha)) return "sha must be the full 40-digit head commit"
   const head = text(input.view, "headRefOid")?.toLowerCase()
@@ -120,7 +120,9 @@ export function mergeRefusal(input: { sha: string; method: string; view: unknown
   if (method !== undefined) return method
   const approval = reviewApproval(input.reviews, text(own(input.view, "author"), "login") ?? null, sha)
   if (!approval.ok) return approval.reason
-  const checks = commitChecks({ runs: input.runs, status: input.status, required: input.required })
+  if (usesMergeQueue(input.rules)) return "the base branch uses a merge queue; merge queues unsupported"
+  const required = requiredContexts(input.protection, input.rules, { requireBoth: true })
+  const checks = commitChecks({ runs: input.runs, status: input.status, required, requireKnown: true })
   return checks.ok ? undefined : checks.reason
 }
 
@@ -156,4 +158,23 @@ export function recordableLane(input: { agent: string | undefined; directory: st
   if (!holdsLane(input.agent)) return false
   const resolved = input.canon(input.directory)
   return resolved !== undefined && input.listed.has(resolved) && !input.primary.has(resolved) && input.linked(input.directory)
+}
+
+/**
+ * Whether `gh pr merge` really merged the PR at `sha`. `view` is `gh pr view --json
+ * state,headRefOid,mergeCommit,autoMergeRequest` read afterwards. Success needs MERGED, the
+ * reviewed head and a merge commit. `disableAuto` says the PR may still be queued to merge later
+ * (open, or an auto-merge request recorded), so the caller must cancel that.
+ */
+export function mergeOutcome(view: unknown, sha: string): { ok: true } | { ok: false; reason: string; disableAuto: boolean } {
+  const state = text(view, "state")
+  const head = text(view, "headRefOid")?.toLowerCase()
+  const queued = own(view, "autoMergeRequest") != null
+  const disableAuto = state !== "MERGED" || queued
+  if (view === undefined) return { ok: false, reason: "could not read the PR after merging, so the merge is unconfirmed", disableAuto }
+  if (state !== "MERGED") return { ok: false, reason: `PR is ${state ?? "unreadable"} after gh pr merge, not MERGED; it may be queued for a later merge`, disableAuto }
+  if (head !== sha) return { ok: false, reason: `PR merged at ${head ?? "an unreadable head"}, not the reviewed ${sha}`, disableAuto }
+  if (own(view, "mergeCommit") == null) return { ok: false, reason: "PR is MERGED but has no merge commit", disableAuto }
+  if (queued) return { ok: false, reason: "PR is MERGED but an auto-merge request is still recorded", disableAuto }
+  return { ok: true }
 }

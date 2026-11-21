@@ -119,7 +119,7 @@ const PASSING_RUN = new Set(["success", "neutral", "skipped"])
  * `commits/{sha}/status`, `required` the contexts branch protection or rulesets demand, or
  * `undefined` when they were unreadable (then the all-green rule stands alone).
  */
-export function commitChecks(input: { runs: unknown; status: unknown; required: readonly string[] | undefined }): Precondition {
+export function commitChecks(input: { runs: unknown; status: unknown; required: readonly string[] | undefined; requireKnown?: boolean }): Precondition {
   const runs = pages(input.runs, (page) => own(page, "check_runs"))
   const statusPages = Array.isArray(input.status) ? input.status : [input.status]
   const statuses = statusPages.flatMap((page) => {
@@ -144,6 +144,7 @@ export function commitChecks(input: { runs: unknown; status: unknown; required: 
   }
   if (runs.length + statuses.length === 0) return { ok: false, reason: "checks: observed no check runs or statuses, expected at least one passing check for the head" }
   if (bad.length > 0) return { ok: false, reason: `checks: observed ${bad.slice(0, 8).join(", ")}, expected every check to pass` }
+  if (input.requireKnown && input.required === undefined) return { ok: false, reason: "checks: branch protection or rulesets unreadable, so the required contexts are unknown; refusing" }
   const missing = (input.required ?? []).filter((context) => !green.has(context))
   if (missing.length > 0) return { ok: false, reason: `checks: required ${missing.join(", ")} not present and passing` }
   return { ok: true, evidence: { checks: runs.length + statuses.length, required: input.required?.length ?? null } }
@@ -154,8 +155,9 @@ export function commitChecks(input: { runs: unknown; status: unknown; required: 
  * rulesets in `rules/branches/{b}`. `undefined` when neither could be read, so the caller knows the
  * requirement is unknown rather than empty.
  */
-export function requiredContexts(protection: unknown, rules: unknown): string[] | undefined {
+export function requiredContexts(protection: unknown, rules: unknown, options: { requireBoth?: boolean } = {}): string[] | undefined {
   if (protection === undefined && rules === undefined) return undefined
+  if (options.requireBoth && (protection === undefined || pages(rules, () => undefined) === undefined)) return undefined
   const contexts = new Set<string>()
   const listed = own(protection, "contexts")
   if (Array.isArray(listed)) for (const context of listed) if (typeof context === "string") contexts.add(context)
@@ -168,4 +170,9 @@ export function requiredContexts(protection: unknown, rules: unknown): string[] 
     if (Array.isArray(required)) for (const check of required) if (str(check, "context") !== null) contexts.add(str(check, "context") as string)
   }
   return [...contexts].sort()
+}
+
+/** Whether a branch ruleset (`rules/branches/{b}`) puts the branch behind a merge queue. */
+export function usesMergeQueue(rules: unknown): boolean {
+  return (pages(rules, () => undefined) ?? []).some((rule) => str(rule, "type") === "merge_queue")
 }

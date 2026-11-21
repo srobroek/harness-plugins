@@ -134,15 +134,21 @@ these hold:
   other than the PR author, and no reviewer's latest review requests changes.
   A comment never counts.
 - Every check run and status on `sha` is success, neutral or skipped, and at
-  least one exists. When branch protection or rulesets are readable, each
-  required context is also present and passing. When they are unreadable, the
-  all-green rule stands alone.
+  least one exists. Each context that branch protection or a ruleset requires
+  is also present and passing. If either source cannot be read, the tool
+  refuses; a branch GitHub reports as "Branch not protected" counts as read.
+- The base branch has no merge queue (a `merge_queue` ruleset rule). Merge
+  queues are unsupported and the tool refuses, journaling an issue.
 - `method` (`squash`, `rebase` or `merge`) is one the repository allows.
 
 It then runs `gh pr merge <pr> --match-head-commit <sha> --<method>` as an
-argument array with no shell and no `--admin`, so GitHub enforces its own
-protection. It journals the result: an `action` on success, an `issue` on a
-refusal. GitHub only. The approval and check judgments live in
+argument array with no shell, no `--admin` and never `--auto`, so GitHub
+enforces its own protection. It then re-reads the PR
+(`state,headRefOid,mergeCommit,autoMergeRequest`) and reports success only when
+the PR is `MERGED` at `sha` with a merge commit and no auto-merge request. In
+any other case it runs `gh pr merge <pr> --disable-auto` when the PR is open or
+has an auto-merge request, and refuses. It journals the result: an `action` on
+success, an `issue` on a refusal. GitHub only. The approval and check judgments live in
 `lib/src/pr-approval.ts`, which `delivery_land` shares.
 
 ## Tick

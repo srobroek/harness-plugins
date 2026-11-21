@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { commitChecks, githubApproval, requiredContexts, reviewApproval } from "./pr-approval.ts"
+import { commitChecks, githubApproval, requiredContexts, reviewApproval, usesMergeQueue } from "./pr-approval.ts"
 
 const SHA = "a".repeat(40)
 const OLD = "b".repeat(40)
@@ -86,5 +86,35 @@ describe("requiredContexts", () => {
   })
   test("both unreadable is unknown", () => {
     expect(requiredContexts(undefined, undefined)).toBeUndefined()
+  })
+})
+
+describe("strict reads fail closed", () => {
+  test("requiredContexts with requireBoth is unknown when only one source was read", () => {
+    expect(requiredContexts({ contexts: ["ci"] }, undefined, { requireBoth: true })).toBeUndefined()
+    expect(requiredContexts(undefined, [[]], { requireBoth: true })).toBeUndefined()
+  })
+  test("requiredContexts with requireBoth reads when both sources were read", () => {
+    expect(requiredContexts({ contexts: ["ci"] }, [[]], { requireBoth: true })).toEqual(["ci"])
+  })
+  test("requiredContexts without the option keeps reading one source", () => {
+    expect(requiredContexts({ contexts: ["ci"] }, undefined)).toEqual(["ci"])
+  })
+  test("an unparseable rules payload is unreadable under requireBoth", () => {
+    expect(requiredContexts({ contexts: [] }, { message: "Not Found" }, { requireBoth: true })).toBeUndefined()
+  })
+  test("commitChecks with requireKnown refuses when the required contexts are unknown", () => {
+    const green = { runs: [{ check_runs: [{ name: "ci", status: "completed", conclusion: "success" }] }], status: { statuses: [] } }
+    expect(commitChecks({ ...green, required: undefined, requireKnown: true })).toMatchObject({ ok: false, reason: expect.stringContaining("unreadable") })
+    expect(commitChecks({ ...green, required: [], requireKnown: true }).ok).toBe(true)
+    expect(commitChecks({ ...green, required: undefined }).ok).toBe(true)
+  })
+  test.each([
+    ["a merge_queue rule", [[{ type: "pull_request" }, { type: "merge_queue", parameters: {} }]], true],
+    ["no merge_queue rule", [[{ type: "pull_request" }]], false],
+    ["no rules", [[]], false],
+    ["unreadable rules", undefined, false],
+  ])("usesMergeQueue: %s", (_name, rules, expected) => {
+    expect(usesMergeQueue(rules)).toBe(expected)
   })
 })

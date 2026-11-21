@@ -7,7 +7,6 @@ import type { Context } from "@opencode/plugin/promise/plugin"
 import { withEmbeddedWriteLock } from "@srobroek/opencode-lib/bd-embedded-write-lock"
 import { hostWarn, type Warn } from "@srobroek/opencode-lib/host-log"
 import { withLease } from "@srobroek/opencode-lib/lease-lock"
-import { requiredContexts } from "@srobroek/opencode-lib/pr-approval"
 import { registerSkills } from "@srobroek/opencode-lib/skill-files"
 import { classifyScope, deadlineAt, type Invocation, parseInvocation, type RunOptions } from "./args.ts"
 import { automationRequest, type TickBinding } from "./automation.ts"
@@ -23,6 +22,7 @@ import {
   type Lstat,
   MERGE_ACTION,
   MERGE_METHODS,
+  mergeOutcome,
   mergeRefusal,
   mergeResource,
   ownWorktreeAsk,
@@ -869,6 +869,17 @@ export class Autopilot {
     }
   }
 
+  /** Required-status-checks protection of `base`. An unprotected branch reads as empty; any other failure is `undefined`, which refuses. */
+  async #protection(cwd: string, base: string): Promise<unknown> {
+    const result = await this.#run(cwd, "gh", ["api", `repos/{owner}/{repo}/branches/${base}/protection/required_status_checks`], GH_TIMEOUT_MS)
+    if (!result.ok) return /Branch not protected/i.test(result.stderr) ? {} : undefined
+    try {
+      return JSON.parse(result.stdout)
+    } catch {
+      return undefined
+    }
+  }
+
   /**
    * Merge one PR at one reviewed head. The host's permission check comes first (the hook allows it
    * only under `--allow merge`), then the approval and checks are read from the forge, and `gh`
@@ -903,15 +914,21 @@ export class Autopilot {
       api(`pulls/${pr}/reviews`),
       api(`commits/${sha}/check-runs`),
       api(`commits/${sha}/status`),
-      this.#gh(cwd, ["api", `repos/{owner}/{repo}/branches/${base}/protection/required_status_checks`]),
+      this.#protection(cwd, base),
       api(`rules/branches/${base}`),
       this.#gh(cwd, ["repo", "view", "--json", "squashMergeAllowed,rebaseMergeAllowed,mergeCommitAllowed"]),
     ])
-    const refusal = mergeRefusal({ sha, method, view, reviews, runs, status, required: requiredContexts(protection, rules), repo })
+    const refusal = mergeRefusal({ sha, method, view, reviews, runs, status, protection, rules, repo })
     if (refusal !== undefined) return refuse(refusal)
     const flag = `--${method}`
     const merged = await this.#run(cwd, "gh", ["pr", "merge", pr, "--match-head-commit", sha, flag], GH_TIMEOUT_MS)
     if (!merged.ok) return refuse(`gh pr merge failed: ${merged.stderr.trim().slice(0, 300)}`)
+    // gh pr merge can succeed by queueing the merge for later; only the PR itself says what happened.
+    const outcome = mergeOutcome(await this.#gh(cwd, ["pr", "view", pr, "--json", "state,headRefOid,mergeCommit,autoMergeRequest"]), sha)
+    if (!outcome.ok) {
+      if (outcome.disableAuto) await this.#run(cwd, "gh", ["pr", "merge", pr, "--disable-auto"], GH_TIMEOUT_MS)
+      return refuse(outcome.reason)
+    }
     await journal({ type: "action", summary: `merged #${pr} at ${sha} (${method})`, evidence: sha })
     return `merged #${pr} at ${sha} with ${flag}`
   }
