@@ -115,6 +115,7 @@ Move new shared code into `lib` instead of adding another edge.
 - File names reach tools as absolute paths after `--`. Every named path and glob is resolved with `realpath` and must stay inside the canonical root. Symlinks met while walking or globbing are skipped. A run id is one path segment (`^\w[\w.-]{0,63}$`).
 - Output directories are created one real directory at a time, files are written with `O_NOFOLLOW`, and a symlink in the way is refused.
 - Captured stdout (16 MiB) and stderr (1 MiB) are capped and an overflow ends the tool's process group; report files and marker files are `lstat`ed and size-capped; the per-tool timeout is capped at 900 s.
+- Accepted residual risk: races on parent path components that need concurrent local filesystem control (swapping a directory for a symlink between the check and the use) are not defended. The model is a trusted local repository with no sandbox, by user decision.
 - Tests: the Biome behaviour suite always runs (biome is a devDependency, resolved from `node_modules/.bin`). The ruff and golangci-lint suites in `scan/behavior.test.ts` skip with a printed reason when the binary is absent, and no workflow installs them, so CI skips them; they run on a machine that has them.
 
 ## Commands

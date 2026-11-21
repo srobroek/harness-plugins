@@ -2345,42 +2345,24 @@ function registerLibFacts(ctx, overrides = {}) {
 import { realpathSync as realpathSync3 } from "fs";
 import { isAbsolute as isAbsolute4, resolve as resolve5 } from "path";
 
+// plugins/code-challenge/opencode/src/session-directory.ts
+async function sessionDirectory(ctx, sessionID, tool) {
+  const session = await ctx.session.get({ sessionID }).catch((cause) => {
+    throw new Error(`${tool}: cannot read session ${sessionID} to find its directory`, { cause });
+  });
+  const found = session.location?.directory;
+  if (typeof found !== "string" || found === "")
+    throw new Error(`${tool}: session ${sessionID} has no directory`);
+  return found;
+}
+
 // plugins/code-challenge/opencode/src/scan/run.ts
 import { existsSync as existsSync3, mkdtempSync, realpathSync as realpathSync2, rmSync, statSync as statSync3 } from "fs";
 import { tmpdir } from "os";
 import { extname as extname2, join as join11, resolve as resolve4 } from "path";
 
-// lib/src/bounded-read.ts
-import { closeSync, constants, fstatSync, lstatSync as lstatSync2, openSync, readSync } from "fs";
-var MAX_LEDGER_FILE_BYTES = 64 * 1024;
-function readBounded(path, maxBytes = MAX_LEDGER_FILE_BYTES) {
-  let fd;
-  try {
-    if (!lstatSync2(path).isFile())
-      return { kind: "unreadable" };
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    const info = fstatSync(fd);
-    if (!info.isFile() || info.size > maxBytes)
-      return { kind: "unreadable" };
-    const buffer = Buffer.alloc(info.size);
-    let offset = 0;
-    while (offset < buffer.length) {
-      const read = readSync(fd, buffer, offset, buffer.length - offset, offset);
-      if (read === 0)
-        break;
-      offset += read;
-    }
-    return { kind: "text", text: buffer.toString("utf8", 0, offset) };
-  } catch (error) {
-    return error.code === "ENOENT" ? { kind: "absent" } : { kind: "unreadable" };
-  } finally {
-    if (fd !== undefined)
-      closeSync(fd);
-  }
-}
-
 // lib/src/subprocess.ts
-import { constants as constants2 } from "os";
+import { constants } from "os";
 var EXIT_GRACE_MS = 2000;
 var EXIT_POLL_MS = 100;
 function goneWatch(graceMs, pollMs) {
@@ -2518,7 +2500,7 @@ function signalName(code) {
     return null;
   if (typeof code === "string")
     return code;
-  return Object.entries(constants2.signals).find(([, n]) => n === code)?.[0] ?? String(code);
+  return Object.entries(constants.signals).find(([, n]) => n === code)?.[0] ?? String(code);
 }
 
 // plugins/code-challenge/opencode/src/scan/env.ts
@@ -2646,21 +2628,49 @@ var spawnTool = async (argv, options) => {
 import { lstatSync as lstatSync3, readdirSync as readdirSync4, realpathSync, statSync as statSync2 } from "fs";
 import { extname, isAbsolute as isAbsolute2, join as join6, relative, resolve as resolve2, sep } from "path";
 
+// lib/src/bounded-read.ts
+import { closeSync, constants as constants2, fstatSync, lstatSync as lstatSync2, openSync, readSync } from "fs";
+var MAX_LEDGER_FILE_BYTES = 64 * 1024;
+function readBoundedBytes(path, maxBytes) {
+  let fd;
+  try {
+    if (!lstatSync2(path).isFile())
+      return { kind: "unreadable", reason: "not-regular" };
+    fd = openSync(path, constants2.O_RDONLY | constants2.O_NOFOLLOW | constants2.O_NONBLOCK);
+    const info = fstatSync(fd);
+    if (!info.isFile())
+      return { kind: "unreadable", reason: "not-regular" };
+    if (info.size > maxBytes)
+      return { kind: "unreadable", reason: "too-large" };
+    const buffer = Buffer.alloc(info.size);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const read = readSync(fd, buffer, offset, buffer.length - offset, offset);
+      if (read === 0)
+        break;
+      offset += read;
+    }
+    return { kind: "bytes", bytes: offset === buffer.length ? buffer : buffer.subarray(0, offset) };
+  } catch (error) {
+    const code = error.code;
+    if (code === "ENOENT")
+      return { kind: "absent" };
+    return { kind: "unreadable", reason: code === "ELOOP" ? "not-regular" : "io" };
+  } finally {
+    if (fd !== undefined)
+      closeSync(fd);
+  }
+}
+
+// plugins/code-challenge/opencode/src/scan/read.ts
+function readText(path, maxBytes) {
+  const read = readBoundedBytes(path, maxBytes);
+  if (read.kind === "bytes")
+    return { kind: "text", text: read.bytes.toString("utf8") };
+  return { kind: read.kind };
+}
+
 // plugins/code-challenge/opencode/src/scan/types.ts
-var LENSES2 = [
-  "simplification",
-  "over-engineering",
-  "optimisation",
-  "performance",
-  "efficiency",
-  "stability",
-  "hand-rolled-stdlib",
-  "hand-rolled-lib",
-  "dead-code",
-  "observability",
-  "structure",
-  "tests"
-];
 var LANGUAGES = ["ts", "python", "go", "rust"];
 var DEPTHS2 = ["quick", "standard", "deep"];
 
@@ -2762,7 +2772,7 @@ function missingMarker(root, markers) {
     return null;
   for (const spec of markers) {
     const [name = "", needle] = spec.split(":");
-    const read = readBounded(join6(root, name), MAX_MARKER_BYTES);
+    const read = readText(join6(root, name), MAX_MARKER_BYTES);
     if (read.kind !== "text")
       continue;
     if (needle === undefined || read.text.includes(needle))
@@ -3156,7 +3166,7 @@ function nearestRuffConfig(root, file) {
   for (;; ) {
     for (const name of [".ruff.toml", "ruff.toml", "pyproject.toml"]) {
       const path = join9(dir, name);
-      const read = readBounded(path, MAX_MARKER_BYTES);
+      const read = readText(path, MAX_MARKER_BYTES);
       if (read.kind !== "text")
         continue;
       if (name !== "pyproject.toml" || read.text.includes("[tool.ruff"))
@@ -3300,9 +3310,9 @@ var RECIPES = [
     id: "eslint:e18e",
     tool: "eslint",
     language: "ts",
-    lenses: ["hand-rolled-stdlib", "hand-rolled-lib", "efficiency"],
+    lenses: ["hand-rolled-stdlib", "hand-rolled-library", "efficiency"],
     lensRules: [
-      [/ban-dependencies/, "hand-rolled-lib"],
+      [/ban-dependencies/, "hand-rolled-library"],
       [/^e18e\/prefer-/, "hand-rolled-stdlib"]
     ],
     binary: "eslint",
@@ -3692,7 +3702,7 @@ async function prepare(input, deps, signal) {
     which,
     now: deps.now ?? Date.now,
     depth: input.depth ?? "standard",
-    lenses: input.lenses && input.lenses.length > 0 ? input.lenses : LENSES2,
+    lenses: input.lenses && input.lenses.length > 0 ? input.lenses : LENSES,
     timeoutMs: Math.min(input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000,
     files,
     languages: input.languages && input.languages.length > 0 ? input.languages : detectLanguages(root, files),
@@ -3759,7 +3769,7 @@ function ensureToolsDir(p) {
 var MiB = 1024 * 1024;
 var MAX_ARGV_BYTES = 256 * 1024;
 function readReport(path, name) {
-  const read = readBounded(path, MAX_STDOUT_BYTES);
+  const read = readText(path, MAX_STDOUT_BYTES);
   if (read.kind === "text")
     return { text: read.text };
   return {
@@ -3912,7 +3922,7 @@ var SCAN_INPUT = {
     root: { type: "string", description: "Target root; defaults to the session directory" },
     files: { type: "array", items: { type: "string" }, description: "Files, directories or globs to scope the scan" },
     languages: { type: "array", items: { enum: [...LANGUAGES] }, description: "Languages; auto-detected by default" },
-    lenses: { type: "array", items: { enum: [...LENSES2] }, description: "Lenses to keep; all by default" },
+    lenses: { type: "array", items: { enum: [...LENSES] }, description: "Lenses to keep; all by default" },
     depth: { enum: [...DEPTHS2], description: "quick skips analyzers that need a build; default standard" },
     timeoutSeconds: { type: "number", maximum: 900, description: "Per-analyzer timeout in seconds; default 120, at most 900" },
     runId: { type: "string", description: "Run id; raw outputs go to <git-dir>/code-challenge/<runId>/scan/" },
@@ -3920,10 +3930,13 @@ var SCAN_INPUT = {
   },
   additionalProperties: false
 };
-function pick(value, allowed) {
-  if (!Array.isArray(value))
+function pick(name, value, allowed) {
+  if (value === undefined)
     return;
-  return value.filter((v) => typeof v === "string" && allowed.includes(v));
+  const known = (v) => typeof v === "string" && allowed.includes(v);
+  if (!Array.isArray(value) || !value.every(known))
+    return `${name} must be a list of: ${allowed.join(", ")}`;
+  return value;
 }
 function readScanInput(raw, base) {
   const input = typeof raw === "object" && raw !== null ? raw : {};
@@ -3936,12 +3949,18 @@ function readScanInput(raw, base) {
   }
   if (input.depth !== undefined && !DEPTHS2.includes(input.depth))
     return `depth must be one of ${DEPTHS2.join(", ")}`;
+  const languages = pick("languages", input.languages, LANGUAGES);
+  if (typeof languages === "string")
+    return languages;
+  const lenses = pick("lenses", input.lenses, LENSES);
+  if (typeof lenses === "string")
+    return lenses;
   const files = Array.isArray(input.files) ? input.files.filter((f) => typeof f === "string") : undefined;
   return {
     root: isAbsolute4(root) ? root : resolve5(base, root),
     files,
-    languages: pick(input.languages, LANGUAGES),
-    lenses: pick(input.lenses, LENSES2),
+    languages,
+    lenses,
     depth: input.depth,
     timeoutSeconds: timeout,
     runId: input.runId,
@@ -3968,7 +3987,6 @@ function confirmScan(evaluation) {
 `);
 }
 async function registerScanTool(ctx, deps = {}) {
-  const base = ctx.location.directory;
   const registrations = [];
   const cleanup = async () => {
     for (const registration of registrations.reverse())
@@ -3981,6 +3999,7 @@ async function registerScanTool(ctx, deps = {}) {
         description: SCAN_DESCRIPTION,
         input: SCAN_INPUT,
         execute: async (raw, context) => {
+          const base = await sessionDirectory(ctx, context.sessionID, SCAN_TOOL);
           const parsed = readScanInput(raw, base);
           if (typeof parsed === "string")
             return { content: `${SCAN_TOOL}: ${parsed}`, metadata: { ok: false } };
@@ -4042,15 +4061,7 @@ async function setupCodeChallenge(ctx, moduleUrl) {
     for (const registration of registrations.reverse())
       await registration.dispose();
   };
-  const directory = async (sessionID) => {
-    const session = await ctx.session.get({ sessionID }).catch((cause) => {
-      throw new Error(`${SETUP_TOOL}: cannot read session ${sessionID} to find its directory`, { cause });
-    });
-    const found = session.location?.directory;
-    if (typeof found !== "string" || found === "")
-      throw new Error(`${SETUP_TOOL}: session ${sessionID} has no directory`);
-    return found;
-  };
+  const directory = (sessionID) => sessionDirectory(ctx, sessionID, SETUP_TOOL);
   const assert = (context, action, resources, metadata) => ctx.permission.assert({
     sessionID: context.sessionID,
     agent: context.agent,

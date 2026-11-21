@@ -10,10 +10,10 @@ setDefaultTimeout(60_000)
 afterAll(cleanup)
 
 // biome is a devDependency of this repository, so its behaviour suite never skips: the binary is taken
-// from node_modules/.bin when it is not on PATH (bun test does not add it). ruff and golangci-lint are
+// from node_modules/.bin first (bun test does not add it, and a mise shim on PATH may name a version that is not set). ruff and golangci-lint are
 // not installed by CI (.github/workflows/ci.yml), so those suites skip, with the reason printed.
 const LOCAL_BIN = join(import.meta.dir, "../../../../../node_modules/.bin")
-const which = (binary: string): string | null => Bun.which(binary) ?? Bun.which(binary, { PATH: LOCAL_BIN })
+const which = (binary: string): string | null => Bun.which(binary, { PATH: LOCAL_BIN }) ?? Bun.which(binary)
 const installed = (binary: string): boolean => {
   const found = which(binary) !== null
   if (!found && binary !== "biome") console.warn(`behavior.test: ${binary} is not installed; its suite is skipped`)
