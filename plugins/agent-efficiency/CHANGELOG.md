@@ -1,3 +1,9 @@
+## agent-efficiency [0.13.0](https://github.com/srobroek/harness-plugins/compare/agent-efficiency--v0.12.0...agent-efficiency--v0.13.0) (2026-11-21)
+
+### Features
+
+* **agent-efficiency:** nudge idle sessions whose background shell a restart cancelled ([#77](https://github.com/srobroek/harness-plugins/issues/77)) ([003b430](https://github.com/srobroek/harness-plugins/commit/003b430749c6a45df48c8180c42286349602efd1))
+
 ## agent-efficiency [0.12.0](https://github.com/srobroek/harness-plugins/compare/agent-efficiency--v0.11.0...agent-efficiency--v0.12.0) (2026-11-21)
 
 ### Features
