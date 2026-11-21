@@ -928,7 +928,7 @@ describe("subagent role parameter", () => {
     const host = createHost({ agents: [{ id: "general" }], models, options })
     const cleanup = await setup(host)
     const role = roleOf(host)
-    expect(role?.enum).toEqual(["cheap", "standard", "strong", "reviewer", "fake"])
+    expect(role?.enum).toEqual(["cheap", "standard", "strong", "reviewer", "orchestrate", "fake"])
     expect(role?.description).toContain("- 'cheap': cheap and fast")
     expect(role?.description).toContain("- 'fake': work that suits the 'fake' tier (no model available now")
     expect(host.subagent().description).toContain("Set `tier` on every new spawn")
@@ -1062,7 +1062,7 @@ describe("subagent role parameter", () => {
       model: "amazon-bedrock/claude-sonnet#high",
     })
     await expect(host.spawn("subagent", { agent: "general", prompt: "x", role: "huge" })).rejects.toThrow(
-      "Unknown model tier 'huge'. Pass one of: cheap, standard, strong, reviewer, fake.",
+      "Unknown model tier 'huge'. Pass one of: cheap, standard, strong, reviewer, orchestrate, fake.",
     )
     host.close()
     await cleanup()
@@ -1117,6 +1117,108 @@ describe("runtime fallback", () => {
     const again = await host.fireRetry({ sessionID: "r", agent: "build", model: haiku, error, attempt: 5 })
     expect(again).toEqual({ retry: true, delay: 1_500 })
     expect(methods(host, "switchModel")).toHaveLength(1)
+    host.close()
+    await cleanup()
+  })
+
+  describe("a retry whose first host lookup stalls", () => {
+    const stallOptions = { ...fallbackOptions, switchTimeoutMs: 20, guard: { lookupTimeoutMs: 20 } }
+    const error = { type: "provider.internal", message: "Service Unavailable", status: 503 }
+    const flush = () => new Promise<void>((resolve) => setImmediate(resolve))
+    // Make the first agent lookup after setup wait on the returned `release`; later lookups answer as before.
+    const stallFirstLookup = (host: ReturnType<typeof createHost>) => {
+      const original = host.context.agent.list
+      let release: () => void = () => {}
+      const gate = new Promise<void>((resolve) => (release = resolve))
+      let calls = 0
+      host.context.agent.list = (async (...args: Parameters<typeof original>) => {
+        if (++calls === 1) await gate
+        return original(...args)
+      }) as typeof original
+      return release
+    }
+
+    test("the host's decision stands, and the next retry still reaches fallback selection", async () => {
+      const host = createHost({ agents: [{ id: "build" }], models, options: stallOptions })
+      const cleanup = await setup(host)
+      const release = stallFirstLookup(host)
+      expect(await host.fireRetry({ sessionID: "h1", agent: "build", model: sonnet, error, attempt: 4 })).toEqual({ retry: true, delay: 1_500 })
+      // The first lookup is still pending; the second retry is not queued behind it.
+      expect(await host.fireRetry({ sessionID: "h2", agent: "build", model: sonnet, error, attempt: 4 })).toEqual({ retry: true, delay: 0 })
+      expect(methods(host, "switchModel").map((c) => c.input)).toEqual([{ sessionID: "h2", model: haiku }])
+      release()
+      host.close()
+      await cleanup()
+    })
+
+    test("a transient failure the host declined to retry is retried on its model once the lookup times out", async () => {
+      const host = createHost({ agents: [{ id: "build" }], models, options: stallOptions })
+      const cleanup = await setup(host)
+      stallFirstLookup(host)
+      expect(await host.fireRetry({ sessionID: "h1", agent: "build", model: sonnet, error, attempt: 4 }, { retry: false })).toEqual({ retry: true, delay: 8_000 })
+      expect(methods(host, "switchModel")).toHaveLength(0)
+      host.close()
+      await cleanup()
+    })
+
+    test("a retry is not held up by event work that never finishes", async () => {
+      const host = createHost({ agents: [{ id: "build" }], models, options: fallbackOptions })
+      const cleanup = await setup(host)
+      // A model event queues a refresh on the event queue; the model list never answers, so that task never ends.
+      host.context.model.list = () => new Promise(() => {})
+      host.setModels(models)
+      await flush()
+      expect(await host.fireRetry({ sessionID: "e1", agent: "build", model: sonnet, error, attempt: 4 })).toEqual({ retry: true, delay: 0 })
+      expect(methods(host, "switchModel").map((c) => c.input)).toEqual([{ sessionID: "e1", model: haiku }])
+      host.close()
+      await cleanup()
+    })
+
+    test("a lookup that answers after the timeout switches nothing", async () => {
+      const host = createHost({ agents: [{ id: "build" }], models, options: stallOptions })
+      const cleanup = await setup(host)
+      const release = stallFirstLookup(host)
+      expect(await host.fireRetry({ sessionID: "h1", agent: "build", model: sonnet, error, attempt: 4 })).toEqual({ retry: true, delay: 1_500 })
+      release()
+      await flush()
+      expect(methods(host, "switchModel")).toHaveLength(0)
+      host.close()
+      await cleanup()
+    })
+
+    test("a lookup that answers after dispose switches nothing", async () => {
+      // A long bound keeps the retry in flight, so only dispose can end it.
+      const host = createHost({ agents: [{ id: "build" }], models, options: { ...fallbackOptions, switchTimeoutMs: 60_000 } })
+      const cleanup = await setup(host)
+      const release = stallFirstLookup(host)
+      const pending = host.fireRetry({ sessionID: "h1", agent: "build", model: sonnet, error, attempt: 4 })
+      await flush()
+      host.close()
+      await cleanup()
+      release()
+      await pending
+      await flush()
+      expect(methods(host, "switchModel")).toHaveLength(0)
+    })
+  })
+
+  test("a retry whose host lookups never answer returns the host's decision, and later retries are not stuck behind it", async () => {
+    const options = { ...fallbackOptions, switchTimeoutMs: 20, guard: { lookupTimeoutMs: 20 } }
+    const host = createHost({ agents: [{ id: "build" }], models, options })
+    const cleanup = await setup(host)
+    let lookups = 0
+    host.context.agent.list = () => {
+      lookups++
+      return new Promise(() => {})
+    }
+    const error = { type: "provider.internal", message: "Service Unavailable", status: 503 }
+    const first = await host.fireRetry({ sessionID: "h1", agent: "build", model: sonnet, error, attempt: 4 })
+    expect(first).toEqual({ retry: true, delay: 1_500 })
+    // A second session retries while the first lookup is still pending: it does not wait for it.
+    const second = await host.fireRetry({ sessionID: "h2", agent: "build", model: sonnet, error, attempt: 4 })
+    expect(second).toEqual({ retry: true, delay: 1_500 })
+    expect(lookups).toBeGreaterThanOrEqual(1)
+    expect(methods(host, "switchModel")).toHaveLength(0)
     host.close()
     await cleanup()
   })
@@ -1559,6 +1661,82 @@ describe("runtime fallback", () => {
     const texts = () => methods(host, "synthetic").map((c) => (c.input as { text: string }).text)
     return { host, cleanup, texts }
   }
+
+  test("a subagent failure note wakes the parent", async () => {
+    const host = createHost({ agents: [{ id: "general" }], models, options: fallbackOptions })
+    host.sessions.set("r", { id: "r" })
+    host.sessions.set("c", { id: "c", parentID: "r", agent: "general", model: sonnet })
+    const cleanup = await setup(host)
+    host.emit(failed("c", { type: "api", message: "ThrottlingException", status: 429 }))
+    await settle()
+    const note = methods(host, "synthetic")[0]?.input as { resume: boolean }
+    expect(note.resume).toBe(true)
+    host.close()
+    await cleanup()
+  })
+
+  test("a recovery note wakes the session that heard the outage", async () => {
+    const { host, cleanup } = await outageHost()
+    host.fireModelRequest({}, { sessionID: "r", model: sonnet, kind: "primary" })
+    host.emit({ type: "session.execution.succeeded", data: { sessionID: "r" } })
+    await settle()
+    const notes = methods(host, "synthetic").map((c) => c.input as { text: string; resume: boolean })
+    expect(notes.at(-1)?.text).toContain("recovered")
+    expect(notes.at(-1)?.resume).toBe(true)
+    host.close()
+    await cleanup()
+  })
+
+  test("a reloaded plugin still recovers the children the previous instance stopped, each to its own parent", async () => {
+    const host = createHost({ agents: [{ id: "general" }], models, options: fallbackOptions })
+    host.sessions.set("r1", { id: "r1" })
+    host.sessions.set("r2", { id: "r2" })
+    host.sessions.set("c1", { id: "c1", parentID: "r1", agent: "general", model: sonnet })
+    host.sessions.set("c2", { id: "c2", parentID: "r2", agent: "general", model: sonnet })
+    const cleanup = await setup(host)
+    const error = { type: "provider.auth", message: "Unable to locate credentials" }
+    host.emit(failed("c1", error))
+    await settle()
+    host.emit(failed("c2", error))
+    await settle()
+    await cleanup()
+    // The reload starts from the stored outage, not from nothing.
+    const again = createHost({ agents: [{ id: "general" }], models, options: fallbackOptions })
+    for (const [key, value] of host.storage) again.storage.set(key, value)
+    const cleanupAgain = await setup(again)
+    again.fireModelRequest({}, { sessionID: "x", model: sonnet, kind: "primary" })
+    again.emit({ type: "session.execution.succeeded", data: { sessionID: "x" } })
+    await settle()
+    const notes = methods(again, "synthetic").map((c) => c.input as { sessionID: string; text: string })
+    expect(notes.map((n) => n.sessionID).sort()).toEqual(["r1", "r2"])
+    expect(notes.find((n) => n.sessionID === "r2")?.text).toContain("general (c2)")
+    expect(notes.find((n) => n.sessionID === "r2")?.text).not.toContain("c1")
+    host.close()
+    again.close()
+    await cleanupAgain()
+  })
+
+  test("two live instances announce one failure event once", async () => {
+    const make = () => {
+      const host = createHost({ agents: [{ id: "general" }], models, options: fallbackOptions })
+      host.sessions.set("r", { id: "r" })
+      host.sessions.set("c", { id: "c", parentID: "r", agent: "general", model: sonnet })
+      return host
+    }
+    const a = make()
+    const b = make()
+    const cleanupA = await setup(a)
+    const cleanupB = await setup(b)
+    const event = { id: "evt_1", type: "session.execution.failed", data: { sessionID: "c", error: { type: "provider.auth", message: "Unable to locate credentials" } } }
+    a.emit(event)
+    b.emit(event)
+    await settle()
+    expect(methods(a, "synthetic").length + methods(b, "synthetic").length).toBe(1)
+    a.close()
+    b.close()
+    await cleanupA()
+    await cleanupB()
+  })
 
   test("a success on the failed provider ends its outage even after the session moved to another provider", async () => {
     const { host, cleanup, texts } = await outageHost()
@@ -2715,7 +2893,7 @@ describe("tiers rpc", () => {
       const host = createHost({ agents: [], models: work as unknown as Model[], references: reference as unknown as Model[], options: {} })
       const cleanup = await setup(host)
       const state = (await host.rpc("state")) as { tiers: Array<{ name: string; resolved?: string }>; models: unknown[]; config?: string }
-      expect(state.tiers.map((t) => t.name)).toEqual(["cheap", "standard", "strong", "reviewer"])
+      expect(state.tiers.map((t) => t.name)).toEqual(["cheap", "standard", "strong", "reviewer", "orchestrate"])
       expect(state.tiers[0]?.resolved).toBe("amazon-bedrock/global.anthropic.claude-haiku-5-5#low")
       expect(state.models.length).toBeGreaterThan(100)
       expect(state.config).toBe(path.join(dir, "opencode.jsonc"))
@@ -3757,6 +3935,91 @@ describe("tiers rpc", () => {
         expect(host.activeTransforms()).toBe(1)
       },
       [{ id: "worker", request: header("cheap") }],
+    )
+  })
+
+  test("a retry that arrives while a reload awaits its registration resolves against the committed tiers, and stays there when the reload fails", async () => {
+    await withConfig(
+      async (host) => {
+        const original = host.context.tool.transform
+        const failedModel = { providerID: "amazon-bedrock", id: "global.anthropic.claude-haiku-5-5", variant: "low" }
+        const error = { type: "provider.internal", message: "Service Unavailable", status: 503 }
+        let decision: unknown
+        let first = true
+        host.context.tool.transform = async (callback) => {
+          if (first) {
+            first = false
+            // The reload has published the new cheap tier [sonnet] and now awaits this registration.
+            decision = await host.fireRetry({ sessionID: "w1", agent: "worker", model: failedModel, error, attempt: 4 })
+            throw new Error("tool refresh refused")
+          }
+          return original(callback)
+        }
+        await expect(host.rpc("set", { tier: "cheap", value: { model: [sonnet55] } })).rejects.toThrow(/not applied: tool refresh refused/)
+        // The retry moved to the committed cheap tier's next candidate, not to the tentative tier's sonnet.
+        expect(decision).toEqual({ retry: true, delay: 0 })
+        expect(host.calls.filter((c) => c.method === "switchModel").map((c) => c.input)).toEqual([
+          { sessionID: "w1", model: { providerID: "amazon-bedrock", id: "global.openai.gpt-6-luna", variant: "low" } },
+        ])
+      },
+      worker,
+    )
+  })
+
+  test("an implicit-assignment change during a failing setAgent reload does not move a retry off the committed tier", async () => {
+    await withConfig(
+      async (host) => {
+        const original = host.context.tool.transform
+        const failedModel = { providerID: "amazon-bedrock", id: "global.anthropic.claude-haiku-5-5", variant: "low" }
+        const error = { type: "provider.internal", message: "Service Unavailable", status: 503 }
+        let decision: unknown
+        let first = true
+        host.context.tool.transform = async (callback) => {
+          if (first) {
+            first = false
+            // The forward registration has dropped general's implicit standard assignment (it is now configured as strong).
+            decision = await host.fireRetry({ sessionID: "w1", agent: "general", model: failedModel, error, attempt: 4 })
+            throw new Error("tool refresh refused")
+          }
+          return original(callback)
+        }
+        await expect(host.rpc("setAgent", { agent: "general", tier: "strong" })).rejects.toThrow(/not applied: tool refresh refused/)
+        // general is still on standard in the committed state, so the retry moves to standard's next candidate.
+        expect(decision).toEqual({ retry: true, delay: 0 })
+        expect(host.calls.filter((c) => c.method === "switchModel").map((c) => c.input)).toEqual([
+          { sessionID: "w1", model: { providerID: "amazon-bedrock", id: "global.openai.gpt-6.1-sol", variant: "medium" } },
+        ])
+      },
+      [{ id: "general" }],
+    )
+  })
+
+  test("removing a custom tier during a failing reload keeps a restarted child's binding for its retry", async () => {
+    const custom = [`amazon-bedrock/${haikuId}#low`, `amazon-bedrock/${sonnetId}#low`]
+    await withConfig(
+      async (host) => {
+        const original = host.context.tool.transform
+        const failedModel = { providerID: "amazon-bedrock", id: haikuId, variant: "low" }
+        const error = { type: "provider.internal", message: "Service Unavailable", status: 503 }
+        let decision: unknown
+        let first = true
+        host.context.tool.transform = async (callback) => {
+          if (first) {
+            first = false
+            // The reload has published tiers without "custom"; the child's stored binding names it.
+            decision = await host.fireRetry({ sessionID: "c1", agent: "worker", model: failedModel, error, attempt: 4 })
+            throw new Error("tool refresh refused")
+          }
+          return original(callback)
+        }
+        await expect(host.rpc("set", { tier: "custom", value: null })).rejects.toThrow(/not applied: tool refresh refused/)
+        expect(decision).toEqual({ retry: true, delay: 0 })
+        expect(host.calls.filter((c) => c.method === "switchModel").map((c) => c.input)).toEqual([
+          { sessionID: "c1", model: { providerID: "amazon-bedrock", id: sonnetId, variant: "low" } },
+        ])
+      },
+      worker,
+      { options: { tiers: { custom: { model: custom } } }, fileText: tierEntry({ custom: { model: custom } }), seed: (host) => host.storage.set("spawn-role:c1", "custom") },
     )
   })
 

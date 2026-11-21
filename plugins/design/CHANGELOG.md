@@ -1,3 +1,13 @@
+## design [0.9.0](https://github.com/srobroek/harness-plugins/compare/design--v0.8.0...design--v0.9.0) (2026-11-21)
+
+### Features
+
+* **design:** give the design critic the read-only shell ([11df718](https://github.com/srobroek/harness-plugins/commit/11df71891da0a9734a32ba81b0ac7722b4e6f484))
+
+### Bug Fixes
+
+* **design:** rebuild with the hardened read-only shell rules ([763adcf](https://github.com/srobroek/harness-plugins/commit/763adcfdb2deea9da1075cf69b757f1dceacdfcb))
+
 # Changelog
 
 ## [0.8.0](https://github.com/srobroek/opencode-plugins/compare/design--v0.7.0...design--v0.8.0) (2026-11-20)

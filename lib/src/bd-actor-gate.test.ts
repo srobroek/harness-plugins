@@ -242,6 +242,9 @@ describe("firstBdVerb / isMutatingBdCommand", () => {
     expect(firstBdVerb("command bd close x")).toBe("close")
     expect(firstBdVerb("env FOO=1 bd close x")).toBe("close")
     expect(firstBdVerb("sudo -u build bd close x")).toBe("close")
+    expect(firstBdVerb("exec bd close x")).toBe("close")
+    expect(firstBdVerb("exec 'bd' close x")).toBe("close")
+    expect(firstBdVerb("nohup bd close x")).toBe("close")
     expect(isMutatingBdCommand("echo command bd close x")).toBe(false)
   })
 

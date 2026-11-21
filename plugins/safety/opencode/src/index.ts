@@ -13,7 +13,7 @@ import { decideToolCall, type MigrationOptions, migrationOverride } from "./migr
 import { createPackageAdvisor } from "./package-investigate.ts"
 import { type Decision, type DecisionID, type ReviewOptions, reviewPermission } from "./permission.ts"
 import { createRedactor, type RedactOptions, readRedactOptions } from "./redact.ts"
-import { allowScratch, scratchRoots } from "./scratch-dirs.ts"
+import { allowScratch, realRoots, scratchRoots } from "./scratch-dirs.ts"
 import {
   COMMAND_ACTION,
   type Destination,
@@ -25,6 +25,7 @@ import {
 } from "./secret-store.ts"
 import { allowSkillReads, listedSkills, READ_ONLY_TOOLS, skillDirectories } from "./skill-references.ts"
 import { denyUnanswerable, type SessionInfo, unanswerableDenial } from "./subagent-prompts.ts"
+import { allowSubagentReads } from "./subagent-reads.ts"
 
 export { normalize as normalizeCloseKeywords, rewriteCloseKeywords } from "./close-keywords.ts"
 export { externalDirectories, flagDirectories, shellFlagDirectories } from "./flag-directories.ts"
@@ -43,6 +44,7 @@ export {
 } from "./redact.ts"
 export { allowSkillReads, skillDirectories } from "./skill-references.ts"
 export { denyUnanswerable, unanswerableMessage } from "./subagent-prompts.ts"
+export { allowSubagentReads, isSecretResource, SECRET_LOCATIONS } from "./subagent-reads.ts"
 
 export type FeatureID =
   | GuardID
@@ -52,6 +54,7 @@ export type FeatureID =
   | "migration-edit"
   | "external-directory"
   | "skill-references"
+  | "subagent-external-reads"
   | "subagent-prompts"
 
 export const FEATURE_IDS: readonly FeatureID[] = [
@@ -64,6 +67,7 @@ export const FEATURE_IDS: readonly FeatureID[] = [
   "migration-edit",
   "external-directory",
   "skill-references",
+  "subagent-external-reads",
   "subagent-prompts",
 ]
 
@@ -72,13 +76,17 @@ export type SafetyOptions = {
   redact: RedactOptions
   opAllow: string[]
   scratchDirs: boolean
+  /** Extra secret locations the `subagent-external-reads` check never allows. */
+  secretPaths: string[]
 }
 
 /**
  * `{ disable: ["git-defender", …] }` turns features off; unknown ids are ignored.
  * `opAllow` lists extra `op` subcommand prefixes the op-guard allows.
- * `scratchDirs: false` stops allowing the OpenCode temp folder and the project's worktree folder.
- * `disable: ["skill-references"]` stops allowing reads in installed skills' directories, and
+ * `scratchDirs: false` stops allowing the OpenCode temp folder, the project's worktree, shell-output and tool-output folders, and the session's own directory.
+ * `disable: ["skill-references"]` stops allowing reads in installed skills' directories.
+ * `disable: ["subagent-external-reads"]` stops allowing a subagent's read-only and shell `external_directory` asks;
+ * `subagentSecretPaths` adds locations (`~/…` or absolute) to `SECRET_LOCATIONS` that stay denied.
  * `disable: ["subagent-prompts"]` lets a subagent session's asks prompt instead of failing at once.
  * `redactSecrets`, `redactNames` and `redactExclude` configure secret redaction.
  */
@@ -87,7 +95,9 @@ export function readOptions(options: Readonly<Record<string, unknown>> | undefin
   const list = Array.isArray(raw) ? raw.filter((id): id is FeatureID => FEATURE_IDS.includes(id as FeatureID)) : []
   const allow = options?.opAllow
   const opAllow = Array.isArray(allow) ? allow.filter((entry): entry is string => typeof entry === "string") : []
-  return { disabled: new Set(list), redact: readRedactOptions(options), opAllow, scratchDirs: options?.scratchDirs !== false }
+  const paths = options?.subagentSecretPaths
+  const secretPaths = Array.isArray(paths) ? paths.filter((entry): entry is string => typeof entry === "string") : []
+  return { disabled: new Set(list), redact: readRedactOptions(options), opAllow, scratchDirs: options?.scratchDirs !== false, secretPaths }
 }
 
 /** The directory a shell call runs in: its `workdir`, resolved against the session's directory. */
@@ -250,7 +260,7 @@ export function createPlugin(overrides: Overrides = {}) {
     async setup(ctx) {
       // Bound before the first await, while the fiber still carries the host's logger.
       const warn = overrides.warn ?? hostWarn("srobroek.safety")
-      const { disabled, redact, opAllow, scratchDirs } = readOptions(ctx.options)
+      const { disabled, redact, opAllow, scratchDirs, secretPaths } = readOptions(ctx.options)
       const on = (id: FeatureID) => !disabled.has(id)
       const guardOptions = {
         env: overrides.env ?? process.env,
@@ -363,7 +373,7 @@ export function createPlugin(overrides: Overrides = {}) {
                 .get({ sessionID: evaluation.sessionID } as never)
                 .then((session) => scratchRoots((session as { projectID: string }).projectID))
                 .catch(() => []))
-            allowScratch(evaluation, roots)
+            allowScratch(evaluation, [...roots, ...realRoots(sessionRoots(await sessionDirectory(evaluation.sessionID)))])
           })
         : undefined
 
@@ -485,6 +495,18 @@ export function createPlugin(overrides: Overrides = {}) {
             })
             return undefined
           })
+      // Before `subagent-prompts`, so the asks it allows never reach the deny.
+      const subagentReads = on("subagent-external-reads")
+        ? await ctx.permission.hook("evaluate", async (evaluation) => {
+            if (evaluation.action !== "external_directory" || evaluation.effect !== "ask") return
+            const source = evaluation.source
+            const tool = source?.type === "tool" ? running.get(source.id)?.tool : undefined
+            if (tool === undefined) return
+            // A failed lookup stays an ask; `subagent-prompts` logs it, so this hook stays quiet.
+            const info = (await ctx.session.get({ sessionID: evaluation.sessionID } as never).catch(() => undefined)) as SessionInfo | undefined
+            allowSubagentReads(evaluation, tool, typeof info?.parentID === "string" && info.parentID !== "", secretPaths)
+          })
+        : undefined
       const unanswerable = on("subagent-prompts")
         ? await ctx.permission.hook("evaluate", async (evaluation) => {
             if (evaluation.effect !== "ask") return
@@ -570,6 +592,7 @@ export function createPlugin(overrides: Overrides = {}) {
       return async () => {
         for (const registration of redacting.reverse()) await registration.dispose()
         await unanswerable?.dispose()
+        await subagentReads?.dispose()
         watching.abort()
         // Ending the iterator ends the loop above; it is not awaited, since a pending read may never settle.
         void asked?.return?.()

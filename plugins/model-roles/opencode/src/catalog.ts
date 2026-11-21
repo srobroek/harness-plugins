@@ -37,6 +37,7 @@ export const DEFAULT_TIER_EFFORT: Readonly<Record<string, string>> = {
   standard: "medium",
   strong: "high",
   reviewer: "high",
+  orchestrate: "high",
 }
 
 /** Effort levels, lowest first. Nearest-variant mapping walks this scale. */

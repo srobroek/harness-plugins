@@ -28,8 +28,10 @@ test("registers the quality skills and the read-only challenger", async () => {
   ])
   expect(fake.agents.get("adversarial-challenger")).toMatchObject({ mode: "subagent" })
   const rules = fake.agents.get("adversarial-challenger")?.permissions as AgentPermission[]
-  for (const action of ["edit", "shell", "subagent", "question", "execute", "some_plugin_tool"])
+  for (const action of ["edit", "subagent", "question", "execute", "some_plugin_tool"])
     expect(permissionEffect(rules, action)).toBe("deny")
+  expect(permissionEffect(rules, "shell", "git log -3")).toBe("allow")
+  expect(permissionEffect(rules, "shell", "git push")).toBe("deny")
   for (const action of ["read", "grep", "glob", "lsp_diagnostics", "webfetch", "websearch"])
     expect(permissionEffect(rules, action)).toBe("allow")
   expect(permissionEffect(rules, "skill", "quality-code-design")).toBe("allow")

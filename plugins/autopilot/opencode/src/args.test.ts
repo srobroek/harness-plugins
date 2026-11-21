@@ -14,7 +14,11 @@ describe("parseInvocation", () => {
     expect(parseInvocation("")).toEqual({ kind: "start", options: {}, missing: ["scope", "full", "allow", "lanes", "budget", "until"] })
   })
 
-  test("--no-full and --allow none answer those questions with no", () => {
+  test("--allow self-review is a grant", () => {
+  expect(parseInvocation("p-1 --allow self-review")).toMatchObject({ options: { allow: ["self-review"] } })
+})
+
+test("--no-full and --allow none answer those questions with no", () => {
     expect(parseInvocation('p-1 --no-full --allow none --lanes 2 --for 1h --until ""')).toMatchObject({ options: { full: false, allow: [] }, missing: [] })
   })
 
@@ -25,7 +29,7 @@ describe("parseInvocation", () => {
 
   test.each([
     ["--lanes 0", "--lanes needs a whole number of at least 1"],
-    ["--allow push", "--allow: unknown grant push; known: merge, deploy"],
+    ["--allow push", "--allow: unknown grant push; known: merge, deploy, self-review"],
     ["--for soon", "--for needs a duration such as 3h or 90m"],
     ["--for 1h --until-time 18:00", "use --for or --until-time, not both"],
     ["--bogus", "unknown flag --bogus"],

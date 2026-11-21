@@ -215,6 +215,15 @@ type ReceiptResolution =
 
 type Absence = "absent" | "present" | "unknown"
 
+/**
+ * Whether a vanished worktree is provably gone: absent on disk and unregistered. Anything
+ * seen on either side is present; an observation that could not be made proves nothing.
+ */
+export function targetAbsence(disk: Absence, registration: Absence): Absence {
+  if (disk === "present" || registration === "present") return "present"
+  return disk === "absent" && registration === "absent" ? "absent" : "unknown"
+}
+
 function show(value: unknown): string {
   if (typeof value === "string") return JSON.stringify(value)
   if (value === undefined) return "missing"
@@ -275,8 +284,9 @@ function describeSelector(selector: ReceiptSelector, scope: string): string {
 /**
  * Picks the one receipt a cleanup is about. `candidates` are validated receipts, newest first.
  * Only a PR's newest receipt in its repository counts, because a continuation supersedes the landing it continues.
- * With no selector at all uncleaned receipts are preferred, and exactly one must remain; with a
- * selector a cleaned receipt qualifies too, so a repeated cleanup finds its finished landing. `pr`,
+ * `repo` scopes the candidates first. With no `pr`, `branch`, `worktree` or `head`, the selection then
+ * prefers uncleaned receipts, and exactly one must remain. With one of them a cleaned receipt qualifies
+ * too, so a repeated cleanup finds its finished landing. `pr`,
  * `branch` and `worktree` must all match; `head` breaks a tie by reviewed head oid, then branch.
  * Zero matches or several are refused with every candidate listed, never guessed.
  */
@@ -292,6 +302,8 @@ export function selectReceipt(
     seen.add(key)
     return true
   })
+  // Scope to the named repository first, so another repository's uncleaned receipt cannot hide this one's.
+  if (selector.repo !== undefined) pool = pool.filter((c) => c.receipt.repo.nameWithOwner === selector.repo)
   const explicit = selector.pr !== undefined || selector.branch !== undefined || selector.worktree !== undefined
   if (!explicit && selector.head === undefined) {
     // Uncleaned landings are what a bare call is about; with none left, the cleaned ones stay candidates
@@ -301,7 +313,6 @@ export function selectReceipt(
   }
   if (selector.pr !== undefined) pool = pool.filter((c) => c.receipt.pr.number === selector.pr)
   if (selector.branch !== undefined) pool = pool.filter((c) => c.receipt.branch.name === selector.branch)
-  if (selector.repo !== undefined) pool = pool.filter((c) => c.receipt.repo.nameWithOwner === selector.repo)
   if (selector.worktree !== undefined) {
     const want = resolve(selector.worktree)
     pool = pool.filter((c) => c.receipt.worktree.path !== null && resolve(c.receipt.worktree.path) === want)
@@ -1188,6 +1199,26 @@ function storedRecordForTarget(records: WorktreeRecord[], target: string): Workt
   return null
 }
 
+/**
+ * The registered record naming `target`, however the path is spelled. A directory that
+ * still exists is compared by its physical path, so a symlinked parent matches; one that
+ * has vanished keeps its physical parent and its own name, so a stored spelling matches.
+ */
+function registeredRecord(records: WorktreeRecord[], target: string): WorktreeRecord | null {
+  const canonical = (path: string): string => {
+    const full = resolve(path)
+    const real = physicalPath(full)
+    if (real !== null) return real
+    const parent = physicalPath(dirname(full))
+    return parent === null ? full : join(parent, basename(full))
+  }
+  const expected = canonical(target)
+  for (const item of records) {
+    if (canonical(item.path) === expected) return item
+  }
+  return null
+}
+
 async function verifyTargetIdentity(
   receipt: LandingReceipt,
   cwd: string,
@@ -1413,17 +1444,44 @@ async function cleanupInRepository(
   }
   // A worktree that is already gone (cleaned before, or removed by hand) has nothing left to remove.
   // Success without a receipt write, because no proof was made now and a repeat must change nothing.
-  const alreadyCleaned = async (receipt: LandingReceipt, receiptPath: string): Promise<CleanupSuccess | null> => {
+  const alreadyCleaned = async (
+    receipt: LandingReceipt,
+    receiptPath: string,
+  ): Promise<CleanupSuccess | CleanupFailure | null> => {
     const target = receipt.worktree.path as string
+    const cleaned = receipt.worktree.removed
+    // A receipt not yet cleaned goes on to the full checks, without an extra Git call,
+    // unless the path is already absent on disk.
+    if (!cleaned && pathAbsence(target) !== "absent") return null
+    const listed = await readWorktrees(cwd, run, bounds.refReadMs)
+    // The disk is read again here, after the await: whatever appeared while Git ran counts.
+    const disk = pathAbsence(target)
+    const record = Array.isArray(listed) ? registeredRecord(listed, target) : null
+    const registration: Absence = !Array.isArray(listed) ? "unknown" : record === null ? "absent" : "present"
+    const state = targetAbsence(disk, registration)
     let note: string | null = null
-    if (receipt.worktree.removed) note = `worktree ${target} was already cleaned by an earlier call`
-    else if (pathAbsence(target) === "absent") {
-      const listed = await readWorktrees(cwd, run, bounds.refReadMs)
-      if (Array.isArray(listed) && storedRecordForTarget(listed, target) === null) {
-        note = `worktree ${target} is already gone (neither on disk nor registered); nothing was removed and the landing receipt is unchanged`
+    if (state === "absent") {
+      note = cleaned
+        ? `worktree ${target} was already cleaned by an earlier call`
+        : `worktree ${target} is already gone (neither on disk nor registered); nothing was removed and the landing receipt is unchanged`
+    } else if (!cleaned) {
+      return null
+    } else if (state === "present") {
+      // A cleaned receipt does not prove the path is still empty: something may have been
+      // created or registered there since. Never remove it; report what is there and stop.
+      return {
+        ok: false,
+        reason: `worktree.path: ${target} was cleaned by an earlier call but a ${record !== null ? "registered worktree" : "directory"} exists there now (HEAD ${record?.head ?? "unknown, not a registered worktree"}); it was not removed, so inspect it and run delivery_cleanup against a new landing receipt if it should go`,
+      }
+    } else {
+      const why = Array.isArray(listed)
+        ? `the filesystem read of ${target} failed`
+        : `the worktree list could not be read (${listed.reason})`
+      return {
+        ok: false,
+        reason: `worktree.path: ${target} was cleaned by an earlier call, but ${why}, so its absence is unproven; nothing was removed`,
       }
     }
-    if (note === null) return null
     return {
       ok: true,
       receipt,

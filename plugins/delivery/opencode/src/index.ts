@@ -115,10 +115,11 @@ type Evaluation = {
 
 /**
  * Turn an allowed land or cleanup into a prompt; a configured deny never reaches the hook.
+ * A subagent cannot answer a prompt (the safety plugin would deny it), so it keeps its allow.
  * A call the tool registered as gated (see gate.ts) is left as the rules resolved it.
  */
-export function confirmDelivery(evaluation: Evaluation, gates?: GateRegistry): void {
-  if (evaluation.effect !== "allow") return
+export function confirmDelivery(evaluation: Evaluation, subagent = false, gates?: GateRegistry): void {
+  if (evaluation.effect !== "allow" || subagent) return
   if (gates?.skips(evaluation.action, evaluation.resources) === true) return
   if (evaluation.action === LAND_ACTION) {
     evaluation.effect = "ask"
@@ -479,7 +480,14 @@ export async function setupDelivery(
   disposers.push(() => pending.dispose())
 
   if (options.confirm) {
-    const gate = await ctx.permission.hook("evaluate", (evaluation) => confirmDelivery(evaluation, gates))
+    const gate = await ctx.permission.hook("evaluate", async (evaluation) => {
+      if (evaluation.effect !== "allow" || (evaluation.action !== LAND_ACTION && evaluation.action !== CLEANUP_ACTION)) return
+      // A failed lookup keeps the prompt (fail closed).
+      const info = (await ctx.session.get({ sessionID: evaluation.sessionID } as never).catch(() => undefined)) as
+        | { parentID?: string | null }
+        | undefined
+      confirmDelivery(evaluation, typeof info?.parentID === "string" && info.parentID !== "", gates)
+    })
     disposers.push(() => gate.dispose())
   }
 

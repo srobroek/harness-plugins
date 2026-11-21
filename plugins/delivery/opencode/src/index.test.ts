@@ -184,6 +184,26 @@ describe("confirmDelivery", () => {
   })
 })
 
+describe("confirm hook", () => {
+  const sessions = [{ id: "root" }, { id: "sub", parentID: "root" }]
+  const fire = async (sessionID: string, action: string, effect: string) => {
+    const { fake } = await load({ sessions })
+    const evaluation = { sessionID, action, resources: ["x"], effect } as { effect: string }
+    await fake.fire.permission("evaluate", evaluation as never)
+    return evaluation.effect
+  }
+  test.each([LAND_ACTION, CLEANUP_ACTION])("%s: a root session is prompted, a subagent keeps allow", async (action) => {
+    expect(await fire("root", action, "allow")).toBe("ask")
+    expect(await fire("sub", action, "allow")).toBe("allow")
+  })
+  test.each(["root", "sub"])("a deny stays deny in session %s", async (id) => {
+    expect(await fire(id, LAND_ACTION, "deny")).toBe("deny")
+  })
+  test("a failed session lookup keeps the prompt", async () => {
+    expect(await fire("missing", LAND_ACTION, "allow")).toBe("ask")
+  })
+})
+
 describe("agents", () => {
   test("each shipped agent is a subagent with a prompt free of omp references", () => {
     for (const file of loadAgents()) {

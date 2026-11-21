@@ -86,13 +86,51 @@ class IdleReports {
   }
 }
 
+// lib/src/review-verdict.ts
+var VERDICT_LINE = /^VERDICT:\s*(APPROVE|REQUEST[-_]CHANGES|COMMENT)\b(.*)$/i;
+var OPEN_FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+var CLOSE_FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+function parseVerdictLine(text, options = {}) {
+  let found;
+  let lastNonBlank = -1;
+  const lines = text.split(/\r?\n/);
+  let fence;
+  for (const [index, line] of lines.entries()) {
+    if (line.trim() !== "")
+      lastNonBlank = index;
+    if (fence !== undefined) {
+      const closes = CLOSE_FENCE.exec(line)?.[1];
+      if (closes?.startsWith(fence.char) && closes.length >= fence.length)
+        fence = undefined;
+      continue;
+    }
+    const opens = OPEN_FENCE.exec(line);
+    if (opens?.[1] !== undefined && !(opens[1].startsWith("`") && opens[2]?.includes("`"))) {
+      fence = { char: opens[1].charAt(0), length: opens[1].length };
+      continue;
+    }
+    if (/^(?: {4}|\t)/.test(line) || /^ {0,3}>/.test(line))
+      continue;
+    const match = VERDICT_LINE.exec(line.trim());
+    if (match?.[1] !== undefined)
+      found = { verdict: match[1].toLowerCase().replace("_", "-"), rest: (match[2] ?? "").trim(), line: index };
+  }
+  if (found === undefined || options.strict === true && found.line !== lastNonBlank)
+    return;
+  return { verdict: found.verdict, rest: found.rest };
+}
+function parseVerdict(text) {
+  return parseVerdictLine(text)?.verdict;
+}
+
 // plugins/model-roles/opencode/src/catalog.ts
 var DERIVED_TIERS = ["cheap", "standard", "strong"];
 var DEFAULT_TIER_EFFORT = {
   cheap: "low",
   standard: "medium",
   strong: "high",
-  reviewer: "high"
+  reviewer: "high",
+  orchestrate: "high"
 };
 var EFFORT_SCALE = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 var DEFAULT_PREMIUM = 8;
@@ -821,12 +859,13 @@ function contextNote(failed, limit, tier) {
 }
 
 // plugins/model-roles/opencode/src/tiers.ts
-var BUILTIN_TIERS = ["cheap", "standard", "strong", "reviewer"];
+var BUILTIN_TIERS = ["cheap", "standard", "strong", "reviewer", "orchestrate"];
 var TIER_PURPOSE = {
   cheap: "cheap and fast: lookups, summaries, log and diff reading, mechanical edits",
   standard: "everyday implementation and investigation",
   strong: "hard reasoning: design, root-cause debugging, subtle concurrency or data-integrity work",
-  reviewer: "an independent second opinion or review, from another model vendor than yours when one is available"
+  reviewer: "an independent second opinion or review, from another model vendor than yours when one is available",
+  orchestrate: "planning and coordinating other agents: decomposing work, routing it and judging results"
 };
 var TIER_ALIASES = {
   smol: { tier: "cheap" },
@@ -910,7 +949,7 @@ var tierOf = (name) => TIER_ALIASES[name]?.tier ?? name;
 function baseTier(name) {
   if (DERIVED_TIERS.includes(name))
     return;
-  return name === "reviewer" ? "strong" : "standard";
+  return name === "reviewer" || name === "orchestrate" ? "strong" : "standard";
 }
 function tierEffort(settings, name) {
   const own = settings.tiers[name]?.effort;
@@ -1050,7 +1089,7 @@ function buildTiers(settings, models, refs) {
   };
   for (const name of ["cheap", "standard", "strong"])
     roles[name] = own(name) ?? [];
-  for (const name of ["reviewer", ...custom]) {
+  for (const name of ["reviewer", "orchestrate", ...custom]) {
     const list = own(name);
     if (list !== undefined) {
       roles[name] = list;
@@ -4538,7 +4577,70 @@ function effectiveConfig(project, global, spec) {
 // plugins/model-roles/opencode/src/outage.ts
 var NOTICE_DEDUPE_MS = 60000;
 var OUTAGE_STALE_MS = 15 * 60000;
-var newNoticeState = () => ({ outages: new Map, notices: new Map, contextNotices: new Map });
+var newNoticeState = () => ({ outages: new Map, notices: new Map, contextNotices: new Map, events: new Map });
+var MAX_EVENTS = 500;
+function claimEvent(state, id, now) {
+  if (id === undefined)
+    return true;
+  if (state.events.has(id))
+    return false;
+  state.events.set(id, now);
+  if (state.events.size > MAX_EVENTS)
+    state.events.delete(state.events.keys().next().value);
+  return true;
+}
+var SHARED = Symbol.for("srobroek.model-roles.notice-state");
+function acquireNoticeState(holder) {
+  const found = holder[SHARED];
+  if (found === undefined || typeof found.state !== "object" || found.state === null) {
+    const shared = { state: newNoticeState(), refs: 1 };
+    holder[SHARED] = shared;
+    return { state: shared.state, first: true };
+  }
+  const fresh = newNoticeState();
+  for (const key of Object.keys(fresh))
+    if (!(found.state[key] instanceof Map))
+      found.state[key] = fresh[key];
+  found.refs = (Number.isFinite(found.refs) ? found.refs : 0) + 1;
+  return { state: found.state, first: false };
+}
+function releaseNoticeState(holder) {
+  const found = holder[SHARED];
+  if (found === undefined)
+    return;
+  found.refs -= 1;
+  if (found.refs <= 0)
+    delete holder[SHARED];
+}
+var OUTAGES_KEY = "outages";
+function snapshotOutages(state) {
+  return [...state.outages.values()].map((o) => ({ providerID: o.providerID, kind: o.kind, lastAt: o.lastAt, notifyTo: o.notifyTo, stopped: [...o.stopped] }));
+}
+var optionalString = (value) => typeof value === "string" ? value : undefined;
+function restoreOutages(state, raw) {
+  if (!Array.isArray(raw))
+    return;
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null)
+      continue;
+    const o = item;
+    if (typeof o.providerID !== "string" || typeof o.notifyTo !== "string" || typeof o.lastAt !== "number" || !Array.isArray(o.stopped))
+      continue;
+    if (typeof o.kind !== "string" || !FAILURE_CLASSES.includes(o.kind))
+      continue;
+    const key = `${o.providerID}\x00${o.kind}`;
+    if (state.outages.has(key))
+      continue;
+    const stopped = new Map;
+    for (const entry of o.stopped.slice(-MAX_TRACKED)) {
+      if (!Array.isArray(entry) || typeof entry[0] !== "string" || typeof entry[1] !== "object" || entry[1] === null)
+        continue;
+      const s = entry[1];
+      stopped.set(entry[0], { agent: optionalString(s.agent), sessionID: optionalString(s.sessionID), parent: optionalString(s.parent) });
+    }
+    state.outages.set(key, { providerID: o.providerID, kind: o.kind, lastAt: o.lastAt, notifyTo: o.notifyTo, stopped });
+  }
+}
 function claimContextNotice(state, sessionID, execution, now) {
   for (const [id, at] of state.contextNotices)
     if (now - at >= NOTICE_DEDUPE_MS)
@@ -4563,6 +4665,7 @@ function toolContextNoticeLive(state, sessionID, now) {
   const at = state.contextNotices.get(`${sessionID}\x00tool-error`);
   return at !== undefined && now - at < NOTICE_DEDUPE_MS;
 }
+var noticeResumes = (kind) => kind === "subagent-fallback" || kind === "recovery";
 var stoppedKey = (report) => report.subagent?.sessionID ?? `${report.notifyTo}\x00${report.subagent?.agent ?? ""}`;
 var stoppedLine = (stopped, provider, kind, first) => {
   const who = stopped.agent === undefined ? "A subagent" : `Subagent '${stopped.agent}'`;
@@ -4601,7 +4704,7 @@ function decideOutage(state, report) {
   outage.lastAt = now;
   let line;
   if (report.subagent !== undefined) {
-    const stopped = { agent: report.subagent.agent, sessionID: report.subagent.sessionID };
+    const stopped = { agent: report.subagent.agent, sessionID: report.subagent.sessionID, parent: notifyTo };
     if (remember(outage, stoppedKey(report), stopped))
       line = stoppedLine(stopped, provider, kind, announce);
   }
@@ -4626,15 +4729,23 @@ function decideRecovery(state, model) {
     if (outage.providerID !== model.providerID)
       continue;
     state.outages.delete(key);
-    let text = `Provider ${outage.providerID} recovered (${outage.kind}).`;
-    const resumable = [...outage.stopped.values()].filter((s) => s.sessionID !== undefined);
-    if (resumable.length > 0) {
-      const list = resumable.slice(0, MAX_STOPPED).map((s) => `${s.agent ?? "subagent"} (${s.sessionID})`);
-      if (resumable.length > MAX_STOPPED)
-        list.push(`+${resumable.length - MAX_STOPPED} more`);
-      text += ` Resume the stopped subagents: ${list.join(", ")}.`;
+    const byParent = new Map([[outage.notifyTo, []]]);
+    for (const s of outage.stopped.values()) {
+      if (s.sessionID === undefined)
+        continue;
+      const parent = s.parent ?? outage.notifyTo;
+      byParent.set(parent, [...byParent.get(parent) ?? [], s]);
     }
-    notices.push({ sessionID: outage.notifyTo, text });
+    for (const [parent, resumable] of byParent) {
+      let text = `Provider ${outage.providerID} recovered (${outage.kind}).`;
+      if (resumable.length > 0) {
+        const list = resumable.slice(0, MAX_STOPPED).map((s) => `${s.agent ?? "subagent"} (${s.sessionID})`);
+        if (resumable.length > MAX_STOPPED)
+          list.push(`+${resumable.length - MAX_STOPPED} more`);
+        text += ` Resume the stopped subagents: ${list.join(", ")}.`;
+      }
+      notices.push({ sessionID: parent, text });
+    }
   }
   return notices;
 }
@@ -5458,32 +5569,6 @@ function parseEvaluate(raw) {
     testGlobs: strings3(input.testGlobs) ?? DEFAULT_TEST_GLOBS
   };
 }
-var VERDICT_LINE = /^VERDICT:\s*(APPROVE|REQUEST-CHANGES|COMMENT)\b/i;
-var OPEN_FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
-var CLOSE_FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
-function parseVerdict(text) {
-  let found;
-  let fence;
-  for (const line of text.split(/\r?\n/)) {
-    if (fence !== undefined) {
-      const closes = CLOSE_FENCE.exec(line)?.[1];
-      if (closes?.startsWith(fence.char) && closes.length >= fence.length)
-        fence = undefined;
-      continue;
-    }
-    const opens = OPEN_FENCE.exec(line);
-    if (opens?.[1] !== undefined && !(opens[1].startsWith("`") && opens[2]?.includes("`"))) {
-      fence = { char: opens[1].charAt(0), length: opens[1].length };
-      continue;
-    }
-    if (/^(?: {4}|\t)/.test(line) || /^ {0,3}>/.test(line))
-      continue;
-    const match = VERDICT_LINE.exec(line.trim());
-    if (match?.[1] !== undefined)
-      found = match[1].toLowerCase();
-  }
-  return found;
-}
 var ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 var SEPARATORS2 = new Set([";", "&", "|", "(", ")", `
 `, "$(", "<<<"]);
@@ -5888,6 +5973,10 @@ var CHECK_EVENTS = new Set(["agent.updated", ...REFRESH_EVENTS]);
 var FAILED_EVENT = "session.execution.failed";
 var INTERRUPTED_EVENT = "session.execution.interrupted";
 var DELETED_EVENT = "session.deleted";
+var eventID = (event) => {
+  const id = event?.id;
+  return typeof id === "string" && id !== "" ? id : undefined;
+};
 var endedAt = (event) => {
   const created = event.created;
   return typeof created === "number" && Number.isFinite(created) ? created : Number.POSITIVE_INFINITY;
@@ -5968,12 +6057,25 @@ var src_default = Plugin.define({
     const classified = {};
     const unclassifiable = new Set;
     const classifying = new Set;
+    const snapshotOptions = () => ({ agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes, implicit: options.implicit });
+    let committed = snapshotOptions();
+    let tentative = false;
+    const commit = () => {
+      committed = snapshotOptions();
+    };
+    const setImplicit = (implicit) => {
+      options.implicit = implicit;
+      if (!tentative)
+        committed = { ...committed, implicit };
+    };
     const rebuild = () => {
       const set = buildTiers(settings, available, refs);
       options.roles = set.roles;
       options.tiers = set.tiers;
       options.classes = set.classes;
       derived = set.derived;
+      if (!tentative)
+        commit();
     };
     const references = await ctx.model.transform((editor) => {
       try {
@@ -5991,7 +6093,18 @@ var src_default = Plugin.define({
     }
     const view = () => healthView(health2, Date.now());
     const queue = serial();
-    const noticeState = newNoticeState();
+    const acquired = acquireNoticeState(globalThis);
+    const noticeState = acquired.state;
+    if (acquired.first) {
+      try {
+        restoreOutages(noticeState, await ctx.storage.get(OUTAGES_KEY));
+      } catch {}
+    }
+    const persistOutages = async () => {
+      try {
+        await ctx.storage.set(OUTAGES_KEY, snapshotOutages(noticeState));
+      } catch {}
+    };
     const childFailures = new Map;
     const refresh = async () => {
       try {
@@ -6020,7 +6133,7 @@ ${refs.size}`;
         failed: unclassifiable,
         autoGeneral: auto2 !== undefined
       });
-      options.implicit = plan.implicit;
+      setImplicit(plan.implicit);
       if (plan.pending.length > 0)
         scheduleClassify(plan.pending);
       const desired = desiredModels(editor.list(), options, available, healthView(health2, Date.now()));
@@ -6127,7 +6240,7 @@ ${refs.size}`;
         failed: unclassifiable,
         autoGeneral: auto2 !== undefined
       });
-      options.implicit = { ...options.implicit, ...late.implicit };
+      setImplicit({ ...options.implicit, ...late.implicit });
       if (late.pending.length > 0)
         scheduleClassify(late.pending);
       const desired = desiredModels(agents, options, available, view());
@@ -6225,12 +6338,14 @@ ${refs.size}`;
           description: text.split(". ", 1)[0] ?? text,
           metadata: { source: SOURCE, kind },
           delivery: "steer",
-          resume: false
+          resume: noticeResumes(kind)
         });
       } catch {}
     };
     const announce = async (report2) => {
       const notice = decideFailureNotice(noticeState, report2);
+      if (report2.subagent !== undefined || failureScope(report2.kind) === "provider")
+        await persistOutages();
       if (notice === undefined)
         return;
       await notify(notice.sessionID, notice.text, report2.subagent === undefined ? "fallback" : "subagent-fallback");
@@ -6242,6 +6357,7 @@ ${refs.size}`;
         return;
       for (const notice of decideRecovery(noticeState, model))
         await notify(notice.sessionID, notice.text, "recovery");
+      await persistOutages();
     };
     const executionOf = new Map;
     const noteExecution = (sessionID, id) => {
@@ -6419,7 +6535,7 @@ ${refs.size}`;
       const stored = await ctx.storage.get(`${SPAWN_ROLE_KEY_PREFIX}${childID}`).catch(() => {
         return;
       });
-      return typeof stored === "string" && Object.hasOwn(options.roles, stored) ? stored : undefined;
+      return typeof stored === "string" && Object.hasOwn(committed.roles, stored) ? stored : undefined;
     };
     const childModels = new Map;
     const snapshotOf = async (childID) => {
@@ -6665,6 +6781,7 @@ ${refs.size}`;
       warn(`session ${event.sessionID}: ${modelLabel(failed)} failed (${kind}); retrying it in ${duration(delay)}.`);
     };
     const triedModels = new Map;
+    const retryQueue = serial();
     const retries = runtime.runtimeFallback ? await ctx.session.hook("retry", async (event) => {
       if (event.attempt <= 2)
         triedModels.delete(event.sessionID);
@@ -6678,17 +6795,29 @@ ${refs.size}`;
         return keepOnModel(event, kind, failed);
       if (switching.has(event.sessionID))
         return keepOnModel(event, kind, failed);
+      let abandoned = false;
+      const live = () => !abandoned && !controller.signal.aborted;
+      const stay = () => {
+        if (live())
+          keepOnModel(event, kind, failed);
+      };
       try {
-        await queue(async () => {
+        await retryQueue(() => withTimeout((async () => {
           const cooldownMs = await markFailed(failed, kind, error);
+          if (!live())
+            return;
           const agent = (await listAgents()).find((a) => a.id === event.agent);
+          if (!live())
+            return;
           const spawnRole = await spawnRoleOf(event.sessionID);
-          const role = spawnRole ?? (agent === undefined ? undefined : roleOf(agent, options.agents, options.implicit));
+          if (!live())
+            return;
+          const role = spawnRole ?? (agent === undefined ? undefined : roleOf(agent, committed.agents, committed.implicit));
           const tried = triedModels.get(event.sessionID) ?? new Set;
           triedModels.set(event.sessionID, tried.add(healthKey(failed)));
           const recent = healthView(health2, Date.now(), RECENT_MS);
           const target = retryTarget({
-            options,
+            options: { ...options, ...committed },
             available,
             health: (ref) => tried.has(healthKey(ref)) ? 0 : recent(ref),
             role,
@@ -6698,18 +6827,25 @@ ${refs.size}`;
             hostRetries: runtime.hostRetries
           });
           if (target === undefined)
-            return keepOnModel(event, kind, failed);
+            return stay();
+          if (!live())
+            return;
           const outcome = await switchWithin(event.sessionID, target.model, spawnRole);
           const note = switchNote({ failed, kind, cooldownMs, target });
-          if (outcome === "switched") {
+          if (outcome === "switched" && live()) {
             event.decision = { retry: true, delay: 0 };
             warn(`session ${event.sessionID}: ${note}`);
             return;
           }
           warn(`session ${event.sessionID}: switching to ${target.model.providerID}/${target.model.id} ${outcome === "late" ? "is still pending" : "failed"}.`);
-          keepOnModel(event, kind, failed);
-        });
+          stay();
+        })(), runtime.switchTimeoutMs + lookupBound()).catch((error) => {
+          abandoned = true;
+          throw error;
+        }));
       } catch (error) {
+        if (error instanceof LookupTimeout && !controller.signal.aborted)
+          keepOnModel(event, kind, failed);
         warn(`could not switch the failing request to another model`, { error: String(error) });
       }
     }) : undefined;
@@ -7526,15 +7662,17 @@ ${refs.size}`;
       if (tiers2 === undefined ? !agentsChanged : !force && key === fileTiers && !agentsChanged)
         return;
       await exclusive(async () => {
-        const previous = { settings, agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes, derived };
+        const previous = { settings, agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes, implicit: options.implicit, derived };
         const restore = () => {
           settings = previous.settings;
           options.agents = previous.agents;
           options.roles = previous.roles;
           options.tiers = previous.tiers;
           options.classes = previous.classes;
+          options.implicit = previous.implicit;
           derived = previous.derived;
         };
+        tentative = true;
         try {
           if (tiers2 !== undefined)
             settings = parseTierSettings({ ...pluginOptions, tiers: tiers2 });
@@ -7544,8 +7682,12 @@ ${refs.size}`;
           attempts = 0;
           await check2(true, true);
           await refreshSubagentTool(true);
+          tentative = false;
+          commit();
         } catch (error) {
+          tentative = false;
           restore();
+          commit();
           attempts = 0;
           restoreFailed = true;
           await check2(true, true).catch(async () => {
@@ -7709,6 +7851,8 @@ ${refs.size}`;
       const kind = classifyFailure({ message });
       if (kind === undefined)
         return;
+      if (!claimEvent(noticeState, `tool:${event.id}`, Date.now()))
+        return;
       const agentID = isRecord11(event.input) && typeof event.input.agent === "string" ? event.input.agent : undefined;
       try {
         await queue(async () => {
@@ -7754,7 +7898,7 @@ ${refs.size}`;
           await outcomes.signals(sessionID, NO_SIGNALS);
           await outcomes.end(sessionID, `failed:${classifyFailure(error) ?? "other"}`, finishedAt(event));
           pruneChildModels();
-          await queue(() => onSessionFailed(sessionID, error)).catch((error) => warn(`fallback after a failed execution did not complete`, { error: String(error) }));
+          await queue(() => claimEvent(noticeState, eventID(event), Date.now()) ? onSessionFailed(sessionID, error) : Promise.resolve()).catch((error) => warn(`fallback after a failed execution did not complete`, { error: String(error) }));
           continue;
         }
         if (type === SUCCEEDED_EVENT) {
@@ -7890,8 +8034,7 @@ ${refs.size}`;
       await retries?.dispose();
       await registration.dispose();
       await references.dispose();
-      noticeState.outages.clear();
-      noticeState.notices.clear();
+      releaseNoticeState(globalThis);
       childFailures.clear();
       requestLog.clear();
       triedModels.clear();
@@ -8113,7 +8256,6 @@ export {
   parseTestCommand,
   parseTierConfig,
   parseTierSettings,
-  parseVerdict,
   pickConfigFile,
   pickRole,
   pinnedContextNote,

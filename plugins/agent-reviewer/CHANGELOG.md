@@ -1,3 +1,13 @@
+## agent-reviewer [0.10.0](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.9.0...agent-reviewer--v0.10.0) (2026-11-21)
+
+### Features
+
+* **agent-reviewer:** give reviewers the read-only shell and a PR review path ([2736c9a](https://github.com/srobroek/harness-plugins/commit/2736c9a1b19ddc9ce0034582935fce50035f762d))
+
+### Bug Fixes
+
+* **agent-reviewer:** rebuild with the hardened read-only shell rules ([1fd391e](https://github.com/srobroek/harness-plugins/commit/1fd391e6a098da9220ea9206896e7a54d793a7b9))
+
 # Changelog
 
 ## [0.9.0](https://github.com/srobroek/opencode-plugins/compare/agent-reviewer--v0.8.0...agent-reviewer--v0.9.0) (2026-11-20)

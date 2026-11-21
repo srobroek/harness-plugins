@@ -65,17 +65,31 @@ describe("ledgerRepoMismatch", () => {
 
   test("warns when the ledger's directory belongs to another repository", () => {
     const warning = ledgerRepoMismatch({
+      verb: "update",
       store: "/a/.beads",
       cwd: "/b",
       identity: identity({ "/a/.beads": "/a/.git", "/b": "/b/.git" }),
     })
     expect(warning).toContain("/a/.beads")
+    expect(warning).toContain("`bd update`")
     expect(warning).toContain("`workdir`")
+  })
+
+  test("the refusal says how to override it: assign BEADS_DIR in the command line itself", () => {
+    const warning = ledgerRepoMismatch({
+      verb: "create",
+      store: "/a/.beads",
+      cwd: "/b",
+      identity: identity({ "/a/.beads": "/a/.git", "/b": "/b/.git" }),
+    })
+    expect(warning).toContain("BEADS_DIR=<path> bd create")
+    expect(warning).toContain("in the command line itself")
   })
 
   test("stays silent for the same repository, e.g. a linked worktree", () => {
     expect(
       ledgerRepoMismatch({
+        verb: "create",
         store: "/a/.beads",
         cwd: "/wt",
         identity: identity({ "/a/.beads": "/a/.git", "/wt": "/a/.git" }),
@@ -84,21 +98,21 @@ describe("ledgerRepoMismatch", () => {
   })
 
   test("stays silent when git cannot answer or cwd is outside any repository", () => {
-    expect(ledgerRepoMismatch({ store: "/a/.beads", cwd: "/b", identity: identity({ "/a/.beads": "/a/.git" }) })).toBeUndefined()
+    expect(ledgerRepoMismatch({ verb: "create", store: "/a/.beads", cwd: "/b", identity: identity({ "/a/.beads": "/a/.git" }) })).toBeUndefined()
     expect(
-      ledgerRepoMismatch({ store: "/a/.beads", cwd: "/b", identity: identity({ "/a/.beads": "/a/.git", "/b": "/b" }) }),
+      ledgerRepoMismatch({ verb: "create", store: "/a/.beads", cwd: "/b", identity: identity({ "/a/.beads": "/a/.git", "/b": "/b" }) }),
     ).toBeUndefined()
   })
 
   test("warns when the ledger sits above the repository (home-directory ledger)", () => {
     expect(
-      ledgerRepoMismatch({ store: "/h/.beads", cwd: "/h/repo", identity: identity({ "/h/.beads": "/h/.beads", "/h/repo": "/h/repo/.git" }) }),
+      ledgerRepoMismatch({ verb: "create", store: "/h/.beads", cwd: "/h/repo", identity: identity({ "/h/.beads": "/h/.beads", "/h/repo": "/h/repo/.git" }) }),
     ).toContain("/h/repo")
   })
 
   test("stays silent for a store that is the repository root itself", () => {
     expect(
-      ledgerRepoMismatch({ store: "/r", cwd: "/r/sub", identity: identity({ "/r": "/r/.git", "/r/sub": "/r/.git", "/": "/" }) }),
+      ledgerRepoMismatch({ verb: "create", store: "/r", cwd: "/r/sub", identity: identity({ "/r": "/r/.git", "/r/sub": "/r/.git", "/": "/" }) }),
     ).toBeUndefined()
   })
 })
@@ -153,7 +167,7 @@ describe("ledgerRepoMismatch canonicalises the store", () => {
     mkdirSync(linkRoot)
     symlinkSync(join(realRoot, ".beads"), join(linkRoot, ".beads"))
     const identity = (dir: string) => (dir === realRoot ? "real-git" : dir === linkRoot ? "link-git" : "here-git")
-    const warning = ledgerRepoMismatch({ store: join(linkRoot, ".beads"), cwd: linkRoot, identity })
+    const warning = ledgerRepoMismatch({ verb: "create", store: join(linkRoot, ".beads"), cwd: linkRoot, identity })
     expect(warning).toContain(JSON.stringify(join(realRoot, ".beads")))
   })
 })
