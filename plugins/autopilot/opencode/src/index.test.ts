@@ -48,6 +48,8 @@ let lookupStdout: string | undefined
 let onCreated: (() => void) | undefined
 /** What `gh <a> <b>` prints, by "a b". */
 let ghReplies: Record<string, { ok: boolean; stdout: string; stderr: string }>
+/** When set, sees each `gh` call and the reply the fake gave it. */
+let onGh: ((line: string, reply: { ok: boolean; stdout: string; stderr: string }) => void) | undefined
 
 const run: Run = async (_cwd, command, args, _timeout, env) => {
   calls.push({ command, args, ...(env ? { env } : {}) })
@@ -55,7 +57,9 @@ const run: Run = async (_cwd, command, args, _timeout, env) => {
   if (command === "gh") {
     const line = args.join(" ")
     const key = Object.keys(ghReplies).find((candidate) => line.includes(candidate))
-    return (key === undefined ? undefined : ghReplies[key]) ?? { ok: true, stdout: "", stderr: "" }
+    const reply = (key === undefined ? undefined : ghReplies[key]) ?? { ok: true, stdout: "", stderr: "" }
+    onGh?.(line, reply)
+    return reply
   }
   if (command === "git" && args[0] === "rev-parse") {
     onRevParse?.()
@@ -176,6 +180,7 @@ beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), "autopilot-test-"))
   calls = []
   ghReplies = {}
+  onGh = undefined
   locked = []
   lockEnvs = []
   routesText = undefined
@@ -554,13 +559,24 @@ describe("autopilot_merge", () => {
     expect(last?.args).toEqual(["pr", "view", "12", "--json", "state,headRefOid,mergeCommit,autoMergeRequest"])
   })
 
-  test("re-reads the base and head right before the PUT", async () => {
+  test("sends the PUT only after a fresh re-read of the base and head, with no evidence read after it", async () => {
     await armed({ allow: ["merge"] })
     ready()
+    // The re-read vouches for what was read before it; reading a rule, review or check afterwards voids it.
+    const evidence = ["state,headRefOid,baseRefName,author", "pulls/12/reviews", "/check-runs", "/status", "required_status_checks", "rules/branches", "repo view"]
+    let base: string | undefined
+    let fresh = false
+    const puts: boolean[] = []
+    onGh = (line, reply) => {
+      if (line.includes("state,headRefOid,baseRefName,author")) base = (JSON.parse(reply.stdout) as { baseRefName: string }).baseRefName
+      if (line === "pr view 12 --json baseRefName,headRefOid") {
+        const read = JSON.parse(reply.stdout) as { baseRefName: string; headRefOid: string }
+        fresh = base !== undefined && read.baseRefName === base && read.headRefOid === SHA
+      } else if (evidence.some((part) => line.includes(part))) fresh = false
+      if (line.includes("-X PUT")) puts.push(fresh)
+    }
     await merge()
-    const lines = calls.filter((call) => call.command === "gh").map((call) => call.args.join(" "))
-    const put = lines.findIndex((line) => line.includes("-X PUT"))
-    expect(lines[put - 1]).toBe("pr view 12 --json baseRefName,headRefOid")
+    expect(puts).toEqual([true])
   })
 
   test("a PR retargeted after its rules were read is refused and no PUT is sent", async () => {
