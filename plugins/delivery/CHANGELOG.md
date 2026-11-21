@@ -1,3 +1,9 @@
+## delivery [0.9.5](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.4...delivery--v0.9.5) (2026-11-21)
+
+### Bug Fixes
+
+* **delivery:** scope a repo-only cleanup to its repository before preferring uncleaned receipts ([5293d21](https://github.com/srobroek/harness-plugins/commit/5293d21f42c2a15e2b7bf47418c1e7bd339f3efb)), closes [#24](https://github.com/srobroek/harness-plugins/issues/24)
+
 ## delivery [0.9.4](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.3...delivery--v0.9.4) (2026-11-21)
 
 ### Bug Fixes
