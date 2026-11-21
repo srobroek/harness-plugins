@@ -1,4 +1,5 @@
 import { isStructured, NEW_KINDS, type StructuredConfig, validateStructuredQuestion } from "./structured.ts"
+import { isRecord } from "./guards"
 
 export const PHASE_ONE_KINDS = [
   "pick_one",
@@ -79,9 +80,6 @@ export interface Question {
 
 const QUESTION_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/
 const OPTION_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every((item) => typeof item === "string")
