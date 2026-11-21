@@ -1648,19 +1648,47 @@ function recordableLane(input) {
 function mergeOutcome(view, sha) {
   const state = text(view, "state");
   const head = text(view, "headRefOid")?.toLowerCase();
-  const queued = own(view, "autoMergeRequest") != null;
-  const disableAuto = state !== "MERGED" || queued;
   if (view === undefined)
-    return { ok: false, reason: "could not read the PR after merging, so the merge is unconfirmed", disableAuto };
+    return { ok: false, reason: "could not read the PR after merging, so the merge is unconfirmed" };
   if (state !== "MERGED")
-    return { ok: false, reason: `PR is ${state ?? "unreadable"} after gh pr merge, not MERGED; it may be queued for a later merge`, disableAuto };
+    return { ok: false, reason: `PR is ${state ?? "unreadable"} after the merge call, not MERGED` };
   if (head !== sha)
-    return { ok: false, reason: `PR merged at ${head ?? "an unreadable head"}, not the reviewed ${sha}`, disableAuto };
+    return { ok: false, reason: `PR merged at ${head ?? "an unreadable head"}, not the reviewed ${sha}` };
   if (own(view, "mergeCommit") == null)
-    return { ok: false, reason: "PR is MERGED but has no merge commit", disableAuto };
-  if (queued)
-    return { ok: false, reason: "PR is MERGED but an auto-merge request is still recorded", disableAuto };
+    return { ok: false, reason: "PR is MERGED but has no merge commit" };
+  if (own(view, "autoMergeRequest") != null)
+    return { ok: false, reason: "PR is MERGED but an auto-merge request is still recorded" };
   return { ok: true };
+}
+function mergeDrift(input) {
+  const base = text(input.view, "baseRefName");
+  const head = text(input.view, "headRefOid")?.toLowerCase();
+  if (base === undefined || head === undefined)
+    return "PR base or head unreadable just before merging";
+  if (base !== input.base)
+    return `PR base changed from ${input.base} to ${base} after its protection was read`;
+  if (head !== input.sha)
+    return `PR head is ${head}, not the reviewed ${input.sha}`;
+  return;
+}
+function mergeResponse(result) {
+  let body;
+  try {
+    body = JSON.parse(result.stdout);
+  } catch {
+    body = undefined;
+  }
+  if (!result.ok) {
+    const status = /HTTP (\d{3})/.exec(result.stderr)?.[1];
+    const message = text(body, "message") ?? result.stderr.trim().slice(0, 300);
+    return { ok: false, reason: status === undefined ? `merge failed: ${message}` : `merge refused by GitHub (HTTP ${status}): ${message}` };
+  }
+  if (body === undefined)
+    return { ok: false, reason: "merge response unreadable" };
+  if (own(body, "merged") !== true)
+    return { ok: false, reason: `merge response did not say merged: ${text(body, "message") ?? "no message"}` };
+  const sha = text(body, "sha");
+  return sha === undefined ? { ok: false, reason: "merge response carried no sha" } : { ok: true, sha };
 }
 
 // plugins/autopilot/opencode/src/state.ts
@@ -3216,18 +3244,17 @@ class Autopilot {
     const refusal = mergeRefusal({ sha, method, view, reviews, runs, status, protection, rules, repo });
     if (refusal !== undefined)
       return refuse(refusal);
-    const flag = `--${method}`;
-    const merged = await this.#run(cwd, "gh", ["pr", "merge", pr, "--match-head-commit", sha, flag], GH_TIMEOUT_MS);
-    if (!merged.ok)
-      return refuse(`gh pr merge failed: ${merged.stderr.trim().slice(0, 300)}`);
+    const drift = mergeDrift({ view: await this.#gh(cwd, ["pr", "view", pr, "--json", "baseRefName,headRefOid"]), base, sha });
+    if (drift !== undefined)
+      return refuse(drift);
+    const put = mergeResponse(await this.#run(cwd, "gh", ["api", "-X", "PUT", `repos/{owner}/{repo}/pulls/${pr}/merge`, "-f", `sha=${sha}`, "-f", `merge_method=${method}`], GH_TIMEOUT_MS));
+    if (!put.ok)
+      return refuse(put.reason);
     const outcome = mergeOutcome(await this.#gh(cwd, ["pr", "view", pr, "--json", "state,headRefOid,mergeCommit,autoMergeRequest"]), sha);
-    if (!outcome.ok) {
-      if (outcome.disableAuto)
-        await this.#run(cwd, "gh", ["pr", "merge", pr, "--disable-auto"], GH_TIMEOUT_MS);
+    if (!outcome.ok)
       return refuse(outcome.reason);
-    }
-    await journal2({ type: "action", summary: `merged #${pr} at ${sha} (${method})`, evidence: sha });
-    return `merged #${pr} at ${sha} with ${flag}`;
+    await journal2({ type: "action", summary: `merged #${pr} at ${sha} (${method}) as ${put.sha}`, evidence: sha });
+    return `merged #${pr} at ${sha} with ${method}`;
   }
   async idle(sessionID) {
     if (!this.armed.has(sessionID))
@@ -3388,9 +3415,11 @@ export {
   inScope,
   isAskTool,
   lastAssistantText,
+  mergeDrift,
   mergeOutcome,
   mergeRefusal,
   mergeResource,
+  mergeResponse,
   missingFields,
   needsInput,
   newRunState,

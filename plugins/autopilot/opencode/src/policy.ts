@@ -161,20 +161,46 @@ export function recordableLane(input: { agent: string | undefined; directory: st
 }
 
 /**
- * Whether `gh pr merge` really merged the PR at `sha`. `view` is `gh pr view --json
- * state,headRefOid,mergeCommit,autoMergeRequest` read afterwards. Success needs MERGED, the
- * reviewed head and a merge commit. `disableAuto` says the PR may still be queued to merge later
- * (open, or an auto-merge request recorded), so the caller must cancel that.
+ * Whether the PR really merged at `sha`. `view` is `gh pr view --json
+ * state,headRefOid,mergeCommit,autoMergeRequest` read after the merge call. Success needs MERGED, the
+ * reviewed head, a merge commit and no auto-merge request.
  */
-export function mergeOutcome(view: unknown, sha: string): { ok: true } | { ok: false; reason: string; disableAuto: boolean } {
+export function mergeOutcome(view: unknown, sha: string): { ok: true } | { ok: false; reason: string } {
   const state = text(view, "state")
   const head = text(view, "headRefOid")?.toLowerCase()
-  const queued = own(view, "autoMergeRequest") != null
-  const disableAuto = state !== "MERGED" || queued
-  if (view === undefined) return { ok: false, reason: "could not read the PR after merging, so the merge is unconfirmed", disableAuto }
-  if (state !== "MERGED") return { ok: false, reason: `PR is ${state ?? "unreadable"} after gh pr merge, not MERGED; it may be queued for a later merge`, disableAuto }
-  if (head !== sha) return { ok: false, reason: `PR merged at ${head ?? "an unreadable head"}, not the reviewed ${sha}`, disableAuto }
-  if (own(view, "mergeCommit") == null) return { ok: false, reason: "PR is MERGED but has no merge commit", disableAuto }
-  if (queued) return { ok: false, reason: "PR is MERGED but an auto-merge request is still recorded", disableAuto }
+  if (view === undefined) return { ok: false, reason: "could not read the PR after merging, so the merge is unconfirmed" }
+  if (state !== "MERGED") return { ok: false, reason: `PR is ${state ?? "unreadable"} after the merge call, not MERGED` }
+  if (head !== sha) return { ok: false, reason: `PR merged at ${head ?? "an unreadable head"}, not the reviewed ${sha}` }
+  if (own(view, "mergeCommit") == null) return { ok: false, reason: "PR is MERGED but has no merge commit" }
+  if (own(view, "autoMergeRequest") != null) return { ok: false, reason: "PR is MERGED but an auto-merge request is still recorded" }
   return { ok: true }
+}
+
+/** Why the PR no longer matches what was checked, from a re-read of `baseRefName,headRefOid` just before the merge; `undefined` when it still does. */
+export function mergeDrift(input: { view: unknown; base: string; sha: string }): string | undefined {
+  const base = text(input.view, "baseRefName")
+  const head = text(input.view, "headRefOid")?.toLowerCase()
+  if (base === undefined || head === undefined) return "PR base or head unreadable just before merging"
+  if (base !== input.base) return `PR base changed from ${input.base} to ${base} after its protection was read`
+  if (head !== input.sha) return `PR head is ${head}, not the reviewed ${input.sha}`
+  return undefined
+}
+
+/** The result of `gh api -X PUT repos/{o}/{r}/pulls/{n}/merge`: success needs `merged: true` and a `sha`; any non-2xx is a refusal with its status and message. */
+export function mergeResponse(result: { ok: boolean; stdout: string; stderr: string }): { ok: true; sha: string } | { ok: false; reason: string } {
+  let body: unknown
+  try {
+    body = JSON.parse(result.stdout)
+  } catch {
+    body = undefined
+  }
+  if (!result.ok) {
+    const status = /HTTP (\d{3})/.exec(result.stderr)?.[1]
+    const message = text(body, "message") ?? result.stderr.trim().slice(0, 300)
+    return { ok: false, reason: status === undefined ? `merge failed: ${message}` : `merge refused by GitHub (HTTP ${status}): ${message}` }
+  }
+  if (body === undefined) return { ok: false, reason: "merge response unreadable" }
+  if (own(body, "merged") !== true) return { ok: false, reason: `merge response did not say merged: ${text(body, "message") ?? "no message"}` }
+  const sha = text(body, "sha")
+  return sha === undefined ? { ok: false, reason: "merge response carried no sha" } : { ok: true, sha }
 }
