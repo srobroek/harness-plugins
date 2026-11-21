@@ -1086,7 +1086,7 @@ import { resolve as resolve6 } from "path";
 import { Plugin as Plugin2 } from "@opencode/plugin";
 
 // lib/src/agent-files.ts
-import { existsSync, readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "fs";
 import { basename, join } from "path";
 
 // lib/src/agent-tools.ts
@@ -1330,6 +1330,9 @@ function parseAgentFile(text, id) {
   }
   flush();
   return agent;
+}
+function directoryReadRulesFor(directories) {
+  return [...new Set(directories)].map((dir) => ({ action: "external_directory", resource: join(dir, "*"), effect: "allow" }));
 }
 function readAgentFile(path) {
   return parseAgentFile(readFileSync(path, "utf8"), basename(path, ".md"));
@@ -2341,8 +2344,27 @@ function registerLibFacts(ctx, overrides = {}) {
   });
 }
 
+// plugins/code-challenge/opencode/src/read-grant.ts
+import { realpathSync as realpathSync2 } from "fs";
+import { join as join6 } from "path";
+import { fileURLToPath as fileURLToPath3 } from "url";
+function referenceReadRules(moduleUrl, warn = console.warn, resolve = realpathSync2) {
+  const skills = fileURLToPath3(new URL("../skills", moduleUrl));
+  const references = join6(skills, "code-challenge", "references");
+  try {
+    const expected = join6(resolve(skills), "code-challenge", "references");
+    const actual = resolve(references);
+    if (actual === expected)
+      return directoryReadRulesFor([references, expected]);
+    warn(`srobroek.code-challenge: ${references} resolves to ${actual}, not ${expected}; no read grant for the references`);
+  } catch (error) {
+    warn(`srobroek.code-challenge: cannot resolve ${references} (${error.code ?? "error"}); no read grant for the references`);
+  }
+  return [];
+}
+
 // plugins/code-challenge/opencode/src/scan/index.ts
-import { realpathSync as realpathSync3 } from "fs";
+import { realpathSync as realpathSync5 } from "fs";
 import { isAbsolute as isAbsolute4, resolve as resolve5 } from "path";
 
 // plugins/code-challenge/opencode/src/session-directory.ts
@@ -2357,9 +2379,9 @@ async function sessionDirectory(ctx, sessionID, tool) {
 }
 
 // plugins/code-challenge/opencode/src/scan/run.ts
-import { existsSync as existsSync3, mkdtempSync, realpathSync as realpathSync2, rmSync, statSync as statSync3 } from "fs";
+import { existsSync as existsSync3, mkdtempSync, realpathSync as realpathSync4, rmSync, statSync as statSync3 } from "fs";
 import { tmpdir } from "os";
-import { extname as extname2, join as join11, resolve as resolve4 } from "path";
+import { extname as extname2, join as join12, resolve as resolve4 } from "path";
 
 // lib/src/subprocess.ts
 import { constants } from "os";
@@ -2625,8 +2647,8 @@ var spawnTool = async (argv, options) => {
 };
 
 // plugins/code-challenge/opencode/src/scan/files.ts
-import { lstatSync as lstatSync3, readdirSync as readdirSync4, realpathSync, statSync as statSync2 } from "fs";
-import { extname, isAbsolute as isAbsolute2, join as join6, relative, resolve as resolve2, sep } from "path";
+import { lstatSync as lstatSync3, readdirSync as readdirSync4, realpathSync as realpathSync3, statSync as statSync2 } from "fs";
+import { extname, isAbsolute as isAbsolute2, join as join7, relative, resolve as resolve2, sep } from "path";
 
 // lib/src/bounded-read.ts
 import { closeSync, constants as constants2, fstatSync, lstatSync as lstatSync2, openSync, readSync } from "fs";
@@ -2655,7 +2677,7 @@ function readBoundedBytes(path, maxBytes) {
     const code = error.code;
     if (code === "ENOENT")
       return { kind: "absent" };
-    return { kind: "unreadable", reason: code === "ELOOP" ? "not-regular" : "io" };
+    return code === "ELOOP" ? { kind: "unreadable", reason: "not-regular" } : { kind: "unreadable", reason: "io", code };
   } finally {
     if (fd !== undefined)
       closeSync(fd);
@@ -2708,7 +2730,7 @@ function detectLanguages(root, files) {
     }
   } else {
     for (const [marker, language] of MARKER_LANGUAGE)
-      if (lstatOrNull(join6(root, marker)) !== null)
+      if (lstatOrNull(join7(root, marker)) !== null)
         found.add(language);
   }
   return LANGUAGES.filter((l) => found.has(l));
@@ -2720,7 +2742,7 @@ function inside(root, abs) {
 var outside = (pattern) => new Error(`challenge_scan: path is outside the root: ${pattern}`);
 function realOrNull(path) {
   try {
-    return realpathSync(path);
+    return realpathSync3(path);
   } catch {
     return null;
   }
@@ -2731,9 +2753,9 @@ function walk(dir, root, out) {
       continue;
     if (entry.isDirectory()) {
       if (!SKIP_DIRS.has(entry.name))
-        walk(join6(dir, entry.name), root, out);
+        walk(join7(dir, entry.name), root, out);
     } else
-      out.add(relative(root, join6(dir, entry.name)));
+      out.add(relative(root, join7(dir, entry.name)));
   }
 }
 function expandFiles(root, patterns) {
@@ -2760,7 +2782,7 @@ function expandFiles(root, patterns) {
     for (const match of new Bun.Glob(pattern).scanSync({ cwd: root, onlyFiles: true })) {
       if (match.split("/").some((part) => SKIP_DIRS.has(part)))
         continue;
-      const real = realOrNull(join6(root, match));
+      const real = realOrNull(join7(root, match));
       if (real !== null && inside(root, real))
         found.add(relative(root, real));
     }
@@ -2772,7 +2794,7 @@ function missingMarker(root, markers) {
     return null;
   for (const spec of markers) {
     const [name = "", needle] = spec.split(":");
-    const read = readText(join6(root, name), MAX_MARKER_BYTES);
+    const read = readText(join7(root, name), MAX_MARKER_BYTES);
     if (read.kind !== "text")
       continue;
     if (needle === undefined || read.text.includes(needle))
@@ -2789,7 +2811,7 @@ function parseListing(stdout) {
 }
 function contained(root, files) {
   return files.filter((f) => {
-    const abs = join6(root, f);
+    const abs = join7(root, f);
     if (!lstatOrNull(abs)?.isFile())
       return false;
     const real = realOrNull(abs);
@@ -2799,11 +2821,11 @@ function contained(root, files) {
 
 // plugins/code-challenge/opencode/src/scan/git.ts
 import { lstatSync as lstatSync4 } from "fs";
-import { join as join7 } from "path";
+import { join as join8 } from "path";
 var GIT_SAFE = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"];
 var LIST_TIMEOUT_MS = 30000;
 function hasDotGit(root) {
-  return lstatSync4(join7(root, ".git"), { throwIfNoEntry: false }) !== undefined;
+  return lstatSync4(join8(root, ".git"), { throwIfNoEntry: false }) !== undefined;
 }
 async function gitState(root, exec, which, signal) {
   const git = which("git");
@@ -2846,7 +2868,7 @@ async function gitListing(root, state, exec, which, signal) {
 
 // plugins/code-challenge/opencode/src/scan/parsers.ts
 import { lstatSync as lstatSync5 } from "fs";
-import { isAbsolute as isAbsolute3, join as join8, relative as relative2, resolve as resolve3 } from "path";
+import { isAbsolute as isAbsolute3, join as join9, relative as relative2, resolve as resolve3 } from "path";
 var obj2 = (v) => typeof v === "object" && v !== null ? v : {};
 var arr2 = (v) => Array.isArray(v) ? v : [];
 var str2 = (v, fallback = "") => typeof v === "string" ? v : fallback;
@@ -2997,7 +3019,7 @@ function moduleFile(root, module) {
   for (const base of MODULE_ROOTS) {
     for (const candidate of [`${path}.py`, `${path}/__init__.py`]) {
       const rel = base === "" ? candidate : `${base}/${candidate}`;
-      if (lstatSync5(join8(root, rel), { throwIfNoEntry: false })?.isFile())
+      if (lstatSync5(join9(root, rel), { throwIfNoEntry: false })?.isFile())
         return rel;
     }
   }
@@ -3167,13 +3189,13 @@ function pinOf(pkg) {
 }
 
 // plugins/code-challenge/opencode/src/scan/probes.ts
-import { dirname as dirname2, join as join9 } from "path";
+import { dirname as dirname2, join as join10 } from "path";
 var UNKNOWN = () => null;
 function nearestRuffConfig(root, file) {
-  let dir = dirname2(join9(root, file));
+  let dir = dirname2(join10(root, file));
   for (;; ) {
     for (const name of [".ruff.toml", "ruff.toml", "pyproject.toml"]) {
-      const path = join9(dir, name);
+      const path = join10(dir, name);
       const read = readText(path, MAX_MARKER_BYTES);
       if (read.kind !== "text")
         continue;
@@ -3186,7 +3208,7 @@ function nearestRuffConfig(root, file) {
   }
 }
 async function ruffSettings(env, file) {
-  const run = await env.exec([...env.prefix, "check", "--show-settings", join9(env.root, file)], {
+  const run = await env.exec([...env.prefix, "check", "--show-settings", join10(env.root, file)], {
     cwd: env.root,
     timeoutMs: env.timeoutMs,
     signal: env.signal
@@ -3590,11 +3612,11 @@ export default [{ ignores: ["**/node_modules/**", "**/dist/**", "**/build/**", "
 
 // plugins/code-challenge/opencode/src/scan/safe.ts
 import { closeSync as closeSync2, constants as constants3, lstatSync as lstatSync6, mkdirSync as mkdirSync3, openSync as openSync2, writeSync } from "fs";
-import { join as join10 } from "path";
+import { join as join11 } from "path";
 function ensureDir(base, ...segments) {
   let current = base;
   for (const segment of ["", ...segments]) {
-    current = segment === "" ? base : join10(current, segment);
+    current = segment === "" ? base : join11(current, segment);
     try {
       mkdirSync3(current, { mode: 448 });
     } catch (error) {
@@ -3625,7 +3647,7 @@ function resolveTool(recipe, which, toolsDir) {
   if (recipe.install === "tool-dir") {
     if (toolsDir === "")
       return { gap: `${recipe.tool} needs a tools directory under the git dir, and the root is not a git repository` };
-    const bin = join11(toolsDir, "node_modules", ".bin", recipe.binary);
+    const bin = join12(toolsDir, "node_modules", ".bin", recipe.binary);
     return existsSync3(bin) ? { prefix: [bin], oneOff: false } : {
       gap: `${recipe.tool} is not provisioned; run "bun add eslint@${pinOf("eslint")} @e18e/eslint-plugin@${pinOf("@e18e/eslint-plugin")}" in ${toolsDir}`
     };
@@ -3665,7 +3687,7 @@ function risksOf(recipe, resolved) {
 function expandArgs(recipe, cfg, out, files, root) {
   return recipe.args.flatMap((arg) => {
     if (arg === "{files}")
-      return files.length > 0 ? files.map((f) => join11(root, f)) : ["."];
+      return files.length > 0 ? files.map((f) => join12(root, f)) : ["."];
     return [arg.replaceAll("{cfg}", cfg).replaceAll("{out}", out)];
   });
 }
@@ -3679,7 +3701,7 @@ var firstLine = (text) => text.trim().split(`
 `)[0]?.slice(0, 200) ?? "";
 var slug = (id) => id.replace(/[^\w.-]/g, "_");
 async function prepare(input, deps, signal) {
-  const root = realpathSync2(resolve4(input.root ?? process.cwd()));
+  const root = realpathSync4(resolve4(input.root ?? process.cwd()));
   if (!statSync3(root).isDirectory())
     throw new Error(`challenge_scan: root is not a directory: ${root}`);
   const exec = deps.exec ?? spawnTool;
@@ -3715,8 +3737,8 @@ async function prepare(input, deps, signal) {
     files,
     languages: input.languages && input.languages.length > 0 ? input.languages : detectLanguages(root, files),
     git,
-    toolsDir: deps.toolsDir ?? (git.kind === "repo" ? join11(git.dir, "code-challenge", "tools") : ""),
-    hasGitignore: lstatOrNull(join11(root, ".gitignore"))?.isFile() === true,
+    toolsDir: deps.toolsDir ?? (git.kind === "repo" ? join12(git.dir, "code-challenge", "tools") : ""),
+    hasGitignore: lstatOrNull(join12(root, ".gitignore"))?.isFile() === true,
     emptySelection: requested && files.length === 0,
     listing,
     ignoreError,
@@ -3772,7 +3794,7 @@ async function consentRisks(input, deps = {}, signal) {
   return plan(prepared).flatMap((item) => item.status === "ready" && item.risks.length > 0 ? [{ recipe: item.recipe.id, tool: item.recipe.tool, reasons: item.risks }] : []);
 }
 function ensureToolsDir(p) {
-  return p.git.kind === "repo" && p.toolsDir === join11(p.git.dir, "code-challenge", "tools") ? ensureDir(p.git.dir, "code-challenge", "tools") : ensureDir(p.toolsDir);
+  return p.git.kind === "repo" && p.toolsDir === join12(p.git.dir, "code-challenge", "tools") ? ensureDir(p.git.dir, "code-challenge", "tools") : ensureDir(p.toolsDir);
 }
 var MiB = 1024 * 1024;
 var MAX_ARGV_BYTES = 256 * 1024;
@@ -3796,7 +3818,7 @@ async function runScan(input, deps = {}, signal) {
   if (input.runId !== undefined && p.git.kind !== "repo") {
     throw new Error(`challenge_scan: runId needs a git repository for the output directory${p.git.kind === "error" ? ` (${p.git.reason})` : ""}`);
   }
-  const base = input.runId !== undefined && p.git.kind === "repo" ? ensureDir(p.git.dir, "code-challenge", input.runId, "scan") : mkdtempSync(join11(tmpdir(), "code-challenge-scan-"));
+  const base = input.runId !== undefined && p.git.kind === "repo" ? ensureDir(p.git.dir, "code-challenge", input.runId, "scan") : mkdtempSync(join12(tmpdir(), "code-challenge-scan-"));
   const rawDir = input.runId !== undefined && p.git.kind === "repo" ? base : null;
   const fileSet = new Set(p.files);
   const coverage = [];
@@ -3821,7 +3843,7 @@ async function runScan(input, deps = {}, signal) {
         continue;
       }
       const name = slug(recipe.id);
-      const fromConfigDir = (recipe.repoConfigNames ?? []).some((n) => lstatOrNull(join11(root, n)) !== null);
+      const fromConfigDir = (recipe.repoConfigNames ?? []).some((n) => lstatOrNull(join12(root, n)) !== null);
       let files = item.scoped;
       if (fromConfigDir) {
         const known = await p.listing();
@@ -3843,16 +3865,16 @@ async function runScan(input, deps = {}, signal) {
       const cfg = recipe.install === "tool-dir" ? ensureToolsDir(p) : ensureDir(base, "cfg", name);
       const out = ensureDir(base, "out", name);
       if (recipe.outputFile)
-        rmSync(join11(out, recipe.outputFile), { recursive: true, force: true });
+        rmSync(join12(out, recipe.outputFile), { recursive: true, force: true });
       for (const [file, content] of Object.entries(recipe.configFiles?.({ root, hasGitignore: p.hasGitignore, toolsDir: p.toolsDir, fromConfigDir }) ?? {})) {
-        writeFileNoFollow(join11(cfg, file), content);
+        writeFileNoFollow(join12(cfg, file), content);
       }
       const argv = [...item.resolved.prefix, ...expandArgs(recipe, cfg, out, files, root)];
       const started = p.now();
       const run = await exec(argv, { cwd: fromConfigDir ? cfg : root, timeoutMs: p.timeoutMs, signal });
       timings.push({ recipe: recipe.id, tool: recipe.tool, ms: p.now() - started, exitCode: run.kind === "exited" ? run.exitCode : null });
-      writeFileNoFollow(join11(base, `${name}.stdout`), run.stdout);
-      writeFileNoFollow(join11(base, `${name}.stderr`), run.stderr);
+      writeFileNoFollow(join12(base, `${name}.stdout`), run.stdout);
+      writeFileNoFollow(join12(base, `${name}.stderr`), run.stderr);
       if (run.kind === "timeout") {
         entry("gap", `timed out after ${p.timeoutMs / 1000}s`);
         continue;
@@ -3876,7 +3898,7 @@ async function runScan(input, deps = {}, signal) {
       }
       let text = run.stdout;
       if (recipe.outputFile) {
-        const report = readReport(join11(out, recipe.outputFile), recipe.outputFile);
+        const report = readReport(join12(out, recipe.outputFile), recipe.outputFile);
         if ("gap" in report) {
           entry("gap", report.gap);
           continue;
@@ -4016,7 +4038,7 @@ async function registerScanTool(ctx, deps = {}) {
           let input;
           let risks;
           try {
-            input = { ...parsed, root: realpathSync3(parsed.root ?? base) };
+            input = { ...parsed, root: realpathSync5(parsed.root ?? base) };
             risks = parsed.staticOnly ? [] : await consentRisks(input, deps, context.signal);
           } catch (error) {
             return { content: `${SCAN_TOOL}: ${error.message}`, metadata: { ok: false } };
@@ -4050,6 +4072,204 @@ async function registerScanTool(ctx, deps = {}) {
     throw error;
   }
   return cleanup;
+}
+
+// plugins/code-challenge/opencode/src/validate.ts
+import { execFileSync } from "child_process";
+import { realpathSync as realpathSync6 } from "fs";
+import { dirname as dirname3, isAbsolute as isAbsolute5, join as join13, relative as relative3, sep as sep2 } from "path";
+import { fileURLToPath as fileURLToPath4 } from "url";
+
+// plugins/code-challenge/opencode/src/json-schema.ts
+var ANNOTATIONS = new Set(["$schema", "$id", "title", "description", "$defs"]);
+var KEYWORDS = new Set([
+  "type",
+  "enum",
+  "required",
+  "properties",
+  "additionalProperties",
+  "items",
+  "minItems",
+  "minimum",
+  "minLength",
+  "pattern",
+  "$ref"
+]);
+function validate(schema, value, root = schema, at = "$") {
+  for (const key of Object.keys(schema))
+    if (!KEYWORDS.has(key) && !ANNOTATIONS.has(key))
+      throw new Error(`unsupported schema keyword: ${key}`);
+  if (schema.$ref !== undefined) {
+    const target = schema.$ref.replace(/^#\/\$defs\//, "");
+    const resolved = root.$defs?.[target];
+    if (!resolved)
+      throw new Error(`unresolved reference: ${schema.$ref}`);
+    return validate(resolved, value, root, at);
+  }
+  const errors = [];
+  if (schema.enum && !schema.enum.includes(value))
+    errors.push(`${at}: ${JSON.stringify(value)} is not one of ${JSON.stringify(schema.enum)}`);
+  const kind = Array.isArray(value) ? "array" : value === null ? "null" : typeof value;
+  const matches = (type) => type === "integer" ? Number.isInteger(value) : type === "number" ? kind === "number" : type === kind;
+  if (schema.type && !matches(schema.type))
+    return [...errors, `${at}: expected ${schema.type}, got ${kind}`];
+  if (typeof value === "string") {
+    if (schema.minLength !== undefined && value.length < schema.minLength)
+      errors.push(`${at}: shorter than ${schema.minLength}`);
+    if (schema.pattern !== undefined && !new RegExp(schema.pattern).test(value))
+      errors.push(`${at}: does not match ${schema.pattern}`);
+  }
+  if (typeof value === "number" && schema.minimum !== undefined && value < schema.minimum)
+    errors.push(`${at}: below ${schema.minimum}`);
+  if (Array.isArray(value)) {
+    if (schema.minItems !== undefined && value.length < schema.minItems)
+      errors.push(`${at}: fewer than ${schema.minItems} items`);
+    for (const [index, item] of value.entries())
+      if (schema.items)
+        errors.push(...validate(schema.items, item, root, `${at}[${index}]`));
+  }
+  if (kind === "object") {
+    const record = value;
+    for (const key of schema.required ?? [])
+      if (!(key in record))
+        errors.push(`${at}: missing ${key}`);
+    for (const [key, entry] of Object.entries(record)) {
+      const property = schema.properties?.[key];
+      if (property)
+        errors.push(...validate(property, entry, root, `${at}.${key}`));
+      else if (schema.additionalProperties === false)
+        errors.push(`${at}: unexpected property ${key}`);
+    }
+  }
+  return errors;
+}
+
+// plugins/code-challenge/opencode/src/validate.ts
+var VALIDATE_TOOL = "challenge_validate";
+var MAX_RUN_FILE_BYTES = 1024 * 1024;
+var VALIDATE_DESCRIPTION = `Validate a code-challenge run's report.json and decisions.jsonl against the shipped JSON Schemas.
+` + "Takes the absolute run directory, which must sit directly under <git-dir>/code-challenge/ of the session's repository. " + "Reads only those two regular files (at most 1 MiB each), lists every error as file, path and message, and " + "reports ok=false when a file is missing, oversized or invalid.";
+var VALIDATE_INPUT = {
+  type: "object",
+  properties: { run_dir: { type: "string", description: "Absolute path of the run directory" } },
+  required: ["run_dir"],
+  additionalProperties: false
+};
+var SCHEMAS = join13(dirname3(fileURLToPath4(import.meta.url)), "..", "skills", "code-challenge", "references");
+var load = (name) => JSON.parse(readBoundedText(join13(SCHEMAS, name)));
+function failure(read) {
+  if (read.kind === "absent")
+    return "ENOENT: no such file or directory";
+  if (read.reason === "not-regular")
+    return "not a regular file";
+  if (read.reason === "too-large")
+    return `larger than ${MAX_RUN_FILE_BYTES} bytes`;
+  return `${read.code ?? "EIO"}: cannot be read`;
+}
+function readBoundedText(path) {
+  const read = readBoundedBytes(path, MAX_RUN_FILE_BYTES);
+  if (read.kind !== "bytes")
+    throw new Error(`${path}: ${failure(read)}`);
+  return read.bytes.toString("utf8");
+}
+var reason = (cause) => cause instanceof Error ? cause.message : String(cause);
+function validateRun(runDir) {
+  const errors = [];
+  const read = (name) => {
+    const result = readBoundedBytes(join13(runDir, name), MAX_RUN_FILE_BYTES);
+    if (result.kind === "bytes")
+      return result.bytes.toString("utf8");
+    errors.push(`${name}: ${failure(result)}`);
+    return;
+  };
+  const report = read("report.json");
+  if (report !== undefined) {
+    try {
+      for (const error of validate(load("report.schema.json"), JSON.parse(report)))
+        errors.push(`report.json ${error}`);
+    } catch (cause) {
+      errors.push(`report.json: ${reason(cause)}`);
+    }
+  }
+  const decisions = read("decisions.jsonl");
+  if (decisions !== undefined) {
+    const schema = load("decisions.schema.json");
+    const lines = decisions.split(`
+`);
+    lines.forEach((text, index) => {
+      if (text.trim() === "")
+        return;
+      try {
+        for (const error of validate(schema, JSON.parse(text)))
+          errors.push(`decisions.jsonl:${index + 1} ${error}`);
+      } catch (cause) {
+        errors.push(`decisions.jsonl:${index + 1}: ${reason(cause)}`);
+      }
+    });
+    if (lines.every((text) => text.trim() === ""))
+      errors.push("decisions.jsonl: has no lines");
+  }
+  return errors;
+}
+function runRoots(directory) {
+  const out = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], {
+    cwd: directory,
+    encoding: "utf8",
+    timeout: 5000,
+    stdio: ["ignore", "pipe", "ignore"]
+  });
+  const roots = new Set;
+  for (const gitDir of out.split(`
+`).filter(Boolean)) {
+    try {
+      roots.add(join13(realpathSync6(gitDir), "code-challenge"));
+    } catch {}
+  }
+  return [...roots];
+}
+function resolveRunDir(directory, runDir) {
+  const inside = `${VALIDATE_TOOL}: run_dir must be inside <git-dir>/code-challenge/ of the session's repository`;
+  if (typeof runDir !== "string" || !isAbsolute5(runDir))
+    return { error: `${VALIDATE_TOOL}: run_dir must be an absolute path` };
+  if (runDir.split(/[\\/]/).includes(".."))
+    return { error: inside };
+  let roots;
+  let real;
+  try {
+    roots = runRoots(directory);
+    real = realpathSync6(runDir);
+  } catch (cause) {
+    return { error: `${VALIDATE_TOOL}: cannot resolve run_dir: ${reason(cause).split(",")[0]}` };
+  }
+  const direct = (root) => {
+    const rel = relative3(root, real);
+    return rel !== "" && !rel.startsWith("..") && !rel.includes(sep2) && !isAbsolute5(rel);
+  };
+  return roots.some(direct) ? { path: real } : { error: inside };
+}
+function registerValidateTool(ctx) {
+  return ctx.tool.transform((editor) => {
+    editor.add({
+      name: VALIDATE_TOOL,
+      description: VALIDATE_DESCRIPTION,
+      input: VALIDATE_INPUT,
+      execute: async (input, context) => {
+        const keys = Object.keys(input ?? {});
+        if (keys.length !== 1 || keys[0] !== "run_dir")
+          return { content: `${VALIDATE_TOOL}: expected exactly { run_dir }`, metadata: { ok: false } };
+        const directory = await sessionDirectory(ctx, context.sessionID, VALIDATE_TOOL);
+        const resolved = resolveRunDir(directory, input.run_dir);
+        if ("error" in resolved)
+          return { content: resolved.error, metadata: { ok: false } };
+        const errors = validateRun(resolved.path);
+        return {
+          content: errors.length === 0 ? "report.json and decisions.jsonl are valid" : errors.join(`
+`),
+          metadata: { ok: errors.length === 0, errors }
+        };
+      }
+    });
+  });
 }
 
 // plugins/code-challenge/opencode/src/index.ts
@@ -4103,6 +4323,7 @@ async function setupCodeChallenge(ctx, moduleUrl) {
       });
     }));
     registrations.push(await registerLibFacts(ctx));
+    registrations.push(await registerValidateTool(ctx));
     registrations.push({ dispose: await registerScanTool(ctx) });
     registrations.push(await ctx.command.transform((editor) => editor.add({
       name: COMMAND,
@@ -4119,7 +4340,7 @@ async function setupCodeChallenge(ctx, moduleUrl) {
     if (skills.length > 0)
       registrations.push(await registerSkills(ctx.skill, skills));
     if (agents.length > 0)
-      registrations.push(await registerAgents(ctx.agent, agents, [], mcpGrant(ctx.options?.tools, agentIds(agents))));
+      registrations.push(await registerAgents(ctx.agent, agents, referenceReadRules(moduleUrl), mcpGrant(ctx.options?.tools, agentIds(agents))));
   } catch (error) {
     await cleanup();
     throw error;
@@ -4142,6 +4363,7 @@ export {
   SETUP_DESCRIPTION,
   SETUP_TOOL,
   SKILL,
+  VALIDATE_TOOL,
   challengePrompt,
   src_default as default,
   installFormulas2 as installFormulas,

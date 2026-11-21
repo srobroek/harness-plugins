@@ -101,10 +101,23 @@ Move new shared code into `lib` instead of adding another edge.
 
 `plugins/code-challenge` is OpenCode only (`harnesses: ["opencode"]`). It challenges existing code for simplification, performance, stability, hand-rolled code and structure, and plans only: it edits no source file.
 
-- Ownership: the plugin owns the `code-challenge` skill (twelve lens references, the report and decisions JSON Schemas, intake, scoring and run-storage rules), the `/code-challenge` command, the `challenge_setup`, `challenge_lib_facts` and `challenge_scan` tools, nine beads formulas and the `code-challenger` and `refactor-challenger` agents. `challenge_scan` is documented under Code-challenge scan.
+- Ownership: the plugin owns the `code-challenge` skill (twelve lens references, the report and decisions JSON Schemas, intake, scoring and run-storage rules), the `/code-challenge` command, the `challenge_setup`, `challenge_lib_facts`, `challenge_validate` and `challenge_scan` tools, nine beads formulas and the `code-challenger` and `refactor-challenger` agents. `challenge_scan` is documented under Code-challenge scan.
 - Run storage: every run writes under `<git-dir>/code-challenge/<run-id>/`, outside the working tree (`intake.json`, `scan.json`, `findings.json`, `research.json`, `verdicts.json`, `decisions.jsonl`, `report.json`, `report.md`). `decisions.jsonl` is append-only. The directory is never committed.
 - Formulas: `challenge_setup` copies `code-challenge` (the full run), `mol-challenge-<phase>` for the seven phases and `mol-challenge-lens` into `.beads/formulas/`. The lead agent sequences the phases, dispatches subagents and writes every file, bead and log line. Only `mol-challenge-lens/analyse-lens` (to `code-challenger`) and `mol-challenge-refute/attack-findings` (to `refactor-challenger`) route to a subagent. Both agents are read-only; each routed step lists `requires_actions` and a test checks the agent's permissions allow them.
 - `challenge_setup` resolves the target workspace from the invoking session's directory and fails when it cannot read that session.
+
+### code-challenge `read-grant.ts`
+
+`plugins/code-challenge/opencode/src/read-grant.ts` (`referenceReadRules`) lets both challengers read the skill's reference files without a prompt, because an installed plugin's skill sits outside the project and a subagent cannot answer an `external_directory` ask.
+
+- Scope: exactly `<skills root>/code-challenge/references/*`, as an `external_directory` allow. `SKILL.md`, the skill's parent, other skills and the project are not covered.
+- Fail closed: the grant is made only when `realpath(references)` equals `realpath(skills root)/code-challenge/references`. A symlink to the parent or outside, any other mismatch, or a missing directory means no grant and one warning.
+- The rules are built once at setup from the two validated paths with `directoryReadRulesFor` (`lib/src/agent-files.ts`), which never touches the file system, so no second resolution can add a pattern. `directoryReadRules`, which resolves the path itself, stays for `cad`.
+- Trust assumption: the check is a single point in time at setup. A later swap of `references` is bounded by the validated pattern, but the host follows symlinks when it reads, and that is outside this plugin's control; the install directory is assumed writable only by the installing user.
+
+### code-challenge `challenge_validate`
+
+`plugins/code-challenge/opencode/src/validate.ts` registers `challenge_validate`. It takes the absolute run directory, reads only `report.json` and `decisions.jsonl`, and checks them against the shipped schemas with `opencode/src/json-schema.ts`, the small in-repo validator that already guards the schemas in tests (it throws on a keyword it does not know). No JSON Schema library is added.
 
 ### code-challenge `challenge_lib_facts`
 

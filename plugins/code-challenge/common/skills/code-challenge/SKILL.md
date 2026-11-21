@@ -29,7 +29,7 @@ Mode: **interactive** (default) asks through `parley_ask`, falling back to the `
 | `standard` (default) | all seven | build-needing analyzers allowed; REFUTE checks every finding above low impact |
 | `deep` | all seven | REFUTE checks every finding; RESEARCH also runs the reverse direction (dependencies replaceable by native code); benchmarks run; test protection gaps handed to `quality-test-audit` |
 
-Each phase is also a beads formula (`mol-challenge-<phase>`) and the full run is `code-challenge`; install them with `challenge_setup`. A phase can run alone when its input file exists in the run directory.
+Each phase is also a beads formula (`mol-challenge-<phase>`) and the full run is `code-challenge`; install them with `challenge_setup`. A phase can run alone when its input file exists in the run directory. The formulas are optional tracking: the run directory holds the run's data and is the source of truth. Pour the `code-challenge` molecule only when the user wants a step per phase in beads; the pour carries the same `run_id`, and its steps do not replace the files. A run that skips the pour loses nothing.
 
 ## Rules
 
@@ -43,7 +43,7 @@ NOT Invent a lens or an analyzer rule; use the twelve lenses below.
 
 ## Lenses
 
-One reference per lens, each with what to look for, the evidence needed and the steering skills to load.
+One reference per lens, each with what to look for, the evidence needed and the steering skills to load. A steering skill is optional: `lang-<language>-…` takes the target's language (`lang-go-quality`), and a skill that is not installed is skipped and named in the report's `gaps`.
 
 | Lens | Reference |
 |---|---|
@@ -62,17 +62,17 @@ One reference per lens, each with what to look for, the evidence needed and the 
 
 ## Tools
 
-`challenge_lib_facts` returns library facts from deps.dev, OSV, the registries and GitHub (see [references/library-scoring.md](references/library-scoring.md) for its input and output). `challenge_scan` runs the SCAN analyzers (see [references/scan.md](references/scan.md) for its input and output).
+`challenge_lib_facts` returns library facts from deps.dev, OSV, the registries and GitHub (see [references/library-scoring.md](references/library-scoring.md) for its input and output). `challenge_scan` runs the SCAN analyzers (see [references/scan.md](references/scan.md) for its input and output). `challenge_validate` checks a run's `report.json` and `decisions.jsonl` against the schemas (see [references/schemas.md](references/schemas.md)).
 
 ## Workflow
 
 1. INTAKE: LOAD [references/intake-questions.md](references/intake-questions.md) and ask its batch (interactive), or infer the answers and ask only for a missing target or depth (autonomous). Create the run directory and `run_id`. -> `intake.json` written; the pluggability answer and its signal logged to `decisions.jsonl`.
 2. SCAN: LOAD [references/scan.md](references/scan.md) and run the analyzers for the languages in the target; `quick` skips build-needing ones. -> `scan.json` listing every hit with tool, rule, `path:line` and whether the rule is enabled in the repo, and every analyzer that could not run named as a gap.
-3. CHALLENGE: for each selected lens, LOAD its reference and spawn one `code-challenger` agent per lens in parallel (standard tier), with a brief naming the lens, the target, the scan hits and the frozen surfaces. The scouts and the critic only read and reply; you (the lead) spawn them, merge the replies, collapse one root cause into one finding, and write every file. -> `findings.json` with each finding at a locator, a tier and a test-protection value.
+3. CHALLENGE: for each selected lens, LOAD its reference and spawn one `code-challenger` agent per lens in parallel (standard tier), with a brief naming the lens, the target, the scan hits and the frozen surfaces. The brief MUST list the absolute paths of `references/lens-<lens>.md` and `references/evidence.md`, resolved from the skill's base directory: a scout sees a sampled file list and otherwise reads no lens reference. When the host caps parallel subagents, group related lenses and run the scouts one after another: simplification, over-engineering and dead-code; optimisation, performance and efficiency; the rest by pairs. A grouped brief names every lens and reference path of its group. Log the grouping as a `choice` line in `decisions.jsonl` and name it in `gaps`. Reject a scout reply that lacks the line `References read:` or lists fewer references than the brief named (every lens reference of its group plus `evidence.md`); re-ask once with the missing paths. If the second reply is still short, record a gap naming the lens and the unread references, and mark its findings as read without the reference. The scouts and the critic only read and reply; you (the lead) spawn them, merge the replies, collapse one root cause into one finding, and write every file. -> `findings.json` with each finding at a locator, a tier and a test-protection value.
 4. RESEARCH (standard, deep): for each library-lens finding LOAD [references/library-scoring.md](references/library-scoring.md); gather facts, score 2 to 4 candidates, apply the gates. -> `research.json` with per-criterion scores, gate results and the "keep what exists" baseline for each finding.
-5. REFUTE (standard, deep): you send the findings to the `refactor-challenger` agent (reviewer tier) as a brief of observable facts only: locator, claim, tool or reading, proposal, evidence. -> `verdicts.json` with KEEP, DOWNGRADE or DROP and a cited rationale per finding; a DROP leaves the offer list.
+5. REFUTE (standard, deep): you send the findings to the `refactor-challenger` agent (reviewer tier) as a brief of observable facts only: locator, claim, tool or reading, proposal, evidence. Split a finding that bundles proposals which can be decided separately into one entry per proposal, each with its own tier, blast radius and contract flag. Keep what was observed in the code, what is inferred from it and what a command reproduced in separate fields. An empty reply is not a verdict: send the same brief again once; if the second reply is empty too, log a `blocker` line and mark those findings unrefuted. -> `verdicts.json` with KEEP, DOWNGRADE or DROP and a cited rationale per finding; a DROP leaves the offer list.
 6. DECIDE: LOAD [references/decide.md](references/decide.md). Interactive: batches of up to 12 through `parley_ask`. Autonomous: accept only a surviving, `proven` or `measured`, low-blast-radius finding that keeps its contract; defer the rest. -> every finding has a status and `decided_by`, with one `decisions.jsonl` line each.
-7. DELIVER: write `report.json` against [references/report.schema.json](references/report.schema.json) and `decisions.jsonl` against [references/decisions.schema.json](references/decisions.schema.json); print the report in chat; create the epic and child beads for accepted findings (standard, deep); draft the PR comment. -> both files validate, the chat report names the run directory, and the comment is posted only after the user confirms.
+7. DELIVER: write `report.json` against [references/report.schema.json](references/report.schema.json) and `decisions.jsonl` against [references/decisions.schema.json](references/decisions.schema.json); print the report in chat; create the epic and child beads for accepted findings (standard, deep); draft the PR comment. -> both files pass `challenge_validate`, the chat report names the run directory, and the comment is posted only after the user confirms.
 
 ## Subagents
 

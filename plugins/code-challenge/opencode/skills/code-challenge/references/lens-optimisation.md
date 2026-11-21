@@ -17,4 +17,4 @@ Judge n from the code: unbounded user data or a fixed list of five. A quadratic 
 
 ## Steering
 
-`quality-profiling` before any speed claim, `lang-*-profiling` for the language's profiler and benchmark tool.
+`quality-profiling` before any speed claim, `lang-<language>-profiling` for the language's profiler and benchmark tool.

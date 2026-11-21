@@ -17,4 +17,4 @@ Every simplification, library and structure finding already records `test_protec
 
 ## Steering
 
-`quality-testing`, `quality-test-audit` (the deep audit; recommend it, never inline it), `lang-*-quality`.
+`quality-testing`, `quality-test-audit` (the deep audit; recommend it, never inline it), `lang-<language>-quality`.

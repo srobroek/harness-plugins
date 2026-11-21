@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { type AgentPermission, permissionEffect, readAgentFile } from "@srobroek/opencode-lib/agent-files"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
-import plugin, { COMMAND, challengePrompt, LIB_FACTS_TOOL, parseInvocation, SCAN_TOOL, SETUP_TOOL } from "./index.ts"
+import plugin, { COMMAND, challengePrompt, LIB_FACTS_TOOL, parseInvocation, SCAN_TOOL, SETUP_TOOL, VALIDATE_TOOL } from "./index.ts"
 
 type Execute = (input: unknown, context: unknown) => Promise<{ content: string; metadata: Record<string, unknown> }>
 
@@ -15,7 +15,7 @@ test("registers the skill, both agents, the setup tool and the command, and remo
   const cleanup = await plugin.setup(fake.context)
   expect([...fake.skills.keys()]).toEqual(["code-challenge"])
   expect([...fake.agents.keys()].sort()).toEqual(["code-challenger", "refactor-challenger"])
-  expect([...fake.tools.keys()]).toEqual([SETUP_TOOL, LIB_FACTS_TOOL, SCAN_TOOL])
+  expect([...fake.tools.keys()]).toEqual([SETUP_TOOL, LIB_FACTS_TOOL, VALIDATE_TOOL, SCAN_TOOL])
   expect([...fake.commands.keys()]).toEqual([COMMAND])
   await cleanup?.()
   expect(fake.active()).toBe(0)
@@ -98,6 +98,22 @@ test("both challengers are read-only subagents that cannot edit, change the repo
     expect(permissionEffect(rules, "shell", "git push")).toBe("deny")
     expect(permissionEffect(rules, "challenge_scan", "*")).toBe("allow")
     expect(permissionEffect(rules, "challenge_lib_facts", "*")).toBe("allow")
+  }
+})
+
+test("both challengers may read exactly the skill's own references directory without a prompt, and nothing else outside the project", async () => {
+  const fake = createFakeContext()
+  await plugin.setup(fake.context)
+  const skill = fake.skills.get("code-challenge") as unknown as { path: string }
+  const references = join(dirname(skill.path), "references")
+  for (const id of ["code-challenger", "refactor-challenger"]) {
+    const rules = (fake.agents.get(id)?.permissions ?? []) as AgentPermission[]
+    expect(permissionEffect(rules, "external_directory", join(references, "lens-stability.md"))).toBe("allow")
+    expect(permissionEffect(rules, "external_directory", join(references, "evidence.md"))).toBe("allow")
+    // The grant is the references directory: its parent (SKILL.md, formulas), a sibling skill and the project are not covered.
+    expect(permissionEffect(rules, "external_directory", skill.path)).toBe("ask")
+    expect(permissionEffect(rules, "external_directory", join(dirname(dirname(references)), "other", "references", "x.md"))).toBe("ask")
+    expect(permissionEffect(rules, "external_directory", "/etc/passwd")).toBe("ask")
   }
 })
 

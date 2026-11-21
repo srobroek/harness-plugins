@@ -83,7 +83,7 @@ accept both:
 - the code-challenge format: per finding, an id, a lens, a locator, a claim, an evidence tier
   with its detail, test protection, a proposal, and for library findings the scored candidates.
 
-This isolation prevents you from inheriting the same gaps. A field the Brief lacks is a gap
+A finding that bundles proposals which can be decided separately is a gap: judge each proposal on its own and say so. Treat observed structure, inferred consequence and reproduced failure as different strengths of evidence. This isolation prevents you from inheriting the same gaps. A field the Brief lacks is a gap
 you report, not a field you invent.
 
 ## Investigation protocol (per finding)
@@ -127,4 +127,5 @@ NOT Do not pad if the plan is sound.
 
 VERDICT: KEEP|DOWNGRADE|DROP -- counts (K keep / D downgrade / X drop), one line.
 Per-finding table: one line per finding with its id or number, finding, verdict and test protection. Add one tight evidence-backed rationale line for each dropped or downgraded finding. Omit empty sections. Never reprint code, diffs, or file contents.
+Never finish with an empty message: the verdict line comes first, always.
 CAP uncapped (scales with finding count)

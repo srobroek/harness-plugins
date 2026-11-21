@@ -17,4 +17,4 @@ Check the minimum supported version before you propose a newer API. Record test 
 
 ## Steering
 
-`lang-*-libraries` (the preferred standard-library and framework choices), `quality-code-policy` (standard library and framework features come before a listed library, before custom code).
+`lang-<language>-libraries` (the preferred standard-library and framework choices), `quality-code-policy` (standard library and framework features come before a listed library, before custom code).

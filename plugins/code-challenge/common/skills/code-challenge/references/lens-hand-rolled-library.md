@@ -15,4 +15,4 @@ Run RESEARCH for every finding: 2 to 4 candidates scored with [library-scoring.m
 
 ## Steering
 
-`lang-*-libraries` (preferred libraries per language), `quality-code-policy` (a dependency the user did not name needs approval), `challenge_lib_facts` for the facts.
+`lang-<language>-libraries` (preferred libraries per language), `quality-code-policy` (a dependency the user did not name needs approval), `challenge_lib_facts` for the facts.

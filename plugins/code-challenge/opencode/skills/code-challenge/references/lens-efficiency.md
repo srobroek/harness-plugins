@@ -18,4 +18,4 @@ Weigh cost against what it saves: a clearer code path often beats a saved millis
 
 ## Steering
 
-`quality-profiling`, `lang-*-profiling`, `toolchain-quality-observability` for counting calls and bytes in production.
+`quality-profiling`, `lang-<language>-profiling`, `toolchain-quality-observability` for counting calls and bytes in production.

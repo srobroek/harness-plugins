@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { execFileSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { planEmbeddedWrites } from "./bd-embedded-write-lock.ts"
 import { readBounded, readBoundedBytes } from "./bounded-read.ts"
@@ -64,6 +64,15 @@ describe("readBoundedBytes", () => {
     expect(readBoundedBytes(join(d, "fifo"), 10)).toEqual({ kind: "unreadable", reason: "not-regular" })
     expect(readBoundedBytes(join(d, "link"), 10)).toEqual({ kind: "unreadable", reason: "not-regular" })
     expect(readBoundedBytes(d, 10)).toEqual({ kind: "unreadable", reason: "not-regular" })
+  })
+
+  test("keeps the fs error code of a failed read, so EACCES is told from ENOENT", () => {
+    const d = dir()
+    writeFileSync(join(d, "locked"), "x")
+    chmodSync(join(d, "locked"), 0o000)
+    // Root ignores permission bits, so this holds only for an ordinary user.
+    if (process.getuid?.() !== 0)
+      expect(readBoundedBytes(join(d, "locked"), 10)).toEqual({ kind: "unreadable", reason: "io", code: "EACCES" })
   })
 })
 

@@ -52,6 +52,14 @@ describe("shipped JSON schemas", () => {
     expect(readdirSync(references).filter((file) => file.startsWith("lens-"))).toHaveLength(LENSES.length)
   })
 
+  test("a performance-only run with benchmarks declined reports its replacement lens and the dropped one, and validates", () => {
+    const replaced = { ...doc, lenses: ["optimisation"], gaps: ["performance lens dropped: benchmarks were not allowed; optimisation ran instead"] }
+    expect(validate(report, replaced)).toEqual([])
+    expect(validate(report, { ...doc, lenses: [] })).toEqual(["$.lenses: fewer than 1 items"])
+    const text = readFileSync(join(references, "lens-performance.md"), "utf8")
+    expect(text).toContain("replacement lens")
+  })
+
   test("the decisions schema names the phases of the plugin", () => {
     expect(decision.properties?.phase?.enum).toEqual([...PHASES])
   })

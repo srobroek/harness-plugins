@@ -84,6 +84,7 @@
         "title": { "type": "string", "minLength": 1 },
         "location": { "$ref": "#/$defs/location" },
         "recurs": { "type": "integer", "minimum": 1 },
+        "also_at": { "type": "array", "items": { "$ref": "#/$defs/location" } },
         "claim": { "type": "string", "minLength": 1 },
         "evidence": { "$ref": "#/$defs/evidence" },
         "impact": { "enum": ["high", "medium", "low"] },

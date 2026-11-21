@@ -21,12 +21,13 @@ export type BoundedRead = { kind: "absent" } | { kind: "unreadable" } | { kind: 
 /**
  * - `absent`: nothing is at the path.
  * - `unreadable`: something is there but it is not a regular non-symlink file (`not-regular`,
- *   which includes a FIFO or device), it is larger than the limit (`too-large`), or reading failed (`io`).
+ *   which includes a FIFO or device), it is larger than the limit (`too-large`), or reading failed (`io`,
+ *   with the fs error `code`, for example `EACCES`).
  * - `bytes`: the whole file, at most `maxBytes` long.
  */
 export type BoundedBytes =
   | { kind: "absent" }
-  | { kind: "unreadable"; reason: "not-regular" | "too-large" | "io" }
+  | { kind: "unreadable"; reason: "not-regular" | "too-large" | "io"; code?: string }
   | { kind: "bytes"; bytes: Buffer }
 
 /**
@@ -55,7 +56,7 @@ export function readBoundedBytes(path: string, maxBytes: number): BoundedBytes {
     const code = (error as NodeJS.ErrnoException).code
     if (code === "ENOENT") return { kind: "absent" }
     // O_NOFOLLOW on a symlink fails with ELOOP.
-    return { kind: "unreadable", reason: code === "ELOOP" ? "not-regular" : "io" }
+    return code === "ELOOP" ? { kind: "unreadable", reason: "not-regular" } : { kind: "unreadable", reason: "io", code }
   } finally {
     if (fd !== undefined) closeSync(fd)
   }

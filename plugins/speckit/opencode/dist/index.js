@@ -6,7 +6,7 @@ import { fileURLToPath as fileURLToPath2 } from "url";
 import { Plugin } from "@opencode/plugin";
 
 // lib/src/agent-files.ts
-import { existsSync, readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "fs";
 import { basename, join } from "path";
 
 // lib/src/agent-tools.ts
@@ -1225,7 +1225,7 @@ import {
   openSync,
   readFileSync as readFileSync3,
   readlinkSync,
-  realpathSync,
+  realpathSync as realpathSync2,
   rmSync
 } from "fs";
 import { tmpdir } from "os";
@@ -1400,8 +1400,8 @@ function readArtifact(workspace, path, race = {}) {
     const now = lstatSync(full);
     if (now.dev !== identity.dev || now.ino !== identity.ino)
       return movedWhileReading("a different file is there now");
-    const expected = join4(realpathSync(workspace), path);
-    const real = snapshot.mode === "120000" ? join4(realpathSync(dirname(full)), basename3(full)) : realpathSync(full);
+    const expected = join4(realpathSync2(workspace), path);
+    const real = snapshot.mode === "120000" ? join4(realpathSync2(dirname(full)), basename3(full)) : realpathSync2(full);
     if (real !== expected)
       return movedWhileReading(`it resolves to ${real}`);
   } catch {
@@ -1414,7 +1414,7 @@ function blobId(format, bytes) {
 }
 var realpathOrSelf = (path) => {
   try {
-    return realpathSync(path);
+    return realpathSync2(path);
   } catch {
     return resolve2(path);
   }
@@ -2323,7 +2323,7 @@ async function startSpec(input, command) {
 // plugins/speckit/opencode/src/spec-start-runtime.ts
 import { spawn } from "child_process";
 import { randomUUID } from "crypto";
-import { realpathSync as realpathSync4 } from "fs";
+import { realpathSync as realpathSync5 } from "fs";
 import { join as join8 } from "path";
 
 // lib/src/bd-embedded-write-lock.ts
@@ -2333,7 +2333,7 @@ import {
   existsSync as existsSync6,
   openSync as openSync3,
   readFileSync as readFileSync5,
-  realpathSync as realpathSync3,
+  realpathSync as realpathSync4,
   statSync as statSync3,
   unlinkSync,
   writeSync
@@ -2386,7 +2386,7 @@ var TRUTHY = { "": true, "1": true, t: true, T: true, TRUE: true, true: true, Tr
 
 // lib/src/beads-store.ts
 import { spawnSync } from "child_process";
-import { lstatSync as lstatSync3, realpathSync as realpathSync2, statSync as statSync2 } from "fs";
+import { lstatSync as lstatSync3, realpathSync as realpathSync3, statSync as statSync2 } from "fs";
 import { dirname as dirname4, isAbsolute as isAbsolute5, resolve as resolve5 } from "path";
 function repoIdentity(cwd) {
   if (cwd.includes("\x00"))
@@ -2406,7 +2406,7 @@ function repoIdentity(cwd) {
   }
   const out = String(result.stdout ?? "").trim();
   try {
-    return realpathSync2(isAbsolute5(out) ? out : resolve5(cwd, out));
+    return realpathSync3(isAbsolute5(out) ? out : resolve5(cwd, out));
   } catch {
     return;
   }
@@ -2414,7 +2414,7 @@ function repoIdentity(cwd) {
 function repositoryState(cwd) {
   let current;
   try {
-    current = realpathSync2(cwd);
+    current = realpathSync3(cwd);
   } catch {
     return "unknown";
   }
@@ -2440,7 +2440,7 @@ function sessionPinFor(cwd) {
   if (common !== cwd && common.endsWith("/.git")) {
     const primaryRoot = resolve5(common, "..");
     try {
-      if (realpathSync2(cwd) === primaryRoot && isDir(local))
+      if (realpathSync3(cwd) === primaryRoot && isDir(local))
         return local;
     } catch {
       return;
@@ -2488,7 +2488,7 @@ function readBoundedBytes(path, maxBytes) {
     const code = error.code;
     if (code === "ENOENT")
       return { kind: "absent" };
-    return { kind: "unreadable", reason: code === "ELOOP" ? "not-regular" : "io" };
+    return code === "ELOOP" ? { kind: "unreadable", reason: "not-regular" } : { kind: "unreadable", reason: "io", code };
   } finally {
     if (fd !== undefined)
       closeSync2(fd);
@@ -2619,7 +2619,7 @@ function isDirectory2(path) {
 }
 function canonical(path) {
   try {
-    return realpathSync3(path);
+    return realpathSync4(path);
   } catch {
     return resolve6(path);
   }
@@ -2951,10 +2951,10 @@ class IncompleteStart extends Error {
 }
 async function runSpecStart(options, signal, commandMs = COMMAND_MS, module = BEADS_LOCK, timers = globalThis) {
   const started = Date.now();
-  const cwd = realpathSync4(options.workspace);
+  const cwd = realpathSync5(options.workspace);
   const env = {
     ...process.env,
-    BEADS_DIR: realpathSync4(join8(cwd, ".beads")),
+    BEADS_DIR: realpathSync5(join8(cwd, ".beads")),
     GIT_TERMINAL_PROMPT: "0",
     SSH_ASKPASS: "/usr/bin/false",
     SSH_ASKPASS_REQUIRE: "force",

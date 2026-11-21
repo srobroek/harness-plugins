@@ -17,4 +17,4 @@ Prefer the framework's middleware (one place for ids, logs, traces and metrics) 
 
 ## Steering
 
-`toolchain-quality-observability` (the standard stack and checks), `lang-*-quality` (log and lint rules), `quality-code-policy` (cross-cutting concerns live in middleware).
+`toolchain-quality-observability` (the standard stack and checks), `lang-<language>-quality` (log and lint rules), `quality-code-policy` (cross-cutting concerns live in middleware).

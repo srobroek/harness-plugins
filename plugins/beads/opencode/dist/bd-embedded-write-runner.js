@@ -1805,7 +1805,7 @@ function readBoundedBytes(path, maxBytes) {
     const code = error.code;
     if (code === "ENOENT")
       return { kind: "absent" };
-    return { kind: "unreadable", reason: code === "ELOOP" ? "not-regular" : "io" };
+    return code === "ELOOP" ? { kind: "unreadable", reason: "not-regular" } : { kind: "unreadable", reason: "io", code };
   } finally {
     if (fd !== undefined)
       closeSync(fd);

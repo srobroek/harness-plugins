@@ -9,14 +9,17 @@ import { registerSkills } from "@srobroek/opencode-lib/skill-files"
 import { COMMAND, challengePrompt } from "./command.ts"
 import { installFormulas, SETUP_TOOL } from "./formulas.ts"
 import { registerLibFacts } from "./lib-facts/index.ts"
+import { referenceReadRules } from "./read-grant.ts"
 import { registerScanTool } from "./scan/index.ts"
 import { sessionDirectory } from "./session-directory.ts"
+import { registerValidateTool } from "./validate.ts"
 
 export { COMMAND, challengePrompt, parseInvocation, SKILL } from "./command.ts"
 export { FORMULAS, installFormulas, SETUP_TOOL } from "./formulas.ts"
 export { DEPTHS, LENSES, PHASES } from "./lenses.ts"
 export { LIB_FACTS_TOOL } from "./lib-facts/index.ts"
 export { SCAN_TOOL } from "./scan/index.ts"
+export { VALIDATE_TOOL } from "./validate.ts"
 
 export const ID = "srobroek.code-challenge"
 
@@ -76,6 +79,7 @@ export async function setupCodeChallenge(ctx: Context, moduleUrl: string) {
       }),
     )
     registrations.push(await registerLibFacts(ctx))
+    registrations.push(await registerValidateTool(ctx))
     registrations.push({ dispose: await registerScanTool(ctx) })
     registrations.push(
       await ctx.command.transform((editor) =>
@@ -96,7 +100,7 @@ export async function setupCodeChallenge(ctx: Context, moduleUrl: string) {
     if (skills.length > 0) registrations.push(await registerSkills(ctx.skill, skills))
     if (agents.length > 0)
       registrations.push(
-        await registerAgents(ctx.agent, agents, [], mcpGrant((ctx.options as Record<string, unknown> | undefined)?.tools, agentIds(agents))),
+        await registerAgents(ctx.agent, agents, referenceReadRules(moduleUrl), mcpGrant((ctx.options as Record<string, unknown> | undefined)?.tools, agentIds(agents))),
       )
   } catch (error) {
     await cleanup()
