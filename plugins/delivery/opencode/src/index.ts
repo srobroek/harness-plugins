@@ -427,7 +427,7 @@ export async function setupDelivery(
                     throw error
                   }
                 },
-                ...pending.removal,
+                ...pending.removalFor(context.sessionID),
                 host: hostWorktrees(ctx),
               })
             })

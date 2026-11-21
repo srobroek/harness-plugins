@@ -1,3 +1,9 @@
+## subagent-worktree [0.6.0](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.5.0...subagent-worktree--v0.6.0) (2026-11-21)
+
+### Features
+
+* **subagent-worktree:** remove lanes through one finalize path ([#59](https://github.com/srobroek/harness-plugins/issues/59)) ([14d4dae](https://github.com/srobroek/harness-plugins/commit/14d4dae9287a4a815569da6f9172b5ace2f36774))
+
 ## subagent-worktree [0.5.0](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.4.0...subagent-worktree--v0.5.0) (2026-11-20)
 
 ### Features
