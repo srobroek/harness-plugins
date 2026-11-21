@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
@@ -210,11 +211,14 @@ describe("recipe table", () => {
 
 describe("tool registration", () => {
   test("input is validated and defaults resolve against the session directory", () => {
-    expect(readScanInput({ lenses: ["dead-code", "nope"], depth: "quick" }, "/base")).toMatchObject({
+    expect(readScanInput({ lenses: ["dead-code", "hand-rolled-library"], depth: "quick" }, "/base")).toMatchObject({
       root: "/base",
-      lenses: ["dead-code"],
+      lenses: ["dead-code", "hand-rolled-library"],
       depth: "quick",
     })
+    // An unknown value is refused, never dropped: dropping it would widen the scan to every lens.
+    expect(readScanInput({ lenses: ["dead-code", "nope"] }, "/base")).toMatch(/^lenses must be a list of: .*hand-rolled-library/)
+    expect(readScanInput({ languages: ["cobol"] }, "/base")).toMatch(/^languages must be a list of: ts, python, go, rust/)
     expect(readScanInput({ root: "sub" }, "/base")).toMatchObject({ root: "/base/sub" })
     expect(readScanInput({ runId: "../x" }, "/base")).toMatch(/^runId must be 1-64 characters/)
     expect(readScanInput({ timeoutSeconds: 0 }, "/base")).toBe("timeoutSeconds must be a positive number")
@@ -228,7 +232,7 @@ describe("tool registration", () => {
   })
 
   test("registers challenge_scan with a short first description line and disposes it", async () => {
-    const fake = createFakeContext()
+    const fake = createFakeContext({ sessions: [{ id: "s", location: { directory: tmpdir() } }] })
     const dispose = await registerScanTool(fake.context as never)
     expect(fake.tools.has(SCAN_TOOL)).toBe(true)
     expect((SCAN_DESCRIPTION.split("\n")[0] ?? "").length).toBeLessThanOrEqual(120)
@@ -237,7 +241,7 @@ describe("tool registration", () => {
   })
 
   test("the tool returns the report as JSON without asking when nothing risky runs", async () => {
-    const fake = createFakeContext()
+    const fake = createFakeContext({ sessions: [{ id: "s", location: { directory: tmpdir() } }] })
     const root = pythonRepo()
     const exec = fakeExec({ "check --isolated": exited(RUFF_HIT, 1), "--show-settings": exited("") })
     await registerScanTool(fake.context as never, { exec, which: withTools("ruff") })

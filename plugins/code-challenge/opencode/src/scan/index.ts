@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
+import { sessionDirectory } from "../session-directory.ts"
 import { consentRisks, type Risk, runScan, type ScanDeps, validRunId } from "./run.ts"
 import { DEPTHS, LANGUAGES, LENSES, type ScanInput, type ScanReport } from "./types.ts"
 
@@ -39,9 +40,12 @@ export const SCAN_INPUT = {
   additionalProperties: false,
 } as const
 
-function pick<T extends string>(value: unknown, allowed: readonly T[]): T[] | undefined {
-  if (!Array.isArray(value)) return undefined
-  return value.filter((v): v is T => typeof v === "string" && (allowed as readonly string[]).includes(v))
+/** The allowed values of a list input; an unknown one is a reason string, never dropped (that would widen the scan). */
+function pick<T extends string>(name: string, value: unknown, allowed: readonly T[]): T[] | undefined | string {
+  if (value === undefined) return undefined
+  const known = (v: unknown): v is T => typeof v === "string" && (allowed as readonly string[]).includes(v)
+  if (!Array.isArray(value) || !value.every(known)) return `${name} must be a list of: ${allowed.join(", ")}`
+  return value
 }
 
 /** Validate the tool input; a string is the reason it is unusable. */
@@ -54,12 +58,16 @@ export function readScanInput(raw: unknown, base: string): ScanInput | string {
     return "runId must be 1-64 characters of letters, digits, underscore, dot or dash, starting with a letter, digit or underscore"
   }
   if (input.depth !== undefined && !(DEPTHS as readonly unknown[]).includes(input.depth)) return `depth must be one of ${DEPTHS.join(", ")}`
+  const languages = pick("languages", input.languages, LANGUAGES)
+  if (typeof languages === "string") return languages
+  const lenses = pick("lenses", input.lenses, LENSES)
+  if (typeof lenses === "string") return lenses
   const files = Array.isArray(input.files) ? input.files.filter((f): f is string => typeof f === "string") : undefined
   return {
     root: isAbsolute(root) ? root : resolve(base, root),
     files,
-    languages: pick(input.languages, LANGUAGES),
-    lenses: pick(input.lenses, LENSES),
+    languages,
+    lenses,
     depth: input.depth as ScanInput["depth"],
     timeoutSeconds: timeout as number | undefined,
     runId: input.runId as string | undefined,
@@ -105,7 +113,6 @@ export function confirmScan(evaluation: Evaluation): void {
 
 /** Register `challenge_scan`; the returned function disposes the registrations. */
 export async function registerScanTool(ctx: Context, deps: ScanDeps = {}): Promise<() => Promise<void>> {
-  const base = ctx.location.directory as string
   const registrations: Array<{ dispose: () => Promise<void> }> = []
   const cleanup = async () => {
     for (const registration of registrations.reverse()) await registration.dispose()
@@ -118,6 +125,8 @@ export async function registerScanTool(ctx: Context, deps: ScanDeps = {}): Promi
           description: SCAN_DESCRIPTION,
           input: SCAN_INPUT as never,
           execute: async (raw, context) => {
+            // The session's directory, not the plugin's: a default or relative root means the project being worked on.
+            const base = await sessionDirectory(ctx, context.sessionID, SCAN_TOOL)
             const parsed = readScanInput(raw, base)
             if (typeof parsed === "string") return { content: `${SCAN_TOOL}: ${parsed}`, metadata: { ok: false } }
             let input: ScanInput

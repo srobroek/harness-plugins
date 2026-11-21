@@ -1,20 +1,8 @@
 /** Shared types for the challenge_scan tool: recipes, normalised candidates and the report. */
 
-export const LENSES = [
-  "simplification",
-  "over-engineering",
-  "optimisation",
-  "performance",
-  "efficiency",
-  "stability",
-  "hand-rolled-stdlib",
-  "hand-rolled-lib",
-  "dead-code",
-  "observability",
-  "structure",
-  "tests",
-] as const
-export type Lens = (typeof LENSES)[number]
+import { LENSES, type Lens } from "../lenses.ts"
+
+export { LENSES, type Lens }
 
 export const LANGUAGES = ["ts", "python", "go", "rust"] as const
 export type Language = (typeof LANGUAGES)[number]

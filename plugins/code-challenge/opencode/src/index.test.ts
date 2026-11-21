@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { type AgentPermission, permissionEffect, readAgentFile } from "@srobroek/opencode-lib/agent-files"
@@ -33,13 +33,56 @@ test("challenge_lib_facts registered by setup validates its input before any req
 })
 
 test("challenge_scan registered by setup rejects bad input before any process starts", async () => {
+  const fake = createFakeContext({ sessions: [{ id: "ses_1", location: { directory: tmpdir() } }] })
+  await plugin.setup(fake.context)
+  const scan = fake.tools.get(SCAN_TOOL)?.execute as Execute
+  for (const input of [{ depth: "bottomless" }, { lenses: ["hand-rolled-lib"] }, { languages: ["cobol"] }]) {
+    const result = await scan(input, context)
+    expect(result.metadata.ok).toBe(false)
+    expect(result.content).toContain("challenge_scan:")
+  }
+  expect(fake.asserts).toEqual([])
+})
+
+test("challenge_scan accepts the canonical hand-rolled-library lens", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "challenge-scan-lens-"))
+  try {
+    const fake = createFakeContext({ sessions: [{ id: "ses_1", location: { directory: repo } }] })
+    await plugin.setup(fake.context)
+    const scan = fake.tools.get(SCAN_TOOL)?.execute as Execute
+    const result = await scan({ lenses: ["hand-rolled-library"], staticOnly: true }, context)
+    expect(result.metadata.ok).toBe(true)
+  } finally {
+    rmSync(repo, { recursive: true, force: true })
+  }
+})
+
+test("challenge_scan resolves a default and a relative root against the session directory, not the plugin's", async () => {
+  const plugin_dir = mkdtempSync(join(tmpdir(), "challenge-scan-plugin-"))
+  const session_dir = realpathSync(mkdtempSync(join(tmpdir(), "challenge-scan-session-")))
+  try {
+    mkdirSync(join(session_dir, "sub"))
+    const fake = createFakeContext({ directory: plugin_dir, sessions: [{ id: "ses_1", location: { directory: session_dir } }] })
+    await plugin.setup(fake.context)
+    const scan = fake.tools.get(SCAN_TOOL)?.execute as Execute
+    const roots = await Promise.all([{}, { root: "sub" }].map((input) => scan({ ...input, staticOnly: true }, context)))
+    expect(roots.map((r) => (JSON.parse(r.content) as { root: string }).root)).toEqual([session_dir, join(session_dir, "sub")])
+  } finally {
+    rmSync(plugin_dir, { recursive: true, force: true })
+    rmSync(session_dir, { recursive: true, force: true })
+  }
+})
+
+test("challenge_scan fails closed when the session cannot be read", async () => {
   const fake = createFakeContext()
   await plugin.setup(fake.context)
   const scan = fake.tools.get(SCAN_TOOL)?.execute as Execute
-  const result = await scan({ depth: "bottomless" }, context)
-  expect(result.metadata.ok).toBe(false)
-  expect(result.content).toContain("challenge_scan:")
-  expect(fake.asserts).toEqual([])
+  const error = await scan({ staticOnly: true }, context).then(
+    () => undefined,
+    (caught: unknown) => caught as Error,
+  )
+  expect(error?.message).toContain("challenge_scan: cannot read session ses_1")
+  expect((error?.cause as Error | undefined)?.message).toContain("no session ses_1")
 })
 
 test("both challengers are read-only subagents that cannot edit, run a shell or spawn agents", async () => {

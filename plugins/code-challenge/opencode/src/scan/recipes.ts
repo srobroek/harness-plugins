@@ -82,9 +82,9 @@ export const RECIPES: readonly Recipe[] = [
     id: "eslint:e18e",
     tool: "eslint",
     language: "ts",
-    lenses: ["hand-rolled-stdlib", "hand-rolled-lib", "efficiency"],
+    lenses: ["hand-rolled-stdlib", "hand-rolled-library", "efficiency"],
     lensRules: [
-      [/ban-dependencies/, "hand-rolled-lib"],
+      [/ban-dependencies/, "hand-rolled-library"],
       [/^e18e\/prefer-/, "hand-rolled-stdlib"],
     ],
     binary: "eslint",

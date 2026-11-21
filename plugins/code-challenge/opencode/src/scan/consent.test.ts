@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { realpathSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import { cleanup, exited, fakeExec, pythonRepo, RUFF_HIT, temp, withTools } from "./fixtures.ts"
@@ -94,7 +95,7 @@ describe("the permission prompt", () => {
   })
 
   async function runTool(root: string) {
-    const fake = createFakeContext()
+    const fake = createFakeContext({ sessions: [{ id: "s", location: { directory: tmpdir() } }] })
     const exec = fakeExec({ clippy: exited(CLIPPY_LINE), "check --isolated": exited(RUFF_HIT, 1), "--show-settings": exited("") })
     await registerScanTool(fake.context as never, { exec, which: withTools("cargo", "ruff") })
     type Execute = (i: unknown, c: unknown) => Promise<{ content: string; metadata: Record<string, unknown> }>
@@ -119,6 +120,7 @@ describe("the permission prompt", () => {
     const root = rustRepo()
     const calls: Parameters<typeof fakeExec>[1] = []
     const fake = createFakeContext({
+      sessions: [{ id: "s", location: { directory: tmpdir() } }],
       assert: async () => {
         throw new Error("rejected")
       },
@@ -133,7 +135,7 @@ describe("the permission prompt", () => {
     const root = rustRepo()
     writeFileSync(join(root, "pyproject.toml"), "")
     writeFileSync(join(root, "a.py"), "")
-    const fake = createFakeContext()
+    const fake = createFakeContext({ sessions: [{ id: "s", location: { directory: tmpdir() } }] })
     const exec = fakeExec({ clippy: exited(CLIPPY_LINE), "check --isolated": exited(RUFF_HIT, 1), "--show-settings": exited("") })
     await registerScanTool(fake.context as never, { exec, which: withTools("cargo", "ruff") })
     const execute = fake.tools.get(SCAN_TOOL)?.execute as (i: unknown, c: unknown) => Promise<{ content: string }>
@@ -151,7 +153,7 @@ describe("the permission prompt", () => {
   })
 
   test("a scan with nothing risky asks nothing", async () => {
-    const fake = createFakeContext()
+    const fake = createFakeContext({ sessions: [{ id: "s", location: { directory: tmpdir() } }] })
     const root = pythonRepo()
     await registerScanTool(fake.context as never, { exec: fakeExec({ "check --isolated": exited("[]") }), which: withTools("ruff") })
     type Execute = (i: unknown, c: unknown) => Promise<unknown>
