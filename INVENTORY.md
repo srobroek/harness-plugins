@@ -43,7 +43,7 @@
 | session | 0.4.1 | development | global | opencode |
 | speckit | 0.10.1 | development | project | opencode, claude |
 | statusline | 0.4.0 | development | global | opencode |
-| subagent-worktree | 0.6.0 | development | global | opencode |
+| subagent-worktree | 0.6.1 | development | global | opencode |
 | toolchain | 0.7.1 | development | global | opencode, claude |
 | trunk-dev | 0.9.0 | development | global | opencode, claude |
 | whats-new | 0.4.0 | development | global | opencode |
