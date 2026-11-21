@@ -1,6 +1,7 @@
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs"
+import { existsSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { extname, join, resolve } from "node:path"
+import { readText } from "./read.ts"
 import { type Exec, MAX_STDERR_BYTES, MAX_STDOUT_BYTES, spawnTool } from "./exec.ts"
 import { detectLanguages, expandFiles, lstatOrNull, missingMarker, parseListing } from "./files.ts"
 import { OutputError, parseOutput } from "./parsers.ts"
@@ -246,10 +247,15 @@ const MAX_ARGV_BYTES = 256 * 1024
 
 /** Read a tool's report file: a regular file under the size cap, else the reason it cannot be used. */
 function readReport(path: string, name: string): { text: string } | { gap: string } {
-  const stat = lstatOrNull(path)
-  if (stat === null || !stat.isFile()) return { gap: `the report file ${name} was not written` }
-  if (stat.size > MAX_STDOUT_BYTES) return { gap: `the report file ${name} is over ${MAX_STDOUT_BYTES / MiB} MiB` }
-  return { text: readFileSync(path, "utf8") }
+  const read = readText(path, MAX_STDOUT_BYTES)
+  if (read.kind === "text") return { text: read.text }
+  // readText folds "too big" and "not a regular file" together; absent is the common case.
+  return {
+    gap:
+      read.kind === "absent"
+        ? `the report file ${name} was not written`
+        : `the report file ${name} is not a regular file under ${MAX_STDOUT_BYTES / MiB} MiB`,
+  }
 }
 
 /** Run the recipes selected by the input and normalise their hits. */

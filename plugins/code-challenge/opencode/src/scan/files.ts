@@ -1,4 +1,5 @@
-import { lstatSync, readdirSync, readFileSync, realpathSync, type Stats, statSync } from "node:fs"
+import { lstatSync, readdirSync, realpathSync, type Stats, statSync } from "node:fs"
+import { readText } from "./read.ts"
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { LANGUAGES, type Language } from "./types.ts"
 
@@ -102,9 +103,10 @@ export function missingMarker(root: string, markers: readonly string[] | undefin
   if (!markers) return null
   for (const spec of markers) {
     const [name = "", needle] = spec.split(":")
-    const stat = lstatOrNull(join(root, name))
-    if (stat === null || !stat.isFile() || stat.size > MAX_MARKER_BYTES) continue
-    if (needle === undefined || readFileSync(join(root, name), "utf8").includes(needle)) return null
+    const read = readText(join(root, name), MAX_MARKER_BYTES)
+    // Absent, a symlink, a FIFO or an oversized file all count as no marker.
+    if (read.kind !== "text") continue
+    if (needle === undefined || read.text.includes(needle)) return null
   }
   return `no ${markers.map((m) => m.replace(":", " containing ")).join(" or ")} in the repository`
 }
