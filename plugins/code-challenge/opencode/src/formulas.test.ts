@@ -60,6 +60,17 @@ describe("formula content", () => {
     ),
   )
 
+  test("both CHALLENGE formulas carry the skill's grouped, sequential fallback for capped hosts", () => {
+    const dispatch = formulas.find(({ name }) => name === "mol-challenge-challenge")?.data.steps.find((step) => step.id === "dispatch-scouts")
+    const full = formulas.find(({ name }) => name === "code-challenge")?.data.steps.find((step) => step.id === "challenge")
+    for (const text of [dispatch?.description ?? "", full?.description ?? ""]) {
+      expect(text).toMatch(/caps parallel/)
+      expect(text).toMatch(/group/)
+      expect(text).toMatch(/one after another/)
+    }
+    expect(formulas.find(({ name }) => name === "mol-challenge-lens")?.text).toMatch(/comma-separated/)
+  })
+
   test("only per-lens analysis and the critique are routed, each to its own agent", () => {
     expect(routed.map(({ name, step, agent }) => `${name}/${step.id}/${agent}`).sort()).toEqual([
       "mol-challenge-lens/analyse-lens/code-challenger",

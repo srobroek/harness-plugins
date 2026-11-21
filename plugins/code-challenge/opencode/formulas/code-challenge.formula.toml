@@ -58,7 +58,7 @@ type = "task"
 needs = ["scan"]
 labels = ["code-challenge", "phase:challenge"]
 description = """
-Run the code-challenge skill, phase CHALLENGE: you (the lead) bond mol-challenge-lens once per selected lens, in parallel, then merge the replies into findings.json with a tier, a locator and test protection on every finding. The scouts only analyse; you spawn them and write the file.
+Run the code-challenge skill, phase CHALLENGE: you (the lead) bond mol-challenge-lens once per selected lens, in parallel. When the host caps parallel subagents, group related lenses (simplification, over-engineering and dead-code; optimisation, performance and efficiency; the rest by pairs), bond once per group with a comma-separated lens var, and run the groups one after another. Then merge the replies into findings.json with a tier, a locator and test protection on every finding. The scouts only analyse; you spawn them and write the file.
 """
 
 [[steps]]

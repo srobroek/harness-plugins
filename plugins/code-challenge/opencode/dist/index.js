@@ -2342,9 +2342,43 @@ function registerLibFacts(ctx, overrides = {}) {
 }
 
 // plugins/code-challenge/opencode/src/validate.ts
-import { readFileSync as readFileSync5 } from "fs";
-import { dirname as dirname2, isAbsolute as isAbsolute2, join as join6 } from "path";
+import { execFileSync } from "child_process";
+import { realpathSync } from "fs";
+import { dirname as dirname2, isAbsolute as isAbsolute2, join as join6, relative, sep } from "path";
 import { fileURLToPath as fileURLToPath3 } from "url";
+
+// lib/src/bounded-read.ts
+import { closeSync, constants, fstatSync, lstatSync as lstatSync2, openSync, readSync } from "fs";
+var MAX_LEDGER_FILE_BYTES = 64 * 1024;
+function readBoundedFile(path, maxBytes) {
+  let fd;
+  try {
+    if (!lstatSync2(path).isFile())
+      return { kind: "failed", reason: "not a regular file" };
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const info = fstatSync(fd);
+    if (!info.isFile())
+      return { kind: "failed", reason: "not a regular file" };
+    if (info.size > maxBytes)
+      return { kind: "failed", reason: `larger than ${maxBytes} bytes` };
+    const buffer = Buffer.alloc(info.size);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const read = readSync(fd, buffer, offset, buffer.length - offset, offset);
+      if (read === 0)
+        break;
+      offset += read;
+    }
+    return { kind: "text", text: buffer.toString("utf8", 0, offset) };
+  } catch (error) {
+    const failure = error;
+    const message = (failure.message ?? String(error)).split(",")[0] ?? "";
+    return { kind: "failed", reason: message };
+  } finally {
+    if (fd !== undefined)
+      closeSync(fd);
+  }
+}
 
 // plugins/code-challenge/opencode/src/json-schema.ts
 var ANNOTATIONS = new Set(["$schema", "$id", "title", "description", "$defs"]);
@@ -2410,10 +2444,22 @@ function validate(schema, value, root = schema, at = "$") {
   return errors;
 }
 
+// plugins/code-challenge/opencode/src/session-directory.ts
+async function sessionDirectory(ctx, sessionID, tool) {
+  const session = await ctx.session.get({ sessionID }).catch((cause) => {
+    throw new Error(`${tool}: cannot read session ${sessionID} to find its directory`, { cause });
+  });
+  const found = session.location?.directory;
+  if (typeof found !== "string" || found === "")
+    throw new Error(`${tool}: session ${sessionID} has no directory`);
+  return found;
+}
+
 // plugins/code-challenge/opencode/src/validate.ts
 var VALIDATE_TOOL = "challenge_validate";
+var MAX_RUN_FILE_BYTES = 1024 * 1024;
 var VALIDATE_DESCRIPTION = `Validate a code-challenge run's report.json and decisions.jsonl against the shipped JSON Schemas.
-` + "Takes the absolute run directory (<git-dir>/code-challenge/<run-id>). Reads only those two files, lists every error as " + "file, path and message, and reports ok=false when any file is missing or invalid.";
+` + "Takes the absolute run directory, which must sit directly under <git-dir>/code-challenge/ of the session's repository. " + "Reads only those two regular files (at most 1 MiB each), lists every error as file, path and message, and " + "reports ok=false when a file is missing, oversized or invalid.";
 var VALIDATE_INPUT = {
   type: "object",
   properties: { run_dir: { type: "string", description: "Absolute path of the run directory" } },
@@ -2421,17 +2467,22 @@ var VALIDATE_INPUT = {
   additionalProperties: false
 };
 var SCHEMAS = join6(dirname2(fileURLToPath3(import.meta.url)), "..", "skills", "code-challenge", "references");
-var load = (name) => JSON.parse(readFileSync5(join6(SCHEMAS, name), "utf8"));
+var load = (name) => JSON.parse(readBoundedText(join6(SCHEMAS, name)));
+function readBoundedText(path) {
+  const read = readBoundedFile(path, MAX_RUN_FILE_BYTES);
+  if (read.kind === "failed")
+    throw new Error(`${path}: ${read.reason}`);
+  return read.text;
+}
 var reason = (cause) => cause instanceof Error ? cause.message : String(cause);
 function validateRun(runDir) {
   const errors = [];
   const read = (name) => {
-    try {
-      return readFileSync5(join6(runDir, name), "utf8");
-    } catch {
-      errors.push(`${name}: cannot be read`);
-      return;
-    }
+    const result = readBoundedFile(join6(runDir, name), MAX_RUN_FILE_BYTES);
+    if (result.kind === "text")
+      return result.text;
+    errors.push(`${name}: ${result.reason}`);
+    return;
   };
   const report = read("report.json");
   if (report !== undefined) {
@@ -2462,17 +2513,57 @@ function validateRun(runDir) {
   }
   return errors;
 }
+function runRoots(directory) {
+  const out = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], {
+    cwd: directory,
+    encoding: "utf8",
+    timeout: 5000,
+    stdio: ["ignore", "pipe", "ignore"]
+  });
+  const roots = new Set;
+  for (const gitDir of out.split(`
+`).filter(Boolean)) {
+    try {
+      roots.add(join6(realpathSync(gitDir), "code-challenge"));
+    } catch {}
+  }
+  return [...roots];
+}
+function resolveRunDir(directory, runDir) {
+  const inside = `${VALIDATE_TOOL}: run_dir must be inside <git-dir>/code-challenge/ of the session's repository`;
+  if (typeof runDir !== "string" || !isAbsolute2(runDir))
+    return { error: `${VALIDATE_TOOL}: run_dir must be an absolute path` };
+  if (runDir.split(/[\\/]/).includes(".."))
+    return { error: inside };
+  let roots;
+  let real;
+  try {
+    roots = runRoots(directory);
+    real = realpathSync(runDir);
+  } catch (cause) {
+    return { error: `${VALIDATE_TOOL}: cannot resolve run_dir: ${reason(cause).split(",")[0]}` };
+  }
+  const direct = (root) => {
+    const rel = relative(root, real);
+    return rel !== "" && !rel.startsWith("..") && !rel.includes(sep) && !isAbsolute2(rel);
+  };
+  return roots.some(direct) ? { path: real } : { error: inside };
+}
 function registerValidateTool(ctx) {
   return ctx.tool.transform((editor) => {
     editor.add({
       name: VALIDATE_TOOL,
       description: VALIDATE_DESCRIPTION,
       input: VALIDATE_INPUT,
-      execute: async (input) => {
-        const { run_dir } = input ?? {};
-        if (typeof run_dir !== "string" || !isAbsolute2(run_dir))
-          return { content: `${VALIDATE_TOOL}: run_dir must be an absolute path`, metadata: { ok: false } };
-        const errors = validateRun(run_dir);
+      execute: async (input, context) => {
+        const keys = Object.keys(input ?? {});
+        if (keys.length !== 1 || keys[0] !== "run_dir")
+          return { content: `${VALIDATE_TOOL}: expected exactly { run_dir }`, metadata: { ok: false } };
+        const directory = await sessionDirectory(ctx, context.sessionID, VALIDATE_TOOL);
+        const resolved = resolveRunDir(directory, input.run_dir);
+        if ("error" in resolved)
+          return { content: resolved.error, metadata: { ok: false } };
+        const errors = validateRun(resolved.path);
         return {
           content: errors.length === 0 ? "report.json and decisions.jsonl are valid" : errors.join(`
 `),

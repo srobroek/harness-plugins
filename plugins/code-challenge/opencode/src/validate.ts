@@ -1,15 +1,22 @@
-import { readFileSync } from "node:fs"
-import { dirname, isAbsolute, join } from "node:path"
+import { execFileSync } from "node:child_process"
+import { realpathSync } from "node:fs"
+import { dirname, isAbsolute, join, relative, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { Context } from "@opencode/plugin/promise/plugin"
+import { readBoundedFile } from "@srobroek/opencode-lib/bounded-read"
 import { type Schema, validate } from "./json-schema.ts"
+import { sessionDirectory } from "./session-directory.ts"
 
 export const VALIDATE_TOOL = "challenge_validate"
 
+// A report with a few dozen findings is tens of KiB; 1 MiB bounds a hostile or runaway file.
+export const MAX_RUN_FILE_BYTES = 1024 * 1024
+
 export const VALIDATE_DESCRIPTION =
   "Validate a code-challenge run's report.json and decisions.jsonl against the shipped JSON Schemas.\n" +
-  "Takes the absolute run directory (<git-dir>/code-challenge/<run-id>). Reads only those two files, lists every error as " +
-  "file, path and message, and reports ok=false when any file is missing or invalid."
+  "Takes the absolute run directory, which must sit directly under <git-dir>/code-challenge/ of the session's repository. " +
+  "Reads only those two regular files (at most 1 MiB each), lists every error as file, path and message, and " +
+  "reports ok=false when a file is missing, oversized or invalid."
 
 export const VALIDATE_INPUT = {
   type: "object",
@@ -18,22 +25,27 @@ export const VALIDATE_INPUT = {
   additionalProperties: false,
 } as const
 
-/** The shipped references: `src/` and the bundled `dist/` both sit one level below `skills/`. */
+// The shipped references: `src/` and the bundled `dist/` both sit one level below `skills/`.
 const SCHEMAS = join(dirname(fileURLToPath(import.meta.url)), "..", "skills", "code-challenge", "references")
 
-const load = (name: string) => JSON.parse(readFileSync(join(SCHEMAS, name), "utf8")) as Schema
+const load = (name: string) => JSON.parse(readBoundedText(join(SCHEMAS, name))) as Schema
+
+function readBoundedText(path: string): string {
+  const read = readBoundedFile(path, MAX_RUN_FILE_BYTES)
+  if (read.kind === "failed") throw new Error(`${path}: ${read.reason}`)
+  return read.text
+}
+
 const reason = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause))
 
 /** Errors of one run directory, each prefixed with its file (and line, for decisions.jsonl). Empty when valid. */
 export function validateRun(runDir: string): string[] {
   const errors: string[] = []
   const read = (name: string): string | undefined => {
-    try {
-      return readFileSync(join(runDir, name), "utf8")
-    } catch {
-      errors.push(`${name}: cannot be read`)
-      return undefined
-    }
+    const result = readBoundedFile(join(runDir, name), MAX_RUN_FILE_BYTES)
+    if (result.kind === "text") return result.text
+    errors.push(`${name}: ${result.reason}`)
+    return undefined
   }
   const report = read("report.json")
   if (report !== undefined) {
@@ -60,6 +72,48 @@ export function validateRun(runDir: string): string[] {
   return errors
 }
 
+/** The real `<git-dir>/code-challenge` roots of the repository at `directory` (the worktree's own and the common one). */
+function runRoots(directory: string): string[] {
+  const out = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], {
+    cwd: directory,
+    encoding: "utf8",
+    timeout: 5_000,
+    stdio: ["ignore", "pipe", "ignore"],
+  })
+  const roots = new Set<string>()
+  for (const gitDir of out.split("\n").filter(Boolean)) {
+    try {
+      roots.add(join(realpathSync(gitDir), "code-challenge"))
+    } catch {
+      // A missing git directory contributes no root.
+    }
+  }
+  return [...roots]
+}
+
+/**
+ * The real path of a run directory, or the reason it is refused. It must be absolute, hold no `..`, and after
+ * `realpath` sit directly inside `<git-dir>/code-challenge/`, so a symlinked directory cannot lead elsewhere.
+ */
+export function resolveRunDir(directory: string, runDir: unknown): { path: string } | { error: string } {
+  const inside = `${VALIDATE_TOOL}: run_dir must be inside <git-dir>/code-challenge/ of the session's repository`
+  if (typeof runDir !== "string" || !isAbsolute(runDir)) return { error: `${VALIDATE_TOOL}: run_dir must be an absolute path` }
+  if (runDir.split(/[\\/]/).includes("..")) return { error: inside }
+  let roots: string[]
+  let real: string
+  try {
+    roots = runRoots(directory)
+    real = realpathSync(runDir)
+  } catch (cause) {
+    return { error: `${VALIDATE_TOOL}: cannot resolve run_dir: ${reason(cause).split(",")[0]}` }
+  }
+  const direct = (root: string) => {
+    const rel = relative(root, real)
+    return rel !== "" && !rel.startsWith("..") && !rel.includes(sep) && !isAbsolute(rel)
+  }
+  return roots.some(direct) ? { path: real } : { error: inside }
+}
+
 /** Register `challenge_validate`. Dispose the returned registration with the plugin's other cleanups. */
 export function registerValidateTool(ctx: Context) {
   return ctx.tool.transform((editor) => {
@@ -67,11 +121,14 @@ export function registerValidateTool(ctx: Context) {
       name: VALIDATE_TOOL,
       description: VALIDATE_DESCRIPTION,
       input: VALIDATE_INPUT,
-      execute: async (input) => {
-        const { run_dir } = (input ?? {}) as { run_dir?: unknown }
-        if (typeof run_dir !== "string" || !isAbsolute(run_dir))
-          return { content: `${VALIDATE_TOOL}: run_dir must be an absolute path`, metadata: { ok: false } }
-        const errors = validateRun(run_dir)
+      execute: async (input, context) => {
+        const keys = Object.keys((input ?? {}) as object)
+        if (keys.length !== 1 || keys[0] !== "run_dir")
+          return { content: `${VALIDATE_TOOL}: expected exactly { run_dir }`, metadata: { ok: false } }
+        const directory = await sessionDirectory(ctx, context.sessionID, VALIDATE_TOOL)
+        const resolved = resolveRunDir(directory, (input as { run_dir?: unknown }).run_dir)
+        if ("error" in resolved) return { content: resolved.error, metadata: { ok: false } }
+        const errors = validateRun(resolved.path)
         return {
           content: errors.length === 0 ? "report.json and decisions.jsonl are valid" : errors.join("\n"),
           metadata: { ok: errors.length === 0, errors },

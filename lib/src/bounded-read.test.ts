@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { execFileSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { planEmbeddedWrites } from "./bd-embedded-write-lock.ts"
-import { readBounded } from "./bounded-read.ts"
+import { readBounded, readBoundedFile } from "./bounded-read.ts"
 
 // Real child processes; 30 s leaves headroom for a loaded machine (AGENTS.md, Testing).
 setDefaultTimeout(30_000)
@@ -66,5 +66,23 @@ describe("the write planner's store classification", () => {
     })
     expect(plan).toEqual({ kind: "writes", writes: [] })
     expect(seen).toEqual([`create@${store}`])
+  })
+})
+
+describe("readBoundedFile", () => {
+  test("reads a file within the cap, and says why it refuses the rest", () => {
+    const dir = join(root, "bounded-file")
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, "ok.txt"), "hello")
+    writeFileSync(join(dir, "big.txt"), "x".repeat(11))
+    writeFileSync(join(dir, "locked.txt"), "secret")
+    chmodSync(join(dir, "locked.txt"), 0o000)
+    expect(readBoundedFile(join(dir, "ok.txt"), 10)).toEqual({ kind: "text", text: "hello" })
+    expect(readBoundedFile(join(dir, "big.txt"), 10)).toEqual({ kind: "failed", reason: "larger than 10 bytes" })
+    expect(readBoundedFile(join(dir, "nope.txt"), 10)).toEqual({ kind: "failed", reason: "ENOENT: no such file or directory" })
+    expect(readBoundedFile(dir, 10)).toEqual({ kind: "failed", reason: "not a regular file" })
+    // Root ignores permission bits, so the EACCES case only holds for an ordinary user.
+    if (process.getuid?.() !== 0)
+      expect(readBoundedFile(join(dir, "locked.txt"), 10)).toEqual({ kind: "failed", reason: "EACCES: permission denied" })
   })
 })

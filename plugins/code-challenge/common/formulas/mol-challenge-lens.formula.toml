@@ -20,7 +20,7 @@ type = "workflow"
 
 [vars.lens]
 required = true
-description = "one lens id, for example simplification or hand-rolled-library"
+description = "one lens id, for example simplification or hand-rolled-library, or a comma-separated group of lens ids when scouts are grouped"
 
 [vars.target]
 required = true
@@ -36,7 +36,7 @@ title = "ANALYSE {{target}} through the {{lens}} lens"
 type = "task"
 labels = ["code-challenge", "sub:challenge", "phase:challenge"]
 description = """
-Read the references/lens-{{lens}}.md file of the code-challenge skill and the steering skills it
+Read the references/lens-<lens>.md file of the code-challenge skill for each lens in {{lens}}, and the steering skills each
 names. Read the target {{target}} and the scan hits in this bead. Reply with findings, one per root
 cause: lens, path:line, claim, evidence tier and detail, impact, blast radius and test protection.
 Read only: return the findings in your reply and leave recording them to the lead.
