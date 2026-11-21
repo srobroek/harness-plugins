@@ -11,8 +11,8 @@
  * directory other users can reach counts as no verdict, so the gate still refuses.
  */
 
-import { createHash } from "node:crypto"
-import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
+import { createHash, randomUUID } from "node:crypto"
+import { linkSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -131,11 +131,41 @@ export class FileVerdictCache {
         return "claimed"
       } catch {
         // Held: keep a live holder, clear a dead one and try once more.
-        if (this.workerAlive(storeDir)) return "busy"
-        rmSync(file, { force: true })
+        const holder = this.#holder(storeDir)
+        if (holder !== undefined && this.#alive(holder)) return "busy"
+        if (!this.#evict(file, holder)) return "busy"
       }
     }
     return "busy"
+  }
+
+  /**
+   * Remove the claim file of the dead process `holder`, and only that one. The rename is atomic,
+   * so of two hooks that both saw the dead holder one gets the file and the other finds none.
+   * A file whose content is not `holder` is a successor's fresh claim that landed after the
+   * check: it goes back under its name and the caller yields.
+   */
+  #evict(file: string, holder: number | undefined): boolean {
+    const taken = `${file}.${process.pid}.${randomUUID()}.stale`
+    try {
+      renameSync(file, taken)
+    } catch {
+      return true // Already gone: the next create decides.
+    }
+    try {
+      const content = readFileSync(taken, "utf8")
+      if (holder === undefined ? content.trim() === "" || Number.isNaN(Number(content)) : content === String(holder)) return true
+      try {
+        linkSync(taken, file)
+      } catch {
+        // Someone created a claim meanwhile; both stay, which the embedded write lock serialises.
+      }
+      return false
+    } catch {
+      return true
+    } finally {
+      rmSync(taken, { force: true })
+    }
   }
 
   /** Pass a claim from `from` to `to`, the worker that does the verification. */
