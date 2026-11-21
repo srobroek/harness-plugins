@@ -2674,6 +2674,76 @@ describe("an execution that fails because its location is gone", () => {
     await cleanup()
   })
 
+  /** Another holder takes the lane lock; `free` lets the plugin have it. */
+  const holdLock = async (common: string) => {
+    let free!: () => void
+    let taken!: () => void
+    const acquired = new Promise<void>((done) => (taken = done))
+    const held = withDiskLock(common, WT, { sessionID: "ses_other", waitMs: 5_000 }, async () => {
+      taken()
+      await new Promise<void>((done) => (free = done))
+    })
+    await acquired
+    return async () => {
+      free()
+      await held
+    }
+  }
+  const sharedCommon = () => {
+    const common = mkdtempSync(join(tmpdir(), "common-"))
+    COMMONS.push(common)
+    return common
+  }
+
+  test.each([
+    ["it is running", true, async () => {}],
+    ["it starts while the failure waits for the lock", false, (fake: Fake, events: { handled: number }) =>
+      deliver(fake, events, { type: "session.execution.started", data: { sessionID: "ses_grand" } })],
+    ["the host will resume it after a shutdown", false, (fake: Fake, events: { handled: number }) =>
+      deliver(fake, events, { type: "session.execution.interrupted", data: { sessionID: "ses_grand", reason: "shutdown" } })],
+  ])("a descendant in the gone worktree of a retired lane stays where it is when %s", async (_name, running, meanwhile) => {
+    const common = sharedCommon()
+    const { fake, events, cleanup } = await start({ missing: [WT] }, { stored: [lane({ state: "landed" })], common, lock: { waitMs: 5_000 } })
+    grandchild(fake)
+    const session = fake.sessions.get("ses_grand")
+    if (session && running) session.time = { busy: 5, idle: 2 }
+    const release = await holdLock(common)
+    await deliver(fake, events, locationGone)
+    await meanwhile(fake, events)
+    await release()
+    await settle(300)
+    expect(moves(fake)).toEqual([])
+    expect(stored(fake).state).toBe("landed")
+    await cleanup()
+  })
+
+  test("a child whose resume was admitted but has not started yet stays where it is when a descendant fails", async () => {
+    const { fake, cleanup } = await start({ missing: [WT] }, { stored: [lane({ resumedAt: NOW })] })
+    grandchild(fake)
+    fake.emit(locationGone)
+    await until(() => moves(fake).some(([id]) => id === "ses_grand"))
+    await settle(100)
+    expect(moves(fake).map(([id]) => id)).not.toContain(CHILD)
+    expect(stored(fake).state).toBe("removing")
+    expect(stored(fake).removal?.pending).toEqual([CHILD])
+    await cleanup()
+  })
+
+  test("the lane's child failing on its own gone location, then starting again, is not moved by the pass that follows", async () => {
+    const common = sharedCommon()
+    const { fake, events, cleanup } = await start({ missing: [WT] }, { common, lock: { waitMs: 5_000 } })
+    const release = await holdLock(common)
+    await deliver(fake, events, { ...locationGone, data: { ...locationGone.data, sessionID: CHILD } })
+    await deliver(fake, events, { type: "session.execution.started", data: { sessionID: CHILD } })
+    await release()
+    // The failure's debounced pass runs after the hook; both had to wait for the lock.
+    await settle(400)
+    expect(moves(fake)).toEqual([])
+    expect(stored(fake).state).toBe("removing")
+    expect(stored(fake).removal?.pending).toEqual([CHILD])
+    await cleanup()
+  })
+
   test.each([
     ["an active lane", lane()],
     ["a lane whose removal still has moves pending", lane({ state: "removing", removal: { retireAs: "removed", head: BASE, pending: [] } })],
