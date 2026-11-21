@@ -7020,6 +7020,13 @@ function createPlugin(overrides = {}) {
       const pending = new Map;
       const advisor = createPackageAdvisor();
       const sessionDirectory = (sessionID) => ctx.session.get({ sessionID }).then((session) => session.location.directory).catch(() => ctx.location.directory);
+      const strictSessionDirectory = (sessionID) => ctx.session.get({ sessionID }).then((session) => session.location?.directory).catch((error) => {
+        warn("session lookup failed; the worktree allow is skipped", {
+          sessionID,
+          error: error instanceof Error ? error.name : typeof error
+        });
+        return;
+      });
       const running = new Map;
       const prune = () => {
         const cutoff = Date.now() - PENDING_TTL_MS;
@@ -7138,7 +7145,10 @@ function createPlugin(overrides = {}) {
         const tool = source?.type === "tool" ? running.get(source.id)?.tool : undefined;
         if (tool === undefined || !READ_ONLY_TOOLS.has(tool))
           return;
-        allowWorktreeReads(evaluation, await worktreeRoots(await sessionDirectory(evaluation.sessionID)));
+        const directory = await strictSessionDirectory(evaluation.sessionID);
+        if (directory === undefined)
+          return;
+        allowWorktreeReads(evaluation, await worktreeRoots(directory));
       }) : undefined;
       const after = await ctx.tool.hook("execute.after", (event) => {
         pending.delete(event.id);
