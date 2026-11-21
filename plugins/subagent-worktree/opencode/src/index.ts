@@ -692,13 +692,15 @@ export function createLanes(
     let lane = await load(child)
     if (lane?.state !== "active") return
 
+    // A resume recorded after this point raced the removal and keeps the lane.
+    const since = now()
     const resultStatus = event.status === "error" ? "error" : metadata.status === "running" ? "running" : "completed"
     const status = await git.status(lane.directory, lane.base)
     const childNow = await childState(ctx.session.get({ sessionID: child } as never), lookupMs, child)
     let removed = false
     if (shouldRemove(status, resultStatus, childNow)) {
       try {
-        if (await lifecycle.removeForeground(lane)) {
+        if (await lifecycle.removeForeground(lane, since)) {
           // Retired inside the removal's critical section; the note below describes this removal.
           removed = true
           lane = { ...lane, state: "removed" }
@@ -839,6 +841,8 @@ export function createLanes(
       resources: [lane?.branch ?? input.sessionID],
       source: { type: "tool", messageID: tool.messageID, id: tool.id },
     } as never)
+    // The fence of a removal after the merge: taken before the first repair or status read, so a resume during any of them keeps the lane.
+    const since = now()
     if (lane) lane = await repair(lane)
     const status = lane && lane.state === "active" ? await git.status(lane.directory, lane.base) : undefined
     if (input.method === "none") {
@@ -889,7 +893,7 @@ export function createLanes(
     }
     const summary = `${MERGE_TOOL}: merged ${lane.branch} into ${decision.target} (${status?.ahead ?? 0} commits, --no-squash --no-ff).\n$ ${argv.join(" ")}\n${output}`
     // The checkout goes through the one removal path: a running child, a dirty tree or unproven HEAD keeps it.
-    const finalized = await lifecycle.removeAfterMerge(lane, decision.target).catch((error): { removed: false; reason: string } => ({
+    const finalized = await lifecycle.removeAfterMerge(lane, decision.target, since).catch((error): { removed: false; reason: string } => ({
       removed: false,
       reason: errorMessage(error),
     }))

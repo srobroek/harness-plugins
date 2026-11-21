@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
-import { claimGeneration, landingFile, readClaim, removeClaim, writeLanding } from "@srobroek/opencode-lib/worktree-claims"
+import { claimGeneration, landingFile, readClaim, removeClaim, writeClaim, writeLanding } from "@srobroek/opencode-lib/worktree-claims"
 import { lockedWrite, lockFile, readHolds, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
 import { deleteDetached } from "./build-dirs.ts"
 import type { RunResult } from "./git.ts"
@@ -365,11 +365,12 @@ describe("execution events", () => {
     await cleanup()
   })
 
-  test("a lane resumed a minute ago is kept even when landed", async () => {
+  test("a lane resumed a minute before the parent's idle pass, when landed and clean, is removed", async () => {
     const { fake, worktree, cleanup } = await start({ ancestor: 0 }, { stored: [lane({ resumedAt: NOW - 60_000 })] })
     fake.emit({ type: "session.idle", data: { sessionID: PARENT } })
-    await settle()
-    expect(worktree).toEqual([])
+    await until(() => worktree.length > 0)
+    expect(worktree.map((entry) => entry.method)).toEqual(["remove", "refresh"])
+    expect(stored(fake).state).toBe("landed")
     await cleanup()
   })
 
@@ -415,6 +416,14 @@ describe("idle gates", () => {
       { kind: "subagent", sessionID: PARENT, childSessionID: CHILD, agent: "general", description: "d" },
     ])
     expect(synthetic(fake)).toEqual([])
+    await cleanup()
+  })
+
+  test("the gate removes a landed, clean lane that was resumed a minute earlier", async () => {
+    const { fake, worktree, cleanup } = await start({ ancestor: 0 }, { stored: [lane({ resumedAt: NOW - 60_000 })] })
+    await idle(fake, PARENT)
+    expect(worktree.map((entry) => entry.method)).toEqual(["remove", "refresh"])
+    expect(stored(fake).state).toBe("landed")
     await cleanup()
   })
 
@@ -486,6 +495,16 @@ describe("the sweep", () => {
       { method: "refresh", input: { projectID: "prj" } },
     ])
     expect(log).toContainEqual(["git", "-C", REPO, "update-ref", "-d", "refs/heads/lane-a", TIP])
+    expect(stored(fake).state).toBe("landed")
+    await cleanup()
+  })
+
+  test("a landed, clean, old lane whose child was resumed a minute earlier is still pruned", async () => {
+    const { fake, common, worktree, cleanup } = await start({ ancestor: 0, age: 3 * 24 * 3_600_000, time: ARCHIVED })
+    writeClaim(common, { directory: WT, branch: "lane-a", sessionID: CHILD, parentID: PARENT, createdAt: NOW - 3 * 24 * 3_600_000, resumedAt: NOW - 60_000 })
+    const result = await sweep(fake, "prune")
+    expect(result.metadata.plan.map((entry) => entry.verdict)).toEqual(["prune"])
+    expect(worktree.map((entry) => entry.method)).toEqual(["remove", "refresh"])
     expect(stored(fake).state).toBe("landed")
     await cleanup()
   })
@@ -2528,12 +2547,113 @@ describe("finalize: a resume and late changes fence the removal", () => {
       input: { agent: "general", prompt: "one more thing", sessionID: CHILD },
     } as never)
 
+  // Blocks the next lane scan, the first thing a pass does, until released: the test then acts between the end event and its pass.
+  const holdNextScan = (fake: Fake) => {
+    const storage = fake.context.storage as unknown as { scan: (input: unknown) => Promise<unknown> }
+    const original = storage.scan.bind(storage)
+    let release: () => void = () => {}
+    const gate = new Promise<void>((done) => {
+      release = done
+    })
+    let held = false
+    storage.scan = async (input) => {
+      if (!held) {
+        held = true
+        await gate
+      }
+      return original(input)
+    }
+    return { release: () => release(), isHeld: () => held }
+  }
+  // Idle hook of a session with no lanes: it runs on the lifecycle's one chain, so awaiting it waits for a pass in flight.
+  const drain = (fake: Fake) => fake.fire.session("experimental.idle", { sessionID: "ses_unrelated", background: [] } as never)
+  // Calls `child` whenever the child's session is read: once it did, the pass is in flight and `drain` waits for its end.
+  const passStarted = (fake: Fake, child: () => void) => {
+    const session = fake.context.session as unknown as { get: (input: { sessionID: string }) => Promise<unknown> }
+    const original = session.get.bind(session)
+    session.get = (input) => {
+      if (input.sessionID === CHILD) child()
+      return original(input)
+    }
+  }
+
   test("a resume recorded after the end event, before its execution starts, keeps the worktree", async () => {
-    const { fake, state, worktree, cleanup } = await start({ ...empty, time: IDLE }, { debounceMs: 150 })
+    const { fake, state, worktree, cleanup } = await start({ ...empty, time: IDLE }, { debounceMs: 20 })
+    const hold = holdNextScan(fake)
     fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await until(() => hold.isHeld())
     state.now += 1_000
     await resume(fake)
-    await settle(400)
+    hold.release()
+    await drain(fake)
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+
+  test("a resume recorded after the end event keeps a landed lane that the pass would otherwise remove", async () => {
+    const { fake, state, worktree, cleanup } = await start({ ancestor: 0, time: IDLE }, { debounceMs: 20 })
+    const hold = holdNextScan(fake)
+    fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await until(() => hold.isHeld())
+    state.now += 1_000
+    await resume(fake)
+    hold.release()
+    await drain(fake)
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+
+  test("a resume that lands while the parent's idle pass collects facts keeps a landed lane", async () => {
+    const { fake, state, worktree, cleanup } = await start({ ancestor: 0, time: IDLE })
+    let resumed = false
+    state.onGit = async (cmd) => {
+      if (cmd === "status --porcelain" && !resumed) {
+        resumed = true
+        await resume(fake)
+      }
+    }
+    fake.emit({ type: "session.idle", data: { sessionID: PARENT } })
+    await until(() => resumed)
+    await drain(fake)
+    expect(resumed).toBe(true)
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+
+  test("a resume that lands while the idle gate collects facts keeps a landed lane", async () => {
+    const { fake, state, worktree, cleanup } = await start({ ancestor: 0, time: IDLE })
+    let resumed = false
+    state.onGit = async (cmd) => {
+      if (cmd === "status --porcelain" && !resumed) {
+        resumed = true
+        await resume(fake)
+      }
+    }
+    await fake.fire.session("experimental.idle", { sessionID: PARENT, background: [] } as never)
+    expect(resumed).toBe(true)
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+
+  test.each([
+    ["running", { [CHILD]: { busy: 9, idle: 2 } }, undefined],
+    ["unknown", IDLE, new Error("503 unavailable")],
+  ])("an end event keeps the worktree when the child's own status is %s", async (_name, time, failure) => {
+    const { fake, worktree, cleanup } = await start({ ...empty, time }, { debounceMs: 20 })
+    let reads = 0
+    passStarted(fake, () => void reads++)
+    if (failure) {
+      const session = fake.context.session as unknown as { get: (input: { sessionID: string }) => Promise<unknown> }
+      const counted = session.get
+      session.get = (input) => (input.sessionID === CHILD ? (counted(input), Promise.reject(failure)) : counted(input))
+    }
+    fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await until(() => reads > 0)
+    await drain(fake)
     expect(worktree).toEqual([])
     expect(stored(fake).state).toBe("active")
     await cleanup()

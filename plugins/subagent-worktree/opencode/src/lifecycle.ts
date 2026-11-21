@@ -77,11 +77,9 @@ const ENDS_LANE = new Set(["succeeded", "failed", "interrupted", "archived"])
 export type FinalizeOptions = {
   /** Where the lane's work is proven: a ref `HEAD` must be an ancestor of (the merge target). */
   target?: string
-  /** The caller has evidence the child is not running (an execution ended, the session is gone), so its status is not read. */
-  childDone?: boolean
   /** The sequence of the accepted end event: an execution that started after it keeps the lane, even before the lock is taken. */
   seq?: number
-  /** When the accepted end event was seen: a resume recorded at or after it keeps the lane. Without it, a resume within `resumeGraceMs` does. */
+  /** When the accepted end event was seen: a resume recorded at or after it keeps the lane. */
   since?: number
   /** The worktree was removed by someone else (delivery): skip the checks and the host removal, still move the sessions and retire. */
   gone?: boolean
@@ -165,7 +163,7 @@ export function within(path: string, root: string): boolean {
 
 export function createLifecycle(deps: LifecycleDeps) {
   const { ctx, options, git, now, load, save } = deps
-  const policy: LanePolicy = { resumeGraceMs: options.resumeGraceMs, emptyGraceMs: options.emptyGraceMs }
+  const policy: LanePolicy = { emptyGraceMs: options.emptyGraceMs }
   const debounceMs = deps.debounceMs ?? 2000
   const root = canonical(deps.worktreeRoot ?? defaultWorktreeRoot())
   const projectID = (ctx.location as { project?: { id?: string } }).project?.id
@@ -456,9 +454,6 @@ export function createLifecycle(deps: LifecycleDeps) {
             // Re-read from disk under the lock: a resume by any instance bumps the generation and stamps resumedAt.
             const claim = readClaim(common, directory)
             if (claimGeneration(claim) !== removal.gen) return "the lane was resumed"
-            if (claim.kind === "present" && claim.value.resumedAt !== undefined && now() - claim.value.resumedAt < options.resumeGraceMs) {
-              return "the lane was resumed recently"
-            }
             const failedWrite = unsafeHolds.get(canonical(directory))
             if (failedWrite !== undefined) return failedWrite
             const running = holdsState(common, directory, now())
@@ -483,9 +478,6 @@ export function createLifecycle(deps: LifecycleDeps) {
             const finalRefusal = async (): Promise<string | undefined> => {
               const claim = readClaim(common, directory)
               if (claimGeneration(claim) !== removal.gen) return "the lane was resumed"
-              if (claim.kind === "present" && claim.value.resumedAt !== undefined && now() - claim.value.resumedAt < options.resumeGraceMs) {
-                return "the lane was resumed recently"
-              }
               const failedWrite = unsafeHolds.get(canonical(directory))
               if (failedWrite !== undefined) return failedWrite
               const running = holdsState(common, directory, now())
@@ -799,13 +791,12 @@ export function createLifecycle(deps: LifecycleDeps) {
     if (claim?.kind === "unreadable") return keptBecause("error", `the lane's claim cannot be read: ${claim.reason}`)
     const stamps = [lane.resumedAt, claim?.kind === "present" ? claim.value.resumedAt : undefined].filter((at): at is number => at !== undefined)
     const resumed = stamps.length === 0 ? undefined : Math.max(...stamps)
-    if (resumed !== undefined && resumed >= (options.since ?? now() - deps.options.resumeGraceMs)) return keptBecause("running", "the child was resumed")
+    // `>=`: a resume stamped in the same millisecond as the fence cannot be ordered against it, so it keeps the lane; a later pass retries.
+    if (resumed !== undefined && options.since !== undefined && resumed >= options.since) return keptBecause("running", "the child was resumed")
     const held = await holdReason(lane.directory, lane.parentDir)
     if (held !== undefined) return keptBecause("running", held)
-    if (!options.childDone) {
-      const child = await childState(ctx.session.get({ sessionID: lane.child } as never), deps.lookupMs, lane.child)
-      if (child === "running" || child === "unknown") return keptBecause("running", `the child session is ${child}`)
-    }
+    const child = await childState(ctx.session.get({ sessionID: lane.child } as never), deps.lookupMs, lane.child)
+    if (child === "running" || child === "unknown") return keptBecause("running", `the child session is ${child}`)
     return undefined
   }
 
@@ -962,13 +953,16 @@ export function createLifecycle(deps: LifecycleDeps) {
   }
 
   /** A successful foreground `subagent` call just returned: its empty lane goes. */
-  const removeForeground = async (lane: Lane): Promise<boolean> => (await finalize(lane, { childDone: true })).removed
+  const removeForeground = async (lane: Lane, since: number): Promise<boolean> => (await finalize(lane, { since })).removed
 
   /** `wt merge` just merged the lane's branch into `target` and kept the checkout (`--no-remove`). */
-  const removeAfterMerge = (lane: Lane, target: string): Promise<Finalized> => finalize(lane, { target, retireAs: "merged" })
+  const removeAfterMerge = (lane: Lane, target: string, since: number): Promise<Finalized> => finalize(lane, { target, retireAs: "merged", since })
 
-  const act = async (lane: Lane, action: LaneAction, facts: LaneFacts, event: LaneEvent) => {
-    if (action.action === "remove") return finalize(lane)
+  /** What a removal decided from earlier facts must not overrun: the accepted end event, or the moment its planning began. */
+  type Fence = { seq: number; since: number }
+
+  const act = async (lane: Lane, action: LaneAction, facts: LaneFacts, event: LaneEvent, fence: Fence) => {
+    if (action.action === "remove") return finalize(lane, fence)
     if (action.action === "defer" && action.quiet) {
       const quietSince = action.quiet === "start" ? facts.now : undefined
       if (lane.quietSince !== quietSince) await save({ ...((await load(lane.child)) ?? lane), ...(quietSince === undefined ? { quietSince: undefined } : { quietSince }) })
@@ -1014,7 +1008,7 @@ export function createLifecycle(deps: LifecycleDeps) {
     const stale = type !== "archived" && (lastStart.get(sessionID) ?? 0) > seq
     let kept: Finalized | undefined
     if (ownLane && ENDS_LANE.has(type) && !stale) {
-      const done = await finalize(ownLane, { childDone: true, seq, since: at })
+      const done = await finalize(ownLane, { seq, since: at })
       if (done.removed) ownLane = undefined
       else kept = done
     }
@@ -1029,8 +1023,10 @@ export function createLifecycle(deps: LifecycleDeps) {
         // Once per state: the key names the head and the dirty state, never a time.
         await deliver(ownLane, `parent:archived:${facts.tip ?? "?"}:${facts.dirtyToken}`, ownLane.parent, archivedKeptNotice(ownLane, kept.reason))
       }
-      await act(ownLane, action, facts, event)
+      await act(ownLane, action, facts, event, { seq, since: at })
     }
+    // Captured before any status is read: a resume recorded after it, or an execution started after it, keeps the lane.
+    const planned: Fence = { seq: eventSeq, since: now() }
     for (const lane of led) {
       const event: LaneEvent = { type: "check", subject: "parent" }
       const child = await statusOf(lane.child)
@@ -1038,7 +1034,7 @@ export function createLifecycle(deps: LifecycleDeps) {
       // The parent's status is read now: an event does not say it is still idle after the debounce.
       const parentStatus = await statusOf(sessionID)
       const facts = await laneFacts(fresh, { child, parent: parentStatus === "finished" ? "idle" : parentStatus === "running" ? "busy" : "unknown" })
-      await act(fresh, laneEventAction(fresh, facts, event, policy), facts, event)
+      await act(fresh, laneEventAction(fresh, facts, event, policy), facts, event, planned)
     }
   }
 
@@ -1126,6 +1122,8 @@ export function createLifecycle(deps: LifecycleDeps) {
     // A hook never throws: a coordination error means a deferred outcome (logged), never a removal.
     await serial(async () => {
       const related = (lane: Lane) => lane.child === input.sessionID || lane.parent === input.sessionID
+      // Captured before any hold or status is read: a resume or an execution start after it keeps the lane the gate removes.
+      const planned: Fence = { seq: eventSeq, since: now() }
       const jobs = input.background ?? []
       // If what is running could not be recorded, running work cannot be ruled out: nothing is removed this time.
       let holdsFailed = false
@@ -1184,7 +1182,7 @@ export function createLifecycle(deps: LifecycleDeps) {
         gateLanes.map(({ lane, facts }) => ({ lane, facts })),
         policy,
       )
-      for (const { lane } of holdsFailed ? [] : gate.remove) await finalize(lane)
+      for (const { lane } of holdsFailed ? [] : gate.remove) await finalize(lane, planned)
       if (gate.message === undefined) return
       // Each notice is reserved on disk first; the message carries only the ones this instance won.
       const won: typeof gate.marks = []
