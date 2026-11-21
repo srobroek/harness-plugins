@@ -1567,7 +1567,16 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
   // A call a person confirmed is not re-judged. Null means still trusted (or not applicable).
   const stillTrusted = async (): Promise<string | null> => {
     if (!gated || alreadyMerged) return null
-    const again = await readApproval(run, bound)
+    // The base the merge will land on, read now: a retarget keeps the head but changes which branch's
+    // rules the forge enforces. Refused, never re-prompted: nobody is there to answer mid-call.
+    const current = await readPr(run, forge, cliRepo, number, FORGE_TIMEOUT_MS, forgeCommandEnv)
+    if ("reason" in current) {
+      return `the target branch could not be re-read (${current.reason}); the call ran without a prompt, so nothing was merged or enqueued and no receipt was written. Call delivery_land again to be asked`
+    }
+    if (current.pr.baseRefName !== bound.base) {
+      return `the pull request was re-targeted from ${show(bound.base)} to ${show(current.pr.baseRefName)} after the prompt-free decision; the call ran without a prompt on the old base, so nothing was merged or enqueued and no receipt was written. Call delivery_land again to be asked`
+    }
+    const again = await readApproval(run, { ...bound, base: current.pr.baseRefName })
     return again.ok && again.trusted?.trusted === true
       ? null
       : `the approval is no longer trusted for ${head} (${again.ok ? (again.trusted?.trusted === false ? again.trusted.reason : "not provable") : again.reason}); the call ran without a prompt on that approval, so nothing was merged or enqueued and no receipt was written. Call delivery_land again to be asked`

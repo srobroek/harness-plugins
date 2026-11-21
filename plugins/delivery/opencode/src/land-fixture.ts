@@ -154,8 +154,10 @@ export type Answers = {
   reviews?: CliResult
   /** GitHub classic protection `required_pull_request_reviews` of the base branch; one approval and stale dismissal by default. */
   protection?: CliResult
-  /** GitLab `projects/<id>/approval_rules`; one required approval by default. */
-  approvalRules?: CliResult
+  /** The protection read once per entry, in call order; the last repeats. Wins over `protection`. */
+  protections?: CliResult[]
+  /** GitLab `merge_requests/<n>/approval_state` (the rules that apply to the target branch); one mandatory rule by default. */
+  approvalState?: CliResult
   /** The reviewer permission read once per entry, in call order; the last repeats. Wins over `permission`. */
   permissions?: CliResult[]
   /** GitLab `projects/<id>/approvals` (the project's approval settings); resets on push by default. */
@@ -228,6 +230,7 @@ export function runner(answers: Answers, canonical: string): { run: CliRunner; c
   const approvals = [...(answers.approvals ?? [])]
   let lastApproval: CliResult | undefined
   const permissions = [...(answers.permissions ?? [])]
+  const protections = [...(answers.protections ?? [])]
   /** The next scripted answer; the last one repeats. */
   const next = (queue: CliResult[]): CliResult | undefined => (queue.length > 1 ? queue.shift() : queue[0])
   const states = [...(answers.queueStates ?? [])]
@@ -268,9 +271,9 @@ export function runner(answers: Answers, canonical: string): { run: CliRunner; c
       return answers.reviews ?? completed(JSON.stringify([restReviews(lastApproval ?? answers.approval)]))
     if (argv[1] === "api" && argv[2] === "user") return answers.viewer ?? completed(JSON.stringify({ login: "author" }))
     if (argv[1] === "api" && argv.some((part) => part.includes("/protection/required_pull_request_reviews")))
-      return answers.protection ?? completed(JSON.stringify({ required_approving_review_count: 1, dismiss_stale_reviews: true }))
-    if (argv[1] === "api" && argv.some((part) => part.endsWith("/approval_rules")))
-      return answers.approvalRules ?? completed(JSON.stringify([{ approvals_required: 1 }]))
+      return next(protections) ?? answers.protection ?? completed(JSON.stringify({ required_approving_review_count: 1, dismiss_stale_reviews: true }))
+    if (argv[1] === "api" && argv.some((part) => part.endsWith("/approval_state")))
+      return answers.approvalState ?? completed(JSON.stringify({ approval_rules_overwritten: false, rules: [{ approvals_required: 1 }] }))
     if (argv[1] === "api" && argv.some((part) => part.includes("/collaborators/")))
       return next(permissions) ?? answers.permission ?? completed(JSON.stringify({ permission: "write", role_name: "write" }))
     if (argv[1] === "api" && argv.some((part) => part.includes("/check-runs")))

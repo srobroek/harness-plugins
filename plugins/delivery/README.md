@@ -333,7 +333,8 @@ confirmation would rest on:
   from a trusted identity, (b) green checks for that head's sha, and (c) a base branch
   whose protection or rulesets make the forge itself refuse a merge without a current
   approving review: at least one approving review required and stale reviews dismissed on
-  push (GitLab: an approval rule, reset on push, approvers locked). If that cannot be read
+  push (GitLab: a mandatory approval rule that applies to the request's target branch,
+  reset on push, approvers locked). If that cannot be read
   or is not set, the prompt stays. Trusted means, on GitHub, an `APPROVED` review from a
   user with write, maintain or admin permission on the repository, with nobody else's
   latest decisive review requesting changes, or a `VERDICT: APPROVE` comment naming the

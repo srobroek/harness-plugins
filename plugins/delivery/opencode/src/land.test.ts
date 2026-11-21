@@ -3007,12 +3007,21 @@ describe("delivery_land approval and checks preconditions", () => {
         expect(await flag({ projectApprovals: completed("", 1, "403 Forbidden") })).toBe(false)
       })
 
-      test("approval rules that require nothing keep the prompt", async () => {
-        expect(await flag({ approvalRules: completed("[]") })).toBe(false)
+      test("a rule scoped to another branch (absent from this request's approval state) keeps the prompt", async () => {
+        expect(await flag({ approvalState: completed(JSON.stringify({ approval_rules_overwritten: false, rules: [] })) })).toBe(false)
       })
 
-      test("approval rules that cannot be read keep the prompt", async () => {
-        expect(await flag({ approvalRules: completed("", 1, "404 Not Found") })).toBe(false)
+      test("an applicable mandatory rule in the approval state satisfies it", async () => {
+        const state = completed(JSON.stringify({ rules: [{ name: "release", approvals_required: 2 }] }))
+        expect(await flag({ approvalState: state })).toBe(true)
+      })
+
+      test("an applicable rule that requires nothing keeps the prompt", async () => {
+        expect(await flag({ approvalState: completed(JSON.stringify({ rules: [{ approvals_required: 0 }] })) })).toBe(false)
+      })
+
+      test("an approval state that cannot be read keeps the prompt", async () => {
+        expect(await flag({ approvalState: completed("", 1, "404 Not Found") })).toBe(false)
       })
 
       test("approvers that merge requests may change keep the prompt", async () => {
@@ -3075,6 +3084,49 @@ describe("delivery_land approval and checks preconditions", () => {
     test("a still-trusted approval merges as before", async () => {
       const { outcome } = await run({ approval: review("reviewer") })
       expect(outcome.ok).toBe(true)
+    })
+
+    test("a base retargeted between the gate and the merge refuses the prompt-free merge and says why", async () => {
+      const { outcome, calls } = await run({
+        approval: review("reviewer"),
+        prView: [completed(githubPr()), completed(githubPr({ baseRefName: "release/unprotected" })), completed(mergedGithubPr())],
+      })
+      expect(outcome.ok).toBe(false)
+      if (outcome.ok) return
+      expect(outcome.reason).toContain("re-targeted")
+      expect(outcome.reason).toContain("release/unprotected")
+      expect(calls.some((call) => merged(call.argv))).toBe(false)
+    })
+
+    test("enforcement lifted between the gate and the merge refuses the prompt-free merge", async () => {
+      const lifted = completed(JSON.stringify({ message: "Branch not protected" }), 1, "HTTP 404")
+      const enforced = completed(JSON.stringify({ required_approving_review_count: 1, dismiss_stale_reviews: true }))
+      const { outcome, calls } = await run({ approval: review("reviewer"), protections: [enforced, lifted] })
+      expect(outcome.ok).toBe(false)
+      if (outcome.ok) return
+      expect(outcome.reason).toContain("no longer trusted")
+      expect(calls.some((call) => merged(call.argv))).toBe(false)
+    })
+
+    test("a retarget between the gate and a GitLab merge refuses it", async () => {
+      const open = completed(gitlabMr({ state: "opened", merge_commit_sha: null }))
+      const retargeted = completed(gitlabMr({ state: "opened", merge_commit_sha: null, target_branch: "release/unprotected" }))
+      const approvals = completed(JSON.stringify({ approved: true, sha: HEAD_OID, approved_by: [{ user: { id: 5, username: "rev" } }] }))
+      const pipeline = completed(JSON.stringify({ head_pipeline: { id: 1, status: "success", sha: HEAD_OID } }))
+      const { canonical, receipts } = repository()
+      mkdirSync(join(canonical, ".beads"))
+      const fixture = runner(
+        { remoteUrl: "git@gitlab.com:group/project.git", prView: [open, retargeted, completed(gitlabMr())], approval: approvals, checks: pipeline },
+        canonical,
+      )
+      const outcome = await landPullRequest(
+        { pr: 12, ...GATED },
+        { run: fixture.run, cwd: canonical, now: () => NOW, receiptsDirectory: receipts, env: {}, authorize: async () => {} },
+      )
+      expect(outcome.ok).toBe(false)
+      if (outcome.ok) return
+      expect(outcome.reason).toContain("re-targeted")
+      expect(fixture.calls.some((call) => merged(call.argv))).toBe(false)
     })
   })
 })

@@ -3673,15 +3673,16 @@ function githubReviewEnforcement(rules, protection) {
     reason: `the base branch does not provably require an approving review and dismiss stale reviews on push (approving review required: ${required}, stale reviews dismissed: ${dismisses})`
   };
 }
-function gitlabReviewEnforcement(settings, rules) {
+function gitlabReviewEnforcement(settings, state) {
+  const rules = own2(state, "rules");
   const required = Array.isArray(rules) && rules.some((rule) => count(own2(rule, "approvals_required")) >= 1);
   const resets = own2(settings, "reset_approvals_on_push") === true;
   const locked = own2(settings, "disable_overriding_approvers_per_merge_request") === true;
   if (required && resets && locked)
-    return { enforced: true, via: "project approval rules" };
+    return { enforced: true, via: "the merge request's approval rules" };
   return {
     enforced: false,
-    reason: `the project does not provably require an approval, reset approvals on push and lock the approvers (approval required: ${required}, reset on push: ${resets}, approvers locked: ${locked})`
+    reason: `the merge request does not provably have an applicable mandatory approval rule, reset approvals on push and lock the approvers (applicable rule requiring an approval: ${required}, reset on push: ${resets}, approvers locked: ${locked})`
   };
 }
 function gitlabChecks(mr, head) {
@@ -3748,8 +3749,8 @@ async function readApproval(run, bound) {
   const trust = gitlabTrust(payload.value, bound.head, access, typeof reset === "boolean" ? reset : null);
   if (!trust.trusted)
     return { ...result, trusted: trust };
-  const approvalRules = await readJson(run, ["glab", "api", `projects/${project}/approval_rules`, ...host], bound);
-  const enforcement = gitlabReviewEnforcement(settings.ok ? settings.value : undefined, approvalRules.ok ? approvalRules.value : undefined);
+  const approvalState = await readJson(run, ["glab", "api", `projects/${project}/merge_requests/${bound.number}/approval_state`, ...host], bound);
+  const enforcement = gitlabReviewEnforcement(settings.ok ? settings.value : undefined, approvalState.ok ? approvalState.value : undefined);
   return { ...result, trusted: enforcement.enforced ? trust : { trusted: false, reason: enforcement.reason } };
 }
 async function readChecks(run, bound) {
@@ -4991,7 +4992,14 @@ async function landPullRequest(params, deps = {}) {
   const stillTrusted = async () => {
     if (!gated || alreadyMerged)
       return null;
-    const again = await readApproval(run, bound);
+    const current = await readPr(run, forge, cliRepo, number, FORGE_TIMEOUT_MS, forgeCommandEnv);
+    if ("reason" in current) {
+      return `the target branch could not be re-read (${current.reason}); the call ran without a prompt, so nothing was merged or enqueued and no receipt was written. Call delivery_land again to be asked`;
+    }
+    if (current.pr.baseRefName !== bound.base) {
+      return `the pull request was re-targeted from ${show3(bound.base)} to ${show3(current.pr.baseRefName)} after the prompt-free decision; the call ran without a prompt on the old base, so nothing was merged or enqueued and no receipt was written. Call delivery_land again to be asked`;
+    }
+    const again = await readApproval(run, { ...bound, base: current.pr.baseRefName });
     return again.ok && again.trusted?.trusted === true ? null : `the approval is no longer trusted for ${head} (${again.ok ? again.trusted?.trusted === false ? again.trusted.reason : "not provable" : again.reason}); the call ran without a prompt on that approval, so nothing was merged or enqueued and no receipt was written. Call delivery_land again to be asked`;
   };
   const notes = [];
