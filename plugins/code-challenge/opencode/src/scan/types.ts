@@ -129,6 +129,8 @@ export type ScanInput = {
   depth?: Depth
   timeoutSeconds?: number
   runId?: string
+  /** Run only recipes that execute no repository or downloaded code; the rest are gaps and nothing is asked. */
+  staticOnly?: boolean
 }
 
 export type ScanReport = {

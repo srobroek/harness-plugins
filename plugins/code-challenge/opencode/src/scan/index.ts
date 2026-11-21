@@ -34,6 +34,7 @@ export const SCAN_INPUT = {
     depth: { enum: [...DEPTHS], description: "quick skips analyzers that need a build; default standard" },
     timeoutSeconds: { type: "number", maximum: 900, description: "Per-analyzer timeout in seconds; default 120, at most 900" },
     runId: { type: "string", description: "Run id; raw outputs go to <git-dir>/code-challenge/<runId>/scan/" },
+    staticOnly: { type: "boolean", description: "Run only analyzers that execute no repo or downloaded code; ask nothing" },
   },
   additionalProperties: false,
 } as const
@@ -62,6 +63,7 @@ export function readScanInput(raw: unknown, base: string): ScanInput | string {
     depth: input.depth as ScanInput["depth"],
     timeoutSeconds: timeout as number | undefined,
     runId: input.runId as string | undefined,
+    staticOnly: input.staticOnly === true ? true : undefined,
   }
 }
 
@@ -80,6 +82,11 @@ type Evaluation = {
   message?: string
 }
 
+/** The resource a consent is bound to: the canonical root and the exact set of risky recipes. */
+export function planResource(root: string, risks: readonly Risk[]): string {
+  return `${root} [${risks.map((r) => r.recipe).sort().join(", ")}]`
+}
+
 /**
  * Turn an allowed scan that would run repository or downloaded code into a prompt. The default
  * policy allows every action, so without this the consent would never be asked.
@@ -90,8 +97,9 @@ export function confirmScan(evaluation: Evaluation): void {
   if (!Array.isArray(recipes) || recipes.length === 0) return
   evaluation.effect = "ask"
   evaluation.message =
-    `challenge_scan in ${evaluation.resources.join(", ")} will run code that is not static analysis. ` +
-    "There is no sandbox: these recipes run with your user's permissions. Recipes that are not approved are skipped as coverage gaps.\n" +
+    `challenge_scan in ${String(evaluation.metadata?.root ?? evaluation.resources.join(", "))} will run code that is not static analysis. ` +
+    "There is no sandbox: these recipes run with your user's permissions. Approving covers exactly these recipes; " +
+    "pass staticOnly to scan without them.\n" +
     recipes.map((r) => `- ${r.recipe}: ${r.reasons.join("; ")}`).join("\n")
 }
 
@@ -99,48 +107,60 @@ export function confirmScan(evaluation: Evaluation): void {
 export async function registerScanTool(ctx: Context, deps: ScanDeps = {}): Promise<() => Promise<void>> {
   const base = ctx.location.directory as string
   const registrations: Array<{ dispose: () => Promise<void> }> = []
-  registrations.push(
-    await ctx.tool.transform((editor) => {
-      editor.add({
-        name: SCAN_TOOL,
-        description: SCAN_DESCRIPTION,
-        input: SCAN_INPUT as never,
-        execute: async (raw, context) => {
-          const parsed = readScanInput(raw, base)
-          if (typeof parsed === "string") return { content: `${SCAN_TOOL}: ${parsed}`, metadata: { ok: false } }
-          try {
-            // Consent is per canonical root, so a symlink or a relative path cannot dodge or widen it.
-            const root = realpathSync(parsed.root ?? base)
-            const input = { ...parsed, root }
-            const risks = await consentRisks(input, deps)
-            let consent = deps.consent ?? false
-            if (risks.length > 0 && !consent) {
-              consent = await ctx.permission
-                .assert({
-                  sessionID: context.sessionID,
-                  agent: context.agent,
-                  source: { type: "tool", messageID: context.messageID, id: context.id },
-                  action: SCAN_TOOL,
-                  resources: [root],
-                  save: [root],
-                  metadata: { depth: input.depth ?? "standard", recipes: risks },
-                } as never)
-                .then(
-                  () => true,
-                  () => false,
-                )
-            } else if (risks.length === 0) consent = true
-            const report = await runScan(input, { ...deps, consent }, context.signal)
-            return { content: formatScan(report), metadata: { ok: true, candidates: report.candidates.length, coverage: report.coverage } }
-          } catch (error) {
-            return { content: `${SCAN_TOOL}: ${(error as Error).message}`, metadata: { ok: false } }
-          }
-        },
-      })
-    }),
-  )
-  registrations.push(await ctx.permission.hook("evaluate", confirmScan as never))
-  return async () => {
+  const cleanup = async () => {
     for (const registration of registrations.reverse()) await registration.dispose()
   }
+  try {
+    registrations.push(
+      await ctx.tool.transform((editor) => {
+        editor.add({
+          name: SCAN_TOOL,
+          description: SCAN_DESCRIPTION,
+          input: SCAN_INPUT as never,
+          execute: async (raw, context) => {
+            const parsed = readScanInput(raw, base)
+            if (typeof parsed === "string") return { content: `${SCAN_TOOL}: ${parsed}`, metadata: { ok: false } }
+            let input: ScanInput
+            let risks: Risk[]
+            try {
+              // Consent is per canonical root, so a symlink or a relative path cannot dodge or widen it.
+              input = { ...parsed, root: realpathSync(parsed.root ?? base) }
+              risks = parsed.staticOnly ? [] : await consentRisks(input, deps, context.signal)
+            } catch (error) {
+              return { content: `${SCAN_TOOL}: ${(error as Error).message}`, metadata: { ok: false } }
+            }
+            // The approved set is exactly the recipes that were listed. Nothing is approved for a plan
+            // with no risk, so a recipe that turns risky before the run is a gap, not a free pass.
+            let approved = deps.approved ?? new Set<string>()
+            if (risks.length > 0 && deps.approved === undefined) {
+              const root = input.root ?? base
+              // A rejection (a deny rule, feedback, an interruption) propagates as the host defines it;
+              // a user who wants the scan without these recipes passes staticOnly instead.
+              await ctx.permission.assert({
+                sessionID: context.sessionID,
+                agent: context.agent,
+                source: { type: "tool", messageID: context.messageID, id: context.id },
+                action: SCAN_TOOL,
+                resources: [planResource(root, risks)],
+                save: [planResource(root, risks)],
+                metadata: { root, depth: input.depth ?? "standard", recipes: risks },
+              } as never)
+              approved = new Set(risks.map((r) => r.recipe))
+            }
+            try {
+              const report = await runScan(input, { ...deps, approved }, context.signal)
+              return { content: formatScan(report), metadata: { ok: true, candidates: report.candidates.length, coverage: report.coverage } }
+            } catch (error) {
+              return { content: `${SCAN_TOOL}: ${(error as Error).message}`, metadata: { ok: false } }
+            }
+          },
+        })
+      }),
+    )
+    registrations.push(await ctx.permission.hook("evaluate", confirmScan as never))
+  } catch (error) {
+    await cleanup()
+    throw error
+  }
+  return cleanup
 }

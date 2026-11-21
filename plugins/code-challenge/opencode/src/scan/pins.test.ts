@@ -17,13 +17,13 @@ const recipe = (id: string) => RECIPES.find((r) => r.id === id) as (typeof RECIP
 describe("one-off pins", () => {
   test("a one-off run names the exact pinned version for each runner", () => {
     expect(resolveTool(recipe("oxlint:perf"), only("bunx"), "/t")).toMatchObject({
-      prefix: ["/bin/bunx", "-p", "oxlint@1.94.0", "oxlint"],
+      prefix: ["/bin/bunx", "-p", `oxlint@${PINS.oxlint}`, "oxlint"],
     })
     expect(resolveTool(recipe("ruff:lenses"), only("uvx"), "/t")).toMatchObject({
-      prefix: ["/bin/uvx", "--from", "ruff==0.17.6", "ruff"],
+      prefix: ["/bin/uvx", "--from", `ruff==${PINS.ruff}`, "ruff"],
     })
     expect(resolveTool(recipe("deadcode:go"), only("go"), "/t")).toMatchObject({
-      prefix: ["/bin/go", "run", "golang.org/x/tools/cmd/deadcode@v0.53.0"],
+      prefix: ["/bin/go", "run", `golang.org/x/tools/cmd/deadcode@${PINS["golang.org/x/tools"]}`],
     })
   })
 
