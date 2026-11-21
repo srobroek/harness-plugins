@@ -36,17 +36,33 @@ function resolved(path: string): string {
   return join(realpathSync(at), ...missing)
 }
 
-/** Whether a resource (`~/…`, an absolute path or a `dir/*` pattern) lies inside one of the `roots`. */
-export function inside(resource: string, roots: readonly string[]): boolean {
+/** A resource (`~/…`, an absolute path or a `dir/*` pattern) as a canonical path, or `undefined` when it is not one. */
+function canonicalResource(resource: string): string | undefined {
   const expanded = resource === "~" || resource.startsWith("~/") ? join(homedir(), resource.slice(1)) : resource
-  if (!isAbsolute(expanded)) return false
+  if (!isAbsolute(expanded)) return undefined
   const path = expanded.replace(/\/\*{1,2}$/, "")
-  if (/[*?[\]{}]/.test(path) || path.split("/").includes("..")) return false
-  const real = resolved(path)
-  return roots.some((root) => {
-    const rel = relative(resolved(root), real)
-    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))
-  })
+  if (/[*?[\]{}]/.test(path) || path.split("/").includes("..")) return undefined
+  return resolved(path)
+}
+
+function within(real: string, root: string): boolean {
+  const rel = relative(root, real)
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))
+}
+
+/** Whether a resource lies inside one of the `roots`; each root is resolved through its symlinks first. */
+export function inside(resource: string, roots: readonly string[]): boolean {
+  const real = canonicalResource(resource)
+  return real !== undefined && roots.some((root) => within(real, resolved(root)))
+}
+
+/**
+ * Like {@link inside} for roots that are already canonical (checked by the caller just before): a root is
+ * compared as given, never re-resolved, so a root swapped for a symlink cannot move the boundary.
+ */
+export function insideCanonical(resource: string, roots: readonly string[]): boolean {
+  const real = canonicalResource(resource)
+  return real !== undefined && roots.some((root) => within(real, root))
 }
 
 /**
@@ -74,5 +90,6 @@ export function allowScratch(evaluation: Evaluation, roots: readonly string[], u
   if (evaluation.action !== "external_directory" || evaluation.effect !== "ask") return
   if (evaluation.resources.length === 0) return
   const trusted = roots.filter((root) => pinned(root, uid))
-  if (evaluation.resources.every((resource) => inside(resource, trusted))) evaluation.effect = "allow"
+  // `pinned` just proved each trusted root is its own real path, so none is resolved again.
+  if (evaluation.resources.every((resource) => insideCanonical(resource, trusted))) evaluation.effect = "allow"
 }

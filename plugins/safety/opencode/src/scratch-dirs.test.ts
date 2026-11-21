@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { allowScratch, scratchRoots } from "./scratch-dirs.ts"
+import { allowScratch, inside, insideCanonical, scratchRoots } from "./scratch-dirs.ts"
 
 const base = join(realpathSync(tmpdir()), "opencode")
 let dir: string
@@ -142,5 +142,18 @@ describe("allowScratch", () => {
     const e = evaluation([])
     allowScratch(e, roots)
     expect(e.effect).toBe("ask")
+  })
+})
+
+describe("insideCanonical", () => {
+  test("does not re-resolve a root: a root that became a symlink does not move the boundary", () => {
+    const target = join(dir, "swap-target")
+    const link = join(dir, "swap-link")
+    mkdirSync(target, { recursive: true })
+    symlinkSync(target, link)
+    expect(inside(`${target}/x`, [link])).toBe(true) // inside() follows the root's symlink
+    expect(insideCanonical(`${target}/x`, [link])).toBe(false)
+    expect(insideCanonical(`${link}/x`, [link])).toBe(false) // the resource resolves to the target
+    expect(insideCanonical(`${temp}/x`, [temp])).toBe(true)
   })
 })

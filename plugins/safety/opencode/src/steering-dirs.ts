@@ -7,7 +7,7 @@
 import { realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, join } from "node:path"
-import { inside, pinned } from "./scratch-dirs.ts"
+import { insideCanonical, pinned } from "./scratch-dirs.ts"
 
 type Evaluation = { readonly action: string; readonly resources: ReadonlyArray<string>; effect: string }
 
@@ -42,5 +42,6 @@ export function steeringRoots(dirs: readonly string[], home: string = homedir(),
 export function allowSteeringReads(evaluation: Evaluation, roots: readonly string[]): void {
   if (evaluation.action !== "external_directory" || evaluation.effect !== "ask") return
   if (evaluation.resources.length === 0 || roots.length === 0) return
-  if (evaluation.resources.every((resource) => inside(resource, roots))) evaluation.effect = "allow"
+  // `steeringRoots` returns pinned real paths; the roots are not resolved again here.
+  if (evaluation.resources.every((resource) => insideCanonical(resource, roots))) evaluation.effect = "allow"
 }
