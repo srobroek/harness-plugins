@@ -8,10 +8,12 @@ import { contentPaths } from "@srobroek/opencode-lib/content-plugin"
 import { registerSkills } from "@srobroek/opencode-lib/skill-files"
 import { COMMAND, challengePrompt } from "./command.ts"
 import { installFormulas, SETUP_TOOL } from "./formulas.ts"
+import { registerLibFacts } from "./lib-facts/index.ts"
 
 export { COMMAND, challengePrompt, parseInvocation, SKILL } from "./command.ts"
 export { FORMULAS, installFormulas, SETUP_TOOL } from "./formulas.ts"
 export { DEPTHS, LENSES, PHASES } from "./lenses.ts"
+export { LIB_FACTS_TOOL } from "./lib-facts/index.ts"
 
 export const ID = "srobroek.code-challenge"
 
@@ -79,6 +81,7 @@ export async function setupCodeChallenge(ctx: Context, moduleUrl: string) {
         })
       }),
     )
+    registrations.push(await registerLibFacts(ctx))
     registrations.push(
       await ctx.command.transform((editor) =>
         editor.add({

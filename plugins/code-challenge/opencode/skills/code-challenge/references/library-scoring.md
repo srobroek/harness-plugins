@@ -2,7 +2,20 @@
 
 Phase RESEARCH, for the two library lenses: hand-rolled code that a library replaces, and the reverse (a dependency that native code or a lighter library replaces).
 
-Collect facts with `challenge_lib_facts` (deps.dev, OSV always fresh, the package registry, GitHub; cached for 7 days; ships in a later PR) and `context7` for API coverage. Until the tool ships, read the registry page and the OSV record with `webfetch` and cite the URL. Never score from memory.
+Collect facts with `challenge_lib_facts` and `context7` for API coverage. Never score from memory.
+
+## The facts tool
+
+Input: `{ ecosystem: "npm" | "pypi" | "crates" | "go", packages: [{ name, version? }] }`, 1 to 6 packages. Pass `version` to get the OSV advisories of the version the repository uses. Output: `{ ecosystem, fetchedAt, packages[] }`, facts only and no verdict. Each package has:
+
+- `latest {version, publishedAt}`, `releases {last12Months, last24Months, monthsSinceLast}`, `deprecated`, `yanked`
+- `licence` (SPDX ids), `downloads {lastWeek, lastMonth, last90Days}`, `dependents`, `dependencies {direct, transitive}`, `size {unpackedBytes, downloadBytes}`, `types`, `modules` (npm: `esm`, `cjs` or `dual`)
+- `repo {url, stars, openIssues, openPullRequests, lastCommit, contributors, archived}`
+- `vulnerabilities {latest[], requested[]}`: OSV ids, fetched fresh on every call
+- `gates {unpatchedCve, licenceNotAllowed, failed[]}`: the two hard gates below, from the latest version's advisories and the licence allowlist
+- `missing[]`: each source that failed, as `<source>: <reason>`
+
+A field is `null` when no source gave it, and a gate is `null` when its data is missing. Treat a `null` gate as unknown, not as a pass: read the registry page or the OSV record with `webfetch` and cite the URL. Everything except OSV is cached for 7 days. `gates.unpatchedCve` means the latest version still carries an advisory; for the version the repository uses, compare `vulnerabilities.requested` with `vulnerabilities.latest` to see whether upgrading fixes it.
 
 Pick 2 to 4 candidates, including "keep the hand-rolled code" as a candidate. Evaluate partial adoption plus an extension over a full swap when the library covers most of the need.
 
