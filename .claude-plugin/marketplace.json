@@ -48,7 +48,7 @@
       "name": "beads",
       "description": "Beads issue tracking: bd prime session context, shell gates on bd, git and gh commands, store pinning and the Beads skills.",
       "source": "./plugins/beads/claude",
-      "version": "0.8.4",
+      "version": "0.8.5",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/beads",
       "repository": "https://github.com/srobroek/harness-plugins"
