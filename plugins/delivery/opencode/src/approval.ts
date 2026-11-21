@@ -12,7 +12,6 @@ import {
   approversAt,
   changesRequested,
   commitChecks,
-  githubChecks,
   login,
   pages,
   own,
@@ -23,7 +22,6 @@ import {
 } from "@srobroek/opencode-lib/pr-approval"
 import type { CliResult, CliRunner } from "./forge-adapter.ts"
 
-export { githubChecks, type Precondition }
 
 
 type Bound = {
@@ -44,11 +42,11 @@ type Bound = {
 
 type Parsed = { ok: true; value: unknown } | { ok: false; reason: string }
 
-function parse(argv: readonly string[], result: CliResult, allowExit = false): Parsed {
+function parse(argv: readonly string[], result: CliResult): Parsed {
   const label = argv.join(" ")
   if (!result.ok || result.error !== undefined)
     return { ok: false, reason: `${label}: observed ${result.error ?? "no completion"}, expected exit 0` }
-  if (!allowExit && result.exitCode !== 0) {
+  if (result.exitCode !== 0) {
     const stderr = result.stderr.trim()
     return {
       ok: false,

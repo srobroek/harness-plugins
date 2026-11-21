@@ -102,9 +102,13 @@ describe("githubTrust", () => {
     expect(githubTrust([rest("other", "CHANGES_REQUESTED")], comment, HEAD, { viewer: "me", permissions: {} }).trusted).toBe(false)
   })
 
-  test("a reviewer's later non-approving decisive review withdraws the approval, and the author's own review never counts", () => {
-    const identity = { viewer: null, permissions: { you: "write", me: "admin" } }
+  test("a reviewer's later dismissal withdraws the approval", () => {
+    const identity = { viewer: null, permissions: { you: "write" } }
     expect(githubTrust([rest("you"), rest("you", "DISMISSED")], view(), HEAD, identity).trusted).toBe(false)
+  })
+
+  test("the PR author's own review never counts, whatever their permission", () => {
+    const identity = { viewer: null, permissions: { me: "admin" } }
     expect(githubTrust([rest("me")], view(), HEAD, identity).trusted).toBe(false)
   })
 

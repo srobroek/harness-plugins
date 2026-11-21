@@ -3588,11 +3588,11 @@ function commitChecks(input) {
 }
 
 // plugins/delivery/opencode/src/approval.ts
-function parse(argv, result, allowExit = false) {
+function parse(argv, result) {
   const label = argv.join(" ");
   if (!result.ok || result.error !== undefined)
     return { ok: false, reason: `${label}: observed ${result.error ?? "no completion"}, expected exit 0` };
-  if (!allowExit && result.exitCode !== 0) {
+  if (result.exitCode !== 0) {
     const stderr = result.stderr.trim();
     return {
       ok: false,
@@ -7045,7 +7045,7 @@ async function setupDelivery(ctx, overrides = {}) {
         let denied = false;
         const cleanup = decision.run ? await runInlineCleanup(() => {
           const askCleanup = asserter(ctx, context, CLEANUP_ACTION, gates);
-          return (overrides.inlineCleanup ?? cleanupDelivery)({ receipt: outcome.receiptPath }, directory, {
+          return cleanupDelivery({ receipt: outcome.receiptPath }, directory, {
             ...overrides.cleanup,
             env: environment(options),
             signal: context.signal,

@@ -7,10 +7,14 @@ const OLD = "b".repeat(40)
 const review = (user: string, state: string, commit = SHA) => ({ user: { login: user }, state, commit_id: commit })
 
 describe("reviewApproval (strict, review-only)", () => {
-  test("only an eligible approver counts, but anyone's changes request still vetoes", () => {
-    const eligible = (who: string) => who === "writer"
+  const eligible = (who: string) => who === "writer"
+
+  test("only an eligible approver counts", () => {
     expect(reviewApproval([review("drive-by", "APPROVED")], "bot", SHA, { eligible }).ok).toBe(false)
     expect(reviewApproval([review("drive-by", "APPROVED"), review("writer", "APPROVED")], "bot", SHA, { eligible }).ok).toBe(true)
+  })
+
+  test("anyone's changes request vetoes an eligible approval, eligible or not", () => {
     expect(reviewApproval([review("writer", "APPROVED"), review("anyone", "CHANGES_REQUESTED")], "bot", SHA, { eligible }).ok).toBe(false)
   })
 
