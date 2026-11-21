@@ -1,3 +1,9 @@
+## subagent-worktree [0.6.4](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.6.3...subagent-worktree--v0.6.4) (2026-11-21)
+
+### Bug Fixes
+
+* **subagent-worktree:** drop the resume grace ([fe30538](https://github.com/srobroek/harness-plugins/commit/fe305388675ebdade4dac3ec8d1b33b56f5ad57c))
+
 ## subagent-worktree [0.6.3](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.6.2...subagent-worktree--v0.6.3) (2026-11-21)
 
 ### Bug Fixes
