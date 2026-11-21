@@ -1203,7 +1203,7 @@
     },
     {
       "name": "repomix",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "description": "Pack a local or remote repo into one file with repomix for bulk context: external repos, module packs and version diffs.",
       "category": "development",
       "harnesses": {
