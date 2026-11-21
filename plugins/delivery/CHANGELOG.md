@@ -1,3 +1,9 @@
+## delivery [0.10.0](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.6...delivery--v0.10.0) (2026-11-21)
+
+### Features
+
+* **subagent-worktree:** remove lanes through one finalize path ([#59](https://github.com/srobroek/harness-plugins/issues/59)) ([14d4dae](https://github.com/srobroek/harness-plugins/commit/14d4dae9287a4a815569da6f9172b5ace2f36774))
+
 ## delivery [0.9.6](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.5...delivery--v0.9.6) (2026-11-21)
 
 ### Bug Fixes
