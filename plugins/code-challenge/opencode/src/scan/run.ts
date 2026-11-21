@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { extname, join, relative, resolve } from "node:path"
-import { type SupervisedRun, supervise } from "@srobroek/opencode-lib/subprocess"
+import { type Exec, MAX_STDERR_BYTES, MAX_STDOUT_BYTES, spawnTool } from "./exec.ts"
 import { parseOutput } from "./parsers.ts"
 import { pinOf } from "./pins.ts"
 import { RECIPES } from "./recipes.ts"
@@ -20,27 +20,7 @@ import {
   type Timing,
 } from "./types.ts"
 
-export type Exec = (
-  argv: string[],
-  options: { cwd: string; timeoutMs: number; signal?: AbortSignal },
-) => Promise<SupervisedRun>
-
-/** Run one analyzer in its own process group so a timeout ends the tool and its children only. */
-export const spawnTool: Exec = async (argv, { cwd, timeoutMs, signal }) => {
-  try {
-    const child = Bun.spawn(argv, {
-      cwd,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      env: { ...Bun.env, NO_COLOR: "1", FORCE_COLOR: "0" },
-      detached: true,
-    })
-    return await supervise(child, { timeoutMs, signal, group: true })
-  } catch (error) {
-    return { kind: "exited", exitCode: 127, signalCode: null, stdout: "", stderr: String(error) }
-  }
-}
+export type { Exec }
 
 export type ScanDeps = {
   exec?: Exec
@@ -52,6 +32,8 @@ export type ScanDeps = {
 }
 
 const DEFAULT_TIMEOUT_SECONDS = 120
+/** No caller can hold an analyzer longer than this. */
+export const MAX_TIMEOUT_SECONDS = 900
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "target", ".venv", "venv", "__pycache__"])
 
 const EXTENSION_LANGUAGE: Record<string, Language> = {
@@ -220,7 +202,7 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
   const now = deps.now ?? Date.now
   const depth: Depth = input.depth ?? "standard"
   const lenses: readonly Lens[] = input.lenses && input.lenses.length > 0 ? input.lenses : LENSES
-  const timeoutMs = (input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000
+  const timeoutMs = Math.min(input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000
   if (input.runId !== undefined && !/^[\w.-]+$/.test(input.runId)) {
     throw new Error(`challenge_scan: invalid runId "${input.runId}"`)
   }
@@ -302,6 +284,10 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
       }
       if (run.kind === "aborted") {
         entry("skipped", "scan aborted")
+        continue
+      }
+      if (run.kind === "overflow") {
+        entry("gap", `${run.stream} exceeded ${(run.stream === "stdout" ? MAX_STDOUT_BYTES : MAX_STDERR_BYTES) / 1024 / 1024} MiB; the tool was ended`)
         continue
       }
       if (run.kind === "lost") {

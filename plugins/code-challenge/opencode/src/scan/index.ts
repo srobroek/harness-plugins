@@ -6,7 +6,8 @@ import { DEPTHS, LANGUAGES, LENSES, type ScanInput, type ScanReport } from "./ty
 export { parseOutput } from "./parsers.ts"
 export { RECIPES } from "./recipes.ts"
 export type { Exec, ScanDeps } from "./run.ts"
-export { detectLanguages, expandFiles, resolveTool, runScan, spawnTool } from "./run.ts"
+export { spawnTool } from "./exec.ts"
+export { detectLanguages, expandFiles, resolveTool, runScan } from "./run.ts"
 export * from "./types.ts"
 
 export const SCAN_TOOL = "challenge_scan"
