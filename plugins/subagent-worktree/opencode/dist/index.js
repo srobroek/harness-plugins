@@ -2282,7 +2282,8 @@ function createLifecycle(deps) {
     return next;
   };
   const noteResume = (directory, parentDir, inside) => withLock(directory, parentDir, async () => {
-    await inside?.();
+    if (inside !== undefined && !await inside())
+      return;
     const common = await deps.commonDir(parentDir);
     if (common !== undefined)
       bumpClaim(common, directory, now());
@@ -3729,9 +3730,10 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     await lifecycle.noteResume(lane2.directory, lane2.parentDir, async () => {
       const fresh = await load(child);
       if (fresh?.state !== "active" || !await confirmLocation(fresh))
-        return;
+        return false;
       const confirmed = await load(child) ?? fresh;
       await save({ ...confirmed, resumedAt: now(), quietSince: undefined });
+      return true;
     });
   };
   const retire = async (lane2, state) => {

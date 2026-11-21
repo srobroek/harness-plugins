@@ -389,11 +389,13 @@ export function createLifecycle(deps: LifecycleDeps) {
    * A `subagent` call is about to resume the child of this lane: waits for a removal in flight (in
    * any instance), then runs `inside` and bumps the generation on disk, recording when, so later
    * removals abort. `inside` runs under the same lock as every removal, so it sees the lane as the
-   * last removal left it (fenced, or retired); if it throws, nothing is bumped.
+   * last removal left it (fenced, retired, or still `removing`); if it throws, or returns false
+   * because it did not admit the resume for an active lane, nothing is bumped. A stamp for a resume
+   * that was not admitted would fence the very recovery that has to finish first.
    */
-  const noteResume = (directory: string, parentDir: string, inside?: () => Promise<void>) =>
+  const noteResume = (directory: string, parentDir: string, inside?: () => Promise<boolean>) =>
     withLock(directory, parentDir, async () => {
-      await inside?.()
+      if (inside !== undefined && !(await inside())) return
       const common = await deps.commonDir(parentDir)
       if (common !== undefined) bumpClaim(common, directory, now())
     })
