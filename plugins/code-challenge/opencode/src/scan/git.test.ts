@@ -3,9 +3,9 @@ import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
 import type { Exec } from "./exec.ts"
+import { spawnTool } from "./exec.ts"
 import { cleanup, exited, fakeExec, temp, withTools } from "./fixtures.ts"
 import { gitListing, gitState } from "./git.ts"
-import { spawnTool } from "./exec.ts"
 import { consentRisks, MAX_ARGV_BYTES, runScan } from "./run.ts"
 
 // Real git processes: each call takes about 10 ms alone; 30 s leaves headroom for a loaded machine (AGENTS.md, Commands).

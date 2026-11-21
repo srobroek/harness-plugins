@@ -1,5 +1,5 @@
-import { readBounded } from "@srobroek/opencode-lib/bounded-read"
 import { dirname, join } from "node:path"
+import { readBounded } from "@srobroek/opencode-lib/bounded-read"
 import type { Exec } from "./exec.ts"
 import { MAX_MARKER_BYTES } from "./files.ts"
 import type { Hit, Recipe } from "./types.ts"

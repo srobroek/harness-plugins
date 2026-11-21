@@ -1,6 +1,6 @@
 import { lstatSync, readdirSync, realpathSync, type Stats, statSync } from "node:fs"
-import { readBounded } from "@srobroek/opencode-lib/bounded-read"
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { readBounded } from "@srobroek/opencode-lib/bounded-read"
 import { LANGUAGES, type Language } from "./types.ts"
 
 export const SKIP_DIRS = new Set([".git", "node_modules", "dist", "target", ".venv", "venv", "__pycache__"])

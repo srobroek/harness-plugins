@@ -20,7 +20,7 @@ export const SCAN_DESCRIPTION =
   "Run existing static analyzers in a lens profile and return normalised code-challenge candidates.\n" +
   "Not read-only: clippy builds the crate (build scripts, proc macros; writes target/), golangci-lint and deadcode " +
   "compile Go, knip and import-linter load repo config code, and one-off bunx/uvx/go runs download and run pinned " +
-  "packages. Those recipes run only after the user approves the root; otherwise they are coverage gaps. " +
+  "packages. Those recipes run only after the user approves them (staticOnly skips them without asking). " +
   "Hits carry lens, tool, rule, file, line, message, ruleEnabledInRepo. Quick depth skips build-backed analyzers. " +
   "With runId, raw output goes to <git-dir>/code-challenge/<runId>/scan/."
 

@@ -62,7 +62,7 @@ One reference per lens, each with what to look for, the evidence needed and the 
 
 ## Tools
 
-`challenge_lib_facts` returns library facts from deps.dev, OSV, the registries and GitHub (see [references/library-scoring.md](references/library-scoring.md) for its input and output). `challenge_scan` (runs the SCAN analyzers) is planned and ships in a later PR. Check that `challenge_scan` is in your tool list before you call it; until then, run analyzers with the shell tool and cite the command.
+`challenge_lib_facts` returns library facts from deps.dev, OSV, the registries and GitHub (see [references/library-scoring.md](references/library-scoring.md) for its input and output). `challenge_scan` runs the SCAN analyzers (see [references/scan.md](references/scan.md) for its input and output).
 
 ## Workflow
 

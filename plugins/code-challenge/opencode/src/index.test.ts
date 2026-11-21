@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { type AgentPermission, permissionEffect, readAgentFile } from "@srobroek/opencode-lib/agent-files"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
-import plugin, { COMMAND, challengePrompt, LIB_FACTS_TOOL, parseInvocation, SETUP_TOOL } from "./index.ts"
+import plugin, { COMMAND, challengePrompt, LIB_FACTS_TOOL, parseInvocation, SCAN_TOOL, SETUP_TOOL } from "./index.ts"
 
 type Execute = (input: unknown, context: unknown) => Promise<{ content: string; metadata: Record<string, unknown> }>
 
@@ -15,7 +15,7 @@ test("registers the skill, both agents, the setup tool and the command, and remo
   const cleanup = await plugin.setup(fake.context)
   expect([...fake.skills.keys()]).toEqual(["code-challenge"])
   expect([...fake.agents.keys()].sort()).toEqual(["code-challenger", "refactor-challenger"])
-  expect([...fake.tools.keys()]).toEqual([SETUP_TOOL, LIB_FACTS_TOOL])
+  expect([...fake.tools.keys()]).toEqual([SETUP_TOOL, LIB_FACTS_TOOL, SCAN_TOOL])
   expect([...fake.commands.keys()]).toEqual([COMMAND])
   await cleanup?.()
   expect(fake.active()).toBe(0)
@@ -30,6 +30,16 @@ test("challenge_lib_facts registered by setup validates its input before any req
   const result = await lookup({ ecosystem: "gem", packages: [{ name: "x" }] }, context)
   expect(result.metadata.ok).toBe(false)
   expect(result.content).toContain("ecosystem must be one of npm, pypi, crates, go")
+})
+
+test("challenge_scan registered by setup rejects bad input before any process starts", async () => {
+  const fake = createFakeContext()
+  await plugin.setup(fake.context)
+  const scan = fake.tools.get(SCAN_TOOL)?.execute as Execute
+  const result = await scan({ depth: "bottomless" }, context)
+  expect(result.metadata.ok).toBe(false)
+  expect(result.content).toContain("challenge_scan:")
+  expect(fake.asserts).toEqual([])
 })
 
 test("both challengers are read-only subagents that cannot edit, run a shell or spawn agents", async () => {
