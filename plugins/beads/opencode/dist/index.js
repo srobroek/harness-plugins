@@ -2362,7 +2362,7 @@ function resolveBdTargets(command, cwd, env) {
   const record = (invocation, target) => {
     const key = targetKey(invocation);
     const earlier = targets.get(key);
-    const same = earlier === undefined || ("unresolved" in earlier ? "unresolved" in target : !("unresolved" in target) && earlier.store === target.store && earlier.cwd === target.cwd && earlier.beadsDir === target.beadsDir && earlier.beadsDirAssigned === target.beadsDirAssigned);
+    const same = earlier === undefined || ("unresolved" in earlier ? "unresolved" in target : !("unresolved" in target) && earlier.store === target.store && earlier.cwd === target.cwd && earlier.beadsDir === target.beadsDir);
     targets.set(key, same ? target : { unresolved: true });
   };
   const plan = planEmbeddedWrites(command, cwd, env, {
@@ -6032,13 +6032,14 @@ function actorEnvironment(env, actor) {
   return { ...rest, BD_ACTOR: actor };
 }
 var TARGET_SELECTORS = ["-C", "--directory", "--db", "--database"];
+var LEDGER_CREATING_VERBS = { init: true, bootstrap: true };
 function ledgerWriteRefusal(command, cwd, env, options = {}) {
   const { configuredStore, identity = repoIdentity } = options;
   let refusal;
   planEmbeddedWrites(command, cwd, env, {
     classify: false,
     observe: ({ invocation, store, cwd: dir, beadsDir, beadsDirAssigned }) => {
-      if (refusal !== undefined || !isMutatingInvocation(invocation))
+      if (refusal !== undefined || LEDGER_CREATING_VERBS[invocation.verb] === true)
         return;
       if (beadsDirAssigned)
         return;

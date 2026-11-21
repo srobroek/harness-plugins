@@ -23,6 +23,7 @@ import {
   parseLinuxStatStartIdentity,
   planEmbeddedWrites,
   release,
+  resolveBdTargets,
   resolveBunBinary,
   setPreflightWaitForTests,
   setProcessStartIdentityForTests,
@@ -1056,5 +1057,21 @@ describe("who chose the ledger a write lands in", () => {
     ["export BEADS_DIR=/x/.beads; unset BEADS_DIR; bd create --title t", false],
   ])("%s -> assigned %p", (command, expected) => {
     expect(assigned(command, { BEADS_DIR: "/inherited/.beads" })).toEqual([expected])
+  })
+
+  test("the same write repeated, first inherited then with an identical explicit BEADS_DIR, is one placed target", () => {
+    const store = "/inherited/.beads"
+    const command = `bd update proj-1 --status open; BEADS_DIR=${store} bd update proj-1 --status open`
+    const invocation = { verb: "update", args: ["proj-1", "--status", "open"], globals: [] }
+    const target = resolveBdTargets(command, "/work", { BEADS_DIR: store }).get(invocation)
+    expect(target).toBeDefined()
+    expect(target).not.toHaveProperty("unresolved")
+  })
+
+  test("each occurrence keeps its own provenance for the refusal", () => {
+    const seen: boolean[] = []
+    const command = "bd update proj-1 --status open; BEADS_DIR=/x/.beads bd update proj-1 --status open"
+    planEmbeddedWrites(command, "/work", { BEADS_DIR: "/x/.beads" }, { classify: false, observe: (t) => seen.push(t.beadsDirAssigned) })
+    expect(seen).toEqual([false, true])
   })
 })

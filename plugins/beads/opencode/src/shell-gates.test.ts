@@ -150,7 +150,11 @@ describe("decideShell", () => {
       ["bd update proj-1 --status open"],
       ["bd close proj-1 --reason x"],
       ["bd comments add proj-1 note"],
-    ])("the same refusal covers the issue write %p", async (command) => {
+      ["bd unclaim proj-1 --if-assignee a/b/c"],
+      ["bd heartbeat proj-1"],
+      ["bd orphans --fix"],
+      ["bd some-future-verb proj-1"],
+    ])("the same refusal covers the store write %p", async (command) => {
       const decision = await decideShell(command, repoA, deps({ env: leaked() }))
       expect(decision.kind === "block" ? decision.cause : "").toContain("belongs to")
     })
@@ -159,8 +163,11 @@ describe("decideShell", () => {
       ["bd list"],
       ["bd show proj-1 --json"],
       ["bd ready"],
+      ["bd orphans"],
       ["bd create --help"],
-    ])("a read of another repository's ledger stays allowed: %p", async (command) => {
+      ["bd init --prefix x"],
+      ["bd bootstrap --yes"],
+    ])("a read, or a command that creates its own ledger, stays allowed: %p", async (command) => {
       expect((await decideShell(command, repoA, deps({ env: leaked() }))).kind).toBe("allow")
     })
 

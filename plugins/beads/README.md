@@ -20,8 +20,8 @@ On every `shell` call (`tool.hook("execute.before")`), in this order, with one
 7. `bd unclaim` without `--if-assignee` is refused.
 8. A subagent command that clears or blanks the injected actor gets an advisory in the
    tool result. A main session chooses its own actor and gets none.
-9. The plugin refuses an issue write (`bd create`, `bd update` and every other mutating verb) when the ledger belongs to a different git repository
-   than the command's directory. Reads, `init` and `bootstrap` pass. So does a command
+9. The plugin refuses a `bd` write (any verb the write lock treats as one, such as `bd create` or `bd heartbeat`) when the ledger belongs to a different git repository
+   than the command's directory. Reads, `bd init` and `bd bootstrap` pass. So does a command
    that assigns `BEADS_DIR=` itself (`BEADS_DIR=/path bd create ...` or an earlier
    `export BEADS_DIR=...`), and so does the project's `options.store`. A `BEADS_DIR`
    that only arrives through the environment is not a choice. One example is a variable

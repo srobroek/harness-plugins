@@ -729,8 +729,7 @@ export function resolveBdTargets(command: string, cwd: string, env: NodeJS.Proce
         : !("unresolved" in target) &&
           earlier.store === target.store &&
           earlier.cwd === target.cwd &&
-          earlier.beadsDir === target.beadsDir &&
-          earlier.beadsDirAssigned === target.beadsDirAssigned)
+          earlier.beadsDir === target.beadsDir)
     targets.set(key, same ? target : { unresolved: true })
   }
   const plan = planEmbeddedWrites(command, cwd, env, {

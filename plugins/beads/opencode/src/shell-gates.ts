@@ -8,13 +8,7 @@
  * sets `BEADS_DIR` in the child's environment.
  */
 
-import {
-  bdInvocations,
-  decideActorParsed,
-  flagEnabled,
-  globalValue,
-  isMutatingInvocation,
-} from "@srobroek/opencode-lib/bd-actor-gate"
+import { bdInvocations, decideActorParsed, flagEnabled, globalValue } from "@srobroek/opencode-lib/bd-actor-gate"
 import {
   decideEmbeddedWrite,
   type EmbeddedWriteRunnerLookup,
@@ -93,7 +87,14 @@ export function actorEnvironment(env: NodeJS.ProcessEnv, actor: string | undefin
 const TARGET_SELECTORS = ["-C", "--directory", "--db", "--database"]
 
 /**
- * The refusal for an issue write in the command that lands in the ledger of another git
+ * Verbs that create or adopt a ledger in the directory they run in. The planner counts them
+ * as writes, but there is no existing ledger of the project to protect: `bd init` ignores
+ * `BEADS_DIR` and `bd bootstrap` sets one up.
+ */
+const LEDGER_CREATING_VERBS: Readonly<Record<string, true>> = { init: true, bootstrap: true }
+
+/**
+ * The refusal for a store write in the command that lands in the ledger of another git
  * repository, unless the command line itself chose that ledger.
  *
  * Targets come from the write planner, so this sees the same `cd`, `export`, `unset` and
@@ -101,8 +102,9 @@ const TARGET_SELECTORS = ["-C", "--directory", "--db", "--database"]
  * `export` or a prefix) is a deliberate choice and passes; one that arrives through the
  * environment, such as a variable inherited from the shell that started the server, does
  * not. The plugin's own configured store (`options.store`) is a deliberate choice too.
- * Reads and verbs that are not issue writes (`init`, `bootstrap`, `config set`) never
- * refuse. A command the planner cannot place passes here; the lock refuses it.
+ * "Write" is the planner's classification (`writesStore`), which counts every verb not known
+ * to be a read, so `unclaim`, `heartbeat` and `orphans --fix` refuse too; reads and the
+ * ledger-creating `init` and `bootstrap` never do. A command the planner cannot place passes here; the lock refuses it.
  */
 export function ledgerWriteRefusal(
   command: string,
@@ -115,7 +117,7 @@ export function ledgerWriteRefusal(
   planEmbeddedWrites(command, cwd, env, {
     classify: false,
     observe: ({ invocation, store, cwd: dir, beadsDir, beadsDirAssigned }) => {
-      if (refusal !== undefined || !isMutatingInvocation(invocation)) return
+      if (refusal !== undefined || LEDGER_CREATING_VERBS[invocation.verb] === true) return
       if (beadsDirAssigned) return
       if (flagEnabled(invocation.globals, ["--global"])) return
       if (TARGET_SELECTORS.some((name) => globalValue(invocation.globals, [name]) !== undefined)) return

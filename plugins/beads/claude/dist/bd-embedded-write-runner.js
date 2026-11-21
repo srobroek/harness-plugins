@@ -2048,7 +2048,7 @@ function resolveBdTargets(command, cwd, env) {
   const record = (invocation, target) => {
     const key = targetKey(invocation);
     const earlier = targets.get(key);
-    const same = earlier === undefined || ("unresolved" in earlier ? "unresolved" in target : !("unresolved" in target) && earlier.store === target.store && earlier.cwd === target.cwd && earlier.beadsDir === target.beadsDir && earlier.beadsDirAssigned === target.beadsDirAssigned);
+    const same = earlier === undefined || ("unresolved" in earlier ? "unresolved" in target : !("unresolved" in target) && earlier.store === target.store && earlier.cwd === target.cwd && earlier.beadsDir === target.beadsDir);
     targets.set(key, same ? target : { unresolved: true });
   };
   const plan = planEmbeddedWrites(command, cwd, env, {

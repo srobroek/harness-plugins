@@ -35,7 +35,7 @@ Run `mise exec -- bd where` from the code checkout and confirm the ledger path. 
 [Project ledger store](https://github.com/srobroek/harness-plugins/blob/main/plugins/beads/README.md#project-ledger-store) for path
 validation and precedence.
 
-The plugin refuses an issue write when the environment chose a ledger that belongs to
+The plugin refuses a `bd` write when the environment chose a ledger that belongs to
 another git repository than the command's directory. `options.store` passes. So does
 `BEADS_DIR=/path bd ...` typed in the command line itself.
 
@@ -60,7 +60,7 @@ For a ledger in a separate repo, set the store in the project's `.claude/setting
 An explicit `BEADS_DIR` wins over the pin. Claude Code has no `options.store`, so
 when that ledger belongs to another repository than the project, write
 `BEADS_DIR=/path bd create ...` in the command line itself. Otherwise the plugin
-refuses the issue write.
+refuses the write.
 Skip `bd setup claude`: its hooks would add `bd prime` a second time.
 
 # DETECT
