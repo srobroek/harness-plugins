@@ -64,6 +64,7 @@ import {
   receiptDirectory,
   repoKey,
   repositoryContext,
+  spawnGit,
   validateReceipt,
   writeReceipt,
 } from "./landing-receipt.ts"
@@ -3727,6 +3728,36 @@ describe("pending cleanup: one remover per worktree", () => {
       expect(removed(h)).toBe(true)
       await h.finish()
     })
+  })
+
+  test("a denial recorded while any repository observation of the final check runs keeps the worktree", async () => {
+    // Every Git observation the final check makes is a wait in which another call can record a
+    // denial. The denial has to be seen whichever of those waits it lands in.
+    let observations = 0
+    let denyAt = 0
+    let deny: () => void = () => {}
+    const observe: GitRunner = (argv, cwd, timeoutMs, signal) => {
+      observations++
+      if (observations === denyAt) deny()
+      return spawnGit(argv, cwd, timeoutMs, signal)
+    }
+    const dry = await harness("final-check-count", { observe })
+    expect(await dry.pending.removalFor("ses_lead").finalCheck(dry.f.linked)).toBeUndefined()
+    const total = observations
+    await dry.finish()
+    expect(total).toBeGreaterThan(0)
+    for (let at = 1; at <= total; at++) {
+      const h = await harness(`final-check-denial-${at}`, { observe })
+      let recorded: Promise<void> = Promise.resolve()
+      deny = () => {
+        recorded = h.pending.record(h.f.receipt, "ses_other", { denied: true })
+      }
+      observations = 0
+      denyAt = at
+      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("cleanup was denied")
+      await recorded
+      await h.finish()
+    }
   })
 
   describe("the repository observations follow the cleanup bound", () => {

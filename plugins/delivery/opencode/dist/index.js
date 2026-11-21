@@ -6111,10 +6111,10 @@ function createPendingCleanup(deps) {
     return {
       removalSection: section,
       finalCheck: async (worktree) => {
+        const common = await commonDir();
         const held = await holdCheck(worktree);
         if (held !== undefined)
           return held;
-        const common = await commonDir();
         const recorded = common === null ? [] : landingsFor(listLandings(common).records, worktree).map((entry) => entry.sessionID);
         roots = [...new Set([...sessionIDs, ...recorded].filter((id) => typeof id === "string"))];
         forms = [...new Set([worktree, canonicalDirectory(worktree)])];

@@ -462,9 +462,11 @@ export function createPendingCleanup(deps: PendingDeps) {
     return {
       removalSection: section,
       finalCheck: async (worktree: string): Promise<string | undefined> => {
+        // The common directory is observed first: no wait may sit between the hold and denial check
+        // and the removal, or a denial recorded during it would go unseen.
+        const common = await commonDir()
         const held = await holdCheck(worktree)
         if (held !== undefined) return held
-        const common = await commonDir()
         const recorded = common === null ? [] : landingsFor(listLandings(common).records, worktree).map((entry) => entry.sessionID)
         roots = [...new Set([...sessionIDs, ...recorded].filter((id): id is string => typeof id === "string"))]
         forms = [...new Set([worktree, canonicalDirectory(worktree)])]
