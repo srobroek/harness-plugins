@@ -6353,8 +6353,8 @@ function parseOptions(raw) {
     autoCleanup: options.autoCleanup !== false
   };
 }
-function confirmDelivery(evaluation) {
-  if (evaluation.effect !== "allow")
+function confirmDelivery(evaluation, subagent = false) {
+  if (evaluation.effect !== "allow" || subagent)
     return;
   if (evaluation.action === LAND_ACTION) {
     evaluation.effect = "ask";
@@ -6641,7 +6641,14 @@ receipt: ${result.path}`;
     await pending.start();
   disposers.push(() => pending.dispose());
   if (options.confirm) {
-    const gate = await ctx.permission.hook("evaluate", confirmDelivery);
+    const gate = await ctx.permission.hook("evaluate", async (evaluation) => {
+      if (evaluation.effect !== "allow" || evaluation.action !== LAND_ACTION && evaluation.action !== CLEANUP_ACTION)
+        return;
+      const info = await ctx.session.get({ sessionID: evaluation.sessionID }).catch(() => {
+        return;
+      });
+      confirmDelivery(evaluation, typeof info?.parentID === "string" && info.parentID !== "");
+    });
     disposers.push(() => gate.dispose());
   }
   if (options.agents) {
