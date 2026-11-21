@@ -284,8 +284,9 @@ function describeSelector(selector: ReceiptSelector, scope: string): string {
 /**
  * Picks the one receipt a cleanup is about. `candidates` are validated receipts, newest first.
  * Only a PR's newest receipt in its repository counts, because a continuation supersedes the landing it continues.
- * With no selector at all uncleaned receipts are preferred, and exactly one must remain; with a
- * selector a cleaned receipt qualifies too, so a repeated cleanup finds its finished landing. `pr`,
+ * `repo` scopes the candidates first. With no `pr`, `branch`, `worktree` or `head`, the selection then
+ * prefers uncleaned receipts, and exactly one must remain. With one of them a cleaned receipt qualifies
+ * too, so a repeated cleanup finds its finished landing. `pr`,
  * `branch` and `worktree` must all match; `head` breaks a tie by reviewed head oid, then branch.
  * Zero matches or several are refused with every candidate listed, never guessed.
  */
@@ -301,6 +302,8 @@ export function selectReceipt(
     seen.add(key)
     return true
   })
+  // Scope to the named repository first, so another repository's uncleaned receipt cannot hide this one's.
+  if (selector.repo !== undefined) pool = pool.filter((c) => c.receipt.repo.nameWithOwner === selector.repo)
   const explicit = selector.pr !== undefined || selector.branch !== undefined || selector.worktree !== undefined
   if (!explicit && selector.head === undefined) {
     // Uncleaned landings are what a bare call is about; with none left, the cleaned ones stay candidates
@@ -310,7 +313,6 @@ export function selectReceipt(
   }
   if (selector.pr !== undefined) pool = pool.filter((c) => c.receipt.pr.number === selector.pr)
   if (selector.branch !== undefined) pool = pool.filter((c) => c.receipt.branch.name === selector.branch)
-  if (selector.repo !== undefined) pool = pool.filter((c) => c.receipt.repo.nameWithOwner === selector.repo)
   if (selector.worktree !== undefined) {
     const want = resolve(selector.worktree)
     pool = pool.filter((c) => c.receipt.worktree.path !== null && resolve(c.receipt.worktree.path) === want)

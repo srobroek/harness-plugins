@@ -3918,6 +3918,12 @@ describe("selectReceipt", () => {
     expect(selectReceipt([newer, one], { pr: 1 })).toEqual({ ok: true, candidate: newer })
   })
 
+  test("a repo-only selector finds that repository's cleaned receipt while another repository has an uncleaned one", () => {
+    const cleaned = candidate(f, 1, "feat/one", OID_A, { removed: true })
+    const elsewhere = candidate(f, 2, "feat/two", OID_B, { nameWithOwner: "other/repo" })
+    expect(selectReceipt([elsewhere, cleaned], { repo: "owner/repo" })).toEqual({ ok: true, candidate: cleaned })
+  })
+
   test("the worktree's HEAD oid picks the receipt whose reviewed head it is", () => {
     expect(selectReceipt(pool, { head: { branch: "other-name", oid: OID_A } })).toEqual({ ok: true, candidate: one })
   })
