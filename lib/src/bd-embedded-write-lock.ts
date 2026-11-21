@@ -689,6 +689,8 @@ export type ResolvedWrite = {
   cwd: string
   /** `BEADS_DIR` as that `bd` gets it, after the command's exports, unsets and prefixes. */
   beadsDir: string | undefined
+  /** Whether the command line itself assigned that `BEADS_DIR` (an `export` or a prefix), rather than inheriting it. */
+  beadsDirAssigned: boolean
 }
 
 /** Where one `bd` write runs, as every gate must judge it: resolved, or unknown until run time. */
@@ -727,7 +729,8 @@ export function resolveBdTargets(command: string, cwd: string, env: NodeJS.Proce
         : !("unresolved" in target) &&
           earlier.store === target.store &&
           earlier.cwd === target.cwd &&
-          earlier.beadsDir === target.beadsDir)
+          earlier.beadsDir === target.beadsDir &&
+          earlier.beadsDirAssigned === target.beadsDirAssigned)
     targets.set(key, same ? target : { unresolved: true })
   }
   const plan = planEmbeddedWrites(command, cwd, env, {
@@ -743,7 +746,9 @@ type Problem = { part: string; fix: string } | { exact: string }
 type CwdState =
   | { kind: "known"; cwd: string; certain: boolean; changed: boolean }
   | { kind: "dynamic"; problem: Problem }
-type BeadsDirState = { kind: "known"; value: string | undefined } | { kind: "unknown"; cause: string }
+type BeadsDirState =
+  | { kind: "known"; value: string | undefined; assigned: boolean }
+  | { kind: "unknown"; cause: string }
 /** What the shell has done to the working directory and `BEADS_DIR` by this point. */
 type ShellState = { cwd: CwdState; beadsDir: BeadsDirState }
 
@@ -818,7 +823,7 @@ export function planEmbeddedWrites(
     })
   }
   const scopes: ShellState[] = [
-    { cwd: { kind: "known", cwd, certain: true, changed: false }, beadsDir: { kind: "known", value: env.BEADS_DIR } },
+    { cwd: { kind: "known", cwd, certain: true, changed: false }, beadsDir: { kind: "known", value: env.BEADS_DIR, assigned: false } },
   ]
   const { items } = scan
   // Inside `if`/`case`/a loop, or behind `&&`/`||`, a command may not run at all.
@@ -873,7 +878,7 @@ export function planEmbeddedWrites(
           resolved.store,
         )
       } else if (state.cwd.kind === "known")
-        observe?.({ invocation: child, store: resolved.store, cwd: state.cwd.cwd, beadsDir: resolved.beadsDir })
+        observe?.({ invocation: child, cwd: state.cwd.cwd, store: resolved.store, ...beadsDirOf(resolved) })
       continue
     }
     const invocation = invocationFromArgv(shape.args.map((word) => word.value))
@@ -887,7 +892,7 @@ export function planEmbeddedWrites(
       continue
     }
     const store = resolved.store
-    if (state.cwd.kind === "known") observe?.({ invocation, store, cwd: state.cwd.cwd, beadsDir: resolved.beadsDir })
+    if (state.cwd.kind === "known") observe?.({ invocation, store, cwd: state.cwd.cwd, ...beadsDirOf(resolved) })
     else unresolved?.(invocation)
     if (store === undefined || !embeddedStore(store)) continue
     if (shape.condition !== undefined) {
@@ -1128,7 +1133,7 @@ function applyEffects(
     if (args.some((word) => word.value === "BEADS_DIR") && !args.some((word) => word.value === "-f")) {
       state.beadsDir = uncertain
         ? { kind: "unknown", cause: "unset BEADS_DIR" }
-        : { kind: "known", value: undefined }
+        : { kind: "known", value: undefined, assigned: false }
     }
     return
   }
@@ -1145,8 +1150,12 @@ function assignBeadsDir(state: ShellState, word: ShellWord, source: string, scop
   if (match === null) return
   const value = word.value.slice(match[0].length)
   const literal = !scoped && match[1] === "" && !word.expands && !DEFERRED_VALUE.test(value)
-  state.beadsDir = literal ? { kind: "known", value } : { kind: "unknown", cause: source.slice(word.start, word.end) }
+  state.beadsDir = literal ? { kind: "known", value, assigned: true } : { kind: "unknown", cause: source.slice(word.start, word.end) }
 }
+
+type ResolvedWriteTarget = Pick<ResolvedWrite, "store" | "beadsDir" | "beadsDirAssigned"> & { selected: string | undefined }
+
+const beadsDirOf = ({ beadsDir, beadsDirAssigned }: ResolvedWriteTarget) => ({ beadsDir, beadsDirAssigned })
 
 /** The store a `bd` write in this shell state lands in, or what keeps it unknown. */
 function resolveWrite(
@@ -1155,7 +1164,7 @@ function resolveWrite(
   state: ShellState,
   env: NodeJS.ProcessEnv,
   source: string,
-): { store: string | undefined; selected: string | undefined; beadsDir: string | undefined } | { problem: Problem } {
+): ResolvedWriteTarget | { problem: Problem } {
   const write = `\`bd ${invocation.verb}\``
   for (const flag of STORE_FLAGS) {
     const value = globalValue(invocation.globals, [flag])
@@ -1175,7 +1184,7 @@ function resolveWrite(
     const value = word.value.slice(match[0].length)
     beadsDir =
       match[1] === "" && !word.expands && !DEFERRED_VALUE.test(value)
-        ? { kind: "known", value }
+        ? { kind: "known", value, assigned: true }
         : { kind: "unknown", cause: source.slice(word.start, word.end) }
   }
   const directory = globalValue(invocation.globals, ["-C", "--directory"])
@@ -1203,7 +1212,12 @@ function resolveWrite(
   }
   const value = beadsDir.kind === "known" ? beadsDir.value : undefined
   const selected = selectedStoreFor(invocation.globals, state.cwd.cwd, { ...env, BEADS_DIR: value })
-  return { store: canonicalStore(selected), selected, beadsDir: value }
+  return {
+    store: canonicalStore(selected),
+    selected,
+    beadsDir: value,
+    beadsDirAssigned: beadsDir.kind === "known" && beadsDir.assigned,
+  }
 }
 
 /**

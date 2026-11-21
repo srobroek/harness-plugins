@@ -3,12 +3,18 @@
  * order, and the rewrites compose only after every gate allowed.
  *
  * Order: binary-hook guard, gate admission, parse failure, `bd edit`, update-close,
- * close, unclaim, actor, PR bead link, embedded-write runner rewrite, subagent actor
+ * close, unclaim, actor, foreign-ledger write, PR bead link, embedded-write runner rewrite, subagent actor
  * prefix. The store pin is not a command rewrite on OpenCode: `shell.create.before`
  * sets `BEADS_DIR` in the child's environment.
  */
 
-import { bdInvocations, decideActorParsed, flagEnabled, globalValue } from "@srobroek/opencode-lib/bd-actor-gate"
+import {
+  bdInvocations,
+  decideActorParsed,
+  flagEnabled,
+  globalValue,
+  isMutatingInvocation,
+} from "@srobroek/opencode-lib/bd-actor-gate"
 import {
   decideEmbeddedWrite,
   type EmbeddedWriteRunnerLookup,
@@ -25,7 +31,7 @@ import { decideBdUnclaimParsed } from "./bd-unclaim-gate.ts"
 import { decideBdUpdateCloseParsed } from "./bd-update-close-gate.ts"
 import { protectBinaryHookCommands } from "./binary-hooks.ts"
 import { admitBdMutation, type GateAdmitter } from "./gate-admission.ts"
-import { describeLedger, findLedger, ledgerRepoMismatch } from "./ledger-context.ts"
+import { describeLedger, findLedger, ledgerRepoMismatch, sameStore } from "./ledger-context.ts"
 import { decideCommandParsed, type RepositoryControl, repositoryControlFor } from "./pr-bead-link-gate.ts"
 
 /**
@@ -49,6 +55,8 @@ export type ShellGateDeps = {
   deadline: number
   runnerLookup?: () => EmbeddedWriteRunnerLookup
   repositoryControl?: (segment: string, cwd: string) => boolean | RepositoryControl
+  /** The store `options.store` pins, when the project configured one: a deliberate ledger choice, never refused as foreign. */
+  configuredStore?: string
 }
 
 const BINARY_HOOKS_NOTE = "# Beads hooks skipped to keep the existing (binary) Git hooks intact."
@@ -85,30 +93,38 @@ export function actorEnvironment(env: NodeJS.ProcessEnv, actor: string | undefin
 const TARGET_SELECTORS = ["-C", "--directory", "--db", "--database"]
 
 /**
- * Warns when a `bd create` in the command writes to a ledger of another git repository.
+ * The refusal for an issue write in the command that lands in the ledger of another git
+ * repository, unless the command line itself chose that ledger.
  *
- * Targets come from the write planner, so the advisory sees the same `cd`, `export`,
- * `unset` and command-local `BEADS_DIR` state as the lock. A command the planner cannot
- * place stays silent here; the lock refuses it.
+ * Targets come from the write planner, so this sees the same `cd`, `export`, `unset` and
+ * command-local `BEADS_DIR` state as the lock. A `BEADS_DIR` the command assigns (an
+ * `export` or a prefix) is a deliberate choice and passes; one that arrives through the
+ * environment, such as a variable inherited from the shell that started the server, does
+ * not. The plugin's own configured store (`options.store`) is a deliberate choice too.
+ * Reads and verbs that are not issue writes (`init`, `bootstrap`, `config set`) never
+ * refuse. A command the planner cannot place passes here; the lock refuses it.
  */
-export function createLedgerWarning(
+export function ledgerWriteRefusal(
   command: string,
   cwd: string,
   env: NodeJS.ProcessEnv,
-  identity: (dir: string) => string | undefined = repoIdentity,
+  options: { configuredStore?: string; identity?: (dir: string) => string | undefined } = {},
 ): string | undefined {
-  let warning: string | undefined
+  const { configuredStore, identity = repoIdentity } = options
+  let refusal: string | undefined
   planEmbeddedWrites(command, cwd, env, {
     classify: false,
-    observe: ({ invocation, store, cwd: dir }) => {
-      if (warning !== undefined || invocation.verb !== "create") return
+    observe: ({ invocation, store, cwd: dir, beadsDir, beadsDirAssigned }) => {
+      if (refusal !== undefined || !isMutatingInvocation(invocation)) return
+      if (beadsDirAssigned) return
       if (flagEnabled(invocation.globals, ["--global"])) return
       if (TARGET_SELECTORS.some((name) => globalValue(invocation.globals, [name]) !== undefined)) return
+      if (configuredStore !== undefined && beadsDir !== undefined && sameStore(beadsDir, configuredStore, dir)) return
       const target = store ?? findLedger(dir)?.store
-      if (target !== undefined) warning = ledgerRepoMismatch({ store: target, cwd: dir, identity })
+      if (target !== undefined) refusal = ledgerRepoMismatch({ verb: invocation.verb, store: target, cwd: dir, identity })
     },
   })
-  return warning
+  return refusal
 }
 
 /** Decide one `shell` call. Never throws: an unexpected error is a parse refusal. */
@@ -210,8 +226,10 @@ async function decide(original: string, cwd: string, deps: ShellGateDeps): Promi
     else if (decision.kind === "advisory") advisories.push(decision.text)
   }
 
-  const crossRepo = on("bd-embedded-write-lock") ? createLedgerWarning(command, cwd, deps.env) : undefined
-  if (crossRepo !== undefined) advisories.push(crossRepo)
+  const crossRepo = on("bd-embedded-write-lock")
+    ? ledgerWriteRefusal(command, cwd, deps.env, { configuredStore: deps.configuredStore })
+    : undefined
+  if (crossRepo !== undefined) return block("bd-embedded-write-lock", crossRepo, "use the right `workdir`, or assign BEADS_DIR in the command line itself, then retry")
 
   if (on("pr-bead-link-gate")) {
     const control = deps.repositoryControl ?? repositoryControlFor

@@ -2362,7 +2362,7 @@ function resolveBdTargets(command, cwd, env) {
   const record = (invocation, target) => {
     const key = targetKey(invocation);
     const earlier = targets.get(key);
-    const same = earlier === undefined || ("unresolved" in earlier ? "unresolved" in target : !("unresolved" in target) && earlier.store === target.store && earlier.cwd === target.cwd && earlier.beadsDir === target.beadsDir);
+    const same = earlier === undefined || ("unresolved" in earlier ? "unresolved" in target : !("unresolved" in target) && earlier.store === target.store && earlier.cwd === target.cwd && earlier.beadsDir === target.beadsDir && earlier.beadsDirAssigned === target.beadsDirAssigned);
     targets.set(key, same ? target : { unresolved: true });
   };
   const plan = planEmbeddedWrites(command, cwd, env, {
@@ -2396,7 +2396,7 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
     });
   }
   const scopes = [
-    { cwd: { kind: "known", cwd, certain: true, changed: false }, beadsDir: { kind: "known", value: env.BEADS_DIR } }
+    { cwd: { kind: "known", cwd, certain: true, changed: false }, beadsDir: { kind: "known", value: env.BEADS_DIR, assigned: false } }
   ];
   const { items } = scan;
   let compound = 0;
@@ -2452,7 +2452,7 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
           fix: "Write the plain `bd` command and let the lock generate the runner form."
         }, resolved.store);
       } else if (state.cwd.kind === "known")
-        observe?.({ invocation: child, store: resolved.store, cwd: state.cwd.cwd, beadsDir: resolved.beadsDir });
+        observe?.({ invocation: child, cwd: state.cwd.cwd, store: resolved.store, ...beadsDirOf(resolved) });
       continue;
     }
     const invocation = invocationFromArgv(shape.args.map((word) => word.value));
@@ -2467,7 +2467,7 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
     }
     const store = resolved.store;
     if (state.cwd.kind === "known")
-      observe?.({ invocation, store, cwd: state.cwd.cwd, beadsDir: resolved.beadsDir });
+      observe?.({ invocation, store, cwd: state.cwd.cwd, ...beadsDirOf(resolved) });
     else
       unresolved?.(invocation);
     if (store === undefined || !embeddedStore(store))
@@ -2679,7 +2679,7 @@ function applyEffects(shape, state, source, context) {
   }
   if (name === "unset") {
     if (args.some((word) => word.value === "BEADS_DIR") && !args.some((word) => word.value === "-f")) {
-      state.beadsDir = uncertain ? { kind: "unknown", cause: "unset BEADS_DIR" } : { kind: "known", value: undefined };
+      state.beadsDir = uncertain ? { kind: "unknown", cause: "unset BEADS_DIR" } : { kind: "known", value: undefined, assigned: false };
     }
     return;
   }
@@ -2693,8 +2693,9 @@ function assignBeadsDir(state, word, source, scoped) {
     return;
   const value = word.value.slice(match[0].length);
   const literal = !scoped && match[1] === "" && !word.expands && !DEFERRED_VALUE.test(value);
-  state.beadsDir = literal ? { kind: "known", value } : { kind: "unknown", cause: source.slice(word.start, word.end) };
+  state.beadsDir = literal ? { kind: "known", value, assigned: true } : { kind: "unknown", cause: source.slice(word.start, word.end) };
 }
+var beadsDirOf = ({ beadsDir, beadsDirAssigned }) => ({ beadsDir, beadsDirAssigned });
 function resolveWrite(invocation, assignments, state, env, source) {
   const write = `\`bd ${invocation.verb}\``;
   for (const flag of STORE_FLAGS) {
@@ -2714,7 +2715,7 @@ function resolveWrite(invocation, assignments, state, env, source) {
     if (match === null)
       continue;
     const value = word.value.slice(match[0].length);
-    beadsDir = match[1] === "" && !word.expands && !DEFERRED_VALUE.test(value) ? { kind: "known", value } : { kind: "unknown", cause: source.slice(word.start, word.end) };
+    beadsDir = match[1] === "" && !word.expands && !DEFERRED_VALUE.test(value) ? { kind: "known", value, assigned: true } : { kind: "unknown", cause: source.slice(word.start, word.end) };
   }
   const directory = globalValue(invocation.globals, ["-C", "--directory"]);
   const db = globalValue(invocation.globals, ["--db"]);
@@ -2739,7 +2740,12 @@ function resolveWrite(invocation, assignments, state, env, source) {
   }
   const value = beadsDir.kind === "known" ? beadsDir.value : undefined;
   const selected = selectedStoreFor(invocation.globals, state.cwd.cwd, { ...env, BEADS_DIR: value });
-  return { store: canonicalStore(selected), selected, beadsDir: value };
+  return {
+    store: canonicalStore(selected),
+    selected,
+    beadsDir: value,
+    beadsDirAssigned: beadsDir.kind === "known" && beadsDir.assigned
+  };
 }
 function namedStore(command, cwd, env) {
   const words = tokenize(command).flatMap((token) => token.quoted ? tokenize(token.value).map((inner) => inner.value) : [token.value]);
@@ -5792,6 +5798,9 @@ function canonical3(path) {
     return resolve8(path);
   }
 }
+function sameStore(a, b, cwd) {
+  return canonical3(resolve8(cwd, a)) === canonical3(resolve8(cwd, b));
+}
 function ledgerRepoMismatch(input) {
   const store = canonical3(input.store);
   const ledgerRoot = dirname8(store);
@@ -5803,7 +5812,7 @@ function ledgerRepoMismatch(input) {
     return;
   if (here === there)
     return;
-  return `This \`bd create\` will write to the ledger ${JSON.stringify(store)}, which belongs to ${JSON.stringify(ledgerRoot)}, not to the git repository you are in (${JSON.stringify(input.cwd)}). If that is the wrong project, pass the shell tool's \`workdir\` for the right repository (and unset BEADS_DIR) instead of \`cd\`.`;
+  return `Refused: this \`bd ${input.verb}\` would write to the ledger ${JSON.stringify(store)}, which belongs to ${JSON.stringify(ledgerRoot)}, not to the git repository you are in (${JSON.stringify(input.cwd)}), and the command did not choose that ledger (it came from the environment, e.g. an inherited BEADS_DIR). If that is the wrong project, pass the shell tool's \`workdir\` for the right repository (and unset BEADS_DIR) instead of \`cd\`. If you really mean to write to that ledger, assign BEADS_DIR in the command line itself: \`BEADS_DIR=<path> bd ${input.verb} ...\`.`;
 }
 
 // plugins/beads/opencode/src/pr-bead-link-gate.ts
@@ -6023,23 +6032,28 @@ function actorEnvironment(env, actor) {
   return { ...rest, BD_ACTOR: actor };
 }
 var TARGET_SELECTORS = ["-C", "--directory", "--db", "--database"];
-function createLedgerWarning(command, cwd, env, identity = repoIdentity) {
-  let warning;
+function ledgerWriteRefusal(command, cwd, env, options = {}) {
+  const { configuredStore, identity = repoIdentity } = options;
+  let refusal;
   planEmbeddedWrites(command, cwd, env, {
     classify: false,
-    observe: ({ invocation, store, cwd: dir }) => {
-      if (warning !== undefined || invocation.verb !== "create")
+    observe: ({ invocation, store, cwd: dir, beadsDir, beadsDirAssigned }) => {
+      if (refusal !== undefined || !isMutatingInvocation(invocation))
+        return;
+      if (beadsDirAssigned)
         return;
       if (flagEnabled(invocation.globals, ["--global"]))
         return;
       if (TARGET_SELECTORS.some((name) => globalValue(invocation.globals, [name]) !== undefined))
         return;
+      if (configuredStore !== undefined && beadsDir !== undefined && sameStore(beadsDir, configuredStore, dir))
+        return;
       const target = store ?? findLedger(dir)?.store;
       if (target !== undefined)
-        warning = ledgerRepoMismatch({ store: target, cwd: dir, identity });
+        refusal = ledgerRepoMismatch({ verb: invocation.verb, store: target, cwd: dir, identity });
     }
   });
-  return warning;
+  return refusal;
 }
 async function decideShell(command, cwd, deps) {
   try {
@@ -6103,9 +6117,9 @@ async function decide(original, cwd, deps) {
     else if (decision.kind === "advisory")
       advisories.push(decision.text);
   }
-  const crossRepo = on("bd-embedded-write-lock") ? createLedgerWarning(command, cwd, deps.env) : undefined;
+  const crossRepo = on("bd-embedded-write-lock") ? ledgerWriteRefusal(command, cwd, deps.env, { configuredStore: deps.configuredStore }) : undefined;
   if (crossRepo !== undefined)
-    advisories.push(crossRepo);
+    return block("bd-embedded-write-lock", crossRepo, "use the right `workdir`, or assign BEADS_DIR in the command line itself, then retry");
   if (on("pr-bead-link-gate")) {
     const control = deps.repositoryControl ?? repositoryControlFor;
     const decision = decideCommandParsed(parsed, (segment) => control(segment, cwd), () => {
@@ -6510,7 +6524,8 @@ async function setupBeads(ctx, deps = {}) {
       callID: event.id,
       deadline,
       runnerLookup: deps.runnerLookup,
-      repositoryControl: deps.repositoryControl
+      repositoryControl: deps.repositoryControl,
+      configuredStore: store
     });
     if (decision.kind === "block")
       throw new GateRefusal(decision.gate, decision.cause, decision.resolution);

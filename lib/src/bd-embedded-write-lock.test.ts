@@ -21,6 +21,7 @@ import {
   embeddedWriteTargets,
   hold,
   parseLinuxStatStartIdentity,
+  planEmbeddedWrites,
   release,
   resolveBunBinary,
   setPreflightWaitForTests,
@@ -1032,5 +1033,28 @@ describe("registry left by another plugin version", () => {
       holder[KEY] = previous
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe("who chose the ledger a write lands in", () => {
+  /** `beadsDirAssigned` of each observed write: did the command line itself set BEADS_DIR? */
+  const assigned = (command: string, env: NodeJS.ProcessEnv): Array<boolean | undefined> => {
+    const seen: Array<boolean | undefined> = []
+    planEmbeddedWrites(command, "/work", env, {
+      classify: false,
+      observe: (target) => seen.push(target.beadsDirAssigned),
+    })
+    return seen
+  }
+
+  test.each([
+    ["bd create --title t", false],
+    ["BEADS_DIR=/x/.beads bd create --title t", true],
+    ["export BEADS_DIR=/x/.beads; bd create --title t", true],
+    ["BEADS_DIR=/x/.beads; bd create --title t", true],
+    ["export OTHER=1; bd create --title t", false],
+    ["export BEADS_DIR=/x/.beads; unset BEADS_DIR; bd create --title t", false],
+  ])("%s -> assigned %p", (command, expected) => {
+    expect(assigned(command, { BEADS_DIR: "/inherited/.beads" })).toEqual([expected])
   })
 })

@@ -16,17 +16,28 @@ Its remote owns `refs/dolt/data`, not the code remote. Then, in the code project
 ```
 
 Match the inherited package target exactly. This entry REPLACES inherited options.
-Copy any options you need to retain. For `bd` in shells, set `mise.local.toml`:
+Copy any options you need to retain.
+
+`options.store` is the only per-project ledger setting for OpenCode. OpenCode starts
+its shared service on demand, forked from the first TUI, so the service inherits that
+shell's environment. A `BEADS_DIR` or `BD_ACTOR` set by `mise.local.toml` (or any
+per-directory env tool) in that first shell therefore applies to every session on the
+host, whatever its project. Do not use mise for the ledger of an OpenCode project.
+Use mise only to give an interactive terminal the same `BEADS_DIR`:
 
 ```toml
 [env]
 BEADS_DIR = "/absolute/path/to/ledger/.beads"
 ```
 
-The shared OpenCode server does not read mise, so the plugin needs `options.store`
-too. Run `mise exec -- bd where` from the code checkout and confirm the ledger
-path. See [Project ledger store](https://github.com/srobroek/harness-plugins/blob/main/plugins/beads/README.md#project-ledger-store) for path
+Start the shared service from a clean environment (no `BEADS_DIR`, no `BD_ACTOR`).
+Run `mise exec -- bd where` from the code checkout and confirm the ledger path. See
+[Project ledger store](https://github.com/srobroek/harness-plugins/blob/main/plugins/beads/README.md#project-ledger-store) for path
 validation and precedence.
+
+The plugin refuses an issue write when the environment chose a ledger that belongs to
+another git repository than the command's directory. `options.store` passes. So does
+`BEADS_DIR=/path bd ...` typed in the command line itself.
 
 # Claude Code
 Install the plugin with these two commands:
@@ -46,8 +57,11 @@ For a ledger in a separate repo, set the store in the project's `.claude/setting
 {"env":{"BEADS_DIR":"/absolute/path/to/ledger/.beads"}}
 ```
 
-An explicit `BEADS_DIR` wins over the pin. Skip `bd setup claude`: its hooks would add
-`bd prime` a second time.
+An explicit `BEADS_DIR` wins over the pin. Claude Code has no `options.store`, so
+when that ledger belongs to another repository than the project, write
+`BEADS_DIR=/path bd create ...` in the command line itself. Otherwise the plugin
+refuses the issue write.
+Skip `bd setup claude`: its hooks would add `bd prime` a second time.
 
 # DETECT
 When `bd where` exits 0, Beads exists in this project. Skip initialization.

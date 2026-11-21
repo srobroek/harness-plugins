@@ -2048,7 +2048,7 @@ function resolveBdTargets(command, cwd, env) {
   const record = (invocation, target) => {
     const key = targetKey(invocation);
     const earlier = targets.get(key);
-    const same = earlier === undefined || ("unresolved" in earlier ? "unresolved" in target : !("unresolved" in target) && earlier.store === target.store && earlier.cwd === target.cwd && earlier.beadsDir === target.beadsDir);
+    const same = earlier === undefined || ("unresolved" in earlier ? "unresolved" in target : !("unresolved" in target) && earlier.store === target.store && earlier.cwd === target.cwd && earlier.beadsDir === target.beadsDir && earlier.beadsDirAssigned === target.beadsDirAssigned);
     targets.set(key, same ? target : { unresolved: true });
   };
   const plan = planEmbeddedWrites(command, cwd, env, {
@@ -2082,7 +2082,7 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
     });
   }
   const scopes = [
-    { cwd: { kind: "known", cwd, certain: true, changed: false }, beadsDir: { kind: "known", value: env.BEADS_DIR } }
+    { cwd: { kind: "known", cwd, certain: true, changed: false }, beadsDir: { kind: "known", value: env.BEADS_DIR, assigned: false } }
   ];
   const { items } = scan;
   let compound = 0;
@@ -2138,7 +2138,7 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
           fix: "Write the plain `bd` command and let the lock generate the runner form."
         }, resolved.store);
       } else if (state.cwd.kind === "known")
-        observe?.({ invocation: child, store: resolved.store, cwd: state.cwd.cwd, beadsDir: resolved.beadsDir });
+        observe?.({ invocation: child, cwd: state.cwd.cwd, store: resolved.store, ...beadsDirOf(resolved) });
       continue;
     }
     const invocation = invocationFromArgv(shape.args.map((word) => word.value));
@@ -2153,7 +2153,7 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
     }
     const store = resolved.store;
     if (state.cwd.kind === "known")
-      observe?.({ invocation, store, cwd: state.cwd.cwd, beadsDir: resolved.beadsDir });
+      observe?.({ invocation, store, cwd: state.cwd.cwd, ...beadsDirOf(resolved) });
     else
       unresolved?.(invocation);
     if (store === undefined || !embeddedStore(store))
@@ -2365,7 +2365,7 @@ function applyEffects(shape, state, source, context) {
   }
   if (name === "unset") {
     if (args.some((word) => word.value === "BEADS_DIR") && !args.some((word) => word.value === "-f")) {
-      state.beadsDir = uncertain ? { kind: "unknown", cause: "unset BEADS_DIR" } : { kind: "known", value: undefined };
+      state.beadsDir = uncertain ? { kind: "unknown", cause: "unset BEADS_DIR" } : { kind: "known", value: undefined, assigned: false };
     }
     return;
   }
@@ -2379,8 +2379,9 @@ function assignBeadsDir(state, word, source, scoped) {
     return;
   const value = word.value.slice(match[0].length);
   const literal = !scoped && match[1] === "" && !word.expands && !DEFERRED_VALUE.test(value);
-  state.beadsDir = literal ? { kind: "known", value } : { kind: "unknown", cause: source.slice(word.start, word.end) };
+  state.beadsDir = literal ? { kind: "known", value, assigned: true } : { kind: "unknown", cause: source.slice(word.start, word.end) };
 }
+var beadsDirOf = ({ beadsDir, beadsDirAssigned }) => ({ beadsDir, beadsDirAssigned });
 function resolveWrite(invocation, assignments, state, env, source) {
   const write = `\`bd ${invocation.verb}\``;
   for (const flag of STORE_FLAGS) {
@@ -2400,7 +2401,7 @@ function resolveWrite(invocation, assignments, state, env, source) {
     if (match === null)
       continue;
     const value = word.value.slice(match[0].length);
-    beadsDir = match[1] === "" && !word.expands && !DEFERRED_VALUE.test(value) ? { kind: "known", value } : { kind: "unknown", cause: source.slice(word.start, word.end) };
+    beadsDir = match[1] === "" && !word.expands && !DEFERRED_VALUE.test(value) ? { kind: "known", value, assigned: true } : { kind: "unknown", cause: source.slice(word.start, word.end) };
   }
   const directory = globalValue(invocation.globals, ["-C", "--directory"]);
   const db = globalValue(invocation.globals, ["--db"]);
@@ -2425,7 +2426,12 @@ function resolveWrite(invocation, assignments, state, env, source) {
   }
   const value = beadsDir.kind === "known" ? beadsDir.value : undefined;
   const selected = selectedStoreFor(invocation.globals, state.cwd.cwd, { ...env, BEADS_DIR: value });
-  return { store: canonicalStore(selected), selected, beadsDir: value };
+  return {
+    store: canonicalStore(selected),
+    selected,
+    beadsDir: value,
+    beadsDirAssigned: beadsDir.kind === "known" && beadsDir.assigned
+  };
 }
 function namedStore(command, cwd, env) {
   const words = tokenize(command).flatMap((token) => token.quoted ? tokenize(token.value).map((inner) => inner.value) : [token.value]);
