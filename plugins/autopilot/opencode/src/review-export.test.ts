@@ -91,6 +91,14 @@ describe("exportReview", () => {
     expect(result.diffstat).toBe(join(result.dir, "diffstat.txt"))
   })
 
+  test("exports a file under a subdirectory when cwd is that subdirectory", async () => {
+    const result = await exportReview({ run: runCommand, cwd: join(repo, "sub"), runDir: mkdtempSync(join(work, "run-")), base: baseSha, head: "main" })
+    if (!result.ok) throw new Error(result.reason)
+    expect(result.files.map((file) => file.path)).toContain("sub/c.ts")
+    expect(result.skipped).toEqual([{ path: "blob.bin", reason: "binary" }])
+    expect(read(result.dir, "files", "sub", "c.ts")).toBe("export const c = 1\n")
+  })
+
   test("uses base...head: changes made only on the base side are not in the diff", async () => {
     const result = await exportReview({ run: runCommand, cwd: repo, runDir, base: "side", head: "main" })
     if (!result.ok) throw new Error(result.reason)

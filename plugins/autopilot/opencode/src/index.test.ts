@@ -52,12 +52,17 @@ let ghReplies: Record<string, { ok: boolean; stdout: string; stderr: string }>
 /** When set, sees each `gh` call and the reply the fake gave it. */
 let onGh: ((line: string, reply: { ok: boolean; stdout: string; stderr: string }) => void) | undefined
 
+/** The directory the fake sessions report. */
+const SESSION_DIRECTORY = "/repo"
+
 /** When set, the git calls `autopilot_export_review` makes run for real in this repository. */
 let realRepo: string | undefined
+/** With `realRepo`, the directory the session reports (a subdirectory of the repository); default: the repository root. */
+let realSessionDir: string | undefined
 
-const run: Run = async (_cwd, command, args, _timeout, env) => {
+const run: Run = async (cwd, command, args, _timeout, env) => {
   calls.push({ command, args, ...(env ? { env } : {}) })
-  if (realRepo !== undefined && command === "git" && args.includes("--no-optional-locks")) return runCommand(realRepo, command, args)
+  if (realRepo !== undefined && command === "git" && args.includes("--no-optional-locks")) return runCommand(cwd === SESSION_DIRECTORY ? (realSessionDir ?? realRepo) : cwd, command, args)
   const json = (value: unknown) => ({ ok: true, stdout: JSON.stringify(value), stderr: "" })
   if (command === "gh") {
     const line = args.join(" ")
@@ -187,6 +192,7 @@ beforeEach(async () => {
   ghReplies = {}
   onGh = undefined
   realRepo = undefined
+  realSessionDir = undefined
   locked = []
   lockEnvs = []
   routesText = undefined
@@ -1283,6 +1289,15 @@ describe("autopilot_export_review", () => {
     expect(readFileSync(join(out.dir, "files", "src", "b.ts"), "utf8")).toBe("export {}\n")
     expect(fake.storage.get(reviewManifestKey(7, headSha))).toEqual({ manifestHash: out.manifestHash })
     expect(verifyExport(out.dir, out.manifestHash).ok).toBe(true)
+  })
+
+  test("exports the changed files when the session directory is a subdirectory of the repository", async () => {
+    realSessionDir = join(repo, "src")
+    await armed()
+    const out = JSON.parse(await exportReview({ pr: 7, base: baseSha, head: "main" })) as { dir: string; files: { path: string }[]; skipped: unknown[] }
+    expect(out.files.map((file) => file.path)).toEqual(["src/b.ts"])
+    expect(out.skipped).toEqual([])
+    expect(readFileSync(join(out.dir, "files", "src", "b.ts"), "utf8")).toBe("export {}\n")
   })
 
   test("re-exporting a head records the new manifest hash", async () => {

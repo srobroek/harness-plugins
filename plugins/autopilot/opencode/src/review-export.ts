@@ -119,7 +119,7 @@ async function resolveCommit(run: Run, cwd: string, name: string, rev: string): 
 /** The tree entries of `paths` at `head`, or a refusal carrying git's diagnostic. Literal pathspecs: a file named like a pathspec (":(top)x") is a name here, not magic. */
 async function listTree(run: Run, cwd: string, head: string, paths: string[]): Promise<{ ok: true; tree: Map<string, TreeEntry> } | Refusal> {
   if (paths.length === 0) return { ok: true, tree: new Map() }
-  const listed = await run(cwd, "git", [...SAFE_GIT_ARGS, "--literal-pathspecs", "ls-tree", "-z", "-l", head, "--", ...paths], GIT_TIMEOUT_MS)
+  const listed = await run(cwd, "git", [...SAFE_GIT_ARGS, "--literal-pathspecs", "ls-tree", "--full-tree", "-z", "-l", head, "--", ...paths], GIT_TIMEOUT_MS)
   return listed.ok ? { ok: true, tree: parseLsTree(listed.stdout) } : refuse(`git ls-tree failed: ${diagnostic(listed.stderr)}`)
 }
 
@@ -128,7 +128,7 @@ const DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--no-textconv"]
 
 export type ExportInput = {
   run: Run
-  /** The run's repository (or any worktree of it). */
+  /** A directory inside the run's repository or one of its worktrees; the export runs git from that worktree's root. */
   cwd: string
   /** The run directory; the export goes to `<runDir>/review/<head-sha>/<manifest-hash>/`. */
   runDir: string
@@ -153,9 +153,13 @@ export type ExportInput = {
  */
 export async function exportReview(input: ExportInput): Promise<ExportResult> {
   const limits = { ...DEFAULT_LIMITS, ...input.limits }
-  const { run, cwd } = input
+  const { run } = input
   const refusal = revRefusal("base", input.base) ?? revRefusal("head", input.head)
   if (refusal !== undefined) return refuse(refusal)
+  // Diff paths are repository-relative, so every later git call runs from the worktree root, whatever directory the caller is in.
+  const top = await run(input.cwd, "git", [...SAFE_GIT_ARGS, "rev-parse", "--show-toplevel"], GIT_TIMEOUT_MS)
+  const cwd = top.stdout.trim()
+  if (!top.ok || cwd === "") return refuse(`${input.cwd} is not inside a git worktree`)
   const base = await resolveCommit(run, cwd, "base", input.base as string)
   if (!base.ok) return base
   const head = await resolveCommit(run, cwd, "head", input.head as string)
