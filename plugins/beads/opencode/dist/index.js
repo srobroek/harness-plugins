@@ -5243,8 +5243,6 @@ var GLOBAL_VALUE_FLAGS = new Set([
   "--dolt-auto-commit",
   "--mem-profile"
 ]);
-var SEPARATORS2 = new Set([";", "&", "|", "&&", "||", "(", ")", "{", "}", `
-`]);
 var GIT_PROBE_TIMEOUT_MS = 5000;
 function runGit(cwd, args) {
   const result = spawnSync3("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: GIT_PROBE_TIMEOUT_MS });
@@ -5291,82 +5289,6 @@ function hasBinaryHooks(cwd, git = runGit) {
     return false;
   }
 }
-function commandChunks(command) {
-  const chunks = [];
-  let start = 0;
-  let quote = null;
-  for (let index = 0;index < command.length; index++) {
-    const character = command[index] ?? "";
-    if (quote !== null) {
-      if (character === quote)
-        quote = null;
-      else if (quote === '"' && character === "\\")
-        index++;
-      continue;
-    }
-    if (character === "'" || character === '"') {
-      quote = character;
-      continue;
-    }
-    if (character === "\\") {
-      index++;
-      continue;
-    }
-    if (SEPARATORS2.has(character)) {
-      chunks.push({ start, end: index });
-      if ((character === "&" || character === "|") && command[index + 1] === character)
-        index++;
-      start = index + 1;
-    }
-  }
-  chunks.push({ start, end: command.length });
-  return chunks;
-}
-function wordSpans(source) {
-  const words = [];
-  let index = 0;
-  while (index < source.length) {
-    while (index < source.length && /\s/.test(source[index] ?? ""))
-      index++;
-    if (index >= source.length)
-      break;
-    const start = index;
-    let value = "";
-    let quote = null;
-    while (index < source.length) {
-      const character = source[index] ?? "";
-      if (quote !== null) {
-        if (character === quote)
-          quote = null;
-        else if (quote === '"' && character === "\\" && index + 1 < source.length)
-          value += source[++index] ?? "";
-        else
-          value += character;
-        index++;
-        continue;
-      }
-      if (character === "'" || character === '"') {
-        quote = character;
-        index++;
-        continue;
-      }
-      if (character === "\\" && index + 1 < source.length) {
-        value += source[index + 1] ?? "";
-        index += 2;
-        continue;
-      }
-      if (/\s/.test(character) || SEPARATORS2.has(character))
-        break;
-      value += character;
-      index++;
-    }
-    if (index === start)
-      index++;
-    else
-      words.push({ value, start, end: index });
-  }
-  return words;
-}
 function initVerbIndex(words) {
   let index = words.findIndex((word) => (word.value.split("/").pop() ?? word.value) === "bd");
   if (index < 0)
@@ -5385,20 +5307,26 @@ function initVerbIndex(words) {
   return;
 }
 function rewriteInitCalls(command) {
+  const scan = scanShell(command);
+  if (!scan.complete)
+    return;
   const insertions = [];
-  for (const chunk of commandChunks(command)) {
-    const source = command.slice(chunk.start, chunk.end);
-    const parsed = parse(source);
+  for (const item of scan.items) {
+    if (item.kind !== "command")
+      continue;
+    const first = item.words[0];
+    const last = item.words.at(-1);
+    if (first === undefined || last === undefined)
+      continue;
+    const parsed = parse(command.slice(first.start, last.end));
     if (parsed.unknown || parsed.commands.length !== 1)
       continue;
-    const invocation = parsedInvocations2(parsed).find((item) => item.verb === "init");
+    const invocation = parsedInvocations2(parsed).find((candidate) => candidate.verb === "init");
     if (invocation === undefined || invocation.args.includes("--skip-hooks"))
       continue;
-    const words = wordSpans(source);
-    const verbIndex = initVerbIndex(words);
-    if (verbIndex === undefined)
-      continue;
-    insertions.push(chunk.start + (words[verbIndex]?.end ?? 0));
+    const verb = item.words[initVerbIndex(item.words) ?? -1];
+    if (verb !== undefined)
+      insertions.push(verb.end);
   }
   if (insertions.length === 0)
     return;

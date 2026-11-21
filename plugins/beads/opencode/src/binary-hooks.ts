@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process"
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, realpathSync, statSync } from "node:fs"
 import { isAbsolute, join, resolve, sep } from "node:path"
-import { parse, parsedInvocations } from "@srobroek/opencode-lib/beads-shell"
+import { parse, parsedInvocations, type ShellWord, scanShell } from "@srobroek/opencode-lib/beads-shell"
 
 const BINARY_MAGICS = [
   [0xfe, 0xed, 0xfa, 0xce],
@@ -24,12 +24,9 @@ const GLOBAL_VALUE_FLAGS = new Set([
   "--dolt-auto-commit",
   "--mem-profile",
 ])
-const SEPARATORS = new Set([";", "&", "|", "&&", "||", "(", ")", "{", "}", "\n"])
 
 type GitResult = { status: number | null; stdout: string }
 type GitRunner = (cwd: string, args: string[]) => GitResult
-type CommandChunk = { start: number; end: number }
-type WordSpan = { value: string; start: number; end: number }
 
 /**
  * A probe that times out reads as "no binary hooks", which lets `bd init` rewrite them,
@@ -89,76 +86,7 @@ export function hasBinaryHooks(cwd: string, git: GitRunner = runGit): boolean {
   }
 }
 
-/** Split at shell operators outside quotes, preserving source offsets. */
-function commandChunks(command: string): CommandChunk[] {
-  const chunks: CommandChunk[] = []
-  let start = 0
-  let quote: "'" | '"' | null = null
-  for (let index = 0; index < command.length; index++) {
-    const character = command[index] ?? ""
-    if (quote !== null) {
-      if (character === quote) quote = null
-      else if (quote === '"' && character === "\\") index++
-      continue
-    }
-    if (character === "'" || character === '"') {
-      quote = character
-      continue
-    }
-    if (character === "\\") {
-      index++
-      continue
-    }
-    if (SEPARATORS.has(character)) {
-      chunks.push({ start, end: index })
-      if ((character === "&" || character === "|") && command[index + 1] === character) index++
-      start = index + 1
-    }
-  }
-  chunks.push({ start, end: command.length })
-  return chunks
-}
-
-/** Offsets for shell words in a separator-free command fragment. */
-function wordSpans(source: string): WordSpan[] {
-  const words: WordSpan[] = []
-  let index = 0
-  while (index < source.length) {
-    while (index < source.length && /\s/.test(source[index] ?? "")) index++
-    if (index >= source.length) break
-    const start = index
-    let value = ""
-    let quote: "'" | '"' | null = null
-    while (index < source.length) {
-      const character = source[index] ?? ""
-      if (quote !== null) {
-        if (character === quote) quote = null
-        else if (quote === '"' && character === "\\" && index + 1 < source.length) value += source[++index] ?? ""
-        else value += character
-        index++
-        continue
-      }
-      if (character === "'" || character === '"') {
-        quote = character
-        index++
-        continue
-      }
-      if (character === "\\" && index + 1 < source.length) {
-        value += source[index + 1] ?? ""
-        index += 2
-        continue
-      }
-      if (/\s/.test(character) || SEPARATORS.has(character)) break
-      value += character
-      index++
-    }
-    if (index === start) index++
-    else words.push({ value, start, end: index })
-  }
-  return words
-}
-
-function initVerbIndex(words: WordSpan[]): number | undefined {
+function initVerbIndex(words: readonly ShellWord[]): number | undefined {
   let index = words.findIndex((word) => (word.value.split("/").pop() ?? word.value) === "bd")
   if (index < 0) return undefined
   index++
@@ -174,17 +102,21 @@ function initVerbIndex(words: WordSpan[]): number | undefined {
 
 /** Add --skip-hooks to direct `bd init` calls while preserving all original shell text. */
 function rewriteInitCalls(command: string): string | undefined {
+  const scan = scanShell(command)
+  // An unterminated quote or here-document: the offsets cannot be trusted, so the caller blocks.
+  if (!scan.complete) return undefined
   const insertions: number[] = []
-  for (const chunk of commandChunks(command)) {
-    const source = command.slice(chunk.start, chunk.end)
-    const parsed = parse(source)
+  for (const item of scan.items) {
+    if (item.kind !== "command") continue
+    const first = item.words[0]
+    const last = item.words.at(-1)
+    if (first === undefined || last === undefined) continue
+    const parsed = parse(command.slice(first.start, last.end))
     if (parsed.unknown || parsed.commands.length !== 1) continue
-    const invocation = parsedInvocations(parsed).find((item) => item.verb === "init")
+    const invocation = parsedInvocations(parsed).find((candidate) => candidate.verb === "init")
     if (invocation === undefined || invocation.args.includes("--skip-hooks")) continue
-    const words = wordSpans(source)
-    const verbIndex = initVerbIndex(words)
-    if (verbIndex === undefined) continue
-    insertions.push(chunk.start + (words[verbIndex]?.end ?? 0))
+    const verb = item.words[initVerbIndex(item.words) ?? -1]
+    if (verb !== undefined) insertions.push(verb.end)
   }
   if (insertions.length === 0) return undefined
   let rewritten = command
