@@ -5359,28 +5359,19 @@ async function evictSessions(api, options) {
 
 // lib/src/worktree-locks.ts
 import { createHash as createHash3, randomUUID as randomUUID2 } from "crypto";
-import { accessSync, constants as constants5, mkdirSync as mkdirSync5, readdirSync as readdirSync3, readFileSync as readFileSync6, renameSync as renameSync2, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "fs";
+import { accessSync, constants as constants4, mkdirSync as mkdirSync5, readdirSync as readdirSync3, readFileSync as readFileSync6, renameSync as renameSync2, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "fs";
 import { join as join7 } from "path";
 
 // lib/src/lease-lock.ts
 import { AsyncLocalStorage } from "async_hooks";
 import { randomUUID } from "crypto";
-import { closeSync as closeSync3, constants as constants4, fstatSync as fstatSync3, lstatSync as lstatSync5, openSync as openSync3, readSync as readSync3, statSync, unlinkSync as unlinkSync2, writeSync } from "fs";
+import { closeSync as closeSync3, openSync as openSync3, statSync, unlinkSync as unlinkSync2, writeSync } from "fs";
 import { hostname } from "os";
 var LEASE_MS = 120000;
 var RENEW_MS = 20000;
 var WAIT_MS = 120000;
 var POLL_MS = 20;
 var POLL_MAX_MS = 400;
-var MAX_RECORD_BYTES = 64 * 1024;
-function processAlive3(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === "EPERM";
-  }
-}
 function parseLeaseRecord(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     return;
@@ -5398,31 +5389,6 @@ function leaseAbandoned(record, facts) {
     return true;
   return facts.now > record.expires;
 }
-function readBounded3(path) {
-  let fd;
-  try {
-    if (!lstatSync5(path).isFile())
-      return { kind: "unreadable" };
-    fd = openSync3(path, constants4.O_RDONLY | constants4.O_NOFOLLOW | constants4.O_NONBLOCK);
-    const info = fstatSync3(fd);
-    if (!info.isFile() || info.size > MAX_RECORD_BYTES)
-      return { kind: "unreadable" };
-    const buffer = Buffer.alloc(info.size);
-    let offset = 0;
-    while (offset < buffer.length) {
-      const read = readSync3(fd, buffer, offset, buffer.length - offset, offset);
-      if (read === 0)
-        break;
-      offset += read;
-    }
-    return { kind: "text", text: buffer.toString("utf8", 0, offset) };
-  } catch (error) {
-    return error.code === "ENOENT" ? { kind: "absent" } : { kind: "unreadable" };
-  } finally {
-    if (fd !== undefined)
-      closeSync3(fd);
-  }
-}
 var insideLock = new AsyncLocalStorage;
 var stealPathFor = (lock) => `${lock}.steal`;
 function backoffDelayMs(attempt, random = Math.random) {
@@ -5437,7 +5403,7 @@ var ageOf = (path, now) => {
   }
 };
 function abandoned(path, c) {
-  const record = readBounded3(path);
+  const record = readBounded(path);
   if (record.kind !== "text")
     return false;
   let parsed;
@@ -5454,7 +5420,7 @@ var recordFor = (c, token) => {
 };
 function stillOurs(lock, token, host) {
   try {
-    const record = readBounded3(lock);
+    const record = readBounded(lock);
     if (record.kind !== "text")
       return false;
     const parsed = parseLeaseRecord(JSON.parse(record.text));
@@ -5531,7 +5497,7 @@ async function withLease(lockPath, options, work) {
     steal: stealPathFor(lockPath),
     now: options.now ?? Date.now,
     host: options.host ?? hostname().split(".")[0] ?? "localhost",
-    alive: options.alive ?? processAlive3,
+    alive: options.alive ?? processAlive,
     leaseMs: options.leaseMs ?? LEASE_MS,
     owner: options.owner,
     afterJudged: options.seams?.afterJudged
@@ -5554,7 +5520,7 @@ async function withLease(lockPath, options, work) {
       const code = error.code;
       if (code !== "EEXIST")
         return { kind: "failed", reason: `the lock at ${lockPath} could not be taken (${code ?? "unknown error"})` };
-      if (readBounded3(lockPath).kind === "unreadable" || readBounded3(c.steal).kind === "unreadable") {
+      if (readBounded(lockPath).kind === "unreadable" || readBounded(c.steal).kind === "unreadable") {
         return { kind: "failed", reason: `the lock path ${lockPath} (or its steal lock) is not a small regular file, so its holder cannot be read safely` };
       }
       takeOverIfAbandoned(c);

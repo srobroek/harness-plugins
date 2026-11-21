@@ -872,14 +872,10 @@ function hostWarn(source) {
 // lib/src/lease-lock.ts
 import { AsyncLocalStorage } from "async_hooks";
 import { randomUUID } from "crypto";
-import { closeSync as closeSync3, constants as constants2, fstatSync as fstatSync2, lstatSync as lstatSync3, openSync as openSync3, readSync as readSync2, statSync as statSync3, unlinkSync as unlinkSync2, writeSync as writeSync2 } from "fs";
+import { closeSync as closeSync3, openSync as openSync3, statSync as statSync3, unlinkSync as unlinkSync2, writeSync as writeSync2 } from "fs";
 import { hostname as hostname2 } from "os";
-var LEASE_MS2 = 120000;
-var RENEW_MS2 = 20000;
-var WAIT_MS2 = 120000;
-var POLL_MS2 = 20;
-var POLL_MAX_MS2 = 400;
-var MAX_RECORD_BYTES = 64 * 1024;
+
+// lib/src/subprocess.ts
 function processAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -888,6 +884,13 @@ function processAlive(pid) {
     return error.code === "EPERM";
   }
 }
+
+// lib/src/lease-lock.ts
+var LEASE_MS2 = 120000;
+var RENEW_MS2 = 20000;
+var WAIT_MS2 = 120000;
+var POLL_MS2 = 20;
+var POLL_MAX_MS2 = 400;
 function parseLeaseRecord(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     return;
@@ -905,31 +908,6 @@ function leaseAbandoned(record, facts) {
     return true;
   return facts.now > record.expires;
 }
-function readBounded2(path) {
-  let fd;
-  try {
-    if (!lstatSync3(path).isFile())
-      return { kind: "unreadable" };
-    fd = openSync3(path, constants2.O_RDONLY | constants2.O_NOFOLLOW | constants2.O_NONBLOCK);
-    const info = fstatSync2(fd);
-    if (!info.isFile() || info.size > MAX_RECORD_BYTES)
-      return { kind: "unreadable" };
-    const buffer = Buffer.alloc(info.size);
-    let offset = 0;
-    while (offset < buffer.length) {
-      const read = readSync2(fd, buffer, offset, buffer.length - offset, offset);
-      if (read === 0)
-        break;
-      offset += read;
-    }
-    return { kind: "text", text: buffer.toString("utf8", 0, offset) };
-  } catch (error) {
-    return error.code === "ENOENT" ? { kind: "absent" } : { kind: "unreadable" };
-  } finally {
-    if (fd !== undefined)
-      closeSync3(fd);
-  }
-}
 var insideLock = new AsyncLocalStorage;
 var stealPathFor = (lock) => `${lock}.steal`;
 function backoffDelayMs2(attempt, random = Math.random) {
@@ -944,7 +922,7 @@ var ageOf2 = (path, now) => {
   }
 };
 function abandoned2(path, c) {
-  const record = readBounded2(path);
+  const record = readBounded(path);
   if (record.kind !== "text")
     return false;
   let parsed;
@@ -961,7 +939,7 @@ var recordFor = (c, token) => {
 };
 function stillOurs2(lock, token, host) {
   try {
-    const record = readBounded2(lock);
+    const record = readBounded(lock);
     if (record.kind !== "text")
       return false;
     const parsed = parseLeaseRecord(JSON.parse(record.text));
@@ -1061,7 +1039,7 @@ async function withLease(lockPath, options, work) {
       const code = error.code;
       if (code !== "EEXIST")
         return { kind: "failed", reason: `the lock at ${lockPath} could not be taken (${code ?? "unknown error"})` };
-      if (readBounded2(lockPath).kind === "unreadable" || readBounded2(c.steal).kind === "unreadable") {
+      if (readBounded(lockPath).kind === "unreadable" || readBounded(c.steal).kind === "unreadable") {
         return { kind: "failed", reason: `the lock path ${lockPath} (or its steal lock) is not a small regular file, so its holder cannot be read safely` };
       }
       takeOverIfAbandoned2(c);
@@ -1774,7 +1752,7 @@ import {
   readdirSync as readdirSync2,
   readFileSync as readFileSync3,
   readlinkSync,
-  readSync as readSync3,
+  readSync as readSync2,
   renameSync,
   rmSync,
   statSync as statSync4,
@@ -2029,7 +2007,7 @@ class RunDir {
       const size = statSync4(this.journalPath).size;
       if (size > 0) {
         const last = Buffer.alloc(1);
-        readSync3(fd, last, 0, 1, size - 1);
+        readSync2(fd, last, 0, 1, size - 1);
         if (last[0] !== 10)
           ftruncateSync(fd, this.#lastLineEnd(fd, size));
       }
@@ -2043,7 +2021,7 @@ class RunDir {
   }
   #lastLineEnd(fd, size) {
     const buffer = Buffer.alloc(size);
-    readSync3(fd, buffer, 0, size, 0);
+    readSync2(fd, buffer, 0, size, 0);
     return buffer.lastIndexOf(10) + 1;
   }
   journal() {
