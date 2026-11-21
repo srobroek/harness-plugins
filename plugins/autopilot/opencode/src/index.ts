@@ -4,13 +4,13 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Plugin } from "@opencode/plugin"
 import type { Context } from "@opencode/plugin/promise/plugin"
-import { readBoundedBytes } from "@srobroek/opencode-lib/bounded-read"
 import { withEmbeddedWriteLock } from "@srobroek/opencode-lib/bd-embedded-write-lock"
+import { readBoundedBytes } from "@srobroek/opencode-lib/bounded-read"
 import { hostWarn, type Warn } from "@srobroek/opencode-lib/host-log"
 import { withLease } from "@srobroek/opencode-lib/lease-lock"
 import { SAFE_GIT_ARGS } from "@srobroek/opencode-lib/safe-git"
 import { registerSkills } from "@srobroek/opencode-lib/skill-files"
-import { classifyScope, deadlineAt, type Grant, GRANTS, type Invocation, parseInvocation, type RunOptions } from "./args.ts"
+import { classifyScope, deadlineAt, GRANTS, type Grant, type Invocation, parseInvocation, type RunOptions } from "./args.ts"
 import { automationRequest, type TickBinding } from "./automation.ts"
 import { Activity, BD_READ_TIMEOUT_MS, type BeadView, childFrom, commitCount, readBeads, type SessionView, sessionBusy } from "./gather.ts"
 import { type JournalEntry, LOG_INPUT_SCHEMA, validateEntry } from "./journal.ts"
@@ -43,14 +43,14 @@ import {
   buildReviewPrompt,
   hashText,
   MAX_REVIEW_DIFF_BYTES,
-  readPointer,
   REVIEW_AGENT,
   type ReviewPointer,
   type ReviewResolution,
+  readPointer,
+  resolveReview,
   reviewMetadata,
   reviewPointerKey,
   reviewPointerPrefix,
-  resolveReview,
 } from "./review-session.ts"
 import { autopilotRoot, findRun, type Run, RunDir, RunFileError, runCommand } from "./rundir.ts"
 import { countBeads, newRunState, type RunState, runIdFor, type Snapshot, TICK_MS, tick, tickPrompt } from "./state.ts"

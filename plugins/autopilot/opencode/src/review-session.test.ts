@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { buildReviewPrompt, hashText, readPointer, type ReviewPointer, resolveReview, REVIEW_AGENT, reviewMetadata, reviewPointerKey } from "./review-session.ts"
+import { buildReviewPrompt, hashText, REVIEW_AGENT, type ReviewPointer, readPointer, resolveReview, reviewMetadata, reviewPointerKey } from "./review-session.ts"
 
 const SHA = "a".repeat(40)
 const OTHER = "b".repeat(40)

@@ -7,46 +7,6 @@ import { join as join5 } from "path";
 import { fileURLToPath } from "url";
 import { Plugin } from "@opencode/plugin";
 
-// lib/src/bounded-read.ts
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "fs";
-var MAX_LEDGER_FILE_BYTES = 64 * 1024;
-function readBoundedBytes(path, maxBytes) {
-  let fd;
-  try {
-    if (!lstatSync(path).isFile())
-      return { kind: "unreadable", reason: "not-regular" };
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    const info = fstatSync(fd);
-    if (!info.isFile())
-      return { kind: "unreadable", reason: "not-regular" };
-    if (info.size > maxBytes)
-      return { kind: "unreadable", reason: "too-large" };
-    const buffer = Buffer.alloc(info.size);
-    let offset = 0;
-    while (offset < buffer.length) {
-      const read = readSync(fd, buffer, offset, buffer.length - offset, offset);
-      if (read === 0)
-        break;
-      offset += read;
-    }
-    return { kind: "bytes", bytes: offset === buffer.length ? buffer : buffer.subarray(0, offset) };
-  } catch (error) {
-    const code = error.code;
-    if (code === "ENOENT")
-      return { kind: "absent" };
-    return { kind: "unreadable", reason: code === "ELOOP" ? "not-regular" : "io" };
-  } finally {
-    if (fd !== undefined)
-      closeSync(fd);
-  }
-}
-function readBounded(path) {
-  const read = readBoundedBytes(path, MAX_LEDGER_FILE_BYTES);
-  if (read.kind === "absent")
-    return { kind: "absent" };
-  return read.kind === "bytes" ? { kind: "text", text: read.bytes.toString("utf8") } : { kind: "unreadable" };
-}
-
 // lib/src/bd-embedded-write-lock.ts
 import { spawnSync as spawnSync2 } from "child_process";
 import {
@@ -353,7 +313,7 @@ var TRUTHY = { "": true, "1": true, t: true, T: true, TRUE: true, true: true, Tr
 
 // lib/src/beads-store.ts
 import { spawnSync } from "child_process";
-import { lstatSync as lstatSync2, realpathSync, statSync } from "fs";
+import { lstatSync, realpathSync, statSync } from "fs";
 import { dirname, isAbsolute, resolve } from "path";
 function repoIdentity(cwd) {
   if (cwd.includes("\x00"))
@@ -387,7 +347,7 @@ function repositoryState(cwd) {
   }
   for (;; ) {
     try {
-      lstatSync2(resolve(current, ".git"));
+      lstatSync(resolve(current, ".git"));
       return "present";
     } catch (error) {
       if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT")
@@ -426,6 +386,46 @@ function isDir(path) {
   } catch {
     return false;
   }
+}
+
+// lib/src/bounded-read.ts
+import { closeSync, constants, fstatSync, lstatSync as lstatSync2, openSync, readSync } from "fs";
+var MAX_LEDGER_FILE_BYTES = 64 * 1024;
+function readBoundedBytes(path, maxBytes) {
+  let fd;
+  try {
+    if (!lstatSync2(path).isFile())
+      return { kind: "unreadable", reason: "not-regular" };
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const info = fstatSync(fd);
+    if (!info.isFile())
+      return { kind: "unreadable", reason: "not-regular" };
+    if (info.size > maxBytes)
+      return { kind: "unreadable", reason: "too-large" };
+    const buffer = Buffer.alloc(info.size);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const read = readSync(fd, buffer, offset, buffer.length - offset, offset);
+      if (read === 0)
+        break;
+      offset += read;
+    }
+    return { kind: "bytes", bytes: offset === buffer.length ? buffer : buffer.subarray(0, offset) };
+  } catch (error) {
+    const code = error.code;
+    if (code === "ENOENT")
+      return { kind: "absent" };
+    return { kind: "unreadable", reason: code === "ELOOP" ? "not-regular" : "io" };
+  } finally {
+    if (fd !== undefined)
+      closeSync(fd);
+  }
+}
+function readBounded(path) {
+  const read = readBoundedBytes(path, MAX_LEDGER_FILE_BYTES);
+  if (read.kind === "absent")
+    return { kind: "absent" };
+  return read.kind === "bytes" ? { kind: "text", text: read.bytes.toString("utf8") } : { kind: "unreadable" };
 }
 
 // lib/src/bd-embedded-write-lock.ts
