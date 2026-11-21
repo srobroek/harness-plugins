@@ -41,12 +41,12 @@ export const RECIPES: readonly Recipe[] = [
     install: "bunx",
     package: "@biomejs/biome",
     args: ["lint", "--config-path={cfg}", "--reporter=json", "--max-diagnostics=1000", "--", "{files}"],
-    // vcs.useIgnoreFile makes biome fail outside a git repository or without a .gitignore.
-    configFiles: ({ hasGitignore }) => ({
+    // vcs.useIgnoreFile fails without a .gitignore, and the temp config does not sit in the repo, so vcs.root names it.
+    configFiles: ({ root, hasGitignore }) => ({
       "biome.json": JSON.stringify({
         root: true,
         linter: { enabled: true, rules: { recommended: false, complexity: "on", performance: "on", suspicious: "on" } },
-        ...(hasGitignore ? { vcs: { enabled: true, clientKind: "git", useIgnoreFile: true } } : {}),
+        ...(hasGitignore ? { vcs: { enabled: true, clientKind: "git", useIgnoreFile: true, root } } : {}),
       }),
     }),
     needsBuild: false,
@@ -90,8 +90,11 @@ export const RECIPES: readonly Recipe[] = [
     package: "eslint",
     // @e18e/eslint-plugin replaces eslint-plugin-depend (its ban-dependencies rule); 0.8.1 verified.
     args: ["--no-config-lookup", "-c", "{cfg}/eslint.config.mjs", "-f", "json", "--", "{files}"],
+    // The config is written into the tools directory ({cfg} is that directory for tool-dir recipes),
+    // because the plugin import resolves from the config file's location.
     configFiles: () => ({
-      "eslint.config.mjs": 'import e18e from "@e18e/eslint-plugin"\nexport default [e18e.configs.recommended]\n',
+      "eslint.config.mjs":
+        'import e18e from "@e18e/eslint-plugin"\nexport default [{ ignores: ["**/node_modules/**", "**/dist/**", "**/build/**", "**/coverage/**"] }, e18e.configs.recommended]\n',
     }),
     needsBuild: false,
     acceptedExitCodes: [0, 1],
@@ -108,6 +111,8 @@ export const RECIPES: readonly Recipe[] = [
     install: "bunx",
     package: "knip",
     args: ["--reporter", "json", "--no-progress", "--include", "files,exports,types,dependencies"],
+    executes:
+      "loads and executes the repository's knip and tool config files (JS/TS) and plugin code",
     needsBuild: false,
     acceptedExitCodes: [0, 1],
     parser: "knip-json",
@@ -195,6 +200,8 @@ export const RECIPES: readonly Recipe[] = [
     install: "uvx",
     package: "import-linter",
     args: ["--no-cache"],
+    executes:
+      "imports custom contract classes named in the repository's import-linter config",
     needsBuild: false,
     acceptedExitCodes: [0, 1],
     parser: "import-linter-text",
@@ -231,6 +238,8 @@ export const RECIPES: readonly Recipe[] = [
       "--show-stats=false",
       "./...",
     ],
+    executes:
+      "compiles the module (cgo may run C compilers), may fetch modules or a Go toolchain; writes the Go build and module caches",
     needsBuild: true,
     acceptedExitCodes: [0, 1],
     parser: "golangci-json",
@@ -247,6 +256,8 @@ export const RECIPES: readonly Recipe[] = [
     package: "golang.org/x/tools",
     subpath: "cmd/deadcode",
     args: ["-json", "./..."],
+    executes:
+      "compiles the module (cgo may run C compilers), may fetch modules or a Go toolchain; writes the Go build and module caches",
     needsBuild: true,
     acceptedExitCodes: [0],
     parser: "deadcode-json",
@@ -293,6 +304,8 @@ export const RECIPES: readonly Recipe[] = [
       "-W",
       "clippy::manual_ok_or",
     ],
+    executes:
+      "builds the crate: runs its build scripts and procedural macros, fetches crates; writes target/ and the cargo caches",
     needsBuild: true,
     acceptedExitCodes: [0],
     parser: "clippy-json",

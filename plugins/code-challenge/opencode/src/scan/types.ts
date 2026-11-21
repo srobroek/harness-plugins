@@ -27,7 +27,8 @@ export type Candidate = {
   lens: Lens
   tool: string
   rule: string
-  file: string
+  /** Root-relative path; null when the analyzer's module could not be mapped to a file. */
+  file: string | null
   line: number | null
   message: string
   /** Whether the repo's own config enables the rule; null when that is not cheap to tell. */
@@ -35,7 +36,7 @@ export type Candidate = {
 }
 
 /** What a parser extracts before lens and repo-config tagging. */
-export type Hit = { rule: string; file: string; line: number | null; message: string }
+export type Hit = { rule: string; file: string | null; line: number | null; message: string }
 
 export type ParserId =
   | "biome-json"
@@ -62,7 +63,7 @@ export type ParserId =
  */
 export type InstallKind = "local" | "bunx" | "uvx" | "go-run" | "tool-dir"
 
-export type RecipeContext = { root: string; hasGitignore: boolean }
+export type RecipeContext = { root: string; hasGitignore: boolean; toolsDir: string }
 
 export type Recipe = {
   id: string
@@ -88,6 +89,11 @@ export type Recipe = {
   configFiles?: (ctx: RecipeContext) => Record<string, string>
   /** The recipe reads this file under `{out}` instead of stdout. */
   outputFile?: string
+  /**
+   * Set when the tool executes repository code or writes build output: what it runs and writes.
+   * Such a recipe only runs after the caller consented for the root.
+   */
+  executes?: string
   /** Quick depth skips recipes that need a build or type-check. */
   needsBuild: boolean
   acceptedExitCodes: readonly number[]
