@@ -12,6 +12,7 @@ metadata:
 - `lock busy: held by another process`
 - `lock already held by another process`
 - `workspace gate busy`
+- `The Beads ledger is busy: other writers held the embedded write lock at ...` (the embedded-write lock's own message; the rest names the lock path, wait time and holder, and ends `Retry the same command, as its own simple command; do not remove the lock.`)
 
 Any of these is contention, not a failure. The embedded store is single-writer by design.
 Ordinary commands share a cooperative gate. Maintenance takes the gate exclusively.
