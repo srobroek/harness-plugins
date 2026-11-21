@@ -256,6 +256,51 @@ describe("decideShell", () => {
       },
     )
 
+    test.each([
+      ["flock LOCKFILE bd create --title t"],
+      ["taskset 0x1 bd create --title t"],
+      ["timeout 5 bd show x-1"],
+      ["nice -n 5 bd close x-1"],
+      ["ionice -c 3 bd create --title t"],
+      ["sudo -u build bd create --title t"],
+      ["find . -exec bd close {} ;"],
+      ["xargs bd show"],
+      ["exec bd create --title t"],
+    ])("a wrapper followed by bd is refused without parsing while the ambient ledger is foreign: %j", async (command) => {
+      const decision = await decideShell(command, repoA, deps({ env: leaked() }))
+      if (decision.kind !== "block") throw new Error(JSON.stringify(decision))
+      expect(decision.cause).toContain(realpathSync(join(repoB, ".beads")))
+    })
+
+    test.each([["flock LOCKFILE bd create --title t"], ["taskset 0x1 bd create --title t"], ["timeout 5 bd show x-1"]])(
+      "the refusal for a wrapped bd names the fix: BEADS_DIR=<path> on the command line, or bd on its own: %j",
+      (command) => {
+        const refusal = ledgerWriteRefusal(command, repoA, leaked())
+        expect(refusal).toContain("BEADS_DIR=<path>")
+        expect(refusal).toContain("its own simple command")
+      },
+    )
+
+    test.each([["flock LOCKFILE bd create --title t"], ["taskset 0x1 bd create --title t"]])(
+      "the same wrapped form passes in the own-ledger case and with options.store: %j",
+      async (command) => {
+        const own = { PATH: process.env.PATH, BEADS_DIR: join(repoA, ".beads") }
+        expect((await decideShell(command, repoA, deps({ env: own }))).kind).toBe("allow")
+        const configuredStore = join(repoB, ".beads")
+        expect(ledgerWriteRefusal(command, repoA, leaked(), { configuredStore })).toBeUndefined()
+      },
+    )
+
+    test.each([
+      [(b: string) => `BEADS_DIR=${b} bd create --title t`],
+      [(b: string) => `BEADS_DIR=${b} flock LOCKFILE bd create --title t`],
+      [(b: string) => `BEADS_DIR=${b} taskset 0x1 bd create --title t`],
+    ])("a literal BEADS_DIR= on the command line stays the override, wrapped or not: %#", async (build) => {
+      const command = build(join(repoB, ".beads"))
+      expect(ledgerWriteRefusal(command, repoA, leaked())).toBeUndefined()
+      expect((await decideShell(`BEADS_DIR=${join(repoB, ".beads")} bd create --title t`, repoA, deps({ env: leaked() }))).kind).toBe("allow")
+    })
+
     test("the gate itself refuses a quoted xargs launcher the shell parser would also refuse", () => {
       const foreign = { PATH: process.env.PATH, BEADS_DIR: join(repoB, ".beads") }
       expect(ledgerWriteRefusal("echo proj-1 | xargs 'bd' close", repoA, foreign)).toContain("its own simple command")

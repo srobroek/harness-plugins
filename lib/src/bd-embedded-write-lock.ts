@@ -889,6 +889,10 @@ export function planEmbeddedWrites(
     if (shape.kind === "other") {
       const launch = launchOf(shape, item, command)
       if (launch !== undefined) refuse(launch)
+      else {
+        const wrapper = wrapperNamesBd(shape)
+        if (wrapper !== undefined) unplaced?.(`\`bd\` follows the wrapper \`${wrapper}\``)
+      }
       const before = operatorAt(items, index - 1)
       const after = operatorAt(items, index + 1)
       applyEffects(shape, state, command, {
@@ -1131,6 +1135,26 @@ function runsBdBehind(head: ShellWord, args: ShellWord[]): boolean {
     return runsBdBehind(word, args.slice(i + 1))
   }
   return false
+}
+
+/**
+ * Whether a recognised wrapper is followed anywhere in this simple command by a word that
+ * unquotes to `bd`, with no `BEADS_DIR=` assignment on the command line. No arity modelling:
+ * `flock LOCKFILE bd create` and `taskset 0x1 bd create` count, so does `sudo -u x ls bd`.
+ * Only the foreign-ledger advisory reads this; the lock's own launch check stays positional.
+ */
+function wrapperNamesBd(shape: OtherShape): string | undefined {
+  const { head, args } = shape
+  if (head === undefined || head.expands) return undefined
+  const name = commandName(head)
+  const wraps = LAUNCHERS[name] === true || (name === "find" && args.some((word) => FIND_EXEC[word.value] === true))
+  if (!wraps || !args.some((word) => !word.expands && commandName(word) === "bd")) return undefined
+  const literalDir = (word: ShellWord): boolean => {
+    const match = BEADS_DIR_ASSIGNMENT.exec(word.value)
+    return match !== null && match[1] === "" && !word.expands && !DEFERRED_VALUE.test(word.value.slice(match[0].length))
+  }
+  if ([...shape.assignments, ...args].some(literalDir)) return undefined
+  return name
 }
 
 /** Why a non-`bd` command may still run `bd` where the lock cannot see it, if it may. */

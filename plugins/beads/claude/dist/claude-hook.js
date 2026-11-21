@@ -2151,6 +2151,11 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
       const launch = launchOf(shape, item, command);
       if (launch !== undefined)
         refuse(launch);
+      else {
+        const wrapper = wrapperNamesBd(shape);
+        if (wrapper !== undefined)
+          unplaced?.(`\`bd\` follows the wrapper \`${wrapper}\``);
+      }
       const before = operatorAt(items, index - 1);
       const after = operatorAt(items, index + 1);
       applyEffects(shape, state, command, {
@@ -2372,6 +2377,22 @@ function runsBdBehind(head, args) {
     return runsBdBehind(word, args.slice(i + 1));
   }
   return false;
+}
+function wrapperNamesBd(shape) {
+  const { head, args } = shape;
+  if (head === undefined || head.expands)
+    return;
+  const name = commandName(head);
+  const wraps = LAUNCHERS[name] === true || name === "find" && args.some((word) => FIND_EXEC[word.value] === true);
+  if (!wraps || !args.some((word) => !word.expands && commandName(word) === "bd"))
+    return;
+  const literalDir = (word) => {
+    const match = BEADS_DIR_ASSIGNMENT.exec(word.value);
+    return match !== null && match[1] === "" && !word.expands && !DEFERRED_VALUE.test(word.value.slice(match[0].length));
+  };
+  if ([...shape.assignments, ...args].some(literalDir))
+    return;
+  return name;
 }
 function launchOf(shape, command, source) {
   const { head, args } = shape;

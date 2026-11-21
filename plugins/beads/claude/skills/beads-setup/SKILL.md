@@ -43,6 +43,9 @@ This gate stops a ledger inherited by accident. It does not stop deliberate shel
 obfuscation: evaluated strings, indirect expansion, sourced scripts, aliases defined outside the
 command and unknown wrapper binaries are out of scope. The real fix is to start the shared
 service from a clean environment.
+Under a foreign ledger the plugin refuses a `bd` that follows a recognised wrapper such as
+`flock`, `taskset` or `timeout`, without parsing the wrapper. Write `BEADS_DIR=<path>` on the
+command line, or run `bd` on its own.
 
 # Claude Code
 Install the plugin with these two commands:

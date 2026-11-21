@@ -40,6 +40,9 @@ On every `shell` call (`tool.hook("execute.before")`), in this order, with one
    obfuscation. Out of scope are `eval`, indirect expansion, sourced scripts, aliases
    defined outside the command and unknown wrapper binaries. The real fix is a clean
    server environment.
+   Under a foreign ledger, a `bd` that follows a recognised wrapper (`flock`, `taskset`,
+   `timeout`, `sudo`, `xargs` and the like) is refused without parsing the wrapper's
+   arguments. A literal `BEADS_DIR=<path>` on the command line is the override.
 10. `gh pr create` without a `Bead:`, `Closes-Bead:` or `Bead-Id:` trailer is
    refused in a repository with a live ledger that you can write to.
 11. Each `bd` write to an embedded store is rewritten to run under

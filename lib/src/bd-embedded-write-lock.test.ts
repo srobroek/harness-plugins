@@ -42,7 +42,7 @@ const host = hostname().split(".")[0] ?? "localhost"
 const BD_ON_PATH = Bun.which("bd") !== null
 /** The runner's store flags, as the gate writes them: the real path held, the path as named. */
 const runnerStore = (store: string): string[] => ["--beads-store", realpathSync(store), "--beads-store-selected", store]
-}
+
 test("resolves mise-only Bun and completes a real runner write", () => {
   const root = mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "beads-lock-mise-"))
   const marker = join(root, "written")
@@ -1206,11 +1206,25 @@ describe("who chose the ledger a write lands in", () => {
     ["git diff -- 'bd'"],
     ["git log -- bd"],
     ["grep -r 'bd' ."],
-    ["xargs grep bd"],
     ["gh label create 'bd'"],
-    ["sudo -u build ls bd"],
   ])("%s names bd as an operand, not as a command", (command) => {
     expect(plan(command).reasons).toEqual([])
+  })
+
+  test.each([
+    ["flock LOCKFILE bd create --title t"],
+    ["taskset 0x1 bd create --title t"],
+    ["xargs grep bd"],
+    ["sudo -u build ls bd"],
+  ])("%s: a wrapper followed anywhere by bd is reported, without parsing arity", (command) => {
+    expect(plan(command).reasons.join("\n")).toContain("follows the wrapper")
+  })
+
+  test.each([
+    ["BEADS_DIR=/x/.beads flock LOCKFILE bd create --title t"],
+    ["env BEADS_DIR=/x/.beads taskset 0x1 bd create --title t"],
+  ])("%s: a literal BEADS_DIR= on the command line is not reported", (command) => {
+    expect(plan(command).reasons.join("\n")).not.toContain("follows the wrapper")
   })
 
   test.each([
