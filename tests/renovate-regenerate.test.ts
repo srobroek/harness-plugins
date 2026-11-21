@@ -87,7 +87,6 @@ test.each([
   "plugins/repomix/opencode/src/pack.ts",
   "plugins/aws/common/agents/hand-written.md",
   "plugins/aws/common/agents/missing-source.claude.md",
-  "plugins/cad/common/agents/vendored.claude.md",
   "plugins/cad/opencode/examples/fixture.py",
 ])("rejects a source patch before applying %s", (name) => {
   const { dir, file } = fixture()
@@ -214,4 +213,16 @@ test("accepts a translated agent with an existing OpenCode form", () => {
   run(dir, ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--quiet", "-m", "source"])
   file("plugins/example/common/agents/researcher.claude.md", "translated\n")
   expect(apply(dir).result.exitCode).toBe(0)
+})
+
+test("rejects a vendored cad translation even when its OpenCode form exists", () => {
+  const { dir, file } = fixture()
+  file("plugins/cad/common/agents/vendored.md", "vendored source\n")
+  run(dir, ["git", "add", "--all"])
+  run(dir, ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--quiet", "-m", "source"])
+  file("plugins/cad/common/agents/vendored.claude.md", "untrusted translation\n")
+  const { result } = apply(dir)
+  expect(result.exitCode).not.toBe(0)
+  expect(result.stderr.toString()).toContain("non-generated path")
+  expect(run(dir, ["git", "status", "--porcelain"])).toBe("")
 })
