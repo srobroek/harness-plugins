@@ -1,3 +1,9 @@
+## beads [0.8.0](https://github.com/srobroek/harness-plugins/compare/beads--v0.7.1...beads--v0.8.0) (2026-11-21)
+
+### Features
+
+* **autopilot:** autopilot_export_review for read-only reviewers ([353abe2](https://github.com/srobroek/harness-plugins/commit/353abe2355f824084499faebdb34734c3c40e26d))
+
 ## beads [0.7.1](https://github.com/srobroek/harness-plugins/compare/beads--v0.7.0...beads--v0.7.1) (2026-11-20)
 
 ### Bug Fixes
