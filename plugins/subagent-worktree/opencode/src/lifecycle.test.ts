@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { dirname, join } from "node:path"
+import { join } from "node:path"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import { claimGeneration, landingFile, readClaim, removeClaim, writeLanding } from "@srobroek/opencode-lib/worktree-claims"
 import { lockedWrite, lockFile, readHolds, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
@@ -140,12 +140,9 @@ async function start(
   options: {
     stored?: Lane[]
     options?: Record<string, unknown>
-    sweepDelayMs?: number
     debounceMs?: number
     /** Share the git common directory and the world with another instance. */
     common?: string
-    /** Make the git common directory `<tmp>/main-checkout/.git`, so the repository has a canonical main checkout distinct from the project root. */
-    mainCheckout?: boolean
     world?: World
     lock?: Record<string, unknown>
     build?: BuildSeams
@@ -194,15 +191,8 @@ async function start(
       refresh: async (input: Record<string, unknown>) => void worktree.push({ method: "refresh", input }),
     },
   })
-  const makeCommon = () => {
-    if (!options.mainCheckout) return mkdtempSync(join(tmpdir(), "common-"))
-    const root = mkdtempSync(join(tmpdir(), "repo-"))
-    COMMONS.push(root)
-    mkdirSync(join(root, "main-checkout", ".git"), { recursive: true })
-    return join(root, "main-checkout", ".git")
-  }
-  const common = options.common ?? makeCommon()
-  if (!options.common && !options.mainCheckout) COMMONS.push(common)
+  const common = options.common ?? mkdtempSync(join(tmpdir(), "common-"))
+  if (!options.common) COMMONS.push(common)
   // Counts the events the plugin has handled: its loop handles each event synchronously, then asks for the next one.
   const events = { handled: 0 }
   const event = fake.context.event as unknown as { subscribe: (input: unknown) => AsyncIterable<unknown> }
@@ -240,7 +230,6 @@ async function start(
     age: async () => state.age,
     ...(options.lock === undefined ? {} : { lock: options.lock }),
     ...(options.build === undefined ? {} : { build: options.build }),
-    ...(options.sweepDelayMs === undefined ? {} : { sweepDelayMs: options.sweepDelayMs }),
   })
   const cleanup = (await plugin.setup(fake.context)) as () => Promise<void>
   return { fake, state, worktree, log, cleanup, common, events }
@@ -928,33 +917,6 @@ describe("build directories of a kept lane whose owner is gone", () => {
   })
 })
 
-describe("the background sweep", () => {
-  test("it runs after the delay, records a plan, and is throttled to once per interval", async () => {
-    const { fake, state, cleanup } = await start({ ancestor: 0 }, { options: { sweep: "report" }, sweepDelayMs: 1 })
-    await settle(50)
-    expect(fake.storage.get("sweep/at/prj")).toBe(NOW)
-    const first = fake.storage.get("sweep/last") as { at: number; mode: string }
-    expect(first.mode).toBe("report")
-    state.now += 3_600_000
-    fake.emit({ type: "session.created", data: { sessionID: "ses_new" } })
-    await settle(50)
-    expect((fake.storage.get("sweep/last") as { at: number }).at).toBe(first.at)
-    state.now += 7 * 3_600_000
-    fake.emit({ type: "session.created", data: { sessionID: "ses_new" } })
-    await settle(50)
-    expect((fake.storage.get("sweep/last") as { at: number }).at).toBe(state.now)
-    await cleanup()
-  })
-
-  test("sweep off never runs it", async () => {
-    const { fake, cleanup } = await start({}, { options: { sweep: "off" }, sweepDelayMs: 1 })
-    fake.emit({ type: "session.created", data: { sessionID: "ses_new" } })
-    await settle(50)
-    expect(fake.storage.has("sweep/at/prj")).toBe(false)
-    await cleanup()
-  })
-})
-
 describe("the branch is deleted only for the commit the proof covered", () => {
   const idleParent = async (fake: Fake) => {
     fake.emit({ type: "session.idle", data: { sessionID: PARENT } })
@@ -1584,146 +1546,6 @@ describe("an unwritable holds store stays unsafe across passes", () => {
     expect(worktree).toEqual([])
     await gate(fake, [])
     expect(worktree[0]?.method).toBe("remove")
-    await cleanup()
-  })
-})
-
-describe("the repair pass heals sessions stranded by earlier removals", () => {
-  const addSession = (fake: Fake, id: string, directory: string) =>
-    fake.sessions.set(id, { id, projectID: "prj", location: { directory }, time: { busy: 1, idle: 2 } })
-  const moved = (fake: Fake) =>
-    fake.calls.filter((entry) => entry.method === "session.move").map((entry) => entry.input as { sessionID: string; directory: string })
-
-  test("a session whose directory is gone is moved to the project's checkout; one with an existing directory is left alone", async () => {
-    const { fake, cleanup } = await start({ missing: ["/wt/removed-long-ago"] }, { options: { sweep: "report" }, sweepDelayMs: 80 })
-    addSession(fake, "ses_stranded", "/wt/removed-long-ago")
-    addSession(fake, "ses_fine", "/wt/still-here")
-    await until(() => moved(fake).length > 0)
-    expect(moved(fake)).toEqual([{ sessionID: "ses_stranded", directory: REPO }])
-    await cleanup()
-  })
-
-  test("a stranded lane child goes to its lane's parent checkout", async () => {
-    const { fake, cleanup } = await start(
-      { missing: [WT] },
-      { options: { sweep: "report" }, sweepDelayMs: 80, stored: [lane({ parentDir: "/other/checkout", state: "removed" })] },
-    )
-    await until(() => moved(fake).length > 0)
-    expect(moved(fake).find((move) => move.sessionID === CHILD)).toEqual({ sessionID: CHILD, directory: "/other/checkout" })
-    await cleanup()
-  })
-
-  const addWith = (fake: Fake, id: string, directory: string, over: { projectID?: string; time?: Record<string, number> } = {}) =>
-    fake.sessions.set(id, { id, projectID: over.projectID ?? "prj", location: { directory }, time: over.time ?? { busy: 1, idle: 2 } })
-
-  test("a running stranded session is never moved", async () => {
-    const { fake, cleanup } = await start({ missing: ["/wt/gone"] }, { options: { sweep: "report" }, sweepDelayMs: 80 })
-    addWith(fake, "ses_running", "/wt/gone", { time: { busy: 9, idle: 2 } })
-    addWith(fake, "ses_idle", "/wt/gone")
-    await until(() => moved(fake).length > 0)
-    await settle(60)
-    expect(moved(fake).map((move) => move.sessionID)).toEqual(["ses_idle"])
-    await cleanup()
-  })
-
-  test.each(["EACCES", "EIO"])("a %s from the existence check moves nothing: unknown is not gone", async (code) => {
-    const { fake, cleanup } = await start({ statErrors: { "/wt/unsure": code } }, { options: { sweep: "report" }, sweepDelayMs: 80 })
-    addWith(fake, "ses_unsure", "/wt/unsure")
-    await settle(300)
-    expect(moved(fake)).toEqual([])
-    await cleanup()
-  })
-
-  test("a stranded session of another project is not touched", async () => {
-    const { fake, cleanup } = await start({ missing: ["/wt/gone"] }, { options: { sweep: "report" }, sweepDelayMs: 80 })
-    addWith(fake, "ses_mine", "/wt/gone")
-    addWith(fake, "ses_theirs", "/wt/gone", { projectID: "other-project" })
-    await until(() => moved(fake).length > 0)
-    await settle(60)
-    expect(moved(fake).map((move) => move.sessionID)).toEqual(["ses_mine"])
-    await cleanup()
-  })
-
-  test("an archived stranded session is repaired as well", async () => {
-    const { fake, cleanup } = await start({ missing: ["/wt/gone"] }, { options: { sweep: "report" }, sweepDelayMs: 80 })
-    addWith(fake, "ses_shelved", "/wt/gone", { time: { busy: 1, idle: 2, archived: 3 } })
-    await until(() => moved(fake).length > 0)
-    expect(moved(fake)).toEqual([{ sessionID: "ses_shelved", directory: REPO }])
-    await cleanup()
-  })
-
-  /**
-   * The three destinations are told apart: the lane's stored parent checkout, the repository's canonical
-   * main checkout (the parent of `<common>/.git`), and the project root (REPO). Here the main checkout is a
-   * real directory that is neither of the other two.
-   */
-  describe("destination order: stored parent, then canonical main checkout, then the project root", () => {
-    const PARENT_CHECKOUT = "/gone/linked-checkout"
-    const run = async (missing: (main: string) => string[]) => {
-      // The main checkout's path is only known once the fixture exists, so `missing` is filled in afterwards.
-      const state = { missing: [] as string[] }
-      const errors: string[] = []
-      const spy = console.error
-      console.error = (...args: unknown[]) => void errors.push(args.map(String).join(" "))
-      try {
-        const started = await start(
-          { missing: state.missing },
-          {
-            options: { sweep: "report" },
-            sweepDelayMs: 150,
-            mainCheckout: true,
-            stored: [lane({ parentDir: PARENT_CHECKOUT, state: "removed" })],
-          },
-        )
-        const main = dirname(started.common)
-        expect(main).not.toBe(REPO)
-        state.missing.push(WT, ...missing(main))
-        return { ...started, main, errors, restore: () => (console.error = spy) }
-      } catch (error) {
-        console.error = spy
-        throw error
-      }
-    }
-
-    test("parent missing: the canonical main checkout wins", async () => {
-      const t = await run(() => [PARENT_CHECKOUT])
-      await until(() => moved(t.fake).length > 0)
-      t.restore()
-      expect(moved(t.fake).find((move) => move.sessionID === CHILD)).toEqual({ sessionID: CHILD, directory: t.main })
-      await t.cleanup()
-    })
-
-    test("parent and main checkout missing: the project root wins", async () => {
-      const t = await run((main) => [PARENT_CHECKOUT, main])
-      await until(() => moved(t.fake).length > 0)
-      t.restore()
-      expect(moved(t.fake).find((move) => move.sessionID === CHILD)).toEqual({ sessionID: CHILD, directory: REPO })
-      await t.cleanup()
-    })
-
-    test("all three missing: nothing is moved, and the session is reported as failed", async () => {
-      const t = await run((main) => [PARENT_CHECKOUT, main, REPO])
-      await until(() => t.errors.some((line) => line.includes("no existing destination")), 3000)
-      t.restore()
-      expect(moved(t.fake)).toEqual([])
-      expect(t.errors.join("\n")).toContain(`could not move session ${CHILD} out of ${WT}: no existing destination`)
-      await t.cleanup()
-    })
-
-    test("the stored parent is preferred when it exists", async () => {
-      const t = await run(() => [])
-      await until(() => moved(t.fake).length > 0)
-      t.restore()
-      expect(moved(t.fake).find((move) => move.sessionID === CHILD)).toEqual({ sessionID: CHILD, directory: PARENT_CHECKOUT })
-      await t.cleanup()
-    })
-  })
-
-  test("with the sweep off, nothing is repaired", async () => {
-    const { fake, cleanup } = await start({ missing: ["/wt/removed-long-ago"] }, { options: { sweep: "off" }, sweepDelayMs: 80 })
-    addSession(fake, "ses_stranded", "/wt/removed-long-ago")
-    await settle(120)
-    expect(moved(fake)).toEqual([])
     await cleanup()
   })
 })
@@ -2378,8 +2200,15 @@ describe("finalize: stale events, apply-time liveness, pending moves and resumed
     await cleanup()
   })
 
-  describe("a lane found in removing after a crash is finished by every entry point", () => {
+  describe("a lane left in removing while the plugin runs is finished by every entry point", () => {
     const crashed = (over: Partial<Lane> = {}) => lane({ state: "removing", removal: { retireAs: "removed", head: BASE }, ...over })
+    /** Startup finishes a lane that is in `removing` when the plugin loads, so the lane gets there after the start. */
+    const startThenCrash = async (world: Partial<World>) => {
+      const started = await start(world, { stored: [] })
+      await settle()
+      started.fake.storage.set(laneKey(CHILD), crashed())
+      return started
+    }
     const entries: Array<[string, Lane["state"], (fake: Fake) => unknown]> = [
       ["an event", "removed", (fake) => fake.emit({ type: "session.idle", data: { sessionID: PARENT } })],
       ["the idle gate", "removed", (fake) => fake.fire.session("experimental.idle", { sessionID: PARENT, background: [] } as never)],
@@ -2415,7 +2244,7 @@ describe("finalize: stale events, apply-time liveness, pending moves and resumed
     ]
 
     test.each(entries)("%s moves the sessions of a lane whose worktree is gone, then retires it", async (_name, final, trigger) => {
-      const { fake, worktree, cleanup } = await start({ exists: false }, { stored: [crashed()] })
+      const { fake, worktree, cleanup } = await startThenCrash({ exists: false })
       grandchild(fake)
       await trigger(fake)
       await until(() => stored(fake).state !== "removing")
@@ -2429,7 +2258,7 @@ describe("finalize: stale events, apply-time liveness, pending moves and resumed
     })
 
     test("a worktree that is still there is removed, then the lane retires", async () => {
-      const { fake, worktree, cleanup } = await start(empty, { stored: [crashed()] })
+      const { fake, worktree, cleanup } = await startThenCrash(empty)
       fake.emit({ type: "session.idle", data: { sessionID: PARENT } })
       await until(() => stored(fake).state === "removed")
       expect(stored(fake).state).toBe("removed")
@@ -2494,8 +2323,10 @@ describe("finalize: round two", () => {
   })
 
   test("the idle hook records a running shell for a lane left in removing, and the worktree stays", async () => {
-    const crashed = lane({ state: "removing", removal: { retireAs: "removed", head: BASE } })
-    const { fake, worktree, cleanup } = await start(empty, { stored: [crashed] })
+    const { fake, worktree, cleanup } = await start(empty, { stored: [] })
+    // After the start: startup finishes a lane that is in `removing` when the plugin loads.
+    await settle()
+    fake.storage.set(laneKey(CHILD), lane({ state: "removing", removal: { retireAs: "removed", head: BASE } }))
     await fake.fire.session("experimental.idle", {
       sessionID: PARENT,
       background: [{ kind: "shell", sessionID: CHILD, shellID: "sh", command: "sleep 60" }],
@@ -2667,6 +2498,94 @@ describe("finalize: the lane's descendants in the worktree protect it", () => {
     expect(await decision(states)).toEqual(["removing", "active"])
     expect(fired).toBe(true)
     expect(removes(worktree)).toBe(0)
+    await cleanup()
+  })
+})
+
+describe("startup reconciles lanes left in removing", () => {
+  const moves = (fake: Fake) =>
+    fake.calls.filter((entry) => entry.method === "session.move").map((entry) => [(entry.input as { sessionID: string }).sessionID, (entry.input as { directory: string }).directory])
+  const removes = (worktree: Array<{ method: string; input: Record<string, unknown> }>) => worktree.filter((entry) => entry.method === "remove")
+  const crashed = lane({ state: "removing", removal: { retireAs: "removed", head: BASE } })
+
+  test.each([
+    ["still there is removed without force", true, [{ method: "remove", input: { projectID: "prj", directory: WT, force: false } }]],
+    ["already gone is not removed again", false, []],
+  ])("with no trigger but the plugin starting, a worktree %s, the child moves home and the lane retires", async (_name, exists, removals) => {
+    const { fake, worktree, cleanup } = await start({ head: BASE, ahead: 0, exists }, { stored: [crashed] })
+    await until(() => stored(fake).state !== "removing")
+    expect(stored(fake).state).toBe("removed")
+    expect(removes(worktree)).toEqual(removals)
+    expect(moves(fake)).toEqual([[CHILD, REPO]])
+    await cleanup()
+  })
+
+  test("an execution of the child that starts after the plugin loaded keeps the worktree, even before the reconcile takes the lock", async () => {
+    const common = mkdtempSync(join(tmpdir(), "common-"))
+    COMMONS.push(common)
+    // Another holder has the lane lock, so the startup reconcile waits for it while the child starts.
+    let free!: () => void
+    let taken!: () => void
+    const acquired = new Promise<void>((done) => (taken = done))
+    const held = withDiskLock(common, WT, { sessionID: "ses_other", waitMs: 5_000 }, async () => {
+      taken()
+      await new Promise<void>((done) => (free = done))
+    })
+    await acquired
+    const { fake, worktree, events, cleanup } = await start({ head: BASE, ahead: 0 }, { stored: [crashed], common, lock: { waitMs: 5_000 } })
+    await deliver(fake, events, { type: "session.execution.started", data: { sessionID: CHILD } })
+    free()
+    await held
+    await settle(300)
+    expect(removes(worktree)).toEqual([])
+    expect(stored(fake).state).toBe("removing")
+    await cleanup()
+  })
+})
+
+describe("an execution that fails because its location is gone", () => {
+  const moves = (fake: Fake) =>
+    fake.calls.filter((entry) => entry.method === "session.move").map((entry) => [(entry.input as { sessionID: string }).sessionID, (entry.input as { directory: string }).directory])
+  const grandchild = (fake: Fake) =>
+    fake.sessions.set("ses_grand", { id: "ses_grand", parentID: CHILD, projectID: "prj", location: { directory: WT }, time: { busy: 1, idle: 2 } })
+  const locationGone = { type: "session.execution.failed", data: { sessionID: "ses_grand", error: { type: "LocationNotFoundError", message: `Location not found: ${WT}` } } }
+
+  test("a descendant of an active lane's child whose worktree is gone moves home with the lane's sessions, and the lane retires", async () => {
+    const { fake, worktree, cleanup } = await start({ missing: [WT] })
+    grandchild(fake)
+    fake.emit(locationGone)
+    await until(() => stored(fake).state !== "active")
+    expect(stored(fake).state).toBe("removed")
+    expect(worktree.filter((entry) => entry.method === "remove")).toEqual([])
+    expect(moves(fake)).toEqual([
+      [CHILD, REPO],
+      ["ses_grand", REPO],
+    ])
+    await cleanup()
+  })
+
+  test("a descendant left in the gone worktree of a retired lane moves home on its own", async () => {
+    const { fake, cleanup } = await start({ missing: [WT] }, { stored: [lane({ state: "landed" })] })
+    grandchild(fake)
+    fake.emit(locationGone)
+    await until(() => moves(fake).length > 0)
+    await settle(50)
+    expect(moves(fake)).toEqual([["ses_grand", REPO]])
+    expect(stored(fake).state).toBe("landed")
+    await cleanup()
+  })
+
+  test.each([
+    ["the worktree still exists", {}, locationGone],
+    ["the failure is not about the location", { missing: [WT] }, { ...locationGone, data: { sessionID: "ses_grand", error: { type: "ProviderError", message: "rate limited" } } }],
+  ])("nothing moves when %s", async (_name, world, event) => {
+    const { fake, worktree, events, cleanup } = await start(world)
+    grandchild(fake)
+    await deliver(fake, events, event)
+    await settle(100)
+    expect(moves(fake)).toEqual([])
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
     await cleanup()
   })
 })

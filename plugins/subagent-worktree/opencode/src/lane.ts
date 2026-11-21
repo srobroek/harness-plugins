@@ -25,10 +25,9 @@ export type Options = {
   resumeGraceMs: number
   /** An empty lane is removed only after its child and parent stayed idle this long. */
   emptyGraceMs: number
-  /** The backstop sweep: nothing, a plan only, or a plan carried out. */
+  /** The sweep mode; it only sets the `freeBuildDirs` default, since the sweep runs on demand. */
   sweep: SweepMode
   minAgeHours: number
-  intervalHours: number
   /** Extra roots, beyond OpenCode's worktree directory, the sweep may look in. */
   include: readonly string[]
   /** A pruning sweep also frees ignored build directories of kept lanes whose owner is gone. Follows `sweep`: on only for "prune". */
@@ -57,7 +56,6 @@ export function readOptions(options: Readonly<Record<string, unknown>> | undefin
     emptyGraceMs: positive(options?.emptyGraceMinutes, 30) * MINUTE,
     sweep,
     minAgeHours: positive(options?.minAgeHours, 24),
-    intervalHours: positive(options?.intervalHours, 6),
     freeBuildDirs: typeof options?.freeBuildDirs === "boolean" ? options.freeBuildDirs : sweep === "prune",
     lowDiskBytes: positive(options?.lowDiskBytes, 0),
     include: Array.isArray(options?.include)

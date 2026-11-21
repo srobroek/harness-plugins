@@ -122,7 +122,6 @@ export type Overrides = {
   now?: () => number
   reserveMs?: number
   debounceMs?: number
-  sweepDelayMs?: number
   age?: (directory: string) => Promise<number | undefined>
   commonDir?: (directory: string) => Promise<string | undefined>
   lock?: Parameters<typeof createLifecycle>[0]["lock"]
@@ -163,7 +162,6 @@ export function createLanes(
   now: () => number = Date.now,
   reserveMs = RESERVATION_MS,
   debounceMs?: number,
-  sweepDelayMs?: number,
   age?: (directory: string) => Promise<number | undefined>,
   commonDirOverride?: (directory: string) => Promise<string | undefined>,
   lock?: Parameters<typeof createLifecycle>[0]["lock"],
@@ -915,7 +913,6 @@ export function createLanes(
     moveHome,
     removeWorktree,
     ...(debounceMs === undefined ? {} : { debounceMs }),
-    ...(sweepDelayMs === undefined ? {} : { sweepDelayMs }),
     ...(age === undefined ? {} : { age }),
     commonDir: commonDirOf,
     ...(lock === undefined ? {} : { lock }),
@@ -938,7 +935,7 @@ export function createPlugin(overrides: Overrides = {}) {
     async setup(ctx) {
       const options = readOptions(ctx.options)
       const git = createGit(overrides.run ?? spawnRunner)
-      const lanes = createLanes(ctx, options, git, overrides.suffix ?? randomSuffix, overrides.lookupMs, overrides.directoryExists, overrides.now, overrides.reserveMs, overrides.debounceMs, overrides.sweepDelayMs, overrides.age, overrides.commonDir, overrides.lock, overrides.build)
+      const lanes = createLanes(ctx, options, git, overrides.suffix ?? randomSuffix, overrides.lookupMs, overrides.directoryExists, overrides.now, overrides.reserveMs, overrides.debounceMs, overrides.age, overrides.commonDir, overrides.lock, overrides.build)
       const registrations: { dispose: () => Promise<void> }[] = []
       const cleanup = async () => {
         for (const registration of registrations.reverse()) await registration.dispose()

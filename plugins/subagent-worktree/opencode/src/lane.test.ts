@@ -80,7 +80,6 @@ describe("readOptions", () => {
       emptyGraceMs: 1_800_000,
       sweep: "report",
       minAgeHours: 24,
-      intervalHours: 6,
       include: [],
     })
     expect(readOptions({ gates: false, sweep: "prune", minAgeHours: 2, include: ["/x", 1] })).toMatchObject({

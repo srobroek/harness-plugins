@@ -181,6 +181,13 @@ export function failureReason(error: unknown): string {
   return typeof message === "string" && message !== "" ? message.slice(0, 200) : "no reason given"
 }
 
+/** Whether an execution failed because the host could not find the session's location (its directory is gone). */
+export function isLocationNotFound(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false
+  const { type, message } = error as { type?: unknown; message?: unknown }
+  return (typeof type === "string" && /^location.?not.?found/i.test(type)) || (typeof message === "string" && /^location not found\b/i.test(message))
+}
+
 /** The parent's notice for a child that failed or was interrupted while its lane holds work. */
 export function outcomeNotice(
   lane: Pick<Lane, "child" | "title" | "branch" | "directory">,
