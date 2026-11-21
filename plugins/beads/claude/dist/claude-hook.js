@@ -333,6 +333,32 @@ function tokenize(segment) {
     quoted: startsQuoted
   }));
 }
+function readEnvOption(tokens, at) {
+  const word = tokens[at].value;
+  if (word.startsWith("--")) {
+    const eq = word.indexOf("=");
+    const name = eq === -1 ? word : word.slice(0, eq);
+    if (name !== "--unset" && name !== "--chdir" && name !== "--split-string")
+      return { span: 1 };
+    const value = eq === -1 ? tokens[at + 1]?.value : word.slice(eq + 1);
+    if (value === undefined)
+      return null;
+    const span = eq === -1 ? 2 : 1;
+    return name === "--split-string" ? { span, split: value } : { span };
+  }
+  for (let j = 1;j < word.length; j++) {
+    const name = word[j];
+    if (name !== "u" && name !== "C" && name !== "S")
+      continue;
+    const attached = word.slice(j + 1);
+    const value = attached || tokens[at + 1]?.value;
+    if (value === undefined)
+      return null;
+    const span = attached ? 1 : 2;
+    return name === "S" ? { span, split: value } : { span };
+  }
+  return { span: 1 };
+}
 function invocation(segment, argv) {
   const tokens = tokenize(segment);
   const head = argv[0];
@@ -350,37 +376,30 @@ function invocation(segment, argv) {
       start++;
       while (start < tokens.length) {
         const option = tokens[start];
-        if (!option || option.quoted)
+        if (!option)
           return null;
         const value = option.value;
         if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(value)) {
-          start++;
-          continue;
-        }
-        if (value === "--") {
-          start++;
-          break;
-        }
-        if (value === "-i" || value === "--ignore-environment") {
-          start++;
-          continue;
-        }
-        if (value === "-u" || value === "--unset") {
-          start++;
-          if (start >= tokens.length || tokens[start]?.quoted)
+          if (option.quoted)
             return null;
           start++;
           continue;
         }
-        if (value.startsWith("--unset=") || value.startsWith("-u") && value.length > 2) {
+        if (option.quoted)
+          return null;
+        if (value === "--") {
           start++;
-          continue;
+          break;
         }
-        if (value.startsWith("-")) {
-          start++;
-          continue;
-        }
-        break;
+        if (!value.startsWith("-") || value === "-")
+          break;
+        const read = readEnvOption(tokens, start);
+        if (read === null)
+          return null;
+        if (read.split !== undefined)
+          tokens.splice(start, read.span, ...tokenize(read.split));
+        else
+          start += read.span;
       }
       continue;
     }
@@ -4382,7 +4401,7 @@ function unplacedBdRefusal(input) {
 // plugins/beads/opencode/src/pr-bead-link-gate.ts
 import { execFileSync } from "child_process";
 import { closeSync as closeSync4, constants as constants3, existsSync as existsSync6, fstatSync as fstatSync2, lstatSync as lstatSync5, openSync as openSync4, readSync as readSync3 } from "fs";
-import { dirname as dirname6, join as join7, resolve as resolve7 } from "path";
+import { dirname as dirname6, isAbsolute as isAbsolute5, join as join7, resolve as resolve7 } from "path";
 
 // lib/src/command-words.ts
 var NONE = new Set;
@@ -4512,42 +4531,81 @@ function stripWrappers(input) {
 
 // plugins/beads/opencode/src/ansi-c-words.ts
 var SIMPLE_ESCAPES = {
-  a: "\x07",
-  b: "\b",
-  e: "\x1B",
-  E: "\x1B",
-  f: "\f",
-  n: `
-`,
-  r: "\r",
-  t: "\t",
-  v: "\v",
-  "\\": "\\",
-  "'": "'",
-  '"': '"',
-  "?": "?"
+  a: 7,
+  b: 8,
+  e: 27,
+  E: 27,
+  f: 12,
+  n: 10,
+  r: 13,
+  t: 9,
+  v: 11,
+  "\\": 92,
+  "'": 39,
+  '"': 34,
+  "?": 63
 };
+var ESCAPED_BYTE_BASE = 56320;
+function stringToBytes(text) {
+  const chunks = [];
+  let plain = "";
+  const flush = () => {
+    if (plain !== "")
+      chunks.push(Buffer.from(plain, "utf8"));
+    plain = "";
+  };
+  for (const char of text) {
+    const code = char.codePointAt(0);
+    if (code >= ESCAPED_BYTE_BASE + 128 && code <= ESCAPED_BYTE_BASE + 255) {
+      flush();
+      chunks.push(Buffer.from([code - ESCAPED_BYTE_BASE]));
+    } else {
+      plain += char;
+    }
+  }
+  flush();
+  return Buffer.concat(chunks);
+}
+function bytesToString(bytes) {
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let out = "";
+  for (let i = 0;i < bytes.length; ) {
+    const lead = bytes[i];
+    const length = lead < 128 ? 1 : lead >= 240 ? 4 : lead >= 224 ? 3 : 2;
+    if (lead >= 194 || lead < 128) {
+      try {
+        out += decoder.decode(bytes.subarray(i, i + length));
+        i += length;
+        continue;
+      } catch {}
+    }
+    out += String.fromCharCode(ESCAPED_BYTE_BASE + lead);
+    i++;
+  }
+  return out;
+}
 function decodeAnsiC(source, from) {
-  let text = "";
+  const chunks = [];
   let truncated = false;
   const emit = (chunk) => {
     if (!truncated)
-      text += chunk;
+      chunks.push(Buffer.from(chunk));
   };
-  const code = (value) => {
+  const emitText = (text) => emit(Buffer.from(text, "utf8"));
+  const emitByte = (value) => {
     if (value === 0)
       truncated = true;
     else
-      emit(String.fromCodePoint(value));
+      emit([value]);
   };
   let i = from;
   while (i < source.length) {
-    const ch = source[i];
-    if (ch === "'")
-      return { text, end: i + 1 };
-    if (ch !== "\\") {
-      emit(ch);
-      i++;
+    const char = String.fromCodePoint(source.codePointAt(i));
+    if (char === "'")
+      return { bytes: Buffer.concat(chunks), end: i + 1 };
+    if (char !== "\\") {
+      emitText(char);
+      i += char.length;
       continue;
     }
     const next = source[i + 1];
@@ -4556,30 +4614,38 @@ function decodeAnsiC(source, from) {
     i += 2;
     const simple = SIMPLE_ESCAPES[next];
     if (simple !== undefined) {
-      emit(simple);
+      emitByte(simple);
     } else if (/[0-7]/.test(next)) {
       const digits = /^[0-7]{0,2}/.exec(source.slice(i))?.[0] ?? "";
       i += digits.length;
-      code(Number.parseInt(next + digits, 8) & 255);
-    } else if (next === "x" || next === "u" || next === "U") {
-      const max = next === "x" ? 2 : next === "u" ? 4 : 8;
-      const digits = new RegExp(`^[0-9A-Fa-f]{0,${max}}`).exec(source.slice(i))?.[0] ?? "";
+      emitByte(Number.parseInt(next + digits, 8) & 255);
+    } else if (next === "x") {
+      const digits = /^[0-9A-Fa-f]{0,2}/.exec(source.slice(i))?.[0] ?? "";
       if (digits.length === 0) {
-        emit(`\\${next}`);
+        emitText("\\x");
       } else {
         i += digits.length;
-        const value = Number.parseInt(digits, 16);
-        if (value > 1114111)
-          emit(`\\${next}${digits}`);
+        emitByte(Number.parseInt(digits, 16));
+      }
+    } else if (next === "u" || next === "U") {
+      const digits = new RegExp(`^[0-9A-Fa-f]{0,${next === "u" ? 4 : 8}}`).exec(source.slice(i))?.[0] ?? "";
+      const value = Number.parseInt(digits, 16);
+      if (digits.length === 0 || value > 1114111) {
+        emitText(`\\${next}${digits}`);
+        i += digits.length;
+      } else {
+        i += digits.length;
+        if (value === 0)
+          truncated = true;
         else
-          code(value);
+          emitText(String.fromCodePoint(value));
       }
     } else if (next === "c" && i < source.length) {
       const control = source.charCodeAt(i) & 31;
       i++;
-      code(control);
+      emitByte(control);
     } else {
-      emit(`\\${next}`);
+      emitText(`\\${next}`);
     }
   }
   return null;
@@ -4609,7 +4675,7 @@ function expandAnsiCQuotes(source) {
     } else if (ch === "$" && source[i + 1] === "'") {
       const decoded = decodeAnsiC(source, i + 2);
       if (decoded !== null) {
-        out += `'${decoded.text.replaceAll("'", `'"'"'`)}'`;
+        out += `'${bytesToString(decoded.bytes).replaceAll("'", `'"'"'`)}'`;
         i = decoded.end - 1;
         continue;
       }
@@ -4671,7 +4737,15 @@ function beadsActive(dir) {
     current = parent;
   }
 }
-function readBodyOfGhCreate(segment, readFile) {
+function literalDirectory(directory) {
+  return directory !== "-" && !directory.startsWith("~") && !/[$`*?[]/.test(directory);
+}
+function effectiveDirectories(enclosing, own) {
+  if (enclosing === "unknown" || !own.every(literalDirectory))
+    return "unknown";
+  return [...enclosing, ...own];
+}
+function readBodyOfGhCreate(segment, readFile, enclosing = []) {
   const expanded = expandAnsiCQuotes(segment);
   const tokens = invocation(expanded, ["gh", "pr", "create"]);
   if (!tokens)
@@ -4717,9 +4791,13 @@ function readBodyOfGhCreate(segment, readFile) {
   if (body !== null)
     return { text: body, source: "the --body text" };
   if (file !== null && file !== "-" && readFile) {
-    const source = `--body-file ${file}`;
-    const read = readFile(file, commandWords(tokenize(expanded).map((token) => token.value)).directories);
-    return "text" in read ? { text: read.text, source } : { unreadable: read.problem, source };
+    const source = `--body-file ${bytesToString(stringToBytes(file))}`;
+    const directories = effectiveDirectories(enclosing, commandWords(tokenize(expanded).map((token) => token.value)).directories);
+    if (directories === "unknown" && !isAbsolute5(file)) {
+      return { unreadable: "the directory it is relative to cannot be worked out from a wrapper's `--chdir`/`-C` or an enclosing `sh -c`", source };
+    }
+    const read = readFile(file, directories === "unknown" ? [] : directories);
+    return "text" in read ? { text: read.text, source } : { unreadable: read.problem, cause: read.cause, source };
   }
   return null;
 }
@@ -4743,7 +4821,7 @@ function decideUnreadableBody(read, active, note) {
   if (active === false || typeof active !== "boolean" && active.kind === "uncontrolled")
     return null;
   const reason = `Could not read ${read.source}: ${read.unreadable}. The gate cannot check it for a Bead: trailer, so it refuses. Fix the path, or pass the text with --body.`;
-  return { block: true, reason: withLedger(reason, note) };
+  return { block: true, reason: withLedger(reason, note), cause: read.cause };
 }
 function decideCommand(command, active, note, options = {}) {
   if (command.length > MAX_COMMAND_LENGTH)
@@ -4751,7 +4829,7 @@ function decideCommand(command, active, note, options = {}) {
   const segments = commandSegments(command);
   const readFile = segments.length === 1 ? options.readFile : undefined;
   for (const segment of segments) {
-    const read = readBodyOfGhCreate(segment, readFile);
+    const read = readBodyOfGhCreate(segment, readFile, options.directories);
     if (read?.unreadable !== undefined) {
       const refusal = decideUnreadableBody(read, typeof active === "function" ? active(segment) : active, note);
       if (refusal)
@@ -4833,22 +4911,36 @@ function repositoryControlled(repo) {
     return { kind: "unknown", reason: `Repository permission could not be determined: ${failure}` };
   }
 }
+function childDirectories(parent, child, inherited) {
+  if (inherited === "unknown")
+    return "unknown";
+  const words = parent.commands.map((position) => commandWords(position.argv));
+  const owner = words.find((entry) => interpreterCommandString(entry.argv) === child.command);
+  if (owner)
+    return effectiveDirectories(inherited, owner.directories);
+  return words.some((entry) => entry.directories.length > 0) ? "unknown" : inherited;
+}
 function decideCommandParsed(parsed, active, note, options) {
   const decision = decideCommand(parsed.command, active, note, options);
   if (decision)
     return decision;
   for (const child of parsed.nested) {
-    const nested = decideCommandParsed(child, active, note, options);
+    const directories = childDirectories(parsed, child, options?.directories ?? []);
+    const nested = decideCommandParsed(child, active, note, { ...options, directories });
     if (nested)
       return nested;
   }
   return null;
 }
+function resolveBytes(cwd, directories, path) {
+  const raw = [cwd, ...directories, path].map((part) => stringToBytes(part).toString("latin1"));
+  return Buffer.from(resolve7(...raw), "latin1");
+}
 function bodyFileReader(cwd) {
   return (path, directories) => {
     let fd;
     try {
-      fd = openSync4(resolve7(cwd, ...directories, path), constants3.O_RDONLY | constants3.O_NONBLOCK);
+      fd = openSync4(resolveBytes(cwd, directories, path), constants3.O_RDONLY | constants3.O_NONBLOCK);
       if (!fstatSync2(fd).isFile())
         return { problem: "it is not a regular file" };
       const buffer = Buffer.alloc(MAX_COMMAND_LENGTH + 1);
@@ -4861,7 +4953,7 @@ function bodyFileReader(cwd) {
       }
       return length > MAX_COMMAND_LENGTH ? { problem: `it is larger than ${MAX_COMMAND_LENGTH} bytes` } : { text: buffer.toString("utf8", 0, length) };
     } catch (error) {
-      return { problem: error instanceof Error ? error.message : String(error) };
+      return { problem: error instanceof Error ? error.message : String(error), cause: error };
     } finally {
       if (fd !== undefined)
         closeSync4(fd);

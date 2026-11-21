@@ -40,6 +40,8 @@ examples/           example projects included in typecheck
 
 A plugin has `package.json`, `agents.src/` or `common/` (skills, agents, formulas), and one directory per harness: `opencode/` with `src/`, a committed `dist/` and one shim per entry declared in `agent-plugins.entries` (`index.js` for a server entry, `tui.js` for a TUI entry), and `claude/` where the plugin ships to Claude Code. AGENTS.md Generated files says which of these are sources.
 
+The `beads` PR bead gate (`plugins/beads/opencode/src/pr-bead-link-gate.ts`) reads the body bash would submit. `plugins/beads/opencode/src/ansi-c-words.ts` belongs to `beads`, not `lib`: no other gate needs it, and `lib/src/shell-tokenizer.ts` stays a lexer that never decodes. Its boundary is one command segment. Before the segment is tokenized, `expandAnsiCQuotes` rewrites each unquoted `$'...'` word part into the single-quoted bytes bash makes of it (simple, octal, `\x`, `\u`, `\U` and `\c` escapes, cut at the first NUL). It does not read `$"..."`, parameter or command expansions, or a `$'` inside a quote, and it leaves an unterminated one as written. Bytes that are not valid UTF-8 travel as lone surrogates U+DC80..U+DCFF, and `stringToBytes` turns a word back into the exact bytes of a path. Working directories come from `lib/src/command-words.ts` (`env -C DIR`, `--chdir`, `sudo -D`) and compose through nested `sh -c` scripts; a directory that cannot be worked out statically makes a relative `--body-file` refuse. `invocation()` in `lib/src/shell-command.ts` consumes the operands of `env` options (`-C`, `-u`, `-S` and their long forms), so the command behind them is found.
+
 ## Dependency direction
 
 Intended rules:

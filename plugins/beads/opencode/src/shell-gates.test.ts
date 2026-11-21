@@ -173,6 +173,19 @@ describe("decideShell", () => {
       })
     })
 
+    test.each([
+      ["env -C sub gh pr create --body-file FILE"],
+      ["env --chdir sub gh pr create --body-file FILE"],
+      ["env --chdir=sub sh -c 'gh pr create --body-file FILE'"],
+      [`env -C sub bash -c "sh -c 'gh pr create --body-file FILE'"`],
+    ])("reads the body file of %s from the wrapper's directory", async (template) => {
+      expect((await decideShell(template.replace("FILE", "pick.md"), dir, controlled())).kind).toBe("allow")
+      expect(await decideShell(template.replace("FILE", "other.md"), dir, controlled())).toMatchObject({
+        kind: "block",
+        gate: "pr-bead-link-gate",
+      })
+    })
+
     test("refuses a $'...' body that bash cuts at a NUL before the trailer", async () => {
       expect(await decideShell("gh pr create --body $'x\\0\\nBead: proj-1'", dir, controlled())).toMatchObject({
         kind: "block",

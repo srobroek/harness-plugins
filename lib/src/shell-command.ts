@@ -99,6 +99,37 @@ export function tokenize(segment: string): Token[] {
   }))
 }
 
+/**
+ * One option of GNU `env`: how many words it spans, and for `-S`/`--split-string` the string
+ * whose words take its place. Options that take a value (`-u NAME`, `-C DIR`, `-S STRING`) own
+ * the next word when no value is attached, so that word is not mistaken for the command.
+ * Null when a valued option has no value.
+ */
+function readEnvOption(tokens: readonly Token[], at: number): { span: number; split?: string } | null {
+  const word = (tokens[at] as Token).value
+  if (word.startsWith("--")) {
+    const eq = word.indexOf("=")
+    const name = eq === -1 ? word : word.slice(0, eq)
+    if (name !== "--unset" && name !== "--chdir" && name !== "--split-string") return { span: 1 }
+    const value = eq === -1 ? tokens[at + 1]?.value : word.slice(eq + 1)
+    if (value === undefined) return null
+    const span = eq === -1 ? 2 : 1
+    return name === "--split-string" ? { span, split: value } : { span }
+  }
+  // A short cluster, read the way getopt does: flags until the first valued option, whose
+  // value is the rest of the word or else the next word.
+  for (let j = 1; j < word.length; j++) {
+    const name = word[j]
+    if (name !== "u" && name !== "C" && name !== "S") continue
+    const attached = word.slice(j + 1)
+    const value = attached || tokens[at + 1]?.value
+    if (value === undefined) return null
+    const span = attached ? 1 : 2
+    return name === "S" ? { span, split: value } : { span }
+  }
+  return { span: 1 }
+}
+
 /** Return argv beginning at a command name, accepting literal env/wrapper prefixes. */
 export function invocation(segment: string, argv: string[]): Token[] | null {
   const tokens = tokenize(segment)
@@ -114,35 +145,24 @@ export function invocation(segment: string, argv: string[]): Token[] | null {
       start++
       while (start < tokens.length) {
         const option = tokens[start]
-        if (!option || option.quoted) return null
+        if (!option) return null
         const value = option.value
         if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(value)) {
+          if (option.quoted) return null
           start++
           continue
         }
+        if (option.quoted) return null
         if (value === "--") {
           start++
           break
         }
-        if (value === "-i" || value === "--ignore-environment") {
-          start++
-          continue
-        }
-        if (value === "-u" || value === "--unset") {
-          start++
-          if (start >= tokens.length || tokens[start]?.quoted) return null
-          start++
-          continue
-        }
-        if (value.startsWith("--unset=") || (value.startsWith("-u") && value.length > 2)) {
-          start++
-          continue
-        }
-        if (value.startsWith("-")) {
-          start++
-          continue
-        }
-        break
+        if (!value.startsWith("-") || value === "-") break
+        const read = readEnvOption(tokens, start)
+        if (read === null) return null
+        // `-S STRING` runs the words STRING splits into in place of itself.
+        if (read.split !== undefined) tokens.splice(start, read.span, ...tokenize(read.split))
+        else start += read.span
       }
       continue
     }
