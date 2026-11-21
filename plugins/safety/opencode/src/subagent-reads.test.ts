@@ -14,6 +14,7 @@ beforeAll(() => {
   writeFileSync(join(home, "work/app.env"), "A=1")
   symlinkSync(join(home, "work/app.env"), join(home, "work/readme.txt"))
   symlinkSync(join(home, ".ssh"), join(home, "work/docs"))
+  symlinkSync(join(home, ".aws"), join(home, "work/notes"))
 })
 afterAll(() => rmSync(home, { recursive: true, force: true }))
 
@@ -29,6 +30,7 @@ describe("isSecretResource", () => {
     ["an env file variant", () => `${home}/work/x.env.local`],
     ["a symlink named like a note that points to an env file", () => `${home}/work/readme.txt`],
     ["a symlink that points into a protected folder", () => `${home}/work/docs/*`],
+    ["a symlink to a protected folder that does not exist yet", () => `${home}/work/notes/*`],
     ["a relative path", () => "work/x"],
     ["a mid-path wildcard", () => `${home}/*/x`],
     ["a `..` segment", () => `${home}/work/../.ssh/x`],
