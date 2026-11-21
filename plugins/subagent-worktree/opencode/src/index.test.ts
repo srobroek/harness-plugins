@@ -1009,14 +1009,26 @@ describe("execute.after", () => {
     expect(lane(setup.fake)?.state).toBe("active")
   })
 
-  test("a resume that completed before the call returned no longer holds an empty foreground lane", async () => {
-    const setup = await start()
+  test("a resume recorded before the call returned no longer holds an empty foreground lane", async () => {
+    let clock = 1_000_000
+    const setup = await start({ now: () => clock })
     await spawn(setup)
     await setup.fake.fire.tool("execute.before", call({ sessionID: "ses_fake1", prompt: "one more thing" }))
+    clock += 1
     const event = await setup.fake.fire.tool("execute.after", completed("ses_fake1"))
     expect((event.result as { content: string }).content).toContain('state="removed"')
     expect(setup.worktree.calls.filter((entry) => entry.method === "remove")).toHaveLength(1)
     expect(lane(setup.fake)?.state).not.toBe("active")
+  })
+
+  // The fence compares with `>=`: a resume stamped in the very millisecond the removal was decided cannot be ordered, so it keeps the lane.
+  test("a resume stamped in the same millisecond as the removal's fence keeps the lane", async () => {
+    const setup = await start({ now: () => 1_000_000 })
+    await spawn(setup)
+    await setup.fake.fire.tool("execute.before", call({ sessionID: "ses_fake1", prompt: "one more thing" }))
+    const event = await setup.fake.fire.tool("execute.after", completed("ses_fake1"))
+    expect((event.result as { content: string }).content).not.toContain('state="removed"')
+    expect(lane(setup.fake)?.state).toBe("active")
   })
 
   test("a commit that lands between the empty check and the HEAD read keeps the lane and its branch", async () => {
@@ -1412,6 +1424,26 @@ describe(MERGE_TOOL, () => {
       expect(attempts).toEqual([{ projectID: "prj", directory, force: false }])
       expect(lane(setup.fake)?.state).toBe("merged")
       expect(readClaim(setup.common, directory)).toEqual({ kind: "missing" })
+    })
+
+    test("a resume that lands while the merge collects its facts keeps the checkout and the child in it", async () => {
+      let clock = 1_000_000
+      const setup = await start({ now: () => clock })
+      await spawn(setup)
+      Object.assign(setup.fake.sessions.get("ses_fake1") ?? {}, { time: { busy: 1000, idle: 2000, archived: 3000 } })
+      setup.repo.ahead = 2
+      let resumed = false
+      setup.repo.onCommand = async (cmd) => {
+        if (cmd === "status --porcelain" && !resumed) {
+          resumed = true
+          await setup.fake.fire.tool("execute.before", call({ sessionID: "ses_fake1", prompt: "one more thing" }))
+          clock += 10
+        }
+      }
+      const result = await run(setup, { sessionID: "ses_fake1", method: "wt-merge" })
+      expect(resumed).toBe(true)
+      expect(result.metadata.ok).toBe(true)
+      expect(setup.worktree.calls.filter((entry) => entry.method === "remove")).toEqual([])
     })
 
     test("a resume that races the merge keeps the checkout and the child in it", async () => {

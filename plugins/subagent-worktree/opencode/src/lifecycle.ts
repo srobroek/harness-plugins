@@ -791,6 +791,7 @@ export function createLifecycle(deps: LifecycleDeps) {
     if (claim?.kind === "unreadable") return keptBecause("error", `the lane's claim cannot be read: ${claim.reason}`)
     const stamps = [lane.resumedAt, claim?.kind === "present" ? claim.value.resumedAt : undefined].filter((at): at is number => at !== undefined)
     const resumed = stamps.length === 0 ? undefined : Math.max(...stamps)
+    // `>=`: a resume stamped in the same millisecond as the fence cannot be ordered against it, so it keeps the lane; a later pass retries.
     if (resumed !== undefined && options.since !== undefined && resumed >= options.since) return keptBecause("running", "the child was resumed")
     const held = await holdReason(lane.directory, lane.parentDir)
     if (held !== undefined) return keptBecause("running", held)

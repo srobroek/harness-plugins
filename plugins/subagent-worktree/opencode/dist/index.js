@@ -3918,6 +3918,7 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
       resources: [lane2?.branch ?? input.sessionID],
       source: { type: "tool", messageID: tool.messageID, id: tool.id }
     });
+    const since = now();
     if (lane2)
       lane2 = await repair(lane2);
     const status = lane2 && lane2.state === "active" ? await git2.status(lane2.directory, lane2.base) : undefined;
@@ -3944,7 +3945,6 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
     if (stopped()) {
       return { content: `${MERGE_TOOL}: stopped before the merge; nothing was merged.`, metadata: { ok: false, stopped: true } };
     }
-    const since = now();
     const result = await git2.run(argv);
     const output = tail(`${result.stdout}
 ${result.stderr}`);

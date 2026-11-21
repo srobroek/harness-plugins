@@ -841,6 +841,8 @@ export function createLanes(
       resources: [lane?.branch ?? input.sessionID],
       source: { type: "tool", messageID: tool.messageID, id: tool.id },
     } as never)
+    // The fence of a removal after the merge: taken before the first repair or status read, so a resume during any of them keeps the lane.
+    const since = now()
     if (lane) lane = await repair(lane)
     const status = lane && lane.state === "active" ? await git.status(lane.directory, lane.base) : undefined
     if (input.method === "none") {
@@ -871,7 +873,6 @@ export function createLanes(
     if (stopped()) {
       return { content: `${MERGE_TOOL}: stopped before the merge; nothing was merged.`, metadata: { ok: false, stopped: true } }
     }
-    const since = now()
     // `wt merge --no-remove` keeps the checkout: the child stays where it is, and the removal below decides.
     const result = await git.run(argv)
     const output = tail(`${result.stdout}\n${result.stderr}`)
