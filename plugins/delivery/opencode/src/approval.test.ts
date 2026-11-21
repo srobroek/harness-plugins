@@ -2,9 +2,11 @@ import { describe, expect, test } from "bun:test"
 import {
   githubApproval,
   githubPermissionAllows,
+  githubReviewEnforcement,
   githubTrust,
   gitlabApproval,
   gitlabChecks,
+  gitlabReviewEnforcement,
   gitlabTrust,
 } from "./approval.ts"
 
@@ -150,5 +152,56 @@ describe("gitlabTrust", () => {
   test("an approval without a sha is not bound to the head", () => {
     expect(gitlabTrust(approvals(), HEAD, { 5: 40 }, true).trusted).toBe(false)
     expect(gitlabTrust(approvals(OLD), HEAD, { 5: 40 }, true).trusted).toBe(false)
+  })
+})
+
+describe("githubReviewEnforcement", () => {
+  const pullRequestRule = (count: number, dismiss: boolean) => ({
+    type: "pull_request",
+    parameters: { required_approving_review_count: count, dismiss_stale_reviews_on_push: dismiss },
+  })
+  const classic = (count: number, dismiss: boolean) => ({ required_approving_review_count: count, dismiss_stale_reviews: dismiss })
+
+  test("a ruleset that requires an approving review and dismisses stale ones enforces", () => {
+    expect(githubReviewEnforcement([[pullRequestRule(1, true)]], undefined).enforced).toBe(true)
+    expect(githubReviewEnforcement([pullRequestRule(2, true)], undefined).enforced).toBe(true)
+  })
+
+  test("classic branch protection that requires one approval and dismisses stale reviews enforces", () => {
+    expect(githubReviewEnforcement(undefined, classic(1, true)).enforced).toBe(true)
+  })
+
+  test("the two sources are enforced independently, so their requirements add up", () => {
+    expect(githubReviewEnforcement([[pullRequestRule(1, false)]], classic(0, true)).enforced).toBe(true)
+  })
+
+  test.each([
+    ["no rules and no protection", undefined, undefined],
+    ["a ruleset with no approvals required", [[pullRequestRule(0, true)]], undefined],
+    ["a ruleset that keeps stale approvals", [[pullRequestRule(1, false)]], undefined],
+    ["rules without a pull_request rule", [[{ type: "required_status_checks" }]], undefined],
+    ["classic protection with approvals but no dismissal", undefined, classic(1, false)],
+    ["classic protection with no approvals required", undefined, classic(0, true)],
+    ["an unreadable ruleset and a not-found protection", { message: "Not Found" }, { message: "Branch not protected" }],
+  ])("%s does not", (_name, rules, protection) => {
+    expect(githubReviewEnforcement(rules, protection).enforced).toBe(false)
+  })
+})
+
+describe("gitlabReviewEnforcement", () => {
+  const settings = { reset_approvals_on_push: true, disable_overriding_approvers_per_merge_request: true }
+  test("needs a rule requiring an approval, reset on push, and no per-MR override of the approvers", () => {
+    expect(gitlabReviewEnforcement(settings, [{ approvals_required: 1 }]).enforced).toBe(true)
+    expect(gitlabReviewEnforcement(settings, [{ approvals_required: 0 }, { approvals_required: 2 }]).enforced).toBe(true)
+  })
+  test.each([
+    ["no rules", settings, []],
+    ["rules requiring nothing", settings, [{ approvals_required: 0 }]],
+    ["approvals that survive pushes", { ...settings, reset_approvals_on_push: false }, [{ approvals_required: 1 }]],
+    ["approvers editable per merge request", { ...settings, disable_overriding_approvers_per_merge_request: false }, [{ approvals_required: 1 }]],
+    ["unreadable settings", undefined, [{ approvals_required: 1 }]],
+    ["unreadable rules", settings, undefined],
+  ])("%s does not", (_name, projectSettings, rules) => {
+    expect(gitlabReviewEnforcement(projectSettings, rules).enforced).toBe(false)
   })
 })

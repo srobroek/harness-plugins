@@ -152,6 +152,10 @@ export type Answers = {
   approvals?: CliResult[]
   /** The REST review list (`pulls/<n>/reviews`); by default the `gh pr view` approval's reviews in REST spelling. */
   reviews?: CliResult
+  /** GitHub classic protection `required_pull_request_reviews` of the base branch; one approval and stale dismissal by default. */
+  protection?: CliResult
+  /** GitLab `projects/<id>/approval_rules`; one required approval by default. */
+  approvalRules?: CliResult
   /** The reviewer permission read once per entry, in call order; the last repeats. Wins over `permission`. */
   permissions?: CliResult[]
   /** GitLab `projects/<id>/approvals` (the project's approval settings); resets on push by default. */
@@ -263,6 +267,10 @@ export function runner(answers: Answers, canonical: string): { run: CliRunner; c
     if (argv[1] === "api" && argv.some((part) => /\/pulls\/\d+\/reviews/.test(part)))
       return answers.reviews ?? completed(JSON.stringify([restReviews(lastApproval ?? answers.approval)]))
     if (argv[1] === "api" && argv[2] === "user") return answers.viewer ?? completed(JSON.stringify({ login: "author" }))
+    if (argv[1] === "api" && argv.some((part) => part.includes("/protection/required_pull_request_reviews")))
+      return answers.protection ?? completed(JSON.stringify({ required_approving_review_count: 1, dismiss_stale_reviews: true }))
+    if (argv[1] === "api" && argv.some((part) => part.endsWith("/approval_rules")))
+      return answers.approvalRules ?? completed(JSON.stringify([{ approvals_required: 1 }]))
     if (argv[1] === "api" && argv.some((part) => part.includes("/collaborators/")))
       return next(permissions) ?? answers.permission ?? completed(JSON.stringify({ permission: "write", role_name: "write" }))
     if (argv[1] === "api" && argv.some((part) => part.includes("/check-runs")))
@@ -300,7 +308,7 @@ export function runner(answers: Answers, canonical: string): { run: CliRunner; c
     if (argv[1] === "api" && argv.some((part) => part.includes("/merge_requests/") && part.endsWith("/approvals")))
       return next(approvals) ?? answers.approval ?? completed("{}")
     if (argv[1] === "api" && argv.some((part) => part.endsWith("/approvals")))
-      return answers.projectApprovals ?? completed(JSON.stringify({ reset_approvals_on_push: true }))
+      return answers.projectApprovals ?? completed(JSON.stringify({ reset_approvals_on_push: true, disable_overriding_approvers_per_merge_request: true }))
     if (argv[1] === "api" && argv.some((part) => part.includes("/members/all/")))
       return answers.member ?? completed(JSON.stringify({ access_level: 30 }))
     if (argv[1] === "api" && argv.some((part) => /\/merge_requests\/\d+$/.test(part)))

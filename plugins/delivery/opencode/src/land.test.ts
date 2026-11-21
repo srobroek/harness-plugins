@@ -2932,6 +2932,32 @@ describe("delivery_land approval and checks preconditions", () => {
       expect(await gatedFlag({ approval: comment("author"), viewer: completed("", 1, "not logged in") })).toBe(false)
     })
 
+    test("a base branch that does not require an approving review keeps the prompt", async () => {
+      const trusted = { approval: review("reviewer"), permission: permission("write") }
+      const off = completed(JSON.stringify({ required_approving_review_count: 0, dismiss_stale_reviews: true }))
+      expect(await gatedFlag({ ...trusted, protection: off })).toBe(false)
+    })
+
+    test("a base branch that keeps stale approvals keeps the prompt", async () => {
+      const trusted = { approval: review("reviewer"), permission: permission("write") }
+      const stale = completed(JSON.stringify({ required_approving_review_count: 1, dismiss_stale_reviews: false }))
+      expect(await gatedFlag({ ...trusted, protection: stale })).toBe(false)
+    })
+
+    test("branch protection that cannot be read keeps the prompt", async () => {
+      const trusted = { approval: review("reviewer"), permission: permission("write") }
+      expect(await gatedFlag({ ...trusted, protection: completed("", 1, "HTTP 404: Branch not protected") })).toBe(false)
+    })
+
+    test("a ruleset that requires an approving review and dismisses stale ones satisfies it without classic protection", async () => {
+      const trusted = { approval: review("reviewer"), permission: permission("write") }
+      const rules = completed(
+        JSON.stringify([{ type: "pull_request", parameters: { required_approving_review_count: 1, dismiss_stale_reviews_on_push: true } }]),
+      )
+      const unprotected = completed("", 1, "HTTP 404: Branch not protected")
+      expect(await gatedFlag({ ...trusted, rules, protection: unprotected })).toBe(true)
+    })
+
     test("a second reviewer's changes request keeps the prompt even with a trusted approval", async () => {
       const rest = (login: string, state: string) => ({ user: { login }, state, commit_id: HEAD_OID })
       const vetoed = completed(JSON.stringify([[rest("reviewer", "APPROVED"), rest("other", "CHANGES_REQUESTED")]]))
@@ -2973,12 +2999,25 @@ describe("delivery_land approval and checks preconditions", () => {
       })
 
       test("a project whose approvals survive pushes keeps the prompt", async () => {
-        const settings = completed(JSON.stringify({ reset_approvals_on_push: false }))
+        const settings = completed(JSON.stringify({ reset_approvals_on_push: false, disable_overriding_approvers_per_merge_request: true }))
         expect(await flag({ projectApprovals: settings })).toBe(false)
       })
 
       test("approval settings that cannot be read keep the prompt", async () => {
         expect(await flag({ projectApprovals: completed("", 1, "403 Forbidden") })).toBe(false)
+      })
+
+      test("approval rules that require nothing keep the prompt", async () => {
+        expect(await flag({ approvalRules: completed("[]") })).toBe(false)
+      })
+
+      test("approval rules that cannot be read keep the prompt", async () => {
+        expect(await flag({ approvalRules: completed("", 1, "404 Not Found") })).toBe(false)
+      })
+
+      test("approvers that merge requests may change keep the prompt", async () => {
+        const settings = completed(JSON.stringify({ reset_approvals_on_push: true, disable_overriding_approvers_per_merge_request: false }))
+        expect(await flag({ projectApprovals: settings })).toBe(false)
       })
 
       test("an approver below Developer access keeps the prompt", async () => {

@@ -14,6 +14,7 @@ import {
   commitChecks,
   githubChecks,
   login,
+  pages,
   own,
   type Precondition,
   githubApproval as sharedApproval,
@@ -32,6 +33,8 @@ type Bound = {
   /** The GitLab project path, for `glab api`. */
   nameWithOwner: string
   forgeHost: string
+  /** The base branch the merge targets: its protection decides whether the forge enforces review. */
+  base: string
   number: string
   /** The lower-case whole head oid the merge is bound to. */
   head: string
@@ -159,6 +162,53 @@ export function gitlabTrust(
   return { trusted: false, reason: "approval: observed no approver with Developer access or above" }
 }
 
+/**
+ * Whether the forge itself, and not this client, keeps the merge behind an approval of the pushed
+ * head. A prompt-free land rests on a read of the approval taken before the merge, and an approval
+ * can be dismissed in between; only a forge that refuses a merge without a current approving review
+ * closes that window. `enforced: false` carries why, and keeps the prompt.
+ */
+export type Enforcement = { enforced: true; via: string } | { enforced: false; reason: string }
+
+const count = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0)
+
+/**
+ * GitHub: the base branch's rulesets (`rules/branches/<b>`, pages) or classic branch protection
+ * (`branches/<b>/protection/required_pull_request_reviews`) require at least one approving review
+ * and dismiss stale reviews on push. The two sources are enforced independently by GitHub, so
+ * their requirements add up. An unreadable or missing source contributes nothing. Pure.
+ */
+export function githubReviewEnforcement(rules: unknown, protection: unknown): Enforcement {
+  const pullRequestRules = (pages(rules, () => undefined) ?? []).filter((rule) => str(rule, "type") === "pull_request")
+  const parameters = pullRequestRules.map((rule) => own(rule, "parameters"))
+  const required =
+    parameters.some((entry) => count(own(entry, "required_approving_review_count")) >= 1) ||
+    count(own(protection, "required_approving_review_count")) >= 1
+  const dismisses =
+    parameters.some((entry) => own(entry, "dismiss_stale_reviews_on_push") === true) || own(protection, "dismiss_stale_reviews") === true
+  if (required && dismisses) return { enforced: true, via: pullRequestRules.length > 0 ? "ruleset" : "branch protection" }
+  return {
+    enforced: false,
+    reason: `the base branch does not provably require an approving review and dismiss stale reviews on push (approving review required: ${required}, stale reviews dismissed: ${dismisses})`,
+  }
+}
+
+/**
+ * GitLab: a project approval rule requires at least one approval, approvals reset on push, and
+ * merge requests may not change the approvers. Pure: takes `projects/<id>/approvals` and
+ * `projects/<id>/approval_rules`, each `undefined` when unreadable.
+ */
+export function gitlabReviewEnforcement(settings: unknown, rules: unknown): Enforcement {
+  const required = Array.isArray(rules) && rules.some((rule) => count(own(rule, "approvals_required")) >= 1)
+  const resets = own(settings, "reset_approvals_on_push") === true
+  const locked = own(settings, "disable_overriding_approvers_per_merge_request") === true
+  if (required && resets && locked) return { enforced: true, via: "project approval rules" }
+  return {
+    enforced: false,
+    reason: `the project does not provably require an approval, reset approvals on push and lock the approvers (approval required: ${required}, reset on push: ${resets}, approvers locked: ${locked})`,
+  }
+}
+
 /** GitLab checks: the head pipeline succeeded and ran on the head. Pure: takes the merge request payload. */
 export function gitlabChecks(mr: unknown, head: string): Precondition {
   const pipeline = own(mr, "head_pipeline")
@@ -202,7 +252,14 @@ export async function readApproval(run: CliRunner, bound: Bound): Promise<Approv
       permissions[who] = read.ok && githubPermissionAllows(read.value) ? (str(read.value, "role_name") ?? str(read.value, "permission")) : null
     }
     const trust = githubTrust(reviews.value, payload.value, bound.head, { viewer: viewer.ok ? str(viewer.value, "login") : null, permissions })
-    return { ...result, trusted: trust }
+    if (!trust.trusted) return { ...result, trusted: trust }
+    // The client re-reads are defence in depth. The atomic guarantee is the forge refusing a merge
+    // whose approval was dismissed, so a prompt-free land needs the base branch to enforce that.
+    const branch = encodeURIComponent(bound.base)
+    const rules = await readJson(run, ["gh", "api", "--paginate", "--slurp", `repos/${bound.nameWithOwner}/rules/branches/${branch}?per_page=100`, ...host], bound)
+    const protection = await readJson(run, ["gh", "api", `repos/${bound.nameWithOwner}/branches/${branch}/protection/required_pull_request_reviews`, ...host], bound)
+    const enforcement = githubReviewEnforcement(rules.ok ? rules.value : undefined, protection.ok ? protection.value : undefined)
+    return { ...result, trusted: enforcement.enforced ? trust : { trusted: false, reason: enforcement.reason } }
   }
   const project = encodeURIComponent(bound.nameWithOwner)
   const host = ["--hostname", bound.forgeHost]
@@ -221,7 +278,11 @@ export async function readApproval(run: CliRunner, bound: Bound): Promise<Approv
   }
   const settings = await readJson(run, ["glab", "api", `projects/${project}/approvals`, ...host], bound)
   const reset = settings.ok ? own(settings.value, "reset_approvals_on_push") : undefined
-  return { ...result, trusted: gitlabTrust(payload.value, bound.head, access, typeof reset === "boolean" ? reset : null) }
+  const trust = gitlabTrust(payload.value, bound.head, access, typeof reset === "boolean" ? reset : null)
+  if (!trust.trusted) return { ...result, trusted: trust }
+  const approvalRules = await readJson(run, ["glab", "api", `projects/${project}/approval_rules`, ...host], bound)
+  const enforcement = gitlabReviewEnforcement(settings.ok ? settings.value : undefined, approvalRules.ok ? approvalRules.value : undefined)
+  return { ...result, trusted: enforcement.enforced ? trust : { trusted: false, reason: enforcement.reason } }
 }
 
 /** Read and judge the checks for the bound head. */

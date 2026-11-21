@@ -1479,6 +1479,7 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
     cliRepo,
     nameWithOwner,
     forgeHost,
+    base: first.pr.baseRefName,
     number,
     head,
     env: forgeCommandEnv,
