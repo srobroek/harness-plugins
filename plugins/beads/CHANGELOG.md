@@ -1,3 +1,9 @@
+## beads [0.8.1](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.0...beads--v0.8.1) (2026-11-21)
+
+### Bug Fixes
+
+* **beads:** refuse issue writes into another repository's ledger the environment chose ([4f53846](https://github.com/srobroek/harness-plugins/commit/4f53846f279248a097bbb031eadd3cd2cda182a3))
+
 ## beads [0.8.0](https://github.com/srobroek/harness-plugins/compare/beads--v0.7.1...beads--v0.8.0) (2026-11-21)
 
 ### Features
