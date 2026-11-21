@@ -1866,6 +1866,92 @@ function parseLeanOptions(options) {
   return { agents: new Set(ids), drop: new Set(drop) };
 }
 
+// plugins/agent-efficiency/opencode/src/restart-nudge.ts
+var RESTART_NOTICE = "Command cancelled because the server restarted";
+var DEFAULT_RESTART_NUDGE_GRACE_MS = 5000;
+function parseRestartNudgeOptions(options) {
+  const raw = options.restartNudge;
+  if (raw !== true && (raw === null || typeof raw !== "object"))
+    return;
+  const graceMs = raw === true ? undefined : raw.graceMs;
+  return { graceMs: typeof graceMs === "number" && Number.isFinite(graceMs) && graceMs > 0 ? graceMs : DEFAULT_RESTART_NUDGE_GRACE_MS };
+}
+function isRestartNotice(text) {
+  return text.includes(RESTART_NOTICE);
+}
+function needsNudge(session, noticeCreated) {
+  const { busy, idle, archived } = session.time;
+  if (archived !== undefined || idle === undefined)
+    return false;
+  if (busy !== undefined && busy > idle)
+    return false;
+  return idle <= noticeCreated;
+}
+var defaultSchedule = (fn, ms) => {
+  const timer = setTimeout(fn, ms);
+  return () => clearTimeout(timer);
+};
+function createRestartNudger(deps) {
+  const schedule = deps.schedule ?? defaultSchedule;
+  const pending = new Map;
+  const nudged = new Set;
+  const settle = async (sessionID, created) => {
+    pending.delete(sessionID);
+    try {
+      if (!needsNudge(await deps.getSession(sessionID), created))
+        return;
+      nudged.add(sessionID);
+      await deps.nudge(sessionID);
+    } catch {}
+  };
+  return {
+    notice(event) {
+      if (!isRestartNotice(event.text) || nudged.has(event.sessionID) || pending.has(event.sessionID))
+        return;
+      pending.set(event.sessionID, schedule(() => void settle(event.sessionID, event.created), deps.graceMs));
+    },
+    dispose() {
+      for (const cancel of pending.values())
+        cancel();
+      pending.clear();
+    }
+  };
+}
+var NUDGE_TEXT = "The server restarted while you were waiting for a background shell, and that shell was lost. Check its output files and the state on disk, rerun it if needed, and continue your task.";
+async function setupRestartNudge(ctx, options, schedule) {
+  const nudger = createRestartNudger({
+    graceMs: options.graceMs,
+    schedule,
+    getSession: (sessionID) => ctx.session.get({ sessionID }),
+    nudge: async (sessionID) => {
+      await ctx.session.synthetic({ sessionID, text: NUDGE_TEXT, description: "Shell lost to server restart", delivery: "queue", resume: true });
+    }
+  });
+  const controller = new AbortController;
+  const iterator = ctx.event.subscribe({ signal: controller.signal, types: ["session.synthetic"] })[Symbol.asyncIterator]();
+  const listening = (async () => {
+    try {
+      while (!controller.signal.aborted) {
+        const next = await iterator.next();
+        if (next.done)
+          break;
+        const event = next.value;
+        if (event.type === "session.synthetic")
+          nudger.notice({ sessionID: event.data.sessionID, text: event.data.text, created: event.created });
+      }
+    } catch (error) {
+      if (!controller.signal.aborted)
+        throw error;
+    }
+  })();
+  listening.catch(() => {});
+  return async () => {
+    controller.abort();
+    nudger.dispose();
+    await iterator.return?.();
+  };
+}
+
 // plugins/agent-efficiency/opencode/src/scratch.ts
 import { readdirSync, realpathSync } from "fs";
 import { tmpdir } from "os";
@@ -2162,6 +2248,9 @@ var src_default = Plugin.define({
     }
     if (options.lead !== false)
       disposers.push(await setupLead(ctx));
+    const restartNudge = parseRestartNudgeOptions(options);
+    if (restartNudge !== undefined)
+      disposers.push(await setupRestartNudge(ctx, restartNudge));
     return async () => {
       for (const dispose of disposers.reverse())
         await dispose();
@@ -2174,24 +2263,31 @@ export {
   DEFAULT_LARGE_READ_LINES,
   DEFAULT_LARGE_READ_TIMEOUT_MS,
   DEFAULT_LEAN_AGENTS,
+  DEFAULT_RESTART_NUDGE_GRACE_MS,
   EXPLORE_ID,
   EXPLORE_PERMISSIONS,
   EXPLORE_PROMPT,
   LEAD_PATH,
+  NUDGE_TEXT,
+  RESTART_NOTICE,
   SEGMENTS,
   SNIFF_LIMIT,
   WAIT_REFUSAL,
+  createRestartNudger,
   src_default as default,
   dropInstructions,
   filterLeadRouting,
   globalConfigDirs,
+  isRestartNotice,
   isUnder,
   largeFile,
   largeReadRefusal,
   leanSystem,
+  needsNudge,
   newScratchEntries,
   parseLargeReadOptions,
   parseLeanOptions,
+  parseRestartNudgeOptions,
   routeShellAlias,
   runsSleep,
   scratchCommandTargets,
@@ -2200,6 +2296,7 @@ export {
   scratchShellWrites,
   setupLargeRead,
   setupLead,
+  setupRestartNudge,
   setupScratch,
   shapeExplore,
   untargetedReadPath,

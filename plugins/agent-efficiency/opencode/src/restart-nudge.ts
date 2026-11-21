@@ -1,0 +1,113 @@
+import type { Context } from "@opencode/plugin/promise/plugin"
+
+/** Text OpenCode's restart recovery posts (`session.synthetic`, `resume: false`) for a shell the restart killed. */
+export const RESTART_NOTICE = "Command cancelled because the server restarted"
+export const DEFAULT_RESTART_NUDGE_GRACE_MS = 5_000
+
+export type RestartNudgeOptions = { graceMs: number }
+
+/** The `time` fields of a session that decide whether it needs waking. */
+export type SessionTimes = { time: { busy?: number; idle?: number; archived?: number } }
+
+export type RestartNotice = { sessionID: string; text: string; created: number }
+
+/** `restartNudge` option: off unless `true` or an object; `graceMs` falls back to the default when unset or invalid. */
+export function parseRestartNudgeOptions(options: Record<string, unknown>): RestartNudgeOptions | undefined {
+  const raw = options.restartNudge
+  if (raw !== true && (raw === null || typeof raw !== "object")) return undefined
+  const graceMs = raw === true ? undefined : (raw as Record<string, unknown>).graceMs
+  return { graceMs: typeof graceMs === "number" && Number.isFinite(graceMs) && graceMs > 0 ? graceMs : DEFAULT_RESTART_NUDGE_GRACE_MS }
+}
+
+export function isRestartNotice(text: string): boolean {
+  return text.includes(RESTART_NOTICE)
+}
+
+/**
+ * Whether a session that got a restart notice at `noticeCreated` is stalled: not archived, not running,
+ * and its last run ended before the notice. A later run means the host already woke it.
+ */
+export function needsNudge(session: SessionTimes, noticeCreated: number): boolean {
+  const { busy, idle, archived } = session.time
+  if (archived !== undefined || idle === undefined) return false
+  if (busy !== undefined && busy > idle) return false
+  return idle <= noticeCreated
+}
+
+export type Schedule = (fn: () => void, ms: number) => () => void
+
+export type RestartNudger = { notice: (event: RestartNotice) => void; dispose: () => void }
+
+export type RestartNudgerDeps = {
+  graceMs: number
+  getSession: (sessionID: string) => Promise<SessionTimes>
+  nudge: (sessionID: string) => Promise<void>
+  schedule?: Schedule
+}
+
+const defaultSchedule: Schedule = (fn, ms) => {
+  const timer = setTimeout(fn, ms)
+  return () => clearTimeout(timer)
+}
+
+/** Waits `graceMs` after a restart notice, then nudges the session once if it is still stalled. At most one nudge per session. */
+export function createRestartNudger(deps: RestartNudgerDeps): RestartNudger {
+  const schedule = deps.schedule ?? defaultSchedule
+  const pending = new Map<string, () => void>()
+  const nudged = new Set<string>()
+  const settle = async (sessionID: string, created: number) => {
+    pending.delete(sessionID)
+    try {
+      if (!needsNudge(await deps.getSession(sessionID), created)) return
+      nudged.add(sessionID)
+      await deps.nudge(sessionID)
+    } catch {
+      // A missing session or a failed post leaves the session as it was; the notice is not retried.
+    }
+  }
+  return {
+    notice(event) {
+      if (!isRestartNotice(event.text) || nudged.has(event.sessionID) || pending.has(event.sessionID)) return
+      pending.set(event.sessionID, schedule(() => void settle(event.sessionID, event.created), deps.graceMs))
+    },
+    dispose() {
+      for (const cancel of pending.values()) cancel()
+      pending.clear()
+    },
+  }
+}
+
+export const NUDGE_TEXT =
+  "The server restarted while you were waiting for a background shell, and that shell was lost. Check its output files and the state on disk, rerun it if needed, and continue your task."
+
+/** Subscribes to `session.synthetic` events and nudges stalled sessions. Returns the cleanup. */
+export async function setupRestartNudge(ctx: Context, options: RestartNudgeOptions, schedule?: Schedule): Promise<() => Promise<void>> {
+  const nudger = createRestartNudger({
+    graceMs: options.graceMs,
+    schedule,
+    getSession: (sessionID) => ctx.session.get({ sessionID } as never) as unknown as Promise<SessionTimes>,
+    nudge: async (sessionID) => {
+      await ctx.session.synthetic({ sessionID, text: NUDGE_TEXT, description: "Shell lost to server restart", delivery: "queue", resume: true } as never)
+    },
+  })
+  const controller = new AbortController()
+  const iterator = ctx.event.subscribe({ signal: controller.signal, types: ["session.synthetic"] } as never)[Symbol.asyncIterator]()
+  const listening = (async () => {
+    try {
+      while (!controller.signal.aborted) {
+        const next = await iterator.next()
+        if (next.done) break
+        const event = next.value as unknown as { type: string; created: number; data: { sessionID: string; text: string } }
+        if (event.type === "session.synthetic") nudger.notice({ sessionID: event.data.sessionID, text: event.data.text, created: event.created })
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) throw error
+    }
+  })()
+  void listening.catch(() => {})
+  return async () => {
+    controller.abort()
+    nudger.dispose()
+    await iterator.return?.()
+  }
+}
