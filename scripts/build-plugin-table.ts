@@ -15,7 +15,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 
-export const SCOPES = ["global", "project", "internal"] as const
+const SCOPES = ["global", "project", "internal"] as const
 export type Scope = (typeof SCOPES)[number]
 
 export type Entry = {

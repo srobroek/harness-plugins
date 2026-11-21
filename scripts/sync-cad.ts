@@ -17,10 +17,10 @@ import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync
 import os from "node:os"
 import path from "node:path"
 
-export const PLUGIN_DIR = path.join(import.meta.dir, "..", "plugins", "cad")
-export const PIN_FILE = "cad-agent.json"
+const PLUGIN_DIR = path.join(import.meta.dir, "..", "plugins", "cad")
+const PIN_FILE = "cad-agent.json"
 /** The upstream directories this script owns, with where each lives in the plugin; each is replaced as a whole. */
-export const OWNED = { skills: "common/skills", examples: "opencode/examples", agents: "common/agents" } as const
+const OWNED = { skills: "common/skills", examples: "opencode/examples", agents: "common/agents" } as const
 const OWNED_NAMES = Object.keys(OWNED) as (keyof typeof OWNED)[]
 
 /** The path in the plugin of a tree key (an upstream path such as `skills/cad-flow/SKILL.md`). */
@@ -61,7 +61,7 @@ type Tier = "cheap" | "standard" | "strong" | "reviewer"
 /** What the plugin adds to each cad-agent agent: its model-roles tier, step limit and, if needed, a shorter description. */
 export type Overlay = { tier: Tier; steps: number; description?: string }
 
-export const AGENTS: Readonly<Record<string, Overlay>> = {
+const AGENTS: Readonly<Record<string, Overlay>> = {
   "cad-analyst": {
     tier: "strong",
     steps: 100,
@@ -84,7 +84,7 @@ export const AGENTS: Readonly<Record<string, Overlay>> = {
  * Shorter descriptions for the cad-agent skills whose own pass the 160-character limit that
  * `bun run descriptions` enforces, since every request lists each skill's description.
  */
-export const SKILL_DESCRIPTIONS: Readonly<Record<string, string>> = {
+const SKILL_DESCRIPTIONS: Readonly<Record<string, string>> = {
   "cad-design":
     'Grows CAD parts from massing blocks to real products, fidelity F0-F3. Triggers on "make it look real", "detail parts".',
   "cad-fits": 'ISO 286 hole/shaft limits, fit types and worst-case/RSS stack-ups. Triggers on "what fit for", "H7/g6", "stack-up".',
@@ -136,7 +136,7 @@ const GRANTS: Record<Exclude<Capability, "read">, Rule[]> = {
 }
 
 /** For an agent with `shell-uv`, whose cad-agent prompt runs its scripts in a shell. */
-export const CAD_RUN_NOTE = [
+const CAD_RUN_NOTE = [
   "You have no shell here. Run each documented",
   '`uv run --script "$CAD_SKILLS/cad-flow/scripts/run.py" <skill>/scripts/<script>.py <args...>` command as one `cad_run`',
   "call: `script` is `<skill>/scripts/<script>.py` and `args` holds the remaining arguments, one per item. It runs from the",

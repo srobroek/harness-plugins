@@ -72,7 +72,7 @@ export interface Converted {
 }
 
 /** V2 permission actions this converter decides; everything else keeps OpenCode defaults. */
-export const MANAGED_ACTIONS = ["read", "glob", "grep", "edit", "shell", "webfetch", "websearch", "subagent"] as const
+const MANAGED_ACTIONS = ["read", "glob", "grep", "edit", "shell", "webfetch", "websearch", "subagent"] as const
 
 const TOOL_MAP: Record<string, string[]> = {
   read: ["read"],
@@ -91,10 +91,10 @@ const TOOL_MAP: Record<string, string[]> = {
 const DROPPED_TOOLS = new Set(["lsp", "ast_grep", "eval", "yield", "github"])
 
 /** Allowed in every `exclusive` agent: loading skills and Code Mode, which carries plugin tools. */
-export const EXCLUSIVE_BASE = ["skill", "execute"] as const
+const EXCLUSIVE_BASE = ["skill", "execute"] as const
 
 /** omp agent ids that have a different V2 counterpart. */
-export const AGENT_MAP: Record<string, string> = { scout: "explore" }
+const AGENT_MAP: Record<string, string> = { scout: "explore" }
 
 const IGNORED_KEYS: Record<string, string> = {
   "read-summarize": "no V2 equivalent",

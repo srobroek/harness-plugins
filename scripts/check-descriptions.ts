@@ -26,19 +26,19 @@ import { parseSkillFile } from "../lib/src/skill-files.ts"
 import { createFakeContext } from "../lib/src/testing.ts"
 
 export const TOOL_FIRST_LINE = 120
-export const SCHEMA = 1500
-export const CODEMODE_SCHEMA = 3000
+const SCHEMA = 1500
+const CODEMODE_SCHEMA = 3000
 export const SKILL_DESCRIPTION = 160
 export const AGENT_DESCRIPTION = 150
 export const CONTEXT_BLOCK = 1000
 
 /** Findings that are accepted for now, by `<kind>:<name>`, each with the reason. */
-export const EXEMPT: Record<string, string> = {
+const EXEMPT: Record<string, string> = {
   "block:speckit/speckit-workflow.md":
     "added only in SpecKit repositories, and its MUST rules redirect the upstream /speckit.* skills on every turn",
 }
 
-export const DIRECT_COMMENT = /check-descriptions:\s*direct\s+\S/
+const DIRECT_COMMENT = /check-descriptions:\s*direct\s+\S/
 
 export type Finding = { key: string; where: string; reason: string }
 
