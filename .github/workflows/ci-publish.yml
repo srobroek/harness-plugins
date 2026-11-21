@@ -1,0 +1,93 @@
+name: ci-publish
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [in_progress, completed]
+
+permissions: {}
+
+jobs:
+  publish:
+    if: github.event.workflow_run.event == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: ci-publish-${{ github.event.workflow_run.event }}-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: Publish dispatched CI as head commit statuses
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          node --input-type=module <<'JS'
+          await (async () => {
+          const { GITHUB_TOKEN, GITHUB_REPOSITORY: repo, GITHUB_SHA: trustedSha, RUN_ID } = process.env;
+          const api = async (path, body) => {
+            const response = await fetch(`https://api.github.com/repos/${repo}${path}`, {
+              method: body ? 'POST' : 'GET',
+              headers: {
+                Authorization: `Bearer ${GITHUB_TOKEN}`,
+                Accept: 'application/vnd.github+json',
+                'Content-Type': 'application/json',
+                'X-GitHub-Api-Version': '2026-03-10',
+              },
+              body: body ? JSON.stringify(body) : undefined,
+              redirect: 'error',
+              signal: AbortSignal.timeout(30_000),
+            });
+            if (!response.ok) throw new Error(`GitHub API ${path}: ${response.status}`);
+            return response.json();
+          };
+          const run = await api(`/actions/runs/${RUN_ID}`);
+          if (run.event !== 'workflow_dispatch' || run.path !== '.github/workflows/ci.yml' ||
+              run.head_repository?.full_name !== repo || !run.head_branch?.startsWith('renovate/')) return;
+          const latest = await api(`/actions/workflows/ci.yml/runs?event=workflow_dispatch&head_sha=${run.head_sha}&branch=${encodeURIComponent(run.head_branch)}&per_page=1`);
+          if (latest.workflow_runs[0]?.id !== run.id) return;
+          const prs = await api(`/pulls?state=open&head=${encodeURIComponent(`${repo.split('/')[0]}:${run.head_branch}`)}&per_page=100`);
+          const eligible = prs.filter(pr => pr.user.login === 'renovate[bot]' && pr.state === 'open' &&
+            pr.head.repo?.full_name === repo && !pr.head.repo.fork &&
+            pr.head.ref === run.head_branch && pr.head.sha === run.head_sha);
+          if (eligible.length !== 1) return;
+          const definition = '/contents/.github/workflows/ci.yml?ref=';
+          const [headCi, trustedCi] = await Promise.all([
+            api(definition + run.head_sha), api(definition + trustedSha),
+          ]);
+          const normalizeCi = file => {
+            if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error('Missing CI definition');
+            return Buffer.from(file.content, 'base64').toString('utf8')
+              .replace(/^(\s+uses: srobroek\/harness-kit\/\.github\/workflows\/check\.yml)@v\d+\.\d+\.\d+$/gm, '$1@VERSION')
+              .replace(/^(\s+- uses: (?:actions\/checkout|actions\/setup-node|oven-sh\/setup-bun))@[a-f0-9]{40}(?: # v\d+(?:\.\d+){0,2})?$/gm, '$1@SHA');
+          };
+          if (!headCi.sha || (headCi.sha !== trustedCi.sha && normalizeCi(headCi) !== normalizeCi(trustedCi))) {
+            throw new Error('CI definition differs from the trusted default branch');
+          }
+          const contexts = ['check / check', 'repo-checks', 'changes'];
+          let state = 'pending';
+          if (run.status === 'completed') {
+            const { jobs, total_count } = await api(`/actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
+            const succeeded = name => {
+              const matching = jobs.filter(job => job.name === name);
+              return matching.length === 1 && matching[0].status === 'completed' && matching[0].conclusion === 'success';
+            };
+            const cad = jobs.filter(job => job.name === 'cad');
+            const cadPassed = cad.length === 1 && cad[0].status === 'completed' && ['success', 'skipped'].includes(cad[0].conclusion);
+            state = run.conclusion === 'success' && total_count === jobs.length && contexts.every(succeeded) && cadPassed ? 'success' : 'failure';
+          }
+          const fresh = await api(`/actions/runs/${RUN_ID}`);
+          if (fresh.run_attempt !== run.run_attempt || fresh.status !== run.status) return;
+          for (const context of contexts) {
+            await api(`/statuses/${run.head_sha}`, {
+              context, state,
+              description: `Dispatched CI: ${state}`,
+              target_url: `https://github.com/${repo}/actions/runs/${run.id}`,
+            });
+          }
+          })();
+          JS
