@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { env } from "node:process"
@@ -129,6 +129,33 @@ describe("createGit() in a checkout with hostile config", () => {
     expect(await ran(marker)).toBe(false)
   })
 
+  test.each(reads)("%s does not run a clean filter whose driver name is empty", async (_, read) => {
+    const { repo, marker } = await repoWithEditedFile("a.txt filter=\n")
+    await appendFile(join(repo, ".git", "config"), `[filter ""]\n\tclean = touch '${marker}'; cat\n`)
+    expect(await read(repo)).toBe(true)
+    expect(await ran(marker)).toBe(false)
+  })
+
+  // A driver name that is not UTF-8 cannot be passed back to git as a `-c` key, so every read refuses.
+  const refusals = [
+    ["status", (repo: string) => git.status(repo, "HEAD")],
+    ["porcelain", (repo: string) => git.porcelain(repo)],
+    ["trackedDirty", (repo: string) => git.trackedDirty(repo).catch(() => undefined)],
+    ["localFiles", (repo: string) => git.localFiles(repo)],
+  ] as const
+
+  test.each(refusals)("%s refuses, without running it, a filter whose driver name is not UTF-8", async (_, read) => {
+    const name = Buffer.from([0xff, 0xfe])
+    const { repo, marker } = await repoWithEditedFile()
+    await writeFile(join(repo, ".gitattributes"), Buffer.concat([Buffer.from("a.txt filter="), name, Buffer.from("\n")]))
+    await appendFile(
+      join(repo, ".git", "config"),
+      Buffer.concat([Buffer.from('[filter "'), name, Buffer.from(`"]\n\tclean = touch '${marker}'; cat\n`)]),
+    )
+    expect(await read(repo)).toBeUndefined()
+    expect(await ran(marker)).toBe(false)
+  })
+
   test.each([
     ["a dotted, mixed-case driver name", "Ev.il", "filter.Ev.il.process"],
     ["a long-running process filter", "evil", "filter.evil.process"],
@@ -203,6 +230,29 @@ describe("createGit() in a checkout with hostile config", () => {
     const { repo, marker } = await repoWithEditedFile()
     await sh(repo, "config", "core.fsmonitor", `touch '${marker}'; false`)
     expect((await git.status(repo, "HEAD"))?.dirty).toBe(true)
+    expect(await ran(marker)).toBe(false)
+  })
+
+  test("stashSubjects does not run the repository's gpg.program", async () => {
+    const { repo, marker } = await repoWithEditedFile()
+    const read = async (stdin: string, ...args: string[]) => {
+      const child = Bun.spawn(["git", "-C", repo, ...args], { stdin: new TextEncoder().encode(stdin), stdout: "pipe", stderr: "ignore" })
+      expect(await child.exited).toBe(0)
+      return (await new Response(child.stdout).text()).trim()
+    }
+    // A stash entry whose commit carries a signature, so showing it with signatures starts gpg.program.
+    const tree = await read("", "write-tree")
+    const head = await read("", "rev-parse", "HEAD")
+    const signed = await read(
+      `tree ${tree}\nparent ${head}\nauthor t <t@e> 1 +0000\ncommitter t <t@e> 1 +0000\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n -----END PGP SIGNATURE-----\n\nsigned stash\n`,
+      "hash-object", "-t", "commit", "-w", "--stdin",
+    )
+    await sh(repo, "update-ref", "--create-reflog", "-m", "On main: signed stash", "refs/stash", signed)
+    const gpg = join(repo, "..", `${repo.split("/").at(-1)}.gpg`)
+    writeExecutable(gpg, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`)
+    await sh(repo, "config", "gpg.program", gpg)
+    await sh(repo, "config", "log.showSignature", "true")
+    expect(await git.stashSubjects(repo)).toBe("On main: signed stash")
     expect(await ran(marker)).toBe(false)
   })
 
