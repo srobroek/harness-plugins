@@ -58,19 +58,25 @@ test("a missing references directory gets no grant", () => {
   expect(warnings).toHaveLength(1)
 })
 
-test("a swap after the check cannot add a pattern: the rules come only from the validated paths", () => {
+test("a real swap of references after the check cannot add a pattern: the rules come only from the validated paths", () => {
   install(() => mkdirSync(join(skill(), "references")))
   const outside = join(root, "outside")
   mkdirSync(outside)
-  const real = (path: string) => realpathSync(path)
-  const calls: string[] = []
-  // The first two resolutions (skills root, references) are what the check sees; any later one would return the outside directory.
+  let calls = 0
+  // The second resolution is the validation of `references`. Right after it returns, replace the directory on disk
+  // with a symlink to an outside directory, so any later native realpath of it (as a delegating helper would do)
+  // sees the outside target.
   const swapping = (path: string) => {
-    calls.push(path)
-    return calls.length <= 2 ? real(path) : outside
+    const resolved = realpathSync(path)
+    if (++calls === 2) {
+      rmSync(join(skill(), "references"), { recursive: true })
+      symlinkSync(outside, join(skill(), "references"))
+    }
+    return resolved
   }
   const rules = referenceReadRules(moduleUrl(), () => {}, swapping)
-  expect(calls).toHaveLength(2)
+  expect(calls).toBe(2)
+  expect(realpathSync(join(skill(), "references"))).toBe(outside)
   expect(rules.length).toBeGreaterThan(0)
   for (const rule of rules) expect(rule.resource).toBe(join(skill(), "references", "*"))
   expect(permissionEffect(rules, "external_directory", join(outside, "x.md"))).toBe("ask")
