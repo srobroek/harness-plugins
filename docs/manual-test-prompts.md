@@ -766,8 +766,8 @@ Call delivery_land with pr 1 in this repo.
 Call delivery_land for PR #<n> with merge_method squash, expectHeadSha <head sha>, requireGreenChecks false.
 ```
 
-**Expect:** a permission prompt for `delivery_land` on `<owner>/<repo>#<n>`, then a merge and a receipt under `~/.omp/receipts/<repo-key>/`.
-**If not:** `plugins/delivery/opencode/src/land.ts` and `approval.ts`; `confirm: false` skips the prompt.
+**Expect:** with an `ask` rule for `delivery_land` (or `confirm: true`), a permission prompt on `<owner>/<repo>#<n>`; with an `allow` rule and no option, no prompt. Then a merge and a receipt under `~/.omp/receipts/<repo-key>/`.
+**If not:** `plugins/delivery/opencode/src/land.ts` and `approval.ts`; `confirm` is opt-in (only the boolean `true` adds the prompt).
 
 ### Tool `delivery_cleanup`
 
@@ -775,7 +775,7 @@ Call delivery_land for PR #<n> with merge_method squash, expectHeadSha <head sha
 Call delivery_cleanup for the receipt delivery_land just wrote.
 ```
 
-**Expect:** a permission prompt for `delivery_cleanup` with the worktree path, then `git worktree remove` and `git branch -d`. Called from inside that worktree, it refuses.
+**Expect:** a prompt for `delivery_cleanup` with the worktree path only if a rule asks or `confirm: true`; then `git worktree remove` and `git branch -d`. Called from inside that worktree, it refuses.
 **If not:** `plugins/delivery/opencode/src/cleanup.ts`.
 
 ### Hook: fan-out instructions
@@ -861,7 +861,7 @@ Load the delivery-fan-out skill, then split "add sub, mul and div to src/math.ts
 ## dep-update
 
 **Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/dep-update/opencode'`.
-Option `confirm` (default `true`). The scratch `package.json` pins `left-pad` `1.1.0`.
+Option `confirm` (default `false`; only the boolean `true` prompts). The scratch `package.json` pins `left-pad` `1.1.0`.
 
 ### Tool `dep_scan`
 
@@ -872,13 +872,13 @@ Call dep_scan on this repo.
 **Expect:** `left-pad` 1.1.0 classified with a newer version (`MINOR-CHECK` for 1.3.0); the scan is read-only.
 **If not:** `plugins/dep-update/opencode/src/index.ts`; needs network access to npm.
 
-### Tool `dep_apply` (permission prompt)
+### Tool `dep_apply` (permission rules)
 
 ```text
 Call dep_apply with ecosystem npm, name left-pad, version 1.3.0.
 ```
 
-**Expect:** a permission prompt for `dep_apply` on `left-pad@1.3.0`, even after an earlier "allow always". Approve it, and `package.json` pins 1.3.0.
+**Expect:** with an `allow` rule and no option, no prompt. With `confirm: true` or an `ask` rule, a prompt for `dep_apply` on `left-pad@1.3.0`, even after an earlier "allow always". Approve it if asked, and and `package.json` pins 1.3.0.
 **If not:** `plugins/dep-update/opencode/src/bump.ts`; `DEP_UPDATE_PKG_MANAGER` picks the package manager.
 
 ### Hook: scanner-install advisory
@@ -896,13 +896,13 @@ Run exactly: uv tool install pip-audit
 Upgrade this project's dependencies safely.
 ```
 
-**Expect:** loads `dep-update`, runs `dep_scan`, and applies patch and minor bumps one at a time, each behind a prompt.
+**Expect:** loads `dep-update`, runs `dep_scan`, and applies patch and minor bumps one at a time, each under your permission rules.
 **If not:** `plugins/dep-update/common/skills/dep-update/SKILL.md`.
 
 ## design
 
 **Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/design/opencode'`.
-Option `confirmScan` (default `true`). `design_setup` needs `.beads/`; the scan needs `npx`.
+Option `confirmScan` (default `false`; only the boolean `true` prompts). `design_setup` needs `.beads/`; the scan needs `npx`.
 The browser steps need the desktop browser tools, a browser MCP server or Playwright.
 
 ### Tool `design_setup`
@@ -920,8 +920,8 @@ Call design_setup for this repo.
 Write src/index.html with a centered purple gradient hero, then call design_impeccable_scan on src/index.html.
 ```
 
-**Expect:** a permission prompt before every run, then the detector's JSON (exit 2 means findings).
-**If not:** `plugins/design/opencode/src/impeccable.ts`; `confirmScan: false` skips the prompt.
+**Expect:** a prompt before every run only with `confirmScan: true` or an `ask` rule; then the detector's JSON (exit 2 means findings).
+**If not:** `plugins/design/opencode/src/impeccable.ts`; `confirmScan: true` adds the prompt.
 
 ### Skill `design-guide` (router) and its members
 

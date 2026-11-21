@@ -111,8 +111,8 @@ two versions noisy (inference; I always set it).
 
 repomix is a global install (`mise use -g npm:repomix@1.18.1`, as on this host). The tool
 resolves `repomix` on PATH first. If it isn't there, the tool falls back to
-`npx --yes repomix@<pinned>`, and that fallback **always asks first**, like
-`design_impeccable_scan`, because npx downloads code. `confirmPack: false` opts out.
+`npx --yes repomix@<pinned>`, and your permission rules decide whether that fallback runs. The boolean
+`confirmPack: true` makes it ask first, because npx downloads code.
 
 ## Recommended packaging
 
