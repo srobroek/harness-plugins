@@ -4,11 +4,13 @@ import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Plugin } from "@opencode/plugin"
 import type { Context } from "@opencode/plugin/promise/plugin"
+import { readBoundedBytes } from "@srobroek/opencode-lib/bounded-read"
 import { withEmbeddedWriteLock } from "@srobroek/opencode-lib/bd-embedded-write-lock"
 import { hostWarn, type Warn } from "@srobroek/opencode-lib/host-log"
 import { withLease } from "@srobroek/opencode-lib/lease-lock"
+import { SAFE_GIT_ARGS } from "@srobroek/opencode-lib/safe-git"
 import { registerSkills } from "@srobroek/opencode-lib/skill-files"
-import { classifyScope, deadlineAt, type Invocation, parseInvocation, type RunOptions } from "./args.ts"
+import { classifyScope, deadlineAt, type Grant, GRANTS, type Invocation, parseInvocation, type RunOptions } from "./args.ts"
 import { automationRequest, type TickBinding } from "./automation.ts"
 import { Activity, BD_READ_TIMEOUT_MS, type BeadView, childFrom, commitCount, readBeads, type SessionView, sessionBusy } from "./gather.ts"
 import { type JournalEntry, LOG_INPUT_SCHEMA, validateEntry } from "./journal.ts"
@@ -34,8 +36,22 @@ import {
   recordableLane,
   reviewExportAsk,
   rootIntact,
+  type Witnessed,
 } from "./policy.ts"
-import { exportDirFor, exportReview, reviewCurrentKey, reviewManifestKey } from "./review-export.ts"
+import { type ExportResult, exportDirFor, exportReview, reviewCurrentKey, reviewManifestKey, verifyExport } from "./review-export.ts"
+import {
+  buildReviewPrompt,
+  hashText,
+  MAX_REVIEW_DIFF_BYTES,
+  readPointer,
+  REVIEW_AGENT,
+  type ReviewPointer,
+  type ReviewResolution,
+  reviewMetadata,
+  reviewPointerKey,
+  reviewPointerPrefix,
+  resolveReview,
+} from "./review-session.ts"
 import { autopilotRoot, findRun, type Run, RunDir, RunFileError, runCommand } from "./rundir.ts"
 import { countBeads, newRunState, type RunState, runIdFor, type Snapshot, TICK_MS, tick, tickPrompt } from "./state.ts"
 import { HANDOFF_LABEL, handoffDescription, renderSummary } from "./summary.ts"
@@ -47,6 +63,7 @@ export * from "./gather.ts"
 export * from "./journal.ts"
 export * from "./policy.ts"
 export * from "./review-export.ts"
+export * from "./review-session.ts"
 export * from "./rundir.ts"
 export * from "./state.ts"
 export * from "./state-schema.ts"
@@ -71,6 +88,10 @@ export const EXPORT_REVIEW_DESCRIPTION =
   "Export a review round for reviewers that cannot run git while the run is armed.\n" +
   "Writes the base...head diff, a diffstat, the changed files at head and a hash manifest under the run's review directory; give reviewers the returned dir and manifestHash."
 
+export const REVIEW_DESCRIPTION =
+  "Start a plugin-run review of one PR head by a code-reviewer session; returns at once.\n" +
+  "Under --allow self-review a merge may rest on its APPROVE for that exact head; autopilot_status reports the verdict."
+
 export const COMMAND_DESCRIPTION = "Run this session unattended: /autopilot [scope] [flags] | resume | review | stop"
 
 const STATUS_INPUT = {
@@ -87,7 +108,7 @@ const STATUS_INPUT = {
         scope: { type: "string" },
         ledger: { type: "string", description: "the beads ledger (.beads directory) this run reads and writes; default: derived from the scope or the session directory" },
         full: { type: "boolean" },
-        allow: { type: "array", items: { type: "string", enum: ["merge", "deploy"] } },
+        allow: { type: "array", items: { type: "string", enum: [...GRANTS] } },
         lanes: { type: "integer", minimum: 1 },
         for: { type: "string", description: "duration such as 3h" },
         until_time: { type: "string", description: "HH:MM" },
@@ -112,6 +133,16 @@ const MERGE_INPUT = {
   },
 } as const
 
+const REVIEW_INPUT = {
+  type: "object",
+  additionalProperties: false,
+  required: ["pr", "sha"],
+  properties: {
+    pr: { type: ["integer", "string"], description: "PR number" },
+    sha: { type: "string", description: "the full 40-digit head commit to review" },
+  },
+} as const
+
 const EXPORT_REVIEW_INPUT = {
   type: "object",
   additionalProperties: false,
@@ -126,7 +157,7 @@ const EXPORT_REVIEW_INPUT = {
 type StatusInput = {
   action?: "status" | "arm" | "tick" | "fallback" | "stop"
   run?: string
-  setup?: { scope?: string; ledger?: string; full?: boolean; allow?: ("merge" | "deploy")[]; lanes?: number; for?: string; until_time?: string; until?: string }
+  setup?: { scope?: string; ledger?: string; full?: boolean; allow?: Grant[]; lanes?: number; for?: string; until_time?: string; until?: string }
   automation_id?: string
   reason?: string
   token?: string
@@ -168,6 +199,9 @@ export const MAX_REPROMPTS = 2
 
 /** A bound on child-session pages per tick (100 sessions each). */
 const MAX_CHILD_PAGES = 50
+
+/** How many reviews a status report resolves. */
+const MAX_REVIEWS_REPORTED = 20
 
 const NO_LEDGER = "the run has no beads ledger to read or write"
 
@@ -637,6 +671,7 @@ export class Autopilot {
       for (const due of result.actions)
         if (due.kind === "park") dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: due.reason, bead: due.item, parked: true })
     }
+    const reviews = await this.#reviews(state.sessionID)
     const out = {
       ping: result.ping,
       progress: result.progress,
@@ -646,6 +681,7 @@ export class Autopilot {
       parked: result.state.parked,
       idleTicks: action === "tick" ? result.state.idleTicks : state.idleTicks,
       ...(result.stop ? { stop: result.stop } : {}),
+      ...(reviews.length ? { reviews } : {}),
     }
     if (result.stop !== undefined && action === "tick")
       return { ...out, done: true, prompt: `Autopilot is stopping: ${result.stop}. Call autopilot_status with action "stop" and reason "${result.stop}", then print the summary and end.` }
@@ -988,7 +1024,11 @@ export class Autopilot {
       api(`rules/branches/${base}`),
       this.#gh(cwd, ["repo", "view", "--json", "squashMergeAllowed,rebaseMergeAllowed,mergeCommitAllowed"]),
     ])
-    const refusal = mergeRefusal({ sha, method, view, reviews, runs, status, protection, rules, repo })
+    const running = await this.runningFor(sessionID)
+    const granted = running?.state?.options.allow.includes("self-review") === true
+    const witness = granted && running ? await this.#resolveReview(running.lead, pr, sha) : undefined
+    const witnessed: Witnessed = { granted, approvedSha: witness?.state === "done" && witness.record.verdict === "approve" ? witness.record.sha : undefined }
+    const refusal = mergeRefusal({ sha, method, view, reviews, runs, status, protection, rules, repo, witnessed })
     if (refusal !== undefined) return refuse(refusal)
     // Re-read right before merging: a retarget or a push since the reads above voids them.
     const drift = mergeDrift({ view: await this.#gh(cwd, ["pr", "view", pr, "--json", "baseRefName,headRefOid"]), base, sha })
@@ -998,7 +1038,8 @@ export class Autopilot {
     if (!put.ok) return refuse(put.reason)
     const outcome = mergeOutcome(await this.#gh(cwd, ["pr", "view", pr, "--json", "state,headRefOid,mergeCommit,autoMergeRequest"]), sha)
     if (!outcome.ok) return refuse(outcome.reason)
-    await journal({ type: "action", summary: `merged #${pr} at ${sha} (${method}) as ${put.sha}`, evidence: sha })
+    const note = witness?.state === "done" && witnessed.approvedSha === sha ? `; plugin review ${witness.record.reviewerSession} approved this head` : ""
+    await journal({ type: "action", summary: `merged #${pr} at ${sha} (${method}) as ${put.sha}${note}`, evidence: sha })
     return `merged #${pr} at ${sha} with ${method}`
   }
 
@@ -1012,15 +1053,145 @@ export class Autopilot {
     if (!running?.state) return "refused: no running autopilot run for this session"
     const pr = String(input.pr ?? "").trim()
     if (!/^\d{1,9}$/.test(pr) || Number(pr) < 1) return "refused: pr must be a positive PR number"
-    const result = await exportReview({ run: this.#run, cwd: running.state.directory, runDir: running.dir.path, base: input.base, head: input.head })
-    if (!result.ok) return `refused: ${result.reason}`
+    const result = await this.#publishExport({ dir: running.dir, state: running.state }, pr, input.base, input.head)
+    return result.ok ? JSON.stringify(result.exported, null, 2) : `refused: ${result.reason}`
+  }
+
+  /** Export a round and record its manifest hash by PR and head, and as the run's current export. */
+  async #publishExport(running: { dir: RunDir; state: RunState }, pr: string, base: unknown, head: unknown): Promise<{ ok: true; exported: Extract<ExportResult, { ok: true }> } | { ok: false; reason: string }> {
+    const result = await exportReview({ run: this.#run, cwd: running.state.directory, runDir: running.dir.path, base, head })
+    if (!result.ok) return result
     try {
       await this.ctx.storage.set(reviewManifestKey(Number(pr), result.head), { manifestHash: result.manifestHash })
       await this.ctx.storage.set(reviewCurrentKey(running.dir.runId), { head: result.head, manifestHash: result.manifestHash })
     } catch (error) {
-      return `refused: the export was written but its manifest hash could not be recorded (${errorText(error)}); export again`
+      return { ok: false, reason: `the export was written but its manifest hash could not be recorded (${errorText(error)}); export again` }
     }
-    return JSON.stringify(result, null, 2)
+    return { ok: true, exported: result }
+  }
+
+  // --- plugin-run review ----------------------------------------------------------------------
+
+  /**
+   * Start a review of one PR head by a `code-reviewer` child session the plugin creates, and return
+   * at once. The export is verified against its stored manifest hash right before the prompt, and
+   * only a pointer to the child is kept; the verdict is derived later by {@link resolveReview}.
+   */
+  async review(sessionID: string, input: { pr?: unknown; sha?: unknown }): Promise<string> {
+    const running = await this.runningFor(sessionID)
+    if (!running?.state) return "refused: no running autopilot run for this session"
+    const pr = String(input.pr ?? "").trim()
+    const sha = String(input.sha ?? "").trim().toLowerCase()
+    if (!/^\d{1,9}$/.test(pr) || Number(pr) < 1) return "refused: pr must be a positive PR number"
+    if (!/^[0-9a-f]{40}$/.test(sha)) return "refused: sha must be the full 40-digit head commit"
+    const { lead, dir, state } = running as typeof running & { state: RunState }
+    const existing = await this.#resolveReview(lead, pr, sha)
+    if (existing?.state === "pending") return JSON.stringify({ started: false, state: "pending", note: "a review of this head is already running" })
+    if (existing?.state === "done") return JSON.stringify({ started: false, state: "done", verdict: existing.record.verdict, reviewer: existing.record.reviewerSession })
+    const agent = await this.ctx.agent.get({ agentID: REVIEW_AGENT } as never).then(
+      (output) => {
+        const value = output as unknown as { data?: { id?: unknown } } | { id?: unknown } | undefined
+        return (value && "data" in value ? value.data : (value as { id?: unknown } | undefined))?.id === REVIEW_AGENT
+      },
+      () => false,
+    )
+    if (!agent) return `refused: the ${REVIEW_AGENT} agent is not available`
+
+    const cwd = await this.#sessionDirectory(sessionID)
+    const view = (await this.#gh(cwd, ["pr", "view", pr, "--json", "state,headRefOid,baseRefName"])) as { state?: unknown; headRefOid?: unknown; baseRefName?: unknown } | undefined
+    const base = typeof view?.baseRefName === "string" ? view.baseRefName : ""
+    if (!/^[A-Za-z0-9._/-]+$/.test(base) || base.includes("..")) return "refused: the PR's base branch is unreadable or unusual"
+    if (view?.state !== "OPEN") return `refused: PR state is ${String(view?.state ?? "unreadable")}, expected OPEN`
+    if (typeof view.headRefOid !== "string" || view.headRefOid.toLowerCase() !== sha) return `refused: PR head is ${String(view.headRefOid ?? "unreadable")}, not ${sha}`
+
+    const remote = await this.#run(state.directory, "git", [...SAFE_GIT_ARGS, "rev-parse", "--verify", "--quiet", `origin/${base}^{commit}`], GH_TIMEOUT_MS)
+    const published = await this.#publishExport({ dir, state }, pr, remote.ok ? `origin/${base}` : base, sha)
+    if (!published.ok) return `refused: ${published.reason}`
+    const { exported } = published
+    if (exported.head !== sha) return `refused: ${sha} resolved to ${exported.head}`
+    const recorded = (await this.ctx.storage.get(reviewManifestKey(Number(pr), sha)).catch(() => undefined)) as { manifestHash?: unknown } | undefined
+    const manifestHash = typeof recorded?.manifestHash === "string" ? recorded.manifestHash : ""
+    const checked = verifyExport(exported.dir, manifestHash)
+    if (!checked.ok) return `refused: the export does not match its recorded hash (${checked.reason})`
+    const read = readBoundedBytes(join(exported.dir, "round.diff"), MAX_REVIEW_DIFF_BYTES)
+    if (read.kind === "unreadable" && read.reason === "too-large") return `refused: the diff is larger than the ${MAX_REVIEW_DIFF_BYTES} bytes a review prompt carries; narrow the round`
+    // The bytes the prompt carries must be the bytes the manifest recorded, not whatever the file holds now.
+    if (read.kind !== "bytes" || hashText(read.bytes) !== checked.manifest.diff.sha256) return "refused: the exported diff could not be read as recorded"
+    const diff = read.bytes.toString("utf8")
+    const delimiter = randomUUID().replaceAll("-", "")
+    if (diff.includes(delimiter)) return "refused: the diff contains the prompt delimiter; start again"
+    const nonce = randomUUID()
+    const prompt = buildReviewPrompt({ pr, sha, dir: exported.dir, manifestHash, nonce, delimiter, diff })
+
+    const key = reviewPointerKey(lead, pr, sha)
+    const child = await this.ctx.session
+      .create({
+        parentID: lead,
+        agent: REVIEW_AGENT,
+        title: `autopilot review of #${pr}`,
+        location: { directory: cwd },
+        metadata: reviewMetadata({ pr, sha, nonce }),
+        // The agent already denies all but reads; these hold if its rules are looser.
+        permissions: ["edit", "shell", "subagent", "autopilot_*"].map((action) => ({ action, resource: "*", effect: "deny" as const })),
+      })
+      .catch((error: unknown) => errorText(error))
+    if (typeof child === "string") return `refused: could not create the reviewer session (${child})`
+    const pointer: ReviewPointer = { pr, sha, session: child.id, nonce, promptHash: hashText(prompt), manifestHash, at: this.#now() }
+    const abandon = async (reason: string): Promise<string> => {
+      await this.ctx.storage.remove(key).catch(() => undefined)
+      await this.ctx.session.remove({ sessionID: child.id }).catch(() => undefined)
+      return `refused: ${reason}`
+    }
+    try {
+      await this.ctx.storage.set(key, pointer)
+    } catch (error) {
+      return abandon(`could not record the review (${errorText(error)})`)
+    }
+    // Immediately before the prompt: a change to the export since the check above refuses the review.
+    const again = verifyExport(exported.dir, manifestHash)
+    if (!again.ok) return abandon(`the export changed before the prompt (${again.reason})`)
+    try {
+      await this.ctx.session.prompt({ sessionID: child.id, text: prompt, metadata: reviewMetadata(pointer) })
+    } catch (error) {
+      return abandon(`could not prompt the reviewer (${errorText(error)})`)
+    }
+    return JSON.stringify({ started: true, session: child.id, pr, sha, manifestHash, note: "returns at once; autopilot_status reports the verdict under reviews" })
+  }
+
+  /** The review of one head started by `lead`, as the host's own record of the reviewer says; `undefined` when none was started. */
+  async #resolveReview(lead: string, pr: string, sha: string): Promise<ReviewResolution | undefined> {
+    const stored = await this.ctx.storage.get(reviewPointerKey(lead, pr, sha)).catch(() => undefined)
+    const pointer = readPointer(stored, pr, sha)
+    return pointer === undefined ? undefined : this.#resolvePointer(lead, pointer)
+  }
+
+  /** Re-read the reviewer from the host, never from a file; a reviewer past its deadline is interrupted. */
+  async #resolvePointer(lead: string, pointer: ReviewPointer): Promise<ReviewResolution> {
+    const [session, messages] = await Promise.all([
+      this.ctx.session.get({ sessionID: pointer.session }).catch(() => undefined),
+      this.ctx.session.context({ sessionID: pointer.session }).catch(() => undefined),
+    ])
+    const resolution = resolveReview({ pointer, lead, session, messages, now: this.#now() })
+    if (resolution.state !== "expired") return resolution
+    await this.ctx.session.interrupt({ sessionID: pointer.session }).catch((error: unknown) => this.#warn("could not interrupt a reviewer past its deadline", { error: errorText(error) }))
+    return { state: "void", reason: "the reviewer passed its deadline and was interrupted" }
+  }
+
+  /** The state of every review `lead` started, for the status report. */
+  async #reviews(lead: string): Promise<Record<string, unknown>[]> {
+    const prefix = reviewPointerPrefix(lead)
+    const page = await this.ctx.storage.scan({ prefix, limit: MAX_REVIEWS_REPORTED }).catch(() => undefined)
+    const out: Record<string, unknown>[] = []
+    for (const entry of page?.entries ?? []) {
+      const [pr, sha] = entry.key.slice(prefix.length).split("@")
+      const pointer = pr === undefined || sha === undefined ? undefined : readPointer(entry.value, pr, sha)
+      if (pointer === undefined) continue
+      const resolution = await this.#resolvePointer(lead, pointer)
+      if (resolution.state === "done") out.push({ pr, sha, state: "done", verdict: resolution.record.verdict, reviewer: resolution.record.reviewerSession })
+      else if (resolution.state === "void") out.push({ pr, sha, state: "void", reason: resolution.reason })
+      else out.push({ pr, sha, state: "pending" })
+    }
+    return out
   }
 
   /** Re-prompts a lead whose turn ended in a question, at most {@link MAX_REPROMPTS} times in a row. */
@@ -1088,6 +1259,12 @@ export async function setupAutopilot(ctx: Context, deps: Deps = {}): Promise<() 
         description: MERGE_DESCRIPTION,
         input: MERGE_INPUT,
         execute: async (input, tool) => ({ content: await pilot.merge(tool.sessionID, input as { pr?: unknown; sha?: unknown; method?: unknown }) }),
+      })
+      editor.add({
+        name: "autopilot_review",
+        description: REVIEW_DESCRIPTION,
+        input: REVIEW_INPUT,
+        execute: async (input, tool) => ({ content: await pilot.review(tool.sessionID, input as { pr?: unknown; sha?: unknown }) }),
       })
       editor.add({
         name: "autopilot_export_review",

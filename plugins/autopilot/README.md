@@ -18,10 +18,13 @@ condition and leaves a debrief and a handoff bead.
 Flags:
 
 - `--full` or `--no-full`
-- `--allow merge,deploy` or `--allow none`
+- `--allow merge,deploy,self-review` or `--allow none`
 - `--lanes N`
 - `--for 3h` or `--until-time 18:00`
 - `--until "<condition>"`, or `--until ""` for no condition
+
+`--allow self-review` (default off, recommended no) lets a merge rest on the
+plugin-run review instead of a GitHub approval; see "Plugin-run review" below.
 
 The setup round asks for each value that the command-line flags leave out.
 `--allow merge`, `--allow deploy` and `--full` govern what the agent decides to
@@ -206,6 +209,47 @@ success only when it is `MERGED` at `sha` with a merge commit and no auto-merge
 request. It journals the result: an `action` on success, an `issue` on a
 refusal. GitHub only. The approval and check judgments live in
 `lib/src/pr-approval.ts`, which `delivery_land` shares.
+
+## Plugin-run review
+
+`autopilot_review({ pr, sha })` starts a review that a merge can rest on without
+a GitHub approval, because the model that asks for the merge cannot write the
+verdict. It refuses unless a run is armed, the PR is open at `sha`, and the
+`code-reviewer` agent exists. It then exports the round (as `autopilot_export_review`
+does), verifies the export against its stored manifest hash, and creates a child
+of the lead session with agent `code-reviewer`, metadata
+`{ source, pr, sha, nonce }` and permissions that deny `edit`, `shell`,
+`subagent` and `autopilot_*`. It verifies the export once more right before it
+sends the one prompt: the diff (at most 256 KiB, else the call refuses) between
+lines with a random delimiter, marked as untrusted, and the closing line
+`VERDICT: APPROVE <sha>` or `VERDICT: REQUEST_CHANGES <sha>`. The call returns
+at once. Plugin storage keeps only a pointer (`pr`, `sha`, session, nonce,
+prompt hash, manifest hash, start time), never a verdict.
+
+`autopilot_status` (and `autopilot_merge`) resolve each review from the host:
+the session's parent, agent and metadata match; the transcript holds exactly
+one user message and its hash is the prompt's; there is no synthetic message,
+agent switch or later activity; the last idle and the session outcome are
+`succeeded`; and the reviewer's final assistant text, outside any code fence,
+ends in a verdict line naming `sha`. A follow-up message, a failed or
+interrupted turn or a verdict for another SHA voids it. A reviewer that is not
+done 30 minutes after the start is interrupted and voided. A head with a
+`done` review is not reviewed again, so a verdict cannot be re-rolled.
+
+Under `--allow self-review`, `autopilot_merge` skips only the GitHub approval,
+and only when the resolved review approves exactly the head being merged.
+Checks, required contexts, the head and base re-reads and the repository's
+merge method all still apply.
+
+Residual risks:
+
+- Prompt injection through the diff can talk the reviewer into `APPROVE`. The
+  delimiter and the fence-aware parse stop a forged verdict line, not a
+  persuaded reviewer.
+- A process of the same user that can call the OpenCode server API can create
+  or edit sessions and forge a record the plugin accepts.
+- Branch protection that requires approving reviews still refuses the merge:
+  GitHub does not know about the plugin's review.
 
 ## Tick
 

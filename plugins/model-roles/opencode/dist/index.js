@@ -86,6 +86,37 @@ class IdleReports {
   }
 }
 
+// lib/src/review-verdict.ts
+var VERDICT_LINE = /^VERDICT:\s*(APPROVE|REQUEST[-_]CHANGES|COMMENT)\b(.*)$/i;
+var OPEN_FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+var CLOSE_FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+function parseVerdictLine(text) {
+  let found;
+  let fence;
+  for (const line of text.split(/\r?\n/)) {
+    if (fence !== undefined) {
+      const closes = CLOSE_FENCE.exec(line)?.[1];
+      if (closes?.startsWith(fence.char) && closes.length >= fence.length)
+        fence = undefined;
+      continue;
+    }
+    const opens = OPEN_FENCE.exec(line);
+    if (opens?.[1] !== undefined && !(opens[1].startsWith("`") && opens[2]?.includes("`"))) {
+      fence = { char: opens[1].charAt(0), length: opens[1].length };
+      continue;
+    }
+    if (/^(?: {4}|\t)/.test(line) || /^ {0,3}>/.test(line))
+      continue;
+    const match = VERDICT_LINE.exec(line.trim());
+    if (match?.[1] !== undefined)
+      found = { verdict: match[1].toLowerCase().replace("_", "-"), rest: (match[2] ?? "").trim() };
+  }
+  return found;
+}
+function parseVerdict(text) {
+  return parseVerdictLine(text)?.verdict;
+}
+
 // plugins/model-roles/opencode/src/catalog.ts
 var DERIVED_TIERS = ["cheap", "standard", "strong"];
 var DEFAULT_TIER_EFFORT = {
@@ -5532,32 +5563,6 @@ function parseEvaluate(raw) {
     testGlobs: strings3(input.testGlobs) ?? DEFAULT_TEST_GLOBS
   };
 }
-var VERDICT_LINE = /^VERDICT:\s*(APPROVE|REQUEST-CHANGES|COMMENT)\b/i;
-var OPEN_FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
-var CLOSE_FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
-function parseVerdict(text) {
-  let found;
-  let fence;
-  for (const line of text.split(/\r?\n/)) {
-    if (fence !== undefined) {
-      const closes = CLOSE_FENCE.exec(line)?.[1];
-      if (closes?.startsWith(fence.char) && closes.length >= fence.length)
-        fence = undefined;
-      continue;
-    }
-    const opens = OPEN_FENCE.exec(line);
-    if (opens?.[1] !== undefined && !(opens[1].startsWith("`") && opens[2]?.includes("`"))) {
-      fence = { char: opens[1].charAt(0), length: opens[1].length };
-      continue;
-    }
-    if (/^(?: {4}|\t)/.test(line) || /^ {0,3}>/.test(line))
-      continue;
-    const match = VERDICT_LINE.exec(line.trim());
-    if (match?.[1] !== undefined)
-      found = match[1].toLowerCase();
-  }
-  return found;
-}
 var ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 var SEPARATORS2 = new Set([";", "&", "|", "(", ")", `
 `, "$(", "<<<"]);
@@ -8245,7 +8250,6 @@ export {
   parseTestCommand,
   parseTierConfig,
   parseTierSettings,
-  parseVerdict,
   pickConfigFile,
   pickRole,
   pinnedContextNote,
