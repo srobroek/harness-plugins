@@ -2221,16 +2221,20 @@ async function resolveCommit(run, cwd, name, rev) {
 async function listTree(run, cwd, head, paths) {
   if (paths.length === 0)
     return { ok: true, tree: new Map };
-  const listed = await run(cwd, "git", [...SAFE_GIT_ARGS, "--literal-pathspecs", "ls-tree", "-z", "-l", head, "--", ...paths], GIT_TIMEOUT_MS);
+  const listed = await run(cwd, "git", [...SAFE_GIT_ARGS, "--literal-pathspecs", "ls-tree", "--full-tree", "-z", "-l", head, "--", ...paths], GIT_TIMEOUT_MS);
   return listed.ok ? { ok: true, tree: parseLsTree(listed.stdout) } : refuse(`git ls-tree failed: ${diagnostic(listed.stderr)}`);
 }
 var DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--no-textconv"];
 async function exportReview(input) {
   const limits = { ...DEFAULT_LIMITS, ...input.limits };
-  const { run, cwd } = input;
+  const { run } = input;
   const refusal = revRefusal("base", input.base) ?? revRefusal("head", input.head);
   if (refusal !== undefined)
     return refuse(refusal);
+  const top = await run(input.cwd, "git", [...SAFE_GIT_ARGS, "rev-parse", "--show-toplevel"], GIT_TIMEOUT_MS);
+  const cwd = top.stdout.trim();
+  if (!top.ok || cwd === "")
+    return refuse(`${input.cwd} is not inside a git worktree`);
   const base = await resolveCommit(run, cwd, "base", input.base);
   if (!base.ok)
     return base;
