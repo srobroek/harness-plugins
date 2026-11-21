@@ -28,8 +28,6 @@ import {
   resolveLandingTarget,
   selectRemoteForRepo,
 } from "./land.ts"
-import { type LandingReceipt, RECEIPT_SCHEMA, readReceipt, repoKey, writeReceipt } from "./landing-receipt.ts"
-import { writePending } from "./merge-queue.ts"
 import {
   type Answers,
   BASE_BRANCH,
@@ -51,13 +49,15 @@ import {
   NOW,
   PARENT_TREE,
   REMOTE_URL,
-  repository,
   REVIEWED,
+  repository,
   runner,
-  temporaryDirectory,
   TIP_OID,
   TITLE,
+  temporaryDirectory,
 } from "./land-fixture.ts"
+import { type LandingReceipt, RECEIPT_SCHEMA, readReceipt, repoKey, writeReceipt } from "./landing-receipt.ts"
+import { writePending } from "./merge-queue.ts"
 
 afterEach(cleanupFixtures)
 

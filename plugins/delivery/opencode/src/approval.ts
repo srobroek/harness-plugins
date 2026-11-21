@@ -13,11 +13,11 @@ import {
   changesRequested,
   commitChecks,
   login,
-  pages,
   own,
   type Precondition,
-  githubApproval as sharedApproval,
+  pages,
   reviewApproval,
+  githubApproval as sharedApproval,
   str,
 } from "@srobroek/opencode-lib/pr-approval"
 import type { CliResult, CliRunner } from "./forge-adapter.ts"
