@@ -75,7 +75,7 @@ function fakeRun(repo: Repo, log: string[][]) {
     if (cmd.startsWith("branch --quiet -d")) return ok()
     if (cmd.startsWith("stash list")) return ok()
     if (cmd.startsWith("update-ref -d")) return ok()
-    if (cmd === "worktree list --porcelain") return repo.git ? ok(repo.porcelain) : fail
+    if (cmd === "worktree list --porcelain -z") return repo.git ? ok(repo.porcelain) : fail
     if (cmd === "diff --name-only -z HEAD") return ok(repo.local[dir]?.changed.map((file) => `${file}\0`).join("") ?? "")
     if (cmd === "ls-files --others --exclude-standard --full-name -z") {
       return ok(repo.local[dir]?.untracked.map((file) => `${file}\0`).join("") ?? "")
@@ -171,7 +171,7 @@ async function start(
     laneFiles: ["hello.txt"],
     local: {},
     heads: { [OTHER]: OTHER_HEAD },
-    porcelain: `worktree ${REPO}\nHEAD ${BASE}\nbranch refs/heads/main\n\nworktree ${OTHER}\nHEAD ${OTHER_HEAD}\nbranch refs/heads/feat\n`,
+    porcelain: `worktree ${REPO}\0HEAD ${BASE}\0branch refs/heads/main\0\0worktree ${OTHER}\0HEAD ${OTHER_HEAD}\0branch refs/heads/feat\0\0`,
     ...options.repo,
   }
   const worktree: Setup["worktree"] = { calls: [] }
