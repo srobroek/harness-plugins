@@ -3,6 +3,11 @@
   "extends": [
     "github>srobroek/harness-kit"
   ],
+  "ignoreDeps": [
+    "@opentui/core",
+    "@opentui/solid",
+    "solid-js"
+  ],
   "customManagers": [
     {
       "description": "Exact PyPI pins in Markdown sources: uv run --with PKG==VER and uvx [--with X] PKG@VER",
