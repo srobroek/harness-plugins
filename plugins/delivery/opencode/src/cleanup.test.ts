@@ -4601,7 +4601,7 @@ describe("delivery_cleanup round 2", () => {
 describe("delivery's permission hook through setupDelivery, with the real cleanup", () => {
   type Check = { action: string; agent: unknown; resources: string[]; effect: string }
 
-  async function host(f: Fixture, rule: "allow" | "deny", autoCleanup: boolean) {
+  async function host(f: Fixture, rule: "allow" | "deny", autoCleanup: boolean, run: CliRunner = runner(f).run) {
     const checks: Check[] = []
     const fake: ReturnType<typeof createFakeContext> = createFakeContext({
       directory: f.main,
@@ -4616,7 +4616,7 @@ describe("delivery's permission hook through setupDelivery, with the real cleanu
     const stop = await setupDelivery(fake.context, {
       debounceMs: 1,
       now: () => NOW + 10,
-      cleanup: { run: stripped(runner(f).run), now: () => NOW + 10, bounds: HEAVY_FIXTURE_BOUNDS },
+      cleanup: { run: stripped(run), now: () => NOW + 10, bounds: HEAVY_FIXTURE_BOUNDS },
     })
     return { fake, checks, stop }
   }
@@ -4696,5 +4696,45 @@ describe("delivery's permission hook through setupDelivery, with the real cleanu
     expect(outcome).toBe("delivery_cleanup denied")
     expect(checks.map((check) => [check.agent, check.effect])).toEqual([["builder", "deny"]])
     expect(existsSync(f.linked)).toBe(true)
+  })
+
+  /** An already MERGED, fully gated land: the real land writes the receipt, then the real inline cleanup runs. */
+  async function landThenClean(prepare: (f: Fixture) => void = () => {}) {
+    const f = fixture("hook-land", "feat/hook-land", "retired")
+    prepare(f)
+    const landing = landRunner(f)
+    const cleaning = runner(f)
+    // The land reads the forge and the base branch; the cleanup's ledger, remote and ref reads are the cleanup double's.
+    const run: CliRunner = (argv, options) =>
+      argv[0] === "gh" &&
+      (argv[1] === "api" && argv[2] === "graphql" ? argv.includes(`ref=refs/heads/${f.receipt.pr.baseRefName}`) : argv[1] === "api")
+        ? landing.run(argv, options)
+        : cleaning.run(argv, options)
+    const { fake, checks, stop } = await host(f, "allow", true, run)
+    const execute = fake.tools.get("delivery_land")?.execute as (input: unknown, context: unknown) => Promise<{ output: { ok: boolean; reason?: string } }>
+    const result = await execute(
+      { pr: f.receipt.pr.number, worktree: f.linked, expectHeadSha: f.head, requireApproval: true, requireGreenChecks: true },
+      { sessionID: "ses_lead", agent: "builder", messageID: "msg_1", id: "call_1", signal: new AbortController().signal },
+    )
+    await stop()
+    return { f, checks, result }
+  }
+
+  test("the inline cleanup after a gated land asks as the landing agent, skips the prompt for the receipt it just wrote, and removes the worktree", async () => {
+    const { f, checks, result } = await landThenClean()
+    expect(result.output.ok).toBe(true)
+    expect(checks.map((check) => [check.action, check.agent, check.effect])).toEqual([
+      ["delivery_land", "builder", "allow"],
+      ["delivery_cleanup", "builder", "allow"],
+    ])
+    expect(existsSync(f.linked)).toBe(false)
+  })
+
+  test("the inline cleanup keeps the prompt when the worktree is not bound to the receipt", async () => {
+    const { checks } = await landThenClean((f) => git(f.linked, ["checkout", "-q", "--detach"]))
+    expect(checks.map((check) => [check.action, check.effect])).toEqual([
+      ["delivery_land", "allow"],
+      ["delivery_cleanup", "ask"],
+    ])
   })
 })

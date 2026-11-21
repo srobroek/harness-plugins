@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { execFileSync } from "node:child_process"
 import { mkdirSync } from "node:fs"
 import { join } from "node:path"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
-import type { CleanupDeps } from "./cleanup.ts"
 import { cleanupGate, createGateRegistry, landAuthorizationGated, landGate } from "./gate.ts"
 import { setupDelivery } from "./index.ts"
 import {
@@ -12,7 +10,6 @@ import {
   completed,
   githubPr,
   HEAD_OID,
-  linkedWorktree,
   matchingVerbs,
   mergedGithubPr,
   repository,
@@ -120,19 +117,15 @@ const forge = (extra: Answers = {}): Answers => ({
  * The real plugin and the real `landPullRequest` over a scripted forge and git process boundary,
  * against a fake host that resolves every permission with `rule`, then the evaluate hook, as OpenCode does.
  */
-async function land(rule: Rule, input: Record<string, unknown>, answers: Answers, inline?: (deps: CleanupDeps) => Promise<void>) {
+async function land(rule: Rule, input: Record<string, unknown>, answers: Answers) {
   const { canonical, receipts } = repository()
-  // An active Beads ledger defers inline cleanup, so the inline cases run without one.
-  if (inline === undefined) mkdirSync(join(canonical, ".beads"))
-  // Ownership of the worktree is read with real git, so the inline cases need a real repository.
-  if (inline !== undefined) execFileSync("git", ["init", "-q", "-b", "main"], { cwd: canonical })
-  const worktree = inline === undefined ? {} : { worktree: linkedWorktree(canonical, "wt") }
+  // An active Beads ledger defers inline cleanup, which the cleanup tests cover over real Git.
+  mkdirSync(join(canonical, ".beads"))
   const { run, calls } = runner(answers, canonical)
   const prompts: string[] = []
-  let inlineRan = false
   const fake: ReturnType<typeof createFakeContext> = createFakeContext({
     directory: canonical,
-    options: { receiptsDirectory: receipts, autoCleanup: inline !== undefined },
+    options: { receiptsDirectory: receipts, autoCleanup: false },
     assert: async (call) => {
       const evaluation = { action: call.action, resources: call.resources, effect: rule as string }
       if (rule !== "deny") await fake.fire.permission("evaluate", evaluation)
@@ -142,29 +135,18 @@ async function land(rule: Rule, input: Record<string, unknown>, answers: Answers
   })
   const context = fake.context as unknown as { location: unknown }
   context.location = { ...(context.location as object), project: { id: "prj" } }
-  await setupDelivery(fake.context, {
-    cleanup: { run: matchingVerbs(run) },
-    ...(inline === undefined
-      ? {}
-      : {
-          inlineCleanup: async (_params, _cwd, deps) => {
-            inlineRan = true
-            await inline(deps as CleanupDeps)
-            return { ok: false, reason: "stopped after authorize" }
-          },
-        }),
-  })
+  await setupDelivery(fake.context, { cleanup: { run: matchingVerbs(run) } })
   const execute = fake.tools.get("delivery_land")?.execute as (i: unknown, c: unknown) => Promise<{ output: { ok: boolean } }>
-  const outcome = await execute({ ...input, ...worktree }, { sessionID: "s", agent: "a", messageID: "m", id: "c", signal: new AbortController().signal }).then(
+  const outcome = await execute(input, { sessionID: "s", agent: "a", messageID: "m", id: "c", signal: new AbortController().signal }).then(
     (result) => (result.output.ok ? "landed" : "refused"),
     (error: Error) => error.message,
   )
-  return { prompts, outcome, inlineRan, merged: calls.some((call) => call.argv[1] === "pr" && call.argv[2] === "merge") }
+  return { prompts, outcome, merged: calls.some((call) => call.argv[1] === "pr" && call.argv[2] === "merge") }
 }
 
 describe("delivery_land permission", () => {
   test("a gated land with an approval from a user with write access asks nothing and merges", async () => {
-    expect(await land("allow", GATED, forge())).toEqual({ prompts: [], outcome: "landed", inlineRan: false, merged: true })
+    expect(await land("allow", GATED, forge())).toEqual({ prompts: [], outcome: "landed", merged: true })
   })
 
   test.each([
@@ -177,25 +159,10 @@ describe("delivery_land permission", () => {
 
   test("an approval from a user without write access keeps the prompt, and the merge still proceeds once confirmed", async () => {
     const answers = forge({ permission: completed(JSON.stringify({ permission: "read", role_name: "read" })) })
-    expect(await land("allow", GATED, answers)).toEqual({ prompts: ["delivery_land srobroek/omp-plugins#470"], outcome: "landed", inlineRan: false, merged: true })
+    expect(await land("allow", GATED, answers)).toEqual({ prompts: ["delivery_land srobroek/omp-plugins#470"], outcome: "landed", merged: true })
   })
 
   test("a configured deny still wins for a fully gated land and nothing is merged", async () => {
-    expect(await land("deny", GATED, forge())).toEqual({ prompts: [], outcome: "delivery_land denied", inlineRan: false, merged: false })
-  })
-})
-
-describe("the cleanup a land runs inline", () => {
-  const request = (receiptBound: boolean) => ({ worktree: "/w/a", branch: "b", pr: 470, receiptBound })
-  const inline = (receiptBound: boolean) => async (deps: CleanupDeps) => deps.authorize?.(request(receiptBound))
-
-  test("asks nothing when it acts on the receipt it just wrote", async () => {
-    const result = await land("allow", GATED, forge(), inline(true))
-    expect(result.inlineRan).toBe(true)
-    expect(result.prompts).toEqual([])
-  })
-
-  test("asks when the worktree is not bound to the receipt", async () => {
-    expect((await land("allow", GATED, forge(), inline(false))).prompts).toEqual(["delivery_cleanup /w/a"])
+    expect(await land("deny", GATED, forge())).toEqual({ prompts: [], outcome: "delivery_land denied", merged: false })
   })
 })

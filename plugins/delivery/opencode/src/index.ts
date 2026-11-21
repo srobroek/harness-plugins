@@ -347,10 +347,7 @@ async function isPrimary(ctx: Context, sessionID: string): Promise<boolean> {
 
 export async function setupDelivery(
   ctx: Context,
-  overrides: Pick<PendingDeps, "debounceMs" | "now" | "cleanup"> & {
-    /** Test seam: the cleanup the land tool runs inline, so a test can observe how it asks. */
-    inlineCleanup?: typeof cleanupDelivery
-  } = {},
+  overrides: Pick<PendingDeps, "debounceMs" | "now" | "cleanup"> = {},
 ): Promise<() => Promise<void>> {
   const options = parseOptions(ctx.options as Record<string, unknown>)
   const directory = ctx.location.directory
@@ -415,7 +412,7 @@ export async function setupDelivery(
         const cleanup: CleanupReport | undefined = decision.run
           ? await runInlineCleanup(() => {
               const askCleanup = asserter(ctx, context, CLEANUP_ACTION, gates)
-              return (overrides.inlineCleanup ?? cleanupDelivery)({ receipt: outcome.receiptPath }, directory, {
+              return cleanupDelivery({ receipt: outcome.receiptPath }, directory, {
                 ...overrides.cleanup,
                 env: environment(options),
                 signal: context.signal,
