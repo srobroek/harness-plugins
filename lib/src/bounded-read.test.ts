@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process"
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { planEmbeddedWrites } from "./bd-embedded-write-lock.ts"
-import { readBounded, readBoundedFile } from "./bounded-read.ts"
+import { readBounded, readBoundedBytes } from "./bounded-read.ts"
 
 // Real child processes; 30 s leaves headroom for a loaded machine (AGENTS.md, Testing).
 setDefaultTimeout(30_000)
@@ -40,6 +40,42 @@ describe("readBounded", () => {
   })
 })
 
+describe("readBoundedBytes", () => {
+  const dir = () => realpathSync(mkdtempSync(join(root, "bytes-")))
+
+  test("returns the bytes of a regular file within the limit, at the limit included", () => {
+    const d = dir()
+    writeFileSync(join(d, "f"), Buffer.from([0, 1, 2, 255]))
+    expect(readBoundedBytes(join(d, "f"), 4)).toEqual({ kind: "bytes", bytes: Buffer.from([0, 1, 2, 255]) })
+  })
+
+  test("reports absent, and refuses a file one byte over the limit without reading it", () => {
+    const d = dir()
+    writeFileSync(join(d, "f"), "12345")
+    expect(readBoundedBytes(join(d, "nope"), 10)).toEqual({ kind: "absent" })
+    expect(readBoundedBytes(join(d, "f"), 4)).toEqual({ kind: "unreadable", reason: "too-large" })
+  })
+
+  test("refuses a FIFO without blocking, and a symlink, whatever they point at", () => {
+    const d = dir()
+    execFileSync("mkfifo", [join(d, "fifo")])
+    writeFileSync(join(d, "real"), "x")
+    symlinkSync(join(d, "real"), join(d, "link"))
+    expect(readBoundedBytes(join(d, "fifo"), 10)).toEqual({ kind: "unreadable", reason: "not-regular" })
+    expect(readBoundedBytes(join(d, "link"), 10)).toEqual({ kind: "unreadable", reason: "not-regular" })
+    expect(readBoundedBytes(d, 10)).toEqual({ kind: "unreadable", reason: "not-regular" })
+  })
+
+  test("keeps the fs error code of a failed read, so EACCES is told from ENOENT", () => {
+    const d = dir()
+    writeFileSync(join(d, "locked"), "x")
+    chmodSync(join(d, "locked"), 0o000)
+    // Root ignores permission bits, so this holds only for an ordinary user.
+    if (process.getuid?.() !== 0)
+      expect(readBoundedBytes(join(d, "locked"), 10)).toEqual({ kind: "unreadable", reason: "io", code: "EACCES" })
+  })
+})
+
 describe("the write planner's store classification", () => {
   for (const [name, make] of Object.entries(hostile)) {
     test(`a ${name} metadata.json neither hangs nor drops the lock`, () => {
@@ -66,23 +102,5 @@ describe("the write planner's store classification", () => {
     })
     expect(plan).toEqual({ kind: "writes", writes: [] })
     expect(seen).toEqual([`create@${store}`])
-  })
-})
-
-describe("readBoundedFile", () => {
-  test("reads a file within the cap, and says why it refuses the rest", () => {
-    const dir = join(root, "bounded-file")
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(join(dir, "ok.txt"), "hello")
-    writeFileSync(join(dir, "big.txt"), "x".repeat(11))
-    writeFileSync(join(dir, "locked.txt"), "secret")
-    chmodSync(join(dir, "locked.txt"), 0o000)
-    expect(readBoundedFile(join(dir, "ok.txt"), 10)).toEqual({ kind: "text", text: "hello" })
-    expect(readBoundedFile(join(dir, "big.txt"), 10)).toEqual({ kind: "failed", reason: "larger than 10 bytes" })
-    expect(readBoundedFile(join(dir, "nope.txt"), 10)).toEqual({ kind: "failed", reason: "ENOENT: no such file or directory" })
-    expect(readBoundedFile(dir, 10)).toEqual({ kind: "failed", reason: "not a regular file" })
-    // Root ignores permission bits, so the EACCES case only holds for an ordinary user.
-    if (process.getuid?.() !== 0)
-      expect(readBoundedFile(join(dir, "locked.txt"), 10)).toEqual({ kind: "failed", reason: "EACCES: permission denied" })
   })
 })

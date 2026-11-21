@@ -3,7 +3,7 @@ import { realpathSync } from "node:fs"
 import { dirname, isAbsolute, join, relative, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { Context } from "@opencode/plugin/promise/plugin"
-import { readBoundedFile } from "@srobroek/opencode-lib/bounded-read"
+import { type BoundedBytes, readBoundedBytes } from "@srobroek/opencode-lib/bounded-read"
 import { type Schema, validate } from "./json-schema.ts"
 import { sessionDirectory } from "./session-directory.ts"
 
@@ -30,10 +30,18 @@ const SCHEMAS = join(dirname(fileURLToPath(import.meta.url)), "..", "skills", "c
 
 const load = (name: string) => JSON.parse(readBoundedText(join(SCHEMAS, name))) as Schema
 
+// Why a bounded read failed, in words that keep the fs error code (ENOENT, EACCES).
+function failure(read: Exclude<BoundedBytes, { kind: "bytes" }>): string {
+  if (read.kind === "absent") return "ENOENT: no such file or directory"
+  if (read.reason === "not-regular") return "not a regular file"
+  if (read.reason === "too-large") return `larger than ${MAX_RUN_FILE_BYTES} bytes`
+  return `${read.code ?? "EIO"}: cannot be read`
+}
+
 function readBoundedText(path: string): string {
-  const read = readBoundedFile(path, MAX_RUN_FILE_BYTES)
-  if (read.kind === "failed") throw new Error(`${path}: ${read.reason}`)
-  return read.text
+  const read = readBoundedBytes(path, MAX_RUN_FILE_BYTES)
+  if (read.kind !== "bytes") throw new Error(`${path}: ${failure(read)}`)
+  return read.bytes.toString("utf8")
 }
 
 const reason = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause))
@@ -42,9 +50,9 @@ const reason = (cause: unknown) => (cause instanceof Error ? cause.message : Str
 export function validateRun(runDir: string): string[] {
   const errors: string[] = []
   const read = (name: string): string | undefined => {
-    const result = readBoundedFile(join(runDir, name), MAX_RUN_FILE_BYTES)
-    if (result.kind === "text") return result.text
-    errors.push(`${name}: ${result.reason}`)
+    const result = readBoundedBytes(join(runDir, name), MAX_RUN_FILE_BYTES)
+    if (result.kind === "bytes") return result.bytes.toString("utf8")
+    errors.push(`${name}: ${failure(result)}`)
     return undefined
   }
   const report = read("report.json")

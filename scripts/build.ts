@@ -245,7 +245,7 @@ async function main(check: boolean, only: readonly string[]) {
   }
   for (const warning of warnings) console.warn(`warning: ${warning}`)
   if (problems.length > 0) {
-    console.error("Build output is stale. Run `npm run build` and commit the result:")
+    console.error("Build output is stale. Run `bun run build` and commit the result:")
     for (const file of problems) console.error(`  ${path.relative(root, file)}`)
     process.exit(1)
   }

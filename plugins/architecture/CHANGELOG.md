@@ -1,3 +1,13 @@
+## architecture [0.8.0](https://github.com/srobroek/harness-plugins/compare/architecture--v0.7.0...architecture--v0.8.0) (2026-11-21)
+
+### Features
+
+* **architecture:** give the architect the read-only shell ([0dc1a97](https://github.com/srobroek/harness-plugins/commit/0dc1a9782229c62b254e96bd5624110ff43ad51c))
+
+### Bug Fixes
+
+* **architecture:** rebuild with the hardened read-only shell rules ([1d623b8](https://github.com/srobroek/harness-plugins/commit/1d623b88696750f9a4bdacea61feaf45d1f4ed39))
+
 # Changelog
 
 ## [0.7.0](https://github.com/srobroek/opencode-plugins/compare/architecture--v0.6.0...architecture--v0.7.0) (2026-11-20)

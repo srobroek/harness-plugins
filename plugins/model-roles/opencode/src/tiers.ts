@@ -33,7 +33,7 @@ import {
   resolveRole,
 } from "./resolve.ts"
 
-export const BUILTIN_TIERS = ["cheap", "standard", "strong", "reviewer"] as const
+export const BUILTIN_TIERS = ["cheap", "standard", "strong", "reviewer", "orchestrate"] as const
 
 /** When the parent should pick each built-in tier. */
 export const TIER_PURPOSE: Readonly<Record<string, string>> = {
@@ -41,6 +41,7 @@ export const TIER_PURPOSE: Readonly<Record<string, string>> = {
   standard: "everyday implementation and investigation",
   strong: "hard reasoning: design, root-cause debugging, subtle concurrency or data-integrity work",
   reviewer: "an independent second opinion or review, from another model vendor than yours when one is available",
+  orchestrate: "planning and coordinating other agents: decomposing work, routing it and judging results",
 }
 
 /** Old role names and the tier (and effort) they stand for. */
@@ -190,7 +191,7 @@ export const tierOf = (name: string): string => TIER_ALIASES[name]?.tier ?? name
 /** The tier whose candidates a tier without its own borrows, and whose effort it inherits; none for the derived tiers. */
 export function baseTier(name: string): string | undefined {
   if ((DERIVED_TIERS as readonly string[]).includes(name)) return undefined
-  return name === "reviewer" ? "strong" : "standard"
+  return name === "reviewer" || name === "orchestrate" ? "strong" : "standard"
 }
 
 export type TierEffort = { effort?: string; from?: EffortSource }
@@ -342,7 +343,7 @@ export function buildTiers(settings: TierSettings, models: ReadonlyArray<Catalog
     return undefined
   }
   for (const name of ["cheap", "standard", "strong"]) roles[name] = own(name) ?? []
-  for (const name of ["reviewer", ...custom]) {
+  for (const name of ["reviewer", "orchestrate", ...custom]) {
     const list = own(name)
     if (list !== undefined) {
       roles[name] = list

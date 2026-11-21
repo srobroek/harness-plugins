@@ -2,7 +2,7 @@
 
 import type { Grant, RunOptions, Scope } from "./args.ts"
 import { type JournalEntry, parkedBeads } from "./journal.ts"
-import { holdsLane } from "./policy.ts"
+import { holdsLane, type RootIdentity } from "./policy.ts"
 
 export const TICK_EVERY = "4 minutes"
 export const TICK_MS = 4 * 60_000
@@ -33,6 +33,8 @@ export type RunState = {
   phase: Phase
   options: RunOptions & { allow: Grant[]; lanes: number; full: boolean }
   scope: Scope
+  /** The beads ledger (`.beads` directory) every `bd` call of the run uses; absent in runs armed before it existed. */
+  ledger?: string
   createdAt: number
   armedAt?: number
   deadline?: number
@@ -48,6 +50,8 @@ export type RunState = {
   children: Record<string, ChildState>
   /** Items parked by the plugin itself (attempts, repeated error, stalled lane). */
   parked: string[]
+  /** Worktree roots the run's lanes work in, as the host reported them; the permission hook may allow `<root>/*`. */
+  worktrees?: RootIdentity[]
   stopRequested?: boolean
   stopReason?: string
   stoppedAt?: number
@@ -56,7 +60,7 @@ export type RunState = {
 }
 
 export type Bead = { id: string; status: string; parent?: string | null; issue_type?: string; labels?: string[] | null }
-export type Child = { sessionID: string; title?: string; agent?: string; busy: boolean; lastActivity: number }
+export type Child = { sessionID: string; title?: string; agent?: string; worktree?: RootIdentity; busy: boolean; lastActivity: number }
 
 /** What one look at the world finds. */
 export type Snapshot = {
@@ -231,6 +235,7 @@ export function tick(previous: RunState, snapshot: Snapshot): TickResult {
     attempts,
     children,
     parked: [...parked].sort(),
+    worktrees: recordWorktrees(previous, snapshot.children),
   }
   const stop = stopReason(state, snapshot, newEntries, parked)
   if (stop !== undefined) actions.push({ kind: "stop", reason: stop })
@@ -325,4 +330,11 @@ export function runIdFor(now: number, random: () => number = Math.random): strin
     .toString(16)
     .padStart(4, "0")
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}-${suffix}`
+}
+
+/** The run's recorded worktrees plus those of children not recorded yet. The first identity recorded for a real path stays: a replacement is not the same directory. */
+export function recordWorktrees(state: Pick<RunState, "worktrees">, children: readonly Pick<Child, "worktree">[]): RootIdentity[] {
+  const roots = new Map((state.worktrees ?? []).map((root) => [root.real, root]))
+  for (const child of children) if (child.worktree !== undefined && !roots.has(child.worktree.real)) roots.set(child.worktree.real, child.worktree)
+  return [...roots.values()].sort((a, b) => a.real.localeCompare(b.real))
 }

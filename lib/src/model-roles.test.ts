@@ -12,6 +12,7 @@ test("tiers and aliases", () => {
   expect(isModelRole("worker")).toBe(false)
   expect(tierFor("challenger")).toBe("reviewer")
   expect(tierFor("cheap")).toBe("cheap")
+  expect(tierFor("orchestrate")).toBe("orchestrate")
   expect(tierFor("default")).toBe("inherit")
   expect(tierFor("worker")).toBeUndefined()
 })

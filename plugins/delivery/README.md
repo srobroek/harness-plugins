@@ -236,6 +236,9 @@ its branch name second. It never falls back to the newest receipt: with no match
 more than one, it refuses and lists each candidate's PR, branch and receipt path.
 With no input at all it picks the only uncleaned landing, or refuses and lists them.
 
+Given only `repo`, it looks at that repository's landings alone. It picks the only uncleaned
+one, else the only cleaned one, so an open landing in another repository does not hide it.
+
 A receipt or worktree of another repository fails before any Git command runs in it.
 So does a `repo` of another repository: once a remote of the clone you name with
 `repoPath` or `worktree` is shown to name `repo`, the tool refuses. That repository's
@@ -285,7 +288,9 @@ what it left (`skipped`).
 
 Cleanup treats a worktree that is already gone as done, whether an earlier cleanup
 finished or someone removed it by hand. The call succeeds with `alreadyCleaned: true`,
-changes nothing and writes no receipt.
+changes nothing and writes no receipt. If a worktree or directory has reappeared at the
+recorded path since, cleanup refuses instead: it reports the path and the worktree's
+HEAD, and removes nothing.
 
 A branch with no upstream (for example, the forge deleted it on merge and a fetch
 pruned it) counts as pushed. Its HEAD has already been checked against the merged
@@ -311,8 +316,15 @@ the directory is already gone.
 `<owner>/<name>#<number>`. It asks after every read has passed and before the
 first write. `delivery_cleanup` asks for action `delivery_cleanup` with the
 worktree path, right before the removal. The plugin turns an allowed request for
-either action into `ask`, so every call prompts. A deny rule still wins. Set the
-`confirm` option to `false` to let your permission rules decide on their own.
+either action into `ask`, so every call in a root session prompts. A deny rule
+still wins. A subagent session (one with a parent) is not prompted, because it
+cannot answer: an allowed request stays allowed. If the session lookup fails, the
+prompt stays. A subagent is still gated by its own `delivery_land` and
+`delivery_cleanup` permission, and by `delivery_land`'s own checks: a call that
+would merge must pass `expectHeadSha` naming the PR head, and it merges at most
+once. Approval and green checks are required only when the call sets
+`requireApproval` and `requireGreenChecks`; the `shepherd` agent always sets both.
+Set the `confirm` option to `false` to let your permission rules decide on their own.
 
 ## Receipts
 

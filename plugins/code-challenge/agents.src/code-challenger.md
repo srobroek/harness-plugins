@@ -54,6 +54,7 @@ permissions:
   - action: "challenge_lib_facts"
     resource: "*"
     effect: allow
+  # {{rules read-only-shell}}
   - action: external_directory
     resource: "*"
     effect: ask
@@ -103,6 +104,7 @@ reply; you have no tool to do either.
 ## Rules
 
 {{include review-core}}
+MUST Keep the shell read-only: never modify the repository, a remote or the ledger.
 MUST Stay advisory: every verdict is information for the caller, never a gate.
 NOT Run a benchmark unless the Brief allows it, and never against production or shared services.
 NOT Recommend a library without its licence and its CVE state from a cited source.

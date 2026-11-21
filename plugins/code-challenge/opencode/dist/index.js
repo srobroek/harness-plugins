@@ -2350,17 +2350,17 @@ import { fileURLToPath as fileURLToPath3 } from "url";
 // lib/src/bounded-read.ts
 import { closeSync, constants, fstatSync, lstatSync as lstatSync2, openSync, readSync } from "fs";
 var MAX_LEDGER_FILE_BYTES = 64 * 1024;
-function readBoundedFile(path, maxBytes) {
+function readBoundedBytes(path, maxBytes) {
   let fd;
   try {
     if (!lstatSync2(path).isFile())
-      return { kind: "failed", reason: "not a regular file" };
+      return { kind: "unreadable", reason: "not-regular" };
     fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const info = fstatSync(fd);
     if (!info.isFile())
-      return { kind: "failed", reason: "not a regular file" };
+      return { kind: "unreadable", reason: "not-regular" };
     if (info.size > maxBytes)
-      return { kind: "failed", reason: `larger than ${maxBytes} bytes` };
+      return { kind: "unreadable", reason: "too-large" };
     const buffer = Buffer.alloc(info.size);
     let offset = 0;
     while (offset < buffer.length) {
@@ -2369,11 +2369,12 @@ function readBoundedFile(path, maxBytes) {
         break;
       offset += read;
     }
-    return { kind: "text", text: buffer.toString("utf8", 0, offset) };
+    return { kind: "bytes", bytes: offset === buffer.length ? buffer : buffer.subarray(0, offset) };
   } catch (error) {
-    const failure = error;
-    const message = (failure.message ?? String(error)).split(",")[0] ?? "";
-    return { kind: "failed", reason: message };
+    const code = error.code;
+    if (code === "ENOENT")
+      return { kind: "absent" };
+    return code === "ELOOP" ? { kind: "unreadable", reason: "not-regular" } : { kind: "unreadable", reason: "io", code };
   } finally {
     if (fd !== undefined)
       closeSync(fd);
@@ -2468,20 +2469,29 @@ var VALIDATE_INPUT = {
 };
 var SCHEMAS = join6(dirname2(fileURLToPath3(import.meta.url)), "..", "skills", "code-challenge", "references");
 var load = (name) => JSON.parse(readBoundedText(join6(SCHEMAS, name)));
+function failure(read) {
+  if (read.kind === "absent")
+    return "ENOENT: no such file or directory";
+  if (read.reason === "not-regular")
+    return "not a regular file";
+  if (read.reason === "too-large")
+    return `larger than ${MAX_RUN_FILE_BYTES} bytes`;
+  return `${read.code ?? "EIO"}: cannot be read`;
+}
 function readBoundedText(path) {
-  const read = readBoundedFile(path, MAX_RUN_FILE_BYTES);
-  if (read.kind === "failed")
-    throw new Error(`${path}: ${read.reason}`);
-  return read.text;
+  const read = readBoundedBytes(path, MAX_RUN_FILE_BYTES);
+  if (read.kind !== "bytes")
+    throw new Error(`${path}: ${failure(read)}`);
+  return read.bytes.toString("utf8");
 }
 var reason = (cause) => cause instanceof Error ? cause.message : String(cause);
 function validateRun(runDir) {
   const errors = [];
   const read = (name) => {
-    const result = readBoundedFile(join6(runDir, name), MAX_RUN_FILE_BYTES);
-    if (result.kind === "text")
-      return result.text;
-    errors.push(`${name}: ${result.reason}`);
+    const result = readBoundedBytes(join6(runDir, name), MAX_RUN_FILE_BYTES);
+    if (result.kind === "bytes")
+      return result.bytes.toString("utf8");
+    errors.push(`${name}: ${failure(result)}`);
     return;
   };
   const report = read("report.json");

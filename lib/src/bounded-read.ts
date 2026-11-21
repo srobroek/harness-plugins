@@ -18,13 +18,32 @@ export const MAX_LEDGER_FILE_BYTES = 64 * 1024
  */
 export type BoundedRead = { kind: "absent" } | { kind: "unreadable" } | { kind: "text"; text: string }
 
-export function readBounded(path: string): BoundedRead {
+/**
+ * - `absent`: nothing is at the path.
+ * - `unreadable`: something is there but it is not a regular non-symlink file (`not-regular`,
+ *   which includes a FIFO or device), it is larger than the limit (`too-large`), or reading failed (`io`,
+ *   with the fs error `code`, for example `EACCES`).
+ * - `bytes`: the whole file, at most `maxBytes` long.
+ */
+export type BoundedBytes =
+  | { kind: "absent" }
+  | { kind: "unreadable"; reason: "not-regular" | "too-large" | "io"; code?: string }
+  | { kind: "bytes"; bytes: Buffer }
+
+/**
+ * Read a regular, non-symlink file of at most `maxBytes` without ever blocking or over-allocating:
+ * `lstat` rejects a FIFO, device or symlink before it is opened, the open is `O_NOFOLLOW |
+ * O_NONBLOCK`, and `fstat` on the descriptor re-checks the type and the size before any buffer is
+ * allocated, so a file swapped in after the `lstat` is caught too.
+ */
+export function readBoundedBytes(path: string, maxBytes: number): BoundedBytes {
   let fd: number | undefined
   try {
-    if (!lstatSync(path).isFile()) return { kind: "unreadable" }
+    if (!lstatSync(path).isFile()) return { kind: "unreadable", reason: "not-regular" }
     fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
     const info = fstatSync(fd)
-    if (!info.isFile() || info.size > MAX_LEDGER_FILE_BYTES) return { kind: "unreadable" }
+    if (!info.isFile()) return { kind: "unreadable", reason: "not-regular" }
+    if (info.size > maxBytes) return { kind: "unreadable", reason: "too-large" }
     const buffer = Buffer.alloc(info.size)
     let offset = 0
     while (offset < buffer.length) {
@@ -32,46 +51,25 @@ export function readBounded(path: string): BoundedRead {
       if (read === 0) break
       offset += read
     }
-    return { kind: "text", text: buffer.toString("utf8", 0, offset) }
+    return { kind: "bytes", bytes: offset === buffer.length ? buffer : buffer.subarray(0, offset) }
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT" ? { kind: "absent" } : { kind: "unreadable" }
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === "ENOENT") return { kind: "absent" }
+    // O_NOFOLLOW on a symlink fails with ELOOP.
+    return code === "ELOOP" ? { kind: "unreadable", reason: "not-regular" } : { kind: "unreadable", reason: "io", code }
   } finally {
     if (fd !== undefined) closeSync(fd)
   }
+}
+
+export function readBounded(path: string): BoundedRead {
+  const read = readBoundedBytes(path, MAX_LEDGER_FILE_BYTES)
+  if (read.kind === "absent") return { kind: "absent" }
+  return read.kind === "bytes" ? { kind: "text", text: read.bytes.toString("utf8") } : { kind: "unreadable" }
 }
 
 /** The text of a small regular file, or undefined for anything else. Diagnostics only. */
 export function readSmallRegularFile(path: string): string | undefined {
   const read = readBounded(path)
   return read.kind === "text" ? read.text : undefined
-}
-
-// A failure keeps the fs error code, so a caller can tell ENOENT from EACCES.
-export type BoundedFile = { kind: "text"; text: string } | { kind: "failed"; reason: string }
-
-// Read a regular, non-symlink file of at most maxBytes. Unlike readBounded the cap is the caller's and a
-// failure says why. It never blocks on a FIFO: lstat first, then O_NONBLOCK | O_NOFOLLOW.
-export function readBoundedFile(path: string, maxBytes: number): BoundedFile {
-  let fd: number | undefined
-  try {
-    if (!lstatSync(path).isFile()) return { kind: "failed", reason: "not a regular file" }
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-    const info = fstatSync(fd)
-    if (!info.isFile()) return { kind: "failed", reason: "not a regular file" }
-    if (info.size > maxBytes) return { kind: "failed", reason: `larger than ${maxBytes} bytes` }
-    const buffer = Buffer.alloc(info.size)
-    let offset = 0
-    while (offset < buffer.length) {
-      const read = readSync(fd, buffer, offset, buffer.length - offset, offset)
-      if (read === 0) break
-      offset += read
-    }
-    return { kind: "text", text: buffer.toString("utf8", 0, offset) }
-  } catch (error) {
-    const failure = error as NodeJS.ErrnoException
-    const message = (failure.message ?? String(error)).split(",")[0] ?? ""
-    return { kind: "failed", reason: message }
-  } finally {
-    if (fd !== undefined) closeSync(fd)
-  }
 }

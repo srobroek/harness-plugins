@@ -1568,7 +1568,7 @@ The index was not synced for these paths: ${synced.reason}`}`,
 
 // plugins/speckit/opencode/src/setup.ts
 import { appendFileSync, copyFileSync, existsSync as existsSync4, lstatSync as lstatSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync4, writeFileSync } from "fs";
-import { dirname as dirname2, isAbsolute as isAbsolute2, join as join5, parse, resolve as resolve3, sep } from "path";
+import { dirname as dirname2, isAbsolute as isAbsolute2, join as join5, relative as relative2, resolve as resolve3, sep } from "path";
 import { fileURLToPath } from "url";
 var PHASE_TIMEOUT_MS = 60000;
 var STOPPED = "stopped by the tool call; rerun to resume, finished phases are skipped";
@@ -1658,7 +1658,7 @@ function specifyVersionOk(versionOut) {
   return v.major > 0 || v.major === 0 && v.minor >= 12;
 }
 function ensureGitignore(repo) {
-  safePath(join5(repo, ".gitignore"));
+  safePath(join5(repo, ".gitignore"), repo);
   const gi = join5(repo, ".gitignore");
   const existing = existsSync4(gi) ? readFileSync4(gi, "utf8") : "";
   if (existing.split(`
@@ -1676,10 +1676,13 @@ function ensureGitignore(repo) {
 `);
   return "appended specs/**/spec-status.md to .gitignore";
 }
-function safePath(path) {
-  const absolute = isAbsolute2(path) ? path : `${process.cwd()}/${path}`;
-  let current = parse(absolute).root;
-  for (const part of absolute.slice(current.length).split(sep === "\\" ? /[\\/]/ : "/").filter(Boolean)) {
+function safePath(path, base) {
+  const root = resolve3(base);
+  const rel = relative2(root, resolve3(path));
+  if (rel.startsWith("..") || isAbsolute2(rel))
+    throw new Error(`path escapes ${root}: ${path}`);
+  let current = root;
+  for (const part of rel.split(sep === "\\" ? /[\\/]/ : "/").filter(Boolean)) {
     current = join5(current, part);
     const st = lstatSync2(current, { throwIfNoEntry: false });
     if (st?.isSymbolicLink())
@@ -1688,13 +1691,13 @@ function safePath(path) {
 }
 function installFormulas(repo, srcDir) {
   const destDir = join5(repo, ".beads", "formulas");
-  safePath(destDir);
+  safePath(destDir, repo);
   const copies = [];
   for (const name of FORMULAS) {
     const src = join5(srcDir, `${name}.formula.toml`);
     const dest = join5(destDir, `${name}.formula.toml`);
-    safePath(src);
-    safePath(dest);
+    safePath(src, srcDir);
+    safePath(dest, repo);
     if (!lstatSync2(src, { throwIfNoEntry: false })?.isFile()) {
       throw new Error(`required formula missing or unsafe: ${src}`);
     }
@@ -1712,7 +1715,7 @@ function installFormulas(repo, srcDir) {
 }
 function installedExtensions(repo) {
   const registry = join5(repo, ".specify", "extensions", ".registry");
-  safePath(registry);
+  safePath(registry, repo);
   if (!existsSync4(registry))
     return new Set;
   try {
@@ -1727,7 +1730,7 @@ function installedExtensions(repo) {
 }
 function communityCatalogState(repo) {
   const config = join5(repo, ".specify", "extension-catalogs.yml");
-  safePath(config);
+  safePath(config, repo);
   if (!existsSync4(config))
     return "absent";
   const parsed = Bun.YAML.parse(readFileSync4(config, "utf8"));
@@ -1768,10 +1771,9 @@ async function runSetup(params, cwd, signal) {
     return finish();
   };
   try {
-    safePath(repo);
-    safePath(join5(repo, ".specify"));
-    safePath(join5(repo, ".beads"));
-    safePath(join5(repo, ".gitignore"));
+    safePath(join5(repo, ".specify"), repo);
+    safePath(join5(repo, ".beads"), repo);
+    safePath(join5(repo, ".gitignore"), repo);
     if (params.skipSpecify)
       record("specify", "skipped", "skipSpecify: specify CLI steps omitted");
     else {
@@ -1948,7 +1950,7 @@ import { basename as basename4 } from "path";
 
 // plugins/speckit/opencode/src/workflow.ts
 import { existsSync as existsSync5 } from "fs";
-import { isAbsolute as isAbsolute3, join as join6, relative as relative2, sep as sep2 } from "path";
+import { isAbsolute as isAbsolute3, join as join6, relative as relative3, sep as sep2 } from "path";
 var OWN_PROMPT_AGENTS = ["speckit-sync", "speckit-verify"];
 function usesSpeckit(directory) {
   return existsSync5(join6(directory, ".specify"));
@@ -1958,7 +1960,7 @@ function speckitWorkspace(directory, projectRoot, detect = usesSpeckit) {
     return directory;
   if (projectRoot === undefined || projectRoot === directory)
     return;
-  const path = relative2(projectRoot, directory);
+  const path = relative3(projectRoot, directory);
   const inside = path !== "" && path !== ".." && !path.startsWith(`..${sep2}`) && !isAbsolute3(path);
   return inside && detect(projectRoot) ? projectRoot : undefined;
 }
@@ -2462,15 +2464,17 @@ function isDir(path) {
 // lib/src/bounded-read.ts
 import { closeSync as closeSync2, constants as constants2, fstatSync as fstatSync2, lstatSync as lstatSync4, openSync as openSync2, readSync } from "fs";
 var MAX_LEDGER_FILE_BYTES = 64 * 1024;
-function readBounded(path) {
+function readBoundedBytes(path, maxBytes) {
   let fd;
   try {
     if (!lstatSync4(path).isFile())
-      return { kind: "unreadable" };
+      return { kind: "unreadable", reason: "not-regular" };
     fd = openSync2(path, constants2.O_RDONLY | constants2.O_NOFOLLOW | constants2.O_NONBLOCK);
     const info = fstatSync2(fd);
-    if (!info.isFile() || info.size > MAX_LEDGER_FILE_BYTES)
-      return { kind: "unreadable" };
+    if (!info.isFile())
+      return { kind: "unreadable", reason: "not-regular" };
+    if (info.size > maxBytes)
+      return { kind: "unreadable", reason: "too-large" };
     const buffer = Buffer.alloc(info.size);
     let offset = 0;
     while (offset < buffer.length) {
@@ -2479,13 +2483,22 @@ function readBounded(path) {
         break;
       offset += read;
     }
-    return { kind: "text", text: buffer.toString("utf8", 0, offset) };
+    return { kind: "bytes", bytes: offset === buffer.length ? buffer : buffer.subarray(0, offset) };
   } catch (error) {
-    return error.code === "ENOENT" ? { kind: "absent" } : { kind: "unreadable" };
+    const code = error.code;
+    if (code === "ENOENT")
+      return { kind: "absent" };
+    return code === "ELOOP" ? { kind: "unreadable", reason: "not-regular" } : { kind: "unreadable", reason: "io", code };
   } finally {
     if (fd !== undefined)
       closeSync2(fd);
   }
+}
+function readBounded(path) {
+  const read = readBoundedBytes(path, MAX_LEDGER_FILE_BYTES);
+  if (read.kind === "absent")
+    return { kind: "absent" };
+  return read.kind === "bytes" ? { kind: "text", text: read.bytes.toString("utf8") } : { kind: "unreadable" };
 }
 
 // lib/src/bd-embedded-write-lock.ts
