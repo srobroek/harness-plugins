@@ -1866,6 +1866,140 @@ function parseLeanOptions(options) {
   return { agents: new Set(ids), drop: new Set(drop) };
 }
 
+// lib/src/session-lanes.ts
+function isSessionNotFound(error, sessionID) {
+  if (typeof error !== "object" || error === null)
+    return false;
+  const fields = error;
+  for (const status of [fields.status, fields.statusCode])
+    if (status !== undefined && status !== 404)
+      return false;
+  const message = typeof fields.message === "string" ? fields.message : "";
+  if (/\b(location|service|directory|project|worktree|agent)\b/i.test(message))
+    return false;
+  const kind = [fields.name, fields._tag].filter((value) => typeof value === "string");
+  if (kind.some((value) => /^session.?not.?found/i.test(value)))
+    return fields.sessionID === undefined || fields.sessionID === sessionID;
+  const named = fields.sessionID === sessionID || message.includes(sessionID);
+  if (!named)
+    return false;
+  return kind.some((value) => /not.?found/i.test(value)) || /not found|no session|no such session|does not exist/i.test(message);
+}
+
+// lib/src/worktree-claims.ts
+var MAX_FILE_BYTES = 64 * 1024;
+
+// lib/src/session-eviction.ts
+var toMillis = (value) => {
+  if (typeof value === "number")
+    return value;
+  if (value instanceof Date)
+    return value.getTime();
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  }
+  return;
+};
+function sessionRunning(session) {
+  if (session.time?.archived !== undefined && session.time.archived !== null)
+    return false;
+  const busy = toMillis(session.time?.busy);
+  const idle = toMillis(session.time?.idle);
+  return busy !== undefined && (idle === undefined || busy > idle);
+}
+
+// plugins/agent-efficiency/opencode/src/restart-nudge.ts
+var RESTART_NOTICE = "Command cancelled because the server restarted";
+var DEFAULT_RESTART_NUDGE_GRACE_MS = 5000;
+function parseRestartNudgeOptions(options) {
+  const raw = options.restartNudge;
+  if (raw !== true && (raw === null || typeof raw !== "object"))
+    return;
+  const graceMs = raw === true ? undefined : raw.graceMs;
+  return { graceMs: typeof graceMs === "number" && Number.isFinite(graceMs) && graceMs > 0 ? graceMs : DEFAULT_RESTART_NUDGE_GRACE_MS };
+}
+function isRestartNotice(text) {
+  return text.includes(RESTART_NOTICE);
+}
+function needsNudge(session, noticeCreated) {
+  const { idle, archived } = session.time;
+  if (archived !== undefined || idle === undefined || sessionRunning(session))
+    return false;
+  return idle <= noticeCreated;
+}
+var defaultSchedule = (fn, ms) => {
+  const timer = setTimeout(fn, ms);
+  return () => clearTimeout(timer);
+};
+function createRestartNudger(deps) {
+  const schedule = deps.schedule ?? defaultSchedule;
+  const active = new Map;
+  const nudged = new Set;
+  let disposed = false;
+  const settle = async (sessionID, created) => {
+    try {
+      const session = await deps.getSession(sessionID);
+      if (disposed || nudged.has(sessionID) || !needsNudge(session, created))
+        return;
+      nudged.add(sessionID);
+      await deps.nudge(sessionID);
+    } catch (error) {
+      if (!isSessionNotFound(error, sessionID))
+        deps.warn?.(`agent-efficiency: restartNudge could not wake session ${sessionID}`, error);
+    } finally {
+      active.delete(sessionID);
+    }
+  };
+  return {
+    notice(event) {
+      if (disposed || !isRestartNotice(event.text) || nudged.has(event.sessionID) || active.has(event.sessionID))
+        return;
+      active.set(event.sessionID, schedule(() => void settle(event.sessionID, event.created), deps.graceMs));
+    },
+    dispose() {
+      disposed = true;
+      for (const cancel of active.values())
+        cancel();
+      active.clear();
+    }
+  };
+}
+var NUDGE_TEXT = "The server restarted while you were waiting for a background shell, and that shell was lost. Check its output files and the state on disk, rerun it if needed, and continue your task.";
+async function setupRestartNudge(ctx, options, schedule, warn = (message, cause) => console.warn(message, cause)) {
+  const nudger = createRestartNudger({
+    graceMs: options.graceMs,
+    schedule,
+    warn,
+    getSession: (sessionID) => ctx.session.get({ sessionID }),
+    nudge: async (sessionID) => {
+      await ctx.session.synthetic({ sessionID, text: NUDGE_TEXT, description: "Shell lost to server restart", delivery: "queue", resume: true });
+    }
+  });
+  const controller = new AbortController;
+  const iterator = ctx.event.subscribe({ signal: controller.signal, types: ["session.synthetic"] })[Symbol.asyncIterator]();
+  (async () => {
+    try {
+      while (!controller.signal.aborted) {
+        const next = await iterator.next();
+        if (next.done)
+          break;
+        const event = next.value;
+        if (event.type === "session.synthetic")
+          nudger.notice({ sessionID: event.data.sessionID, text: event.data.text, created: event.created });
+      }
+    } catch (error) {
+      if (!controller.signal.aborted)
+        warn("agent-efficiency: restartNudge stopped listening for restart notices", error);
+    }
+  })();
+  return async () => {
+    controller.abort();
+    nudger.dispose();
+    await iterator.return?.();
+  };
+}
+
 // plugins/agent-efficiency/opencode/src/scratch.ts
 import { readdirSync, realpathSync } from "fs";
 import { tmpdir } from "os";
@@ -2162,6 +2296,9 @@ var src_default = Plugin.define({
     }
     if (options.lead !== false)
       disposers.push(await setupLead(ctx));
+    const restartNudge = parseRestartNudgeOptions(options);
+    if (restartNudge !== undefined)
+      disposers.push(await setupRestartNudge(ctx, restartNudge));
     return async () => {
       for (const dispose of disposers.reverse())
         await dispose();
@@ -2174,24 +2311,31 @@ export {
   DEFAULT_LARGE_READ_LINES,
   DEFAULT_LARGE_READ_TIMEOUT_MS,
   DEFAULT_LEAN_AGENTS,
+  DEFAULT_RESTART_NUDGE_GRACE_MS,
   EXPLORE_ID,
   EXPLORE_PERMISSIONS,
   EXPLORE_PROMPT,
   LEAD_PATH,
+  NUDGE_TEXT,
+  RESTART_NOTICE,
   SEGMENTS,
   SNIFF_LIMIT,
   WAIT_REFUSAL,
+  createRestartNudger,
   src_default as default,
   dropInstructions,
   filterLeadRouting,
   globalConfigDirs,
+  isRestartNotice,
   isUnder,
   largeFile,
   largeReadRefusal,
   leanSystem,
+  needsNudge,
   newScratchEntries,
   parseLargeReadOptions,
   parseLeanOptions,
+  parseRestartNudgeOptions,
   routeShellAlias,
   runsSleep,
   scratchCommandTargets,
@@ -2200,6 +2344,7 @@ export {
   scratchShellWrites,
   setupLargeRead,
   setupLead,
+  setupRestartNudge,
   setupScratch,
   shapeExplore,
   untargetedReadPath,

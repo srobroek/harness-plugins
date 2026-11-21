@@ -54,6 +54,13 @@ Deleting a session clears its cached directory, pending calls and reminder histo
 Subsequent calls retain the session's reminder counts unless the session is deleted.
 Reminders do not change the system prompt. Set `scratchReminder: false` to disable them.
 
+## Restart nudge
+
+`restartNudge` defaults to off. After a server restart, OpenCode posts a "Command cancelled because the server restarted" notice for each lost background shell, but with `resume: false`. A session that ended its turn waiting on that shell, typically a subagent, then stays idle.
+With the option on, the plugin watches `session.synthetic` events for that notice. After a grace period (`graceMs`, 5000 by default) it reads the session. If the session is not archived, not running, and has not finished a run since the notice, it posts one `resume: true` message telling the agent its shell was lost.
+A session gets at most one nudge per server process. A session the host already woke gets none. Set `restartNudge: true` or `{ "graceMs": 10000 }`.
+This is a stopgap for an upstream gap in restart recovery.
+
 ## Install
 
 ```sh
@@ -197,6 +204,7 @@ starts with, rejects it. Moving the call into `workdir` does not help: OpenCode 
 | `waitGuard` | `true` | Refuses foreground shell commands that run `sleep`. |
 | `largeRead` | `true` | Refuses a first untargeted read of a large text file. `false` turns it off; an object sets `bytes` (32768), `lines` (350), `timeoutMs` (500) and `agents` (every agent when unset; a list limits the child sessions covered). |
 | `scratchReminder` | `true` | Notes newly created scratch entries in child-session tool results. |
+| `restartNudge` | off | `true` or `{ graceMs }` wakes an idle session once after a restart cancelled its background shell. |
 | `explore` | `true` | `false` keeps the built-in `explore` agent as OpenCode and your config define it. |
 | `tools` | `["context7_*", "aws-mcp_*"]` | MCP tool patterns the narrowed `explore` may call, named `<server>_<tool>` (for example `["context7_*", "<server>_<tool>"]`). `false` or `[]` adds no rules; explore keeps its fixed allowlist. Only read-only MCP server tools (`<server>_<tool>`) belong here; a pattern that could match a built-in action (`shell`, `edit`, `*`), a plugin tool (`dep_*`, `delivery_*`, `lsp_*`) or an OpenCode tool (`opencode_*`) is refused with a warning. Explore denies `execute`, so OpenCode lists its allowed MCP tools directly, even for a server configured for Code Mode (`packages/core/src/tool.ts:260-264`, OpenCode v2.2.6). The rules go after explore's own, so they win over its leading `* deny`. |
 | `leanSubagents` | the read-only agents above | Agent ids whose child sessions get the trimmed prompt. `false` or `[]` turns it off. |

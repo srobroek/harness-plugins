@@ -7,6 +7,7 @@ import { EXPLORE_ID, shapeExplore } from "./explore.ts"
 import { parseLargeReadOptions, setupLargeRead } from "./large-read.ts"
 import { setupLead } from "./lead.ts"
 import { globalConfigDirs, leanSystem, parseLeanOptions } from "./lean.ts"
+import { parseRestartNudgeOptions, setupRestartNudge } from "./restart-nudge.ts"
 import { setupScratch } from "./scratch.ts"
 import { waitRefusal } from "./wait.ts"
 
@@ -14,6 +15,7 @@ export * from "./explore.ts"
 export * from "./large-read.ts"
 export * from "./lead.ts"
 export * from "./lean.ts"
+export * from "./restart-nudge.ts"
 export * from "./scratch.ts"
 export * from "./wait.ts"
 
@@ -116,6 +118,9 @@ export default Plugin.define({
     }
 
     if (options.lead !== false) disposers.push(await setupLead(ctx))
+
+    const restartNudge = parseRestartNudgeOptions(options)
+    if (restartNudge !== undefined) disposers.push(await setupRestartNudge(ctx, restartNudge))
 
     return async () => {
       for (const dispose of disposers.reverse()) await dispose()
