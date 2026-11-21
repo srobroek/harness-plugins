@@ -9,7 +9,16 @@ import { runScan } from "./run.ts"
 setDefaultTimeout(60_000)
 afterAll(cleanup)
 
-const installed = (binary: string) => Bun.which(binary) !== null
+// biome is a devDependency of this repository, so its behaviour suite never skips: the binary is taken
+// from node_modules/.bin when it is not on PATH (bun test does not add it). ruff and golangci-lint are
+// not installed by CI (.github/workflows/ci.yml), so those suites skip, with the reason printed.
+const LOCAL_BIN = join(import.meta.dir, "../../../../../node_modules/.bin")
+const which = (binary: string): string | null => Bun.which(binary) ?? Bun.which(binary, { PATH: LOCAL_BIN })
+const installed = (binary: string): boolean => {
+  const found = which(binary) !== null
+  if (!found && binary !== "biome") console.warn(`behavior.test: ${binary} is not installed; its suite is skipped`)
+  return found
+}
 const git = (root: string, ...args: string[]) => Bun.spawnSync(["git", ...args], { cwd: root, stdout: "ignore", stderr: "ignore" })
 
 function repo(files: Record<string, string>): string {
@@ -25,7 +34,7 @@ const only = (report: Awaited<ReturnType<typeof runScan>>, tool: string) => repo
 // Every case pairs the protection under test with a control file that must still be reported, so
 // removing the protection (or the analysis) fails the test either way.
 
-describe.skipIf(!installed("biome"))("biome (isolated lens profile)", () => {
+describe("biome (isolated lens profile)", () => {
   const SPREAD = "export const f = (xs: number[]) => xs.reduce((a, x) => ({ ...a, [x]: 1 }), {} as Record<number, number>)\n"
   const SUPPRESSED = `export const g = (xs: number[]) =>\n  // biome-ignore lint/performance/noAccumulatingSpread: fixture\n  xs.reduce((a, x) => ({ ...a, [x]: 1 }), {} as Record<number, number>)\n`
   const files = {
@@ -38,8 +47,9 @@ describe.skipIf(!installed("biome"))("biome (isolated lens profile)", () => {
   }
 
   test("reports a rule the repo disabled, but honours .gitignore and inline suppressions", async () => {
+    expect(which("biome")).not.toBeNull()
     const root = repo(files)
-    const report = await runScan({ root, languages: ["ts"], lenses: ["performance"] }, {})
+    const report = await runScan({ root, languages: ["ts"], lenses: ["performance"] }, { which })
     const biome = only(report, "biome")
     expect(biome.map((c) => [c.file, c.rule, c.ruleEnabledInRepo])).toEqual([["bad.ts", "performance/noAccumulatingSpread", null]])
     expect(where(report)).not.toContain("ignored.ts")
