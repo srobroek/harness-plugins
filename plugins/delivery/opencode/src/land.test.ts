@@ -1858,7 +1858,7 @@ describe("delivery_land", () => {
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) throw new Error(outcome.reason)
     const receipt = outcome.receipt
-    const key = repoKey(canonical, () => join(canonical, ".git"))
+    const key = await repoKey(canonical, () => join(canonical, ".git"))
     if (key === null) throw new Error("the fixture repository has no key")
 
     expect(Object.keys(receipt).sort()).toEqual([

@@ -114,7 +114,7 @@ export async function retargetRepository(
   const context =
     printed === null
       ? null
-      : repositoryContext(dir, (argv) =>
+      : await repositoryContext(dir, (argv) =>
           argv.length === REPOSITORY_OBSERVATION_ARGS.length &&
           argv.every((part, index) => part === REPOSITORY_OBSERVATION_ARGS[index])
             ? printed

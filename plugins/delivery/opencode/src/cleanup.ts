@@ -34,6 +34,7 @@ import {
   readReceipt,
   repoKey,
   repositoryContext,
+  spawnGit,
   validateReceipt,
   writeReceipt,
 } from "./landing-receipt.ts"
@@ -150,9 +151,9 @@ export type CleanupDeps = {
    */
   afterRemoval?: (worktree: string) => Promise<readonly string[]>
   /**
-   * The synchronous Git reader behind the repository identity reads (the repository
-   * key, the common directory and the canonical ledger root); each runs within
-   * `bounds.refReadMs`. Tests observe it.
+   * The Git reader behind the repository identity reads (the repository key, the
+   * common directory and the canonical ledger root); each runs within
+   * `bounds.refReadMs` and ends on `signal`. Tests observe it.
    */
   git?: GitRunner
 }
@@ -750,15 +751,15 @@ function foreignRepository(): CleanupFailure {
   )
 }
 
-function resolveReceipt(
+async function resolveReceipt(
   params: DeliveryCleanupParams,
   cwd: string,
   env: NodeJS.ProcessEnv,
   refReadMs: number,
   git: GitRunner | undefined,
   head?: ReceiptSelector["head"],
-): ReceiptResolution {
-  const key = repoKey(cwd, git, refReadMs)
+): Promise<ReceiptResolution> {
+  const key = await repoKey(cwd, git, refReadMs)
   if (key === null) {
     return {
       tag: "refused",
@@ -1030,7 +1031,7 @@ async function verifyLedger(
   git: GitRunner | undefined,
   env: NodeJS.ProcessEnv,
 ): Promise<CleanupFailure | null> {
-  const classification = canonicalLedger(cwd, git, refReadMs)
+  const classification = await canonicalLedger(cwd, git, refReadMs)
   if (classification === null) {
     return refuse(
       "beads.ledgerActive",
@@ -1256,7 +1257,7 @@ async function verifyTargetIdentity(
   // whatever is on disk now: a replaced checkout, or a `.git` link into another
   // repository, would make the Git commands below run in code this repository does
   // not own. Nothing runs in the target until its marker provably belongs here.
-  const common = repositoryContext(cwd, git, refReadMs)?.commonDir ?? null
+  const common = (await repositoryContext(cwd, git, refReadMs))?.commonDir ?? null
   const verdict = common === null ? ({ state: "unsafe" } as const) : verifyCheckout(physicalTarget, common)
   if (verdict.state !== "same" || common === null) {
     return refuse(
@@ -1425,6 +1426,9 @@ async function cleanupInRepository(
   // interrupt ends whichever read is running and keeps the next one from starting.
   const commit = deps.run ?? runCli
   const run: CliRunner = (argv, options) => commit(argv, { ...options, signal })
+  // The repository identity reads end on the same interrupt.
+  const observe = deps.git ?? spawnGit
+  const git: GitRunner = (argv, at, timeoutMs) => observe(argv, at, timeoutMs, signal)
   const now = deps.now ?? Date.now
   const env = deps.env ?? process.env
   // A target of another repository is refused from the session repository's own
@@ -1500,7 +1504,7 @@ async function cleanupInRepository(
       report: { removed: [], skipped: [note] },
     }
   }
-  const resolution = resolveReceipt(params, cwd, env, bounds.refReadMs, deps.git, await worktreeHead())
+  const resolution = await resolveReceipt(params, cwd, env, bounds.refReadMs, git, await worktreeHead())
   if (resolution.tag === "refused") return (await foreignWorktree()) ? foreignRepository() : resolution.failure
   const receipt = resolution.receipt
 
@@ -1533,7 +1537,7 @@ async function cleanupInRepository(
   // receipt's branch and head before it is used as a directory to run a command in,
   // and `revalidateBoundary` proves the same identity again immediately before the
   // irreversible step.
-  const identity = await verifyTargetIdentity(receipt, cwd, run, bounds.refReadMs, deps.git)
+  const identity = await verifyTargetIdentity(receipt, cwd, run, bounds.refReadMs, git)
   if (isFailure(identity)) return identity
   const observed = await observePullRequest(receipt, run, identity.cwd, env, bounds.refReadMs, identity.pin)
   if (isFailure(observed)) return observed
@@ -1544,7 +1548,7 @@ async function cleanupInRepository(
   if (dirty !== null) return dirty
   const pushed = await verifyPushed(identity.cwd, run, bounds.refReadMs, identity.pin)
   if (isFailure(pushed)) return pushed
-  const ledger = await verifyLedger(receipt, cwd, resolution.path, run, bounds.bdShowMs, bounds.refReadMs, deps.git, env)
+  const ledger = await verifyLedger(receipt, cwd, resolution.path, run, bounds.bdShowMs, bounds.refReadMs, git, env)
   if (ledger !== null) return ledger
 
   // The prompt (if any) comes first and outside the critical section: a held lock must never wait on a person.
@@ -1553,7 +1557,7 @@ async function cleanupInRepository(
   const removeSection = async (): Promise<CleanupFailure | RemovalFacts> => {
     const localRef = await verifyLocalRef(receipt, cwd, run, bounds.refReadMs)
     if (isFailure(localRef)) return localRef
-    const boundary = await revalidateBoundary(receipt, cwd, run, bounds, deps.git)
+    const boundary = await revalidateBoundary(receipt, cwd, run, bounds, git)
     if (isFailure(boundary)) return boundary
 
     const executionCwd = safeExecutionCwd(receipt, boundary.records, cwd)

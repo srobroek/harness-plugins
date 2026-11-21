@@ -21,10 +21,10 @@ let cleanupCalls: Array<{ params: unknown; deps: CleanupDeps }> = []
 let repo = ""
 let common = ""
 
-beforeAll(() => {
+beforeAll(async () => {
   repo = mkdtempSync(join(tmpdir(), "land-repo-"))
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo })
-  common = repositoryContext(repo)?.commonDir as string
+  common = (await repositoryContext(repo))?.commonDir as string
   mock.module("./cleanup.ts", () => ({
     ...originalCleanup,
     cleanupDelivery: async (params: unknown, _cwd: string, deps: CleanupDeps) => {

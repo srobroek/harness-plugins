@@ -380,7 +380,7 @@ export async function setupDelivery(
         const decision = inlineCleanupDecision(
           outcome.receipt,
           options.autoCleanup,
-          receiptPath === null || pending === undefined ? { owner: "none" } : pending.ownership(receiptPath),
+          receiptPath === null || pending === undefined ? { owner: "none" } : await pending.ownership(receiptPath),
         )
         // A refused prompt is a denial: recorded, and never retried without a new explicit call.
         let denied = false

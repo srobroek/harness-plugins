@@ -20,6 +20,7 @@ import {
 import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
 import { SAFE_GIT_ARGS } from "@srobroek/opencode-lib/safe-git"
+import { type CliOptions, runCli } from "./forge-adapter.ts"
 
 /**
  * The landing receipt: the proof a branch landed, written by delivery and read by
@@ -243,26 +244,33 @@ export type WriteOptions = { tempName?: () => string }
  *
  * Returns stdout exactly as Git wrote it, or null when Git failed for any reason.
  * Repository paths may contain spaces, so parsing owns any delimiters rather than
- * trimming them at this process boundary.
+ * trimming them at this process boundary. `signal` ends the read early. Every caller
+ * awaits the answer; a runner that answers synchronously satisfies this type too,
+ * which is what lets a test runner answer without a process.
  */
-export type GitRunner = (argv: readonly string[], cwd: string, timeoutMs: number) => string | null
+export type GitRunner = (
+  argv: readonly string[],
+  cwd: string,
+  timeoutMs: number,
+  signal?: AbortSignal,
+) => string | null | Promise<string | null>
 
-const spawnGit: GitRunner = (argv, cwd, timeoutMs) => {
-  try {
-    // Without `env`, Bun starts the child in the environment this process started with;
-    // the current one is what every other Git child of this plugin gets.
-    const proc = Bun.spawnSync(["git", ...SAFE_GIT_ARGS, ...argv], {
-      cwd,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: Math.max(1, timeoutMs),
-    })
-    if (proc.exitCode !== 0) return null
-    return proc.stdout.toString()
-  } catch {
-    return null
-  }
+/**
+ * The default {@link GitRunner}: an asynchronous child, so the host's event loop keeps
+ * running while Git does. A synchronous spawn here held the whole server for up to the
+ * bound on every observation.
+ */
+export const spawnGit: GitRunner = async (argv, cwd, timeoutMs, signal) => {
+  // Without `env`, Bun starts the child in the environment this process started with;
+  // the current one is what every other Git child of this plugin gets.
+  const options = {
+    cwd,
+    env: process.env,
+    timeoutMs,
+    signal,
+  } as CliOptions & { signal?: AbortSignal }
+  const result = await runCli(["git", ...SAFE_GIT_ARGS, ...argv], options)
+  return result.ok && result.error === undefined && result.exitCode === 0 ? result.stdout : null
 }
 
 /** One Git read that binds repository identity and the current checkout placement together. */
@@ -342,12 +350,12 @@ function repositoryPaths(output: string): { commonDir: string; topLevel: string 
  * Every input and selected output is realpathed. Missing, malformed, non-directory,
  * or ambiguous observations return null rather than a ledger-free verdict.
  */
-export function repositoryContext(
+export async function repositoryContext(
   cwd: string,
   run: GitRunner = spawnGit,
   timeoutMs: number = GIT_TIMEOUT_MS,
-): RepositoryContext | null {
-  const printed = run(REPOSITORY_OBSERVATION_ARGS, cwd, timeoutMs)
+): Promise<RepositoryContext | null> {
+  const printed = await run(REPOSITORY_OBSERVATION_ARGS, cwd, timeoutMs)
   if (printed === null || printed === "") return null
   const paths = repositoryPaths(printed)
   if (paths === null) return null
@@ -373,8 +381,12 @@ export function repositoryContext(
 }
 
 /** Stable identity shared by a repository's primary checkout and linked worktrees. */
-export function repoKey(cwd: string, run: GitRunner = spawnGit, timeoutMs: number = GIT_TIMEOUT_MS): string | null {
-  const printed = run(["rev-parse", "--git-common-dir"], cwd, timeoutMs)
+export async function repoKey(
+  cwd: string,
+  run: GitRunner = spawnGit,
+  timeoutMs: number = GIT_TIMEOUT_MS,
+): Promise<string | null> {
+  const printed = await run(["rev-parse", "--git-common-dir"], cwd, timeoutMs)
   if (printed === null || printed === "") return null
   const common = printed.endsWith("\n") ? printed.slice(0, -1) : printed
   if (common === "" || common.includes("\n") || common.includes("\r") || common.includes("\0")) return null
@@ -425,12 +437,12 @@ export type CanonicalLedger = { root: string; active: boolean }
  * whenever the combined common-dir/top-level observation cannot be resolved
  * unambiguously, which keeps the destructive cleanup path closed.
  */
-export function canonicalLedger(
+export async function canonicalLedger(
   cwd: string,
   run: GitRunner = spawnGit,
   timeoutMs: number = GIT_TIMEOUT_MS,
-): CanonicalLedger | null {
-  return repositoryContext(cwd, run, timeoutMs)?.ledger ?? null
+): Promise<CanonicalLedger | null> {
+  return (await repositoryContext(cwd, run, timeoutMs))?.ledger ?? null
 }
 
 /**

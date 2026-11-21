@@ -1616,21 +1616,15 @@ var RECEIPT_ID_TEXT = 'epoch millis of at most 15 digits, "-", then 12 lowercase
 var EMITTED_AT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?(Z|[+-](\d{2}):(\d{2}))$/;
 var RECEIPT_FILE = /^[0-9]{1,15}-(?:[0-9a-f]{12}|nomerge)\.json$/;
 var MERGE_OID = /^[0-9a-f]{12,}$/;
-var spawnGit = (argv, cwd, timeoutMs) => {
-  try {
-    const proc = Bun.spawnSync(["git", ...SAFE_GIT_ARGS, ...argv], {
-      cwd,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: Math.max(1, timeoutMs)
-    });
-    if (proc.exitCode !== 0)
-      return null;
-    return proc.stdout.toString();
-  } catch {
-    return null;
-  }
+var spawnGit = async (argv, cwd, timeoutMs, signal) => {
+  const options = {
+    cwd,
+    env: process.env,
+    timeoutMs,
+    signal
+  };
+  const result = await runCli(["git", ...SAFE_GIT_ARGS, ...argv], options);
+  return result.ok && result.error === undefined && result.exitCode === 0 ? result.stdout : null;
 };
 var REPOSITORY_OBSERVATION_ARGS = [
   "rev-parse",
@@ -1683,8 +1677,8 @@ function repositoryPaths(output) {
   const topLevel = physicalDirectory(top);
   return commonDir === null || topLevel === null ? null : { commonDir, topLevel };
 }
-function repositoryContext(cwd, run = spawnGit, timeoutMs = GIT_TIMEOUT_MS) {
-  const printed = run(REPOSITORY_OBSERVATION_ARGS, cwd, timeoutMs);
+async function repositoryContext(cwd, run = spawnGit, timeoutMs = GIT_TIMEOUT_MS) {
+  const printed = await run(REPOSITORY_OBSERVATION_ARGS, cwd, timeoutMs);
   if (printed === null || printed === "")
     return null;
   const paths = repositoryPaths(printed);
@@ -1711,8 +1705,8 @@ function repositoryContext(cwd, run = spawnGit, timeoutMs = GIT_TIMEOUT_MS) {
     ledger: { root, active: ledgerActive(root) }
   };
 }
-function repoKey(cwd, run = spawnGit, timeoutMs = GIT_TIMEOUT_MS) {
-  const printed = run(["rev-parse", "--git-common-dir"], cwd, timeoutMs);
+async function repoKey(cwd, run = spawnGit, timeoutMs = GIT_TIMEOUT_MS) {
+  const printed = await run(["rev-parse", "--git-common-dir"], cwd, timeoutMs);
   if (printed === null || printed === "")
     return null;
   const common = printed.endsWith(`
@@ -1739,8 +1733,8 @@ function ledgerActive(dir) {
     return true;
   }
 }
-function canonicalLedger(cwd, run = spawnGit, timeoutMs = GIT_TIMEOUT_MS) {
-  return repositoryContext(cwd, run, timeoutMs)?.ledger ?? null;
+async function canonicalLedger(cwd, run = spawnGit, timeoutMs = GIT_TIMEOUT_MS) {
+  return (await repositoryContext(cwd, run, timeoutMs))?.ledger ?? null;
 }
 function receiptDirectory(env = process.env, key) {
   const configured = env.DELIVERY_RECEIPTS_DIR?.trim() ?? "";
@@ -2357,7 +2351,7 @@ async function retargetRepository(input, sessionCwd, read) {
   }
   const dir = resolve3(sessionCwd, clone.value);
   const printed = await read(dir, REPOSITORY_OBSERVATION_ARGS);
-  const context = printed === null ? null : repositoryContext(dir, (argv) => argv.length === REPOSITORY_OBSERVATION_ARGS.length && argv.every((part, index) => part === REPOSITORY_OBSERVATION_ARGS[index]) ? printed : null);
+  const context = printed === null ? null : await repositoryContext(dir, (argv) => argv.length === REPOSITORY_OBSERVATION_ARGS.length && argv.every((part, index) => part === REPOSITORY_OBSERVATION_ARGS[index]) ? printed : null);
   if (context === null)
     return { reason: notACloneReason(clone.field, dir) };
   const remotes = await remotePaths(read, dir);
@@ -2692,8 +2686,8 @@ var FOREIGN_HINT = "a worktree of a repository other than this session's is neve
 function foreignRepository() {
   return refuse2("worktree.owner", "a receipt or worktree of a repository other than this session's", "delivery_cleanup run from a session in that repository; a checkout of another repository is untrusted, so nothing was read or removed");
 }
-function resolveReceipt(params, cwd, env, refReadMs, git, head) {
-  const key = repoKey(cwd, git, refReadMs);
+async function resolveReceipt(params, cwd, env, refReadMs, git, head) {
+  const key = await repoKey(cwd, git, refReadMs);
   if (key === null) {
     return {
       tag: "refused",
@@ -2868,7 +2862,7 @@ async function ledgerState(receipt, cwd, receiptPath, run = runCli, timeoutMs = 
   return /^beads\.(?!ledgerActive)[^:]+:/.test(failure.reason) ? "open" : "unknown";
 }
 async function verifyLedger(receipt, cwd, receiptPath, run, timeoutMs, refReadMs, git, env) {
-  const classification = canonicalLedger(cwd, git, refReadMs);
+  const classification = await canonicalLedger(cwd, git, refReadMs);
   if (classification === null) {
     return refuse2("beads.ledgerActive", `no ledger classification from ${cwd}`, "a repository whose canonical root can be resolved, so the receipt's ledger claim can be recomputed rather than trusted");
   }
@@ -3046,7 +3040,7 @@ async function verifyTargetIdentity(receipt, cwd, run, refReadMs, git) {
     return refuse2("worktree.path", path, "a worktree in the current repository");
   if (target === null || target.prunable)
     return refuse2("worktree.path", path, "an exact live record in git worktree list --porcelain");
-  const common = repositoryContext(cwd, git, refReadMs)?.commonDir ?? null;
+  const common = (await repositoryContext(cwd, git, refReadMs))?.commonDir ?? null;
   const verdict = common === null ? { state: "unsafe" } : verifyCheckout(physicalTarget, common);
   if (verdict.state !== "same" || common === null) {
     return refuse2("worktree.marker", `${path} (.git ${verdict.state})`, "a regular .git file naming a directory under this repository's worktrees/ whose commondir is this repository; nothing was read in the worktree");
@@ -3155,6 +3149,8 @@ async function cleanupInRepository(params, cwd, deps) {
   const bounds = { ...CLEANUP_BOUNDS, ...deps.bounds };
   const commit = deps.run ?? runCli;
   const run = (argv, options) => commit(argv, { ...options, signal });
+  const observe = deps.git ?? spawnGit;
+  const git = (argv, at, timeoutMs) => observe(argv, at, timeoutMs, signal);
   const now = deps.now ?? Date.now;
   const env = deps.env ?? process.env;
   const worktreeHead = async () => {
@@ -3212,7 +3208,7 @@ async function cleanupInRepository(params, cwd, deps) {
       report: { removed: [], skipped: [note] }
     };
   };
-  const resolution = resolveReceipt(params, cwd, env, bounds.refReadMs, deps.git, await worktreeHead());
+  const resolution = await resolveReceipt(params, cwd, env, bounds.refReadMs, git, await worktreeHead());
   if (resolution.tag === "refused")
     return await foreignWorktree() ? foreignRepository() : resolution.failure;
   const receipt = resolution.receipt;
@@ -3228,7 +3224,7 @@ async function cleanupInRepository(params, cwd, deps) {
   if (invocationInsideTarget(cwd, receipt.worktree.path)) {
     return refuse2("worktree.invocationCwd", cwd, `a directory outside the worktree this call would remove (${receipt.worktree.path}, resolved to ${physicalPath(receipt.worktree.path)})`);
   }
-  const identity = await verifyTargetIdentity(receipt, cwd, run, bounds.refReadMs, deps.git);
+  const identity = await verifyTargetIdentity(receipt, cwd, run, bounds.refReadMs, git);
   if (isFailure(identity))
     return identity;
   const observed = await observePullRequest(receipt, run, identity.cwd, env, bounds.refReadMs, identity.pin);
@@ -3244,7 +3240,7 @@ async function cleanupInRepository(params, cwd, deps) {
   const pushed = await verifyPushed(identity.cwd, run, bounds.refReadMs, identity.pin);
   if (isFailure(pushed))
     return pushed;
-  const ledger = await verifyLedger(receipt, cwd, resolution.path, run, bounds.bdShowMs, bounds.refReadMs, deps.git, env);
+  const ledger = await verifyLedger(receipt, cwd, resolution.path, run, bounds.bdShowMs, bounds.refReadMs, git, env);
   if (ledger !== null)
     return ledger;
   await deps.authorize?.({ worktree: path, branch: receipt.branch.name, pr: receipt.pr.number });
@@ -3253,7 +3249,7 @@ async function cleanupInRepository(params, cwd, deps) {
     const localRef = await verifyLocalRef(receipt, cwd, run, bounds.refReadMs);
     if (isFailure(localRef))
       return localRef;
-    const boundary = await revalidateBoundary(receipt, cwd, run, bounds, deps.git);
+    const boundary = await revalidateBoundary(receipt, cwd, run, bounds, git);
     if (isFailure(boundary))
       return boundary;
     const executionCwd = safeExecutionCwd(receipt, boundary.records, cwd);
@@ -4402,7 +4398,7 @@ async function gitOutput(run, cwd, argv, env, input) {
 }
 async function observeRepository(git, cwd) {
   const printed = await git(REPOSITORY_OBSERVATION_ARGS);
-  const repository = repositoryContext(cwd, (argv) => argv.length === REPOSITORY_OBSERVATION_ARGS.length && argv.every((part, index) => part === REPOSITORY_OBSERVATION_ARGS[index]) ? printed : null);
+  const repository = await repositoryContext(cwd, (argv) => argv.length === REPOSITORY_OBSERVATION_ARGS.length && argv.every((part, index) => part === REPOSITORY_OBSERVATION_ARGS[index]) ? printed : null);
   if (repository === null) {
     return {
       reason: `git ${REPOSITORY_OBSERVATION_ARGS.join(" ")} in ${cwd}: observed no unambiguous repository paths, expected absolute git common directory and checkout top level`
@@ -5911,7 +5907,7 @@ async function authorizeExplicit(pending, ask, sessionID, request) {
     throw error;
   }
   await pending?.arm(request.worktree).catch(() => {});
-  const deferred = pending === undefined ? undefined : explicitDeferral(pending.ownership(request.worktree));
+  const deferred = pending === undefined ? undefined : explicitDeferral(await pending.ownership(request.worktree));
   if (deferred !== undefined)
     throw new CleanupDeferred(deferred);
 }
@@ -5935,28 +5931,27 @@ function createPendingCleanup(deps) {
     chain = next.catch(() => {});
     return next;
   };
-  const commonDir = () => repositoryContext(cwd, deps.observe, observationMs)?.commonDir ?? null;
-  const ownership = (path) => {
-    const common = commonDir();
+  const commonDir = async () => (await repositoryContext(cwd, deps.observe, observationMs))?.commonDir ?? null;
+  const ownership = async (path) => {
+    const common = await commonDir();
     if (common === null)
       return { owner: "unknown", reason: "the git common directory could not be resolved" };
     return ownershipOf(readClaim(common, path));
   };
-  const landings = () => {
-    const common = commonDir();
+  const landings = async () => {
+    const common = await commonDir();
     if (common === null)
       return { byReceipt: new Map, unreadable: true, common };
     const listed = listLandings(common);
     return { byReceipt: new Map(listed.records.map((record) => [record.receiptId, record])), unreadable: listed.unreadable, common };
   };
-  const locked = (worktree, write) => {
-    const common = commonDir();
+  const locked = (worktree, write) => commonDir().then((common) => {
     if (common === null)
-      return Promise.reject(new Error("the git common directory could not be resolved"));
+      throw new Error("the git common directory could not be resolved");
     return lockedWrite(common, worktree, { sessionID: "delivery", now, ...deps.lock }, write);
-  };
+  });
   const write = async (receiptId, worktree, update, options = {}) => {
-    const common = commonDir();
+    const common = await commonDir();
     if (common === null)
       return;
     await locked(worktree, () => {
@@ -5975,8 +5970,8 @@ function createPendingCleanup(deps) {
     });
   };
   const markNudged = (receiptId, worktree) => write(receiptId, worktree, (current) => current ? { ...current, nudged: true } : current);
-  const dropEvidence = (receiptId) => {
-    const key = repoKey(cwd, deps.observe, observationMs);
+  const dropEvidence = async (receiptId) => {
+    const key = await repoKey(cwd, deps.observe, observationMs);
     if (key === null)
       return false;
     const directory = resolve8(receiptDirectory(env, key));
@@ -5991,11 +5986,11 @@ function createPendingCleanup(deps) {
       return false;
     }
   };
-  const dropLanding = async (common, record, needsEvidence = true) => locked(record.worktree, () => {
+  const dropLanding = async (common, record, needsEvidence = true) => locked(record.worktree, async () => {
     const current = readLanding(common, record.receiptId);
     if (current.kind !== "present" || current.value.denied !== undefined)
       return;
-    if (needsEvidence && !dropEvidence(record.receiptId))
+    if (needsEvidence && !await dropEvidence(record.receiptId))
       return;
     removeLanding(common, record.receiptId);
   });
@@ -6015,17 +6010,17 @@ function createPendingCleanup(deps) {
       ...outcome.denied ? { denied: { at: now(), sessionID } } : existing?.denied ? { denied: existing.denied } : {}
     }));
   };
-  const receiptsFor = (path) => {
-    const key = repoKey(cwd, deps.observe, observationMs);
+  const receiptsFor = async (path) => {
+    const key = await repoKey(cwd, deps.observe, observationMs);
     if (key === null)
       return [];
     const want = canonicalDirectory(path);
     return pendingReceipts(listReceipts(resolve8(receiptDirectory(env, key)))).filter((receipt) => receipt.worktree.path !== null && canonicalDirectory(receipt.worktree.path) === want);
   };
   const deny = async (worktree, sessionID) => {
-    for (const receipt of receiptsFor(worktree))
+    for (const receipt of await receiptsFor(worktree))
       await record(receipt, sessionID, { denied: true });
-    for (const entry of landingsFor([...landings().byReceipt.values()], worktree)) {
+    for (const entry of landingsFor([...(await landings()).byReceipt.values()], worktree)) {
       await write(entry.receiptId, entry.worktree, (current) => current ? { ...current, denied: { at: now(), sessionID } } : current);
     }
   };
@@ -6033,7 +6028,7 @@ function createPendingCleanup(deps) {
     for (const [id, where] of deniedInMemory)
       if (where === canonicalDirectory(worktree))
         deniedInMemory.delete(id);
-    const { byReceipt } = landings();
+    const { byReceipt } = await landings();
     for (const entry of landingsFor([...byReceipt.values()], worktree)) {
       if (entry.denied === undefined)
         continue;
@@ -6042,10 +6037,10 @@ function createPendingCleanup(deps) {
     }
   };
   const holdFor = async (path) => {
-    const owned = ownershipDeferral(ownership(path));
+    const owned = ownershipDeferral(await ownership(path));
     if (owned !== undefined)
       return owned;
-    const common = commonDir();
+    const common = await commonDir();
     if (common === null)
       return "the git common directory could not be resolved";
     const failed = unsafe.get(canonicalDirectory(path));
@@ -6082,8 +6077,8 @@ function createPendingCleanup(deps) {
       return `the sessions in ${path} could not be listed`;
     }
   };
-  const landingBlock = (path) => {
-    const common = commonDir();
+  const landingBlock = async (path) => {
+    const common = await commonDir();
     if (common === null)
       return "the git common directory could not be resolved";
     const listed = listLandings(common);
@@ -6097,18 +6092,18 @@ function createPendingCleanup(deps) {
     return;
   };
   const section = async (worktree, run) => {
-    const common = commonDir();
+    const common = await commonDir();
     if (common === null)
       return { ok: false, reason: "worktree.held: observed the git common directory could not be resolved, expected a coordination store; nothing was removed" };
     const outcome = await lockedWorktreeRemoval(common, worktree, { sessionID: "delivery", now, ...deps.lock }, {
-      recheck: async () => await holdFor(worktree) ?? landingBlock(worktree),
+      recheck: async () => await holdFor(worktree) ?? await landingBlock(worktree),
       remove: run
     });
     if (outcome.removed)
       return outcome.value;
     return { ok: false, reason: `worktree.held: observed ${outcome.reason}, expected no owner, hold, denial or competing remover; nothing was removed` };
   };
-  const holdCheck = async (worktree) => await holdFor(worktree) ?? landingBlock(worktree);
+  const holdCheck = async (worktree) => await holdFor(worktree) ?? await landingBlock(worktree);
   const removalFor = (...sessionIDs) => {
     const client = ctx.session;
     let roots = [];
@@ -6119,7 +6114,7 @@ function createPendingCleanup(deps) {
         const held = await holdCheck(worktree);
         if (held !== undefined)
           return held;
-        const common = commonDir();
+        const common = await commonDir();
         const recorded = common === null ? [] : landingsFor(listLandings(common).records, worktree).map((entry) => entry.sessionID);
         roots = [...new Set([...sessionIDs, ...recorded].filter((id) => typeof id === "string"))];
         forms = [...new Set([worktree, canonicalDirectory(worktree)])];
@@ -6127,7 +6122,7 @@ function createPendingCleanup(deps) {
       },
       afterRemoval: async (worktree) => {
         const lane = await laneSessionsIn(client, roots, forms.length === 0 ? [worktree] : forms);
-        return moveLaneHome(client, lane, canonicalCheckout(commonDir() ?? undefined, cwd));
+        return moveLaneHome(client, lane, canonicalCheckout(await commonDir() ?? undefined, cwd));
       }
     };
   };
@@ -6136,17 +6131,17 @@ function createPendingCleanup(deps) {
     ...removalFor(sessionID)
   });
   const gc = async () => {
-    const recorded = landings();
+    const recorded = await landings();
     if (recorded.common === null || recorded.unreadable)
       return;
     for (const record of recorded.byReceipt.values()) {
-      if (record.denied !== undefined || !dropEvidence(record.receiptId))
+      if (record.denied !== undefined || !await dropEvidence(record.receiptId))
         continue;
       await dropLanding(recorded.common, record);
     }
   };
   const run = async (sessionID, idle) => {
-    const key = repoKey(cwd, deps.observe, observationMs);
+    const key = await repoKey(cwd, deps.observe, observationMs);
     if (key === null)
       return;
     const directory = resolve8(receiptDirectory(env, key));
@@ -6156,7 +6151,7 @@ function createPendingCleanup(deps) {
     } catch {
       return;
     }
-    const recorded = landings();
+    const recorded = await landings();
     await gc();
     const present = [];
     for (const receipt of pending) {
@@ -6168,8 +6163,15 @@ function createPendingCleanup(deps) {
       } else if (!doneIds.has(receipt.receiptId))
         present.push(receipt);
     }
+    const laneOwned = new Set;
+    for (const receipt of present) {
+      if (recorded.byReceipt.get(receipt.receiptId)?.denied !== undefined || deniedInMemory.has(receipt.receiptId))
+        continue;
+      if (receipt.worktree.path !== null && (await ownership(receipt.worktree.path)).owner !== "none")
+        laneOwned.add(receipt.receiptId);
+    }
     const window = selectWindow(present, {
-      skip: (receipt) => recorded.byReceipt.get(receipt.receiptId)?.denied !== undefined || deniedInMemory.has(receipt.receiptId) || receipt.worktree.path !== null && ownership(receipt.worktree.path).owner !== "none",
+      skip: (receipt) => recorded.byReceipt.get(receipt.receiptId)?.denied !== undefined || deniedInMemory.has(receipt.receiptId) || laneOwned.has(receipt.receiptId),
       lastAttempt: (receipt) => attemptedAt.get(receipt.receiptId),
       limit
     });
@@ -6239,8 +6241,8 @@ function createPendingCleanup(deps) {
       schedule(sessionID, false);
   };
   const recordHolds = async (sessionID, background) => {
-    const common = commonDir();
-    const key = repoKey(cwd, deps.observe, observationMs);
+    const common = await commonDir();
+    const key = await repoKey(cwd, deps.observe, observationMs);
     if (common === null || key === null)
       return;
     let pending;
@@ -6674,7 +6676,7 @@ async function setupDelivery(ctx, overrides = {}) {
           const output = landOutput(outcome, cleanup);
           return { output, content: textAfterCleanup(outcome.text, cleanup), metadata: metadataOf(output) };
         }
-        const decision = inlineCleanupDecision(outcome.receipt, options.autoCleanup, receiptPath === null || pending === undefined ? { owner: "none" } : pending.ownership(receiptPath));
+        const decision = inlineCleanupDecision(outcome.receipt, options.autoCleanup, receiptPath === null || pending === undefined ? { owner: "none" } : await pending.ownership(receiptPath));
         let denied = false;
         const cleanup = decision.run ? await runInlineCleanup(() => {
           const askCleanup = asserter(ctx, context, CLEANUP_ACTION);
