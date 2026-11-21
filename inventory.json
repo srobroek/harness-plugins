@@ -479,6 +479,32 @@
       "scope": "project"
     },
     {
+      "name": "code-challenge",
+      "version": "0.0.0",
+      "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "code-challenge"
+          ],
+          "agents": [
+            "code-challenger",
+            "refactor-challenger"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global"
+    },
+    {
       "name": "debate",
       "version": "0.5.0",
       "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",

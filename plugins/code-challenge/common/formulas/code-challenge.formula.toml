@@ -1,0 +1,102 @@
+# code-challenge -- a full run: INTAKE, SCAN, CHALLENGE, RESEARCH, REFUTE, DECIDE, DELIVER
+#
+# Install: run the challenge_setup tool, which copies every code-challenge formula into
+# <repo>/.beads/formulas/, or copy this file there (or into ~/.beads/formulas/).
+# Pour a full run:
+#   bd mol pour code-challenge --var target=<paths> --var run_id=<run-id>
+#
+# Each phase is also a formula, mol-challenge-<phase>, that runs alone.
+#
+# PRECONDITION: the skills and agents named here ship in the code-challenge plugin
+# (srobroek.code-challenge). Install it first.
+#
+# Evidence rule: every finding carries a tier -- proven, measured or hypothesis -- and a
+# path:line locator. A speed claim without a measurement is a hypothesis.
+formula = "code-challenge"
+description = "Challenge {{target}} at depth {{depth}} in {{mode}} mode: seven phases from intake to a delivered report (run {{run_id}})"
+type = "workflow"
+
+[vars.target]
+required = true
+description = "paths, packages or diff range under challenge"
+
+[vars.run_id]
+required = true
+description = "run id; the run directory is <git-dir>/code-challenge/<run-id>/"
+
+[vars.depth]
+default = "standard"
+description = "quick, standard or deep"
+
+[vars.mode]
+default = "interactive"
+description = "interactive or autonomous"
+
+[[steps]]
+id = "intake"
+title = "INTAKE the scope of {{target}}"
+type = "task"
+labels = ["code-challenge", "phase:intake"]
+description = """
+Run the code-challenge skill, phase INTAKE, for run {{run_id}} in {{mode}} mode at depth {{depth}}. Write intake.json and log the pluggability answer and its signal.
+"""
+
+[[steps]]
+id = "scan"
+title = "SCAN {{target}} with the repository's analyzers"
+type = "task"
+needs = ["intake"]
+labels = ["code-challenge", "phase:scan"]
+description = """
+Run the code-challenge skill, phase SCAN: references/scan.md analyzers, hits tagged by rule_enabled_in_repo, scan.json written. Depth quick skips analyzers that need a build.
+"""
+
+[[steps]]
+id = "challenge"
+title = "CHALLENGE {{target}} with one lens scout per lens"
+type = "task"
+needs = ["scan"]
+labels = ["code-challenge", "phase:challenge"]
+description = """
+Run the code-challenge skill, phase CHALLENGE: you (the lead) bond mol-challenge-lens once per selected lens, in parallel, then merge the replies into findings.json with a tier, a locator and test protection on every finding. The scouts only analyse; you spawn them and write the file.
+"""
+
+[[steps]]
+id = "research"
+title = "RESEARCH library candidates"
+type = "task"
+needs = ["challenge"]
+labels = ["code-challenge", "phase:research"]
+description = """
+Run the code-challenge skill, phase RESEARCH: 2 to 4 candidates per library finding, scored with references/library-scoring.md, gates first. Skip at depth quick and record why.
+"""
+
+[[steps]]
+id = "refute"
+title = "REFUTE the findings with refactor-challenger"
+type = "task"
+needs = ["research"]
+labels = ["code-challenge", "phase:refute"]
+description = """
+Run the code-challenge skill, phase REFUTE: you (the lead) send refactor-challenger a brief of observable facts only, then write verdicts.json from its reply. The critic only judges; you write the file. Skip at depth quick and record why.
+"""
+
+[[steps]]
+id = "decide"
+title = "DECIDE which findings to accept"
+type = "task"
+needs = ["refute"]
+labels = ["code-challenge", "phase:decide"]
+description = """
+Run the code-challenge skill, phase DECIDE in {{mode}} mode: parley_ask batches of up to 12 when interactive; the autonomous rule (kept, proven or measured, low blast radius, contract kept) otherwise. Every choice goes to decisions.jsonl.
+"""
+
+[[steps]]
+id = "deliver"
+title = "DELIVER the report for run {{run_id}}"
+type = "task"
+needs = ["decide"]
+labels = ["code-challenge", "phase:deliver"]
+description = """
+Run the code-challenge skill, phase DELIVER: report.json and decisions.jsonl validated against their schemas, the report printed in chat, an epic and child beads for accepted findings at depth standard and deep, the comment drafted and never posted without confirmation.
+"""

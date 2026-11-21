@@ -66,7 +66,17 @@ Move new shared code into `lib` instead of adding another edge.
 
 - Renovate (`renovate.json`) extends the `srobroek/harness-kit` preset and adds five regex custom managers. Two read exact PyPI and npm pins in Markdown sources: `uv run --with PKG==VER`, `uvx PKG@VER`, `npx [-y] PKG@X.Y.Z` and `npm:PKG@X.Y.Z`. Two read the same pins in `plugins/<name>/common/.mcp.json`. One reads `REPOMIX_VERSION` in `plugins/repomix/opencode/src/pack.ts`. The Markdown managers select source files only: `docs/` and `lib/`, plugin READMEs, `common/` and `agents.src/`, and `opencode/src/` Markdown. Copies that `harness-kit build` writes are not selected. A package rule disables these managers for the vendored `plugins/cad/common` and `plugins/cad/opencode`. Version pins in skills and docs use the shapes these managers match.
 - The preset also moves `@srobroek/harness-kit` (package pin), the `srobroek/harness-kit` workflow tags and the versions quoted in any Markdown file (`srobroek/harness-kit/.github/workflows/<file>.yml@vX.Y.Z`, `@srobroek/harness-kit@X.Y.Z`) in one `harness-kit` group. Renovate does not run `harness-kit build`, so a Renovate PR that changes a source needs `npm run build` on its branch to regenerate the copies; `npm run check` fails until then.
-- Approved departures: none recorded. Record each departure here with its reason.
+- Approved departures:
+  - `code-challenge` names its tool `challenge_setup`, not `code_challenge_setup` as `<name>_<verb>` would give. The skill's other two tools, `challenge_scan` and `challenge_lib_facts`, ship in later pull requests under the same `challenge_` namespace, so one short prefix (reserved in `RESERVED_TOOL_PREFIXES`) covers the family and the agents' permission rules.
+
+## code-challenge
+
+`plugins/code-challenge` is OpenCode only (`harnesses: ["opencode"]`). It challenges existing code for simplification, performance, stability, hand-rolled code and structure, and plans only: it edits no source file.
+
+- Ownership: the plugin owns the `code-challenge` skill (twelve lens references, the report and decisions JSON Schemas, intake, scoring and run-storage rules), the `/code-challenge` command, the `challenge_setup` tool, nine beads formulas and the `code-challenger` and `refactor-challenger` agents. `challenge_scan` and `challenge_lib_facts` are planned in later pull requests.
+- Run storage: every run writes under `<git-dir>/code-challenge/<run-id>/`, outside the working tree (`intake.json`, `scan.json`, `findings.json`, `research.json`, `verdicts.json`, `decisions.jsonl`, `report.json`, `report.md`). `decisions.jsonl` is append-only. The directory is never committed.
+- Formulas: `challenge_setup` copies `code-challenge` (the full run), `mol-challenge-<phase>` for the seven phases and `mol-challenge-lens` into `.beads/formulas/`. The lead agent sequences the phases, dispatches subagents and writes every file, bead and log line. Only `mol-challenge-lens/analyse-lens` (to `code-challenger`) and `mol-challenge-refute/attack-findings` (to `refactor-challenger`) route to a subagent. Both agents are read-only; each routed step lists `requires_actions` and a test checks the agent's permissions allow them.
+- `challenge_setup` resolves the target workspace from the invoking session's directory and fails when it cannot read that session.
 
 ## Commands
 

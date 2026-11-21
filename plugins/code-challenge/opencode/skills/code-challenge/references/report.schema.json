@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/srobroek/harness-plugins/plugins/code-challenge/report.schema.json",
+  "title": "code-challenge report",
+  "description": "report.json written by the DELIVER phase.",
+  "type": "object",
+  "required": ["run_id", "target", "depth", "mode", "created", "lenses", "summary", "findings", "gaps"],
+  "additionalProperties": false,
+  "properties": {
+    "run_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[a-z0-9-]{1,24}$" },
+    "target": { "type": "string", "minLength": 1 },
+    "depth": { "enum": ["quick", "standard", "deep"] },
+    "mode": { "enum": ["interactive", "autonomous"] },
+    "created": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+    "lenses": { "type": "array", "items": { "$ref": "#/$defs/lens" }, "minItems": 1 },
+    "summary": {
+      "type": "object",
+      "required": ["found", "accepted", "deferred", "rejected", "dropped"],
+      "additionalProperties": false,
+      "properties": {
+        "found": { "type": "integer", "minimum": 0 },
+        "accepted": { "type": "integer", "minimum": 0 },
+        "deferred": { "type": "integer", "minimum": 0 },
+        "rejected": { "type": "integer", "minimum": 0 },
+        "dropped": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+    "beads": {
+      "type": "object",
+      "required": ["epic", "children"],
+      "additionalProperties": false,
+      "properties": {
+        "epic": { "type": "string", "minLength": 1 },
+        "children": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "comment_draft": { "type": "string" },
+    "gaps": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  },
+  "$defs": {
+    "lens": {
+      "enum": [
+        "simplification",
+        "over-engineering",
+        "optimisation",
+        "performance",
+        "efficiency",
+        "stability",
+        "hand-rolled-stdlib",
+        "hand-rolled-library",
+        "dead-code",
+        "observability",
+        "structure",
+        "tests"
+      ]
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["tier", "detail"],
+      "additionalProperties": false,
+      "properties": {
+        "tier": { "enum": ["proven", "measured", "hypothesis"] },
+        "detail": { "type": "string", "minLength": 1 },
+        "command": { "type": "string" }
+      }
+    },
+    "location": {
+      "type": "object",
+      "required": ["path", "line"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "line": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": ["id", "lens", "title", "location", "claim", "evidence", "impact", "blast_radius", "test_protection", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^F[0-9]+$" },
+        "lens": { "$ref": "#/$defs/lens" },
+        "title": { "type": "string", "minLength": 1 },
+        "location": { "$ref": "#/$defs/location" },
+        "recurs": { "type": "integer", "minimum": 1 },
+        "claim": { "type": "string", "minLength": 1 },
+        "evidence": { "$ref": "#/$defs/evidence" },
+        "impact": { "enum": ["high", "medium", "low"] },
+        "blast_radius": { "enum": ["low", "medium", "high"] },
+        "changes_contract": { "type": "boolean" },
+        "test_protection": { "enum": ["protected", "partial", "unprotected", "not-applicable"] },
+        "proposal": { "type": "string" },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "score", "gates_passed"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "score": { "type": "number", "minimum": 0 },
+              "gates_passed": { "type": "boolean" },
+              "note": { "type": "string" }
+            }
+          }
+        },
+        "refute": {
+          "type": "object",
+          "required": ["verdict", "rationale"],
+          "additionalProperties": false,
+          "properties": {
+            "verdict": { "enum": ["KEEP", "DOWNGRADE", "DROP"] },
+            "rationale": { "type": "string", "minLength": 1 }
+          }
+        },
+        "status": { "enum": ["accepted", "deferred", "rejected", "dropped"] },
+        "decided_by": { "enum": ["user", "autonomous-rule"] },
+        "bead": { "type": "string" }
+      }
+    }
+  }
+}

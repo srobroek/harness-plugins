@@ -77,14 +77,8 @@ describe("MCP grant sets", () => {
     )
   const shippedIds = new Set(shipped.map((agent) => agent.id))
 
-  // Ids registered ahead of the plugin that ships them, so the lib change can land apart from the plugin
-  // (it rebuilds every bundle and must not share a release-cutting commit). plugins/code-challenge removes this list.
-  const AHEAD_OF_PLUGIN = ["code-challenger", "refactor-challenger"]
-
   test("every id in either set ships in a plugin, or is OpenCode's built-in explore", () => {
-    const unknown = [...MCP_TOOL_AGENTS, ...MCP_EXCLUDED_AGENTS].filter(
-      (id) => id !== "explore" && !AHEAD_OF_PLUGIN.includes(id) && !shippedIds.has(id),
-    )
+    const unknown = [...MCP_TOOL_AGENTS, ...MCP_EXCLUDED_AGENTS].filter((id) => id !== "explore" && !shippedIds.has(id))
     expect(unknown).toEqual([])
   })
 

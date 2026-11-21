@@ -1,0 +1,58 @@
+# mol-challenge-decide -- the DECIDE phase of a code-challenge run, runnable alone
+#
+# Install: run the challenge_setup tool, which copies every code-challenge formula into
+# <repo>/.beads/formulas/, or copy this file there (or into ~/.beads/formulas/).
+# Pour one phase:
+#   bd mol pour mol-challenge-decide --var target=<paths> --var run_id=<run-id> --var depth=<depth> --var mode=<mode>
+#
+# The phase needs the earlier phases' files in the run directory; each file is named in the
+# code-challenge skill's references/run-storage.md. The vars have no defaults because bd mol bond
+# does not apply them.
+#
+# PRECONDITION: the skills and agents named here ship in the code-challenge plugin
+# (srobroek.code-challenge). Install it first.
+#
+# Evidence rule: every finding carries a tier -- proven, measured or hypothesis -- and a
+# path:line locator. A speed claim without a measurement is a hypothesis.
+formula = "mol-challenge-decide"
+description = "Run the DECIDE phase for {{target}}: the user, or the autonomous rule, accepts, defers or rejects each finding"
+type = "workflow"
+
+[vars.target]
+required = true
+description = "paths, packages or diff range under challenge"
+
+[vars.run_id]
+required = true
+description = "run id; the run directory is <git-dir>/code-challenge/<run-id>/"
+
+[vars.depth]
+required = true
+description = "quick, standard or deep"
+
+[vars.mode]
+required = true
+description = "interactive or autonomous"
+
+[[steps]]
+id = "offer-or-apply-rule"
+title = "DECIDE which findings to accept"
+type = "task"
+labels = ["code-challenge", "sub:decide", "phase:decide"]
+description = """
+Run the code-challenge skill, phase DECIDE, from run {{run_id}}, in {{mode}} mode. Interactive:
+offer the surviving findings through parley_ask in batches of up to 12, highest impact first.
+Autonomous: accept only a finding that REFUTE kept, whose evidence is proven or measured, whose
+blast radius is low and that keeps its contract; defer the rest. Never ask in autonomous mode.
+"""
+
+[[steps]]
+id = "log-decisions"
+title = "LOG every decision"
+type = "task"
+needs = ["offer-or-apply-rule"]
+labels = ["code-challenge", "sub:decide", "phase:decide"]
+description = """
+Set status and decided_by on every finding and append one decisions.jsonl line per finding, plus
+a line for every blocker, ambiguity and choice made on the way. The log is append-only.
+"""
