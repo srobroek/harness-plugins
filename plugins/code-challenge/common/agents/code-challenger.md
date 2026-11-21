@@ -83,8 +83,11 @@ reply; you have no tool to do either.
 
 ## Protocol
 
-1. Load the `code-challenge` skill and read the reference of each lens in the Brief. Load
-   the steering skills each reference names.
+1. Load the `code-challenge` skill and read the reference of each lens in the Brief with the
+   `read` tool, by the absolute path the Brief gives; the skill's file list is a sample. With
+   no path in the Brief, build it from the skill's base directory:
+   `references/lens-<lens>.md`, plus `references/evidence.md`. Load the steering skills each
+   reference names; skip one that is not installed and list it as a gap.
 2. Read the target. Treat scan hits as leads, never as findings.
 3. For each lens, look for what its reference lists. Confirm each candidate with a tool
    result: LSP references, `grep` counts, a type check, a lint rule, a read-only

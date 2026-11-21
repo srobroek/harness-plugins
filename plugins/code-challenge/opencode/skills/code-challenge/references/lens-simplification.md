@@ -20,4 +20,4 @@ Record test protection on every finding: `protected` (a test fails if behaviour 
 
 ## Steering
 
-`quality-code-policy`, `lang-*-quality` for the language's idioms, `quality-test-audit` when protection is missing across a whole module.
+`quality-code-policy`, `lang-<language>-quality` for the language's idioms, `quality-test-audit` when protection is missing across a whole module.

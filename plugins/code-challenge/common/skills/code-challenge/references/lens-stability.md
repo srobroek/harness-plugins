@@ -18,4 +18,4 @@ Name the trigger: the input or event that makes it fail.
 
 ## Steering
 
-`lang-*-quality` (error handling and lint rules), `quality-code-policy`, `toolchain-quality-observability` for the signals that show the failure in production.
+`lang-<language>-quality` (error handling and lint rules), `quality-code-policy`, `toolchain-quality-observability` for the signals that show the failure in production.

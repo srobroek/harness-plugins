@@ -1,6 +1,6 @@
 # Report and decisions schemas
 
-Two JSON Schemas (draft 2020-12) ship beside this file. Validate before DELIVER ends and fix the file, not the schema.
+Two JSON Schemas (draft 2020-12) ship beside this file. Validate before DELIVER ends and fix the file, not the schema: call `challenge_validate` with the absolute run directory. It checks `report.json` and every line of `decisions.jsonl` and lists each error with its file and line.
 
 | File | Validates |
 |---|---|
@@ -9,13 +9,14 @@ Two JSON Schemas (draft 2020-12) ship beside this file. Validate before DELIVER 
 
 ## Finding
 
-A finding is one root cause. When the same cause recurs, report it once with `recurs` set to the count.
+A finding is one root cause. When the same cause recurs, report it once: `location` is the first or clearest site, `also_at` lists the other sites, and `recurs` is the total count (one more than the length of `also_at`).
 
 | Field | Meaning |
 |---|---|
 | `id` | `F1`, `F2`, ... stable for the run |
 | `lens` | one of the 12 lenses; see [lens-simplification.md](lens-simplification.md) and its siblings |
 | `location` | `path` and `line` of the code challenged |
+| `also_at` | the other `path` and `line` sites of a recurring cause; absent when `recurs` is 1 |
 | `evidence.tier` | `proven`, `measured` or `hypothesis`; see [evidence.md](evidence.md) |
 | `impact` | value if applied: `high`, `medium` or `low` |
 | `blast_radius` | how much code and how many callers the change touches |

@@ -9,7 +9,7 @@ Phase INTAKE. Ask in one batch with `parley_ask`; fall back to the `question` to
 | 3 | Lenses: all 12, or a subset? | all 12 | a lens named in the request |
 | 4 | Is pluggability expected (more backends or providers, or frequent change in this area)? | no | see the seam signals below |
 | 5 | Which behaviour is frozen (public API, wire format, config keys, CLI flags)? | everything exported or documented | exports, docs, schema files |
-| 6 | May the run execute benchmarks and build-needing tools? | interactive: ask once; autonomous: yes at `standard` and `deep` | depth |
+| 6 | May the run execute benchmarks and build-needing tools? (No: the performance lens is dropped, see [lens-performance.md](lens-performance.md).) | interactive: ask once; autonomous: yes at `standard` and `deep` | depth |
 | 7 | How are tests run, and how long do they take? | the repo's check command | `package.json` scripts, `justfile`, CI |
 | 8 | Deliver beads for accepted findings and a PR comment draft? | beads yes, comment no | an open PR for the branch |
 

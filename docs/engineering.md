@@ -74,10 +74,14 @@ Move new shared code into `lib` instead of adding another edge.
 
 `plugins/code-challenge` is OpenCode only (`harnesses: ["opencode"]`). It challenges existing code for simplification, performance, stability, hand-rolled code and structure, and plans only: it edits no source file.
 
-- Ownership: the plugin owns the `code-challenge` skill (twelve lens references, the report and decisions JSON Schemas, intake, scoring and run-storage rules), the `/code-challenge` command, the `challenge_setup` and `challenge_lib_facts` tools, nine beads formulas and the `code-challenger` and `refactor-challenger` agents. `challenge_scan` is planned in a later pull request.
+- Ownership: the plugin owns the `code-challenge` skill (twelve lens references, the report and decisions JSON Schemas, intake, scoring and run-storage rules), the `/code-challenge` command, the `challenge_setup`, `challenge_lib_facts` and `challenge_validate` tools, nine beads formulas and the `code-challenger` and `refactor-challenger` agents. `challenge_scan` is planned in a later pull request.
 - Run storage: every run writes under `<git-dir>/code-challenge/<run-id>/`, outside the working tree (`intake.json`, `scan.json`, `findings.json`, `research.json`, `verdicts.json`, `decisions.jsonl`, `report.json`, `report.md`). `decisions.jsonl` is append-only. The directory is never committed.
 - Formulas: `challenge_setup` copies `code-challenge` (the full run), `mol-challenge-<phase>` for the seven phases and `mol-challenge-lens` into `.beads/formulas/`. The lead agent sequences the phases, dispatches subagents and writes every file, bead and log line. Only `mol-challenge-lens/analyse-lens` (to `code-challenger`) and `mol-challenge-refute/attack-findings` (to `refactor-challenger`) route to a subagent. Both agents are read-only; each routed step lists `requires_actions` and a test checks the agent's permissions allow them.
 - `challenge_setup` resolves the target workspace from the invoking session's directory and fails when it cannot read that session.
+
+### code-challenge `challenge_validate`
+
+`plugins/code-challenge/opencode/src/validate.ts` registers `challenge_validate`. It takes the absolute run directory, reads only `report.json` and `decisions.jsonl`, and checks them against the shipped schemas with `opencode/src/json-schema.ts`, the small in-repo validator that already guards the schemas in tests (it throws on a keyword it does not know). No JSON Schema library is added.
 
 ### code-challenge `challenge_lib_facts`
 

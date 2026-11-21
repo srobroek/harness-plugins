@@ -15,4 +15,4 @@ Analyzer output is a lead, not proof: dynamic dispatch, reflection, framework co
 
 ## Steering
 
-`lang-*-quality` (dead-code tools per language: knip, vulture, deadcode, cargo-machete), `quality-test-audit` for obsolete tests.
+`lang-<language>-quality` (dead-code tools per language: knip, vulture, deadcode, cargo-machete), `quality-test-audit` for obsolete tests.

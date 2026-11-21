@@ -2341,6 +2341,148 @@ function registerLibFacts(ctx, overrides = {}) {
   });
 }
 
+// plugins/code-challenge/opencode/src/validate.ts
+import { readFileSync as readFileSync5 } from "fs";
+import { dirname as dirname2, isAbsolute as isAbsolute2, join as join6 } from "path";
+import { fileURLToPath as fileURLToPath3 } from "url";
+
+// plugins/code-challenge/opencode/src/json-schema.ts
+var ANNOTATIONS = new Set(["$schema", "$id", "title", "description", "$defs"]);
+var KEYWORDS = new Set([
+  "type",
+  "enum",
+  "required",
+  "properties",
+  "additionalProperties",
+  "items",
+  "minItems",
+  "minimum",
+  "minLength",
+  "pattern",
+  "$ref"
+]);
+function validate(schema, value, root = schema, at = "$") {
+  for (const key of Object.keys(schema))
+    if (!KEYWORDS.has(key) && !ANNOTATIONS.has(key))
+      throw new Error(`unsupported schema keyword: ${key}`);
+  if (schema.$ref !== undefined) {
+    const target = schema.$ref.replace(/^#\/\$defs\//, "");
+    const resolved = root.$defs?.[target];
+    if (!resolved)
+      throw new Error(`unresolved reference: ${schema.$ref}`);
+    return validate(resolved, value, root, at);
+  }
+  const errors = [];
+  if (schema.enum && !schema.enum.includes(value))
+    errors.push(`${at}: ${JSON.stringify(value)} is not one of ${JSON.stringify(schema.enum)}`);
+  const kind = Array.isArray(value) ? "array" : value === null ? "null" : typeof value;
+  const matches = (type) => type === "integer" ? Number.isInteger(value) : type === "number" ? kind === "number" : type === kind;
+  if (schema.type && !matches(schema.type))
+    return [...errors, `${at}: expected ${schema.type}, got ${kind}`];
+  if (typeof value === "string") {
+    if (schema.minLength !== undefined && value.length < schema.minLength)
+      errors.push(`${at}: shorter than ${schema.minLength}`);
+    if (schema.pattern !== undefined && !new RegExp(schema.pattern).test(value))
+      errors.push(`${at}: does not match ${schema.pattern}`);
+  }
+  if (typeof value === "number" && schema.minimum !== undefined && value < schema.minimum)
+    errors.push(`${at}: below ${schema.minimum}`);
+  if (Array.isArray(value)) {
+    if (schema.minItems !== undefined && value.length < schema.minItems)
+      errors.push(`${at}: fewer than ${schema.minItems} items`);
+    for (const [index, item] of value.entries())
+      if (schema.items)
+        errors.push(...validate(schema.items, item, root, `${at}[${index}]`));
+  }
+  if (kind === "object") {
+    const record = value;
+    for (const key of schema.required ?? [])
+      if (!(key in record))
+        errors.push(`${at}: missing ${key}`);
+    for (const [key, entry] of Object.entries(record)) {
+      const property = schema.properties?.[key];
+      if (property)
+        errors.push(...validate(property, entry, root, `${at}.${key}`));
+      else if (schema.additionalProperties === false)
+        errors.push(`${at}: unexpected property ${key}`);
+    }
+  }
+  return errors;
+}
+
+// plugins/code-challenge/opencode/src/validate.ts
+var VALIDATE_TOOL = "challenge_validate";
+var VALIDATE_DESCRIPTION = `Validate a code-challenge run's report.json and decisions.jsonl against the shipped JSON Schemas.
+` + "Takes the absolute run directory (<git-dir>/code-challenge/<run-id>). Reads only those two files, lists every error as " + "file, path and message, and reports ok=false when any file is missing or invalid.";
+var VALIDATE_INPUT = {
+  type: "object",
+  properties: { run_dir: { type: "string", description: "Absolute path of the run directory" } },
+  required: ["run_dir"],
+  additionalProperties: false
+};
+var SCHEMAS = join6(dirname2(fileURLToPath3(import.meta.url)), "..", "skills", "code-challenge", "references");
+var load = (name) => JSON.parse(readFileSync5(join6(SCHEMAS, name), "utf8"));
+var reason = (cause) => cause instanceof Error ? cause.message : String(cause);
+function validateRun(runDir) {
+  const errors = [];
+  const read = (name) => {
+    try {
+      return readFileSync5(join6(runDir, name), "utf8");
+    } catch {
+      errors.push(`${name}: cannot be read`);
+      return;
+    }
+  };
+  const report = read("report.json");
+  if (report !== undefined) {
+    try {
+      for (const error of validate(load("report.schema.json"), JSON.parse(report)))
+        errors.push(`report.json ${error}`);
+    } catch (cause) {
+      errors.push(`report.json: ${reason(cause)}`);
+    }
+  }
+  const decisions = read("decisions.jsonl");
+  if (decisions !== undefined) {
+    const schema = load("decisions.schema.json");
+    const lines = decisions.split(`
+`);
+    lines.forEach((text, index) => {
+      if (text.trim() === "")
+        return;
+      try {
+        for (const error of validate(schema, JSON.parse(text)))
+          errors.push(`decisions.jsonl:${index + 1} ${error}`);
+      } catch (cause) {
+        errors.push(`decisions.jsonl:${index + 1}: ${reason(cause)}`);
+      }
+    });
+    if (lines.every((text) => text.trim() === ""))
+      errors.push("decisions.jsonl: has no lines");
+  }
+  return errors;
+}
+function registerValidateTool(ctx) {
+  return ctx.tool.transform((editor) => {
+    editor.add({
+      name: VALIDATE_TOOL,
+      description: VALIDATE_DESCRIPTION,
+      input: VALIDATE_INPUT,
+      execute: async (input) => {
+        const { run_dir } = input ?? {};
+        if (typeof run_dir !== "string" || !isAbsolute2(run_dir))
+          return { content: `${VALIDATE_TOOL}: run_dir must be an absolute path`, metadata: { ok: false } };
+        const errors = validateRun(run_dir);
+        return {
+          content: errors.length === 0 ? "report.json and decisions.jsonl are valid" : errors.join(`
+`),
+          metadata: { ok: errors.length === 0, errors }
+        };
+      }
+    });
+  });
+}
+
 // plugins/code-challenge/opencode/src/index.ts
 var ID = "srobroek.code-challenge";
 var SETUP_DESCRIPTION = `Copy the code-challenge beads formulas into a beads workspace's .beads/formulas/.
@@ -2400,6 +2542,7 @@ async function setupCodeChallenge(ctx, moduleUrl) {
       });
     }));
     registrations.push(await registerLibFacts(ctx));
+    registrations.push(await registerValidateTool(ctx));
     registrations.push(await ctx.command.transform((editor) => editor.add({
       name: COMMAND,
       description: "challenge code for simplification, performance and structure: [auto] [quick|standard|deep] [target]",
@@ -2437,6 +2580,7 @@ export {
   SETUP_DESCRIPTION,
   SETUP_TOOL,
   SKILL,
+  VALIDATE_TOOL,
   challengePrompt,
   src_default as default,
   installFormulas2 as installFormulas,

@@ -23,4 +23,4 @@ Record test protection. Hand deep restructuring to the refactor mode of the code
 
 ## Steering
 
-`architecture-guide`, `architecture-ownership`, `quality-code-policy`, `lang-*-quality`.
+`architecture-guide`, `architecture-ownership`, `quality-code-policy`, `lang-<language>-quality`.

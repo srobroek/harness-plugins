@@ -1,6 +1,6 @@
 # Lens: performance (measured)
 
-Findings here need a measurement. A suspicion without one stays a hypothesis and goes to [lens-optimisation.md](lens-optimisation.md) or [lens-efficiency.md](lens-efficiency.md) as that lens's finding.
+Findings here need a measurement. When INTAKE did not allow benchmarks, no finding can reach `measured`: INTAKE drops this lens from `lenses` and logs a `choice` line, scouts file speed suspicions under optimisation or efficiency as `hypothesis`, and the report's `gaps` names the dropped lens. A suspicion without one stays a hypothesis and goes to [lens-optimisation.md](lens-optimisation.md) or [lens-efficiency.md](lens-efficiency.md) as that lens's finding.
 
 - slow endpoints, builds, tests or start-up named by the user or by CI timings
 - allocation hot spots, lock contention, blocking calls on an async path, serial I/O that can overlap
