@@ -25,11 +25,12 @@ import { JournalCorrupt, type JournalEntry, readJournal } from "./journal.ts"
 import type { RunState } from "./state.ts"
 import { decodeRunState } from "./state-schema.ts"
 
-export type Run = (cwd: string, command: string, args: string[], timeoutMs?: number) => Promise<{ ok: boolean; stdout: string; stderr: string }>
+/** `env` is added to (and wins over) the inherited environment. */
+export type Run = (cwd: string, command: string, args: string[], timeoutMs?: number, env?: Record<string, string>) => Promise<{ ok: boolean; stdout: string; stderr: string }>
 
-export const runCommand: Run = (cwd, command, args, timeoutMs = 20_000) =>
+export const runCommand: Run = (cwd, command, args, timeoutMs = 20_000, env) =>
   new Promise((done) => {
-    execFile(command, args, { cwd, timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) =>
+    execFile(command, args, { cwd, timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024, ...(env ? { env: { ...process.env, ...env } } : {}) }, (error, stdout, stderr) =>
       done({ ok: error === null, stdout: String(stdout), stderr: String(stderr) }),
     )
   })

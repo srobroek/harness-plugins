@@ -20,6 +20,10 @@ you to.
      - an epic id or a bead id
      - a goal in plain words
      - the `bd ready` queue
+   - ledger: the beads ledger (`.beads` directory) the run reads and writes.
+     Skip it unless the scope's beads live in a ledger other than this session
+     directory's; the plugin derives it from the scope's bead ids or the session
+     directory, and refuses to arm when it cannot. Pass it as `setup.ledger`.
    - `--full`: decide irreversible items too (recommend no)
    - permissions: `merge` and `deploy` grants (recommend none)
    - parallel write lanes: any whole number (recommend 3)

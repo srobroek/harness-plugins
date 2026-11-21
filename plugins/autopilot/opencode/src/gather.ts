@@ -1,5 +1,6 @@
 /** Reading the world for one tick: beads, git and child sessions. */
 
+import { ledgerEnv } from "./ledger.ts"
 import type { RootIdentity } from "./policy.ts"
 import type { Run } from "./rundir.ts"
 import type { Bead, Child } from "./state.ts"
@@ -22,12 +23,13 @@ export type BeadView = { beads: Bead[]; ready: string[]; blocked: string[]; ok: 
 /** A cold embedded store can take 30-50 s for one read. */
 export const BD_READ_TIMEOUT_MS = 90_000
 
-/** `bd list --all`, `bd ready` and `bd blocked`, as JSON. */
-export async function readBeads(directory: string, run: Run): Promise<BeadView> {
+/** `bd list --all`, `bd ready` and `bd blocked`, as JSON, from `ledger` and no other. */
+export async function readBeads(directory: string, run: Run, ledger: string): Promise<BeadView> {
+  const env = ledgerEnv(ledger)
   const [list, ready, blocked] = await Promise.all([
-    run(directory, "bd", ["list", "--all", "--brief", "--json", "--limit", "0"], BD_READ_TIMEOUT_MS),
-    run(directory, "bd", ["ready", "--brief", "--json", "--limit", "0"], BD_READ_TIMEOUT_MS),
-    run(directory, "bd", ["blocked", "--json"], BD_READ_TIMEOUT_MS),
+    run(directory, "bd", ["list", "--all", "--brief", "--json", "--limit", "0"], BD_READ_TIMEOUT_MS, env),
+    run(directory, "bd", ["ready", "--brief", "--json", "--limit", "0"], BD_READ_TIMEOUT_MS, env),
+    run(directory, "bd", ["blocked", "--json"], BD_READ_TIMEOUT_MS, env),
   ])
   const beads = parseArray(list.stdout).flatMap((raw) => {
     const item = raw as Partial<Bead>

@@ -4,18 +4,30 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFakeContext, type FakeContext } from "@srobroek/opencode-lib/testing"
 import { DENY_QUESTION, HANDOFF_LABEL, MAX_REPROMPTS, REPROMPT, setupAutopilot, type WriteLock } from "./index.ts"
+import type { LedgerHost } from "./ledger.ts"
 import { type Run, RunDir, RunFileError } from "./rundir.ts"
 import { type Clock, Ticks } from "./timer.ts"
 
 const NOW = new Date(2026, 10, 20, 14, 0).getTime()
 
-type Call = { command: string; args: string[] }
+type Call = { command: string; args: string[]; env?: Record<string, string> }
 
 let root: string
 let fake: FakeContext
 let cleanup: (() => Promise<void>) | undefined
 let calls: Call[]
 let locked: string[]
+let lockEnvs: (NodeJS.ProcessEnv | undefined)[]
+const SESSION_LEDGER = "/ledgers/session/.beads"
+const OTHER_LEDGER = "/ledgers/other/.beads"
+/** The session ledger's routes.jsonl, when a test sets one. */
+let routesText: string | undefined
+const ledgerHost: LedgerHost = {
+  sessionLedger: () => SESSION_LEDGER,
+  isLedger: (path) => path === SESSION_LEDGER || path === OTHER_LEDGER,
+  canonical: (path) => path,
+  readRoutes: () => routesText,
+}
 let warnings: string[]
 const warn = (message: string) => void warnings.push(message)
 let beads: { list: unknown[]; ready: unknown[]; blocked: unknown[] }
@@ -34,8 +46,8 @@ let onCreated: (() => void) | undefined
 /** What `gh <a> <b>` prints, by "a b". */
 let ghReplies: Record<string, { ok: boolean; stdout: string; stderr: string }>
 
-const run: Run = async (_cwd, command, args) => {
-  calls.push({ command, args })
+const run: Run = async (_cwd, command, args, _timeout, env) => {
+  calls.push({ command, args, ...(env ? { env } : {}) })
   const json = (value: unknown) => ({ ok: true, stdout: JSON.stringify(value), stderr: "" })
   if (command === "gh") {
     const line = args.join(" ")
@@ -73,8 +85,9 @@ const run: Run = async (_cwd, command, args) => {
   return json({})
 }
 
-const lock: WriteLock = async (_cwd, owner, write) => {
+const lock: WriteLock = async (_cwd, owner, write, env) => {
   locked.push(owner)
+  lockEnvs.push(env)
   return { kind: "done", value: await write() }
 }
 
@@ -87,7 +100,7 @@ async function start(storage?: Record<string, unknown>) {
     storage,
     sessions: [lead(), { id: "ses_child", parentID: "ses_lead", agent: "coder", time: {} }, { id: "ses_grand", parentID: "ses_child", time: {} }, { id: "ses_other", time: {} }],
   })
-  cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock, warn })
+  cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock, warn, ledger: ledgerHost })
 }
 
 async function command(text: string, sessionID = "ses_lead"): Promise<string> {
@@ -161,6 +174,8 @@ beforeEach(async () => {
   calls = []
   ghReplies = {}
   locked = []
+  lockEnvs = []
+  routesText = undefined
   failLookups = 0
   lookupStdout = undefined
   onCreated = undefined
@@ -634,8 +649,60 @@ test("the same error signature logged twice parks its bead on the next tick", as
 test("a blocker on a bead flags it human under the store's write lock", async () => {
   await armed()
   expect(await log({ type: "blocker", summary: "needs a key", bead: "p-1", parked: true })).toBe("logged blocker; flagged p-1 human")
-  expect(calls.at(-1)).toEqual({ command: "bd", args: ["update", "p-1", "--add-label", "human", "--json"] })
+  expect(calls.at(-1)).toEqual({ command: "bd", args: ["update", "p-1", "--add-label", "human", "--json"], env: { BEADS_DIR: SESSION_LEDGER } })
   expect(locked).toHaveLength(1)
+  expect(lockEnvs[0]?.BEADS_DIR).toBe(SESSION_LEDGER)
+})
+
+describe("the run's ledger", () => {
+  const bdCalls = () => calls.filter((call) => call.command === "bd")
+
+  test("arming stores the session directory's ledger and every status read uses it", async () => {
+    await armed()
+    expect(latestState()).toMatchObject({ ledger: SESSION_LEDGER })
+    expect(bdCalls().map((call) => call.args[0]).sort()).toEqual(["blocked", "list", "ready"])
+    for (const call of bdCalls()) expect(call.env).toEqual({ BEADS_DIR: SESSION_LEDGER })
+  })
+
+  test("a setup ledger beats the directory's", async () => {
+    await armed({ ledger: OTHER_LEDGER })
+    expect(latestState()).toMatchObject({ ledger: OTHER_LEDGER })
+    for (const call of bdCalls()) expect(call.env).toEqual({ BEADS_DIR: OTHER_LEDGER })
+  })
+
+  test("a bead scope whose prefix is routed arms on the routed ledger", async () => {
+    routesText = '{"prefix":"oth-","path":"../other"}'
+    await armed({ scope: "oth-1" })
+    expect(latestState()).toMatchObject({ ledger: OTHER_LEDGER })
+  })
+
+  test("an unusable setup ledger refuses the arm and reads nothing", async () => {
+    await command("--for 2h")
+    const result = await status({ action: "arm", setup: { scope: "p-1", full: false, allow: [], lanes: 3, until: "", ledger: "/nowhere" } })
+    expect(result).toHaveProperty("error")
+    expect(latestState().phase).toBe("setup")
+    expect(bdCalls()).toEqual([])
+  })
+
+  test("the stop lookup, handoff create and final read all use the run's ledger", async () => {
+    await armed({ ledger: OTHER_LEDGER })
+    calls.length = 0
+    lockEnvs.length = 0
+    await status({ action: "stop", reason: "done" })
+    expect(bdCalls().map((call) => call.args[0])).toContain("create")
+    for (const call of bdCalls()) expect(call.env).toEqual({ BEADS_DIR: OTHER_LEDGER })
+    expect(lockEnvs.map((env) => env?.BEADS_DIR)).toEqual([OTHER_LEDGER])
+  })
+
+  test("a write naming a bead of another ledger is refused and never reaches bd", async () => {
+    routesText = '{"prefix":"oth-","path":"../other"}'
+    await armed()
+    calls.length = 0
+    const text = await log({ type: "blocker", summary: "needs a key", bead: "oth-1", parked: true })
+    expect(text).toContain("could not flag oth-1")
+    expect(bdCalls()).toEqual([])
+    expect(locked).toEqual([])
+  })
 })
 
 describe("stop", () => {
@@ -730,7 +797,7 @@ describe("fallback tick", () => {
     await cleanup?.()
     fake.closeEvents()
     fake = createFakeContext({ directory: "/repo", storage, sessions: [lead()] })
-    cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock, warn, ticks: new Ticks(clock) })
+    cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock, warn, ledger: ledgerHost, ticks: new Ticks(clock) })
   }
 
   const prompts = () => fake.calls.filter((call) => call.method === "session.prompt").map((call) => (call.input as { text: string }).text)
@@ -916,7 +983,7 @@ test("startup reads every page of armed runs from storage", async () => {
   const host = fake.context.storage as unknown as { scan: (input: { prefix: string; after?: string; limit?: number }) => Promise<unknown> }
   const scan = host.scan
   host.scan = (input) => scan({ ...input, limit: Math.min(input.limit ?? 100, 100) })
-  cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock, warn })
+  cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock, warn, ledger: ledgerHost })
   expect(await denied("question", "ses_lead")).toBe(DENY_QUESTION)
 })
 
