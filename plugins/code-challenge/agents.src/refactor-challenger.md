@@ -54,6 +54,7 @@ permissions:
   - action: "challenge_lib_facts"
     resource: "*"
     effect: allow
+  # {{rules read-only-shell}}
   - action: external_directory
     resource: "*"
     effect: ask
@@ -112,7 +113,7 @@ you report, not a field you invent.
 
 ## What you MUST NOT do
 
-- Change anything: no edits, patches, applied refactors, commits.
+- Change anything: no edits, patches, applied refactors, commits, or shell commands that modify the repository, a remote or the ledger.
 - Manufacture disagreement. If a finding is sound and well-scoped, confirm it.
 
 ## Rules

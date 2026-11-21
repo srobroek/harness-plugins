@@ -39,6 +39,7 @@ permissions:
   - action: "lsp_*"
     resource: "*"
     effect: allow
+  # {{rules read-only-shell}}
   - action: external_directory
     resource: "*"
     effect: ask

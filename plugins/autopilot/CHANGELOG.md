@@ -1,3 +1,15 @@
+## autopilot [1.3.0](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.2.0...autopilot--v1.3.0) (2026-11-21)
+
+### Features
+
+* **autopilot:** autopilot_review for a plugin-run verdict a merge can rest on ([10d47e7](https://github.com/srobroek/harness-plugins/commit/10d47e798ea4b1f8e81e17362bcc5537d5942b18))
+
+## autopilot [1.2.0](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.1.2...autopilot--v1.2.0) (2026-11-21)
+
+### Features
+
+* **autopilot:** autopilot_export_review for read-only reviewers ([353abe2](https://github.com/srobroek/harness-plugins/commit/353abe2355f824084499faebdb34734c3c40e26d))
+
 ## autopilot [1.1.2](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.1.1...autopilot--v1.1.2) (2026-11-21)
 
 ### Bug Fixes

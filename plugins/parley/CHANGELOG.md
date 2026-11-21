@@ -1,3 +1,5 @@
+## parley [0.4.1](https://github.com/srobroek/harness-plugins/compare/parley--v0.4.0...parley--v0.4.1) (2026-11-21)
+
 # Changelog
 
 ## [0.4.0](https://github.com/srobroek/opencode-plugins/compare/parley--v0.3.4...parley--v0.4.0) (2026-11-20)

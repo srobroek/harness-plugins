@@ -1,3 +1,9 @@
+## delivery [0.9.6](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.5...delivery--v0.9.6) (2026-11-21)
+
+### Bug Fixes
+
+* **delivery:** do not prompt for land and cleanup in a subagent session ([95d0d48](https://github.com/srobroek/harness-plugins/commit/95d0d4846e46f385cb36cc6ce2393fc5deda8dd6))
+
 ## delivery [0.9.5](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.4...delivery--v0.9.5) (2026-11-21)
 
 ### Bug Fixes

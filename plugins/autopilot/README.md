@@ -18,10 +18,13 @@ condition and leaves a debrief and a handoff bead.
 Flags:
 
 - `--full` or `--no-full`
-- `--allow merge,deploy` or `--allow none`
+- `--allow merge,deploy,self-review` or `--allow none`
 - `--lanes N`
 - `--for 3h` or `--until-time 18:00`
 - `--until "<condition>"`, or `--until ""` for no condition
+
+`--allow self-review` (default off, recommended no) lets a merge rest on the
+plugin-run review instead of a GitHub approval; see "Plugin-run review" below.
 
 The setup round asks for each value that the command-line flags leave out.
 `--allow merge`, `--allow deploy` and `--full` govern what the agent decides to
@@ -64,6 +67,17 @@ it:
     removed and recreated does not. A lane is recorded at the first tick after
     it starts.
   - An `autopilot_merge` ask for one PR and SHA, under `--allow merge`.
+  - An `external_directory` ask for `<dir>/*`, where `<dir>` is the one export
+    directory the run made last (`review/<head>/<manifest hash>/`, see
+    `autopilot_export_review`) or a directory under it. The plugin records
+    that export in its storage, compares real paths, and requires the
+    directory to be a plain directory, not a symlink. A wildcard, a `..`
+    climb, a sibling, `review/` itself, an older export and a symlink leading
+    outside do not match. The allow is for the directory, not for reads: the
+    ask carries no read/write distinction, and where the user's rules allow
+    `edit` for a path, this ask is the only prompt in the way. The directory
+    is model-writable. What a reviewer reads is trusted only through the
+    export's manifest hash, not through this permission.
   Shell, edit, MCP and deploy asks stay denied.
 - After compaction, the plugin queues a notice with the rules and a fresh
   status.
@@ -124,6 +138,45 @@ these types:
 
 Without `--full`, `autopilot_log` also labels a blocked bead `human`.
 
+`autopilot_export_review({ pr, base, head })` prepares a review round for
+reviewers that cannot run git while the run is armed. `pr` is a positive
+integer that keys the stored manifest hash. The plugin runs git itself, as
+argument arrays with no shell and with `--no-ext-diff` and `--no-textconv`, in
+the run's repository. It rejects a revision that is not a string, starts with
+`-` or holds whitespace, then resolves `base` and `head` to full SHAs with
+`git rev-parse --verify <rev>^{commit}`. It writes, under
+`<run dir>/review/<head-sha>/<manifest-hash>/`:
+
+- `round.diff`: the three-dot diff `base...head`, what `head` changed since it
+  left `base`, as a pull request shows it. Work that landed on `base` since is
+  not in it.
+- `diffstat.txt`: the diffstat of the same range.
+- `files/<repo-relative path>`: each file the diff touches (deleted files
+  excluded), as it is at `head`.
+- `manifest.json`: `base`, `head`, `mergeBase`, the SHA-256 and size of the
+  diff, the diffstat and every file, and the skipped files.
+
+It returns the directory, the file list, the skipped files and `manifestHash`
+(the SHA-256 of `manifest.json`). The hash is stored in plugin storage under
+`review/<pr>@<head>`, and the export becomes the run's current one, the only
+directory the hook opens.
+
+Binary files, files above 512 KiB, submodules and unsafe paths (`..`,
+absolute, `.git`) are skipped and listed. A range with more than 300 changed
+files, a diff above 4 MiB or more than 8 MiB of file content is refused and
+nothing is written. Exports are immutable: a published directory is never
+overwritten or deleted. Exporting the same content again returns the same
+directory if it still verifies; if it was damaged, the damaged directory is
+renamed to `.rejected-<id>` and a fresh one is published under the same hash.
+
+`verifyExport(dir, storedManifestHash)` is the check for whoever hands the
+export to a reviewer (the plugin, before it prompts one). It refuses unless
+`manifest.json` hashes to the stored value and every file, the diff and the
+diffstat match their recorded SHA-256 and size, and there is no extra or
+missing file or directory, no symlink and no non-regular file. The allowed path
+is model-writable, so the manifest hash is the integrity anchor; the
+permission is not.
+
 `autopilot_merge({ pr, sha, method })` merges one PR. It asks the host for the
 action `autopilot_merge` on `<pr>@<sha>`, which the hook allows only under
 `--allow merge`. The tool then reads the PR from `gh` and refuses unless all of
@@ -156,6 +209,73 @@ success only when it is `MERGED` at `sha` with a merge commit and no auto-merge
 request. It journals the result: an `action` on success, an `issue` on a
 refusal. GitHub only. The approval and check judgments live in
 `lib/src/pr-approval.ts`, which `delivery_land` shares.
+
+## Plugin-run review
+
+`autopilot_review({ pr, sha })` starts a review that a merge can rest on without
+a GitHub approval, because the model that asks for the merge cannot write the
+verdict. It refuses unless a run is armed, the PR is open at `sha`, and the
+`code-reviewer` agent exists. It then exports the round (as `autopilot_export_review`
+does), verifies the export against its stored manifest hash, and creates a child
+of the lead session with agent `code-reviewer`, metadata
+`{ source, pr, sha, nonce }` and permissions that deny `edit`, `shell`,
+`subagent` and `autopilot_*`. It verifies the export once more right before it
+sends the one prompt: the diff (at most 256 KiB, else the call refuses) between
+lines with a random delimiter, marked as untrusted, and the closing line
+`VERDICT: APPROVE <sha>` or `VERDICT: REQUEST_CHANGES <sha>`. The call returns
+at once. Plugin storage keeps only a pointer (`pr`, `sha`, session, nonce,
+prompt hash, manifest hash, start time), never a verdict.
+
+`autopilot_status` (and `autopilot_merge`) resolve each review from the host:
+the session's parent, agent and metadata match; the transcript holds exactly
+one user message and its hash is the prompt's; there is no synthetic message,
+agent switch or later activity; the last idle and the session outcome are
+`succeeded`; and the reviewer's final assistant text, outside any code fence,
+ends in a verdict line naming `sha`. A follow-up message, a failed or
+interrupted turn or a verdict for another SHA voids it. A reviewer that is not
+done 30 minutes after the start is interrupted and voided, and so is a reviewer
+whose transcript shows it finished later than that. The verdict line must be the
+last non-blank line of the reply. The base of the export is the base commit SHA
+GitHub reports for the PR, fetched if needed; the call refuses when it is
+missing or the export is empty while GitHub reports changed files.
+
+A head is reviewed at most once, however the review ends. Plugin storage backs
+the claim files: a start is also refused when storage holds a pointer for the
+head under any PR number or lead, and a storage read that fails refuses the
+start, is journaled as a blocker and appears as `storageErrors` in
+`autopilot_status`, labelled by operation and resource and cleared only by the
+same operation on the same resource succeeding (a sweep cursor that cannot be
+read stops the sweep, and a merge under the grant refuses when the review record
+cannot be read); it is never read as "no record". The export is also refused
+when its diff is empty or its changed-file count differs from the `changed_files`
+that GitHub reports (a rename counts once, as `git diff --name-status -M`
+lists it). Each status call resolves the newest 20 reviews and the next 25
+pointers after a cursor kept in plugin storage, so every deadline is enforced
+over successive calls. Before any reviewer
+exists the call creates claim files (`pr-<pr>@<sha>` and `head-<sha>`) in
+`<git common dir>/opencode-scratch/autopilot/review-claims/`, with the same
+create-exclusive link the run state uses. They are released only when the start
+is refused, never after a verdict, void, deleted session or follow-up, so a
+verdict cannot be re-rolled.
+
+Under `--allow self-review`, `autopilot_merge` skips only the GitHub approval,
+and only when the resolved review approves exactly the head being merged.
+Checks, required contexts, the head and base re-reads and the repository's
+merge method all still apply.
+
+Residual risks:
+
+- Prompt injection through the diff can talk the reviewer into `APPROVE`. The
+  delimiter and the fence-aware parse stop a forged verdict line, not a
+  persuaded reviewer.
+- Same-user writes are out of scope: a process running as you can edit the
+  scratch area (claim files, run state), the host database
+  (`~/.local/share/opencode/opencode.db`) and call the OpenCode server API, and
+  so can create or edit sessions and forge a record the plugin accepts.
+- `--allow self-review` is weaker than a second GitHub account. The reviewer is
+  a model the same installation runs, with the same user and the same host.
+- Branch protection that requires approving reviews still refuses the merge:
+  GitHub does not know about the plugin's review.
 
 ## Tick
 

@@ -1,3 +1,5 @@
+## toolchain [0.7.1](https://github.com/srobroek/harness-plugins/compare/toolchain--v0.7.0...toolchain--v0.7.1) (2026-11-21)
+
 # Changelog
 
 ## [0.7.0](https://github.com/srobroek/opencode-plugins/compare/toolchain--v0.6.0...toolchain--v0.7.0) (2026-11-20)

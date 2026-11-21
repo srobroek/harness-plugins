@@ -1,3 +1,13 @@
+## cad [0.8.0](https://github.com/srobroek/harness-plugins/compare/cad--v0.7.0...cad--v0.8.0) (2026-11-21)
+
+### Features
+
+* **cad:** give the read-only cad agents the shared shell rules ([341fd4a](https://github.com/srobroek/harness-plugins/commit/341fd4a2c83ac196023a525a77e437acb5b630d2))
+
+### Bug Fixes
+
+* **cad:** rebuild with the hardened read-only shell rules ([b159aa2](https://github.com/srobroek/harness-plugins/commit/b159aa2fde129b0f0a0eefd794e5334cae547e5f))
+
 # Changelog
 
 ## [0.7.0](https://github.com/srobroek/opencode-plugins/compare/cad--v0.6.0...cad--v0.7.0) (2026-11-20)

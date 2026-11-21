@@ -1,3 +1,13 @@
+## quality [0.13.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.12.0...quality--v0.13.0) (2026-11-21)
+
+### Features
+
+* **quality:** give the adversarial challenger the read-only shell ([c145260](https://github.com/srobroek/harness-plugins/commit/c14526098df88b459ec2ec3b992d0e3ef0150502))
+
+### Bug Fixes
+
+* **quality:** rebuild with the hardened read-only shell rules ([1f2a83f](https://github.com/srobroek/harness-plugins/commit/1f2a83f33f84c1de50798e4f81961f4d3552d683))
+
 # Changelog
 
 ## [0.12.0](https://github.com/srobroek/opencode-plugins/compare/quality--v0.11.0...quality--v0.12.0) (2026-11-20)

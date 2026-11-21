@@ -1,3 +1,15 @@
+## model-roles [0.10.0](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.9.1...model-roles--v0.10.0) (2026-11-21)
+
+### Features
+
+* **autopilot:** autopilot_review for a plugin-run verdict a merge can rest on ([10d47e7](https://github.com/srobroek/harness-plugins/commit/10d47e798ea4b1f8e81e17362bcc5537d5942b18))
+
+## model-roles [0.9.1](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.9.0...model-roles--v0.9.1) (2026-11-21)
+
+### Bug Fixes
+
+* **model-roles:** wake the parent on subagent failure and recovery, share outage state ([1315127](https://github.com/srobroek/harness-plugins/commit/131512798be29ce03deaa3f5bb57af913aef18cf))
+
 ## model-roles [0.9.0](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.8.2...model-roles--v0.9.0) (2026-11-21)
 
 ### Features

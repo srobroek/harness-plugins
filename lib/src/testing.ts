@@ -256,6 +256,11 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
     sessions.set(id, session)
     return session
   }
+  const sessionRemove = async (input: { sessionID: string }): Promise<void> => {
+    calls.push({ method: "session.remove", input })
+    sessions.delete(input.sessionID)
+    messages.delete(input.sessionID)
+  }
   const sessionMove = async (input: { sessionID: string; directory: string }): Promise<void> => {
     calls.push({ method: "session.move", input })
     const session = sessions.get(input.sessionID)
@@ -405,6 +410,7 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
       context: sessionContext,
       create: sessionCreate,
       move: sessionMove,
+      remove: sessionRemove,
       synthetic: sessionSynthetic,
       prompt: sessionPrompt,
       interrupt: sessionInterrupt,

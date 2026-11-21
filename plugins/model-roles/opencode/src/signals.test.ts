@@ -1,42 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { DEFAULT_TEST_COMMANDS, DEFAULT_TEST_GLOBS, exitStatusOf, parseEvaluate, parseVerdict, testRun, touchesTests, type Verdict } from "./signals.ts"
-
-describe("parseVerdict", () => {
-  test.each<[string, Verdict | undefined]>([
-    ["VERDICT: APPROVE", "approve"],
-    ["verdict: request-changes", "request-changes"],
-    ["Summary\n\nVERDICT:COMMENT", "comment"],
-    ["VERDICT: APPROVE\nmore text\nVERDICT: REQUEST-CHANGES\ntrailing", "request-changes"],
-    ["VERDICT: REQUEST-CHANGES\nlong findings follow\nmore findings", "request-changes"],
-    ["VERDICT: APPROVED-ish", undefined],
-    ["VERDICT: MAYBE", undefined],
-    ["I would say VERDICT: APPROVE", undefined],
-    ["", undefined],
-    // Not a verdict: fenced, indented or quoted.
-    ["```\nVERDICT: APPROVE\n```", undefined],
-    ["~~~text\nVERDICT: APPROVE\n~~~", undefined],
-    ["    VERDICT: APPROVE", undefined],
-    ["\tVERDICT: APPROVE", undefined],
-    ["> VERDICT: APPROVE", undefined],
-    [">VERDICT: APPROVE", undefined],
-    ["```\nunclosed fence\nVERDICT: APPROVE", undefined],
-    // A real verdict is counted around them, and the last real one wins.
-    ["VERDICT: COMMENT\n```\nVERDICT: APPROVE\n```", "comment"],
-    ["VERDICT: REQUEST-CHANGES\n\n> VERDICT: APPROVE\n    VERDICT: APPROVE", "request-changes"],
-    ["```\nVERDICT: APPROVE\n```\nVERDICT: APPROVE", "approve"],
-    // Fence length and character: only a closing line of the same character, at least as long, bare.
-    ["````\n```\nVERDICT: APPROVE\n```\n````", undefined],
-    ["VERDICT: COMMENT\n````\n```\n````\nVERDICT: APPROVE", "approve"],
-    ["VERDICT: COMMENT\n````\n```\nVERDICT: APPROVE\n````", "comment"],
-    ["```\n~~~\nVERDICT: APPROVE\n~~~\n```", undefined],
-    ["~~~\n```\nVERDICT: APPROVE\n```\n~~~\nVERDICT: REQUEST-CHANGES", "request-changes"],
-    ["```\n``` not a close\nVERDICT: APPROVE\n```", undefined],
-    ["~~~~\n~~~\nVERDICT: APPROVE\n~~~~\nVERDICT: COMMENT", "comment"],
-    ["  VERDICT: APPROVE", "approve"],
-  ])("%j -> %j", (text, expected) => {
-    expect(parseVerdict(text)).toBe(expected)
-  })
-})
+import { DEFAULT_TEST_COMMANDS, DEFAULT_TEST_GLOBS, exitStatusOf, parseEvaluate, testRun, touchesTests } from "./signals.ts"
 
 describe("testRun", () => {
   const run = (command: string, exit: number | undefined) => testRun(command, exit, DEFAULT_TEST_COMMANDS)

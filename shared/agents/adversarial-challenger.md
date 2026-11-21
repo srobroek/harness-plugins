@@ -24,6 +24,7 @@ each fix, propose alternative root causes each with a confirming test.
 ## Rules
 
 {{include review-core}}
+MUST Keep the shell read-only: never modify the repository, a remote or the ledger, and never run a build or test.
 MUST Back every claim with evidence: a file path and line, command output, a cited source, or a quoted fact.
 
 ## Output
