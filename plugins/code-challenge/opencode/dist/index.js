@@ -1083,10 +1083,11 @@ var require_spdx_expression_parse = __commonJS(function(exports, module) {
 
 // plugins/code-challenge/opencode/src/index.ts
 import { resolve as resolve2 } from "path";
+import { fileURLToPath as fileURLToPath4 } from "url";
 import { Plugin as Plugin2 } from "@opencode/plugin";
 
 // lib/src/agent-files.ts
-import { existsSync, readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "fs";
 import { basename, join } from "path";
 
 // lib/src/agent-tools.ts
@@ -1330,6 +1331,13 @@ function parseAgentFile(text, id) {
   }
   flush();
   return agent;
+}
+function directoryReadRules(directory) {
+  const dirs = new Set([directory]);
+  try {
+    dirs.add(realpathSync(directory));
+  } catch {}
+  return [...dirs].map((dir) => ({ action: "external_directory", resource: join(dir, "*"), effect: "allow" }));
 }
 function readAgentFile(path) {
   return parseAgentFile(readFileSync(path, "utf8"), basename(path, ".md"));
@@ -2343,7 +2351,7 @@ function registerLibFacts(ctx, overrides = {}) {
 
 // plugins/code-challenge/opencode/src/validate.ts
 import { execFileSync } from "child_process";
-import { realpathSync } from "fs";
+import { realpathSync as realpathSync2 } from "fs";
 import { dirname as dirname2, isAbsolute as isAbsolute2, join as join6, relative, sep } from "path";
 import { fileURLToPath as fileURLToPath3 } from "url";
 
@@ -2534,7 +2542,7 @@ function runRoots(directory) {
   for (const gitDir of out.split(`
 `).filter(Boolean)) {
     try {
-      roots.add(join6(realpathSync(gitDir), "code-challenge"));
+      roots.add(join6(realpathSync2(gitDir), "code-challenge"));
     } catch {}
   }
   return [...roots];
@@ -2549,7 +2557,7 @@ function resolveRunDir(directory, runDir) {
   let real;
   try {
     roots = runRoots(directory);
-    real = realpathSync(runDir);
+    real = realpathSync2(runDir);
   } catch (cause) {
     return { error: `${VALIDATE_TOOL}: cannot resolve run_dir: ${reason(cause).split(",")[0]}` };
   }
@@ -2585,6 +2593,7 @@ function registerValidateTool(ctx) {
 }
 
 // plugins/code-challenge/opencode/src/index.ts
+var REFERENCES_DIR = (moduleUrl) => fileURLToPath4(new URL("../skills/code-challenge/references", moduleUrl));
 var ID = "srobroek.code-challenge";
 var SETUP_DESCRIPTION = `Copy the code-challenge beads formulas into a beads workspace's .beads/formulas/.
 ` + "Covers the code-challenge full run and the mol-challenge-<phase> formulas, so bd mol pour finds them. Identical " + "copies stay; divergent ones are refused unless force=true; symlinked paths are always refused.";
@@ -2659,7 +2668,7 @@ async function setupCodeChallenge(ctx, moduleUrl) {
     if (skills.length > 0)
       registrations.push(await registerSkills(ctx.skill, skills));
     if (agents.length > 0)
-      registrations.push(await registerAgents(ctx.agent, agents, [], mcpGrant(ctx.options?.tools, agentIds(agents))));
+      registrations.push(await registerAgents(ctx.agent, agents, directoryReadRules(REFERENCES_DIR(moduleUrl)), mcpGrant(ctx.options?.tools, agentIds(agents))));
   } catch (error) {
     await cleanup();
     throw error;

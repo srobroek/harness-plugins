@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 import { Plugin } from "@opencode/plugin";
 
 // lib/src/agent-files.ts
-import { existsSync, readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "fs";
 import { basename, join } from "path";
 
 // lib/src/agent-tools.ts

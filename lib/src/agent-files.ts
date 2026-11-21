@@ -8,7 +8,7 @@
  * in the `x-opencode-model-role` header, and without that plugin inherit the session model.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs"
 import { basename, join } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import { grantTools, type ToolGrant } from "./agent-tools.ts"
@@ -133,6 +133,19 @@ export function permissionEffect(
   resource = "*",
 ): AgentPermission["effect"] {
   return rules.findLast((rule) => wildcard(action, rule.action) && wildcard(resource, rule.resource))?.effect ?? "ask"
+}
+
+// Rules that let an agent read the files of exactly one directory outside the project without a prompt, for
+// `registerAgents`' `extra`. Both the directory and its real path are granted, because the host may report either.
+// A missing directory grants only the path as given.
+export function directoryReadRules(directory: string): AgentPermission[] {
+  const dirs = new Set([directory])
+  try {
+    dirs.add(realpathSync(directory))
+  } catch {
+    // A missing directory is reported by whatever registers its content.
+  }
+  return [...dirs].map((dir) => ({ action: "external_directory", resource: join(dir, "*"), effect: "allow" }))
 }
 
 /** Read `<path>` and parse it as the agent named by its file name. */

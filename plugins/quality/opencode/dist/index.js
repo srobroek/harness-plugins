@@ -8,7 +8,7 @@ import { fileURLToPath } from "url";
 import { Plugin } from "@opencode/plugin";
 
 // lib/src/agent-files.ts
-import { existsSync, readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync } from "fs";
 import { basename, join } from "path";
 
 // lib/src/agent-tools.ts
@@ -657,7 +657,7 @@ async function setupStandards(ctx, options) {
 }
 
 // plugins/quality/opencode/src/audit-util.ts
-import { readFileSync as readFileSync3, realpathSync, statSync } from "fs";
+import { readFileSync as readFileSync3, realpathSync as realpathSync2, statSync } from "fs";
 import { tmpdir } from "os";
 import { isAbsolute, join as join3, relative, resolve, sep } from "path";
 var TEXT_CAP = 4000;
@@ -703,12 +703,12 @@ function inside(root, target) {
 class PathError extends Error {
 }
 function opencodeTempDir() {
-  return join3(realpathSync(tmpdir()), "opencode");
+  return join3(realpathSync2(tmpdir()), "opencode");
 }
 function reportRoots(sessionDirectory) {
   const real = (path) => {
     try {
-      return realpathSync(path);
+      return realpathSync2(path);
     } catch {
       return resolve(path);
     }
@@ -720,7 +720,7 @@ function readReportFile(sessionDirectory, path, roots = reportRoots(sessionDirec
   const target = isAbsolute(path) ? path : resolve(sessionDirectory, path);
   let real;
   try {
-    real = realpathSync(target);
+    real = realpathSync2(target);
   } catch {
     const lexical = [...roots, resolve(sessionDirectory), join3(tmpdir(), "opencode")];
     if (!lexical.some((root) => inside(root, resolve(target))))

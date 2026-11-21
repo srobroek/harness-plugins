@@ -48,6 +48,22 @@ test("both challengers are read-only subagents that cannot edit, change the repo
   }
 })
 
+test("both challengers may read exactly the skill's own references directory without a prompt, and nothing else outside the project", async () => {
+  const fake = createFakeContext()
+  await plugin.setup(fake.context)
+  const skill = fake.skills.get("code-challenge") as unknown as { path: string }
+  const references = join(dirname(skill.path), "references")
+  for (const id of ["code-challenger", "refactor-challenger"]) {
+    const rules = (fake.agents.get(id)?.permissions ?? []) as AgentPermission[]
+    expect(permissionEffect(rules, "external_directory", join(references, "lens-stability.md"))).toBe("allow")
+    expect(permissionEffect(rules, "external_directory", join(references, "evidence.md"))).toBe("allow")
+    // The grant is the references directory: its parent (SKILL.md, formulas), a sibling skill and the project are not covered.
+    expect(permissionEffect(rules, "external_directory", skill.path)).toBe("ask")
+    expect(permissionEffect(rules, "external_directory", join(dirname(dirname(references)), "other", "references", "x.md"))).toBe("ask")
+    expect(permissionEffect(rules, "external_directory", "/etc/passwd")).toBe("ask")
+  }
+})
+
 test("every references/ file the skill links exists beside it", async () => {
   const fake = createFakeContext()
   await plugin.setup(fake.context)

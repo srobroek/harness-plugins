@@ -1,10 +1,9 @@
-import { realpathSync } from "node:fs"
-import { join, resolve } from "node:path"
+import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Plugin } from "@opencode/plugin"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import type { ToolContext } from "@opencode/plugin/promise/tool"
-import { type AgentPermission, registerAgents } from "@srobroek/opencode-lib/agent-files"
+import { directoryReadRules, registerAgents } from "@srobroek/opencode-lib/agent-files"
 import { contentPaths } from "@srobroek/opencode-lib/content-plugin"
 import { registerSkills } from "@srobroek/opencode-lib/skill-files"
 import { processAlive } from "@srobroek/opencode-lib/subprocess"
@@ -47,15 +46,7 @@ const MAX_DEPTH = 16
  * Agents may read the CAD skills' references and assets where the plugin is installed,
  * outside the project, without a prompt; every other external path keeps its own rule.
  */
-export function skillReadRules(skillsDir: string): AgentPermission[] {
-  const dirs = new Set([skillsDir])
-  try {
-    dirs.add(realpathSync(skillsDir))
-  } catch {
-    // A missing directory is reported by the skill registration instead.
-  }
-  return [...dirs].map((dir) => ({ action: "external_directory", resource: join(dir, "*"), effect: "allow" }))
-}
+export const skillReadRules = directoryReadRules
 
 /** Test seams; the host never passes them. */
 export type Overrides = {
