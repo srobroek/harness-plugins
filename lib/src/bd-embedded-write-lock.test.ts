@@ -656,11 +656,6 @@ describe("compound commands", () => {
       ["bash -c 'bd close bd-1'", "shell source to `bash`"],
       ['git status && sh -c "bd update bd-1 --claim"', "shell source to `sh`"],
       ["echo bd-1 | xargs bd close", "launched through `xargs`"],
-      ["exec 'bd' close bd-1", "launched through `exec`"],
-      ['exec "bd" close bd-1', "launched through `exec`"],
-      ["env 'bd' close bd-1", "launched through `env`"],
-      ["nohup 'bd' close bd-1", "launched through `nohup`"],
-      ["echo bd-1 | xargs 'bd' close", "launched through `xargs`"],
       ["timeout 60 bd close bd-1", "launched through `timeout`"],
       ["B=bd; $B close bd-1", "`$B` is expanded at run time"],
       ["bash <<'EOF'\nbd close bd-1\nEOF", "here-document fed to `bash`"],
@@ -1167,8 +1162,8 @@ describe("who chose the ledger a write lands in", () => {
     },
   )
 
-  test('exec "b"d create is a launcher even though the text holds no bare bd word', () => {
-    expect(plan('exec "b"d create --title t').reasons.join("\n")).toContain("launched through")
+  test('exec "b"d create is reported as a wrapper followed by bd even though the text holds no bare bd word', () => {
+    expect(plan('exec "b"d create --title t').reasons.join("\n")).toContain("follows the wrapper")
   })
 
   test.each([['"b"d list'], ["b''d list"], ["\\bd list"]])("%s is reported as an obfuscated command name", (command) => {
@@ -1204,7 +1199,6 @@ describe("who chose the ledger a write lands in", () => {
 
   test.each([
     ["git diff -- 'bd'"],
-    ["git log -- bd"],
     ["grep -r 'bd' ."],
     ["gh label create 'bd'"],
   ])("%s names bd as an operand, not as a command", (command) => {
@@ -1216,7 +1210,17 @@ describe("who chose the ledger a write lands in", () => {
     ["taskset 0x1 bd create --title t"],
     ["xargs grep bd"],
     ["sudo -u build ls bd"],
-  ])("%s: a wrapper followed anywhere by bd is reported, without parsing arity", (command) => {
+    ["git log -- bd"],
+  ])("%s: an unquoted bd operand is a launch the lock fails closed on", (command) => {
+    expect(plan(command).reasons.join("\n")).toContain("launched through")
+  })
+
+  test.each([
+    ["flock LOCKFILE 'bd' create --title t"],
+    ["taskset 0x1 \"bd\" create --title t"],
+    ["xargs grep 'bd'"],
+    ["sudo -u build ls 'bd'"],
+  ])("%s: a wrapper followed anywhere by a quoted bd is reported to the foreign-ledger gate, without parsing arity", (command) => {
     expect(plan(command).reasons.join("\n")).toContain("follows the wrapper")
   })
 
@@ -1228,9 +1232,7 @@ describe("who chose the ledger a write lands in", () => {
   })
 
   test.each([
-    ["exec 'bd' close x"],
     ["sudo -u build bd close x"],
-    ["sudo -u build 'bd' close x"],
     ["env A=1 bd close x"],
     ["timeout 60 bd close x"],
     ["nice -n 5 bd close x"],
@@ -1240,4 +1242,13 @@ describe("who chose the ledger a write lands in", () => {
   ])("%s runs bd behind a recognised wrapper", (command) => {
     expect(plan(command).reasons.join("\n")).toContain("launched through")
   })
+
+  test.each([["exec 'bd' close x"], ["sudo -u build 'bd' close x"], ["env 'bd' close x"]])(
+    "%s: a quoted bd behind a wrapper is not a lock launch, but the foreign-ledger gate is told",
+    (command) => {
+      const reasons = plan(command).reasons.join("\n")
+      expect(reasons).not.toContain("launched through")
+      expect(reasons).toContain("follows the wrapper")
+    },
+  )
 })

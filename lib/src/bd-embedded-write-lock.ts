@@ -837,8 +837,8 @@ export function planEmbeddedWrites(
   const writes: EmbeddedWrite[] = []
   let problem: Problem | undefined
   let problemStore: string | undefined
-  const refuse = (found: Problem, store?: string): void => {
-    unplaced?.("exact" in found ? found.exact : found.part)
+  const refuse = (found: Problem, store?: string, report = true): void => {
+    if (report) unplaced?.("exact" in found ? found.exact : found.part)
     problem ??= found
     problemStore ??= store
   }
@@ -888,7 +888,8 @@ export function planEmbeddedWrites(
     }
     if (shape.kind === "other") {
       const launch = launchOf(shape, item, command)
-      if (launch !== undefined) refuse(launch)
+      // The lock still refuses a launch; a literal `BEADS_DIR=` on its line is the foreign-ledger override.
+      if (launch !== undefined) refuse(launch, undefined, !namesLiteralBeadsDir(shape))
       else {
         const wrapper = wrapperNamesBd(shape)
         if (wrapper !== undefined) unplaced?.(`\`bd\` follows the wrapper \`${wrapper}\``)
@@ -1106,42 +1107,11 @@ const LAUNCHERS: Record<string, true> = {
 const FIND_EXEC: Record<string, true> = { "-exec": true, "-execdir": true, "-ok": true, "-okdir": true }
 
 /**
- * Whether `head args...` runs `bd` as a command: `bd` is the command word of a recognised
- * wrapper, quoted or not. Options, assignments, durations and the value after an option are
- * skipped; the first other word is the wrapped command, which is followed when it is a wrapper
- * too. An operand of any other command (`git diff -- bd`) is not a launch.
- */
-function runsBdBehind(head: ShellWord, args: ShellWord[]): boolean {
-  const name = commandName(head)
-  if (name === "find") {
-    return args.some((word, i) => {
-      const next = args[i + 1]
-      return FIND_EXEC[word.value] === true && next !== undefined && !next.expands && commandName(next) === "bd"
-    })
-  }
-  if (LAUNCHERS[name] !== true) return false
-  let afterOption = false
-  for (const [i, word] of args.entries()) {
-    if (word.expands) return false
-    if (commandName(word) === "bd") return true
-    if (word.value.startsWith("-")) {
-      afterOption = true
-      continue
-    }
-    if (afterOption || ASSIGNMENT.test(word.value) || /^[0-9.]+[smhd]?$/.test(word.value)) {
-      afterOption = false
-      continue
-    }
-    return runsBdBehind(word, args.slice(i + 1))
-  }
-  return false
-}
-
-/**
  * Whether a recognised wrapper is followed anywhere in this simple command by a word that
  * unquotes to `bd`, with no `BEADS_DIR=` assignment on the command line. No arity modelling:
  * `flock LOCKFILE bd create` and `taskset 0x1 bd create` count, so does `sudo -u x ls bd`.
- * Only the foreign-ledger advisory reads this; the lock's own launch check stays positional.
+ * Only the foreign-ledger advisory reads this. It also sees a quoted `'bd'`, which the lock's
+ * own launch check (any unquoted `bd` operand) does not.
  */
 function wrapperNamesBd(shape: OtherShape): string | undefined {
   const { head, args } = shape
@@ -1149,12 +1119,15 @@ function wrapperNamesBd(shape: OtherShape): string | undefined {
   const name = commandName(head)
   const wraps = LAUNCHERS[name] === true || (name === "find" && args.some((word) => FIND_EXEC[word.value] === true))
   if (!wraps || !args.some((word) => !word.expands && commandName(word) === "bd")) return undefined
-  const literalDir = (word: ShellWord): boolean => {
+  return namesLiteralBeadsDir(shape) ? undefined : name
+}
+
+/** Whether this simple command carries a literal `BEADS_DIR=<path>`, as a prefix or an `env` argument. */
+function namesLiteralBeadsDir({ assignments, args }: OtherShape): boolean {
+  return [...assignments, ...args].some((word) => {
     const match = BEADS_DIR_ASSIGNMENT.exec(word.value)
     return match !== null && match[1] === "" && !word.expands && !DEFERRED_VALUE.test(word.value.slice(match[0].length))
-  }
-  if ([...shape.assignments, ...args].some(literalDir)) return undefined
-  return name
+  })
 }
 
 /** Why a non-`bd` command may still run `bd` where the lock cannot see it, if it may. */
@@ -1177,8 +1150,10 @@ function launchOf(shape: OtherShape, command: SimpleCommand, source: string): Pr
   }
   const name = commandName(head)
   if (NAME_ONLY[name] === true || (name === "command" && /^-[vV]$/.test(args[0]?.value ?? ""))) return undefined
-  // Only a `bd` in command position is a launch; `git diff -- 'bd'` merely names it.
-  if (!runsBdBehind(head, args)) return undefined
+  // Any unquoted `bd` operand counts, so `flock X bd create` and `taskset 0x1 bd create` fail closed
+  // without modelling a wrapper's arity. A quoted word (`git diff -- 'bd'`) merely names it; the
+  // foreign-ledger gate reads those through {@link wrapperNamesBd}.
+  if (!args.some((word) => !word.quoted && !word.expands && commandName(word) === "bd")) return undefined
   return {
     part: `\`bd\` is launched through \`${head.value}\`, which hides the invocation from the lock`,
     fix: 'Call `bd` directly as its own simple command instead of through a launcher such as `env`, `xargs`, `timeout` or `find -exec`; to act on a list of ids, pass them to one `bd` call or loop with `while read -r id; do bd ... "$id"; done`.',

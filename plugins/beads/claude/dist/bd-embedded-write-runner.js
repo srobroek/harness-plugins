@@ -2092,8 +2092,9 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
   const writes = [];
   let problem;
   let problemStore;
-  const refuse = (found, store) => {
-    unplaced?.("exact" in found ? found.exact : found.part);
+  const refuse = (found, store, report = true) => {
+    if (report)
+      unplaced?.("exact" in found ? found.exact : found.part);
     problem ??= found;
     problemStore ??= store;
   };
@@ -2146,7 +2147,7 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
     if (shape.kind === "other") {
       const launch = launchOf(shape, item, command);
       if (launch !== undefined)
-        refuse(launch);
+        refuse(launch, undefined, !namesLiteralBeadsDir(shape));
       else {
         const wrapper = wrapperNamesBd(shape);
         if (wrapper !== undefined)
@@ -2346,34 +2347,6 @@ var LAUNCHERS = {
   xargs: true
 };
 var FIND_EXEC = { "-exec": true, "-execdir": true, "-ok": true, "-okdir": true };
-function runsBdBehind(head, args) {
-  const name = commandName(head);
-  if (name === "find") {
-    return args.some((word, i) => {
-      const next = args[i + 1];
-      return FIND_EXEC[word.value] === true && next !== undefined && !next.expands && commandName(next) === "bd";
-    });
-  }
-  if (LAUNCHERS[name] !== true)
-    return false;
-  let afterOption = false;
-  for (const [i, word] of args.entries()) {
-    if (word.expands)
-      return false;
-    if (commandName(word) === "bd")
-      return true;
-    if (word.value.startsWith("-")) {
-      afterOption = true;
-      continue;
-    }
-    if (afterOption || ASSIGNMENT3.test(word.value) || /^[0-9.]+[smhd]?$/.test(word.value)) {
-      afterOption = false;
-      continue;
-    }
-    return runsBdBehind(word, args.slice(i + 1));
-  }
-  return false;
-}
 function wrapperNamesBd(shape) {
   const { head, args } = shape;
   if (head === undefined || head.expands)
@@ -2382,13 +2355,13 @@ function wrapperNamesBd(shape) {
   const wraps = LAUNCHERS[name] === true || name === "find" && args.some((word) => FIND_EXEC[word.value] === true);
   if (!wraps || !args.some((word) => !word.expands && commandName(word) === "bd"))
     return;
-  const literalDir = (word) => {
+  return namesLiteralBeadsDir(shape) ? undefined : name;
+}
+function namesLiteralBeadsDir({ assignments, args }) {
+  return [...assignments, ...args].some((word) => {
     const match = BEADS_DIR_ASSIGNMENT.exec(word.value);
     return match !== null && match[1] === "" && !word.expands && !DEFERRED_VALUE.test(word.value.slice(match[0].length));
-  };
-  if ([...shape.assignments, ...args].some(literalDir))
-    return;
-  return name;
+  });
 }
 function launchOf(shape, command, source) {
   const { head, args } = shape;
@@ -2412,7 +2385,7 @@ function launchOf(shape, command, source) {
   const name = commandName(head);
   if (NAME_ONLY[name] === true || name === "command" && /^-[vV]$/.test(args[0]?.value ?? ""))
     return;
-  if (!runsBdBehind(head, args))
+  if (!args.some((word) => !word.quoted && !word.expands && commandName(word) === "bd"))
     return;
   return {
     part: `\`bd\` is launched through \`${head.value}\`, which hides the invocation from the lock`,
