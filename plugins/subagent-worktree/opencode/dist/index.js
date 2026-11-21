@@ -762,7 +762,15 @@ function untrustedLocalGitArgs() {
     "-c",
     "credential.helper=",
     "-c",
-    "core.askPass="
+    "core.askPass=",
+    "-c",
+    "log.showSignature=false",
+    "-c",
+    "gpg.program=",
+    "-c",
+    "gpg.ssh.program=",
+    "-c",
+    "gpg.x509.program="
   ];
 }
 var UNTRUSTED_LOCAL_GIT_ENV = {
@@ -771,7 +779,7 @@ var UNTRUSTED_LOCAL_GIT_ENV = {
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_TERMINAL_PROMPT: "0"
 };
-var FILTER_DRIVER_LISTING = ["config", "--name-only", "-z", "--get-regexp", "^filter\\."];
+var FILTER_DRIVER_LISTING = ["config", "--name-only", "-z", "--list"];
 function filterDriverOverrides(listing) {
   const keys = listing.split("\x00");
   if (keys.pop() !== "")
@@ -779,11 +787,11 @@ function filterDriverOverrides(listing) {
   const drivers = new Set;
   for (const key of keys) {
     const last = key.lastIndexOf(".");
-    if (!key.startsWith("filter.") || last <= "filter.".length)
+    if (!key.startsWith("filter.") || last < "filter.".length)
       continue;
     drivers.add(key.slice("filter.".length, last));
   }
-  if ([...drivers].some((driver) => driver.includes("=")))
+  if ([...drivers].some((driver) => driver.includes("=") || driver.includes("\uFFFD")))
     return;
   return [...drivers].flatMap((driver) => ["clean=", "smudge=", "process=", "required=false"].flatMap((setting) => ["-c", `filter.${driver}.${setting}`]));
 }
@@ -1435,7 +1443,7 @@ function createGit(run) {
     head: (directory) => git(directory, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"),
     porcelain: (directory) => unfiltered(directory, "status", "--porcelain"),
     isAncestor: async (directory, tip, ref) => (await run(["git", "-C", directory, "merge-base", "--is-ancestor", tip, ref])).code === 0,
-    stashSubjects: (directory) => git(directory, "stash", "list", "--format=%gs"),
+    stashSubjects: (directory) => git(directory, "stash", "list", "--no-show-signature", "--format=%gs"),
     gitDir: (directory) => git(directory, "rev-parse", "--absolute-git-dir"),
     deleteBranchAt: async (directory, name, oid) => (await run(["git", "-C", directory, "update-ref", "-d", `refs/heads/${name}`, oid])).code === 0,
     pruneWorktrees: async (directory) => await git(directory, "worktree", "prune") !== undefined,

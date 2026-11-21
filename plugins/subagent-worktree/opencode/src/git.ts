@@ -124,7 +124,7 @@ export function createGit(run: Runner) {
     isAncestor: async (directory: string, tip: string, ref: string) =>
       (await run(["git", "-C", directory, "merge-base", "--is-ancestor", tip, ref])).code === 0,
     /** Stash subjects (`%gs`), one per line; undefined when git fails. */
-    stashSubjects: (directory: string) => git(directory, "stash", "list", "--format=%gs"),
+    stashSubjects: (directory: string) => git(directory, "stash", "list", "--no-show-signature", "--format=%gs"),
     /** The worktree's own git directory, absolute. */
     gitDir: (directory: string) => git(directory, "rev-parse", "--absolute-git-dir"),
     /** Delete `refs/heads/<name>` only if it still points at `oid`; a ref that moved fails instead of being deleted. */

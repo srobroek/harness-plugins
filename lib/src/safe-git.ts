@@ -24,6 +24,8 @@ export const SAFE_GIT_ARGS = [
  * - `diff.external` is blanked, so a patch diff fails instead of running it.
  * - `core.sshCommand`, `credential.helper` and `core.askPass` are blanked. With every transport
  *   refused ({@link UNTRUSTED_LOCAL_GIT_ENV}) none of them should start; this is a second layer.
+ * - `log.showSignature` is off, so a log-style read (`stash list`) verifies no signature, and
+ *   the signature programs are blanked as a second layer.
  *
  * Filter drivers are named per repository, so a command that hashes work-tree files also needs
  * {@link filterDriverOverrides}.
@@ -42,6 +44,14 @@ export function untrustedLocalGitArgs(): string[] {
     "credential.helper=",
     "-c",
     "core.askPass=",
+    "-c",
+    "log.showSignature=false",
+    "-c",
+    "gpg.program=",
+    "-c",
+    "gpg.ssh.program=",
+    "-c",
+    "gpg.x509.program=",
   ]
 }
 
@@ -65,20 +75,21 @@ export const UNTRUSTED_LOCAL_GIT_ENV: Readonly<Record<string, string>> = {
 }
 
 /**
- * The git arguments that list every configured filter-driver key, NUL-terminated. Run them in the
- * same directory, with the same options and environment, as the command they protect: git then
- * evaluates conditional includes (`includeIf`) and per-worktree config the same way for both.
- * Exit 1 with no output means no driver is configured.
+ * The git arguments that list every configured key, NUL-terminated; {@link filterDriverOverrides}
+ * picks the filter drivers out. A `--get-regexp` would skip a key that is not valid in the locale's
+ * encoding, and with it the driver. Run them in the same directory, with the same options and
+ * environment, as the command they protect: git then evaluates conditional includes (`includeIf`)
+ * and per-worktree config the same way for both. Exit 1 with no output means no config at all.
  */
-export const FILTER_DRIVER_LISTING = ["config", "--name-only", "-z", "--get-regexp", "^filter\\."] as const
+export const FILTER_DRIVER_LISTING = ["config", "--name-only", "-z", "--list"] as const
 
 /**
  * `-c` options that disable every filter driver a {@link FILTER_DRIVER_LISTING} output names, so
  * a command that hashes work-tree files runs no clean or process filter. That includes drivers
  * from the user's global config, git-lfs among them: the repository picks the driver through its
  * attributes and can supply the program a relative command runs. Undefined when the listing is
- * malformed or a driver name contains `=`, which `-c` cannot express; the caller must then not
- * run the command.
+ * malformed or a driver name is not UTF-8 or contains `=`, since `-c` cannot name such a driver;
+ * the caller must then not run the command.
  *
  * Not covered: a submodule's own drivers when `git status` recurses into it, and a config that
  * changes between the listing and the command.
@@ -89,11 +100,12 @@ export function filterDriverOverrides(listing: string): string[] | undefined {
   const drivers = new Set<string>()
   for (const key of keys) {
     const last = key.lastIndexOf(".")
-    // A key is `filter.<driver>.<variable>`; a two-part `filter.<variable>` names no driver.
-    if (!key.startsWith("filter.") || last <= "filter.".length) continue
+    // A key is `filter.<driver>.<variable>`, and `<driver>` may be empty; a two-part `filter.<variable>` names no driver.
+    if (!key.startsWith("filter.") || last < "filter.".length) continue
     drivers.add(key.slice("filter.".length, last))
   }
-  if ([...drivers].some((driver) => driver.includes("="))) return undefined
+  // Output is decoded as UTF-8 with replacement, so U+FFFD marks a name that was not UTF-8.
+  if ([...drivers].some((driver) => driver.includes("=") || driver.includes("\uFFFD"))) return undefined
   return [...drivers].flatMap((driver) =>
     ["clean=", "smudge=", "process=", "required=false"].flatMap((setting) => ["-c", `filter.${driver}.${setting}`]),
   )

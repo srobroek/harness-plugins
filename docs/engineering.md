@@ -69,9 +69,10 @@ Move new shared code into `lib` instead of adding another edge.
 - `diff.external`
 - every transport
 - `core.sshCommand`, `credential.helper` and `core.askPass`
+- signature checks (`log.showSignature`) and the signature programs
 - system config, terminal prompts and lazy fetch
 
-Before a status or a work-tree diff, the plugin lists the filter drivers in the same directory (`FILTER_DRIVER_LISTING`). It disables every driver it finds, including the user's global ones such as git-lfs, because the repository picks the driver and can supply the program a relative command runs. It refuses to run the command when the listing fails or a driver name contains `=`. The plugin reads `git worktree list --porcelain -z` and refuses malformed output. The minimum git version stays as it is, so these risks remain:
+Before a status or a work-tree diff, the plugin lists the filter drivers in the same directory (`FILTER_DRIVER_LISTING`). It disables every driver it finds, including the user's global ones such as git-lfs, because the repository picks the driver and can supply the program a relative command runs. It refuses to run the command when the listing fails or a driver name is not UTF-8 or contains `=`. The plugin reads `git worktree list --porcelain -z` and refuses malformed output. The minimum git version stays as it is, so these risks remain:
 
 - `GIT_NO_LAZY_FETCH` needs git 2.45. Older git still starts a lazy fetch and relies on the transport refusal (`GIT_ALLOW_PROTOCOL` set empty).
 - `git status` recursing into a submodule runs with the submodule's own filter drivers.
