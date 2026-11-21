@@ -217,20 +217,74 @@ function landingsFor(records, directory) {
 
 // lib/src/worktree-locks.ts
 import { createHash as createHash2, randomUUID as randomUUID2 } from "crypto";
-import { accessSync, constants as constants2, mkdirSync as mkdirSync2, readdirSync as readdirSync2, readFileSync as readFileSync2, renameSync as renameSync2, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "fs";
+import { accessSync, constants as constants3, mkdirSync as mkdirSync2, readdirSync as readdirSync2, readFileSync as readFileSync2, renameSync as renameSync2, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "fs";
 import { join as join2 } from "path";
 
 // lib/src/lease-lock.ts
 import { AsyncLocalStorage } from "async_hooks";
 import { randomUUID } from "crypto";
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, statSync, unlinkSync, writeSync } from "fs";
+import { closeSync as closeSync2, openSync as openSync2, statSync, unlinkSync, writeSync } from "fs";
 import { hostname } from "os";
-var LEASE_MS = 120000;
-var RENEW_MS = 20000;
-var WAIT_MS = 120000;
-var POLL_MS = 20;
-var POLL_MAX_MS = 400;
-var MAX_RECORD_BYTES = 64 * 1024;
+
+// lib/src/bounded-read.ts
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "fs";
+var MAX_LEDGER_FILE_BYTES = 64 * 1024;
+function readBoundedBytes(path, maxBytes) {
+  let fd;
+  try {
+    if (!lstatSync(path).isFile())
+      return { kind: "unreadable", reason: "not-regular" };
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const info = fstatSync(fd);
+    if (!info.isFile())
+      return { kind: "unreadable", reason: "not-regular" };
+    if (info.size > maxBytes)
+      return { kind: "unreadable", reason: "too-large" };
+    const buffer = Buffer.alloc(info.size);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const read = readSync(fd, buffer, offset, buffer.length - offset, offset);
+      if (read === 0)
+        break;
+      offset += read;
+    }
+    return { kind: "bytes", bytes: offset === buffer.length ? buffer : buffer.subarray(0, offset) };
+  } catch (error) {
+    const code = error.code;
+    if (code === "ENOENT")
+      return { kind: "absent" };
+    return { kind: "unreadable", reason: code === "ELOOP" ? "not-regular" : "io" };
+  } finally {
+    if (fd !== undefined)
+      closeSync(fd);
+  }
+}
+function readBounded(path, maxBytes = MAX_LEDGER_FILE_BYTES) {
+  const read = readBoundedBytes(path, maxBytes);
+  if (read.kind === "absent")
+    return { kind: "absent" };
+  return read.kind === "bytes" ? { kind: "text", text: read.bytes.toString("utf8") } : { kind: "unreadable" };
+}
+
+// lib/src/subprocess.ts
+import { constants as constants2 } from "os";
+var EXIT_GRACE_MS = 2000;
+var EXIT_POLL_MS = 100;
+function goneWatch(graceMs, pollMs) {
+  const polls = Math.max(1, Math.ceil(graceMs / Math.max(1, pollMs)));
+  let since = null;
+  let seen = 0;
+  return (alive) => {
+    if (alive) {
+      since = null;
+      seen = 0;
+      return false;
+    }
+    since ??= Date.now();
+    seen++;
+    return seen > polls && Date.now() - since >= graceMs;
+  };
+}
 function processAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -239,6 +293,127 @@ function processAlive(pid) {
     return error.code === "EPERM";
   }
 }
+function killChild(child, group) {
+  if (group) {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+      return;
+    } catch {}
+  }
+  try {
+    child.kill("SIGKILL");
+  } catch {}
+}
+function unref(timer) {
+  timer.unref?.();
+}
+function capture(stream) {
+  if (!(stream instanceof ReadableStream))
+    return { text: Promise.resolve(""), snapshot: () => "", cancel: () => {} };
+  const reader = stream.getReader();
+  const decoder = new TextDecoder;
+  let collected = "";
+  const text = (async () => {
+    try {
+      for (;; ) {
+        const chunk = await reader.read();
+        if (chunk.done)
+          break;
+        collected += decoder.decode(chunk.value, { stream: true });
+      }
+    } catch {}
+    collected += decoder.decode();
+    return collected;
+  })();
+  const cancel = () => {
+    try {
+      reader.cancel().catch(() => {
+        return;
+      });
+    } catch {}
+  };
+  return { text, snapshot: () => collected, cancel };
+}
+function supervise(child, options = {}) {
+  const grace = Math.max(0, options.graceMs ?? EXIT_GRACE_MS);
+  const pollMs = Math.max(1, options.pollMs ?? EXIT_POLL_MS);
+  const alive = options.alive ?? processAlive;
+  const group = options.group ?? false;
+  const { signal, timeoutMs } = options;
+  const out = capture(child.stdout);
+  const err = capture(child.stderr);
+  return new Promise((resolve) => {
+    let ended = null;
+    let exitSeen = false;
+    let settled = false;
+    const gone = goneWatch(grace, pollMs);
+    let deadline;
+    let graceTimer;
+    const settle = (run) => {
+      if (settled)
+        return;
+      settled = true;
+      clearTimeout(deadline);
+      clearTimeout(graceTimer);
+      clearInterval(poller);
+      signal?.removeEventListener("abort", onAbort);
+      resolve(run);
+    };
+    const end = (cause) => {
+      if (ended !== null || settled)
+        return;
+      ended = cause;
+      if (cause !== "lost" || group)
+        killChild(child, group);
+      out.cancel();
+      err.cancel();
+      graceTimer = setTimeout(() => settle({ kind: cause, stdout: out.snapshot(), stderr: err.snapshot() }), grace);
+      if (options.unref)
+        unref(graceTimer);
+    };
+    const onAbort = () => end("aborted");
+    const poller = setInterval(() => {
+      if (exitSeen || ended !== null || settled)
+        return;
+      if (gone(alive(child.pid)))
+        end("lost");
+    }, pollMs);
+    unref(poller);
+    if (timeoutMs !== undefined && timeoutMs > 0 && Number.isFinite(timeoutMs)) {
+      deadline = setTimeout(() => end("timeout"), timeoutMs);
+      if (options.unref)
+        unref(deadline);
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted)
+      onAbort();
+    child.exited.then(() => {
+      exitSeen = true;
+    }, () => {
+      return;
+    });
+    Promise.all([child.exited, out.text, err.text]).then(([exitCode, stdout, stderr]) => {
+      if (ended !== null)
+        settle({ kind: ended, stdout, stderr });
+      else
+        settle({ kind: "exited", exitCode, signalCode: signalName(child.signalCode), stdout, stderr });
+    }, () => end("lost"));
+  });
+}
+function signalName(code) {
+  if (code === null || code === undefined)
+    return null;
+  if (typeof code === "string")
+    return code;
+  return Object.entries(constants2.signals).find(([, n]) => n === code)?.[0] ?? String(code);
+}
+
+// lib/src/lease-lock.ts
+var LEASE_MS = 120000;
+var RENEW_MS = 20000;
+var WAIT_MS = 120000;
+var POLL_MS = 20;
+var POLL_MAX_MS = 400;
 function parseLeaseRecord(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     return;
@@ -255,31 +430,6 @@ function leaseAbandoned(record, facts) {
   if (record.host === facts.host && !facts.alive(record.pid))
     return true;
   return facts.now > record.expires;
-}
-function readBounded(path) {
-  let fd;
-  try {
-    if (!lstatSync(path).isFile())
-      return { kind: "unreadable" };
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-    const info = fstatSync(fd);
-    if (!info.isFile() || info.size > MAX_RECORD_BYTES)
-      return { kind: "unreadable" };
-    const buffer = Buffer.alloc(info.size);
-    let offset = 0;
-    while (offset < buffer.length) {
-      const read = readSync(fd, buffer, offset, buffer.length - offset, offset);
-      if (read === 0)
-        break;
-      offset += read;
-    }
-    return { kind: "text", text: buffer.toString("utf8", 0, offset) };
-  } catch (error) {
-    return error.code === "ENOENT" ? { kind: "absent" } : { kind: "unreadable" };
-  } finally {
-    if (fd !== undefined)
-      closeSync(fd);
-  }
 }
 var insideLock = new AsyncLocalStorage;
 var stealPathFor = (lock) => `${lock}.steal`;
@@ -327,7 +477,7 @@ function takeOverIfAbandoned(c) {
   c.afterJudged?.();
   let fd;
   try {
-    fd = openSync(c.steal, "wx");
+    fd = openSync2(c.steal, "wx");
   } catch (error) {
     if (error.code !== "EEXIST")
       return;
@@ -343,7 +493,7 @@ function takeOverIfAbandoned(c) {
     if (abandoned(c.lock, c))
       unlinkSync(c.lock);
   } catch {} finally {
-    closeSync(fd);
+    closeSync2(fd);
     try {
       unlinkSync(c.steal);
     } catch {}
@@ -352,7 +502,7 @@ function takeOverIfAbandoned(c) {
 function withOwnership(c, token, change) {
   let fd;
   try {
-    fd = openSync(c.steal, "wx");
+    fd = openSync2(c.steal, "wx");
   } catch (error) {
     if (error.code === "EEXIST")
       return "busy";
@@ -364,7 +514,7 @@ function withOwnership(c, token, change) {
     change();
     return "done";
   } finally {
-    closeSync(fd);
+    closeSync2(fd);
     try {
       unlinkSync(c.steal);
     } catch {}
@@ -372,11 +522,11 @@ function withOwnership(c, token, change) {
 }
 function rewrite(c, token) {
   return withOwnership(c, token, () => {
-    const fd = openSync(c.lock, "w");
+    const fd = openSync2(c.lock, "w");
     try {
       writeSync(fd, JSON.stringify(recordFor(c, token)));
     } finally {
-      closeSync(fd);
+      closeSync2(fd);
     }
   });
 }
@@ -402,11 +552,11 @@ async function withLease(lockPath, options, work) {
   let fd;
   while (fd === undefined) {
     try {
-      fd = openSync(lockPath, "wx");
+      fd = openSync2(lockPath, "wx");
       writeSync(fd, JSON.stringify(recordFor(c, token)));
     } catch (error) {
       if (fd !== undefined) {
-        closeSync(fd);
+        closeSync2(fd);
         fd = undefined;
       }
       const code = error.code;
@@ -436,7 +586,7 @@ async function withLease(lockPath, options, work) {
   } finally {
     clearInterval(heartbeat);
     try {
-      closeSync(owned);
+      closeSync2(owned);
     } catch {}
     const releaseBy = Date.now() + 2000;
     for (;; ) {
@@ -586,148 +736,6 @@ async function lockedWorktreeRemoval(commonDir, directory, lock, steps) {
 }
 function lockedWrite(commonDir, directory, options, write) {
   return withDiskLock(commonDir, directory, { waitMs: 1e4, ...options }, async () => write());
-}
-
-// lib/src/subprocess.ts
-import { constants as constants3 } from "os";
-var EXIT_GRACE_MS = 2000;
-var EXIT_POLL_MS = 100;
-function goneWatch(graceMs, pollMs) {
-  const polls = Math.max(1, Math.ceil(graceMs / Math.max(1, pollMs)));
-  let since = null;
-  let seen = 0;
-  return (alive) => {
-    if (alive) {
-      since = null;
-      seen = 0;
-      return false;
-    }
-    since ??= Date.now();
-    seen++;
-    return seen > polls && Date.now() - since >= graceMs;
-  };
-}
-function processAlive2(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === "EPERM";
-  }
-}
-function killChild(child, group) {
-  if (group) {
-    try {
-      process.kill(-child.pid, "SIGKILL");
-      return;
-    } catch {}
-  }
-  try {
-    child.kill("SIGKILL");
-  } catch {}
-}
-function unref(timer) {
-  timer.unref?.();
-}
-function capture(stream) {
-  if (!(stream instanceof ReadableStream))
-    return { text: Promise.resolve(""), snapshot: () => "", cancel: () => {} };
-  const reader = stream.getReader();
-  const decoder = new TextDecoder;
-  let collected = "";
-  const text = (async () => {
-    try {
-      for (;; ) {
-        const chunk = await reader.read();
-        if (chunk.done)
-          break;
-        collected += decoder.decode(chunk.value, { stream: true });
-      }
-    } catch {}
-    collected += decoder.decode();
-    return collected;
-  })();
-  const cancel = () => {
-    try {
-      reader.cancel().catch(() => {
-        return;
-      });
-    } catch {}
-  };
-  return { text, snapshot: () => collected, cancel };
-}
-function supervise(child, options = {}) {
-  const grace = Math.max(0, options.graceMs ?? EXIT_GRACE_MS);
-  const pollMs = Math.max(1, options.pollMs ?? EXIT_POLL_MS);
-  const alive = options.alive ?? processAlive2;
-  const group = options.group ?? false;
-  const { signal, timeoutMs } = options;
-  const out = capture(child.stdout);
-  const err = capture(child.stderr);
-  return new Promise((resolve) => {
-    let ended = null;
-    let exitSeen = false;
-    let settled = false;
-    const gone = goneWatch(grace, pollMs);
-    let deadline;
-    let graceTimer;
-    const settle = (run) => {
-      if (settled)
-        return;
-      settled = true;
-      clearTimeout(deadline);
-      clearTimeout(graceTimer);
-      clearInterval(poller);
-      signal?.removeEventListener("abort", onAbort);
-      resolve(run);
-    };
-    const end = (cause) => {
-      if (ended !== null || settled)
-        return;
-      ended = cause;
-      if (cause !== "lost" || group)
-        killChild(child, group);
-      out.cancel();
-      err.cancel();
-      graceTimer = setTimeout(() => settle({ kind: cause, stdout: out.snapshot(), stderr: err.snapshot() }), grace);
-      if (options.unref)
-        unref(graceTimer);
-    };
-    const onAbort = () => end("aborted");
-    const poller = setInterval(() => {
-      if (exitSeen || ended !== null || settled)
-        return;
-      if (gone(alive(child.pid)))
-        end("lost");
-    }, pollMs);
-    unref(poller);
-    if (timeoutMs !== undefined && timeoutMs > 0 && Number.isFinite(timeoutMs)) {
-      deadline = setTimeout(() => end("timeout"), timeoutMs);
-      if (options.unref)
-        unref(deadline);
-    }
-    signal?.addEventListener("abort", onAbort, { once: true });
-    if (signal?.aborted)
-      onAbort();
-    child.exited.then(() => {
-      exitSeen = true;
-    }, () => {
-      return;
-    });
-    Promise.all([child.exited, out.text, err.text]).then(([exitCode, stdout, stderr]) => {
-      if (ended !== null)
-        settle({ kind: ended, stdout, stderr });
-      else
-        settle({ kind: "exited", exitCode, signalCode: signalName(child.signalCode), stdout, stderr });
-    }, () => end("lost"));
-  });
-}
-function signalName(code) {
-  if (code === null || code === undefined)
-    return null;
-  if (typeof code === "string")
-    return code;
-  return Object.entries(constants3.signals).find(([, n]) => n === code)?.[0] ?? String(code);
 }
 
 // lib/src/patterns.ts
@@ -1548,8 +1556,7 @@ import { rm } from "fs/promises";
 import { join as join3 } from "path";
 
 // lib/src/checkout-marker.ts
-import { closeSync as closeSync2, constants as constants4, fstatSync as fstatSync2, lstatSync as lstatSync2, openSync as openSync2, readlinkSync, readSync as readSync2 } from "fs";
-var MAX_MARKER_BYTES = 64 * 1024;
+import { lstatSync as lstatSync2, readlinkSync } from "fs";
 var MAX_LINKS = 40;
 function physical(path) {
   const pending = (path.startsWith("/") ? path : `${process.cwd()}/${path}`).split("/").reverse();

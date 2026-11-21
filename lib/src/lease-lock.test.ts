@@ -27,6 +27,15 @@ const record = (over: Partial<LeaseRecord> = {}): LeaseRecord => ({
 const plant = (path: string, value: LeaseRecord | string) =>
   writeFileSync(path, typeof value === "string" ? value : JSON.stringify(value))
 const tokenOf = (path: string) => (JSON.parse(readFileSync(path, "utf8")) as LeaseRecord).token
+/** A promise and the function that settles it, for ordering concurrent steps by state instead of by sleeps. */
+const gate = () => {
+  let open!: () => void
+  const opened = new Promise<void>((resolve) => {
+    open = resolve
+  })
+  return { opened, open }
+}
+const recordExpires = (path: string) => (JSON.parse(readFileSync(path, "utf8")) as LeaseRecord).expires
 const base = { owner: "test", host: HOST, leaseMs: 60_000, waitMs: 120 }
 
 describe("leaseAbandoned", () => {
@@ -80,15 +89,33 @@ describe("withLease", () => {
     const dir = scratch()
     const lock = join(dir, "a.lock")
     const order: string[] = []
+    const firstIn = gate()
+    const release = gate()
+    const secondWaiting = gate()
     const first = withLease(lock, { ...base, waitMs: 2000 }, async () => {
       order.push("a-in")
-      await new Promise((done) => setTimeout(done, 60))
+      firstIn.open()
+      await release.opened
       order.push("a-out")
     })
-    await new Promise((done) => setTimeout(done, 10))
-    const second = withLease(lock, { ...base, waitMs: 2000 }, () => {
-      order.push("b-in")
-    })
+    await firstIn.opened
+    const second = withLease(
+      lock,
+      {
+        ...base,
+        waitMs: 2000,
+        // The second holder sleeps only after it found the lock busy, so its first sleep proves it is waiting.
+        sleep: async (ms) => {
+          secondWaiting.open()
+          await new Promise((done) => setTimeout(done, ms))
+        },
+      },
+      () => {
+        order.push("b-in")
+      },
+    )
+    await secondWaiting.opened
+    release.open()
     await Promise.all([first, second])
     expect(order).toEqual(["a-in", "a-out", "b-in"])
   })
@@ -139,14 +166,29 @@ describe("withLease", () => {
   test("the heartbeat renews the lease, so a long hold is not taken over while its holder works", async () => {
     const dir = scratch()
     const lock = join(dir, "a.lock")
+    const renewed = gate()
+    const contended = gate()
+    let holderToken = ""
     const holder = withLease(lock, { ...base, leaseMs: 80, renewMs: 15, waitMs: 1000 }, async () => {
-      await new Promise((done) => setTimeout(done, 400))
+      holderToken = tokenOf(lock)
+      const firstExpiry = recordExpires(lock)
+      // Wait for state, not a delay: the heartbeat has written the lease past its first expiry, and that
+      // expiry has passed. A holder without a working heartbeat never reaches this; the cap fails the test.
+      const capped = Date.now() + 2000
+      while (!(Date.now() > firstExpiry && recordExpires(lock) > firstExpiry) && Date.now() < capped) {
+        await new Promise((done) => setTimeout(done, 5))
+      }
+      renewed.open()
+      await contended.opened
     })
-    await new Promise((done) => setTimeout(done, 100))
-    // Several leases old by now, but renewed: a contender with its own short patience must fail busy.
+    await renewed.opened
+    // The original lease is over, but renewed: a contender with its own short patience must fail busy.
     const contender = await withLease(lock, { ...base, leaseMs: 80, waitMs: 200 }, () => "stolen")
+    const tokenAfter = tokenOf(lock)
+    contended.open()
     await holder
     expect(contender).toMatchObject({ kind: "failed", busy: true })
+    expect(tokenAfter).toBe(holderToken)
   })
 
   test("an owner whose lease lapsed cannot unlink or overwrite its successor", async () => {
@@ -154,17 +196,28 @@ describe("withLease", () => {
     const lock = join(dir, "a.lock")
     let successorToken = ""
     let seenAfterRelease = ""
+    const stalledIn = gate()
+    const stalledRelease = gate()
+    const successorIn = gate()
+    const successorRelease = gate()
     const stalled = withLease(lock, { ...base, leaseMs: 40, renewMs: 60_000, waitMs: 1000 }, async () => {
-      // No renewals: the lease lapses while this owner is stalled.
-      await new Promise((done) => setTimeout(done, 200))
+      // No renewals: the lease lapses while this owner is stalled, until the successor holds the lock.
+      stalledIn.open()
+      await stalledRelease.opened
     })
-    await new Promise((done) => setTimeout(done, 20))
+    await stalledIn.opened
     const successor = withLease(lock, { ...base, leaseMs: 60_000, waitMs: 1000 }, async () => {
       successorToken = tokenOf(lock)
-      await new Promise((done) => setTimeout(done, 300))
-      seenAfterRelease = tokenOf(lock)
+      successorIn.open()
+      await successorRelease.opened
     })
-    await Promise.all([stalled, successor])
+    await successorIn.opened
+    // The stalled owner releases in the middle of the successor's hold.
+    stalledRelease.open()
+    await stalled
+    seenAfterRelease = tokenOf(lock)
+    successorRelease.open()
+    await successor
     expect(successorToken).not.toBe("")
     // The stalled owner released in the middle of the successor's hold, found a token that is not its
     // own, and left the file alone.
