@@ -4565,6 +4565,7 @@ function toolContextNoticeLive(state, sessionID, now) {
   const at = state.contextNotices.get(`${sessionID}\x00tool-error`);
   return at !== undefined && now - at < NOTICE_DEDUPE_MS;
 }
+var noticeResumes = (kind) => kind === "subagent-fallback" || kind === "recovery";
 var stoppedKey = (report) => report.subagent?.sessionID ?? `${report.notifyTo}\x00${report.subagent?.agent ?? ""}`;
 var stoppedLine = (stopped, provider, kind, first) => {
   const who = stopped.agent === undefined ? "A subagent" : `Subagent '${stopped.agent}'`;
@@ -6240,7 +6241,7 @@ ${refs.size}`;
           description: text.split(". ", 1)[0] ?? text,
           metadata: { source: SOURCE, kind },
           delivery: "steer",
-          resume: false
+          resume: noticeResumes(kind)
         });
       } catch {}
     };

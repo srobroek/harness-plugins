@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { FailureClass } from "./health.ts"
-import { claimContextNotice, claimToolContextNotice, decideFailureNotice, decideRecovery, type FailureReport, forgetSession, MAX_STOPPED, MAX_TRACKED, newNoticeState, type RequestLog, recordRequest, settleRequest, toolContextNoticeLive } from "./outage.ts"
+import { claimContextNotice, claimToolContextNotice, decideFailureNotice, decideRecovery, type FailureReport, forgetSession, MAX_STOPPED, MAX_TRACKED, newNoticeState, noticeResumes, type RequestLog, recordRequest, settleRequest, toolContextNoticeLive } from "./outage.ts"
 import type { ModelRef } from "./resolve.ts"
 
 const bedrock = (id: string): ModelRef => ({ providerID: "amazon-bedrock", id })
@@ -228,5 +228,16 @@ describe("request log", () => {
     for (let i = 0; i < 50; i++) recordRequest(log, "s", bedrock(`m${i}`), i)
     expect(log.get("s")?.length).toBeLessThanOrEqual(8)
     expect(settleRequest(log, "s", 1_000)).toEqual(bedrock("m49"))
+  })
+})
+
+describe("noticeResumes", () => {
+  test.each([
+    ["subagent-fallback", true],
+    ["recovery", true],
+    ["fallback", false],
+    ["context-length", false],
+  ])("%s wakes its session: %p", (kind, expected) => {
+    expect(noticeResumes(kind)).toBe(expected)
   })
 })

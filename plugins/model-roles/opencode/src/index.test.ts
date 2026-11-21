@@ -1662,6 +1662,31 @@ describe("runtime fallback", () => {
     return { host, cleanup, texts }
   }
 
+  test("a subagent failure note wakes the parent", async () => {
+    const host = createHost({ agents: [{ id: "general" }], models, options: fallbackOptions })
+    host.sessions.set("r", { id: "r" })
+    host.sessions.set("c", { id: "c", parentID: "r", agent: "general", model: sonnet })
+    const cleanup = await setup(host)
+    host.emit(failed("c", { type: "api", message: "ThrottlingException", status: 429 }))
+    await settle()
+    const note = methods(host, "synthetic")[0]?.input as { resume: boolean }
+    expect(note.resume).toBe(true)
+    host.close()
+    await cleanup()
+  })
+
+  test("a recovery note wakes the session that heard the outage", async () => {
+    const { host, cleanup } = await outageHost()
+    host.fireModelRequest({}, { sessionID: "r", model: sonnet, kind: "primary" })
+    host.emit({ type: "session.execution.succeeded", data: { sessionID: "r" } })
+    await settle()
+    const notes = methods(host, "synthetic").map((c) => c.input as { text: string; resume: boolean })
+    expect(notes.at(-1)?.text).toContain("recovered")
+    expect(notes.at(-1)?.resume).toBe(true)
+    host.close()
+    await cleanup()
+  })
+
   test("a success on the failed provider ends its outage even after the session moved to another provider", async () => {
     const { host, cleanup, texts } = await outageHost()
     host.fireModelRequest({}, { sessionID: "r", model: sonnet, kind: "primary" })

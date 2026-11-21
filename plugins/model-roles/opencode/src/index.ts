@@ -94,7 +94,7 @@ import {
   recordFailure,
 } from "./health.ts"
 import { createFirstTokenTracker, createLedgerStore, LEDGER_DISPOSE_TIMEOUT_MS, OUTCOME_KEY_PREFIX, readOutcome, type Usage } from "./ledger.ts"
-import { claimContextNotice, claimToolContextNotice, decideFailureNotice, decideRecovery, type FailureReport, forgetSession, NOTICE_DEDUPE_MS, newNoticeState, type RequestLog, recordRequest, settleRequest, toolContextNoticeLive } from "./outage.ts"
+import { claimContextNotice, claimToolContextNotice, decideFailureNotice, decideRecovery, type FailureReport, forgetSession, NOTICE_DEDUPE_MS, newNoticeState, noticeResumes, type RequestLog, recordRequest, settleRequest, toolContextNoticeLive } from "./outage.ts"
 import { explainSpawn, formatReceipts, pushReceipt, RECEIPTS_KEY, type Receipt, readReceipts, type SpawnRule, type SpawnSource } from "./receipt.ts"
 import { formatUsage, summarizeUsage } from "./report.ts"
 import {
@@ -626,7 +626,7 @@ export default Plugin.define({
           description: text.split(". ", 1)[0] ?? text,
           metadata: { source: SOURCE, kind },
           delivery: "steer",
-          resume: false,
+          resume: noticeResumes(kind),
         } as never)
       } catch {
         // The log line above is the record when the session cannot take a note.

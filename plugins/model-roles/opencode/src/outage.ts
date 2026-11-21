@@ -73,6 +73,13 @@ export function toolContextNoticeLive(state: NoticeState, sessionID: string, now
   return at !== undefined && now - at < NOTICE_DEDUPE_MS
 }
 
+/**
+ * Whether a note of this kind wakes its session. A subagent failure and a recovery name sessions the
+ * recipient must resume, so they wake it. A root session's own failure note and a context note
+ * (the child already switched) only inform.
+ */
+export const noticeResumes = (kind: string): boolean => kind === "subagent-fallback" || kind === "recovery"
+
 export type FailureReport = NoteFacts & {
   now: number
   /** The session the note goes to: the failed session, or a subagent's parent. */
