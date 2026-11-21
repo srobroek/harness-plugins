@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { endsWithQuestion, grantedMergeAsk, holdsLane, identifyRoot, isAskTool, mergeDrift, mergeOutcome, mergeRefusal, mergeResource, mergeResponse, ownWorktreeAsk, recordableLane, rootIntact } from "./policy.ts"
+import { endsWithQuestion, grantedMergeAsk, holdsLane, identifyRoot, isAskTool, mergeDrift, mergeOutcome, mergeRefusal, mergeResource, mergeResponse, ownWorktreeAsk, recordableLane, reviewExportAsk, rootIntact } from "./policy.ts"
 
 test.each([
   ["question", true],
@@ -156,6 +156,33 @@ test("a verdict comment by the author is not an approval", () => {
   expect(refusal({ view: withComment, reviews: [] })).toContain("approval")
 })
 
+describe("a witnessed review in place of the GitHub approval", () => {
+  const noApproval = { reviews: [] as unknown[] }
+  test("is accepted when the grant is set and the record approves exactly the merged head", () => {
+    expect(refusal({ ...noApproval, witnessed: { granted: true, approvedSha: SHA } })).toBeUndefined()
+  })
+
+  test.each<[string, { granted: boolean; approvedSha: string | undefined } | undefined]>([
+    ["no grant", { granted: false, approvedSha: SHA }],
+    ["no record", { granted: true, approvedSha: undefined }],
+    ["a record for another head", { granted: true, approvedSha: OTHER }],
+    ["no witness input", undefined],
+  ])("is refused with %s", (_name, witnessed) => {
+    expect(refusal({ ...noApproval, ...(witnessed ? { witnessed } : {}) })).toContain("approval")
+  })
+
+  test.each<[string, Partial<Input>, string]>([
+    ["a failing check", { runs: [{ check_runs: [{ name: "ci", status: "completed", conclusion: "failure" }] }] }, "checks"],
+    ["a missing required context", { protection: { contexts: ["ci", "deploy"] } }, "deploy"],
+    ["a moved head", { view: view({ headRefOid: OTHER }) }, "head"],
+    ["a merged PR", { view: view({ state: "MERGED" }) }, "state"],
+    ["a merge queue", { rules: [[{ type: "merge_queue", parameters: {} }]] }, "merge queues unsupported"],
+    ["a method the repository does not allow", { method: "rebase" }, "method"],
+  ])("still applies %s", (_name, over, word) => {
+    expect(refusal({ ...noApproval, ...over, witnessed: { granted: true, approvedSha: SHA } })).toContain(word)
+  })
+})
+
 test("mergeRefusal refuses a SHA that is not 40 hex digits", () => {
   expect(refusal({ sha: "abc", view: view({ headRefOid: "abc" }) })).toContain("sha")
 })
@@ -269,5 +296,50 @@ describe("mergeResponse (gh api -X PUT .../merge)", () => {
   })
   test("a non-2xx refusal carries the status and the message", () => {
     expect(mergeResponse(reply(false, { message: "Merge queue required" }, "gh: Merge queue required (HTTP 405)"))).toEqual({ ok: false, reason: "merge refused by GitHub (HTTP 405): Merge queue required" })
+  })
+})
+
+// --- read access to the exported review directory ----------------------------------------------
+
+describe("reviewExportAsk", () => {
+  let review: string
+  beforeAll(() => {
+    review = join(base, "run", "review")
+    mkdirSync(join(review, "abc", "files", "src"), { recursive: true })
+    symlinkSync(outside, join(review, "abc", "escape"))
+    symlinkSync(review, join(base, "review-alias"))
+  })
+  const reviewAsk = (resources: string[], over: { action?: string; effect?: "allow" | "deny" | "ask"; root?: string | undefined } = {}) =>
+    reviewExportAsk({ action: over.action ?? "external_directory", effect: over.effect ?? "ask", resources, root: "root" in over ? over.root : review, canon })
+
+  test.each([
+    ["the review directory", () => [`${review}/*`], true],
+    ["an exported directory", () => [`${review}/abc/files/src/*`], true],
+    ["a symlink alias of the review directory", () => [`${join(base, "review-alias")}/*`], true],
+    ["a sibling that only shares the prefix", () => [`${review}-x/*`], false],
+    ["the run directory above it", () => [`${join(base, "run")}/*`], false],
+    ["a `..` climb out of it", () => [`${review}/abc/../../*`], false],
+    ["a symlink inside it that leads outside", () => [`${review}/abc/escape/*`], false],
+    ["a wildcard in the directory", () => [`${review}/a*/*`], false],
+    ["a single-character wildcard", () => [`${review}/ab?/*`], false],
+    ["no trailing /*", () => [review], false],
+    ["a relative directory", () => ["review/*"], false],
+    ["a directory that does not exist", () => [`${review}/gone/*`], false],
+    ["two resources when one is outside", () => [`${review}/*`, `${outside}/*`], false],
+    ["no resources", () => [], false],
+  ])("external_directory ask for %s: allowed is %p", (_name, resources, expected) => {
+    expect(reviewAsk(resources())).toBe(expected)
+  })
+
+  test.each(["allow", "deny"] as const)("an external_directory %s effect is not touched", (effect) => {
+    expect(reviewAsk([`${review}/*`], { effect })).toBe(false)
+  })
+
+  test.each(["shell", "edit", "autopilot_merge", "read"])("a %s ask for the review directory is not touched", (action) => {
+    expect(reviewAsk([`${review}/*`], { action })).toBe(false)
+  })
+
+  test("a run with no usable review directory allows nothing", () => {
+    expect(reviewAsk([`${review}/*`], { root: undefined })).toBe(false)
   })
 })

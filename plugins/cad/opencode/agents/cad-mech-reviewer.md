@@ -34,6 +34,636 @@ permissions:
   - action: external_directory
     resource: "*"
     effect: ask
+  - action: shell
+    resource: "*"
+    effect: allow
+  - action: shell
+    resource: "rm*"
+    effect: deny
+  - action: shell
+    resource: "mv*"
+    effect: deny
+  - action: shell
+    resource: "cp*"
+    effect: deny
+  - action: shell
+    resource: "touch*"
+    effect: deny
+  - action: shell
+    resource: "tee*"
+    effect: deny
+  - action: shell
+    resource: "chmod*"
+    effect: deny
+  - action: shell
+    resource: "chown*"
+    effect: deny
+  - action: shell
+    resource: "ln*"
+    effect: deny
+  - action: shell
+    resource: "sudo*"
+    effect: deny
+  - action: shell
+    resource: "sed -i*"
+    effect: deny
+  - action: shell
+    resource: "sed * -i*"
+    effect: deny
+  - action: shell
+    resource: "find *-delete*"
+    effect: deny
+  - action: shell
+    resource: "find *-exec*"
+    effect: deny
+  - action: shell
+    resource: "*>*"
+    effect: deny
+  - action: shell
+    resource: "* | tee *"
+    effect: deny
+  - action: shell
+    resource: "* | tee"
+    effect: deny
+  - action: shell
+    resource: "git push*"
+    effect: deny
+  - action: shell
+    resource: "git commit*"
+    effect: deny
+  - action: shell
+    resource: "git reset*"
+    effect: deny
+  - action: shell
+    resource: "git checkout*"
+    effect: deny
+  - action: shell
+    resource: "git switch*"
+    effect: deny
+  - action: shell
+    resource: "git restore*"
+    effect: deny
+  - action: shell
+    resource: "git clean*"
+    effect: deny
+  - action: shell
+    resource: "git rebase*"
+    effect: deny
+  - action: shell
+    resource: "git merge*"
+    effect: deny
+  - action: shell
+    resource: "git pull*"
+    effect: deny
+  - action: shell
+    resource: "git cherry-pick*"
+    effect: deny
+  - action: shell
+    resource: "git revert*"
+    effect: deny
+  - action: shell
+    resource: "git apply*"
+    effect: deny
+  - action: shell
+    resource: "git am*"
+    effect: deny
+  - action: shell
+    resource: "git add*"
+    effect: deny
+  - action: shell
+    resource: "git rm*"
+    effect: deny
+  - action: shell
+    resource: "git mv*"
+    effect: deny
+  - action: shell
+    resource: "git branch -d*"
+    effect: deny
+  - action: shell
+    resource: "git branch -D*"
+    effect: deny
+  - action: shell
+    resource: "git branch --delete*"
+    effect: deny
+  - action: shell
+    resource: "git branch -m*"
+    effect: deny
+  - action: shell
+    resource: "git branch -M*"
+    effect: deny
+  - action: shell
+    resource: "git branch --move*"
+    effect: deny
+  - action: shell
+    resource: "git branch -f*"
+    effect: deny
+  - action: shell
+    resource: "git branch --force*"
+    effect: deny
+  - action: shell
+    resource: "git tag -d*"
+    effect: deny
+  - action: shell
+    resource: "git tag --delete*"
+    effect: deny
+  - action: shell
+    resource: "git stash*"
+    effect: deny
+  - action: shell
+    resource: "git worktree remove*"
+    effect: deny
+  - action: shell
+    resource: "git worktree prune*"
+    effect: deny
+  - action: shell
+    resource: "git update-ref*"
+    effect: deny
+  - action: shell
+    resource: "git remote add*"
+    effect: deny
+  - action: shell
+    resource: "git remote remove*"
+    effect: deny
+  - action: shell
+    resource: "git remote rm*"
+    effect: deny
+  - action: shell
+    resource: "git remote set-url*"
+    effect: deny
+  - action: shell
+    resource: "git remote rename*"
+    effect: deny
+  - action: shell
+    resource: "git config*"
+    effect: deny
+  - action: shell
+    resource: "git gc*"
+    effect: deny
+  - action: shell
+    resource: "git stash list*"
+    effect: allow
+  - action: shell
+    resource: "git stash show*"
+    effect: allow
+  - action: shell
+    resource: "git config --get*"
+    effect: allow
+  - action: shell
+    resource: "git config --list*"
+    effect: allow
+  - action: shell
+    resource: "git config -l*"
+    effect: allow
+  - action: shell
+    resource: "git * --output*"
+    effect: deny
+  - action: shell
+    resource: "git -c *"
+    effect: deny
+  - action: shell
+    resource: "git --config-env*"
+    effect: deny
+  - action: shell
+    resource: "gh pr create*"
+    effect: deny
+  - action: shell
+    resource: "gh pr merge*"
+    effect: deny
+  - action: shell
+    resource: "gh pr close*"
+    effect: deny
+  - action: shell
+    resource: "gh pr edit*"
+    effect: deny
+  - action: shell
+    resource: "gh pr comment*"
+    effect: deny
+  - action: shell
+    resource: "gh pr review*"
+    effect: deny
+  - action: shell
+    resource: "gh pr ready*"
+    effect: deny
+  - action: shell
+    resource: "gh pr reopen*"
+    effect: deny
+  - action: shell
+    resource: "gh issue create*"
+    effect: deny
+  - action: shell
+    resource: "gh issue close*"
+    effect: deny
+  - action: shell
+    resource: "gh issue edit*"
+    effect: deny
+  - action: shell
+    resource: "gh issue comment*"
+    effect: deny
+  - action: shell
+    resource: "gh issue reopen*"
+    effect: deny
+  - action: shell
+    resource: "gh release*"
+    effect: deny
+  - action: shell
+    resource: "gh repo delete*"
+    effect: deny
+  - action: shell
+    resource: "gh repo create*"
+    effect: deny
+  - action: shell
+    resource: "gh repo edit*"
+    effect: deny
+  - action: shell
+    resource: "gh * delete*"
+    effect: deny
+  - action: shell
+    resource: "gh workflow run*"
+    effect: deny
+  - action: shell
+    resource: "gh run rerun*"
+    effect: deny
+  - action: shell
+    resource: "glab mr create*"
+    effect: deny
+  - action: shell
+    resource: "glab mr merge*"
+    effect: deny
+  - action: shell
+    resource: "glab mr close*"
+    effect: deny
+  - action: shell
+    resource: "glab mr note*"
+    effect: deny
+  - action: shell
+    resource: "glab mr approve*"
+    effect: deny
+  - action: shell
+    resource: "glab mr update*"
+    effect: deny
+  - action: shell
+    resource: "glab mr reopen*"
+    effect: deny
+  - action: shell
+    resource: "glab issue create*"
+    effect: deny
+  - action: shell
+    resource: "glab issue close*"
+    effect: deny
+  - action: shell
+    resource: "glab issue note*"
+    effect: deny
+  - action: shell
+    resource: "glab issue update*"
+    effect: deny
+  - action: shell
+    resource: "glab release*"
+    effect: deny
+  - action: shell
+    resource: "glab repo delete*"
+    effect: deny
+  - action: shell
+    resource: "glab * delete*"
+    effect: deny
+  - action: shell
+    resource: "gh api *-f *"
+    effect: deny
+  - action: shell
+    resource: "gh api *-F *"
+    effect: deny
+  - action: shell
+    resource: "gh api *--field*"
+    effect: deny
+  - action: shell
+    resource: "gh api *--raw-field*"
+    effect: deny
+  - action: shell
+    resource: "gh api *--input*"
+    effect: deny
+  - action: shell
+    resource: "gh api *-X*"
+    effect: deny
+  - action: shell
+    resource: "gh api *--method*"
+    effect: deny
+  - action: shell
+    resource: "gh api *-X GET*"
+    effect: allow
+  - action: shell
+    resource: "gh api *--method GET*"
+    effect: allow
+  - action: shell
+    resource: "gh api *-X POST*"
+    effect: deny
+  - action: shell
+    resource: "gh api *--method POST*"
+    effect: deny
+  - action: shell
+    resource: "gh api *-X PUT*"
+    effect: deny
+  - action: shell
+    resource: "gh api *--method PUT*"
+    effect: deny
+  - action: shell
+    resource: "gh api *-X PATCH*"
+    effect: deny
+  - action: shell
+    resource: "gh api *--method PATCH*"
+    effect: deny
+  - action: shell
+    resource: "gh api *-X DELETE*"
+    effect: deny
+  - action: shell
+    resource: "gh api *--method DELETE*"
+    effect: deny
+  - action: shell
+    resource: "gh api *graphql*"
+    effect: deny
+  - action: shell
+    resource: "glab api *-f *"
+    effect: deny
+  - action: shell
+    resource: "glab api *-F *"
+    effect: deny
+  - action: shell
+    resource: "glab api *--field*"
+    effect: deny
+  - action: shell
+    resource: "glab api *--raw-field*"
+    effect: deny
+  - action: shell
+    resource: "glab api *--input*"
+    effect: deny
+  - action: shell
+    resource: "glab api *-X*"
+    effect: deny
+  - action: shell
+    resource: "glab api *--method*"
+    effect: deny
+  - action: shell
+    resource: "glab api *-X GET*"
+    effect: allow
+  - action: shell
+    resource: "glab api *--method GET*"
+    effect: allow
+  - action: shell
+    resource: "glab api *-X POST*"
+    effect: deny
+  - action: shell
+    resource: "glab api *--method POST*"
+    effect: deny
+  - action: shell
+    resource: "glab api *-X PUT*"
+    effect: deny
+  - action: shell
+    resource: "glab api *--method PUT*"
+    effect: deny
+  - action: shell
+    resource: "glab api *-X PATCH*"
+    effect: deny
+  - action: shell
+    resource: "glab api *--method PATCH*"
+    effect: deny
+  - action: shell
+    resource: "glab api *-X DELETE*"
+    effect: deny
+  - action: shell
+    resource: "glab api *--method DELETE*"
+    effect: deny
+  - action: shell
+    resource: "bd*"
+    effect: deny
+  - action: shell
+    resource: "bd show*"
+    effect: allow
+  - action: shell
+    resource: "bd --json show*"
+    effect: allow
+  - action: shell
+    resource: "bd list*"
+    effect: allow
+  - action: shell
+    resource: "bd --json list*"
+    effect: allow
+  - action: shell
+    resource: "bd ready*"
+    effect: allow
+  - action: shell
+    resource: "bd --json ready*"
+    effect: allow
+  - action: shell
+    resource: "bd search*"
+    effect: allow
+  - action: shell
+    resource: "bd --json search*"
+    effect: allow
+  - action: shell
+    resource: "bd query*"
+    effect: allow
+  - action: shell
+    resource: "bd --json query*"
+    effect: allow
+  - action: shell
+    resource: "bd count*"
+    effect: allow
+  - action: shell
+    resource: "bd --json count*"
+    effect: allow
+  - action: shell
+    resource: "bd blocked*"
+    effect: allow
+  - action: shell
+    resource: "bd --json blocked*"
+    effect: allow
+  - action: shell
+    resource: "bd children*"
+    effect: allow
+  - action: shell
+    resource: "bd --json children*"
+    effect: allow
+  - action: shell
+    resource: "bd graph*"
+    effect: allow
+  - action: shell
+    resource: "bd --json graph*"
+    effect: allow
+  - action: shell
+    resource: "bd history*"
+    effect: allow
+  - action: shell
+    resource: "bd --json history*"
+    effect: allow
+  - action: shell
+    resource: "bd status*"
+    effect: allow
+  - action: shell
+    resource: "bd --json status*"
+    effect: allow
+  - action: shell
+    resource: "bd stale*"
+    effect: allow
+  - action: shell
+    resource: "bd --json stale*"
+    effect: allow
+  - action: shell
+    resource: "bd types*"
+    effect: allow
+  - action: shell
+    resource: "bd --json types*"
+    effect: allow
+  - action: shell
+    resource: "bd statuses*"
+    effect: allow
+  - action: shell
+    resource: "bd --json statuses*"
+    effect: allow
+  - action: shell
+    resource: "bd where*"
+    effect: allow
+  - action: shell
+    resource: "bd --json where*"
+    effect: allow
+  - action: shell
+    resource: "bd info*"
+    effect: allow
+  - action: shell
+    resource: "bd --json info*"
+    effect: allow
+  - action: shell
+    resource: "bd context*"
+    effect: allow
+  - action: shell
+    resource: "bd --json context*"
+    effect: allow
+  - action: shell
+    resource: "bd ping*"
+    effect: allow
+  - action: shell
+    resource: "bd --json ping*"
+    effect: allow
+  - action: shell
+    resource: "bd memories*"
+    effect: allow
+  - action: shell
+    resource: "bd --json memories*"
+    effect: allow
+  - action: shell
+    resource: "bd recall*"
+    effect: allow
+  - action: shell
+    resource: "bd --json recall*"
+    effect: allow
+  - action: shell
+    resource: "bd find-duplicates*"
+    effect: allow
+  - action: shell
+    resource: "bd --json find-duplicates*"
+    effect: allow
+  - action: shell
+    resource: "bd lint*"
+    effect: allow
+  - action: shell
+    resource: "bd --json lint*"
+    effect: allow
+  - action: shell
+    resource: "bd events*"
+    effect: allow
+  - action: shell
+    resource: "bd --json events*"
+    effect: allow
+  - action: shell
+    resource: "bd diff*"
+    effect: allow
+  - action: shell
+    resource: "bd --json diff*"
+    effect: allow
+  - action: shell
+    resource: "bd dep list*"
+    effect: allow
+  - action: shell
+    resource: "bd --json dep list*"
+    effect: allow
+  - action: shell
+    resource: "bd dep tree*"
+    effect: allow
+  - action: shell
+    resource: "bd --json dep tree*"
+    effect: allow
+  - action: shell
+    resource: "bd dep cycles*"
+    effect: allow
+  - action: shell
+    resource: "bd --json dep cycles*"
+    effect: allow
+  - action: shell
+    resource: "bd label list*"
+    effect: allow
+  - action: shell
+    resource: "bd --json label list*"
+    effect: allow
+  - action: shell
+    resource: "bd config get*"
+    effect: allow
+  - action: shell
+    resource: "bd --json config get*"
+    effect: allow
+  - action: shell
+    resource: "bd config list*"
+    effect: allow
+  - action: shell
+    resource: "bd --json config list*"
+    effect: allow
+  - action: shell
+    resource: "bd epic status*"
+    effect: allow
+  - action: shell
+    resource: "bd --json epic status*"
+    effect: allow
+  - action: shell
+    resource: "bd state*"
+    effect: allow
+  - action: shell
+    resource: "bd --json state*"
+    effect: allow
+  - action: shell
+    resource: "bd --version*"
+    effect: allow
+  - action: shell
+    resource: "bd --help*"
+    effect: allow
+  - action: shell
+    resource: "bd * --help*"
+    effect: allow
+  - action: shell
+    resource: "bd comments add*"
+    effect: deny
+  - action: shell
+    resource: "bd config set*"
+    effect: deny
+  - action: shell
+    resource: "bd label add*"
+    effect: deny
+  - action: shell
+    resource: "bd dep add*"
+    effect: deny
+  - action: shell
+    resource: "ast-grep * -U*"
+    effect: deny
+  - action: shell
+    resource: "ast-grep *--update-all*"
+    effect: deny
+  - action: shell
+    resource: "ast-grep * -i*"
+    effect: deny
+  - action: shell
+    resource: "ast-grep *--interactive*"
+    effect: deny
+  - action: shell
+    resource: "semgrep *--autofix*"
+    effect: deny
+  - action: shell
+    resource: "semgrep *-a *"
+    effect: deny
   - action: subagent
     resource: "*"
     effect: deny

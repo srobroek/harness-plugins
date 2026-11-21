@@ -229,7 +229,7 @@ describe("plugin", () => {
     rules.findLast(
       (rule) =>
         (rule.action === "*" || rule.action === action) &&
-        (rule.resource === "*" || new RegExp(`^${rule.resource.replaceAll(".", "\\.").replaceAll("*", ".*")}$`).test(resource)),
+        (rule.resource === "*" || new RegExp(`^${rule.resource.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*")}$`).test(resource)),
     )?.effect
 
   test("renames a bash call to shell before the host looks the tool up", async () => {

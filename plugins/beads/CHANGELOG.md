@@ -1,3 +1,21 @@
+## beads [0.8.2](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.1...beads--v0.8.2) (2026-11-21)
+
+### Bug Fixes
+
+* **beads:** read body files and ANSI-C bodies in the PR bead gate ([e49e31e](https://github.com/srobroek/harness-plugins/commit/e49e31e73297ce5a2b7ee18b2df46410c521a7cc)), closes [srobroek/opencode-plugins#293](https://github.com/srobroek/opencode-plugins/issues/293)
+
+## beads [0.8.1](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.0...beads--v0.8.1) (2026-11-21)
+
+### Bug Fixes
+
+* **beads:** refuse issue writes into another repository's ledger the environment chose ([4f53846](https://github.com/srobroek/harness-plugins/commit/4f53846f279248a097bbb031eadd3cd2cda182a3))
+
+## beads [0.8.0](https://github.com/srobroek/harness-plugins/compare/beads--v0.7.1...beads--v0.8.0) (2026-11-21)
+
+### Features
+
+* **autopilot:** autopilot_export_review for read-only reviewers ([353abe2](https://github.com/srobroek/harness-plugins/commit/353abe2355f824084499faebdb34734c3c40e26d))
+
 ## beads [0.7.1](https://github.com/srobroek/harness-plugins/compare/beads--v0.7.0...beads--v0.7.1) (2026-11-20)
 
 ### Bug Fixes

@@ -76,6 +76,33 @@ export function ownWorktreeAsk(input: { action: string; effect: Effect; resource
   })
 }
 
+/**
+ * Whether an `external_directory` ask is for `<dir>/*` where `dir` is `root`, the real path of the
+ * one export directory the run made last (already checked to be a plain directory), or a directory
+ * under it. A host may ask for the directory that holds a file, so a reader of an exported file may
+ * ask for a subdirectory; the host's types give the resource only as an opaque string, so both
+ * forms are accepted and both stay inside that one directory. Real paths are compared, so a symlink
+ * inside the export that leads outside, a `..` climb and a sibling sharing the prefix all fail. Only
+ * an `ask` is ever turned into an allow.
+ *
+ * This is a directory grant, not a read grant: the ask carries no read/write distinction (see
+ * `PermissionEvaluation`: action, resources, metadata, the originating tool call id), and when the
+ * user's rules allow `edit` for paths, `external_directory` is the only prompt between a model and a
+ * write there. The directory is therefore model-writable, and the integrity of what a reviewer reads
+ * comes from the export's manifest (`verifyExport`), never from this permission.
+ */
+export function reviewExportAsk(input: { action: string; effect: Effect; resources: ReadonlyArray<string>; root: string | undefined; canon: Canon }): boolean {
+  const { root } = input
+  if (input.effect !== "ask" || input.action !== EXTERNAL_DIRECTORY || root === undefined || input.resources.length === 0) return false
+  return input.resources.every((resource) => {
+    if (!resource.endsWith("/*")) return false
+    const dir = resource.slice(0, -2)
+    if (!dir.startsWith("/") || /[*?]/.test(dir)) return false
+    const resolved = input.canon(dir)
+    return resolved !== undefined && (resolved === root || resolved.startsWith(`${root}/`))
+  })
+}
+
 const FULL_SHA = /^[0-9a-f]{40}$/
 
 /** The permission resource of one merge: `<pr>@<sha>`. */
@@ -103,13 +130,36 @@ function methodRefusal(repo: unknown, method: string): string | undefined {
 }
 
 /**
+ * What the plugin's own review says about a merge: `granted` is the `self-review` grant, and
+ * `approvedSha` the head a verified review record approved (`undefined` when there is none).
+ */
+export type Witnessed = { granted: boolean; approvedSha: string | undefined }
+
+/** Whether a witnessed review stands in for the forge approval of `sha`: the grant is set and the record approves exactly that head. */
+export function witnessedApproval(witnessed: Witnessed | undefined, sha: string): boolean {
+  return witnessed !== undefined && witnessed.granted && witnessed.approvedSha !== undefined && witnessed.approvedSha.toLowerCase() === sha.toLowerCase()
+}
+
+/**
  * Why a PR may not be merged at `sha` with `method`, or `undefined` when it may. `view` is `gh pr
  * view --json state,headRefOid,baseRefName,author`; `reviews`, `runs` and `status` are the REST
  * payloads for the PR's reviews and the commit's check runs and status; `protection` and `rules` are
  * the base branch's required-status-checks protection and rulesets, `undefined` when unreadable (which refuses). Approval is a review by someone other than the
- * author, on exactly `sha`; comments never count. Anything unreadable refuses.
+ * author, on exactly `sha`; comments never count. A `witnessed` review under the `self-review` grant
+ * replaces that approval and nothing else. Anything unreadable refuses.
  */
-export function mergeRefusal(input: { sha: string; method: string; view: unknown; reviews: unknown; runs: unknown; status: unknown; protection: unknown; rules: unknown; repo: unknown }): string | undefined {
+export function mergeRefusal(input: {
+  sha: string
+  method: string
+  view: unknown
+  reviews: unknown
+  runs: unknown
+  status: unknown
+  protection: unknown
+  rules: unknown
+  repo: unknown
+  witnessed?: Witnessed
+}): string | undefined {
   const sha = input.sha.toLowerCase()
   if (!FULL_SHA.test(sha)) return "sha must be the full 40-digit head commit"
   const head = text(input.view, "headRefOid")?.toLowerCase()
@@ -118,8 +168,11 @@ export function mergeRefusal(input: { sha: string; method: string; view: unknown
   if (state !== "OPEN") return `PR state is ${state ?? "unreadable"}, expected OPEN`
   const method = methodRefusal(input.repo, input.method)
   if (method !== undefined) return method
-  const approval = reviewApproval(input.reviews, text(own(input.view, "author"), "login") ?? null, sha)
-  if (!approval.ok) return approval.reason
+  // The only requirement a witnessed review replaces is the forge's approval; everything else still applies.
+  if (!witnessedApproval(input.witnessed, sha)) {
+    const approval = reviewApproval(input.reviews, text(own(input.view, "author"), "login") ?? null, sha)
+    if (!approval.ok) return approval.reason
+  }
   if (usesMergeQueue(input.rules)) return "the base branch uses a merge queue; merge queues unsupported"
   const required = requiredContexts(input.protection, input.rules, { requireBoth: true })
   const checks = commitChecks({ runs: input.runs, status: input.status, required, requireKnown: true })

@@ -112,9 +112,12 @@ type Evaluation = {
   message?: string
 }
 
-/** Turn an allowed land or cleanup into a prompt; a configured deny never reaches the hook. */
-export function confirmDelivery(evaluation: Evaluation): void {
-  if (evaluation.effect !== "allow") return
+/**
+ * Turn an allowed land or cleanup into a prompt; a configured deny never reaches the hook.
+ * A subagent cannot answer a prompt (the safety plugin would deny it), so it keeps its allow.
+ */
+export function confirmDelivery(evaluation: Evaluation, subagent = false): void {
+  if (evaluation.effect !== "allow" || subagent) return
   if (evaluation.action === LAND_ACTION) {
     evaluation.effect = "ask"
     evaluation.message = `Land ${evaluation.resources.join(", ")}? delivery_land merges at most once and writes a landing receipt.`
@@ -453,7 +456,14 @@ export async function setupDelivery(
   disposers.push(() => pending.dispose())
 
   if (options.confirm) {
-    const gate = await ctx.permission.hook("evaluate", confirmDelivery)
+    const gate = await ctx.permission.hook("evaluate", async (evaluation) => {
+      if (evaluation.effect !== "allow" || (evaluation.action !== LAND_ACTION && evaluation.action !== CLEANUP_ACTION)) return
+      // A failed lookup keeps the prompt (fail closed).
+      const info = (await ctx.session.get({ sessionID: evaluation.sessionID } as never).catch(() => undefined)) as
+        | { parentID?: string | null }
+        | undefined
+      confirmDelivery(evaluation, typeof info?.parentID === "string" && info.parentID !== "")
+    })
     disposers.push(() => gate.dispose())
   }
 

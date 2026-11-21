@@ -21,7 +21,9 @@ import {
   embeddedWriteTargets,
   hold,
   parseLinuxStatStartIdentity,
+  planEmbeddedWrites,
   release,
+  resolveBdTargets,
   resolveBunBinary,
   setPreflightWaitForTests,
   setProcessStartIdentityForTests,
@@ -40,6 +42,7 @@ const host = hostname().split(".")[0] ?? "localhost"
 const BD_ON_PATH = Bun.which("bd") !== null
 /** The runner's store flags, as the gate writes them: the real path held, the path as named. */
 const runnerStore = (store: string): string[] => ["--beads-store", realpathSync(store), "--beads-store-selected", store]
+
 test("resolves mise-only Bun and completes a real runner write", () => {
   const root = mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "beads-lock-mise-"))
   const marker = join(root, "written")
@@ -682,6 +685,58 @@ describe("compound commands", () => {
     }
   })
 
+  // Each read form below was run against a scratch embedded store on bd 1.3.1 and left every
+  // file of the store byte-identical; their `--help` text calls them list/show/status.
+  test.each([
+    "bd dolt status",
+    "bd dolt show",
+    "bd dolt test",
+    "bd dolt remote list",
+    "bd dolt remote list --json",
+    "bd label list bd-1",
+    "bd label list-all",
+    "bd todo list",
+    "bd worktree list",
+    "bd worktree info",
+    "bd hooks list",
+    "bd repo list",
+    "bd epic status",
+    "bd vc status",
+    "bd federation list-peers",
+    "bd federation status",
+    "bd backup status",
+    "bd mol current",
+    "bd mol progress",
+    "bd mol stale",
+    "bd mol ready",
+  ])("%s is a read", (command) => {
+    expect(embeddedWriteTargets(command, root, { BEADS_DIR: store })).toEqual({ kind: "stores", stores: [] })
+  })
+
+  test.each([
+    "bd dolt remote add origin url",
+    "bd dolt remote remove origin",
+    "bd dolt remote reset-data origin",
+    "bd dolt remote",
+    "bd dolt push",
+    "bd dolt pull",
+    "bd dolt commit",
+    "bd dolt set port 1",
+    "bd dolt start",
+    "bd label add bd-1 x",
+    "bd todo add t",
+    "bd worktree create w",
+    "bd hooks install",
+    "bd repo add r",
+    "bd vc commit",
+    "bd federation sync",
+    "bd backup sync",
+    "bd mol pour p",
+    "bd mol seed x",
+  ])("%s stays a write: only the verified nested reads are reads", (command) => {
+    expect(embeddedWriteTargets(command, root, { BEADS_DIR: store })).toEqual({ kind: "stores", stores: [held] })
+  })
+
   test(
     "runs each write in a compound command under its own hold, one after another",
     async () => {
@@ -700,7 +755,7 @@ describe("compound commands", () => {
       const command = await rewritten("bd update bd-1 --claim | bd update bd-2 --claim; bd close bd-3 && echo ok", real)
       const run = Bun.spawnSync(["/bin/sh", "-c", command], {
         cwd: root,
-        env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
+        env: scrubbedBeadsEnv({ PATH: `${bin}:${process.env.PATH ?? ""}` }),
         stdout: "pipe",
         stderr: "pipe",
       })
@@ -1033,4 +1088,167 @@ describe("registry left by another plugin version", () => {
       rmSync(root, { recursive: true, force: true })
     }
   })
+})
+
+describe("who chose the ledger a write lands in", () => {
+  /** `beadsDirAssigned` of each observed write: did the command line itself set BEADS_DIR? */
+  const assigned = (command: string, env: NodeJS.ProcessEnv): Array<boolean | undefined> => {
+    const seen: Array<boolean | undefined> = []
+    planEmbeddedWrites(command, "/work", env, {
+      classify: false,
+      observe: (target) => seen.push(target.beadsDirAssigned),
+    })
+    return seen
+  }
+
+  test.each([
+    ["bd create --title t", false],
+    ["BEADS_DIR=/x/.beads bd create --title t", true],
+    ["export BEADS_DIR=/x/.beads; bd create --title t", true],
+    ["BEADS_DIR=/x/.beads; bd create --title t", true],
+    ["export OTHER=1; bd create --title t", false],
+    ["export BEADS_DIR=/x/.beads; unset BEADS_DIR; bd create --title t", false],
+  ])("%s -> assigned %p", (command, expected) => {
+    expect(assigned(command, { BEADS_DIR: "/inherited/.beads" })).toEqual([expected])
+  })
+
+  test("the same write repeated, first inherited then with an identical explicit BEADS_DIR, is one placed target", () => {
+    const store = "/inherited/.beads"
+    const command = `bd update proj-1 --status open; BEADS_DIR=${store} bd update proj-1 --status open`
+    const invocation = { verb: "update", args: ["proj-1", "--status", "open"], globals: [] }
+    const target = resolveBdTargets(command, "/work", { BEADS_DIR: store }).get(invocation)
+    expect(target).toBeDefined()
+    expect(target).not.toHaveProperty("unresolved")
+  })
+
+  test.each([
+    ["exec 'bd' create --title t", true],
+    ["exec bd create --title t", true],
+    ["env 'bd' create --title t", true],
+    ["echo x | xargs 'bd' close", true],
+    ["id=$(bd create --title t --silent)", true],
+    ["bd create --title t", false],
+    ["'bd' create --title t", false],
+    ["echo 'bd'", false],
+  ])("%s -> the planner reports an unplaced bd: %p", (command, unplaced) => {
+    const reasons: string[] = []
+    planEmbeddedWrites(command, "/work", { BEADS_DIR: "/x/.beads" }, { classify: false, unplaced: (reason) => reasons.push(reason) })
+    expect(reasons.length > 0).toBe(unplaced)
+  })
+
+  test("each occurrence keeps its own provenance for the refusal", () => {
+    const seen: boolean[] = []
+    const command = "bd update proj-1 --status open; BEADS_DIR=/x/.beads bd update proj-1 --status open"
+    planEmbeddedWrites(command, "/work", { BEADS_DIR: "/x/.beads" }, { classify: false, observe: (t) => seen.push(t.beadsDirAssigned) })
+    expect(seen).toEqual([false, true])
+  })
+
+  /** Reasons the planner reports as unplaced for `command`, and the writes it observes. */
+  const plan = (command: string, env: NodeJS.ProcessEnv = { BEADS_DIR: "/x/.beads" }) => {
+    const reasons: string[] = []
+    const writes: Array<{ verb: string; assigned: boolean }> = []
+    planEmbeddedWrites(command, "/work", env, {
+      classify: false,
+      unplaced: (reason) => reasons.push(reason),
+      observe: (target) => writes.push({ verb: target.invocation.verb, assigned: target.beadsDirAssigned }),
+    })
+    return { reasons, writes }
+  }
+
+  test.each([['"b"d create --title t'], ["b''d create --title t"], ["\\bd create --title t"]])(
+    "a quote-split or escaped bd (%s) is placed as a bd write even though the text holds no bare bd word",
+    (command) => {
+      expect(plan(command).writes.map((w) => w.verb)).toEqual(["create"])
+    },
+  )
+
+  test('exec "b"d create is reported as a wrapper followed by bd even though the text holds no bare bd word', () => {
+    expect(plan('exec "b"d create --title t').reasons.join("\n")).toContain("follows the wrapper")
+  })
+
+  test.each([['"b"d list'], ["b''d list"], ["\\bd list"]])("%s is reported as an obfuscated command name", (command) => {
+    expect(plan(command).reasons.join("\n")).toContain("quote-split or escaped")
+  })
+
+  test.each([["bd create --title t"], ["'bd' create --title t"], ['"bd" create --title t']])(
+    "%s, a bd whose quotes wrap the whole name, is placed normally",
+    (command) => {
+      const { reasons, writes } = plan(command)
+      expect(reasons).toEqual([])
+      expect(writes.map((w) => w.verb)).toEqual(["create"])
+    },
+  )
+
+  test.each([
+    ["alias b=bd\nb create --title t", "alias"],
+    ["alias b=bd; b create --title t", "alias"],
+    ["f() { bd create --title t; }; f", "shell function"],
+    ["f ()\n{\n bd create --title t\n}\nf", "shell function"],
+    ["function f { bd create --title t; }; f", "shell function"],
+  ])("%j is reported as unplaced (%s)", (command, what) => {
+    expect(plan(command).reasons.join("\n")).toContain(what)
+  })
+
+  test.each([
+    ["f() { export BEADS_DIR=/y/.beads; }; f; bd create --title t"],
+    ["function f { export BEADS_DIR=/y/.beads; }\nbd create --title t"],
+    ["f() { :; }; export BEADS_DIR=/y/.beads; bd create --title t"],
+  ])("a function definition in the command voids every BEADS_DIR provenance: %j", (command) => {
+    expect(plan(command).writes.map((w) => w.assigned)).toEqual([false])
+  })
+
+  test.each([
+    ["git diff -- 'bd'"],
+    ["grep -r 'bd' ."],
+    ["gh label create 'bd'"],
+  ])("%s names bd as an operand, not as a command", (command) => {
+    expect(plan(command).reasons).toEqual([])
+  })
+
+  test.each([
+    ["flock LOCKFILE bd create --title t"],
+    ["taskset 0x1 bd create --title t"],
+    ["xargs grep bd"],
+    ["sudo -u build ls bd"],
+    ["git log -- bd"],
+  ])("%s: an unquoted bd operand is a launch the lock fails closed on", (command) => {
+    expect(plan(command).reasons.join("\n")).toContain("launched through")
+  })
+
+  test.each([
+    ["flock LOCKFILE 'bd' create --title t"],
+    ["taskset 0x1 \"bd\" create --title t"],
+    ["xargs grep 'bd'"],
+    ["sudo -u build ls 'bd'"],
+  ])("%s: a wrapper followed anywhere by a quoted bd is reported to the foreign-ledger gate, without parsing arity", (command) => {
+    expect(plan(command).reasons.join("\n")).toContain("follows the wrapper")
+  })
+
+  test.each([
+    ["BEADS_DIR=/x/.beads flock LOCKFILE bd create --title t"],
+    ["env BEADS_DIR=/x/.beads taskset 0x1 bd create --title t"],
+  ])("%s: a literal BEADS_DIR= on the command line is not reported", (command) => {
+    expect(plan(command).reasons.join("\n")).not.toContain("follows the wrapper")
+  })
+
+  test.each([
+    ["sudo -u build bd close x"],
+    ["env A=1 bd close x"],
+    ["timeout 60 bd close x"],
+    ["nice -n 5 bd close x"],
+    ["xargs -n1 bd close"],
+    ["nohup exec bd close x"],
+    ["find . -exec bd close {} \\;"],
+  ])("%s runs bd behind a recognised wrapper", (command) => {
+    expect(plan(command).reasons.join("\n")).toContain("launched through")
+  })
+
+  test.each([["exec 'bd' close x"], ["sudo -u build 'bd' close x"], ["env 'bd' close x"]])(
+    "%s: a quoted bd behind a wrapper is not a lock launch, but the foreign-ledger gate is told",
+    (command) => {
+      const reasons = plan(command).reasons.join("\n")
+      expect(reasons).not.toContain("launched through")
+      expect(reasons).toContain("follows the wrapper")
+    },
+  )
 })

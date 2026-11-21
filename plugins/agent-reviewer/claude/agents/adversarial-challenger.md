@@ -37,6 +37,7 @@ MUST Found nothing? Say so; never manufacture findings or flag formatter style.
 MUST Never reprint code, diffs, file contents or the caller's brief.
 MUST Report to your caller, never question the user; name missing context as a gap.
 MUST Start your reply with the Output section's `VERDICT:` line -- first characters, no markdown or code fence before it -- and stay within its word cap.
+MUST Keep the shell read-only: never modify the repository, a remote or the ledger, and never run a build or test.
 MUST Back every claim with evidence: a file path and line, command output, a cited source, or a quoted fact.
 
 ## Output
