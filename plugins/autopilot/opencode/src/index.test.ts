@@ -1393,7 +1393,7 @@ describe("autopilot_review", () => {
   const prompts = () => fake.calls.filter((call) => call.method === "session.prompt").map((call) => call.input as { sessionID: string; text: string }).filter((input) => input.sessionID !== "ses_lead")
 
   /** The forge, with no approving review at all: only a plugin review can approve. */
-  const forge = (head = headSha) => {
+  const forge = (head = headSha, over: Record<string, unknown> = {}) => {
     ghReplies = {
       "json baseRefName,headRefOid": ok({ baseRefName: "trunk", headRefOid: head }),
       "-X PUT": ok({ merged: true, sha: "f".repeat(40), message: "Pull Request successfully merged" }),
@@ -1405,8 +1405,10 @@ describe("autopilot_review", () => {
       required_status_checks: ok({ contexts: ["ci"] }),
       "rules/branches": ok([[]]),
       "repo view": ok({ squashMergeAllowed: true, rebaseMergeAllowed: false, mergeCommitAllowed: true }),
+      "repos/{owner}/{repo}/pulls/12": ok({ state: "open", head: { sha: head }, base: { sha: baseSha, ref: "trunk" }, changed_files: 1, ...over }),
     }
   }
+  const creates = () => fake.calls.filter((call) => call.method === "session.create")
 
   /** What the host holds for the reviewer once it answered `reply` and went idle. */
   const answer = (reply: string, extra: Record<string, unknown>[] = [], outcome = "succeeded") => {
@@ -1511,6 +1513,94 @@ describe("autopilot_review", () => {
     expect(prompts()).toEqual([])
     expect(fake.storage.has(pointerKey())).toBe(false)
     expect(fake.calls.filter((call) => call.method === "session.remove")).toHaveLength(1)
+  })
+
+  test("refuses a PR that is not open and creates no reviewer", async () => {
+    await armed({ allow: ["self-review"] })
+    forge(headSha, { state: "closed" })
+    expect(await review()).toMatch(/^refused: .*open/i)
+    expect(creates()).toEqual([])
+  })
+
+  test("exports against the base SHA GitHub reports, not a local branch that has moved", async () => {
+    await armed({ allow: ["self-review"] })
+    git("branch", "-f", "trunk", headSha)
+    expect(JSON.parse(await review())).toMatchObject({ started: true })
+    expect(prompts()[0]?.text).toContain("+two")
+  })
+
+  test("refuses when GitHub's base SHA is not present locally", async () => {
+    await armed({ allow: ["self-review"] })
+    forge(headSha, { base: { sha: "9".repeat(40), ref: "trunk" } })
+    expect(await review()).toMatch(/^refused: .*base/)
+    expect(creates()).toEqual([])
+  })
+
+  test("refuses an empty export when GitHub says the PR changes files", async () => {
+    await armed({ allow: ["self-review"] })
+    forge(headSha, { base: { sha: headSha, ref: "trunk" }, changed_files: 3 })
+    expect(await review()).toMatch(/^refused: .*empty/)
+    expect(creates()).toEqual([])
+  })
+
+  describe("the once-only claim", () => {
+    const claimDir = () => join(latest(), "..", "review-claims")
+    test("two simultaneous calls create exactly one reviewer", async () => {
+      await armed({ allow: ["self-review"] })
+      const outs = await Promise.all([review(), review()])
+      expect(creates()).toHaveLength(1)
+      expect(outs.filter((out) => out.startsWith("{") && JSON.parse(out).started === true)).toHaveLength(1)
+    })
+
+    test("a second PR number for the same head does not start another reviewer", async () => {
+      await armed({ allow: ["self-review"] })
+      await review()
+      expect(await review({ pr: 13, sha: headSha })).toMatch(/already/)
+      expect(creates()).toHaveLength(1)
+    })
+
+    test.each([
+      ["a deleted reviewer session", () => void fake.sessions.delete(pointer().session)],
+      ["a follow-up message", () => answer(`VERDICT: APPROVE ${headSha}`, [{ type: "user", id: "m9", text: "again", time: { created: NOW } }])],
+      ["a failed turn", () => answer("x", [], "failed")],
+    ])("is kept after %s, so the head is not reviewed again", async (_name, spoil) => {
+      await armed({ allow: ["self-review"] })
+      await review()
+      spoil()
+      expect(await review()).toMatch(/already/)
+      expect(creates()).toHaveLength(1)
+    })
+
+    test("a refused start releases the claim, so a retry can run", async () => {
+      await armed({ allow: ["self-review"] })
+      fake.agents.delete("code-reviewer")
+      expect(await review()).toStartWith("refused:")
+      fake.agents.set("code-reviewer", { id: "code-reviewer" })
+      expect(JSON.parse(await review())).toMatchObject({ started: true })
+    })
+
+    test("claim files live beside the run directories", async () => {
+      await armed({ allow: ["self-review"] })
+      await review()
+      expect(readdirSync(claimDir()).sort()).toEqual([`head-${headSha}`, `pr-12@${headSha}`])
+    })
+
+    test("a failed cleanup is journaled and keeps the claim", async () => {
+      await armed({ allow: ["self-review"] })
+      const session = fake.context.session as unknown as Record<string, (input: unknown) => Promise<unknown>>
+      const create = session.create as (input: unknown) => Promise<unknown>
+      session.create = async (input) => {
+        const exports = readdirSync(join(realpathSync(latest()), "review", headSha))
+        writeFileSync(join(realpathSync(latest()), "review", headSha, exports[0] as string, "files", "b.txt"), "evil\n")
+        return create(input)
+      }
+      session.remove = async () => {
+        throw new Error("remove failed")
+      }
+      expect(await review()).toStartWith("refused:")
+      expect(journal().some((entry) => entry.type === "issue" && entry.summary.includes("remove failed"))).toBe(true)
+      expect(await review()).toMatch(/already/)
+    })
   })
 
   describe("merging on the plugin's review", () => {
@@ -1639,10 +1729,40 @@ describe("autopilot_review", () => {
       expect(fake.calls.filter((call) => call.method === "session.interrupt").map((call) => (call.input as { sessionID: string }).sessionID)).toEqual([pointer().session])
     })
 
+    test("resolves every review across pages, enforces every deadline, and shows at most 20", async () => {
+      await armed({ allow: ["self-review"] })
+      for (let n = 0; n < 130; n++) {
+        const sha = n.toString(16).padStart(40, "0")
+        const session = `ses_old${n}`
+        fake.sessions.set(session, { id: session, parentID: "ses_lead", agent: "code-reviewer", metadata: { source: "autopilot", pr: "5", sha, nonce: "n" } })
+        fake.storage.set(`review-session/ses_lead/5@${sha}`, { pr: "5", sha, session, nonce: "n", promptHash: "a".repeat(64), manifestHash: "b".repeat(64), at: NOW - 31 * 60_000 })
+      }
+      const out = (await status({ action: "status" })).reviews as unknown[]
+      expect(out).toHaveLength(20)
+      expect(fake.calls.filter((call) => call.method === "session.interrupt")).toHaveLength(130)
+    })
+
     test("reports no reviews when none was started", async () => {
       await armed()
       expect(await status({ action: "status" })).not.toHaveProperty("reviews")
     })
+  })
+
+  test("a reviewer that finished after its deadline is void even if polled later", async () => {
+    await armed({ allow: ["merge", "self-review"] })
+    await review()
+    approve()
+    const late = fake.messages.get(pointer().session) as { time: { created: number } }[]
+    for (const message of late) message.time.created = NOW + 31 * 60_000
+    expect(await merge()).toContain("approval")
+    expect((await status({ action: "status" })).reviews).toEqual([{ pr: "12", sha: headSha, state: "void", reason: expect.stringContaining("deadline") }])
+  })
+
+  test("an approval followed by a retraction line is no approval", async () => {
+    await armed({ allow: ["merge", "self-review"] })
+    await review()
+    answer(`VERDICT: APPROVE ${headSha}\nActually, wait: I found a bug.`)
+    expect(await merge()).toContain("approval")
   })
 
   test("a finished review of a head is not run again, so a verdict cannot be re-rolled", async () => {

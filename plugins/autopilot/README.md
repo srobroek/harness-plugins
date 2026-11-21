@@ -233,8 +233,18 @@ agent switch or later activity; the last idle and the session outcome are
 `succeeded`; and the reviewer's final assistant text, outside any code fence,
 ends in a verdict line naming `sha`. A follow-up message, a failed or
 interrupted turn or a verdict for another SHA voids it. A reviewer that is not
-done 30 minutes after the start is interrupted and voided. A head with a
-`done` review is not reviewed again, so a verdict cannot be re-rolled.
+done 30 minutes after the start is interrupted and voided, and so is a reviewer
+whose transcript shows it finished later than that. The verdict line must be the
+last non-blank line of the reply. The base of the export is the base commit SHA
+GitHub reports for the PR, fetched if needed; the call refuses when it is
+missing or the export is empty while GitHub reports changed files.
+
+A head is reviewed at most once, however the review ends. Before any reviewer
+exists the call creates claim files (`pr-<pr>@<sha>` and `head-<sha>`) in
+`<git common dir>/opencode-scratch/autopilot/review-claims/`, with the same
+create-exclusive link the run state uses. They are released only when the start
+is refused, never after a verdict, void, deleted session or follow-up, so a
+verdict cannot be re-rolled.
 
 Under `--allow self-review`, `autopilot_merge` skips only the GitHub approval,
 and only when the resolved review approves exactly the head being merged.

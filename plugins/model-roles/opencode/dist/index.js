@@ -90,10 +90,14 @@ class IdleReports {
 var VERDICT_LINE = /^VERDICT:\s*(APPROVE|REQUEST[-_]CHANGES|COMMENT)\b(.*)$/i;
 var OPEN_FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
 var CLOSE_FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
-function parseVerdictLine(text) {
+function parseVerdictLine(text, options = {}) {
   let found;
+  let lastNonBlank = -1;
+  const lines = text.split(/\r?\n/);
   let fence;
-  for (const line of text.split(/\r?\n/)) {
+  for (const [index, line] of lines.entries()) {
+    if (line.trim() !== "")
+      lastNonBlank = index;
     if (fence !== undefined) {
       const closes = CLOSE_FENCE.exec(line)?.[1];
       if (closes?.startsWith(fence.char) && closes.length >= fence.length)
@@ -109,9 +113,11 @@ function parseVerdictLine(text) {
       continue;
     const match = VERDICT_LINE.exec(line.trim());
     if (match?.[1] !== undefined)
-      found = { verdict: match[1].toLowerCase().replace("_", "-"), rest: (match[2] ?? "").trim() };
+      found = { verdict: match[1].toLowerCase().replace("_", "-"), rest: (match[2] ?? "").trim(), line: index };
   }
-  return found;
+  if (found === undefined || options.strict === true && found.line !== lastNonBlank)
+    return;
+  return { verdict: found.verdict, rest: found.rest };
 }
 function parseVerdict(text) {
   return parseVerdictLine(text)?.verdict;

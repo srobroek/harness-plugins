@@ -99,8 +99,8 @@ const voided = (reason: string): ReviewResolution => ({ state: "void", reason })
  * one the plugin created for this lead (parent, agent, metadata, id), the transcript holds exactly
  * the one user message whose hash the pointer names and nothing the plugin did not send (a second
  * user message, a synthetic message or an agent switch voids it), the last idle succeeded with
- * nothing after it, and the final assistant reply ends with a verdict line, outside any fence,
- * that names the head. Until the reviewer is idle it is `pending`, and `expired` past the deadline.
+ * nothing after it, and the final assistant reply ends with a verdict line, outside any fence
+ * and last of the reply, that names the head, and the turn finished by the deadline. Until the reviewer is idle it is `pending`, and `expired` past the deadline.
  */
 export function resolveReview(input: { pointer: ReviewPointer; lead: string; session: unknown; messages: unknown; now: number }): ReviewResolution {
   const { pointer, lead, now } = input
@@ -135,9 +135,14 @@ export function resolveReview(input: { pointer: ReviewPointer; lead: string; ses
   if (reply === undefined || reply.agent !== REVIEW_AGENT) return voided("the reviewer wrote no reply")
   if (reply.finish !== "stop" || reply.error !== undefined) return voided("the reviewer's reply did not finish cleanly")
   const text = replyText(reply)
-  const line = text === undefined ? undefined : parseVerdictLine(text)
+  const line = text === undefined ? undefined : parseVerdictLine(text, { strict: true })
   if (line === undefined) return voided("the reviewer's reply has no verdict line outside a code fence")
   if (line.rest.toLowerCase() !== pointer.sha) return voided("the reviewer's verdict line does not name the reviewed head")
   const created = (idle.time as { created?: unknown } | undefined)?.created
+  const completed = (reply.time as { completed?: unknown } | undefined)?.completed
+  // The turn's own finish time, from the transcript, so a late finish stays late however soon it is polled.
+  const finished = [created, completed].filter((time): time is number => typeof time === "number")
+  if (finished.length === 0) return voided("the transcript carries no finish time for the reviewer's turn")
+  if (finished.some((time) => time > pointer.at + REVIEW_DEADLINE_MS)) return voided("the reviewer finished after its deadline")
   return { state: "done", record: { pr: pointer.pr, sha: pointer.sha, verdict: line.verdict, reviewerSession: pointer.session, at: typeof created === "number" ? created : pointer.at } }
 }

@@ -50,3 +50,19 @@ describe("parseVerdictLine", () => {
     expect(parseVerdictLine(text)).toEqual(expected)
   })
 })
+
+describe("parseVerdictLine strict", () => {
+  test.each<[string, boolean]>([
+    ["VERDICT: APPROVE abc", true],
+    ["notes\nVERDICT: APPROVE abc\n\n  \n", true],
+    ["VERDICT: APPROVE abc\nbut wait", false],
+    ["VERDICT: APPROVE abc\n```\ncode\n```", false],
+    ["VERDICT: APPROVE abc\nVERDICT: REQUEST_CHANGES abc", true],
+  ])("%j is a final verdict: %j", (text, expected) => {
+    expect(parseVerdictLine(text, { strict: true }) !== undefined).toBe(expected)
+  })
+
+  test("the default mode keeps the last verdict line wherever it is", () => {
+    expect(parseVerdictLine("VERDICT: APPROVE abc\nbut wait")).toEqual({ verdict: "approve", rest: "abc" })
+  })
+})

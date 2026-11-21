@@ -74,6 +74,16 @@ describe("resolveReview", () => {
     expect(resolve({ lead: "ses_lead2" })).toMatchObject({ state: "void" })
   })
 
+  test("a verdict that is not the last non-blank line is no approval", () => {
+    expect(resolve({ messages: [user(), assistant(`VERDICT: APPROVE ${SHA}\nOn reflection, there is a bug.`), idle()] })).toMatchObject({ state: "void" })
+    expect(resolve({ messages: [user(), assistant(`VERDICT: APPROVE ${SHA}\n\n`), idle()] })).toMatchObject({ state: "done" })
+  })
+
+  test("a turn that finished after the deadline is void", () => {
+    const late = { ...idle(), time: { created: 1_000 + 30 * 60_000 + 1 } }
+    expect(resolve({ messages: [user(), assistant(`VERDICT: APPROVE ${SHA}`), late] })).toMatchObject({ state: "void", reason: expect.stringContaining("deadline") })
+  })
+
   test("a verdict naming another sha does not count", () => {
     expect(resolve({ messages: [user(), assistant(`VERDICT: APPROVE ${OTHER}`), idle()] })).toMatchObject({ state: "void" })
   })

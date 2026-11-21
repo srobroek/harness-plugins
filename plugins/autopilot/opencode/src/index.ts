@@ -38,6 +38,7 @@ import {
   rootIntact,
   type Witnessed,
 } from "./policy.ts"
+import { claimNames, releaseClaims, takeClaims } from "./review-claim.ts"
 import { type ExportResult, exportDirFor, exportReview, reviewCurrentKey, reviewManifestKey, verifyExport } from "./review-export.ts"
 import {
   buildReviewPrompt,
@@ -62,6 +63,7 @@ export * from "./automation.ts"
 export * from "./gather.ts"
 export * from "./journal.ts"
 export * from "./policy.ts"
+export * from "./review-claim.ts"
 export * from "./review-export.ts"
 export * from "./review-session.ts"
 export * from "./rundir.ts"
@@ -200,8 +202,11 @@ export const MAX_REPROMPTS = 2
 /** A bound on child-session pages per tick (100 sessions each). */
 const MAX_CHILD_PAGES = 50
 
-/** How many reviews a status report resolves. */
+/** How many reviews a status report shows. */
 const MAX_REVIEWS_REPORTED = 20
+
+/** A bound on storage pages (100 pointers each) one status report resolves. */
+const MAX_REVIEW_PAGES = 50
 
 const NO_LEDGER = "the run has no beads ledger to read or write"
 
@@ -1085,9 +1090,39 @@ export class Autopilot {
     if (!/^\d{1,9}$/.test(pr) || Number(pr) < 1) return "refused: pr must be a positive PR number"
     if (!/^[0-9a-f]{40}$/.test(sha)) return "refused: sha must be the full 40-digit head commit"
     const { lead, dir, state } = running as typeof running & { state: RunState }
-    const existing = await this.#resolveReview(lead, pr, sha)
-    if (existing?.state === "pending") return JSON.stringify({ started: false, state: "pending", note: "a review of this head is already running" })
-    if (existing?.state === "done") return JSON.stringify({ started: false, state: "done", verdict: existing.record.verdict, reviewer: existing.record.reviewerSession })
+    // Before anything else, and before any reviewer session exists: a head is reviewed at most once.
+    const names = claimNames(pr, sha)
+    const claim = takeClaims(dir.root, names, `${ID}/${dir.runId}/${randomUUID()}`)
+    if (!claim.ok) {
+      if ("error" in claim) return `refused: could not take the review claim (${claim.error})`
+      const existing = await this.#resolveReview(lead, pr, sha)
+      const note = "this head already has a review; it is never reviewed twice"
+      if (existing?.state === "done") return JSON.stringify({ started: false, state: "done", verdict: existing.record.verdict, reviewer: existing.record.reviewerSession, note })
+      if (existing?.state === "void") return JSON.stringify({ started: false, state: "void", reason: existing.reason, note })
+      return JSON.stringify({ started: false, state: "pending", note })
+    }
+    // The claim is given back only when this start was refused and left no reviewer behind.
+    const hold = { keep: false }
+    let result: string
+    try {
+      result = await this.#startReview({ lead, dir, state, sessionID, pr, sha, hold })
+    } catch (error) {
+      hold.keep = true
+      this.#journalIssue(dir, `review of #${pr} at ${sha} failed unexpectedly and its claim was kept: ${errorText(error)}`)
+      throw error
+    }
+    if (result.startsWith("refused:") && !hold.keep) {
+      try {
+        releaseClaims(dir.root, names)
+      } catch (error) {
+        this.#journalIssue(dir, `could not release the review claim of #${pr} at ${sha}: ${errorText(error)}`)
+      }
+    }
+    return result
+  }
+
+  async #startReview(input: { lead: string; dir: RunDir; state: RunState; sessionID: string; pr: string; sha: string; hold: { keep: boolean } }): Promise<string> {
+    const { lead, dir, state, sessionID, pr, sha, hold } = input
     const agent = await this.ctx.agent.get({ agentID: REVIEW_AGENT } as never).then(
       (output) => {
         const value = output as unknown as { data?: { id?: unknown } } | { id?: unknown } | undefined
@@ -1097,18 +1132,31 @@ export class Autopilot {
     )
     if (!agent) return `refused: the ${REVIEW_AGENT} agent is not available`
 
+    // GitHub's own account of the PR: its state, head, and the base commit its diff is against.
     const cwd = await this.#sessionDirectory(sessionID)
-    const view = (await this.#gh(cwd, ["pr", "view", pr, "--json", "state,headRefOid,baseRefName"])) as { state?: unknown; headRefOid?: unknown; baseRefName?: unknown } | undefined
-    const base = typeof view?.baseRefName === "string" ? view.baseRefName : ""
-    if (!/^[A-Za-z0-9._/-]+$/.test(base) || base.includes("..")) return "refused: the PR's base branch is unreadable or unusual"
-    if (view?.state !== "OPEN") return `refused: PR state is ${String(view?.state ?? "unreadable")}, expected OPEN`
-    if (typeof view.headRefOid !== "string" || view.headRefOid.toLowerCase() !== sha) return `refused: PR head is ${String(view.headRefOid ?? "unreadable")}, not ${sha}`
+    const pull = (await this.#gh(cwd, ["api", `repos/{owner}/{repo}/pulls/${pr}`])) as
+      | { state?: unknown; head?: { sha?: unknown }; base?: { sha?: unknown }; changed_files?: unknown }
+      | undefined
+    if (pull?.state !== "open") return `refused: PR state is ${String(pull?.state ?? "unreadable")}, expected open`
+    const headSha = typeof pull.head?.sha === "string" ? pull.head.sha.toLowerCase() : undefined
+    if (headSha !== sha) return `refused: PR head is ${headSha ?? "unreadable"}, not ${sha}`
+    const baseSha = typeof pull.base?.sha === "string" ? pull.base.sha.toLowerCase() : ""
+    if (!/^[0-9a-f]{40}$/.test(baseSha)) return "refused: GitHub did not report the PR's base commit"
+    // A fetch that fails is not fatal by itself: the commit may already be here. Presence is what counts.
+    await this.#run(state.directory, "git", [...SAFE_GIT_ARGS, "fetch", "--no-tags", "--quiet", "origin", baseSha], GH_TIMEOUT_MS)
+    const present = await this.#run(state.directory, "git", [...SAFE_GIT_ARGS, "rev-parse", "--verify", "--quiet", `${baseSha}^{commit}`], GH_TIMEOUT_MS)
+    if (!present.ok) return `refused: the base commit ${baseSha} is not present locally and could not be fetched`
 
-    const remote = await this.#run(state.directory, "git", [...SAFE_GIT_ARGS, "rev-parse", "--verify", "--quiet", `origin/${base}^{commit}`], GH_TIMEOUT_MS)
-    const published = await this.#publishExport({ dir, state }, pr, remote.ok ? `origin/${base}` : base, sha)
+    const published = await this.#publishExport({ dir, state }, pr, baseSha, sha)
     if (!published.ok) return `refused: ${published.reason}`
     const { exported } = published
     if (exported.head !== sha) return `refused: ${sha} resolved to ${exported.head}`
+    const changedFiles = typeof pull.changed_files === "number" ? pull.changed_files : undefined
+    if (changedFiles === undefined) return "refused: GitHub did not report how many files the PR changes"
+    // The head already contained in the base while GitHub still reports a diff means the base is not the one GitHub diffed against.
+    if (changedFiles > 0 && (exported.mergeBase === exported.head || exported.files.length + exported.skipped.length === 0)) {
+      return `refused: the export is empty but GitHub reports ${changedFiles} changed files; the base is not the one GitHub diffs against`
+    }
     const recorded = (await this.ctx.storage.get(reviewManifestKey(Number(pr), sha)).catch(() => undefined)) as { manifestHash?: unknown } | undefined
     const manifestHash = typeof recorded?.manifestHash === "string" ? recorded.manifestHash : ""
     const checked = verifyExport(exported.dir, manifestHash)
@@ -1137,9 +1185,20 @@ export class Autopilot {
       .catch((error: unknown) => errorText(error))
     if (typeof child === "string") return `refused: could not create the reviewer session (${child})`
     const pointer: ReviewPointer = { pr, sha, session: child.id, nonce, promptHash: hashText(prompt), manifestHash, at: this.#now() }
+    // A refused start removes the pointer and the session. A removal that fails is journaled and the
+    // claim is kept, since a reviewer may still exist.
     const abandon = async (reason: string): Promise<string> => {
-      await this.ctx.storage.remove(key).catch(() => undefined)
-      await this.ctx.session.remove({ sessionID: child.id }).catch(() => undefined)
+      const failures: string[] = []
+      await Promise.resolve()
+        .then(() => this.ctx.storage.remove(key))
+        .catch((error: unknown) => void failures.push(`pointer ${key}: ${errorText(error)}`))
+      await Promise.resolve()
+        .then(() => this.ctx.session.remove({ sessionID: child.id }))
+        .catch((error: unknown) => void failures.push(`session ${child.id}: ${errorText(error)}`))
+      if (failures.length > 0) {
+        hold.keep = true
+        this.#journalIssue(dir, `review of #${pr} at ${sha} was refused (${reason}) but cleanup failed: ${failures.join("; ")}`)
+      }
       return `refused: ${reason}`
     }
     try {
@@ -1180,18 +1239,36 @@ export class Autopilot {
   /** The state of every review `lead` started, for the status report. */
   async #reviews(lead: string): Promise<Record<string, unknown>[]> {
     const prefix = reviewPointerPrefix(lead)
-    const page = await this.ctx.storage.scan({ prefix, limit: MAX_REVIEWS_REPORTED }).catch(() => undefined)
-    const out: Record<string, unknown>[] = []
-    for (const entry of page?.entries ?? []) {
-      const [pr, sha] = entry.key.slice(prefix.length).split("@")
-      const pointer = pr === undefined || sha === undefined ? undefined : readPointer(entry.value, pr, sha)
-      if (pointer === undefined) continue
+    const pointers: ReviewPointer[] = []
+    // Every pointer is resolved, so every deadline is enforced; the report shows only the newest few.
+    let after: string | undefined
+    for (let pages = 0; pages < MAX_REVIEW_PAGES; pages++) {
+      const page = await this.ctx.storage.scan({ prefix, limit: STORAGE_PAGE, ...(after !== undefined ? { after } : {}) }).catch(() => undefined)
+      if (page === undefined) break
+      for (const entry of page.entries) {
+        const [pr, sha] = entry.key.slice(prefix.length).split("@")
+        const pointer = pr === undefined || sha === undefined ? undefined : readPointer(entry.value, pr, sha)
+        if (pointer !== undefined) pointers.push(pointer)
+      }
+      if (page.next === undefined || page.entries.length === 0) break
+      after = page.next
+    }
+    const out: { at: number; item: Record<string, unknown> }[] = []
+    for (const pointer of pointers) {
+      const { pr, sha } = pointer
       const resolution = await this.#resolvePointer(lead, pointer)
-      if (resolution.state === "done") out.push({ pr, sha, state: "done", verdict: resolution.record.verdict, reviewer: resolution.record.reviewerSession })
-      else if (resolution.state === "void") out.push({ pr, sha, state: "void", reason: resolution.reason })
-      else out.push({ pr, sha, state: "pending" })
+      const item =
+        resolution.state === "done"
+          ? { pr, sha, state: "done", verdict: resolution.record.verdict, reviewer: resolution.record.reviewerSession }
+          : resolution.state === "void"
+            ? { pr, sha, state: "void", reason: resolution.reason }
+            : { pr, sha, state: "pending" }
+      out.push({ at: pointer.at, item })
     }
     return out
+      .sort((a, b) => b.at - a.at)
+      .slice(0, MAX_REVIEWS_REPORTED)
+      .map((entry) => entry.item)
   }
 
   /** Re-prompts a lead whose turn ended in a question, at most {@link MAX_REPROMPTS} times in a row. */
