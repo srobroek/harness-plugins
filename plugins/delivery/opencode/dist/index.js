@@ -5172,6 +5172,9 @@ async function landPullRequest(params, deps = {}) {
         const untrustedEnqueue = await stillTrusted();
         if (untrustedEnqueue !== null)
           return refuse(untrustedEnqueue);
+        const cancelledEnqueue = interrupted("after the trust refresh; nothing was enqueued and no receipt was written");
+        if (cancelledEnqueue !== null)
+          return cancelledEnqueue;
         const generation = newGeneration();
         const claimed = recordEnqueue(generation);
         if (typeof claimed !== "string")
@@ -5243,6 +5246,9 @@ async function landPullRequest(params, deps = {}) {
     const untrustedMerge = await stillTrusted();
     if (untrustedMerge !== null)
       return refuse(untrustedMerge);
+    const cancelledMerge = interrupted("after the trust refresh; no merge was issued and no receipt was written");
+    if (cancelledMerge !== null)
+      return cancelledMerge;
     merging = true;
     const mergeFailure = cliFailure(mergeArgv, await run(mergeArgv, { cwd, timeoutMs: FORGE_TIMEOUT_MS, env: forgeCommandEnv }));
     if (mergeFailure !== null)

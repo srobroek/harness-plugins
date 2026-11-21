@@ -3040,7 +3040,7 @@ describe("delivery_land approval and checks preconditions", () => {
     const review = (login: string) =>
       completed(JSON.stringify({ author: { login: "author" }, reviews: [{ state: "APPROVED", author: { login }, commit: { oid: HEAD_OID } }], comments: [] }))
     const dismissed = completed(JSON.stringify({ author: { login: "author" }, reviews: [{ state: "DISMISSED", author: { login: "reviewer" }, commit: { oid: HEAD_OID } }], comments: [] }))
-    const run = async (answers: Answers) => {
+    const run = async (answers: Answers, signal?: AbortSignal) => {
       const { canonical, receipts } = repository()
       mkdirSync(join(canonical, ".beads"))
       const fixture = runner({ prView: [completed(githubPr()), completed(mergedGithubPr())], checkRuns: greenRuns, ...answers }, canonical)
@@ -3052,6 +3052,7 @@ describe("delivery_land approval and checks preconditions", () => {
           now: () => NOW,
           receiptsDirectory: receipts,
           env: {},
+          signal,
           // A gated call passes without a person; an ungated one is answered by the test as "confirmed".
           authorize: async () => {},
         },
@@ -3095,6 +3096,20 @@ describe("delivery_land approval and checks preconditions", () => {
       if (outcome.ok) return
       expect(outcome.reason).toContain("re-targeted")
       expect(outcome.reason).toContain("release/unprotected")
+      expect(calls.some((call) => merged(call.argv))).toBe(false)
+    })
+
+    test("a cancel that lands as the trust refresh finishes stops the merge before it is issued", async () => {
+      const controller = new AbortController()
+      let reads = 0
+      // The second protection read is the refresh's last command: the abort arrives with its answer.
+      const onCall = (argv: string[]) => {
+        if (argv.some((part) => part.includes("/protection/required_pull_request_reviews")) && ++reads === 2) controller.abort()
+      }
+      const { outcome, calls } = await run({ approval: review("reviewer"), onCall }, controller.signal)
+      expect(outcome.ok).toBe(false)
+      if (outcome.ok) return
+      expect(outcome.reason).toContain("observed an abort")
       expect(calls.some((call) => merged(call.argv))).toBe(false)
     })
 
@@ -3340,6 +3355,31 @@ describe("delivery_land through a GitHub merge queue", () => {
       mergeMethod: "squash",
       queue: { rule: "merge_queue", method: "squash" },
     })
+  })
+
+  test("a cancel that lands as the trust refresh finishes stops the enqueue before it is recorded or sent", async () => {
+    const controller = new AbortController()
+    let reads = 0
+    const onCall = (argv: string[]) => {
+      if (argv.some((part) => part.includes("/protection/required_pull_request_reviews")) && ++reads === 2) controller.abort()
+    }
+    const approval = completed(
+      JSON.stringify({ author: { login: "author" }, reviews: [{ state: "APPROVED", author: { login: "reviewer" }, commit: { oid: HEAD_OID } }], comments: [] }),
+    )
+    const { outcome, calls, receipts } = await inQueue(
+      {
+        prView: [completed(githubPr()), completed(mergedGithubPr())],
+        queueStates: [snapshot("OPEN", null), snapshot("OPEN", null), snapshot("MERGED", null)],
+        approval,
+        checkRuns: completed(JSON.stringify({ total_count: 1, check_runs: [{ name: "ci", status: "completed", conclusion: "success" }] })),
+        onCall,
+      },
+      { requireApproval: true, requireGreenChecks: true },
+      { signal: controller.signal, authorize: async () => {} },
+    )
+    expect(reasonOf(outcome)).toContain("observed an abort")
+    expect(enqueues(calls)).toEqual([])
+    expect(readdirSync(receipts).filter((name) => name.startsWith("pending-"))).toEqual([])
   })
 
   test("a squash queue's commit may have any single parent, as when a grouped entry follows another", async () => {

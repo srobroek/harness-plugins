@@ -131,6 +131,8 @@ export function repository(): { canonical: string; receipts: string } {
 }
 
 export type Answers = {
+  /** Runs as each command starts (argv, 1-based call number): lets a test cancel the call at an exact boundary. */
+  onCall?: (argv: string[], call: number) => void
   prView?: CliResult[]
   merge?: CliResult
   autoDelete?: CliResult
@@ -238,6 +240,7 @@ export function runner(answers: Answers, canonical: string): { run: CliRunner; c
   const calls: Call[] = []
   const run: CliRunner = (argv, options) => {
     calls.push({ argv: [...argv], cwd: options.cwd, timeoutMs: options.timeoutMs, env: options.env })
+    answers.onCall?.([...argv], calls.length)
     const command = argv.join(" ")
     if (argv[0] === "git" && argv.at(-1) === "--version") return completed(`git version ${answers.gitVersion ?? "2.45.1"}\n`)
     if (command.startsWith("git rev-parse --path-format=absolute --git-common-dir --show-toplevel")) {

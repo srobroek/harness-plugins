@@ -1783,6 +1783,9 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
         if (unenqueued !== null) return unenqueued
         const untrustedEnqueue = await stillTrusted()
         if (untrustedEnqueue !== null) return refuse(untrustedEnqueue)
+        // The refresh is async: a cancel that landed while it ran must stop the enqueue here.
+        const cancelledEnqueue = interrupted("after the trust refresh; nothing was enqueued and no receipt was written")
+        if (cancelledEnqueue !== null) return cancelledEnqueue
         // The intent is recorded before the mutation is sent: GitHub can accept it and the answer
         // still be lost, and without the record a retry would read that as "never enqueued".
         const generation = newGeneration()
@@ -1883,6 +1886,10 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
     if (unmerged !== null) return unmerged
     const untrustedMerge = await stillTrusted()
     if (untrustedMerge !== null) return refuse(untrustedMerge)
+    // The refresh is async, and `merging` strips the signal from every later command: the last
+    // abort check must come after it, immediately before the critical section.
+    const cancelledMerge = interrupted("after the trust refresh; no merge was issued and no receipt was written")
+    if (cancelledMerge !== null) return cancelledMerge
     merging = true
     const mergeFailure = cliFailure(
       mergeArgv,
