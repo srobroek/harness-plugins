@@ -14,6 +14,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }))
 describe("spawnTool", () => {
   test("the child sees an allowlisted environment without the caller's secrets", async () => {
     writeExecutable(join(dir, "env-probe"), 'echo "token=[$GITHUB_TOKEN] key=[$OPENAI_API_KEY] path=[$PATH] color=[$NO_COLOR]"\n')
+    const saved = { GITHUB_TOKEN: Bun.env.GITHUB_TOKEN, OPENAI_API_KEY: Bun.env.OPENAI_API_KEY }
     Bun.env.GITHUB_TOKEN = "s3cret"
     Bun.env.OPENAI_API_KEY = "s3cret"
     try {
@@ -21,8 +22,10 @@ describe("spawnTool", () => {
       expect(run.kind).toBe("exited")
       expect(run.stdout.trim()).toBe(`token=[] key=[] path=[${Bun.env.PATH}] color=[1]`)
     } finally {
-      delete Bun.env.GITHUB_TOKEN
-      delete Bun.env.OPENAI_API_KEY
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete Bun.env[name]
+        else Bun.env[name] = value
+      }
     }
   })
 
