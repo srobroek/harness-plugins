@@ -44,7 +44,7 @@ export async function commitCount(directory: string, run: Run): Promise<number> 
 }
 
 /** The fields of a host `SessionInfo` a tick reads. */
-export type SessionView = { id?: unknown; title?: unknown; agent?: unknown; parentID?: unknown; time?: { updated?: unknown; busy?: unknown; idle?: unknown } }
+export type SessionView = { id?: unknown; title?: unknown; agent?: unknown; parentID?: unknown; location?: { directory?: unknown }; time?: { updated?: unknown; busy?: unknown; idle?: unknown } }
 
 const finite = (value: unknown): number | undefined => (typeof value === "number" && Number.isFinite(value) ? value : undefined)
 
@@ -68,6 +68,7 @@ export function childFrom(info: SessionView & { id: string }, lastSeen: number |
     sessionID: info.id,
     ...(typeof info.title === "string" && info.title ? { title: info.title } : {}),
     ...(typeof info.agent === "string" && info.agent ? { agent: info.agent } : {}),
+    ...(typeof info.location?.directory === "string" && info.location.directory ? { directory: info.location.directory } : {}),
     busy: sessionBusy(info),
     lastActivity: Math.max(lastSeen ?? stamped, armedAt),
   }

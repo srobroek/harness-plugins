@@ -50,6 +50,10 @@ export type FakeContextOptions = {
   options?: Loose
   /** MCP servers the host already has (the user's config) before any transform runs. */
   mcp?: Record<string, Loose>
+  /** When set, `context.location.project.id`; left out by default because some plugins branch on a project. */
+  projectID?: string
+  /** Directories `worktree.list` returns. */
+  worktrees?: ReadonlyArray<string>
   /** Decides each `permission.assert`: resolve to allow, throw to reject. Allows when omitted. */
   assert?: (input: FakeAssert) => Promise<void> | void
 }
@@ -379,7 +383,8 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
   }
 
   const context = {
-    location: { directory },
+    location: options.projectID === undefined ? { directory } : { directory, project: { id: options.projectID, directory, canonical: directory } },
+    worktree: { transform: async () => ({ dispose: async () => {} }), list: async () => (options.worktrees ?? []).map((dir) => ({ directory: dir })) },
     options: options.options ?? {},
     tool: {
       transform: toolTransform,

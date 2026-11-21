@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { realpathSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { Plugin } from "@opencode/plugin"
 import type { Context } from "@opencode/plugin/promise/plugin"
@@ -10,7 +11,7 @@ import { classifyScope, deadlineAt, type Invocation, parseInvocation, type RunOp
 import { automationRequest, type TickBinding } from "./automation.ts"
 import { Activity, BD_READ_TIMEOUT_MS, childFrom, commitCount, readBeads, type SessionView, sessionBusy } from "./gather.ts"
 import { type JournalEntry, LOG_INPUT_SCHEMA, validateEntry } from "./journal.ts"
-import { DENY_QUESTION, endsWithQuestion, isAskTool, REPROMPT } from "./policy.ts"
+import { DENY_QUESTION, EXTERNAL_DIRECTORY, endsWithQuestion, grantedMergeAsk, isAskTool, MERGE_ACTION, mergeMethodFlag, mergeRefusal, mergeResource, ownWorktreeAsk, REPROMPT } from "./policy.ts"
 import { autopilotRoot, findRun, type Run, RunDir, RunFileError, runCommand } from "./rundir.ts"
 import { countBeads, newRunState, type RunState, runIdFor, type Snapshot, TICK_MS, tick, tickPrompt } from "./state.ts"
 import { HANDOFF_LABEL, handoffDescription, renderSummary } from "./summary.ts"
@@ -36,6 +37,10 @@ export const STATUS_DESCRIPTION =
   '"tick" is what the automation calls; "fallback" starts the in-process timer when automation_create failed; "stop" ends the run, writes summary.md and the handoff bead.'
 
 export const LOG_DESCRIPTION = "Append one validated entry (decision, blocker, issue, ambiguity, stop, progress, action) to the autopilot journal."
+
+export const MERGE_DESCRIPTION =
+  "Merge one PR at one reviewed head, under --allow merge.\n" +
+  "Requires an approval for the exact SHA and green checks; merges only if the head is still that SHA."
 
 export const COMMAND_DESCRIPTION = "Run this session unattended: /autopilot [scope] [flags] | resume | review | stop"
 
@@ -63,6 +68,16 @@ const STATUS_INPUT = {
     reason: { type: "string", description: "stop: why" },
     token: { type: "string", description: "tick: the automation's binding token" },
     session: { type: "string", description: "tick: the session the automation was created for" },
+  },
+} as const
+
+const MERGE_INPUT = {
+  type: "object",
+  additionalProperties: false,
+  required: ["pr", "sha"],
+  properties: {
+    pr: { type: ["integer", "string"], description: "PR number" },
+    sha: { type: "string", description: "the full 40-digit head commit that was reviewed" },
   },
 } as const
 
@@ -126,6 +141,18 @@ const STORAGE_PAGE = 100
 
 /** A run lock that could not be taken: the transition did not run. */
 class RunLockBusy extends Error {}
+
+/** The real path of `path`, or `undefined` when it does not exist. */
+const realPath = (path: string): string | undefined => {
+  try {
+    return realpathSync(path)
+  } catch {
+    return undefined
+  }
+}
+
+/** One `gh` call. */
+const GH_TIMEOUT_MS = 60_000
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
@@ -748,6 +775,10 @@ export class Autopilot {
     if (event.effect !== "ask") return
     const running = await this.runningFor(event.sessionID)
     if (!running) return
+    if (running.state && (await this.#autoAllowed(event, running.state))) {
+      event.effect = "allow"
+      return
+    }
     const asked = event.resources.join(" ").slice(0, 300)
     event.effect = "deny"
     event.message = running.state
@@ -758,6 +789,70 @@ export class Autopilot {
     } catch (error) {
       this.#warn("could not journal a denied permission", { run: running.dir.runId, error: errorText(error) })
     }
+  }
+
+  /**
+   * The two asks a run answers itself: `<root>/*` of a worktree the run recorded and the project
+   * still lists, and `autopilot_merge` for one PR and SHA under `--allow merge`.
+   */
+  async #autoAllowed(event: PermissionEvaluation, state: RunState): Promise<boolean> {
+    const asked = { action: event.action, effect: event.effect, resources: event.resources }
+    if (grantedMergeAsk({ ...asked, allow: state.options.allow })) return true
+    if (event.action !== EXTERNAL_DIRECTORY || !state.worktrees?.length) return false
+    const listed = await this.ctx.worktree.list({ projectID: this.ctx.location.project.id }).catch(() => [])
+    const confirmed = new Set(listed.flatMap((entry) => realPath(entry.directory) ?? []))
+    const roots = state.worktrees.filter((root) => confirmed.has(realPath(root) ?? ""))
+    return ownWorktreeAsk({ ...asked, roots, canon: realPath })
+  }
+
+  /** `gh` JSON output, or `undefined` when the command failed or printed something else. */
+  async #gh(cwd: string, args: string[], tolerateExit = false): Promise<unknown> {
+    const result = await this.#run(cwd, "gh", args, GH_TIMEOUT_MS)
+    if (!result.ok && !(tolerateExit && result.stdout.trim() !== "")) return undefined
+    try {
+      return JSON.parse(result.stdout)
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Merge one PR at one reviewed head. The host's permission check comes first (the hook allows it
+   * only under `--allow merge`), then the approval and checks are read from the forge, and `gh`
+   * merges only if the head is still `sha`.
+   */
+  async merge(sessionID: string, input: { pr?: unknown; sha?: unknown }): Promise<string> {
+    const pr = String(input.pr ?? "").trim()
+    const sha = String(input.sha ?? "").trim().toLowerCase()
+    const journal = async (entry: Omit<JournalEntry, "ts">) => {
+      const running = await this.runningFor(sessionID)
+      try {
+        running?.dir.append({ ts: new Date(this.#now()).toISOString(), ...entry })
+      } catch (error) {
+        this.#warn("could not journal a merge", { error: errorText(error) })
+      }
+    }
+    const refuse = async (reason: string) => {
+      await journal({ type: "issue", summary: `merge of #${pr || "?"} refused: ${reason}`, evidence: sha })
+      return `refused: ${reason}`
+    }
+    if (!/^\d+$/.test(pr)) return refuse("pr must be a PR number")
+    if (!/^[0-9a-f]{40}$/.test(sha)) return refuse("sha must be the full 40-digit head commit")
+    await this.ctx.permission.assert({ sessionID, action: MERGE_ACTION, resources: [mergeResource(pr, sha)] } as never)
+    const cwd = await this.#sessionDirectory(sessionID)
+    const [view, checks, repo] = await Promise.all([
+      this.#gh(cwd, ["pr", "view", pr, "--json", "state,headRefOid,author,reviews,comments"]),
+      this.#gh(cwd, ["pr", "checks", pr, "--json", "name,state,bucket"], true),
+      this.#gh(cwd, ["repo", "view", "--json", "squashMergeAllowed,rebaseMergeAllowed,mergeCommitAllowed"]),
+    ])
+    const refusal = mergeRefusal({ sha, view, checks })
+    if (refusal !== undefined) return refuse(refusal)
+    const method = mergeMethodFlag(repo)
+    if (method === undefined) return refuse("the repository allows no merge method, or its settings were unreadable")
+    const merged = await this.#run(cwd, "gh", ["pr", "merge", pr, "--match-head-commit", sha, method], GH_TIMEOUT_MS)
+    if (!merged.ok) return refuse(`gh pr merge failed: ${merged.stderr.trim().slice(0, 300)}`)
+    await journal({ type: "action", summary: `merged #${pr} at ${sha} (${method.slice(2)})`, evidence: sha })
+    return `merged #${pr} at ${sha} with ${method}`
   }
 
   /** Re-prompts a lead whose turn ended in a question, at most {@link MAX_REPROMPTS} times in a row. */
@@ -819,6 +914,12 @@ export async function setupAutopilot(ctx: Context, deps: Deps = {}): Promise<() 
         description: LOG_DESCRIPTION,
         input: LOG_INPUT_SCHEMA,
         execute: async (input, tool) => ({ content: await pilot.log(tool.sessionID, input) }),
+      })
+      editor.add({
+        name: "autopilot_merge",
+        description: MERGE_DESCRIPTION,
+        input: MERGE_INPUT,
+        execute: async (input, tool) => ({ content: await pilot.merge(tool.sessionID, input as { pr?: unknown; sha?: unknown }) }),
       })
     }),
   )

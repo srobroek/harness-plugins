@@ -25,8 +25,8 @@ Flags:
 
 The setup round asks for each value that the command-line flags leave out.
 `--allow merge`, `--allow deploy` and `--full` govern what the agent decides to
-do on its own and what the plugin itself does. They never approve a
-permission prompt. The
+do on its own and what the plugin itself does. Only `--allow merge` reaches the
+permission hook, and only for `autopilot_merge`. The
 number of parallel write lanes has no upper limit. The setup round recommends 3
 lanes, and `--lanes N` skips that question. Read-only subagents, such as
 `explore` and the reviewers, take no lane.
@@ -47,11 +47,19 @@ it:
 - When a turn ends with a question to the user, the plugin re-prompts the
   session to decide, log the decision and continue. After two re-prompts in a
   row, the plugin logs an issue and waits for the next tick.
-- The plugin denies every permission `ask`. It approves nothing, whatever the
-  run's grants. Your own OpenCode permission rules already allow what you
-  trust, and an `ask` is exactly what you wanted to be asked about. Nobody is
-  there to answer it. The plugin journals each denied `ask` as a blocker, with
-  its permission kind and the command or pattern it asked about.
+- The plugin denies every permission `ask` and journals it as a blocker, with
+  its permission kind and the command or pattern it asked about. Your own
+  OpenCode permission rules already allow what you trust, and an `ask` is what
+  you wanted to be asked about. Nobody is there to answer it. Two asks are
+  exceptions, and only an `ask` is ever changed:
+  - An `external_directory` ask for exactly `<root>/*`, where `<root>` is the
+    directory of a lane session the run observed, `worktree.list` still shows
+    for this project, and no wildcard appears in. The plugin compares real
+    paths, so a symlink alias of the root matches and a sibling, a
+    subdirectory or a symlink leading elsewhere does not. A lane is recorded at
+    the first tick after it starts.
+  - An `autopilot_merge` ask for one PR and SHA, under `--allow merge`.
+  Shell, edit, MCP and deploy asks stay denied.
 - After compaction, the plugin queues a notice with the rules and a fresh
   status.
 
@@ -110,6 +118,16 @@ these types:
 - action
 
 Without `--full`, `autopilot_log` also labels a blocked bead `human`.
+
+`autopilot_merge({ pr, sha })` merges one PR. It asks the host for the action
+`autopilot_merge` on `<pr>@<sha>`, which the hook allows only under
+`--allow merge`. The tool then reads the PR from `gh` and refuses unless the PR
+is open, its head is `sha`, an `APPROVED` review of that commit or the author's
+`VERDICT: APPROVE` comment naming it exists, and every check passed. It then
+runs `gh pr merge <pr> --match-head-commit <sha>` with the repository's
+squash, rebase or merge method (first one allowed), as an argument array with
+no shell. It journals the result: an `action` on success, an `issue` on a
+refusal. GitHub only.
 
 ## Tick
 

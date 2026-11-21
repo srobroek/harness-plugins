@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFakeContext, type FakeContext } from "@srobroek/opencode-lib/testing"
@@ -31,10 +31,13 @@ let failLookups = 0
 let lookupStdout: string | undefined
 /** Called after a `bd create` succeeds. */
 let onCreated: (() => void) | undefined
+/** What `gh <a> <b>` prints, by "a b". */
+let ghReplies: Record<string, { ok: boolean; stdout: string; stderr: string }>
 
 const run: Run = async (_cwd, command, args) => {
   calls.push({ command, args })
   const json = (value: unknown) => ({ ok: true, stdout: JSON.stringify(value), stderr: "" })
+  if (command === "gh") return ghReplies[args.slice(0, 2).join(" ")] ?? { ok: true, stdout: "", stderr: "" }
   if (command === "git" && args[0] === "rev-parse") {
     onRevParse?.()
     return { ok: true, stdout: `${root}\n`, stderr: "" }
@@ -76,6 +79,7 @@ const lead = (time: Record<string, number> = { busy: NOW - 60_000, idle: NOW - 3
 async function start(storage?: Record<string, unknown>) {
   fake = createFakeContext({
     directory: "/repo",
+    projectID: "prj_test",
     storage,
     sessions: [lead(), { id: "ses_child", parentID: "ses_lead", agent: "coder", time: {} }, { id: "ses_grand", parentID: "ses_child", time: {} }, { id: "ses_other", time: {} }],
   })
@@ -151,6 +155,7 @@ const journal = () =>
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), "autopilot-test-"))
   calls = []
+  ghReplies = {}
   locked = []
   failLookups = 0
   lookupStdout = undefined
@@ -261,6 +266,137 @@ describe("permission asks while armed", () => {
     await status({ action: "stop", reason: "done" })
     expect(latestState().phase).toBe("stopping")
     expect((await ask("git status")).effect).toBe("deny")
+  })
+})
+
+describe("a run's own worktrees", () => {
+  let wt: string
+  const ask = (resource: string, action = "external_directory", sessionID = "ses_child") =>
+    fake.fire.permission("evaluate", { sessionID, action, resources: [resource], effect: "ask", message: undefined as string | undefined })
+  const confirm = (...dirs: string[]) => {
+    ;(fake.context as unknown as { worktree: { list: () => Promise<unknown> } }).worktree.list = async () => dirs.map((directory) => ({ directory }))
+  }
+  const observeLane = async (directory: string) => {
+    fake.sessions.set("ses_child", { id: "ses_child", parentID: "ses_lead", agent: "coder", location: { directory }, time: { busy: NOW - 1_000 } })
+    await status(tickInput())
+  }
+
+  beforeEach(() => {
+    wt = realpathSync(mkdtempSync(join(root, "lane-")))
+  })
+
+  test("allows <root>/* of a lane the run observed and the project lists, without a blocker", async () => {
+    await armed()
+    await observeLane(wt)
+    confirm(wt)
+    expect(await ask(`${wt}/*`)).toMatchObject({ effect: "allow" })
+    expect(journal().map((entry) => entry.type)).toEqual(["action"])
+  })
+
+  test("denies the same ask before the lane is observed", async () => {
+    await armed()
+    confirm(wt)
+    expect(await ask(`${wt}/*`)).toMatchObject({ effect: "deny" })
+  })
+
+  test("denies the ask when the project does not list the worktree", async () => {
+    await armed()
+    await observeLane(wt)
+    confirm()
+    expect(await ask(`${wt}/*`)).toMatchObject({ effect: "deny" })
+  })
+
+  test("denies a sibling of a recorded root", async () => {
+    await armed()
+    await observeLane(wt)
+    confirm(wt)
+    expect(await ask(`${wt}-x/*`)).toMatchObject({ effect: "deny" })
+  })
+
+  test("keeps the recorded roots across ticks and in the state file", async () => {
+    await armed()
+    await observeLane(wt)
+    fake.sessions.delete("ses_child")
+    await status(tickInput())
+    expect((latestState() as unknown as { worktrees: string[] }).worktrees).toEqual([wt])
+  })
+})
+
+describe("autopilot_merge", () => {
+  const SHA = "c".repeat(40)
+  const merge = (input: Record<string, unknown> = { pr: 12, sha: SHA }) => {
+    const tool = fake.tools.get("autopilot_merge") as unknown as { execute: (input: unknown, context: unknown) => Promise<{ content: string }> }
+    return tool.execute(input, { sessionID: "ses_lead" })
+  }
+  const approved = { state: "OPEN", headRefOid: SHA, author: { login: "bot" }, reviews: [{ state: "APPROVED", commit: { oid: SHA } }], comments: [] }
+  const ready = (view: unknown = approved) => {
+    ghReplies = {
+      "pr view": { ok: true, stdout: JSON.stringify(view), stderr: "" },
+      "pr checks": { ok: true, stdout: JSON.stringify([{ name: "ci", bucket: "pass" }]), stderr: "" },
+      "repo view": { ok: true, stdout: JSON.stringify({ squashMergeAllowed: true, rebaseMergeAllowed: false, mergeCommitAllowed: true }), stderr: "" },
+    }
+  }
+  const merged = () => calls.filter((call) => call.command === "gh" && call.args[1] === "merge")
+  const ask = (resource: string, action = "autopilot_merge") =>
+    fake.fire.permission("evaluate", { sessionID: "ses_lead", action, resources: [resource], effect: "ask", message: undefined as string | undefined })
+
+  test("asks the host for exactly <pr>@<sha>, then merges at that head with the repo's method", async () => {
+    await armed({ allow: ["merge"] })
+    ready()
+    expect((await merge()).content).toContain("merged #12")
+    expect(fake.asserts.at(-1)).toMatchObject({ sessionID: "ses_lead", action: "autopilot_merge", resources: [`12@${SHA}`] })
+    expect(merged()).toEqual([{ command: "gh", args: ["pr", "merge", "12", "--match-head-commit", SHA, "--squash"] }])
+    expect(journal().at(-1)).toMatchObject({ type: "action", summary: expect.stringContaining("merged #12") })
+  })
+
+  test("the hook allows the merge ask only under --allow merge", async () => {
+    await armed({ allow: ["merge"] })
+    expect(await ask(`12@${SHA}`)).toMatchObject({ effect: "allow" })
+  })
+
+  test("the hook denies the merge ask without the grant and journals a blocker", async () => {
+    await armed({ allow: ["deploy"] })
+    expect(await ask(`12@${SHA}`)).toMatchObject({ effect: "deny", message: expect.stringContaining("never approves") })
+    expect(journal().at(-1)).toMatchObject({ type: "blocker" })
+  })
+
+  test("does not merge when the host refuses the permission", async () => {
+    await armed()
+    ready()
+    ;(fake.context.permission as unknown as { assert: () => Promise<void> }).assert = async () => {
+      throw new Error("denied")
+    }
+    await expect(merge()).rejects.toThrow("denied")
+    expect(merged()).toEqual([])
+  })
+
+  test("refuses and journals an issue when the PR head is not the given SHA", async () => {
+    await armed({ allow: ["merge"] })
+    ready({ ...approved, headRefOid: "d".repeat(40) })
+    expect((await merge()).content).toContain("refused")
+    expect(merged()).toEqual([])
+    expect(journal().at(-1)).toMatchObject({ type: "issue", summary: expect.stringContaining("#12") })
+  })
+
+  test("refuses without an approval for the SHA", async () => {
+    await armed({ allow: ["merge"] })
+    ready({ ...approved, reviews: [] })
+    expect((await merge()).content).toContain("refused")
+    expect(merged()).toEqual([])
+  })
+
+  test("refuses when a check is red", async () => {
+    await armed({ allow: ["merge"] })
+    ready()
+    ghReplies["pr checks"] = { ok: false, stdout: JSON.stringify([{ name: "ci", bucket: "fail" }]), stderr: "" }
+    expect((await merge()).content).toContain("checks not green")
+    expect(merged()).toEqual([])
+  })
+
+  test.each([{ pr: "12; rm -rf /", sha: SHA }, { pr: 12, sha: "abc" }])("rejects malformed input %p before any gh call", async (input) => {
+    await armed({ allow: ["merge"] })
+    expect((await merge(input)).content).toContain("refused")
+    expect(calls.filter((call) => call.command === "gh")).toEqual([])
   })
 })
 
