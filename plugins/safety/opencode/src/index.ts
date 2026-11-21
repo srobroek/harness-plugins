@@ -286,6 +286,19 @@ export function createPlugin(overrides: Overrides = {}) {
           .then((session) => (session as { location: { directory: string } }).location.directory)
           .catch(() => ctx.location.directory as string)
 
+      // For an allow decision: the session's own directory, or `undefined` (logged) when it cannot be read.
+      const strictSessionDirectory = (sessionID: string): Promise<string | undefined> =>
+        ctx.session
+          .get({ sessionID } as never)
+          .then((session) => (session as { location?: { directory?: string } }).location?.directory)
+          .catch((error: unknown) => {
+            warn("session lookup failed; the worktree allow is skipped", {
+              sessionID,
+              error: error instanceof Error ? error.name : typeof error,
+            })
+            return undefined
+          })
+
       // The tool behind each running call, so a permission request can be traced to it.
       const running = new Map<string, { tool: string; at: number }>()
 
@@ -423,7 +436,11 @@ export function createPlugin(overrides: Overrides = {}) {
             const source = evaluation.source
             const tool = source?.type === "tool" ? running.get(source.id)?.tool : undefined
             if (tool === undefined || !READ_ONLY_TOOLS.has(tool)) return
-            allowWorktreeReads(evaluation, await worktreeRoots(await sessionDirectory(evaluation.sessionID)))
+            // Fails closed: without the requesting session's own directory there is no repository to match,
+            // so the ask stays (the plugin's location is never a stand-in for an allow).
+            const directory = await strictSessionDirectory(evaluation.sessionID)
+            if (directory === undefined) return
+            allowWorktreeReads(evaluation, await worktreeRoots(directory))
           })
         : undefined
 

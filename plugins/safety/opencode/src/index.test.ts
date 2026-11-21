@@ -678,6 +678,29 @@ describe("steering directories and same-repo worktrees", () => {
       expect((await ask(fake, [], "c3")).effect).toBe("ask")
     })
 
+    test("a failed session lookup never falls back to the plugin location's worktrees", async () => {
+      const warnings: string[] = []
+      const seam = git()
+      const { fake } = await load(
+        {},
+        {
+          scratchRoots: [],
+          directory: main,
+          worktrees: seam,
+          sessions: [child(lane)],
+          warn: (message) => void warnings.push(message),
+          patch: (context) => {
+            context.session.get = () => Promise.reject(new Error("lookup failed"))
+          },
+        },
+      )
+      await start(fake, "c5", "read")
+      const result = await ask(fake, [`${lane}/src/a.ts`], "c5", "ask", "ses_child")
+      expect(result.effect).not.toBe("allow")
+      expect(seam.calls).toEqual([])
+      expect(warnings.some((message) => message.includes("session lookup failed"))).toBe(true)
+    })
+
     test("a deny stays a deny in a subagent session", async () => {
       const { fake } = await load({ steeringDirs: [steering] }, { scratchRoots: [], sessions: [child(fixture)] })
       await start(fake, "c4", "read")
@@ -951,7 +974,11 @@ describe("prompts a subagent cannot answer", () => {
     const warnings: unknown[][] = []
     const { fake } = await setup({}, (...args) => void warnings.push(args))
     expect((await ask(fake, "ses_missing", "read", [`${outside}/*`])).effect).toBe("ask")
-    expect(warnings).toEqual([["session lookup failed; the permission prompt stays", { sessionID: "ses_missing", error: "Error" }]])
+    // The subagent-prompts hook and the repo-worktrees relaxation each log their own failed lookup, ids only.
+    expect(warnings).toEqual([
+      ["session lookup failed; the worktree allow is skipped", { sessionID: "ses_missing", error: "Error" }],
+      ["session lookup failed; the permission prompt stays", { sessionID: "ses_missing", error: "Error" }],
+    ])
   })
 
   test.each([
