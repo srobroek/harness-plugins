@@ -1,3 +1,11 @@
+## model-roles [0.8.2](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.8.1...model-roles--v0.8.2) (2026-11-21)
+
+### Bug Fixes
+
+* **model-roles:** bound the retry hook on its own queue ([b8ca496](https://github.com/srobroek/harness-plugins/commit/b8ca496b611c7bd295a3d28a6cd4db6baa7a1096))
+* **model-roles:** resolve implicit assignments and child tiers against the committed snapshot ([f7f94f1](https://github.com/srobroek/harness-plugins/commit/f7f94f199ce38955eb58b689fcce2a13721ae2e0))
+* **model-roles:** resolve retries against committed tiers and cover the retry queue ([3c57082](https://github.com/srobroek/harness-plugins/commit/3c57082a5ad08208738fde833a1278842e5ee577))
+
 ## model-roles [0.8.1](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.8.0...model-roles--v0.8.1) (2026-11-20)
 
 ### Bug Fixes
