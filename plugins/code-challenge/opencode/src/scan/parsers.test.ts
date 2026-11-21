@@ -155,6 +155,32 @@ describe("parseOutput", () => {
     expect(() => parseOutput(parser, text, ctx)).toThrow(OutputError)
   })
 
+  test.each([
+    ["biome-json", "diagnostics"],
+    ["oxlint-json", "diagnostics"],
+    ["knip-json", "issues"],
+    ["jscpd-json", "duplicates"],
+    ["golangci-json", "Issues"],
+  ] as const)("%s without its %s list, or with a list of another type, is an error, not a clean run", (parser, key) => {
+    expect(() => parseOutput(parser, "{}", ctx)).toThrow(OutputError)
+    expect(() => parseOutput(parser, JSON.stringify({ [key]: "none" }), ctx)).toThrow(OutputError)
+    expect(() => parseOutput(parser, JSON.stringify({ [key]: { 0: {} } }), ctx)).toThrow(OutputError)
+  })
+
+  test("depcruise needs summary.violations to be a list", () => {
+    for (const body of [{}, { summary: {} }, { summary: { violations: "none" } }, { summary: [] }]) {
+      expect(() => parseOutput("depcruise-json", JSON.stringify(body), ctx)).toThrow(OutputError)
+    }
+    expect(parseOutput("depcruise-json", JSON.stringify({ summary: { violations: [] } }), ctx)).toEqual([])
+  })
+
+  test("a present empty list is zero findings, and golangci-lint's null Issues is too", () => {
+    for (const [parser, key] of [["biome-json", "diagnostics"], ["oxlint-json", "diagnostics"], ["knip-json", "issues"], ["jscpd-json", "duplicates"], ["golangci-json", "Issues"]] as const) {
+      expect(parseOutput(parser, JSON.stringify({ [key]: [] }), ctx)).toEqual([])
+    }
+    expect(parseOutput("golangci-json", '{"Issues":null}', ctx)).toEqual([])
+  })
+
   test("empty well-formed output is zero findings", () => {
     expect(parseOutput("ruff-json", "[]", ctx)).toEqual([])
     expect(parseOutput("deadcode-json", "null", ctx)).toEqual([])

@@ -141,7 +141,7 @@ describe("ignore enforcement in biome's explicit-file mode", () => {
   test("a directory that is not a repository is walked and biome runs", async () => {
     const root = biomeRepo()
     const calls: Parameters<typeof fakeExec>[1] = []
-    const report = await runScan({ root, languages: ["ts"] }, { exec: fakeExec({ "/bin/biome": exited("{}") }, calls), which: withTools("biome", "git") })
+    const report = await runScan({ root, languages: ["ts"] }, { exec: fakeExec({ "/bin/biome": exited('{"diagnostics":[]}') }, calls), which: withTools("biome", "git") })
     expect(report.coverage.find((c) => c.recipe === "biome:lenses")?.status).toBe("ran")
     expect(calls.find((c) => c.argv.includes("/bin/biome"))?.argv.at(-1)).toBe(join(root, "a.ts"))
   })
@@ -171,7 +171,7 @@ describe("command-line length in isolated mode", () => {
     writeFileSync(join(root, "biome.json"), "{}")
     const names = filesFor(count, root)
     const calls: Parameters<typeof fakeExec>[1] = []
-    const exec = fakeExec({ "rev-parse": exited(`${join(root, ".git")}\n`), "--others": exited(`${names.join("\0")}\0`), "/bin/biome": exited("{}") }, calls)
+    const exec = fakeExec({ "rev-parse": exited(`${join(root, ".git")}\n`), "--others": exited(`${names.join("\0")}\0`), "/bin/biome": exited('{"diagnostics":[]}') }, calls)
     const report = await runScan({ root, languages: ["ts"] }, { exec, which: withTools("biome", "git") })
     return { report, ranBiome: calls.some((c) => c.argv.includes("/bin/biome")), perFile: perFile(root) }
   }

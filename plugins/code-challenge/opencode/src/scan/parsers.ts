@@ -36,6 +36,17 @@ function payload(text: string, kind: "object" | "array"): unknown {
   return value
 }
 
+/**
+ * A diagnostics collection the tool always prints. A missing key or a value of another type means the
+ * output is not that tool's report, so it is an OutputError (a gap) and never an empty result.
+ */
+function collection(owner: unknown, key: string, where = key, allowNull = false): unknown[] {
+  const value = obj(owner)[key]
+  if (Array.isArray(value)) return value
+  if (allowNull && value === null) return []
+  throw new OutputError(`expected "${where}" to be a list, got ${value === undefined ? "nothing" : typeof value}`)
+}
+
 /** A path as the root-relative form; analyzers report absolute, cwd-relative or root-relative paths. */
 export function relativeTo(root: string, file: string, cwd = root): string {
   const abs = isAbsolute(file) ? file : resolve(cwd, file)
@@ -48,7 +59,7 @@ type Ctx = { root: string; cwd: string }
 const MODULE_ROOTS = ["", "src"] as const
 
 function biome(text: string): Hit[] {
-  return arr(obj(payload(text, "object")).diagnostics).flatMap((d) => {
+  return collection(payload(text, "object"), "diagnostics").flatMap((d) => {
     const diag = obj(d)
     const category = str(diag.category)
     if (!category.startsWith("lint/")) return []
@@ -59,7 +70,7 @@ function biome(text: string): Hit[] {
 }
 
 function oxlint(text: string): Hit[] {
-  return arr(obj(payload(text, "object")).diagnostics).map((d) => {
+  return collection(payload(text, "object"), "diagnostics").map((d) => {
     const diag = obj(d)
     const label = obj(arr(diag.labels)[0])
     return {
@@ -97,7 +108,7 @@ const KNIP_KEYS = [
 ] as const
 
 function knip(text: string): Hit[] {
-  return arr(obj(payload(text, "object")).issues).flatMap((i) => {
+  return collection(payload(text, "object"), "issues").flatMap((i) => {
     const issue = obj(i)
     const file = str(issue.file)
     return KNIP_KEYS.flatMap((key) =>
@@ -111,7 +122,7 @@ function knip(text: string): Hit[] {
 }
 
 function jscpd(text: string): Hit[] {
-  return arr(obj(payload(text, "object")).duplicates).map((d) => {
+  return collection(payload(text, "object"), "duplicates").map((d) => {
     const dup = obj(d)
     const first = obj(dup.firstFile)
     const second = obj(dup.secondFile)
@@ -126,7 +137,7 @@ function jscpd(text: string): Hit[] {
 }
 
 function depcruise(text: string): Hit[] {
-  return arr(obj(obj(payload(text, "object")).summary).violations).map((v) => {
+  return collection(obj(payload(text, "object")).summary, "violations", "summary.violations").map((v) => {
     const violation = obj(v)
     const cycle = arr(violation.cycle).map((c) => str(obj(c).name))
     const detail = cycle.length > 0 ? `${str(violation.from)} -> ${cycle.join(" -> ")}` : `${str(violation.from)} -> ${str(violation.to)}`
@@ -194,7 +205,8 @@ function importLinter(text: string, ctx: Ctx): Hit[] {
 }
 
 function golangci(text: string): Hit[] {
-  return arr(obj(payload(text, "object")).Issues).map((i) => {
+  // golangci-lint prints "Issues": null when it found nothing; a missing key is not its report.
+  return collection(payload(text, "object"), "Issues", "Issues", true).map((i) => {
     const issue = obj(i)
     const pos = obj(issue.Pos)
     return { rule: str(issue.FromLinter), file: str(pos.Filename), line: num(pos.Line), message: str(issue.Text) }

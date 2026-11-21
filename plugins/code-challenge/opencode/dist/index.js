@@ -2878,6 +2878,14 @@ function payload(text, kind) {
     throw new OutputError(`expected a JSON ${kind}, got ${text.trim() === "" ? "empty output" : `"${text.trim().slice(0, 60)}"`}`);
   return value;
 }
+function collection(owner, key, where = key, allowNull = false) {
+  const value = obj2(owner)[key];
+  if (Array.isArray(value))
+    return value;
+  if (allowNull && value === null)
+    return [];
+  throw new OutputError(`expected "${where}" to be a list, got ${value === undefined ? "nothing" : typeof value}`);
+}
 function relativeTo(root, file, cwd = root) {
   const abs = isAbsolute3(file) ? file : resolve3(cwd, file);
   const rel = relative2(root, abs);
@@ -2885,7 +2893,7 @@ function relativeTo(root, file, cwd = root) {
 }
 var MODULE_ROOTS = ["", "src"];
 function biome(text) {
-  return arr2(obj2(payload(text, "object")).diagnostics).flatMap((d) => {
+  return collection(payload(text, "object"), "diagnostics").flatMap((d) => {
     const diag = obj2(d);
     const category = str2(diag.category);
     if (!category.startsWith("lint/"))
@@ -2896,7 +2904,7 @@ function biome(text) {
   });
 }
 function oxlint(text) {
-  return arr2(obj2(payload(text, "object")).diagnostics).map((d) => {
+  return collection(payload(text, "object"), "diagnostics").map((d) => {
     const diag = obj2(d);
     const label = obj2(arr2(diag.labels)[0]);
     return {
@@ -2931,7 +2939,7 @@ var KNIP_KEYS = [
   "namespaceMembers"
 ];
 function knip(text) {
-  return arr2(obj2(payload(text, "object")).issues).flatMap((i) => {
+  return collection(payload(text, "object"), "issues").flatMap((i) => {
     const issue = obj2(i);
     const file = str2(issue.file);
     return KNIP_KEYS.flatMap((key) => arr2(issue[key]).map((entry) => {
@@ -2942,7 +2950,7 @@ function knip(text) {
   });
 }
 function jscpd(text) {
-  return arr2(obj2(payload(text, "object")).duplicates).map((d) => {
+  return collection(payload(text, "object"), "duplicates").map((d) => {
     const dup = obj2(d);
     const first = obj2(dup.firstFile);
     const second = obj2(dup.secondFile);
@@ -2956,7 +2964,7 @@ function jscpd(text) {
   });
 }
 function depcruise(text) {
-  return arr2(obj2(obj2(payload(text, "object")).summary).violations).map((v) => {
+  return collection(obj2(payload(text, "object")).summary, "violations", "summary.violations").map((v) => {
     const violation = obj2(v);
     const cycle = arr2(violation.cycle).map((c) => str2(obj2(c).name));
     const detail = cycle.length > 0 ? `${str2(violation.from)} -> ${cycle.join(" -> ")}` : `${str2(violation.from)} -> ${str2(violation.to)}`;
@@ -3025,7 +3033,7 @@ function importLinter(text, ctx) {
   return hits;
 }
 function golangci(text) {
-  return arr2(obj2(payload(text, "object")).Issues).map((i) => {
+  return collection(payload(text, "object"), "Issues", "Issues", true).map((i) => {
     const issue = obj2(i);
     const pos = obj2(issue.Pos);
     return { rule: str2(issue.FromLinter), file: str2(pos.Filename), line: num2(pos.Line), message: str2(issue.Text) };
