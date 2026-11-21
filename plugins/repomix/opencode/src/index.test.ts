@@ -32,6 +32,15 @@ test("registers the tool and the skill with no npx prompt, and disposes them", a
   expect(fake.tools.size).toBe(0)
 })
 
+test.each(["false", "true", 1, "yes"])("a non-boolean confirmPack %p registers no prompt and keeps an allow", async (value) => {
+  const fake = createFakeContext({ options: { confirmPack: value } })
+  await plugin.setup(fake.context)
+  expect(fake.hooks("permission")).toEqual([])
+  const npx = { sessionID: "ses_1", action: PACK_TOOL, resources: ["o/r"], metadata: { runner: "npx" }, effect: "allow" }
+  const evaluation = await fake.fire.permission("evaluate", npx as { effect: string })
+  expect(evaluation.effect).toBe("allow")
+})
+
 test("confirmPack=true prompts for the npx fallback; a deny stays a deny and the default leaves an allow", async () => {
   const npx = { sessionID: "ses_1", action: PACK_TOOL, resources: ["o/r"], metadata: { runner: "npx" } }
   const on = createFakeContext({ options: { confirmPack: true } })

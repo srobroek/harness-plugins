@@ -25,7 +25,7 @@ export const PACK_DESCRIPTION =
   "Pack a local directory or a remote repo at a ref into one file; returns its path, token counts and top files.\n" +
   "Runs repomix (PATH, else npx --yes repomix@" +
   REPOMIX_VERSION +
-  ", which asks first). The pack is written under the OpenCode temp dir and never returned: grep it for the " +
+  "; your permission config controls the run, and the boolean option confirmPack: true makes the npx fallback ask first). The pack is written under the OpenCode temp dir and never returned: grep it for the " +
   "file anchors and read slices. The target's repomix.config.* is never loaded and the secret scan always runs. " +
   "Use for bulk context over many files; for a single lookup use grep/read."
 
