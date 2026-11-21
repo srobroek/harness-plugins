@@ -63,7 +63,18 @@ Move new shared code into `lib` instead of adding another edge.
 - `subagent-worktree` removes a lane through one path, `finalize` in `plugins/subagent-worktree/opencode/src/lifecycle.ts`, under the worktree's disk lock. It records the lane as `removing`, re-proves liveness and the tree, removes the worktree, moves the sessions and retires the lane. A failed move or an incomplete listing leaves the lane in `removing` until a later trigger finishes it.
 - `delivery` wraps the helpers in `plugins/delivery/opencode/src/lane-move.ts`. After it removes a worktree and proves it absent, it moves the lane's sessions that sit in the worktree or below it to the canonical checkout. A failed move, an unreadable session or an incomplete listing is reported in the cleanup result and never fails the cleanup; only a session the host says does not exist is dropped silently.
 
-`subagent-worktree` runs git automatically in lanes and checkouts whose config it does not control. So `spawnRunner` in `plugins/subagent-worktree/opencode/src/git.ts` gives every `git` command `untrustedLocalGitArgs()` and `UNTRUSTED_LOCAL_GIT_ENV` from `lib/src/safe-git.ts`. They disable these:
+`subagent-worktree` runs git automatically in lanes and checkouts whose config it does not control. So `spawnRunner` in `plugins/subagent-worktree/opencode/src/git.ts` gives every `git` command `untrustedLocalGitArgs()` and the environment from `untrustedLocalGitEnv()`, both in `lib/src/safe-git.ts`. The environment drops every inherited `GIT_*` variable except `GIT_CONFIG_GLOBAL`. It also drops `PAGER`, `EDITOR`, `VISUAL` and `SSH_ASKPASS`. The dropped variables include these:
+
+| Why | Variables |
+| --- | --- |
+| The filter-driver listing and the command could read different config | `GIT_CONFIG`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`, `GIT_CONFIG_SYSTEM` |
+| They select another repository, work tree or index | `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` |
+| They name programs | `GIT_EXEC_PATH`, `GIT_EXTERNAL_DIFF`, `GIT_PAGER`, `GIT_EDITOR`, `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_ASKPASS`, `GIT_PROXY_COMMAND` |
+| They write files or change what a read sees | `GIT_TRACE*`, `GIT_*_PATHSPECS`, `GIT_NAMESPACE`, `GIT_REPLACE_REF_BASE` |
+
+`GIT_CONFIG_GLOBAL`, `HOME` and `XDG_CONFIG_HOME` stay, because the listing and the command read the global config the same way. Together, the arguments and the environment disable these:
+
+`GIT_CONFIG_GLOBAL`, `HOME` and `XDG_CONFIG_HOME` stay, because the listing and the command read the global config the same way. Together, the arguments and the environment disable these:
 
 - fsmonitor, hooks and the global attributes file
 - `diff.external`
@@ -72,7 +83,7 @@ Move new shared code into `lib` instead of adding another edge.
 - signature checks (`log.showSignature`) and the signature programs
 - system config, terminal prompts and lazy fetch
 
-Before a status or a work-tree diff, the plugin lists the filter drivers in the same directory (`FILTER_DRIVER_LISTING`). It disables every driver it finds, including the user's global ones such as git-lfs, because the repository picks the driver and can supply the program a relative command runs. It refuses to run the command when the listing fails or a driver name is not UTF-8 or contains `=`. The plugin reads `git worktree list --porcelain -z` and refuses malformed output. The minimum git version stays as it is, so these risks remain:
+Before a status or a work-tree diff, the plugin lists the filter drivers in the same directory (`FILTER_DRIVER_LISTING`). It disables every driver it finds, including the user's global ones such as git-lfs. The repository picks the driver, and it can supply the program that a relative command runs. It refuses to run the command when the listing fails or a driver name is not UTF-8 or contains `=`. The plugin reads `git worktree list --porcelain -z` and refuses malformed output. The minimum git version stays as it is, so these risks remain:
 
 - `GIT_NO_LAZY_FETCH` needs git 2.45. Older git still starts a lazy fetch and relies on the transport refusal (`GIT_ALLOW_PROTOCOL` set empty).
 - `git status` recursing into a submodule runs with the submodule's own filter drivers.

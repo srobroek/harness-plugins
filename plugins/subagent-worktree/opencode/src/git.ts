@@ -4,8 +4,8 @@ import { env as hostEnv } from "node:process"
 import {
   FILTER_DRIVER_LISTING,
   filterDriverOverrides,
-  UNTRUSTED_LOCAL_GIT_ENV,
   untrustedLocalGitArgs,
+  untrustedLocalGitEnv,
 } from "@srobroek/opencode-lib/safe-git"
 import { supervise } from "@srobroek/opencode-lib/subprocess"
 import { type HeadFacts, isUnbornHead } from "./lane.ts"
@@ -32,7 +32,7 @@ export const spawnRunner: Runner = async (argv, options) => {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
-      ...(git ? { env: { ...hostEnv, ...UNTRUSTED_LOCAL_GIT_ENV } } : {}),
+      ...(git ? { env: untrustedLocalGitEnv(hostEnv) } : {}),
       ...(options?.cwd ? { cwd: options.cwd } : {}),
     })
     const run = await supervise(child, git ? { timeoutMs: GIT_TIMEOUT_MS } : {})

@@ -23,7 +23,7 @@ export const SAFE_GIT_ARGS = [
  * - `core.attributesFile` drops the global attributes file.
  * - `diff.external` is blanked, so a patch diff fails instead of running it.
  * - `core.sshCommand`, `credential.helper` and `core.askPass` are blanked. With every transport
- *   refused ({@link UNTRUSTED_LOCAL_GIT_ENV}) none of them should start; this is a second layer.
+ *   refused ({@link untrustedLocalGitEnv}) none of them should start; this is a second layer.
  * - `log.showSignature` is off, so a log-style read (`stash list`) verifies no signature, and
  *   the signature programs are blanked as a second layer.
  *
@@ -56,7 +56,38 @@ export function untrustedLocalGitArgs(): string[] {
 }
 
 /**
- * Environment for the commands {@link untrustedLocalGitArgs} covers.
+ * Variables git reads to choose a program to run that do not start with `GIT_`. Every inherited
+ * `GIT_*` variable is dropped too; see {@link untrustedLocalGitEnv}.
+ */
+const PROGRAM_VARIABLES = ["PAGER", "EDITOR", "VISUAL", "SSH_ASKPASS"] as const
+
+/** The one inherited `GIT_*` variable kept: the user's global config file. */
+const KEPT_GIT_VARIABLE = "GIT_CONFIG_GLOBAL"
+
+/**
+ * The environment for the commands {@link untrustedLocalGitArgs} covers, from the host's.
+ *
+ * Every inherited `GIT_*` variable except `GIT_CONFIG_GLOBAL` is dropped, and so are
+ * {@link PROGRAM_VARIABLES}. Among the dropped ones:
+ *
+ * - Config that the filter-driver preflight and the command would read differently: `GIT_CONFIG`
+ *   (only `git config` reads it), `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`,
+ *   `GIT_CONFIG_VALUE_<n>` and `GIT_CONFIG_SYSTEM`. This plugin's own overrides are `-c` options,
+ *   so nothing of its own needs to be appended to them.
+ * - A repository, work tree or index other than the one `-C` names: `GIT_DIR`, `GIT_WORK_TREE`,
+ *   `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY` and
+ *   `GIT_ALTERNATE_OBJECT_DIRECTORIES`.
+ * - Programs git runs: `GIT_EXEC_PATH`, `GIT_EXTERNAL_DIFF`, `GIT_PAGER`, `GIT_EDITOR`, `GIT_SSH`,
+ *   `GIT_SSH_COMMAND`, `GIT_ASKPASS` and `GIT_PROXY_COMMAND`.
+ * - Files git writes: `GIT_TRACE` and every other `GIT_TRACE*`.
+ * - Pathspec and lookup switches that change what a read sees: `GIT_LITERAL_PATHSPECS` and the
+ *   other `GIT_*_PATHSPECS`, `GIT_NAMESPACE` and `GIT_REPLACE_REF_BASE`.
+ *
+ * `GIT_CONFIG_GLOBAL` is kept because the preflight and the command both read it, and its filter
+ * drivers are disabled like any other. `HOME` and `XDG_CONFIG_HOME`, which locate the global config
+ * when it is unset, are kept: they only locate that file.
+ *
+ * Then these are set:
  *
  * - An empty `GIT_ALLOW_PROTOCOL` refuses every transport, built-in or remote helper, whatever
  *   the repository's `protocol.*.allow` says. A lazy fetch in a partial clone would otherwise run
@@ -67,11 +98,21 @@ export function untrustedLocalGitArgs(): string[] {
  * Residual risk (no minimum-version bump): `GIT_NO_LAZY_FETCH` needs git 2.45. Older git still
  * starts a lazy fetch and relies on the transport refusal, which git checks before it connects.
  */
-export const UNTRUSTED_LOCAL_GIT_ENV: Readonly<Record<string, string>> = {
-  GIT_ALLOW_PROTOCOL: "",
-  GIT_NO_LAZY_FETCH: "1",
-  GIT_CONFIG_NOSYSTEM: "1",
-  GIT_TERMINAL_PROMPT: "0",
+export function untrustedLocalGitEnv(host: Readonly<Record<string, string | undefined>>): Record<string, string> {
+  const dropped = new Set<string>(PROGRAM_VARIABLES)
+  const kept: Record<string, string> = {}
+  for (const [name, value] of Object.entries(host)) {
+    if (value === undefined || dropped.has(name)) continue
+    if (name.startsWith("GIT_") && name !== KEPT_GIT_VARIABLE) continue
+    kept[name] = value
+  }
+  return {
+    ...kept,
+    GIT_ALLOW_PROTOCOL: "",
+    GIT_NO_LAZY_FETCH: "1",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_TERMINAL_PROMPT: "0",
+  }
 }
 
 /**
@@ -79,7 +120,7 @@ export const UNTRUSTED_LOCAL_GIT_ENV: Readonly<Record<string, string>> = {
  * picks the filter drivers out. A `--get-regexp` would skip a key that is not valid in the locale's
  * encoding, and with it the driver. Run them in the same directory, with the same options and
  * environment, as the command they protect: git then evaluates conditional includes (`includeIf`)
- * and per-worktree config the same way for both. Exit 1 with no output means no config at all.
+ * and per-worktree config the same way for both. An empty listing exits 1.
  */
 export const FILTER_DRIVER_LISTING = ["config", "--name-only", "-z", "--list"] as const
 

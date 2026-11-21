@@ -773,12 +773,26 @@ function untrustedLocalGitArgs() {
     "gpg.x509.program="
   ];
 }
-var UNTRUSTED_LOCAL_GIT_ENV = {
-  GIT_ALLOW_PROTOCOL: "",
-  GIT_NO_LAZY_FETCH: "1",
-  GIT_CONFIG_NOSYSTEM: "1",
-  GIT_TERMINAL_PROMPT: "0"
-};
+var PROGRAM_VARIABLES = ["PAGER", "EDITOR", "VISUAL", "SSH_ASKPASS"];
+var KEPT_GIT_VARIABLE = "GIT_CONFIG_GLOBAL";
+function untrustedLocalGitEnv(host) {
+  const dropped = new Set(PROGRAM_VARIABLES);
+  const kept = {};
+  for (const [name, value] of Object.entries(host)) {
+    if (value === undefined || dropped.has(name))
+      continue;
+    if (name.startsWith("GIT_") && name !== KEPT_GIT_VARIABLE)
+      continue;
+    kept[name] = value;
+  }
+  return {
+    ...kept,
+    GIT_ALLOW_PROTOCOL: "",
+    GIT_NO_LAZY_FETCH: "1",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_TERMINAL_PROMPT: "0"
+  };
+}
 var FILTER_DRIVER_LISTING = ["config", "--name-only", "-z", "--list"];
 function filterDriverOverrides(listing) {
   const keys = listing.split("\x00");
@@ -1375,7 +1389,7 @@ var spawnRunner = async (argv, options) => {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
-      ...git ? { env: { ...hostEnv, ...UNTRUSTED_LOCAL_GIT_ENV } } : {},
+      ...git ? { env: untrustedLocalGitEnv(hostEnv) } : {},
       ...options?.cwd ? { cwd: options.cwd } : {}
     });
     const run = await supervise(child, git ? { timeoutMs: GIT_TIMEOUT_MS } : {});
