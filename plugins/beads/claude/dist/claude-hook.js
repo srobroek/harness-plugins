@@ -4383,8 +4383,247 @@ function unplacedBdRefusal(input) {
 import { execFileSync } from "child_process";
 import { closeSync as closeSync4, constants as constants3, existsSync as existsSync6, fstatSync as fstatSync2, lstatSync as lstatSync5, openSync as openSync4, readSync as readSync3 } from "fs";
 import { dirname as dirname6, join as join7, resolve as resolve7 } from "path";
+
+// lib/src/command-words.ts
+var NONE = new Set;
+var WRAPPERS2 = new Map([
+  [
+    "sudo",
+    {
+      valued: new Set([
+        "-C",
+        "-D",
+        "-g",
+        "-h",
+        "-p",
+        "-R",
+        "-r",
+        "-T",
+        "-t",
+        "-U",
+        "-u",
+        "--chdir",
+        "--chroot",
+        "--close-from",
+        "--command-timeout",
+        "--group",
+        "--host",
+        "--other-user",
+        "--prompt",
+        "--role",
+        "--type",
+        "--user"
+      ]),
+      chdir: new Set(["-D", "--chdir"])
+    }
+  ],
+  ["doas", { valued: new Set(["-C", "-u"]) }],
+  [
+    "env",
+    {
+      valued: new Set(["-C", "-L", "-P", "-S", "-U", "-u", "--chdir", "--split-string", "--unset"]),
+      chdir: new Set(["-C", "--chdir"]),
+      split: new Set(["-S", "--split-string"]),
+      assignments: true
+    }
+  ],
+  ["nice", { valued: new Set(["-n", "--adjustment"]) }],
+  ["timeout", { valued: new Set(["-k", "-s", "--kill-after", "--signal"]), operands: 1 }],
+  ["stdbuf", { valued: new Set(["-e", "-i", "-o", "--error", "--input", "--output"]) }],
+  ["exec", { valued: new Set(["-a"]) }],
+  ["command", { valued: NONE, lookup: new Set(["-V", "-v"]) }],
+  ["time", { valued: new Set(["-f", "-o", "--format", "--output"]) }],
+  ["nohup", { valued: NONE }]
+]);
+var ASSIGNMENT4 = /^[A-Za-z_][A-Za-z0-9_]*=/;
+function readOption(words, at, wrapper) {
+  const word = words[at];
+  if (word.startsWith("--")) {
+    const eq = word.indexOf("=");
+    const name = eq === -1 ? word : word.slice(0, eq);
+    if (!wrapper.valued.has(name))
+      return null;
+    return eq === -1 ? { name, value: words[at + 1], span: 2 } : { name, value: word.slice(eq + 1), span: 1 };
+  }
+  for (let j = 1;j < word.length; j++) {
+    const name = `-${word[j]}`;
+    if (wrapper.lookup?.has(name))
+      return "lookup";
+    if (!wrapper.valued.has(name))
+      continue;
+    const attached = word.slice(j + 1);
+    return attached ? { name, value: attached, span: 1 } : { name, value: words[at + 1], span: 2 };
+  }
+  return null;
+}
+function commandWords(input) {
+  const { argv, directories } = stripWrappers(input);
+  return { argv, directories };
+}
+function stripWrappers(input) {
+  const words = [...input];
+  const directories = [];
+  const wrappers = [];
+  let i = 0;
+  while (i < words.length) {
+    const word = words[i];
+    if (ASSIGNMENT4.test(word) || word === "--") {
+      i++;
+      continue;
+    }
+    const wrapper = WRAPPERS2.get(word.slice(word.lastIndexOf("/") + 1));
+    if (wrapper === undefined)
+      break;
+    wrappers.push(word.slice(word.lastIndexOf("/") + 1));
+    i++;
+    while (i < words.length) {
+      const option = words[i];
+      if (option === "--") {
+        i++;
+        break;
+      }
+      if (wrapper.assignments && ASSIGNMENT4.test(option)) {
+        i++;
+        continue;
+      }
+      if (!option.startsWith("-"))
+        break;
+      const read = readOption(words, i, wrapper);
+      if (read === "lookup")
+        return { argv: [], directories, wrappers };
+      if (read === null) {
+        i++;
+        continue;
+      }
+      if (read.value === undefined)
+        return { argv: [], directories, wrappers };
+      if (wrapper.split?.has(read.name)) {
+        words.splice(i, read.span, ...tokenizeShell(read.value).map((token) => token.value));
+        continue;
+      }
+      if (wrapper.chdir?.has(read.name))
+        directories.push(read.value);
+      i += read.span;
+    }
+    i += Math.min(wrapper.operands ?? 0, words.length - i);
+  }
+  return { argv: words.slice(i), directories, wrappers };
+}
+
+// plugins/beads/opencode/src/ansi-c-words.ts
+var SIMPLE_ESCAPES = {
+  a: "\x07",
+  b: "\b",
+  e: "\x1B",
+  E: "\x1B",
+  f: "\f",
+  n: `
+`,
+  r: "\r",
+  t: "\t",
+  v: "\v",
+  "\\": "\\",
+  "'": "'",
+  '"': '"',
+  "?": "?"
+};
+function decodeAnsiC(source, from) {
+  let text = "";
+  let truncated = false;
+  const emit = (chunk) => {
+    if (!truncated)
+      text += chunk;
+  };
+  const code = (value) => {
+    if (value === 0)
+      truncated = true;
+    else
+      emit(String.fromCodePoint(value));
+  };
+  let i = from;
+  while (i < source.length) {
+    const ch = source[i];
+    if (ch === "'")
+      return { text, end: i + 1 };
+    if (ch !== "\\") {
+      emit(ch);
+      i++;
+      continue;
+    }
+    const next = source[i + 1];
+    if (next === undefined)
+      return null;
+    i += 2;
+    const simple = SIMPLE_ESCAPES[next];
+    if (simple !== undefined) {
+      emit(simple);
+    } else if (/[0-7]/.test(next)) {
+      const digits = /^[0-7]{0,2}/.exec(source.slice(i))?.[0] ?? "";
+      i += digits.length;
+      code(Number.parseInt(next + digits, 8) & 255);
+    } else if (next === "x" || next === "u" || next === "U") {
+      const max = next === "x" ? 2 : next === "u" ? 4 : 8;
+      const digits = new RegExp(`^[0-9A-Fa-f]{0,${max}}`).exec(source.slice(i))?.[0] ?? "";
+      if (digits.length === 0) {
+        emit(`\\${next}`);
+      } else {
+        i += digits.length;
+        const value = Number.parseInt(digits, 16);
+        if (value > 1114111)
+          emit(`\\${next}${digits}`);
+        else
+          code(value);
+      }
+    } else if (next === "c" && i < source.length) {
+      const control = source.charCodeAt(i) & 31;
+      i++;
+      code(control);
+    } else {
+      emit(`\\${next}`);
+    }
+  }
+  return null;
+}
+function expandAnsiCQuotes(source) {
+  if (!source.includes("$'"))
+    return source;
+  let out = "";
+  let quote = null;
+  for (let i = 0;i < source.length; i++) {
+    const ch = source[i];
+    if (quote === "'") {
+      if (ch === "'")
+        quote = null;
+    } else if (quote === '"') {
+      if (ch === "\\") {
+        out += ch + (source[i + 1] ?? "");
+        i++;
+        continue;
+      }
+      if (ch === '"')
+        quote = null;
+    } else if (ch === "\\") {
+      out += ch + (source[i + 1] ?? "");
+      i++;
+      continue;
+    } else if (ch === "$" && source[i + 1] === "'") {
+      const decoded = decodeAnsiC(source, i + 2);
+      if (decoded !== null) {
+        out += `'${decoded.text.replaceAll("'", `'"'"'`)}'`;
+        i = decoded.end - 1;
+        continue;
+      }
+    } else if (ch === "'" || ch === '"') {
+      quote = ch;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+// plugins/beads/opencode/src/pr-bead-link-gate.ts
 var MAX_COMMAND_LENGTH = 64000;
-var BEAD_REF = /(?:^|\s|\\[nrt])(?:Bead|Closes-Bead|Bead-Id):\s*[A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9]+/i;
+var BEAD_REF = /(?:^|\s)(?:Bead|Closes-Bead|Bead-Id):\s*[A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9]+/i;
 var GH_TIMEOUT_MS = 1e4;
 var VALUE_FLAGS3 = {
   "--title": true,
@@ -4433,7 +4672,8 @@ function beadsActive(dir) {
   }
 }
 function readBodyOfGhCreate(segment, readFile) {
-  const tokens = invocation(segment, ["gh", "pr", "create"]);
+  const expanded = expandAnsiCQuotes(segment);
+  const tokens = invocation(expanded, ["gh", "pr", "create"]);
   if (!tokens)
     return null;
   let body = null;
@@ -4477,9 +4717,9 @@ function readBodyOfGhCreate(segment, readFile) {
   if (body !== null)
     return { text: body, source: "the --body text" };
   if (file !== null && file !== "-" && readFile) {
-    const text = readFile(file);
-    if (text !== undefined)
-      return { text, source: `--body-file ${file}` };
+    const source = `--body-file ${file}`;
+    const read = readFile(file, commandWords(tokenize(expanded).map((token) => token.value)).directories);
+    return "text" in read ? { text: read.text, source } : { unreadable: read.problem, source };
   }
   return null;
 }
@@ -4499,6 +4739,12 @@ function decidePrCreate(body, active, note, source) {
   }
   return { block: true, reason: withLedger(`${REASON}${looked}`, note) };
 }
+function decideUnreadableBody(read, active, note) {
+  if (active === false || typeof active !== "boolean" && active.kind === "uncontrolled")
+    return null;
+  const reason = `Could not read ${read.source}: ${read.unreadable}. The gate cannot check it for a Bead: trailer, so it refuses. Fix the path, or pass the text with --body.`;
+  return { block: true, reason: withLedger(reason, note) };
+}
 function decideCommand(command, active, note, options = {}) {
   if (command.length > MAX_COMMAND_LENGTH)
     return null;
@@ -4506,6 +4752,12 @@ function decideCommand(command, active, note, options = {}) {
   const readFile = segments.length === 1 ? options.readFile : undefined;
   for (const segment of segments) {
     const read = readBodyOfGhCreate(segment, readFile);
+    if (read?.unreadable !== undefined) {
+      const refusal = decideUnreadableBody(read, typeof active === "function" ? active(segment) : active, note);
+      if (refusal)
+        return refusal;
+      continue;
+    }
     const body = read?.text ?? null;
     if (body === null || BEAD_REF.test(body))
       continue;
@@ -4593,12 +4845,12 @@ function decideCommandParsed(parsed, active, note, options) {
   return null;
 }
 function bodyFileReader(cwd) {
-  return (path) => {
+  return (path, directories) => {
     let fd;
     try {
-      fd = openSync4(resolve7(cwd, path), constants3.O_RDONLY | constants3.O_NONBLOCK);
+      fd = openSync4(resolve7(cwd, ...directories, path), constants3.O_RDONLY | constants3.O_NONBLOCK);
       if (!fstatSync2(fd).isFile())
-        return;
+        return { problem: "it is not a regular file" };
       const buffer = Buffer.alloc(MAX_COMMAND_LENGTH + 1);
       let length = 0;
       while (length < buffer.length) {
@@ -4607,9 +4859,9 @@ function bodyFileReader(cwd) {
           break;
         length += read;
       }
-      return length > MAX_COMMAND_LENGTH ? undefined : buffer.toString("utf8", 0, length);
-    } catch {
-      return;
+      return length > MAX_COMMAND_LENGTH ? { problem: `it is larger than ${MAX_COMMAND_LENGTH} bytes` } : { text: buffer.toString("utf8", 0, length) };
+    } catch (error) {
+      return { problem: error instanceof Error ? error.message : String(error) };
     } finally {
       if (fd !== undefined)
         closeSync4(fd);

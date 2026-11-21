@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process"
 import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync } from "node:fs"
 import { dirname, join, resolve } from "node:path"
-import { commandSegments, invocation, type ParsedCommand, type Token } from "@srobroek/opencode-lib/beads-shell"
+import { commandSegments, invocation, type ParsedCommand, type Token, tokenize } from "@srobroek/opencode-lib/beads-shell"
+import { commandWords } from "@srobroek/opencode-lib/command-words"
+import { expandAnsiCQuotes } from "./ansi-c-words.ts"
 
 /**
  * A PR that names no bead is a PR nobody can trace back to a decision.
@@ -12,8 +14,7 @@ import { commandSegments, invocation, type ParsedCommand, type Token } from "@sr
  */
 
 const MAX_COMMAND_LENGTH = 64_000
-// `$'a\nb'` reaches the gate undecoded, so a literal `\n`, `\r` or `\t` also separates a trailer from the line before it.
-const BEAD_REF = /(?:^|\s|\\[nrt])(?:Bead|Closes-Bead|Bead-Id):\s*[A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9]+/i
+const BEAD_REF = /(?:^|\s)(?:Bead|Closes-Bead|Bead-Id):\s*[A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9]+/i
 
 /**
  * A `gh` API call that hangs must not spend the whole tool_call budget: the harness kills a
@@ -72,11 +73,20 @@ export function beadsActive(dir: string): boolean {
   }
 }
 
-/** Where the gate read a PR body, so a refusal can say what it looked at. */
-export type BodyRead = { text: string; source: string }
+/**
+ * Where the gate read a PR body, so a refusal can say what it looked at. `unreadable` is set
+ * instead of `text` when a `--body-file` exists on the command line but its content could not be read.
+ */
+export type BodyRead = { source: string } & ({ text: string; unreadable?: undefined } | { text?: undefined; unreadable: string })
 
-/** Reads a `--body-file` path; undefined when the file cannot be read. */
-export type ReadBodyFile = (path: string) => string | undefined
+/** What reading a `--body-file` found: its text, or why the gate cannot see it. */
+export type BodyFile = { text: string } | { problem: string }
+
+/**
+ * Reads a `--body-file` path. `directories` are the working directories that wrappers
+ * (`env -C DIR`) give the command, outermost first; a relative path resolves against them in order.
+ */
+export type ReadBodyFile = (path: string, directories: readonly string[]) => BodyFile
 
 /** The `--body` value of one `gh pr create` segment; `--body-file` is not read. */
 export function bodyOfGhCreate(segment: string): string | null {
@@ -86,10 +96,12 @@ export function bodyOfGhCreate(segment: string): string | null {
 /**
  * The body of one `gh pr create` segment and where it came from: null when the segment
  * creates no PR, and null when it creates one whose body is not visible here (`--fill`,
- * an editor session, stdin, or a `--body-file` that `readFile` does not supply).
+ * an editor session, stdin, or a `--body-file` when `readFile` is not supplied). A `--body-file` that
+ * `readFile` cannot read comes back as `unreadable`, never as a silent null.
  */
 export function readBodyOfGhCreate(segment: string, readFile?: ReadBodyFile): BodyRead | null {
-  const tokens = invocation(segment, ["gh", "pr", "create"])
+  const expanded = expandAnsiCQuotes(segment)
+  const tokens = invocation(expanded, ["gh", "pr", "create"])
   if (!tokens) return null
   let body: string | null = null
   let file: string | null = null
@@ -130,8 +142,9 @@ export function readBodyOfGhCreate(segment: string, readFile?: ReadBodyFile): Bo
   }
   if (body !== null) return { text: body, source: "the --body text" }
   if (file !== null && file !== "-" && readFile) {
-    const text = readFile(file)
-    if (text !== undefined) return { text, source: `--body-file ${file}` }
+    const source = `--body-file ${file}`
+    const read = readFile(file, commandWords(tokenize(expanded).map((token) => token.value)).directories)
+    return "text" in read ? { text: read.text, source } : { unreadable: read.problem, source }
   }
   return null
 }
@@ -161,6 +174,20 @@ export function decidePrCreate(
 }
 
 /**
+ * A `--body-file` the gate cannot read hides the body, so a PR in a gated repository is
+ * refused rather than passed unseen.
+ */
+function decideUnreadableBody(
+  read: BodyRead,
+  active: boolean | RepositoryControl,
+  note?: LedgerNote,
+): { block: true; reason: string } | null {
+  if (active === false || (typeof active !== "boolean" && active.kind === "uncontrolled")) return null
+  const reason = `Could not read ${read.source}: ${read.unreadable}. The gate cannot check it for a Bead: trailer, so it refuses. Fix the path, or pass the text with --body.`
+  return { block: true, reason: withLedger(reason, note) }
+}
+
+/**
  * Blocks when any `gh pr create` in the command carries neither a bead nor a truthful no-bead reason.
  *
  * `active` is resolved per segment and only for a segment whose answer actually depends on it,
@@ -178,6 +205,11 @@ export function decideCommand(
   const readFile = segments.length === 1 ? options.readFile : undefined
   for (const segment of segments) {
     const read = readBodyOfGhCreate(segment, readFile)
+    if (read?.unreadable !== undefined) {
+      const refusal = decideUnreadableBody(read, typeof active === "function" ? active(segment) : active, note)
+      if (refusal) return refusal
+      continue
+    }
     const body = read?.text ?? null
     // A segment that creates no PR, and one whose body already names a bead, decide null for
     // every `active`. Resolving `active` ahead of them spent two synchronous `gh` API calls per
@@ -288,16 +320,17 @@ export function decideCommandParsed(
 }
 
 /**
- * Reads a body file relative to `cwd`. Only a regular file of at most the command cap is visible:
- * the target is opened without blocking (so a FIFO cannot hang the open), the opened descriptor
- * is checked (so a symlink is judged by its target), and the read is bounded.
+ * Reads a body file relative to `cwd` and any wrapper directories. Only a regular file of at most
+ * the command cap is read: the target is opened without blocking (so a FIFO cannot hang the open),
+ * the opened descriptor is checked (so a symlink is judged by its target), and the read is bounded.
+ * Anything else comes back as a problem the gate reports; it is never read as an empty body.
  */
 export function bodyFileReader(cwd: string): ReadBodyFile {
-  return (path) => {
+  return (path, directories) => {
     let fd: number | undefined
     try {
-      fd = openSync(resolve(cwd, path), constants.O_RDONLY | constants.O_NONBLOCK)
-      if (!fstatSync(fd).isFile()) return undefined
+      fd = openSync(resolve(cwd, ...directories, path), constants.O_RDONLY | constants.O_NONBLOCK)
+      if (!fstatSync(fd).isFile()) return { problem: "it is not a regular file" }
       const buffer = Buffer.alloc(MAX_COMMAND_LENGTH + 1)
       let length = 0
       while (length < buffer.length) {
@@ -305,9 +338,11 @@ export function bodyFileReader(cwd: string): ReadBodyFile {
         if (read === 0) break
         length += read
       }
-      return length > MAX_COMMAND_LENGTH ? undefined : buffer.toString("utf8", 0, length)
-    } catch {
-      return undefined
+      return length > MAX_COMMAND_LENGTH
+        ? { problem: `it is larger than ${MAX_COMMAND_LENGTH} bytes` }
+        : { text: buffer.toString("utf8", 0, length) }
+    } catch (error) {
+      return { problem: error instanceof Error ? error.message : String(error) }
     } finally {
       if (fd !== undefined) closeSync(fd)
     }

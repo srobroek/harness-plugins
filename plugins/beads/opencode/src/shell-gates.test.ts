@@ -123,6 +123,64 @@ describe("decideShell", () => {
     expect(linked.kind).toBe("allow")
   })
 
+  describe("PR body files", () => {
+    const controlled = () => deps({ repositoryControl: () => ({ kind: "controlled" }) })
+    let dir = ""
+    beforeAll(() => {
+      dir = join(root, "bodies")
+      mkdirSync(join(dir, "sub"), { recursive: true })
+      writeFileSync(join(dir, "bad.md"), "Adds a fish alias.\n")
+      writeFileSync(join(dir, "good.md"), "Adds a fish alias.\n\nBead: proj-1\n")
+      writeFileSync(join(dir, "sub", "good.md"), "Bead: proj-1\n")
+    })
+
+    test.each([
+      ["a direct create", "gh pr create --title t --body-file bad.md"],
+      ["a create under env", "env GH_PAGER= gh pr create --title t -F bad.md"],
+      ["a create in sh -c", `sh -c 'gh pr create --title t --body-file bad.md'`],
+      ["a create in a nested bash -c", `bash -c "sh -c 'gh pr create --body-file=bad.md'"`],
+    ])("refuses %s whose body file names no bead", async (_label, command) => {
+      const decision = await decideShell(command, dir, controlled())
+      expect(decision).toMatchObject({ kind: "block", gate: "pr-bead-link-gate" })
+      if (decision.kind === "block") expect(decision.cause).toContain("Looked at --body-file bad.md")
+    })
+
+    test.each([
+      ["a direct create", "gh pr create --title t --body-file good.md"],
+      ["a create under env", "env GH_PAGER= gh pr create --title t -F good.md"],
+      ["a create in sh -c", `sh -c 'gh pr create --title t --body-file good.md'`],
+    ])("allows %s whose body file names a bead", async (_label, command) => {
+      expect((await decideShell(command, dir, controlled())).kind).toBe("allow")
+    })
+
+    test("refuses a body file that is missing, in a direct and a nested create", async () => {
+      for (const command of ["gh pr create --body-file nope.md", `sh -c 'gh pr create --body-file nope.md'`]) {
+        const decision = await decideShell(command, dir, controlled())
+        expect(decision).toMatchObject({ kind: "block", gate: "pr-bead-link-gate" })
+        if (decision.kind === "block") expect(decision.cause).toContain("Could not read --body-file nope.md")
+      }
+    })
+
+    test("reads a relative body file from the env --chdir directory", async () => {
+      // pick.md names a bead only in sub/; other.md names one only here.
+      writeFileSync(join(dir, "pick.md"), "Adds a fish alias.\n")
+      writeFileSync(join(dir, "sub", "pick.md"), "Bead: proj-1\n")
+      writeFileSync(join(dir, "other.md"), "Bead: proj-1\n")
+      writeFileSync(join(dir, "sub", "other.md"), "Adds a fish alias.\n")
+      expect((await decideShell("env --chdir=sub gh pr create --body-file pick.md", dir, controlled())).kind).toBe("allow")
+      expect(await decideShell("env --chdir=sub gh pr create --body-file other.md", dir, controlled())).toMatchObject({
+        kind: "block",
+      })
+    })
+
+    test("refuses a $'...' body that bash cuts at a NUL before the trailer", async () => {
+      expect(await decideShell("gh pr create --body $'x\\0\\nBead: proj-1'", dir, controlled())).toMatchObject({
+        kind: "block",
+        gate: "pr-bead-link-gate",
+      })
+    })
+  })
+
   describe("ledger context wiring", () => {
     let repoA = ""
     let repoB = ""
