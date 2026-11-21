@@ -2788,6 +2788,43 @@ describe("delivery_cleanup resolves the target path once", () => {
     expect(existsSync(f.linked)).toBe(true)
   }, 60_000)
 
+  test("a receipt that names the worktree through a symlinked ancestor is authorized and removed by its physical path", async () => {
+    const f = fixture("canonical-path")
+    const alias = join(scratch("alias-canonical"), "parent")
+    symlinkSync(f.root, alias, "dir")
+    const receipt = buildReceipt({
+      ...f.receipt,
+      now: NOW + 1,
+      worktree: { path: join(alias, basename(f.linked)), removed: false, localRefDeleted: false, absenceVerifiedAt: null },
+      continues: f.receipt,
+    })
+    const path = writeReceipt(receipt, receiptDirectory(f.env, receipt.repo.key))
+    const real = realpathSync(f.linked)
+    const asked: string[] = []
+    const { result, calls } = await invoke(f, { receipt: path }, {}, { authorize: async (request) => void asked.push(request.worktree) })
+    if (!result.ok) throw new Error(result.reason)
+    // A deny written for the real directory matches the resource, and that is the path removed.
+    expect(asked).toEqual([real])
+    const removal = calls.find((argv) => argv.includes("worktree") && argv.includes("remove"))
+    expect(removal?.at(-1)).toBe(real)
+  }, 60_000)
+
+  test("a worktree renamed off the receipt branch after a prompt-free authorization is not removed", async () => {
+    const f = fixture("renamed-after-authorize")
+    const { result, calls } = await invoke(f, undefined, {}, {
+      authorize: async (request) => {
+        expect(request.receiptBound).toBe(true)
+      },
+      removalSection: async (_path, run) => {
+        git(f.linked, ["branch", "-m", "renamed-after-authorize"])
+        return run()
+      },
+    })
+    expect(refusal(result)).toContain("worktree.branch")
+    expect(mutationCalls(calls)).toEqual([])
+    expect(existsSync(f.linked)).toBe(true)
+  }, 60_000)
+
   test("a receipt path that does not resolve is treated as already gone and no Git runs in it", async () => {
     const f = fixture("resolve-missing")
     const receipt = buildReceipt({

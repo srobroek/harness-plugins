@@ -377,6 +377,11 @@ export function stashBranches(receiptBranch: string, target: { branch: string | 
 
 const DETACHED_STASH_BRANCH = "(no branch)"
 
+/** Whether a listed worktree is on the receipt's own branch; a renamed or detached checkout is not. Pure. */
+export function bindsReceipt(target: { branch: string | null; detached: boolean }, receiptBranch: string): boolean {
+  return !target.detached && target.branch === `${LOCAL_REF_PREFIX}${receiptBranch}`
+}
+
 export type LocalRefPlan = "delete" | "absent" | "moved"
 
 /** What to do with the receipt branch's local ref: delete it only when it is still at the reviewed head. */
@@ -1479,17 +1484,27 @@ async function cleanupInRepository(
   // The prompt (if any) comes first and outside the critical section: a held lock must never wait on a person.
   // The receipt was read and every proof above passed. It is bound when the worktree to remove is
   // the receipt's own path on the receipt's own branch: a renamed or detached checkout still asks.
-  const receiptBound =
-    !identity.target.detached &&
-    identity.target.branch === `${LOCAL_REF_PREFIX}${receipt.branch.name}` &&
-    physicalPath(path) === identity.cwd
-  await deps.authorize?.({ worktree: path, branch: receipt.branch.name, pr: receipt.pr.number, receiptBound })
+  // The permission resource and the removal both use this one physical path: a deny written for the
+  // real directory must match what is removed, whatever spelling (a symlinked ancestor) the receipt has.
+  const canonicalPath = identity.cwd
+  const receiptBound = bindsReceipt(identity.target, receipt.branch.name)
+  await deps.authorize?.({ worktree: canonicalPath, branch: receipt.branch.name, pr: receipt.pr.number, receiptBound })
   const removeSection = async (): Promise<CleanupFailure | RemovalFacts> => {
     const localRef = await verifyLocalRef(receipt, cwd, run, bounds.refReadMs)
     if (isFailure(localRef)) return localRef
     const boundary = await revalidateBoundary(receipt, cwd, run, bounds, deps.git)
     if (isFailure(boundary)) return boundary
 
+    // What was approved is what is removed: the path is the one the permission named, and a
+    // prompt-free call stays prompt-free only while the worktree is still on the receipt's branch.
+    if (physicalPath(boundary.target.path) !== canonicalPath)
+      return refuse("worktree.path", boundary.target.path, `the worktree the permission named (${canonicalPath})`)
+    if (receiptBound && !bindsReceipt(boundary.target, receipt.branch.name))
+      return refuse(
+        "worktree.branch",
+        boundary.target.detached ? "a detached HEAD" : String(boundary.target.branch),
+        `${LOCAL_REF_PREFIX}${receipt.branch.name}, as when the removal was authorized; nothing was removed, retry delivery_cleanup`,
+      )
     const executionCwd = safeExecutionCwd(receipt, boundary.records, cwd)
     if (executionCwd === null)
       return refuse("worktree.executionCwd", null, "a different listed worktree for the same repository")
@@ -1500,7 +1515,7 @@ async function cleanupInRepository(
     if (executionDir === null || executionVerdict.state !== "same")
       return refuse("worktree.executionCwd", `${executionCwd} (.git ${executionVerdict.state})`, "a verified worktree of this repository")
     const executionPin = executionVerdict.pin
-    const targetPath = boundary.target.path
+    const targetPath = canonicalPath
     const removeArgv = ["worktree", "remove", targetPath]
     // Ownership is decided before the last abort check, so an interrupt during the
     // listing still stops the call. A host that is present but cannot list leaves the
