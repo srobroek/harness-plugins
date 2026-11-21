@@ -9,7 +9,9 @@ test("registers the architecture skills and the read-only architect", async () =
   expect([...fake.skills.keys()]).toEqual(["architecture-docs-files", "architecture-guide", "architecture-ownership", "architecture-repositories", "architecture-top-level"])
   expect(fake.agents.get("architect")).toMatchObject({ name: "architect", mode: "subagent" })
   const rules = fake.agents.get("architect")?.permissions as AgentPermission[]
-  for (const action of ["edit", "shell", "execute", "question", "some_plugin_tool"]) expect(permissionEffect(rules, action)).toBe("deny")
+  for (const action of ["edit", "execute", "question", "some_plugin_tool"]) expect(permissionEffect(rules, action)).toBe("deny")
+  expect(permissionEffect(rules, "shell", "git log -3")).toBe("allow")
+  expect(permissionEffect(rules, "shell", "git commit -m x")).toBe("deny")
   for (const action of ["read", "grep", "glob", "lsp_diagnostics", "webfetch", "websearch"])
     expect(permissionEffect(rules, action)).toBe("allow")
   for (const skill of ["architecture-guide", "architecture-ownership", "lang-rust-crate-boundaries", "quality-code-design"])

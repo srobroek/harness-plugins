@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { type AgentPermission, permissionEffect } from "@srobroek/opencode-lib/agent-files"
 import { createFakeContext, type FakeContextOptions } from "@srobroek/opencode-lib/testing"
-import plugin, { externalResource, inProject, renderTurn, TOOL_NAME } from "./index.ts"
+import plugin, { inProject, renderTurn, TOOL_NAME } from "./index.ts"
 
 const T = Date.parse("2026-10-20T10:00:00.000Z")
 let n = 0
@@ -74,10 +74,12 @@ describe("seance agent", () => {
     expect(agent).toMatchObject({ mode: "subagent", request: { headers: { "x-opencode-model-role": "cheap" } } })
     expect(agent?.system).toContain("tools.seance_read")
     const rules = agent?.permissions as AgentPermission[]
-    for (const action of ["edit", "shell", "skill", "subagent", "question", "webfetch", "session_resume"])
+    for (const action of ["edit", "skill", "subagent", "question", "webfetch", "session_resume"])
       expect(permissionEffect(rules, action)).toBe("deny")
     for (const action of ["read", "grep", "glob", "execute", "seance_read"]) expect(permissionEffect(rules, action)).toBe("allow")
     expect(permissionEffect(rules, "read", "/repo/.env")).toBe("ask")
+    for (const command of ["bd show bd-1", "git fetch origin"]) expect(permissionEffect(rules, "shell", command)).toBe("allow")
+    for (const command of ["bd close bd-1", "git push"]) expect(permissionEffect(rules, "shell", command)).toBe("deny")
     expect(permissionEffect(rules, "external_directory", "/elsewhere/*")).toBe("ask")
     await cleanup()
     expect(fake.active()).toBe(0)
@@ -138,28 +140,12 @@ describe("seance_read", () => {
     await cleanup()
   })
 
-  test("asks external_directory before reading a session outside the project", async () => {
+  test("reads a session outside the project without any permission request", async () => {
     const { fake, execute, cleanup } = await setup()
     const result = await execute({ session: "ses_far" }, context)
     expect(result.metadata.outside).toBe(true)
-    expect(fake.asserts).toHaveLength(1)
-    expect(fake.asserts[0]).toMatchObject({
-      sessionID: "ses_me",
-      action: "external_directory",
-      resources: ["/elsewhere/*"],
-      source: { type: "tool", messageID: "msg_x", id: "call_x" },
-    })
-    await cleanup()
-  })
-
-  test("a refused permission propagates and reads nothing", async () => {
-    const options = fixture()
-    options.assert = () => {
-      throw new Error("rejected")
-    }
-    const { fake, execute, cleanup } = await setup(options)
-    await expect(execute({ session: "ses_far" }, context)).rejects.toThrow("rejected")
-    expect(fake.calls.some((entry) => entry.method === "session.context")).toBe(false)
+    expect(result.content).toContain("outside this project")
+    expect(fake.asserts).toEqual([])
     await cleanup()
   })
 
@@ -178,10 +164,6 @@ describe("helpers", () => {
     expect(inProject({ ...base, projectID: "p" }, { ...base, projectID: "p" })).toBe(true)
     expect(inProject({ ...base, projectID: "p" }, { ...base, projectID: "q" })).toBe(false)
     expect(inProject(undefined, { ...base, projectID: "q" })).toBe(true)
-  })
-  test("externalResource is the directory boundary", () => {
-    expect(externalResource({ ...base, directory: "/x/y/" })).toBe("/x/y/*")
-    expect(externalResource({ ...base, directory: "" })).toBe("*")
   })
   test("renderTurn notes a failed end state", () => {
     const turn = {

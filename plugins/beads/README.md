@@ -20,12 +20,36 @@ On every `shell` call (`tool.hook("execute.before")`), in this order, with one
 7. `bd unclaim` without `--if-assignee` is refused.
 8. A subagent command that clears or blanks the injected actor gets an advisory in the
    tool result. A main session chooses its own actor and gets none.
-9. `gh pr create` without a `Bead:`, `Closes-Bead:` or `Bead-Id:` trailer is
+9. The plugin refuses a `bd` write (any verb the write lock treats as one, such as `bd create` or `bd heartbeat`) when the ledger belongs to a different git repository
+   than the command's directory. Reads, `bd init` and `bd bootstrap` pass. So does a command
+   that assigns `BEADS_DIR=` itself (`BEADS_DIR=/path bd create ...` or an earlier
+   `export BEADS_DIR=...`), and so does the project's `options.store`. A `BEADS_DIR`
+   that only arrives through the environment is not a choice. One example is a variable
+   inherited from the shell that started a shared OpenCode server. `-C`, `--db`,
+   `--database` and `--global` name their own target and pass. The Claude Code hook has
+   no `options.store`, so a ledger in another repository needs the literal `BEADS_DIR=`
+   there. A `bd` the gate cannot place (behind `exec`, `env`, `xargs`, a shell string or a
+   substitution, quoted or not) is refused too while the default ledger is foreign, because it
+   may be a write. The same holds for a command that defines an `alias` or a shell function.
+   It also holds for a command name spelled with quotes or a backslash (`"b"d`, `\bd`).
+   Run each `bd` as its own simple command. The `bd-embedded-write-lock` gate controls this check. An unquoted `bd` operand of any
+   other command counts as a launch, so the write lock fails closed on `flock X bd create`.
+   A quoted `'bd'` operand names it and passes: `git diff -- 'bd'`.
+
+   Threat model: this gate stops a ledger inherited by accident, such as a `BEADS_DIR`
+   that leaked from the shell that started the server. It does not stop deliberate shell
+   obfuscation. Out of scope are `eval`, indirect expansion, sourced scripts, aliases
+   defined outside the command and unknown wrapper binaries. The real fix is a clean
+   server environment.
+   Under a foreign ledger, a `bd` that follows a recognised wrapper (`flock`, `taskset`,
+   `timeout`, `sudo`, `xargs` and the like) is refused without parsing the wrapper's
+   arguments. A literal `BEADS_DIR=<path>` on the command line is the override.
+10. `gh pr create` without a `Bead:`, `Closes-Bead:` or `Bead-Id:` trailer is
    refused in a repository with a live ledger that you can write to.
-10. Each `bd` write to an embedded store is rewritten to run under
+11. Each `bd` write to an embedded store is rewritten to run under
     `bd-embedded-write-runner`, which holds the store's write lock for exactly the
     life of the `bd` process. The lock files are shared with the omp plugin.
-11. Every shell call of a subagent session starts with
+12. Every shell call of a subagent session starts with
     `unset BEADS_ACTOR; export BD_ACTOR='opencode/<root-session>/<agent>/<session>'`.
     A main session gets no prefix. The prefix is fixed text, not a parse of the command:
     anything the command sets later wins through shell order and bd's precedence

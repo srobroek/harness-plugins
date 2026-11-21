@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { Tool } from "@opencode/plugin/effect"
 import { createFakeContext, type FakeAssert, type FakeSession, type FakeSkill } from "@srobroek/opencode-lib/testing"
@@ -77,7 +77,7 @@ describe("setup", () => {
     const { fake, cleanup } = await load()
     expect(fake.hooks("tool")).toEqual(["execute.before", "execute.before", "execute.after", "execute.after"])
     expect(fake.hooks("shell")).toEqual(["create.before"])
-    expect(fake.hooks("permission")).toEqual(Array(7).fill("evaluate"))
+    expect(fake.hooks("permission")).toEqual(Array(8).fill("evaluate"))
     expect([...fake.tools.keys()]).toEqual([STORE_ACTION])
     await cleanup?.()
     expect(fake.active()).toBe(0)
@@ -544,7 +544,12 @@ describe("scratch folders", () => {
 
   test("scratchDirs: false registers no hook", async () => {
     const { fake } = await load({ scratchDirs: false })
-    expect(fake.hooks("permission")).toEqual(Array(6).fill("evaluate"))
+    expect(fake.hooks("permission")).toEqual(Array(7).fill("evaluate"))
+  })
+
+  test("readOptions reads the documented subagentSecretPaths key and ignores non-strings", () => {
+    expect(readOptions({ subagentSecretPaths: ["~/.x", 3] }).secretPaths).toEqual(["~/.x"])
+    expect(readOptions({}).secretPaths).toEqual([])
   })
 
   test("readOptions defaults scratchDirs to true", () => {
@@ -646,10 +651,15 @@ describe("steering directories and same-repo worktrees", () => {
   })
 
   describe("in a subagent session (full hook chain, subagent-prompts on)", () => {
+    // `subagent-external-reads` would allow these non-secret paths on its own; turn it off so each test proves
+    // the relaxation under test, and that an outside path is still denied without it.
+    const ISOLATE = "subagent-external-reads"
+    // The session directory itself is a scratch root now, so the children work somewhere that does not exist.
+    const ELSEWHERE = "/no-such-session-directory"
     const child = (directory: string): FakeSession => ({ id: "ses_child", parentID: "ses_1", location: { directory } }) as never
 
     test("steering reads are allowed before the unanswerable deny; an outside path is denied", async () => {
-      const { fake } = await load({ steeringDirs: [steering] }, { scratchRoots: [], sessions: [child(fixture)] })
+      const { fake } = await load({ steeringDirs: [steering], disable: [ISOLATE] }, { scratchRoots: [], sessions: [child(ELSEWHERE)] })
       await start(fake, "c1", "read")
       expect((await ask(fake, [`${steering}/git-defender.md`], "c1", "ask", "ses_child")).effect).toBe("allow")
       const denied = await ask(fake, [`${outside}/x`], "c1", "ask", "ses_child")
@@ -659,7 +669,7 @@ describe("steering directories and same-repo worktrees", () => {
     })
 
     test("same-repo worktree reads are allowed; writes, shell and outside paths are denied", async () => {
-      const { fake } = await load({}, { scratchRoots: [], directory: main, worktrees: git(), sessions: [child(main)] })
+      const { fake } = await load({ disable: [ISOLATE] }, { scratchRoots: [], directory: main, worktrees: git(), sessions: [child(main)] })
       await start(fake, "c2", "grep")
       expect((await ask(fake, [`${lane}/src/a.ts`], "c2", "ask", "ses_child")).effect).toBe("allow")
       expect((await ask(fake, [`${outside}/x`], "c2", "ask", "ses_child")).effect).toBe("deny")
@@ -670,7 +680,7 @@ describe("steering directories and same-repo worktrees", () => {
     })
 
     test("a shell call in a scratch folder is allowed; one reaching outside it is denied; no resources is never auto-approved", async () => {
-      const { fake } = await load({}, { scratchRoots: [steering], sessions: [child(fixture)] })
+      const { fake } = await load({ disable: [ISOLATE] }, { scratchRoots: [steering], sessions: [child(ELSEWHERE)] })
       await start(fake, "c3", "shell")
       expect((await ask(fake, [`${steering}/work/*`], "c3", "ask", "ses_child")).effect).toBe("allow")
       expect((await ask(fake, [`${steering}/work/*`, `${outside}/*`], "c3", "ask", "ses_child")).effect).toBe("deny")
@@ -702,7 +712,7 @@ describe("steering directories and same-repo worktrees", () => {
     })
 
     test("a deny stays a deny in a subagent session", async () => {
-      const { fake } = await load({ steeringDirs: [steering] }, { scratchRoots: [], sessions: [child(fixture)] })
+      const { fake } = await load({ steeringDirs: [steering], disable: [ISOLATE] }, { scratchRoots: [], sessions: [child(ELSEWHERE)] })
       await start(fake, "c4", "read")
       expect((await ask(fake, [`${steering}/a`], "c4", "deny", "ses_child")).effect).toBe("deny")
     })
@@ -921,7 +931,7 @@ describe("prompts a subagent cannot answer", () => {
 
   test("denies a depth-2 child's external_directory ask at once, naming the path and the session directory", async () => {
     const { fake } = await setup()
-    const result = await ask(fake, "ses_grandchild", "read", [`${outside}/*`])
+    const result = await ask(fake, "ses_grandchild", "write", [`${outside}/*`])
     expect(result.effect).toBe("deny")
     expect(result.message).toBe(
       `external_directory denied for ${outside}/*: subagent sessions cannot answer permission prompts; ` +
@@ -967,7 +977,7 @@ describe("prompts a subagent cannot answer", () => {
 
   test("a read beside the skill, elsewhere in the plugin cache, is still denied in a child", async () => {
     const { fake } = await setup()
-    expect((await ask(fake, "ses_grandchild", "read", [`${join(fixture, "npm")}/*`])).effect).toBe("deny")
+    expect((await ask(fake, "ses_grandchild", "write", [`${join(fixture, "npm")}/*`])).effect).toBe("deny")
   })
 
   test("an unknown session keeps the prompt and logs the failed lookup with its session id only", async () => {
@@ -989,7 +999,7 @@ describe("prompts a subagent cannot answer", () => {
   ])("%s keeps the prompt in a root and is denied in a child", async (_, resource) => {
     const { fake } = await setup()
     expect((await ask(fake, "ses_1", "read", [resource()])).effect).toBe("ask")
-    expect((await ask(fake, "ses_grandchild", "read", [resource()])).effect).toBe("deny")
+    expect((await ask(fake, "ses_grandchild", "write", [resource()])).effect).toBe("deny")
   })
 
   /** Resolves when the plugin has made `count` reply calls, after it handled the events that led to them. */
@@ -1072,7 +1082,7 @@ describe("prompts a subagent cannot answer", () => {
       },
     })
     expect(await seen.first).toEqual({ error: "RangeError" })
-    expect((await ask(fake, "ses_grandchild", "read", [`${outside}/x`])).effect).toBe("deny")
+    expect((await ask(fake, "ses_grandchild", "write", [`${outside}/x`])).effect).toBe("deny")
   })
 
   test.each([
@@ -1132,7 +1142,74 @@ describe("prompts a subagent cannot answer", () => {
 
   test('disable: ["subagent-prompts"] keeps a child\'s prompt', async () => {
     const { fake } = await setup({ disable: ["subagent-prompts"] })
-    expect((await ask(fake, "ses_grandchild", "read", [`${outside}/*`])).effect).toBe("ask")
+    expect((await ask(fake, "ses_grandchild", "write", [`${outside}/*`])).effect).toBe("ask")
+  })
+
+  describe("subagent-external-reads", () => {
+    const home = homedir()
+    let envLink: string
+    let sshLink: string
+    let extra: string
+    beforeAll(() => {
+      writeFileSync(join(outside, ".env"), "KEY=1\n")
+      envLink = join(outside, "notes.txt")
+      symlinkSync(join(outside, ".env"), envLink)
+      sshLink = join(outside, "innocent")
+      symlinkSync(join(home, ".ssh"), sshLink)
+      extra = join(outside, "secret-tool")
+      mkdirSync(extra, { recursive: true })
+    })
+
+    test.each(["read", "glob", "grep", "list", "shell"])("a child's %s outside its directory is allowed", async (tool) => {
+      const { fake } = await setup()
+      expect((await ask(fake, "ses_grandchild", tool, [`${outside}/*`])).effect).toBe("allow")
+    })
+
+    test.each(["edit", "write", "patch"])("a child's %s outside its directory is still denied", async (tool) => {
+      const { fake } = await setup()
+      expect((await ask(fake, "ses_grandchild", tool, [`${outside}/*`])).effect).toBe("deny")
+    })
+
+    test("a root session's read outside its directory still asks", async () => {
+      const { fake } = await setup()
+      expect((await ask(fake, "ses_1", "read", [`${outside}/*`])).effect).toBe("ask")
+    })
+
+    test.each([
+      ["~/.ssh", () => join(home, ".ssh", "id_ed25519")],
+      ["~/.aws", () => `${join(home, ".aws")}/*`],
+      ["an .env file", () => join(outside, ".env")],
+      ["a .env.local file", () => join(outside, ".env.local")],
+      ["a benign name linking to an .env", () => envLink],
+      ["a benign folder linking to ~/.ssh", () => `${sshLink}/*`],
+      ["an ancestor of a secret: the home folder", () => `${home}/*`],
+      ["an ancestor of a secret: ~/.config", () => `${join(home, ".config")}/*`],
+      ["the filesystem root", () => "/*"],
+    ])("%s is denied for a child's read and shell", async (_, resource) => {
+      const { fake } = await setup()
+      for (const tool of ["read", "shell"]) expect((await ask(fake, "ses_grandchild", tool, [resource()])).effect).toBe("deny")
+    })
+
+    test("one secret among several resources denies the request", async () => {
+      const { fake } = await setup()
+      const result = await ask(fake, "ses_grandchild", "read", [`${outside}/*`, join(home, ".ssh", "config")])
+      expect(result.effect).toBe("deny")
+    })
+
+    test("subagentSecretPaths adds a location that stays denied", async () => {
+      const without = await setup()
+      expect((await ask(without.fake, "ses_grandchild", "read", [`${extra}/*`])).effect).toBe("allow")
+      const { fake } = await setup({ subagentSecretPaths: [extra] })
+      expect((await ask(fake, "ses_grandchild", "read", [`${extra}/*`])).effect).toBe("deny")
+      expect((await ask(fake, "ses_grandchild", "shell", [`${skillDir}/*`])).effect).toBe("allow")
+    })
+
+    test('disable: ["subagent-external-reads"] leaves a child\'s read asking, then denied by subagent-prompts', async () => {
+      const { fake } = await setup({ disable: ["subagent-external-reads"] })
+      expect((await ask(fake, "ses_grandchild", "read", [`${outside}/*`])).effect).toBe("deny")
+      const { fake: only } = await setup({ disable: ["subagent-external-reads", "subagent-prompts"] })
+      expect((await ask(only, "ses_grandchild", "read", [`${outside}/*`])).effect).toBe("ask")
+    })
   })
 
   test('disable: ["skill-references"] leaves a skill read asking', async () => {

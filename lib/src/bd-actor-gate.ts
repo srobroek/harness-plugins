@@ -34,7 +34,14 @@ const CONTROL_PREFIXES: Record<string, true> = {
   do: true,
 }
 
-const TRANSPARENT_WRAPPERS: Record<string, true> = { command: true, env: true, sudo: true, time: true }
+const TRANSPARENT_WRAPPERS: Record<string, true> = {
+  command: true,
+  env: true,
+  exec: true,
+  nohup: true,
+  sudo: true,
+  time: true,
+}
 
 const WRAPPER_VALUE_FLAGS: Record<string, true> = {
   "-C": true,

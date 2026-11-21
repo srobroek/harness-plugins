@@ -1,5 +1,7 @@
 /** Reading the world for one tick: beads, git and child sessions. */
 
+import { ledgerEnv } from "./ledger.ts"
+import type { RootIdentity } from "./policy.ts"
 import type { Run } from "./rundir.ts"
 import type { Bead, Child } from "./state.ts"
 
@@ -21,12 +23,13 @@ export type BeadView = { beads: Bead[]; ready: string[]; blocked: string[]; ok: 
 /** A cold embedded store can take 30-50 s for one read. */
 export const BD_READ_TIMEOUT_MS = 90_000
 
-/** `bd list --all`, `bd ready` and `bd blocked`, as JSON. */
-export async function readBeads(directory: string, run: Run): Promise<BeadView> {
+/** `bd list --all`, `bd ready` and `bd blocked`, as JSON, from `ledger` and no other. */
+export async function readBeads(directory: string, run: Run, ledger: string): Promise<BeadView> {
+  const env = ledgerEnv(ledger)
   const [list, ready, blocked] = await Promise.all([
-    run(directory, "bd", ["list", "--all", "--brief", "--json", "--limit", "0"], BD_READ_TIMEOUT_MS),
-    run(directory, "bd", ["ready", "--brief", "--json", "--limit", "0"], BD_READ_TIMEOUT_MS),
-    run(directory, "bd", ["blocked", "--json"], BD_READ_TIMEOUT_MS),
+    run(directory, "bd", ["list", "--all", "--brief", "--json", "--limit", "0"], BD_READ_TIMEOUT_MS, env),
+    run(directory, "bd", ["ready", "--brief", "--json", "--limit", "0"], BD_READ_TIMEOUT_MS, env),
+    run(directory, "bd", ["blocked", "--json"], BD_READ_TIMEOUT_MS, env),
   ])
   const beads = parseArray(list.stdout).flatMap((raw) => {
     const item = raw as Partial<Bead>
@@ -44,7 +47,7 @@ export async function commitCount(directory: string, run: Run): Promise<number> 
 }
 
 /** The fields of a host `SessionInfo` a tick reads. */
-export type SessionView = { id?: unknown; title?: unknown; agent?: unknown; parentID?: unknown; time?: { updated?: unknown; busy?: unknown; idle?: unknown } }
+export type SessionView = { id?: unknown; title?: unknown; agent?: unknown; parentID?: unknown; location?: { directory?: unknown }; time?: { updated?: unknown; busy?: unknown; idle?: unknown } }
 
 const finite = (value: unknown): number | undefined => (typeof value === "number" && Number.isFinite(value) ? value : undefined)
 
@@ -62,12 +65,13 @@ export function sessionBusy(info: Pick<SessionView, "time"> | undefined): boolea
  * A child session as a tick sees it. `lastSeen` is the newest event the plugin saw for it since
  * load; without one, the session's own timestamps stand in. Nothing counts from before `armedAt`.
  */
-export function childFrom(info: SessionView & { id: string }, lastSeen: number | undefined, armedAt: number): Child {
+export function childFrom(info: SessionView & { id: string }, lastSeen: number | undefined, armedAt: number, worktree?: RootIdentity): Child {
   const stamped = Math.max(finite(info.time?.updated) ?? 0, finite(info.time?.busy) ?? 0)
   return {
     sessionID: info.id,
     ...(typeof info.title === "string" && info.title ? { title: info.title } : {}),
     ...(typeof info.agent === "string" && info.agent ? { agent: info.agent } : {}),
+    ...(worktree !== undefined ? { worktree } : {}),
     busy: sessionBusy(info),
     lastActivity: Math.max(lastSeen ?? stamped, armedAt),
   }

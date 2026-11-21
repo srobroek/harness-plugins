@@ -1,3 +1,13 @@
+## agent-efficiency [0.12.0](https://github.com/srobroek/harness-plugins/compare/agent-efficiency--v0.11.0...agent-efficiency--v0.12.0) (2026-11-21)
+
+### Features
+
+* **agent-efficiency:** align explore with the shared read-only shell rules ([0581d66](https://github.com/srobroek/harness-plugins/commit/0581d66b22dec37c8284d59369940763b3ed216b))
+
+### Bug Fixes
+
+* **agent-efficiency:** rebuild explore with the hardened shell rules, escape regex in the test ([4fabbe9](https://github.com/srobroek/harness-plugins/commit/4fabbe97d12013eabd8ac2aa89c1751a734329c0))
+
 # Changelog
 
 ## [0.11.0](https://github.com/srobroek/opencode-plugins/compare/agent-efficiency--v0.10.0...agent-efficiency--v0.11.0) (2026-11-20)

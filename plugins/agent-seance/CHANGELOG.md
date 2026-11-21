@@ -1,3 +1,13 @@
+## agent-seance [0.7.0](https://github.com/srobroek/harness-plugins/compare/agent-seance--v0.6.0...agent-seance--v0.7.0) (2026-11-21)
+
+### Features
+
+* **agent-seance:** read other projects' sessions without a prompt, allow a read-only shell ([f1c2874](https://github.com/srobroek/harness-plugins/commit/f1c28746d91e725ceead71f77db7ce4739b27ebe))
+
+### Bug Fixes
+
+* **agent-seance:** rebuild with the hardened read-only shell rules ([f205d5b](https://github.com/srobroek/harness-plugins/commit/f205d5b75c7ff9ee4d540a44f48a9d771ead607f))
+
 # Changelog
 
 ## [0.6.0](https://github.com/srobroek/opencode-plugins/compare/agent-seance--v0.5.0...agent-seance--v0.6.0) (2026-11-20)

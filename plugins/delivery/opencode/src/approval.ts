@@ -8,9 +8,11 @@
  * read, refuses: an unknown approval is not an approval.
  */
 
+import { githubChecks, own, type Precondition, githubApproval as sharedApproval, str } from "@srobroek/opencode-lib/pr-approval"
 import type { CliResult, CliRunner } from "./forge-adapter.ts"
 
-export type Precondition = { ok: true; evidence: Record<string, unknown> } | { ok: false; reason: string }
+export { githubChecks, type Precondition }
+
 
 type Bound = {
   forge: "github" | "gitlab"
@@ -24,22 +26,6 @@ type Bound = {
   head: string
   env: Readonly<Record<string, string>>
   timeoutMs: number
-}
-
-function own(holder: unknown, key: string): unknown {
-  if (typeof holder !== "object" || holder === null || Array.isArray(holder)) return undefined
-  const descriptor = Object.getOwnPropertyDescriptor(holder, key)
-  if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) return undefined
-  return descriptor.value
-}
-
-function str(holder: unknown, key: string): string | null {
-  const value = own(holder, key)
-  return typeof value === "string" ? value : null
-}
-
-function login(holder: unknown): string | null {
-  return str(own(holder, "author"), "login") ?? str(own(holder, "author"), "username")
 }
 
 type Parsed = { ok: true; value: unknown } | { ok: false; reason: string }
@@ -62,59 +48,8 @@ function parse(argv: readonly string[], result: CliResult, allowExit = false): P
   }
 }
 
-/**
- * GitHub approval for exactly `head`: an `APPROVED` review whose `commit.oid` is the
- * head, or, when the reviewer shares the author's account (GitHub refuses a
- * self-approval), a comment by the author whose first line is `VERDICT: APPROVE` and
- * whose body names the head. Pure: takes the `gh pr view --json author,reviews,comments` payload.
- */
-export function githubApproval(payload: unknown, head: string): Precondition {
-  const author = login(payload)
-  const reviews = own(payload, "reviews")
-  const comments = own(payload, "comments")
-  if (!Array.isArray(reviews) || !Array.isArray(comments)) {
-    return {
-      ok: false,
-      reason: "approval: observed no reviews/comments arrays, expected the gh pr view --json reviews,comments payload",
-    }
-  }
-  for (const review of reviews) {
-    if (str(review, "state") !== "APPROVED") continue
-    const oid = str(own(review, "commit"), "oid")?.trim().toLowerCase()
-    if (oid === head) return { ok: true, evidence: { kind: "review", reviewer: login(review), commit: oid } }
-  }
-  if (author !== null) {
-    for (const comment of comments) {
-      if (login(comment) !== author) continue
-      const body = str(comment, "body") ?? ""
-      const first = body.split(/\r?\n/, 1)[0]?.trim() ?? ""
-      if (/^VERDICT:\s*APPROVE\b/.test(first) && body.toLowerCase().includes(head)) {
-        return { ok: true, evidence: { kind: "verdict-comment", reviewer: author, commit: head } }
-      }
-    }
-  }
-  const stale = reviews.filter((review) => str(review, "state") === "APPROVED").length
-  return {
-    ok: false,
-    reason: `approval: observed ${stale} APPROVED review(s), none for head ${head}, and no author "VERDICT: APPROVE" comment naming it; expected an approval artifact on the PR for the exact head`,
-  }
-}
-
-/** GitHub checks for the PR head: every check passed or was skipped, and at least one ran. Pure: takes `gh pr checks --json name,state,bucket`. */
-export function githubChecks(payload: unknown): Precondition {
-  if (!Array.isArray(payload))
-    return { ok: false, reason: "checks: observed no check list, expected gh pr checks --json output" }
-  if (payload.length === 0)
-    return { ok: false, reason: "checks: observed no checks, expected at least one passing check for the head" }
-  const bad = payload.filter((check) => !["pass", "skipping"].includes(str(check, "bucket") ?? ""))
-  if (bad.length > 0) {
-    const listed = bad
-      .slice(0, 8)
-      .map((check) => `${str(check, "name") ?? "?"}=${str(check, "bucket") ?? str(check, "state") ?? "?"}`)
-    return { ok: false, reason: `checks: observed ${listed.join(", ")}, expected every check to pass` }
-  }
-  return { ok: true, evidence: { checks: payload.length } }
-}
+/** GitHub approval for exactly `head`: an `APPROVED` review of it, or the author's `VERDICT: APPROVE` comment naming it (GitHub refuses a self-approval). */
+export const githubApproval = (payload: unknown, head: string): Precondition => sharedApproval(payload, head, { commentVerdict: true })
 
 /**
  * GitLab approval: the approvals endpoint reports `approved: true` and the merge

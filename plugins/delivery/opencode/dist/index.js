@@ -574,7 +574,7 @@ function stashesOnBranch(subjects, branch) {
 // plugins/delivery/package.json
 var package_default = {
   name: "delivery",
-  version: "0.9.2",
+  version: "0.9.6",
   description: "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
   private: true,
   type: "module",
@@ -2366,6 +2366,11 @@ function removalRoute(listed, target, canonical = (path) => physicalPath(path) ?
   const want = canonical(target);
   return listed.some((entry) => canonical(entry.directory) === want) ? "host" : "git";
 }
+function targetAbsence(disk, registration) {
+  if (disk === "present" || registration === "present")
+    return "present";
+  return disk === "absent" && registration === "absent" ? "absent" : "unknown";
+}
 function show2(value) {
   if (typeof value === "string")
     return JSON.stringify(value);
@@ -2415,6 +2420,8 @@ function selectReceipt(candidates, selector, scope = "this repository") {
     seen.add(key);
     return true;
   });
+  if (selector.repo !== undefined)
+    pool = pool.filter((c) => c.receipt.repo.nameWithOwner === selector.repo);
   const explicit = selector.pr !== undefined || selector.branch !== undefined || selector.worktree !== undefined;
   if (!explicit && selector.head === undefined) {
     const open = pool.filter((c) => !c.receipt.worktree.removed);
@@ -2425,8 +2432,6 @@ function selectReceipt(candidates, selector, scope = "this repository") {
     pool = pool.filter((c) => c.receipt.pr.number === selector.pr);
   if (selector.branch !== undefined)
     pool = pool.filter((c) => c.receipt.branch.name === selector.branch);
-  if (selector.repo !== undefined)
-    pool = pool.filter((c) => c.receipt.repo.nameWithOwner === selector.repo);
   if (selector.worktree !== undefined) {
     const want = resolve4(selector.worktree);
     pool = pool.filter((c) => c.receipt.worktree.path !== null && resolve4(c.receipt.worktree.path) === want);
@@ -2989,6 +2994,22 @@ function storedRecordForTarget(records, target) {
   }
   return null;
 }
+function registeredRecord(records, target) {
+  const canonical = (path) => {
+    const full = resolve4(path);
+    const real = physicalPath(full);
+    if (real !== null)
+      return real;
+    const parent = physicalPath(dirname4(full));
+    return parent === null ? full : join4(parent, basename3(full));
+  };
+  const expected = canonical(target);
+  for (const item of records) {
+    if (canonical(item.path) === expected)
+      return item;
+  }
+  return null;
+}
 async function verifyTargetIdentity(receipt, cwd, run, refReadMs, git) {
   const path = receipt.worktree.path;
   const listed = await readWorktrees(cwd, run, refReadMs);
@@ -3138,17 +3159,31 @@ async function cleanupInRepository(params, cwd, deps) {
   };
   const alreadyCleaned = async (receipt, receiptPath) => {
     const target = receipt.worktree.path;
-    let note = null;
-    if (receipt.worktree.removed)
-      note = `worktree ${target} was already cleaned by an earlier call`;
-    else if (pathAbsence(target) === "absent") {
-      const listed = await readWorktrees(cwd, run, bounds.refReadMs);
-      if (Array.isArray(listed) && storedRecordForTarget(listed, target) === null) {
-        note = `worktree ${target} is already gone (neither on disk nor registered); nothing was removed and the landing receipt is unchanged`;
-      }
-    }
-    if (note === null)
+    const cleaned = receipt.worktree.removed;
+    if (!cleaned && pathAbsence(target) !== "absent")
       return null;
+    const listed = await readWorktrees(cwd, run, bounds.refReadMs);
+    const disk = pathAbsence(target);
+    const record = Array.isArray(listed) ? registeredRecord(listed, target) : null;
+    const registration = !Array.isArray(listed) ? "unknown" : record === null ? "absent" : "present";
+    const state = targetAbsence(disk, registration);
+    let note = null;
+    if (state === "absent") {
+      note = cleaned ? `worktree ${target} was already cleaned by an earlier call` : `worktree ${target} is already gone (neither on disk nor registered); nothing was removed and the landing receipt is unchanged`;
+    } else if (!cleaned) {
+      return null;
+    } else if (state === "present") {
+      return {
+        ok: false,
+        reason: `worktree.path: ${target} was cleaned by an earlier call but a ${record !== null ? "registered worktree" : "directory"} exists there now (HEAD ${record?.head ?? "unknown, not a registered worktree"}); it was not removed, so inspect it and run delivery_cleanup against a new landing receipt if it should go`
+      };
+    } else {
+      const why = Array.isArray(listed) ? `the filesystem read of ${target} failed` : `the worktree list could not be read (${listed.reason})`;
+      return {
+        ok: false,
+        reason: `worktree.path: ${target} was cleaned by an earlier call, but ${why}, so its absence is unproven; nothing was removed`
+      };
+    }
     return {
       ok: true,
       receipt,
@@ -3340,7 +3375,7 @@ async function cleanupInRepository(params, cwd, deps) {
 // plugins/delivery/opencode/src/land.ts
 import { resolve as resolve5 } from "path";
 
-// plugins/delivery/opencode/src/approval.ts
+// lib/src/pr-approval.ts
 function own2(holder, key) {
   if (typeof holder !== "object" || holder === null || Array.isArray(holder))
     return;
@@ -3356,6 +3391,55 @@ function str(holder, key) {
 function login(holder) {
   return str(own2(holder, "author"), "login") ?? str(own2(holder, "author"), "username");
 }
+function githubApproval(payload, head, options) {
+  const author = login(payload);
+  const reviews = own2(payload, "reviews");
+  const comments = own2(payload, "comments");
+  if (!Array.isArray(reviews) || !Array.isArray(comments)) {
+    return {
+      ok: false,
+      reason: "approval: observed no reviews/comments arrays, expected the gh pr view --json reviews,comments payload"
+    };
+  }
+  for (const review of reviews) {
+    if (str(review, "state") !== "APPROVED")
+      continue;
+    const oid = str(own2(review, "commit"), "oid")?.trim().toLowerCase();
+    if (oid === head)
+      return { ok: true, evidence: { kind: "review", reviewer: login(review), commit: oid } };
+  }
+  if (options.commentVerdict && author !== null) {
+    for (const comment of comments) {
+      if (login(comment) !== author)
+        continue;
+      const body = str(comment, "body") ?? "";
+      const first = body.split(/\r?\n/, 1)[0]?.trim() ?? "";
+      if (/^VERDICT:\s*APPROVE\b/.test(first) && body.toLowerCase().includes(head)) {
+        return { ok: true, evidence: { kind: "verdict-comment", reviewer: author, commit: head } };
+      }
+    }
+  }
+  const stale = reviews.filter((review) => str(review, "state") === "APPROVED").length;
+  return {
+    ok: false,
+    reason: `approval: observed ${stale} APPROVED review(s), none for head ${head}${options.commentVerdict ? ', and no author "VERDICT: APPROVE" comment naming it' : ""}; expected an approval artifact on the PR for the exact head`
+  };
+}
+function githubChecks(payload) {
+  if (!Array.isArray(payload))
+    return { ok: false, reason: "checks: observed no check list, expected gh pr checks --json output" };
+  if (payload.length === 0)
+    return { ok: false, reason: "checks: observed no checks, expected at least one passing check for the head" };
+  const bad = payload.filter((check) => !["pass", "skipping"].includes(str(check, "bucket") ?? ""));
+  if (bad.length > 0) {
+    const listed = bad.slice(0, 8).map((check) => `${str(check, "name") ?? "?"}=${str(check, "bucket") ?? str(check, "state") ?? "?"}`);
+    return { ok: false, reason: `checks: observed ${listed.join(", ")}, expected every check to pass` };
+  }
+  return { ok: true, evidence: { checks: payload.length } };
+}
+var PASSING_RUN = new Set(["success", "neutral", "skipped"]);
+
+// plugins/delivery/opencode/src/approval.ts
 function parse(argv, result, allowExit = false) {
   const label = argv.join(" ");
   if (!result.ok || result.error !== undefined)
@@ -3373,52 +3457,7 @@ function parse(argv, result, allowExit = false) {
     return { ok: false, reason: `${label}: observed unparseable output (exit ${result.exitCode}), expected JSON` };
   }
 }
-function githubApproval(payload, head) {
-  const author = login(payload);
-  const reviews = own2(payload, "reviews");
-  const comments = own2(payload, "comments");
-  if (!Array.isArray(reviews) || !Array.isArray(comments)) {
-    return {
-      ok: false,
-      reason: "approval: observed no reviews/comments arrays, expected the gh pr view --json reviews,comments payload"
-    };
-  }
-  for (const review of reviews) {
-    if (str(review, "state") !== "APPROVED")
-      continue;
-    const oid = str(own2(review, "commit"), "oid")?.trim().toLowerCase();
-    if (oid === head)
-      return { ok: true, evidence: { kind: "review", reviewer: login(review), commit: oid } };
-  }
-  if (author !== null) {
-    for (const comment of comments) {
-      if (login(comment) !== author)
-        continue;
-      const body = str(comment, "body") ?? "";
-      const first = body.split(/\r?\n/, 1)[0]?.trim() ?? "";
-      if (/^VERDICT:\s*APPROVE\b/.test(first) && body.toLowerCase().includes(head)) {
-        return { ok: true, evidence: { kind: "verdict-comment", reviewer: author, commit: head } };
-      }
-    }
-  }
-  const stale = reviews.filter((review) => str(review, "state") === "APPROVED").length;
-  return {
-    ok: false,
-    reason: `approval: observed ${stale} APPROVED review(s), none for head ${head}, and no author "VERDICT: APPROVE" comment naming it; expected an approval artifact on the PR for the exact head`
-  };
-}
-function githubChecks(payload) {
-  if (!Array.isArray(payload))
-    return { ok: false, reason: "checks: observed no check list, expected gh pr checks --json output" };
-  if (payload.length === 0)
-    return { ok: false, reason: "checks: observed no checks, expected at least one passing check for the head" };
-  const bad = payload.filter((check) => !["pass", "skipping"].includes(str(check, "bucket") ?? ""));
-  if (bad.length > 0) {
-    const listed = bad.slice(0, 8).map((check) => `${str(check, "name") ?? "?"}=${str(check, "bucket") ?? str(check, "state") ?? "?"}`);
-    return { ok: false, reason: `checks: observed ${listed.join(", ")}, expected every check to pass` };
-  }
-  return { ok: true, evidence: { checks: payload.length } };
-}
+var githubApproval2 = (payload, head) => githubApproval(payload, head, { commentVerdict: true });
 function gitlabApproval(approvals, head) {
   const sha = str(approvals, "sha")?.trim().toLowerCase();
   if (own2(approvals, "approved") !== true)
@@ -3443,7 +3482,7 @@ async function readApproval(run, bound) {
   if (bound.forge === "github") {
     const argv = ["gh", "pr", "view", bound.number, "--repo", bound.cliRepo, "--json", "author,reviews,comments"];
     const payload = parse(argv, await run(argv, { timeoutMs: bound.timeoutMs, env: bound.env }));
-    return payload.ok ? githubApproval(payload.value, bound.head) : payload;
+    return payload.ok ? githubApproval2(payload.value, bound.head) : payload;
   }
   const project = encodeURIComponent(bound.nameWithOwner);
   const argv = [
@@ -6314,8 +6353,8 @@ function parseOptions(raw) {
     autoCleanup: options.autoCleanup !== false
   };
 }
-function confirmDelivery(evaluation) {
-  if (evaluation.effect !== "allow")
+function confirmDelivery(evaluation, subagent = false) {
+  if (evaluation.effect !== "allow" || subagent)
     return;
   if (evaluation.action === LAND_ACTION) {
     evaluation.effect = "ask";
@@ -6602,7 +6641,14 @@ receipt: ${result.path}`;
     await pending.start();
   disposers.push(() => pending.dispose());
   if (options.confirm) {
-    const gate = await ctx.permission.hook("evaluate", confirmDelivery);
+    const gate = await ctx.permission.hook("evaluate", async (evaluation) => {
+      if (evaluation.effect !== "allow" || evaluation.action !== LAND_ACTION && evaluation.action !== CLEANUP_ACTION)
+        return;
+      const info = await ctx.session.get({ sessionID: evaluation.sessionID }).catch(() => {
+        return;
+      });
+      confirmDelivery(evaluation, typeof info?.parentID === "string" && info.parentID !== "");
+    });
     disposers.push(() => gate.dispose());
   }
   if (options.agents) {
