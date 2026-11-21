@@ -4544,24 +4544,9 @@ function leaseEndingIds(invocations) {
   for (const invocation of invocations) {
     if (invocation.verb !== "update")
       continue;
-    let status;
-    const named = [];
-    for (let index = 0;index < invocation.args.length; index++) {
-      const token = invocation.args[index] ?? "";
-      if (token === "--status" || token === "-s") {
-        status = invocation.args[++index];
-        continue;
-      }
-      if (token.startsWith("--status=")) {
-        status = token.slice("--status=".length);
-        continue;
-      }
-      if (token.startsWith("-"))
-        break;
-      named.push(...beadIdCandidates(token));
-    }
+    const status = optionValue(invocation.args, ["--status", "-s"]);
     if (status !== undefined && status.toLowerCase() !== "in_progress")
-      for (const id of named)
+      for (const id of mutationTargetIds(invocation.args))
         ids.add(id);
   }
   return [...ids];

@@ -69,6 +69,7 @@ describe("which claims are renewed", () => {
     expect(leaseEndingIds(bdInvocations("bd update hb-1 --status in_progress"))).toEqual([])
     expect(leaseEndingIds(bdInvocations("bd update hb-1 --claim"))).toEqual([])
     expect(leaseEndingIds(bdInvocations("bd show hb-1 --status open"))).toEqual([])
+    expect(leaseEndingIds(bdInvocations("bd update hb-1 --priority 2 --status blocked"))).toEqual(["hb-1"])
   })
 
   test("a claim whose actor is unknown is not renewed", () => {

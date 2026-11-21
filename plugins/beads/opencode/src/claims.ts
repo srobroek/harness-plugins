@@ -83,7 +83,7 @@ export function beadIdCandidates(command: string): string[] {
   return ids
 }
 
-function optionValue(args: readonly string[], names: readonly string[]): string | undefined {
+export function optionValue(args: readonly string[], names: readonly string[]): string | undefined {
   for (const name of names) {
     const index = args.indexOf(name)
     if (index >= 0) return args[index + 1]
@@ -93,7 +93,7 @@ function optionValue(args: readonly string[], names: readonly string[]): string 
   return undefined
 }
 
-function mutationTargetIds(args: readonly string[]): string[] {
+export function mutationTargetIds(args: readonly string[]): string[] {
   const ids: string[] = []
   for (let index = 0; index < args.length; index++) {
     const token = args[index] ?? ""

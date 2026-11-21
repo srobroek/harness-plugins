@@ -10,7 +10,7 @@
 
 import { dirname } from "node:path"
 import type { BdInvocation } from "@srobroek/opencode-lib/bd-actor-gate"
-import { beadIdCandidates, type ClaimState } from "./claims.ts"
+import { type ClaimState, mutationTargetIds, optionValue } from "./claims.ts"
 import { type BdRun, parseTrailingJson } from "./gate-admission.ts"
 import { claimEnvironment } from "./release.ts"
 
@@ -43,22 +43,8 @@ export function leaseEndingIds(invocations: readonly BdInvocation[]): string[] {
   const ids = new Set<string>()
   for (const invocation of invocations) {
     if (invocation.verb !== "update") continue
-    let status: string | undefined
-    const named: string[] = []
-    for (let index = 0; index < invocation.args.length; index++) {
-      const token = invocation.args[index] ?? ""
-      if (token === "--status" || token === "-s") {
-        status = invocation.args[++index]
-        continue
-      }
-      if (token.startsWith("--status=")) {
-        status = token.slice("--status=".length)
-        continue
-      }
-      if (token.startsWith("-")) break
-      named.push(...beadIdCandidates(token))
-    }
-    if (status !== undefined && status.toLowerCase() !== "in_progress") for (const id of named) ids.add(id)
+    const status = optionValue(invocation.args, ["--status", "-s"])
+    if (status !== undefined && status.toLowerCase() !== "in_progress") for (const id of mutationTargetIds(invocation.args)) ids.add(id)
   }
   return [...ids]
 }
