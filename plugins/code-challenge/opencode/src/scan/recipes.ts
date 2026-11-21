@@ -42,13 +42,15 @@ export const RECIPES: readonly Recipe[] = [
     package: "@biomejs/biome",
     args: ["lint", "--config-path={cfg}", "--reporter=json", "--max-diagnostics=1000", "--", "{files}"],
     // vcs.useIgnoreFile fails without a .gitignore, and the temp config does not sit in the repo, so vcs.root names it.
-    configFiles: ({ root, hasGitignore }) => ({
+    configFiles: ({ root, hasGitignore, fromConfigDir }) => ({
       "biome.json": JSON.stringify({
         root: true,
         linter: { enabled: true, rules: { recommended: false, complexity: "on", performance: "on", suspicious: "on" } },
-        ...(hasGitignore ? { vcs: { enabled: true, clientKind: "git", useIgnoreFile: true, root } } : {}),
+        ...(hasGitignore && !fromConfigDir ? { vcs: { enabled: true, clientKind: "git", useIgnoreFile: true, root } } : {}),
       }),
     }),
+    // A biome.json at the root wins over --config-path, so then biome runs from the config directory.
+    repoConfigNames: ["biome.json", "biome.jsonc"],
     needsBuild: false,
     acceptedExitCodes: [0, 1],
     parser: "biome-json",

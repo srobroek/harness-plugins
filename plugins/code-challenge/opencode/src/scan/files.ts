@@ -119,3 +119,8 @@ export function lstatOrNull(path: string): ReturnType<typeof lstatSync> | null {
   }
 }
 
+
+/** Files git lists as tracked or untracked-but-not-ignored (NUL separated), as root-relative paths. */
+export function parseListing(stdout: string): string[] {
+  return stdout.split("\0").filter((f) => f !== "")
+}

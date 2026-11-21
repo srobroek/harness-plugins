@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync }
 import { tmpdir } from "node:os"
 import { extname, join, resolve } from "node:path"
 import { type Exec, MAX_STDERR_BYTES, MAX_STDOUT_BYTES, spawnTool } from "./exec.ts"
-import { detectLanguages, expandFiles, lstatOrNull, missingMarker } from "./files.ts"
+import { detectLanguages, expandFiles, lstatOrNull, missingMarker, parseListing } from "./files.ts"
 import { OutputError, parseOutput } from "./parsers.ts"
 import { pinOf } from "./pins.ts"
 import { probeFor } from "./probes.ts"
@@ -110,7 +110,16 @@ async function gitDir(root: string, exec: Exec, which: (b: string) => string | n
   const git = which("git")
   if (!git) return null
   const run = await exec([git, "rev-parse", "--absolute-git-dir"], { cwd: root, timeoutMs: 10_000 })
-  return run.kind === "exited" && run.exitCode === 0 ? run.stdout.trim() : null
+  const dir = run.kind === "exited" && run.exitCode === 0 ? run.stdout.trim() : ""
+  return dir === "" ? null : dir
+}
+
+/** `git ls-files` of everything not ignored; null when git is missing, fails, or the answer is unusable. */
+async function gitListing(root: string, exec: Exec, which: (b: string) => string | null): Promise<string[] | null> {
+  const git = which("git")
+  if (!git) return null
+  const run = await exec([git, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: root, timeoutMs: 30_000 })
+  return run.kind === "exited" && run.exitCode === 0 ? parseListing(run.stdout) : null
 }
 
 const firstLine = (text: string): string => text.trim().split("\n")[0]?.slice(0, 200) ?? ""
@@ -131,6 +140,8 @@ type Prepared = {
   hasGitignore: boolean
   /** The file list matched nothing. */
   emptySelection: boolean
+  /** Non-ignored files git knows (tracked or untracked), computed once; null when this is not a git repository. */
+  listing: () => Promise<string[] | null>
 }
 
 async function prepare(input: ScanInput, deps: ScanDeps): Promise<Prepared> {
@@ -141,9 +152,23 @@ async function prepare(input: ScanInput, deps: ScanDeps): Promise<Prepared> {
   const which = deps.which ?? ((b: string) => Bun.which(b))
   if (input.runId !== undefined && !validRunId(input.runId)) throw new Error(`challenge_scan: invalid runId "${input.runId}"`)
   const requested = input.files !== undefined && input.files.length > 0
-  const files = requested ? expandFiles(root, input.files ?? []) : []
+  let files = requested ? expandFiles(root, input.files ?? []) : []
+  let git = files.length === 0 && requested ? null : await gitDir(root, exec, which)
+  let listed: Promise<string[] | null> | undefined
+  const listing = (): Promise<string[] | null> => {
+    listed ??= git === null ? Promise.resolve(null) : gitListing(root, exec, which)
+    return listed
+  }
+  // Pass the repo's ignore files through to tools that would lint an explicitly named, git-ignored file.
+  if (files.length > 0) {
+    const known = await listing()
+    if (known !== null) {
+      const set = new Set(known)
+      files = files.filter((f) => set.has(f))
+    }
+  }
   const emptySelection = requested && files.length === 0
-  const git = emptySelection ? null : await gitDir(root, exec, which)
+  if (emptySelection) git = null
   return {
     root,
     exec,
@@ -158,6 +183,7 @@ async function prepare(input: ScanInput, deps: ScanDeps): Promise<Prepared> {
     toolsDir: deps.toolsDir ?? (git === null ? "" : join(git, "code-challenge", "tools")),
     hasGitignore: lstatOrNull(join(root, ".gitignore"))?.isFile() === true,
     emptySelection,
+    listing,
   }
 }
 
@@ -215,6 +241,8 @@ export async function consentRisks(input: ScanInput, deps: ScanDeps = {}): Promi
 }
 
 const MiB = 1024 * 1024
+/** Room left on a command line (macOS ARG_MAX is 1 MiB) after the environment and fixed arguments. */
+const MAX_ARGV_BYTES = 256 * 1024
 
 /** Read a tool's report file: a regular file under the size cap, else the reason it cannot be used. */
 function readReport(path: string, name: string): { text: string } | { gap: string } {
@@ -268,17 +296,32 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
       }
 
       const name = slug(recipe.id)
+      // A repo config that overrides --config-path means running from the config directory on explicit files.
+      const fromConfigDir = (recipe.repoConfigNames ?? []).some((n) => lstatOrNull(join(root, n)) !== null)
+      let files = item.scoped
+      if (fromConfigDir) {
+        const known = (await p.listing()) ?? expandFiles(root, ["."])
+        files = p.files.length > 0 ? item.scoped : known.filter((f) => !recipe.extensions || recipe.extensions.includes(extname(f)))
+        if (files.length === 0) {
+          entry("skipped", "no matching files outside the repo's ignore files")
+          continue
+        }
+        if (files.reduce((n, f) => n + root.length + f.length + 2, 0) > MAX_ARGV_BYTES) {
+          entry("gap", `too many files to name on one command line in isolated mode (${files.length}); pass a narrower file list`)
+          continue
+        }
+      }
       // eslint resolves its plugin from the config's own location, so that config sits in the tools directory.
       const cfg = recipe.install === "tool-dir" ? p.toolsDir : ensureDir(base, "cfg", name)
       const out = ensureDir(base, "out", name)
       for (const [file, content] of Object.entries(
-        recipe.configFiles?.({ root, hasGitignore: p.hasGitignore, toolsDir: p.toolsDir }) ?? {},
+        recipe.configFiles?.({ root, hasGitignore: p.hasGitignore, toolsDir: p.toolsDir, fromConfigDir }) ?? {},
       )) {
         writeFileNoFollow(join(cfg, file), content)
       }
-      const argv = [...item.resolved.prefix, ...expandArgs(recipe, cfg, out, item.scoped, root)]
+      const argv = [...item.resolved.prefix, ...expandArgs(recipe, cfg, out, files, root)]
       const started = p.now()
-      const run = await exec(argv, { cwd: root, timeoutMs: p.timeoutMs, signal })
+      const run = await exec(argv, { cwd: fromConfigDir ? cfg : root, timeoutMs: p.timeoutMs, signal })
       timings.push({ recipe: recipe.id, tool: recipe.tool, ms: p.now() - started, exitCode: run.kind === "exited" ? run.exitCode : null })
       writeFileNoFollow(join(base, `${name}.stdout`), run.stdout)
       writeFileNoFollow(join(base, `${name}.stderr`), run.stderr)
