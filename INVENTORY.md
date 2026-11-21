@@ -11,7 +11,7 @@
 | agent-seance | 0.6.0 | development | global | opencode |
 | architecture | 0.7.0 | development | global | opencode, claude |
 | ast-grep | 1.2.0 | development | global | opencode, claude |
-| autopilot | 1.1.1 | development | global | opencode |
+| autopilot | 1.1.2 | development | global | opencode |
 | aws | 0.7.0 | development | global | opencode, claude |
 | beads | 0.7.1 | development | project | opencode, claude |
 | build | 0.7.0 | development | project | opencode |
@@ -32,7 +32,7 @@
 | lang-rust | 0.6.0 | development | global | opencode, claude |
 | lang-typescript | 0.7.0 | development | global | opencode, claude |
 | lsp | 0.5.0 | development | project | opencode |
-| model-roles | 0.8.1 | development | global | opencode |
+| model-roles | 0.9.1 | development | global | opencode |
 | modes | 1.1.0 | development | global | opencode |
 | parley | 0.4.0 | development | global | opencode |
 | plugin-audit | 0.2.0 | development | project | opencode |
@@ -41,7 +41,7 @@
 | repomix | 0.4.0 | development | global | opencode, claude |
 | safety | 0.9.3 | development | global | opencode |
 | session | 0.4.0 | development | global | opencode |
-| speckit | 0.9.0 | development | project | opencode, claude |
+| speckit | 0.9.1 | development | project | opencode, claude |
 | statusline | 0.4.0 | development | global | opencode |
 | subagent-worktree | 0.5.0 | development | global | opencode |
 | toolchain | 0.7.0 | development | global | opencode, claude |

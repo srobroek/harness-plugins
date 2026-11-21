@@ -245,7 +245,7 @@
     },
     {
       "name": "autopilot",
-      "version": "1.1.1",
+      "version": "1.1.2",
       "description": "Unattended runs: /autopilot arms a no-questions session with a journal, a 4-minute tick and stop conditions.",
       "category": "development",
       "harnesses": {
@@ -1025,7 +1025,7 @@
     },
     {
       "name": "model-roles",
-      "version": "0.8.1",
+      "version": "0.9.1",
       "description": "Give agents a model tier (cheap, standard, strong, reviewer) derived from the model catalog, and resolve each tier to the first available candidate.",
       "category": "development",
       "harnesses": {
@@ -1282,7 +1282,7 @@
     },
     {
       "name": "speckit",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "description": "SpecKit on beads: a tasks.md guard, setup and bugfix skills, formulas, and the speckit-sync and speckit-verify subagents.",
       "category": "development",
       "harnesses": {

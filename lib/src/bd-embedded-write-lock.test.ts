@@ -30,6 +30,7 @@ import {
 } from "./bd-embedded-write-lock.ts"
 import { main as runEmbeddedWriter, setCommandTimeoutForTests } from "./bd-embedded-write-runner.ts"
 import { parse } from "./beads-shell.ts"
+import { scrubbedBeadsEnv } from "./testing.ts"
 
 // Real runner and lock processes: 1.5 to 8.4 s at load average 49; 30 s leaves headroom for a loaded machine (AGENTS.md, Testing).
 setDefaultTimeout(30_000)
@@ -77,7 +78,7 @@ test.skipIf(!BD_ON_PATH)(
   async () => {
     const root = mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "beads-lock-mise-proof-"))
     const store = join(root, ".beads")
-    const env = { ...process.env, BEADS_DIR: store, BEADS_ACTOR: "omp/test/qycs" }
+    const env = scrubbedBeadsEnv({ BEADS_DIR: store, BEADS_ACTOR: "omp/test/qycs" })
     try {
       const init = Bun.spawnSync(["bd", "init", "--init-if-missing", "--skip-hooks"], {
         cwd: root,
@@ -91,7 +92,7 @@ test.skipIf(!BD_ON_PATH)(
       const decision = await decideEmbeddedWrite(
         parsed,
         root,
-        { ...process.env, BEADS_DIR: store, BEADS_ACTOR: "omp/test/qycs" },
+        scrubbedBeadsEnv({ BEADS_DIR: store, BEADS_ACTOR: "omp/test/qycs" }),
         "mise-proof",
         Date.now() + 5000,
         () => ({ interpreter: process.execPath, script: join(import.meta.dir, "bd-embedded-write-runner.ts") }),
@@ -382,7 +383,7 @@ test("accepts a literal cd prefix while refusing dynamic cwd", async () => {
     const decision = await decideEmbeddedWrite(
       parse(literal) as unknown as Parameters<typeof decideEmbeddedWrite>[0],
       root,
-      { ...process.env, BEADS_DIR: store },
+      scrubbedBeadsEnv({ BEADS_DIR: store }),
       literal,
       Date.now() + 2000,
       () => ({ interpreter: process.execPath, script: join(import.meta.dir, "bd-embedded-write-runner.ts") }),
@@ -392,7 +393,7 @@ test("accepts a literal cd prefix while refusing dynamic cwd", async () => {
     const refused = await decideEmbeddedWrite(
       parse(dynamic) as unknown as Parameters<typeof decideEmbeddedWrite>[0],
       root,
-      { ...process.env, BEADS_DIR: store },
+      scrubbedBeadsEnv({ BEADS_DIR: store }),
       dynamic,
       Date.now() + 2000,
       () => ({ interpreter: process.execPath, script: join(import.meta.dir, "bd-embedded-write-runner.ts") }),
@@ -440,7 +441,7 @@ test("refuses the write, naming the missing runner, when none is installed", asy
     const decision = await decideEmbeddedWrite(
       parse(command) as unknown as Parameters<typeof decideEmbeddedWrite>[0],
       root,
-      { ...process.env, BEADS_DIR: store },
+      scrubbedBeadsEnv({ BEADS_DIR: store }),
       "no-runner",
       Date.now() + 5000,
       () => embeddedWriteRunner(loaded, () => process.execPath),
@@ -462,7 +463,7 @@ test("refuses the write when no bun interpreter is reachable", async () => {
     const decision = await decideEmbeddedWrite(
       parse("bd update bead-1 --claim") as unknown as Parameters<typeof decideEmbeddedWrite>[0],
       root,
-      { ...process.env, BEADS_DIR: store },
+      scrubbedBeadsEnv({ BEADS_DIR: store }),
       "no-bun",
       Date.now() + 5000,
       () => embeddedWriteRunner(import.meta.dir, () => undefined),
@@ -535,7 +536,7 @@ describe("compound commands", () => {
     return decideEmbeddedWrite(
       parse(command) as unknown as Parameters<typeof decideEmbeddedWrite>[0],
       root,
-      { ...process.env, BEADS_DIR: store },
+      scrubbedBeadsEnv({ BEADS_DIR: store }),
       `compound:${command}`,
       Date.now() + 2000,
       () => using,
@@ -818,7 +819,7 @@ describe("waiting for a busy ledger", () => {
       const decision = await decideEmbeddedWrite(
         parse("bd update bead-1 --claim") as unknown as Parameters<typeof decideEmbeddedWrite>[0],
         root,
-        { ...process.env, BEADS_DIR: store },
+        scrubbedBeadsEnv({ BEADS_DIR: store }),
         "busy-preflight",
         Date.now() + 5000,
         () => ({ interpreter: "/opt/bun", script: "/opt/runner.js" }),
@@ -934,7 +935,7 @@ describe("waiting for a busy ledger", () => {
         const decision = await decideEmbeddedWrite(
           parse("bd update bead-1 --claim") as unknown as Parameters<typeof decideEmbeddedWrite>[0],
           root,
-          { ...process.env, BEADS_DIR: store },
+          scrubbedBeadsEnv({ BEADS_DIR: store }),
           "hostile-preflight",
           Date.now() + 5000,
           () => ({ interpreter: "/opt/bun", script: "/opt/runner.js" }),
@@ -991,7 +992,7 @@ describe("registry left by another plugin version", () => {
         await new Promise((resolve) => setTimeout(resolve, 60))
         active--
       }
-      const env = { ...process.env, BEADS_DIR: store }
+      const env = scrubbedBeadsEnv({ BEADS_DIR: store })
       const results = await Promise.all([
         withEmbeddedWriteLock(root, "writer-a", write, env),
         withEmbeddedWriteLock(root, "writer-b", write, env),

@@ -1,3 +1,9 @@
+## speckit [0.9.1](https://github.com/srobroek/harness-plugins/compare/speckit--v0.9.0...speckit--v0.9.1) (2026-11-21)
+
+### Bug Fixes
+
+* **speckit:** check symlinks only below the repo root ([2c5282b](https://github.com/srobroek/harness-plugins/commit/2c5282b77692397d3136032e6d2d708a32bc12dd))
+
 # Changelog
 
 ## [0.9.0](https://github.com/srobroek/opencode-plugins/compare/speckit--v0.8.0...speckit--v0.9.0) (2026-11-20)

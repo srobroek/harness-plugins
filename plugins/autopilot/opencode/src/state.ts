@@ -33,6 +33,8 @@ export type RunState = {
   phase: Phase
   options: RunOptions & { allow: Grant[]; lanes: number; full: boolean }
   scope: Scope
+  /** The beads ledger (`.beads` directory) every `bd` call of the run uses; absent in runs armed before it existed. */
+  ledger?: string
   createdAt: number
   armedAt?: number
   deadline?: number

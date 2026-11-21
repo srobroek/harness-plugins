@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { FailureClass } from "./health.ts"
-import { claimContextNotice, claimToolContextNotice, decideFailureNotice, decideRecovery, type FailureReport, forgetSession, MAX_STOPPED, MAX_TRACKED, newNoticeState, type RequestLog, recordRequest, settleRequest, toolContextNoticeLive } from "./outage.ts"
+import { acquireNoticeState, claimContextNotice, claimEvent, claimToolContextNotice, decideFailureNotice, decideRecovery, type FailureReport, forgetSession, MAX_STOPPED, MAX_TRACKED, newNoticeState, noticeResumes, type RequestLog, recordRequest, releaseNoticeState, restoreOutages, settleRequest, snapshotOutages, toolContextNoticeLive } from "./outage.ts"
 import type { ModelRef } from "./resolve.ts"
 
 const bedrock = (id: string): ModelRef => ({ providerID: "amazon-bedrock", id })
@@ -228,5 +228,90 @@ describe("request log", () => {
     for (let i = 0; i < 50; i++) recordRequest(log, "s", bedrock(`m${i}`), i)
     expect(log.get("s")?.length).toBeLessThanOrEqual(8)
     expect(settleRequest(log, "s", 1_000)).toEqual(bedrock("m49"))
+  })
+})
+
+describe("noticeResumes", () => {
+  test.each([
+    ["subagent-fallback", true],
+    ["recovery", true],
+    ["fallback", false],
+    ["context-length", false],
+  ])("%s wakes its session: %p", (kind, expected) => {
+    expect(noticeResumes(kind)).toBe(expected)
+  })
+})
+
+describe("recovery reaches every parent", () => {
+  const child = (id: string, parent: string) => report(bedrock("a"), "credentials", 0, { notifyTo: parent, subagent: { agent: "general", sessionID: id } })
+
+  test("children stopped under two parents tell each parent only its own", () => {
+    const state = newNoticeState()
+    decideFailureNotice(state, child("c1", "p1"))
+    decideFailureNotice(state, child("c2", "p2"))
+    decideFailureNotice(state, child("c3", "p2"))
+    const notices = decideRecovery(state, bedrock("z"))
+    expect(notices).toEqual([
+      { sessionID: "p1", text: "Provider amazon-bedrock recovered (credentials). Resume the stopped subagents: general (c1)." },
+      { sessionID: "p2", text: "Provider amazon-bedrock recovered (credentials). Resume the stopped subagents: general (c2), general (c3)." },
+    ])
+  })
+
+  test("the session that heard the outage start is told too when none of its own children stopped", () => {
+    const state = newNoticeState()
+    decideFailureNotice(state, report(bedrock("a"), "credentials", 0, { notifyTo: "root" }))
+    decideFailureNotice(state, child("c1", "p1"))
+    expect(decideRecovery(state, bedrock("z")).map((n) => n.sessionID)).toEqual(["root", "p1"])
+  })
+})
+
+describe("persisted outages", () => {
+  test("a restored state recovers the stopped children of the state that was saved", () => {
+    const before = newNoticeState()
+    decideFailureNotice(before, report(bedrock("a"), "credentials", 5, { notifyTo: "p1", subagent: { agent: "general", sessionID: "c1" } }))
+    const after = newNoticeState()
+    restoreOutages(after, JSON.parse(JSON.stringify(snapshotOutages(before))))
+    expect(decideRecovery(after, bedrock("z"))[0]).toEqual({ sessionID: "p1", text: "Provider amazon-bedrock recovered (credentials). Resume the stopped subagents: general (c1)." })
+  })
+
+  test.each([[undefined], [null], ["x"], [[{ providerID: 1 }]], [[{ providerID: "p", kind: "nonsense", lastAt: 1, notifyTo: "s", stopped: [] }]]])("malformed stored data %p restores nothing", (raw) => {
+    const state = newNoticeState()
+    restoreOutages(state, raw)
+    expect(state.outages.size).toBe(0)
+  })
+})
+
+describe("process-global state", () => {
+  test("two instances share one state, and it goes when the last releases", () => {
+    const holder: Record<symbol, unknown> = {}
+    const a = acquireNoticeState(holder)
+    const b = acquireNoticeState(holder)
+    expect(b.state).toBe(a.state)
+    expect(a.first).toBe(true)
+    expect(b.first).toBe(false)
+    releaseNoticeState(holder)
+    expect(acquireNoticeState(holder).state).toBe(a.state)
+    releaseNoticeState(holder)
+    releaseNoticeState(holder)
+    expect(acquireNoticeState(holder).state).not.toBe(a.state)
+  })
+
+  test("a state left by an older build without the event map is backfilled, not replaced", () => {
+    const holder: Record<symbol, unknown> = {}
+    const old = { outages: new Map(), notices: new Map(), contextNotices: new Map() }
+    holder[Symbol.for("srobroek.model-roles.notice-state")] = { state: old, refs: 1 }
+    const { state } = acquireNoticeState(holder)
+    expect(state).toBe(old as never)
+    expect(claimEvent(state, "e1", 0)).toBe(true)
+  })
+
+  test("an event id is claimed once; no id is always claimed; the oldest ids are forgotten", () => {
+    const state = newNoticeState()
+    expect(claimEvent(state, "e1", 0)).toBe(true)
+    expect(claimEvent(state, "e1", 1)).toBe(false)
+    expect(claimEvent(state, undefined, 2)).toBe(true)
+    expect(claimEvent(state, undefined, 3)).toBe(true)
+    for (let i = 0; i < 1000; i++) claimEvent(state, `n${i}`, 4)
+    expect(claimEvent(state, "e1", 5)).toBe(true)
   })
 })

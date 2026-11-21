@@ -16,6 +16,7 @@
  */
 
 import type { Context } from "@opencode/plugin/promise/plugin"
+import { insideDirectory } from "./session-lanes.ts"
 
 type Callback = (input: never) => Promise<void> | void
 type Registration = { dispose: () => Promise<void> }
@@ -268,7 +269,11 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
   }
   const matchesQuery = (session: FakeSession, query: Loose): boolean => {
     if ("project" in query && session.projectID !== query.project) return false
-    if ("directory" in query && (session.location as Loose | undefined)?.directory !== query.directory) return false
+    // The host matches the directory and every directory below it.
+    if ("directory" in query) {
+      const where = (session.location as Loose | undefined)?.directory
+      if (typeof where !== "string" || typeof query.directory !== "string" || !insideDirectory(where, query.directory)) return false
+    }
     if (typeof query.search === "string" && query.search) {
       const title = typeof session.title === "string" ? session.title.toLowerCase() : ""
       if (!title.includes(query.search.toLowerCase())) return false
@@ -474,4 +479,28 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
     },
     active: () => live.size,
   }
+}
+
+/**
+ * Whether `name` is a variable `bd` reads: anything starting with `BEADS_` or `BD_`
+ * (`BEADS_DIR`, `BEADS_DB`, `BEADS_ACTOR`, `BD_ACTOR`, `BD_DB`, `BD_SOCKET`,
+ * `BEADS_DOLT_SERVER_*`, `BEADS_DOLT_SHARED_SERVER`, ...). The OpenCode server, and so a
+ * test process, can inherit these from another project's shell; they carry that project's
+ * ledger, actor or dolt server routing, so a test that runs a real `bd` would act on it.
+ * A prefix rule covers variables a later `bd` release adds. `SROBROEK_BEADS_PIN` and
+ * `MY_BD_X` do not match.
+ */
+export function isBeadsEnvKey(name: string): boolean {
+  return name.startsWith("BEADS_") || name.startsWith("BD_")
+}
+
+/**
+ * A copy of `process.env` for a test child: every {@link isBeadsEnvKey} variable removed,
+ * then `extra` applied. A key in `extra` with value `undefined` is left unset.
+ */
+export function scrubbedBeadsEnv(extra: Record<string, string | undefined> = {}): Record<string, string> {
+  const env: Record<string, string | undefined> = { ...process.env }
+  for (const key of Object.keys(env)) if (isBeadsEnvKey(key)) delete env[key]
+  Object.assign(env, extra)
+  return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined))
 }

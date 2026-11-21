@@ -6,7 +6,7 @@
  */
 
 import { failureNote, type NoteFacts } from "./fallback.ts"
-import { type FailureClass, failureScope, healthKey } from "./health.ts"
+import { FAILURE_CLASSES, type FailureClass, failureScope, healthKey } from "./health.ts"
 import type { ModelRef } from "./resolve.ts"
 
 /** A model's failure notice repeats at most once in this window. */
@@ -15,7 +15,12 @@ export const NOTICE_DEDUPE_MS = 60_000
 /** An outage whose failures stopped this long ago and never saw a success is announced afresh. */
 export const OUTAGE_STALE_MS = 15 * 60_000
 
-type Stopped = { agent: string | undefined; sessionID: string | undefined }
+type Stopped = {
+  agent: string | undefined
+  sessionID: string | undefined
+  /** The session told about the stop; the recovery goes there. */
+  parent?: string | undefined
+}
 
 type Outage = {
   providerID: string
@@ -37,9 +42,85 @@ export type NoticeState = {
    * failure event and its tool error claim the same entry, so the parent hears once. Bounded by the window.
    */
   contextNotices: Map<string, number>
+  /** Failure events already handled, by event id, so instances sharing this state handle each once. Bounded. */
+  events: Map<string, number>
 }
 
-export const newNoticeState = (): NoticeState => ({ outages: new Map(), notices: new Map(), contextNotices: new Map() })
+export const newNoticeState = (): NoticeState => ({ outages: new Map(), notices: new Map(), contextNotices: new Map(), events: new Map() })
+
+/** Event ids remembered; the oldest go first. */
+export const MAX_EVENTS = 500
+
+/** Whether the event `id` is still to be handled, and claim it. An event without an id is always handled. */
+export function claimEvent(state: NoticeState, id: string | undefined, now: number): boolean {
+  if (id === undefined) return true
+  if (state.events.has(id)) return false
+  state.events.set(id, now)
+  if (state.events.size > MAX_EVENTS) state.events.delete(state.events.keys().next().value as string)
+  return true
+}
+
+const SHARED = Symbol.for("srobroek.model-roles.notice-state")
+type Shared = { state: NoticeState; refs: number }
+
+/**
+ * The notice state every instance of the plugin in this process shares (a reload or a second load
+ * would otherwise start from nothing and repeat notices). `holder` is `globalThis`. A state left by an
+ * older build is kept and gains the maps it lacks. `first` is true for the instance that creates it,
+ * which restores the persisted outages.
+ */
+export function acquireNoticeState(holder: Record<symbol, unknown>): { state: NoticeState; first: boolean } {
+  const found = holder[SHARED] as Shared | undefined
+  if (found === undefined || typeof found.state !== "object" || found.state === null) {
+    const shared: Shared = { state: newNoticeState(), refs: 1 }
+    holder[SHARED] = shared
+    return { state: shared.state, first: true }
+  }
+  const fresh = newNoticeState()
+  for (const key of Object.keys(fresh) as Array<keyof NoticeState>) if (!(found.state[key] instanceof Map)) (found.state as Record<string, unknown>)[key] = fresh[key]
+  found.refs = (Number.isFinite(found.refs) ? found.refs : 0) + 1
+  return { state: found.state, first: false }
+}
+
+/** An instance is done with the shared state; the last one drops it. */
+export function releaseNoticeState(holder: Record<symbol, unknown>): void {
+  const found = holder[SHARED] as Shared | undefined
+  if (found === undefined) return
+  found.refs -= 1
+  if (found.refs <= 0) delete holder[SHARED]
+}
+
+/** Storage key of the persisted outages. */
+export const OUTAGES_KEY = "outages"
+
+type StoredOutage = { providerID: string; kind: FailureClass; lastAt: number; notifyTo: string; stopped: Array<[string, Stopped]> }
+
+/** The open outages as plain data for `ctx.storage`. */
+export function snapshotOutages(state: NoticeState): StoredOutage[] {
+  return [...state.outages.values()].map((o) => ({ providerID: o.providerID, kind: o.kind, lastAt: o.lastAt, notifyTo: o.notifyTo, stopped: [...o.stopped] }))
+}
+
+const optionalString = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined)
+
+/** Load persisted outages into `state`; anything malformed is skipped, and open outages are never replaced. */
+export function restoreOutages(state: NoticeState, raw: unknown): void {
+  if (!Array.isArray(raw)) return
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) continue
+    const o = item as Record<string, unknown>
+    if (typeof o.providerID !== "string" || typeof o.notifyTo !== "string" || typeof o.lastAt !== "number" || !Array.isArray(o.stopped)) continue
+    if (typeof o.kind !== "string" || !(FAILURE_CLASSES as readonly string[]).includes(o.kind)) continue
+    const key = `${o.providerID}\0${o.kind}`
+    if (state.outages.has(key)) continue
+    const stopped = new Map<string, Stopped>()
+    for (const entry of o.stopped.slice(-MAX_TRACKED)) {
+      if (!Array.isArray(entry) || typeof entry[0] !== "string" || typeof entry[1] !== "object" || entry[1] === null) continue
+      const s = entry[1] as Record<string, unknown>
+      stopped.set(entry[0], { agent: optionalString(s.agent), sessionID: optionalString(s.sessionID), parent: optionalString(s.parent) })
+    }
+    state.outages.set(key, { providerID: o.providerID, kind: o.kind as FailureClass, lastAt: o.lastAt, notifyTo: o.notifyTo, stopped })
+  }
+}
 
 /**
  * Whether the context overflow of one execution of `sessionID` is still to be handled, and claim it.
@@ -72,6 +153,13 @@ export function toolContextNoticeLive(state: NoticeState, sessionID: string, now
   const at = state.contextNotices.get(`${sessionID}\0tool-error`)
   return at !== undefined && now - at < NOTICE_DEDUPE_MS
 }
+
+/**
+ * Whether a note of this kind wakes its session. A subagent failure and a recovery name sessions the
+ * recipient must resume, so they wake it. A root session's own failure note and a context note
+ * (the child already switched) only inform.
+ */
+export const noticeResumes = (kind: string): boolean => kind === "subagent-fallback" || kind === "recovery"
 
 export type FailureReport = NoteFacts & {
   now: number
@@ -134,7 +222,7 @@ function decideOutage(state: NoticeState, report: FailureReport): Notice | undef
   outage.lastAt = now
   let line: string | undefined
   if (report.subagent !== undefined) {
-    const stopped = { agent: report.subagent.agent, sessionID: report.subagent.sessionID }
+    const stopped = { agent: report.subagent.agent, sessionID: report.subagent.sessionID, parent: notifyTo }
     if (remember(outage, stoppedKey(report), stopped)) line = stoppedLine(stopped, provider, kind, announce)
   }
   if (!announce) return line === undefined ? undefined : { sessionID: notifyTo, text: line }
@@ -158,14 +246,22 @@ export function decideRecovery(state: NoticeState, model: Pick<ModelRef, "provid
   for (const [key, outage] of state.outages) {
     if (outage.providerID !== model.providerID) continue
     state.outages.delete(key)
-    let text = `Provider ${outage.providerID} recovered (${outage.kind}).`
-    const resumable = [...outage.stopped.values()].filter((s) => s.sessionID !== undefined)
-    if (resumable.length > 0) {
-      const list = resumable.slice(0, MAX_STOPPED).map((s) => `${s.agent ?? "subagent"} (${s.sessionID})`)
-      if (resumable.length > MAX_STOPPED) list.push(`+${resumable.length - MAX_STOPPED} more`)
-      text += ` Resume the stopped subagents: ${list.join(", ")}.`
+    // Each stopped child's own parent hears, with its own children; the session that heard the start always does.
+    const byParent = new Map<string, Stopped[]>([[outage.notifyTo, []]])
+    for (const s of outage.stopped.values()) {
+      if (s.sessionID === undefined) continue
+      const parent = s.parent ?? outage.notifyTo
+      byParent.set(parent, [...(byParent.get(parent) ?? []), s])
     }
-    notices.push({ sessionID: outage.notifyTo, text })
+    for (const [parent, resumable] of byParent) {
+      let text = `Provider ${outage.providerID} recovered (${outage.kind}).`
+      if (resumable.length > 0) {
+        const list = resumable.slice(0, MAX_STOPPED).map((s) => `${s.agent ?? "subagent"} (${s.sessionID})`)
+        if (resumable.length > MAX_STOPPED) list.push(`+${resumable.length - MAX_STOPPED} more`)
+        text += ` Resume the stopped subagents: ${list.join(", ")}.`
+      }
+      notices.push({ sessionID: parent, text })
+    }
   }
   return notices
 }

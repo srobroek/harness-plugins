@@ -20,8 +20,8 @@ the `wt` strategy when the [worktrunk](../worktrunk) plugin is loaded, OpenCode'
 | `base` | `"HEAD"` | Ref the worktree starts from, resolved in the caller's checkout. |
 
 | `gates` | `true` | Register the `experimental.idle` gates (see Cleanup layers). The hook is experimental; if the host lacks it the plugin runs without gates. |
-| `resumeGraceMinutes` | `10` | A landed lane is kept this long after a `subagent` call last targeted its child. |
-| `emptyGraceMinutes` | `30` | An empty lane is removed only after its child and parent stayed idle this long. |
+| `resumeGraceMinutes` | `10` | A removal with no end event behind it (the idle pass, the gate, a merge) keeps a lane this long after a `subagent` call last targeted its child. |
+| `emptyGraceMinutes` | `30` | The idle pass and the gate remove an empty lane only after its child and parent stayed idle this long. An end of the child's execution removes it at once. |
 | `sweep` | `"report"` | `"off"`, `"report"` (plan only) or `"prune"` (carry the plan out). |
 | `minAgeHours` | `24` | The sweep never prunes a worktree younger than this. |
 | `intervalHours` | `6` | The background sweep runs at most once per project in this time. |
@@ -102,7 +102,7 @@ plugin instance.
 | Input | Effect |
 | --- | --- |
 | `sessionID` | The child session from the subagent result. Not needed for `list`. |
-| `method: "wt-merge"` | Runs `wt -C <worktree> merge <target> --no-squash --no-ff --no-remove --yes`, then removes the checkout only if the child session is gone (see below). |
+| `method: "wt-merge"` | Runs `wt -C <worktree> merge <target> --no-squash --no-ff --no-remove --yes`, then removes the checkout through the removal path (see below). |
 | `method: "none"` | Reports the lane status only. |
 | `method: "list"` | Reports every active lane in the caller's project. |
 | `target` | Branch to merge into. Defaults to the branch the caller was on. |
@@ -118,13 +118,11 @@ branch. Only the session that spawned the subagent can merge. The merge is refus
   is not checked out anywhere has no local changes.
 
 `wt merge` keeps the checkout (`--no-remove`), and the child stays in it. After a successful merge the
-plugin removes the checkout through the same verified removal as every other path. That removal runs
-under the removal lock, refuses if a resume happened since the merge began, and checks the child
-session last. It removes the checkout only when the child session is deleted or archived, and it
-then retires the lane as `merged`. While the child session exists, the merge still completes and the
-merge commit lands on the target. The checkout and the lane stay, the child does not move, and
-the result tells the parent to delete or archive the child session so the lane can be removed. On a
-conflict or other failure the worktree is kept and the `wt` output is returned.
+plugin removes the checkout through the same removal path as every other trigger (see Lane
+removal), with the merge target as the proof: HEAD must be an ancestor of `target`. Then the lane is
+retired as `merged`. When the path keeps the lane (the child is running or was resumed, the tree
+changed), the merge commit still lands on the target. The checkout and the lane stay, and the result
+says why. On a conflict or other failure the worktree is kept and the `wt` output is returned.
 
 `list` asserts the `subagent_worktree_merge` permission with resource `list` before reading any
 lane or session data. It reads every stored lane in the caller's project and reports the branch, worktree path,
@@ -137,45 +135,80 @@ marking the lanes removed, and reports these repairs. It does not delete any wor
 ## Cleanup layers
 
 Agent worktrees pile up when work lands or an agent dies. Five layers keep them in step, each
-covering what the others cannot see. The plugin removes a lane only when the host has
-**deleted or archived** its child session and the lane is empty or landed. Every removal is a non-force
-`worktree.remove` followed by a refresh, and the plugin never deletes a remote branch.
+covering what the others cannot see. Every lane removal goes through one path (see Lane removal);
+the sweep keeps its own verified removal for worktrees no trigger reached. Every removal is a
+non-force `worktree.remove` followed by a refresh, and the plugin never deletes a remote branch.
 
-Every removal is applied under a per-directory lock and re-checked at that moment: no `subagent` call
-resumed the child since the facts were read, HEAD is still the commit the landed proof covered, and
-the tree is still clean. The local branch is deleted only when the worktree was on it (not
-detached) and it still points at that commit, with `git update-ref -d refs/heads/<branch> <oid>`,
-so a ref that moved is left alone. Landed proofs are keyed by commit, never by branch name.
-The idle gate counts every `background` job (shell, image, subagent) that belongs to the child, a
-descendant of it, or a shell that names the lane directory, and reads the child's own status; an
-unknown status or an ownership lookup that fails or spans unread pages keeps the worktree.
+### Lane removal
 
-A lane may be removed when all of these hold:
+These triggers start a lane's removal:
 
-1. **Landed.** Its tip is an ancestor of `origin/main`, or a merged PR's `headRefOid` equals the tip
-   (one batched `gh pr list` per repository, cached for five minutes), or `wt list` reports the
-   branch integrated, or `delivery_land` recorded that PR head for it. The local branch is deleted
-   (`git branch -D`) only on this proof.
-2. **Clean.** No uncommitted or untracked change (ignored files are fine), no merge, rebase,
+- the child's execution succeeded, failed, or was interrupted. An interruption with reason
+  `shutdown` is not an end, because the host resumes the turn;
+- the child session was archived or deleted;
+- `delivery_land` or `delivery_cleanup` removed the worktree. Only the session move and the
+  retirement below are left to do;
+- `subagent_worktree_merge` merged the lane;
+- a foreground `subagent` call returned and its lane is empty;
+- the rules of the parent's idle pass or the idle gate select it (see below).
+
+The removal runs under the worktree's on-disk lock, which delivery and every resume also take, and
+reads everything fresh. The lane is kept unless all of these hold:
+
+1. **Not running.** No shutdown resume is pending. No execution of the child started after the end
+   event. No `subagent` call resumed the child after the end event (without an end event: within
+   `resumeGraceMinutes`). No background job is recorded for the lane. The child's own status is not
+   running or unknown. Only a trigger that is the end of the child's execution or session skips
+   that read.
+2. **Not denied.** Delivery's landing records for the worktree do not block it.
+3. **Clean.** No uncommitted or untracked change (ignored files are fine), no merge, rebase,
    cherry-pick, revert or bisect in progress, no stash on its branch. `delivery_cleanup` applies
    the same check.
-3. **Child gone.** The host reports the child session as deleted or archived. The plugin reads
-   this directly under the removal lock, as the last step before the removal. A child that exists
-   (running, or idle and so resumable) keeps its lane. A lookup that fails, or that cannot tell the
-   session from a missing location or service, also keeps it. A success, an `error` result or an
-   idle signal does not release a lane. The sweep removes the lane once the host deletes or
-   archives the child.
-4. **Parent done with it.** The parent is idle, and no `subagent` call targeted the child within
-   `resumeGraceMinutes`.
+4. **Proven.** HEAD is one of these commits. Proofs are keyed by commit, never by branch name.
+   - the commit the lane started from (an empty lane);
+   - an ancestor of the merge target;
+   - an ancestor of `origin/main`;
+   - the `headRefOid` of a merged PR (one batched `gh pr list` per repository, cached for five
+     minutes);
+   - the head of a branch that `wt list` reports integrated;
+   - a PR head that `delivery_land` recorded for the worktree.
 
-The plugin removes an empty lane (no commits, clean) after the host deletes or archives its child
-and the parent stays idle for `emptyGraceMinutes`. A child event does not shorten that wait.
+Then the lane is recorded as `removing`, and liveness and the tree are read once more. HEAD must
+still be the proven commit and the tree must still be clean. Then the worktree is removed. The local
+branch is deleted only when the worktree was on it and it still points at the proven commit
+(`git update-ref -d refs/heads/<branch> <oid>`), so a ref that moved is left alone. The lane's
+sessions move home, and the lane is retired as `removed`, `merged` or `landed`. A refusal at any
+step leaves the lane as it was.
+
+The lane's sessions are the child and every session below it, found by parent ID, never by a
+project-wide listing. They move to the parent's checkout, or to the repository's canonical checkout
+when that is gone. The host moves a session whose directory is gone, so the move comes after the
+removal. A failed move or an incomplete listing leaves the lane in `removing` with the sessions
+still to move. The next trigger for the lane finishes the moves; so do the idle gate, a landing, the
+sweep and `list`. Until then a resume of its child is refused.
+
+A dirty or unmerged lane is kept. When its child was archived or deleted, the parent is told once
+per state. The `worktree` argument can move a new child into an existing worktree. That move takes
+the same lock, so it waits for a removal in flight. It is refused when the worktree is gone or being
+removed.
+
+The idle gate counts every `background` job (shell, image, subagent) of the child or a descendant
+of it, and every shell that names the lane directory. It also reads the child's own status. An
+unknown status, or an ownership lookup that fails or spans unread pages, keeps the worktree. The
+parent's idle pass and the idle gate remove a landed lane when all of these hold:
+
+- the child is not running;
+- the parent is idle;
+- no `subagent` call targeted the child within `resumeGraceMinutes`.
+
+They remove an empty lane (no commits, clean) after the child and parent stay idle for
+`emptyGraceMinutes`.
 
 | Layer | Covers | Does not cover |
 | --- | --- | --- |
 | 1. `delivery` `autoCleanup` | `delivery_land` runs `delivery_cleanup` itself, and retries it when a turn ends, for worktrees nothing owns. A lane's worktree is never removed by delivery: this plugin owns it (see Claims below), delivery reports `cleanup.deferred` and records the landing. | A lane landed by hand, or any other tool. |
 | 2. Lane sync on a landing | An `execute.after` hook on `delivery_land` and `delivery_cleanup`: when the result shows the worktree removed (or its path gone), the lane is retired as `landed` and the worktree list is refreshed. `list` stops showing it. Results are read defensively (object, JSON or prose), and nothing happens when `delivery` is not installed. | Lanes whose worktree is still there. |
-| 3. Execution events | `session.execution.failed`, `.interrupted`, `.succeeded` and `session.idle` for a lane child or the parent of lanes. One debounced pass (about 2 s) per session; `succeeded` and `idle` for one execution are one pass. It records how a child ended, tells the parent once when a failed or interrupted child left work, and removes a landed, clean, finished lane. | A hard crash or a restart: the server emits nothing. |
+| 3. Execution events | `session.execution.failed`, `.interrupted`, `.succeeded`, `session.idle`, `session.archived` and `session.deleted` for a lane child or the parent of lanes. One debounced pass (about 2 s) per session; `succeeded` and `idle` for one execution are one pass. It records how a child ended, tells the parent once when a failed or interrupted child left work, and starts the removal when the child's execution or session ended. | A hard crash or a restart: the server emits nothing. |
 | 4. Idle gates | `experimental.idle`. A child idle with uncommitted changes gets one nudge per dirty state. A lead with finished lanes gets one message: landed and clean lanes are removed, an unresolved lane (commits, not landed, no open PR) is named once, a landed-but-dirty lane is reported once. Nothing is sent while one of its children runs, and at most one message per session every 15 s, because a message admitted in the hook fires the hook again. `subagent_worktree_merge` method `keep` (with `reason`) silences a lane until its state changes. | An interrupt or a failure: the hook does not fire for them. |
 | 5. Sweep | Worktrees that no event or gate reaches: a crash, a restart, a PR merged on the forge after the lead went idle, worktrees from before lanes existed. Runs after 30 s at startup and on `session.created`, throttled by `intervalHours`. Only paths under OpenCode's worktree directory (plus `include` roots and lane records). Prunes only landed, clean worktrees that no live session owns and that are older than `minAgeHours`; dirty or unpushed ones are **quarantined**, reported and kept. An unknown owner keeps the worktree. `git worktree prune` runs only for entries whose directory is already gone. | Anything it cannot prove: it keeps it. |
 
@@ -227,9 +260,11 @@ lives under `<git-common-dir>/opencode/`, shared by every instance of the reposi
   state (holds, claims, landing records, denials) takes it, so readers and writers are serialised;
   it is re-entrant inside a removal's own critical section. `delivery` takes this same lock.
 - the lane's claim carries the resume `generation` and `resumedAt`. A resume takes the lock, bumps
-  the generation and stamps the time; a removal captures the generation before collecting facts and,
-  under the lock right before removing, re-reads both from disk and aborts if the generation changed
-  or the child was resumed inside the resume window.
+  the generation and stamps the time. A lane removal reads `resumedAt` from disk under the lock and
+  keeps the lane when the child was resumed after the end event that started the removal (with no
+  end event: inside the resume window). The sweep captures the generation before collecting facts
+  and, under the lock right before removing, aborts if it changed or the child was resumed inside the
+  resume window.
 - `holds/<sha1 of the directory>/<sha1 of the session>.json`: the background jobs a session has
   running for the lane (its own, a descendant's, or a shell naming the lane directory). Every idle
   gate, child or parent, writes its own entry and clears it when it sees none; every remover reads
@@ -238,18 +273,19 @@ lives under `<git-common-dir>/opencode/`, shared by every instance of the reposi
   that cannot be written (running work could not have been recorded). A coordination error in a
   hook means a deferred outcome, logged; nothing is removed and nothing is thrown.
 
-### Sessions are moved out before a worktree goes
+### Sessions and removed worktrees
 
 OpenCode resolves a session's location for every request that touches the session, so a session
 left pointing at a removed directory fails with `Location not found` (in the TUI, on a wake or
-drain, on `session.get`). Every removal therefore, under the lock and right before the host
-removal, lists the project's sessions (every page; an incomplete listing refuses) and:
+drain, on `session.get`). A lane removal moves the lane's own sessions home after the worktree is
+gone (see Lane removal). The sweep, under the lock and right before its host removal, lists the
+project's sessions (every page; an incomplete listing refuses) and:
 
 - refuses if a session in the worktree, or below it, is running;
 - moves each idle one to the repository's canonical checkout, and refuses if a move fails.
 
-This covers lane removals, the foreground empty-lane removal and the sweep. `delivery` does the same
-in its removal section. The background pass (startup and every `intervalHours`, whenever `sweep` is
+`delivery` also moves the sessions of a lane it removes, after the removal. The background pass
+(startup and every `intervalHours`, whenever `sweep` is
 not `off`, including the default `report`) also repairs sessions stranded by earlier removals,
 including ones made by other tools: a session of this project whose directory no longer exists is
 moved, and each move is logged. Archived sessions count (unarchiving one in a removed worktree would

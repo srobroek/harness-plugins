@@ -36,6 +36,7 @@ export const RunStateSchema = Schema.Struct({
   phase: Schema.Literals(["setup", "running", "stopping", "stopped"]),
   options: OptionsSchema,
   scope: ScopeSchema,
+  ledger: Schema.optionalKey(Schema.String),
   createdAt: Schema.Finite,
   armedAt: Schema.optionalKey(Schema.Finite),
   deadline: Schema.optionalKey(Schema.Finite),
