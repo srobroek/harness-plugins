@@ -1,3 +1,9 @@
+## safety [0.9.3](https://github.com/srobroek/harness-plugins/compare/safety--v0.9.2...safety--v0.9.3) (2026-11-21)
+
+### Bug Fixes
+
+* **safety:** resolve symlinks before excluding broad skill roots ([0c2355c](https://github.com/srobroek/harness-plugins/commit/0c2355cdec427af1184946a5ec64c8083f6de16a))
+
 ## safety [0.9.2](https://github.com/srobroek/harness-plugins/compare/safety--v0.9.1...safety--v0.9.2) (2026-11-20)
 
 ### Bug Fixes
