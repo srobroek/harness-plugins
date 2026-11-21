@@ -10,6 +10,7 @@ import { RELOADED_REASON, type Round } from "./rounds.ts"
 import type { RoundEvent } from "./rpc.ts"
 import { CLOSED_TTL_MS, Parley, type RoundStore, type SessionMessage, type Settings } from "./service.ts"
 import { submitRound } from "./submit.ts"
+import { opened, quiet, until } from "./test-wait.ts"
 import { readUpload, removeUpload, saveUpload, uploadRoot } from "./uploads.ts"
 
 const settings: Settings = { fallback: "none", questionTool: "takeover", disabled: false, heartbeatWindowMs: 30_000 }
@@ -111,8 +112,6 @@ function deferred() {
 
 const stored = (data: Data, roundID: string) => data.get(roundKey(roundID)) as StoredRound
 
-const tick = () => new Promise((resolve) => setTimeout(resolve, 5))
-
 /** A plugin reload: the first instance is disposed (which drains its writes), a second starts on the same storage. */
 async function reload(first: ReturnType<typeof instance>, store: RoundStore, extras: Extras = {}) {
   await first.service.suspend()
@@ -125,8 +124,7 @@ async function openRound(extras: Extras = {}, data: Data = new Map()) {
   const store = storeOver(data)
   const first = instance(store, extras)
   const asking = first.service.ask({ questions, title: "SSH" }, { sessionID: "s" })
-  await tick()
-  const roundID = first.service.pending({}).rounds[0]?.roundID ?? ""
+  const roundID = await opened(first.service)
   return { data, store, first, asking, roundID }
 }
 
@@ -143,8 +141,7 @@ describe("reload", () => {
     const store = storeOver(new Map())
     const first = instance(store)
     const asking = first.service.ask({ questions, title: "SSH", wait: "any" }, { sessionID: "s" })
-    await tick()
-    const roundID = first.service.pending({}).rounds[0]?.roundID ?? ""
+    const roundID = await opened(first.service)
     await first.service.submit({ roundID, answers: [{ id: "ssh.host", status: "accepted" }], final: false })
     await asking
     const second = await reload(first, store)
@@ -201,7 +198,7 @@ describe("reload", () => {
     await first.service.suspend()
     await stuck.service.restore()
     const submitting = stuck.service.submit({ roundID, answers: both })
-    await tick()
+    await until(() => stored(data, roundID).status === "submitted", "the closure to be saved")
     expect(stuck.posts).toEqual([])
     expect(stored(data, roundID)).toMatchObject({ status: "submitted", delivery: { status: "pending" } })
     await stuck.service.suspend()
@@ -272,7 +269,7 @@ describe("reload", () => {
     await first.service.suspend()
     await held.service.restore()
     const submitting = held.service.submit({ roundID, answers: both })
-    await tick()
+    await until(() => held.events.some((event) => event.action === "closed"), "the closed event")
     const { result } = await held.service.wait({}, { sessionID: "s" })
     expect(result.answers.map((answer) => answer.id)).toEqual(["ssh.host", "ssh.port"])
     expect(result.as_message).toBeUndefined()
@@ -322,14 +319,14 @@ describe("reload", () => {
     await first.service.suspend()
     await slow.service.restore()
     const submitting = slow.service.submit({ roundID, answers: both })
-    await tick()
+    await until(() => slow.posts.length >= 1, "the first send")
     expect(slow.posts).toHaveLength(1)
     let waited = false
     const waiting = slow.service.wait({}, { sessionID: "s" }).then((outcome) => {
       waited = true
       return outcome
     })
-    await tick()
+    await quiet()
     expect(waited).toBe(false)
     gate.reject(new Error("host down"))
     await submitting
@@ -347,9 +344,9 @@ describe("reload", () => {
     await first.service.suspend()
     await slow.service.restore()
     const submitting = slow.service.submit({ roundID, answers: both })
-    await tick()
+    await until(() => slow.posts.length >= 1, "the first send")
     const waiting = slow.service.wait({}, { sessionID: "s" })
-    await tick()
+    await quiet()
     gate.resolve()
     await submitting
     const { result } = await waiting
@@ -365,7 +362,7 @@ describe("reload", () => {
     await first.service.suspend()
     await held.service.restore()
     const submitting = held.service.submit({ roundID, answers: both })
-    await tick()
+    await until(() => held.events.some((event) => event.action === "closed"), "the closed event")
     const scoped = (await held.service.wait({ ids: ["ssh.host"] }, { sessionID: "s" })).result
     expect(scoped.answers.map((answer) => answer.id)).toEqual(["ssh.host"])
     hang.resolve()
@@ -387,8 +384,8 @@ describe("reload", () => {
     await first.service.suspend()
     await failing.service.restore()
     await failing.service.submit({ roundID, answers: both })
-    for (let i = 0; i < 20 && failing.posts.length < MAX_ATTEMPTS; i++) await tick()
-    await tick()
+    await until(() => failing.posts.length >= MAX_ATTEMPTS, "the attempt limit")
+    await until(() => failing.service.pending({ sessionID: "s" }).rounds.some((round) => round.undelivered !== undefined), "the card to come back")
     expect(failing.posts).toHaveLength(MAX_ATTEMPTS)
     expect(failing.events.at(-1)).toMatchObject({ roundID, action: "opened", status: "undelivered" })
     const [card] = failing.service.pending({ sessionID: "s" }).rounds
@@ -418,8 +415,8 @@ describe("reload", () => {
     await first.service.suspend()
     await failing.service.restore()
     await failing.service.submit({ roundID, answers: both })
-    for (let i = 0; i < 20 && failing.posts.length < MAX_ATTEMPTS; i++) await tick()
-    await tick()
+    await until(() => failing.posts.length >= MAX_ATTEMPTS, "the attempt limit")
+    await until(() => failing.service.pending({ sessionID: "s" }).rounds.some((round) => round.undelivered !== undefined), "the card to come back")
     const problems = await submitRound({
       submit: () => failing.service.submit({ roundID, answers: both }),
       deliver: async () => ({ ok: false }),
@@ -449,7 +446,8 @@ describe("reload", () => {
     const { store, first, roundID } = await openRound()
     const second = await reload(first, store)
     const waiting = second.service.wait({}, { sessionID: "s" })
-    await tick()
+    await until(() => second.events.some((event) => event.action === "updated"), "the wait to register")
+    await quiet(1) // the wait registers right after its event
     await second.service.submit({ roundID, answers: both })
     const { result } = await waiting
     expect(result).toMatchObject({ status: "submitted", round: 1 })
@@ -467,7 +465,7 @@ describe("reload", () => {
       const store = storeOver(new Map())
       const first = instance(store)
       first.service.takeover({ questions: prompts }, call).catch(() => {})
-      await tick()
+      await opened(first.service)
       const second = await reload(first, store)
       return { second, roundID: second.service.pending({ sessionID: "s" }).rounds[0]?.roundID ?? "" }
     }
@@ -487,7 +485,7 @@ describe("reload", () => {
     test("the same question waits as usual when unanswered, and the card gains nothing", async () => {
       const { second, roundID } = await restoredTakeover()
       const asking = second.service.takeover({ questions: prompts }, { sessionID: "s", callID: "c2" })
-      await tick()
+      await quiet()
       await second.service.submit({ roundID, answers: [{ id: "q1", status: "answered", value: { text: "beta" } }], final: true })
       expect(await asking).toMatchObject({ output: { answers: [["beta"]] } })
       expect(second.service.rounds.get(roundID)?.questions).toEqual([host])
@@ -499,7 +497,7 @@ describe("reload", () => {
         { questions: [{ id: "q1", title: "Port", kind: "ask_text" }], wait: "any" },
         { sessionID: "s" },
       )
-      await tick()
+      await until(() => second.service.rounds.get(roundID)?.questions.length === 2, "the question to join the round")
       expect(second.service.rounds.get(roundID)?.questions.map((question) => question.id)).toEqual(["q1", "q1-2"])
       await second.service.submit({ roundID, answers: [{ id: "q1-2", status: "answered", value: { text: "22" } }], final: false })
       const { result, questions } = await asking
@@ -516,7 +514,7 @@ describe("reload", () => {
     test("a collision with a round that has a waiter still errors", async () => {
       const { second } = await restoredTakeover()
       void second.service.takeover({ questions: prompts }, { sessionID: "s", callID: "c2" })
-      await tick()
+      await quiet()
       const clash = { id: "q1", title: "Port", kind: "ask_text" as const }
       await expect(second.service.ask({ questions: [clash] }, { sessionID: "s" })).rejects.toThrow("duplicate id")
     })
@@ -525,7 +523,7 @@ describe("reload", () => {
   test("a round opened in the new instance is waited on as before and sends no message", async () => {
     const { service, messages } = instance(storeOver(new Map()))
     const asking = service.ask({ questions }, { sessionID: "s" })
-    await tick()
+    await opened(service)
     await service.submit({ roundID: service.pending({}).rounds[0]?.roundID ?? "", answers: both })
     expect((await asking).result.status).toBe("submitted")
     expect(messages).toEqual([])
@@ -553,7 +551,7 @@ describe("reload", () => {
       { sessionID: "s", callID: "call-1" },
     )
     const outcome = taking.then(() => "returned", (error: Error) => error.message)
-    await tick()
+    await opened(service)
     service.suspend()
     expect(await outcome).toContain(RELOADED_REASON)
   })
@@ -573,8 +571,7 @@ describe("uploads after a reload", () => {
     const store = storeOver(new Map())
     const first = instance(store)
     void first.service.ask({ questions: fileQuestions }, { sessionID: "s" })
-    await tick()
-    const roundID = first.service.pending({}).rounds[0]?.roundID ?? ""
+    const roundID = await opened(first.service)
     const second = await reload(first, store, extras)
     const outcome = await second.service.submit({
       roundID,
@@ -582,6 +579,37 @@ describe("uploads after a reload", () => {
     })
     return { second, outcome }
   }
+
+  test("a reload with uploads readable leaves answers without files untouched and still loads the bytes of uploads", async () => {
+    const mixed: Question[] = [
+      { id: "name", title: "Name", kind: "ask_text" },
+      { id: "host", title: "Host", kind: "pick_one", options: [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta" }] },
+      { id: "tags", title: "Tags", kind: "pick_many", options: [{ id: "x", label: "X" }, { id: "y", label: "Y" }] },
+      { id: "key", title: "Key", kind: "ask_file" },
+    ]
+    const store = storeOver(new Map())
+    const extras: Extras = { save: () => "/private/key-copy", readUpload: () => "S0VZ" }
+    const first = instance(store, extras)
+    void first.service.ask({ questions: mixed }, { sessionID: "s" })
+    const roundID = await opened(first.service)
+    await first.service.submit({
+      roundID,
+      final: false,
+      answers: [
+        { id: "name", status: "answered", value: { text: "prod" } },
+        { id: "host", status: "answered", value: { selected: "b" } },
+        { id: "tags", status: "answered", value: { selected: ["x", "y"] } },
+        { id: "key", status: "answered", value: { files: [{ name: "k.pub", mime: "text/plain", data: "S0VZ" }] } },
+      ],
+    })
+    const second = await reload(first, store, extras)
+    const answers = second.service.rounds.get(roundID)?.answers
+    expect(answers?.get("name")?.value).toEqual({ text: "prod" })
+    expect(answers?.get("host")?.value).toEqual({ selected: "b" })
+    expect(answers?.get("tags")?.value).toEqual({ selected: ["x", "y"] })
+    const key = answers?.get("key")?.value as { files: unknown[] } | undefined
+    expect(key?.files[0]).toMatchObject({ name: "k.pub", stored: "/private/key-copy", data: "S0VZ" })
+  })
 
   test("uploads reach the session as text and file paths, never as bytes", async () => {
     const saved: Array<string | undefined> = []
@@ -627,8 +655,7 @@ describe("uploads submitted before the final submit", () => {
       ]
       const first = instance(storeOver(data), extras)
       const asking = first.service.ask({ questions: fileQuestions }, { sessionID: "s" })
-      await tick()
-      const roundID = first.service.pending({}).rounds[0]?.roundID ?? ""
+      const roundID = await opened(first.service)
       const bytes = Buffer.from("ssh-ed25519 AAAA").toString("base64")
       await first.service.submit({
         roundID,
@@ -647,7 +674,8 @@ describe("uploads submitted before the final submit", () => {
       const next = instance(storeOver(data), extras)
       await next.service.restore()
       const waiting = next.service.wait({}, { sessionID: "s" })
-      await tick()
+      await until(() => next.events.some((event) => event.action === "updated"), "the wait to register")
+      await quiet(1) // the wait registers right after its event
       await next.service.submit({ roundID, answers: [{ id: "ok", status: "accepted" }] })
       const { result } = await waiting
       const key = result.answers.find((answer) => answer.id === "key")
@@ -691,8 +719,7 @@ describe("a failed upload copy", () => {
       const data: Data = new Map()
       const { service } = instance(storeOver(data), extras)
       const asking = service.ask({ questions: fileQuestions }, { sessionID: "s" })
-      await tick()
-      const roundID = service.pending({}).rounds[0]?.roundID ?? ""
+      const roundID = await opened(service)
       const answers = [upload("one", "a.txt", "first"), upload("two", "b.txt", "second")]
       const failed = await service.submit({ roundID, answers })
       expect(failed.ok).toBe(false)
@@ -720,8 +747,7 @@ describe("a failed upload copy", () => {
         removeUpload: (copy) => removeUpload(copy, base),
       })
       void service.ask({ questions: fileQuestions }, { sessionID: "s" })
-      await tick()
-      const roundID = service.pending({}).rounds[0]?.roundID ?? ""
+      const roundID = await opened(service)
       const outcome = await service.submit({ roundID, answers: [upload("one", "a.txt", "first"), { id: "ghost", status: "accepted" }] })
       expect(outcome.ok).toBe(false)
       expect(copies(base)).toEqual([])
@@ -807,7 +833,8 @@ describe("ownership", () => {
     const b = instance(storeOver(data, "/b", async (id) => id === "sB"))
     void a.service.ask({ questions }, { sessionID: "sA" })
     void b.service.ask({ questions }, { sessionID: "sB" })
-    await tick()
+    await opened(a.service)
+    await opened(b.service)
     await a.service.suspend()
     await b.service.suspend()
     const a2 = instance(storeOver(data, "/a", async (id) => id === "sA"))
@@ -823,7 +850,7 @@ describe("ownership", () => {
     const data: Data = new Map()
     const first = instance(storeOver(data))
     void first.service.ask({ questions }, { sessionID: "s" })
-    await tick()
+    await opened(first.service)
     await first.service.suspend()
     const second = instance(storeOver(data, "/repo", async () => { throw new Error("session not found") }))
     await second.service.restore()
@@ -835,7 +862,7 @@ describe("ownership", () => {
     const data: Data = new Map()
     const other = instance(storeOver(data, "/other"))
     void other.service.ask({ questions }, { sessionID: "s" })
-    await tick()
+    await opened(other.service)
     await other.service.suspend()
     const here = instance(storeOver(data, "/repo"))
     await here.service.restore()
@@ -852,8 +879,7 @@ describe("draining writes", () => {
     const data: Data = new Map()
     const first = instance(storeOver(data, "/repo", async () => true, 20))
     const asking = first.service.ask({ questions, wait: "any" }, { sessionID: "s" })
-    await tick()
-    const roundID = first.service.pending({}).rounds[0]?.roundID ?? ""
+    const roundID = await opened(first.service)
     await first.service.submit({ roundID, answers: [{ id: "ssh.host", status: "accepted" }], final: false })
     const draining = first.service.suspend()
     expect(draining).toBeInstanceOf(Promise)
@@ -868,7 +894,7 @@ describe("draining writes", () => {
   test("the wait for slow storage is bounded", async () => {
     const first = instance(storeOver(new Map(), "/repo", async () => true, 500))
     void first.service.ask({ questions }, { sessionID: "s" })
-    await tick()
+    await opened(first.service)
     const started = Date.now()
     await first.service.suspend(30)
     expect(Date.now() - started).toBeLessThan(300)
@@ -983,8 +1009,7 @@ describe("upload files outlive the round record", () => {
     const closed: Array<[string, number]> = []
     const { service } = instance(storeOver(new Map()), { save: () => "/tmp/x", closeUploads: (id, at) => void closed.push([id, at]) })
     const asking = service.ask({ questions: [{ id: "shot", title: "Shot", kind: "ask_image" }] }, { sessionID: "s" })
-    await tick()
-    const roundID = service.pending({}).rounds[0]?.roundID ?? ""
+    const roundID = await opened(service)
     await service.submit({
       roundID,
       answers: [{ id: "shot", status: "answered", value: { files: [{ name: "a.png", mime: "image/png", data: "UE5H" }] } }],
@@ -1000,8 +1025,7 @@ describe("upload files outlive the round record", () => {
     const data: Data = new Map()
     const first = instance(storeOver(data), { now: () => 1_000 })
     void first.service.ask({ questions }, { sessionID: "s" })
-    await tick()
-    const roundID = first.service.pending({}).rounds[0]?.roundID ?? ""
+    const roundID = await opened(first.service)
     await first.service.suspend()
     const later = 1_000 + OPEN_TTL_MS + 1
     const next = instance(storeOver(data), { now: () => later, closeUploads: (id, at) => void closed.push([id, at]) })

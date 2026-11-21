@@ -1,3 +1,4 @@
+import { isRecord } from "./guards.ts"
 import type { Question } from "./questions.ts"
 import { canonical as canon } from "./value-json.ts"
 
@@ -123,9 +124,6 @@ const ALLOCATION_TOLERANCE = 1e-8
 const DEFAULT_TOTAL = 100
 const NEUTRAL_COLOUR = "#808080"
 const TEMPORAL_DEFAULTS = { date: "2026-01-01", time: "12:00", datetime: "2026-01-01T12:00" } as const
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value)
 

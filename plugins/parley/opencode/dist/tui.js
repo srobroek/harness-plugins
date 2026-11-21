@@ -31,6 +31,10 @@ import { tmpdir } from "os";
 import path from "path";
 import { createHostClipboard } from "@opentui/core";
 
+// plugins/parley/opencode/src/guards.ts
+var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+var strings = (input) => Array.isArray(input) ? input.filter((item) => typeof item === "string") : [];
+
 // plugins/parley/opencode/src/value-json.ts
 function canonical(value) {
   if (Array.isArray(value))
@@ -63,7 +67,6 @@ var ALLOCATION_TOLERANCE = 0.00000001;
 var DEFAULT_TOTAL = 100;
 var NEUTRAL_COLOUR = "#808080";
 var TEMPORAL_DEFAULTS = { date: "2026-01-01", time: "12:00", datetime: "2026-01-01T12:00" };
-var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 var finite = (value) => typeof value === "number" && Number.isFinite(value);
 var tidy = (value) => Number(value.toPrecision(15));
 function isStructured(question) {
@@ -761,7 +764,6 @@ var DEFAULT_EMOJIS = ["\uD83D\uDC4D", "\uD83D\uDC4E", "\uD83C\uDF89", "\uD83E\uD
 var MAX_QUESTIONS = 12;
 var QUESTION_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/;
 var OPTION_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
-var isRecord2 = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 var isStringArray = (value) => Array.isArray(value) && value.every((item) => typeof item === "string");
 function validateQuestions(input, existing = []) {
   const errors = [];
@@ -772,20 +774,20 @@ function validateQuestions(input, existing = []) {
   const seen = new Set(existing.map((question) => question.id));
   input.forEach((raw, index) => {
     const at = `questions[${index}]`;
-    if (!isRecord2(raw)) {
+    if (!isRecord(raw)) {
       errors.push(`${at} must be an object`);
       return;
     }
     const where = typeof raw.id === "string" ? `${at} (${raw.id})` : at;
     if (raw.show_if !== undefined) {
       const showIf = raw.show_if;
-      if (!isRecord2(showIf) || typeof showIf.id !== "string")
+      if (!isRecord(showIf) || typeof showIf.id !== "string")
         errors.push(`${where}.show_if must be an object with an id`);
       else if (showIf.id === raw.id)
         errors.push(`${where}.show_if cannot refer to the question itself`);
       else if (!seen.has(showIf.id))
         errors.push(`${where}.show_if refers to ${JSON.stringify(showIf.id)}, which is not an earlier question`);
-      if (isRecord2(showIf) && !Object.hasOwn(showIf, "equals"))
+      if (isRecord(showIf) && !Object.hasOwn(showIf, "equals"))
         errors.push(`${where}.show_if.equals is required`);
     }
     if (typeof raw.id !== "string" || !QUESTION_ID.test(raw.id))
@@ -814,7 +816,7 @@ function validateKind(question, where) {
     if (options.length < 2)
       errors.push(`${where}.options needs at least 2 entries for ${question.kind}`);
     for (const option of options) {
-      if (!isRecord2(option) || typeof option.id !== "string" || !OPTION_ID.test(option.id)) {
+      if (!isRecord(option) || typeof option.id !== "string" || !OPTION_ID.test(option.id)) {
         errors.push(`${where}.options: every option needs an id matching ${OPTION_ID}`);
         continue;
       }
@@ -885,7 +887,7 @@ function validateKind(question, where) {
           errors.push(`${where}.recommended is outside min..max`);
       }
       if (question.kind === "rate" && rec !== undefined) {
-        if (!isRecord2(rec))
+        if (!isRecord(rec))
           errors.push(`${where}.recommended must map option ids to numbers`);
         else
           for (const key of Object.keys(rec))
@@ -1025,24 +1027,23 @@ function coerceQuestion(raw) {
 // plugins/parley/opencode/src/answers.ts
 var ANSWER_STATUSES = ["answered", "accepted", "noted", "deferred"];
 var MAX_FILE_BYTES = 10 * 1024 * 1024;
-var isRecord3 = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 var text = (value) => typeof value === "string" && value.trim() !== "" ? value : undefined;
 var sameSet = (a, b) => canonical([...a].sort()) === canonical([...b].sort());
 function equalsRecommendation(question, value) {
   const rec = recommendedValue(question);
   if (rec === undefined || value === undefined)
     return false;
-  if (question.kind === "pick_many" && isRecord3(value) && isRecord3(rec)) {
+  if (question.kind === "pick_many" && isRecord(value) && isRecord(rec)) {
     return value.other === undefined && Array.isArray(value.selected) && sameSet(value.selected, rec.selected);
   }
-  if ((question.kind === "review" || question.kind === "show_diff") && isRecord3(value)) {
+  if ((question.kind === "review" || question.kind === "show_diff") && isRecord(value)) {
     return value.decision === rec.decision && text(value.feedback) === undefined;
   }
   return canonical(value) === canonical(rec);
 }
 function validateValue(question, value) {
   const fail = (error) => ({ error: `${question.id}: ${error}` });
-  if (!isRecord3(value))
+  if (!isRecord(value))
     return fail("value must be an object");
   const ids = (question.options ?? []).map((option) => option.id);
   switch (question.kind) {
@@ -1103,7 +1104,7 @@ function validateValue(question, value) {
     }
     case "rate": {
       const { min, max } = sliderBounds(question);
-      if (!isRecord3(value.ratings))
+      if (!isRecord(value.ratings))
         return fail("ratings must map option ids to numbers");
       const ratings = {};
       for (const [id, rating] of Object.entries(value.ratings)) {
@@ -1142,7 +1143,7 @@ function validateValue(question, value) {
         return fail("only one file allowed");
       const cleaned = [];
       for (const file of files) {
-        if (!isRecord3(file) || typeof file.name !== "string" || typeof file.data !== "string")
+        if (!isRecord(file) || typeof file.name !== "string" || typeof file.data !== "string")
           return fail("each file needs name and base64 data");
         const size = Buffer.byteLength(file.data, "base64");
         if (size > MAX_FILE_BYTES)
@@ -1216,13 +1217,13 @@ function normaliseAnswer(question, submitted) {
   }
 }
 function publicAnswer(answer) {
-  if (!isRecord3(answer.value) || !Array.isArray(answer.value.files))
+  if (!isRecord(answer.value) || !Array.isArray(answer.value.files))
     return answer;
   const files = answer.value.files.map(({ data: _data, ...file }) => file);
   return { ...answer, value: { files } };
 }
 function describeValue(question, value) {
-  if (!isRecord3(value))
+  if (!isRecord(value))
     return "";
   const label = (id) => optionLabel(question, id);
   switch (question.kind) {

@@ -1,3 +1,4 @@
+import { isRecord } from "./guards.ts"
 import { DEFAULT_EMOJIS, optionLabel, type Question, recommendedValue, sliderBounds, sliderText } from "./questions.ts"
 import { structuredSummary, validateStructuredValue } from "./structured.ts"
 import { canonical } from "./value-json.ts"
@@ -35,9 +36,6 @@ export interface Answer {
   readonly note?: string
   readonly accepted_recommendation?: boolean
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
 
 const text = (value: unknown) => (typeof value === "string" && value.trim() !== "" ? value : undefined)
 

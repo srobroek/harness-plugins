@@ -5,6 +5,7 @@ import type { Question } from "./questions.ts"
 import type { RoundEvent } from "./rpc.ts"
 import { Parley, type QuestionTool, type Settings, settingsFrom } from "./service.ts"
 import { BUILTIN } from "./takeover.ts"
+import { opened } from "./test-wait.ts"
 
 const settings: Settings = { fallback: "none", questionTool: "takeover", disabled: false, heartbeatWindowMs: 30_000 }
 const questions: Question[] = [
@@ -23,8 +24,6 @@ function setup(overrides: Partial<Settings> = {}, questionTool?: QuestionTool) {
   })
   return { service, events }
 }
-
-const tick = () => new Promise((resolve) => setTimeout(resolve, 5))
 
 describe("settingsFrom", () => {
   test("reads options and env", () => {
@@ -53,7 +52,7 @@ describe("Parley", () => {
       { questions, title: "Auth" },
       { sessionID: "s", progress: async (update) => void progress.push(update) },
     )
-    await tick()
+    await opened(service)
     expect(events[0]).toMatchObject({ sessionID: "s", action: "opened" })
     const [round] = service.pending({ sessionID: "s" }).rounds
     if (!round) throw new Error("no pending round")
@@ -85,7 +84,7 @@ describe("Parley", () => {
     service.attach({ clientID: "tui" })
     const controller = new AbortController()
     const asking = service.ask({ questions }, { sessionID: "s", signal: controller.signal })
-    await tick()
+    await opened(service)
     controller.abort()
     const { result } = await asking
     expect(result).toMatchObject({ status: "cancelled", reason: "aborted" })
@@ -99,8 +98,8 @@ describe("Parley", () => {
     const first = await service.ask({ questions, wait: "none" }, { sessionID: "s" })
     expect(first.result.status).toBe("open")
     expect(service.pending({}).rounds[0]?.deadline).toBeUndefined()
+    // wait() extends the deadline before its first await, so the deadline is readable at once.
     const waiting = service.wait({}, { sessionID: "s" })
-    await tick()
     const roundID = service.pending({}).rounds[0]?.roundID ?? ""
     expect(service.pending({}).rounds[0]?.deadline).toBeGreaterThan(Date.now())
     await service.submit({ roundID, answers: [{ id: "auth.storage", status: "accepted" }] })
@@ -114,7 +113,7 @@ describe("Parley", () => {
     const { service, events } = setup()
     service.attach({ clientID: "tui" })
     const asking = service.ask({ questions, timeout_s: "0.02" as never }, { sessionID: "s" })
-    await tick()
+    await opened(service)
     expect(service.pending({}).rounds[0]?.deadline).toBeGreaterThan(Date.now() - 5)
     const { result } = await asking
     expect(result).toMatchObject({ status: "timeout", reason: "timeout", pending: ["auth.storage", "auth.ttl"] })
@@ -128,7 +127,7 @@ describe("Parley", () => {
     const { service } = setup()
     service.attach({ clientID: "tui" })
     const long = service.ask({ questions: [questions[0] as Question], timeout_s: 5 }, { sessionID: "s" })
-    await tick()
+    await opened(service)
     const short = await service.ask({ questions: [questions[1] as Question], timeout_s: 0.01 as never }, { sessionID: "s" })
     expect(short.result.status).toBe("timeout")
     const roundID = service.pending({}).rounds[0]?.roundID ?? ""
@@ -166,7 +165,7 @@ describe("Parley", () => {
     const { service } = setup()
     service.attach({ clientID: "tui" })
     const asking = service.ask({ questions }, { sessionID: "s" })
-    await tick()
+    await opened(service)
     await service.cancel({ roundID: service.pending({}).rounds[0]?.roundID ?? "" })
     expect((await asking).result).toMatchObject({ status: "cancelled", reason: "user_closed" })
   })
@@ -239,7 +238,7 @@ describe("close", () => {
     const { service } = setup()
     service.attach({ clientID: "tui" })
     const asking = service.ask({ questions }, { sessionID: "s" })
-    await tick()
+    await opened(service)
     service.close()
     expect((await asking).result).toMatchObject({ status: "cancelled", reason: "plugin_unloaded" })
   })
@@ -290,7 +289,7 @@ describe("question takeover", () => {
     service.attach({ clientID: "tui" })
     expect(service.takeoverWanted()).toBe(true)
     const asking = service.takeover({ questions: prompts }, { sessionID: "s" })
-    await tick()
+    await opened(service)
     expect(events[0]).toMatchObject({ action: "opened" })
     const [round] = service.pending({ sessionID: "s" }).rounds
     expect(round?.questions[0]).toMatchObject({ id: "q1", kind: "pick_one", recommended: "o1" })
@@ -309,7 +308,7 @@ describe("question takeover", () => {
     const { service } = setup()
     service.attach({ clientID: "tui" })
     const asking = service.takeover({ questions: prompts }, { sessionID: "s", callID: "call_1" })
-    await tick()
+    await opened(service)
     const [round] = service.pending({}).rounds
     expect(round?.callIDs).toEqual(["call_1"])
     await service.cancel({ roundID: round?.roundID ?? "" })
@@ -329,7 +328,7 @@ describe("question takeover", () => {
     const { service } = setup()
     service.attach({ clientID: "tui" })
     const asking = service.takeover({ questions: prompts }, { sessionID: "s" })
-    await tick()
+    await opened(service)
     await service.end("s")
     await expect(asking).rejects.toThrow("cancelled before the user answered (ended)")
   })
@@ -338,7 +337,7 @@ describe("question takeover", () => {
     const { service } = setup()
     service.attach({ clientID: "tui" })
     void service.ask({ questions: [{ id: "a", title: "A", kind: "ask_text" }] }, { sessionID: "s", callID: "call_2" })
-    await tick()
+    await opened(service)
     expect(service.pending({}).rounds[0]?.callIDs).toBeUndefined()
   })
 
@@ -359,7 +358,7 @@ describe("round ownership", () => {
     const service = new Parley({ settings, emit: async (e) => void events.push(e), deliver: async () => {}, ...(warn ? { warn } : {}) })
     service.attach({ clientID: "tui" })
     const asking = service.takeover({ questions: prompts }, { sessionID: "s1" })
-    await tick()
+    await opened(service)
     const [round] = service.pending({ sessionID: "s1" }).rounds
     return { service, asking, roundID: round?.roundID ?? "" }
   }

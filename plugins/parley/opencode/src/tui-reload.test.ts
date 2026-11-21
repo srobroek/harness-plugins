@@ -5,9 +5,9 @@ import { createTestRenderer } from "@opentui/core/testing"
 import { roundKey, type StoredRound } from "./persist.ts"
 import type { RoundEvent } from "./rpc.ts"
 import { Parley, type RoundStore, settingsFrom } from "./service.ts"
+import { opened, quiet, until } from "./test-wait.ts"
 import tui from "./tui.tsx"
 
-const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms))
 const location = { directory: "/repo" }
 const question = [
   { id: "a", title: "A", kind: "confirm" as const, recommended: "yes" },
@@ -86,7 +86,8 @@ async function attachTui(current: () => Parley) {
     attention: { notify: async () => ({ ok: true }) },
   } as unknown as Plugin.Context
   const cleanup = await tui.setup(context)
-  await tick()
+  await until(() => pendingReplies.length > 0, "the first fetch")
+  await quiet()
   const heartbeat = () => intervals.find((item) => item.ms === 10_000)?.run()
   // The app slot registers the commands; `parley.focus` is enabled only while this session has a round on screen.
   const shown = () => {
@@ -115,7 +116,7 @@ test("after a reload the heartbeat fetches the restored round again from the new
   const before = server(memoryStore(data))
   before.attach({ clientID: "x" })
   void before.ask({ questions: question, timeout_s: 0 }, { sessionID: "s" })
-  await tick()
+  await opened(before)
   let running = before
   const view = await attachTui(() => running)
   try {
@@ -126,8 +127,9 @@ test("after a reload the heartbeat fetches the restored round again from the new
     running = after
     const fetched = view.pendingReplies.length
     view.heartbeat()
-    await tick(20)
     // Without the heartbeat noticing the new instance nothing asks the server again.
+    await until(() => view.pendingReplies.length > fetched, "the heartbeat to fetch again")
+    await quiet()
     expect(view.pendingReplies.length).toBeGreaterThan(fetched)
     expect(view.pendingReplies.at(-1)).toEqual({ instance: after.instance, rounds: 1 })
     expect(view.shown()).toBe(true)
@@ -140,18 +142,22 @@ test("a round the new server instance never had stays on screen, with its draft,
   const before = server()
   before.attach({ clientID: "x" })
   void before.ask({ questions: question, timeout_s: 0 }, { sessionID: "s" })
-  await tick()
+  await opened(before)
   let running = before
   const view = await attachTui(() => running)
   try {
     expect(view.shown()).toBe(true)
     running = server()
+    const fetched = view.pendingReplies.length
     view.heartbeat()
-    await tick(20)
+    await until(() => view.pendingReplies.length > fetched, "the heartbeat to fetch again")
+    await quiet()
     expect(view.pendingReplies.at(-1)?.rounds).toBe(0)
     // An ordinary refresh (any event) after the reload must not drop the round the user may still be answering.
+    const refreshed = view.pendingReplies.length
     await view.event({ sessionID: "s", roundID: "other", action: "updated" })
-    await tick(20)
+    await until(() => view.pendingReplies.length > refreshed, "the event to refresh")
+    await quiet()
     expect(view.shown()).toBe(true)
   } finally {
     await view.stop()
@@ -162,14 +168,14 @@ test("a round closed elsewhere without a reload still leaves the screen", async 
   const only = server()
   only.attach({ clientID: "x" })
   void only.ask({ questions: question, timeout_s: 0 }, { sessionID: "s" })
-  await tick()
+  await opened(only)
   const view = await attachTui(() => only)
   try {
     expect(view.shown()).toBe(true)
     const roundID = only.pending({}).rounds[0]?.roundID ?? ""
     await only.cancel({ roundID })
     await view.event({ sessionID: "s", roundID, action: "closed", status: "cancelled" })
-    await tick(20)
+    await until(() => !view.shown(), "the round to leave the screen")
     expect(view.shown()).toBe(false)
   } finally {
     await view.stop()
@@ -181,7 +187,7 @@ test("a round whose message to the agent kept failing comes back on screen with 
   const before = server(memoryStore(data))
   before.attach({ clientID: "x" })
   void before.ask({ questions: question, timeout_s: 0 }, { sessionID: "s" })
-  await tick()
+  await opened(before)
   await before.suspend()
   let view: Awaited<ReturnType<typeof attachTui>> | undefined
   const after = new Parley({
@@ -202,9 +208,9 @@ test("a round whose message to the agent kept failing comes back on screen with 
     const yes = [{ id: "a", status: "accepted" as const }, { id: "b", status: "accepted" as const }]
     await after.submit({ roundID, answers: yes })
     await view.event({ sessionID: "s", roundID, action: "closed", status: "submitted" })
-    await tick(20)
+    await until(() => !view.shown(), "the round to leave the screen")
     expect(view.shown()).toBe(false)
-    for (let i = 0; i < 50 && !view.shown(); i++) await tick(10)
+    await until(() => view.shown(), "the undelivered card to come back", 5000)
     expect(view.shown()).toBe(true)
     expect(view.toasts.some((toast) => toast.variant === "warning" && toast.message.includes("host down"))).toBe(true)
   } finally {

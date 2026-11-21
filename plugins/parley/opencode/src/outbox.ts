@@ -1,3 +1,4 @@
+import { isRecord, strings } from "./guards.ts"
 /** Messages parley sends to a session for the TUI's fallback (a round the server never held), kept until the host admits them. */
 export const OUTBOX_KEY_PREFIX = "outbox:"
 /** A delivery that failed this many times stops retrying on its own and goes back to the user. */
@@ -61,10 +62,6 @@ export function messageID(now: number): string {
   return `msg_${time}${Array.from(bytes, (byte) => CHARS[byte % 62]).join("")}`
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-const strings = (input: unknown) =>
-  Array.isArray(input) ? input.filter((item): item is string => typeof item === "string") : []
 const STATUSES = new Set<unknown>(["pending", "sent", "failed", "dismissed"])
 
 function base(value: Record<string, unknown>): DeliveryBase | undefined {
