@@ -40,7 +40,7 @@
     "@opencode/plugin": "2.3.2",
     "@opencode/theme": "2.3.2",
     "@opentui/core": "0.9.3",
-    "@opentui/solid": "0.9.3",
+    "@opentui/solid": "0.9.7",
     "@semantic-release/changelog": "7.0.0",
     "@semantic-release/exec": "7.1.0",
     "@semantic-release/git": "11.0.1",
