@@ -1,3 +1,9 @@
+## project [0.9.0](https://github.com/srobroek/harness-plugins/compare/project--v0.8.0...project--v0.9.0) (2026-11-21)
+
+### Features
+
+* **code-challenge:** add the code-challenge plugin ([#30](https://github.com/srobroek/harness-plugins/issues/30)) ([82baa11](https://github.com/srobroek/harness-plugins/commit/82baa116b647fc293a17318e11cf132ff9c39151))
+
 # Changelog
 
 ## [0.8.0](https://github.com/srobroek/opencode-plugins/compare/project--v0.7.0...project--v0.8.0) (2026-11-20)
