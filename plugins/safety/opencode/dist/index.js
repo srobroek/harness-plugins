@@ -4206,9 +4206,10 @@ var REWRITE_FORM = /(?<![\w-])git[-_]filter[-_]repo(?![\w-])/;
 var REWRITE_WORD = /(?<![\w/.-])(?:filter-repo|filter-branch|update-ref|replace)(?![\w/-]|\.\w)/;
 var GIT_WORD = /(?<![\w/.-])d?git(?![\w-])/;
 var EXECUTABLE_OPTION = /^(?:-O|--(?:open-files-in-pager|ext-diff|textconv|exec|exec-path|pager|config-env|upload-pack|receive-pack|pre|pre-glob|hostname-bin)(?![\w-]))/;
-var DATA_OPTION = /^(?:--grep|--message|--regexp|--pattern)$/;
+var DATA_OPTION = /^(?:--grep|--message|--regexp|--pattern|--glob|--iglob|--include|--exclude|--include-dir|--exclude-dir|--type-add)$/;
 var mentioned = (word) => REWRITE_FORM.test(word) || REWRITE_WORD.test(word);
-var SHORT_VALUED = /[efmABC]/;
+var SHORT_VALUED = /[efgmABC]/;
+var SHORT_DATA = "emg";
 function cluster(arg) {
   const letters = arg.slice(1);
   const at = letters.search(SHORT_VALUED);
@@ -4247,7 +4248,7 @@ function mentionsOnlyAsData(args) {
       if (at >= 0) {
         const rest = letters.slice(at + 1);
         const value = rest === "" ? args[++i] : rest;
-        if (!"em".includes(letters[at]) && value !== undefined && mentioned(value))
+        if (!SHORT_DATA.includes(letters[at]) && value !== undefined && mentioned(value))
           return false;
         continue;
       }

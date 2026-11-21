@@ -1054,6 +1054,26 @@ describe("ordinary git is untouched in a canonical checkout", () => {
   })
 })
 
+describe("a lone abbreviated --target is resolved", () => {
+  test("--targ into a canonical checkout is refused from a linked worktree", () => {
+    expectRefused("git filter-repo --targ {canonical} --path a", "linked")
+  })
+  test("--targ into a linked worktree is allowed from a canonical checkout", () => {
+    expect(run("git filter-repo --targ {linked} --path a", "canonical")).toBeUndefined()
+  })
+})
+
+describe("a data-option exemption never hides a real rewrite", () => {
+  test.each([
+    "git filter-repo --glob x --path a",
+    "git filter-repo --include x --path a",
+    "git filter-repo --glob=x --path a",
+    "uv run git-filter-repo --glob x",
+  ])("refuses %s in a canonical checkout", (command) => {
+    expect(run(command, "canonical")?.guard).toBe("history-rewrite")
+  })
+})
+
 describe("a rewrite the walker cannot fully parse is refused", () => {
   test.each([
     ["a builtin-wrapped eval", "builtin eval 'git update-ref -d refs/heads/main'"],
@@ -1064,6 +1084,11 @@ describe("a rewrite the walker cannot fully parse is refused", () => {
     ["a shell launched by uvx", "uvx sh -c 'git update-ref -d refs/heads/main'"],
     ["a mixed-spelling --target", "git filter-repo --target {clone} --targ {canonical} --path a"],
     ["an abbreviated repeated --target", "git filter-repo --tar={clone} --ta {canonical} --path a"],
+    ["a rewrite as the value of -f", "rg -f git-filter-repo x ."],
+    ["a rewrite as the separate value of -A", "git grep -A filter-repo x"],
+    ["a rewrite as the value of -B", "git grep -B update-ref x"],
+    ["a rewrite as the value of -C in a cluster", "git grep -nC filter-branch x"],
+    ["a rewrite as the value of -f in a cluster", "rg -nf git-filter-repo x ."],
     ["git launched after a valued option", "uv run --package billing git update-ref -d refs/heads/main"],
     ["git filter-branch launched after --with", "uv run --with x git filter-branch --env-filter true"],
     ["a script that is handed a filter-repo word", "python3 script.py git-filter-repo --force"],
@@ -1099,6 +1124,21 @@ describe("a rewrite the walker cannot fully parse is refused", () => {
     'grep -rie "git filter-branch" docs/',
     'bd create --description "git replace misuse"',
     "uv run --directory {linked} pytest",
+    "rg --glob='*git-filter-repo*' TODO .",
+    "rg --glob '*git-filter-repo*' TODO .",
+    "rg -g'*git-filter-repo*' TODO .",
+    "rg -g '*git-filter-repo*' TODO .",
+    "rg -ng '*git-filter-repo*' TODO .",
+    "rg --iglob=*git-filter-repo* TODO .",
+    "rg --iglob '*git-filter-repo*' TODO .",
+    "rg --type-add 'x:*git-filter-repo*' TODO .",
+    "rg --type-add='x:*git-filter-repo*' TODO .",
+    "grep -r --include='*git-filter-repo*' TODO .",
+    "grep -r --include '*git-filter-repo*' TODO .",
+    "grep -r --exclude=*git-filter-repo* TODO .",
+    "grep -r --exclude-dir git-filter-repo TODO .",
+    "grep -r --include-dir=git-filter-repo TODO .",
+    "rg -g '*git-filter-repo*' --glob '!git-filter-repo' TODO .",
   ])("allows the mention in %s", (command) => {
     expect(run(command, "canonical")).toBeUndefined()
   })

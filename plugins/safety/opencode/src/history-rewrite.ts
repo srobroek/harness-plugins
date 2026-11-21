@@ -655,12 +655,15 @@ const GIT_WORD = /(?<![\w/.-])d?git(?![\w-])/
 /** Options that run a program or pager (`git grep -O`, `git diff --ext-diff`, `rg --pre`), whatever their value. */
 const EXECUTABLE_OPTION =
   /^(?:-O|--(?:open-files-in-pager|ext-diff|textconv|exec|exec-path|pager|config-env|upload-pack|receive-pack|pre|pre-glob|hostname-bin)(?![\w-]))/
-/** Options whose value is a pattern or message, never a program. */
-const DATA_OPTION = /^(?:--grep|--message|--regexp|--pattern)$/
+/** Options whose value is a pattern, message or file selector, never a program. */
+const DATA_OPTION =
+  /^(?:--grep|--message|--regexp|--pattern|--glob|--iglob|--include|--exclude|--include-dir|--exclude-dir|--type-add)$/
 const mentioned = (word: string): boolean => REWRITE_FORM.test(word) || REWRITE_WORD.test(word)
 
-/** Short options that take a value: `-e`/`-m` a pattern or message, `-f` a file, `-A`/`-B`/`-C` a count. */
-const SHORT_VALUED = /[efmABC]/
+/** Short options that take a value: `-e`/`-m` a pattern or message, `-g` an rg glob, `-f` a file, `-A`/`-B`/`-C` a count. */
+const SHORT_VALUED = /[efgmABC]/
+/** The short options in `SHORT_VALUED` whose value is data. */
+const SHORT_DATA = "emg"
 
 /** The letters of a short-option cluster up to and including its first value-taking letter, and the index of that letter. */
 function cluster(arg: string): { letters: string; at: number } {
@@ -671,7 +674,7 @@ function cluster(arg: string): { letters: string; at: number } {
 
 /**
  * Whether every rewrite word among `args` sits where the command treats it as data: a positional
- * pattern or path, or the value of `-e`, `-m`, `--grep`, `--message`. A program-running option is
+ * pattern or path, or the value of `-e`, `-m`, `-g`, `--grep`, `--message` or a glob or include/exclude option. A program-running option is
  * looked for in every word, whatever option it might be the value of; only the data exemption
  * follows the options' values.
  */
@@ -703,7 +706,7 @@ function mentionsOnlyAsData(args: readonly string[]): boolean {
       if (at >= 0) {
         const rest = letters.slice(at + 1)
         const value = rest === "" ? args[++i] : rest
-        if (!"em".includes(letters[at] as string) && value !== undefined && mentioned(value)) return false
+        if (!SHORT_DATA.includes(letters[at] as string) && value !== undefined && mentioned(value)) return false
         continue
       }
     }
