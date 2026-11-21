@@ -75,6 +75,17 @@ The check compares real paths, with symlinks resolved, and ignores a skill when:
 - its directory is the filesystem root, the home folder or a parent of it, or links to one of them.
 - its directory or the home folder does not resolve.
 
+Three more checks turn an `external_directory` ask into an allow. Each applies to an `ask` only, never
+overrides a deny, behaves the same in root and subagent sessions, and runs before `subagent-prompts`:
+
+| Id | Allows |
+| --- | --- |
+| `steering-dirs` | `read`, `glob`, `grep` and `list` inside the `steeringDirs` option (default `["~/.config/opencode/steering"]`; a list replaces the default). Each directory is resolved with realpath and must exist, hold no symlink component and belong to the current user. A symlink inside that leaves the directory still asks. |
+| `scratch-shell` | The `shell` tool when every parsed `external_directory` resource of the evaluation lies in a pinned scratch root (the OpenCode temp folder, the project's worktree folder). It only waives that ask. It does not confine the process: a command run there can still read or write elsewhere, as any allowed shell can from its own directory. One resource outside the roots, such as a `git -C`, `make -C` or `--prefix` directory, keeps the ask, and an empty resource list is never auto-approved. Part of the `scratchDirs` check: `scratchDirs: false` turns it off too. |
+| `repo-worktrees` | `read`, `glob`, `grep` and `list` inside the worktrees of the session's own repository. The list comes from `git worktree list --porcelain -z` (run with the shared safe-git flags, a 3 s timeout, the supervised-subprocess wait, and the repository-selecting `GIT_*` variables cleared). A listed path counts only if the disk agrees: the main worktree's `.git` is the repository's common directory; a linked worktree's `.git` file names `<common-dir>/worktrees/<name>` and that directory's `gitdir` file names the worktree's `.git` back. The root must be a real path owned by the current user. Roots are cached 30 s per directory with their device and inode; each use re-checks them, and a root that became a symlink or another directory drops the entry and keeps the ask. Concurrent lookups share one git run. Paths are canonicalised, so a symlink out of a worktree still asks. No writes, no shell. |
+
+Turn each off with `{ "disable": ["steering-dirs"] }`, `["scratch-shell"]` or `["repo-worktrees"]`.
+
 These checks run in this plugin's `permission.hook("evaluate")` in plugin order. A plugin loaded after
 `safety` can still turn an allow into a prompt. As a backstop, the plugin watches each
 `permission.asked` event in its location. When the session has a parent, it rejects the request at

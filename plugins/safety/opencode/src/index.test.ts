@@ -8,6 +8,7 @@ import plugin, { applyDecision, confirmSecretCommand, createPlugin, type Evaluat
 import { FNOX_CONFIG_MESSAGE, FNOX_INDIRECT_MESSAGE, FNOX_STORE_MESSAGE, VALUE_MESSAGE } from "./op-guard.ts"
 import { INVESTIGATE_NOTICE } from "./package-investigate.ts"
 import { FORCE_PUSH_MESSAGE } from "./permission.ts"
+import type { GitRun } from "./repo-worktrees.ts"
 import { scratchRoots } from "./scratch-dirs.ts"
 import { COMMAND_ACTION, STORE_ACTION } from "./secret-store.ts"
 
@@ -21,6 +22,7 @@ type Load = {
   env?: NodeJS.ProcessEnv
   projectID?: string
   scratchRoots?: string[]
+  worktrees?: { run?: GitRun; ttlMs?: number }
   guard?: Record<string, unknown>
   assert?: (input: FakeAssert) => Promise<void> | void
   /** Sessions besides `ses_1`. */
@@ -49,6 +51,7 @@ async function load(options: Record<string, unknown> = {}, more: Load = {}) {
     env: more.env ?? {},
     ...(more.guard ? { guard: more.guard } : {}),
     ...(more.scratchRoots ? { scratch: { roots: more.scratchRoots } } : {}),
+    ...(more.worktrees ? { worktrees: more.worktrees } : {}),
     warn: more.warn ?? (() => {}),
   }).setup(fake.context)
   const before = (id: string, command: string, workdir?: string) =>
@@ -74,7 +77,7 @@ describe("setup", () => {
     const { fake, cleanup } = await load()
     expect(fake.hooks("tool")).toEqual(["execute.before", "execute.before", "execute.after", "execute.after"])
     expect(fake.hooks("shell")).toEqual(["create.before"])
-    expect(fake.hooks("permission")).toEqual(["evaluate", "evaluate", "evaluate", "evaluate", "evaluate", "evaluate"])
+    expect(fake.hooks("permission")).toEqual(Array(8).fill("evaluate"))
     expect([...fake.tools.keys()]).toEqual([STORE_ACTION])
     await cleanup?.()
     expect(fake.active()).toBe(0)
@@ -486,11 +489,37 @@ describe("scratch folders", () => {
     }
   })
 
-  test("leaves a shell call's request asking", async () => {
+  test("allows a shell call whose every resource is in a scratch folder", async () => {
     const { fake } = await load({}, { scratchRoots: [fixture] })
-    const worktrees = fixture
-    await start(fake, "s1", "shell", { command: `ls ${worktrees}/lane` })
-    expect((await ask(fake, [`${worktrees}/lane`], "s1")).effect).toBe("ask")
+    await start(fake, "s1", "shell", { command: `ls ${fixture}/lane` })
+    expect((await ask(fake, [`${fixture}/lane`, `${fixture}/other/*`], "s1")).effect).toBe("allow")
+  })
+
+  test("leaves a shell call asking when one resource, such as a git -C directory, is outside the roots", async () => {
+    const { fake } = await load({}, { scratchRoots: [fixture] })
+    await start(fake, "s2", "shell", { command: `git -C /elsewhere status` })
+    expect((await ask(fake, [`${fixture}/lane`, "/elsewhere/*"], "s2")).effect).toBe("ask")
+  })
+
+  test("disable scratch-shell keeps a shell call asking while direct tools stay allowed", async () => {
+    const { fake } = await load({ disable: ["scratch-shell"] }, { scratchRoots: [fixture] })
+    await start(fake, "s3", "shell", {})
+    await start(fake, "s4", "read", {})
+    expect((await ask(fake, [`${fixture}/lane`], "s3")).effect).toBe("ask")
+    expect((await ask(fake, [`${fixture}/lane`], "s4")).effect).toBe("allow")
+  })
+
+  test("a deny stays a deny for a shell call in a scratch folder", async () => {
+    const { fake } = await load({}, { scratchRoots: [fixture] })
+    await start(fake, "s5", "shell", {})
+    const e = await fake.fire.permission("evaluate", {
+      sessionID: "ses_1",
+      action: "external_directory",
+      resources: [`${fixture}/lane`],
+      effect: "deny",
+      source: { type: "tool", messageID: "msg_1", id: "s5" },
+    } as Evaluation)
+    expect(e.effect).toBe("deny")
   })
 
   test("leaves a request asking when its tool call is unknown or has no source", async () => {
@@ -515,7 +544,7 @@ describe("scratch folders", () => {
 
   test("scratchDirs: false registers no hook", async () => {
     const { fake } = await load({ scratchDirs: false })
-    expect(fake.hooks("permission")).toEqual(["evaluate", "evaluate", "evaluate", "evaluate", "evaluate"])
+    expect(fake.hooks("permission")).toEqual(Array(7).fill("evaluate"))
   })
 
   test("readOptions reads the documented subagentSecretPaths key and ignores non-strings", () => {
@@ -526,6 +555,173 @@ describe("scratch folders", () => {
   test("readOptions defaults scratchDirs to true", () => {
     expect(readOptions(undefined).scratchDirs).toBe(true)
     expect(readOptions({ scratchDirs: false }).scratchDirs).toBe(false)
+  })
+})
+
+describe("steering directories and same-repo worktrees", () => {
+  let fixture: string
+  let steering: string
+  let lane: string
+  let outside: string
+  let main: string
+  let common: string
+  beforeAll(() => {
+    const base = join(realpathSync(tmpdir()), "opencode")
+    mkdirSync(base, { recursive: true })
+    fixture = realpathSync(mkdtempSync(join(base, "safety-relaxed-")))
+    steering = join(fixture, "steering")
+    lane = join(fixture, "lane")
+    outside = join(fixture, "outside")
+    main = join(fixture, "main")
+    common = join(main, ".git")
+    for (const path of [steering, lane, outside, join(common, "worktrees", "lane")]) mkdirSync(path, { recursive: true })
+    // The reciprocal links git writes for a linked worktree.
+    writeFileSync(join(lane, ".git"), `gitdir: ${join(common, "worktrees", "lane")}\n`)
+    writeFileSync(join(common, "worktrees", "lane", "gitdir"), `${join(lane, ".git")}\n`)
+  })
+  afterAll(() => rmSync(fixture, { recursive: true, force: true }))
+
+  const ask = (
+    fake: Awaited<ReturnType<typeof load>>["fake"],
+    resources: string[],
+    id: string,
+    effect: Evaluation["effect"] = "ask",
+    sessionID = "ses_1",
+  ) =>
+    fake.fire.permission("evaluate", {
+      sessionID,
+      action: "external_directory",
+      resources,
+      effect,
+      source: { type: "tool", messageID: "msg_1", id },
+    } as Evaluation)
+  const start = (fake: Awaited<ReturnType<typeof load>>["fake"], id: string, tool: string) =>
+    fake.fire.tool("execute.before", { ...call, id, tool, input: {} } as never)
+  const git = (calls: string[] = []): { run: GitRun; calls: string[] } => ({
+    calls,
+    run: async (args, cwd) => {
+      if (args[0] === "rev-parse") return `${common}\n`
+      calls.push(cwd)
+      return `worktree ${main}\0HEAD x\0\0worktree ${lane}\0HEAD x\0\0`
+    },
+  })
+
+  test("allows read-only tools in a configured steering directory, and no other tool", async () => {
+    const { fake } = await load({ steeringDirs: [steering] }, { scratchRoots: [] })
+    for (const tool of ["read", "glob", "grep", "list"]) {
+      await start(fake, `st-${tool}`, tool)
+      expect((await ask(fake, [`${steering}/git-defender.md`], `st-${tool}`)).effect).toBe("allow")
+    }
+    for (const tool of ["write", "edit", "shell"]) {
+      await start(fake, `st-${tool}`, tool)
+      expect((await ask(fake, [`${steering}/x.md`], `st-${tool}`)).effect).toBe("ask")
+    }
+    await start(fake, "st-out", "read")
+    expect((await ask(fake, [`${steering}/a.md`, `${outside}/b`], "st-out")).effect).toBe("ask")
+    expect((await ask(fake, [`${steering}/a.md`], "st-out", "deny")).effect).toBe("deny")
+  })
+
+  test("disable steering-dirs keeps the ask", async () => {
+    const { fake } = await load({ steeringDirs: [steering], disable: ["steering-dirs"] }, { scratchRoots: [] })
+    await start(fake, "sx", "read")
+    expect((await ask(fake, [`${steering}/x.md`], "sx")).effect).toBe("ask")
+  })
+
+  test("allows read-only tools in a worktree of the session repository, not writes or shell", async () => {
+    const seam = git()
+    const { fake } = await load({}, { scratchRoots: [], directory: main, worktrees: seam })
+    await start(fake, "w1", "read")
+    expect((await ask(fake, [`${lane}/src/a.ts`], "w1")).effect).toBe("allow")
+    expect((await ask(fake, [`${outside}/a`], "w1")).effect).toBe("ask")
+    expect((await ask(fake, [`${lane}/a`, `${outside}/a`], "w1")).effect).toBe("ask")
+    for (const tool of ["write", "edit", "shell"]) {
+      await start(fake, `w-${tool}`, tool)
+      expect((await ask(fake, [`${lane}/a`], `w-${tool}`)).effect).toBe("ask")
+    }
+    expect((await ask(fake, [`${lane}/a`], "w1", "deny")).effect).toBe("deny")
+    expect(seam.calls).toEqual([main])
+  })
+
+  test("disable repo-worktrees keeps the ask and never runs git", async () => {
+    const seam = git()
+    const { fake } = await load({ disable: ["repo-worktrees"] }, { scratchRoots: [], directory: main, worktrees: seam })
+    await start(fake, "wd", "read")
+    expect((await ask(fake, [`${lane}/a`], "wd")).effect).toBe("ask")
+    expect(seam.calls).toEqual([])
+  })
+
+  describe("in a subagent session (full hook chain, subagent-prompts on)", () => {
+    // `subagent-external-reads` would allow these non-secret paths on its own; turn it off so each test proves
+    // the relaxation under test, and that an outside path is still denied without it.
+    const ISOLATE = "subagent-external-reads"
+    // The session directory itself is a scratch root now, so the children work somewhere that does not exist.
+    const ELSEWHERE = "/no-such-session-directory"
+    const child = (directory: string): FakeSession => ({ id: "ses_child", parentID: "ses_1", location: { directory } }) as never
+
+    test("steering reads are allowed before the unanswerable deny; an outside path is denied", async () => {
+      const { fake } = await load({ steeringDirs: [steering], disable: [ISOLATE] }, { scratchRoots: [], sessions: [child(ELSEWHERE)] })
+      await start(fake, "c1", "read")
+      expect((await ask(fake, [`${steering}/git-defender.md`], "c1", "ask", "ses_child")).effect).toBe("allow")
+      const denied = await ask(fake, [`${outside}/x`], "c1", "ask", "ses_child")
+      expect(denied.effect).toBe("deny")
+      expect(denied.message).toContain("subagent sessions cannot answer permission prompts")
+      expect((await ask(fake, [`${steering}/a`, `${outside}/x`], "c1", "ask", "ses_child")).effect).toBe("deny")
+    })
+
+    test("same-repo worktree reads are allowed; writes, shell and outside paths are denied", async () => {
+      const { fake } = await load({ disable: [ISOLATE] }, { scratchRoots: [], directory: main, worktrees: git(), sessions: [child(main)] })
+      await start(fake, "c2", "grep")
+      expect((await ask(fake, [`${lane}/src/a.ts`], "c2", "ask", "ses_child")).effect).toBe("allow")
+      expect((await ask(fake, [`${outside}/x`], "c2", "ask", "ses_child")).effect).toBe("deny")
+      for (const tool of ["write", "shell"]) {
+        await start(fake, `c2-${tool}`, tool)
+        expect((await ask(fake, [`${lane}/a`], `c2-${tool}`, "ask", "ses_child")).effect).toBe("deny")
+      }
+    })
+
+    test("a shell call in a scratch folder is allowed; one reaching outside it is denied; no resources is never auto-approved", async () => {
+      const { fake } = await load({ disable: [ISOLATE] }, { scratchRoots: [steering], sessions: [child(ELSEWHERE)] })
+      await start(fake, "c3", "shell")
+      expect((await ask(fake, [`${steering}/work/*`], "c3", "ask", "ses_child")).effect).toBe("allow")
+      expect((await ask(fake, [`${steering}/work/*`, `${outside}/*`], "c3", "ask", "ses_child")).effect).toBe("deny")
+      expect((await ask(fake, [], "c3", "ask", "ses_child")).effect).toBe("deny")
+      expect((await ask(fake, [], "c3")).effect).toBe("ask")
+    })
+
+    test("a failed session lookup never falls back to the plugin location's worktrees", async () => {
+      const warnings: string[] = []
+      const seam = git()
+      const { fake } = await load(
+        {},
+        {
+          scratchRoots: [],
+          directory: main,
+          worktrees: seam,
+          sessions: [child(lane)],
+          warn: (message) => void warnings.push(message),
+          patch: (context) => {
+            context.session.get = () => Promise.reject(new Error("lookup failed"))
+          },
+        },
+      )
+      await start(fake, "c5", "read")
+      const result = await ask(fake, [`${lane}/src/a.ts`], "c5", "ask", "ses_child")
+      expect(result.effect).not.toBe("allow")
+      expect(seam.calls).toEqual([])
+      expect(warnings.some((message) => message.includes("session lookup failed"))).toBe(true)
+    })
+
+    test("a deny stays a deny in a subagent session", async () => {
+      const { fake } = await load({ steeringDirs: [steering], disable: [ISOLATE] }, { scratchRoots: [], sessions: [child(ELSEWHERE)] })
+      await start(fake, "c4", "read")
+      expect((await ask(fake, [`${steering}/a`], "c4", "deny", "ses_child")).effect).toBe("deny")
+    })
+  })
+
+  test("a git failure leaves the ask", async () => {
+    const { fake } = await load({}, { scratchRoots: [], directory: main, worktrees: { run: async () => undefined } })
+    await start(fake, "wf", "read")
+    expect((await ask(fake, [`${lane}/a`], "wf")).effect).toBe("ask")
   })
 })
 
@@ -788,7 +984,11 @@ describe("prompts a subagent cannot answer", () => {
     const warnings: unknown[][] = []
     const { fake } = await setup({}, (...args) => void warnings.push(args))
     expect((await ask(fake, "ses_missing", "read", [`${outside}/*`])).effect).toBe("ask")
-    expect(warnings).toEqual([["session lookup failed; the permission prompt stays", { sessionID: "ses_missing", error: "Error" }]])
+    // The subagent-prompts hook and the repo-worktrees relaxation each log their own failed lookup, ids only.
+    expect(warnings).toEqual([
+      ["session lookup failed; the worktree allow is skipped", { sessionID: "ses_missing", error: "Error" }],
+      ["session lookup failed; the permission prompt stays", { sessionID: "ses_missing", error: "Error" }],
+    ])
   })
 
   test.each([
