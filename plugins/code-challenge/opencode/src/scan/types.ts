@@ -75,8 +75,10 @@ export type Recipe = {
   /** The binary name looked up on PATH (or in the tools directory). */
   binary: string
   install: InstallKind
-  /** Package for a one-off run (bunx -p, uvx --from, go run <pkg>@latest). */
+  /** Package for a one-off run (bunx -p, uvx --from, go run); its exact version is in pins.ts. */
   package?: string
+  /** Path inside a Go module to run (`go run <module>/<subpath>@<version>`). */
+  subpath?: string
   /**
    * Arguments. Tokens: `{cfg}` the isolated config directory, `{files}` the scoped files
    * (or `.`), `{out}` a per-run output directory.

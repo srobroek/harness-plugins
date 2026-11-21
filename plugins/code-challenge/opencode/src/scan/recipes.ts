@@ -87,6 +87,7 @@ export const RECIPES: readonly Recipe[] = [
     ],
     binary: "eslint",
     install: "tool-dir",
+    package: "eslint",
     // @e18e/eslint-plugin replaces eslint-plugin-depend (its ban-dependencies rule); 0.8.1 verified.
     args: ["--no-config-lookup", "-c", "{cfg}/eslint.config.mjs", "-f", "json", "{files}"],
     configFiles: () => ({
@@ -242,7 +243,8 @@ export const RECIPES: readonly Recipe[] = [
     lenses: ["dead-code"],
     binary: "deadcode",
     install: "go-run",
-    package: "golang.org/x/tools/cmd/deadcode",
+    package: "golang.org/x/tools",
+    subpath: "cmd/deadcode",
     args: ["-json", "./..."],
     needsBuild: true,
     acceptedExitCodes: [0],
