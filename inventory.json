@@ -1025,7 +1025,7 @@
     },
     {
       "name": "model-roles",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "description": "Give agents a model tier (cheap, standard, strong, reviewer) derived from the model catalog, and resolve each tier to the first available candidate.",
       "category": "development",
       "harnesses": {
