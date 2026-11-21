@@ -40,7 +40,7 @@ another git repository than the command's directory. `options.store` passes. So 
 `BEADS_DIR=/path bd ...` typed in the command line itself.
 
 This gate stops a ledger inherited by accident. It does not stop deliberate shell
-obfuscation: `eval`, indirect expansion, sourced scripts, aliases defined outside the
+obfuscation: evaluated strings, indirect expansion, sourced scripts, aliases defined outside the
 command and unknown wrapper binaries are out of scope. The real fix is to start the shared
 service from a clean environment.
 
