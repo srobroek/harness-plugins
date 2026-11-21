@@ -6,9 +6,10 @@
  * the bottom adds persistence.
  */
 
+import type { Verdict } from "@srobroek/opencode-lib/review-verdict"
 import type { FailureClass } from "./health.ts"
 import type { SpawnRule, SpawnSource } from "./receipt.ts"
-import type { TestResult, Verdict } from "./signals.ts"
+import type { TestResult } from "./signals.ts"
 
 export const OUTCOME_KEY_PREFIX = "outcome:"
 export const LEDGER_MAX_ENTRIES = 1000

@@ -29,6 +29,16 @@ describe("childFrom", () => {
   })
 })
 
+test("readBeads runs every bd read against the ledger it was given", async () => {
+  const seen: (Record<string, string> | undefined)[] = []
+  const run: Run = async (_cwd, _command, _args, _timeout, env) => {
+    seen.push(env)
+    return { ok: true, stdout: "[]", stderr: "" }
+  }
+  await readBeads("/repo", run, "/l/.beads")
+  expect(seen).toEqual(Array(3).fill({ BEADS_DIR: "/l/.beads" }))
+})
+
 test("readBeads parses bd JSON after a warning line and keeps the fields a tick reads", async () => {
   const outputs: Record<string, string> = {
     list: `warning: something\n${JSON.stringify([
@@ -40,7 +50,7 @@ test("readBeads parses bd JSON after a warning line and keeps the fields a tick 
     blocked: "[]",
   }
   const run: Run = async (_cwd, _command, args) => ({ ok: true, stdout: outputs[args[0] as string] ?? "", stderr: "" })
-  expect(await readBeads("/repo", run)).toEqual({
+  expect(await readBeads("/repo", run, "/l/.beads")).toEqual({
     ok: true,
     beads: [
       { id: "p-1", status: "open", parent: null, issue_type: "epic", labels: null },
@@ -53,5 +63,5 @@ test("readBeads parses bd JSON after a warning line and keeps the fields a tick 
 
 test.each(["list", "ready", "blocked"])("readBeads reports a failed bd %s as an incomplete read", async (failing) => {
   const run: Run = async (_cwd, _command, args) => ({ ok: args[0] !== failing, stdout: "[]", stderr: "" })
-  expect((await readBeads("/repo", run)).ok).toBe(false)
+  expect((await readBeads("/repo", run, "/l/.beads")).ok).toBe(false)
 })

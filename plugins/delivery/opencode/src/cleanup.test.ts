@@ -51,6 +51,7 @@ import {
   type ReceiptCandidate,
   removalRoute,
   selectReceipt,
+  targetAbsence,
 } from "./cleanup.ts"
 import { type CliResult, type CliRunner, runCli, SAFE_GIT_ARGS } from "./forge-adapter.ts"
 import { type LandDeps, type LandParams, landPullRequest as landPullRequestUnwrapped } from "./land.ts"
@@ -156,6 +157,10 @@ type RunnerOptions = {
   beadMergeSha?: string
   remote?: "absent" | "present" | "unknown"
   pathlessAfterRemove?: boolean
+  /** Add a porcelain record for a path that is not on disk, to model a registration that outlives its directory. */
+  registerAbsent?: { path: string; head: string }
+  /** Fail every `git worktree list` read as a timeout. */
+  worktreeListTimeout?: boolean
   registeredTargetAfterRemove?: boolean
   before?: (argv: string[], calls: string[][]) => void
   after?: (argv: string[], result: CliResult, calls: string[][]) => void
@@ -645,6 +650,14 @@ function runner(
     ) {
       result = success(
         `${result.stdout.trimEnd()}\n\nworktree ${f.linked}\nHEAD ${f.head}\nbranch refs/heads/${f.branch}\n\n`,
+      )
+    }
+    if (options.worktreeListTimeout && argv[0] === "git" && argv[1] === "worktree" && argv[2] === "list") {
+      result = { ok: false, exitCode: null, stdout: "", stderr: "", error: "timeout" }
+    }
+    if (options.registerAbsent && argv[0] === "git" && argv[1] === "worktree" && argv[2] === "list") {
+      result = success(
+        `${result.stdout.trimEnd()}\n\nworktree ${options.registerAbsent.path}\nHEAD ${options.registerAbsent.head}\ndetached\n\n`,
       )
     }
     options.after?.(argv, result, calls)
@@ -1638,6 +1651,88 @@ describe("delivery_cleanup irreversible boundary", () => {
     expect(git(f.main, ["rev-parse", `refs/heads/${f.branch}`])).toBe(raced)
     expect(calls.some((argv) => argv[0] === "git" && argv[1] === "branch")).toBe(false)
     expect(readFileSync(f.receiptPath, "utf8")).toBe(beforeReceipts)
+  })
+
+  test("work after the removal still runs when a ref race refuses the cleanup later, and its notes join the refusal", async () => {
+    const f = fixture("ref-race-after")
+    const raced = git(f.main, ["commit-tree", `${f.merge}^{tree}`, "-p", f.merge, "-m", "raced ref"])
+    const seen: string[] = []
+    const { result } = await invoke(
+      f,
+      { receipt: f.receiptPath },
+      {
+        after: (argv, commandResult) => {
+          if (argv[0] === "git" && argv[1] === "worktree" && argv[2] === "remove" && commandResult.exitCode === 0) {
+            git(f.main, ["update-ref", `refs/heads/${f.branch}`, raced])
+          }
+        },
+      },
+      {
+        afterRemoval: async (worktree) => {
+          seen.push(worktree)
+          return ["session ses_x could not be moved"]
+        },
+      },
+    )
+    expect(refusal(result)).toContain("branch.localRef: observed")
+    expect(refusal(result)).toContain("session ses_x could not be moved")
+    expect(seen).toHaveLength(1)
+    expect(existsSync(f.linked)).toBe(false)
+  })
+
+  test("work after the removal does not run when the removal's absence was not proven", async () => {
+    const f = fixture("registration-race-after")
+    let ran = false
+    const { result } = await invoke(
+      f,
+      { receipt: f.receiptPath },
+      { registeredTargetAfterRemove: true },
+      {
+        afterRemoval: async () => {
+          ran = true
+          return []
+        },
+      },
+    )
+    expect(result.ok).toBe(false)
+    expect(ran).toBe(false)
+  })
+
+  test("work after the removal that throws is reported and does not fail the cleanup", async () => {
+    const f = fixture("after-throws")
+    const { result } = await invoke(
+      f,
+      { receipt: f.receiptPath },
+      {},
+      {
+        afterRemoval: async () => {
+          throw new Error("move machinery down")
+        },
+      },
+    )
+    if (!result.ok) throw new Error(result.reason)
+    expect(existsSync(f.linked)).toBe(false)
+    expect(result.report.skipped.join("\n")).toContain("move machinery down")
+  })
+
+  test("notes from the work after the removal join the refusal when the continuation receipt cannot be written", async () => {
+    const f = fixture("after-notes-write-fails")
+    const dir = dirname(f.receiptPath)
+    const { result } = await invoke(
+      f,
+      { receipt: f.receiptPath },
+      {},
+      {
+        afterRemoval: async () => {
+          // The receipt directory becomes a symlink, which the writer refuses.
+          renameSync(dir, `${dir}-moved`)
+          symlinkSync(`${dir}-moved`, dir)
+          return ["session ses_x could not be moved"]
+        },
+      },
+    )
+    expect(refusal(result)).toContain("continuation receipt write")
+    expect(refusal(result)).toContain("session ses_x could not be moved")
   })
 
   test("re-registration after removal is detected independently and stops branch deletion", async () => {
@@ -3366,32 +3461,109 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
-    describe("sessions inside the worktree are moved out before it goes", () => {
+    describe("the lane's sessions are moved home after the worktree goes", () => {
       const moves = (h: Harness) =>
         h.fake.calls.filter((entry) => entry.method === "session.move").map((entry) => entry.input as { sessionID: string; directory: string })
+      const inLane = (h: Harness) => {
+        h.fake.sessions.set("ses_lead", { id: "ses_lead", location: { directory: h.f.main }, time: { busy: 1, idle: 2 } })
+        h.fake.sessions.set("ses_lane", { id: "ses_lane", parentID: "ses_lead", location: { directory: h.f.linked }, time: { busy: 1, idle: 2 } })
+      }
 
-      test("an idle session inside is moved to the main checkout first, then the worktree is removed", async () => {
+      test("the worktree is removed first, then the lane's session inside it moves to the main checkout", async () => {
         let movedBeforeRemoval: number | undefined
         let h: Harness | undefined
-        h = await harness("evict-idle", {
+        h = await harness("move-after", {
           before: (argv) => {
             if (argv.includes("remove") && h) movedBeforeRemoval = moves(h).length
           },
         })
-        h.fake.sessions.set("ses_idle", { id: "ses_idle", location: { directory: h.f.linked }, time: { busy: 1, idle: 2 } })
-        h.fake.sessions.set("ses_elsewhere", { id: "ses_elsewhere", location: { directory: h.f.main }, time: { busy: 1, idle: 2 } })
+        inLane(h)
         const result = await explicitCleanup(h)
         expect(result.ok).toBe(true)
-        expect(moves(h)).toEqual([{ sessionID: "ses_idle", directory: realpathSync(h.f.main) }])
-        expect(movedBeforeRemoval).toBe(1)
+        expect(movedBeforeRemoval).toBe(0)
+        expect(removed(h)).toBe(true)
+        expect(moves(h)).toEqual([{ sessionID: "ses_lane", directory: realpathSync(h.f.main) }])
+        await h.finish()
+      })
+
+      test("a session in the worktree that is not part of the lane stays where it is", async () => {
+        const h = await harness("move-outside-lane")
+        inLane(h)
+        h.fake.sessions.set("ses_stranger", { id: "ses_stranger", location: { directory: h.f.linked }, time: { busy: 1, idle: 2 } })
+        h.fake.sessions.set("ses_other_lane", { id: "ses_other_lane", parentID: "ses_stranger", location: { directory: h.f.main }, time: { busy: 1, idle: 2 } })
+        const result = await explicitCleanup(h)
+        expect(result.ok).toBe(true)
+        expect(moves(h).map((move) => move.sessionID)).toEqual(["ses_lane"])
+        await h.finish()
+      })
+
+      test("a failed move is reported with its reason and the cleanup still succeeds", async () => {
+        const h = await harness("move-fails")
+        inLane(h)
+        ;(h.fake.context.session as unknown as { move: unknown }).move = async () => {
+          throw new Error("host refused")
+        }
+        const result = await explicitCleanup(h)
+        expect(result.ok).toBe(true)
+        const skipped = result.ok ? result.report.skipped.join("\n") : ""
+        expect(skipped).toContain("ses_lane could not be moved")
+        expect(skipped).toContain("host refused")
         expect(removed(h)).toBe(true)
         await h.finish()
       })
 
-      test("a running session inside blocks the removal, and nothing is moved", async () => {
-        const h = await harness("evict-running")
-        h.fake.sessions.set("ses_busy", { id: "ses_busy", location: { directory: h.f.linked }, time: { busy: 9, idle: 2 } })
-        h.fake.sessions.set("ses_idle", { id: "ses_idle", location: { directory: h.f.linked }, time: { busy: 1, idle: 2 } })
+      test("a session created after the lane was first read, before the removal, is still moved", async () => {
+        let h: Harness | undefined
+        h = await harness("move-late", {
+          before: (argv) => {
+            if (argv.includes("remove") && h) {
+              h.fake.sessions.set("ses_late", { id: "ses_late", parentID: "ses_lead", location: { directory: h.f.linked }, time: { busy: 1, idle: 2 } })
+            }
+          },
+        })
+        inLane(h)
+        const result = await explicitCleanup(h)
+        expect(result.ok).toBe(true)
+        expect(moves(h).map((move) => move.sessionID).sort()).toEqual(["ses_lane", "ses_late"])
+        await h.finish()
+      })
+
+      test("every landing record's session is a root of the lane", async () => {
+        const h = await harness("move-two-roots")
+        inLane(h)
+        h.fake.sessions.set("ses_lead2", { id: "ses_lead2", location: { directory: h.f.main }, time: { busy: 1, idle: 2 } })
+        h.fake.sessions.set("ses_lane2", { id: "ses_lane2", parentID: "ses_lead2", location: { directory: h.f.linked }, time: { busy: 1, idle: 2 } })
+        await h.pending.record(h.f.receipt, "ses_lead")
+        await h.pending.record({ ...h.f.receipt, receiptId: "other-receipt" }, "ses_lead2")
+        const result = await cleanupDelivery({ receipt: h.f.receiptPath }, h.f.main, {
+          run: h.scripted.run,
+          now: () => NOW + 10,
+          env: h.f.env,
+          bounds: HEAVY_FIXTURE_BOUNDS,
+          ...h.pending.explicit(async () => {}, "ses_unrelated"),
+        })
+        expect(result.ok).toBe(true)
+        expect(moves(h).map((move) => move.sessionID).sort()).toEqual(["ses_lane", "ses_lane2"])
+        await h.finish()
+      })
+
+      test("a listing that fails is reported as incomplete and the cleanup still succeeds", async () => {
+        const h = await harness("move-incomplete")
+        inLane(h)
+        const session = h.fake.context.session as unknown as { list: (query: Record<string, unknown>) => Promise<unknown> }
+        const original = session.list.bind(session)
+        session.list = (query) => (typeof query.parentID === "string" ? Promise.reject(new Error("list down")) : original(query))
+        const result = await explicitCleanup(h)
+        expect(result.ok).toBe(true)
+        expect(result.ok ? result.report.skipped.join("\n") : "").toContain("incompletely")
+        expect(removed(h)).toBe(true)
+        await h.finish()
+      })
+
+      test("a session in a subdirectory of the worktree that is running blocks the removal", async () => {
+        const h = await harness("move-running-below")
+        inLane(h)
+        h.fake.sessions.set("ses_deep", { id: "ses_deep", location: { directory: join(h.f.linked, "sub", "dir") }, time: { busy: 9, idle: 2 } })
         const result = await explicitCleanup(h)
         expect(result.ok).toBe(false)
         expect(removed(h)).toBe(false)
@@ -3399,27 +3571,34 @@ describe("pending cleanup: one remover per worktree", () => {
         await h.finish()
       })
 
-      test("a failed move blocks the removal and is reported", async () => {
-        const h = await harness("evict-move-fails")
-        h.fake.sessions.set("ses_idle", { id: "ses_idle", location: { directory: h.f.linked }, time: { busy: 1, idle: 2 } })
-        ;(h.fake.context.session as unknown as { move: unknown }).move = async () => {
-          throw new Error("host refused")
-        }
-        const result = await explicitCleanup(h)
-        expect(refusal(result)).toContain("ses_idle could not be moved")
-        expect(refusal(result)).toContain("host refused")
-        expect(removed(h)).toBe(false)
-        expect(mutationCalls(h.scripted.calls)).toEqual([])
+      test("the retry with no landing record uses the session whose turn ended as the lane root", async () => {
+        const h = await harness("move-retry-no-record")
+        inLane(h)
+        await h.pending.start()
+        await h.idle("ses_lead")
+        expect(removed(h)).toBe(true)
+        expect(moves(h).map((move) => move.sessionID)).toEqual(["ses_lane"])
         await h.finish()
       })
 
-      test("the background retry moves an idle session out too", async () => {
-        const h = await harness("evict-retry")
-        h.fake.sessions.set("ses_idle", { id: "ses_idle", location: { directory: h.f.linked }, time: { busy: 1, idle: 2 } })
+      test("a running session in the worktree still blocks the removal, and nothing is moved", async () => {
+        const h = await harness("move-running")
+        inLane(h)
+        h.fake.sessions.set("ses_busy", { id: "ses_busy", location: { directory: h.f.linked }, time: { busy: 9, idle: 2 } })
+        const result = await explicitCleanup(h)
+        expect(result.ok).toBe(false)
+        expect(removed(h)).toBe(false)
+        expect(moves(h)).toEqual([])
+        await h.finish()
+      })
+
+      test("the background retry moves the landing session's lane the same way", async () => {
+        const h = await harness("move-retry")
+        inLane(h)
         await h.pending.record(h.f.receipt, "ses_lead")
         await h.pending.start()
         await h.idle()
-        expect(moves(h).map((move) => move.sessionID)).toEqual(["ses_idle"])
+        expect(moves(h).map((move) => move.sessionID)).toEqual(["ses_lane"])
         expect(removed(h)).toBe(true)
         await h.finish()
       })
@@ -3905,6 +4084,12 @@ describe("selectReceipt", () => {
     expect(selectReceipt([newer, one], { pr: 1 })).toEqual({ ok: true, candidate: newer })
   })
 
+  test("a repo-only selector finds that repository's cleaned receipt while another repository has an uncleaned one", () => {
+    const cleaned = candidate(f, 1, "feat/one", OID_A, { removed: true })
+    const elsewhere = candidate(f, 2, "feat/two", OID_B, { nameWithOwner: "other/repo" })
+    expect(selectReceipt([elsewhere, cleaned], { repo: "owner/repo" })).toEqual({ ok: true, candidate: cleaned })
+  })
+
   test("the worktree's HEAD oid picks the receipt whose reviewed head it is", () => {
     expect(selectReceipt(pool, { head: { branch: "other-name", oid: OID_A } })).toEqual({ ok: true, candidate: one })
   })
@@ -4030,6 +4215,100 @@ describe("delivery_cleanup worktree acceptance", () => {
     expect(second.result.alreadyCleaned).toBe(true)
     expect(second.result.report.skipped.join("\n")).toContain("already cleaned")
     expect(mutationCalls(second.calls)).toEqual([])
+  })
+
+  test("a worktree recreated at the cleaned path is refused with its path and HEAD, and kept", async () => {
+    const f = fixture("reappeared")
+    const first = await invoke(f, { pr: 17 })
+    expect(first.result.ok).toBe(true)
+    git(f.main, ["worktree", "add", "-q", "-b", "reborn", f.linked])
+    writeFileSync(join(f.linked, "new.txt"), "new\n")
+    git(f.linked, ["add", "new.txt"])
+    git(f.linked, ["commit", "-q", "-m", "new work"])
+    const head = git(f.linked, ["rev-parse", "HEAD"]).trim()
+    const second = await invoke(f, { pr: 17 })
+    const reason = refusal(second.result)
+    expect(reason).toContain(f.linked)
+    expect(reason).toContain(head)
+    expect(mutationCalls(second.calls)).toEqual([])
+    expect(existsSync(f.linked)).toBe(true)
+  })
+
+  test("a plain directory at the cleaned path is refused and kept", async () => {
+    const f = fixture("reappeared-dir")
+    const first = await invoke(f, { pr: 17 })
+    expect(first.result.ok).toBe(true)
+    mkdirSync(f.linked)
+    writeFileSync(join(f.linked, "mine.txt"), "mine\n")
+    const second = await invoke(f, { pr: 17 })
+    expect(refusal(second.result)).toContain(f.linked)
+    expect(mutationCalls(second.calls)).toEqual([])
+    expect(existsSync(join(f.linked, "mine.txt"))).toBe(true)
+  })
+
+  test("a cleaned landing whose path is absent but still registered is refused with the path and registered HEAD", async () => {
+    const f = fixture("registered-absent")
+    const first = await invoke(f, { pr: 17 })
+    expect(first.result.ok).toBe(true)
+    const head = "1234567890abcdef1234567890abcdef12345678"
+    const second = await invoke(f, { pr: 17 }, { registerAbsent: { path: f.linked, head } })
+    const reason = refusal(second.result)
+    expect(reason).toContain(f.linked)
+    expect(reason).toContain(head)
+    expect(mutationCalls(second.calls)).toEqual([])
+  })
+
+  test("a registration spelled through a symlinked parent still names the cleaned path", async () => {
+    const f = fixture("registered-alias")
+    const first = await invoke(f, { pr: 17 })
+    expect(first.result.ok).toBe(true)
+    const alias = join(dirname(f.linked), "alias-parent")
+    symlinkSync(dirname(f.linked), alias)
+    const head = "abcdef1234567890abcdef1234567890abcdef12"
+    const spelled = join(alias, basename(f.linked))
+    const second = await invoke(f, { pr: 17 }, { registerAbsent: { path: spelled, head } })
+    const reason = refusal(second.result)
+    expect(reason).toContain(f.linked)
+    expect(reason).toContain(head)
+    expect(mutationCalls(second.calls)).toEqual([])
+  })
+
+  test("a cleaned landing whose worktree list cannot be read is refused, not treated as gone", async () => {
+    const f = fixture("list-unreadable")
+    const first = await invoke(f, { pr: 17 })
+    expect(first.result.ok).toBe(true)
+    const second = await invoke(f, { pr: 17 }, { worktreeListTimeout: true })
+    expect(refusal(second.result)).toContain("worktree.list")
+    expect(mutationCalls(second.calls)).toEqual([])
+  })
+
+  test("a directory created while the worktree list is read is still caught", async () => {
+    const f = fixture("created-during-read")
+    const first = await invoke(f, { pr: 17 })
+    expect(first.result.ok).toBe(true)
+    const second = await invoke(
+      f,
+      { pr: 17 },
+      {
+        after: (argv) => {
+          if (argv[0] === "git" && argv[1] === "worktree" && argv[2] === "list") mkdirSync(f.linked)
+        },
+      },
+    )
+    expect(refusal(second.result)).toContain(f.linked)
+    expect(mutationCalls(second.calls)).toEqual([])
+    expect(existsSync(f.linked)).toBe(true)
+  })
+
+  test.each([
+    ["absent", "absent", "absent"],
+    ["present", "absent", "present"],
+    ["absent", "present", "present"],
+    ["unknown", "absent", "unknown"],
+    ["absent", "unknown", "unknown"],
+    ["unknown", "present", "present"],
+  ] as const)("target absence: disk %s and registration %s give %s", (disk, registration, expected) => {
+    expect(targetAbsence(disk, registration)).toBe(expected)
   })
 
   test("a worktree deleted by hand before cleanup is treated as already cleaned", async () => {

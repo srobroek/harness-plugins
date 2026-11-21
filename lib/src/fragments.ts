@@ -11,11 +11,15 @@
  * `{{include shared/<id>}}` inlines `shared/agents/<id>.md` at the repository root: the body
  * of an agent that several plugins ship, each with its own frontmatter. That body may itself
  * include `lib/src` fragments, which are expanded in turn; other fragments do not nest.
+ *
+ * In the frontmatter, a comment line `# {{rules read-only-shell}}` inside `permissions:` becomes
+ * the shell rules of `read-only-shell.ts`, indented like the comment. The source stays valid YAML.
  */
 
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { READ_ONLY_SHELL_RULES } from "./read-only-shell.ts"
 
 export const FRAGMENTS_DIR = fileURLToPath(new URL(".", import.meta.url))
 export const SHARED_AGENTS_DIR = fileURLToPath(new URL("../../shared/agents/", import.meta.url))
@@ -23,6 +27,7 @@ const SHARED_PREFIX = "shared/"
 
 const INCLUDE = /^\{\{include ((?:shared\/)?[a-z][\w-]*)(?::([ \w-]*))?\}\}[ \t]*$/
 const PART = /^<!-- part: ([a-z][\w-]*) -->[ \t]*$/
+const RULES_LINE = /^([ \t]*)# \{\{rules read-only-shell\}\}[ \t]*$/
 const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---\r?\n/
 
 /** The parts of a fragment file, in file order. Throws on a fragment without parts or with a repeated part. */
@@ -56,7 +61,22 @@ export function readFragment(name: string, directory = FRAGMENTS_DIR): string {
  */
 export function composeAgent(source: string, read: (name: string) => string = (name) => readFragment(name)): string {
   const head = FRONTMATTER.exec(source)?.[0] ?? ""
-  return head + composeBody(source.slice(head.length), read, true)
+  return expandRules(head) + composeBody(source.slice(head.length), read, true)
+}
+
+/** Replace a `# {{rules read-only-shell}}` frontmatter line with the shared shell permission entries. */
+function expandRules(head: string): string {
+  return head
+    .split("\n")
+    .map((line) => {
+      const match = RULES_LINE.exec(line.replace(/\r$/, ""))
+      if (!match) return line
+      const indent = match[1] as string
+      return READ_ONLY_SHELL_RULES.map(
+        (rule) => `${indent}- action: ${rule.action}\n${indent}  resource: ${JSON.stringify(rule.resource)}\n${indent}  effect: ${rule.effect}`,
+      ).join("\n")
+    })
+    .join("\n")
 }
 
 function composeBody(body: string, read: (name: string) => string, allowShared: boolean): string {

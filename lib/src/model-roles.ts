@@ -15,7 +15,7 @@ export const MODEL_ROLE_HEADER = "x-opencode-model-role"
 export const MODEL_FALLBACK_HEADER = "x-opencode-model-fallback"
 
 /** The built-in tiers a shipped agent declares. */
-export const MODEL_TIERS = ["cheap", "standard", "strong", "reviewer"] as const
+export const MODEL_TIERS = ["cheap", "standard", "strong", "reviewer", "orchestrate"] as const
 
 export type ModelTier = (typeof MODEL_TIERS)[number]
 
@@ -40,6 +40,7 @@ export const MODEL_ROLES: ReadonlyArray<string> = [
   "standard",
   "strong",
   "reviewer",
+  "orchestrate",
   "default",
   "smol",
   "commit",

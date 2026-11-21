@@ -3,8 +3,8 @@
 import { tokenize } from "@srobroek/opencode-lib/shell-command"
 import { shellQuoteBalanced } from "@srobroek/opencode-lib/shell-tokenizer"
 
-export type Grant = "merge" | "deploy"
-export const GRANTS: readonly Grant[] = ["merge", "deploy"]
+export type Grant = "merge" | "deploy" | "self-review"
+export const GRANTS: readonly Grant[] = ["merge", "deploy", "self-review"]
 
 export type RunOptions = {
   scope?: string

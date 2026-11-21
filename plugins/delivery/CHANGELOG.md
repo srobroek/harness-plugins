@@ -1,3 +1,33 @@
+## delivery [0.10.0](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.6...delivery--v0.10.0) (2026-11-21)
+
+### Features
+
+* **subagent-worktree:** remove lanes through one finalize path ([#59](https://github.com/srobroek/harness-plugins/issues/59)) ([14d4dae](https://github.com/srobroek/harness-plugins/commit/14d4dae9287a4a815569da6f9172b5ace2f36774))
+
+## delivery [0.9.6](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.5...delivery--v0.9.6) (2026-11-21)
+
+### Bug Fixes
+
+* **delivery:** do not prompt for land and cleanup in a subagent session ([95d0d48](https://github.com/srobroek/harness-plugins/commit/95d0d4846e46f385cb36cc6ce2393fc5deda8dd6))
+
+## delivery [0.9.5](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.4...delivery--v0.9.5) (2026-11-21)
+
+### Bug Fixes
+
+* **delivery:** scope a repo-only cleanup to its repository before preferring uncleaned receipts ([5293d21](https://github.com/srobroek/harness-plugins/commit/5293d21f42c2a15e2b7bf47418c1e7bd339f3efb)), closes [#24](https://github.com/srobroek/harness-plugins/issues/24)
+
+## delivery [0.9.4](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.3...delivery--v0.9.4) (2026-11-21)
+
+### Bug Fixes
+
+* **autopilot:** review-only approval, bound worktree identity, full checks and explicit merge method ([a888673](https://github.com/srobroek/harness-plugins/commit/a888673f410701b98818d437fb5f22984bac0ed8))
+
+## delivery [0.9.3](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.2...delivery--v0.9.3) (2026-11-21)
+
+### Bug Fixes
+
+* **delivery:** refuse already-cleaned when a worktree reappeared at the recorded path ([360d865](https://github.com/srobroek/harness-plugins/commit/360d865a2008522c134d13b898767086892c0da4))
+
 ## delivery [0.9.2](https://github.com/srobroek/harness-plugins/compare/delivery--v0.9.1...delivery--v0.9.2) (2026-11-20)
 
 ### Bug Fixes

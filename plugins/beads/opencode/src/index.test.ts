@@ -1,4 +1,5 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
+import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -6,6 +7,10 @@ import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import { setBdShowRunForTests } from "./bd-close-gate.ts"
 import plugin, { type AdapterDeps, pinnedEnvironment, setupBeads, shellPin } from "./index.ts"
+
+// Real `git init` children in the ledger-repository fixture: the whole file runs in 1.8 s here (bun test, 94 tests);
+// 30 s leaves headroom for a loaded machine (AGENTS.md, Testing).
+setDefaultTimeout(30_000)
 
 const roots: string[] = []
 afterEach(() => {
@@ -233,6 +238,39 @@ describe("shell create.before", () => {
       expect((explicit.input as { command: string }).command).toContain(`--beads-store '${other}'`)
       await cleanup()
     }
+  })
+
+  describe("a ledger in a repository other than the project's", () => {
+    const repos = () => {
+      const project = scratch()
+      const ledger = scratch()
+      for (const repo of [project, ledger]) execFileSync("git", ["init", "-q", repo])
+      mkdirSync(join(ledger, ".beads"))
+      writeFileSync(join(ledger, ".beads", "metadata.json"), "{}")
+      return { project, store: join(ledger, ".beads") }
+    }
+    const lookup = () => ({ interpreter: "/opt/bun", script: "/opt/runner.ts" })
+    const quiet = { "beads-gate-admission": false }
+
+    test("options.store is a deliberate choice: a bd create into it is not refused", async () => {
+      const { project, store } = repos()
+      const { fake, cleanup } = await start(project, { runnerLookup: lookup }, { store, gates: quiet })
+      const event = await fake.fire.tool("execute.before", shellCall("bd create --title test"))
+      expect((event.input as { command: string }).command).toContain("bd create --title test")
+      await cleanup()
+    })
+
+    test("a BEADS_DIR inherited from the server's environment is refused, with the override named", async () => {
+      const { project, store } = repos()
+      const env = { ...quietEnv, BEADS_DIR: store }
+      const { fake, cleanup } = await start(project, { env, runnerLookup: lookup }, { gates: quiet })
+      await expect(fake.fire.tool("execute.before", shellCall("bd create --title test"))).rejects.toThrow(
+        /BEADS_DIR=<path> bd create/,
+      )
+      const explicit = await fake.fire.tool("execute.before", shellCall(`BEADS_DIR=${store} bd create --title test`, "ses_root", "call_2"))
+      expect((explicit.input as { command: string }).command).toContain("bd create --title test")
+      await cleanup()
+    })
   })
 
   test("an invalid project store keeps refusing writes without any internal bd command", async () => {
