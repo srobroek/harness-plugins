@@ -121,8 +121,9 @@ A new plugin, `plugins/repomix` (`srobroek.repomix`).
 - **Tool `repomix_pack`** (codemode default): `{ directory? | remote + ref?, include?,
   ignore?, compress?, style?, lineNumbers? }`. It writes to `<opencode tmp>/repomix/<id>.xml`
   and returns `{ path, files, tokens, topFiles, suspiciousExcluded }`, never the content. It
-  never passes `--remote-trust-config` or `--no-security-check`. It asks permission
-  (`repomix_pack`), and also asks every time it falls back to npx. The decision logic
+  never passes `--remote-trust-config` or `--no-security-check`. It requests permission
+  (`repomix_pack`), and the user's rules decide; `confirmPack: true` adds a prompt before
+  an npx fallback. The decision logic
   (argument building, choosing PATH or npx, parsing metrics) goes in pure functions. Setup
   stays a thin adapter.
 - **Skill `repomix`**: the recipes table above, the out-of-context rules, the compression
@@ -160,8 +161,8 @@ decisions:
   plus the grep anchor for the style and, above 50k tokens, advice to hand the path to a
   researcher. The same fields are in the tool metadata, with `runner`.
 - **Permission**: action `repomix_pack`, resource the absolute directory or `remote@ref`,
-  metadata `runner: path|npx`. An `evaluate` hook turns an allowed npx run into a prompt
-  (`confirmPack: false` disables it). The fallback runs `npx --yes repomix@1.18.1`.
+  metadata `runner: path|npx`. The user's permission rules decide. With the boolean
+  `confirmPack: true`, an `evaluate` hook turns an allowed npx run into a prompt. The fallback runs `npx --yes repomix@1.18.1`.
 - **Skill**: exported to Claude Code, with a CLI recipe that keeps the same rules
   for hosts without the tool. Description: "Use to pack a repo into one file with repomix
   for bulk context: external repo APIs, module review, version diffs, docs."
@@ -181,7 +182,7 @@ fallback ran repomix 1.18.1.
 |---|---|---|
 | `researcher` (agent-researcher) | allow | Its job is read-only research, and the shell rule "no command that writes" forbids the CLI. The tool is a scoped, safe exception. |
 | `external-repo-worker` (build) | allow | Orientation before cloning, or inside the clone. |
-| main/build agent | default (ask) | Usually delegates to researcher. |
+| main/build agent | no rule (the host default applies) | Usually delegates to researcher. |
 | reviewer agents | deny (default `*` deny) | Reviews get the diff and paths. A module pack should arrive as a path in the brief, which reviewers can `read`. |
 | coder/mechanic/explore | deny | Single-lookup work. grep/read is cheaper. |
 
