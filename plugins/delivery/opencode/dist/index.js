@@ -2420,6 +2420,8 @@ function selectReceipt(candidates, selector, scope = "this repository") {
     seen.add(key);
     return true;
   });
+  if (selector.repo !== undefined)
+    pool = pool.filter((c) => c.receipt.repo.nameWithOwner === selector.repo);
   const explicit = selector.pr !== undefined || selector.branch !== undefined || selector.worktree !== undefined;
   if (!explicit && selector.head === undefined) {
     const open = pool.filter((c) => !c.receipt.worktree.removed);
@@ -2430,8 +2432,6 @@ function selectReceipt(candidates, selector, scope = "this repository") {
     pool = pool.filter((c) => c.receipt.pr.number === selector.pr);
   if (selector.branch !== undefined)
     pool = pool.filter((c) => c.receipt.branch.name === selector.branch);
-  if (selector.repo !== undefined)
-    pool = pool.filter((c) => c.receipt.repo.nameWithOwner === selector.repo);
   if (selector.worktree !== undefined) {
     const want = resolve4(selector.worktree);
     pool = pool.filter((c) => c.receipt.worktree.path !== null && resolve4(c.receipt.worktree.path) === want);

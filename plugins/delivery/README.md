@@ -236,6 +236,9 @@ its branch name second. It never falls back to the newest receipt: with no match
 more than one, it refuses and lists each candidate's PR, branch and receipt path.
 With no input at all it picks the only uncleaned landing, or refuses and lists them.
 
+Given only `repo`, it looks at that repository's landings alone. It picks the only uncleaned
+one, else the only cleaned one, so an open landing in another repository does not hide it.
+
 A receipt or worktree of another repository fails before any Git command runs in it.
 So does a `repo` of another repository: once a remote of the clone you name with
 `repoPath` or `worktree` is shown to name `repo`, the tool refuses. That repository's
