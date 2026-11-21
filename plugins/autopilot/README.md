@@ -64,6 +64,17 @@ it:
     removed and recreated does not. A lane is recorded at the first tick after
     it starts.
   - An `autopilot_merge` ask for one PR and SHA, under `--allow merge`.
+  - An `external_directory` ask for `<dir>/*`, where `<dir>` is the one export
+    directory the run made last (`review/<head>/<manifest hash>/`, see
+    `autopilot_export_review`) or a directory under it. The plugin records
+    that export in its storage, compares real paths, and requires the
+    directory to be a plain directory, not a symlink. A wildcard, a `..`
+    climb, a sibling, `review/` itself, an older export and a symlink leading
+    outside do not match. The allow is for the directory, not for reads: the
+    ask carries no read/write distinction, and where the user's rules allow
+    `edit` for a path, this ask is the only prompt in the way. The directory
+    is model-writable. What a reviewer reads is trusted only through the
+    export's manifest hash, not through this permission.
   Shell, edit, MCP and deploy asks stay denied.
 - After compaction, the plugin queues a notice with the rules and a fresh
   status.
@@ -123,6 +134,45 @@ these types:
 - action
 
 Without `--full`, `autopilot_log` also labels a blocked bead `human`.
+
+`autopilot_export_review({ pr, base, head })` prepares a review round for
+reviewers that cannot run git while the run is armed. `pr` is a positive
+integer that keys the stored manifest hash. The plugin runs git itself, as
+argument arrays with no shell and with `--no-ext-diff` and `--no-textconv`, in
+the run's repository. It rejects a revision that is not a string, starts with
+`-` or holds whitespace, then resolves `base` and `head` to full SHAs with
+`git rev-parse --verify <rev>^{commit}`. It writes, under
+`<run dir>/review/<head-sha>/<manifest-hash>/`:
+
+- `round.diff`: the three-dot diff `base...head`, what `head` changed since it
+  left `base`, as a pull request shows it. Work that landed on `base` since is
+  not in it.
+- `diffstat.txt`: the diffstat of the same range.
+- `files/<repo-relative path>`: each file the diff touches (deleted files
+  excluded), as it is at `head`.
+- `manifest.json`: `base`, `head`, `mergeBase`, the SHA-256 and size of the
+  diff, the diffstat and every file, and the skipped files.
+
+It returns the directory, the file list, the skipped files and `manifestHash`
+(the SHA-256 of `manifest.json`). The hash is stored in plugin storage under
+`review/<pr>@<head>`, and the export becomes the run's current one, the only
+directory the hook opens.
+
+Binary files, files above 512 KiB, submodules and unsafe paths (`..`,
+absolute, `.git`) are skipped and listed. A range with more than 300 changed
+files, a diff above 4 MiB or more than 8 MiB of file content is refused and
+nothing is written. Exports are immutable: a published directory is never
+overwritten or deleted. Exporting the same content again returns the same
+directory if it still verifies; if it was damaged, the damaged directory is
+renamed to `.rejected-<id>` and a fresh one is published under the same hash.
+
+`verifyExport(dir, storedManifestHash)` is the check for whoever hands the
+export to a reviewer (the plugin, before it prompts one). It refuses unless
+`manifest.json` hashes to the stored value and every file, the diff and the
+diffstat match their recorded SHA-256 and size, and there is no extra or
+missing file or directory, no symlink and no non-regular file. The allowed path
+is model-writable, so the manifest hash is the integrity anchor; the
+permission is not.
 
 `autopilot_merge({ pr, sha, method })` merges one PR. It asks the host for the
 action `autopilot_merge` on `<pr>@<sha>`, which the hook allows only under

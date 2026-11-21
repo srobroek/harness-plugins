@@ -71,10 +71,38 @@ run is armed, the plugin denies every permission `ask` and logs it as a
 blocker. The user's own permission rules already allow what they trust, and an
 `ask` is what they wanted to be asked about. When a call is denied that way,
 log the item, park it, and move on. Do not retry it in another form to get
-around the prompt. The two exceptions are your own lanes' worktrees (the
+around the prompt. The exceptions are your own lanes' worktrees (the
 plugin allows `<root>/*` for a writer lane's linked worktree that it recorded at a tick
-and still finds unchanged) and
-`autopilot_merge` under `--allow merge`.
+and still finds unchanged), `autopilot_merge` under `--allow merge`, and
+reading the directory `autopilot_export_review` returns.
+
+Reviews of a local round you spawn yourself go to `code-reviewer`, with the
+export below. Do not send export paths to `pr-reviewer`: its permissions deny
+local reads and its contract is a PR on the forge. `code-reviewer` reads with
+`read`, `grep` and `glob`, which ask `external_directory` for a path outside its
+worktree. While the run is armed the hook allows that ask for exactly one
+directory: the export the run made last. Its other permissions stay as they are
+(everything not listed is denied; it has no `edit`).
+
+Before you spawn a reviewer for a round, call
+`autopilot_export_review({ pr, base, head })` with the PR number and the
+revisions under review, and call it again after each new head. The tool runs
+git itself and writes, under the run's `review/<head>/<manifestHash>/`:
+`round.diff` (the `base...head` diff), `diffstat.txt`, `files/<path>` (each
+changed file at head) and `manifest.json` (the SHA-256 of every file). It
+returns `dir` and `manifestHash`; the plugin keeps the hash by `pr@head`.
+Put both in the reviewer's prompt: "Review the export at `<dir>` (manifest hash
+`<manifestHash>`). Read `manifest.json` first and start your verdict with that
+hash line. Do not run git." A verdict that quotes a different hash, or none,
+does not count: export again and re-run the review. If the tool refuses (a cap,
+a bad revision), narrow the range or log a blocker.
+
+The export directory is writable by any session that may edit, so the allow is
+not an integrity guarantee. The manifest hash is: when the plugin spawns a
+reviewer itself, it verifies the directory against the stored hash immediately
+before the prompt and refuses on any difference, extra or missing file, or
+symlink. Exporting identical content again re-publishes a damaged directory
+under the same hash and keeps the damaged one aside.
 
 Allowed by default:
 

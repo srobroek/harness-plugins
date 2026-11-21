@@ -32,8 +32,10 @@ import {
   REPROMPT,
   type RootIdentity,
   recordableLane,
+  reviewExportAsk,
   rootIntact,
 } from "./policy.ts"
+import { exportDirFor, exportReview, reviewCurrentKey, reviewManifestKey } from "./review-export.ts"
 import { autopilotRoot, findRun, type Run, RunDir, RunFileError, runCommand } from "./rundir.ts"
 import { countBeads, newRunState, type RunState, runIdFor, type Snapshot, TICK_MS, tick, tickPrompt } from "./state.ts"
 import { HANDOFF_LABEL, handoffDescription, renderSummary } from "./summary.ts"
@@ -44,6 +46,7 @@ export * from "./automation.ts"
 export * from "./gather.ts"
 export * from "./journal.ts"
 export * from "./policy.ts"
+export * from "./review-export.ts"
 export * from "./rundir.ts"
 export * from "./state.ts"
 export * from "./state-schema.ts"
@@ -63,6 +66,10 @@ export const LOG_DESCRIPTION = "Append one validated entry (decision, blocker, i
 export const MERGE_DESCRIPTION =
   "Merge one PR at one reviewed head, under --allow merge.\n" +
   "Requires an approval for the exact SHA and green checks; merges only if the head is still that SHA."
+
+export const EXPORT_REVIEW_DESCRIPTION =
+  "Export a review round for reviewers that cannot run git while the run is armed.\n" +
+  "Writes the base...head diff, a diffstat, the changed files at head and a hash manifest under the run's review directory; give reviewers the returned dir and manifestHash."
 
 export const COMMAND_DESCRIPTION = "Run this session unattended: /autopilot [scope] [flags] | resume | review | stop"
 
@@ -102,6 +109,17 @@ const MERGE_INPUT = {
     pr: { type: ["integer", "string"], description: "PR number" },
     method: { type: "string", enum: [...MERGE_METHODS], description: "the repository's merge method; the repo must allow it" },
     sha: { type: "string", description: "the full 40-digit head commit that was reviewed" },
+  },
+} as const
+
+const EXPORT_REVIEW_INPUT = {
+  type: "object",
+  additionalProperties: false,
+  required: ["pr", "base", "head"],
+  properties: {
+    pr: { type: ["integer", "string"], description: "PR number the round belongs to; keys the stored manifest hash" },
+    base: { type: "string", description: "the revision the round is reviewed against, such as main or a SHA" },
+    head: { type: "string", description: "the revision under review, such as a branch or a SHA" },
   },
 } as const
 
@@ -853,7 +871,7 @@ export class Autopilot {
     if (event.effect !== "ask") return
     const running = await this.runningFor(event.sessionID)
     if (!running) return
-    if (running.state && (await this.#autoAllowed(event, running.state))) {
+    if (running.state && (await this.#autoAllowed(event, running.state, running.dir))) {
       event.effect = "allow"
       return
     }
@@ -870,16 +888,27 @@ export class Autopilot {
   }
 
   /**
-   * The two asks a run answers itself: `<root>/*` of a worktree the run recorded and the project
-   * still lists, and `autopilot_merge` for one PR and SHA under `--allow merge`.
+   * The asks a run answers itself: `<root>/*` of a worktree the run recorded and the project
+   * still lists, `autopilot_merge` for one PR and SHA under `--allow merge`, and the one review
+   * export directory the run made last. That directory is model-writable; its integrity rests on
+   * the export's manifest, not on this allow.
    */
-  async #autoAllowed(event: PermissionEvaluation, state: RunState): Promise<boolean> {
+  async #autoAllowed(event: PermissionEvaluation, state: RunState, dir: RunDir): Promise<boolean> {
     const asked = { action: event.action, effect: event.effect, resources: event.resources }
     if (grantedMergeAsk({ ...asked, allow: state.options.allow })) return true
+    if (event.action === EXTERNAL_DIRECTORY && reviewExportAsk({ ...asked, root: await this.#currentExport(dir), canon: realPath })) return true
     if (event.action !== EXTERNAL_DIRECTORY || !state.worktrees?.length) return false
     const { listed } = await this.#worktrees()
     const roots = state.worktrees.filter((root) => listed.has(root.real) && rootIntact(root, lstatProbe, realPath)).map((root) => root.real)
     return ownWorktreeAsk({ ...asked, roots, canon: realPath })
+  }
+
+  /** The real path of the export directory the run made last, when it is still a plain directory. */
+  async #currentExport(dir: RunDir): Promise<string | undefined> {
+    const current = (await this.ctx.storage.get(reviewCurrentKey(dir.runId)).catch(() => undefined)) as { head?: unknown; manifestHash?: unknown } | undefined
+    if (typeof current?.head !== "string" || typeof current.manifestHash !== "string") return undefined
+    const exported = exportDirFor(dir.path, current.head, current.manifestHash)
+    return exported === undefined ? undefined : identifyRoot(exported, lstatProbe, realPath)?.real
   }
 
   /** The real paths `worktree.list` shows for this project, and the project's primary checkout. */
@@ -973,6 +1002,27 @@ export class Autopilot {
     return `merged #${pr} at ${sha} with ${method}`
   }
 
+  /**
+   * Export a review round into the run directory for reviewers that cannot run git. The manifest
+   * hash is kept in plugin storage by PR and head (the trust anchor for `verifyExport`), and the
+   * export is recorded as the run's current one, the only directory the permission hook opens.
+   */
+  async exportReview(sessionID: string, input: { pr?: unknown; base?: unknown; head?: unknown }): Promise<string> {
+    const running = await this.runningFor(sessionID)
+    if (!running?.state) return "refused: no running autopilot run for this session"
+    const pr = String(input.pr ?? "").trim()
+    if (!/^\d{1,9}$/.test(pr) || Number(pr) < 1) return "refused: pr must be a positive PR number"
+    const result = await exportReview({ run: this.#run, cwd: running.state.directory, runDir: running.dir.path, base: input.base, head: input.head })
+    if (!result.ok) return `refused: ${result.reason}`
+    try {
+      await this.ctx.storage.set(reviewManifestKey(Number(pr), result.head), { manifestHash: result.manifestHash })
+      await this.ctx.storage.set(reviewCurrentKey(running.dir.runId), { head: result.head, manifestHash: result.manifestHash })
+    } catch (error) {
+      return `refused: the export was written but its manifest hash could not be recorded (${errorText(error)}); export again`
+    }
+    return JSON.stringify(result, null, 2)
+  }
+
   /** Re-prompts a lead whose turn ended in a question, at most {@link MAX_REPROMPTS} times in a row. */
   async idle(sessionID: string): Promise<void> {
     if (!this.armed.has(sessionID)) return
@@ -1038,6 +1088,12 @@ export async function setupAutopilot(ctx: Context, deps: Deps = {}): Promise<() 
         description: MERGE_DESCRIPTION,
         input: MERGE_INPUT,
         execute: async (input, tool) => ({ content: await pilot.merge(tool.sessionID, input as { pr?: unknown; sha?: unknown; method?: unknown }) }),
+      })
+      editor.add({
+        name: "autopilot_export_review",
+        description: EXPORT_REVIEW_DESCRIPTION,
+        input: EXPORT_REVIEW_INPUT,
+        execute: async (input, tool) => ({ content: await pilot.exportReview(tool.sessionID, input as { pr?: unknown; base?: unknown; head?: unknown }) }),
       })
     }),
   )
