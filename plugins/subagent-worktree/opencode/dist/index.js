@@ -2698,11 +2698,6 @@ function createLifecycle(deps) {
         const removal = { retireAs, ...head === undefined ? {} : { head }, ...earlier?.pending === undefined ? {} : { pending: earlier.pending } };
         await save({ ...stored, state: "removing", removal });
         if (present) {
-          const drift = await treeDrift(stored, head);
-          if (drift !== undefined) {
-            await save(stored);
-            return drift;
-          }
           const live = await liveRefusal(stored, options, seq);
           if (live !== undefined) {
             await save(stored);
@@ -2712,6 +2707,11 @@ function createLifecycle(deps) {
           if (!("ids" in descendants)) {
             await save(stored);
             return descendants;
+          }
+          const drift = await treeDrift(stored, head);
+          if (drift !== undefined) {
+            await save(stored);
+            return drift;
           }
           const late = startedSince([stored.child, ...descendants.ids], seq);
           if (late !== undefined) {

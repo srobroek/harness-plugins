@@ -235,6 +235,26 @@ const until = async (condition: () => boolean, ms = 5000) => {
 }
 const tool = { sessionID: PARENT, agent: "a", messageID: "m", id: "t" }
 
+/**
+ * The lane's states in the order the plugin writes them. A removal records `removing` first and then either
+ * restores `active` (a refusal) or retires the lane, so the first write after `removing` is the removal's decision.
+ */
+const laneWrites = (fake: Fake, child = CHILD) => {
+  const states: string[] = []
+  const storage = fake.context.storage as unknown as { set: (key: string, value: unknown) => Promise<void> }
+  const original = storage.set.bind(storage)
+  storage.set = (key, value) => {
+    if (key === laneKey(child)) states.push((value as Lane).state)
+    return original(key, value)
+  }
+  return states
+}
+/** Wait for that decision, and return the states from `removing` on. */
+const decision = async (states: string[]) => {
+  await until(() => states.includes("removing") && states.length > states.indexOf("removing") + 1)
+  return states.slice(states.indexOf("removing"), states.indexOf("removing") + 2)
+}
+
 describe("lane sync on a landing", () => {
   test("a delivery_cleanup result that removed the worktree retires the lane as landed and refreshes", async () => {
     const { fake, worktree, cleanup } = await start()
@@ -2581,6 +2601,27 @@ describe("finalize: the lane's descendants in the worktree protect it", () => {
     await settle(150)
     expect(removes(worktree)).toBe(0)
     expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+
+  test("a commit made while the descendants are listed keeps the lane and its worktree", async () => {
+    const { fake, state, worktree, cleanup } = await start(empty, noGates)
+    const states = laneWrites(fake)
+    const original = api(fake).list.bind(fake.context.session)
+    let committed = false
+    api(fake).list = async (input) => {
+      // The pre-removal listing: a clean commit lands in the worktree, so HEAD is no longer the proven (empty) commit.
+      if (!committed && input.parentID === CHILD && removes(worktree) === 0) {
+        committed = true
+        state.head = TIP2
+        state.branchOid = TIP2
+      }
+      return original(input)
+    }
+    fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    expect(await decision(states)).toEqual(["removing", "active"])
+    expect(committed).toBe(true)
+    expect(removes(worktree)).toBe(0)
     await cleanup()
   })
 

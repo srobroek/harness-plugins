@@ -900,13 +900,7 @@ export function createLifecycle(deps: LifecycleDeps) {
         const removal: NonNullable<Lane["removal"]> = { retireAs, ...(head === undefined ? {} : { head }), ...(earlier?.pending === undefined ? {} : { pending: earlier.pending }) }
         await save({ ...stored, state: "removing", removal })
         if (present) {
-          // Re-prove the tree after every await since the checks: a new commit or a change keeps the worktree.
-          const drift = await treeDrift(stored, head)
-          if (drift !== undefined) {
-            await save(stored)
-            return drift
-          }
-          // Liveness after the git probes, so nothing the probes awaited can hide a start, a resume or a job.
+          // Every async look comes first: liveness, then the descendants and their sessions.
           const live = await liveRefusal(stored, options, seq)
           if (live !== undefined) {
             await save(stored)
@@ -917,6 +911,12 @@ export function createLifecycle(deps: LifecycleDeps) {
           if (!("ids" in descendants)) {
             await save(stored)
             return descendants
+          }
+          // The tree proof is the last async step: a commit, a change, a stash or an operation made during any await above keeps the worktree.
+          const drift = await treeDrift(stored, head)
+          if (drift !== undefined) {
+            await save(stored)
+            return drift
           }
           // The last look, synchronous and immediately before the host call: an event delivered during the awaits above is seen here.
           const late = startedSince([stored.child, ...descendants.ids], seq)
