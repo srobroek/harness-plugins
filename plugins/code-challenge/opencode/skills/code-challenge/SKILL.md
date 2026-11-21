@@ -62,7 +62,7 @@ One reference per lens, each with what to look for, the evidence needed and the 
 
 ## Tools
 
-Two tools are planned and ship in a later PR: `challenge_scan` (runs the SCAN analyzers) and `challenge_lib_facts` (library facts from deps.dev, OSV, registries and GitHub). Check that each tool is in your tool list before you call it. Until then, run analyzers with the shell tool and fetch library facts with `webfetch` and `context7`, and cite the source.
+`challenge_lib_facts` returns library facts from deps.dev, OSV, the registries and GitHub (see [references/library-scoring.md](references/library-scoring.md) for its input and output). `challenge_scan` (runs the SCAN analyzers) is planned and ships in a later PR. Check that `challenge_scan` is in your tool list before you call it; until then, run analyzers with the shell tool and cite the command.
 
 ## Workflow
 

@@ -37,7 +37,8 @@ Both are composed by `bun run build` from `agents.src/` and the shared review co
 | --- | --- | --- |
 | `/code-challenge` | command | Load the skill with the mode, depth and target |
 | `challenge_setup` | tool | Copy the formulas into a beads workspace's `.beads/formulas/` |
-| `challenge_scan`, `challenge_lib_facts` | tools | Planned, ship in a later PR. The skill names them and falls back to the shell and `webfetch` until then |
+| `challenge_lib_facts` | tool | Registry, OSV and GitHub facts for 1 to 6 packages (npm, pypi, crates, go); facts only |
+| `challenge_scan` | tool | Planned, ships in a later PR. The skill falls back to the shell until then |
 
 ## Beads formulas
 
