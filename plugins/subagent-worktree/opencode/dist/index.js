@@ -738,6 +738,56 @@ function lockedWrite(commonDir, directory, options, write) {
   return withDiskLock(commonDir, directory, { waitMs: 1e4, ...options }, async () => write());
 }
 
+// plugins/subagent-worktree/opencode/src/git.ts
+import { env as hostEnv } from "process";
+
+// lib/src/safe-git.ts
+import { devNull } from "os";
+var SAFE_GIT_ARGS = [
+  "-c",
+  "core.fsmonitor=false",
+  "-c",
+  `core.hooksPath=${devNull}`,
+  "--no-optional-locks"
+];
+function untrustedLocalGitArgs() {
+  return [
+    ...SAFE_GIT_ARGS,
+    "-c",
+    `core.attributesFile=${devNull}`,
+    "-c",
+    "diff.external=",
+    "-c",
+    "core.sshCommand=",
+    "-c",
+    "credential.helper=",
+    "-c",
+    "core.askPass="
+  ];
+}
+var UNTRUSTED_LOCAL_GIT_ENV = {
+  GIT_ALLOW_PROTOCOL: "",
+  GIT_NO_LAZY_FETCH: "1",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_TERMINAL_PROMPT: "0"
+};
+var FILTER_DRIVER_LISTING = ["config", "--name-only", "-z", "--get-regexp", "^filter\\."];
+function filterDriverOverrides(listing) {
+  const keys = listing.split("\x00");
+  if (keys.pop() !== "")
+    return;
+  const drivers = new Set;
+  for (const key of keys) {
+    const last = key.lastIndexOf(".");
+    if (!key.startsWith("filter.") || last <= "filter.".length)
+      continue;
+    drivers.add(key.slice("filter.".length, last));
+  }
+  if ([...drivers].some((driver) => driver.includes("=")))
+    return;
+  return [...drivers].flatMap((driver) => ["clean=", "smudge=", "process=", "required=false"].flatMap((setting) => ["-c", `filter.${driver}.${setting}`]));
+}
+
 // lib/src/patterns.ts
 var compiled = new Map;
 function compile(pattern) {
@@ -968,14 +1018,20 @@ function withoutWorktree(input) {
   return rest;
 }
 function parseWorktrees(porcelain) {
+  if (porcelain === "")
+    return [];
+  const records = porcelain.split("\x00\x00");
+  if (records.pop() !== "")
+    return;
   const entries = [];
-  for (const block of porcelain.split(/\n\s*\n/)) {
-    const lines = block.split(`
-`).map((line) => line.trim());
-    const directory = lines.find((line) => line.startsWith("worktree "))?.slice("worktree ".length);
-    if (!directory || lines.includes("bare"))
+  for (const record of records) {
+    const [first = "", ...fields] = record.split("\x00");
+    if (!first.startsWith("worktree ") || first === "worktree ")
+      return;
+    if (fields.includes("bare"))
       continue;
-    const ref = lines.find((line) => line.startsWith("branch "))?.slice("branch ".length);
+    const directory = first.slice("worktree ".length);
+    const ref = fields.find((field) => field.startsWith("branch "))?.slice("branch ".length);
     entries.push(ref ? { directory, branch: ref.replace(/^refs\/heads\//, "") } : { directory });
   }
   return entries;
@@ -1220,15 +1276,8 @@ function decideMerge(input) {
   }
   return { refuse: false, target };
 }
-function worktreeForBranch(porcelain, branch) {
-  for (const block of porcelain.split(/\n\s*\n/)) {
-    const lines = block.split(`
-`);
-    const path = lines.find((line) => line.startsWith("worktree "))?.slice("worktree ".length);
-    if (path && lines.includes(`branch refs/heads/${branch}`))
-      return path;
-  }
-  return;
+function worktreeForBranch(entries, branch) {
+  return entries.find((entry) => entry.branch === branch)?.directory;
 }
 var SESSION_LOOKUP_MS = 2000;
 async function liveness(lookup, ms) {
@@ -1311,9 +1360,17 @@ var FENCED_REASON = "another writer spawn took over this worktree while it waite
 // plugins/subagent-worktree/opencode/src/git.ts
 var GIT_TIMEOUT_MS = 60000;
 var spawnRunner = async (argv, options) => {
+  const git = argv[0] === "git";
+  const command = git ? ["git", ...untrustedLocalGitArgs(), ...argv.slice(1)] : argv;
   try {
-    const child = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe", ...options?.cwd ? { cwd: options.cwd } : {} });
-    const run = await supervise(child, argv[0] === "git" ? { timeoutMs: GIT_TIMEOUT_MS } : {});
+    const child = Bun.spawn(command, {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      ...git ? { env: { ...hostEnv, ...UNTRUSTED_LOCAL_GIT_ENV } } : {},
+      ...options?.cwd ? { cwd: options.cwd } : {}
+    });
+    const run = await supervise(child, git ? { timeoutMs: GIT_TIMEOUT_MS } : {});
     if (run.kind === "exited")
       return { code: run.exitCode, stdout: run.stdout, stderr: run.stderr };
     const why = run.kind === "timeout" ? `timed out after ${GIT_TIMEOUT_MS / 1000}s` : "ended without an exit status";
@@ -1339,6 +1396,12 @@ function createGit(run) {
     const result = await run(["git", "-C", directory, ...args]);
     return result.code === 0 ? result.stdout.trim() : undefined;
   };
+  const unfiltered = async (directory, ...args) => {
+    const listing = await run(["git", "-C", directory, ...FILTER_DRIVER_LISTING]);
+    const none = listing.code === 1 && listing.stdout === "";
+    const overrides = none ? [] : listing.code === 0 ? filterDriverOverrides(listing.stdout) : undefined;
+    return overrides === undefined ? undefined : git(directory, ...overrides, ...args);
+  };
   const files = (output) => output?.split("\x00").filter((file) => file !== "");
   return {
     run,
@@ -1351,32 +1414,32 @@ function createGit(run) {
     deleteBranch: async (directory, name) => await git(directory, "branch", "--quiet", "-d", name) !== undefined,
     status: async (directory, base) => {
       const ahead = await git(directory, "rev-list", "--count", `${base}..HEAD`);
-      const porcelain = await git(directory, "status", "--porcelain");
+      const porcelain = await unfiltered(directory, "status", "--porcelain");
       if (ahead === undefined || porcelain === undefined)
         return;
       return { ahead: Number.parseInt(ahead, 10) || 0, dirty: porcelain !== "" };
     },
     changedFiles: async (directory, target) => files(await git(directory, "diff", "--name-only", "-z", `${target}...HEAD`)),
     trackedDirty: async (directory) => {
-      const changed = await git(directory, "status", "--porcelain", "--untracked-files=no", "--", ...TRACKED_DIRTY_PATHSPEC);
+      const changed = await unfiltered(directory, "status", "--porcelain", "--untracked-files=no", "--", ...TRACKED_DIRTY_PATHSPEC);
       if (changed === undefined)
         throw new Error(`subagent-worktree: cannot read tracked changes in ${directory}`);
       return changed !== "";
     },
     localFiles: async (directory) => {
-      const changed = files(await git(directory, "diff", "--name-only", "-z", "HEAD"));
+      const changed = files(await unfiltered(directory, "diff", "--name-only", "-z", "HEAD"));
       const untracked = files(await git(directory, "ls-files", "--others", "--exclude-standard", "--full-name", "-z"));
       return changed && untracked ? [...changed, ...untracked] : undefined;
     },
     commonDir: (directory) => git(directory, "rev-parse", "--path-format=absolute", "--git-common-dir"),
     head: (directory) => git(directory, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"),
-    porcelain: (directory) => git(directory, "status", "--porcelain"),
+    porcelain: (directory) => unfiltered(directory, "status", "--porcelain"),
     isAncestor: async (directory, tip, ref) => (await run(["git", "-C", directory, "merge-base", "--is-ancestor", tip, ref])).code === 0,
     stashSubjects: (directory) => git(directory, "stash", "list", "--format=%gs"),
     gitDir: (directory) => git(directory, "rev-parse", "--absolute-git-dir"),
     deleteBranchAt: async (directory, name, oid) => (await run(["git", "-C", directory, "update-ref", "-d", `refs/heads/${name}`, oid])).code === 0,
     pruneWorktrees: async (directory) => await git(directory, "worktree", "prune") !== undefined,
-    worktrees: (directory) => git(directory, "worktree", "list", "--porcelain")
+    worktrees: (directory) => git(directory, "worktree", "list", "--porcelain", "-z")
   };
 }
 
@@ -1593,16 +1656,6 @@ function physical(path) {
   }
   return resolved === "" ? "/" : resolved;
 }
-
-// lib/src/safe-git.ts
-import { devNull } from "os";
-var SAFE_GIT_ARGS = [
-  "-c",
-  "core.fsmonitor=false",
-  "-c",
-  `core.hooksPath=${devNull}`,
-  "--no-optional-locks"
-];
 
 // plugins/subagent-worktree/opencode/src/build-dirs.ts
 var BUILD_GRACE_MS = 30 * 60000;
@@ -3422,7 +3475,8 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
   };
   const locate = async (parentDir, requested) => {
     const porcelain = await git2.worktrees(parentDir);
-    const entries = porcelain === undefined ? undefined : await Promise.all(parseWorktrees(porcelain).map(async (entry) => ({ ...entry, directory: await normalize(entry.directory) })));
+    const parsed = porcelain === undefined ? undefined : parseWorktrees(porcelain);
+    const entries = parsed === undefined ? undefined : await Promise.all(parsed.map(async (entry) => ({ ...entry, directory: await normalize(entry.directory) })));
     const raw = requested.startsWith("~/") ? join5(homedir2(), requested.slice(2)) : requested;
     const path = await normalize(resolve4(parentDir, raw));
     const current = entries && containingWorktree(await normalize(parentDir), entries)?.directory;
@@ -3878,9 +3932,10 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
   };
   const targetChanges = async (lane2, target) => {
     const porcelain = await git2.worktrees(lane2.parentDir);
-    if (porcelain === undefined)
+    const entries = porcelain === undefined ? undefined : parseWorktrees(porcelain);
+    if (entries === undefined)
       return;
-    const directory = worktreeForBranch(porcelain, target);
+    const directory = worktreeForBranch(entries, target);
     return directory === undefined ? [] : git2.localFiles(directory);
   };
   const merge = async (input, tool) => {

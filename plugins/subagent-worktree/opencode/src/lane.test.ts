@@ -126,33 +126,37 @@ describe("readSubagentInput", () => {
   })
 })
 
-const PORCELAIN = [
-  "worktree /repo",
-  "HEAD 0123",
-  "branch refs/heads/main",
-  "",
-  "worktree /repo/.worktrees/feat-x",
-  "HEAD 4567",
-  "branch refs/heads/feat/x",
-  "",
-  "worktree /wt/detached",
-  "HEAD 89ab",
-  "detached",
-  "",
-  "worktree /bare.git",
-  "bare",
-  "",
-].join("\n")
+/** `git worktree list --porcelain -z` output: NUL ends each field, an empty field ends each record. */
+const porcelainZ = (...records: string[][]) => records.map((fields) => `${fields.join("\0")}\0\0`).join("")
+
+const PORCELAIN = porcelainZ(
+  ["worktree /repo", "HEAD 0123", "branch refs/heads/main"],
+  ["worktree /repo/.worktrees/feat-x", "HEAD 4567", "branch refs/heads/feat/x"],
+  ["worktree /wt/detached", "HEAD 89ab", "detached"],
+  ["worktree /bare.git", "bare"],
+  // A newline is valid in a path and in a lock reason; neither starts a new record or field.
+  ["worktree /wt/odd\nprunable", "HEAD cdef", "branch refs/heads/odd", "locked first\n\nworktree /forged"],
+)
 
 describe("worktree lookup", () => {
-  const entries = parseWorktrees(PORCELAIN)
+  const entries = parseWorktrees(PORCELAIN) ?? []
 
   test("parses git worktree list, skipping bare repositories", () => {
-    expect(entries).toEqual([
+    expect(parseWorktrees(PORCELAIN)).toEqual([
       { directory: "/repo", branch: "main" },
       { directory: "/repo/.worktrees/feat-x", branch: "feat/x" },
       { directory: "/wt/detached" },
+      { directory: "/wt/odd\nprunable", branch: "odd" },
     ])
+  })
+
+  test.each([
+    ["output cut off inside a record", PORCELAIN.slice(0, -1)],
+    ["a record that does not start with its path", porcelainZ(["HEAD 0123", "worktree /repo"])],
+    ["a record with an empty path", porcelainZ(["worktree ", "HEAD 0123"])],
+    ["output without NUL separators", "worktree /repo\nHEAD 0123\nbranch refs/heads/main\n\n"],
+  ])("refuses %s", (_, porcelain) => {
+    expect(parseWorktrees(porcelain)).toBeUndefined()
   })
 
   test("finds a worktree by branch, path inside it, or unique directory name", () => {
@@ -515,22 +519,10 @@ describe("merge", () => {
     expect(overlap([], ["a"])).toEqual([])
   })
   test("worktreeForBranch", () => {
-    const porcelain = [
-      "worktree /repo",
-      "HEAD 1111",
-      "branch refs/heads/main",
-      "",
-      "worktree /wt/x",
-      "HEAD 2222",
-      "branch refs/heads/subagent-x",
-      "",
-      "worktree /wt/detached",
-      "HEAD 3333",
-      "detached",
-    ].join("\n")
-    expect(worktreeForBranch(porcelain, "main")).toBe("/repo")
-    expect(worktreeForBranch(porcelain, "subagent-x")).toBe("/wt/x")
-    expect(worktreeForBranch(porcelain, "dev")).toBeUndefined()
+    const entries = [{ directory: "/repo", branch: "main" }, { directory: "/wt/x", branch: "subagent-x" }, { directory: "/wt/detached" }]
+    expect(worktreeForBranch(entries, "main")).toBe("/repo")
+    expect(worktreeForBranch(entries, "subagent-x")).toBe("/wt/x")
+    expect(worktreeForBranch(entries, "dev")).toBeUndefined()
   })
 })
 

@@ -63,6 +63,23 @@ Move new shared code into `lib` instead of adding another edge.
 - `subagent-worktree` removes a lane through one path, `finalize` in `plugins/subagent-worktree/opencode/src/lifecycle.ts`, under the worktree's disk lock. It records the lane as `removing`, re-proves liveness and the tree, removes the worktree, moves the sessions and retires the lane. A failed move or an incomplete listing leaves the lane in `removing` until a later trigger finishes it.
 - `delivery` wraps the helpers in `plugins/delivery/opencode/src/lane-move.ts`. After it removes a worktree and proves it absent, it moves the lane's sessions that sit in the worktree or below it to the canonical checkout. A failed move, an unreadable session or an incomplete listing is reported in the cleanup result and never fails the cleanup; only a session the host says does not exist is dropped silently.
 
+`subagent-worktree` runs git automatically in lanes and checkouts whose config it does not control. So `spawnRunner` in `plugins/subagent-worktree/opencode/src/git.ts` gives every `git` command `untrustedLocalGitArgs()` and `UNTRUSTED_LOCAL_GIT_ENV` from `lib/src/safe-git.ts`. They disable these:
+
+- fsmonitor, hooks and the global attributes file
+- `diff.external`
+- every transport
+- `core.sshCommand`, `credential.helper` and `core.askPass`
+- system config, terminal prompts and lazy fetch
+
+Before a status or a work-tree diff, the plugin lists the filter drivers in the same directory (`FILTER_DRIVER_LISTING`). It disables every driver it finds, including the user's global ones such as git-lfs, because the repository picks the driver and can supply the program a relative command runs. It refuses to run the command when the listing fails or a driver name contains `=`. The plugin reads `git worktree list --porcelain -z` and refuses malformed output. The minimum git version stays as it is, so these risks remain:
+
+- `GIT_NO_LAZY_FETCH` needs git 2.45. Older git still starts a lazy fetch and relies on the transport refusal (`GIT_ALLOW_PROTOCOL` set empty).
+- `git status` recursing into a submodule runs with the submodule's own filter drivers.
+- A config change between the driver listing and the command is not seen. Git evaluates conditional includes (`includeIf`) the same way for both, because both run in the same directory.
+- `wt` commands (`wt list`, `wt merge`) run without these settings.
+
+With git-lfs disabled, an LFS file whose index entry is stale reads as modified. A lane then looks dirty and is kept, never removed.
+
 `plugins/parley/opencode/src/guards.ts` holds the `isRecord` and `strings` type guards that the parley parsers share.
 
 `plugins/parley/opencode/src/test-wait.ts` holds the state-driven test waits: `until` (polls an observable effect, fails after 2 s), `opened` (waits for a round to open) and `quiet` (a few event-loop turns, for "nothing happened yet" checks).
