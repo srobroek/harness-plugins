@@ -305,12 +305,23 @@ export default Plugin.define({
     const unclassifiable = new Set<string>()
     const classifying = new Set<string>()
 
+    /**
+     * The tier state the retry hook resolves against. It follows `options` except while a reload has
+     * published tentative tiers it has not yet registered: a retry on its own queue never sees those, so a
+     * failed registration cannot leave a session switched to a tier that was rolled back.
+     */
+    let committed = { agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes }
+    let tentative = false
+    const commit = () => {
+      committed = { agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes }
+    }
     const rebuild = () => {
       const set = buildTiers(settings, available as CatalogModel[], refs)
       options.roles = set.roles
       options.tiers = set.tiers
       options.classes = set.classes
       derived = set.derived
+      if (!tentative) commit()
     }
 
     // models.dev first-party records (anthropic, openai, google), connected or not, price
@@ -1219,12 +1230,12 @@ export default Plugin.define({
           if (!live()) return
           const spawnRole = await spawnRoleOf(event.sessionID)
           if (!live()) return
-          const role = spawnRole ?? (agent === undefined ? undefined : roleOf(agent, options.agents, options.implicit))
+          const role = spawnRole ?? (agent === undefined ? undefined : roleOf(agent, committed.agents, options.implicit))
           const tried = triedModels.get(event.sessionID) ?? new Set<string>()
           triedModels.set(event.sessionID, tried.add(healthKey(failed)))
           const recent = healthView(health, Date.now(), RECENT_MS)
           const target = retryTarget({
-            options,
+            options: { ...options, ...committed },
             available,
             health: (ref) => (tried.has(healthKey(ref)) ? 0 : recent(ref)),
             role,
@@ -2177,6 +2188,7 @@ export default Plugin.define({
           options.classes = previous.classes
           derived = previous.derived
         }
+        tentative = true
         try {
           // Spawns wait in `exclusive`, so they see either the old tiers or the new ones once agents and tools follow.
           if (tiers !== undefined) settings = parseTierSettings({ ...pluginOptions, tiers })
@@ -2185,8 +2197,12 @@ export default Plugin.define({
           attempts = 0
           await check(true, true)
           await refreshSubagentTool(true)
+          tentative = false
+          commit()
         } catch (error) {
+          tentative = false
           restore()
+          commit()
           attempts = 0
           restoreFailed = true
           // The agents go back to the restored tiers even when the lookup in `check` stalls: the transform needs no lookup.

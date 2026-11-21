@@ -1151,6 +1151,29 @@ describe("runtime fallback", () => {
       await cleanup()
     })
 
+    test("a transient failure the host declined to retry is retried on its model once the lookup times out", async () => {
+      const host = createHost({ agents: [{ id: "build" }], models, options: stallOptions })
+      const cleanup = await setup(host)
+      stallFirstLookup(host)
+      expect(await host.fireRetry({ sessionID: "h1", agent: "build", model: sonnet, error, attempt: 4 }, { retry: false })).toEqual({ retry: true, delay: 8_000 })
+      expect(methods(host, "switchModel")).toHaveLength(0)
+      host.close()
+      await cleanup()
+    })
+
+    test("a retry is not held up by event work that never finishes", async () => {
+      const host = createHost({ agents: [{ id: "build" }], models, options: fallbackOptions })
+      const cleanup = await setup(host)
+      // A model event queues a refresh on the event queue; the model list never answers, so that task never ends.
+      host.context.model.list = () => new Promise(() => {})
+      host.setModels(models)
+      await flush()
+      expect(await host.fireRetry({ sessionID: "e1", agent: "build", model: sonnet, error, attempt: 4 })).toEqual({ retry: true, delay: 0 })
+      expect(methods(host, "switchModel").map((c) => c.input)).toEqual([{ sessionID: "e1", model: haiku }])
+      host.close()
+      await cleanup()
+    })
+
     test("a lookup that answers after the timeout switches nothing", async () => {
       const host = createHost({ agents: [{ id: "build" }], models, options: stallOptions })
       const cleanup = await setup(host)
@@ -3836,6 +3859,34 @@ describe("tiers rpc", () => {
         expect(host.activeTransforms()).toBe(1)
       },
       [{ id: "worker", request: header("cheap") }],
+    )
+  })
+
+  test("a retry that arrives while a reload awaits its registration resolves against the committed tiers, and stays there when the reload fails", async () => {
+    await withConfig(
+      async (host) => {
+        const original = host.context.tool.transform
+        const failedModel = { providerID: "amazon-bedrock", id: "global.anthropic.claude-haiku-5-5", variant: "low" }
+        const error = { type: "provider.internal", message: "Service Unavailable", status: 503 }
+        let decision: unknown
+        let first = true
+        host.context.tool.transform = async (callback) => {
+          if (first) {
+            first = false
+            // The reload has published the new cheap tier [sonnet] and now awaits this registration.
+            decision = await host.fireRetry({ sessionID: "w1", agent: "worker", model: failedModel, error, attempt: 4 })
+            throw new Error("tool refresh refused")
+          }
+          return original(callback)
+        }
+        await expect(host.rpc("set", { tier: "cheap", value: { model: [sonnet55] } })).rejects.toThrow(/not applied: tool refresh refused/)
+        // The retry moved to the committed cheap tier's next candidate, not to the tentative tier's sonnet.
+        expect(decision).toEqual({ retry: true, delay: 0 })
+        expect(host.calls.filter((c) => c.method === "switchModel").map((c) => c.input)).toEqual([
+          { sessionID: "w1", model: { providerID: "amazon-bedrock", id: "global.openai.gpt-6-luna", variant: "low" } },
+        ])
+      },
+      worker,
     )
   })
 

@@ -5968,12 +5968,19 @@ var src_default = Plugin.define({
     const classified = {};
     const unclassifiable = new Set;
     const classifying = new Set;
+    let committed = { agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes };
+    let tentative = false;
+    const commit = () => {
+      committed = { agents: options.agents, roles: options.roles, tiers: options.tiers, classes: options.classes };
+    };
     const rebuild = () => {
       const set = buildTiers(settings, available, refs);
       options.roles = set.roles;
       options.tiers = set.tiers;
       options.classes = set.classes;
       derived = set.derived;
+      if (!tentative)
+        commit();
     };
     const references = await ctx.model.transform((editor) => {
       try {
@@ -6696,12 +6703,12 @@ ${refs.size}`;
           const spawnRole = await spawnRoleOf(event.sessionID);
           if (!live())
             return;
-          const role = spawnRole ?? (agent === undefined ? undefined : roleOf(agent, options.agents, options.implicit));
+          const role = spawnRole ?? (agent === undefined ? undefined : roleOf(agent, committed.agents, options.implicit));
           const tried = triedModels.get(event.sessionID) ?? new Set;
           triedModels.set(event.sessionID, tried.add(healthKey(failed)));
           const recent = healthView(health2, Date.now(), RECENT_MS);
           const target = retryTarget({
-            options,
+            options: { ...options, ...committed },
             available,
             health: (ref) => tried.has(healthKey(ref)) ? 0 : recent(ref),
             role,
@@ -7555,6 +7562,7 @@ ${refs.size}`;
           options.classes = previous.classes;
           derived = previous.derived;
         };
+        tentative = true;
         try {
           if (tiers2 !== undefined)
             settings = parseTierSettings({ ...pluginOptions, tiers: tiers2 });
@@ -7564,8 +7572,12 @@ ${refs.size}`;
           attempts = 0;
           await check2(true, true);
           await refreshSubagentTool(true);
+          tentative = false;
+          commit();
         } catch (error) {
+          tentative = false;
           restore();
+          commit();
           attempts = 0;
           restoreFailed = true;
           await check2(true, true).catch(async () => {
