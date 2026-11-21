@@ -83,6 +83,7 @@ describe("binary Git hook protection", () => {
       expect(run("bd init # note")).toEqual({ kind: "rewrite", input: { command: "bd init --skip-hooks # note" } })
       expect(run("echo hi # bd init")).toBeUndefined()
       expect(run("echo $(bd init)")?.kind).toBe("block")
+      expect(run("bd init && echo $(bd init)")?.kind).toBe("block")
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

@@ -122,7 +122,11 @@ function rewriteInitCalls(command: string): string | undefined {
   let rewritten = command
   for (const offset of insertions.sort((left, right) => right - left))
     rewritten = `${rewritten.slice(0, offset)} --skip-hooks${rewritten.slice(offset)}`
-  return rewritten
+  // Every init must be guarded now; one the scan could not place (inside a substitution) means block.
+  const unguarded = parsedInvocations(parse(rewritten)).some(
+    (invocation) => invocation.verb === "init" && !invocation.args.includes("--skip-hooks"),
+  )
+  return unguarded ? undefined : rewritten
 }
 
 export type BinaryHooksDecision =

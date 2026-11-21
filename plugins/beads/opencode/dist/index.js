@@ -5333,7 +5333,8 @@ function rewriteInitCalls(command) {
   let rewritten = command;
   for (const offset of insertions.sort((left, right) => right - left))
     rewritten = `${rewritten.slice(0, offset)} --skip-hooks${rewritten.slice(offset)}`;
-  return rewritten;
+  const unguarded = parsedInvocations2(parse(rewritten)).some((invocation) => invocation.verb === "init" && !invocation.args.includes("--skip-hooks"));
+  return unguarded ? undefined : rewritten;
 }
 function protectBinaryHookCommands(input, command, cwd, git = runGit) {
   try {
