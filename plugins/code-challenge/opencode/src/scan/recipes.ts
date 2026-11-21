@@ -61,7 +61,7 @@ export const RECIPES: readonly Recipe[] = [
     id: "oxlint:perf",
     tool: "oxlint",
     language: "ts",
-    lenses: ["performance", "efficiency", "stability"],
+    lenses: ["performance", "stability"],
     lensRules: [
       [/no-accumulating-spread|no-array-index-key|no-map-spread/, "performance"],
       [/^eslint\(|^oxc\(/, "stability"],
@@ -82,7 +82,7 @@ export const RECIPES: readonly Recipe[] = [
     id: "eslint:e18e",
     tool: "eslint",
     language: "ts",
-    lenses: ["hand-rolled-stdlib", "hand-rolled-library", "efficiency"],
+    lenses: ["hand-rolled-stdlib", "hand-rolled-library"],
     lensRules: [
       [/ban-dependencies/, "hand-rolled-library"],
       [/^e18e\/prefer-/, "hand-rolled-stdlib"],
@@ -270,7 +270,7 @@ export const RECIPES: readonly Recipe[] = [
     id: "clippy:lenses",
     tool: "clippy",
     language: "rust",
-    lenses: ["performance", "simplification", "stability", "dead-code"],
+    lenses: ["performance", "simplification", "dead-code"],
     lensRules: [
       [/clippy::(perf|redundant_clone|useless_vec|manual_memcpy)/, "performance"],
       [/^dead_code$|unused/, "dead-code"],
