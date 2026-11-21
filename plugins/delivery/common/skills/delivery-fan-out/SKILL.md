@@ -29,7 +29,7 @@ The lead is the user's bridge: it plans, splits, dispatches, integrates, verifie
 | Risky diff (security, data loss, concurrency, public contract) | `pr-reviewer`, before landing |
 | External question that needs cited sources | `researcher` |
 | One exact, judgment-free command over named paths | `operator` |
-| Landing one approved PR | `shepherd`, or `delivery_land` yourself |
+| Landing one approved PR | `shepherd`, or `delivery_land` yourself (a subagent lands only with `expectHeadSha`, `requireApproval` and `requireGreenChecks` all set; an ungated land needs a root session) |
 | A few reads, one grep, or one script answers it | none: do it inline |
 
 ## Isolate and integrate
