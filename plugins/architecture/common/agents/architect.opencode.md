@@ -89,10 +89,13 @@ permissions:
     resource: "find *-exec*"
     effect: deny
   - action: shell
-    resource: "* > *"
+    resource: "*>*"
     effect: deny
   - action: shell
-    resource: "* >> *"
+    resource: "* | tee *"
+    effect: deny
+  - action: shell
+    resource: "* | tee"
     effect: deny
   - action: shell
     resource: "git push*"
@@ -225,6 +228,12 @@ permissions:
     effect: allow
   - action: shell
     resource: "git * --output*"
+    effect: deny
+  - action: shell
+    resource: "git -c *"
+    effect: deny
+  - action: shell
+    resource: "git --config-env*"
     effect: deny
   - action: shell
     resource: "gh pr create*"
