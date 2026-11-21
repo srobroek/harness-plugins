@@ -1,5 +1,8 @@
-import { describe, expect, test } from "bun:test"
-import { parseJson, parseOutput } from "./parsers.ts"
+import { afterAll, describe, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { OutputError, parseJson, parseOutput } from "./parsers.ts"
 import type { Hit, ParserId } from "./types.ts"
 
 const ctx = { root: "/r", cwd: "/r" }
@@ -91,14 +94,6 @@ const CASES: Array<{ name: string; parser: ParserId; text: string; expected: Hit
     expected: [{ rule: "vulture", file: "a.py", line: 1, message: "unused import 'os' (90% confidence)" }],
   },
   {
-    name: "import-linter reports each broken import with its contract",
-    parser: "import-linter-text",
-    text: "Contracts: 0 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nlayers\n------\n\npk.b is not allowed to import pk.a:\n\n- pk.b -> pk.a (l.1)\n",
-    expected: [
-      { rule: "layers", file: "pk/b.py", line: 1, message: "pk.b is not allowed to import pk.a (pk.b -> pk.a)" },
-    ],
-  },
-  {
     name: "golangci uses the linter name and resolves paths against the root",
     parser: "golangci-json",
     text: JSON.stringify({ Issues: [{ FromLinter: "perfsprint", Text: "string-format: fmt.Sprintf can be replaced", Pos: { Filename: "main.go", Line: 14 } }] }),
@@ -145,9 +140,27 @@ describe("parseOutput", () => {
     expect(parseOutput(parser, text, ctx)).toEqual(expected)
   })
 
-  test("unparseable output yields no hits instead of throwing", () => {
-    expect(parseOutput("ruff-json", "Traceback...", ctx)).toEqual([])
-    expect(parseOutput("golangci-json", "", ctx)).toEqual([])
+  test.each([
+    ["ruff-json", "Traceback (most recent call last):"],
+    ["ruff-json", ""],
+    ["golangci-json", ""],
+    ["knip-json", "[]"],
+    ["biome-json", "not json"],
+    ["eslint-json", "{}"],
+    ["jscpd-json", ""],
+    ["depcruise-json", "Error: cannot read config"],
+    ["oxlint-json", ""],
+    ["deadcode-json", "oops"],
+  ] as const)("%s output %p is an error, not zero findings", (parser, text) => {
+    expect(() => parseOutput(parser, text, ctx)).toThrow(OutputError)
+  })
+
+  test("empty well-formed output is zero findings", () => {
+    expect(parseOutput("ruff-json", "[]", ctx)).toEqual([])
+    expect(parseOutput("deadcode-json", "null", ctx)).toEqual([])
+    expect(parseOutput("deadcode-json", "", ctx)).toEqual([])
+    expect(parseOutput("golangci-json", '{"Issues":null}', ctx)).toEqual([])
+    expect(parseOutput("vulture-text", "", ctx)).toEqual([])
   })
 
   test("paths outside the cwd resolve against it, then the root", () => {
@@ -163,5 +176,43 @@ describe("parseOutput", () => {
 describe("parseJson", () => {
   test("skips a banner before the payload", () => {
     expect(parseJson('banner\n{"a":1}')).toEqual({ a: 1 })
+  })
+})
+
+describe("import-linter module resolution", () => {
+  const OUTPUT =
+    "Contracts: 0 kept, 1 broken.\n\n\n----------------\nBroken contracts\n----------------\n\nlayers\n------\n\npk.b is not allowed to import pk.a:\n\n- pk.b -> pk.a (l.4)\n"
+  const roots: string[] = []
+  const repo = (files: string[]): string => {
+    const root = mkdtempSync(join(tmpdir(), "challenge-il-"))
+    roots.push(root)
+    for (const file of files) {
+      mkdirSync(join(root, file, ".."), { recursive: true })
+      writeFileSync(join(root, file), "")
+    }
+    return root
+  }
+  afterAll(() => {
+    for (const root of roots) rmSync(root, { recursive: true, force: true })
+  })
+  const message = "pk.b is not allowed to import pk.a (pk.b -> pk.a)"
+
+  test.each([
+    ["a flat module", ["pk/b.py"], "pk/b.py"],
+    ["a src-layout module", ["src/pk/b.py"], "src/pk/b.py"],
+    ["a package", ["pk/b/__init__.py"], "pk/b/__init__.py"],
+    ["a src-layout package", ["src/pk/b/__init__.py"], "src/pk/b/__init__.py"],
+  ])("maps %s to its file", (_name, files, expected) => {
+    const root = repo(files)
+    expect(parseOutput("import-linter-text", OUTPUT, { root, cwd: root })).toEqual([
+      { rule: "layers", file: expected, line: 4, message },
+    ])
+  })
+
+  test("an unresolvable module has no file and no line", () => {
+    const root = repo(["other.py"])
+    expect(parseOutput("import-linter-text", OUTPUT, { root, cwd: root })).toEqual([
+      { rule: "layers", file: null, line: null, message },
+    ])
   })
 })

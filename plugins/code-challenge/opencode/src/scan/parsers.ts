@@ -1,4 +1,5 @@
-import { isAbsolute, relative, resolve } from "node:path"
+import { lstatSync } from "node:fs"
+import { isAbsolute, join, relative, resolve } from "node:path"
 import type { Hit, ParserId } from "./types.ts"
 
 type Json = Record<string, unknown>
@@ -7,7 +8,10 @@ const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
 const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback)
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null)
 
-/** Parse JSON, tolerating a banner line before the first `{` or `[` (biome prints one). */
+/** Output that does not have the shape the recipe's tool promises; a gap, never "no findings". */
+export class OutputError extends Error {}
+
+/** Parse JSON, tolerating a banner line before the first brace or bracket (biome prints one). Null when it is not JSON. */
 export function parseJson(text: string): unknown {
   const trimmed = text.trim()
   if (trimmed === "") return null
@@ -24,6 +28,14 @@ export function parseJson(text: string): unknown {
   }
 }
 
+/** The payload of a JSON-printing tool: an object (or an array), otherwise an OutputError. */
+function payload(text: string, kind: "object" | "array"): unknown {
+  const value = parseJson(text)
+  const ok = kind === "array" ? Array.isArray(value) : typeof value === "object" && value !== null && !Array.isArray(value)
+  if (!ok) throw new OutputError(`expected a JSON ${kind}, got ${text.trim() === "" ? "empty output" : `"${text.trim().slice(0, 60)}"`}`)
+  return value
+}
+
 /** A path as the root-relative form; analyzers report absolute, cwd-relative or root-relative paths. */
 export function relativeTo(root: string, file: string, cwd = root): string {
   const abs = isAbsolute(file) ? file : resolve(cwd, file)
@@ -33,8 +45,10 @@ export function relativeTo(root: string, file: string, cwd = root): string {
 
 type Ctx = { root: string; cwd: string }
 
+const MODULE_ROOTS = ["", "src"] as const
+
 function biome(text: string): Hit[] {
-  return arr(obj(parseJson(text)).diagnostics).flatMap((d) => {
+  return arr(obj(payload(text, "object")).diagnostics).flatMap((d) => {
     const diag = obj(d)
     const category = str(diag.category)
     if (!category.startsWith("lint/")) return []
@@ -45,7 +59,7 @@ function biome(text: string): Hit[] {
 }
 
 function oxlint(text: string): Hit[] {
-  return arr(obj(parseJson(text)).diagnostics).map((d) => {
+  return arr(obj(payload(text, "object")).diagnostics).map((d) => {
     const diag = obj(d)
     const label = obj(arr(diag.labels)[0])
     return {
@@ -58,7 +72,7 @@ function oxlint(text: string): Hit[] {
 }
 
 function eslint(text: string): Hit[] {
-  return arr(parseJson(text)).flatMap((f) => {
+  return arr(payload(text, "array")).flatMap((f) => {
     const file = obj(f)
     return arr(file.messages).map((m) => {
       const msg = obj(m)
@@ -83,7 +97,7 @@ const KNIP_KEYS = [
 ] as const
 
 function knip(text: string): Hit[] {
-  return arr(obj(parseJson(text)).issues).flatMap((i) => {
+  return arr(obj(payload(text, "object")).issues).flatMap((i) => {
     const issue = obj(i)
     const file = str(issue.file)
     return KNIP_KEYS.flatMap((key) =>
@@ -97,7 +111,7 @@ function knip(text: string): Hit[] {
 }
 
 function jscpd(text: string): Hit[] {
-  return arr(obj(parseJson(text)).duplicates).map((d) => {
+  return arr(obj(payload(text, "object")).duplicates).map((d) => {
     const dup = obj(d)
     const first = obj(dup.firstFile)
     const second = obj(dup.secondFile)
@@ -112,7 +126,7 @@ function jscpd(text: string): Hit[] {
 }
 
 function depcruise(text: string): Hit[] {
-  return arr(obj(obj(parseJson(text)).summary).violations).map((v) => {
+  return arr(obj(obj(payload(text, "object")).summary).violations).map((v) => {
     const violation = obj(v)
     const cycle = arr(violation.cycle).map((c) => str(obj(c).name))
     const detail = cycle.length > 0 ? `${str(violation.from)} -> ${cycle.join(" -> ")}` : `${str(violation.from)} -> ${str(violation.to)}`
@@ -121,7 +135,7 @@ function depcruise(text: string): Hit[] {
 }
 
 function ruff(text: string): Hit[] {
-  return arr(parseJson(text)).map((d) => {
+  return arr(payload(text, "array")).map((d) => {
     const diag = obj(d)
     return {
       rule: str(diag.code),
@@ -141,8 +155,20 @@ function vulture(text: string): Hit[] {
   return hits
 }
 
+/** The file of a dotted module under the root (flat or src layout, module or package), or null. */
+function moduleFile(root: string, module: string): string | null {
+  const path = module.replaceAll(".", "/")
+  for (const base of MODULE_ROOTS) {
+    for (const candidate of [`${path}.py`, `${path}/__init__.py`]) {
+      const rel = base === "" ? candidate : `${base}/${candidate}`
+      if (lstatSync(join(root, rel), { throwIfNoEntry: false })?.isFile()) return rel
+    }
+  }
+  return null
+}
+
 /** Broken contracts from `lint-imports`: `<importer> is not allowed to import <imported>` then `- a -> b (l.N)`. */
-function importLinter(text: string): Hit[] {
+function importLinter(text: string, ctx: Ctx): Hit[] {
   const hits: Hit[] = []
   const broken = text.split(/^-+\nBroken contracts\n-+\n/m)[1]
   if (broken === undefined) return hits
@@ -154,10 +180,11 @@ function importLinter(text: string): Hit[] {
     const next = /^- (\S+) -> (\S+) \(l\.(\d+)\)/.exec(line.trim())
     if (next) {
       const module = next[1] ?? ""
+      const file = moduleFile(ctx.root, module)
       hits.push({
         rule: contract || "import-linter",
-        file: `${module.replaceAll(".", "/")}.py`,
-        line: Number(next[3]),
+        file,
+        line: file === null ? null : Number(next[3]),
         message: `${heading || `${module} imports ${next[2]}`} (${module} -> ${next[2]})`,
       })
     } else if (/ is not allowed to import /.test(line)) heading = line.replace(/:$/, "")
@@ -167,7 +194,7 @@ function importLinter(text: string): Hit[] {
 }
 
 function golangci(text: string): Hit[] {
-  return arr(obj(parseJson(text)).Issues).map((i) => {
+  return arr(obj(payload(text, "object")).Issues).map((i) => {
     const issue = obj(i)
     const pos = obj(issue.Pos)
     return { rule: str(issue.FromLinter), file: str(pos.Filename), line: num(pos.Line), message: str(issue.Text) }
@@ -175,7 +202,9 @@ function golangci(text: string): Hit[] {
 }
 
 function deadcode(text: string): Hit[] {
-  return arr(parseJson(text)).flatMap((p) =>
+  // deadcode prints nothing, or null, when every function is reachable.
+  if (text.trim() === "" || text.trim() === "null") return []
+  return arr(payload(text, "array")).flatMap((p) =>
     arr(obj(p).Funcs).map((f) => {
       const fn = obj(f)
       const pos = obj(fn.Position)
@@ -255,7 +284,7 @@ function lizard(text: string): Hit[] {
   return hits
 }
 
-const PARSERS: Record<ParserId, (text: string) => Hit[]> = {
+const PARSERS: Record<ParserId, (text: string, ctx: Ctx) => Hit[]> = {
   "biome-json": biome,
   "oxlint-json": oxlint,
   "eslint-json": eslint,
@@ -274,5 +303,5 @@ const PARSERS: Record<ParserId, (text: string) => Hit[]> = {
 
 /** Parse one analyzer's output into hits with root-relative files. */
 export function parseOutput(parser: ParserId, text: string, ctx: Ctx): Hit[] {
-  return PARSERS[parser](text).map((hit) => ({ ...hit, file: relativeTo(ctx.root, hit.file, ctx.cwd) }))
+  return PARSERS[parser](text, ctx).map((hit) => ({ ...hit, file: hit.file === null ? null : relativeTo(ctx.root, hit.file, ctx.cwd) }))
 }
