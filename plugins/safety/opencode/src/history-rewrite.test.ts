@@ -1054,6 +1054,20 @@ describe("ordinary git is untouched in a canonical checkout", () => {
   })
 })
 
+describe("the attached value of a file-selection option is data", () => {
+  test.each([
+    ["rg", "--glob"],
+    ["rg", "--iglob"],
+    ["rg", "--type-add"],
+    ["grep", "--include"],
+    ["grep", "--exclude"],
+    ["grep", "--include-dir"],
+    ["grep", "--exclude-dir"],
+  ])("allows %s %s=…git-filter-repo…", (program, option) => {
+    expect(run(`${program} -r ${option}='x:*git-filter-repo*' TODO .`, "canonical")).toBeUndefined()
+  })
+})
+
 describe("a lone abbreviated --target is resolved", () => {
   test("--targ into a canonical checkout is refused from a linked worktree", () => {
     expectRefused("git filter-repo --targ {canonical} --path a", "linked")
