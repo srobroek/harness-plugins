@@ -63,7 +63,7 @@ describe.skipIf(!installed("ruff"))("ruff (isolated lens profile)", () => {
     expect(only(report, "ruff").map((c) => [c.file, c.rule, c.ruleEnabledInRepo])).toEqual([["bad.py", "T201", false]])
   })
 
-  test("a gitignored file named explicitly is still excluded (--force-exclude)", async () => {
+  test("a gitignored file named explicitly is still excluded", async () => {
     const root = repo(files)
     const report = await runScan(
       { root, files: ["bad.py", "ignored.py", "suppressed.py"], lenses: ["observability"] },
@@ -78,8 +78,9 @@ describe.skipIf(!installed("golangci-lint") || !installed("go"))("golangci-lint 
     "go.mod": "module fixture\n\ngo 1.22\n",
     "main.go": "package main\n\nfunc main() {}\n\nfunc unusedBad() {}\n",
     "other.go": "package main\n\n//nolint:unused\nfunc unusedSuppressed() {}\n",
-    // The repo enables only govet; the lens profile must still run unused, and tag it as not enabled there.
-    ".golangci.yml": 'version: "2"\nlinters:\n  default: none\n  enable:\n    - govet\n',
+    // The repo enables only govet and excludes unusedBad; the lens profile must still report it, tagged as not enabled there.
+    ".golangci.yml":
+      'version: "2"\nlinters:\n  default: none\n  enable:\n    - govet\n  exclusions:\n    rules:\n      - linters: [unused]\n        text: unusedBad\n',
   }
 
   test("reports a linter the repo did not enable, but honours //nolint", async () => {
