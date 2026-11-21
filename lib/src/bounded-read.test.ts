@@ -29,6 +29,17 @@ const hostile: Record<string, (store: string) => void> = {
 }
 
 describe("readBounded", () => {
+  test("a caller-chosen cap moves the size limit in both directions", () => {
+    const store = ledger("cap", (s) => writeFileSync(join(s, "metadata.json"), "x".repeat(100)))
+    const file = join(store, "metadata.json")
+    expect(readBounded(file, 100)).toMatchObject({ kind: "text" })
+    expect(readBounded(file, 99)).toEqual({ kind: "unreadable" })
+    writeFileSync(file, "y".repeat(70_000))
+    expect(readBounded(file).kind).toBe("unreadable")
+    expect(readBounded(file, 80_000).kind).toBe("text")
+  })
+
+
   test("reads a small regular file, reports absent, and refuses everything else", () => {
     const store = ledger("plain", (s) => writeFileSync(join(s, "metadata.json"), "{}"))
     expect(readBounded(join(store, "metadata.json"))).toEqual({ kind: "text", text: "{}" })

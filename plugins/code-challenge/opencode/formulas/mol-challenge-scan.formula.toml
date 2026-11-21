@@ -43,8 +43,8 @@ description = """
 Run the code-challenge skill, phase SCAN, from run {{run_id}}. Read intake.json, then run the
 analyzers in references/scan.md for each language in the target, with an isolated lens profile
 that respects the repository's suppressions. At depth quick skip every analyzer that needs a
-build. Use challenge_scan when it is in the tool list (it ships in a later PR); otherwise run the
-commands with the shell tool, read-only. A missing analyzer is a gap; never install without asking.
+build. Run them with challenge_scan (pass staticOnly to skip the recipes that run repository or
+downloaded code). A missing analyzer is a gap; never install anything.
 """
 
 [[steps]]
