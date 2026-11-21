@@ -1,3 +1,5 @@
+## speckit [0.10.1](https://github.com/srobroek/harness-plugins/compare/speckit--v0.10.0...speckit--v0.10.1) (2026-11-21)
+
 ## speckit [0.10.0](https://github.com/srobroek/harness-plugins/compare/speckit--v0.9.1...speckit--v0.10.0) (2026-11-21)
 
 ### Features
