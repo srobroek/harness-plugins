@@ -144,7 +144,7 @@ Code Mode:
 
 | Server | Default | Command | Used by |
 | --- | --- | --- | --- |
-| `accessibility-scanner` | on | `npx -y accessibility-scanner-mcp@0.2.3` | The primary measurement route of `accessibility-audit` and `a11y-auditor`. Needs a local Google Chrome or `CHROME_PATH` |
+| `accessibility-scanner` | on | `npx -y accessibility-scanner-mcp@0.3.1` | The primary measurement route of `accessibility-audit` and `a11y-auditor`. Needs a local Google Chrome or `CHROME_PATH` |
 | `wire-dsl` | on | `npx -y @wire-dsl/mcp-server@0.1.3` | Vector wireframes for `design-prototype` |
 | `storybook` | off | remote `http://localhost:6006/mcp` | Component documentation for `design-component-truth` and `ui-review`, served while `storybook dev` runs with `@storybook/addon-mcp` |
 
