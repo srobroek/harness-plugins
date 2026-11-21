@@ -13,6 +13,7 @@ var DEFAULT_MCP_TOOLS = ["context7_*", "aws-mcp_*"];
 var MCP_TOOL_AGENTS = new Set([
   "adversarial-challenger",
   "architect",
+  "code-challenger",
   "code-reviewer",
   "coder",
   "concept",
@@ -22,6 +23,7 @@ var MCP_TOOL_AGENTS = new Set([
   "implementer",
   "implementer-high",
   "refactor",
+  "refactor-challenger",
   "researcher",
   "security-reviewer",
   "spec",
@@ -65,6 +67,7 @@ var BUILT_IN_ACTIONS = [
 var RESERVED_TOOL_PREFIXES = [
   "autopilot_",
   "cad_",
+  "challenge_",
   "claude_",
   "dep_",
   "delivery_",

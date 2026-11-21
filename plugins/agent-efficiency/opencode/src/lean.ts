@@ -27,6 +27,8 @@ export const DEFAULT_LEAN_AGENTS: ReadonlyArray<string> = [
   "explore",
   "pr-reviewer",
   "adversarial-challenger",
+  "code-challenger",
+  "refactor-challenger",
   "design-critic",
   "a11y-auditor",
   "speckit-verify",

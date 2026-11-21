@@ -21,6 +21,7 @@ export const DEFAULT_MCP_TOOLS: readonly string[] = ["context7_*", "aws-mcp_*"]
 export const MCP_TOOL_AGENTS: ReadonlySet<string> = new Set([
   "adversarial-challenger",
   "architect",
+  "code-challenger",
   "code-reviewer",
   "coder",
   "concept",
@@ -30,6 +31,7 @@ export const MCP_TOOL_AGENTS: ReadonlySet<string> = new Set([
   "implementer",
   "implementer-high",
   "refactor",
+  "refactor-challenger",
   "researcher",
   "security-reviewer",
   "spec",
@@ -87,6 +89,7 @@ const BUILT_IN_ACTIONS: readonly string[] = [
 export const RESERVED_TOOL_PREFIXES: readonly string[] = [
   "autopilot_",
   "cad_",
+  "challenge_",
   "claude_",
   "dep_",
   "delivery_",

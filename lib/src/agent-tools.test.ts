@@ -39,6 +39,8 @@ describe("parseToolsOption", () => {
     ["dep_*", "plugin"],
     ["dep_apply", "plugin"],
     ["delivery_*", "plugin"],
+    ["challenge_scan", "plugin"],
+    ["challenge_*", "plugin"],
     ["de*", "plugin"],
     ["dep*", "plugin"],
     ["*_apply", "server"],
