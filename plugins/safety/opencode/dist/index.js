@@ -3,7 +3,7 @@
 // plugins/safety/opencode/src/index.ts
 import { realpathSync as realpathSync9 } from "fs";
 import { homedir as homedir10 } from "os";
-import { isAbsolute as isAbsolute12, resolve as resolve11 } from "path";
+import { isAbsolute as isAbsolute13, resolve as resolve12 } from "path";
 import { Plugin } from "@opencode/plugin";
 import { Tool } from "@opencode/plugin/effect";
 
@@ -6059,7 +6059,19 @@ function createRedactor(env, options = DEFAULT_REDACT) {
 }
 
 // plugins/safety/opencode/src/repo-worktrees.ts
-import { realpathSync as realpathSync7 } from "fs";
+import { lstatSync as lstatSync3, readFileSync as readFileSync3, realpathSync as realpathSync7 } from "fs";
+import { dirname as dirname6, isAbsolute as isAbsolute10, join as join9, resolve as resolve10 } from "path";
+import { env as hostEnv } from "process";
+
+// lib/src/safe-git.ts
+import { devNull } from "os";
+var SAFE_GIT_ARGS = [
+  "-c",
+  "core.fsmonitor=false",
+  "-c",
+  `core.hooksPath=${devNull}`,
+  "--no-optional-locks"
+];
 
 // plugins/safety/opencode/src/scratch-dirs.ts
 import { existsSync as existsSync4, lstatSync as lstatSync2, realpathSync as realpathSync6 } from "fs";
@@ -6080,18 +6092,26 @@ function resolved(path) {
   }
   return join8(realpathSync6(at), ...missing);
 }
-function inside(resource, roots) {
+function canonicalResource(resource) {
   const expanded = resource === "~" || resource.startsWith("~/") ? join8(homedir6(), resource.slice(1)) : resource;
   if (!isAbsolute9(expanded))
-    return false;
+    return;
   const path = expanded.replace(/\/\*{1,2}$/, "");
   if (/[*?[\]{}]/.test(path) || path.split("/").includes(".."))
-    return false;
-  const real = resolved(path);
-  return roots.some((root) => {
-    const rel = relative3(resolved(root), real);
-    return rel === "" || !rel.startsWith("..") && !isAbsolute9(rel);
-  });
+    return;
+  return resolved(path);
+}
+function within2(real, root) {
+  const rel = relative3(root, real);
+  return rel === "" || !rel.startsWith("..") && !isAbsolute9(rel);
+}
+function inside(resource, roots) {
+  const real = canonicalResource(resource);
+  return real !== undefined && roots.some((root) => within2(real, resolved(root)));
+}
+function insideCanonical(resource, roots) {
+  const real = canonicalResource(resource);
+  return real !== undefined && roots.some((root) => within2(real, root));
 }
 function pinned(root, uid = () => process.getuid?.()) {
   try {
@@ -6115,31 +6135,50 @@ function allowScratch(evaluation, roots, uid) {
   if (evaluation.resources.length === 0)
     return;
   const trusted = roots.filter((root) => pinned(root, uid));
-  if (evaluation.resources.every((resource) => inside(resource, trusted)))
+  if (evaluation.resources.every((resource) => insideCanonical(resource, trusted)))
     evaluation.effect = "allow";
 }
 
 // plugins/safety/opencode/src/repo-worktrees.ts
 var GIT_TIMEOUT_MS = 3000;
 var WORKTREE_TTL_MS = 30000;
-var SAFE_GIT = ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"];
-var runGit = async (args, cwd, signal) => {
-  try {
-    const child = Bun.spawn(["git", ...SAFE_GIT, ...args], {
-      cwd,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "ignore",
-      timeout: GIT_TIMEOUT_MS,
-      killSignal: "SIGKILL",
-      ...signal ? { signal } : {}
-    });
-    const [out, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
-    return code === 0 ? out : undefined;
-  } catch {
-    return;
-  }
-};
+var LINK_FILE_MAX = 4096;
+var REPOSITORY_SELECTORS = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_CEILING_DIRECTORIES",
+  "GIT_DISCOVERY_ACROSS_FILESYSTEM"
+];
+function gitEnv(env) {
+  const clean = { ...env };
+  for (const name of REPOSITORY_SELECTORS)
+    delete clean[name];
+  return clean;
+}
+var spawnGit = (argv, options) => Bun.spawn(argv, { cwd: options.cwd, env: options.env, stdin: "ignore", stdout: "pipe", stderr: "ignore", killSignal: "SIGKILL" });
+function createGitRunner(options = {}) {
+  const spawn = options.spawn ?? spawnGit;
+  return async (args, cwd, signal) => {
+    try {
+      const child = spawn(["git", ...SAFE_GIT_ARGS, ...args], { cwd, env: gitEnv(options.env ?? hostEnv) });
+      const run = await supervise(child, {
+        timeoutMs: options.timeoutMs ?? GIT_TIMEOUT_MS,
+        ...signal ? { signal } : {},
+        ...options.graceMs === undefined ? {} : { graceMs: options.graceMs },
+        ...options.pollMs === undefined ? {} : { pollMs: options.pollMs },
+        ...options.alive ? { alive: options.alive } : {}
+      });
+      return run.kind === "exited" && run.exitCode === 0 ? run.stdout : undefined;
+    } catch {
+      return;
+    }
+  };
+}
+var runGit = createGitRunner();
 function parseWorktrees(output) {
   const paths = [];
   let current;
@@ -6157,26 +6196,104 @@ function parseWorktrees(output) {
     paths.push(current);
   return paths;
 }
+function readSmall(path) {
+  try {
+    const stat = lstatSync3(path);
+    if (!stat.isFile() || stat.size > LINK_FILE_MAX)
+      return;
+    return readFileSync3(path, "utf8");
+  } catch {
+    return;
+  }
+}
+function firstLine(text) {
+  const line = text?.split(`
+`, 1)[0]?.replace(/\r$/, "");
+  return line === "" ? undefined : line;
+}
+function linkTarget(text, prefix) {
+  const line = firstLine(text);
+  return line?.startsWith(prefix) && line.length > prefix.length ? line.slice(prefix.length) : undefined;
+}
+function belongs(root, common) {
+  try {
+    const dotgit = join9(root, ".git");
+    const stat = lstatSync3(dotgit);
+    if (stat.isDirectory())
+      return realpathSync7(dotgit) === common;
+    const named = linkTarget(readSmall(dotgit), "gitdir: ");
+    if (named === undefined)
+      return false;
+    const admin = realpathSync7(isAbsolute10(named) ? named : resolve10(root, named));
+    if (dirname6(admin) !== join9(common, "worktrees"))
+      return false;
+    const back = firstLine(readSmall(join9(admin, "gitdir")));
+    if (back === undefined)
+      return false;
+    return realpathSync7(isAbsolute10(back) ? back : resolve10(admin, back)) === dotgit;
+  } catch {
+    return false;
+  }
+}
+function unchanged(root, uid) {
+  try {
+    const stat = lstatSync3(root.path);
+    return !stat.isSymbolicLink() && stat.dev === root.dev && stat.ino === root.ino && pinned(root.path, uid);
+  } catch {
+    return false;
+  }
+}
 function createWorktreeLister(options = {}) {
   const run = options.run ?? runGit;
   const ttlMs = options.ttlMs ?? WORKTREE_TTL_MS;
   const now = options.now ?? Date.now;
   const cache = new Map;
-  return async (directory, signal) => {
-    const hit = cache.get(directory);
-    if (hit && now() - hit.at < ttlMs)
-      return hit.roots;
-    const output = await run(["worktree", "list", "--porcelain", "-z"], directory, signal);
-    if (output === undefined)
-      return [];
+  const inflight = new Map;
+  async function load(directory, signal) {
+    const commonOut = await run(["rev-parse", "--path-format=absolute", "--git-common-dir"], directory, signal);
+    const listed = commonOut === undefined ? undefined : await run(["worktree", "list", "--porcelain", "-z"], directory, signal);
+    if (commonOut === undefined || listed === undefined)
+      return;
+    let common;
+    try {
+      common = realpathSync7(commonOut.trim());
+    } catch {
+      return;
+    }
     const roots = [];
-    for (const path of parseWorktrees(output)) {
+    for (const path of parseWorktrees(listed)) {
       try {
-        roots.push(realpathSync7(path));
+        const real = realpathSync7(path);
+        if (real === "/" || !pinned(real, options.uid) || !belongs(real, common))
+          continue;
+        const stat = lstatSync3(real);
+        roots.push({ path: real, dev: stat.dev, ino: stat.ino });
       } catch {}
     }
-    cache.set(directory, { at: now(), roots });
-    return roots;
+    return { at: now(), roots };
+  }
+  return async (directory, signal) => {
+    let entry = cache.get(directory);
+    if (entry !== undefined && now() - entry.at >= ttlMs) {
+      cache.delete(directory);
+      entry = undefined;
+    }
+    if (entry === undefined) {
+      let pending = inflight.get(directory);
+      if (pending === undefined) {
+        pending = load(directory, signal).finally(() => inflight.delete(directory));
+        inflight.set(directory, pending);
+      }
+      entry = await pending;
+      if (entry === undefined)
+        return [];
+      cache.set(directory, entry);
+    }
+    if (!entry.roots.every((root) => unchanged(root, options.uid))) {
+      cache.delete(directory);
+      return [];
+    }
+    return entry.roots.map((root) => root.path);
   };
 }
 function allowWorktreeReads(evaluation, roots) {
@@ -6184,13 +6301,13 @@ function allowWorktreeReads(evaluation, roots) {
     return;
   if (evaluation.resources.length === 0 || roots.length === 0)
     return;
-  if (evaluation.resources.every((resource) => inside(resource, roots)))
+  if (evaluation.resources.every((resource) => insideCanonical(resource, roots)))
     evaluation.effect = "allow";
 }
 
 // plugins/safety/opencode/src/secret-store.ts
 import { homedir as homedir7 } from "os";
-import { dirname as dirname6, isAbsolute as isAbsolute10, resolve as resolve10 } from "path";
+import { dirname as dirname7, isAbsolute as isAbsolute11, resolve as resolve11 } from "path";
 var STORE_ACTION = "safety_secret_store";
 var COMMAND_ACTION = "safety_secret_command";
 var STDOUT_CAP = 64 * 1024;
@@ -6475,7 +6592,7 @@ function readCapped(stream, cap, onOverflow) {
   })();
   return { done, cancel };
 }
-function within2(promise, ms) {
+function within3(promise, ms) {
   let timer;
   const late = new Promise((resolve) => {
     timer = setTimeout(() => resolve("late"), ms);
@@ -6507,7 +6624,7 @@ var runChild = async (argv, options) => {
     } catch {}
   }
   const outcome = await run;
-  let captured = capture === undefined ? undefined : await within2(capture.done, EXIT_GRACE_MS);
+  let captured = capture === undefined ? undefined : await within3(capture.done, EXIT_GRACE_MS);
   if (options.reap)
     killChild(child, true);
   if (captured === "late") {
@@ -6572,7 +6689,7 @@ async function obtain(request, deps) {
   const source = request.source;
   if (source.kind === "generate")
     return generateSecret(source.charset, source.length, deps.random);
-  const cwd = source.cwd === undefined ? deps.directory : isAbsolute10(source.cwd) ? source.cwd : resolve10(deps.directory, source.cwd);
+  const cwd = source.cwd === undefined ? deps.directory : isAbsolute11(source.cwd) ? source.cwd : resolve11(deps.directory, source.cwd);
   const program = source.argv[0];
   const resolved = program.includes("/") ? program : onPath(deps, program, cwd);
   await deps.askCommand(source.argv, cwd);
@@ -6599,7 +6716,7 @@ function configEnvironmentRefusal(env, home) {
     if (env[name] !== undefined)
       return `${name} is set`;
   const xdg = env.XDG_CONFIG_HOME;
-  if (xdg !== undefined && xdg !== "" && resolve10(xdg) !== resolve10(home, ".config"))
+  if (xdg !== undefined && xdg !== "" && resolve11(xdg) !== resolve11(home, ".config"))
     return "XDG_CONFIG_HOME is not ~/.config";
   return;
 }
@@ -6611,9 +6728,9 @@ async function storeSecret(input, deps) {
   const overridden = configEnvironmentRefusal(deps.env, deps.home ?? homedir7());
   if (overridden !== undefined)
     fail(`${overridden}, so fnox may read a config this check did not; unset it and retry`);
-  const requested = resolve10(deps.directory, request.config ?? "fnox.toml");
+  const requested = resolve11(deps.directory, request.config ?? "fnox.toml");
   const file = deps.realpath(requested) ?? fail(`fnox config ${requested} does not exist; create it first`);
-  const external = externalDirectories([dirname6(file)], deps.roots);
+  const external = externalDirectories([dirname7(file)], deps.roots);
   if (external.length > 0)
     await deps.askExternal(external);
   const before = deps.snapshot(file) ?? fail(`could not read the fnox config ${file}, so the provider is uncertain`);
@@ -6669,14 +6786,14 @@ async function storeSecret(input, deps) {
 
 // plugins/safety/opencode/src/skill-references.ts
 import { homedir as homedir8 } from "os";
-import { basename as basename5, dirname as dirname7, relative as relative4 } from "path";
+import { basename as basename5, dirname as dirname8, relative as relative4 } from "path";
 var READ_ONLY_TOOLS = new Set(["read", "glob", "grep", "list"]);
 function skillDirectories(skills, home = homedir8()) {
   const dirs = new Set;
   for (const skill of skills) {
     if (typeof skill.path !== "string" || !skill.path.startsWith("/") || basename5(skill.path) !== "SKILL.md")
       continue;
-    const dir = dirname7(skill.path);
+    const dir = dirname8(skill.path);
     const toHome = relative4(dir, home);
     if (dir === "/" || !(toHome === ".." || toHome.startsWith("../")))
       continue;
@@ -6702,7 +6819,7 @@ function allowSkillReads(evaluation, dirs) {
 // plugins/safety/opencode/src/steering-dirs.ts
 import { realpathSync as realpathSync8 } from "fs";
 import { homedir as homedir9 } from "os";
-import { isAbsolute as isAbsolute11, join as join9 } from "path";
+import { isAbsolute as isAbsolute12, join as join10 } from "path";
 var DEFAULT_STEERING_DIRS = ["~/.config/opencode/steering"];
 function readSteeringDirs(raw) {
   if (!Array.isArray(raw))
@@ -6712,8 +6829,8 @@ function readSteeringDirs(raw) {
 function steeringRoots(dirs, home = homedir9(), uid) {
   const roots = [];
   for (const dir of dirs) {
-    const expanded = dir === "~" || dir.startsWith("~/") ? join9(home, dir.slice(1)) : dir;
-    if (!isAbsolute11(expanded))
+    const expanded = dir === "~" || dir.startsWith("~/") ? join10(home, dir.slice(1)) : dir;
+    if (!isAbsolute12(expanded))
       continue;
     try {
       const real = realpathSync8(expanded);
@@ -6728,7 +6845,7 @@ function allowSteeringReads(evaluation, roots) {
     return;
   if (evaluation.resources.length === 0 || roots.length === 0)
     return;
-  if (evaluation.resources.every((resource) => inside(resource, roots)))
+  if (evaluation.resources.every((resource) => insideCanonical(resource, roots)))
     evaluation.effect = "allow";
 }
 
@@ -6789,7 +6906,7 @@ function readOptions(options) {
 function shellCwd(workdir, sessionDirectory) {
   if (workdir === undefined)
     return sessionDirectory;
-  return isAbsolute12(workdir) ? workdir : resolve11(sessionDirectory, workdir);
+  return isAbsolute13(workdir) ? workdir : resolve12(sessionDirectory, workdir);
 }
 function applyDecision(evaluation, decision) {
   if (decision === undefined || evaluation.effect === "deny")
