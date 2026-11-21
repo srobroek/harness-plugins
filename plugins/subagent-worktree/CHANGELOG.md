@@ -1,3 +1,9 @@
+## subagent-worktree [0.6.3](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.6.2...subagent-worktree--v0.6.3) (2026-11-21)
+
+### Bug Fixes
+
+* **subagent-worktree:** harden automatic git calls against hostile repo config ([#79](https://github.com/srobroek/harness-plugins/issues/79)) ([b05559b](https://github.com/srobroek/harness-plugins/commit/b05559bf17a7777a4236ccdd6642c2fad06e6bc1))
+
 ## subagent-worktree [0.6.2](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.6.1...subagent-worktree--v0.6.2) (2026-11-21)
 
 ### Bug Fixes
