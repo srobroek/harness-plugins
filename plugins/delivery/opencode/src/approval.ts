@@ -165,8 +165,16 @@ export function gitlabApproval(approvals: unknown, head: string): Precondition {
  * carries the head sha (an approval without one may survive pushes) and an approver holds
  * Developer access or above. `access` maps user id to access level. Pure.
  */
-export function gitlabTrust(approvals: unknown, head: string, access: Readonly<Record<number, number | null | undefined>>): Trust {
+export function gitlabTrust(
+  approvals: unknown,
+  head: string,
+  access: Readonly<Record<number, number | null | undefined>>,
+  resetOnPush: boolean | null,
+): Trust {
   if (own(approvals, "approved") !== true) return { trusted: false, reason: "approval: observed approved false" }
+  // An approval that survives pushes says nothing about which commit was approved, whatever sha the MR carries now.
+  if (resetOnPush !== true)
+    return { trusted: false, reason: "approval: the project does not provably reset approvals on push, so the approval is not bound to the head" }
   const sha = str(approvals, "sha")?.trim().toLowerCase()
   if (sha !== head) return { trusted: false, reason: `approval: observed sha ${sha ?? "none"}, expected an approval bound to head ${head}` }
   const by = own(approvals, "approved_by")
@@ -238,7 +246,9 @@ export async function readApproval(run: CliRunner, bound: Bound): Promise<Approv
     const level = read.ok ? own(read.value, "access_level") : null
     access[id] = typeof level === "number" ? level : null
   }
-  return { ...result, trusted: gitlabTrust(payload.value, bound.head, access) }
+  const settings = await readJson(run, ["glab", "api", `projects/${project}/approvals`, ...host], bound)
+  const reset = settings.ok ? own(settings.value, "reset_approvals_on_push") : undefined
+  return { ...result, trusted: gitlabTrust(payload.value, bound.head, access, typeof reset === "boolean" ? reset : null) }
 }
 
 /** Read and judge the checks for the bound head. */

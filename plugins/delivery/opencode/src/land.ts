@@ -1474,17 +1474,17 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
   // to. Only a merge needs them: an already-MERGED request is proved, not approved.
   const preconditions: { approval?: Record<string, unknown>; checks?: Record<string, unknown> } = {}
   let approvalTrusted = false
+  const bound = {
+    forge,
+    cliRepo,
+    nameWithOwner,
+    forgeHost,
+    number,
+    head,
+    env: forgeCommandEnv,
+    timeoutMs: FORGE_TIMEOUT_MS,
+  }
   if (!alreadyMerged && (params.requireApproval === true || params.requireGreenChecks === true)) {
-    const bound = {
-      forge,
-      cliRepo,
-      nameWithOwner,
-      forgeHost,
-      number,
-      head,
-      env: forgeCommandEnv,
-      timeoutMs: FORGE_TIMEOUT_MS,
-    }
     if (params.requireApproval === true) {
       const approval = await readApproval(run, bound)
       if (!approval.ok) return refuse(`${approval.reason}; no merge was issued and no receipt was written`)
@@ -1552,14 +1552,25 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
   // Every read above passed; nothing has been written yet.
   const unasked = interrupted("before authorization; nothing was merged or written")
   if (unasked !== null) return unasked
+  const gated = landAuthorizationGated(params, { alreadyMerged, approvalTrusted })
   await deps.authorize?.({
     resource: `${nameWithOwner}#${number}`,
     forge,
     head,
     merge: alreadyMerged ? null : landMethod,
     setupAutoDelete: params.setupAutoDelete === true,
-    gated: landAuthorizationGated(params, { alreadyMerged, approvalTrusted }),
+    gated,
   })
+  // A prompt-free call rested on the approval read above. Each mutation re-reads it, so an approval
+  // dismissed, or an approver demoted, after the gate decision cannot ride a merge that nobody confirmed.
+  // A call a person confirmed is not re-judged. Null means still trusted (or not applicable).
+  const stillTrusted = async (): Promise<string | null> => {
+    if (!gated || alreadyMerged) return null
+    const again = await readApproval(run, bound)
+    return again.ok && again.trusted?.trusted === true
+      ? null
+      : `the approval is no longer trusted for ${head} (${again.ok ? (again.trusted?.trusted === false ? again.trusted.reason : "not provable") : again.reason}); the call ran without a prompt on that approval, so nothing was merged or enqueued and no receipt was written. Call delivery_land again to be asked`
+  }
 
   const notes: string[] = []
   if (planGated) {
@@ -1760,6 +1771,8 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
         }
         const unenqueued = interrupted("before the enqueue; nothing was enqueued and no receipt was written")
         if (unenqueued !== null) return unenqueued
+        const untrustedEnqueue = await stillTrusted()
+        if (untrustedEnqueue !== null) return refuse(untrustedEnqueue)
         // The intent is recorded before the mutation is sent: GitHub can accept it and the answer
         // still be lost, and without the record a retry would read that as "never enqueued".
         const generation = newGeneration()
@@ -1858,6 +1871,8 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
     }
     const unmerged = interrupted("before the merge; no merge was issued and no receipt was written")
     if (unmerged !== null) return unmerged
+    const untrustedMerge = await stillTrusted()
+    if (untrustedMerge !== null) return refuse(untrustedMerge)
     merging = true
     const mergeFailure = cliFailure(
       mergeArgv,

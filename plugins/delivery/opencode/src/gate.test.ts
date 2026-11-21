@@ -87,6 +87,12 @@ describe("createGateRegistry", () => {
 
 describe("landAuthorizationGated", () => {
   const gated = { expectHeadSha: HEAD, requireApproval: true, requireGreenChecks: true }
+  test("a call that also writes the deletion-on-merge setting is never exempt", () => {
+    const withSetting = { ...gated, setupAutoDelete: true }
+    expect(landAuthorizationGated(withSetting, { alreadyMerged: true, approvalTrusted: false })).toBe(false)
+    expect(landAuthorizationGated(withSetting, { alreadyMerged: false, approvalTrusted: true })).toBe(false)
+    expect(landAuthorizationGated({ ...gated, setupAutoDelete: false }, { alreadyMerged: true, approvalTrusted: false })).toBe(true)
+  })
   test("needs the gated input and either a trusted approval or an already merged request", () => {
     expect(landAuthorizationGated(gated, { alreadyMerged: false, approvalTrusted: true })).toBe(true)
     expect(landAuthorizationGated(gated, { alreadyMerged: true, approvalTrusted: false })).toBe(true)

@@ -148,6 +148,14 @@ export type Answers = {
   fetch?: CliResult[]
   /** What the approval read (`gh pr view --json author,reviews,comments` or the GitLab approvals API) answers. */
   approval?: CliResult
+  /** The approval read once per entry, in call order; the last repeats. Wins over `approval`. */
+  approvals?: CliResult[]
+  /** The reviewer permission read once per entry, in call order; the last repeats. Wins over `permission`. */
+  permissions?: CliResult[]
+  /** GitLab `projects/<id>/approvals` (the project's approval settings); resets on push by default. */
+  projectApprovals?: CliResult
+  /** GitLab `projects/<id>/members/all/<user>`; Developer access by default. */
+  member?: CliResult
   /** What the branch rules read (`gh api repos/<o>/<r>/rules/branches/<base>`) answers; no rules by default. */
   rules?: CliResult
   /** What each merge queue state read (`gh api graphql` query) answers, in call order; the last repeats. */
@@ -201,6 +209,10 @@ export function runner(answers: Answers, canonical: string): { run: CliRunner; c
   const views = [...(answers.prView ?? [])]
   const present = [...(answers.present ?? [])]
   const fetches = [...(answers.fetch ?? [])]
+  const approvals = [...(answers.approvals ?? [])]
+  const permissions = [...(answers.permissions ?? [])]
+  /** The next scripted answer; the last one repeats. */
+  const next = (queue: CliResult[]): CliResult | undefined => (queue.length > 1 ? queue.shift() : queue[0])
   const states = [...(answers.queueStates ?? [])]
   let stateReads = 0
   const calls: Call[] = []
@@ -232,10 +244,10 @@ export function runner(answers: Answers, canonical: string): { run: CliRunner; c
     if (command === "git remote") return completed("origin\n")
     if (command === "git worktree list --porcelain") return completed(answers.worktrees ?? "")
     if (argv[1] === "pr" && argv[2] === "view" && argv.includes("author,reviews,comments"))
-      return answers.approval ?? completed("{}")
+      return next(approvals) ?? answers.approval ?? completed("{}")
     if (argv[1] === "api" && argv[2] === "user") return answers.viewer ?? completed(JSON.stringify({ login: "author" }))
     if (argv[1] === "api" && argv.some((part) => part.includes("/collaborators/")))
-      return answers.permission ?? completed(JSON.stringify({ permission: "write", role_name: "write" }))
+      return next(permissions) ?? answers.permission ?? completed(JSON.stringify({ permission: "write", role_name: "write" }))
     if (argv[1] === "api" && argv.some((part) => part.includes("/check-runs")))
       return answers.checkRuns ?? completed(JSON.stringify({ total_count: 0, check_runs: [] }))
     if (argv[1] === "api" && argv.some((part) => /\/commits\/[0-9a-f]+\/status/.test(part)))
@@ -268,8 +280,12 @@ export function runner(answers: Answers, canonical: string): { run: CliRunner; c
       const during = answers.duringQueueState?.(stateReads++)
       return during === undefined ? state : during.then(() => state)
     }
+    if (argv[1] === "api" && argv.some((part) => part.includes("/merge_requests/") && part.endsWith("/approvals")))
+      return next(approvals) ?? answers.approval ?? completed("{}")
     if (argv[1] === "api" && argv.some((part) => part.endsWith("/approvals")))
-      return answers.approval ?? completed("{}")
+      return answers.projectApprovals ?? completed(JSON.stringify({ reset_approvals_on_push: true }))
+    if (argv[1] === "api" && argv.some((part) => part.includes("/members/all/")))
+      return answers.member ?? completed(JSON.stringify({ access_level: 30 }))
     if (argv[1] === "api" && argv.some((part) => /\/merge_requests\/\d+$/.test(part)))
       return answers.checks ?? completed("{}")
     if (argv[1] === "pr" && argv[2] === "view") return views.shift() ?? completed(mergedGithubPr())

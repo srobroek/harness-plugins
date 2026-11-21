@@ -29,6 +29,8 @@ export function landGate(input: unknown): boolean {
  * `requireGreenChecks` set, a red or unreadable check refuses the call before this point.
  */
 export function landAuthorizationGated(input: unknown, proof: { alreadyMerged: boolean; approvalTrusted: boolean }): boolean {
+  // A repository-wide setting write is not covered by any approval or receipt proof.
+  if (typeof input === "object" && input !== null && (input as Record<string, unknown>).setupAutoDelete === true) return false
   return landGate(input) && (proof.alreadyMerged || proof.approvalTrusted)
 }
 

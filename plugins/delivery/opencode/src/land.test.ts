@@ -2937,6 +2937,96 @@ describe("delivery_land approval and checks preconditions", () => {
       expect(await gatedFlag(trusted, { ...REVIEWED, requireApproval: true })).toBe(false)
       expect(await gatedFlag(trusted, { ...REVIEWED, requireGreenChecks: true })).toBe(false)
     })
+
+    test("an already MERGED request is exempt only when it writes nothing but the receipt", async () => {
+      const merged = { prView: [completed(mergedGithubPr())] }
+      expect(await gatedFlag(merged)).toBe(true)
+      expect(await gatedFlag(merged, { ...GATED, setupAutoDelete: true })).toBe(false)
+    })
+
+    test("a call that would write the deletion-on-merge setting keeps the prompt", async () => {
+      const trusted = { approval: review("reviewer"), permission: permission("write") }
+      expect(await gatedFlag(trusted, { ...GATED, setupAutoDelete: true })).toBe(false)
+    })
+
+    describe("on GitLab", () => {
+      const gitlabApprovals = completed(
+        JSON.stringify({ approved: true, sha: HEAD_OID, approved_by: [{ user: { id: 5, username: "rev" } }] }),
+      )
+      const pipeline = completed(JSON.stringify({ head_pipeline: { id: 1, status: "success", sha: HEAD_OID } }))
+      const open = { prView: [completed(gitlabMr({ state: "opened", merge_commit_sha: null })), completed(gitlabMr())] }
+      const base = { remoteUrl: "git@gitlab.com:group/project.git", ...open, approval: gitlabApprovals, checks: pipeline }
+      const flag = (answers: Answers) => gatedFlag({ ...base, ...answers }, { ...GATED, pr: 12 })
+
+      test("an approval bound to the head on a project that resets approvals on push satisfies it", async () => {
+        expect(await flag({})).toBe(true)
+      })
+
+      test("a project whose approvals survive pushes keeps the prompt", async () => {
+        const settings = completed(JSON.stringify({ reset_approvals_on_push: false }))
+        expect(await flag({ projectApprovals: settings })).toBe(false)
+      })
+
+      test("approval settings that cannot be read keep the prompt", async () => {
+        expect(await flag({ projectApprovals: completed("", 1, "403 Forbidden") })).toBe(false)
+      })
+
+      test("an approver below Developer access keeps the prompt", async () => {
+        expect(await flag({ member: completed(JSON.stringify({ access_level: 20 })) })).toBe(false)
+      })
+    })
+  })
+
+  describe("the trust is re-read immediately before the mutation", () => {
+    const GATED = { ...REVIEWED, requireApproval: true, requireGreenChecks: true }
+    const review = (login: string) =>
+      completed(JSON.stringify({ author: { login: "author" }, reviews: [{ state: "APPROVED", author: { login }, commit: { oid: HEAD_OID } }], comments: [] }))
+    const dismissed = completed(JSON.stringify({ author: { login: "author" }, reviews: [{ state: "DISMISSED", author: { login: "reviewer" }, commit: { oid: HEAD_OID } }], comments: [] }))
+    const run = async (answers: Answers) => {
+      const { canonical, receipts } = repository()
+      mkdirSync(join(canonical, ".beads"))
+      const fixture = runner({ prView: [completed(githubPr()), completed(mergedGithubPr())], checkRuns: greenRuns, ...answers }, canonical)
+      const outcome = await landPullRequest(
+        { pr: 470, ...GATED },
+        {
+          run: fixture.run,
+          cwd: canonical,
+          now: () => NOW,
+          receiptsDirectory: receipts,
+          env: {},
+          // A gated call passes without a person; an ungated one is answered by the test as "confirmed".
+          authorize: async () => {},
+        },
+      )
+      return { outcome, calls: fixture.calls }
+    }
+
+    test("an approval dismissed between the gate and the merge stops the prompt-free merge", async () => {
+      const { outcome, calls } = await run({ approvals: [review("reviewer"), dismissed] })
+      expect(outcome.ok).toBe(false)
+      if (outcome.ok) return
+      expect(outcome.reason).toContain("no longer")
+      expect(calls.some((call) => merged(call.argv))).toBe(false)
+    })
+
+    test("a reviewer whose write access is revoked between the gate and the merge stops it", async () => {
+      const revoked = completed(JSON.stringify({ permission: "read", role_name: "read" }))
+      const writer = completed(JSON.stringify({ permission: "write", role_name: "write" }))
+      const { outcome, calls } = await run({ approval: review("reviewer"), permissions: [writer, revoked] })
+      expect(outcome.ok).toBe(false)
+      expect(calls.some((call) => merged(call.argv))).toBe(false)
+    })
+
+    test("a call that was prompted is not re-judged: the person confirmed it", async () => {
+      const { outcome, calls } = await run({ approvals: [review("drive-by"), dismissed], permission: completed(JSON.stringify({ permission: "read", role_name: "read" })) })
+      expect(outcome.ok).toBe(true)
+      expect(calls.filter((call) => merged(call.argv))).toHaveLength(1)
+    })
+
+    test("a still-trusted approval merges as before", async () => {
+      const { outcome } = await run({ approval: review("reviewer") })
+      expect(outcome.ok).toBe(true)
+    })
   })
 })
 

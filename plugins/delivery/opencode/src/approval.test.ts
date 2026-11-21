@@ -123,15 +123,19 @@ describe("githubPermissionAllows", () => {
 
 describe("gitlabTrust", () => {
   const approvals = (sha?: string) => ({ approved: true, ...(sha === undefined ? {} : { sha }), approved_by: [{ user: { id: 5, username: "you" } }] })
-  test("needs an approval bound to the head sha and an approver of Developer level or above", () => {
-    expect(gitlabTrust(approvals(HEAD), HEAD, { 5: 30 }).trusted).toBe(true)
-    expect(gitlabTrust(approvals(HEAD), HEAD, { 5: 40 }).trusted).toBe(true)
-    expect(gitlabTrust(approvals(HEAD), HEAD, { 5: 20 }).trusted).toBe(false)
-    expect(gitlabTrust(approvals(HEAD), HEAD, {}).trusted).toBe(false)
+  test("needs a head-bound approval, a project that resets approvals on push, and an approver of Developer level or above", () => {
+    expect(gitlabTrust(approvals(HEAD), HEAD, { 5: 30 }, true).trusted).toBe(true)
+    expect(gitlabTrust(approvals(HEAD), HEAD, { 5: 40 }, true).trusted).toBe(true)
+    expect(gitlabTrust(approvals(HEAD), HEAD, { 5: 20 }, true).trusted).toBe(false)
+    expect(gitlabTrust(approvals(HEAD), HEAD, {}, true).trusted).toBe(false)
+  })
+  test("approvals that survive pushes, or whose setting cannot be read, do not prove the approved commit", () => {
+    expect(gitlabTrust(approvals(HEAD), HEAD, { 5: 40 }, false).trusted).toBe(false)
+    expect(gitlabTrust(approvals(HEAD), HEAD, { 5: 40 }, null).trusted).toBe(false)
   })
   test("an approval without a sha is not bound to the head", () => {
-    expect(gitlabTrust(approvals(), HEAD, { 5: 40 }).trusted).toBe(false)
-    expect(gitlabTrust(approvals(OLD), HEAD, { 5: 40 }).trusted).toBe(false)
+    expect(gitlabTrust(approvals(), HEAD, { 5: 40 }, true).trusted).toBe(false)
+    expect(gitlabTrust(approvals(OLD), HEAD, { 5: 40 }, true).trusted).toBe(false)
   })
 })
 
