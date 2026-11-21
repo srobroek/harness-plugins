@@ -1714,11 +1714,16 @@ describe("autopilot_review", () => {
       const held = new Promise<void>((resolve) => {
         release = resolve
       })
+      let reachedHold: () => void = () => {}
+      const reached = new Promise<void>((resolve) => {
+        reachedHold = resolve
+      })
       // Two entries a page, so the three pointers take two pages of the global scan.
       storage.scan = async (input) => {
         if (input.prefix !== "review-session/") return original(input)
         if (input.after !== undefined && secondPage === "fail") throw new Error("page two offline")
         if (input.after !== undefined && secondPage === "hold") {
+          reachedHold()
           await held
           throw new Error("page two offline")
         }
@@ -1731,8 +1736,7 @@ describe("autopilot_review", () => {
       // The retry reads a good first page and has not reached the end: the error must still show.
       secondPage = "hold"
       const retry = review()
-      await Promise.resolve()
-      await new Promise((resolve) => setTimeout(resolve, 20))
+      await reached // page 1 was read and the retry is held on page 2
       expect((await status({ action: "status" })).storageErrors).toEqual(global)
       release()
       expect(await retry).toMatch(/^refused: .*storage/)
