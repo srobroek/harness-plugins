@@ -1704,6 +1704,45 @@ describe("autopilot_review", () => {
       expect(out.storageErrors).toEqual([expect.stringContaining("(scan:review-session/)")])
     })
 
+    test("a failed later page of a scan stays reported until that scan next runs to the end", async () => {
+      await armed({ allow: ["self-review"] })
+      seedOld(3)
+      const storage = fake.context.storage as unknown as { scan: (input: { prefix: string; after?: string; limit?: number }) => Promise<unknown> }
+      const original = storage.scan
+      let secondPage: "fail" | "hold" | "work" = "fail"
+      let release: () => void = () => {}
+      const held = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      // Two entries a page, so the three pointers take two pages of the global scan.
+      storage.scan = async (input) => {
+        if (input.prefix !== "review-session/") return original(input)
+        if (input.after !== undefined && secondPage === "fail") throw new Error("page two offline")
+        if (input.after !== undefined && secondPage === "hold") {
+          await held
+          throw new Error("page two offline")
+        }
+        return original({ ...input, limit: 2 })
+      }
+      const global = [expect.stringContaining("(scan:review-session/)")]
+      expect(await review()).toMatch(/^refused: .*storage/)
+      expect((await status({ action: "status" })).storageErrors).toEqual(global)
+
+      // The retry reads a good first page and has not reached the end: the error must still show.
+      secondPage = "hold"
+      const retry = review()
+      await Promise.resolve()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect((await status({ action: "status" })).storageErrors).toEqual(global)
+      release()
+      expect(await retry).toMatch(/^refused: .*storage/)
+
+      // Only a scan that runs to the end clears it.
+      secondPage = "work"
+      expect(JSON.parse(await review())).toMatchObject({ started: true })
+      expect((await status({ action: "status" })).storageErrors).toBeUndefined()
+    })
+
     test("a merge refuses when the plugin review record cannot be read, even with a valid GitHub approval", async () => {
       await armed({ allow: ["merge", "self-review"] })
       await review()
