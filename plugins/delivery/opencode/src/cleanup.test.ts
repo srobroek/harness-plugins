@@ -10,6 +10,7 @@ import {
   writeLanding,
 } from "@srobroek/opencode-lib/worktree-claims"
 import { lockedWrite, lockFile, readHolds, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
+import { setupDelivery } from "./index.ts"
 import { authorizeExplicit, createPendingCleanup, retryAgentKey } from "./pending-cleanup.ts"
 
 // Fixture setup creates several real Git repositories and measured about 20s under full-suite load;
@@ -4589,5 +4590,111 @@ describe("delivery_cleanup round 2", () => {
     const { result } = await invoke(f)
     if (!result.ok) throw new Error(result.reason)
     expect(result.localRefDeleted).toBe(true)
+  })
+})
+
+/**
+ * The real plugin (`setupDelivery`) and the real `cleanupDelivery`, over a scripted forge and
+ * ledger and real Git. The host resolves every permission with `rule`, runs the evaluate hook as
+ * OpenCode does, and records who asked and what the hook left of the effect.
+ */
+describe("delivery's permission hook through setupDelivery, with the real cleanup", () => {
+  type Check = { action: string; agent: unknown; resources: string[]; effect: string }
+
+  async function host(f: Fixture, rule: "allow" | "deny", autoCleanup: boolean) {
+    const checks: Check[] = []
+    const fake: ReturnType<typeof createFakeContext> = createFakeContext({
+      directory: f.main,
+      options: { receiptsDirectory: join(f.root, "agent", "receipts"), autoCleanup },
+      assert: async (call) => {
+        const evaluation = { action: call.action, resources: call.resources, effect: rule as string, sessionID: call.sessionID }
+        if (rule !== "deny") await fake.fire.permission("evaluate", evaluation)
+        checks.push({ action: call.action, agent: call.agent, resources: [...call.resources], effect: evaluation.effect })
+        if (evaluation.effect === "deny") throw new Error(`${call.action} denied`)
+      },
+    })
+    const stop = await setupDelivery(fake.context, {
+      debounceMs: 1,
+      now: () => NOW + 10,
+      cleanup: { run: stripped(runner(f).run), now: () => NOW + 10, bounds: HEAVY_FIXTURE_BOUNDS },
+    })
+    return { fake, checks, stop }
+  }
+
+  /** Wait (bounded) for what the background retry produces. */
+  async function until(condition: () => boolean): Promise<void> {
+    for (let waited = 0; waited < 20_000 && !condition(); waited += 25) await new Promise((done) => setTimeout(done, 25))
+  }
+
+  /** A background retry of a landed receipt, attributed in plugin storage to `shepherd`. */
+  async function retry(rule: "allow" | "deny") {
+    const f = fixture(`hook-retry-${rule}`)
+    const { fake, checks, stop } = await host(f, rule, true)
+    const common = repositoryContext(f.main)?.commonDir as string
+    const worktree = realpathSync(f.linked)
+    fake.storage.set(retryAgentKey(f.receipt.receiptId), {
+      receiptId: f.receipt.receiptId,
+      agent: "shepherd",
+      worktree,
+      headRefOid: f.receipt.pr.headRefOid,
+    })
+    writeLanding(common, { receiptId: f.receipt.receiptId, worktree: f.linked, headRefOid: f.head, sessionID: "ses_lead", landedAt: 1 })
+    fake.emit({ type: "session.idle", data: { sessionID: "ses_lead" } })
+    const denied = () => {
+      const landing = readLanding(common, f.receipt.receiptId)
+      return landing.kind === "present" && landing.value.denied !== undefined
+    }
+    await until(() => (rule === "allow" ? !existsSync(f.linked) : denied()))
+    await stop()
+    return { f, checks, worktree, denied: denied() }
+  }
+
+  test("a background retry asks the host as the stored agent, for the physical worktree, as a gated cleanup that skips the prompt", async () => {
+    const { f, checks, worktree } = await retry("allow")
+    expect(checks).toEqual([{ action: "delivery_cleanup", agent: "shepherd", resources: [worktree], effect: "allow" }])
+    expect(existsSync(f.linked)).toBe(false)
+  })
+
+  test("a deny rule stops the background retry: nothing is removed and the denial is recorded", async () => {
+    const { f, checks, worktree, denied } = await retry("deny")
+    expect(checks).toEqual([{ action: "delivery_cleanup", agent: "shepherd", resources: [worktree], effect: "deny" }])
+    expect(existsSync(f.linked)).toBe(true)
+    expect(denied).toBe(true)
+  })
+
+  async function explicit(rule: "allow" | "deny", prepare: (f: Fixture) => void = () => {}) {
+    const f = fixture(`hook-explicit-${rule}`)
+    prepare(f)
+    const { fake, checks, stop } = await host(f, rule, false)
+    const execute = fake.tools.get("delivery_cleanup")?.execute as (input: unknown, context: unknown) => Promise<{ output: { ok: boolean } }>
+    const outcome = await execute(
+      { receipt: f.receiptPath },
+      { sessionID: "ses_lead", agent: "builder", messageID: "msg_1", id: "call_1", signal: new AbortController().signal },
+    ).then(
+      (result) => (result.output.ok ? "removed" : "refused"),
+      (error: Error) => error.message,
+    )
+    await stop()
+    return { f, checks, outcome }
+  }
+
+  test("an explicit delivery_cleanup asks as the calling agent, gated for a receipt it verified, and removes the worktree", async () => {
+    const { f, checks, outcome } = await explicit("allow")
+    expect(outcome).toBe("removed")
+    expect(checks.map((check) => [check.action, check.agent, check.effect])).toEqual([["delivery_cleanup", "builder", "allow"]])
+    expect(checks[0]?.resources.map((resource) => resource.endsWith("linked worktree"))).toEqual([true])
+    expect(existsSync(f.linked)).toBe(false)
+  })
+
+  test("an explicit delivery_cleanup whose worktree is not bound to the receipt keeps the prompt", async () => {
+    const { checks } = await explicit("allow", (f) => git(f.linked, ["checkout", "-q", "--detach"]))
+    expect(checks.map((check) => [check.action, check.agent, check.effect])).toEqual([["delivery_cleanup", "builder", "ask"]])
+  })
+
+  test("a deny rule stops an explicit delivery_cleanup: nothing is removed", async () => {
+    const { f, checks, outcome } = await explicit("deny")
+    expect(outcome).toBe("delivery_cleanup denied")
+    expect(checks.map((check) => [check.agent, check.effect])).toEqual([["builder", "deny"]])
+    expect(existsSync(f.linked)).toBe(true)
   })
 })
