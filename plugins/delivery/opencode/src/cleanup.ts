@@ -122,7 +122,7 @@ export type CleanupDeps = {
    * section takes, because it may prompt a person). A throw ends the call with nothing removed;
    * the error propagates.
    */
-  authorize?: (request: { worktree: string; branch: string; pr: number }) => Promise<void>
+  authorize?: (request: { worktree: string; branch: string; pr: number; receiptBound?: boolean }) => Promise<void>
   /**
    * OpenCode's own worktree registry. A worktree it created is tracked there, and a
    * `git worktree remove` behind its back leaves an entry the host can no longer
@@ -1535,7 +1535,13 @@ async function cleanupInRepository(
   if (ledger !== null) return ledger
 
   // The prompt (if any) comes first and outside the critical section: a held lock must never wait on a person.
-  await deps.authorize?.({ worktree: path, branch: receipt.branch.name, pr: receipt.pr.number })
+  // The receipt was read and every proof above passed. It is bound when the worktree to remove is
+  // the receipt's own path on the receipt's own branch: a renamed or detached checkout still asks.
+  const receiptBound =
+    !identity.target.detached &&
+    identity.target.branch === `${LOCAL_REF_PREFIX}${receipt.branch.name}` &&
+    physicalPath(path) === identity.cwd
+  await deps.authorize?.({ worktree: path, branch: receipt.branch.name, pr: receipt.pr.number, receiptBound })
   const removeSection = async (): Promise<CleanupFailure | RemovalFacts> => {
     const localRef = await verifyLocalRef(receipt, cwd, run, bounds.refReadMs)
     if (isFailure(localRef)) return localRef

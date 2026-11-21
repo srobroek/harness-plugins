@@ -319,6 +319,23 @@ worktree path, right before the removal. The plugin turns an allowed request for
 either action into `ask`, so every call prompts. A deny rule still wins. Set the
 `confirm` option to `false` to let your permission rules decide on their own.
 
+Two kinds of call skip that extra prompt, because the tool proves the safety itself:
+
+- A fully gated land: the validated input sets `expectHeadSha`, `requireApproval: true`
+  and `requireGreenChecks: true`. The tool reads an approval artifact and green checks
+  for that exact head before it merges.
+- A cleanup that read a landing receipt, verified it, and removes exactly the receipt's
+  own worktree on the receipt's own branch. A cleanup with no valid receipt is refused
+  before any prompt; a renamed or detached checkout is not bound to the receipt and
+  still prompts.
+
+The decision comes from the validated tool input and the tool's own proofs, never from
+free text (`opencode/src/gate.ts`). It only removes the prompt delivery adds: a `deny`
+or `ask` rule you configured still applies, and a land missing any gate prompts as
+before. A subagent session cannot answer a prompt (it becomes a deny), so gated
+landing and receipt cleanup work in subagents such as `shepherd`, and ungated calls
+need a root session.
+
 ## Receipts
 
 Receipts are JSON files under `~/.omp/receipts/<repo-key>/<receiptId>.json`. That

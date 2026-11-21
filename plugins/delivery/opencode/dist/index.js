@@ -3229,7 +3229,8 @@ async function cleanupInRepository(params, cwd, deps) {
   const ledger = await verifyLedger(receipt, cwd, resolution.path, run, bounds.bdShowMs, bounds.refReadMs, deps.git, env);
   if (ledger !== null)
     return ledger;
-  await deps.authorize?.({ worktree: path, branch: receipt.branch.name, pr: receipt.pr.number });
+  const receiptBound = !identity.target.detached && identity.target.branch === `${LOCAL_REF_PREFIX}${receipt.branch.name}` && physicalPath(path) === identity.cwd;
+  await deps.authorize?.({ worktree: path, branch: receipt.branch.name, pr: receipt.pr.number, receiptBound });
   const removeSection = async () => {
     const localRef = await verifyLocalRef(receipt, cwd, run, bounds.refReadMs);
     if (isFailure(localRef))
@@ -3369,6 +3370,50 @@ async function cleanupInRepository(params, cwd, deps) {
     alreadyCleaned: false,
     localRefDeleted: localRefPlan === "delete",
     report: removalReport(receipt, path, identity.target, localRefPlan)
+  };
+}
+
+// plugins/delivery/opencode/src/gate.ts
+function landGate(input) {
+  if (typeof input !== "object" || input === null)
+    return false;
+  const { expectHeadSha, requireApproval, requireGreenChecks } = input;
+  return typeof expectHeadSha === "string" && expectHeadSha.trim() !== "" && requireApproval === true && requireGreenChecks === true;
+}
+function cleanupGate(request) {
+  return request.receiptBound === true && typeof request.worktree === "string" && request.worktree.trim() !== "" && typeof request.branch === "string" && request.branch.trim() !== "" && Number.isInteger(request.pr) && request.pr > 0;
+}
+function createGateRegistry() {
+  const counts = new Map;
+  const key = (action, resource) => `${action}\x00${resource}`;
+  return {
+    enter(action, resource, gated) {
+      const id = key(action, resource);
+      const entry = counts.get(id) ?? { gated: 0, ungated: 0 };
+      if (gated)
+        entry.gated += 1;
+      else
+        entry.ungated += 1;
+      counts.set(id, entry);
+      let done = false;
+      return () => {
+        if (done)
+          return;
+        done = true;
+        if (gated)
+          entry.gated -= 1;
+        else
+          entry.ungated -= 1;
+        if (entry.gated === 0 && entry.ungated === 0)
+          counts.delete(id);
+      };
+    },
+    skips(action, resources) {
+      return resources.length > 0 && resources.every((resource) => {
+        const entry = counts.get(key(action, resource));
+        return entry !== undefined && entry.gated > 0 && entry.ungated === 0;
+      });
+    }
   };
 }
 
@@ -6353,8 +6398,10 @@ function parseOptions(raw) {
     autoCleanup: options.autoCleanup !== false
   };
 }
-function confirmDelivery(evaluation) {
+function confirmDelivery(evaluation, gates) {
   if (evaluation.effect !== "allow")
+    return;
+  if (gates?.skips(evaluation.action, evaluation.resources) === true)
     return;
   if (evaluation.action === LAND_ACTION) {
     evaluation.effect = "ask";
@@ -6517,17 +6564,22 @@ function hostWorktrees(ctx) {
 function environment(options) {
   return options.receiptsDirectory === undefined ? process.env : { ...process.env, DELIVERY_RECEIPTS_DIR: options.receiptsDirectory };
 }
-function asserter(ctx, context, action) {
-  return async (resource, metadata) => {
-    await ctx.permission.assert({
-      sessionID: context.sessionID,
-      agent: context.agent,
-      source: { type: "tool", messageID: context.messageID, id: context.id },
-      action,
-      resources: [resource],
-      save: [resource],
-      metadata
-    });
+function asserter(ctx, context, action, gates) {
+  return async (resource, metadata, gated = false) => {
+    const leave = gates.enter(action, resource, gated);
+    try {
+      await ctx.permission.assert({
+        sessionID: context.sessionID,
+        agent: context.agent,
+        source: { type: "tool", messageID: context.messageID, id: context.id },
+        action,
+        resources: [resource],
+        save: [resource],
+        metadata
+      });
+    } finally {
+      leave();
+    }
   };
 }
 async function isPrimary(ctx, sessionID) {
@@ -6542,6 +6594,7 @@ async function setupDelivery(ctx, overrides = {}) {
   const options = parseOptions(ctx.options);
   const directory = ctx.location.directory;
   const disposers = [];
+  const gates = createGateRegistry();
   const pending = createPendingCleanup({
     ctx,
     cwd: directory,
@@ -6556,12 +6609,13 @@ async function setupDelivery(ctx, overrides = {}) {
       input: LAND_INPUT,
       output: LAND_OUTPUT,
       execute: async (input, context) => {
-        const ask = asserter(ctx, context, LAND_ACTION);
+        const ask = asserter(ctx, context, LAND_ACTION, gates);
+        const gated = landGate(input);
         const outcome = await landPullRequest(input, {
           cwd: directory,
           env: environment(options),
           signal: context.signal,
-          authorize: (request) => ask(request.resource, { ...request })
+          authorize: (request) => ask(request.resource, { ...request }, gated)
         });
         if (!outcome.ok) {
           const output = landOutput(outcome);
@@ -6580,13 +6634,13 @@ async function setupDelivery(ctx, overrides = {}) {
         const decision = inlineCleanupDecision(outcome.receipt, options.autoCleanup, receiptPath === null || pending === undefined ? { owner: "none" } : pending.ownership(receiptPath));
         let denied = false;
         const cleanup = decision.run ? await runInlineCleanup(() => {
-          const askCleanup = asserter(ctx, context, CLEANUP_ACTION);
+          const askCleanup = asserter(ctx, context, CLEANUP_ACTION, gates);
           return cleanupDelivery({ receipt: outcome.receiptPath }, directory, {
             env: environment(options),
             signal: context.signal,
             authorize: async (request) => {
               try {
-                await askCleanup(request.worktree, { ...request });
+                await askCleanup(request.worktree, { ...request }, cleanupGate(request));
               } catch (error) {
                 denied = true;
                 throw error;
@@ -6612,13 +6666,13 @@ async function setupDelivery(ctx, overrides = {}) {
       input: CLEANUP_INPUT,
       output: CLEANUP_OUTPUT,
       execute: async (input, context) => {
-        const ask = asserter(ctx, context, CLEANUP_ACTION);
+        const ask = asserter(ctx, context, CLEANUP_ACTION, gates);
         let result;
         try {
           result = await cleanupDelivery(input, directory, {
             env: environment(options),
             signal: context.signal,
-            ...pending.explicit((req) => ask(req.worktree, { ...req }), context.sessionID),
+            ...pending.explicit((req) => ask(req.worktree, { ...req }, cleanupGate(req)), context.sessionID),
             host: hostWorktrees(ctx)
           });
         } catch (error) {
@@ -6641,7 +6695,7 @@ receipt: ${result.path}`;
     await pending.start();
   disposers.push(() => pending.dispose());
   if (options.confirm) {
-    const gate = await ctx.permission.hook("evaluate", confirmDelivery);
+    const gate = await ctx.permission.hook("evaluate", (evaluation) => confirmDelivery(evaluation, gates));
     disposers.push(() => gate.dispose());
   }
   if (options.agents) {

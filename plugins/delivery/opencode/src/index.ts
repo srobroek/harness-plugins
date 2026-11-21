@@ -31,6 +31,7 @@ import {
   type HostWorktrees,
 } from "./cleanup.ts"
 import { MERGE_METHODS } from "./forge-adapter.ts"
+import { cleanupGate, createGateRegistry, type GateRegistry, landGate } from "./gate.ts"
 import { type LandOutcome, type LandParams, landPullRequest } from "./land.ts"
 import { CleanupDeferred, createPendingCleanup, type PendingDeps } from "./pending-cleanup.ts"
 import { malformedNote, parseVerdict } from "./verdict.ts"
@@ -112,9 +113,13 @@ type Evaluation = {
   message?: string
 }
 
-/** Turn an allowed land or cleanup into a prompt; a configured deny never reaches the hook. */
-export function confirmDelivery(evaluation: Evaluation): void {
+/**
+ * Turn an allowed land or cleanup into a prompt; a configured deny never reaches the hook.
+ * A call the tool registered as gated (see gate.ts) is left as the rules resolved it.
+ */
+export function confirmDelivery(evaluation: Evaluation, gates?: GateRegistry): void {
   if (evaluation.effect !== "allow") return
+  if (gates?.skips(evaluation.action, evaluation.resources) === true) return
   if (evaluation.action === LAND_ACTION) {
     evaluation.effect = "ask"
     evaluation.message = `Land ${evaluation.resources.join(", ")}? delivery_land merges at most once and writes a landing receipt.`
@@ -304,17 +309,22 @@ function environment(options: DeliveryOptions): NodeJS.ProcessEnv {
     : { ...process.env, DELIVERY_RECEIPTS_DIR: options.receiptsDirectory }
 }
 
-function asserter(ctx: Context, context: ToolContext, action: string) {
-  return async (resource: string, metadata: Record<string, unknown>) => {
-    await ctx.permission.assert({
-      sessionID: context.sessionID,
-      agent: context.agent,
-      source: { type: "tool", messageID: context.messageID, id: context.id },
-      action,
-      resources: [resource],
-      save: [resource],
-      metadata,
-    } as never)
+function asserter(ctx: Context, context: ToolContext, action: string, gates: GateRegistry) {
+  return async (resource: string, metadata: Record<string, unknown>, gated = false) => {
+    const leave = gates.enter(action, resource, gated)
+    try {
+      await ctx.permission.assert({
+        sessionID: context.sessionID,
+        agent: context.agent,
+        source: { type: "tool", messageID: context.messageID, id: context.id },
+        action,
+        resources: [resource],
+        save: [resource],
+        metadata,
+      } as never)
+    } finally {
+      leave()
+    }
   }
 }
 
@@ -336,6 +346,7 @@ export async function setupDelivery(
   const disposers: Array<() => Promise<void>> = []
   // Always set up: denials and landing records coordinate with the lane owner whatever autoCleanup says.
   // autoCleanup only turns delivery's own inline cleanup and retry on or off.
+  const gates = createGateRegistry()
   const pending = createPendingCleanup({
     ctx,
     cwd: directory,
@@ -351,12 +362,13 @@ export async function setupDelivery(
       input: LAND_INPUT,
       output: LAND_OUTPUT,
       execute: async (input, context) => {
-        const ask = asserter(ctx, context, LAND_ACTION)
+        const ask = asserter(ctx, context, LAND_ACTION, gates)
+        const gated = landGate(input)
         const outcome = await landPullRequest(input as LandParams, {
           cwd: directory,
           env: environment(options),
           signal: context.signal,
-          authorize: (request) => ask(request.resource, { ...request }),
+          authorize: (request) => ask(request.resource, { ...request }, gated),
         })
         if (!outcome.ok) {
           const output = landOutput(outcome)
@@ -384,13 +396,13 @@ export async function setupDelivery(
         // A skipped run is reported only when the option is on; off keeps the old result.
         const cleanup: CleanupReport | undefined = decision.run
           ? await runInlineCleanup(() => {
-              const askCleanup = asserter(ctx, context, CLEANUP_ACTION)
+              const askCleanup = asserter(ctx, context, CLEANUP_ACTION, gates)
               return cleanupDelivery({ receipt: outcome.receiptPath }, directory, {
                 env: environment(options),
                 signal: context.signal,
                 authorize: async (request) => {
                   try {
-                    await askCleanup(request.worktree, { ...request })
+                    await askCleanup(request.worktree, { ...request }, cleanupGate(request))
                   } catch (error) {
                     denied = true
                     throw error
@@ -421,13 +433,13 @@ export async function setupDelivery(
       input: CLEANUP_INPUT,
       output: CLEANUP_OUTPUT,
       execute: async (input, context) => {
-        const ask = asserter(ctx, context, CLEANUP_ACTION)
+        const ask = asserter(ctx, context, CLEANUP_ACTION, gates)
         let result: CleanupResult
         try {
           result = await cleanupDelivery(input as DeliveryCleanupParams, directory, {
             env: environment(options),
             signal: context.signal,
-            ...pending.explicit((req) => ask(req.worktree, { ...req }), context.sessionID),
+            ...pending.explicit((req) => ask(req.worktree, { ...req }, cleanupGate(req)), context.sessionID),
             host: hostWorktrees(ctx),
           })
         } catch (error) {
@@ -453,7 +465,7 @@ export async function setupDelivery(
   disposers.push(() => pending.dispose())
 
   if (options.confirm) {
-    const gate = await ctx.permission.hook("evaluate", confirmDelivery)
+    const gate = await ctx.permission.hook("evaluate", (evaluation) => confirmDelivery(evaluation, gates))
     disposers.push(() => gate.dispose())
   }
 

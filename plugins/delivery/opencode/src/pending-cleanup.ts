@@ -166,7 +166,7 @@ export function explicitDeferral(ownership: Ownership): string | undefined {
  * lane owns the worktree, delivery stops there with {@link CleanupDeferred}: one remover per worktree.
  */
 /** What `cleanupDelivery` hands `authorize`. */
-export type ExplicitRequest = { worktree: string; branch?: string; pr?: number }
+export type ExplicitRequest = { worktree: string; branch?: string; pr?: number; receiptBound?: boolean }
 
 export async function authorizeExplicit(
   pending:
