@@ -1893,32 +1893,36 @@ var defaultSchedule = (fn, ms) => {
 };
 function createRestartNudger(deps) {
   const schedule = deps.schedule ?? defaultSchedule;
-  const pending = new Map;
+  const active = new Map;
   const nudged = new Set;
+  let disposed = false;
   const settle = async (sessionID, created) => {
-    pending.delete(sessionID);
     try {
-      if (!needsNudge(await deps.getSession(sessionID), created))
+      const session = await deps.getSession(sessionID);
+      if (disposed || nudged.has(sessionID) || !needsNudge(session, created))
         return;
       nudged.add(sessionID);
       await deps.nudge(sessionID);
-    } catch {}
+    } catch {} finally {
+      active.delete(sessionID);
+    }
   };
   return {
     notice(event) {
-      if (!isRestartNotice(event.text) || nudged.has(event.sessionID) || pending.has(event.sessionID))
+      if (disposed || !isRestartNotice(event.text) || nudged.has(event.sessionID) || active.has(event.sessionID))
         return;
-      pending.set(event.sessionID, schedule(() => void settle(event.sessionID, event.created), deps.graceMs));
+      active.set(event.sessionID, schedule(() => void settle(event.sessionID, event.created), deps.graceMs));
     },
     dispose() {
-      for (const cancel of pending.values())
+      disposed = true;
+      for (const cancel of active.values())
         cancel();
-      pending.clear();
+      active.clear();
     }
   };
 }
 var NUDGE_TEXT = "The server restarted while you were waiting for a background shell, and that shell was lost. Check its output files and the state on disk, rerun it if needed, and continue your task.";
-async function setupRestartNudge(ctx, options, schedule) {
+async function setupRestartNudge(ctx, options, schedule, warn = (message, cause) => console.warn(message, cause)) {
   const nudger = createRestartNudger({
     graceMs: options.graceMs,
     schedule,
@@ -1929,7 +1933,7 @@ async function setupRestartNudge(ctx, options, schedule) {
   });
   const controller = new AbortController;
   const iterator = ctx.event.subscribe({ signal: controller.signal, types: ["session.synthetic"] })[Symbol.asyncIterator]();
-  const listening = (async () => {
+  (async () => {
     try {
       while (!controller.signal.aborted) {
         const next = await iterator.next();
@@ -1941,10 +1945,9 @@ async function setupRestartNudge(ctx, options, schedule) {
       }
     } catch (error) {
       if (!controller.signal.aborted)
-        throw error;
+        warn("agent-efficiency: restartNudge stopped listening for restart notices", error);
     }
   })();
-  listening.catch(() => {});
   return async () => {
     controller.abort();
     nudger.dispose();

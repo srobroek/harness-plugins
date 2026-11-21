@@ -157,6 +157,15 @@ Move new shared code into `lib` instead of adding another edge.
 - Accepted residual risk: races on parent path components that need concurrent local filesystem control (swapping a directory for a symlink between the check and the use) are not defended. The model is a trusted local repository with no sandbox, by user decision.
 - Tests: the Biome behaviour suite always runs (biome is a devDependency, resolved from `node_modules/.bin`). The ruff and golangci-lint suites in `scan/behavior.test.ts` skip with a printed reason when the binary is absent, and no workflow installs them, so CI skips them; they run on a machine that has them.
 
+## agent-efficiency restart nudge
+
+`plugins/agent-efficiency/opencode/src/restart-nudge.ts` is a stopgap for upstream restart recovery, which posts the "Command cancelled because the server restarted" notice with `resume: false`, so an idle subagent that waited on the lost shell never wakes.
+
+- Option: `restartNudge`, off by default; `true` or `{ graceMs }` (5000 by default). `index.ts` calls `setupRestartNudge` only when `parseRestartNudgeOptions` returns a value, and pushes its cleanup onto the plugin's disposers.
+- Behaviour: `setupRestartNudge` subscribes to `session.synthetic` events. A restart notice starts a timer; after `graceMs`, `createRestartNudger` reads the session and, when `needsNudge` holds (not archived, not running, last run ended before the notice), posts one `resume: true` synthetic message. The message text does not contain the notice text, so a nudge cannot trigger another.
+- Lifecycle: a session stays reserved from its notice until its attempt ends, and is nudged at most once per plugin process. State is in memory only. The cleanup returned by `setup` aborts the subscription and disposes the nudger; a disposed nudger ignores later notices and an in-flight lookup posts nothing. A failed subscription is logged with its cause through `console.warn`; an abort is silent.
+- Decision logic (`needsNudge`, `isRestartNotice`, `createRestartNudger` with injected `schedule`) is pure and tested directly; `setupRestartNudge` is the adapter.
+
 ## Commands
 
 AGENTS.md Commands lists every script. The `justfile` has one recipe per script, and `just verify` runs every gate CI runs ([decision 0006](decisions/0006-bun-and-just.md)): installs use `bun install --frozen-lockfile` and the lockfile is `bun.lock`, never npm. `bun run check` is `harness-kit check`: `build --check` for the generated files, then validation of each Claude Code tree. It does not run typecheck, lint, tests or the content checks. The `cad:*` scripts need network.

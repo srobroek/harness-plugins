@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import plugin, {
   createRestartNudger,
-  DEFAULT_RESTART_NUDGE_GRACE_MS,
   isRestartNotice,
+  NUDGE_TEXT,
   needsNudge,
   parseRestartNudgeOptions,
   type SessionTimes,
@@ -19,9 +19,9 @@ describe("parseRestartNudgeOptions", () => {
   })
 
   test("true selects the default grace; an object may set a positive grace", () => {
-    expect(parseRestartNudgeOptions({ restartNudge: true })).toEqual({ graceMs: DEFAULT_RESTART_NUDGE_GRACE_MS })
+    expect(parseRestartNudgeOptions({ restartNudge: true })).toEqual({ graceMs: 5000 })
     expect(parseRestartNudgeOptions({ restartNudge: { graceMs: 250 } })).toEqual({ graceMs: 250 })
-    expect(parseRestartNudgeOptions({ restartNudge: { graceMs: -1 } })).toEqual({ graceMs: DEFAULT_RESTART_NUDGE_GRACE_MS })
+    expect(parseRestartNudgeOptions({ restartNudge: { graceMs: -1 } })).toEqual({ graceMs: 5000 })
   })
 })
 
@@ -29,6 +29,10 @@ describe("isRestartNotice", () => {
   test("matches the cancelled-shell notice only", () => {
     expect(isRestartNotice(NOTICE)).toBe(true)
     expect(isRestartNotice("Command finished with exit code 0")).toBe(false)
+  })
+
+  test("does not match the nudge's own synthetic message, so a nudge cannot retrigger itself", () => {
+    expect(isRestartNotice(NUDGE_TEXT)).toBe(false)
   })
 })
 
@@ -151,6 +155,59 @@ describe("createRestartNudger", () => {
   })
 })
 
+describe("createRestartNudger with a slow session lookup", () => {
+  function slow() {
+    const lookups: Array<(value: SessionTimes) => void> = []
+    const timers: Array<() => void> = []
+    const nudged: string[] = []
+    const nudger = createRestartNudger({
+      graceMs: 5_000,
+      getSession: () => new Promise<SessionTimes>((resolve) => lookups.push(resolve)),
+      nudge: async (sessionID) => {
+        nudged.push(sessionID)
+      },
+      schedule: (fn) => {
+        timers.push(fn)
+        return () => {}
+      },
+    })
+    const flush = () => new Promise((resolve) => setImmediate(resolve))
+    return { nudger, lookups, timers, nudged, flush }
+  }
+  const notice = { sessionID: "ses_a", text: NOTICE, created: 100 }
+  const idle: SessionTimes = { time: { idle: 20 } }
+
+  test("a notice that arrives while the lookup is in flight does not start a second nudge", async () => {
+    const h = slow()
+    h.nudger.notice(notice)
+    h.timers[0]?.()
+    h.nudger.notice(notice)
+    expect(h.timers).toHaveLength(1)
+    h.lookups[0]?.(idle)
+    await h.flush()
+    h.nudger.notice(notice)
+    expect(h.timers).toHaveLength(1)
+    expect(h.nudged).toEqual(["ses_a"])
+  })
+
+  test("dispose during the lookup stops the nudge", async () => {
+    const h = slow()
+    h.nudger.notice(notice)
+    h.timers[0]?.()
+    h.nudger.dispose()
+    h.lookups[0]?.(idle)
+    await h.flush()
+    expect(h.nudged).toEqual([])
+  })
+
+  test("a disposed nudger ignores later notices", () => {
+    const h = slow()
+    h.nudger.dispose()
+    h.nudger.notice(notice)
+    expect(h.timers).toEqual([])
+  })
+})
+
 describe("plugin wiring", () => {
   const synthetic = (sessionID: string) => ({ type: "session.synthetic", created: 100, data: { sessionID, text: NOTICE } })
   const setup = async (options: Record<string, unknown>) => {
@@ -187,5 +244,28 @@ describe("plugin wiring", () => {
     expect(posts).toHaveLength(1)
     expect(posts[0]?.input).toMatchObject({ sessionID: "ses_a", resume: true, delivery: "queue" })
     await stop()
+  })
+
+  test("logs a subscription failure with its cause", async () => {
+    const fake = createFakeContext()
+    const boom = new Error("stream broke")
+    ;(fake.context.event as { subscribe: unknown }).subscribe = () => ({
+      [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(boom) }),
+    })
+    const warnings: unknown[][] = []
+    const stop = await setupRestartNudge(fake.context, { graceMs: 5_000 }, undefined, (...args) => warnings.push(args))
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]?.[1]).toBe(boom)
+    await stop()
+  })
+
+  test("stays quiet when teardown aborts the subscription", async () => {
+    const fake = createFakeContext()
+    const warnings: unknown[][] = []
+    const stop = await setupRestartNudge(fake.context, { graceMs: 5_000 }, undefined, (...args) => warnings.push(args))
+    await stop()
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(warnings).toEqual([])
   })
 })

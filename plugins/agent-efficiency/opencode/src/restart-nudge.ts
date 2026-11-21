@@ -53,26 +53,31 @@ const defaultSchedule: Schedule = (fn, ms) => {
 /** Waits `graceMs` after a restart notice, then nudges the session once if it is still stalled. At most one nudge per session. */
 export function createRestartNudger(deps: RestartNudgerDeps): RestartNudger {
   const schedule = deps.schedule ?? defaultSchedule
-  const pending = new Map<string, () => void>()
+  // A session stays here from its notice until its nudge attempt ends, so overlapping notices cannot start a second attempt.
+  const active = new Map<string, () => void>()
   const nudged = new Set<string>()
+  let disposed = false
   const settle = async (sessionID: string, created: number) => {
-    pending.delete(sessionID)
     try {
-      if (!needsNudge(await deps.getSession(sessionID), created)) return
+      const session = await deps.getSession(sessionID)
+      if (disposed || nudged.has(sessionID) || !needsNudge(session, created)) return
       nudged.add(sessionID)
       await deps.nudge(sessionID)
     } catch {
       // A missing session or a failed post leaves the session as it was; the notice is not retried.
+    } finally {
+      active.delete(sessionID)
     }
   }
   return {
     notice(event) {
-      if (!isRestartNotice(event.text) || nudged.has(event.sessionID) || pending.has(event.sessionID)) return
-      pending.set(event.sessionID, schedule(() => void settle(event.sessionID, event.created), deps.graceMs))
+      if (disposed || !isRestartNotice(event.text) || nudged.has(event.sessionID) || active.has(event.sessionID)) return
+      active.set(event.sessionID, schedule(() => void settle(event.sessionID, event.created), deps.graceMs))
     },
     dispose() {
-      for (const cancel of pending.values()) cancel()
-      pending.clear()
+      disposed = true
+      for (const cancel of active.values()) cancel()
+      active.clear()
     },
   }
 }
@@ -81,7 +86,12 @@ export const NUDGE_TEXT =
   "The server restarted while you were waiting for a background shell, and that shell was lost. Check its output files and the state on disk, rerun it if needed, and continue your task."
 
 /** Subscribes to `session.synthetic` events and nudges stalled sessions. Returns the cleanup. */
-export async function setupRestartNudge(ctx: Context, options: RestartNudgeOptions, schedule?: Schedule): Promise<() => Promise<void>> {
+export async function setupRestartNudge(
+  ctx: Context,
+  options: RestartNudgeOptions,
+  schedule?: Schedule,
+  warn: (message: string, cause: unknown) => void = (message, cause) => console.warn(message, cause),
+): Promise<() => Promise<void>> {
   const nudger = createRestartNudger({
     graceMs: options.graceMs,
     schedule,
@@ -92,7 +102,7 @@ export async function setupRestartNudge(ctx: Context, options: RestartNudgeOptio
   })
   const controller = new AbortController()
   const iterator = ctx.event.subscribe({ signal: controller.signal, types: ["session.synthetic"] } as never)[Symbol.asyncIterator]()
-  const listening = (async () => {
+  void (async () => {
     try {
       while (!controller.signal.aborted) {
         const next = await iterator.next()
@@ -101,10 +111,10 @@ export async function setupRestartNudge(ctx: Context, options: RestartNudgeOptio
         if (event.type === "session.synthetic") nudger.notice({ sessionID: event.data.sessionID, text: event.data.text, created: event.created })
       }
     } catch (error) {
-      if (!controller.signal.aborted) throw error
+      // Without the stream no notice arrives, so say so; an abort is our own teardown.
+      if (!controller.signal.aborted) warn("agent-efficiency: restartNudge stopped listening for restart notices", error)
     }
   })()
-  void listening.catch(() => {})
   return async () => {
     controller.abort()
     nudger.dispose()
