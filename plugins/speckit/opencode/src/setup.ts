@@ -1,5 +1,5 @@
 import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path"
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 
 /**
@@ -123,7 +123,7 @@ export function specifyVersionOk(versionOut: string): boolean {
 }
 
 export function ensureGitignore(repo: string): string {
-  safePath(join(repo, ".gitignore"))
+  safePath(join(repo, ".gitignore"), repo)
   const gi = join(repo, ".gitignore")
   const existing = existsSync(gi) ? readFileSync(gi, "utf8") : ""
   if (existing.split("\n").some((l) => l.trim() === GITIGNORE_ENTRY)) {
@@ -135,13 +135,18 @@ export function ensureGitignore(repo: string): string {
   return "appended specs/**/spec-status.md to .gitignore"
 }
 
-function safePath(path: string): void {
-  const absolute = isAbsolute(path) ? path : `${process.cwd()}/${path}`
-  let current = parse(absolute).root
-  for (const part of absolute
-    .slice(current.length)
-    .split(sep === "\\" ? /[\\/]/ : "/")
-    .filter(Boolean)) {
+/**
+ * Refuse a symlink below `base`. Only the components under `base` are checked: they are repo
+ * content (or a shipped formula file) that could redirect a read or write. `base` itself and
+ * everything above it is the user's filesystem (macOS `/var`, `~/dev` -> a volume), so a
+ * symlinked repo root is accepted: the user chose that path and repo content cannot swap it.
+ */
+function safePath(path: string, base: string): void {
+  const root = resolve(base)
+  const rel = relative(root, resolve(path))
+  if (rel.startsWith("..") || isAbsolute(rel)) throw new Error(`path escapes ${root}: ${path}`)
+  let current = root
+  for (const part of rel.split(sep === "\\" ? /[\\/]/ : "/").filter(Boolean)) {
     current = join(current, part)
     const st = lstatSync(current, { throwIfNoEntry: false })
     if (st?.isSymbolicLink()) throw new Error(`unsafe symlink: ${current}`)
@@ -150,13 +155,13 @@ function safePath(path: string): void {
 
 export function installFormulas(repo: string, srcDir: string): string[] {
   const destDir = join(repo, ".beads", "formulas")
-  safePath(destDir)
+  safePath(destDir, repo)
   const copies: { src: string; dest: string; name: string }[] = []
   for (const name of FORMULAS) {
     const src = join(srcDir, `${name}.formula.toml`)
     const dest = join(destDir, `${name}.formula.toml`)
-    safePath(src)
-    safePath(dest)
+    safePath(src, srcDir)
+    safePath(dest, repo)
     if (!lstatSync(src, { throwIfNoEntry: false })?.isFile()) {
       throw new Error(`required formula missing or unsafe: ${src}`)
     }
@@ -174,7 +179,7 @@ export function installFormulas(repo: string, srcDir: string): string[] {
 /** Extension ids `specify` records as installed in `.specify/extensions/.registry`. */
 export function installedExtensions(repo: string): Set<string> {
   const registry = join(repo, ".specify", "extensions", ".registry")
-  safePath(registry)
+  safePath(registry, repo)
   if (!existsSync(registry)) return new Set()
   try {
     const data: unknown = JSON.parse(readFileSync(registry, "utf8"))
@@ -193,7 +198,7 @@ export function installedExtensions(repo: string): Set<string> {
  */
 export function communityCatalogState(repo: string): "trusted" | "absent" | "conflict" {
   const config = join(repo, ".specify", "extension-catalogs.yml")
-  safePath(config)
+  safePath(config, repo)
   if (!existsSync(config)) return "absent"
   const parsed: unknown = Bun.YAML.parse(readFileSync(config, "utf8"))
   const catalogs =
@@ -254,10 +259,9 @@ export async function runSetup(params: SetupParams, cwd: string, signal?: AbortS
     return finish()
   }
   try {
-    safePath(repo)
-    safePath(join(repo, ".specify"))
-    safePath(join(repo, ".beads"))
-    safePath(join(repo, ".gitignore"))
+    safePath(join(repo, ".specify"), repo)
+    safePath(join(repo, ".beads"), repo)
+    safePath(join(repo, ".gitignore"), repo)
     if (params.skipSpecify) record("specify", "skipped", "skipSpecify: specify CLI steps omitted")
     else {
       current = "specify"

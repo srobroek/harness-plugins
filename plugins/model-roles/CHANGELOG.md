@@ -1,3 +1,29 @@
+## model-roles [0.10.0](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.9.1...model-roles--v0.10.0) (2026-11-21)
+
+### Features
+
+* **autopilot:** autopilot_review for a plugin-run verdict a merge can rest on ([10d47e7](https://github.com/srobroek/harness-plugins/commit/10d47e798ea4b1f8e81e17362bcc5537d5942b18))
+
+## model-roles [0.9.1](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.9.0...model-roles--v0.9.1) (2026-11-21)
+
+### Bug Fixes
+
+* **model-roles:** wake the parent on subagent failure and recovery, share outage state ([1315127](https://github.com/srobroek/harness-plugins/commit/131512798be29ce03deaa3f5bb57af913aef18cf))
+
+## model-roles [0.9.0](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.8.2...model-roles--v0.9.0) (2026-11-21)
+
+### Features
+
+* **model-roles:** add orchestrate as a built-in tier ([6895cf0](https://github.com/srobroek/harness-plugins/commit/6895cf053c03f5c1aa27854f9023fffc8955d6b8))
+
+## model-roles [0.8.2](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.8.1...model-roles--v0.8.2) (2026-11-21)
+
+### Bug Fixes
+
+* **model-roles:** bound the retry hook on its own queue ([b8ca496](https://github.com/srobroek/harness-plugins/commit/b8ca496b611c7bd295a3d28a6cd4db6baa7a1096))
+* **model-roles:** resolve implicit assignments and child tiers against the committed snapshot ([f7f94f1](https://github.com/srobroek/harness-plugins/commit/f7f94f199ce38955eb58b689fcce2a13721ae2e0))
+* **model-roles:** resolve retries against committed tiers and cover the retry queue ([3c57082](https://github.com/srobroek/harness-plugins/commit/3c57082a5ad08208738fde833a1278842e5ee577))
+
 ## model-roles [0.8.1](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.8.0...model-roles--v0.8.1) (2026-11-20)
 
 ### Bug Fixes

@@ -1,3 +1,20 @@
+## safety [0.10.0](https://github.com/srobroek/harness-plugins/compare/safety--v0.9.3...safety--v0.10.0) (2026-11-21)
+
+### Features
+
+* **safety:** let subagents read outside the session directory, allow symlink aliases and tool-output folders ([6888618](https://github.com/srobroek/harness-plugins/commit/68886186a55fb554ae4ef65354fd0d53e7dfa71d))
+
+### Bug Fixes
+
+* **safety:** follow a dangling symlink when checking a subagent read for secrets ([1d1bb89](https://github.com/srobroek/harness-plugins/commit/1d1bb896e2f05256f845878c49dd2367391a3e43))
+* **safety:** refuse ancestors and symlinked secrets for subagent reads, test the hook, name the option subagentSecretPaths ([b0ca47d](https://github.com/srobroek/harness-plugins/commit/b0ca47d01c6316e9bb7adbbb636b6df34ea92bfe))
+
+## safety [0.9.3](https://github.com/srobroek/harness-plugins/compare/safety--v0.9.2...safety--v0.9.3) (2026-11-21)
+
+### Bug Fixes
+
+* **safety:** resolve symlinks before excluding broad skill roots ([0c2355c](https://github.com/srobroek/harness-plugins/commit/0c2355cdec427af1184946a5ec64c8083f6de16a))
+
 ## safety [0.9.2](https://github.com/srobroek/harness-plugins/compare/safety--v0.9.1...safety--v0.9.2) (2026-11-20)
 
 ### Bug Fixes

@@ -12,6 +12,23 @@ interface Manager {
 }
 const managers = config.customManagers as Manager[]
 
+test("Renovate ignores the regeneration workflow's commit author", () => {
+  const workflow = readFileSync(path.join(root, ".github/workflows/renovate-regenerate.yml"), "utf8")
+  const author = /git config user\.email '([^']+)'/.exec(workflow)?.[1]
+  expect(author).toBeDefined()
+  expect(config.gitIgnoredAuthors).toContain(author)
+})
+
+test("Renovate can update the repomix permission example's fallback pin", () => {
+  const file = "docs/design/repomix.md"
+  const text = readFileSync(path.join(root, file), "utf8")
+  const permission = text.split("- **Permission**:")[1]?.split("- **Skill**:")[0] ?? ""
+  const hits = managers
+    .filter((manager) => selected(manager).includes(file))
+    .flatMap((manager) => manager.matchStrings.flatMap((source) => [...permission.matchAll(new RegExp(source, "g"))]))
+  expect(hits.map((hit) => hit.groups?.depName)).toEqual(["repomix"])
+})
+
 /** Renovate's "/regex/" pattern form; Renovate compiles named groups and lookaheads as JS does. */
 const filePattern = (pattern: string) => new RegExp(pattern.slice(1, -1))
 

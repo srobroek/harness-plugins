@@ -82,22 +82,23 @@ In OpenCode:
 ## Develop
 
 ```sh
-mise install
-npm ci
-npm run build    # scripts/build.ts, then harness-kit build
-npm run check    # harness-kit check: generated files are current, Claude plugins validate
-npm test
-npm run typecheck
-npm run lint
+mise install    # bun and just
+bun install --frozen-lockfile
+bun run build    # scripts/build.ts, then harness-kit build
+bun run check    # harness-kit check: generated files are current, Claude plugins validate
+bun test
+bun run typecheck
+bun run lint
+just verify      # everything CI runs
 ```
 
-Edit `common/`, `opencode/src/`, `agents.src/` or `lib/`. Run `npm run build` and commit the
-generated files. `npm run build:check` and `npm run check` fail on any stale file. The content
+Edit `common/`, `opencode/src/`, `agents.src/` or `lib/`. Run `bun run build` and commit the
+generated files. `bun run build:check` and `bun run check` fail on any stale file. The content
 checks (`plugin-table:check`, `steering`, `pitfalls`, `agent-roles`, `descriptions`, `concerns`)
 run in CI next to the reusable `harness-kit` check.
 
 Load a local checkout by adding `plugins/<name>/opencode` to `plugins` in `opencode.json`. Run
-`npm run build` after each change; OpenCode loads the built `dist/`, not `src/`.
+`bun run build` after each change; OpenCode loads the built `dist/`, not `src/`.
 
 ## Converting Oh My Pi agents
 
@@ -109,7 +110,7 @@ bun scripts/convert-agent.ts --out .opencode/agents \
 ```
 
 - The omp `@role` becomes the `x-opencode-model-role` request header with the model-roles tier
-  it stands for (`cheap`, `standard`, `strong`, `reviewer`). Old role names map to their tier:
+  it stands for (`cheap`, `standard`, `strong`, `reviewer`, `orchestrate`). Old role names map to their tier:
   `smol`, `commit` and `tiny` to `cheap`, `task` to `standard`, `slow`, `plan`, `architect` and
   `designer` to `strong`, `challenger` and `judge` to `reviewer`. `default` writes no header.
   `--role-map map.json` renames roles first. Anything else gets no header and a warning.
@@ -132,11 +133,11 @@ Plugins that only ship skills and agents export `contentPlugin(id, import.meta.u
 `x-opencode-model-role` request header. A skill or agent you already have with the same id keeps
 its fields.
 
-`npm run agent-roles` fails when a shipped agent has no tier header, names a value that is
+`bun run agent-roles` fails when a shipped agent has no tier header, names a value that is
 neither a tier nor an accepted old role name, or pins a model outside `delivery`. A plugin's
 `common/agents/roles.json` fragment must match the headers.
 
-`npm run steering` fails on omp steering left in shipped markdown: `skill://`, `rule://`,
+`bun run steering` fails on omp steering left in shipped markdown: `skill://`, `rule://`,
 `agent://`, `proc://` and other omp URIs, omp tool names such as `` `bash` ``, `` `task` ``,
 `` `eval` `` or `ast_grep`, TTSR wording, omp CLI paths, and SKILL.md frontmatter that is not
 strict YAML.
@@ -150,9 +151,9 @@ strict YAML.
 - `.github/workflows/release.yml` calls the reusable `release.yml` (multi-semantic-release). It
   tags each plugin as `<name>--v<version>`.
 
-Both pin harness-kit at the version of the package in `package.json`: `srobroek/harness-kit/.github/workflows/check.yml@v1.4.0` and `srobroek/harness-kit/.github/workflows/release.yml@v1.4.0`.
+Both pin harness-kit at the version of the package in `package.json`: `srobroek/harness-kit/.github/workflows/check.yml@v1.5.0` and `srobroek/harness-kit/.github/workflows/release.yml@v1.5.0`.
 Renovate moves the package and the workflow tags in one pull request, using the preset in
-`renovate.json`. That pull request needs `npm run build` on its branch before it passes
+`renovate.json`. That pull request needs `bun run build` on its branch before it passes
 `harness-kit check`.
 
 ## Migration notes

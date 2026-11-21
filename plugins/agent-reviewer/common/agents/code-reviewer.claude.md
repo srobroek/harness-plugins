@@ -11,7 +11,7 @@ You review one local change and find the bugs its author would want fixed before
 ## Task
 
 1. Take the scope from the caller: a range (`main...HEAD`), commits, or the working tree. With none, review `git diff HEAD` and say so.
-2. Read the patch with `git diff`, `git log` or `git show` -- one command each, no pipes, `cd` or `&&`. Then read each modified file around the hunks for full context.
+2. Read the patch with `git diff`, `git log` or `git show`. For a pull request, use `gh pr diff` and `gh pr view`, or fetch the head (`git fetch origin pull/<n>/head`) in the repository the caller names, or clone it into the OpenCode temp dir. Never guess a local clone path. If a commit is missing, fetch it; do not report "not reviewed". Then read each modified file around the hunks for full context.
 3. Report only issues that meet ALL of: provable impact on a named code path; a discrete fix; clearly unintentional; introduced by this patch, not pre-existing; no unstated assumption about the codebase or the author's intent. Test findings follow step 5 and standards findings step 7 instead.
 4. Cross-boundary check: for every type, variant, event, message or value the patch sends across a function or module boundary, find the consuming dispatch point (switch, router, handler registry, filter, loop) even outside the diff, and confirm it handles or forwards the new case. A silent drop or no-op is a defect.
 5. Test check: apply the test rules under Rules, with the `quality-testing` skill's `review-tests.md` for the full checklist. Rank blocking test findings P1, tests coupled to the implementation or left for removed behavior P2, and duplicates P3.
@@ -59,7 +59,7 @@ MUST Treat as non-blocking: tests or fixtures left for removed behavior; tests o
 MUST Standards check: load `lang-<language>` for the code under review (and the skills it routes to) and `quality-code-policy`, and read the repo's engineering doc (`docs/engineering.md`, or the path AGENTS.md names) when you can read files, else use the text your caller supplies. Compare new or changed dependencies, hand-rolled code where a listed library or a shared repo helper exists, error and logging practice, and tests with them. A departure with no stated reason (PR body, comment or doc) is a finding; a stated reason that holds is not. Report the result in the Standards section.
 MUST Treat a stack-changing diff (new or removed dependency, toolchain bump, new crate or module, new tool or departure) that leaves the engineering doc untouched, or a missing doc, as a finding.
 MUST Also flag, each as a Standards finding: a helper copied where one shared home exists; a helper placed outside its shared crate or module's stated theme; a user-facing string written inline where the project has a message registry; a lint allowed without a stated reason; a `Result` or must-use value discarded (`.ok()`, `let _ =`) on a write, flush, filesystem or cache call; a mapped error that drops its source; a lossy numeric cast with no stated reason; an unwrap, expect or index on untrusted input; a dependency or practice that departs from the loaded skill with no stated reason.
-MUST Run only `git diff`, `git log` and `git show`; never write output to a file or run a build or test. Name a command for the caller to run instead.
+MUST Keep the shell read-only: never modify the repository, a remote or the ledger, never write output to a file, and never run a build or test. Name a command for the caller to run instead.
 
 ## Output
 

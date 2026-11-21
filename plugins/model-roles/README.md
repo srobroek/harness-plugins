@@ -1,7 +1,7 @@
 # model-roles
 
 Gives agents a model *tier* instead of a fixed model: `cheap`, `standard`,
-`strong` or `reviewer`, plus any tiers you add. Each tier is an ordered list of
+`strong`, `reviewer` or `orchestrate`, plus any tiers you add. Each tier is an ordered list of
 candidate models, and the plugin picks the first one that is available on this
 machine. With no options at all it works the tiers out from the model catalog, so
 the same agent files run on Bedrock at work and on a ChatGPT or Claude
@@ -56,15 +56,16 @@ writes them for you.
     `"auto"` leaves the variant to the [auto decider](#auto-routing) per spawn when
     `auto` is on. When `auto` is off, or the decider fails, times out or gives no
     valid effort, the spawn runs at the effort the tier would have without
-    `"auto"`. Defaults: `cheap` low, `standard` medium, `strong` and `reviewer`
-    high. A custom tier takes its base tier's effort (`standard`'s, configured or
+    `"auto"`. Defaults: `cheap` low, `standard` medium, `strong`, `reviewer` and
+    `orchestrate` high. A custom tier takes its base tier's effort (`standard`'s, configured or
     built in) unless it sets its own. See [Precedence](#precedence).
   - `purpose`: when the spawner should pick the tier. The built-in tiers have
     texts of their own; set one for every custom tier, or `model_roles_check` warns.
   - `distinctVendor`: put candidates from another vendor than the calling
     session's model first. On by default for `reviewer` only.
-- Built-in tiers: `cheap`, `standard`, `strong` and `reviewer`. `reviewer` with no
-  model of its own uses `strong`'s candidates at its own effort. A custom tier with
+- Built-in tiers: `cheap`, `standard`, `strong`, `reviewer` and `orchestrate`.
+  `reviewer` and `orchestrate` with no model of their own use `strong`'s
+  candidates at their own effort. A custom tier with
   no model uses `standard`'s.
 - `prefer`: provider ids, vendors (`anthropic`, `openai`, `google`) or
   `provider/model*` globs; derived candidates they name come first, within the
@@ -352,11 +353,11 @@ For each spawn, the first rule that applies decides the model and its variant:
    over a `tier` the spawn passes. See [Model pins win over tiers](#model-pins-win-over-tiers).
 3. **Candidate variant.** A candidate written as `provider/model#variant` keeps
    that variant, even when the tier's effort says otherwise. This holds within
-   the tier that lists it: a tier that borrows those candidates (`reviewer` from
-   `strong`, a custom tier from `standard`) sets them to its own effort.
+   the tier that lists it: a tier that borrows those candidates (`reviewer` and `orchestrate`
+   from `strong`, a custom tier from `standard`) sets them to its own effort.
 4. **Tier effort.** The tier's own `effort`, mapped to the nearest variant.
-5. **Built-in default.** `cheap` low, `standard` medium, `strong` and `reviewer`
-   high.
+5. **Built-in default.** `cheap` low, `standard` medium, `strong`, `reviewer` and
+   `orchestrate` high.
 6. **Base tier effort.** A custom tier with no effort of its own takes
    `standard`'s, as configured, else as built in.
 7. **Model default.** A model with no variants, or none near the effort, runs
@@ -801,6 +802,8 @@ cost class of its first available candidate (`metered, $2/M input tokens`,
   concurrency or data-integrity work.
 - `reviewer`: an independent second opinion or review, from another model
   vendor than the caller's when one is available.
+- `orchestrate`: planning and coordinating other agents, such as decomposing
+  work, routing it and judging results.
 
 The descriptions follow model availability and the tier config, never model
 health, and each session keeps the `tier` and `role` parameters it saw on its

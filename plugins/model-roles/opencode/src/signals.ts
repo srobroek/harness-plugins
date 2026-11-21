@@ -6,7 +6,6 @@
 
 import { shellQuoteBalanced, tokenizeShell } from "@srobroek/opencode-lib"
 
-export type Verdict = "approve" | "request-changes" | "comment"
 export type TestResult = "pass" | "fail" | "none"
 
 export const DEFAULT_TEST_COMMANDS: readonly string[] = [
@@ -45,36 +44,6 @@ export function parseEvaluate(raw: unknown): EvaluateOptions {
     testCommands: strings(input.testCommands) ?? DEFAULT_TEST_COMMANDS,
     testGlobs: strings(input.testGlobs) ?? DEFAULT_TEST_GLOBS,
   }
-}
-
-const VERDICT_LINE = /^VERDICT:\s*(APPROVE|REQUEST-CHANGES|COMMENT)\b/i
-const OPEN_FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/
-const CLOSE_FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/
-
-/**
- * The verdict on the last `VERDICT:` line of `text`. A line in a fenced block, indented four
- * spaces or a tab, or quoted with `>` is someone else's text and does not count. A fence
- * closes only on a bare line of the same character at least as long as the opening (CommonMark).
- */
-export function parseVerdict(text: string): Verdict | undefined {
-  let found: Verdict | undefined
-  let fence: { char: string; length: number } | undefined
-  for (const line of text.split(/\r?\n/)) {
-    if (fence !== undefined) {
-      const closes = CLOSE_FENCE.exec(line)?.[1]
-      if (closes?.startsWith(fence.char) && closes.length >= fence.length) fence = undefined
-      continue
-    }
-    const opens = OPEN_FENCE.exec(line)
-    if (opens?.[1] !== undefined && !(opens[1].startsWith("`") && opens[2]?.includes("`"))) {
-      fence = { char: opens[1].charAt(0), length: opens[1].length }
-      continue
-    }
-    if (/^(?: {4}|\t)/.test(line) || /^ {0,3}>/.test(line)) continue
-    const match = VERDICT_LINE.exec(line.trim())
-    if (match?.[1] !== undefined) found = match[1].toLowerCase() as Verdict
-  }
-  return found
 }
 
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/

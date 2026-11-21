@@ -285,6 +285,7 @@ export async function setupBeads(ctx: Context, deps: AdapterDeps = {}): Promise<
       deadline,
       runnerLookup: deps.runnerLookup,
       repositoryControl: deps.repositoryControl,
+      configuredStore: store,
     })
     if (decision.kind === "block") throw new GateRefusal(decision.gate, decision.cause, decision.resolution)
     if (decision.command !== call.command) event.input = { ...(event.input as object), command: decision.command }

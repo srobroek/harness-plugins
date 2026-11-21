@@ -1,2 +1,6 @@
+[install]
+# npm-style hoisting: plugins import the workspace package @srobroek/opencode-lib without declaring it.
+linker = "hoisted"
+
 [test]
 preload = ["./scripts/test-preload.ts"]

@@ -10,14 +10,23 @@
 import { lstatSync, readlinkSync } from "node:fs"
 import { dirname, join } from "node:path"
 
-import { readBounded } from "./bounded-read.ts"
+import { type BoundedRead, readBoundedBytes } from "./bounded-read.ts"
+
+/** `.git` entries and `commondir` files are one short line; anything bigger is not read. */
+const MAX_MARKER_BYTES = 64 * 1024
+
+export type { BoundedRead }
 
 /**
- * The bounded read (`absent`, `unreadable` or `text`) is shared with the ledger reads in
- * `bounded-read.ts`. Its default bound (64 KiB) suits `.git` entries and `commondir` files,
- * which are one short line; `maxBytes` overrides it.
+ * The text of a small regular file, with the bound a caller picks (default: the marker bound).
+ * A view over the shared `readBoundedBytes`, which does the `lstat`, `O_NOFOLLOW | O_NONBLOCK`
+ * open and `fstat` checks; this keeps the `absent | unreadable | text` shape the delivery plugin uses.
  */
-export { type BoundedRead, readBounded } from "./bounded-read.ts"
+export function readBounded(path: string, maxBytes: number = MAX_MARKER_BYTES): BoundedRead {
+  const read = readBoundedBytes(path, maxBytes)
+  if (read.kind === "absent") return { kind: "absent" }
+  return read.kind === "bytes" ? { kind: "text", text: read.bytes.toString("utf8") } : { kind: "unreadable" }
+}
 
 export type MarkerState = "same" | "foreign" | "unsafe" | "absent"
 

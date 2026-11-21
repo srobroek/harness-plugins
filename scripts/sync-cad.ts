@@ -16,6 +16,7 @@
 import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { READ_ONLY_SHELL_RULES } from "../lib/src/read-only-shell.ts"
 
 export const PLUGIN_DIR = path.join(import.meta.dir, "..", "plugins", "cad")
 export const PIN_FILE = "cad-agent.json"
@@ -59,7 +60,7 @@ export function vendored(file: string): boolean {
 
 type Tier = "cheap" | "standard" | "strong" | "reviewer"
 /** What the plugin adds to each cad-agent agent: its model-roles tier, step limit and, if needed, a shorter description. */
-export type Overlay = { tier: Tier; steps: number; description?: string }
+export type Overlay = { tier: Tier; steps: number; description?: string; readOnlyShell?: true }
 
 export const AGENTS: Readonly<Record<string, Overlay>> = {
   "cad-analyst": {
@@ -69,12 +70,13 @@ export const AGENTS: Readonly<Record<string, Overlay>> = {
       "Runs one L4 analysis case (sweep, FreeCAD assembly, stack-up, FEA, motion) on an integrated CAD version and proposes verification rows.",
   },
   "cad-concept-designer": { tier: "standard", steps: 100 },
-  "cad-dfm-reviewer": { tier: "reviewer", steps: 60 },
-  "cad-mech-reviewer": { tier: "reviewer", steps: 60 },
+  "cad-dfm-reviewer": { tier: "reviewer", steps: 60, readOnlyShell: true },
+  "cad-mech-reviewer": { tier: "reviewer", steps: 60, readOnlyShell: true },
   "cad-part-designer": { tier: "strong", steps: 150 },
   "cad-sourcing-researcher": {
     tier: "standard",
     steps: 80,
+    readOnlyShell: true,
     description:
       "Researches one purchased-part family with cited designations, datasheets, installation limits and materials. Read-only; spawned at L2 PARTS.",
   },
@@ -172,6 +174,7 @@ export function composeAgent(id: string, text: string, overlay: Overlay, tag: st
   if (typeof description !== "string" || description === "") throw new Error(`agents/${id}.md: no description`)
   const rules = [
     ...READ,
+    ...(overlay.readOnlyShell ? READ_ONLY_SHELL_RULES.map((rule): Rule => [rule.action, rule.resource, rule.effect]) : []),
     ...CAPABILITIES.flatMap((capability) => (capability !== "read" && capabilities.includes(capability) ? GRANTS[capability] : [])),
     ["subagent", "*", "deny"] satisfies Rule,
   ]

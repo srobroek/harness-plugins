@@ -50,6 +50,10 @@ export type FakeContextOptions = {
   options?: Loose
   /** MCP servers the host already has (the user's config) before any transform runs. */
   mcp?: Record<string, Loose>
+  /** When set, `context.location.project.id`; left out by default because some plugins branch on a project. */
+  projectID?: string
+  /** Directories `worktree.list` returns. */
+  worktrees?: ReadonlyArray<string>
   /** Decides each `permission.assert`: resolve to allow, throw to reject. Allows when omitted. */
   assert?: (input: FakeAssert) => Promise<void> | void
 }
@@ -252,6 +256,11 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
     sessions.set(id, session)
     return session
   }
+  const sessionRemove = async (input: { sessionID: string }): Promise<void> => {
+    calls.push({ method: "session.remove", input })
+    sessions.delete(input.sessionID)
+    messages.delete(input.sessionID)
+  }
   const sessionMove = async (input: { sessionID: string; directory: string }): Promise<void> => {
     calls.push({ method: "session.move", input })
     const session = sessions.get(input.sessionID)
@@ -379,7 +388,8 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
   }
 
   const context = {
-    location: { directory },
+    location: options.projectID === undefined ? { directory } : { directory, project: { id: options.projectID, directory, canonical: directory } },
+    worktree: { transform: async () => ({ dispose: async () => {} }), list: async () => (options.worktrees ?? []).map((dir) => ({ directory: dir })) },
     options: options.options ?? {},
     tool: {
       transform: toolTransform,
@@ -400,6 +410,7 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
       context: sessionContext,
       create: sessionCreate,
       move: sessionMove,
+      remove: sessionRemove,
       synthetic: sessionSynthetic,
       prompt: sessionPrompt,
       interrupt: sessionInterrupt,
@@ -469,4 +480,28 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
     },
     active: () => live.size,
   }
+}
+
+/**
+ * Whether `name` is a variable `bd` reads: anything starting with `BEADS_` or `BD_`
+ * (`BEADS_DIR`, `BEADS_DB`, `BEADS_ACTOR`, `BD_ACTOR`, `BD_DB`, `BD_SOCKET`,
+ * `BEADS_DOLT_SERVER_*`, `BEADS_DOLT_SHARED_SERVER`, ...). The OpenCode server, and so a
+ * test process, can inherit these from another project's shell; they carry that project's
+ * ledger, actor or dolt server routing, so a test that runs a real `bd` would act on it.
+ * A prefix rule covers variables a later `bd` release adds. `SROBROEK_BEADS_PIN` and
+ * `MY_BD_X` do not match.
+ */
+export function isBeadsEnvKey(name: string): boolean {
+  return name.startsWith("BEADS_") || name.startsWith("BD_")
+}
+
+/**
+ * A copy of `process.env` for a test child: every {@link isBeadsEnvKey} variable removed,
+ * then `extra` applied. A key in `extra` with value `undefined` is left unset.
+ */
+export function scrubbedBeadsEnv(extra: Record<string, string | undefined> = {}): Record<string, string> {
+  const env: Record<string, string | undefined> = { ...process.env }
+  for (const key of Object.keys(env)) if (isBeadsEnvKey(key)) delete env[key]
+  Object.assign(env, extra)
+  return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined))
 }

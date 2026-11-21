@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,7 +12,7 @@ permissions:
 jobs:
   check:
     # Same version as @srobroek/harness-kit in package.json; `harness-kit check` warns when they differ.
-    uses: srobroek/harness-kit/.github/workflows/check.yml@v1.4.0
+    uses: srobroek/harness-kit/.github/workflows/check.yml@v1.5.0
 
   # The gates the reusable workflow does not run: lint, bundles, and the repository's content checks.
   repo-checks:
@@ -19,25 +20,25 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "24"
           package-manager-cache: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.4"
-      - run: npm ci --no-audit --no-fund
-      - run: npm run lint
+          bun-version: "1.4.5"
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
       - name: Plugin bundles and composed agents are current
-        run: npm run build:check
+        run: bun run build:check
       - name: Release prepare step leaves bundles current
         run: bun scripts/check-release-prepare.ts
-      - run: npm run plugin-table:check
-      - run: npm run steering
-      - run: npm run pitfalls
-      - run: npm run agent-roles
-      - run: npm run descriptions
-      - run: npm run concerns
+      - run: bun run plugin-table:check
+      - run: bun run steering
+      - run: bun run pitfalls
+      - run: bun run agent-roles
+      - run: bun run descriptions
+      - run: bun run concerns
       - run: bun scripts/check-test-executables.ts
       - name: Python tests of the shipped scripts
         run: |
@@ -82,6 +83,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: "1.4.4"
+          bun-version: "1.4.5"
       - name: Vendored files match the pinned cad-agent tag
         run: bun scripts/sync-cad.ts --check

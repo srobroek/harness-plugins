@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Plugin } from "@opencode/plugin"
 
-import { createFakeContext } from "./testing.ts"
+import { createFakeContext, isBeadsEnvKey, scrubbedBeadsEnv } from "./testing.ts"
 
 const plugin = Plugin.define({
   id: "srobroek.lib-test",
@@ -208,5 +208,31 @@ describe("createFakeContext", () => {
     const input = { sessionID: "ses_a", requestID: "per_1", decision: "reject", message: "no" } as const
     await fake.context.permission.reply(input)
     expect(fake.replies).toEqual([input])
+  })
+})
+
+describe("scrubbedBeadsEnv", () => {
+  const leaked = ["BEADS_DIR", "BEADS_DB", "BEADS_ACTOR", "BD_ACTOR", "BD_DB", "BD_SOCKET", "BEADS_DOLT_SERVER_PORT"]
+  const kept = ["BEADSX", "MY_BD_X", "KEEP_ME"]
+
+  test("isBeadsEnvKey matches the BEADS_ and BD_ prefixes only", () => {
+    expect(leaked.every(isBeadsEnvKey)).toBe(true)
+    expect(kept.some(isBeadsEnvKey)).toBe(false)
+  })
+
+  test("drops inherited beads variables, keeps the rest and applies extra", () => {
+    const saved = { ...process.env }
+    for (const key of [...leaked, ...kept]) process.env[key] = "foreign"
+    try {
+      const env = scrubbedBeadsEnv({ BEADS_DIR: "/mine", BD_ACTOR: undefined, BD_SOCKET: "/mine.sock" })
+      expect(env.BEADS_DIR).toBe("/mine")
+      expect(env.BD_SOCKET).toBe("/mine.sock")
+      for (const key of leaked.filter((key) => !["BEADS_DIR", "BD_SOCKET"].includes(key))) expect(key in env).toBe(false)
+      for (const key of kept) expect(env[key]).toBe("foreign")
+      expect(process.env.BEADS_DIR).toBe("foreign")
+    } finally {
+      for (const key of [...leaked, ...kept]) delete process.env[key]
+      Object.assign(process.env, saved)
+    }
   })
 })

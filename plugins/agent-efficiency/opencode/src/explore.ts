@@ -1,3 +1,5 @@
+import { READ_ONLY_SHELL_RULES } from "@srobroek/opencode-lib/read-only-shell"
+
 export const EXPLORE_ID = "explore"
 
 /** Replaces the built-in explore prompt; the report shape follows oh-my-pi's scout agent. */
@@ -14,7 +16,7 @@ Guidelines:
 - Run independent searches and reads in parallel.
 - If a search finds nothing, try at least one other pattern or path before concluding the target does not exist.
 - Match depth to the thoroughness the caller asks for (quick, medium or very thorough); default to medium.
-- Use the shell for read-only inspection only: \`git log\`, \`git diff\`, \`rg\`, or \`gh repo clone\` into a temp dir. Never create, modify or delete files in the project, and never push or change a remote.`
+- Use the shell for read-only inspection only: \`git log\`, \`git diff\`, \`rg\`, \`bd show\`, or \`gh repo clone\` into the OpenCode temp dir. Never create, modify or delete files in the project, and never change a remote or the ledger.`
 
 export type Rule = { action: string; resource: string; effect: "allow" | "deny" | "ask" }
 
@@ -29,11 +31,7 @@ export const EXPLORE_PERMISSIONS: ReadonlyArray<Rule> = [
   { action: "glob", resource: "*", effect: "allow" },
   { action: "websearch", resource: "*", effect: "allow" },
   { action: "webfetch", resource: "*", effect: "allow" },
-  { action: "shell", resource: "*", effect: "allow" },
-  { action: "shell", resource: "git push*", effect: "deny" },
-  { action: "shell", resource: "gh pr create*", effect: "deny" },
-  { action: "shell", resource: "gh pr merge*", effect: "deny" },
-  { action: "shell", resource: "gh * delete*", effect: "deny" },
+  ...READ_ONLY_SHELL_RULES,
   { action: "edit", resource: "*", effect: "deny" },
   { action: "write", resource: "*", effect: "deny" },
   { action: "patch", resource: "*", effect: "deny" },
