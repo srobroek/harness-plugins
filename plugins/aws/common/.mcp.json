@@ -6,7 +6,7 @@
     },
     "aws-pricing": {
       "command": "uvx",
-      "args": ["--with", "botocore[crt]", "awslabs.aws-pricing-mcp-server@1.1.1"],
+      "args": ["--with", "botocore[crt]", "awslabs.aws-pricing-mcp-server@1.1.2"],
       "env": { "AWS_REGION": "us-east-1", "FASTMCP_LOG_LEVEL": "ERROR" }
     }
   }
