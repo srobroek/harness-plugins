@@ -15,7 +15,7 @@
 | aws | 0.7.0 | development | global | opencode, claude |
 | beads | 0.8.1 | development | project | opencode, claude |
 | build | 0.7.0 | development | project | opencode |
-| cad | 0.7.0 | development | project | opencode |
+| cad | 0.8.0 | development | project | opencode |
 | chezmoi | 0.5.0 | development | global | opencode, claude |
 | claude-compat | 0.4.0 | development | project | opencode |
 | code-challenge | 1.1.0 | development | global | opencode |
