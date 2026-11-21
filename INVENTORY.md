@@ -39,7 +39,7 @@
 | project | 0.9.0 | productivity | global | opencode, claude |
 | quality | 0.13.0 | development | global | opencode, claude |
 | repomix | 0.4.0 | development | global | opencode, claude |
-| safety | 0.9.3 | development | global | opencode |
+| safety | 0.10.0 | development | global | opencode |
 | session | 0.4.0 | development | global | opencode |
 | speckit | 0.10.0 | development | project | opencode, claude |
 | statusline | 0.4.0 | development | global | opencode |
