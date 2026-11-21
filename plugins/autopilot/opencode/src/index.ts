@@ -10,8 +10,9 @@ import { withLease } from "@srobroek/opencode-lib/lease-lock"
 import { registerSkills } from "@srobroek/opencode-lib/skill-files"
 import { classifyScope, deadlineAt, type Invocation, parseInvocation, type RunOptions } from "./args.ts"
 import { automationRequest, type TickBinding } from "./automation.ts"
-import { Activity, BD_READ_TIMEOUT_MS, childFrom, commitCount, readBeads, type SessionView, sessionBusy } from "./gather.ts"
+import { Activity, BD_READ_TIMEOUT_MS, type BeadView, childFrom, commitCount, readBeads, type SessionView, sessionBusy } from "./gather.ts"
 import { type JournalEntry, LOG_INPUT_SCHEMA, validateEntry } from "./journal.ts"
+import { foreignBead, fsLedgerHost, type LedgerHost, ledgerEnv, resolveLedger } from "./ledger.ts"
 import {
   DENY_QUESTION,
   EXTERNAL_DIRECTORY,
@@ -77,6 +78,7 @@ const STATUS_INPUT = {
       additionalProperties: false,
       properties: {
         scope: { type: "string" },
+        ledger: { type: "string", description: "the beads ledger (.beads directory) this run reads and writes; default: derived from the scope or the session directory" },
         full: { type: "boolean" },
         allow: { type: "array", items: { type: "string", enum: ["merge", "deploy"] } },
         lanes: { type: "integer", minimum: 1 },
@@ -106,7 +108,7 @@ const MERGE_INPUT = {
 type StatusInput = {
   action?: "status" | "arm" | "tick" | "fallback" | "stop"
   run?: string
-  setup?: { scope?: string; full?: boolean; allow?: ("merge" | "deploy")[]; lanes?: number; for?: string; until_time?: string; until?: string }
+  setup?: { scope?: string; ledger?: string; full?: boolean; allow?: ("merge" | "deploy")[]; lanes?: number; for?: string; until_time?: string; until?: string }
   automation_id?: string
   reason?: string
   token?: string
@@ -149,11 +151,14 @@ export const MAX_REPROMPTS = 2
 /** A bound on child-session pages per tick (100 sessions each). */
 const MAX_CHILD_PAGES = 50
 
-export type WriteLock = <T>(cwd: string, owner: string, write: () => Promise<T>) => Promise<{ kind: "done"; value: T } | { kind: "failed"; reason: string }>
+const NO_LEDGER = "the run has no beads ledger to read or write"
 
-const embeddedLock: WriteLock = (cwd, owner, write) => withEmbeddedWriteLock(cwd, owner, write)
+/** `env` is the environment of the `bd` run the lock guards, so the lock covers the store that run writes. */
+export type WriteLock = <T>(cwd: string, owner: string, write: () => Promise<T>, env: NodeJS.ProcessEnv) => Promise<{ kind: "done"; value: T } | { kind: "failed"; reason: string }>
 
-export type Deps = { run?: Run; now?: () => number; ticks?: Ticks; lock?: WriteLock; warn?: Warn }
+const embeddedLock: WriteLock = (cwd, owner, write, env) => withEmbeddedWriteLock(cwd, owner, write, env)
+
+export type Deps = { run?: Run; now?: () => number; ticks?: Ticks; lock?: WriteLock; warn?: Warn; ledger?: LedgerHost }
 
 /** How long a state transition waits for another instance's hold on the run lock. */
 const RUN_LOCK_WAIT_MS = 60_000
@@ -262,6 +267,7 @@ export class Autopilot {
   readonly #now: () => number
   readonly #ticks: Ticks
   readonly #lock: WriteLock
+  readonly #ledgers: LedgerHost
   readonly #warn: Warn
   readonly #reprompts = new Map<string, number>()
   readonly #serial = new Map<string, Promise<unknown>>()
@@ -278,6 +284,7 @@ export class Autopilot {
     this.activity = new Activity(this.#now)
     this.#ticks = deps.ticks ?? new Ticks(realClock, this.#warn)
     this.#lock = deps.lock ?? embeddedLock
+    this.#ledgers = deps.ledger ?? fsLedgerHost
   }
 
   /**
@@ -384,7 +391,7 @@ export class Autopilot {
     const now = this.#now()
     const armedAt = state.armedAt ?? now
     const [beads, commits, kids, leadBusy] = await Promise.all([
-      readBeads(state.directory, this.#run),
+      this.#readBeads(state),
       commitCount(state.directory, this.#run),
       this.#children(state.sessionID),
       this.leadBusy(state.sessionID),
@@ -640,6 +647,9 @@ export class Autopilot {
     if (state.phase !== "setup") return { error: `run is ${state.phase}` }
     const options = applySetup(state.options, input.setup)
     if ("error" in options) return options
+    const scope = classifyScope(options.scope)
+    const ledger = resolveLedger({ ...(input.setup?.ledger !== undefined ? { explicit: input.setup.ledger } : {}), scope, directory: state.directory }, this.#ledgers)
+    if (!ledger.ok) return { error: ledger.error }
     const now = this.#now()
     const deadline = options.forMs !== undefined ? now + options.forMs : options.untilTime !== undefined ? deadlineAt(options.untilTime, now) : undefined
     const next: RunState = {
@@ -647,7 +657,8 @@ export class Autopilot {
       phase: "running",
       armedAt: now,
       options: { ...options, allow: options.allow ?? [], lanes: options.lanes ?? 3, full: options.full ?? false },
-      scope: classifyScope(options.scope),
+      scope,
+      ledger: ledger.ledger,
       tick: { kind: "none", token: randomUUID() },
       ...(deadline !== undefined ? { deadline } : {}),
     }
@@ -670,7 +681,7 @@ export class Autopilot {
    */
   async #beginStop(dir: RunDir, state: RunState, reason: string): Promise<Record<string, unknown>> {
     const now = this.#now()
-    const fresh = await readBeads(state.directory, this.#run)
+    const fresh = await this.#readBeads(state)
     const beads = fresh.ok ? countBeads(fresh, state.scope) : state.beads
     const stopReason = state.stopReason ?? reason
     dir.append({ ts: new Date(now).toISOString(), type: "stop", summary: stopReason })
@@ -735,7 +746,9 @@ export class Autopilot {
    * stop never creates a second. A lookup that fails or answers something unreadable is `ok: false`.
    */
   async #findHandoff(state: RunState, title: string): Promise<{ ok: true; id: string | undefined } | { ok: false; reason: string }> {
-    const listed = await this.#run(state.directory, "bd", ["list", "--all", "--label", HANDOFF_LABEL, "--json", "--limit", "0"], BD_READ_TIMEOUT_MS)
+    const ledger = this.#ledgerOf(state)
+    if (ledger === undefined) return { ok: false, reason: NO_LEDGER }
+    const listed = await this.#run(state.directory, "bd", ["list", "--all", "--label", HANDOFF_LABEL, "--json", "--limit", "0"], BD_READ_TIMEOUT_MS, ledgerEnv(ledger))
     if (!listed.ok) return { ok: false, reason: listed.stderr.trim() || "bd list failed" }
     let items: unknown
     try {
@@ -777,16 +790,37 @@ export class Autopilot {
     if (state?.phase === "stopped" || state?.phase === "stopping")
       return `logged ${entry.type} after the run stopped; it is in journal.jsonl but not in summary.md or the handoff bead`
     if (entry.bead && (entry.type === "blocker" || entry.type === "ambiguity") && state && !state.options.full) {
-      const flagged = await this.#bdWrite(state, ["update", entry.bead, "--add-label", "human", "--json"])
+      const flagged = await this.#bdWrite(state, ["update", entry.bead, "--add-label", "human", "--json"], entry.bead)
       return `logged ${entry.type}${flagged.ok ? `; flagged ${entry.bead} human` : `; could not flag ${entry.bead}: ${flagged.stderr.trim()}`}`
     }
     return `logged ${entry.type}`
   }
 
-  /** One `bd` mutation, as the embedded store's single writer when the store is embedded. */
-  async #bdWrite(state: RunState, args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  /** The run's ledger; runs armed before the ledger was recorded derive it as arming would, or have none. */
+  #ledgerOf(state: RunState): string | undefined {
+    if (state.ledger !== undefined) return state.ledger
+    const legacy = resolveLedger({ scope: state.scope, directory: state.directory }, this.#ledgers)
+    return legacy.ok ? legacy.ledger : undefined
+  }
+
+  async #readBeads(state: RunState): Promise<BeadView> {
+    const ledger = this.#ledgerOf(state)
+    return ledger === undefined ? { beads: [], ready: [], blocked: [], ok: false } : readBeads(state.directory, this.#run, ledger)
+  }
+
+  /**
+   * One `bd` mutation in the run's ledger, as the embedded store's single writer when the store is
+   * embedded. It never leaves that ledger: a bead that belongs to another one is refused.
+   */
+  async #bdWrite(state: RunState, args: string[], bead?: string): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+    const refuse = (stderr: string) => ({ ok: false, stdout: "", stderr })
+    const ledger = this.#ledgerOf(state)
+    if (ledger === undefined) return refuse(NO_LEDGER)
+    const foreign = bead === undefined ? undefined : foreignBead(ledger, bead, this.#ledgers)
+    if (foreign !== undefined) return refuse(`refused: ${foreign}`)
+    const env = ledgerEnv(ledger)
     const owner = `autopilot/${state.runId}/${randomUUID()}`
-    const held = await this.#lock(state.directory, owner, () => this.#run(state.directory, "bd", args, BD_READ_TIMEOUT_MS))
+    const held = await this.#lock(state.directory, owner, () => this.#run(state.directory, "bd", args, BD_READ_TIMEOUT_MS, env), { ...process.env, ...env })
     return held.kind === "done" ? held.value : { ok: false, stdout: "", stderr: held.reason }
   }
 
