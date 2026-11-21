@@ -475,3 +475,21 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
     active: () => live.size,
   }
 }
+
+/**
+ * Variables that point `bd` at a ledger or an identity. The OpenCode server, and so a test
+ * process, can inherit them from another project's shell; a test that runs a real `bd`
+ * would then write to that ledger. `BEADS_DB` is bd's legacy database path override.
+ */
+export const BEADS_ENV_KEYS = ["BEADS_DIR", "BEADS_DB", "BEADS_ACTOR", "BD_ACTOR"] as const
+
+/**
+ * A copy of `process.env` for a test child: the {@link BEADS_ENV_KEYS} removed, then `extra`
+ * applied. A key in `extra` with value `undefined` is left unset.
+ */
+export function scrubbedBeadsEnv(extra: Record<string, string | undefined> = {}): Record<string, string> {
+  const env: Record<string, string | undefined> = { ...process.env }
+  for (const key of BEADS_ENV_KEYS) delete env[key]
+  Object.assign(env, extra)
+  return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined))
+}

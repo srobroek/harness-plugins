@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Plugin } from "@opencode/plugin"
 
-import { createFakeContext } from "./testing.ts"
+import { createFakeContext, scrubbedBeadsEnv } from "./testing.ts"
 
 const plugin = Plugin.define({
   id: "srobroek.lib-test",
@@ -208,5 +208,22 @@ describe("createFakeContext", () => {
     const input = { sessionID: "ses_a", requestID: "per_1", decision: "reject", message: "no" } as const
     await fake.context.permission.reply(input)
     expect(fake.replies).toEqual([input])
+  })
+})
+
+describe("scrubbedBeadsEnv", () => {
+  test("drops inherited beads variables, keeps the rest and applies extra", () => {
+    const saved = { ...process.env }
+    Object.assign(process.env, { BEADS_DIR: "/foreign", BEADS_DB: "/foreign/db", BEADS_ACTOR: "x", BD_ACTOR: "y", KEEP_ME: "1" })
+    try {
+      const env = scrubbedBeadsEnv({ BEADS_DIR: "/mine", BEADS_ACTOR: undefined })
+      expect(env.BEADS_DIR).toBe("/mine")
+      expect(env.KEEP_ME).toBe("1")
+      for (const key of ["BEADS_DB", "BEADS_ACTOR", "BD_ACTOR"]) expect(key in env).toBe(false)
+      expect(process.env.BEADS_DIR).toBe("/foreign")
+    } finally {
+      for (const key of ["BEADS_DIR", "BEADS_DB", "BEADS_ACTOR", "BD_ACTOR", "KEEP_ME"]) delete process.env[key]
+      Object.assign(process.env, saved)
+    }
   })
 })
