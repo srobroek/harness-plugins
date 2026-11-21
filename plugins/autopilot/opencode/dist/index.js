@@ -1960,52 +1960,64 @@ function parseRoutes(text) {
   }
   return routes;
 }
+var unreadable = (file, ledger) => ({ ok: false, error: `${file} in ${ledger} cannot be read safely (a symlink, a special file or too large), so routing cannot be checked; fix it or pass setup.ledger` });
 function followRedirect(ledger, host) {
-  const text = host.readRedirect(ledger);
-  const line = text?.split(`
+  const read = host.readRedirect(ledger);
+  if (read.kind === "absent")
+    return { ok: true, ledger };
+  if (read.kind === "unreadable")
+    return unreadable("redirect", ledger);
+  const line = read.text.split(`
 `).map((entry) => entry.trim()).find((entry) => entry !== "" && !entry.startsWith("#"));
   if (line === undefined)
-    return ledger;
+    return { ok: true, ledger };
   const target = host.canonical(isAbsolute3(line) ? line : resolve3(dirname3(ledger), line));
-  return host.isLedger(target) ? target : ledger;
+  return { ok: true, ledger: host.isLedger(target) ? target : ledger };
 }
 function routedLedger(ledger, id, host) {
-  const text = host.readRoutes(ledger);
-  if (text === undefined)
-    return null;
+  const read = host.readRoutes(ledger);
+  if (read.kind === "absent")
+    return { ok: true, ledger: null };
+  if (read.kind === "unreadable")
+    return unreadable("routes.jsonl", ledger);
   let best;
-  for (const [prefix, path] of parseRoutes(text))
+  for (const [prefix, path] of parseRoutes(read.text))
     if (id.startsWith(prefix) && (best === undefined || prefix.length > best.prefix.length))
       best = { prefix, path };
   if (best === undefined)
-    return null;
+    return { ok: true, ledger: null };
   const target = host.canonical(join2(resolve3(dirname3(ledger), best.path), ".beads"));
-  return host.isLedger(target) ? followRedirect(target, host) : undefined;
+  if (!host.isLedger(target))
+    return { ok: false, error: `the route for ${id} in ${ledger} leads to no ledger (${target})` };
+  const followed = followRedirect(target, host);
+  return followed;
 }
 function resolveLedger(input, host) {
   if (input.explicit !== undefined && input.explicit.trim() !== "") {
     const path = resolve3(input.directory, input.explicit.trim());
     for (const candidate of [path, join2(path, ".beads")])
       if (host.isLedger(candidate))
-        return { ok: true, ledger: followRedirect(host.canonical(candidate), host) };
+        return followRedirect(host.canonical(candidate), host);
     return { ok: false, error: `setup.ledger ${input.explicit} is not a beads ledger (a .beads directory, or the checkout that holds one)` };
   }
   const session = host.sessionLedger(input.directory);
   if (session === undefined)
     return { ok: false, error: `no beads ledger found for ${input.directory}; pass setup.ledger` };
-  const base = followRedirect(host.canonical(session), host);
-  if (input.scope.kind !== "bead")
-    return { ok: true, ledger: base };
-  const routed = routedLedger(base, input.scope.id, host);
-  if (routed === undefined)
-    return { ok: false, error: `the route for ${input.scope.id} in ${base} leads to no ledger; pass setup.ledger` };
-  return { ok: true, ledger: routed ?? base };
+  const resolved = followRedirect(host.canonical(session), host);
+  if (!resolved.ok || input.scope.kind !== "bead")
+    return resolved;
+  const routed = routedLedger(resolved.ledger, input.scope.id, host);
+  if (!routed.ok)
+    return routed;
+  return { ok: true, ledger: routed.ledger ?? resolved.ledger };
 }
 function foreignBead(ledger, beadId, host) {
   const routed = routedLedger(ledger, beadId, host);
-  if (routed === null || routed === ledger)
+  if (!routed.ok)
+    return routed.error;
+  if (routed.ledger === null || routed.ledger === ledger)
     return;
-  return routed === undefined ? `${beadId} routes to no ledger` : `${beadId} belongs to ${routed}, not this run's ledger ${ledger}`;
+  return `${beadId} belongs to ${routed.ledger}, not this run's ledger ${ledger}`;
 }
 var ledgerEnv = (ledger) => ({ BEADS_DIR: ledger });
 var isDir2 = (path) => {
@@ -2025,14 +2037,8 @@ var fsLedgerHost = {
       return resolve3(path);
     }
   },
-  readRoutes: (ledger) => {
-    const read = readBounded(join2(ledger, "routes.jsonl"));
-    return read.kind === "text" ? read.text : undefined;
-  },
-  readRedirect: (ledger) => {
-    const read = readBounded(join2(ledger, "redirect"));
-    return read.kind === "text" ? read.text : undefined;
-  }
+  readRoutes: (ledger) => readBounded(join2(ledger, "routes.jsonl")),
+  readRedirect: (ledger) => readBounded(join2(ledger, "redirect"))
 };
 
 // plugins/autopilot/opencode/src/gather.ts
@@ -3234,8 +3240,8 @@ class Autopilot {
   #ledgerOf(state2) {
     if (state2.ledger !== undefined)
       return state2.ledger;
-    const session = this.#ledgers.sessionLedger(state2.directory);
-    return session === undefined ? undefined : this.#ledgers.canonical(session);
+    const legacy = resolveLedger({ scope: state2.scope, directory: state2.directory }, this.#ledgers);
+    return legacy.ok ? legacy.ledger : undefined;
   }
   async#readBeads(state2) {
     const ledger = this.#ledgerOf(state2);
