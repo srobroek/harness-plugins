@@ -41,7 +41,10 @@ export function fakeExec(answers: Record<string, ExecRun>, calls: Array<{ argv: 
   return async (argv, options) => {
     calls.push({ argv, options })
     const key = Object.keys(answers).find((k) => argv.join(" ").includes(k))
-    return key ? (answers[key] as ExecRun) : exited("", 0)
+    if (key) return answers[key] as ExecRun
+    // Unless a test says otherwise the target is not a git repository.
+    if (argv.includes("rev-parse")) return exited("", 128, "fatal: not a git repository (or any of the parent directories): .git")
+    return exited("", 0)
   }
 }
 

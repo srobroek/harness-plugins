@@ -3,7 +3,8 @@ import { tmpdir } from "node:os"
 import { extname, join, resolve } from "node:path"
 import { readText } from "./read.ts"
 import { type Exec, MAX_STDERR_BYTES, MAX_STDOUT_BYTES, spawnTool } from "./exec.ts"
-import { detectLanguages, expandFiles, lstatOrNull, missingMarker, parseListing } from "./files.ts"
+import { detectLanguages, expandFiles, lstatOrNull, missingMarker } from "./files.ts"
+import { type GitState, gitListing, gitState, type Listing } from "./git.ts"
 import { OutputError, parseOutput } from "./parsers.ts"
 import { pinOf } from "./pins.ts"
 import { probeFor } from "./probes.ts"
@@ -107,22 +108,6 @@ function lensOf(recipe: Recipe, rule: string): Lens {
   return recipe.lenses[0] ?? "simplification"
 }
 
-async function gitDir(root: string, exec: Exec, which: (b: string) => string | null): Promise<string | null> {
-  const git = which("git")
-  if (!git) return null
-  const run = await exec([git, "rev-parse", "--absolute-git-dir"], { cwd: root, timeoutMs: 10_000 })
-  const dir = run.kind === "exited" && run.exitCode === 0 ? run.stdout.trim() : ""
-  return dir === "" ? null : dir
-}
-
-/** `git ls-files` of everything not ignored; null when git is missing, fails, or the answer is unusable. */
-async function gitListing(root: string, exec: Exec, which: (b: string) => string | null): Promise<string[] | null> {
-  const git = which("git")
-  if (!git) return null
-  const run = await exec([git, "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: root, timeoutMs: 30_000 })
-  return run.kind === "exited" && run.exitCode === 0 ? parseListing(run.stdout) : null
-}
-
 const firstLine = (text: string): string => text.trim().split("\n")[0]?.slice(0, 200) ?? ""
 const slug = (id: string): string => id.replace(/[^\w.-]/g, "_")
 
@@ -136,16 +121,19 @@ type Prepared = {
   timeoutMs: number
   files: string[]
   languages: Language[]
-  git: string | null
+  git: GitState
   toolsDir: string
   hasGitignore: boolean
   /** The file list matched nothing. */
   emptySelection: boolean
-  /** Non-ignored files git knows (tracked or untracked), computed once; null when this is not a git repository. */
-  listing: () => Promise<string[] | null>
+  /** Non-ignored files git knows (tracked or untracked), computed once. */
+  listing: () => Promise<Listing>
+  /** Set when explicit files were named and the repository's ignore files could not be applied to them. */
+  ignoreError: string | null
+  signal?: AbortSignal
 }
 
-async function prepare(input: ScanInput, deps: ScanDeps): Promise<Prepared> {
+async function prepare(input: ScanInput, deps: ScanDeps, signal?: AbortSignal): Promise<Prepared> {
   // Analyzers report real paths, so a symlinked root (macOS /var -> /private/var) is resolved first.
   const root = realpathSync(resolve(input.root ?? process.cwd()))
   if (!statSync(root).isDirectory()) throw new Error(`challenge_scan: root is not a directory: ${root}`)
@@ -154,22 +142,22 @@ async function prepare(input: ScanInput, deps: ScanDeps): Promise<Prepared> {
   if (input.runId !== undefined && !validRunId(input.runId)) throw new Error(`challenge_scan: invalid runId "${input.runId}"`)
   const requested = input.files !== undefined && input.files.length > 0
   let files = requested ? expandFiles(root, input.files ?? []) : []
-  let git = files.length === 0 && requested ? null : await gitDir(root, exec, which)
-  let listed: Promise<string[] | null> | undefined
-  const listing = (): Promise<string[] | null> => {
-    listed ??= git === null ? Promise.resolve(null) : gitListing(root, exec, which)
+  const nothing = requested && files.length === 0
+  const git: GitState = nothing ? { kind: "none" } : await gitState(root, exec, which, signal)
+  let listed: Promise<Listing> | undefined
+  const listing = (): Promise<Listing> => {
+    listed ??= gitListing(root, git, exec, which, signal)
     return listed
   }
   // Pass the repo's ignore files through to tools that would lint an explicitly named, git-ignored file.
+  let ignoreError: string | null = null
   if (files.length > 0) {
     const known = await listing()
-    if (known !== null) {
-      const set = new Set(known)
+    if (known.kind === "files") {
+      const set = new Set(known.files)
       files = files.filter((f) => set.has(f))
-    }
+    } else if (known.kind === "error") ignoreError = known.reason
   }
-  const emptySelection = requested && files.length === 0
-  if (emptySelection) git = null
   return {
     root,
     exec,
@@ -181,10 +169,12 @@ async function prepare(input: ScanInput, deps: ScanDeps): Promise<Prepared> {
     files,
     languages: input.languages && input.languages.length > 0 ? input.languages : detectLanguages(root, files),
     git,
-    toolsDir: deps.toolsDir ?? (git === null ? "" : join(git, "code-challenge", "tools")),
+    toolsDir: deps.toolsDir ?? (git.kind === "repo" ? join(git.dir, "code-challenge", "tools") : ""),
     hasGitignore: lstatOrNull(join(root, ".gitignore"))?.isFile() === true,
-    emptySelection,
+    emptySelection: requested && files.length === 0,
     listing,
+    ignoreError,
+    signal,
   }
 }
 
@@ -214,6 +204,10 @@ function plan(p: Prepared): PlanItem[] {
     }
     let scoped: string[] = []
     if (recipe.scope === "files" && p.files.length > 0) {
+      if (p.ignoreError) {
+        items.push({ recipe, status: "gap", reason: `the repository's ignore files could not be applied to the named files: ${p.ignoreError}` })
+        continue
+      }
       scoped = p.files.filter((f) => !recipe.extensions || recipe.extensions.includes(extname(f)))
       if (scoped.length === 0) {
         skip("no matching files in the file list")
@@ -233,17 +227,24 @@ function plan(p: Prepared): PlanItem[] {
 export type Risk = { recipe: string; tool: string; reasons: string[] }
 
 /** The recipes this scan would run that execute repository or downloaded code, and what each runs and writes. */
-export async function consentRisks(input: ScanInput, deps: ScanDeps = {}): Promise<Risk[]> {
-  const prepared = await prepare(input, deps)
+export async function consentRisks(input: ScanInput, deps: ScanDeps = {}, signal?: AbortSignal): Promise<Risk[]> {
+  const prepared = await prepare(input, deps, signal)
   if (prepared.emptySelection) return []
   return plan(prepared).flatMap((item) =>
     item.status === "ready" && item.risks.length > 0 ? [{ recipe: item.recipe.id, tool: item.recipe.tool, reasons: item.risks }] : [],
   )
 }
 
+/** The eslint tools directory, validated one real directory at a time like every other output path. */
+function ensureToolsDir(p: Prepared): string {
+  return p.git.kind === "repo" && p.toolsDir === join(p.git.dir, "code-challenge", "tools")
+    ? ensureDir(p.git.dir, "code-challenge", "tools")
+    : ensureDir(p.toolsDir)
+}
+
 const MiB = 1024 * 1024
 /** Room left on a command line (macOS ARG_MAX is 1 MiB) after the environment and fixed arguments. */
-const MAX_ARGV_BYTES = 256 * 1024
+export const MAX_ARGV_BYTES = 256 * 1024
 
 /** Read a tool's report file: a regular file under the size cap, else the reason it cannot be used. */
 function readReport(path: string, name: string): { text: string } | { gap: string } {
@@ -260,7 +261,7 @@ function readReport(path: string, name: string): { text: string } | { gap: strin
 
 /** Run the recipes selected by the input and normalise their hits. */
 export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: AbortSignal): Promise<ScanReport> {
-  const p = await prepare(input, deps)
+  const p = await prepare(input, deps, signal)
   const { root, exec, depth } = p
   if (p.emptySelection) {
     const coverage: CoverageEntry[] = [
@@ -268,14 +269,14 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
     ]
     return { root, languages: [], depth, candidates: [], coverage, timings: [], rawDir: null }
   }
-  if (input.runId !== undefined && p.git === null) {
-    throw new Error("challenge_scan: runId needs a git repository for the output directory")
+  if (input.runId !== undefined && p.git.kind !== "repo") {
+    throw new Error(`challenge_scan: runId needs a git repository for the output directory${p.git.kind === "error" ? ` (${p.git.reason})` : ""}`)
   }
   const base =
-    input.runId !== undefined && p.git !== null
-      ? ensureDir(p.git, "code-challenge", input.runId, "scan")
+    input.runId !== undefined && p.git.kind === "repo"
+      ? ensureDir(p.git.dir, "code-challenge", input.runId, "scan")
       : mkdtempSync(join(tmpdir(), "code-challenge-scan-"))
-  const rawDir = input.runId !== undefined && p.git !== null ? base : null
+  const rawDir = input.runId !== undefined && p.git.kind === "repo" ? base : null
   const fileSet = new Set(p.files)
 
   const coverage: CoverageEntry[] = []
@@ -306,8 +307,15 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
       const fromConfigDir = (recipe.repoConfigNames ?? []).some((n) => lstatOrNull(join(root, n)) !== null)
       let files = item.scoped
       if (fromConfigDir) {
-        const known = (await p.listing()) ?? expandFiles(root, ["."])
-        files = p.files.length > 0 ? item.scoped : known.filter((f) => !recipe.extensions || recipe.extensions.includes(extname(f)))
+        // Isolated mode names the files itself, so the repo's ignore files must be applied here: a listing
+        // that failed is a gap, and only a directory that is not a repository is walked unfiltered.
+        const known = await p.listing()
+        if (known.kind === "error") {
+          entry("gap", `the repository's ignore files could not be applied: ${known.reason}`)
+          continue
+        }
+        const all = known.kind === "files" ? known.files : expandFiles(root, ["."])
+        files = p.files.length > 0 ? item.scoped : all.filter((f) => !recipe.extensions || recipe.extensions.includes(extname(f)))
         if (files.length === 0) {
           entry("skipped", "no matching files outside the repo's ignore files")
           continue
@@ -318,7 +326,7 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
         }
       }
       // eslint resolves its plugin from the config's own location, so that config sits in the tools directory.
-      const cfg = recipe.install === "tool-dir" ? p.toolsDir : ensureDir(base, "cfg", name)
+      const cfg = recipe.install === "tool-dir" ? ensureToolsDir(p) : ensureDir(base, "cfg", name)
       const out = ensureDir(base, "out", name)
       for (const [file, content] of Object.entries(
         recipe.configFiles?.({ root, hasGitignore: p.hasGitignore, toolsDir: p.toolsDir, fromConfigDir }) ?? {},

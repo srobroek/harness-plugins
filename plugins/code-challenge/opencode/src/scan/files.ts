@@ -122,3 +122,13 @@ export function lstatOrNull(path: string): Stats | null {
 export function parseListing(stdout: string): string[] {
   return stdout.split("\0").filter((f) => f !== "")
 }
+
+/** Keep the listed root-relative paths that are regular files, not symlinks, and really inside the root. */
+export function contained(root: string, files: readonly string[]): string[] {
+  return files.filter((f) => {
+    const abs = join(root, f)
+    if (!lstatOrNull(abs)?.isFile()) return false
+    const real = realOrNull(abs)
+    return real !== null && inside(root, real)
+  })
+}
