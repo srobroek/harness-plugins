@@ -1,6 +1,6 @@
 import { lstatSync, readdirSync, realpathSync, type Stats, statSync } from "node:fs"
-import { readText } from "./read.ts"
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { readText } from "./read.ts"
 import { LANGUAGES, type Language } from "./types.ts"
 
 export const SKIP_DIRS = new Set([".git", "node_modules", "dist", "target", ".venv", "venv", "__pycache__"])

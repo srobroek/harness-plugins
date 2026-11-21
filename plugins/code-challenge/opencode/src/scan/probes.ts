@@ -1,7 +1,7 @@
-import { readText } from "./read.ts"
 import { dirname, join } from "node:path"
 import type { Exec } from "./exec.ts"
 import { MAX_MARKER_BYTES } from "./files.ts"
+import { readText } from "./read.ts"
 import type { Hit, Recipe } from "./types.ts"
 
 /** Whether the repo's own config enables a hit's rule: true, false, or null when that could not be told. */

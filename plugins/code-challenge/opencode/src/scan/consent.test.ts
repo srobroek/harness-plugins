@@ -2,9 +2,9 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { realpathSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
-import { PINS } from "./pins.ts"
 import { cleanup, exited, fakeExec, pythonRepo, RUFF_HIT, temp, withTools } from "./fixtures.ts"
 import { confirmScan, registerScanTool, SCAN_TOOL } from "./index.ts"
+import { PINS } from "./pins.ts"
 import { consentRisks, runScan } from "./run.ts"
 
 afterAll(cleanup)
