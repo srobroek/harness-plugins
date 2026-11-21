@@ -258,10 +258,11 @@ lives under `<git-common-dir>/opencode/`, shared by every instance of the reposi
   it is re-entrant inside a removal's own critical section. `delivery` takes this same lock.
 - the lane's claim carries the resume `generation` and `resumedAt`. A resume takes the lock, bumps
   the generation and stamps the time. A lane removal reads `resumedAt` from disk under the lock and
-  keeps the lane when the child was resumed after the end event that started the removal (with no
-  end event: inside the resume window). The sweep captures the generation before collecting facts
-  and, under the lock right before removing, aborts if it changed or the child was resumed inside the
-  resume window.
+  keeps the lane when the child was resumed at or after the moment the removal was decided: the
+  accepted end event for an end-event removal, or the start of planning for the parent's idle pass,
+  the idle gate, a foreground return and a merge. A resume before that moment does not keep it; the
+  child's status is read again instead. The sweep captures the generation before collecting facts
+  and, under the lock right before removing, aborts if it changed.
 - `holds/<sha1 of the directory>/<sha1 of the session>.json`: the background jobs a session has
   running for the lane (its own, a descendant's, or a shell naming the lane directory). Every idle
   gate, child or parent, writes its own entry and clears it when it sees none; every remover reads

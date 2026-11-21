@@ -957,8 +957,11 @@ export function createLifecycle(deps: LifecycleDeps) {
   /** `wt merge` just merged the lane's branch into `target` and kept the checkout (`--no-remove`). */
   const removeAfterMerge = (lane: Lane, target: string, since: number): Promise<Finalized> => finalize(lane, { target, retireAs: "merged", since })
 
-  const act = async (lane: Lane, action: LaneAction, facts: LaneFacts, event: LaneEvent) => {
-    if (action.action === "remove") return finalize(lane)
+  /** What a removal decided from earlier facts must not overrun: the accepted end event, or the moment its planning began. */
+  type Fence = { seq: number; since: number }
+
+  const act = async (lane: Lane, action: LaneAction, facts: LaneFacts, event: LaneEvent, fence: Fence) => {
+    if (action.action === "remove") return finalize(lane, fence)
     if (action.action === "defer" && action.quiet) {
       const quietSince = action.quiet === "start" ? facts.now : undefined
       if (lane.quietSince !== quietSince) await save({ ...((await load(lane.child)) ?? lane), ...(quietSince === undefined ? { quietSince: undefined } : { quietSince }) })
@@ -1019,8 +1022,10 @@ export function createLifecycle(deps: LifecycleDeps) {
         // Once per state: the key names the head and the dirty state, never a time.
         await deliver(ownLane, `parent:archived:${facts.tip ?? "?"}:${facts.dirtyToken}`, ownLane.parent, archivedKeptNotice(ownLane, kept.reason))
       }
-      await act(ownLane, action, facts, event)
+      await act(ownLane, action, facts, event, { seq, since: at })
     }
+    // Captured before any status is read: a resume recorded after it, or an execution started after it, keeps the lane.
+    const planned: Fence = { seq: eventSeq, since: now() }
     for (const lane of led) {
       const event: LaneEvent = { type: "check", subject: "parent" }
       const child = await statusOf(lane.child)
@@ -1028,7 +1033,7 @@ export function createLifecycle(deps: LifecycleDeps) {
       // The parent's status is read now: an event does not say it is still idle after the debounce.
       const parentStatus = await statusOf(sessionID)
       const facts = await laneFacts(fresh, { child, parent: parentStatus === "finished" ? "idle" : parentStatus === "running" ? "busy" : "unknown" })
-      await act(fresh, laneEventAction(fresh, facts, event, policy), facts, event)
+      await act(fresh, laneEventAction(fresh, facts, event, policy), facts, event, planned)
     }
   }
 
@@ -1116,6 +1121,8 @@ export function createLifecycle(deps: LifecycleDeps) {
     // A hook never throws: a coordination error means a deferred outcome (logged), never a removal.
     await serial(async () => {
       const related = (lane: Lane) => lane.child === input.sessionID || lane.parent === input.sessionID
+      // Captured before any hold or status is read: a resume or an execution start after it keeps the lane the gate removes.
+      const planned: Fence = { seq: eventSeq, since: now() }
       const jobs = input.background ?? []
       // If what is running could not be recorded, running work cannot be ruled out: nothing is removed this time.
       let holdsFailed = false
@@ -1174,7 +1181,7 @@ export function createLifecycle(deps: LifecycleDeps) {
         gateLanes.map(({ lane, facts }) => ({ lane, facts })),
         policy,
       )
-      for (const { lane } of holdsFailed ? [] : gate.remove) await finalize(lane)
+      for (const { lane } of holdsFailed ? [] : gate.remove) await finalize(lane, planned)
       if (gate.message === undefined) return
       // Each notice is reserved on disk first; the message carries only the ones this instance won.
       const won: typeof gate.marks = []

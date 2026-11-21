@@ -2531,6 +2531,68 @@ describe("finalize: a resume and late changes fence the removal", () => {
     await cleanup()
   })
 
+  test("a resume recorded after the end event keeps a landed lane that the pass would otherwise remove", async () => {
+    const { fake, state, worktree, cleanup } = await start({ ancestor: 0, time: IDLE }, { debounceMs: 150 })
+    fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    state.now += 1_000
+    await resume(fake)
+    await settle(400)
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+
+  test("a resume that lands while the parent's idle pass collects facts keeps a landed lane", async () => {
+    const { fake, state, worktree, cleanup } = await start({ ancestor: 0, time: IDLE })
+    let resumed = false
+    state.onGit = async (cmd) => {
+      if (cmd === "status --porcelain" && !resumed) {
+        resumed = true
+        await resume(fake)
+      }
+    }
+    fake.emit({ type: "session.idle", data: { sessionID: PARENT } })
+    await settle()
+    expect(resumed).toBe(true)
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+
+  test("a resume that lands while the idle gate collects facts keeps a landed lane", async () => {
+    const { fake, state, worktree, cleanup } = await start({ ancestor: 0, time: IDLE })
+    let resumed = false
+    state.onGit = async (cmd) => {
+      if (cmd === "status --porcelain" && !resumed) {
+        resumed = true
+        await resume(fake)
+      }
+    }
+    await fake.fire.session("experimental.idle", { sessionID: PARENT, background: [] } as never)
+    expect(resumed).toBe(true)
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+
+  test.each([
+    ["running", { [CHILD]: { busy: 9, idle: 2 } }, undefined],
+    ["unknown", IDLE, new Error("503 unavailable")],
+  ])("an end event keeps the worktree when the child's own status is %s", async (_name, time, failure) => {
+    const { fake, worktree, cleanup } = await start({ ...empty, time }, { debounceMs: 20 })
+    if (failure) {
+      const get = fake.context.session.get.bind(fake.context.session)
+      Object.assign(fake.context.session, {
+        get: (input: { sessionID: string }) => (input.sessionID === CHILD ? Promise.reject(failure) : get(input)),
+      })
+    }
+    fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await settle(150)
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+
   test("a resumed child whose new execution started and then succeeded is removed", async () => {
     const { fake, state, worktree, cleanup } = await start({ ...empty, time: IDLE }, { debounceMs: 20 })
     await resume(fake)

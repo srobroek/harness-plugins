@@ -2750,9 +2750,9 @@ function createLifecycle(deps) {
   };
   const removeForeground = async (lane, since) => (await finalize(lane, { since })).removed;
   const removeAfterMerge = (lane, target, since) => finalize(lane, { target, retireAs: "merged", since });
-  const act = async (lane, action, facts, event) => {
+  const act = async (lane, action, facts, event, fence) => {
     if (action.action === "remove")
-      return finalize(lane);
+      return finalize(lane, fence);
     if (action.action === "defer" && action.quiet) {
       const quietSince = action.quiet === "start" ? facts.now : undefined;
       if (lane.quietSince !== quietSince)
@@ -2806,15 +2806,16 @@ function createLifecycle(deps) {
       if (type === "archived" && kept && !kept.removed && (kept.kept === "dirty" || kept.kept === "unmerged") && !noticed) {
         await deliver(ownLane, `parent:archived:${facts.tip ?? "?"}:${facts.dirtyToken}`, ownLane.parent, archivedKeptNotice(ownLane, kept.reason));
       }
-      await act(ownLane, action, facts, event);
+      await act(ownLane, action, facts, event, { seq, since: at });
     }
+    const planned = { seq: eventSeq, since: now() };
     for (const lane of led) {
       const event = { type: "check", subject: "parent" };
       const child = await statusOf(lane.child);
       const fresh = await load(lane.child) ?? lane;
       const parentStatus = await statusOf(sessionID);
       const facts = await laneFacts(fresh, { child, parent: parentStatus === "finished" ? "idle" : parentStatus === "running" ? "busy" : "unknown" });
-      await act(fresh, laneEventAction(fresh, facts, event, policy), facts, event);
+      await act(fresh, laneEventAction(fresh, facts, event, policy), facts, event, planned);
     }
   };
   const schedule = (sessionID, type, reason, id) => {
@@ -2897,6 +2898,7 @@ function createLifecycle(deps) {
       return;
     await serial(async () => {
       const related = (lane) => lane.child === input.sessionID || lane.parent === input.sessionID;
+      const planned = { seq: eventSeq, since: now() };
       const jobs = input.background ?? [];
       let holdsFailed = false;
       const recordHolds = async (lane) => {
@@ -2944,7 +2946,7 @@ function createLifecycle(deps) {
       }));
       const gate = idleGateAction({ id: input.sessionID, runningChildren: running, now: now(), lastMessageAt: lastGate.get(input.sessionID) }, gateLanes.map(({ lane, facts }) => ({ lane, facts })), policy);
       for (const { lane } of holdsFailed ? [] : gate.remove)
-        await finalize(lane);
+        await finalize(lane, planned);
       if (gate.message === undefined)
         return;
       const won = [];

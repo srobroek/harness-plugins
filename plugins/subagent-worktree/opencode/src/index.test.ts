@@ -1009,6 +1009,16 @@ describe("execute.after", () => {
     expect(lane(setup.fake)?.state).toBe("active")
   })
 
+  test("a resume that completed before the call returned no longer holds an empty foreground lane", async () => {
+    const setup = await start()
+    await spawn(setup)
+    await setup.fake.fire.tool("execute.before", call({ sessionID: "ses_fake1", prompt: "one more thing" }))
+    const event = await setup.fake.fire.tool("execute.after", completed("ses_fake1"))
+    expect((event.result as { content: string }).content).toContain('state="removed"')
+    expect(setup.worktree.calls.filter((entry) => entry.method === "remove")).toHaveLength(1)
+    expect(lane(setup.fake)?.state).not.toBe("active")
+  })
+
   test("a commit that lands between the empty check and the HEAD read keeps the lane and its branch", async () => {
     const setup = await start()
     await spawn(setup)
