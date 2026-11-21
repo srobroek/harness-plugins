@@ -13,7 +13,7 @@ import path from "node:path"
 export type Finding = { file: string; line: number; reason: string }
 
 const FIELDS = ["Symptom", "Cause", "Fix"] as const
-export const POINTER = "references/pitfalls.md"
+const POINTER = "references/pitfalls.md"
 
 /** Findings for one pitfalls file. */
 export function checkPitfalls(file: string, text: string): Finding[] {

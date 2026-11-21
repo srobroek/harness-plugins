@@ -71,17 +71,22 @@ export function checkSkillFrontmatter(file: string, text: string): Finding[] {
   return missing.length > 0 ? finding(`frontmatter has no ${missing.join(" or ")}`) : []
 }
 
+const FENCE = /^\s*(?:```|~~~)/
+const INLINE_LINK = /\]\(<?([^)\s#<>]+)>?(?:#[^)\s]*)?(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\)/g
+const DEFINITION_LINK = /^\s{0,3}\[[^\]]+\]:\s*<?([^\s#<>]+)>?/g
+
 /** Findings for relative markdown links in `file` whose target `exists` reports missing. */
 export function checkLocalLinks(file: string, text: string, exists: (target: string) => boolean): Finding[] {
   const findings: Finding[] = []
   let fenced = false
   text.split(/\r?\n/).forEach((line, index) => {
-    if (/^\s*(?:```|~~~)/.test(line)) fenced = !fenced
-    if (fenced || /^\s*(?:```|~~~)/.test(line)) return
+    if (FENCE.test(line)) {
+      fenced = !fenced
+      return
+    }
+    if (fenced) return
     const content = line.replace(/(`+)[^`]*?\1/g, "")
-    const inline = /\]\(<?([^)\s#<>]+)>?(?:#[^)\s]*)?(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\)/g
-    const definition = /^\s{0,3}\[[^\]]+\]:\s*<?([^\s#<>]+)>?/g
-    for (const match of [...content.matchAll(inline), ...content.matchAll(definition)]) {
+    for (const match of [...content.matchAll(INLINE_LINK), ...content.matchAll(DEFINITION_LINK)]) {
       const target = match[1] ?? ""
       if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("/")) continue
       if (!exists(path.join(path.dirname(file), target)))
