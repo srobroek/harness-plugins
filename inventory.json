@@ -1259,7 +1259,7 @@
     },
     {
       "name": "session",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "description": "Read-only handoff from an earlier session: session_resume tool and resume-session skill.",
       "category": "development",
       "harnesses": {
