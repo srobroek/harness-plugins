@@ -49,6 +49,22 @@ external_directory denied for /elsewhere/*: subagent sessions cannot answer perm
 A root session keeps its prompt. A session that the plugin cannot look up keeps it too. The reason an
 earlier hook gave for asking follows the denial. Turn the check off with `{ "disable": ["subagent-prompts"] }`.
 
+The `subagent-external-reads` check runs before `subagent-prompts`. In a subagent session it turns an
+`external_directory` ask into an allow when the tool is `read`, `glob`, `grep`, `list` or the shell: an agent
+with a shell can `cat` the path anyway, so the deny protected nothing. `edit`, `write` and `patch` keep the
+ask (so they are denied outside the session directory). Secret locations keep the ask for every tool, so
+a subagent is denied there: `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/op`, `~/.config/gh/hosts.yml`,
+`~/.netrc`, `~/.docker/config.json`, `~/.kube`, `~/.local/share/opencode/auth.json` (the exported
+`SECRET_LOCATIONS`) and any `*.env` or `*.env.*` path. Paths resolve through symlinks, so a link into
+`~/.ssh` counts. A request the check cannot judge (a relative path, a wildcard in the middle, `..`) keeps
+the ask. Add locations with `{ "subagentSecretPaths": ["~/.config/secret-tool"] }`. A root session is
+unchanged. Turn the check off with `{ "disable": ["subagent-external-reads"] }`.
+
+The `scratchDirs` check also allows direct file tools in the session's own directory (and its repository
+root) when the request reaches it through a symlink alias, such as `/home/u` for `/local/home/u`, and in
+`<data>/opencode/shell/<project id>` and `<data>/opencode/tool-output`, where OpenCode writes truncated
+output.
+
 The `skill-references` check allows the read-only tools (`read`, `glob`, `grep`, `list`) without an
 `external_directory` prompt. It applies inside the directory of each skill the host lists, such as an
 installed plugin's skill in the plugin cache. Writes, shell commands and other paths in the cache still

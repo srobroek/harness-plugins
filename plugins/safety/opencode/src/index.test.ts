@@ -74,7 +74,7 @@ describe("setup", () => {
     const { fake, cleanup } = await load()
     expect(fake.hooks("tool")).toEqual(["execute.before", "execute.before", "execute.after", "execute.after"])
     expect(fake.hooks("shell")).toEqual(["create.before"])
-    expect(fake.hooks("permission")).toEqual(["evaluate", "evaluate", "evaluate", "evaluate", "evaluate"])
+    expect(fake.hooks("permission")).toEqual(["evaluate", "evaluate", "evaluate", "evaluate", "evaluate", "evaluate"])
     expect([...fake.tools.keys()]).toEqual([STORE_ACTION])
     await cleanup?.()
     expect(fake.active()).toBe(0)
@@ -515,7 +515,7 @@ describe("scratch folders", () => {
 
   test("scratchDirs: false registers no hook", async () => {
     const { fake } = await load({ scratchDirs: false })
-    expect(fake.hooks("permission")).toEqual(["evaluate", "evaluate", "evaluate", "evaluate"])
+    expect(fake.hooks("permission")).toEqual(["evaluate", "evaluate", "evaluate", "evaluate", "evaluate"])
   })
 
   test("readOptions defaults scratchDirs to true", () => {
@@ -730,7 +730,7 @@ describe("prompts a subagent cannot answer", () => {
 
   test("denies a depth-2 child's external_directory ask at once, naming the path and the session directory", async () => {
     const { fake } = await setup()
-    const result = await ask(fake, "ses_grandchild", "read", [`${outside}/*`])
+    const result = await ask(fake, "ses_grandchild", "write", [`${outside}/*`])
     expect(result.effect).toBe("deny")
     expect(result.message).toBe(
       `external_directory denied for ${outside}/*: subagent sessions cannot answer permission prompts; ` +
@@ -776,7 +776,7 @@ describe("prompts a subagent cannot answer", () => {
 
   test("a read beside the skill, elsewhere in the plugin cache, is still denied in a child", async () => {
     const { fake } = await setup()
-    expect((await ask(fake, "ses_grandchild", "read", [`${join(fixture, "npm")}/*`])).effect).toBe("deny")
+    expect((await ask(fake, "ses_grandchild", "write", [`${join(fixture, "npm")}/*`])).effect).toBe("deny")
   })
 
   test("an unknown session keeps the prompt and logs the failed lookup with its session id only", async () => {
@@ -794,7 +794,7 @@ describe("prompts a subagent cannot answer", () => {
   ])("%s keeps the prompt in a root and is denied in a child", async (_, resource) => {
     const { fake } = await setup()
     expect((await ask(fake, "ses_1", "read", [resource()])).effect).toBe("ask")
-    expect((await ask(fake, "ses_grandchild", "read", [resource()])).effect).toBe("deny")
+    expect((await ask(fake, "ses_grandchild", "write", [resource()])).effect).toBe("deny")
   })
 
   /** Resolves when the plugin has made `count` reply calls, after it handled the events that led to them. */
@@ -877,7 +877,7 @@ describe("prompts a subagent cannot answer", () => {
       },
     })
     expect(await seen.first).toEqual({ error: "RangeError" })
-    expect((await ask(fake, "ses_grandchild", "read", [`${outside}/x`])).effect).toBe("deny")
+    expect((await ask(fake, "ses_grandchild", "write", [`${outside}/x`])).effect).toBe("deny")
   })
 
   test.each([
@@ -937,7 +937,7 @@ describe("prompts a subagent cannot answer", () => {
 
   test('disable: ["subagent-prompts"] keeps a child\'s prompt', async () => {
     const { fake } = await setup({ disable: ["subagent-prompts"] })
-    expect((await ask(fake, "ses_grandchild", "read", [`${outside}/*`])).effect).toBe("ask")
+    expect((await ask(fake, "ses_grandchild", "write", [`${outside}/*`])).effect).toBe("ask")
   })
 
   test('disable: ["skill-references"] leaves a skill read asking', async () => {
