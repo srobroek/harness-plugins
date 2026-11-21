@@ -1,3 +1,9 @@
+## dep-update [0.6.1](https://github.com/srobroek/harness-plugins/compare/dep-update--v0.6.0...dep-update--v0.6.1) (2026-11-21)
+
+### Bug Fixes
+
+* stop forcing confirmation prompts in delivery, dep-update, design and repomix ([fe59fa1](https://github.com/srobroek/harness-plugins/commit/fe59fa10692bc61a3d7b2b7c8eb728ee6a0050b5))
+
 # Changelog
 
 ## [0.6.0](https://github.com/srobroek/opencode-plugins/compare/dep-update--v0.5.0...dep-update--v0.6.0) (2026-11-20)
