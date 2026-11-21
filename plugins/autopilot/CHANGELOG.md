@@ -1,3 +1,9 @@
+## autopilot [1.1.2](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.1.1...autopilot--v1.1.2) (2026-11-21)
+
+### Bug Fixes
+
+* **autopilot:** pin each run to its own beads ledger ([632df34](https://github.com/srobroek/harness-plugins/commit/632df349e038dd96ed758c5a3d661872d8f9b68a))
+
 ## autopilot [1.1.1](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.1.0...autopilot--v1.1.1) (2026-11-21)
 
 ### Bug Fixes
