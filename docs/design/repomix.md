@@ -109,7 +109,7 @@ two versions noisy (inference; I always set it).
 
 ## Install
 
-repomix is a global install (`mise use -g npm:repomix@1.18.1`, as on this host). The tool
+repomix is a global install (`mise use -g npm:repomix@1.19.0`, as on this host). The tool
 resolves `repomix` on PATH first. If it isn't there, the tool falls back to
 `npx --yes repomix@<pinned>`, and that fallback **always asks first**, like
 `design_impeccable_scan`, because npx downloads code. `confirmPack: false` opts out.
@@ -161,7 +161,7 @@ decisions:
   researcher. The same fields are in the tool metadata, with `runner`.
 - **Permission**: action `repomix_pack`, resource the absolute directory or `remote@ref`,
   metadata `runner: path|npx`. An `evaluate` hook turns an allowed npx run into a prompt
-  (`confirmPack: false` disables it). The fallback runs `npx --yes repomix@1.18.1`.
+  (`confirmPack: false` disables it). The fallback runs `npx --yes repomix@1.19.0`.
 - **Skill**: exported to Claude Code, with a CLI recipe that keeps the same rules
   for hosts without the tool. Description: "Use to pack a repo into one file with repomix
   for bulk context: external repo APIs, module review, version diffs, docs."
