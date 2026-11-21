@@ -283,12 +283,11 @@ export function createLanes(
   /** The worktrees of the caller's repository, the one its directory is in, and the one `requested` names. */
   const locate = async (parentDir: string, requested: string) => {
     const porcelain = await git.worktrees(parentDir)
+    const parsed = porcelain === undefined ? undefined : parseWorktrees(porcelain)
     const entries =
-      porcelain === undefined
+      parsed === undefined
         ? undefined
-        : await Promise.all(
-            parseWorktrees(porcelain).map(async (entry) => ({ ...entry, directory: await normalize(entry.directory) })),
-          )
+        : await Promise.all(parsed.map(async (entry) => ({ ...entry, directory: await normalize(entry.directory) })))
     const raw = requested.startsWith("~/") ? join(homedir(), requested.slice(2)) : requested
     const path = await normalize(resolve(parentDir, raw))
     const current = entries && containingWorktree(await normalize(parentDir), entries)?.directory
@@ -784,8 +783,9 @@ export function createLanes(
   /** Uncommitted and untracked files where `target` is checked out; [] when it is not checked out. */
   const targetChanges = async (lane: Lane, target: string) => {
     const porcelain = await git.worktrees(lane.parentDir)
-    if (porcelain === undefined) return undefined
-    const directory = worktreeForBranch(porcelain, target)
+    const entries = porcelain === undefined ? undefined : parseWorktrees(porcelain)
+    if (entries === undefined) return undefined
+    const directory = worktreeForBranch(entries, target)
     return directory === undefined ? [] : git.localFiles(directory)
   }
 

@@ -1,3 +1,9 @@
+## ast-grep [1.2.1](https://github.com/srobroek/harness-plugins/compare/ast-grep--v1.2.0...ast-grep--v1.2.1) (2026-11-21)
+
+### Bug Fixes
+
+* **code-challenge:** close dogfood friction in skill, schema and validation ([043a8b3](https://github.com/srobroek/harness-plugins/commit/043a8b39057ec8fca54d09adebb0532c2154e330))
+
 # Changelog
 
 ## [1.2.0](https://github.com/srobroek/opencode-plugins/compare/ast-grep--v1.1.0...ast-grep--v1.2.0) (2026-11-20)

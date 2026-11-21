@@ -28,7 +28,7 @@ type Execute = (input: unknown, context: unknown) => Promise<{ content: string; 
 
 const context = { sessionID: "ses_1", agent: "build", messageID: "msg_1", id: "call_1", signal: new AbortController().signal }
 
-test("registers the design skills, the four design agents, both tools and the scan prompt", async () => {
+test("registers the design skills, the four design agents, both tools and no scan prompt", async () => {
   const fake = createFakeContext()
   const cleanup = await plugin.setup(fake.context)
   expect([...fake.skills.keys()]).toEqual(SKILLS)
@@ -40,16 +40,34 @@ test("registers the design skills, the four design agents, both tools and the sc
     effect: "allow",
   })
   expect([...fake.tools.keys()]).toEqual([SETUP_TOOL, SCAN_TOOL])
-  expect(fake.hooks("permission")).toEqual(["evaluate"])
+  expect(fake.hooks("permission")).toEqual([])
   await cleanup?.()
   expect(fake.active()).toBe(0)
   expect(fake.tools.size).toBe(0)
 })
 
-test("confirmScan=false leaves the scan to the configured permission rules", async () => {
-  const fake = createFakeContext({ options: { confirmScan: false } })
+test("confirmScan=true registers the prompt; an allowed scan asks and a deny stays a deny", async () => {
+  const fake = createFakeContext({ options: { confirmScan: true } })
+  await plugin.setup(fake.context)
+  expect(fake.hooks("permission")).toEqual(["evaluate"])
+  const scan = { action: SCAN_TOOL, resources: ["src"] }
+  expect((await fake.fire.permission("evaluate", { ...scan, effect: "allow" })).effect).toBe("ask")
+  expect((await fake.fire.permission("evaluate", { ...scan, effect: "deny" })).effect).toBe("deny")
+})
+
+test.each(["false", "true", 1, "yes"])("a non-boolean confirmScan %p registers no prompt and keeps an allow", async (value) => {
+  const fake = createFakeContext({ options: { confirmScan: value } })
   await plugin.setup(fake.context)
   expect(fake.hooks("permission")).toEqual([])
+  const evaluation = await fake.fire.permission("evaluate", { action: SCAN_TOOL, resources: ["src"], effect: "allow" })
+  expect(evaluation.effect).toBe("allow")
+})
+
+test("without options an allowed scan stays allowed", async () => {
+  const fake = createFakeContext()
+  await plugin.setup(fake.context)
+  const evaluation = await fake.fire.permission("evaluate", { action: SCAN_TOOL, resources: ["src"], effect: "allow" })
+  expect(evaluation.effect).toBe("allow")
 })
 
 test("every own references/ path in a design skill resolves; other skills' references exist too", async () => {

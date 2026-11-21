@@ -63,6 +63,35 @@ Move new shared code into `lib` instead of adding another edge.
 - `subagent-worktree` removes a lane through one path, `finalize` in `plugins/subagent-worktree/opencode/src/lifecycle.ts`, under the worktree's disk lock. It records the lane as `removing`, re-proves liveness and the tree, removes the worktree, moves the sessions and retires the lane. A failed move or an incomplete listing leaves the lane in `removing` until a later trigger finishes it. Every plugin start also finishes the lanes it finds in `removing`. A `session.execution.failed` with `Location not found` for a lane's child or a session below it moves the lane's sessions home through the same path, but only when the lane's worktree is gone from disk. The plugin runs no background sweep and no project-wide session repair. `subagent_worktree_sweep` runs on demand.
 - `delivery` wraps the helpers in `plugins/delivery/opencode/src/lane-move.ts`. After it removes a worktree and proves it absent, it moves the lane's sessions that sit in the worktree or below it to the canonical checkout. A failed move, an unreadable session or an incomplete listing is reported in the cleanup result and never fails the cleanup; only a session the host says does not exist is dropped silently.
 
+`subagent-worktree` runs git automatically in lanes and checkouts whose config it does not control. So `spawnRunner` in `plugins/subagent-worktree/opencode/src/git.ts` gives every `git` command `untrustedLocalGitArgs()` and the environment from `untrustedLocalGitEnv()`, both in `lib/src/safe-git.ts`. The environment drops every inherited `GIT_*` variable except `GIT_CONFIG_GLOBAL`. It also drops `PAGER`, `EDITOR`, `VISUAL` and `SSH_ASKPASS`. The dropped variables include these:
+
+| Why | Variables |
+| --- | --- |
+| The filter-driver listing and the command could read different config | `GIT_CONFIG`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`, `GIT_CONFIG_SYSTEM` |
+| They select another repository, work tree or index | `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` |
+| They name programs | `GIT_EXEC_PATH`, `GIT_EXTERNAL_DIFF`, `GIT_PAGER`, `GIT_EDITOR`, `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_ASKPASS`, `GIT_PROXY_COMMAND` |
+| They write files or change what a read sees | `GIT_TRACE*`, `GIT_*_PATHSPECS`, `GIT_NAMESPACE`, `GIT_REPLACE_REF_BASE` |
+
+`GIT_CONFIG_GLOBAL`, `HOME` and `XDG_CONFIG_HOME` stay, because the listing and the command read the global config the same way. Together, the arguments and the environment disable these:
+
+`GIT_CONFIG_GLOBAL`, `HOME` and `XDG_CONFIG_HOME` stay, because the listing and the command read the global config the same way. Together, the arguments and the environment disable these:
+
+- fsmonitor, hooks and the global attributes file
+- `diff.external`
+- every transport
+- `core.sshCommand`, `credential.helper` and `core.askPass`
+- signature checks (`log.showSignature`) and the signature programs
+- system config, terminal prompts and lazy fetch
+
+Before a status or a work-tree diff, the plugin lists the filter drivers in the same directory (`FILTER_DRIVER_LISTING`). It disables every driver it finds, including the user's global ones such as git-lfs. The repository picks the driver, and it can supply the program that a relative command runs. It refuses to run the command when the listing fails or a driver name is not UTF-8 or contains `=`. The plugin reads `git worktree list --porcelain -z` and refuses malformed output. The minimum git version stays as it is, so these risks remain:
+
+- `GIT_NO_LAZY_FETCH` needs git 2.45. Older git still starts a lazy fetch and relies on the transport refusal (`GIT_ALLOW_PROTOCOL` set empty).
+- `git status` recursing into a submodule runs with the submodule's own filter drivers.
+- A config change between the driver listing and the command is not seen. Git evaluates conditional includes (`includeIf`) the same way for both, because both run in the same directory.
+- `wt` commands (`wt list`, `wt merge`) run without these settings.
+
+With git-lfs disabled, an LFS file whose index entry is stale reads as modified. A lane then looks dirty and is kept, never removed.
+
 `plugins/parley/opencode/src/guards.ts` holds the `isRecord` and `strings` type guards that the parley parsers share.
 
 `plugins/parley/opencode/src/test-wait.ts` holds the state-driven test waits: `until` (polls an observable effect, fails after 2 s), `opened` (waits for a round to open) and `quiet` (a few event-loop turns, for "nothing happened yet" checks).
@@ -156,6 +185,15 @@ Move new shared code into `lib` instead of adding another edge.
 - Captured stdout (16 MiB) and stderr (1 MiB) are capped and an overflow ends the tool's process group; report files and marker files are `lstat`ed and size-capped; the per-tool timeout is capped at 900 s.
 - Accepted residual risk: races on parent path components that need concurrent local filesystem control (swapping a directory for a symlink between the check and the use) are not defended. The model is a trusted local repository with no sandbox, by user decision.
 - Tests: the Biome behaviour suite always runs (biome is a devDependency, resolved from `node_modules/.bin`). The ruff and golangci-lint suites in `scan/behavior.test.ts` skip with a printed reason when the binary is absent, and no workflow installs them, so CI skips them; they run on a machine that has them.
+
+## agent-efficiency restart nudge
+
+`plugins/agent-efficiency/opencode/src/restart-nudge.ts` is a stopgap for upstream restart recovery, which posts the "Command cancelled because the server restarted" notice with `resume: false`, so an idle subagent that waited on the lost shell never wakes.
+
+- Option: `restartNudge`, off by default; `true` or `{ graceMs }` (5000 by default). `index.ts` calls `setupRestartNudge` only when `parseRestartNudgeOptions` returns a value, and pushes its cleanup onto the plugin's disposers.
+- Behaviour: `setupRestartNudge` subscribes to `session.synthetic` events. A restart notice starts a timer; after `graceMs`, `createRestartNudger` reads the session and, when `needsNudge` holds (not archived, not running, last run ended before the notice), posts one `resume: true` synthetic message. The message text does not contain the notice text, so a nudge cannot trigger another.
+- Lifecycle: a session stays reserved from its notice until its attempt ends, and is nudged at most once per plugin process. State is in memory only. The cleanup returned by `setup` aborts the subscription and disposes the nudger; a disposed nudger ignores later notices and an in-flight lookup posts nothing. A failed subscription is logged with its cause through `console.warn`; an abort is silent.
+- Decision logic (`needsNudge`, `isRestartNotice`, `createRestartNudger` with injected `schedule`) is pure and tested directly; `setupRestartNudge` is the adapter.
 
 ## Commands
 

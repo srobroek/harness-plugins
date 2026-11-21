@@ -1,7 +1,7 @@
 # dep-update
 
 Classifies a project's dependency declarations by semver safety and applies patch
-or minor bumps one at a time, each behind a permission prompt. It applies bumps for
+or minor bumps one at a time, each under your permission rules. It applies bumps for
 PyPI and npm; for Rust and Go it only advises.
 
 Ported from the omp-plugins `dep-update` plugin.
@@ -22,18 +22,18 @@ opencode plugin add 'github:srobroek/harness-plugins::path:plugins/dep-update/op
 `dep_scan` honours cancellation and stops after 5 minutes in total. A stopped scan
 returns `complete: false` and marks every dependency it did not query `UNCHECKED`.
 
-## Confirming a bump
+## Permissions for a bump
 
 `dep_apply` asks permission for action `dep_apply` with the resource
-`<name>@<version>`, so the prompt names the exact bump. OpenCode's default policy
-allows every action, so the plugin also registers a `permission.hook("evaluate")`
-that turns an allowed `dep_apply` into `ask`. Every bump prompts, including one
-covered by an earlier "allow always".
+`<name>@<version>`, so a rule or prompt names the exact bump. By default your
+permission rules decide: an allowed `dep_apply` runs without a prompt, so
+unattended runs are not blocked. A deny or ask rule always wins.
 
-- To block bumps, add a deny rule. Deny rules always win:
+- To block bumps, add a deny rule:
   `{ "action": "dep_apply", "resource": "*", "effect": "deny" }`.
-- To skip the prompt, set the plugin option `confirm` to `false`. Your
-  permission rules then decide on their own.
+- To prompt for every bump, add an ask rule, or set the plugin option `confirm`
+  to `true` (default `false`). The plugin then turns an allowed `dep_apply` into
+  `ask`, including one covered by an earlier "allow always".
 
 A rejection with feedback, or a deny rule, comes back to the model as a tool error.
 A plain rejection ends the step. The package manager stops after 10 minutes, after

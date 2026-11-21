@@ -1,3 +1,10 @@
+## design [0.9.1](https://github.com/srobroek/harness-plugins/compare/design--v0.9.0...design--v0.9.1) (2026-11-21)
+
+### Bug Fixes
+
+* **code-challenge:** close dogfood friction in skill, schema and validation ([043a8b3](https://github.com/srobroek/harness-plugins/commit/043a8b39057ec8fca54d09adebb0532c2154e330))
+* stop forcing confirmation prompts in delivery, dep-update, design and repomix ([fe59fa1](https://github.com/srobroek/harness-plugins/commit/fe59fa10692bc61a3d7b2b7c8eb728ee6a0050b5))
+
 ## design [0.9.0](https://github.com/srobroek/harness-plugins/compare/design--v0.8.0...design--v0.9.0) (2026-11-21)
 
 ### Features

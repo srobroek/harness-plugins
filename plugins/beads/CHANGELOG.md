@@ -1,3 +1,10 @@
+## beads [0.8.5](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.4...beads--v0.8.5) (2026-11-21)
+
+### Bug Fixes
+
+* **beads:** round 4 code-challenge fixes (uwg.6.12-6.16) ([149f996](https://github.com/srobroek/harness-plugins/commit/149f99603ba697b07a8593b694de2705288bf8ce))
+* **code-challenge:** close dogfood friction in skill, schema and validation ([043a8b3](https://github.com/srobroek/harness-plugins/commit/043a8b39057ec8fca54d09adebb0532c2154e330))
+
 ## beads [0.8.4](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.3...beads--v0.8.4) (2026-11-21)
 
 ### Bug Fixes

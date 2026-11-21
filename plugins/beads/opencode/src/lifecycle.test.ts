@@ -1250,3 +1250,31 @@ describe("the reconcile record of a subagent", () => {
     await t.cleanup()
   })
 })
+
+describe("heartbeat failures", () => {
+  test("a rejected beat is logged when the host injects no detach", async () => {
+    const root = sid("hbfail")
+    const errors: unknown[][] = []
+    const logged = Promise.withResolvers<void>()
+    const original = console.error
+    console.error = (...args: unknown[]) => {
+      errors.push(args)
+      logged.resolve()
+    }
+    try {
+      const t = await start([{ id: root }], { run: async () => ({ failure: "bd down" }), detach: undefined })
+      t.fake.storage.set(`leases/${root}`, { k: { id: "proj-1", actor: "me/main", store: "/repo/.beads" } })
+      // The failed beat drops the lease through storage; make that write reject.
+      ;(t.fake.context.storage as { set: unknown }).set = async () => {
+        throw new Error("storage down")
+      }
+      await t.emit("session.execution.started", root, {}, false)
+      // The default detach logs the rejected beat; wait for that call instead of for time to pass.
+      await logged.promise
+      expect(errors.map((args) => String(args[0]))).toEqual(["srobroek.beads: detached task failed"])
+      await t.cleanup()
+    } finally {
+      console.error = original
+    }
+  })
+})

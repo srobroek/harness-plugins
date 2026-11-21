@@ -166,17 +166,26 @@ export function withoutWorktree(input: unknown): unknown {
   return rest
 }
 
-/** One checkout from `git worktree list --porcelain`. */
+/** One checkout from `git worktree list --porcelain -z`. */
 export type WorktreeEntry = { directory: string; branch?: string }
 
-/** The checkouts in `git worktree list --porcelain` output, skipping bare repositories. */
-export function parseWorktrees(porcelain: string): WorktreeEntry[] {
+/**
+ * The checkouts in `git worktree list --porcelain -z` output, skipping bare repositories.
+ * Each field ends in NUL and each record in an empty field, so a path or lock reason may hold a
+ * newline. Undefined for output in any other shape: a record that does not start with its path,
+ * or output cut off before its last record ends.
+ */
+export function parseWorktrees(porcelain: string): WorktreeEntry[] | undefined {
+  if (porcelain === "") return []
+  const records = porcelain.split("\0\0")
+  if (records.pop() !== "") return undefined
   const entries: WorktreeEntry[] = []
-  for (const block of porcelain.split(/\n\s*\n/)) {
-    const lines = block.split("\n").map((line) => line.trim())
-    const directory = lines.find((line) => line.startsWith("worktree "))?.slice("worktree ".length)
-    if (!directory || lines.includes("bare")) continue
-    const ref = lines.find((line) => line.startsWith("branch "))?.slice("branch ".length)
+  for (const record of records) {
+    const [first = "", ...fields] = record.split("\0")
+    if (!first.startsWith("worktree ") || first === "worktree ") return undefined
+    if (fields.includes("bare")) continue
+    const directory = first.slice("worktree ".length)
+    const ref = fields.find((field) => field.startsWith("branch "))?.slice("branch ".length)
     entries.push(ref ? { directory, branch: ref.replace(/^refs\/heads\//, "") } : { directory })
   }
   return entries
@@ -562,14 +571,9 @@ export function decideMerge(input: {
   return { refuse: false, target }
 }
 
-/** The worktree path that has `branch` checked out, from `git worktree list --porcelain`. */
-export function worktreeForBranch(porcelain: string, branch: string): string | undefined {
-  for (const block of porcelain.split(/\n\s*\n/)) {
-    const lines = block.split("\n")
-    const path = lines.find((line) => line.startsWith("worktree "))?.slice("worktree ".length)
-    if (path && lines.includes(`branch refs/heads/${branch}`)) return path
-  }
-  return undefined
+/** The checkout that has `branch` checked out. */
+export function worktreeForBranch(entries: readonly WorktreeEntry[], branch: string): string | undefined {
+  return entries.find((entry) => entry.branch === branch)?.directory
 }
 
 /** How long a session lookup in `method: "list"` may take before it counts as unknown. */

@@ -1,3 +1,9 @@
+## toolchain [0.7.2](https://github.com/srobroek/harness-plugins/compare/toolchain--v0.7.1...toolchain--v0.7.2) (2026-11-21)
+
+### Bug Fixes
+
+* **code-challenge:** close dogfood friction in skill, schema and validation ([043a8b3](https://github.com/srobroek/harness-plugins/commit/043a8b39057ec8fca54d09adebb0532c2154e330))
+
 ## toolchain [0.7.1](https://github.com/srobroek/harness-plugins/compare/toolchain--v0.7.0...toolchain--v0.7.1) (2026-11-21)
 
 # Changelog

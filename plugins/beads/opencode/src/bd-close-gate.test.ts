@@ -1,16 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { parse } from "@srobroek/opencode-lib/beads-shell"
-import {
-  type BdShowRun,
-  decideBdClose,
-  decideBdCloseParsed,
-  denyReason,
-  extractCommand,
-  findCloseInvocations,
-  gateIdsAmong,
-  setBdShowRunForTests,
-  tokenize,
-} from "./bd-close-gate.ts"
+import { closeInvocations as findCloseInvocations, parse, tokenizeShell } from "@srobroek/opencode-lib/beads-shell"
+import { type BdShowRun, decideBdCloseParsed, denyReason, setBdShowRunForTests } from "./bd-close-gate.ts"
+
+const tokenize = (command: string): string[] => tokenizeShell(command).map(({ value }) => value)
+
+/** The close decision for a command line, through the parsed path production uses. */
+function decideBdClose(command: string, cwd = process.cwd()) {
+  return decideBdCloseParsed(parse(command), cwd)
+}
 
 /** Shapes recorded from bd 1.1.2 `bd show --json`. */
 function row(id: string, issueType: string): Record<string, unknown> {
@@ -41,14 +38,6 @@ function fakeBd(table: Record<string, string>, calls: Call[] = []): { run: BdSho
 
 afterEach(() => {
   setBdShowRunForTests(null)
-})
-
-describe("extractCommand", () => {
-  test("reads command then cmd", () => {
-    expect(extractCommand({ command: "bd close x-1" })).toBe("bd close x-1")
-    expect(extractCommand({ cmd: "bd close x-1" })).toBe("bd close x-1")
-    expect(extractCommand({})).toBe("")
-  })
 })
 
 describe("tokenize", () => {
@@ -181,14 +170,17 @@ describe("findCloseInvocations", () => {
   })
 })
 
-describe("gateIdsAmong", () => {
-  test("finds the gate among mixed types", () => {
+describe("gate lookup", () => {
+  test("finds the gate among mixed types", async () => {
     const { run } = fakeBd({ "bdp-1a": "task", "bdp-2b": "gate", "bdp-3c": "epic" })
     setBdShowRunForTests(run)
-    expect(gateIdsAmong(["bdp-1a", "bdp-2b", "bdp-3c"])).toEqual(["bdp-2b"])
+    const reason = (await decideBdClose("bd close bdp-1a bdp-2b bdp-3c"))?.reason ?? ""
+    expect(reason).toContain("bdp-2b")
+    expect(reason).not.toContain("bdp-1a")
+    expect(reason).not.toContain("bdp-3c")
   })
 
-  test("close decisions use the selected database rather than a same-id local bead", () => {
+  test("close decisions use the selected database rather than a same-id local bead", async () => {
     setBdShowRunForTests((argv, cwd) => {
       let database = cwd
       for (let i = 1; i < argv.indexOf("show"); i++) {
@@ -198,8 +190,8 @@ describe("gateIdsAmong", () => {
       }
       return { exitCode: 0, stdout: JSON.stringify([row("bdp-1a", database === "/gates" ? "gate" : "task")]) }
     })
-    expect(decideBdClose("bd close bdp-1a", "/tasks")).toBeUndefined()
-    expect(decideBdClose("bd close bdp-1a", "/gates")?.block).toBe(true)
+    expect(await decideBdClose("bd close bdp-1a", "/tasks")).toBeUndefined()
+    expect((await decideBdClose("bd close bdp-1a", "/gates"))?.block).toBe(true)
     for (const command of [
       "bd -C /gates close bdp-1a",
       "bd --actor test --db=/gates close bdp-1a",
@@ -207,95 +199,96 @@ describe("gateIdsAmong", () => {
       "echo bd close bdp-1a; env MODE=test command bd --db /gates done bdp-1a",
       "sudo -u user bd --db /gates close bdp-1a",
     ])
-      expect(decideBdClose(command, "/tasks")?.block).toBe(true)
-    expect(decideBdClose("bd --db /tasks close bdp-1a", "/gates")).toBeUndefined()
+      expect((await decideBdClose(command, "/tasks"))?.block).toBe(true)
+    expect(await decideBdClose("bd --db /tasks close bdp-1a", "/gates")).toBeUndefined()
   })
 
-  test("no ids means no spawn", () => {
+  test("no ids means no spawn", async () => {
     const { run, calls } = fakeBd({})
     setBdShowRunForTests(run)
-    expect(gateIdsAmong([])).toEqual([])
+    expect(await decideBdClose("bd close $GATE_ID")).toBeUndefined()
+    expect(await decideBdClose("bd close --reason done")).toBeUndefined()
     expect(calls).toEqual([])
   })
 
-  test("non-zero exit fails closed", () => {
+  test("non-zero exit fails closed", async () => {
     setBdShowRunForTests(() => ({ exitCode: 1, stdout: "" }))
-    expect(() => gateIdsAmong(["bdp-1a"])).toThrow("bd show lookup failed")
+    await expect(decideBdClose("bd close bdp-1a")).rejects.toThrow("bd show lookup failed")
   })
 
-  test("unparseable stdout reports uncertainty", () => {
+  test("unparseable stdout reports uncertainty", async () => {
     setBdShowRunForTests(() => ({ exitCode: 0, stdout: "bd: command not found" }))
-    expect(() => gateIdsAmong(["bdp-1a"])).toThrow()
+    await expect(decideBdClose("bd close bdp-1a")).rejects.toThrow("unreadable JSON")
   })
 
-  test("the error object shape reports uncertainty", () => {
+  test("the error object shape reports uncertainty", async () => {
     setBdShowRunForTests(() => ({
       exitCode: 0,
       stdout: JSON.stringify({ error: "no issues found", schema_version: 1 }),
     }))
-    expect(() => gateIdsAmong(["bdp-1a"])).toThrow()
+    await expect(decideBdClose("bd close bdp-1a")).rejects.toThrow("gate types remain unverified")
   })
 
-  test("a throwing seam is not swallowed here", () => {
+  test("a throwing seam is not swallowed here", async () => {
     setBdShowRunForTests(() => {
       throw new Error("spawn failed")
     })
-    expect(() => gateIdsAmong(["bdp-1a"])).toThrow()
+    await expect(decideBdClose("bd close bdp-2b")).rejects.toThrow("spawn failed")
   })
 })
 
-describe("decideBdClose", () => {
-  test("blocks a gate id", () => {
+describe("decideBdCloseParsed", () => {
+  test("blocks a gate id", async () => {
     const { run } = fakeBd({ "bdp-2b": "gate" })
     setBdShowRunForTests(run)
-    const decision = decideBdClose("bd close bdp-2b --reason approved")
+    const decision = await decideBdClose("bd close bdp-2b --reason approved")
     expect(decision).toEqual(expect.objectContaining({ block: true, reason: expect.stringContaining("bdp-2b") }))
     expect(decision?.reason).toContain("bd gate check")
     expect(decision?.reason).toContain("bd gate resolve")
   })
 
-  test("blocks when a gate hides among ordinary ids", () => {
+  test("blocks when a gate hides among ordinary ids", async () => {
     const { run } = fakeBd({ "bdp-1a": "task", "bdp-2b": "gate" })
     setBdShowRunForTests(run)
-    expect(decideBdClose("bd close bdp-1a bdp-2b")?.block).toBe(true)
+    expect((await decideBdClose("bd close bdp-1a bdp-2b"))?.block).toBe(true)
   })
 
-  test("blocks even with --force", () => {
+  test("blocks even with --force", async () => {
     const { run } = fakeBd({ "bdp-2b": "gate" })
     setBdShowRunForTests(run)
-    expect(decideBdClose("bd close bdp-2b --force")?.block).toBe(true)
-    expect(decideBdClose("bd close bdp-2b -f")?.block).toBe(true)
+    expect((await decideBdClose("bd close bdp-2b --force"))?.block).toBe(true)
+    expect((await decideBdClose("bd close bdp-2b -f"))?.block).toBe(true)
   })
 
-  test("blocks the second of two chained closes", () => {
+  test("blocks the second of two chained closes", async () => {
     const { run } = fakeBd({ "bdp-1a": "task", "bdp-2b": "gate" })
     setBdShowRunForTests(run)
-    expect(decideBdClose("bd close bdp-1a && bd close bdp-2b")?.block).toBe(true)
+    expect((await decideBdClose("bd close bdp-1a && bd close bdp-2b"))?.block).toBe(true)
   })
 
-  test("names every gate once", () => {
+  test("names every gate once", async () => {
     const { run } = fakeBd({ "bdp-2b": "gate", "bdp-3c": "gate" })
     setBdShowRunForTests(run)
-    const reason = decideBdClose("bd close bdp-2b bdp-3c && bd close bdp-2b")?.reason ?? ""
+    const reason = (await decideBdClose("bd close bdp-2b bdp-3c && bd close bdp-2b"))?.reason ?? ""
     expect(reason).toContain("bdp-2b, bdp-3c")
   })
 
-  test("allows an ordinary bead", () => {
+  test("allows an ordinary bead", async () => {
     const { run } = fakeBd({ "bdp-1a": "task" })
     setBdShowRunForTests(run)
-    expect(decideBdClose("bd close bdp-1a --reason done")).toBeUndefined()
+    expect(await decideBdClose("bd close bdp-1a --reason done")).toBeUndefined()
   })
 
-  test("allows the sanctioned resolution sequence", () => {
+  test("allows the sanctioned resolution sequence", async () => {
     const { run, calls } = fakeBd({ "bdp-2b": "gate", "bdp-9z": "task" })
     setBdShowRunForTests(run)
-    expect(decideBdClose("bd gate resolve bdp-2b")).toBeUndefined()
-    expect(decideBdClose("bd gate check")).toBeUndefined()
+    expect(await decideBdClose("bd gate resolve bdp-2b")).toBeUndefined()
+    expect(await decideBdClose("bd gate check")).toBeUndefined()
     expect(calls).toEqual([])
-    expect(decideBdClose("bd close bdp-9z --reason 'gate answered'")).toBeUndefined()
+    expect(await decideBdClose("bd close bdp-9z --reason 'gate answered'")).toBeUndefined()
   })
 
-  test("mentions never query gates but a following real close still does", () => {
+  test("mentions never query gates but a following real close still does", async () => {
     const { run, calls } = fakeBd({ "bdp-2b": "gate" })
     setBdShowRunForTests(run)
     for (const command of [
@@ -304,40 +297,38 @@ describe("decideBdClose", () => {
       "env printf '%s' bd close bdp-2b",
       "command echo bd close bdp-2b",
     ])
-      expect(decideBdClose(command)).toBeUndefined()
+      expect(await decideBdClose(command)).toBeUndefined()
     expect(calls).toEqual([])
-    expect(decideBdClose("echo bd close bdp-2b && command bd close bdp-2b")?.block).toBe(true)
+    expect((await decideBdClose("echo bd close bdp-2b && command bd close bdp-2b"))?.block).toBe(true)
   })
+
   test("a real substitution between quoted literals in a parameter default is still read", async () => {
     const { run } = fakeBd({ "bdp-2b": "gate" })
     setBdShowRunForTests(run)
-    const blocked = await decideBdCloseParsed(parse("echo ${X:-'<('$(bd close bdp-2b)')'}"))
+    const blocked = await decideBdClose("echo ${X:-'<('$(bd close bdp-2b)')'}")
     expect(blocked?.block).toBe(true)
-    expect((await decideBdCloseParsed(parse("echo ${X:- #$(bd close bdp-2b)}")))?.block).toBe(true)
-    expect((await decideBdCloseParsed(parse("bash 3<<<'bd close bdp-2b' 0<&3")))?.block).toBe(true)
-    expect((await decideBdCloseParsed(parse(`echo \${X:-"\${Y:-'$(bd close bdp-2b)'}"}`)))?.block).toBe(true)
+    expect((await decideBdClose("echo ${X:- #$(bd close bdp-2b)}"))?.block).toBe(true)
+    expect((await decideBdClose("bash 3<<<'bd close bdp-2b' 0<&3"))?.block).toBe(true)
+    expect((await decideBdClose(`echo \${X:-"\${Y:-'$(bd close bdp-2b)'}"}`))?.block).toBe(true)
   })
 
   test("a quoted here-document fed to a shell is read as commands", async () => {
     const { run } = fakeBd({ "bdp-2b": "gate" })
     setBdShowRunForTests(run)
-    const blocked = await decideBdCloseParsed(parse("bash <<'EOF'\nbd close bdp-2b\nEOF"))
+    const blocked = await decideBdClose("bash <<'EOF'\nbd close bdp-2b\nEOF")
     expect(blocked?.block).toBe(true)
-    expect(await decideBdCloseParsed(parse("cat <<'EOF'\nbd close bdp-2b\nEOF"))).toBeUndefined()
+    expect(await decideBdClose("cat <<'EOF'\nbd close bdp-2b\nEOF")).toBeUndefined()
   })
-  test("prefilter keeps unrelated commands away from the seam", () => {
+
+  test("unrelated commands never reach the seam", async () => {
     const { run, calls } = fakeBd({ "bdp-2b": "gate" })
     setBdShowRunForTests(run)
-    for (const cmd of ["git status", "bd ready --json", "echo close"]) {
-      expect(decideBdClose(cmd)).toBeUndefined()
+    for (const cmd of ["git status", "bd ready --json", "echo close", ""]) {
+      expect(await decideBdClose(cmd)).toBeUndefined()
     }
     expect(calls).toEqual([])
   })
 
-  test("fails closed when the database cannot answer", () => {
-    setBdShowRunForTests(() => ({ exitCode: 1, stdout: "" }))
-    expect(() => decideBdClose("bd close bdp-2b")).toThrow("bd show lookup failed")
-  })
   test("a command-local BEADS_DIR selects the store the lookup reads", async () => {
     const stores: (string | undefined)[] = []
     setBdShowRunForTests((_argv, _cwd, _deadline, env) => {
@@ -357,6 +348,15 @@ describe("decideBdClose", () => {
       "gate types remain unverified",
     )
   })
+
+  test("decisions use the bash cwd", async () => {
+    setBdShowRunForTests((_argv, cwd) => ({
+      exitCode: 0,
+      stdout: JSON.stringify([row("bdp-2b", cwd === "/other/repo" ? "gate" : "task")]),
+    }))
+    expect(await decideBdClose("bd close bdp-2b", "/other/repo")).toEqual(expect.objectContaining({ block: true }))
+    expect(await decideBdClose("bd close bdp-2b", process.cwd())).toBeUndefined()
+  })
 })
 
 describe("denyReason", () => {
@@ -366,34 +366,5 @@ describe("denyReason", () => {
     expect(reason).toContain("bd gate resolve")
     expect(reason).toContain("bd gate check")
     expect(reason).toContain("--force")
-  })
-})
-
-describe("integration", () => {
-  test("blocks gate-closing bash, allows the rest", () => {
-    const { run } = fakeBd({ "bdp-2b": "gate", "bdp-1a": "task" })
-    setBdShowRunForTests(run)
-    expect(decideBdClose("bd close bdp-2b")).toEqual(expect.objectContaining({ block: true }))
-    expect(decideBdClose("bd close bdp-1a")).toBeUndefined()
-  })
-  test("decisions use the bash cwd", () => {
-    setBdShowRunForTests((_argv, cwd) => ({
-      exitCode: 0,
-      stdout: JSON.stringify([row("bdp-2b", cwd === "/other/repo" ? "gate" : "task")]),
-    }))
-    expect(decideBdClose("bd close bdp-2b", "/other/repo")).toEqual(expect.objectContaining({ block: true }))
-    expect(decideBdClose("bd close bdp-2b", process.cwd())).toBeUndefined()
-  })
-  test("ignores an empty command at the fanout boundary", () => {
-    const { run, calls } = fakeBd({ "bdp-2b": "gate" })
-    setBdShowRunForTests(run)
-    expect(decideBdClose("")).toBeUndefined()
-    expect(calls).toEqual([])
-  })
-  test("the direct helper exposes a failing lookup to its caller", () => {
-    setBdShowRunForTests(() => {
-      throw new Error("spawn failed")
-    })
-    expect(() => decideBdClose("bd close bdp-2b")).toThrow("spawn failed")
   })
 })

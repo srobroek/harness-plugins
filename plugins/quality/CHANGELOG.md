@@ -1,3 +1,9 @@
+## quality [0.13.1](https://github.com/srobroek/harness-plugins/compare/quality--v0.13.0...quality--v0.13.1) (2026-11-21)
+
+### Bug Fixes
+
+* **code-challenge:** close dogfood friction in skill, schema and validation ([043a8b3](https://github.com/srobroek/harness-plugins/commit/043a8b39057ec8fca54d09adebb0532c2154e330))
+
 ## quality [0.13.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.12.0...quality--v0.13.0) (2026-11-21)
 
 ### Features

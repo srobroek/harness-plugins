@@ -2617,7 +2617,7 @@ function projectDir(base, path) {
 var src_default = Plugin.define({
   id: "srobroek.dep-update",
   async setup(ctx) {
-    const confirm = ctx.options.confirm !== false;
+    const confirm = ctx.options.confirm === true;
     const tools = await ctx.tool.transform((editor) => {
       editor.add({
         name: "dep_scan",
@@ -2642,8 +2642,8 @@ ${stderr}`, metadata: { exit } };
       });
       editor.add({
         name: "dep_apply",
-        description: `Apply one dependency bump with the ecosystem package manager, after a permission prompt.
-` + "The prompt names that exact bump. One call per bump. The run is bounded to 10 minutes; if it is cancelled or fails, " + "the result says partial changes may remain so the caller can inspect manifests and lockfiles.",
+        description: `Apply one dependency bump with the ecosystem package manager, under the permission rules.
+` + "The permission resource names that exact bump. One call per bump. The run is bounded to 10 minutes; if it is cancelled or fails, " + "the result says partial changes may remain so the caller can inspect manifests and lockfiles.",
         input: {
           type: "object",
           properties: {

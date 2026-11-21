@@ -53,7 +53,7 @@ export type DesignOptions = { confirmScan: boolean }
 export const STORYBOOK_MCP = { storybook: { type: "http" as const, url: "http://localhost:6006/mcp" } }
 
 export function parseOptions(options: Record<string, unknown> | undefined): DesignOptions {
-  return { confirmScan: options?.confirmScan !== false }
+  return { confirmScan: options?.confirmScan === true }
 }
 
 /** Test seam; the host never passes it. */

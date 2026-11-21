@@ -56,8 +56,8 @@ export function bumpResource(name: string, version: string): string {
 type Evaluation = { readonly action: string; readonly resources: ReadonlyArray<string>; effect: string; message?: string }
 
 /**
- * Turn an allowed dep_apply into a prompt. The default policy allows every action, so
- * without this a bump would run unconfirmed; a configured deny never reaches the hook.
+ * Turn an allowed dep_apply into a prompt. Opt-in (`confirm: true`); by default the
+ * user's permission rules decide. A configured deny never reaches the hook.
  */
 export function confirmBump(evaluation: Evaluation): void {
   if (evaluation.action !== APPLY_ACTION || evaluation.effect !== "allow") return
@@ -76,7 +76,7 @@ function projectDir(base: string, path: string | undefined): string {
 export default Plugin.define({
   id: "srobroek.dep-update",
   async setup(ctx) {
-    const confirm = ctx.options.confirm !== false
+    const confirm = ctx.options.confirm === true
     const tools = await ctx.tool.transform((editor) => {
       editor.add({
         name: "dep_scan",
@@ -104,8 +104,8 @@ export default Plugin.define({
       editor.add({
         name: "dep_apply",
         description:
-          "Apply one dependency bump with the ecosystem package manager, after a permission prompt.\n" +
-          "The prompt names that exact bump. One call per bump. The run is bounded to 10 minutes; if it is cancelled or fails, " +
+          "Apply one dependency bump with the ecosystem package manager, under the permission rules.\n" +
+          "The permission resource names that exact bump. One call per bump. The run is bounded to 10 minutes; if it is cancelled or fails, " +
           "the result says partial changes may remain so the caller can inspect manifests and lockfiles.",
         input: {
           type: "object",

@@ -590,7 +590,7 @@ function stashesOnBranch(subjects, branch) {
 // plugins/delivery/package.json
 var package_default = {
   name: "delivery",
-  version: "0.10.1",
+  version: "0.10.2",
   description: "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
   private: true,
   type: "module",
@@ -6441,7 +6441,7 @@ function parseOptions(raw) {
     }
   }
   return {
-    confirm: options.confirm !== false,
+    confirm: options.confirm === true,
     receiptsDirectory: typeof options.receiptsDirectory === "string" ? options.receiptsDirectory : undefined,
     agents: options.agents !== false,
     models,

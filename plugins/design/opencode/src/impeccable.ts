@@ -10,8 +10,8 @@ export const MAX_OUTPUT_CHARS = 60_000
 
 export const SCAN_DESCRIPTION =
   "Run impeccable's deterministic design detector over files, directories or a URL; returns JSON findings.\n" +
-  "Runs npx --yes impeccable detect --json. Asks before every run, because npx may download impeccable and its " +
-  "engine. Findings are a coarse corroborating signal: HTML-engine findings can carry line 0, so confirm each one " +
+  "Runs npx --yes impeccable detect --json. Your permission config controls the run; the boolean option confirmScan: true adds a prompt, because npx " +
+  "may download impeccable and its engine. Findings are a coarse corroborating signal: HTML-engine findings can carry line 0, so confirm each one " +
   "on the rendered surface before citing it."
 
 export const SCAN_INPUT = {
@@ -195,7 +195,7 @@ export async function runScan(
 
 type Evaluation = { action: string; resources: ReadonlyArray<string>; effect: string; message?: string }
 
-/** Turn an allowed scan into a prompt: npx may fetch and run code from the network. */
+/** Opt-in (`confirmScan: true`): turn an allowed scan into a prompt, because npx may fetch and run code from the network. */
 export function confirmScan(evaluation: Evaluation): void {
   if (evaluation.effect !== "allow" || evaluation.action !== SCAN_TOOL) return
   evaluation.effect = "ask"

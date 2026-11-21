@@ -16,14 +16,10 @@
  */
 
 
-import { tokenizeShell } from "@srobroek/opencode-lib/beads-shell"
 import { supervise } from "@srobroek/opencode-lib/subprocess"
 
 /** The shell gates' shared 25,000 ms budget also bounds every gate lookup. */
 const TIMEOUT_MS = 25_000
-
-/** Cheap prefilter: never spawn on a command that cannot be a bd close. */
-const PREFILTER = /\bbd\b[\s\S]{0,400}?\b(?:close|done)\b/
 
 /** Runs `bd show`; `env` is the environment the lookup would get, store pin included. */
 export type BdShowRun = (
@@ -44,54 +40,13 @@ function timeoutError(): Error {
   return new Error("bd show lookup timed out; gate types remain unverified")
 }
 
-function defaultRun(
-  argv: string[],
-  cwd: string,
-  deadline = Date.now() + TIMEOUT_MS,
-): { exitCode: number; stdout: string } {
-  const remaining = deadline - Date.now()
-  if (remaining <= 0) throw timeoutError()
-  const proc = Bun.spawnSync(argv, {
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: Math.min(TIMEOUT_MS, remaining),
-    env: { ...process.env, BD_JSON_ENVELOPE: "1", BD_NO_PAGER: "1", BD_NON_INTERACTIVE: "1" },
-  })
-  if (proc.exitCode === null) throw timeoutError()
-  if (Date.now() >= deadline) throw timeoutError()
-  return { exitCode: proc.exitCode, stdout: proc.stdout.toString() }
-}
-
-export { commandFromInput as extractCommand } from "@srobroek/opencode-lib/beads-shell"
-
-/** Shared parser compatibility surfaces for existing direct unit callers. */
-export function tokenize(command: string): string[] {
-  return tokenizeShell(command).map(({ value }) => value)
-}
-export { type CloseInvocation, closeInvocations as findCloseInvocations } from "@srobroek/opencode-lib/beads-shell"
-
 /**
- * Canonical ids among `ids` whose `issue_type` is `gate`.
+ * Canonical ids among a `bd show --json` reply whose `issue_type` is `gate`.
  *
- * An unavailable or incomplete lookup is a refusal: allowing a close without
+ * An unavailable or incomplete reply is a refusal: allowing a close without
  * proving its type would make the gate safety check a silent no-op.
- *
- * `cwd` is the directory the bash tool would have run in, because bd
- * auto-discovers `.beads/*.db` from there. An explicit `-C`/`--db` on the
- * original command is replayed in `dbArgs` and still wins.
  */
-export function gateIdsAmong(
-  ids: string[],
-  dbArgs: string[] = [],
-  cwd: string = process.cwd(),
-  deadline = Date.now() + TIMEOUT_MS,
-): string[] {
-  if (ids.length === 0) return []
-  if (Date.now() >= deadline) throw timeoutError()
-  const run = injectedRun ?? defaultRun
-  const result = run(["bd", ...dbArgs, "show", ...ids, "--json"], cwd, deadline)
-  if (Date.now() >= deadline) throw timeoutError()
+function parseGateRows(result: { exitCode: number; stdout: string }): string[] {
   if (result.exitCode !== 0)
     throw new Error(`bd show lookup failed with exit code ${result.exitCode}; gate types remain unverified`)
   let parsed: unknown
@@ -136,7 +91,7 @@ export function denyReason(gateIds: string[]): string {
 }
 
 import type { BdTarget, BdTargets } from "@srobroek/opencode-lib/bd-embedded-write-lock"
-import { type CloseSite, closeInvocations, closeSites, type ParsedCommand } from "@srobroek/opencode-lib/beads-shell"
+import { type CloseSite, closeSites, type ParsedCommand } from "@srobroek/opencode-lib/beads-shell"
 
 async function asyncShowRun(
   argv: string[],
@@ -174,33 +129,7 @@ async function gateIdsAmongAsync(
           injectedRun?.(argv, dir, limit, env) ?? asyncShowRun(argv, dir, limit, env)
   const result = await run(["bd", ...dbArgs, "show", ...ids, "--json"], cwd, deadline)
   if (Date.now() >= deadline) throw timeoutError()
-  if (result.exitCode !== 0)
-    throw new Error(`bd show lookup failed with exit code ${result.exitCode}; gate types remain unverified`)
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(result.stdout)
-  } catch {
-    throw new Error("bd show returned unreadable JSON; gate types remain unverified")
-  }
-  if (
-    parsed !== null &&
-    typeof parsed === "object" &&
-    !Array.isArray(parsed) &&
-    "schema_version" in parsed &&
-    "data" in parsed
-  )
-    parsed = parsed.data
-  if (!Array.isArray(parsed)) throw new Error("bd show returned no issue array; gate types remain unverified")
-  const gates: string[] = []
-  for (const row of parsed) {
-    if (!row || typeof row !== "object")
-      throw new Error("bd show returned malformed issues; gate types remain unverified")
-    const issue = row as { id?: unknown; issue_type?: unknown }
-    if (typeof issue.id !== "string" || typeof issue.issue_type !== "string")
-      throw new Error("bd show omitted issue identity or type; gate types remain unverified")
-    if (issue.issue_type === "gate") gates.push(issue.id)
-  }
-  return gates
+  return parseGateRows(result)
 }
 
 /**
@@ -256,22 +185,5 @@ function lookupSite(
   if (store === undefined || store === "") delete lookupEnv.BEADS_DIR
   else lookupEnv.BEADS_DIR = store
   return { cwd: target.cwd, env: lookupEnv }
-}
-
-export function decideBdClose(
-  command: string,
-  cwd: string = process.cwd(),
-  deadline?: number,
-): { block: true; reason: string } | undefined {
-  if (!PREFILTER.test(command)) return
-  const invocations = closeInvocations(command)
-  if (invocations.length === 0) return
-  const sharedDeadline = deadline ?? Date.now() + TIMEOUT_MS
-  const gates = new Set<string>()
-  for (const invocation of invocations) {
-    for (const id of gateIdsAmong(invocation.ids, invocation.dbArgs, cwd, sharedDeadline)) gates.add(id)
-  }
-  if (gates.size === 0) return
-  return { block: true, reason: denyReason([...gates]) }
 }
 

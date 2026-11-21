@@ -3944,13 +3944,14 @@ function beadIdCandidates(command) {
   return ids;
 }
 function optionValue(args, names) {
-  for (const name of names) {
-    const index = args.indexOf(name);
-    if (index >= 0)
-      return args[index + 1];
-    const inline = args.find((arg) => arg.startsWith(`${name}=`));
-    if (inline !== undefined)
-      return inline.slice(name.length + 1);
+  for (let index = 0;index < args.length; index++) {
+    const token = args[index] ?? "";
+    const name = token.split("=", 1)[0] ?? token;
+    const inline = token.includes("=");
+    if (names.includes(name))
+      return inline ? token.slice(name.length + 1) : args[index + 1];
+    if (!inline && TRANSITION_VALUE_FLAGS[name] === true)
+      index++;
   }
   return;
 }
@@ -4544,24 +4545,9 @@ function leaseEndingIds(invocations) {
   for (const invocation of invocations) {
     if (invocation.verb !== "update")
       continue;
-    let status;
-    const named = [];
-    for (let index = 0;index < invocation.args.length; index++) {
-      const token = invocation.args[index] ?? "";
-      if (token === "--status" || token === "-s") {
-        status = invocation.args[++index];
-        continue;
-      }
-      if (token.startsWith("--status=")) {
-        status = token.slice("--status=".length);
-        continue;
-      }
-      if (token.startsWith("-"))
-        break;
-      named.push(...beadIdCandidates(token));
-    }
+    const status = optionValue(invocation.args, ["--status", "-s"]);
     if (status !== undefined && status.toLowerCase() !== "in_progress")
-      for (const id of named)
+      for (const id of mutationTargetIds(invocation.args))
         ids.add(id);
   }
   return [...ids];
@@ -5258,8 +5244,6 @@ var GLOBAL_VALUE_FLAGS = new Set([
   "--dolt-auto-commit",
   "--mem-profile"
 ]);
-var SEPARATORS2 = new Set([";", "&", "|", "&&", "||", "(", ")", "{", "}", `
-`]);
 var GIT_PROBE_TIMEOUT_MS = 5000;
 function runGit(cwd, args) {
   const result = spawnSync3("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: GIT_PROBE_TIMEOUT_MS });
@@ -5306,82 +5290,6 @@ function hasBinaryHooks(cwd, git = runGit) {
     return false;
   }
 }
-function commandChunks(command) {
-  const chunks = [];
-  let start = 0;
-  let quote = null;
-  for (let index = 0;index < command.length; index++) {
-    const character = command[index] ?? "";
-    if (quote !== null) {
-      if (character === quote)
-        quote = null;
-      else if (quote === '"' && character === "\\")
-        index++;
-      continue;
-    }
-    if (character === "'" || character === '"') {
-      quote = character;
-      continue;
-    }
-    if (character === "\\") {
-      index++;
-      continue;
-    }
-    if (SEPARATORS2.has(character)) {
-      chunks.push({ start, end: index });
-      if ((character === "&" || character === "|") && command[index + 1] === character)
-        index++;
-      start = index + 1;
-    }
-  }
-  chunks.push({ start, end: command.length });
-  return chunks;
-}
-function wordSpans(source) {
-  const words = [];
-  let index = 0;
-  while (index < source.length) {
-    while (index < source.length && /\s/.test(source[index] ?? ""))
-      index++;
-    if (index >= source.length)
-      break;
-    const start = index;
-    let value = "";
-    let quote = null;
-    while (index < source.length) {
-      const character = source[index] ?? "";
-      if (quote !== null) {
-        if (character === quote)
-          quote = null;
-        else if (quote === '"' && character === "\\" && index + 1 < source.length)
-          value += source[++index] ?? "";
-        else
-          value += character;
-        index++;
-        continue;
-      }
-      if (character === "'" || character === '"') {
-        quote = character;
-        index++;
-        continue;
-      }
-      if (character === "\\" && index + 1 < source.length) {
-        value += source[index + 1] ?? "";
-        index += 2;
-        continue;
-      }
-      if (/\s/.test(character) || SEPARATORS2.has(character))
-        break;
-      value += character;
-      index++;
-    }
-    if (index === start)
-      index++;
-    else
-      words.push({ value, start, end: index });
-  }
-  return words;
-}
 function initVerbIndex(words) {
   let index = words.findIndex((word) => (word.value.split("/").pop() ?? word.value) === "bd");
   if (index < 0)
@@ -5400,27 +5308,37 @@ function initVerbIndex(words) {
   return;
 }
 function rewriteInitCalls(command) {
+  const scan = scanShell(command);
+  if (!scan.complete)
+    return;
   const insertions = [];
-  for (const chunk of commandChunks(command)) {
-    const source = command.slice(chunk.start, chunk.end);
-    const parsed = parse(source);
+  for (const item of scan.items) {
+    if (item.kind !== "command")
+      continue;
+    const first = item.words[0];
+    const last = item.words.at(-1);
+    if (first === undefined || last === undefined)
+      continue;
+    const parsed = parse(command.slice(first.start, last.end));
     if (parsed.unknown || parsed.commands.length !== 1)
       continue;
-    const invocation = parsedInvocations2(parsed).find((item) => item.verb === "init");
+    const invocation = parsedInvocations2(parsed).find((candidate) => candidate.verb === "init");
     if (invocation === undefined || invocation.args.includes("--skip-hooks"))
       continue;
-    const words = wordSpans(source);
-    const verbIndex = initVerbIndex(words);
-    if (verbIndex === undefined)
-      continue;
-    insertions.push(chunk.start + (words[verbIndex]?.end ?? 0));
+    const verb = item.words[initVerbIndex(item.words) ?? -1];
+    if (verb !== undefined)
+      insertions.push(verb.end);
   }
   if (insertions.length === 0)
     return;
   let rewritten = command;
   for (const offset of insertions.sort((left, right) => right - left))
     rewritten = `${rewritten.slice(0, offset)} --skip-hooks${rewritten.slice(offset)}`;
-  return rewritten;
+  const checked = parse(rewritten);
+  if (checked.unknown)
+    return;
+  const unguarded = parsedInvocations2(checked).some((invocation) => invocation.verb === "init" && !invocation.args.includes("--skip-hooks"));
+  return unguarded ? undefined : rewritten;
 }
 function protectBinaryHookCommands(input, command, cwd, git = runGit) {
   try {
@@ -5577,11 +5495,38 @@ function sessionStartAdvisories(directory, deps) {
 
 // plugins/beads/opencode/src/shell-gates.ts
 import { resolve as resolve10 } from "path";
+
 // plugins/beads/opencode/src/bd-close-gate.ts
 var TIMEOUT_MS = 25000;
 var injectedRun = null;
 function timeoutError() {
   return new Error("bd show lookup timed out; gate types remain unverified");
+}
+function parseGateRows(result) {
+  if (result.exitCode !== 0)
+    throw new Error(`bd show lookup failed with exit code ${result.exitCode}; gate types remain unverified`);
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    throw new Error("bd show returned unreadable JSON; gate types remain unverified");
+  }
+  if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) && "schema_version" in parsed && "data" in parsed)
+    parsed = parsed.data;
+  if (!Array.isArray(parsed))
+    throw new Error("bd show returned no issue array; gate types remain unverified");
+  const gates = [];
+  for (const row of parsed) {
+    if (!row || typeof row !== "object")
+      throw new Error("bd show returned malformed issues; gate types remain unverified");
+    const issue = row;
+    if (typeof issue.id !== "string" || typeof issue.issue_type !== "string") {
+      throw new Error("bd show omitted issue identity or type; gate types remain unverified");
+    }
+    if (issue.issue_type === "gate")
+      gates.push(issue.id);
+  }
+  return gates;
 }
 function denyReason(gateIds) {
   return `blocked by beads (a gate bead is resolved, never closed): ${gateIds.join(", ")} ` + "is a gate. `bd close` on it flips status to closed and does unblock the waiting " + "bead, so nothing fails loudly -- but no gate resolution happens. A `human` gate " + "loses the decision it stood for, and a `timer`/`gh:run`/`gh:pr`/`bead` gate is " + "asserted satisfied without anything evaluating it. Run `bd gate check` to have the " + "conditions evaluated, or `bd gate resolve <gate-id>` for the manual human answer; " + "then `bd close <step-id> --reason ...` on the step the gate blocked. `--force` does " + "not lift this guard: it forces the same unrecorded close.";
@@ -5612,29 +5557,7 @@ async function gateIdsAmongAsync(ids, dbArgs, cwd, deadline, env) {
   const result = await run(["bd", ...dbArgs, "show", ...ids, "--json"], cwd, deadline);
   if (Date.now() >= deadline)
     throw timeoutError();
-  if (result.exitCode !== 0)
-    throw new Error(`bd show lookup failed with exit code ${result.exitCode}; gate types remain unverified`);
-  let parsed;
-  try {
-    parsed = JSON.parse(result.stdout);
-  } catch {
-    throw new Error("bd show returned unreadable JSON; gate types remain unverified");
-  }
-  if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) && "schema_version" in parsed && "data" in parsed)
-    parsed = parsed.data;
-  if (!Array.isArray(parsed))
-    throw new Error("bd show returned no issue array; gate types remain unverified");
-  const gates = [];
-  for (const row of parsed) {
-    if (!row || typeof row !== "object")
-      throw new Error("bd show returned malformed issues; gate types remain unverified");
-    const issue = row;
-    if (typeof issue.id !== "string" || typeof issue.issue_type !== "string")
-      throw new Error("bd show omitted issue identity or type; gate types remain unverified");
-    if (issue.issue_type === "gate")
-      gates.push(issue.id);
-  }
-  return gates;
+  return parseGateRows(result);
 }
 async function decideBdCloseParsed(parsed, cwd = process.cwd(), deadline, env = process.env, targets) {
   const sharedDeadline = deadline ?? Date.now() + TIMEOUT_MS;
@@ -6572,11 +6495,8 @@ async function setupBeads(ctx, deps = {}) {
   const pins = new Map;
   const queue = keyedQueue();
   const run = deps.run ?? runBdResult;
-  const detached = new Set;
   const detach = deps.detach ?? ((task) => {
-    const settled = task.catch((error) => console.error("srobroek.beads: detached task failed", error));
-    detached.add(settled);
-    settled.finally(() => detached.delete(settled));
+    task.catch((error) => console.error("srobroek.beads: detached task failed", error));
   });
   const heartbeatNoticed = new Set;
   const heartbeats = new Heartbeats(async (sessionID, key, lease) => {
@@ -6604,7 +6524,7 @@ async function setupBeads(ctx, deps = {}) {
     }).catch(() => {
       return;
     });
-  }, deps.clock, deps.detach);
+  }, deps.clock, detach);
   const lifecycle = new Lifecycle({
     ctx,
     run,

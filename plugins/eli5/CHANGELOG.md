@@ -1,3 +1,9 @@
+## eli5 [0.5.1](https://github.com/srobroek/harness-plugins/compare/eli5--v0.5.0...eli5--v0.5.1) (2026-11-21)
+
+### Bug Fixes
+
+* **code-challenge:** close dogfood friction in skill, schema and validation ([043a8b3](https://github.com/srobroek/harness-plugins/commit/043a8b39057ec8fca54d09adebb0532c2154e330))
+
 # Changelog
 
 ## [0.5.0](https://github.com/srobroek/opencode-plugins/compare/eli5--v0.4.0...eli5--v0.5.0) (2026-11-20)

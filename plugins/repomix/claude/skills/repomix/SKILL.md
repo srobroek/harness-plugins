@@ -48,8 +48,8 @@ TypeScript). Don't compress:
   third-party checkout is safe. A `.repomixignore` in the target still applies.
 - The secret scan always runs. A flagged file is left out of the pack and named in the
   result. The scan is a heuristic, so don't paste pack contents anywhere public.
-- When repomix is not on PATH, the tool runs a pinned version through npx and asks first,
-  because npx downloads code.
+- When repomix is not on PATH, the tool runs a pinned version through npx, because npx
+  downloads code. The user's permission rules decide whether that runs.
 
 ## Without the tool
 

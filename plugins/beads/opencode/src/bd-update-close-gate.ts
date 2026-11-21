@@ -1,4 +1,4 @@
-import { type ParsedCommand, parse, parsedInvocations } from "@srobroek/opencode-lib/beads-shell"
+import { type ParsedCommand, parsedInvocations } from "@srobroek/opencode-lib/beads-shell"
 
 const UPDATE = "update"
 const CLOSING_STATUSES: Record<string, true> = { closed: true, done: true }
@@ -29,9 +29,5 @@ export function hasClosingBdUpdate(parsed: ParsedCommand): boolean {
 
 export function decideBdUpdateCloseParsed(parsed: ParsedCommand): { block: true; reason: string } | undefined {
   return hasClosingBdUpdate(parsed) ? { block: true, reason: UPDATE_CLOSE_REASON } : undefined
-}
-
-export function decideBdUpdateClose(command: string): { block: true; reason: string } | undefined {
-  return decideBdUpdateCloseParsed(parse(command))
 }
 

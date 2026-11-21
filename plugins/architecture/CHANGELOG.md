@@ -1,3 +1,9 @@
+## architecture [0.8.1](https://github.com/srobroek/harness-plugins/compare/architecture--v0.8.0...architecture--v0.8.1) (2026-11-21)
+
+### Bug Fixes
+
+* **code-challenge:** close dogfood friction in skill, schema and validation ([043a8b3](https://github.com/srobroek/harness-plugins/commit/043a8b39057ec8fca54d09adebb0532c2154e330))
+
 ## architecture [0.8.0](https://github.com/srobroek/harness-plugins/compare/architecture--v0.7.0...architecture--v0.8.0) (2026-11-21)
 
 ### Features
