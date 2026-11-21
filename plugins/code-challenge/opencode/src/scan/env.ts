@@ -54,6 +54,11 @@ const ALLOWED_PREFIXES = ["LC_", "UV_"]
 const SECRET_NAME = /(TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|AUTH)/i
 const SECRET_PREFIX = /^(AWS_|GH_|GITHUB_)/i
 
+/** `scheme://user:pass@host` becomes `scheme://host`: proxy and index URLs may carry credentials the analyzers must not inherit. */
+export function stripUserinfo(value: string): string {
+  return value.replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^/\s@,]*@/gi, "$1")
+}
+
 export function childEnv(
   source: Record<string, string | undefined> = Bun.env,
   extra: Record<string, string> = { NO_COLOR: "1", FORCE_COLOR: "0" },
@@ -62,7 +67,7 @@ export function childEnv(
   for (const [name, value] of Object.entries(source)) {
     if (value === undefined) continue
     if (SECRET_NAME.test(name) || SECRET_PREFIX.test(name)) continue
-    if (ALLOWED.has(name) || ALLOWED_PREFIXES.some((p) => name.startsWith(p))) env[name] = value
+    if (ALLOWED.has(name) || ALLOWED_PREFIXES.some((p) => name.startsWith(p))) env[name] = stripUserinfo(value)
   }
   return { ...env, ...extra }
 }

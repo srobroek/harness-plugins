@@ -1,4 +1,4 @@
-import { type SupervisedRun, supervise } from "@srobroek/opencode-lib/subprocess"
+import { killChild, type SupervisedRun, supervise } from "@srobroek/opencode-lib/subprocess"
 import { childEnv } from "./env.ts"
 
 export const MAX_STDOUT_BYTES = 16 * 1024 * 1024
@@ -49,11 +49,7 @@ export const spawnTool: Exec = async (argv, options) => {
     const state: { overflow: "stdout" | "stderr" | null } = { overflow: null }
     const over = (stream: "stdout" | "stderr") => () => {
       state.overflow ??= stream
-      try {
-        process.kill(-child.pid, "SIGKILL")
-      } catch {
-        child.kill("SIGKILL")
-      }
+      killChild(child, true)
     }
     const guarded = {
       pid: child.pid,
