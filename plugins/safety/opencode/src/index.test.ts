@@ -558,6 +558,8 @@ describe("steering directories and same-repo worktrees", () => {
   let steering: string
   let lane: string
   let outside: string
+  let main: string
+  let common: string
   beforeAll(() => {
     const base = join(realpathSync(tmpdir()), "opencode")
     mkdirSync(base, { recursive: true })
@@ -565,13 +567,24 @@ describe("steering directories and same-repo worktrees", () => {
     steering = join(fixture, "steering")
     lane = join(fixture, "lane")
     outside = join(fixture, "outside")
-    for (const path of [steering, lane, outside]) mkdirSync(path)
+    main = join(fixture, "main")
+    common = join(main, ".git")
+    for (const path of [steering, lane, outside, join(common, "worktrees", "lane")]) mkdirSync(path, { recursive: true })
+    // The reciprocal links git writes for a linked worktree.
+    writeFileSync(join(lane, ".git"), `gitdir: ${join(common, "worktrees", "lane")}\n`)
+    writeFileSync(join(common, "worktrees", "lane", "gitdir"), `${join(lane, ".git")}\n`)
   })
   afterAll(() => rmSync(fixture, { recursive: true, force: true }))
 
-  const ask = (fake: Awaited<ReturnType<typeof load>>["fake"], resources: string[], id: string, effect: Evaluation["effect"] = "ask") =>
+  const ask = (
+    fake: Awaited<ReturnType<typeof load>>["fake"],
+    resources: string[],
+    id: string,
+    effect: Evaluation["effect"] = "ask",
+    sessionID = "ses_1",
+  ) =>
     fake.fire.permission("evaluate", {
-      sessionID: "ses_1",
+      sessionID,
       action: "external_directory",
       resources,
       effect,
@@ -581,9 +594,10 @@ describe("steering directories and same-repo worktrees", () => {
     fake.fire.tool("execute.before", { ...call, id, tool, input: {} } as never)
   const git = (calls: string[] = []): { run: GitRun; calls: string[] } => ({
     calls,
-    run: async (_args, cwd) => {
+    run: async (args, cwd) => {
+      if (args[0] === "rev-parse") return `${common}\n`
       calls.push(cwd)
-      return `worktree ${lane}\0HEAD x\0\0`
+      return `worktree ${main}\0HEAD x\0\0worktree ${lane}\0HEAD x\0\0`
     },
   })
 
@@ -610,7 +624,7 @@ describe("steering directories and same-repo worktrees", () => {
 
   test("allows read-only tools in a worktree of the session repository, not writes or shell", async () => {
     const seam = git()
-    const { fake } = await load({}, { scratchRoots: [], directory: fixture, worktrees: seam })
+    const { fake } = await load({}, { scratchRoots: [], directory: main, worktrees: seam })
     await start(fake, "w1", "read")
     expect((await ask(fake, [`${lane}/src/a.ts`], "w1")).effect).toBe("allow")
     expect((await ask(fake, [`${outside}/a`], "w1")).effect).toBe("ask")
@@ -620,19 +634,59 @@ describe("steering directories and same-repo worktrees", () => {
       expect((await ask(fake, [`${lane}/a`], `w-${tool}`)).effect).toBe("ask")
     }
     expect((await ask(fake, [`${lane}/a`], "w1", "deny")).effect).toBe("deny")
-    expect(seam.calls).toEqual([fixture])
+    expect(seam.calls).toEqual([main])
   })
 
   test("disable repo-worktrees keeps the ask and never runs git", async () => {
     const seam = git()
-    const { fake } = await load({ disable: ["repo-worktrees"] }, { scratchRoots: [], directory: fixture, worktrees: seam })
+    const { fake } = await load({ disable: ["repo-worktrees"] }, { scratchRoots: [], directory: main, worktrees: seam })
     await start(fake, "wd", "read")
     expect((await ask(fake, [`${lane}/a`], "wd")).effect).toBe("ask")
     expect(seam.calls).toEqual([])
   })
 
+  describe("in a subagent session (full hook chain, subagent-prompts on)", () => {
+    const child = (directory: string): FakeSession => ({ id: "ses_child", parentID: "ses_1", location: { directory } }) as never
+
+    test("steering reads are allowed before the unanswerable deny; an outside path is denied", async () => {
+      const { fake } = await load({ steeringDirs: [steering] }, { scratchRoots: [], sessions: [child(fixture)] })
+      await start(fake, "c1", "read")
+      expect((await ask(fake, [`${steering}/git-defender.md`], "c1", "ask", "ses_child")).effect).toBe("allow")
+      const denied = await ask(fake, [`${outside}/x`], "c1", "ask", "ses_child")
+      expect(denied.effect).toBe("deny")
+      expect(denied.message).toContain("subagent sessions cannot answer permission prompts")
+      expect((await ask(fake, [`${steering}/a`, `${outside}/x`], "c1", "ask", "ses_child")).effect).toBe("deny")
+    })
+
+    test("same-repo worktree reads are allowed; writes, shell and outside paths are denied", async () => {
+      const { fake } = await load({}, { scratchRoots: [], directory: main, worktrees: git(), sessions: [child(main)] })
+      await start(fake, "c2", "grep")
+      expect((await ask(fake, [`${lane}/src/a.ts`], "c2", "ask", "ses_child")).effect).toBe("allow")
+      expect((await ask(fake, [`${outside}/x`], "c2", "ask", "ses_child")).effect).toBe("deny")
+      for (const tool of ["write", "shell"]) {
+        await start(fake, `c2-${tool}`, tool)
+        expect((await ask(fake, [`${lane}/a`], `c2-${tool}`, "ask", "ses_child")).effect).toBe("deny")
+      }
+    })
+
+    test("a shell call in a scratch folder is allowed; one reaching outside it is denied; no resources is never auto-approved", async () => {
+      const { fake } = await load({}, { scratchRoots: [steering], sessions: [child(fixture)] })
+      await start(fake, "c3", "shell")
+      expect((await ask(fake, [`${steering}/work/*`], "c3", "ask", "ses_child")).effect).toBe("allow")
+      expect((await ask(fake, [`${steering}/work/*`, `${outside}/*`], "c3", "ask", "ses_child")).effect).toBe("deny")
+      expect((await ask(fake, [], "c3", "ask", "ses_child")).effect).toBe("deny")
+      expect((await ask(fake, [], "c3")).effect).toBe("ask")
+    })
+
+    test("a deny stays a deny in a subagent session", async () => {
+      const { fake } = await load({ steeringDirs: [steering] }, { scratchRoots: [], sessions: [child(fixture)] })
+      await start(fake, "c4", "read")
+      expect((await ask(fake, [`${steering}/a`], "c4", "deny", "ses_child")).effect).toBe("deny")
+    })
+  })
+
   test("a git failure leaves the ask", async () => {
-    const { fake } = await load({}, { scratchRoots: [], directory: fixture, worktrees: { run: async () => undefined } })
+    const { fake } = await load({}, { scratchRoots: [], directory: main, worktrees: { run: async () => undefined } })
     await start(fake, "wf", "read")
     expect((await ask(fake, [`${lane}/a`], "wf")).effect).toBe("ask")
   })
