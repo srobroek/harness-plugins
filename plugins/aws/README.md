@@ -13,7 +13,7 @@ The plugin adds the servers in [`.mcp.json`](.mcp.json), with pinned versions:
 
 | Server | Command | Scope |
 | --- | --- | --- |
-| `aws-mcp` | `uvx mcp-proxy-for-aws-cli@1.7.0 https://aws-mcp.us-east-1.api.aws/mcp --read-only --skip-auth` | AWS documentation search, guided AWS skills, regions and regional availability. `--read-only` hides every tool that can change AWS resources; `--skip-auth` lets the documentation and skill tools work without credentials. Queries go to the AWS-hosted endpoint, and authenticated calls appear in CloudTrail for the signing account |
+| `aws-mcp` | `uvx mcp-proxy-for-aws-cli@2.0.0 https://aws-mcp.us-east-1.api.aws/mcp --read-only --skip-auth` | AWS documentation search, guided AWS skills, regions and regional availability. `--read-only` hides every tool that can change AWS resources; `--skip-auth` lets the documentation and skill tools work without credentials. Queries go to the AWS-hosted endpoint, and authenticated calls appear in CloudTrail for the signing account |
 | `aws-pricing` | `uvx --with botocore[crt] awslabs.aws-pricing-mcp-server@1.1.1`, with `AWS_REGION=us-east-1` | AWS Price List queries in `us-east-1` and Terraform or CDK cost analysis. The `botocore[crt]` extra loads credentials created by `aws login` |
 
 In OpenCode both run in Code Mode with a 120 s startup timeout, since the first start
