@@ -15,7 +15,7 @@ import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import { canonicalCheckout, evictSessions, repairStrandedSessions, type SessionApi } from "@srobroek/opencode-lib/session-eviction"
-import { type LaneSessionClient, laneSessions, moveSessionsHome } from "@srobroek/opencode-lib/session-lanes"
+import { isSessionNotFound, type LaneSessionClient, laneSessions, moveSessionsHome } from "@srobroek/opencode-lib/session-lanes"
 import { bumpClaim, claimGeneration, forgetNotice, landingsFor, listLandings, readClaim, readNotices, recordNotice } from "@srobroek/opencode-lib/worktree-claims"
 import { holdsState, type LockOptions, lockedWorktreeRemoval, lockedWrite, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
 import { OPERATION_MARKERS, operationsInProgress, stashesOnBranch } from "@srobroek/opencode-lib/worktree-state"
@@ -744,6 +744,49 @@ export function createLifecycle(deps: LifecycleDeps) {
     return undefined
   }
 
+  /** `session.get` within the lookup time: the session, `missing` when the host says it does not exist, `unknown` otherwise. */
+  const lookupSession = async (sessionID: string): Promise<SessionLike | "missing" | "unknown"> => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<"unknown">((done) => {
+      timer = setTimeout(() => done("unknown"), deps.lookupMs)
+    })
+    const settled = Promise.resolve()
+      .then(() => ctx.session.get({ sessionID } as never))
+      .then(
+        (session): SessionLike | "unknown" => (typeof session === "object" && session !== null ? (session as SessionLike) : "unknown"),
+        (error): "missing" | "unknown" => (isSessionNotFound(error, sessionID) ? "missing" : "unknown"),
+      )
+    try {
+      return await Promise.race([settled, timeout])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /**
+   * The lane's descendants (by parent ID) that sit in the worktree, or the reason to keep it: one of them running,
+   * one that cannot be read, or a listing that may have missed some. The root is `liveRefusal`'s.
+   */
+  const descendantRefusal = async (lane: Lane): Promise<{ ids: string[] } | Finalized> => {
+    const found = await laneSessions(sessionClient, lane.child)
+    if (!found.complete) return keptBecause("running", "the lane's sessions could not all be listed")
+    const worktree = canonical(lane.directory)
+    const ids: string[] = []
+    for (const id of found.ids) {
+      if (id === lane.child) continue
+      const session = await lookupSession(id)
+      if (session === "missing") continue
+      if (session === "unknown") return keptBecause("running", `the state of ${id} cannot be read`)
+      const directory = session.location?.directory
+      if (typeof directory !== "string") return keptBecause("running", `the location of ${id} cannot be read`)
+      if (!within(canonical(directory), worktree)) continue
+      ids.push(id)
+      if (toMillis(session.time?.archived) !== undefined) continue
+      if (isRunning({ busy: toMillis(session.time?.busy), idle: toMillis(session.time?.idle) })) return keptBecause("running", `${id} is running in the worktree`)
+    }
+    return { ids }
+  }
+
   /** Whether the child may be running, read fresh: a pending shutdown resume, a resume, a start since `seq`, a background job, or a running or unknown session. */
   const liveRefusal = async (lane: Lane, options: FinalizeOptions, seq: number): Promise<Finalized | undefined> => {
     const started = startedSince([lane.child], seq)
@@ -867,8 +910,14 @@ export function createLifecycle(deps: LifecycleDeps) {
             await save(stored)
             return live
           }
+          // Descendants hold no claim of their own: one running in the worktree keeps it, and so does a listing that may be short.
+          const descendants = await descendantRefusal(stored)
+          if (!("ids" in descendants)) {
+            await save(stored)
+            return descendants
+          }
           // The last look, synchronous and immediately before the host call: an event delivered during the awaits above is seen here.
-          const late = startedSince([stored.child], seq)
+          const late = startedSince([stored.child, ...descendants.ids], seq)
           if (late !== undefined) {
             await save(stored)
             return late

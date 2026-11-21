@@ -2559,6 +2559,45 @@ function createLifecycle(deps) {
     }
     return;
   };
+  const lookupSession = async (sessionID) => {
+    let timer;
+    const timeout = new Promise((done) => {
+      timer = setTimeout(() => done("unknown"), deps.lookupMs);
+    });
+    const settled = Promise.resolve().then(() => ctx.session.get({ sessionID })).then((session) => typeof session === "object" && session !== null ? session : "unknown", (error) => isSessionNotFound(error, sessionID) ? "missing" : "unknown");
+    try {
+      return await Promise.race([settled, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const descendantRefusal = async (lane) => {
+    const found = await laneSessions(sessionClient, lane.child);
+    if (!found.complete)
+      return keptBecause("running", "the lane's sessions could not all be listed");
+    const worktree = canonical(lane.directory);
+    const ids = [];
+    for (const id of found.ids) {
+      if (id === lane.child)
+        continue;
+      const session = await lookupSession(id);
+      if (session === "missing")
+        continue;
+      if (session === "unknown")
+        return keptBecause("running", `the state of ${id} cannot be read`);
+      const directory = session.location?.directory;
+      if (typeof directory !== "string")
+        return keptBecause("running", `the location of ${id} cannot be read`);
+      if (!within3(canonical(directory), worktree))
+        continue;
+      ids.push(id);
+      if (toMillis2(session.time?.archived) !== undefined)
+        continue;
+      if (isRunning({ busy: toMillis2(session.time?.busy), idle: toMillis2(session.time?.idle) }))
+        return keptBecause("running", `${id} is running in the worktree`);
+    }
+    return { ids };
+  };
   const liveRefusal = async (lane, options, seq) => {
     const started = startedSince([lane.child], seq);
     if (started !== undefined)
@@ -2668,7 +2707,12 @@ function createLifecycle(deps) {
             await save(stored);
             return live;
           }
-          const late = startedSince([stored.child], seq);
+          const descendants = await descendantRefusal(stored);
+          if (!("ids" in descendants)) {
+            await save(stored);
+            return descendants;
+          }
+          const late = startedSince([stored.child, ...descendants.ids], seq);
           if (late !== undefined) {
             await save(stored);
             return late;

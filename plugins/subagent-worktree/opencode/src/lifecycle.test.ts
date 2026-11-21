@@ -2295,7 +2295,7 @@ describe("finalize: stale events, apply-time liveness, pending moves and resumed
   })
 
   test.each([
-    ["a failed move", (fake: Fake) => {
+    ["a failed move", (fake: Fake, _removed: () => boolean) => {
       const session = fake.context.session as unknown as { move: (input: { sessionID: string; directory: string }) => Promise<unknown> }
       const original = session.move.bind(session)
       session.move = (input) => (input.sessionID === "ses_grand" ? Promise.reject(new Error("host refused")) : original(input))
@@ -2303,10 +2303,11 @@ describe("finalize: stale events, apply-time liveness, pending moves and resumed
         session.move = original
       }
     }],
-    ["an incomplete listing", (fake: Fake) => {
+    // A listing that fails before the removal keeps the worktree; this one fails only once the worktree is gone.
+    ["an incomplete listing after the removal", (fake: Fake, removed: () => boolean) => {
       const session = fake.context.session as unknown as { list: (input: unknown) => Promise<unknown> }
       const original = session.list.bind(session)
-      session.list = () => Promise.reject(new Error("listing down"))
+      session.list = (input) => (removed() ? Promise.reject(new Error("listing down")) : original(input))
       return () => {
         session.list = original
       }
@@ -2314,7 +2315,7 @@ describe("finalize: stale events, apply-time liveness, pending moves and resumed
   ])("%s keeps the lane in removing, and a later trigger finishes only the moves", async (_name, breakIt) => {
     const { fake, worktree, cleanup } = await start(empty)
     grandchild(fake)
-    const repair = breakIt(fake)
+    const repair = breakIt(fake, () => removes(worktree) > 0)
     fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
     await until(() => stored(fake).state === "removing")
     await settle(50)
@@ -2535,6 +2536,70 @@ describe("finalize: a resume and late changes fence the removal", () => {
     await settle(150)
     expect(stashReads).toBeGreaterThanOrEqual(2)
     expect(worktree.filter((entry) => entry.method === "remove")).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+})
+
+describe("finalize: the lane's descendants in the worktree protect it", () => {
+  const removes = (worktree: Array<{ method: string }>) => worktree.filter((entry) => entry.method === "remove").length
+  const empty = { head: BASE, ahead: 0 }
+  // Gates off: no idle hook records background work, so only the descendants' own status can keep the lane.
+  const noGates = { options: { gates: false } }
+  const grandchild = (fake: Fake, time: Record<string, number>) =>
+    fake.sessions.set("ses_grand", { id: "ses_grand", parentID: CHILD, projectID: "prj", location: { directory: WT }, time })
+  type SessionApi = {
+    get: (input: { sessionID: string }) => Promise<unknown>
+    list: (input: { parentID?: string }) => Promise<unknown>
+  }
+  const api = (fake: Fake) => fake.context.session as unknown as SessionApi
+
+  test.each([
+    ["running", (fake: Fake) => grandchild(fake, { busy: 5, idle: 2 })],
+    [
+      "unknown",
+      (fake: Fake) => {
+        grandchild(fake, { busy: 1, idle: 2 })
+        const original = api(fake).get.bind(fake.context.session)
+        api(fake).get = (input) => (input.sessionID === "ses_grand" ? Promise.reject(new Error("service down")) : original(input))
+      },
+    ],
+  ])("a %s grandchild in the worktree keeps the lane when its root ended", async (_name, arrange) => {
+    const { fake, worktree, cleanup } = await start(empty, noGates)
+    arrange(fake)
+    fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await settle(150)
+    expect(removes(worktree)).toBe(0)
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+
+  test("a lane whose sessions cannot all be listed keeps its worktree", async () => {
+    const { fake, worktree, cleanup } = await start(empty, noGates)
+    api(fake).list = () => Promise.reject(new Error("listing down"))
+    fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await settle(150)
+    expect(removes(worktree)).toBe(0)
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+
+  test("an execution that starts while the descendants are listed keeps the lane", async () => {
+    const { fake, worktree, cleanup } = await start(empty, noGates)
+    const original = api(fake).list.bind(fake.context.session)
+    let fired = false
+    api(fake).list = async (input) => {
+      if (!fired && input.parentID === CHILD && removes(worktree) === 0) {
+        fired = true
+        fake.emit({ type: "session.execution.started", data: { sessionID: CHILD } })
+        await settle(20)
+      }
+      return original(input)
+    }
+    fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await until(() => fired)
+    await settle(150)
+    expect(removes(worktree)).toBe(0)
     expect(stored(fake).state).toBe("active")
     await cleanup()
   })
