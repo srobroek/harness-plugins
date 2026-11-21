@@ -309,7 +309,7 @@
     },
     {
       "name": "beads",
-      "version": "0.8.2",
+      "version": "0.8.3",
       "description": "Beads issue tracking: bd prime session context, shell gates on bd, git and gh commands, store pinning and the Beads skills.",
       "category": "development",
       "harnesses": {

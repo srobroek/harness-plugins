@@ -1,3 +1,5 @@
+## beads [0.8.3](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.2...beads--v0.8.3) (2026-11-21)
+
 ## beads [0.8.2](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.1...beads--v0.8.2) (2026-11-21)
 
 ### Bug Fixes
