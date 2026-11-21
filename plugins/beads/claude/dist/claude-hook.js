@@ -1168,7 +1168,14 @@ var CONTROL_PREFIXES = {
   until: true,
   do: true
 };
-var TRANSPARENT_WRAPPERS = { command: true, env: true, sudo: true, time: true };
+var TRANSPARENT_WRAPPERS = {
+  command: true,
+  env: true,
+  exec: true,
+  nohup: true,
+  sudo: true,
+  time: true
+};
 var WRAPPER_VALUE_FLAGS = {
   "-C": true,
   "--chdir": true,
@@ -1874,13 +1881,23 @@ var READS = {
   where: true,
   config: { get: true, list: true },
   dep: { list: true, tree: true },
-  dolt: { status: true },
+  backup: { status: true },
+  dolt: { status: true, show: true, test: true },
+  epic: { status: true },
+  federation: { "list-peers": true, status: true },
   formula: { list: true, show: true },
   gate: { list: true, show: true },
+  hooks: { list: true },
   kv: { get: true, list: true },
-  mol: { show: true },
-  swarm: { list: true }
+  label: { list: true, "list-all": true },
+  mol: { show: true, current: true, progress: true, ready: true, stale: true },
+  repo: { list: true },
+  swarm: { list: true },
+  todo: { list: true },
+  vc: { status: true },
+  worktree: { info: true, list: true }
 };
+var NESTED_READS = { dolt: { remote: { list: true } } };
 var WRITE_FLAGS = {
   orphans: ["--fix", "-f"],
   preflight: ["--fix"],
@@ -1908,10 +1925,16 @@ function writesStore(invocation) {
   const writeFlags = WRITE_FLAGS[verb];
   if (writeFlags !== undefined && flagEnabled(args, writeFlags))
     return true;
-  const subaction = args.find((arg) => !arg.startsWith("-"));
+  const positional = args.filter((arg) => !arg.startsWith("-"));
+  const subaction = positional[0];
   if (rule === true)
     return false;
-  return subaction === undefined || rule[subaction] !== true;
+  if (subaction === undefined)
+    return true;
+  const nested = NESTED_READS[verb]?.[subaction];
+  if (nested !== undefined)
+    return nested[positional[1] ?? ""] !== true;
+  return rule[subaction] !== true;
 }
 function storeFor(globals, cwd, env) {
   return canonicalStore(selectedStoreFor(globals, cwd, env));
@@ -2062,7 +2085,7 @@ function resolveBdTargets(command, cwd, env) {
   return { get: (invocation) => targets.get(targetKey(invocation)), plan };
 }
 function planEmbeddedWrites(command, cwd, env, options = {}) {
-  const { observe, unresolved, classify = true } = options;
+  const { observe, unresolved, unplaced, classify = true } = options;
   const embeddedStore = (store) => classify && embedded(store);
   if (!BD_WORD.test(command))
     return { kind: "writes", writes: [] };
@@ -2071,6 +2094,7 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
   let problem;
   let problemStore;
   const refuse = (found, store) => {
+    unplaced?.("exact" in found ? found.exact : found.part);
     problem ??= found;
     problemStore ??= store;
   };
@@ -2312,7 +2336,7 @@ function launchOf(shape, command, source) {
   const name = commandName(head);
   if (NAME_ONLY[name] === true || name === "command" && /^-[vV]$/.test(args[0]?.value ?? ""))
     return;
-  if (!args.some((word) => !word.quoted && !word.expands && commandName(word) === "bd"))
+  if (!args.some((word) => !word.expands && commandName(word) === "bd"))
     return;
   return {
     part: `\`bd\` is launched through \`${head.value}\`, which hides the invocation from the lock`,
@@ -3937,6 +3961,9 @@ function sessionStartAdvisories(directory, deps) {
   }
   return advisories;
 }
+
+// plugins/beads/opencode/src/shell-gates.ts
+import { resolve as resolve8 } from "path";
 // plugins/beads/opencode/src/bd-close-gate.ts
 var TIMEOUT_MS = 25000;
 var injectedRun = null;
@@ -4257,9 +4284,8 @@ function canonical3(path) {
 function sameStore(a, b, cwd) {
   return canonical3(resolve6(cwd, a)) === canonical3(resolve6(cwd, b));
 }
-function ledgerRepoMismatch(input) {
+function foreignLedger(input) {
   const store = canonical3(input.store);
-  const ledgerRoot = dirname5(store);
   const here = input.identity(input.cwd);
   const there = input.identity(store);
   if (here === undefined || there === undefined)
@@ -4268,7 +4294,20 @@ function ledgerRepoMismatch(input) {
     return;
   if (here === there)
     return;
-  return `Refused: this \`bd ${input.verb}\` would write to the ledger ${JSON.stringify(store)}, which belongs to ${JSON.stringify(ledgerRoot)}, not to the git repository you are in (${JSON.stringify(input.cwd)}), and the command did not choose that ledger (it came from the environment, e.g. an inherited BEADS_DIR). If that is the wrong project, pass the shell tool's \`workdir\` for the right repository (and unset BEADS_DIR) instead of \`cd\`. If you really mean to write to that ledger, assign BEADS_DIR in the command line itself: \`BEADS_DIR=<path> bd ${input.verb} ...\`.`;
+  return { store, ledgerRoot: dirname5(store) };
+}
+var WRONG_PROJECT = "pass the shell tool's `workdir` for the right repository (and unset BEADS_DIR) instead of `cd`";
+function ledgerRepoMismatch(input) {
+  const foreign = foreignLedger(input);
+  if (foreign === undefined)
+    return;
+  return `Refused: this \`bd ${input.verb}\` would write to the ledger ${JSON.stringify(foreign.store)}, which belongs to ${JSON.stringify(foreign.ledgerRoot)}, not to the git repository you are in (${JSON.stringify(input.cwd)}), and the command did not choose that ledger (it came from the environment, e.g. an inherited BEADS_DIR). If that is the wrong project, ${WRONG_PROJECT}. If you really mean to write to that ledger, assign BEADS_DIR in the command line itself: \`BEADS_DIR=<path> bd ${input.verb} ...\`.`;
+}
+function unplacedBdRefusal(input) {
+  const foreign = foreignLedger(input);
+  if (foreign === undefined)
+    return;
+  return `Refused: this command runs \`bd\` where the gate cannot place it (${input.reason}), and the ledger it would reach by default, ${JSON.stringify(foreign.store)}, belongs to ${JSON.stringify(foreign.ledgerRoot)}, not to the git repository you are in (${JSON.stringify(input.cwd)}). Run each \`bd\` as its own simple command, directly, with no launcher, shell string or substitution around it. If that is the wrong project, ${WRONG_PROJECT}. If you really mean to use that ledger, write \`BEADS_DIR=<path> bd <verb> ...\` in the command line itself.`;
 }
 
 // plugins/beads/opencode/src/pr-bead-link-gate.ts
@@ -4492,8 +4531,12 @@ var LEDGER_CREATING_VERBS = { init: true, bootstrap: true };
 function ledgerWriteRefusal(command, cwd, env, options = {}) {
   const { configuredStore, identity = repoIdentity } = options;
   let refusal;
+  let unplaced;
   planEmbeddedWrites(command, cwd, env, {
     classify: false,
+    unplaced: (reason) => {
+      unplaced ??= reason;
+    },
     observe: ({ invocation, store, cwd: dir, beadsDir, beadsDirAssigned }) => {
       if (refusal !== undefined || LEDGER_CREATING_VERBS[invocation.verb] === true)
         return;
@@ -4510,7 +4553,13 @@ function ledgerWriteRefusal(command, cwd, env, options = {}) {
         refusal = ledgerRepoMismatch({ verb: invocation.verb, store: target, cwd: dir, identity });
     }
   });
-  return refusal;
+  if (refusal !== undefined || unplaced === undefined)
+    return refusal;
+  const inherited = env.BEADS_DIR !== undefined && env.BEADS_DIR !== "" ? env.BEADS_DIR : undefined;
+  if (inherited !== undefined && configuredStore !== undefined && sameStore(inherited, configuredStore, cwd))
+    return;
+  const store = inherited === undefined ? findLedger(cwd)?.store : resolve8(cwd, inherited);
+  return store === undefined ? undefined : unplacedBdRefusal({ reason: unplaced, store, cwd, identity });
 }
 async function decideShell(command, cwd, deps) {
   try {

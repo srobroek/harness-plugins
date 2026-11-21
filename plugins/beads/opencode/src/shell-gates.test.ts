@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { execFileSync } from "node:child_process"
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { isAbsolute, join } from "node:path"
 import { parse } from "@srobroek/opencode-lib/beads-shell"
 import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
 import { setBdShowRunForTests } from "./bd-close-gate.ts"
@@ -172,12 +172,51 @@ describe("decideShell", () => {
     })
 
     test.each([
-      [`BEADS_DIR=${join(repoB, ".beads")} bd create --title t`],
-      [`export BEADS_DIR=${join(repoB, ".beads")}; bd create --title t`],
-    ])("a command that assigns BEADS_DIR itself may write to that ledger: %p", async (command) => {
-      const decision = await decideShell(command, repoA, deps({ env: { PATH: process.env.PATH, BEADS_DIR: join(repoA, ".beads") } }))
+      ["a prefix", (ledger: string) => `BEADS_DIR=${ledger} bd create --title t`],
+      ["an export", (ledger: string) => `export BEADS_DIR=${ledger}; bd create --title t`],
+    ])("a command that assigns BEADS_DIR itself (%s) may write to that ledger", async (_name, build) => {
+      // Built here, after beforeAll has made the repositories: a path read at collection time is empty.
+      const ledger = join(repoB, ".beads")
+      expect(isAbsolute(ledger)).toBe(true)
+      const env = { PATH: process.env.PATH, BEADS_DIR: join(repoA, ".beads") }
+      const decision = await decideShell(build(ledger), repoA, deps({ env }))
       expect(decision.kind).toBe("allow")
     })
+
+    test.each([
+      ["exec 'bd' create --title t"],
+      ['exec "bd" create --title t'],
+      ["exec bd create --title t"],
+      ["env 'bd' create --title t"],
+      ["command 'bd' create --title t"],
+      ["nohup 'bd' create --title t"],
+      ["echo proj-1 | xargs bd show"],
+      ["timeout 60 'bd' create --title t"],
+      ["sh -c 'bd create --title t'"],
+      ["id=$(bd create --title t --silent)"],
+      ["B=bd; $B create --title t"],
+    ])("a bd the gate cannot place is refused while the ambient ledger is foreign: %p", async (command) => {
+      const decision = await decideShell(command, repoA, deps({ env: leaked() }))
+      if (decision.kind !== "block") throw new Error(JSON.stringify(decision))
+      expect(decision.cause).toContain(realpathSync(join(repoB, ".beads")))
+      expect(decision.cause).toContain("its own simple command")
+    })
+
+    test("the gate itself refuses a quoted xargs launcher the shell parser would also refuse", () => {
+      const foreign = { PATH: process.env.PATH, BEADS_DIR: join(repoB, ".beads") }
+      expect(ledgerWriteRefusal("echo proj-1 | xargs 'bd' close", repoA, foreign)).toContain("its own simple command")
+    })
+
+    test.each([["exec 'bd' create --title t"], ["echo proj-1 | xargs bd show"]])(
+      "the foreign-ledger gate lets a bd it cannot place pass when the ambient ledger is the project's own or options.store: %p",
+      (command) => {
+        const own = { PATH: process.env.PATH, BEADS_DIR: join(repoA, ".beads") }
+        expect(ledgerWriteRefusal(command, repoA, own)).toBeUndefined()
+        const foreign = { PATH: process.env.PATH, BEADS_DIR: join(repoB, ".beads") }
+        expect(ledgerWriteRefusal(command, repoA, foreign)).toContain("its own simple command")
+        expect(ledgerWriteRefusal(command, repoA, foreign, { configuredStore: join(repoB, ".beads") })).toBeUndefined()
+      },
+    )
 
     test("a store the plugin was configured with (options.store) is not refused", async () => {
       const configuredStore = join(repoB, ".beads")

@@ -28,7 +28,10 @@ On every `shell` call (`tool.hook("execute.before")`), in this order, with one
    inherited from the shell that started a shared OpenCode server. `-C`, `--db`,
    `--database` and `--global` name their own target and pass. The Claude Code hook has
    no `options.store`, so a ledger in another repository needs the literal `BEADS_DIR=`
-   there. The `bd-embedded-write-lock` gate controls this check.
+   there. A `bd` the gate cannot place (behind `exec`, `env`, `xargs`, a shell string or a
+   substitution, quoted or not) is refused too while the default ledger is foreign, because it
+   may be a write. Run each `bd` as its own simple command. The `bd-embedded-write-lock` gate
+   controls this check.
 10. `gh pr create` without a `Bead:`, `Closes-Bead:` or `Bead-Id:` trailer is
    refused in a repository with a live ledger that you can write to.
 11. Each `bd` write to an embedded store is rewritten to run under

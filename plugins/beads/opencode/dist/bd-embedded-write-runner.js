@@ -1231,7 +1231,14 @@ var CONTROL_PREFIXES = {
   until: true,
   do: true
 };
-var TRANSPARENT_WRAPPERS = { command: true, env: true, sudo: true, time: true };
+var TRANSPARENT_WRAPPERS = {
+  command: true,
+  env: true,
+  exec: true,
+  nohup: true,
+  sudo: true,
+  time: true
+};
 var WRAPPER_VALUE_FLAGS = {
   "-C": true,
   "--chdir": true,
@@ -1947,13 +1954,23 @@ var READS = {
   where: true,
   config: { get: true, list: true },
   dep: { list: true, tree: true },
-  dolt: { status: true },
+  backup: { status: true },
+  dolt: { status: true, show: true, test: true },
+  epic: { status: true },
+  federation: { "list-peers": true, status: true },
   formula: { list: true, show: true },
   gate: { list: true, show: true },
+  hooks: { list: true },
   kv: { get: true, list: true },
-  mol: { show: true },
-  swarm: { list: true }
+  label: { list: true, "list-all": true },
+  mol: { show: true, current: true, progress: true, ready: true, stale: true },
+  repo: { list: true },
+  swarm: { list: true },
+  todo: { list: true },
+  vc: { status: true },
+  worktree: { info: true, list: true }
 };
+var NESTED_READS = { dolt: { remote: { list: true } } };
 var WRITE_FLAGS = {
   orphans: ["--fix", "-f"],
   preflight: ["--fix"],
@@ -1981,10 +1998,16 @@ function writesStore(invocation) {
   const writeFlags = WRITE_FLAGS[verb];
   if (writeFlags !== undefined && flagEnabled(args, writeFlags))
     return true;
-  const subaction = args.find((arg) => !arg.startsWith("-"));
+  const positional = args.filter((arg) => !arg.startsWith("-"));
+  const subaction = positional[0];
   if (rule === true)
     return false;
-  return subaction === undefined || rule[subaction] !== true;
+  if (subaction === undefined)
+    return true;
+  const nested = NESTED_READS[verb]?.[subaction];
+  if (nested !== undefined)
+    return nested[positional[1] ?? ""] !== true;
+  return rule[subaction] !== true;
 }
 function storeFor(globals, cwd, env) {
   return canonicalStore(selectedStoreFor(globals, cwd, env));
@@ -2135,7 +2158,7 @@ function resolveBdTargets(command, cwd, env) {
   return { get: (invocation) => targets.get(targetKey(invocation)), plan };
 }
 function planEmbeddedWrites(command, cwd, env, options = {}) {
-  const { observe, unresolved, classify = true } = options;
+  const { observe, unresolved, unplaced, classify = true } = options;
   const embeddedStore = (store) => classify && embedded(store);
   if (!BD_WORD.test(command))
     return { kind: "writes", writes: [] };
@@ -2144,6 +2167,7 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
   let problem;
   let problemStore;
   const refuse = (found, store) => {
+    unplaced?.("exact" in found ? found.exact : found.part);
     problem ??= found;
     problemStore ??= store;
   };
@@ -2385,7 +2409,7 @@ function launchOf(shape, command, source) {
   const name = commandName(head);
   if (NAME_ONLY[name] === true || name === "command" && /^-[vV]$/.test(args[0]?.value ?? ""))
     return;
-  if (!args.some((word) => !word.quoted && !word.expands && commandName(word) === "bd"))
+  if (!args.some((word) => !word.expands && commandName(word) === "bd"))
     return;
   return {
     part: `\`bd\` is launched through \`${head.value}\`, which hides the invocation from the lock`,

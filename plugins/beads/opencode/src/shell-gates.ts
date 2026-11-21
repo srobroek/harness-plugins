@@ -20,12 +20,13 @@ import {
 import { type Gate, gateEnabled, type Options } from "@srobroek/opencode-lib/beads-host"
 import { type ParsedCommand, parse } from "@srobroek/opencode-lib/beads-shell"
 import { repoIdentity } from "@srobroek/opencode-lib/beads-store"
+import { resolve } from "node:path"
 import { decideBdCloseParsed } from "./bd-close-gate.ts"
 import { decideBdUnclaimParsed } from "./bd-unclaim-gate.ts"
 import { decideBdUpdateCloseParsed } from "./bd-update-close-gate.ts"
 import { protectBinaryHookCommands } from "./binary-hooks.ts"
 import { admitBdMutation, type GateAdmitter } from "./gate-admission.ts"
-import { describeLedger, findLedger, ledgerRepoMismatch, sameStore } from "./ledger-context.ts"
+import { describeLedger, findLedger, ledgerRepoMismatch, sameStore, unplacedBdRefusal } from "./ledger-context.ts"
 import { decideCommandParsed, type RepositoryControl, repositoryControlFor } from "./pr-bead-link-gate.ts"
 
 /**
@@ -104,7 +105,12 @@ const LEDGER_CREATING_VERBS: Readonly<Record<string, true>> = { init: true, boot
  * not. The plugin's own configured store (`options.store`) is a deliberate choice too.
  * "Write" is the planner's classification (`writesStore`), which counts every verb not known
  * to be a read, so `unclaim`, `heartbeat` and `orphans --fix` refuse too; reads and the
- * ledger-creating `init` and `bootstrap` never do. A command the planner cannot place passes here; the lock refuses it.
+ * ledger-creating `init` and `bootstrap` never do.
+ *
+ * A `bd` the planner cannot place (behind `exec`, `env`, `xargs`, a shell string or a
+ * substitution, quoted or not) may be a write, so while the ledger it would reach by default
+ * is foreign the whole command is refused, reads included. The planner decides what it cannot
+ * place; this gate only fails closed on it.
  */
 export function ledgerWriteRefusal(
   command: string,
@@ -114,8 +120,12 @@ export function ledgerWriteRefusal(
 ): string | undefined {
   const { configuredStore, identity = repoIdentity } = options
   let refusal: string | undefined
+  let unplaced: string | undefined
   planEmbeddedWrites(command, cwd, env, {
     classify: false,
+    unplaced: (reason) => {
+      unplaced ??= reason
+    },
     observe: ({ invocation, store, cwd: dir, beadsDir, beadsDirAssigned }) => {
       if (refusal !== undefined || LEDGER_CREATING_VERBS[invocation.verb] === true) return
       if (beadsDirAssigned) return
@@ -126,7 +136,13 @@ export function ledgerWriteRefusal(
       if (target !== undefined) refusal = ledgerRepoMismatch({ verb: invocation.verb, store: target, cwd: dir, identity })
     },
   })
-  return refusal
+  if (refusal !== undefined || unplaced === undefined) return refusal
+  // A `bd` the planner cannot place may be a write, and there is no `BEADS_DIR=` to read off
+  // it, so it is judged by the ledger it would reach by default.
+  const inherited = env.BEADS_DIR !== undefined && env.BEADS_DIR !== "" ? env.BEADS_DIR : undefined
+  if (inherited !== undefined && configuredStore !== undefined && sameStore(inherited, configuredStore, cwd)) return undefined
+  const store = inherited === undefined ? findLedger(cwd)?.store : resolve(cwd, inherited)
+  return store === undefined ? undefined : unplacedBdRefusal({ reason: unplaced, store, cwd, identity })
 }
 
 /** Decide one `shell` call. Never throws: an unexpected error is a parse refusal. */

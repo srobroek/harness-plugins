@@ -113,12 +113,36 @@ export function sameStore(a: string, b: string, cwd: string): boolean {
   return canonical(resolve(cwd, a)) === canonical(resolve(cwd, b))
 }
 
+type Foreign = { store: string; ledgerRoot: string }
+
+/**
+ * The ledger `store`, canonicalised, when it belongs to another git repository than `cwd`.
+ * `identity` maps a directory to its repository (git common dir); an unknown answer, or a
+ * command directory outside any repository, is not foreign. A symlinked `.beads` is judged
+ * by where it really lives.
+ */
+function foreignLedger(input: {
+  store: string
+  cwd: string
+  identity: (dir: string) => string | undefined
+}): Foreign | undefined {
+  const store = canonical(input.store)
+  const here = input.identity(input.cwd)
+  // Ownership comes from the store itself: a store may be a repository root.
+  const there = input.identity(store)
+  if (here === undefined || there === undefined) return undefined
+  // `repoIdentity` answers the directory itself outside any repository.
+  if (here === input.cwd) return undefined
+  if (here === there) return undefined
+  return { store, ledgerRoot: dirname(store) }
+}
+
+const WRONG_PROJECT =
+  "pass the shell tool's `workdir` for the right repository (and unset BEADS_DIR) instead of `cd`"
+
 /**
  * The refusal for a `bd` write whose ledger lives in another git repository than the
- * command's directory, or `undefined` when the write is fine. `identity` maps a directory
- * to its repository (git common dir); an unknown answer, or a command directory outside
- * any repository, stays silent. The store is canonicalised first, so a symlinked `.beads`
- * is judged by where it lives.
+ * command's directory, or `undefined` when the write is fine.
  *
  * Whether the command itself chose that ledger is the caller's question: this only
  * words the refusal, and the wording names the one override.
@@ -129,14 +153,23 @@ export function ledgerRepoMismatch(input: {
   cwd: string
   identity: (dir: string) => string | undefined
 }): string | undefined {
-  const store = canonical(input.store)
-  const ledgerRoot = dirname(store)
-  const here = input.identity(input.cwd)
-  // Ownership comes from the store itself: a store may be a repository root.
-  const there = input.identity(store)
-  if (here === undefined || there === undefined) return undefined
-  // `repoIdentity` answers the directory itself outside any repository.
-  if (here === input.cwd) return undefined
-  if (here === there) return undefined
-  return `Refused: this \`bd ${input.verb}\` would write to the ledger ${JSON.stringify(store)}, which belongs to ${JSON.stringify(ledgerRoot)}, not to the git repository you are in (${JSON.stringify(input.cwd)}), and the command did not choose that ledger (it came from the environment, e.g. an inherited BEADS_DIR). If that is the wrong project, pass the shell tool's \`workdir\` for the right repository (and unset BEADS_DIR) instead of \`cd\`. If you really mean to write to that ledger, assign BEADS_DIR in the command line itself: \`BEADS_DIR=<path> bd ${input.verb} ...\`.`
+  const foreign = foreignLedger(input)
+  if (foreign === undefined) return undefined
+  return `Refused: this \`bd ${input.verb}\` would write to the ledger ${JSON.stringify(foreign.store)}, which belongs to ${JSON.stringify(foreign.ledgerRoot)}, not to the git repository you are in (${JSON.stringify(input.cwd)}), and the command did not choose that ledger (it came from the environment, e.g. an inherited BEADS_DIR). If that is the wrong project, ${WRONG_PROJECT}. If you really mean to write to that ledger, assign BEADS_DIR in the command line itself: \`BEADS_DIR=<path> bd ${input.verb} ...\`.`
+}
+
+/**
+ * The refusal for a command whose `bd` the gate cannot place (behind a launcher, in a shell
+ * string or a substitution), when the ledger it would reach by default is foreign. The
+ * gate cannot tell a read from a write there, so it fails closed.
+ */
+export function unplacedBdRefusal(input: {
+  reason: string
+  store: string
+  cwd: string
+  identity: (dir: string) => string | undefined
+}): string | undefined {
+  const foreign = foreignLedger(input)
+  if (foreign === undefined) return undefined
+  return `Refused: this command runs \`bd\` where the gate cannot place it (${input.reason}), and the ledger it would reach by default, ${JSON.stringify(foreign.store)}, belongs to ${JSON.stringify(foreign.ledgerRoot)}, not to the git repository you are in (${JSON.stringify(input.cwd)}). Run each \`bd\` as its own simple command, directly, with no launcher, shell string or substitution around it. If that is the wrong project, ${WRONG_PROJECT}. If you really mean to use that ledger, write \`BEADS_DIR=<path> bd <verb> ...\` in the command line itself.`
 }

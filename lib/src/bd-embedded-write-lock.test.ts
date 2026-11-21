@@ -655,6 +655,11 @@ describe("compound commands", () => {
       ["bash -c 'bd close bd-1'", "shell source to `bash`"],
       ['git status && sh -c "bd update bd-1 --claim"', "shell source to `sh`"],
       ["echo bd-1 | xargs bd close", "launched through `xargs`"],
+      ["exec 'bd' close bd-1", "launched through `exec`"],
+      ['exec "bd" close bd-1', "launched through `exec`"],
+      ["env 'bd' close bd-1", "launched through `env`"],
+      ["nohup 'bd' close bd-1", "launched through `nohup`"],
+      ["echo bd-1 | xargs 'bd' close", "launched through `xargs`"],
       ["timeout 60 bd close bd-1", "launched through `timeout`"],
       ["B=bd; $B close bd-1", "`$B` is expanded at run time"],
       ["bash <<'EOF'\nbd close bd-1\nEOF", "here-document fed to `bash`"],
@@ -682,6 +687,58 @@ describe("compound commands", () => {
     for (const command of ["bd stats --json", "bd comments bd-1 --json", "bd dep tree bd-1", "bd mol show mol-1"]) {
       expect(stores(command)).toEqual({ kind: "stores", stores: [] })
     }
+  })
+
+  // Each read form below was run against a scratch embedded store on bd 1.3.1 and left every
+  // file of the store byte-identical; their `--help` text calls them list/show/status.
+  test.each([
+    "bd dolt status",
+    "bd dolt show",
+    "bd dolt test",
+    "bd dolt remote list",
+    "bd dolt remote list --json",
+    "bd label list bd-1",
+    "bd label list-all",
+    "bd todo list",
+    "bd worktree list",
+    "bd worktree info",
+    "bd hooks list",
+    "bd repo list",
+    "bd epic status",
+    "bd vc status",
+    "bd federation list-peers",
+    "bd federation status",
+    "bd backup status",
+    "bd mol current",
+    "bd mol progress",
+    "bd mol stale",
+    "bd mol ready",
+  ])("%s is a read", (command) => {
+    expect(embeddedWriteTargets(command, root, { BEADS_DIR: store })).toEqual({ kind: "stores", stores: [] })
+  })
+
+  test.each([
+    "bd dolt remote add origin url",
+    "bd dolt remote remove origin",
+    "bd dolt remote reset-data origin",
+    "bd dolt remote",
+    "bd dolt push",
+    "bd dolt pull",
+    "bd dolt commit",
+    "bd dolt set port 1",
+    "bd dolt start",
+    "bd label add bd-1 x",
+    "bd todo add t",
+    "bd worktree create w",
+    "bd hooks install",
+    "bd repo add r",
+    "bd vc commit",
+    "bd federation sync",
+    "bd backup sync",
+    "bd mol pour p",
+    "bd mol seed x",
+  ])("%s stays a write: only the verified nested reads are reads", (command) => {
+    expect(embeddedWriteTargets(command, root, { BEADS_DIR: store })).toEqual({ kind: "stores", stores: [held] })
   })
 
   test(
@@ -1066,6 +1123,21 @@ describe("who chose the ledger a write lands in", () => {
     const target = resolveBdTargets(command, "/work", { BEADS_DIR: store }).get(invocation)
     expect(target).toBeDefined()
     expect(target).not.toHaveProperty("unresolved")
+  })
+
+  test.each([
+    ["exec 'bd' create --title t", true],
+    ["exec bd create --title t", true],
+    ["env 'bd' create --title t", true],
+    ["echo x | xargs 'bd' close", true],
+    ["id=$(bd create --title t --silent)", true],
+    ["bd create --title t", false],
+    ["'bd' create --title t", false],
+    ["echo 'bd'", false],
+  ])("%s -> the planner reports an unplaced bd: %p", (command, unplaced) => {
+    const reasons: string[] = []
+    planEmbeddedWrites(command, "/work", { BEADS_DIR: "/x/.beads" }, { classify: false, unplaced: (reason) => reasons.push(reason) })
+    expect(reasons.length > 0).toBe(unplaced)
   })
 
   test("each occurrence keeps its own provenance for the refusal", () => {

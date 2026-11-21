@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -7,6 +7,10 @@ import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import { setBdShowRunForTests } from "./bd-close-gate.ts"
 import plugin, { type AdapterDeps, pinnedEnvironment, setupBeads, shellPin } from "./index.ts"
+
+// Real `git init` children in the ledger-repository fixture: the whole file runs in 1.8 s here (bun test, 94 tests);
+// 30 s leaves headroom for a loaded machine (AGENTS.md, Testing).
+setDefaultTimeout(30_000)
 
 const roots: string[] = []
 afterEach(() => {

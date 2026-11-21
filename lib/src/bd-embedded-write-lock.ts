@@ -401,13 +401,26 @@ const READS: Record<string, true | Record<string, true>> = {
   where: true,
   config: { get: true, list: true },
   dep: { list: true, tree: true },
-  dolt: { status: true },
+  // Verified read-only on bd 1.3.1: each form below left a scratch embedded store byte-identical.
+  backup: { status: true },
+  dolt: { status: true, show: true, test: true },
+  epic: { status: true },
+  federation: { "list-peers": true, status: true },
   formula: { list: true, show: true },
   gate: { list: true, show: true },
+  hooks: { list: true },
   kv: { get: true, list: true },
-  mol: { show: true },
+  label: { list: true, "list-all": true },
+  mol: { show: true, current: true, progress: true, ready: true, stale: true },
+  repo: { list: true },
   swarm: { list: true },
+  todo: { list: true },
+  vc: { status: true },
+  worktree: { info: true, list: true },
 }
+
+/** Nested read forms one level below a read subaction: `bd dolt remote list`. */
+const NESTED_READS: Record<string, Record<string, Record<string, true>>> = { dolt: { remote: { list: true } } }
 
 /**
  * Flags that turn one of the reads above back into a write, read from each verb's
@@ -449,9 +462,13 @@ export function writesStore(invocation: BdInvocation | undefined): boolean {
   if (rule === undefined) return true
   const writeFlags = WRITE_FLAGS[verb]
   if (writeFlags !== undefined && flagEnabled(args, writeFlags)) return true
-  const subaction = args.find((arg) => !arg.startsWith("-"))
+  const positional = args.filter((arg) => !arg.startsWith("-"))
+  const subaction = positional[0]
   if (rule === true) return false
-  return subaction === undefined || rule[subaction] !== true
+  if (subaction === undefined) return true
+  const nested = NESTED_READS[verb]?.[subaction]
+  if (nested !== undefined) return nested[positional[1] ?? ""] !== true
+  return rule[subaction] !== true
 }
 
 /**
@@ -791,6 +808,12 @@ export type PlanOptions = {
    * is opened, and the plan is always `writes: []`. For advisories that only need targets.
    */
   classify?: boolean
+  /**
+   * Called with the reason for every part of the command the planner cannot place: a `bd`
+   * behind a launcher or a shell string, in a substitution, or with a store chosen at run
+   * time. Independent of `classify`, so an advisory can fail closed on what it cannot see.
+   */
+  unplaced?: (reason: string) => void
 }
 
 export function planEmbeddedWrites(
@@ -799,7 +822,7 @@ export function planEmbeddedWrites(
   env: NodeJS.ProcessEnv,
   options: PlanOptions = {},
 ): WritePlan {
-  const { observe, unresolved, classify = true } = options
+  const { observe, unresolved, unplaced, classify = true } = options
   const embeddedStore = (store: string): boolean => classify && embedded(store)
   if (!BD_WORD.test(command)) return { kind: "writes", writes: [] }
   const scan = scanShell(command)
@@ -807,6 +830,7 @@ export function planEmbeddedWrites(
   let problem: Problem | undefined
   let problemStore: string | undefined
   const refuse = (found: Problem, store?: string): void => {
+    unplaced?.("exact" in found ? found.exact : found.part)
     problem ??= found
     problemStore ??= store
   }
@@ -1056,7 +1080,8 @@ function launchOf(shape: OtherShape, command: SimpleCommand, source: string): Pr
   }
   const name = commandName(head)
   if (NAME_ONLY[name] === true || (name === "command" && /^-[vV]$/.test(args[0]?.value ?? ""))) return undefined
-  if (!args.some((word) => !word.quoted && !word.expands && commandName(word) === "bd")) return undefined
+  // A quoted `'bd'` is the same program as a bare one: `exec 'bd' create` runs `bd`.
+  if (!args.some((word) => !word.expands && commandName(word) === "bd")) return undefined
   return {
     part: `\`bd\` is launched through \`${head.value}\`, which hides the invocation from the lock`,
     fix: 'Call `bd` directly as its own simple command instead of through a launcher such as `env`, `xargs`, `timeout` or `find -exec`; to act on a list of ids, pass them to one `bd` call or loop with `while read -r id; do bd ... "$id"; done`.',
