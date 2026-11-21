@@ -4033,11 +4033,38 @@ function sessionStartAdvisories(directory, deps) {
 
 // plugins/beads/opencode/src/shell-gates.ts
 import { resolve as resolve8 } from "path";
+
 // plugins/beads/opencode/src/bd-close-gate.ts
 var TIMEOUT_MS = 25000;
 var injectedRun = null;
 function timeoutError() {
   return new Error("bd show lookup timed out; gate types remain unverified");
+}
+function parseGateRows(result) {
+  if (result.exitCode !== 0)
+    throw new Error(`bd show lookup failed with exit code ${result.exitCode}; gate types remain unverified`);
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    throw new Error("bd show returned unreadable JSON; gate types remain unverified");
+  }
+  if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) && "schema_version" in parsed && "data" in parsed)
+    parsed = parsed.data;
+  if (!Array.isArray(parsed))
+    throw new Error("bd show returned no issue array; gate types remain unverified");
+  const gates = [];
+  for (const row of parsed) {
+    if (!row || typeof row !== "object")
+      throw new Error("bd show returned malformed issues; gate types remain unverified");
+    const issue = row;
+    if (typeof issue.id !== "string" || typeof issue.issue_type !== "string") {
+      throw new Error("bd show omitted issue identity or type; gate types remain unverified");
+    }
+    if (issue.issue_type === "gate")
+      gates.push(issue.id);
+  }
+  return gates;
 }
 function denyReason(gateIds) {
   return `blocked by beads (a gate bead is resolved, never closed): ${gateIds.join(", ")} ` + "is a gate. `bd close` on it flips status to closed and does unblock the waiting " + "bead, so nothing fails loudly -- but no gate resolution happens. A `human` gate " + "loses the decision it stood for, and a `timer`/`gh:run`/`gh:pr`/`bead` gate is " + "asserted satisfied without anything evaluating it. Run `bd gate check` to have the " + "conditions evaluated, or `bd gate resolve <gate-id>` for the manual human answer; " + "then `bd close <step-id> --reason ...` on the step the gate blocked. `--force` does " + "not lift this guard: it forces the same unrecorded close.";
@@ -4068,29 +4095,7 @@ async function gateIdsAmongAsync(ids, dbArgs, cwd, deadline, env) {
   const result = await run(["bd", ...dbArgs, "show", ...ids, "--json"], cwd, deadline);
   if (Date.now() >= deadline)
     throw timeoutError();
-  if (result.exitCode !== 0)
-    throw new Error(`bd show lookup failed with exit code ${result.exitCode}; gate types remain unverified`);
-  let parsed;
-  try {
-    parsed = JSON.parse(result.stdout);
-  } catch {
-    throw new Error("bd show returned unreadable JSON; gate types remain unverified");
-  }
-  if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) && "schema_version" in parsed && "data" in parsed)
-    parsed = parsed.data;
-  if (!Array.isArray(parsed))
-    throw new Error("bd show returned no issue array; gate types remain unverified");
-  const gates = [];
-  for (const row of parsed) {
-    if (!row || typeof row !== "object")
-      throw new Error("bd show returned malformed issues; gate types remain unverified");
-    const issue = row;
-    if (typeof issue.id !== "string" || typeof issue.issue_type !== "string")
-      throw new Error("bd show omitted issue identity or type; gate types remain unverified");
-    if (issue.issue_type === "gate")
-      gates.push(issue.id);
-  }
-  return gates;
+  return parseGateRows(result);
 }
 async function decideBdCloseParsed(parsed, cwd = process.cwd(), deadline, env = process.env, targets) {
   const sharedDeadline = deadline ?? Date.now() + TIMEOUT_MS;

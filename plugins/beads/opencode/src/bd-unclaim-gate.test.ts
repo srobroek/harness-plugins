@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { parse } from "@srobroek/opencode-lib/beads-shell"
-import { decideBdUnclaim, decideBdUnclaimParsed } from "./bd-unclaim-gate.ts"
+import { decideBdUnclaimParsed } from "./bd-unclaim-gate.ts"
 import { decideShell } from "./shell-gates.ts"
 import { gateDeps } from "./test-support.ts"
 
@@ -13,19 +13,19 @@ function decision(command: string) {
 
 describe("bd unclaim gate", () => {
   test("refuses an unguarded unclaim between quoted literals in a parameter default", () => {
-    expect(decideBdUnclaim("echo ${X:-'<('$(bd unclaim bead-1)')'}")?.block).toBe(true)
-    expect(decideBdUnclaim("echo ${X:- #$(bd unclaim bead-1)}")?.block).toBe(true)
-    expect(decideBdUnclaim("bash 3<<<'bd unclaim bead-1' 0<&3")?.block).toBe(true)
-    expect(decideBdUnclaim(`echo \${X:-"\${Y:-'$(bd unclaim bead-1)'}"}`)?.block).toBe(true)
-    expect(decideBdUnclaim("bash 3<<<'bd unclaim bead-1' </dev/null")).toBeUndefined()
+    expect(decision("echo ${X:-'<('$(bd unclaim bead-1)')'}")?.block).toBe(true)
+    expect(decision("echo ${X:- #$(bd unclaim bead-1)}")?.block).toBe(true)
+    expect(decision("bash 3<<<'bd unclaim bead-1' 0<&3")?.block).toBe(true)
+    expect(decision(`echo \${X:-"\${Y:-'$(bd unclaim bead-1)'}"}`)?.block).toBe(true)
+    expect(decision("bash 3<<<'bd unclaim bead-1' </dev/null")).toBeUndefined()
   })
 
   test("refuses an unguarded unclaim fed to a shell as a quoted here-document", () => {
-    expect(decideBdUnclaim("bash <<'EOF'\nbd unclaim bead-1\nEOF")?.block).toBe(true)
+    expect(decision("bash <<'EOF'\nbd unclaim bead-1\nEOF")?.block).toBe(true)
   })
   test("refuses unguarded unclaim and force", () => {
     for (const command of ["bd unclaim bead-1", "bd unclaim bead-1 --force", "a && bd unclaim bead-1"]) {
-      expect(decideBdUnclaim(command)?.block).toBe(true)
+      expect(decision(command)?.block).toBe(true)
     }
   })
 
@@ -35,14 +35,14 @@ describe("bd unclaim gate", () => {
       "bd unclaim bead-1 --if-assignee=",
       'bd unclaim bead-1 --if-assignee ""',
     ]) {
-      expect(decideBdUnclaim(command)?.block).toBe(true)
+      expect(decision(command)?.block).toBe(true)
     }
   })
 
   test("allows both guarded spellings", () => {
-    expect(decideBdUnclaim("bd unclaim bead-1 --if-assignee omp/main")).toBeUndefined()
-    expect(decideBdUnclaim("bd unclaim bead-1 --if-assignee=omp/main")).toBeUndefined()
-    expect(decideBdUnclaim("bd unclaim bead-1 --if-assignee omp/main --force")).toBeUndefined()
+    expect(decision("bd unclaim bead-1 --if-assignee omp/main")).toBeUndefined()
+    expect(decision("bd unclaim bead-1 --if-assignee=omp/main")).toBeUndefined()
+    expect(decision("bd unclaim bead-1 --if-assignee omp/main --force")).toBeUndefined()
   })
 
   test("allows help without a guard", () => {
@@ -50,14 +50,14 @@ describe("bd unclaim gate", () => {
     expect(decision("bd unclaim -h")).toBeUndefined()
   })
   test("matches only the wrapper executable and recurses through nested wrappers", () => {
-    expect(decideBdUnclaim("env printf bd unclaim bead-1")).toBeUndefined()
+    expect(decision("env printf bd unclaim bead-1")).toBeUndefined()
     for (const command of [
       "env -u A command -- bd unclaim bead-1",
       "command env bd unclaim bead-1",
       "env /opt/bin/bd unclaim bead-1",
       "command -- ./bd unclaim bead-1",
     ])
-      expect(decideBdUnclaim(command)?.block).toBe(true)
+      expect(decision(command)?.block).toBe(true)
   })
 
   test("finds wrapped bd unclaim inside command substitution and bash -c", () => {
@@ -66,21 +66,21 @@ describe("bd unclaim gate", () => {
       "bash -c 'env -u X bd unclaim bead-1'",
       "sh -c 'command -- bd unclaim bead-1'",
     ])
-      expect(decideBdUnclaim(command)?.block).toBe(true)
-    expect(decideBdUnclaim("bash -c 'env -u X bd unclaim bead-1 --if-assignee actor/x'")).toBeUndefined()
+      expect(decision(command)?.block).toBe(true)
+    expect(decision("bash -c 'env -u X bd unclaim bead-1 --if-assignee actor/x'")).toBeUndefined()
   })
 
   test("does not treat a positional help argument after -- as help", () => {
-    expect(decideBdUnclaim("bd unclaim bead-1 -- --help")?.block).toBe(true)
+    expect(decision("bd unclaim bead-1 -- --help")?.block).toBe(true)
   })
 
   test("allows explicit help flags before the option terminator", () => {
-    expect(decideBdUnclaim("bd unclaim --help bead-1")?.block).toBeUndefined()
-    expect(decideBdUnclaim("bd unclaim --help -- bead-1")?.block).toBeUndefined()
+    expect(decision("bd unclaim --help bead-1")?.block).toBeUndefined()
+    expect(decision("bd unclaim --help -- bead-1")?.block).toBeUndefined()
   })
   test("ignores prose that is not a bd invocation", () => {
     for (const command of ["echo 'bd unclaim bead-1'", "printf '%s\\n' bd unclaim bead-1"]) {
-      expect(decideBdUnclaim(command)).toBeUndefined()
+      expect(decision(command)).toBeUndefined()
     }
   })
 

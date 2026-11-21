@@ -1,5 +1,5 @@
 /** Refuse unguarded `bd unclaim` operations. */
-import { type ParsedCommand, type ParseFailure, parse, parsedInvocations } from "@srobroek/opencode-lib/beads-shell"
+import { type ParsedCommand, type ParseFailure, parsedInvocations } from "@srobroek/opencode-lib/beads-shell"
 
 const UNCLAIM = "unclaim"
 const HELP_FLAGS: Record<string, true> = { "--help": true, "-h": true }
@@ -113,7 +113,4 @@ export function decideBdUnclaimParsed(parsed: ParsedCommand | ParseFailure): BdU
   return undefined
 }
 
-export function decideBdUnclaim(command: string): BdUnclaimDecision | undefined {
-  return decideBdUnclaimParsed(parse(command))
-}
 
