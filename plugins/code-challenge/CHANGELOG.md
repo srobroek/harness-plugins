@@ -1,3 +1,13 @@
+## code-challenge [1.2.0](https://github.com/srobroek/harness-plugins/compare/code-challenge--v1.1.0...code-challenge--v1.2.0) (2026-11-21)
+
+### Features
+
+* **code-challenge:** give the challengers the read-only shell ([073c537](https://github.com/srobroek/harness-plugins/commit/073c53744e5675b92e7d8e69c420683e60419faa))
+
+### Bug Fixes
+
+* **code-challenge:** rebuild with the hardened read-only shell rules ([a625c97](https://github.com/srobroek/harness-plugins/commit/a625c979af933dadd5f7fed1962ad99eb6081782))
+
 ## code-challenge [1.1.0](https://github.com/srobroek/harness-plugins/compare/code-challenge--v1.0.0...code-challenge--v1.1.0) (2026-11-21)
 
 ### Features
