@@ -19,6 +19,13 @@ SPEC.loader.exec_module(preflight)
 
 
 class BeadsPreflightRegressionTests(unittest.TestCase):
+    def test_path_remedy_quotes_the_directory_and_expands_path(self) -> None:
+        self.assertEqual(
+            preflight.path_remedy("/opt/my tools/bin"),
+            "export PATH='/opt/my tools/bin'\":$PATH\"",
+        )
+        self.assertEqual(preflight.path_remedy("/usr/local/bin"), 'export PATH=/usr/local/bin":$PATH"')
+
     def test_invalid_utf8_command_output_is_replaced(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             stub = Path(directory) / "bd"

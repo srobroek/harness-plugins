@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -249,6 +250,10 @@ def parse_timestamp(value: Any) -> dt.datetime | None:
 
 
 
+def path_remedy(directory: str) -> str:
+    return f'export PATH={shlex.quote(directory)}":$PATH"'
+
+
 def check_bd_available(state: dict[str, Any]) -> dict[str, Any]:
     path = shutil.which("bd")
     if path is None:
@@ -256,7 +261,7 @@ def check_bd_available(state: dict[str, Any]) -> dict[str, Any]:
         return result(
             "fail",
             "bd does not resolve on PATH",
-            "export PATH='<directory-containing-bd>:$PATH'",
+            path_remedy("<directory-containing-bd>"),
         )
     command = run_bd(["--version"], timeout_for(state))
     state["version_command"] = command

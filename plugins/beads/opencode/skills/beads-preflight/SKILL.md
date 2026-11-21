@@ -33,7 +33,7 @@ It performs no ledger mutation.
 
 | ID | FAIL means | Exact remedy |
 | --- | --- | --- |
-| `bd-available` | `bd` is not on PATH. The version command failed. | Install stable `bd`. Expose it with `export PATH='DIRECTORY_CONTAINING_BD:$PATH'`. |
+| `bd-available` | `bd` is not on PATH. The version command failed. | Install stable `bd`. Expose it with `export PATH='DIRECTORY_CONTAINING_BD'":$PATH"`. |
 | `bd-version-supported` | The client is older than stable `1.3.0`. The client is an RC or prerelease. | Put stable `bd` version `1.3.0` or later first on PATH. |
 | `store-reachable` | `bd info --json` failed. The result was not an object. `config.issue_prefix` was missing. | For `no beads database found`, run `bd bootstrap --yes` when `git ls-remote origin refs/dolt/data` finds Dolt data; otherwise confirm the git origin first and run `bd init --init-if-missing --skip-hooks --skip-agents`. Load the `beads-setup` skill. |
 | `store-is-embedded` | The embedded `.beads` store was not confirmed. | Configure the checkout to use its embedded `.beads` store. A server configuration is a `warn`, not a required shared server. |
