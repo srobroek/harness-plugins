@@ -898,10 +898,11 @@ var BD_READS = [
 var READ_ONLY_SHELL_RULES = [
   ...allow("*"),
   ...deny("rm*", "mv*", "cp*", "touch*", "tee*", "chmod*", "chown*", "ln*", "sudo*", "sed -i*", "sed * -i*", "find *-delete*", "find *-exec*"),
-  ...deny("* > *", "* >> *"),
+  ...deny("*>*", "* | tee *", "* | tee"),
   ...deny("git push*", "git commit*", "git reset*", "git checkout*", "git switch*", "git restore*", "git clean*", "git rebase*", "git merge*", "git pull*", "git cherry-pick*", "git revert*", "git apply*", "git am*", "git add*", "git rm*", "git mv*", "git branch -d*", "git branch -D*", "git branch --delete*", "git branch -m*", "git branch -M*", "git branch --move*", "git branch -f*", "git branch --force*", "git tag -d*", "git tag --delete*", "git stash*", "git worktree remove*", "git worktree prune*", "git update-ref*", "git remote add*", "git remote remove*", "git remote rm*", "git remote set-url*", "git remote rename*", "git config*", "git gc*"),
   ...allow("git stash list*", "git stash show*", "git config --get*", "git config --list*", "git config -l*"),
   ...deny("git * --output*"),
+  ...deny("git -c *", "git --config-env*"),
   ...deny("gh pr create*", "gh pr merge*", "gh pr close*", "gh pr edit*", "gh pr comment*", "gh pr review*", "gh pr ready*", "gh pr reopen*", "gh issue create*", "gh issue close*", "gh issue edit*", "gh issue comment*", "gh issue reopen*", "gh release*", "gh repo delete*", "gh repo create*", "gh repo edit*", "gh * delete*", "gh workflow run*", "gh run rerun*", "glab mr create*", "glab mr merge*", "glab mr close*", "glab mr note*", "glab mr approve*", "glab mr update*", "glab mr reopen*", "glab issue create*", "glab issue close*", "glab issue note*", "glab issue update*", "glab release*", "glab repo delete*", "glab * delete*"),
   ...forgeApi("gh"),
   ...deny("gh api *graphql*"),
