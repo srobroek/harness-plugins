@@ -91,6 +91,33 @@ describe("FileVerdictCache", () => {
   })
 })
 
+describe("FileVerdictCache stale takeover", () => {
+  test("a hook that saw a dead holder never removes a successor's fresh claim", () => {
+    // A claim by a dead process; a second hook claims while the first is still judging that holder.
+    let racer: (() => void) | undefined
+    const racing = new FileVerdictCache(join(root, "cache"), clock, (pid) => {
+      if (pid === 99) {
+        const run = racer
+        racer = undefined
+        run?.()
+      }
+      return live.has(pid)
+    })
+    expect(racing.claim(store, 99)).toBe("claimed")
+    live.add(300)
+    let second: string | undefined
+    racer = () => {
+      second = racing.claim(store, 300)
+    }
+    const first = racing.claim(store, 200)
+    expect(second).toBe("claimed")
+    expect(first).toBe("busy")
+    expect(racing.workerAlive(store)).toBe(true)
+    racing.release(store, 300)
+    expect(racing.workerAlive(store)).toBe(false)
+  })
+})
+
 describe("delegatedVerifier", () => {
   const cwd = () => join(root, "repo")
 

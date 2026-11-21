@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { decideBdUpdateClose, UPDATE_CLOSE_REASON } from "./bd-update-close-gate.ts"
+import { parse } from "@srobroek/opencode-lib/beads-shell"
+import { decideBdUpdateCloseParsed, UPDATE_CLOSE_REASON } from "./bd-update-close-gate.ts"
+
+const decision = (command: string) => decideBdUpdateCloseParsed(parse(command))
 
 describe("bd update close-status gate", () => {
   test("refuses every status spelling and shell routing form", () => {
@@ -13,7 +16,7 @@ describe("bd update close-status gate", () => {
             `cd /repo && bd update bead-1 ${value}`,
             `'/opt/bun' '/opt/beads/extensions/bd-embedded-write-runner.js' --beads-store '/repo/.beads' --beads-wait-ms 30000 -- bd update bead-1 ${value}`,
           ]) {
-            expect(decideBdUpdateClose(command)).toEqual({ block: true, reason: UPDATE_CLOSE_REASON })
+            expect(decision(command)).toEqual({ block: true, reason: UPDATE_CLOSE_REASON })
           }
         }
       }
@@ -29,27 +32,27 @@ describe("bd update close-status gate", () => {
       "bd update bead-1 -s=open",
       "bd update bead-1 --title 'done later'",
     ])
-      expect(decideBdUpdateClose(command)).toBeUndefined()
+      expect(decision(command)).toBeUndefined()
   })
 
   test("refuses a closing update between quoted literals in a parameter default", () => {
-    expect(decideBdUpdateClose("echo ${X:- #$(bd update bead-1 --status closed)}")?.block).toBe(true)
-    expect(decideBdUpdateClose("bash 3<<<'bd update bead-1 --status closed' 0<&3")?.block).toBe(true)
-    expect(decideBdUpdateClose(`echo \${X:-"\${Y:-'$(bd update bead-1 --status closed)'}"}`)?.block).toBe(true)
-    expect(decideBdUpdateClose("echo ${X:-'<('$(bd update bead-1 --status closed)')'}")).toEqual({
+    expect(decision("echo ${X:- #$(bd update bead-1 --status closed)}")?.block).toBe(true)
+    expect(decision("bash 3<<<'bd update bead-1 --status closed' 0<&3")?.block).toBe(true)
+    expect(decision(`echo \${X:-"\${Y:-'$(bd update bead-1 --status closed)'}"}`)?.block).toBe(true)
+    expect(decision("echo ${X:-'<('$(bd update bead-1 --status closed)')'}")).toEqual({
       block: true,
       reason: UPDATE_CLOSE_REASON,
     })
   })
 
   test("refuses a closing update fed to a shell as a quoted here-document", () => {
-    expect(decideBdUpdateClose("bash <<'EOF'\nbd update bead-1 --status closed\nEOF")).toEqual({
+    expect(decision("bash <<'EOF'\nbd update bead-1 --status closed\nEOF")).toEqual({
       block: true,
       reason: UPDATE_CLOSE_REASON,
     })
   })
 
   test("allows the reason-bearing close command", () => {
-    expect(decideBdUpdateClose('bd close bead-1 --reason "implemented and reviewed"')).toBeUndefined()
+    expect(decision('bd close bead-1 --reason "implemented and reviewed"')).toBeUndefined()
   })
 })

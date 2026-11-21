@@ -71,6 +71,29 @@ describe("binary Git hook protection", () => {
     }
   })
 
+  test("rewrites only real bd init calls: not heredoc bodies or comments, and blocks what it cannot place", () => {
+    const { root, hooks } = repoWithHooks()
+    try {
+      putBinaryHook(join(hooks, "pre-commit"))
+      const run = (command: string) => protectBinaryHookCommands({ command }, command, root)
+      expect(run("cat <<'EOF'\nbd init\nEOF\nbd init --prefix x")).toEqual({
+        kind: "rewrite",
+        input: { command: "cat <<'EOF'\nbd init\nEOF\nbd init --skip-hooks --prefix x" },
+      })
+      expect(run("bd init # note")).toEqual({ kind: "rewrite", input: { command: "bd init --skip-hooks # note" } })
+      expect(run("echo hi # bd init")).toBeUndefined()
+      expect(run("echo $(bd init)")?.kind).toBe("block")
+      expect(run("bd init && echo $(bd init)")?.kind).toBe("block")
+      // Inserting the flag pushes this past the parser's 64,000-character limit, so the result cannot be checked.
+      const head = "bd init && echo $(bd init) #"
+      const padded = head + "x".repeat(64_000 - head.length)
+      expect(padded).toHaveLength(64_000)
+      expect(run(padded)?.kind).toBe("block")
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   test("blocks hooks install only when binary hooks exist", () => {
     const { root, hooks } = repoWithHooks()
     try {
