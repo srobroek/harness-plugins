@@ -4540,7 +4540,70 @@ function effectiveConfig(project, global, spec) {
 // plugins/model-roles/opencode/src/outage.ts
 var NOTICE_DEDUPE_MS = 60000;
 var OUTAGE_STALE_MS = 15 * 60000;
-var newNoticeState = () => ({ outages: new Map, notices: new Map, contextNotices: new Map });
+var newNoticeState = () => ({ outages: new Map, notices: new Map, contextNotices: new Map, events: new Map });
+var MAX_EVENTS = 500;
+function claimEvent(state, id, now) {
+  if (id === undefined)
+    return true;
+  if (state.events.has(id))
+    return false;
+  state.events.set(id, now);
+  if (state.events.size > MAX_EVENTS)
+    state.events.delete(state.events.keys().next().value);
+  return true;
+}
+var SHARED = Symbol.for("srobroek.model-roles.notice-state");
+function acquireNoticeState(holder) {
+  const found = holder[SHARED];
+  if (found === undefined || typeof found.state !== "object" || found.state === null) {
+    const shared = { state: newNoticeState(), refs: 1 };
+    holder[SHARED] = shared;
+    return { state: shared.state, first: true };
+  }
+  const fresh = newNoticeState();
+  for (const key of Object.keys(fresh))
+    if (!(found.state[key] instanceof Map))
+      found.state[key] = fresh[key];
+  found.refs = (Number.isFinite(found.refs) ? found.refs : 0) + 1;
+  return { state: found.state, first: false };
+}
+function releaseNoticeState(holder) {
+  const found = holder[SHARED];
+  if (found === undefined)
+    return;
+  found.refs -= 1;
+  if (found.refs <= 0)
+    delete holder[SHARED];
+}
+var OUTAGES_KEY = "outages";
+function snapshotOutages(state) {
+  return [...state.outages.values()].map((o) => ({ providerID: o.providerID, kind: o.kind, lastAt: o.lastAt, notifyTo: o.notifyTo, stopped: [...o.stopped] }));
+}
+var optionalString = (value) => typeof value === "string" ? value : undefined;
+function restoreOutages(state, raw) {
+  if (!Array.isArray(raw))
+    return;
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null)
+      continue;
+    const o = item;
+    if (typeof o.providerID !== "string" || typeof o.notifyTo !== "string" || typeof o.lastAt !== "number" || !Array.isArray(o.stopped))
+      continue;
+    if (typeof o.kind !== "string" || !FAILURE_CLASSES.includes(o.kind))
+      continue;
+    const key = `${o.providerID}\x00${o.kind}`;
+    if (state.outages.has(key))
+      continue;
+    const stopped = new Map;
+    for (const entry of o.stopped.slice(-MAX_TRACKED)) {
+      if (!Array.isArray(entry) || typeof entry[0] !== "string" || typeof entry[1] !== "object" || entry[1] === null)
+        continue;
+      const s = entry[1];
+      stopped.set(entry[0], { agent: optionalString(s.agent), sessionID: optionalString(s.sessionID), parent: optionalString(s.parent) });
+    }
+    state.outages.set(key, { providerID: o.providerID, kind: o.kind, lastAt: o.lastAt, notifyTo: o.notifyTo, stopped });
+  }
+}
 function claimContextNotice(state, sessionID, execution, now) {
   for (const [id, at] of state.contextNotices)
     if (now - at >= NOTICE_DEDUPE_MS)
@@ -4565,6 +4628,7 @@ function toolContextNoticeLive(state, sessionID, now) {
   const at = state.contextNotices.get(`${sessionID}\x00tool-error`);
   return at !== undefined && now - at < NOTICE_DEDUPE_MS;
 }
+var noticeResumes = (kind) => kind === "subagent-fallback" || kind === "recovery";
 var stoppedKey = (report) => report.subagent?.sessionID ?? `${report.notifyTo}\x00${report.subagent?.agent ?? ""}`;
 var stoppedLine = (stopped, provider, kind, first) => {
   const who = stopped.agent === undefined ? "A subagent" : `Subagent '${stopped.agent}'`;
@@ -4603,7 +4667,7 @@ function decideOutage(state, report) {
   outage.lastAt = now;
   let line;
   if (report.subagent !== undefined) {
-    const stopped = { agent: report.subagent.agent, sessionID: report.subagent.sessionID };
+    const stopped = { agent: report.subagent.agent, sessionID: report.subagent.sessionID, parent: notifyTo };
     if (remember(outage, stoppedKey(report), stopped))
       line = stoppedLine(stopped, provider, kind, announce);
   }
@@ -4628,15 +4692,23 @@ function decideRecovery(state, model) {
     if (outage.providerID !== model.providerID)
       continue;
     state.outages.delete(key);
-    let text = `Provider ${outage.providerID} recovered (${outage.kind}).`;
-    const resumable = [...outage.stopped.values()].filter((s) => s.sessionID !== undefined);
-    if (resumable.length > 0) {
-      const list = resumable.slice(0, MAX_STOPPED).map((s) => `${s.agent ?? "subagent"} (${s.sessionID})`);
-      if (resumable.length > MAX_STOPPED)
-        list.push(`+${resumable.length - MAX_STOPPED} more`);
-      text += ` Resume the stopped subagents: ${list.join(", ")}.`;
+    const byParent = new Map([[outage.notifyTo, []]]);
+    for (const s of outage.stopped.values()) {
+      if (s.sessionID === undefined)
+        continue;
+      const parent = s.parent ?? outage.notifyTo;
+      byParent.set(parent, [...byParent.get(parent) ?? [], s]);
     }
-    notices.push({ sessionID: outage.notifyTo, text });
+    for (const [parent, resumable] of byParent) {
+      let text = `Provider ${outage.providerID} recovered (${outage.kind}).`;
+      if (resumable.length > 0) {
+        const list = resumable.slice(0, MAX_STOPPED).map((s) => `${s.agent ?? "subagent"} (${s.sessionID})`);
+        if (resumable.length > MAX_STOPPED)
+          list.push(`+${resumable.length - MAX_STOPPED} more`);
+        text += ` Resume the stopped subagents: ${list.join(", ")}.`;
+      }
+      notices.push({ sessionID: parent, text });
+    }
   }
   return notices;
 }
@@ -5890,6 +5962,10 @@ var CHECK_EVENTS = new Set(["agent.updated", ...REFRESH_EVENTS]);
 var FAILED_EVENT = "session.execution.failed";
 var INTERRUPTED_EVENT = "session.execution.interrupted";
 var DELETED_EVENT = "session.deleted";
+var eventID = (event) => {
+  const id = event?.id;
+  return typeof id === "string" && id !== "" ? id : undefined;
+};
 var endedAt = (event) => {
   const created = event.created;
   return typeof created === "number" && Number.isFinite(created) ? created : Number.POSITIVE_INFINITY;
@@ -6006,7 +6082,18 @@ var src_default = Plugin.define({
     }
     const view = () => healthView(health2, Date.now());
     const queue = serial();
-    const noticeState = newNoticeState();
+    const acquired = acquireNoticeState(globalThis);
+    const noticeState = acquired.state;
+    if (acquired.first) {
+      try {
+        restoreOutages(noticeState, await ctx.storage.get(OUTAGES_KEY));
+      } catch {}
+    }
+    const persistOutages = async () => {
+      try {
+        await ctx.storage.set(OUTAGES_KEY, snapshotOutages(noticeState));
+      } catch {}
+    };
     const childFailures = new Map;
     const refresh = async () => {
       try {
@@ -6240,12 +6327,14 @@ ${refs.size}`;
           description: text.split(". ", 1)[0] ?? text,
           metadata: { source: SOURCE, kind },
           delivery: "steer",
-          resume: false
+          resume: noticeResumes(kind)
         });
       } catch {}
     };
     const announce = async (report2) => {
       const notice = decideFailureNotice(noticeState, report2);
+      if (report2.subagent !== undefined || failureScope(report2.kind) === "provider")
+        await persistOutages();
       if (notice === undefined)
         return;
       await notify(notice.sessionID, notice.text, report2.subagent === undefined ? "fallback" : "subagent-fallback");
@@ -6257,6 +6346,7 @@ ${refs.size}`;
         return;
       for (const notice of decideRecovery(noticeState, model))
         await notify(notice.sessionID, notice.text, "recovery");
+      await persistOutages();
     };
     const executionOf = new Map;
     const noteExecution = (sessionID, id) => {
@@ -7750,6 +7840,8 @@ ${refs.size}`;
       const kind = classifyFailure({ message });
       if (kind === undefined)
         return;
+      if (!claimEvent(noticeState, `tool:${event.id}`, Date.now()))
+        return;
       const agentID = isRecord11(event.input) && typeof event.input.agent === "string" ? event.input.agent : undefined;
       try {
         await queue(async () => {
@@ -7795,7 +7887,7 @@ ${refs.size}`;
           await outcomes.signals(sessionID, NO_SIGNALS);
           await outcomes.end(sessionID, `failed:${classifyFailure(error) ?? "other"}`, finishedAt(event));
           pruneChildModels();
-          await queue(() => onSessionFailed(sessionID, error)).catch((error) => warn(`fallback after a failed execution did not complete`, { error: String(error) }));
+          await queue(() => claimEvent(noticeState, eventID(event), Date.now()) ? onSessionFailed(sessionID, error) : Promise.resolve()).catch((error) => warn(`fallback after a failed execution did not complete`, { error: String(error) }));
           continue;
         }
         if (type === SUCCEEDED_EVENT) {
@@ -7931,8 +8023,7 @@ ${refs.size}`;
       await retries?.dispose();
       await registration.dispose();
       await references.dispose();
-      noticeState.outages.clear();
-      noticeState.notices.clear();
+      releaseNoticeState(globalThis);
       childFailures.clear();
       requestLog.clear();
       triedModels.clear();

@@ -1662,6 +1662,82 @@ describe("runtime fallback", () => {
     return { host, cleanup, texts }
   }
 
+  test("a subagent failure note wakes the parent", async () => {
+    const host = createHost({ agents: [{ id: "general" }], models, options: fallbackOptions })
+    host.sessions.set("r", { id: "r" })
+    host.sessions.set("c", { id: "c", parentID: "r", agent: "general", model: sonnet })
+    const cleanup = await setup(host)
+    host.emit(failed("c", { type: "api", message: "ThrottlingException", status: 429 }))
+    await settle()
+    const note = methods(host, "synthetic")[0]?.input as { resume: boolean }
+    expect(note.resume).toBe(true)
+    host.close()
+    await cleanup()
+  })
+
+  test("a recovery note wakes the session that heard the outage", async () => {
+    const { host, cleanup } = await outageHost()
+    host.fireModelRequest({}, { sessionID: "r", model: sonnet, kind: "primary" })
+    host.emit({ type: "session.execution.succeeded", data: { sessionID: "r" } })
+    await settle()
+    const notes = methods(host, "synthetic").map((c) => c.input as { text: string; resume: boolean })
+    expect(notes.at(-1)?.text).toContain("recovered")
+    expect(notes.at(-1)?.resume).toBe(true)
+    host.close()
+    await cleanup()
+  })
+
+  test("a reloaded plugin still recovers the children the previous instance stopped, each to its own parent", async () => {
+    const host = createHost({ agents: [{ id: "general" }], models, options: fallbackOptions })
+    host.sessions.set("r1", { id: "r1" })
+    host.sessions.set("r2", { id: "r2" })
+    host.sessions.set("c1", { id: "c1", parentID: "r1", agent: "general", model: sonnet })
+    host.sessions.set("c2", { id: "c2", parentID: "r2", agent: "general", model: sonnet })
+    const cleanup = await setup(host)
+    const error = { type: "provider.auth", message: "Unable to locate credentials" }
+    host.emit(failed("c1", error))
+    await settle()
+    host.emit(failed("c2", error))
+    await settle()
+    await cleanup()
+    // The reload starts from the stored outage, not from nothing.
+    const again = createHost({ agents: [{ id: "general" }], models, options: fallbackOptions })
+    for (const [key, value] of host.storage) again.storage.set(key, value)
+    const cleanupAgain = await setup(again)
+    again.fireModelRequest({}, { sessionID: "x", model: sonnet, kind: "primary" })
+    again.emit({ type: "session.execution.succeeded", data: { sessionID: "x" } })
+    await settle()
+    const notes = methods(again, "synthetic").map((c) => c.input as { sessionID: string; text: string })
+    expect(notes.map((n) => n.sessionID).sort()).toEqual(["r1", "r2"])
+    expect(notes.find((n) => n.sessionID === "r2")?.text).toContain("general (c2)")
+    expect(notes.find((n) => n.sessionID === "r2")?.text).not.toContain("c1")
+    host.close()
+    again.close()
+    await cleanupAgain()
+  })
+
+  test("two live instances announce one failure event once", async () => {
+    const make = () => {
+      const host = createHost({ agents: [{ id: "general" }], models, options: fallbackOptions })
+      host.sessions.set("r", { id: "r" })
+      host.sessions.set("c", { id: "c", parentID: "r", agent: "general", model: sonnet })
+      return host
+    }
+    const a = make()
+    const b = make()
+    const cleanupA = await setup(a)
+    const cleanupB = await setup(b)
+    const event = { id: "evt_1", type: "session.execution.failed", data: { sessionID: "c", error: { type: "provider.auth", message: "Unable to locate credentials" } } }
+    a.emit(event)
+    b.emit(event)
+    await settle()
+    expect(methods(a, "synthetic").length + methods(b, "synthetic").length).toBe(1)
+    a.close()
+    b.close()
+    await cleanupA()
+    await cleanupB()
+  })
+
   test("a success on the failed provider ends its outage even after the session moved to another provider", async () => {
     const { host, cleanup, texts } = await outageHost()
     host.fireModelRequest({}, { sessionID: "r", model: sonnet, kind: "primary" })
