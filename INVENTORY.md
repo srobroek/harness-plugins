@@ -37,7 +37,7 @@
 | parley | 0.4.1 | development | global | opencode |
 | plugin-audit | 0.2.0 | development | project | opencode |
 | project | 0.9.0 | productivity | global | opencode, claude |
-| quality | 0.12.0 | development | global | opencode, claude |
+| quality | 0.13.0 | development | global | opencode, claude |
 | repomix | 0.4.0 | development | global | opencode, claude |
 | safety | 0.9.3 | development | global | opencode |
 | session | 0.4.0 | development | global | opencode |
