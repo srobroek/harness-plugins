@@ -102,8 +102,11 @@ with the SHA the reviewer approved; never run `gh pr merge` in a shell,
 because the plugin denies that ask. Pass the repository's documented merge
 method (see AGENTS.md, CONTRIBUTING or the README; `squash`, `rebase` or
 `merge`), never a guess: the tool refuses a method the repository does not
-allow. It also refuses when the head moved, the approval is for another SHA or
-a required check is not green: then re-review the new head. When the only
+allow. It also refuses when the head moved, the approval is for another SHA, a
+required check is not green, branch protection or rulesets cannot be read, or the
+base branch uses a merge queue: after a moved head or a bad approval, re-review
+the new head; for the rest, log a blocker and park the item. Report a merge only
+when the tool says merged; the tool re-reads the PR to confirm it. When the only
 reviewer is the PR author's own account, log a blocker and park the item. A
 deployment (stack create, update or delete) needs `--allow deploy`; that grant
 decides what you do and never approves a permission prompt.

@@ -1104,126 +1104,6 @@ async function withLease(lockPath, options, work) {
   }
 }
 
-// lib/src/pr-approval.ts
-function own(holder, key) {
-  if (typeof holder !== "object" || holder === null || Array.isArray(holder))
-    return;
-  const descriptor = Object.getOwnPropertyDescriptor(holder, key);
-  if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor))
-    return;
-  return descriptor.value;
-}
-function str(holder, key) {
-  const value = own(holder, key);
-  return typeof value === "string" ? value : null;
-}
-function pages(payload, pick) {
-  if (!Array.isArray(payload))
-    return;
-  const out = [];
-  for (const page of payload) {
-    const items = Array.isArray(page) ? page : pick(page);
-    if (Array.isArray(items))
-      out.push(...items);
-    else if (page !== null && typeof page === "object")
-      out.push(page);
-    else
-      return;
-  }
-  return out;
-}
-function reviewApproval(reviewsPayload, prAuthor, sha) {
-  const reviews = pages(reviewsPayload, (page) => own(page, "reviews"));
-  if (reviews === undefined)
-    return { ok: false, reason: "approval: observed no review list, expected gh api pulls/{n}/reviews output" };
-  if (prAuthor === null)
-    return { ok: false, reason: "approval: observed no PR author, expected one to rule out a self-approval" };
-  const latest = new Map;
-  for (const review of reviews) {
-    const state = str(review, "state");
-    const who = str(own(review, "user"), "login");
-    if (who === null || state === null || !["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(state))
-      continue;
-    latest.set(who.toLowerCase(), { state, commit: str(review, "commit_id")?.trim().toLowerCase() ?? null });
-  }
-  const blocking = [...latest].filter(([, review]) => review.state === "CHANGES_REQUESTED").map(([who]) => who);
-  if (blocking.length > 0)
-    return { ok: false, reason: `approval: ${blocking.join(", ")} requested changes and has not approved since` };
-  for (const [who, review] of latest) {
-    if (review.state === "APPROVED" && review.commit === sha && who !== prAuthor.toLowerCase())
-      return { ok: true, evidence: { kind: "review", reviewer: who, commit: sha } };
-  }
-  return { ok: false, reason: `approval: observed no APPROVED review of ${sha} by someone other than the PR author ${prAuthor}; comments do not count` };
-}
-var PASSING_RUN = new Set(["success", "neutral", "skipped"]);
-function commitChecks(input) {
-  const runs = pages(input.runs, (page) => own(page, "check_runs"));
-  const statusPages = Array.isArray(input.status) ? input.status : [input.status];
-  const statuses = statusPages.flatMap((page) => {
-    const list = own(page, "statuses");
-    return Array.isArray(list) ? list : [];
-  });
-  if (runs === undefined || !statusPages.every((page) => Array.isArray(own(page, "statuses")))) {
-    return { ok: false, reason: "checks: observed an unreadable check-run or status list, expected the commit's check-runs and status" };
-  }
-  const green = new Set;
-  const bad = [];
-  for (const run of runs) {
-    const name = str(run, "name") ?? "?";
-    const conclusion = str(run, "conclusion");
-    if (str(run, "status") === "completed" && conclusion !== null && PASSING_RUN.has(conclusion))
-      green.add(name);
-    else
-      bad.push(`${name}=${conclusion ?? str(run, "status") ?? "?"}`);
-  }
-  for (const status of statuses) {
-    const name = str(status, "context") ?? "?";
-    if (str(status, "state") === "success")
-      green.add(name);
-    else
-      bad.push(`${name}=${str(status, "state") ?? "?"}`);
-  }
-  if (runs.length + statuses.length === 0)
-    return { ok: false, reason: "checks: observed no check runs or statuses, expected at least one passing check for the head" };
-  if (bad.length > 0)
-    return { ok: false, reason: `checks: observed ${bad.slice(0, 8).join(", ")}, expected every check to pass` };
-  const missing = (input.required ?? []).filter((context) => !green.has(context));
-  if (missing.length > 0)
-    return { ok: false, reason: `checks: required ${missing.join(", ")} not present and passing` };
-  return { ok: true, evidence: { checks: runs.length + statuses.length, required: input.required?.length ?? null } };
-}
-function requiredContexts(protection, rules) {
-  if (protection === undefined && rules === undefined)
-    return;
-  const contexts = new Set;
-  const listed = own(protection, "contexts");
-  if (Array.isArray(listed)) {
-    for (const context of listed)
-      if (typeof context === "string")
-        contexts.add(context);
-  }
-  const checks = own(protection, "checks");
-  if (Array.isArray(checks)) {
-    for (const check of checks)
-      if (str(check, "context") !== null)
-        contexts.add(str(check, "context"));
-  }
-  const ruleList = pages(rules, () => {
-    return;
-  }) ?? [];
-  for (const rule of ruleList) {
-    if (str(rule, "type") !== "required_status_checks")
-      continue;
-    const required = own(own(rule, "parameters"), "required_status_checks");
-    if (Array.isArray(required)) {
-      for (const check of required)
-        if (str(check, "context") !== null)
-          contexts.add(str(check, "context"));
-    }
-  }
-  return [...contexts].sort();
-}
-
 // lib/src/skill-files.ts
 import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2 } from "fs";
 var FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
@@ -1528,6 +1408,137 @@ function parkedBeads(entries) {
   return [...parked];
 }
 
+// lib/src/pr-approval.ts
+function own(holder, key) {
+  if (typeof holder !== "object" || holder === null || Array.isArray(holder))
+    return;
+  const descriptor = Object.getOwnPropertyDescriptor(holder, key);
+  if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor))
+    return;
+  return descriptor.value;
+}
+function str(holder, key) {
+  const value = own(holder, key);
+  return typeof value === "string" ? value : null;
+}
+function pages(payload, pick) {
+  if (!Array.isArray(payload))
+    return;
+  const out = [];
+  for (const page of payload) {
+    const items = Array.isArray(page) ? page : pick(page);
+    if (Array.isArray(items))
+      out.push(...items);
+    else if (page !== null && typeof page === "object")
+      out.push(page);
+    else
+      return;
+  }
+  return out;
+}
+function reviewApproval(reviewsPayload, prAuthor, sha) {
+  const reviews = pages(reviewsPayload, (page) => own(page, "reviews"));
+  if (reviews === undefined)
+    return { ok: false, reason: "approval: observed no review list, expected gh api pulls/{n}/reviews output" };
+  if (prAuthor === null)
+    return { ok: false, reason: "approval: observed no PR author, expected one to rule out a self-approval" };
+  const latest = new Map;
+  for (const review of reviews) {
+    const state = str(review, "state");
+    const who = str(own(review, "user"), "login");
+    if (who === null || state === null || !["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(state))
+      continue;
+    latest.set(who.toLowerCase(), { state, commit: str(review, "commit_id")?.trim().toLowerCase() ?? null });
+  }
+  const blocking = [...latest].filter(([, review]) => review.state === "CHANGES_REQUESTED").map(([who]) => who);
+  if (blocking.length > 0)
+    return { ok: false, reason: `approval: ${blocking.join(", ")} requested changes and has not approved since` };
+  for (const [who, review] of latest) {
+    if (review.state === "APPROVED" && review.commit === sha && who !== prAuthor.toLowerCase())
+      return { ok: true, evidence: { kind: "review", reviewer: who, commit: sha } };
+  }
+  return { ok: false, reason: `approval: observed no APPROVED review of ${sha} by someone other than the PR author ${prAuthor}; comments do not count` };
+}
+var PASSING_RUN = new Set(["success", "neutral", "skipped"]);
+function commitChecks(input) {
+  const runs = pages(input.runs, (page) => own(page, "check_runs"));
+  const statusPages = Array.isArray(input.status) ? input.status : [input.status];
+  const statuses = statusPages.flatMap((page) => {
+    const list = own(page, "statuses");
+    return Array.isArray(list) ? list : [];
+  });
+  if (runs === undefined || !statusPages.every((page) => Array.isArray(own(page, "statuses")))) {
+    return { ok: false, reason: "checks: observed an unreadable check-run or status list, expected the commit's check-runs and status" };
+  }
+  const green = new Set;
+  const bad = [];
+  for (const run of runs) {
+    const name = str(run, "name") ?? "?";
+    const conclusion = str(run, "conclusion");
+    if (str(run, "status") === "completed" && conclusion !== null && PASSING_RUN.has(conclusion))
+      green.add(name);
+    else
+      bad.push(`${name}=${conclusion ?? str(run, "status") ?? "?"}`);
+  }
+  for (const status of statuses) {
+    const name = str(status, "context") ?? "?";
+    if (str(status, "state") === "success")
+      green.add(name);
+    else
+      bad.push(`${name}=${str(status, "state") ?? "?"}`);
+  }
+  if (runs.length + statuses.length === 0)
+    return { ok: false, reason: "checks: observed no check runs or statuses, expected at least one passing check for the head" };
+  if (bad.length > 0)
+    return { ok: false, reason: `checks: observed ${bad.slice(0, 8).join(", ")}, expected every check to pass` };
+  if (input.requireKnown && input.required === undefined)
+    return { ok: false, reason: "checks: branch protection or rulesets unreadable, so the required contexts are unknown; refusing" };
+  const missing = (input.required ?? []).filter((context) => !green.has(context));
+  if (missing.length > 0)
+    return { ok: false, reason: `checks: required ${missing.join(", ")} not present and passing` };
+  return { ok: true, evidence: { checks: runs.length + statuses.length, required: input.required?.length ?? null } };
+}
+function requiredContexts(protection, rules, options = {}) {
+  if (protection === undefined && rules === undefined)
+    return;
+  if (options.requireBoth && (protection === undefined || pages(rules, () => {
+    return;
+  }) === undefined))
+    return;
+  const contexts = new Set;
+  const listed = own(protection, "contexts");
+  if (Array.isArray(listed)) {
+    for (const context of listed)
+      if (typeof context === "string")
+        contexts.add(context);
+  }
+  const checks = own(protection, "checks");
+  if (Array.isArray(checks)) {
+    for (const check of checks)
+      if (str(check, "context") !== null)
+        contexts.add(str(check, "context"));
+  }
+  const ruleList = pages(rules, () => {
+    return;
+  }) ?? [];
+  for (const rule of ruleList) {
+    if (str(rule, "type") !== "required_status_checks")
+      continue;
+    const required = own(own(rule, "parameters"), "required_status_checks");
+    if (Array.isArray(required)) {
+      for (const check of required)
+        if (str(check, "context") !== null)
+          contexts.add(str(check, "context"));
+    }
+  }
+  return [...contexts].sort();
+}
+function usesMergeQueue(rules) {
+  return (pages(rules, () => {
+    return;
+  }) ?? []).some((rule) => str(rule, "type") === "merge_queue");
+}
+
 // plugins/autopilot/opencode/src/policy.ts
 var ASK_TOOLS = new Set(["question", "parley_ask", "parley_wait", "parley_end", "ask_user", "ask_followup_question"]);
 function isAskTool(tool) {
@@ -1611,7 +1622,10 @@ function mergeRefusal(input) {
   const approval = reviewApproval(input.reviews, text(own(input.view, "author"), "login") ?? null, sha);
   if (!approval.ok)
     return approval.reason;
-  const checks = commitChecks({ runs: input.runs, status: input.status, required: input.required });
+  if (usesMergeQueue(input.rules))
+    return "the base branch uses a merge queue; merge queues unsupported";
+  const required = requiredContexts(input.protection, input.rules, { requireBoth: true });
+  const checks = commitChecks({ runs: input.runs, status: input.status, required, requireKnown: true });
   return checks.ok ? undefined : checks.reason;
 }
 function identifyRoot(path, lstat, canon) {
@@ -1630,6 +1644,23 @@ function recordableLane(input) {
     return false;
   const resolved = input.canon(input.directory);
   return resolved !== undefined && input.listed.has(resolved) && !input.primary.has(resolved) && input.linked(input.directory);
+}
+function mergeOutcome(view, sha) {
+  const state = text(view, "state");
+  const head = text(view, "headRefOid")?.toLowerCase();
+  const queued = own(view, "autoMergeRequest") != null;
+  const disableAuto = state !== "MERGED" || queued;
+  if (view === undefined)
+    return { ok: false, reason: "could not read the PR after merging, so the merge is unconfirmed", disableAuto };
+  if (state !== "MERGED")
+    return { ok: false, reason: `PR is ${state ?? "unreadable"} after gh pr merge, not MERGED; it may be queued for a later merge`, disableAuto };
+  if (head !== sha)
+    return { ok: false, reason: `PR merged at ${head ?? "an unreadable head"}, not the reviewed ${sha}`, disableAuto };
+  if (own(view, "mergeCommit") == null)
+    return { ok: false, reason: "PR is MERGED but has no merge commit", disableAuto };
+  if (queued)
+    return { ok: false, reason: "PR is MERGED but an auto-merge request is still recorded", disableAuto };
+  return { ok: true };
 }
 
 // plugins/autopilot/opencode/src/state.ts
@@ -3135,6 +3166,16 @@ class Autopilot {
       return;
     }
   }
+  async#protection(cwd, base) {
+    const result = await this.#run(cwd, "gh", ["api", `repos/{owner}/{repo}/branches/${base}/protection/required_status_checks`], GH_TIMEOUT_MS);
+    if (!result.ok)
+      return /Branch not protected/i.test(result.stderr) ? {} : undefined;
+    try {
+      return JSON.parse(result.stdout);
+    } catch {
+      return;
+    }
+  }
   async merge(sessionID, input) {
     const pr = String(input.pr ?? "").trim();
     const sha = String(input.sha ?? "").trim().toLowerCase();
@@ -3168,17 +3209,23 @@ class Autopilot {
       api(`pulls/${pr}/reviews`),
       api(`commits/${sha}/check-runs`),
       api(`commits/${sha}/status`),
-      this.#gh(cwd, ["api", `repos/{owner}/{repo}/branches/${base}/protection/required_status_checks`]),
+      this.#protection(cwd, base),
       api(`rules/branches/${base}`),
       this.#gh(cwd, ["repo", "view", "--json", "squashMergeAllowed,rebaseMergeAllowed,mergeCommitAllowed"])
     ]);
-    const refusal = mergeRefusal({ sha, method, view, reviews, runs, status, required: requiredContexts(protection, rules), repo });
+    const refusal = mergeRefusal({ sha, method, view, reviews, runs, status, protection, rules, repo });
     if (refusal !== undefined)
       return refuse(refusal);
     const flag = `--${method}`;
     const merged = await this.#run(cwd, "gh", ["pr", "merge", pr, "--match-head-commit", sha, flag], GH_TIMEOUT_MS);
     if (!merged.ok)
       return refuse(`gh pr merge failed: ${merged.stderr.trim().slice(0, 300)}`);
+    const outcome = mergeOutcome(await this.#gh(cwd, ["pr", "view", pr, "--json", "state,headRefOid,mergeCommit,autoMergeRequest"]), sha);
+    if (!outcome.ok) {
+      if (outcome.disableAuto)
+        await this.#run(cwd, "gh", ["pr", "merge", pr, "--disable-auto"], GH_TIMEOUT_MS);
+      return refuse(outcome.reason);
+    }
     await journal2({ type: "action", summary: `merged #${pr} at ${sha} (${method})`, evidence: sha });
     return `merged #${pr} at ${sha} with ${flag}`;
   }
@@ -3341,6 +3388,7 @@ export {
   inScope,
   isAskTool,
   lastAssistantText,
+  mergeOutcome,
   mergeRefusal,
   mergeResource,
   missingFields,

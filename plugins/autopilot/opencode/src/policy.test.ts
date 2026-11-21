@@ -2,7 +2,38 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { endsWithQuestion, grantedMergeAsk, holdsLane, identifyRoot, isAskTool, mergeRefusal, mergeResource, ownWorktreeAsk, recordableLane, rootIntact } from "./policy.ts"
+import { endsWithQuestion, grantedMergeAsk, holdsLane, identifyRoot, isAskTool, mergeOutcome, mergeRefusal, mergeResource, ownWorktreeAsk, recordableLane, rootIntact } from "./policy.ts"
+
+test.each([
+  ["question", true],
+  ["parley_ask", true],
+  ["parley.wait", true],
+  ["tools.parley_end", true],
+  ["read", false],
+  ["autopilot_log", false],
+])("isAskTool(%p) is %p", (tool, expected) => {
+  expect(isAskTool(tool)).toBe(expected)
+})
+
+test.each([
+  ["explore", false],
+  ["code-reviewer", false],
+  ["researcher", false],
+  ["coder", true],
+  ["general", true],
+  [undefined, true],
+])("holdsLane(%p) is %p", (agent, expected) => {
+  expect(holdsLane(agent)).toBe(expected)
+})
+
+test.each([
+  ["Done. Should I also update the docs?", true],
+  ["Plan:\n\nLet me know which one you prefer.", true],
+  ["Closed the bead. What is left: nothing?\n\nMoving on to the next item.", false],
+  ["", false],
+])("endsWithQuestion(%p)", (text, expected) => {
+  expect(endsWithQuestion(text)).toBe(expected)
+})
 
 // --- auto-allow of the run's own worktrees ---------------------------------------------------
 
@@ -92,7 +123,7 @@ const runs = [{ check_runs: [{ name: "ci", status: "completed", conclusion: "suc
 const status = { state: "success", statuses: [] }
 const repo = { squashMergeAllowed: true, rebaseMergeAllowed: false, mergeCommitAllowed: true }
 type Input = Parameters<typeof mergeRefusal>[0]
-const refusal = (over: Partial<Input> = {}) => mergeRefusal({ sha: SHA, method: "squash", view: view(), reviews, runs, status, required: undefined, repo, ...over })
+const refusal = (over: Partial<Input> = {}) => mergeRefusal({ sha: SHA, method: "squash", view: view(), reviews, runs, status, protection: { contexts: ["ci"] }, rules: [[]], repo, ...over })
 
 test("mergeRefusal passes an approved, green, matching PR", () => {
   expect(refusal()).toBeUndefined()
@@ -108,7 +139,11 @@ test.each<[string, Partial<Input>, string]>([
   ["an unreadable review list", { reviews: undefined }, "approval"],
   ["a failing check", { runs: [{ check_runs: [{ name: "ci", status: "completed", conclusion: "failure" }] }] }, "checks"],
   ["no checks", { runs: [{ check_runs: [] }] }, "checks"],
-  ["a required check that never ran", { required: ["deploy"] }, "deploy"],
+  ["a required check that never ran", { protection: { contexts: ["ci", "deploy"] } }, "deploy"],
+  ["a ruleset context that never ran", { rules: [[{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "e2e" }] } }]] }, "e2e"],
+  ["unreadable rulesets", { rules: undefined }, "unreadable"],
+  ["unreadable branch protection", { protection: undefined }, "unreadable"],
+  ["a merge queue on the base branch", { rules: [[{ type: "merge_queue", parameters: {} }]] }, "merge queues unsupported"],
   ["a method the repository does not allow", { method: "rebase" }, "method"],
   ["a method that is not one", { method: "fast-forward" }, "method"],
   ["unreadable repository settings", { repo: undefined }, "method"],
@@ -180,5 +215,24 @@ describe("recordableLane", () => {
   })
   test("a directory without a linked-worktree marker is not recorded", () => {
     expect(recordableLane({ ...base, linked: () => false })).toBe(false)
+  })
+})
+
+// --- what happened after gh pr merge ---------------------------------------------------------
+
+describe("mergeOutcome", () => {
+  const after = (over: Record<string, unknown> = {}) => ({ state: "MERGED", headRefOid: SHA, mergeCommit: { oid: "f".repeat(40) }, autoMergeRequest: null, ...over })
+  test("a merged PR at the reviewed head with a merge commit is success", () => {
+    expect(mergeOutcome(after(), SHA)).toEqual({ ok: true })
+  })
+  test.each<[string, unknown, boolean]>([
+    ["auto-merge was enabled and the PR is still open", after({ state: "OPEN", mergeCommit: null, autoMergeRequest: { enabledAt: "now" } }), true],
+    ["the PR is still open without auto-merge (a queue or a silent no-op)", after({ state: "OPEN", mergeCommit: null }), true],
+    ["the PR is merged but auto-merge is still recorded", after({ autoMergeRequest: { enabledAt: "now" } }), true],
+    ["the PR merged at another head", after({ headRefOid: OTHER }), false],
+    ["the PR merged without a merge commit", after({ mergeCommit: null }), false],
+    ["the PR cannot be read", undefined, true],
+  ])("refuses when %s (disable auto-merge: %p)", (_name, view, disableAuto) => {
+    expect(mergeOutcome(view, SHA)).toMatchObject({ ok: false, disableAuto, reason: expect.any(String) })
   })
 })
