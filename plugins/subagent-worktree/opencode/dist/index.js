@@ -2609,37 +2609,43 @@ function createLifecycle(deps) {
     const busy = await busyTreeOf(lane.directory, lane.branch);
     return busy === undefined ? undefined : keptBecause("dirty", busy);
   };
-  const moveLaneSessions = async (lane, common, earlier = []) => {
+  const moveIfIdle = async (id, session, destination, seq) => {
+    if (toMillis2(session.time?.archived) === undefined && isRunning({ busy: toMillis2(session.time?.busy), idle: toMillis2(session.time?.idle) })) {
+      console.error(`subagent-worktree: ${id} is running; it is not moved yet`);
+      return "pending";
+    }
+    const started = startedSince([id], seq);
+    if (started !== undefined) {
+      console.error(`subagent-worktree: ${started.removed ? id : started.reason}; it is not moved yet`);
+      return "pending";
+    }
+    const [result] = await moveSessionsHome(sessionClient, [id], destination);
+    if (result?.status !== "error")
+      return "moved";
+    console.error(`subagent-worktree: could not move ${id} to ${destination}: ${result.reason}`);
+    return "pending";
+  };
+  const moveLaneSessions = async (lane, common, seq, earlier = []) => {
     const found = await laneSessions(sessionClient, lane.child);
     if (!found.complete)
       console.error(`subagent-worktree: the session listing of ${lane.child} is incomplete; moving the ${found.ids.length} found`);
     const destination = await deps.exists(lane.parentDir) ? lane.parentDir : canonicalCheckout(common, lane.parentDir);
     const pending = [];
     const worktree = canonical(lane.directory);
-    const ids = [];
     for (const id of new Set([...found.ids, ...earlier])) {
-      if (id === lane.child) {
-        ids.push(id);
-        continue;
-      }
       const session = await lookupSession(id);
       if (session === "missing")
         continue;
       const directory = session === "unknown" ? undefined : session.location?.directory;
-      if (typeof directory !== "string") {
+      if (session === "unknown" || typeof directory !== "string") {
         pending.push(id);
-        console.error(`subagent-worktree: could not read where ${id} sits; it is not moved yet`);
+        console.error(`subagent-worktree: could not read ${id}; it is not moved yet`);
         continue;
       }
-      if (within3(canonical(directory), worktree) || within3(directory, lane.directory))
-        ids.push(id);
-    }
-    const results = await moveSessionsHome(sessionClient, ids, destination);
-    for (const result of results) {
-      if (result.status !== "error")
+      if (id !== lane.child && !within3(canonical(directory), worktree) && !within3(directory, lane.directory))
         continue;
-      pending.push(result.id);
-      console.error(`subagent-worktree: could not move ${result.id} to ${destination}: ${result.reason}`);
+      if (await moveIfIdle(id, session, destination, seq) === "pending")
+        pending.push(id);
     }
     return { pending, incomplete: !found.complete };
   };
@@ -2704,7 +2710,7 @@ function createLifecycle(deps) {
         await ctx.worktree.refresh({ projectID: stored.projectID }).catch(() => {});
         if (deleteAt !== undefined)
           await git.deleteBranchAt(stored.parentDir, stored.branch, deleteAt);
-        const moved = await moveLaneSessions(stored, common, earlier?.pending);
+        const moved = await moveLaneSessions(stored, common, seq, earlier?.pending);
         const latest = await load(stored.child) ?? stored;
         if (latest.state !== "removing" || canonical(latest.directory) !== canonical(stored.directory))
           return { removed: true };
@@ -2729,7 +2735,7 @@ function createLifecycle(deps) {
       console.error("subagent-worktree: resuming removals failed:", error instanceof Error ? error.message : error);
     }
   };
-  const rehome = async (sessionID) => {
+  const rehome = async (sessionID, seq) => {
     try {
       const byChild = new Map((await deps.scan()).map((lane) => [lane.child, lane]));
       const failed = await withinLookup(deps.getSession(sessionID));
@@ -2743,7 +2749,7 @@ function createLifecycle(deps) {
       if (failed === undefined || lane === undefined || await deps.exists(lane.directory))
         return;
       if (lane.state === "active" || lane.state === "removing") {
-        await finalize(lane, { ifGone: true });
+        await finalize(lane, { ifGone: true, seq });
         return;
       }
       if (sessionID === lane.child)
@@ -2755,16 +2761,15 @@ function createLifecycle(deps) {
         const latest = await load(owner.child);
         if (latest === undefined || latest.state === "active" || latest.state === "removing" || canonical(latest.directory) !== canonical(owner.directory))
           return;
-        const current = await withinLookup(deps.getSession(sessionID));
-        const directory = current?.location?.directory;
+        const current = await lookupSession(sessionID);
+        if (current === "missing" || current === "unknown")
+          return;
+        const directory = current.location?.directory;
         if (typeof directory !== "string" || !within3(canonical(directory), canonical(owner.directory)))
           return;
         const common = await deps.commonDir(owner.parentDir);
         const destination = await deps.exists(owner.parentDir) ? owner.parentDir : canonicalCheckout(common, owner.parentDir);
-        for (const result of await moveSessionsHome(sessionClient, [sessionID], destination)) {
-          if (result.status === "error")
-            console.error(`subagent-worktree: could not move ${result.id} to ${destination}: ${result.reason}`);
-        }
+        await moveIfIdle(sessionID, current, destination, seq);
       });
     } catch (error) {
       console.error(`subagent-worktree: moving ${sessionID} out of a removed worktree failed:`, error instanceof Error ? error.message : error);
@@ -2883,8 +2888,10 @@ function createLifecycle(deps) {
       case "session.deleted":
         return schedule(sessionID, "archived");
       case "session.execution.failed":
-        if (!disposed && isLocationNotFound(event.data?.error))
-          serial(() => rehome(sessionID));
+        if (!disposed && isLocationNotFound(event.data?.error)) {
+          const seq = eventSeq;
+          serial(() => rehome(sessionID, seq));
+        }
         return schedule(sessionID, "failed", failureReason(event.data?.error), eventID);
       case "session.execution.interrupted": {
         const reason = typeof event.data?.reason === "string" ? event.data.reason : "interrupted";

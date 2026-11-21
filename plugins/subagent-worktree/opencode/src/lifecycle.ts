@@ -849,39 +849,52 @@ export function createLifecycle(deps: LifecycleDeps) {
   }
 
   /**
+   * Move one session home unless it may be running: a pending shutdown resume or an execution start since `seq`
+   * (read synchronously, right before the move call), or a running session. `pending` keeps it for a later call.
+   */
+  const moveIfIdle = async (id: string, session: SessionLike, destination: string, seq: number): Promise<"moved" | "pending"> => {
+    if (toMillis(session.time?.archived) === undefined && isRunning({ busy: toMillis(session.time?.busy), idle: toMillis(session.time?.idle) })) {
+      console.error(`subagent-worktree: ${id} is running; it is not moved yet`)
+      return "pending"
+    }
+    const started = startedSince([id], seq)
+    if (started !== undefined) {
+      console.error(`subagent-worktree: ${started.removed ? id : started.reason}; it is not moved yet`)
+      return "pending"
+    }
+    // Nothing is awaited between the look above and the move call.
+    const [result] = await moveSessionsHome(sessionClient, [id], destination)
+    if (result?.status !== "error") return "moved"
+    console.error(`subagent-worktree: could not move ${id} to ${destination}: ${result.reason}`)
+    return "pending"
+  }
+
+  /**
    * Move the lane's sessions (the child and everything it spawned that sits in the worktree, plus any an earlier call
    * could not move) to the parent's checkout, else the repository's canonical one. A descendant elsewhere (in its own
-   * lane's worktree, say) stays. `pending` lists the ones that failed or could not be read; `incomplete` says the
-   * listing may have missed some. Either keeps the lane from retiring.
+   * lane's worktree, say) stays, and so does every session that may be running (see `moveIfIdle`). `pending` lists
+   * the ones that failed, could not be read or may be running; `incomplete` says the listing may have missed some.
+   * Either keeps the lane from retiring.
    */
-  const moveLaneSessions = async (lane: Lane, common: string | undefined, earlier: readonly string[] = []) => {
+  const moveLaneSessions = async (lane: Lane, common: string | undefined, seq: number, earlier: readonly string[] = []) => {
     const found = await laneSessions(sessionClient, lane.child)
     if (!found.complete) console.error(`subagent-worktree: the session listing of ${lane.child} is incomplete; moving the ${found.ids.length} found`)
     const destination = (await deps.exists(lane.parentDir)) ? lane.parentDir : canonicalCheckout(common, lane.parentDir)
     const pending: string[] = []
     const worktree = canonical(lane.directory)
-    const ids: string[] = []
     for (const id of new Set([...found.ids, ...earlier])) {
-      if (id === lane.child) {
-        ids.push(id)
-        continue
-      }
       // The host keeps a moved session's old location until the move, so this reads where it sits even after the removal.
       const session = await lookupSession(id)
       if (session === "missing") continue
       const directory = session === "unknown" ? undefined : session.location?.directory
-      if (typeof directory !== "string") {
+      if (session === "unknown" || typeof directory !== "string") {
         pending.push(id)
-        console.error(`subagent-worktree: could not read where ${id} sits; it is not moved yet`)
+        console.error(`subagent-worktree: could not read ${id}; it is not moved yet`)
         continue
       }
-      if (within(canonical(directory), worktree) || within(directory, lane.directory)) ids.push(id)
-    }
-    const results = await moveSessionsHome(sessionClient, ids, destination)
-    for (const result of results) {
-      if (result.status !== "error") continue
-      pending.push(result.id)
-      console.error(`subagent-worktree: could not move ${result.id} to ${destination}: ${result.reason}`)
+      // The child always belongs to the lane; a descendant only while it sits in the worktree.
+      if (id !== lane.child && !within(canonical(directory), worktree) && !within(directory, lane.directory)) continue
+      if ((await moveIfIdle(id, session, destination, seq)) === "pending") pending.push(id)
     }
     return { pending, incomplete: !found.complete }
   }
@@ -959,7 +972,7 @@ export function createLifecycle(deps: LifecycleDeps) {
         }
         await ctx.worktree.refresh({ projectID: stored.projectID } as never).catch(() => {})
         if (deleteAt !== undefined) await git.deleteBranchAt(stored.parentDir, stored.branch, deleteAt)
-        const moved = await moveLaneSessions(stored, common, earlier?.pending)
+        const moved = await moveLaneSessions(stored, common, seq, earlier?.pending)
         // Update only the record this removal is about: a resume may have revived the child in a fresh worktree meanwhile.
         const latest = (await load(stored.child)) ?? stored
         if (latest.state !== "removing" || canonical(latest.directory) !== canonical(stored.directory)) return { removed: true }
@@ -991,9 +1004,10 @@ export function createLifecycle(deps: LifecycleDeps) {
    * A session's execution failed because its location is gone. When it is a lane's child or below one, and that
    * lane's worktree is gone from disk, its sessions go home: an active or removing lane through `finalize` (which
    * moves the child and every descendant, then retires it), a retired lane by moving just this session, and only
-   * when it is not the lane's child, which a resume moves into a fresh worktree. The error alone moves nothing.
+   * when it is not the lane's child, which a resume moves into a fresh worktree. The error alone moves nothing. `seq`
+   * is the failure's place in the event order: a start after it, even one seen before the lock, keeps that session.
    */
-  const rehome = async (sessionID: string) => {
+  const rehome = async (sessionID: string, seq: number) => {
     try {
       const byChild = new Map((await deps.scan()).map((lane) => [lane.child, lane]))
       const failed = await withinLookup(deps.getSession(sessionID))
@@ -1007,7 +1021,7 @@ export function createLifecycle(deps: LifecycleDeps) {
       if (failed === undefined || lane === undefined || (await deps.exists(lane.directory))) return
       if (lane.state === "active" || lane.state === "removing") {
         // Gone is read again under the lock: a worktree back by then is left as it is.
-        await finalize(lane, { ifGone: true })
+        await finalize(lane, { ifGone: true, seq })
         return
       }
       if (sessionID === lane.child) return
@@ -1017,14 +1031,13 @@ export function createLifecycle(deps: LifecycleDeps) {
         if (await deps.exists(owner.directory)) return
         const latest = await load(owner.child)
         if (latest === undefined || latest.state === "active" || latest.state === "removing" || canonical(latest.directory) !== canonical(owner.directory)) return
-        const current = await withinLookup(deps.getSession(sessionID))
-        const directory = current?.location?.directory
+        const current = await lookupSession(sessionID)
+        if (current === "missing" || current === "unknown") return
+        const directory = current.location?.directory
         if (typeof directory !== "string" || !within(canonical(directory), canonical(owner.directory))) return
         const common = await deps.commonDir(owner.parentDir)
         const destination = (await deps.exists(owner.parentDir)) ? owner.parentDir : canonicalCheckout(common, owner.parentDir)
-        for (const result of await moveSessionsHome(sessionClient, [sessionID], destination)) {
-          if (result.status === "error") console.error(`subagent-worktree: could not move ${result.id} to ${destination}: ${result.reason}`)
-        }
+        await moveIfIdle(sessionID, current, destination, seq)
       })
     } catch (error) {
       console.error(`subagent-worktree: moving ${sessionID} out of a removed worktree failed:`, error instanceof Error ? error.message : error)
@@ -1154,7 +1167,10 @@ export function createLifecycle(deps: LifecycleDeps) {
       case "session.deleted":
         return schedule(sessionID, "archived")
       case "session.execution.failed":
-        if (!disposed && isLocationNotFound(event.data?.error)) void serial(() => rehome(sessionID))
+        if (!disposed && isLocationNotFound(event.data?.error)) {
+          const seq = eventSeq
+          void serial(() => rehome(sessionID, seq))
+        }
         return schedule(sessionID, "failed", failureReason(event.data?.error), eventID)
       case "session.execution.interrupted": {
         const reason = typeof event.data?.reason === "string" ? event.data.reason : "interrupted"

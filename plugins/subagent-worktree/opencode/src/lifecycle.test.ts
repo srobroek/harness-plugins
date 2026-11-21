@@ -2575,7 +2575,10 @@ describe("startup reconciles lanes left in removing", () => {
     await cleanup()
   })
 
-  test("an execution of the child that starts after the plugin loaded keeps the worktree, even before the reconcile takes the lock", async () => {
+  test.each([
+    ["is still there", true],
+    ["is already gone", false],
+  ])("an execution of the child that starts after the plugin loaded keeps it home and its worktree, even before the reconcile takes the lock, when the tree %s", async (_name, exists) => {
     const common = mkdtempSync(join(tmpdir(), "common-"))
     COMMONS.push(common)
     // Another holder has the lane lock, so the startup reconcile waits for it while the child starts.
@@ -2587,12 +2590,13 @@ describe("startup reconciles lanes left in removing", () => {
       await new Promise<void>((done) => (free = done))
     })
     await acquired
-    const { fake, worktree, events, cleanup } = await start({ head: BASE, ahead: 0 }, { stored: [crashed], common, lock: { waitMs: 5_000 } })
+    const { fake, worktree, events, cleanup } = await start({ head: BASE, ahead: 0, exists }, { stored: [crashed], common, lock: { waitMs: 5_000 } })
     await deliver(fake, events, { type: "session.execution.started", data: { sessionID: CHILD } })
     free()
     await held
     await settle(300)
     expect(removes(worktree)).toEqual([])
+    expect(moves(fake)).toEqual([])
     expect(stored(fake).state).toBe("removing")
     await cleanup()
   })
@@ -2605,6 +2609,46 @@ describe("an execution that fails because its location is gone", () => {
     fake.sessions.set("ses_grand", { id: "ses_grand", parentID: CHILD, projectID: "prj", location: { directory: WT }, time: { busy: 1, idle: 2 } })
   const locationGone = { type: "session.execution.failed", data: { sessionID: "ses_grand", error: { type: "LocationNotFoundError", message: `Location not found: ${WT}` } } }
 
+  test("a child that starts while the failure waits for the lock stays where it is, though the tree is gone", async () => {
+    const common = mkdtempSync(join(tmpdir(), "common-"))
+    COMMONS.push(common)
+    const { fake, events, cleanup } = await start({ missing: [WT] }, { common, lock: { waitMs: 5_000 } })
+    grandchild(fake)
+    let free!: () => void
+    let taken!: () => void
+    const acquired = new Promise<void>((done) => (taken = done))
+    const held = withDiskLock(common, WT, { sessionID: "ses_other", waitMs: 5_000 }, async () => {
+      taken()
+      await new Promise<void>((done) => (free = done))
+    })
+    await acquired
+    await deliver(fake, events, locationGone)
+    await deliver(fake, events, { type: "session.execution.started", data: { sessionID: CHILD } })
+    free()
+    await held
+    await until(() => moves(fake).length > 0)
+    await settle(100)
+    expect(moves(fake)).toEqual([["ses_grand", REPO]])
+    expect(stored(fake).state).toBe("removing")
+    expect(stored(fake).removal?.pending).toEqual([CHILD])
+    await cleanup()
+  })
+
+  test.each([
+    ["the lane's child", { time: { [CHILD]: { busy: 5, idle: 2 } } }, CHILD],
+    ["a sibling in the worktree", {}, "ses_sib"],
+  ])("a failure in one descendant while %s runs moves only the failed one; the running one stays pending", async (_name, world, running) => {
+    const { fake, cleanup } = await start({ missing: [WT], ...world })
+    grandchild(fake)
+    if (running === "ses_sib") fake.sessions.set("ses_sib", { id: "ses_sib", parentID: CHILD, projectID: "prj", location: { directory: WT }, time: { busy: 5, idle: 2 } })
+    fake.emit(locationGone)
+    await until(() => moves(fake).some(([id]) => id === "ses_grand"))
+    await settle(100)
+    expect(moves(fake).map(([id]) => id)).not.toContain(running)
+    expect(stored(fake).state).toBe("removing")
+    expect(stored(fake).removal?.pending).toEqual([running])
+    await cleanup()
+  })
   test("a descendant of an active lane's child whose worktree is gone moves home with the lane's sessions, and the lane retires", async () => {
     const { fake, worktree, cleanup } = await start({ missing: [WT] })
     grandchild(fake)

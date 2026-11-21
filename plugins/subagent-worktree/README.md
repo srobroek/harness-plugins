@@ -182,6 +182,9 @@ step leaves the lane as it was.
 The lane's sessions are the child and every session below it, found by parent ID, never by a
 project-wide listing. A session below the child moves only when it sits in the lane's worktree, so a
 nested lane's child stays in its own worktree. A session whose location cannot be read stays pending.
+So does one that may be running: a running session, a pending shutdown resume, or an execution start
+seen after the removal was triggered (for the startup pass, after the plugin loaded). A running
+session is never moved.
 They move to the parent's checkout, or to the repository's canonical checkout
 when that is gone. The host moves a session whose directory is gone, so the move comes after the
 removal. A failed move or an incomplete listing leaves the lane in `removing` with the sessions
