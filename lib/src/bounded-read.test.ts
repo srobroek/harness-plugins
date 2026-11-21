@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { planEmbeddedWrites } from "./bd-embedded-write-lock.ts"
-import { readBounded } from "./bounded-read.ts"
+import { readBounded, readBoundedBytes } from "./bounded-read.ts"
 
 // Real child processes; 30 s leaves headroom for a loaded machine (AGENTS.md, Testing).
 setDefaultTimeout(30_000)
@@ -37,6 +37,33 @@ describe("readBounded", () => {
       const hostileStore = ledger(`rb-${name}`, make)
       expect(readBounded(join(hostileStore, "metadata.json")).kind).toBe("unreadable")
     }
+  })
+})
+
+describe("readBoundedBytes", () => {
+  const dir = () => realpathSync(mkdtempSync(join(root, "bytes-")))
+
+  test("returns the bytes of a regular file within the limit, at the limit included", () => {
+    const d = dir()
+    writeFileSync(join(d, "f"), Buffer.from([0, 1, 2, 255]))
+    expect(readBoundedBytes(join(d, "f"), 4)).toEqual({ kind: "bytes", bytes: Buffer.from([0, 1, 2, 255]) })
+  })
+
+  test("reports absent, and refuses a file one byte over the limit without reading it", () => {
+    const d = dir()
+    writeFileSync(join(d, "f"), "12345")
+    expect(readBoundedBytes(join(d, "nope"), 10)).toEqual({ kind: "absent" })
+    expect(readBoundedBytes(join(d, "f"), 4)).toEqual({ kind: "unreadable", reason: "too-large" })
+  })
+
+  test("refuses a FIFO without blocking, and a symlink, whatever they point at", () => {
+    const d = dir()
+    execFileSync("mkfifo", [join(d, "fifo")])
+    writeFileSync(join(d, "real"), "x")
+    symlinkSync(join(d, "real"), join(d, "link"))
+    expect(readBoundedBytes(join(d, "fifo"), 10)).toEqual({ kind: "unreadable", reason: "not-regular" })
+    expect(readBoundedBytes(join(d, "link"), 10)).toEqual({ kind: "unreadable", reason: "not-regular" })
+    expect(readBoundedBytes(d, 10)).toEqual({ kind: "unreadable", reason: "not-regular" })
   })
 })
 

@@ -1,11 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
+import { execFileSync } from "node:child_process"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFakeContext, type FakeContext } from "@srobroek/opencode-lib/testing"
-import { DENY_QUESTION, HANDOFF_LABEL, MAX_REPROMPTS, REPROMPT, setupAutopilot, type WriteLock } from "./index.ts"
+import { DENY_QUESTION, HANDOFF_LABEL, MAX_REPROMPTS, REPROMPT, reviewManifestKey, setupAutopilot, verifyExport, type WriteLock } from "./index.ts"
 import type { LedgerHost } from "./ledger.ts"
-import { type Run, RunDir, RunFileError } from "./rundir.ts"
+import { type Run, RunDir, RunFileError, runCommand } from "./rundir.ts"
 import { type Clock, Ticks } from "./timer.ts"
 
 const NOW = new Date(2026, 10, 20, 14, 0).getTime()
@@ -51,8 +52,17 @@ let ghReplies: Record<string, { ok: boolean; stdout: string; stderr: string }>
 /** When set, sees each `gh` call and the reply the fake gave it. */
 let onGh: ((line: string, reply: { ok: boolean; stdout: string; stderr: string }) => void) | undefined
 
-const run: Run = async (_cwd, command, args, _timeout, env) => {
+/** The directory the fake sessions report. */
+const SESSION_DIRECTORY = "/repo"
+
+/** When set, the git calls `autopilot_export_review` makes run for real in this repository. */
+let realRepo: string | undefined
+/** With `realRepo`, the directory the session reports (a subdirectory of the repository); default: the repository root. */
+let realSessionDir: string | undefined
+
+const run: Run = async (cwd, command, args, _timeout, env) => {
   calls.push({ command, args, ...(env ? { env } : {}) })
+  if (realRepo !== undefined && command === "git" && args.includes("--no-optional-locks")) return runCommand(cwd === SESSION_DIRECTORY ? (realSessionDir ?? realRepo) : cwd, command, args)
   const json = (value: unknown) => ({ ok: true, stdout: JSON.stringify(value), stderr: "" })
   if (command === "gh") {
     const line = args.join(" ")
@@ -181,6 +191,8 @@ beforeEach(async () => {
   calls = []
   ghReplies = {}
   onGh = undefined
+  realRepo = undefined
+  realSessionDir = undefined
   locked = []
   lockEnvs = []
   routesText = undefined
@@ -1230,5 +1242,130 @@ describe("a stop whose artifacts fail to write", () => {
     beads.list.push({ id: "t-42", status: "open", labels: [HANDOFF_LABEL], title: `Autopilot handoff: run ${latestState().runId}` })
     expect(await status({ action: "stop", reason: "done" })).toMatchObject({ done: true, handoff: "t-42" })
     expect(calls.filter((call) => call.args[0] === "create")).toHaveLength(0)
+  })
+})
+
+describe("autopilot_export_review", () => {
+  // Each test spawns about ten git processes; measured at 0.2 s on this host.
+  setDefaultTimeout(30_000)
+  let repo: string
+  let baseSha: string
+  let headSha: string
+  const git = (...args: string[]) =>
+    execFileSync("git", args, {
+      cwd: repo,
+      encoding: "utf8",
+      env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" },
+    }).trim()
+  const exportReview = (input: Record<string, unknown>, sessionID = "ses_lead") => {
+    const tool = fake.tools.get("autopilot_export_review") as unknown as { execute: (input: unknown, context: unknown) => Promise<{ content: string }> }
+    return tool.execute(input, { sessionID }).then((out) => out.content)
+  }
+  const ask = (resource: string, sessionID = "ses_child") =>
+    fake.fire.permission("evaluate", { sessionID, action: "external_directory", resources: [resource], effect: "ask", message: undefined as string | undefined })
+  const reviewRoot = () => join(realpathSync(latest()), "review")
+
+  beforeEach(() => {
+    repo = join(root, "repo")
+    mkdirSync(repo)
+    git("init", "-q", "-b", "main")
+    writeFileSync(join(repo, "a.txt"), "one\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
+    baseSha = git("rev-parse", "HEAD")
+    mkdirSync(join(repo, "src"))
+    writeFileSync(join(repo, "src", "b.ts"), "export {}\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "head")
+    headSha = git("rev-parse", "HEAD")
+    realRepo = repo
+  })
+
+  test("exports into the run directory, returns the directory, the file list and the manifest hash, and records that hash by PR and head", async () => {
+    await armed()
+    const out = JSON.parse(await exportReview({ pr: 7, base: baseSha, head: "main" })) as { dir: string; files: { path: string }[]; manifestHash: string }
+    expect(out.dir).toBe(join(reviewRoot(), headSha, out.manifestHash))
+    expect(out.files.map((file) => file.path)).toEqual(["src/b.ts"])
+    expect(readFileSync(join(out.dir, "files", "src", "b.ts"), "utf8")).toBe("export {}\n")
+    expect(fake.storage.get(reviewManifestKey(7, headSha))).toEqual({ manifestHash: out.manifestHash })
+    expect(verifyExport(out.dir, out.manifestHash).ok).toBe(true)
+  })
+
+  test("exports the changed files when the session directory is a subdirectory of the repository", async () => {
+    realSessionDir = join(repo, "src")
+    await armed()
+    const out = JSON.parse(await exportReview({ pr: 7, base: baseSha, head: "main" })) as { dir: string; files: { path: string }[]; skipped: unknown[] }
+    expect(out.files.map((file) => file.path)).toEqual(["src/b.ts"])
+    expect(out.skipped).toEqual([])
+    expect(readFileSync(join(out.dir, "files", "src", "b.ts"), "utf8")).toBe("export {}\n")
+  })
+
+  test("re-exporting a head records the new manifest hash", async () => {
+    await armed()
+    const first = JSON.parse(await exportReview({ pr: 7, base: baseSha, head: "main" })) as { dir: string; manifestHash: string }
+    writeFileSync(join(first.dir, "files", "src", "b.ts"), "evil\n")
+    const second = JSON.parse(await exportReview({ pr: 7, base: baseSha, head: "main" })) as { dir: string; manifestHash: string }
+    expect(readFileSync(join(second.dir, "files", "src", "b.ts"), "utf8")).toBe("export {}\n")
+    expect(fake.storage.get(reviewManifestKey(7, headSha))).toEqual({ manifestHash: second.manifestHash })
+  })
+
+  test.each([
+    ["a missing pr", { base: "x", head: "main" }],
+    ["a zero pr", { pr: 0, base: "x", head: "main" }],
+    ["a negative pr", { pr: -3, base: "x", head: "main" }],
+    ["a fractional pr", { pr: 1.5, base: "x", head: "main" }],
+    ["a non-numeric pr", { pr: "7; rm", base: "x", head: "main" }],
+    ["an invalid revision", { pr: 7, base: "--output=x", head: "main" }],
+  ])("refuses %s with a message, not an exception, and records nothing", async (_name, input) => {
+    await armed()
+    expect(await exportReview(input)).toStartWith("refused:")
+    expect([...fake.storage.keys()].filter((key) => key.startsWith("review"))).toEqual([])
+  })
+
+  test("refuses when the session has no running run", async () => {
+    expect(await exportReview({ pr: 7, base: baseSha, head: "main" })).toStartWith("refused:")
+    expect(existsSync(join(root, "opencode-scratch", "autopilot"))).toBe(false)
+  })
+
+  test("the hook allows a reviewer to read the current export directory and what is under it, without a blocker", async () => {
+    await armed()
+    const exported = (JSON.parse(await exportReview({ pr: 7, base: baseSha, head: "main" })) as { dir: string }).dir
+    for (const dir of [exported, join(exported, "files", "src")]) expect(await ask(`${dir}/*`)).toMatchObject({ effect: "allow" })
+    expect(journal().map((entry) => entry.type)).toEqual(["action"])
+  })
+
+  test("the hook denies the review directory itself, the run directory and a sibling, and leaves a session outside the run alone", async () => {
+    await armed()
+    const exported = (JSON.parse(await exportReview({ pr: 7, base: baseSha, head: "main" })) as { dir: string }).dir
+    for (const dir of [reviewRoot(), join(reviewRoot(), headSha), realpathSync(latest()), `${exported}-x`, join(reviewRoot(), "other")]) expect(await ask(`${dir}/*`)).toMatchObject({ effect: "deny" })
+    expect(await ask(`${exported}/*`, "ses_other")).toMatchObject({ effect: "ask" })
+  })
+
+  test("the hook allows only the head the run exported last", async () => {
+    await armed()
+    const first = (JSON.parse(await exportReview({ pr: 7, base: baseSha, head: "main" })) as { dir: string }).dir
+    writeFileSync(join(repo, "c.txt"), "c\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "next")
+    const nextSha = git("rev-parse", "HEAD")
+    const next = (JSON.parse(await exportReview({ pr: 7, base: baseSha, head: "main" })) as { dir: string }).dir
+    expect(next).toContain(nextSha)
+    expect(await ask(`${next}/*`)).toMatchObject({ effect: "allow" })
+    expect(await ask(`${first}/*`)).toMatchObject({ effect: "deny" })
+  })
+
+  test("the hook denies before anything was exported", async () => {
+    await armed()
+    expect(await ask(`${join(realpathSync(latest()), "review", headSha)}/*`)).toMatchObject({ effect: "deny" })
+  })
+
+  test("the hook denies an export directory that was replaced by a symlink", async () => {
+    await armed()
+    const exported = (JSON.parse(await exportReview({ pr: 7, base: baseSha, head: "main" })) as { dir: string }).dir
+    const elsewhere = join(root, "elsewhere")
+    mkdirSync(elsewhere)
+    renameSync(exported, `${exported}.moved`)
+    symlinkSync(elsewhere, exported)
+    expect(await ask(`${exported}/*`)).toMatchObject({ effect: "deny" })
   })
 })

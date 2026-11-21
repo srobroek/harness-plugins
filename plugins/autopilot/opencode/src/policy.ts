@@ -76,6 +76,33 @@ export function ownWorktreeAsk(input: { action: string; effect: Effect; resource
   })
 }
 
+/**
+ * Whether an `external_directory` ask is for `<dir>/*` where `dir` is `root`, the real path of the
+ * one export directory the run made last (already checked to be a plain directory), or a directory
+ * under it. A host may ask for the directory that holds a file, so a reader of an exported file may
+ * ask for a subdirectory; the host's types give the resource only as an opaque string, so both
+ * forms are accepted and both stay inside that one directory. Real paths are compared, so a symlink
+ * inside the export that leads outside, a `..` climb and a sibling sharing the prefix all fail. Only
+ * an `ask` is ever turned into an allow.
+ *
+ * This is a directory grant, not a read grant: the ask carries no read/write distinction (see
+ * `PermissionEvaluation`: action, resources, metadata, the originating tool call id), and when the
+ * user's rules allow `edit` for paths, `external_directory` is the only prompt between a model and a
+ * write there. The directory is therefore model-writable, and the integrity of what a reviewer reads
+ * comes from the export's manifest (`verifyExport`), never from this permission.
+ */
+export function reviewExportAsk(input: { action: string; effect: Effect; resources: ReadonlyArray<string>; root: string | undefined; canon: Canon }): boolean {
+  const { root } = input
+  if (input.effect !== "ask" || input.action !== EXTERNAL_DIRECTORY || root === undefined || input.resources.length === 0) return false
+  return input.resources.every((resource) => {
+    if (!resource.endsWith("/*")) return false
+    const dir = resource.slice(0, -2)
+    if (!dir.startsWith("/") || /[*?]/.test(dir)) return false
+    const resolved = input.canon(dir)
+    return resolved !== undefined && (resolved === root || resolved.startsWith(`${root}/`))
+  })
+}
+
 const FULL_SHA = /^[0-9a-f]{40}$/
 
 /** The permission resource of one merge: `<pr>@<sha>`. */
