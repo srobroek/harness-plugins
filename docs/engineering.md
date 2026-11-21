@@ -70,6 +70,13 @@ Move new shared code into `lib` instead of adding another edge.
 - Approved departures:
   - `code-challenge` names its tool `challenge_setup`, not `code_challenge_setup` as `<name>_<verb>` would give. The skill's other two tools, `challenge_lib_facts` and `challenge_scan`, share the same `challenge_` namespace, so one short prefix (reserved in `RESERVED_TOOL_PREFIXES`) covers the family and the agents' permission rules.
 
+## Read-only shell rules and subagent reads
+
+- `lib/src/read-only-shell.ts` owns `READ_ONLY_SHELL_RULES`, the one shell permission list of every read-only agent: `shell "*"` allowed, then a deny list for repository, remote, ledger and file mutations, `git -c`/`--config-env`, and visible redirection (`*>*`, `| tee`). Agent sources put `# {{rules read-only-shell}}` inside `permissions:`; `composeAgent` (`lib/src/fragments.ts`) expands it. `plugins/cad` gets it through the `readOnlyShell` overlay in `scripts/sync-cad.ts`, and `explore` (`plugins/agent-efficiency`) spreads the list. `tests/read-only-shell.test.ts` keeps every shipped read-only agent in step with it. `pr-reviewer` is not on this list: it reads untrusted PR content and stays on a two-command `gh pr` allowlist.
+- Enforcement limit: this is best-effort, the owner's chosen trade-off, not a sandbox. It stops accidental writes by a read-only agent, not a determined one. Prefix and pattern matching can be bypassed by interpreters (`python -c`, `node -e`), nested shells (`bash -c`), `git -C x push` and forms the matcher does not see. Those stay out of scope; do not grow the list into a parser.
+- `plugins/safety/opencode/src/subagent-reads.ts` owns the `subagent-external-reads` hook (feature id of the same name, registered before `subagent-prompts`). In a subagent session it turns an `external_directory` ask into an allow for `read`, `glob`, `grep`, `list` and the shell. Edit, write and patch keep the ask. Secrets keep it too: `SECRET_LOCATIONS` (exported), `*.env` and `*.env.*`, plus the `subagentSecretPaths` option. Limits: paths resolve through `realpath` before any check; a resource that is inside or an ancestor of a protected location (`~/*`, `/*`) is refused; a relative path, a mid-path wildcard or `..` keeps the ask. A root session is unchanged. `disable: ["subagent-external-reads"]` turns it off.
+- `scratch-dirs.ts` also allows the session directory spelled through a symlink alias, `<data>/opencode/shell/<project id>` and `<data>/opencode/tool-output`.
+
 ## code-challenge
 
 `plugins/code-challenge` is OpenCode only (`harnesses: ["opencode"]`). It challenges existing code for simplification, performance, stability, hand-rolled code and structure, and plans only: it edits no source file.

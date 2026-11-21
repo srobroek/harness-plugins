@@ -6682,9 +6682,8 @@ function denyUnanswerable(evaluation, session) {
 }
 
 // plugins/safety/opencode/src/subagent-reads.ts
-import { lstatSync as lstatSync3 } from "fs";
 import { homedir as homedir9 } from "os";
-import { basename as basename6, dirname as dirname8, isAbsolute as isAbsolute11, join as join9 } from "path";
+import { basename as basename6, isAbsolute as isAbsolute11, join as join9 } from "path";
 var SHELL_TOOLS = new Set(["shell", "bash"]);
 var SECRET_LOCATIONS = [
   "~/.ssh",
@@ -6701,26 +6700,19 @@ var ENV_FILE = /\.env(\.|$)/;
 function expand(location, home) {
   return location === "~" || location.startsWith("~/") ? join9(home, location.slice(1)) : location;
 }
-var isFile = (path) => {
-  try {
-    return !lstatSync3(path).isDirectory();
-  } catch {
-    return false;
-  }
-};
 function isSecretResource(resource, extra = [], home = homedir9()) {
   const expanded = expand(resource, home);
   if (!isAbsolute11(expanded))
     return true;
-  const path = expanded.replace(/\/\*{1,2}$/, "");
+  const path = expanded.replace(/\/\*{1,2}$/, "") || "/";
   if (/[*?[\]{}]/.test(path) || path.split("/").includes(".."))
     return true;
-  if (ENV_FILE.test(basename6(path)))
-    return true;
   const real = resolved(path);
+  if (ENV_FILE.test(basename6(path)) || ENV_FILE.test(basename6(real)))
+    return true;
   return [...SECRET_LOCATIONS, ...extra].some((location) => {
     const root = resolved(expand(location, home));
-    return inside(real, [root]) || isFile(root) && dirname8(root) === real;
+    return inside(real, [root]) || inside(root, [real]);
   });
 }
 function allowSubagentReads(evaluation, tool, isSubagent, extraSecrets = [], home) {
@@ -6754,7 +6746,7 @@ function readOptions(options) {
   const list = Array.isArray(raw) ? raw.filter((id) => FEATURE_IDS.includes(id)) : [];
   const allow = options?.opAllow;
   const opAllow = Array.isArray(allow) ? allow.filter((entry) => typeof entry === "string") : [];
-  const paths = options?.secretPaths;
+  const paths = options?.subagentSecretPaths;
   const secretPaths = Array.isArray(paths) ? paths.filter((entry) => typeof entry === "string") : [];
   return { disabled: new Set(list), redact: readRedactOptions(options), opAllow, scratchDirs: options?.scratchDirs !== false, secretPaths };
 }

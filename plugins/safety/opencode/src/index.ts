@@ -86,7 +86,7 @@ export type SafetyOptions = {
  * `scratchDirs: false` stops allowing the OpenCode temp folder, the project's worktree, shell-output and tool-output folders, and the session's own directory.
  * `disable: ["skill-references"]` stops allowing reads in installed skills' directories.
  * `disable: ["subagent-external-reads"]` stops allowing a subagent's read-only and shell `external_directory` asks;
- * `secretPaths` adds locations (`~/…` or absolute) to `SECRET_LOCATIONS` that stay denied.
+ * `subagentSecretPaths` adds locations (`~/…` or absolute) to `SECRET_LOCATIONS` that stay denied.
  * `disable: ["subagent-prompts"]` lets a subagent session's asks prompt instead of failing at once.
  * `redactSecrets`, `redactNames` and `redactExclude` configure secret redaction.
  */
@@ -95,7 +95,7 @@ export function readOptions(options: Readonly<Record<string, unknown>> | undefin
   const list = Array.isArray(raw) ? raw.filter((id): id is FeatureID => FEATURE_IDS.includes(id as FeatureID)) : []
   const allow = options?.opAllow
   const opAllow = Array.isArray(allow) ? allow.filter((entry): entry is string => typeof entry === "string") : []
-  const paths = options?.secretPaths
+  const paths = options?.subagentSecretPaths
   const secretPaths = Array.isArray(paths) ? paths.filter((entry): entry is string => typeof entry === "string") : []
   return { disabled: new Set(list), redact: readRedactOptions(options), opAllow, scratchDirs: options?.scratchDirs !== false, secretPaths }
 }
