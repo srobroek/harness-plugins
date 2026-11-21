@@ -1,4 +1,6 @@
 import type { Context } from "@opencode/plugin/promise/plugin"
+import { sessionRunning } from "@srobroek/opencode-lib/session-eviction"
+import { isSessionNotFound } from "@srobroek/opencode-lib/session-lanes"
 
 /** Text OpenCode's restart recovery posts (`session.synthetic`, `resume: false`) for a shell the restart killed. */
 export const RESTART_NOTICE = "Command cancelled because the server restarted"
@@ -28,9 +30,8 @@ export function isRestartNotice(text: string): boolean {
  * and its last run ended before the notice. A later run means the host already woke it.
  */
 export function needsNudge(session: SessionTimes, noticeCreated: number): boolean {
-  const { busy, idle, archived } = session.time
-  if (archived !== undefined || idle === undefined) return false
-  if (busy !== undefined && busy > idle) return false
+  const { idle, archived } = session.time
+  if (archived !== undefined || idle === undefined || sessionRunning(session)) return false
   return idle <= noticeCreated
 }
 
@@ -43,6 +44,8 @@ export type RestartNudgerDeps = {
   getSession: (sessionID: string) => Promise<SessionTimes>
   nudge: (sessionID: string) => Promise<void>
   schedule?: Schedule
+  /** Called for a lookup or post failure other than a missing session. */
+  warn?: (message: string, cause: unknown) => void
 }
 
 const defaultSchedule: Schedule = (fn, ms) => {
@@ -63,8 +66,9 @@ export function createRestartNudger(deps: RestartNudgerDeps): RestartNudger {
       if (disposed || nudged.has(sessionID) || !needsNudge(session, created)) return
       nudged.add(sessionID)
       await deps.nudge(sessionID)
-    } catch {
-      // A missing session or a failed post leaves the session as it was; the notice is not retried.
+    } catch (error) {
+      // The attempt is not retried. A missing session is expected (deleted meanwhile); anything else is reported.
+      if (!isSessionNotFound(error, sessionID)) deps.warn?.(`agent-efficiency: restartNudge could not wake session ${sessionID}`, error)
     } finally {
       active.delete(sessionID)
     }
@@ -95,6 +99,7 @@ export async function setupRestartNudge(
   const nudger = createRestartNudger({
     graceMs: options.graceMs,
     schedule,
+    warn,
     getSession: (sessionID) => ctx.session.get({ sessionID } as never) as unknown as Promise<SessionTimes>,
     nudge: async (sessionID) => {
       await ctx.session.synthetic({ sessionID, text: NUDGE_TEXT, description: "Shell lost to server restart", delivery: "queue", resume: true } as never)

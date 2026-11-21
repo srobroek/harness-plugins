@@ -13,21 +13,32 @@ import plugin, {
 const NOTICE = "<shell state=cancelled>Command cancelled because the server restarted</shell>"
 
 describe("parseRestartNudgeOptions", () => {
-  test("is off unless asked for", () => {
-    expect(parseRestartNudgeOptions({})).toBeUndefined()
-    expect(parseRestartNudgeOptions({ restartNudge: false })).toBeUndefined()
+  test.each([
+    ["unset", {}],
+    ["false", { restartNudge: false }],
+  ])("is off when restartNudge is %s", (_name, options) => {
+    expect(parseRestartNudgeOptions(options)).toBeUndefined()
   })
 
-  test("true selects the default grace; an object may set a positive grace", () => {
+  test("true selects the default grace", () => {
     expect(parseRestartNudgeOptions({ restartNudge: true })).toEqual({ graceMs: 5000 })
+  })
+
+  test("an object sets a positive grace", () => {
     expect(parseRestartNudgeOptions({ restartNudge: { graceMs: 250 } })).toEqual({ graceMs: 250 })
-    expect(parseRestartNudgeOptions({ restartNudge: { graceMs: -1 } })).toEqual({ graceMs: 5000 })
+  })
+
+  test.each([-1, 0, "250"])("an invalid grace %p falls back to the default", (graceMs) => {
+    expect(parseRestartNudgeOptions({ restartNudge: { graceMs } })).toEqual({ graceMs: 5000 })
   })
 })
 
 describe("isRestartNotice", () => {
-  test("matches the cancelled-shell notice only", () => {
+  test("matches the cancelled-shell notice", () => {
     expect(isRestartNotice(NOTICE)).toBe(true)
+  })
+
+  test("does not match an ordinary shell notice", () => {
     expect(isRestartNotice("Command finished with exit code 0")).toBe(false)
   })
 
@@ -38,9 +49,11 @@ describe("isRestartNotice", () => {
 
 describe("needsNudge", () => {
   const at = (time: SessionTimes["time"]): SessionTimes => ({ time })
-  test("an idle session whose last run ended before the notice needs a nudge", () => {
-    expect(needsNudge(at({ busy: 10, idle: 20 }), 100)).toBe(true)
-    expect(needsNudge(at({ idle: 20 }), 100)).toBe(true)
+  test.each([
+    ["ran before", { busy: 10, idle: 20 }],
+    ["has only an idle time before", { idle: 20 }],
+  ])("an idle session that %s the notice needs a nudge", (_name, time) => {
+    expect(needsNudge(at(time), 100)).toBe(true)
   })
   test("a session that is running does not", () => {
     expect(needsNudge(at({ busy: 150, idle: 20 }), 100)).toBe(false)
@@ -57,7 +70,8 @@ describe("needsNudge", () => {
 })
 
 describe("createRestartNudger", () => {
-  function harness(session: () => SessionTimes | Error = () => ({ time: { idle: 20 } })) {
+  function harness(session: () => SessionTimes | Error = () => ({ time: { idle: 20 } }), post: () => void = () => {}) {
+    const warnings: Array<{ message: string; cause: unknown }> = []
     const timers: Array<{ fn: () => void; ms: number; live: boolean }> = []
     const nudged: string[] = []
     const nudger = createRestartNudger({
@@ -68,8 +82,10 @@ describe("createRestartNudger", () => {
         return value
       },
       nudge: async (sessionID) => {
+        post()
         nudged.push(sessionID)
       },
+      warn: (message, cause) => warnings.push({ message, cause }),
       schedule: (fn, ms) => {
         const timer = { fn, ms, live: true }
         timers.push(timer)
@@ -83,7 +99,7 @@ describe("createRestartNudger", () => {
       await Promise.resolve()
       await Promise.resolve()
     }
-    return { nudger, timers, nudged, fire }
+    return { nudger, timers, nudged, fire, warnings }
   }
   const notice = (sessionID = "ses_a", text = NOTICE) => ({ sessionID, text, created: 100 })
 
@@ -127,23 +143,53 @@ describe("createRestartNudger", () => {
     expect(h.nudged.sort()).toEqual(["ses_a", "ses_b"])
   })
 
-  test("no nudge when the session was woken in the meantime, and a later notice may still nudge", async () => {
+  test("no nudge when the session was woken in the meantime", async () => {
+    const h = harness(() => ({ time: { busy: 110, idle: 200 } }))
+    h.nudger.notice(notice())
+    await h.fire()
+    expect(h.nudged).toEqual([])
+  })
+
+  test("a notice that needed no nudge leaves the session eligible for a later one", async () => {
     let state: SessionTimes = { time: { busy: 110, idle: 200 } }
     const h = harness(() => state)
     h.nudger.notice(notice())
     await h.fire()
-    expect(h.nudged).toEqual([])
     state = { time: { idle: 20 } }
     h.nudger.notice(notice())
     await h.fire()
     expect(h.nudged).toEqual(["ses_a"])
   })
 
-  test("no nudge when the session lookup fails", async () => {
-    const h = harness(() => new Error("gone"))
+  test("a missing session is skipped quietly", async () => {
+    const h = harness(() => new Error("session ses_a not found"))
     h.nudger.notice(notice())
     await h.fire()
     expect(h.nudged).toEqual([])
+    expect(h.warnings).toEqual([])
+  })
+
+  test("a failed lookup warns with the session id and cause", async () => {
+    const boom = new Error("backend down")
+    const h = harness(() => boom)
+    h.nudger.notice(notice())
+    await h.fire()
+    expect(h.nudged).toEqual([])
+    expect(h.warnings).toHaveLength(1)
+    expect(h.warnings[0]?.message).toContain("ses_a")
+    expect(h.warnings[0]?.cause).toBe(boom)
+  })
+
+  test("a failed post warns with the session id and cause", async () => {
+    const boom = new Error("post refused")
+    const h = harness(undefined, () => {
+      throw boom
+    })
+    h.nudger.notice(notice())
+    await h.fire()
+    expect(h.warnings).toHaveLength(1)
+    expect(h.warnings[0]?.message).toContain("ses_a")
+    expect(h.warnings[0]?.cause).toBe(boom)
   })
 
   test("dispose cancels pending nudges", async () => {
@@ -262,6 +308,16 @@ describe("plugin wiring", () => {
 
   test("stays quiet when teardown aborts the subscription", async () => {
     const fake = createFakeContext()
+    // The stock fake ignores the signal; this one rejects its pending read on abort, as a real stream does.
+    ;(fake.context.event as { subscribe: unknown }).subscribe = (options: { signal: AbortSignal }) => ({
+      [Symbol.asyncIterator]: () => ({
+        next: () =>
+          new Promise((_resolve, reject) => {
+            options.signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")))
+          }),
+        return: async () => ({ value: undefined, done: true }),
+      }),
+    })
     const warnings: unknown[][] = []
     const stop = await setupRestartNudge(fake.context, { graceMs: 5_000 }, undefined, (...args) => warnings.push(args))
     await stop()

@@ -1866,6 +1866,49 @@ function parseLeanOptions(options) {
   return { agents: new Set(ids), drop: new Set(drop) };
 }
 
+// lib/src/session-lanes.ts
+function isSessionNotFound(error, sessionID) {
+  if (typeof error !== "object" || error === null)
+    return false;
+  const fields = error;
+  for (const status of [fields.status, fields.statusCode])
+    if (status !== undefined && status !== 404)
+      return false;
+  const message = typeof fields.message === "string" ? fields.message : "";
+  if (/\b(location|service|directory|project|worktree|agent)\b/i.test(message))
+    return false;
+  const kind = [fields.name, fields._tag].filter((value) => typeof value === "string");
+  if (kind.some((value) => /^session.?not.?found/i.test(value)))
+    return fields.sessionID === undefined || fields.sessionID === sessionID;
+  const named = fields.sessionID === sessionID || message.includes(sessionID);
+  if (!named)
+    return false;
+  return kind.some((value) => /not.?found/i.test(value)) || /not found|no session|no such session|does not exist/i.test(message);
+}
+
+// lib/src/worktree-claims.ts
+var MAX_FILE_BYTES = 64 * 1024;
+
+// lib/src/session-eviction.ts
+var toMillis = (value) => {
+  if (typeof value === "number")
+    return value;
+  if (value instanceof Date)
+    return value.getTime();
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  }
+  return;
+};
+function sessionRunning(session) {
+  if (session.time?.archived !== undefined && session.time.archived !== null)
+    return false;
+  const busy = toMillis(session.time?.busy);
+  const idle = toMillis(session.time?.idle);
+  return busy !== undefined && (idle === undefined || busy > idle);
+}
+
 // plugins/agent-efficiency/opencode/src/restart-nudge.ts
 var RESTART_NOTICE = "Command cancelled because the server restarted";
 var DEFAULT_RESTART_NUDGE_GRACE_MS = 5000;
@@ -1880,10 +1923,8 @@ function isRestartNotice(text) {
   return text.includes(RESTART_NOTICE);
 }
 function needsNudge(session, noticeCreated) {
-  const { busy, idle, archived } = session.time;
-  if (archived !== undefined || idle === undefined)
-    return false;
-  if (busy !== undefined && busy > idle)
+  const { idle, archived } = session.time;
+  if (archived !== undefined || idle === undefined || sessionRunning(session))
     return false;
   return idle <= noticeCreated;
 }
@@ -1903,7 +1944,10 @@ function createRestartNudger(deps) {
         return;
       nudged.add(sessionID);
       await deps.nudge(sessionID);
-    } catch {} finally {
+    } catch (error) {
+      if (!isSessionNotFound(error, sessionID))
+        deps.warn?.(`agent-efficiency: restartNudge could not wake session ${sessionID}`, error);
+    } finally {
       active.delete(sessionID);
     }
   };
@@ -1926,6 +1970,7 @@ async function setupRestartNudge(ctx, options, schedule, warn = (message, cause)
   const nudger = createRestartNudger({
     graceMs: options.graceMs,
     schedule,
+    warn,
     getSession: (sessionID) => ctx.session.get({ sessionID }),
     nudge: async (sessionID) => {
       await ctx.session.synthetic({ sessionID, text: NUDGE_TEXT, description: "Shell lost to server restart", delivery: "queue", resume: true });
