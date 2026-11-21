@@ -1,17 +1,18 @@
-import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { extname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { extname, join, resolve } from "node:path"
 import { type Exec, MAX_STDERR_BYTES, MAX_STDOUT_BYTES, spawnTool } from "./exec.ts"
-import { parseOutput } from "./parsers.ts"
+import { detectLanguages, expandFiles, lstatOrNull, missingMarker } from "./files.ts"
+import { OutputError, parseOutput } from "./parsers.ts"
 import { pinOf } from "./pins.ts"
-import { ensureDir, writeFileNoFollow } from "./safe.ts"
+import { probeFor } from "./probes.ts"
 import { RECIPES } from "./recipes.ts"
+import { ensureDir, writeFileNoFollow } from "./safe.ts"
 import {
   type Candidate,
   type CoverageEntry,
   type Depth,
   type Hit,
-  LANGUAGES,
   type Language,
   LENSES,
   type Lens,
@@ -21,6 +22,7 @@ import {
   type Timing,
 } from "./types.ts"
 
+export { detectLanguages, expandFiles } from "./files.ts"
 export type { Exec }
 
 export type ScanDeps = {
@@ -30,155 +32,65 @@ export type ScanDeps = {
   /** Directory holding the `tool-dir` recipes' node_modules. */
   toolsDir?: string
   now?: () => number
+  /**
+   * The caller consented to run recipes that execute repository or downloaded code for this
+   * root. Without it those recipes are coverage gaps. It is host-side only: tool input cannot set it.
+   */
+  consent?: boolean
 }
 
 const DEFAULT_TIMEOUT_SECONDS = 120
 /** No caller can hold an analyzer longer than this. */
 export const MAX_TIMEOUT_SECONDS = 900
-const SKIP_DIRS = new Set([".git", "node_modules", "dist", "target", ".venv", "venv", "__pycache__"])
 
-const EXTENSION_LANGUAGE: Record<string, Language> = {
-  ".ts": "ts",
-  ".tsx": "ts",
-  ".js": "ts",
-  ".jsx": "ts",
-  ".mjs": "ts",
-  ".cjs": "ts",
-  ".mts": "ts",
-  ".cts": "ts",
-  ".py": "python",
-  ".go": "go",
-  ".rs": "rust",
+/** A run id is one path segment: a word character first, then word characters, dots and dashes, at most 64. */
+export function validRunId(runId: string): boolean {
+  return /^\w[\w.-]{0,63}$/.test(runId)
 }
 
-const MARKER_LANGUAGE: ReadonlyArray<readonly [string, Language]> = [
-  ["package.json", "ts"],
-  ["tsconfig.json", "ts"],
-  ["pyproject.toml", "python"],
-  ["setup.py", "python"],
-  ["requirements.txt", "python"],
-  ["go.mod", "go"],
-  ["Cargo.toml", "rust"],
-]
-
-/** Languages of a file list, or of the marker files at the root when no files are given. */
-export function detectLanguages(root: string, files: readonly string[]): Language[] {
-  const found = new Set<Language>()
-  if (files.length > 0) {
-    for (const file of files) {
-      const language = EXTENSION_LANGUAGE[extname(file)]
-      if (language) found.add(language)
-    }
-  } else {
-    for (const [marker, language] of MARKER_LANGUAGE) if (existsSync(join(root, marker))) found.add(language)
-  }
-  return LANGUAGES.filter((l) => found.has(l))
-}
-
-/** Whether `abs` is the root or below it. Both must already be real paths. */
-function inside(root: string, abs: string): boolean {
-  const rel = relative(root, abs)
-  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
-}
-
-const outside = (pattern: string): Error => new Error(`challenge_scan: path is outside the root: ${pattern}`)
-
-function realOrNull(path: string): string | null {
-  try {
-    return realpathSync(path)
-  } catch {
-    return null
-  }
-}
-
-/** Collect regular files below `dir`; symlinks are skipped, never followed. */
-function walk(dir: string, root: string, out: Set<string>): void {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isSymbolicLink()) continue
-    if (entry.isDirectory()) {
-      if (!SKIP_DIRS.has(entry.name)) walk(join(dir, entry.name), root, out)
-    } else out.add(relative(root, join(dir, entry.name)))
-  }
-}
-
-/**
- * Expand files, directories and globs into existing root-relative files. `root` is a real
- * path. A named path or a glob that leaves the root is an error; a symlink met while walking
- * or globbing that leaves it is skipped.
- */
-export function expandFiles(root: string, patterns: readonly string[]): string[] {
-  const found = new Set<string>()
-  for (const pattern of patterns) {
-    const isGlob = /[*?[{]/.test(pattern)
-    if (isGlob && (isAbsolute(pattern) || pattern.split("/").includes(".."))) throw outside(pattern)
-    const abs = resolve(root, pattern)
-    if (!isGlob) {
-      if (!inside(root, abs)) throw outside(pattern)
-      const real = realOrNull(abs)
-      if (real === null) continue
-      if (!inside(root, real)) throw outside(pattern)
-      if (statSync(real).isDirectory()) walk(real, root, found)
-      else found.add(relative(root, real))
-      continue
-    }
-    for (const match of new Bun.Glob(pattern).scanSync({ cwd: root, onlyFiles: true })) {
-      if (match.split("/").some((part) => SKIP_DIRS.has(part))) continue
-      const real = realOrNull(join(root, match))
-      if (real !== null && inside(root, real)) found.add(relative(root, real))
-    }
-  }
-  return [...found].sort()
-}
-
-/** Why a recipe's repo marker is missing, or null. A marker is `file` or `file:needle` (the file must contain it). */
-function missingMarker(root: string, markers: readonly string[] | undefined): string | null {
-  if (!markers) return null
-  for (const spec of markers) {
-    const [name = "", needle] = spec.split(":")
-    const stat = lstatOrNull(join(root, name))
-    if (stat === null || !stat.isFile() || stat.size > MAX_MARKER_BYTES) continue
-    if (needle === undefined || readFileSync(join(root, name), "utf8").includes(needle)) return null
-  }
-  return `no ${markers.map((m) => m.replace(":", " containing ")).join(" or ")} in the repository`
-}
-
-const MAX_MARKER_BYTES = 1024 * 1024
-
-function lstatOrNull(path: string): ReturnType<typeof lstatSync> | null {
-  try {
-    return lstatSync(path)
-  } catch {
-    return null
-  }
-}
-
-type Resolved = { prefix: string[] } | { gap: string }
+type Resolved = { prefix: string[]; oneOff: boolean } | { gap: string }
 
 /** The command prefix that runs a recipe's tool, or why it cannot run. Never installs anything. */
 export function resolveTool(recipe: Recipe, which: (b: string) => string | null, toolsDir: string): Resolved {
   if (recipe.install === "tool-dir") {
+    // Without a git directory there is no private place to provision tools; never look in a shared one.
+    if (toolsDir === "") return { gap: `${recipe.tool} needs a tools directory under the git dir, and the root is not a git repository` }
     const bin = join(toolsDir, "node_modules", ".bin", recipe.binary)
     return existsSync(bin)
-      ? { prefix: [bin] }
+      ? { prefix: [bin], oneOff: false }
       : {
           gap: `${recipe.tool} is not provisioned; run "bun add eslint@${pinOf("eslint")} @e18e/eslint-plugin@${pinOf("@e18e/eslint-plugin")}" in ${toolsDir}`,
         }
   }
   const local = which(recipe.binary)
-  if (local) return { prefix: [local] }
+  if (local) return { prefix: [local], oneOff: false }
   const pkg = recipe.package ?? recipe.binary
   if (recipe.install === "bunx") {
     const bunx = which("bunx")
-    if (bunx) return { prefix: [bunx, "-p", `${pkg}@${pinOf(pkg)}`, recipe.binary] }
+    if (bunx) return { prefix: [bunx, "-p", `${pkg}@${pinOf(pkg)}`, recipe.binary], oneOff: true }
   } else if (recipe.install === "uvx") {
     const uvx = which("uvx")
-    if (uvx) return { prefix: [uvx, "--from", `${pkg}==${pinOf(pkg)}`, recipe.binary] }
+    if (uvx) return { prefix: [uvx, "--from", `${pkg}==${pinOf(pkg)}`, recipe.binary], oneOff: true }
   } else if (recipe.install === "go-run") {
     const go = which("go")
-    if (go) return { prefix: [go, "run", `${recipe.subpath ? `${pkg}/${recipe.subpath}` : pkg}@${pinOf(pkg)}`] }
+    if (go) return { prefix: [go, "run", `${recipe.subpath ? `${pkg}/${recipe.subpath}` : pkg}@${pinOf(pkg)}`], oneOff: true }
   }
   const runner = recipe.install === "local" ? "" : ` and no ${recipe.install} runner is on PATH`
   return { gap: `${recipe.binary} is not installed${runner}` }
+}
+
+const RUNNER_NAME = { bunx: "bunx", uvx: "uvx", "go-run": "go run" } as const
+
+/** What running this recipe would execute or write beyond static analysis; empty when nothing. */
+function risksOf(recipe: Recipe, resolved: { prefix: string[]; oneOff: boolean }): string[] {
+  const risks: string[] = []
+  if (recipe.executes) risks.push(recipe.executes)
+  if (resolved.oneOff && recipe.install !== "local" && recipe.install !== "tool-dir") {
+    const pkg = recipe.package ?? recipe.binary
+    const spec = recipe.install === "uvx" ? `${pkg}==${pinOf(pkg)}` : `${pkg}@${pinOf(pkg)}`
+    risks.push(`downloads and runs ${spec} with ${RUNNER_NAME[recipe.install]}; writes the package cache`)
+  }
+  return risks
 }
 
 function expandArgs(recipe: Recipe, cfg: string, out: string, files: readonly string[], root: string): string[] {
@@ -194,37 +106,6 @@ function lensOf(recipe: Recipe, rule: string): Lens {
   return recipe.lenses[0] ?? "simplification"
 }
 
-type Probe = (hits: readonly Hit[]) => Promise<(rule: string) => boolean>
-
-/** Repo-config checks that one query of the tool answers; every other tool reports null. */
-function enabledProbe(recipe: Recipe, prefix: string[], root: string, exec: Exec, timeoutMs: number): Probe | null {
-  if (recipe.tool === "ruff") {
-    return async (hits) => {
-      const file = hits[0]?.file ?? "."
-      const run = await exec([...prefix, "check", "--show-settings", file], { cwd: root, timeoutMs })
-      const enabled = new Set<string>()
-      if (run.kind === "exited") for (const m of run.stdout.matchAll(/\(([A-Z]+[0-9]+)\)/g)) enabled.add(m[1] ?? "")
-      return (rule) => enabled.has(rule)
-    }
-  }
-  if (recipe.tool === "golangci-lint") {
-    return async () => {
-      const run = await exec([...prefix, "linters", "--json"], { cwd: root, timeoutMs })
-      const enabled = new Set<string>()
-      if (run.kind === "exited") {
-        try {
-          const parsed = JSON.parse(run.stdout) as { Enabled?: Array<{ name?: string }> }
-          for (const linter of parsed.Enabled ?? []) if (linter.name) enabled.add(linter.name)
-        } catch {
-          // an unreadable answer leaves every rule reported as not enabled
-        }
-      }
-      return (rule) => enabled.has(rule)
-    }
-  }
-  return null
-}
-
 async function gitDir(root: string, exec: Exec, which: (b: string) => string | null): Promise<string | null> {
   const git = which("git")
   if (!git) return null
@@ -232,82 +113,153 @@ async function gitDir(root: string, exec: Exec, which: (b: string) => string | n
   return run.kind === "exited" && run.exitCode === 0 ? run.stdout.trim() : null
 }
 
-/** A run id is one path segment: a word character first, then word characters, dots and dashes, at most 64. */
-export function validRunId(runId: string): boolean {
-  return /^\w[\w.-]{0,63}$/.test(runId)
-}
-
 const firstLine = (text: string): string => text.trim().split("\n")[0]?.slice(0, 200) ?? ""
 const slug = (id: string): string => id.replace(/[^\w.-]/g, "_")
 
-/** Run the recipes selected by the input and normalise their hits. */
-export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: AbortSignal): Promise<ScanReport> {
+type Prepared = {
+  root: string
+  exec: Exec
+  which: (b: string) => string | null
+  now: () => number
+  depth: Depth
+  lenses: readonly Lens[]
+  timeoutMs: number
+  files: string[]
+  languages: Language[]
+  git: string | null
+  toolsDir: string
+  hasGitignore: boolean
+  /** The file list matched nothing. */
+  emptySelection: boolean
+}
+
+async function prepare(input: ScanInput, deps: ScanDeps): Promise<Prepared> {
   // Analyzers report real paths, so a symlinked root (macOS /var -> /private/var) is resolved first.
   const root = realpathSync(resolve(input.root ?? process.cwd()))
+  if (!statSync(root).isDirectory()) throw new Error(`challenge_scan: root is not a directory: ${root}`)
   const exec = deps.exec ?? spawnTool
   const which = deps.which ?? ((b: string) => Bun.which(b))
-  const now = deps.now ?? Date.now
-  const depth: Depth = input.depth ?? "standard"
-  const lenses: readonly Lens[] = input.lenses && input.lenses.length > 0 ? input.lenses : LENSES
-  const timeoutMs = Math.min(input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000
   if (input.runId !== undefined && !validRunId(input.runId)) throw new Error(`challenge_scan: invalid runId "${input.runId}"`)
+  const requested = input.files !== undefined && input.files.length > 0
+  const files = requested ? expandFiles(root, input.files ?? []) : []
+  const emptySelection = requested && files.length === 0
+  const git = emptySelection ? null : await gitDir(root, exec, which)
+  return {
+    root,
+    exec,
+    which,
+    now: deps.now ?? Date.now,
+    depth: input.depth ?? "standard",
+    lenses: input.lenses && input.lenses.length > 0 ? input.lenses : LENSES,
+    timeoutMs: Math.min(input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000,
+    files,
+    languages: input.languages && input.languages.length > 0 ? input.languages : detectLanguages(root, files),
+    git,
+    toolsDir: deps.toolsDir ?? (git === null ? "" : join(git, "code-challenge", "tools")),
+    hasGitignore: lstatOrNull(join(root, ".gitignore"))?.isFile() === true,
+    emptySelection,
+  }
+}
 
-  const files = input.files && input.files.length > 0 ? expandFiles(root, input.files) : []
-  if (input.files !== undefined && input.files.length > 0 && files.length === 0) {
+type PlanItem =
+  | { recipe: Recipe; status: "ready"; resolved: { prefix: string[]; oneOff: boolean }; scoped: string[]; risks: string[] }
+  | { recipe: Recipe; status: "skipped" | "gap"; reason: string }
+
+/** Decide, per recipe, whether it runs, is skipped or is a gap, before anything executes. */
+function plan(p: Prepared): PlanItem[] {
+  const items: PlanItem[] = []
+  for (const recipe of RECIPES) {
+    if (recipe.language !== "any" && !p.languages.includes(recipe.language)) continue
+    if (recipe.language === "any" && p.languages.length === 0) continue
+    const skip = (reason: string) => items.push({ recipe, status: "skipped", reason })
+    if (!recipe.lenses.some((l) => p.lenses.includes(l))) {
+      skip("serves none of the requested lenses")
+      continue
+    }
+    if (p.depth === "quick" && recipe.needsBuild) {
+      skip("needs a build; skipped at quick depth")
+      continue
+    }
+    const missing = missingMarker(p.root, recipe.requiresMarker)
+    if (missing) {
+      skip(missing)
+      continue
+    }
+    let scoped: string[] = []
+    if (recipe.scope === "files" && p.files.length > 0) {
+      scoped = p.files.filter((f) => !recipe.extensions || recipe.extensions.includes(extname(f)))
+      if (scoped.length === 0) {
+        skip("no matching files in the file list")
+        continue
+      }
+    }
+    const resolved = resolveTool(recipe, p.which, p.toolsDir)
+    if ("gap" in resolved) {
+      items.push({ recipe, status: "gap", reason: resolved.gap })
+      continue
+    }
+    items.push({ recipe, status: "ready", resolved, scoped, risks: risksOf(recipe, resolved) })
+  }
+  return items
+}
+
+export type Risk = { recipe: string; tool: string; reasons: string[] }
+
+/** The recipes this scan would run that execute repository or downloaded code, and what each runs and writes. */
+export async function consentRisks(input: ScanInput, deps: ScanDeps = {}): Promise<Risk[]> {
+  const prepared = await prepare(input, deps)
+  if (prepared.emptySelection) return []
+  return plan(prepared).flatMap((item) =>
+    item.status === "ready" && item.risks.length > 0 ? [{ recipe: item.recipe.id, tool: item.recipe.tool, reasons: item.risks }] : [],
+  )
+}
+
+const MiB = 1024 * 1024
+
+/** Read a tool's report file: a regular file under the size cap, else the reason it cannot be used. */
+function readReport(path: string, name: string): { text: string } | { gap: string } {
+  const stat = lstatOrNull(path)
+  if (stat === null || !stat.isFile()) return { gap: `the report file ${name} was not written` }
+  if (stat.size > MAX_STDOUT_BYTES) return { gap: `the report file ${name} is over ${MAX_STDOUT_BYTES / MiB} MiB` }
+  return { text: readFileSync(path, "utf8") }
+}
+
+/** Run the recipes selected by the input and normalise their hits. */
+export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: AbortSignal): Promise<ScanReport> {
+  const p = await prepare(input, deps)
+  const { root, exec, depth } = p
+  if (p.emptySelection) {
     const coverage: CoverageEntry[] = [
       { recipe: "*", tool: "-", language: "-", status: "skipped", reason: "the file list matched no files" },
     ]
     return { root, languages: [], depth, candidates: [], coverage, timings: [], rawDir: null }
   }
-  const languages = input.languages && input.languages.length > 0 ? input.languages : detectLanguages(root, files)
-  const git = await gitDir(root, exec, which)
-  if (input.runId !== undefined && git === null) {
+  if (input.runId !== undefined && p.git === null) {
     throw new Error("challenge_scan: runId needs a git repository for the output directory")
   }
   const base =
-    input.runId !== undefined && git !== null
-      ? ensureDir(git, "code-challenge", input.runId, "scan")
+    input.runId !== undefined && p.git !== null
+      ? ensureDir(p.git, "code-challenge", input.runId, "scan")
       : mkdtempSync(join(tmpdir(), "code-challenge-scan-"))
-  const rawDir = input.runId !== undefined && git !== null ? base : null
-  const toolsDir = deps.toolsDir ?? join(git ?? base, "code-challenge", "tools")
-  const hasGitignore = existsSync(join(root, ".gitignore"))
-  const fileSet = new Set(files)
+  const rawDir = input.runId !== undefined && p.git !== null ? base : null
+  const fileSet = new Set(p.files)
 
   const coverage: CoverageEntry[] = []
   const timings: Timing[] = []
   const candidates: Candidate[] = []
 
   try {
-    for (const recipe of RECIPES) {
-      if (recipe.language !== "any" && !languages.includes(recipe.language)) continue
-      if (recipe.language === "any" && languages.length === 0) continue
+    for (const item of plan(p)) {
+      const { recipe } = item
       const entry = (status: CoverageEntry["status"], reason?: string): void => {
         coverage.push({ recipe: recipe.id, tool: recipe.tool, language: recipe.language, status, ...(reason ? { reason } : {}) })
       }
-      if (!recipe.lenses.some((l) => lenses.includes(l))) {
-        entry("skipped", "serves none of the requested lenses")
+      if (item.status !== "ready") {
+        entry(item.status, item.reason)
         continue
       }
-      if (depth === "quick" && recipe.needsBuild) {
-        entry("skipped", "needs a build; skipped at quick depth")
-        continue
-      }
-      const missing = missingMarker(root, recipe.requiresMarker)
-      if (missing) {
-        entry("skipped", missing)
-        continue
-      }
-      let scoped: string[] = []
-      if (recipe.scope === "files" && files.length > 0) {
-        scoped = files.filter((f) => !recipe.extensions || recipe.extensions.includes(extname(f)))
-        if (scoped.length === 0) {
-          entry("skipped", "no matching files in the file list")
-          continue
-        }
-      }
-      const resolved = resolveTool(recipe, which, toolsDir)
-      if ("gap" in resolved) {
-        entry("gap", resolved.gap)
+      if (item.risks.length > 0 && deps.consent !== true) {
+        entry("gap", `not run without consent: ${item.risks.join("; ")}`)
         continue
       }
       if (signal?.aborted) {
@@ -316,23 +268,23 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
       }
 
       const name = slug(recipe.id)
-      const cfg = join(base, "cfg", name)
-      const out = join(base, "out", name)
-      ensureDir(base, "cfg", name)
-      ensureDir(base, "out", name)
-      for (const [file, content] of Object.entries(recipe.configFiles?.({ root, hasGitignore }) ?? {})) {
+      // eslint resolves its plugin from the config's own location, so that config sits in the tools directory.
+      const cfg = recipe.install === "tool-dir" ? p.toolsDir : ensureDir(base, "cfg", name)
+      const out = ensureDir(base, "out", name)
+      for (const [file, content] of Object.entries(
+        recipe.configFiles?.({ root, hasGitignore: p.hasGitignore, toolsDir: p.toolsDir }) ?? {},
+      )) {
         writeFileNoFollow(join(cfg, file), content)
       }
-      const argv = [...resolved.prefix, ...expandArgs(recipe, cfg, out, scoped, root)]
-      const started = now()
-      const run = await exec(argv, { cwd: root, timeoutMs, signal })
-      const exitCode = run.kind === "exited" ? run.exitCode : null
-      timings.push({ recipe: recipe.id, tool: recipe.tool, ms: now() - started, exitCode })
+      const argv = [...item.resolved.prefix, ...expandArgs(recipe, cfg, out, item.scoped, root)]
+      const started = p.now()
+      const run = await exec(argv, { cwd: root, timeoutMs: p.timeoutMs, signal })
+      timings.push({ recipe: recipe.id, tool: recipe.tool, ms: p.now() - started, exitCode: run.kind === "exited" ? run.exitCode : null })
       writeFileNoFollow(join(base, `${name}.stdout`), run.stdout)
       writeFileNoFollow(join(base, `${name}.stderr`), run.stderr)
 
       if (run.kind === "timeout") {
-        entry("gap", `timed out after ${timeoutMs / 1000}s`)
+        entry("gap", `timed out after ${p.timeoutMs / 1000}s`)
         continue
       }
       if (run.kind === "aborted") {
@@ -340,7 +292,8 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
         continue
       }
       if (run.kind === "overflow") {
-        entry("gap", `${run.stream} exceeded ${(run.stream === "stdout" ? MAX_STDOUT_BYTES : MAX_STDERR_BYTES) / 1024 / 1024} MiB; the tool was ended`)
+        const cap = run.stream === "stdout" ? MAX_STDOUT_BYTES : MAX_STDERR_BYTES
+        entry("gap", `${run.stream} exceeded ${cap / MiB} MiB; the tool was ended`)
         continue
       }
       if (run.kind === "lost") {
@@ -354,16 +307,27 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
 
       let text = run.stdout
       if (recipe.outputFile) {
-        const path = join(out, recipe.outputFile)
-        text = existsSync(path) ? readFileSync(path, "utf8") : ""
+        const report = readReport(join(out, recipe.outputFile), recipe.outputFile)
+        if ("gap" in report) {
+          entry("gap", report.gap)
+          continue
+        }
+        text = report.text
       }
-      let hits = parseOutput(recipe.parser, text, { root, cwd: root })
-      if (fileSet.size > 0 && recipe.scope === "repo") hits = hits.filter((h) => fileSet.has(h.file))
-      const probe = hits.length > 0 ? enabledProbe(recipe, resolved.prefix, root, exec, timeoutMs) : null
-      const isEnabled = probe ? await probe(hits) : null
+      let hits: Hit[]
+      try {
+        hits = parseOutput(recipe.parser, text, { root, cwd: root })
+      } catch (error) {
+        if (!(error instanceof OutputError)) throw error
+        entry("gap", `unparseable output: ${error.message}`)
+        continue
+      }
+      if (fileSet.size > 0 && recipe.scope === "repo") hits = hits.filter((h) => h.file !== null && fileSet.has(h.file))
+      const probe = hits.length > 0 ? probeFor(recipe, { root, prefix: item.resolved.prefix, exec, timeoutMs: p.timeoutMs, signal }) : null
+      const enabled = probe ? await probe(hits) : null
       for (const hit of hits) {
         const lens = lensOf(recipe, hit.rule)
-        if (!lenses.includes(lens)) continue
+        if (!p.lenses.includes(lens)) continue
         candidates.push({
           lens,
           tool: recipe.tool,
@@ -371,7 +335,7 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
           file: hit.file,
           line: hit.line,
           message: hit.message,
-          ruleEnabledInRepo: isEnabled ? isEnabled(hit.rule) : null,
+          ruleEnabledInRepo: enabled ? enabled(hit) : null,
         })
       }
       entry("ran")
@@ -380,6 +344,8 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
     if (rawDir === null) rmSync(base, { recursive: true, force: true })
   }
 
-  candidates.sort((a, b) => a.file.localeCompare(b.file) || (a.line ?? 0) - (b.line ?? 0) || a.rule.localeCompare(b.rule))
-  return { root, languages, depth, candidates, coverage, timings, rawDir }
+  const byFile = (a: Candidate, b: Candidate): number =>
+    (a.file ?? "").localeCompare(b.file ?? "") || (a.line ?? 0) - (b.line ?? 0) || a.rule.localeCompare(b.rule)
+  candidates.sort(byFile)
+  return { root, languages: p.languages, depth, candidates, coverage, timings, rawDir }
 }
