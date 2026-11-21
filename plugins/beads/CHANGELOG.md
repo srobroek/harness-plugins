@@ -1,3 +1,9 @@
+## beads [0.8.4](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.3...beads--v0.8.4) (2026-11-21)
+
+### Bug Fixes
+
+* **beads:** preflight PATH remedy, ledger-busy retry, real cwd symptom ([8305e1d](https://github.com/srobroek/harness-plugins/commit/8305e1d18fbb73c0da75e335fcc6a774dc92af1f))
+
 ## beads [0.8.3](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.2...beads--v0.8.3) (2026-11-21)
 
 ## beads [0.8.2](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.1...beads--v0.8.2) (2026-11-21)
