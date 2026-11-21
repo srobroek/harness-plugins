@@ -1,0 +1,62 @@
+# mol-challenge-challenge -- the CHALLENGE phase of a code-challenge run, runnable alone
+#
+# Install: run the challenge_setup tool, which copies every code-challenge formula into
+# <repo>/.beads/formulas/, or copy this file there (or into ~/.beads/formulas/).
+# Pour one phase:
+#   bd mol pour mol-challenge-challenge --var target=<paths> --var run_id=<run-id> --var depth=<depth> --var mode=<mode>
+#
+# The phase needs the earlier phases' files in the run directory; each file is named in the
+# code-challenge skill's references/run-storage.md. The vars have no defaults because bd mol bond
+# does not apply them.
+#
+# PRECONDITION: the skills and agents named here ship in the code-challenge plugin
+# (srobroek.code-challenge). Install it first.
+#
+# Evidence rule: every finding carries a tier -- proven, measured or hypothesis -- and a
+# path:line locator. A speed claim without a measurement is a hypothesis.
+formula = "mol-challenge-challenge"
+description = "Run the CHALLENGE phase for {{target}}: one lens scout per selected lens, merged into findings with evidence"
+type = "workflow"
+
+[vars.target]
+required = true
+description = "paths, packages or diff range under challenge"
+
+[vars.run_id]
+required = true
+description = "run id; the run directory is <git-dir>/code-challenge/<run-id>/"
+
+[vars.depth]
+required = true
+description = "quick, standard or deep"
+
+[vars.mode]
+required = true
+description = "interactive or autonomous"
+
+[[steps]]
+id = "dispatch-scouts"
+title = "DISPATCH one mol-challenge-lens per lens"
+type = "task"
+labels = ["code-challenge", "sub:challenge", "phase:challenge"]
+description = """
+Run the code-challenge skill, phase CHALLENGE, from run {{run_id}}. You (the lead) do the
+dispatching: for each lens selected in intake.json, bond mol-challenge-lens in parallel with
+--var lens=<lens> --var target={{target}} --var run_id={{run_id}}, and put the scan hits for that
+lens, the frozen surfaces and the benchmark allowance in the bead. The scouts only analyse and
+reply; they spawn nothing and write nothing.
+"""
+
+[[steps]]
+id = "merge-findings"
+title = "MERGE the scout replies into findings.json"
+type = "task"
+needs = ["dispatch-scouts"]
+labels = ["code-challenge", "sub:challenge", "phase:challenge"]
+description = """
+You (the lead) write findings.json from the scout replies. Collapse one root cause into one finding with a recurrence count. Every finding carries a lens,
+a path:line locator, an impact, a blast radius, an evidence tier (proven, measured or hypothesis)
+and, for simplification, library and structure findings, test protection (protected, partial or
+unprotected). Apply the abstraction-seam rule: no pluggability signal means extra abstraction is
+an over-engineering finding. Never upgrade a tier because lenses agree. Write findings.json.
+"""

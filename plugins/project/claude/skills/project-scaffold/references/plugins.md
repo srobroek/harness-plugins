@@ -60,6 +60,7 @@ Loaded in every project by the global configuration. Do not add them per project
 | autopilot | Unattended runs: /autopilot arms a no-questions session with a journal, a 4-minute tick and stop conditions |
 | aws | AWS working guidance as a skill, plus the read-only AWS MCP Server and the AWS Pricing MCP server, added in AWS projects |
 | chezmoi | Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill |
+| code-challenge | Challenge code for simplification, performance, stability, hand-rolled code and structure: one skill, a /code-challenge command, phase formulas and two read-only challenger agents |
 | debate | Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else |
 | delivery | Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2 |
 | dep-update | Classify dependency updates by semver safety and apply confirmed patch and minor bumps |
