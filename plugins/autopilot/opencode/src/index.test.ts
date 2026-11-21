@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFakeContext, type FakeContext } from "@srobroek/opencode-lib/testing"
 import { DENY_QUESTION, HANDOFF_LABEL, MAX_REPROMPTS, REPROMPT, setupAutopilot, type WriteLock } from "./index.ts"
-import type { Run } from "./rundir.ts"
+import { type Run, RunDir, RunFileError } from "./rundir.ts"
 import { type Clock, Ticks } from "./timer.ts"
 
 const NOW = new Date(2026, 10, 20, 14, 0).getTime()
@@ -1040,6 +1040,31 @@ describe("a stop whose artifacts fail to write", () => {
       .at(-1)
     expect(join(latest(), `state.${highest}.json`)).toBe(successorPath)
     expect(JSON.parse(successorText)).toMatchObject({ phase: "stopping", ticks: 41 })
+  })
+
+  test("autopilot_log whose write loses a create-exclusive race journals an issue, not a parked blocker", async () => {
+    await armed()
+    // The entry's own append loses the race once; the follow-up issue append then succeeds.
+    const original = RunDir.prototype.append
+    let lost = false
+    RunDir.prototype.append = function (this: RunDir, entry) {
+      if (!lost && entry.type === "progress") {
+        lost = true
+        throw new RunFileError("stale", this.path, "generation 7 was written first by another writer")
+      }
+      return original.call(this, entry)
+    }
+    let result: string
+    try {
+      result = await log({ type: "progress", summary: "halfway through the queue" })
+    } finally {
+      RunDir.prototype.append = original
+    }
+    expect(result).toContain("state moved on")
+    const last = journal().at(-1) as { type: string; parked?: boolean }
+    expect(last).toMatchObject({ type: "issue", summary: expect.stringContaining("lost to another writer") })
+    expect(last.parked).toBeUndefined()
+    expect(journal().some((entry) => entry.type === "blocker")).toBe(false)
   })
 
   test.each([
