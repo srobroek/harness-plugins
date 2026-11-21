@@ -52,8 +52,12 @@ earlier hook gave for asking follows the denial. Turn the check off with `{ "dis
 The `skill-references` check allows the read-only tools (`read`, `glob`, `grep`, `list`) without an
 `external_directory` prompt. It applies inside the directory of each skill the host lists, such as an
 installed plugin's skill in the plugin cache. Writes, shell commands and other paths in the cache still
-ask, or fail at once in a subagent. The check ignores a skill whose directory is the filesystem root,
-the home folder or a parent of it. Turn it off with `{ "disable": ["skill-references"] }`.
+ask, or fail at once in a subagent. Turn it off with `{ "disable": ["skill-references"] }`.
+
+The check compares real paths, with symlinks resolved, and ignores a skill when:
+
+- its directory is the filesystem root, the home folder or a parent of it, or links to one of them.
+- its directory or the home folder does not resolve.
 
 These checks run in this plugin's `permission.hook("evaluate")` in plugin order. A plugin loaded after
 `safety` can still turn an allow into a prompt. As a backstop, the plugin watches each
