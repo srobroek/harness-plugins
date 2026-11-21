@@ -8,13 +8,13 @@ The repository is a workspace of OpenCode V2 plugins written in TypeScript, and 
 
 | Tool | Version | Source |
 | --- | --- | --- |
-| bun | 1.4.4 | `.mise.toml`, `bun-version` in `.github/workflows/ci.yml` |
+| bun | 1.4.5 | `.mise.toml`, `bun-version` in `.github/workflows/ci.yml` |
 | TypeScript | 7.0.2 | `package.json` |
 | Biome | 2.6.8 | `package.json`; linter only, the formatter is off (`biome.json`) |
 | `@opencode/plugin`, `client`, `theme` | 2.3.2 | `package.json` |
 | `@opentui/core`, `@opentui/solid` | 0.9.3 | `package.json` |
 | `solid-js` | 1.9.19 | `package.json` |
-| `effect` | 4.1.4 | `package.json` |
+| `effect` | 4.1.5 | `package.json` |
 | `smol-toml` | 1.9.1 | `lib/package.json`; `lib` and `safety` read TOML with it |
 | `jsonc-parser` | 3.3.1 | `package.json`; `model-roles` edits JSONC config files with it |
 | `spdx-expression-parse` | 5.0.0 | `package.json`; `code-challenge` parses SPDX licence expressions with it (types: `@types/spdx-expression-parse` 4.0.0) |

@@ -86,7 +86,7 @@ mise install    # bun and just
 bun install --frozen-lockfile
 bun run build    # scripts/build.ts, then harness-kit build
 bun run check    # harness-kit check: generated files are current, Claude plugins validate
-npm test
+bun test
 bun run typecheck
 bun run lint
 just verify      # everything CI runs

@@ -70,5 +70,6 @@ test-executables:
 python-tests:
     for dir in plugins/cad/common/formulas plugins/beads/common/skills/beads-preflight plugins/worktrunk/common/skills/worktrunk-preflight; do python3 -B -m unittest discover -s "$dir" -p 'test_*.py' -v; done
 
-# Everything CI runs: the `check` job (harness-kit check, tests, tsc) and the `repo-checks` job.
-verify: typecheck lint test build-check check plugin-table-check steering pitfalls agent-roles descriptions concerns test-executables release-prepare-check python-tests
+# Everything CI runs: the `check` job (harness-kit check, tests, tsc), the `repo-checks` job and the `cad` job.
+# CI runs `cad-check` only when plugins/cad changes; locally it always runs, so `verify` needs network.
+verify: typecheck lint test build-check check plugin-table-check steering pitfalls agent-roles descriptions concerns test-executables release-prepare-check python-tests cad-check
