@@ -2717,6 +2717,22 @@ describe("an execution that fails because its location is gone", () => {
     await cleanup()
   })
 
+  test.each([
+    ["an active lane", "active"],
+    ["a retired lane", "landed"],
+  ] as const)("running work held on the gone worktree of %s keeps every idle session where it is", async (_name, state) => {
+    const { fake, common, cleanup } = await start({ missing: [WT] }, { stored: [lane({ state })] })
+    grandchild(fake)
+    // A live hold: the idle gate recorded a shell still running for the worktree.
+    setHold(common, WT, "ses_x", [{ kind: "shell", id: "sh1" }], NOW)
+    fake.emit(locationGone)
+    // Done when the removal recorded what it kept pending, or retired the lane having moved everything.
+    if (state === "active") await until(() => stored(fake).removal?.pending !== undefined || stored(fake).state === "removed")
+    else await settle(300)
+    expect(moves(fake)).toEqual([])
+    await cleanup()
+  })
+
   test("a child whose resume was admitted but has not started yet stays where it is when a descendant fails", async () => {
     const { fake, cleanup } = await start({ missing: [WT] }, { stored: [lane({ resumedAt: NOW })] })
     grandchild(fake)
