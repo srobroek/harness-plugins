@@ -1,7 +1,7 @@
 {
   "name": "design",
   "description": "UI and UX design skills: design-system audit, DESIGN.md, rendered-surface review, accessibility audit, motion, microcopy, prototypes, and wireframes.",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "author": {
     "name": "Sjors Robroek",
     "url": "https://github.com/srobroek"
