@@ -2653,9 +2653,9 @@ function createLifecycle(deps) {
         }
         const seq = options.seq ?? eventSeq;
         const earlier = stored.state === "removing" ? stored.removal : undefined;
-        const present = options.gone !== true && earlier?.pending === undefined && await deps.exists(stored.directory);
-        if (present && options.ifGone === true)
+        if (options.ifGone === true && await deps.exists(stored.directory))
           return keptBecause("present", "the worktree exists");
+        const present = options.gone !== true && earlier?.pending === undefined && await deps.exists(stored.directory);
         let proof;
         let head;
         let deleteAt;

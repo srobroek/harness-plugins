@@ -904,9 +904,10 @@ export function createLifecycle(deps: LifecycleDeps) {
         }
         const seq = options.seq ?? eventSeq
         const earlier = stored.state === "removing" ? stored.removal : undefined
+        // Read on its own: a removal with moves pending never looks at the disk below, so a worktree that is back would pass unseen.
+        if (options.ifGone === true && (await deps.exists(stored.directory))) return keptBecause("present", "the worktree exists")
         // Once the host removed the worktree, a retry only moves sessions: a directory that exists again is not this removal's.
         const present = options.gone !== true && earlier?.pending === undefined && (await deps.exists(stored.directory))
-        if (present && options.ifGone === true) return keptBecause("present", "the worktree exists")
         let proof: "empty" | "merged" | "landed" | undefined
         let head: string | undefined
         let deleteAt: string | undefined

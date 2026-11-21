@@ -2519,6 +2519,40 @@ describe("a lane's removal leaves a nested lane where it is", () => {
   })
 })
 
+describe("a removal's session moves read where each session sits", () => {
+  const moved = (fake: Fake) => fake.calls.filter((entry) => entry.method === "session.move").map((entry) => (entry.input as { sessionID: string }).sessionID)
+  /** A removal that took the worktree away but still has `pending` moves, seeded after the start (which would finish it). */
+  const startPending = async (pending: string[]) => {
+    const started = await start({ exists: false }, { stored: [] })
+    await settle()
+    started.fake.storage.set(laneKey(CHILD), lane({ state: "removing", removal: { retireAs: "removed", head: BASE, pending } }))
+    return started
+  }
+
+  test("a descendant whose location cannot be read is not moved and stays pending", async () => {
+    const { fake, cleanup } = await startPending([])
+    fake.sessions.set("ses_grand", { id: "ses_grand", parentID: CHILD, projectID: "prj", location: { directory: WT }, time: { busy: 1, idle: 2 } })
+    const session = fake.context.session as unknown as { get: (input: { sessionID: string }) => Promise<unknown> }
+    const original = session.get.bind(session)
+    session.get = (input) => (input.sessionID === "ses_grand" ? Promise.reject(new Error("service down")) : original(input))
+    fake.emit({ type: "session.idle", data: { sessionID: PARENT } })
+    await until(() => stored(fake).removal?.pending?.includes("ses_grand") === true)
+    expect(stored(fake).state).toBe("removing")
+    expect(stored(fake).removal?.pending).toEqual(["ses_grand"])
+    expect(moved(fake)).toEqual([CHILD])
+    await cleanup()
+  })
+
+  test("a pending session the host says does not exist no longer holds the lane", async () => {
+    const { fake, cleanup } = await startPending(["ses_gone"])
+    fake.emit({ type: "session.idle", data: { sessionID: PARENT } })
+    await until(() => stored(fake).state !== "removing")
+    expect(stored(fake).state).toBe("removed")
+    expect(moved(fake)).toEqual([CHILD])
+    await cleanup()
+  })
+})
+
 describe("startup reconciles lanes left in removing", () => {
   const moves = (fake: Fake) =>
     fake.calls.filter((entry) => entry.method === "session.move").map((entry) => [(entry.input as { sessionID: string }).sessionID, (entry.input as { directory: string }).directory])
@@ -2592,10 +2626,16 @@ describe("an execution that fails because its location is gone", () => {
     await cleanup()
   })
 
-  test("a worktree that is back by the time the lock is taken is neither removed nor emptied", async () => {
+  test.each([
+    ["an active lane", lane()],
+    ["a lane whose removal still has moves pending", lane({ state: "removing", removal: { retireAs: "removed", head: BASE, pending: [] } })],
+  ])("the worktree of %s that is back by the time the lock is taken is neither removed nor emptied", async (_name, seeded) => {
     const common = mkdtempSync(join(tmpdir(), "common-"))
     COMMONS.push(common)
-    const { fake, state, worktree, cleanup } = await start({ head: BASE, ahead: 0, missing: [WT] }, { common, lock: { waitMs: 5_000 } })
+    const { fake, state, worktree, cleanup } = await start({ head: BASE, ahead: 0, missing: [WT] }, { stored: [], common, lock: { waitMs: 5_000 } })
+    // Seeded after the start, which finishes a lane in `removing` on its own.
+    await settle()
+    fake.storage.set(laneKey(CHILD), seeded)
     grandchild(fake)
     // Another holder has the lane lock while the failure is handled; the worktree comes back meanwhile.
     let free!: () => void
@@ -2614,7 +2654,7 @@ describe("an execution that fails because its location is gone", () => {
     await settle(300)
     expect(worktree).toEqual([])
     expect(moves(fake)).toEqual([])
-    expect(stored(fake).state).toBe("active")
+    expect(stored(fake).state).toBe(seeded.state)
     await cleanup()
   })
 
