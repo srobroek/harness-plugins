@@ -2502,6 +2502,23 @@ describe("finalize: the lane's descendants in the worktree protect it", () => {
   })
 })
 
+describe("a lane's removal leaves a nested lane where it is", () => {
+  test("a descendant that works in its own lane's worktree is not moved with its ancestor's lane", async () => {
+    const NESTED = "/wt/lane-b"
+    const { fake, worktree, cleanup } = await start(
+      { head: BASE, ahead: 0 },
+      { stored: [lane(), lane({ child: "ses_grand", parent: CHILD, directory: NESTED, branch: "lane-b", parentDir: WT })] },
+    )
+    fake.sessions.set("ses_grand", { id: "ses_grand", parentID: CHILD, projectID: "prj", location: { directory: NESTED }, time: { busy: 1, idle: 2 } })
+    fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await until(() => stored(fake).state === "removed")
+    expect(worktree.filter((entry) => entry.method === "remove").map((entry) => entry.input.directory)).toEqual([WT])
+    expect(fake.calls.filter((entry) => entry.method === "session.move").map((entry) => (entry.input as { sessionID: string }).sessionID)).toEqual([CHILD])
+    expect(stored(fake, "ses_grand").state).toBe("active")
+    await cleanup()
+  })
+})
+
 describe("startup reconciles lanes left in removing", () => {
   const moves = (fake: Fake) =>
     fake.calls.filter((entry) => entry.method === "session.move").map((entry) => [(entry.input as { sessionID: string }).sessionID, (entry.input as { directory: string }).directory])
@@ -2572,6 +2589,32 @@ describe("an execution that fails because its location is gone", () => {
     await settle(50)
     expect(moves(fake)).toEqual([["ses_grand", REPO]])
     expect(stored(fake).state).toBe("landed")
+    await cleanup()
+  })
+
+  test("a worktree that is back by the time the lock is taken is neither removed nor emptied", async () => {
+    const common = mkdtempSync(join(tmpdir(), "common-"))
+    COMMONS.push(common)
+    const { fake, state, worktree, cleanup } = await start({ head: BASE, ahead: 0, missing: [WT] }, { common, lock: { waitMs: 5_000 } })
+    grandchild(fake)
+    // Another holder has the lane lock while the failure is handled; the worktree comes back meanwhile.
+    let free!: () => void
+    let taken!: () => void
+    const acquired = new Promise<void>((done) => (taken = done))
+    const held = withDiskLock(common, WT, { sessionID: "ses_other", waitMs: 5_000 }, async () => {
+      taken()
+      await new Promise<void>((done) => (free = done))
+    })
+    await acquired
+    fake.emit(locationGone)
+    await settle(100)
+    state.missing = []
+    free()
+    await held
+    await settle(300)
+    expect(worktree).toEqual([])
+    expect(moves(fake)).toEqual([])
+    expect(stored(fake).state).toBe("active")
     await cleanup()
   })
 

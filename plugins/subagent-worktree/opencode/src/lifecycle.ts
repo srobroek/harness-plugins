@@ -88,10 +88,12 @@ export type FinalizeOptions = {
   gone?: boolean
   /** How the lane is retired; by default `removed` for an empty lane, `merged` for a `target` proof and `landed` otherwise. */
   retireAs?: "removed" | "merged" | "landed"
+  /** The caller acts on the worktree being gone: one that exists under the lock is kept, unchecked and unremoved. */
+  ifGone?: boolean
 }
 export type Finalized =
   | { removed: true }
-  | { removed: false; kept: "retired" | "running" | "dirty" | "unmerged" | "denied" | "pending" | "error"; reason: string }
+  | { removed: false; kept: "retired" | "running" | "dirty" | "unmerged" | "denied" | "pending" | "present" | "error"; reason: string }
 
 type SessionLike = { id: string; parentID?: string; projectID: string; location: { directory: string }; time?: Record<string, unknown> }
 
@@ -847,16 +849,35 @@ export function createLifecycle(deps: LifecycleDeps) {
   }
 
   /**
-   * Move the lane's sessions (the child and everything it spawned, plus any an earlier call could not move) to the
-   * parent's checkout, else the repository's canonical one. `pending` lists the ones that failed; `incomplete` says
-   * the listing may have missed some. Either keeps the lane from retiring.
+   * Move the lane's sessions (the child and everything it spawned that sits in the worktree, plus any an earlier call
+   * could not move) to the parent's checkout, else the repository's canonical one. A descendant elsewhere (in its own
+   * lane's worktree, say) stays. `pending` lists the ones that failed or could not be read; `incomplete` says the
+   * listing may have missed some. Either keeps the lane from retiring.
    */
   const moveLaneSessions = async (lane: Lane, common: string | undefined, earlier: readonly string[] = []) => {
     const found = await laneSessions(sessionClient, lane.child)
     if (!found.complete) console.error(`subagent-worktree: the session listing of ${lane.child} is incomplete; moving the ${found.ids.length} found`)
     const destination = (await deps.exists(lane.parentDir)) ? lane.parentDir : canonicalCheckout(common, lane.parentDir)
-    const results = await moveSessionsHome(sessionClient, [...new Set([...found.ids, ...earlier])], destination)
     const pending: string[] = []
+    const worktree = canonical(lane.directory)
+    const ids: string[] = []
+    for (const id of new Set([...found.ids, ...earlier])) {
+      if (id === lane.child) {
+        ids.push(id)
+        continue
+      }
+      // The host keeps a moved session's old location until the move, so this reads where it sits even after the removal.
+      const session = await lookupSession(id)
+      if (session === "missing") continue
+      const directory = session === "unknown" ? undefined : session.location?.directory
+      if (typeof directory !== "string") {
+        pending.push(id)
+        console.error(`subagent-worktree: could not read where ${id} sits; it is not moved yet`)
+        continue
+      }
+      if (within(canonical(directory), worktree) || within(directory, lane.directory)) ids.push(id)
+    }
+    const results = await moveSessionsHome(sessionClient, ids, destination)
     for (const result of results) {
       if (result.status !== "error") continue
       pending.push(result.id)
@@ -885,6 +906,7 @@ export function createLifecycle(deps: LifecycleDeps) {
         const earlier = stored.state === "removing" ? stored.removal : undefined
         // Once the host removed the worktree, a retry only moves sessions: a directory that exists again is not this removal's.
         const present = options.gone !== true && earlier?.pending === undefined && (await deps.exists(stored.directory))
+        if (present && options.ifGone === true) return keptBecause("present", "the worktree exists")
         let proof: "empty" | "merged" | "landed" | undefined
         let head: string | undefined
         let deleteAt: string | undefined
@@ -980,13 +1002,15 @@ export function createLifecycle(deps: LifecycleDeps) {
       }
       if (failed === undefined || lane === undefined || (await deps.exists(lane.directory))) return
       if (lane.state === "active" || lane.state === "removing") {
-        await finalize(lane)
+        // Gone is read again under the lock: a worktree back by then is left as it is.
+        await finalize(lane, { ifGone: true })
         return
       }
       if (sessionID === lane.child) return
       const owner = lane
       await withLock(owner.directory, owner.parentDir, async () => {
-        // Re-read under the lock: the lane may have been revived elsewhere, the session moved meanwhile.
+        // Re-read under the lock: the worktree may be back, the lane revived elsewhere, the session moved meanwhile.
+        if (await deps.exists(owner.directory)) return
         const latest = await load(owner.child)
         if (latest === undefined || latest.state === "active" || latest.state === "removing" || canonical(latest.directory) !== canonical(owner.directory)) return
         const current = await withinLookup(deps.getSession(sessionID))

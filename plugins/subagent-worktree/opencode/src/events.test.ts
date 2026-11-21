@@ -3,6 +3,7 @@ import {
   GATE_MIN_INTERVAL_MS,
   type GateLane,
   idleGateAction,
+  isLocationNotFound,
   type LaneEvent,
   type LaneFacts,
   type LanePolicy,
@@ -257,5 +258,18 @@ describe("idleGateAction with the child's real status", () => {
   test("a landed clean lane whose child is running is not removed", () => {
     const gate = idleGateAction(session, [{ lane: lane(), facts: facts({ landed: true, child: "running" }) }], policy)
     expect(gate.remove).toEqual([])
+  })
+})
+
+describe("isLocationNotFound", () => {
+  test.each([
+    ["the host's location error type", { type: "LocationNotFoundError", message: "boom" }, true],
+    ["the host's message under another type", { type: "UnknownError", message: "Location not found: /wt/lane-a" }, true],
+    ["another failure", { type: "ProviderError", message: "rate limited" }, false],
+    ["a message that only mentions a location later", { type: "UnknownError", message: "Session not found; Location not found later" }, false],
+    ["a bare string", "Location not found: /wt/lane-a", false],
+    ["no error", undefined, false],
+  ])("%s", (_name, error, expected) => {
+    expect(isLocationNotFound(error)).toBe(expected)
   })
 })

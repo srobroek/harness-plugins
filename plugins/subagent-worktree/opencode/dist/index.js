@@ -2614,8 +2614,27 @@ function createLifecycle(deps) {
     if (!found.complete)
       console.error(`subagent-worktree: the session listing of ${lane.child} is incomplete; moving the ${found.ids.length} found`);
     const destination = await deps.exists(lane.parentDir) ? lane.parentDir : canonicalCheckout(common, lane.parentDir);
-    const results = await moveSessionsHome(sessionClient, [...new Set([...found.ids, ...earlier])], destination);
     const pending = [];
+    const worktree = canonical(lane.directory);
+    const ids = [];
+    for (const id of new Set([...found.ids, ...earlier])) {
+      if (id === lane.child) {
+        ids.push(id);
+        continue;
+      }
+      const session = await lookupSession(id);
+      if (session === "missing")
+        continue;
+      const directory = session === "unknown" ? undefined : session.location?.directory;
+      if (typeof directory !== "string") {
+        pending.push(id);
+        console.error(`subagent-worktree: could not read where ${id} sits; it is not moved yet`);
+        continue;
+      }
+      if (within3(canonical(directory), worktree) || within3(directory, lane.directory))
+        ids.push(id);
+    }
+    const results = await moveSessionsHome(sessionClient, ids, destination);
     for (const result of results) {
       if (result.status !== "error")
         continue;
@@ -2635,6 +2654,8 @@ function createLifecycle(deps) {
         const seq = options.seq ?? eventSeq;
         const earlier = stored.state === "removing" ? stored.removal : undefined;
         const present = options.gone !== true && earlier?.pending === undefined && await deps.exists(stored.directory);
+        if (present && options.ifGone === true)
+          return keptBecause("present", "the worktree exists");
         let proof;
         let head;
         let deleteAt;
@@ -2720,13 +2741,15 @@ function createLifecycle(deps) {
       if (failed === undefined || lane === undefined || await deps.exists(lane.directory))
         return;
       if (lane.state === "active" || lane.state === "removing") {
-        await finalize(lane);
+        await finalize(lane, { ifGone: true });
         return;
       }
       if (sessionID === lane.child)
         return;
       const owner = lane;
       await withLock(owner.directory, owner.parentDir, async () => {
+        if (await deps.exists(owner.directory))
+          return;
         const latest = await load(owner.child);
         if (latest === undefined || latest.state === "active" || latest.state === "removing" || canonical(latest.directory) !== canonical(owner.directory))
           return;

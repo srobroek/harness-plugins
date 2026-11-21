@@ -1257,6 +1257,8 @@ describe("execute.after", () => {
       const retired = lane(setup.fake)
       const stuck = { ...retired, state: "removing", removal: { retireAs: "removed", head: retired?.base, pending: ["ses_stuck"] } }
       setup.fake.storage.set(laneKey("ses_fake1"), stuck)
+      // A descendant still recorded in the removed worktree, whose move the host fails.
+      setup.fake.sessions.set("ses_stuck", { id: "ses_stuck", parentID: "ses_fake1", projectID: "prj", location: { directory: retired?.directory ?? "" }, time: { busy: 1, idle: 2 } })
       const move = setup.fake.context.session.move.bind(setup.fake.context.session)
       setup.fake.context.session.move = (async (input: { sessionID: string }) => {
         if (input.sessionID === "ses_stuck") throw new Error("host down")
