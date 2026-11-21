@@ -2944,9 +2944,11 @@ describe("pending cleanup: one remover per worktree", () => {
       bounds?: Partial<CleanupBounds>
       observe?: GitRunner
       lock?: Record<string, unknown>
+      authorize?: (sessionID: string, request: { worktree: string; receiptBound?: boolean }) => Promise<void>
     } = {},
   ) {
     const f = fixture(name)
+    const asked: Array<{ sessionID: string; worktree: string; receiptBound?: boolean }> = []
     const options: RunnerOptions = { beadStatus: over.beadStatus ?? "closed", ...(over.before ? { before: over.before } : {}) }
     const scripted = runner(f, options)
     const fake = createFakeContext({ directory: f.main })
@@ -2963,6 +2965,10 @@ describe("pending cleanup: one remover per worktree", () => {
       cwd: f.main,
       env: f.env,
       host: () => undefined,
+      authorize: async (sessionID, request) => {
+        asked.push({ sessionID, worktree: request.worktree, ...(request.receiptBound === undefined ? {} : { receiptBound: request.receiptBound }) })
+        await over.authorize?.(sessionID, request)
+      },
       debounceMs: 1,
       ...(over.maxPerPass === undefined ? {} : { maxPerPass: over.maxPerPass }),
       cleanup: { run: stripped(scripted.run), now: () => NOW + 10, bounds: over.bounds ?? HEAVY_FIXTURE_BOUNDS },
@@ -2984,7 +2990,7 @@ describe("pending cleanup: one remover per worktree", () => {
       await pending.dispose()
       rmSync(f.root, { recursive: true, force: true })
     }
-    return { f, options, scripted, fake, pending, common, advance, idle, claim, finish }
+    return { f, options, scripted, fake, pending, common, advance, idle, claim, finish, asked }
   }
   const removed = (h: Harness) => !existsSync(h.f.linked)
   const synthetic = (h: Harness) => h.fake.calls.filter((entry) => entry.method === "session.synthetic")
@@ -3004,6 +3010,35 @@ describe("pending cleanup: one remover per worktree", () => {
     await h.idle()
     expect(removed(h)).toBe(true)
     expect(readLanding(h.common, h.f.receipt.receiptId)).toEqual({ kind: "missing" })
+    await h.finish()
+  })
+
+  test("a retry asks the cleanup permission for the physical worktree before it removes anything", async () => {
+    const h = await harness("pending-retry-asks")
+    const real = realpathSync(h.f.linked)
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    await h.idle()
+    expect(h.asked).toEqual([{ sessionID: "ses_lead", worktree: real, receiptBound: true }])
+    await h.finish()
+  })
+
+  test("a denied retry removes nothing, is recorded as a denial, and is not tried again", async () => {
+    const h = await harness("pending-retry-denied", {
+      authorize: async () => {
+        throw new Error("delivery_cleanup denied")
+      },
+    })
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    await h.idle()
+    expect(removed(h)).toBe(false)
+    expect(mutationCalls(h.scripted.calls)).toEqual([])
+    const landing = readLanding(h.common, h.f.receipt.receiptId)
+    expect(landing.kind === "present" && landing.landing.denied !== undefined).toBe(true)
+    h.advance(60_000)
+    await h.idle()
+    expect(h.asked).toHaveLength(1)
     await h.finish()
   })
 

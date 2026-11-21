@@ -309,14 +309,21 @@ function environment(options: DeliveryOptions): NodeJS.ProcessEnv {
     : { ...process.env, DELIVERY_RECEIPTS_DIR: options.receiptsDirectory }
 }
 
-function asserter(ctx: Context, context: ToolContext, action: string, gates: GateRegistry) {
+function asserter(
+  ctx: Context,
+  context: { sessionID: ToolContext["sessionID"] } & Partial<Pick<ToolContext, "agent" | "messageID" | "id">>,
+  action: string,
+  gates: GateRegistry,
+) {
   return async (resource: string, metadata: Record<string, unknown>, gated = false) => {
     const leave = gates.enter(action, resource, gated)
     try {
       await ctx.permission.assert({
         sessionID: context.sessionID,
         agent: context.agent,
-        source: { type: "tool", messageID: context.messageID, id: context.id },
+        ...(context.messageID === undefined || context.id === undefined
+          ? {}
+          : { source: { type: "tool", messageID: context.messageID, id: context.id } }),
         action,
         resources: [resource],
         save: [resource],
@@ -355,6 +362,8 @@ export async function setupDelivery(
     cwd: directory,
     env: environment(options),
     host: () => hostWorktrees(ctx),
+    authorize: (sessionID, request) =>
+      asserter(ctx, { sessionID: sessionID as ToolContext["sessionID"] }, CLEANUP_ACTION, gates)(request.worktree, { ...request }, cleanupGate(request)),
     ...overrides,
   })
 

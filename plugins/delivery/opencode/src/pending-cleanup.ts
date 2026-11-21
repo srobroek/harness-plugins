@@ -203,6 +203,12 @@ export type PendingDeps = {
   debounceMs?: number
   /** Receipts looked at per pass. */
   maxPerPass?: number
+  /**
+   * Asked before every retry removes anything, with the retrying session: the same permission
+   * (and receipt-bound exemption) an explicit `delivery_cleanup` gets. A throw is a denial: the
+   * retry stops and the denial is recorded, so it is not tried again without a new explicit call.
+   */
+  authorize: (sessionID: string, request: ExplicitRequest) => Promise<void>
   /** Test seam: the runner, bounds and clock the cleanup proofs use. */
   cleanup?: Pick<CleanupDeps, "run" | "bounds" | "now">
   /** Test seam: the git runner the repository observations use. */
@@ -545,7 +551,21 @@ export function createPendingCleanup(deps: PendingDeps) {
         let result: CleanupResult
         try {
           // `guard` re-checks ownership after the proofs and before the removal.
-          result = await cleanupDelivery({ receipt: path }, cwd, { env, host: deps.host(), ...removal, ...deps.cleanup })
+          result = await cleanupDelivery({ receipt: path }, cwd, {
+            env,
+            host: deps.host(),
+            ...removal,
+            authorize: async (request) => {
+              try {
+                await deps.authorize(sessionID, request)
+              } catch (error) {
+                // A refused retry is a denial like a refused explicit call: recorded, never retried unasked.
+                await deny(request.worktree, sessionID).catch(() => {})
+                throw error
+              }
+            },
+            ...deps.cleanup,
+          })
         } catch {
           continue
         }
