@@ -2550,11 +2550,19 @@ function createLifecycle(deps) {
     move: (input) => ctx.session.move(input)
   };
   const keptBecause = (kept, reason) => ({ removed: false, kept, reason });
+  const startedSince = (sessionIDs, seq) => {
+    for (const id of sessionIDs) {
+      if (shutdownPending.has(id))
+        return keptBecause("running", `${id} was interrupted by a shutdown and the host resumes it`);
+      if ((lastStart.get(id) ?? 0) > seq)
+        return keptBecause("running", `${id} started a new execution`);
+    }
+    return;
+  };
   const liveRefusal = async (lane, options, seq) => {
-    if (shutdownPending.has(lane.child))
-      return keptBecause("running", "the child was interrupted by a shutdown and the host resumes it");
-    if ((lastStart.get(lane.child) ?? 0) > seq)
-      return keptBecause("running", "the child started a new execution");
+    const started = startedSince([lane.child], seq);
+    if (started !== undefined)
+      return started;
     const common = await deps.commonDir(lane.parentDir);
     const claim = common === undefined ? undefined : readClaim(common, lane.directory);
     if (claim?.kind === "unreadable")
@@ -2650,15 +2658,20 @@ function createLifecycle(deps) {
         const removal = { retireAs, ...head === undefined ? {} : { head }, ...earlier?.pending === undefined ? {} : { pending: earlier.pending } };
         await save({ ...stored, state: "removing", removal });
         if (present) {
+          const drift = await treeDrift(stored, head);
+          if (drift !== undefined) {
+            await save(stored);
+            return drift;
+          }
           const live = await liveRefusal(stored, options, seq);
           if (live !== undefined) {
             await save(stored);
             return live;
           }
-          const drift = await treeDrift(stored, head);
-          if (drift !== undefined) {
+          const late = startedSince([stored.child], seq);
+          if (late !== undefined) {
             await save(stored);
-            return drift;
+            return late;
           }
           try {
             await deps.removeWorktree(stored.projectID, stored.directory, false);

@@ -2520,4 +2520,22 @@ describe("finalize: a resume and late changes fence the removal", () => {
     expect(stored(fake).state).toBe("active")
     await cleanup()
   })
+
+  test("an execution that starts during the final git probe keeps the lane and its worktree", async () => {
+    const { fake, state, worktree, cleanup } = await start(empty)
+    // `stash list` is read once by the checks and once more right before the host removal.
+    let stashReads = 0
+    state.onGit = async (cmd) => {
+      if (!cmd.startsWith("stash list") || ++stashReads !== 2) return
+      fake.emit({ type: "session.execution.started", data: { sessionID: CHILD } })
+      await settle(20)
+    }
+    fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await until(() => stashReads >= 2)
+    await settle(150)
+    expect(stashReads).toBeGreaterThanOrEqual(2)
+    expect(worktree.filter((entry) => entry.method === "remove")).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
 })

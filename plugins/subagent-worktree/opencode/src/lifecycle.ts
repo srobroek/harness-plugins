@@ -735,10 +735,19 @@ export function createLifecycle(deps: LifecycleDeps) {
 
   const keptBecause = (kept: Extract<Finalized, { removed: false }>["kept"], reason: string): Finalized => ({ removed: false, kept, reason })
 
+  /** Synchronous: a pending shutdown resume of, or an execution start since `seq` by, any of `sessionIDs`. */
+  const startedSince = (sessionIDs: readonly string[], seq: number): Finalized | undefined => {
+    for (const id of sessionIDs) {
+      if (shutdownPending.has(id)) return keptBecause("running", `${id} was interrupted by a shutdown and the host resumes it`)
+      if ((lastStart.get(id) ?? 0) > seq) return keptBecause("running", `${id} started a new execution`)
+    }
+    return undefined
+  }
+
   /** Whether the child may be running, read fresh: a pending shutdown resume, a resume, a start since `seq`, a background job, or a running or unknown session. */
   const liveRefusal = async (lane: Lane, options: FinalizeOptions, seq: number): Promise<Finalized | undefined> => {
-    if (shutdownPending.has(lane.child)) return keptBecause("running", "the child was interrupted by a shutdown and the host resumes it")
-    if ((lastStart.get(lane.child) ?? 0) > seq) return keptBecause("running", "the child started a new execution")
+    const started = startedSince([lane.child], seq)
+    if (started !== undefined) return started
     // A resume stamps the claim (any instance) and the lane record under this lock; its execution may not have started yet.
     const common = await deps.commonDir(lane.parentDir)
     const claim = common === undefined ? undefined : readClaim(common, lane.directory)
@@ -846,17 +855,23 @@ export function createLifecycle(deps: LifecycleDeps) {
         const removal: NonNullable<Lane["removal"]> = { retireAs, ...(head === undefined ? {} : { head }), ...(earlier?.pending === undefined ? {} : { pending: earlier.pending }) }
         await save({ ...stored, state: "removing", removal })
         if (present) {
-          // The last look before the host removal. A host that starts an execution after this can still race it.
-          const live = await liveRefusal(stored, options, seq)
-          if (live !== undefined) {
-            await save(stored)
-            return live
-          }
           // Re-prove the tree after every await since the checks: a new commit or a change keeps the worktree.
           const drift = await treeDrift(stored, head)
           if (drift !== undefined) {
             await save(stored)
             return drift
+          }
+          // Liveness after the git probes, so nothing the probes awaited can hide a start, a resume or a job.
+          const live = await liveRefusal(stored, options, seq)
+          if (live !== undefined) {
+            await save(stored)
+            return live
+          }
+          // The last look, synchronous and immediately before the host call: an event delivered during the awaits above is seen here.
+          const late = startedSince([stored.child], seq)
+          if (late !== undefined) {
+            await save(stored)
+            return late
           }
           try {
             await deps.removeWorktree(stored.projectID, stored.directory, false)
