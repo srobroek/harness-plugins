@@ -1,9 +1,10 @@
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { extname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { type Exec, MAX_STDERR_BYTES, MAX_STDOUT_BYTES, spawnTool } from "./exec.ts"
 import { parseOutput } from "./parsers.ts"
 import { pinOf } from "./pins.ts"
+import { ensureDir, writeFileNoFollow } from "./safe.ts"
 import { RECIPES } from "./recipes.ts"
 import {
   type Candidate,
@@ -263,9 +264,11 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
   if (input.runId !== undefined && git === null) {
     throw new Error("challenge_scan: runId needs a git repository for the output directory")
   }
-  const rawDir = input.runId !== undefined && git !== null ? join(git, "code-challenge", input.runId, "scan") : null
-  const base = rawDir ?? mkdtempSync(join(tmpdir(), "code-challenge-scan-"))
-  mkdirSync(base, { recursive: true })
+  const base =
+    input.runId !== undefined && git !== null
+      ? ensureDir(git, "code-challenge", input.runId, "scan")
+      : mkdtempSync(join(tmpdir(), "code-challenge-scan-"))
+  const rawDir = input.runId !== undefined && git !== null ? base : null
   const toolsDir = deps.toolsDir ?? join(git ?? base, "code-challenge", "tools")
   const hasGitignore = existsSync(join(root, ".gitignore"))
   const fileSet = new Set(files)
@@ -315,18 +318,18 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
       const name = slug(recipe.id)
       const cfg = join(base, "cfg", name)
       const out = join(base, "out", name)
-      mkdirSync(cfg, { recursive: true })
-      mkdirSync(out, { recursive: true })
+      ensureDir(base, "cfg", name)
+      ensureDir(base, "out", name)
       for (const [file, content] of Object.entries(recipe.configFiles?.({ root, hasGitignore }) ?? {})) {
-        writeFileSync(join(cfg, file), content)
+        writeFileNoFollow(join(cfg, file), content)
       }
       const argv = [...resolved.prefix, ...expandArgs(recipe, cfg, out, scoped, root)]
       const started = now()
       const run = await exec(argv, { cwd: root, timeoutMs, signal })
       const exitCode = run.kind === "exited" ? run.exitCode : null
       timings.push({ recipe: recipe.id, tool: recipe.tool, ms: now() - started, exitCode })
-      writeFileSync(join(base, `${name}.stdout`), run.stdout)
-      writeFileSync(join(base, `${name}.stderr`), run.stderr)
+      writeFileNoFollow(join(base, `${name}.stdout`), run.stdout)
+      writeFileNoFollow(join(base, `${name}.stderr`), run.stderr)
 
       if (run.kind === "timeout") {
         entry("gap", `timed out after ${timeoutMs / 1000}s`)
