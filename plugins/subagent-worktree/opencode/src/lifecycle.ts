@@ -15,7 +15,7 @@ import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import { canonicalCheckout, evictSessions, repairStrandedSessions, type SessionApi } from "@srobroek/opencode-lib/session-eviction"
-import { type LaneSessionClient, laneSessions, moveSessionsHome } from "@srobroek/opencode-lib/session-lanes"
+import { isSessionNotFound, type LaneSessionClient, laneSessions, moveSessionsHome } from "@srobroek/opencode-lib/session-lanes"
 import { bumpClaim, claimGeneration, forgetNotice, landingsFor, listLandings, readClaim, readNotices, recordNotice } from "@srobroek/opencode-lib/worktree-claims"
 import { holdsState, type LockOptions, lockedWorktreeRemoval, lockedWrite, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
 import { OPERATION_MARKERS, operationsInProgress, stashesOnBranch } from "@srobroek/opencode-lib/worktree-state"
@@ -389,11 +389,13 @@ export function createLifecycle(deps: LifecycleDeps) {
    * A `subagent` call is about to resume the child of this lane: waits for a removal in flight (in
    * any instance), then runs `inside` and bumps the generation on disk, recording when, so later
    * removals abort. `inside` runs under the same lock as every removal, so it sees the lane as the
-   * last removal left it (fenced, or retired); if it throws, nothing is bumped.
+   * last removal left it (fenced, retired, or still `removing`); if it throws, or returns false
+   * because it did not admit the resume for an active lane, nothing is bumped. A stamp for a resume
+   * that was not admitted would fence the very recovery that has to finish first.
    */
-  const noteResume = (directory: string, parentDir: string, inside?: () => Promise<void>) =>
+  const noteResume = (directory: string, parentDir: string, inside?: () => Promise<boolean>) =>
     withLock(directory, parentDir, async () => {
-      await inside?.()
+      if (inside !== undefined && !(await inside())) return
       const common = await deps.commonDir(parentDir)
       if (common !== undefined) bumpClaim(common, directory, now())
     })
@@ -735,10 +737,62 @@ export function createLifecycle(deps: LifecycleDeps) {
 
   const keptBecause = (kept: Extract<Finalized, { removed: false }>["kept"], reason: string): Finalized => ({ removed: false, kept, reason })
 
+  /** Synchronous: a pending shutdown resume of, or an execution start since `seq` by, any of `sessionIDs`. */
+  const startedSince = (sessionIDs: readonly string[], seq: number): Finalized | undefined => {
+    for (const id of sessionIDs) {
+      if (shutdownPending.has(id)) return keptBecause("running", `${id} was interrupted by a shutdown and the host resumes it`)
+      if ((lastStart.get(id) ?? 0) > seq) return keptBecause("running", `${id} started a new execution`)
+    }
+    return undefined
+  }
+
+  /** `session.get` within the lookup time: the session, `missing` when the host says it does not exist, `unknown` otherwise. */
+  const lookupSession = async (sessionID: string): Promise<SessionLike | "missing" | "unknown"> => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<"unknown">((done) => {
+      timer = setTimeout(() => done("unknown"), deps.lookupMs)
+    })
+    const settled = Promise.resolve()
+      .then(() => ctx.session.get({ sessionID } as never))
+      .then(
+        (session): SessionLike | "unknown" => (typeof session === "object" && session !== null ? (session as SessionLike) : "unknown"),
+        (error): "missing" | "unknown" => (isSessionNotFound(error, sessionID) ? "missing" : "unknown"),
+      )
+    try {
+      return await Promise.race([settled, timeout])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /**
+   * The lane's descendants (by parent ID) that sit in the worktree, or the reason to keep it: one of them running,
+   * one that cannot be read, or a listing that may have missed some. The root is `liveRefusal`'s.
+   */
+  const descendantRefusal = async (lane: Lane): Promise<{ ids: string[] } | Finalized> => {
+    const found = await laneSessions(sessionClient, lane.child)
+    if (!found.complete) return keptBecause("running", "the lane's sessions could not all be listed")
+    const worktree = canonical(lane.directory)
+    const ids: string[] = []
+    for (const id of found.ids) {
+      if (id === lane.child) continue
+      const session = await lookupSession(id)
+      if (session === "missing") continue
+      if (session === "unknown") return keptBecause("running", `the state of ${id} cannot be read`)
+      const directory = session.location?.directory
+      if (typeof directory !== "string") return keptBecause("running", `the location of ${id} cannot be read`)
+      if (!within(canonical(directory), worktree)) continue
+      ids.push(id)
+      if (toMillis(session.time?.archived) !== undefined) continue
+      if (isRunning({ busy: toMillis(session.time?.busy), idle: toMillis(session.time?.idle) })) return keptBecause("running", `${id} is running in the worktree`)
+    }
+    return { ids }
+  }
+
   /** Whether the child may be running, read fresh: a pending shutdown resume, a resume, a start since `seq`, a background job, or a running or unknown session. */
   const liveRefusal = async (lane: Lane, options: FinalizeOptions, seq: number): Promise<Finalized | undefined> => {
-    if (shutdownPending.has(lane.child)) return keptBecause("running", "the child was interrupted by a shutdown and the host resumes it")
-    if ((lastStart.get(lane.child) ?? 0) > seq) return keptBecause("running", "the child started a new execution")
+    const started = startedSince([lane.child], seq)
+    if (started !== undefined) return started
     // A resume stamps the claim (any instance) and the lane record under this lock; its execution may not have started yet.
     const common = await deps.commonDir(lane.parentDir)
     const claim = common === undefined ? undefined : readClaim(common, lane.directory)
@@ -846,17 +900,29 @@ export function createLifecycle(deps: LifecycleDeps) {
         const removal: NonNullable<Lane["removal"]> = { retireAs, ...(head === undefined ? {} : { head }), ...(earlier?.pending === undefined ? {} : { pending: earlier.pending }) }
         await save({ ...stored, state: "removing", removal })
         if (present) {
-          // The last look before the host removal. A host that starts an execution after this can still race it.
-          const live = await liveRefusal(stored, options, seq)
-          if (live !== undefined) {
-            await save(stored)
-            return live
-          }
           // Re-prove the tree after every await since the checks: a new commit or a change keeps the worktree.
           const drift = await treeDrift(stored, head)
           if (drift !== undefined) {
             await save(stored)
             return drift
+          }
+          // Liveness after the git probes, so nothing the probes awaited can hide a start, a resume or a job.
+          const live = await liveRefusal(stored, options, seq)
+          if (live !== undefined) {
+            await save(stored)
+            return live
+          }
+          // Descendants hold no claim of their own: one running in the worktree keeps it, and so does a listing that may be short.
+          const descendants = await descendantRefusal(stored)
+          if (!("ids" in descendants)) {
+            await save(stored)
+            return descendants
+          }
+          // The last look, synchronous and immediately before the host call: an event delivered during the awaits above is seen here.
+          const late = startedSince([stored.child, ...descendants.ids], seq)
+          if (late !== undefined) {
+            await save(stored)
+            return late
           }
           try {
             await deps.removeWorktree(stored.projectID, stored.directory, false)

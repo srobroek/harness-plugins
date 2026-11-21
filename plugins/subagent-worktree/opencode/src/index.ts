@@ -636,10 +636,11 @@ export function createLanes(
     // check and the bookkeeping run inside that same lock, on the lane as the last removal left it.
     await lifecycle.noteResume(lane.directory, lane.parentDir, async () => {
       const fresh = await load(child)
-      // Retired while this call waited: the resume gets a fresh worktree from `revive`.
-      if (fresh?.state !== "active" || !(await confirmLocation(fresh))) return
+      // Retired or still `removing` while this call waited: `revive` finishes the removal and gives a fresh worktree; nothing is admitted here.
+      if (fresh?.state !== "active" || !(await confirmLocation(fresh))) return false
       const confirmed = (await load(child)) ?? fresh
       await save({ ...confirmed, resumedAt: now(), quietSince: undefined })
+      return true
     })
   }
 

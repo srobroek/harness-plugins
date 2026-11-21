@@ -113,6 +113,8 @@ async function start(
     commonDir?: (directory: string) => Promise<string | undefined>
     /** Called inside the host removal, i.e. while the removal holds the directory lock. */
     onRemove?: () => void
+    /** Test seam for the on-disk lock. */
+    lock?: Record<string, unknown>
   } = {},
 ): Promise<Setup> {
   const fake = createFakeContext({
@@ -208,7 +210,7 @@ async function start(
     // `wt merge --no-remove` keeps the checkout, so the child stays in it; only the verified removal moves it home.
     if (argv[0] === "wt") expect(fake.sessions.get("ses_fake1")?.location).not.toEqual({ directory: REPO })
     return fakeRun(repo, log)(argv)
-  }, suffix: () => "abc123", lookupMs: 20, directoryExists: options.exists ?? (async () => true), ...(options.now ? { now: options.now } : {}), reserveMs: 60_000 })
+  }, suffix: () => "abc123", lookupMs: 20, directoryExists: options.exists ?? (async () => true), ...(options.now ? { now: options.now } : {}), ...(options.lock ? { lock: options.lock } : {}), reserveMs: 60_000 })
   const cleanup = (await plugin.setup(fake.context)) as () => Promise<void>
   return { common, fake, repo, log, worktree, cleanup }
 }
@@ -455,7 +457,14 @@ describe("worktree argument", () => {
 
   test("a spawn into a worktree waits for the removal holding its lock, and is refused once the worktree is gone", async () => {
     let gone = false
-    const setup = await start({ exists: async (path) => !(gone && path === OTHER) })
+    // The lock's wait loop sleeps only while the lock is busy: its first sleep is the spawn waiting for the holder.
+    let waiting!: () => void
+    const blocked = new Promise<void>((done) => (waiting = done))
+    const sleep = (ms: number) => {
+      waiting()
+      return new Promise<void>((done) => setTimeout(done, ms))
+    }
+    const setup = await start({ exists: async (path) => !(gone && path === OTHER), lock: { sleep } })
     let free!: () => void
     let taken!: () => void
     const acquired = new Promise<void>((done) => (taken = done))
@@ -466,7 +475,7 @@ describe("worktree argument", () => {
     await acquired
     const spawned = spawn(setup, { agent: "explore", worktree: OTHER })
     spawned.catch(() => {})
-    await new Promise((done) => setTimeout(done, 100))
+    await blocked
     expect(moves(setup.fake)).toEqual([])
     gone = true
     free()
@@ -1208,6 +1217,27 @@ describe("execute.after", () => {
       expect(creates(setup)).toBe(2)
       expect(lane(setup.fake)?.state).toBe("active")
       expect((event.input as { prompt: string }).prompt).toContain("isolated git worktree")
+    })
+
+    test("a crash left a lane in removing with its checkout and claim: the resume finishes it, and a later resume still fences removal", async () => {
+      const setup = await start()
+      await spawn(setup)
+      const active = lane(setup.fake)
+      if (!active) throw new Error("no lane")
+      expect(readClaim(setup.common, active.directory).kind).toBe("present")
+      setup.fake.storage.set(laneKey("ses_fake1"), { ...active, state: "removing", removal: { retireAs: "removed", head: active.base } })
+      await setup.fake.fire.tool("execute.before", call({ sessionID: "ses_fake1", prompt: "more" }))
+      expect(setup.worktree.calls.filter((entry) => entry.method === "remove")).toEqual([
+        { method: "remove", input: { projectID: "prj", directory: active.directory, force: false } },
+      ])
+      const revived = lane(setup.fake)
+      expect(revived?.state).toBe("active")
+      expect(setup.worktree.calls.filter((entry) => entry.method === "create")).toHaveLength(2)
+      // A real resume of the revived lane is recorded, so the empty-lane removal after it keeps the worktree.
+      await setup.fake.fire.tool("execute.before", call({ sessionID: "ses_fake1", prompt: "again" }))
+      await setup.fake.fire.tool("execute.after", completed("ses_fake1"))
+      expect(setup.worktree.calls.filter((entry) => entry.method === "remove")).toHaveLength(1)
+      expect(lane(setup.fake)?.state).toBe("active")
     })
 
     test("a lane left in removing is finished first, then the resume gets a fresh worktree", async () => {

@@ -2282,7 +2282,8 @@ function createLifecycle(deps) {
     return next;
   };
   const noteResume = (directory, parentDir, inside) => withLock(directory, parentDir, async () => {
-    await inside?.();
+    if (inside !== undefined && !await inside())
+      return;
     const common = await deps.commonDir(parentDir);
     if (common !== undefined)
       bumpClaim(common, directory, now());
@@ -2550,11 +2551,58 @@ function createLifecycle(deps) {
     move: (input) => ctx.session.move(input)
   };
   const keptBecause = (kept, reason) => ({ removed: false, kept, reason });
+  const startedSince = (sessionIDs, seq) => {
+    for (const id of sessionIDs) {
+      if (shutdownPending.has(id))
+        return keptBecause("running", `${id} was interrupted by a shutdown and the host resumes it`);
+      if ((lastStart.get(id) ?? 0) > seq)
+        return keptBecause("running", `${id} started a new execution`);
+    }
+    return;
+  };
+  const lookupSession = async (sessionID) => {
+    let timer;
+    const timeout = new Promise((done) => {
+      timer = setTimeout(() => done("unknown"), deps.lookupMs);
+    });
+    const settled = Promise.resolve().then(() => ctx.session.get({ sessionID })).then((session) => typeof session === "object" && session !== null ? session : "unknown", (error) => isSessionNotFound(error, sessionID) ? "missing" : "unknown");
+    try {
+      return await Promise.race([settled, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const descendantRefusal = async (lane) => {
+    const found = await laneSessions(sessionClient, lane.child);
+    if (!found.complete)
+      return keptBecause("running", "the lane's sessions could not all be listed");
+    const worktree = canonical(lane.directory);
+    const ids = [];
+    for (const id of found.ids) {
+      if (id === lane.child)
+        continue;
+      const session = await lookupSession(id);
+      if (session === "missing")
+        continue;
+      if (session === "unknown")
+        return keptBecause("running", `the state of ${id} cannot be read`);
+      const directory = session.location?.directory;
+      if (typeof directory !== "string")
+        return keptBecause("running", `the location of ${id} cannot be read`);
+      if (!within3(canonical(directory), worktree))
+        continue;
+      ids.push(id);
+      if (toMillis2(session.time?.archived) !== undefined)
+        continue;
+      if (isRunning({ busy: toMillis2(session.time?.busy), idle: toMillis2(session.time?.idle) }))
+        return keptBecause("running", `${id} is running in the worktree`);
+    }
+    return { ids };
+  };
   const liveRefusal = async (lane, options, seq) => {
-    if (shutdownPending.has(lane.child))
-      return keptBecause("running", "the child was interrupted by a shutdown and the host resumes it");
-    if ((lastStart.get(lane.child) ?? 0) > seq)
-      return keptBecause("running", "the child started a new execution");
+    const started = startedSince([lane.child], seq);
+    if (started !== undefined)
+      return started;
     const common = await deps.commonDir(lane.parentDir);
     const claim = common === undefined ? undefined : readClaim(common, lane.directory);
     if (claim?.kind === "unreadable")
@@ -2650,15 +2698,25 @@ function createLifecycle(deps) {
         const removal = { retireAs, ...head === undefined ? {} : { head }, ...earlier?.pending === undefined ? {} : { pending: earlier.pending } };
         await save({ ...stored, state: "removing", removal });
         if (present) {
+          const drift = await treeDrift(stored, head);
+          if (drift !== undefined) {
+            await save(stored);
+            return drift;
+          }
           const live = await liveRefusal(stored, options, seq);
           if (live !== undefined) {
             await save(stored);
             return live;
           }
-          const drift = await treeDrift(stored, head);
-          if (drift !== undefined) {
+          const descendants = await descendantRefusal(stored);
+          if (!("ids" in descendants)) {
             await save(stored);
-            return drift;
+            return descendants;
+          }
+          const late = startedSince([stored.child, ...descendants.ids], seq);
+          if (late !== undefined) {
+            await save(stored);
+            return late;
           }
           try {
             await deps.removeWorktree(stored.projectID, stored.directory, false);
@@ -3672,9 +3730,10 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     await lifecycle.noteResume(lane2.directory, lane2.parentDir, async () => {
       const fresh = await load(child);
       if (fresh?.state !== "active" || !await confirmLocation(fresh))
-        return;
+        return false;
       const confirmed = await load(child) ?? fresh;
       await save({ ...confirmed, resumedAt: now(), quietSince: undefined });
+      return true;
     });
   };
   const retire = async (lane2, state) => {
