@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { extname, join, relative, resolve } from "node:path"
 import { type SupervisedRun, supervise } from "@srobroek/opencode-lib/subprocess"
 import { parseOutput } from "./parsers.ts"
+import { pinOf } from "./pins.ts"
 import { RECIPES } from "./recipes.ts"
 import {
   type Candidate,
@@ -136,20 +137,22 @@ export function resolveTool(recipe: Recipe, which: (b: string) => string | null,
     const bin = join(toolsDir, "node_modules", ".bin", recipe.binary)
     return existsSync(bin)
       ? { prefix: [bin] }
-      : { gap: `${recipe.tool} is not provisioned; run "bun add eslint @e18e/eslint-plugin" in ${toolsDir}` }
+      : {
+          gap: `${recipe.tool} is not provisioned; run "bun add eslint@${pinOf("eslint")} @e18e/eslint-plugin@${pinOf("@e18e/eslint-plugin")}" in ${toolsDir}`,
+        }
   }
   const local = which(recipe.binary)
   if (local) return { prefix: [local] }
   const pkg = recipe.package ?? recipe.binary
   if (recipe.install === "bunx") {
     const bunx = which("bunx")
-    if (bunx) return { prefix: [bunx, "-p", pkg, recipe.binary] }
+    if (bunx) return { prefix: [bunx, "-p", `${pkg}@${pinOf(pkg)}`, recipe.binary] }
   } else if (recipe.install === "uvx") {
     const uvx = which("uvx")
-    if (uvx) return { prefix: [uvx, "--from", pkg, recipe.binary] }
+    if (uvx) return { prefix: [uvx, "--from", `${pkg}==${pinOf(pkg)}`, recipe.binary] }
   } else if (recipe.install === "go-run") {
     const go = which("go")
-    if (go) return { prefix: [go, "run", `${pkg}@latest`] }
+    if (go) return { prefix: [go, "run", `${recipe.subpath ? `${pkg}/${recipe.subpath}` : pkg}@${pinOf(pkg)}`] }
   }
   const runner = recipe.install === "local" ? "" : ` and no ${recipe.install} runner is on PATH`
   return { gap: `${recipe.binary} is not installed${runner}` }

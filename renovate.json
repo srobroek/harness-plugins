@@ -58,6 +58,16 @@
       "datasourceTemplate": "npm"
     },
     {
+      "description": "Exact one-off analyzer pins in the code-challenge scan module",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^plugins\\/code-challenge\\/opencode\\/src\\/scan\\/pins\\.ts$/"
+      ],
+      "matchStrings": [
+        "// renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\n\\s*\\\"?[^\\\":\\n]+\\\"?: \\\"(?<currentValue>[^\\\"]+)\\\""
+      ]
+    },
+    {
       "description": "The repomix runner pin in the plugin source",
       "customType": "regex",
       "managerFilePatterns": [
