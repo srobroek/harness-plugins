@@ -39,7 +39,7 @@ description = """
 Read the references/lens-<lens>.md file of the code-challenge skill for each lens in {{lens}}, and the steering skills each
 names. Read the target {{target}} and the scan hits in this bead. Reply with findings, one per root
 cause: lens, path:line, claim, evidence tier and detail, impact, blast radius and test protection.
-Read only: return the findings in your reply and leave recording them to the lead.
+End the reply with a `References read:` line listing the absolute paths you read first. Read only: return the findings in your reply and leave recording them to the lead.
 """
 
 [steps.metadata]

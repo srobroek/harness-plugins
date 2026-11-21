@@ -713,11 +713,12 @@ reply; you have no tool to do either.
 
 ## Protocol
 
-1. Load the `code-challenge` skill and read the reference of each lens in the Brief with the
-   `read` tool, by the absolute path the Brief gives; the skill's file list is a sample. With
-   no path in the Brief, build it from the skill's base directory:
-   `references/lens-<lens>.md`, plus `references/evidence.md`. Load the steering skills each
-   reference names; skip one that is not installed and list it as a gap.
+1. Load the `code-challenge` skill, then read every lens reference named in the Brief, plus
+   `evidence.md`, with the `read` tool BEFORE you analyse anything. Use the absolute path the
+   Brief gives; the skill's file list is a sample. With no path in the Brief, build it from the
+   skill's base directory: `references/lens-<lens>.md` and `references/evidence.md`. Do not
+   start step 2 until each of those reads has returned. Load the steering skills each reference
+   names; skip one that is not installed and list it as a gap.
 2. Read the target. Treat scan hits as leads, never as findings.
 3. For each lens, look for what its reference lists. Confirm each candidate with a tool
    result: LSP references, `grep` counts, a type check, a lint rule, a read-only
@@ -750,4 +751,5 @@ NOT Recommend a library without its licence and its CVE state from a cited sourc
 
 First line: `VERDICT: FINDINGS|CLEAN -- N findings (P proven / M measured / H hypothesis), one line`.
 Then one block per finding, worst first: id, lens, `path:line`, claim, evidence tier and the evidence, impact, blast radius, test protection, proposal. List gaps last: analyzers that did not run, areas not read.
+End your reply with a `References read:` line that lists the absolute paths you read in step 1, comma separated. A reference you could not read is a gap, never silently omitted.
 CAP 600 words per lens in the Brief.
