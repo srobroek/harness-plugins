@@ -57,7 +57,7 @@ export const FAN_OUT_SKILL_PATH = fileURLToPath(new URL("../skills/delivery-fan-
 export const FAN_OUT_PATH = fileURLToPath(new URL("../instructions/delivery-fan-out.md", import.meta.url))
 
 export type DeliveryOptions = {
-  /** Ask before every land and cleanup even when the permission policy allows them. Default true. */
+  /** Turn an allowed land or cleanup into a prompt, except a fully proven one (see gate.ts). Default true. */
   confirm: boolean
   /** Receipts root; default `$DELIVERY_RECEIPTS_DIR`, then `~/.omp/receipts`. */
   receiptsDirectory?: string

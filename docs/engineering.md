@@ -70,6 +70,16 @@ Move new shared code into `lib` instead of adding another edge.
 - Approved departures:
   - `code-challenge` names its tool `challenge_setup`, not `code_challenge_setup` as `<name>_<verb>` would give. The skill's other two tools, `challenge_lib_facts` and `challenge_scan`, share the same `challenge_` namespace, so one short prefix (reserved in `RESERVED_TOOL_PREFIXES`) covers the family and the agents' permission rules.
 
+## delivery permission gate
+
+`plugins/delivery/opencode/src/gate.ts` decides which `delivery_land` and `delivery_cleanup` calls skip the prompt that `confirmDelivery` (`index.ts`) adds. The delivery plugin owns it. Its authorization invariant:
+
+- A land is prompt-free only when its validated input sets `expectHeadSha`, `requireApproval: true` and `requireGreenChecks: true`, and the forge showed an approval for exactly that head from a trusted identity (a reviewer with write, maintain or admin permission; the authenticated account that is also the PR author for a `VERDICT: APPROVE` comment; on GitLab an approval bound to the head sha from a Developer or above), and checks green for that sha. An already MERGED request only writes the receipt and keeps the input gate.
+- A cleanup is prompt-free only when it acts on a receipt it read and verified, on the receipt's own worktree (physical path) and branch, and the binding still holds at the final revalidation before removal.
+- Anything unproved keeps the prompt. A configured `deny` or `ask` always wins: the tool still asserts the permission, and only the plugin's own `allow` to `ask` conversion is skipped, through a per-setup registry of in-flight gated asserts.
+- Every cleanup path asserts: explicit calls, the inline cleanup after a land, and the pending-cleanup retries.
+- The decision reads validated tool input and the tool's own forge and git proofs, never model-provided text.
+
 ## code-challenge
 
 `plugins/code-challenge` is OpenCode only (`harnesses: ["opencode"]`). It challenges existing code for simplification, performance, stability, hand-rolled code and structure, and plans only: it edits no source file.

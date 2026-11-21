@@ -2475,6 +2475,9 @@ function stashBranches(receiptBranch, target) {
   return own === receiptBranch ? [receiptBranch] : [receiptBranch, own];
 }
 var DETACHED_STASH_BRANCH = "(no branch)";
+function bindsReceipt(target, receiptBranch) {
+  return !target.detached && target.branch === `${LOCAL_REF_PREFIX}${receiptBranch}`;
+}
 function planLocalRef(observedOid, reviewedOid) {
   if (observedOid === null)
     return "absent";
@@ -3194,8 +3197,9 @@ async function cleanupInRepository(params, cwd, deps) {
   const ledger = await verifyLedger(receipt, cwd, resolution.path, run, bounds.bdShowMs, bounds.refReadMs, deps.git, env);
   if (ledger !== null)
     return ledger;
-  const receiptBound = !identity.target.detached && identity.target.branch === `${LOCAL_REF_PREFIX}${receipt.branch.name}` && physicalPath(path) === identity.cwd;
-  await deps.authorize?.({ worktree: path, branch: receipt.branch.name, pr: receipt.pr.number, receiptBound });
+  const canonicalPath = identity.cwd;
+  const receiptBound = bindsReceipt(identity.target, receipt.branch.name);
+  await deps.authorize?.({ worktree: canonicalPath, branch: receipt.branch.name, pr: receipt.pr.number, receiptBound });
   const removeSection = async () => {
     const localRef = await verifyLocalRef(receipt, cwd, run, bounds.refReadMs);
     if (isFailure(localRef))
@@ -3203,6 +3207,10 @@ async function cleanupInRepository(params, cwd, deps) {
     const boundary = await revalidateBoundary(receipt, cwd, run, bounds, deps.git);
     if (isFailure(boundary))
       return boundary;
+    if (physicalPath(boundary.target.path) !== canonicalPath)
+      return refuse2("worktree.path", boundary.target.path, `the worktree the permission named (${canonicalPath})`);
+    if (receiptBound && !bindsReceipt(boundary.target, receipt.branch.name))
+      return refuse2("worktree.branch", boundary.target.detached ? "a detached HEAD" : String(boundary.target.branch), `${LOCAL_REF_PREFIX}${receipt.branch.name}, as when the removal was authorized; nothing was removed, retry delivery_cleanup`);
     const executionCwd = safeExecutionCwd(receipt, boundary.records, cwd);
     if (executionCwd === null)
       return refuse2("worktree.executionCwd", null, "a different listed worktree for the same repository");
@@ -3211,7 +3219,7 @@ async function cleanupInRepository(params, cwd, deps) {
     if (executionDir === null || executionVerdict.state !== "same")
       return refuse2("worktree.executionCwd", `${executionCwd} (.git ${executionVerdict.state})`, "a verified worktree of this repository");
     const executionPin = executionVerdict.pin;
-    const targetPath = boundary.target.path;
+    const targetPath = canonicalPath;
     const removeArgv = ["worktree", "remove", targetPath];
     let route = "git";
     if (deps.host !== undefined) {
@@ -3345,6 +3353,9 @@ function landGate(input) {
   const { expectHeadSha, requireApproval, requireGreenChecks } = input;
   return typeof expectHeadSha === "string" && expectHeadSha.trim() !== "" && requireApproval === true && requireGreenChecks === true;
 }
+function landAuthorizationGated(input, proof) {
+  return landGate(input) && (proof.alreadyMerged || proof.approvalTrusted);
+}
 function cleanupGate(request) {
   return request.receiptBound === true && typeof request.worktree === "string" && request.worktree.trim() !== "" && typeof request.branch === "string" && request.branch.trim() !== "" && Number.isInteger(request.pr) && request.pr > 0;
 }
@@ -3452,17 +3463,69 @@ function githubApproval(payload, head) {
     reason: `approval: observed ${stale} APPROVED review(s), none for head ${head}, and no author "VERDICT: APPROVE" comment naming it; expected an approval artifact on the PR for the exact head`
   };
 }
-function githubChecks(payload) {
-  if (!Array.isArray(payload))
-    return { ok: false, reason: "checks: observed no check list, expected gh pr checks --json output" };
-  if (payload.length === 0)
-    return { ok: false, reason: "checks: observed no checks, expected at least one passing check for the head" };
-  const bad = payload.filter((check) => !["pass", "skipping"].includes(str(check, "bucket") ?? ""));
+function githubHeadChecks(checkRuns, status) {
+  const runs = own2(checkRuns, "check_runs");
+  const total = own2(checkRuns, "total_count");
+  const statusTotal = own2(status, "total_count");
+  if (!Array.isArray(runs) || typeof total !== "number" || typeof statusTotal !== "number")
+    return { ok: false, reason: "checks: observed no check-run or status payload, expected commits/<sha>/check-runs and /status output" };
+  if (total > runs.length)
+    return { ok: false, reason: `checks: observed ${runs.length} of ${total} check runs, expected the whole list` };
+  const bad = runs.filter((run) => str(run, "status") !== "completed" || !["success", "neutral", "skipped"].includes(str(run, "conclusion") ?? ""));
   if (bad.length > 0) {
-    const listed = bad.slice(0, 8).map((check) => `${str(check, "name") ?? "?"}=${str(check, "bucket") ?? str(check, "state") ?? "?"}`);
+    const listed = bad.slice(0, 8).map((run) => `${str(run, "name") ?? "?"}=${str(run, "conclusion") ?? str(run, "status") ?? "?"}`);
     return { ok: false, reason: `checks: observed ${listed.join(", ")}, expected every check to pass` };
   }
-  return { ok: true, evidence: { checks: payload.length } };
+  if (statusTotal > 0 && str(status, "state") !== "success")
+    return { ok: false, reason: `checks: observed combined status ${JSON.stringify(str(status, "state"))}, expected "success"` };
+  if (runs.length === 0 && statusTotal === 0)
+    return { ok: false, reason: "checks: observed no checks, expected at least one passing check for the head" };
+  return { ok: true, evidence: { checks: runs.length, statuses: statusTotal } };
+}
+var WRITE_ROLES = new Set(["admin", "maintain", "write"]);
+function githubPermissionAllows(payload) {
+  const role = str(payload, "role_name");
+  if (role !== null)
+    return WRITE_ROLES.has(role);
+  const permission = str(payload, "permission");
+  return permission === "admin" || permission === "write";
+}
+function githubApprovers(payload, head) {
+  const author = login(payload);
+  const reviews = own2(payload, "reviews");
+  if (!Array.isArray(reviews))
+    return [];
+  const latest = new Map;
+  for (const review of reviews) {
+    const who = login(review);
+    const state = str(review, "state");
+    if (who !== null && state !== null && state !== "COMMENTED" && state !== "PENDING")
+      latest.set(who, review);
+  }
+  return [...latest].filter(([who, review]) => who !== author && str(review, "state") === "APPROVED").filter(([, review]) => str(own2(review, "commit"), "oid")?.trim().toLowerCase() === head).map(([who]) => who);
+}
+function githubTrust(payload, head, identity) {
+  for (const who of githubApprovers(payload, head)) {
+    const role = identity.permissions[who];
+    if (typeof role === "string" && WRITE_ROLES.has(role))
+      return { trusted: true, by: who };
+  }
+  const author = login(payload);
+  const comments = own2(payload, "comments");
+  if (author !== null && identity.viewer === author && Array.isArray(comments)) {
+    for (const comment of comments) {
+      if (login(comment) !== author)
+        continue;
+      const body = str(comment, "body") ?? "";
+      const first = body.split(/\r?\n/, 1)[0]?.trim() ?? "";
+      if (/^VERDICT:\s*APPROVE\b/.test(first) && body.toLowerCase().includes(head))
+        return { trusted: true, by: author };
+    }
+  }
+  return {
+    trusted: false,
+    reason: "no exact-head approval from a user with write access, and no author VERDICT comment from the authenticated account"
+  };
 }
 function gitlabApproval(approvals, head) {
   const sha = str(approvals, "sha")?.trim().toLowerCase();
@@ -3474,6 +3537,24 @@ function gitlabApproval(approvals, head) {
   const names = Array.isArray(by) ? by.map((entry) => str(own2(entry, "user"), "username")).filter(Boolean) : [];
   return { ok: true, evidence: { kind: "gitlab-approvals", approvedBy: names } };
 }
+function gitlabTrust(approvals, head, access) {
+  if (own2(approvals, "approved") !== true)
+    return { trusted: false, reason: "approval: observed approved false" };
+  const sha = str(approvals, "sha")?.trim().toLowerCase();
+  if (sha !== head)
+    return { trusted: false, reason: `approval: observed sha ${sha ?? "none"}, expected an approval bound to head ${head}` };
+  const by = own2(approvals, "approved_by");
+  if (Array.isArray(by)) {
+    for (const entry of by) {
+      const user = own2(entry, "user");
+      const id = own2(user, "id");
+      const level = typeof id === "number" ? access[id] : undefined;
+      if (typeof id === "number" && typeof level === "number" && level >= 30)
+        return { trusted: true, by: str(user, "username") ?? String(id) };
+    }
+  }
+  return { trusted: false, reason: "approval: observed no approver with Developer access or above" };
+}
 function gitlabChecks(mr, head) {
   const pipeline = own2(mr, "head_pipeline");
   const status = str(pipeline, "status");
@@ -3484,32 +3565,63 @@ function gitlabChecks(mr, head) {
     return { ok: false, reason: `checks: observed head pipeline sha ${JSON.stringify(sha ?? null)}, expected ${head}` };
   return { ok: true, evidence: { pipeline: own2(pipeline, "id") ?? null } };
 }
+async function readJson(run, argv, bound) {
+  return parse(argv, await run(argv, { timeoutMs: bound.timeoutMs, env: bound.env }));
+}
 async function readApproval(run, bound) {
   if (bound.forge === "github") {
     const argv = ["gh", "pr", "view", bound.number, "--repo", bound.cliRepo, "--json", "author,reviews,comments"];
-    const payload = parse(argv, await run(argv, { timeoutMs: bound.timeoutMs, env: bound.env }));
-    return payload.ok ? githubApproval(payload.value, bound.head) : payload;
+    const payload = await readJson(run, argv, bound);
+    if (!payload.ok)
+      return payload;
+    const result = githubApproval(payload.value, bound.head);
+    if (!result.ok)
+      return result;
+    const host = ["--hostname", bound.forgeHost];
+    const viewer = await readJson(run, ["gh", "api", "user", ...host], bound);
+    const permissions = {};
+    for (const who of githubApprovers(payload.value, bound.head).slice(0, 5)) {
+      const read = await readJson(run, ["gh", "api", `repos/${bound.nameWithOwner}/collaborators/${encodeURIComponent(who)}/permission`, ...host], bound);
+      permissions[who] = read.ok && githubPermissionAllows(read.value) ? str(read.value, "role_name") ?? str(read.value, "permission") : null;
+    }
+    const trust = githubTrust(payload.value, bound.head, { viewer: viewer.ok ? str(viewer.value, "login") : null, permissions });
+    return { ...result, trusted: trust };
   }
   const project = encodeURIComponent(bound.nameWithOwner);
-  const argv = [
-    "glab",
-    "api",
-    `projects/${project}/merge_requests/${bound.number}/approvals`,
-    "--hostname",
-    bound.forgeHost
-  ];
-  const payload = parse(argv, await run(argv, { timeoutMs: bound.timeoutMs, env: bound.env }));
-  return payload.ok ? gitlabApproval(payload.value, bound.head) : payload;
+  const host = ["--hostname", bound.forgeHost];
+  const payload = await readJson(run, ["glab", "api", `projects/${project}/merge_requests/${bound.number}/approvals`, ...host], bound);
+  if (!payload.ok)
+    return payload;
+  const result = gitlabApproval(payload.value, bound.head);
+  if (!result.ok)
+    return result;
+  const access = {};
+  const by = own2(payload.value, "approved_by");
+  for (const entry of Array.isArray(by) ? by.slice(0, 5) : []) {
+    const id = own2(own2(entry, "user"), "id");
+    if (typeof id !== "number")
+      continue;
+    const read = await readJson(run, ["glab", "api", `projects/${project}/members/all/${id}`, ...host], bound);
+    const level = read.ok ? own2(read.value, "access_level") : null;
+    access[id] = typeof level === "number" ? level : null;
+  }
+  return { ...result, trusted: gitlabTrust(payload.value, bound.head, access) };
 }
 async function readChecks(run, bound) {
   if (bound.forge === "github") {
-    const argv = ["gh", "pr", "checks", bound.number, "--repo", bound.cliRepo, "--json", "name,state,bucket"];
-    const payload = parse(argv, await run(argv, { timeoutMs: bound.timeoutMs, env: bound.env }), true);
-    return payload.ok ? githubChecks(payload.value) : payload;
+    const base = `repos/${bound.nameWithOwner}/commits/${bound.head}`;
+    const host = ["--hostname", bound.forgeHost];
+    const runs = await readJson(run, ["gh", "api", `${base}/check-runs?per_page=100`, ...host], bound);
+    if (!runs.ok)
+      return runs;
+    const status = await readJson(run, ["gh", "api", `${base}/status?per_page=100`, ...host], bound);
+    if (!status.ok)
+      return status;
+    return githubHeadChecks(runs.value, status.value);
   }
   const project = encodeURIComponent(bound.nameWithOwner);
   const argv = ["glab", "api", `projects/${project}/merge_requests/${bound.number}`, "--hostname", bound.forgeHost];
-  const payload = parse(argv, await run(argv, { timeoutMs: bound.timeoutMs, env: bound.env }));
+  const payload = await readJson(run, argv, bound);
   return payload.ok ? gitlabChecks(payload.value, bound.head) : payload;
 }
 
@@ -4654,6 +4766,7 @@ async function landPullRequest(params, deps = {}) {
   if (unnamed !== null)
     return refuse(`${unnamed}; no merge was issued and no receipt was written`);
   const preconditions = {};
+  let approvalTrusted = false;
   if (!alreadyMerged && (params.requireApproval === true || params.requireGreenChecks === true)) {
     const bound = {
       forge,
@@ -4670,6 +4783,7 @@ async function landPullRequest(params, deps = {}) {
       if (!approval.ok)
         return refuse(`${approval.reason}; no merge was issued and no receipt was written`);
       preconditions.approval = approval.evidence;
+      approvalTrusted = approval.trusted?.trusted === true;
     }
     if (params.requireGreenChecks === true) {
       const checks = await readChecks(run, bound);
@@ -4723,7 +4837,8 @@ async function landPullRequest(params, deps = {}) {
     forge,
     head,
     merge: alreadyMerged ? null : landMethod,
-    setupAutoDelete: params.setupAutoDelete === true
+    setupAutoDelete: params.setupAutoDelete === true,
+    gated: landAuthorizationGated(params, { alreadyMerged, approvalTrusted })
   });
   const notes = [];
   if (planGated) {
@@ -5239,7 +5354,7 @@ var landingFile = (commonDir, receiptId) => {
     throw new Error(`unsafe receipt id ${JSON.stringify(receiptId)}`);
   return join6(commonDir, "opencode", "landings", `${receiptId}.json`);
 };
-function readJson(path, parse) {
+function readJson2(path, parse) {
   let raw;
   try {
     raw = readFileSync5(path, "utf8");
@@ -5262,8 +5377,8 @@ function writeAtomic(path, value) {
 `);
   renameSync(temp, path);
 }
-var readClaim = (commonDir, directory) => readJson(claimFile(commonDir, directory), parseClaim);
-var readLanding = (commonDir, receiptId) => readJson(landingFile(commonDir, receiptId), parseLanding);
+var readClaim = (commonDir, directory) => readJson2(claimFile(commonDir, directory), parseClaim);
+var readLanding = (commonDir, receiptId) => readJson2(landingFile(commonDir, receiptId), parseLanding);
 function writeLanding(commonDir, record) {
   writeAtomic(landingFile(commonDir, record.receiptId), record);
 }
@@ -5285,7 +5400,7 @@ function listLandings(commonDir) {
   const records = [];
   let unreadable = false;
   for (const name of names) {
-    const read = readJson(join6(directory, name), parseLanding);
+    const read = readJson2(join6(directory, name), parseLanding);
     if (read.kind === "present")
       records.push(read.value);
     else if (read.kind === "unreadable")
@@ -6111,7 +6226,20 @@ function createPendingCleanup(deps) {
         retriedAt.set(receipt.receiptId, now());
         let result;
         try {
-          result = await cleanupDelivery({ receipt: path }, cwd, { env, host: deps.host(), ...removal, ...deps.cleanup });
+          result = await cleanupDelivery({ receipt: path }, cwd, {
+            env,
+            host: deps.host(),
+            ...removal,
+            authorize: async (request) => {
+              try {
+                await deps.authorize(sessionID, request);
+              } catch (error) {
+                await deny(request.worktree, sessionID).catch(() => {});
+                throw error;
+              }
+            },
+            ...deps.cleanup
+          });
         } catch {
           continue;
         }
@@ -6532,7 +6660,7 @@ function asserter(ctx, context, action, gates) {
       await ctx.permission.assert({
         sessionID: context.sessionID,
         agent: context.agent,
-        source: { type: "tool", messageID: context.messageID, id: context.id },
+        ...context.messageID === undefined || context.id === undefined ? {} : { source: { type: "tool", messageID: context.messageID, id: context.id } },
         action,
         resources: [resource],
         save: [resource],
@@ -6561,6 +6689,7 @@ async function setupDelivery(ctx, overrides = {}) {
     cwd: directory,
     env: environment(options),
     host: () => hostWorktrees(ctx),
+    authorize: (sessionID, request) => asserter(ctx, { sessionID }, CLEANUP_ACTION, gates)(request.worktree, { ...request }, cleanupGate(request)),
     ...overrides
   });
   const tools = await ctx.tool.transform((editor) => {
@@ -6571,12 +6700,12 @@ async function setupDelivery(ctx, overrides = {}) {
       output: LAND_OUTPUT,
       execute: async (input, context) => {
         const ask = asserter(ctx, context, LAND_ACTION, gates);
-        const gated = landGate(input);
         const outcome = await landPullRequest(input, {
+          ...overrides.cleanup?.run === undefined ? {} : { run: overrides.cleanup.run },
           cwd: directory,
           env: environment(options),
           signal: context.signal,
-          authorize: (request) => ask(request.resource, { ...request }, gated)
+          authorize: (request) => ask(request.resource, { ...request }, request.gated)
         });
         if (!outcome.ok) {
           const output = landOutput(outcome);
@@ -6596,7 +6725,8 @@ async function setupDelivery(ctx, overrides = {}) {
         let denied = false;
         const cleanup = decision.run ? await runInlineCleanup(() => {
           const askCleanup = asserter(ctx, context, CLEANUP_ACTION, gates);
-          return cleanupDelivery({ receipt: outcome.receiptPath }, directory, {
+          return (overrides.inlineCleanup ?? cleanupDelivery)({ receipt: outcome.receiptPath }, directory, {
+            ...overrides.cleanup,
             env: environment(options),
             signal: context.signal,
             authorize: async (request) => {
@@ -6631,6 +6761,7 @@ async function setupDelivery(ctx, overrides = {}) {
         let result;
         try {
           result = await cleanupDelivery(input, directory, {
+            ...overrides.cleanup,
             env: environment(options),
             signal: context.signal,
             ...pending.explicit((req) => ask(req.worktree, { ...req }, cleanupGate(req)), context.sessionID),

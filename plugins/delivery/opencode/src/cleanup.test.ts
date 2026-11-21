@@ -3035,7 +3035,7 @@ describe("pending cleanup: one remover per worktree", () => {
     expect(removed(h)).toBe(false)
     expect(mutationCalls(h.scripted.calls)).toEqual([])
     const landing = readLanding(h.common, h.f.receipt.receiptId)
-    expect(landing.kind === "present" && landing.landing.denied !== undefined).toBe(true)
+    expect(landing.kind === "present" && landing.value.denied !== undefined).toBe(true)
     h.advance(60_000)
     await h.idle()
     expect(h.asked).toHaveLength(1)

@@ -308,28 +308,36 @@ the directory is already gone.
 ## Permissions
 
 `delivery_land` asks permission for action `delivery_land` with resource
-`<owner>/<name>#<number>`. It asks after every read has passed and before the
-first write. `delivery_cleanup` asks for action `delivery_cleanup` with the
-worktree path, right before the removal. The plugin turns an allowed request for
-either action into `ask`, so every call prompts. A deny rule still wins. Set the
-`confirm` option to `false` to let your permission rules decide on their own.
+`<owner>/<name>#<number>`, after every read has passed and before the first write.
+`delivery_cleanup` asks for action `delivery_cleanup` with the physical worktree path,
+right before the removal. A deny rule always wins.
 
-Two kinds of call skip that extra prompt, because the tool proves the safety itself:
+By default (`confirm` on) the plugin turns an allowed request for either action into
+`ask`, except for the two proven cases below. Set `confirm` to `false` to let your
+permission rules decide on their own.
 
-- A fully gated land: the validated input sets `expectHeadSha`, `requireApproval: true`
-  and `requireGreenChecks: true`. The tool reads an approval artifact and green checks
-  for that exact head before it merges.
-- A cleanup that read a landing receipt, verified it, and removes exactly the receipt's
-  own worktree on the receipt's own branch. A cleanup with no valid receipt is refused
-  before any prompt; a renamed or detached checkout is not bound to the receipt and
-  still prompts.
+A call skips the plugin's extra prompt only when the tool itself proved what a person's
+confirmation would rest on:
 
-The decision comes from the validated tool input and the tool's own proofs, never from
-free text (`opencode/src/gate.ts`). It only removes the prompt delivery adds: a `deny`
-or `ask` rule you configured still applies, and a land missing any gate prompts as
-before. A subagent session cannot answer a prompt (it becomes a deny), so gated
-landing and receipt cleanup work in subagents such as `shepherd`, and ungated calls
-need a root session.
+- **Gated land.** The validated input sets `expectHeadSha`, `requireApproval: true` and
+  `requireGreenChecks: true`, and the forge shows (a) an approval for exactly that head
+  from a trusted identity and (b) green checks for that head's sha. Trusted means, on
+  GitHub, an `APPROVED` review from a user with write, maintain or admin permission on
+  the repository, or a `VERDICT: APPROVE` comment naming the head from the account that
+  is both the authenticated `gh` user and the PR author. On GitLab it means an
+  approvals payload bound to the head sha with an approver of Developer access or above.
+  An approval that cannot be tied to the head or to a trusted identity leaves the
+  prompt in place; the merge can still go ahead once someone confirms.
+- **Receipt cleanup.** The tool read a landing receipt, verified it, and is removing
+  exactly that receipt's worktree on that receipt's branch. A renamed or detached checkout
+  is not bound to the receipt and prompts; so does any change of branch between the
+  authorization and the removal (the removal is refused). Delivery's retries of a pending
+  cleanup ask the same permission before they remove anything, and a denial stops them.
+
+Every other call prompts as before. The decisions come from validated tool input and the
+tool's own proofs, never from free text (`opencode/src/gate.ts`). A subagent session
+cannot answer a prompt (it becomes a deny), so gated landing and receipt cleanup work in
+subagents such as `shepherd`, and calls that need a prompt need a root session.
 
 ## Receipts
 
