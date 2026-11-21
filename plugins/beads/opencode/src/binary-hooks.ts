@@ -123,7 +123,10 @@ function rewriteInitCalls(command: string): string | undefined {
   for (const offset of insertions.sort((left, right) => right - left))
     rewritten = `${rewritten.slice(0, offset)} --skip-hooks${rewritten.slice(offset)}`
   // Every init must be guarded now; one the scan could not place (inside a substitution) means block.
-  const unguarded = parsedInvocations(parse(rewritten)).some(
+  // A rewritten command the parser refuses (for example past its size limit) cannot be checked.
+  const checked = parse(rewritten)
+  if (checked.unknown) return undefined
+  const unguarded = parsedInvocations(checked).some(
     (invocation) => invocation.verb === "init" && !invocation.args.includes("--skip-hooks"),
   )
   return unguarded ? undefined : rewritten

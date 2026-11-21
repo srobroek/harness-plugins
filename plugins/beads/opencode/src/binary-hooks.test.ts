@@ -84,6 +84,11 @@ describe("binary Git hook protection", () => {
       expect(run("echo hi # bd init")).toBeUndefined()
       expect(run("echo $(bd init)")?.kind).toBe("block")
       expect(run("bd init && echo $(bd init)")?.kind).toBe("block")
+      // Inserting the flag pushes this past the parser's 64,000-character limit, so the result cannot be checked.
+      const head = "bd init && echo $(bd init) #"
+      const padded = head + "x".repeat(64_000 - head.length)
+      expect(padded).toHaveLength(64_000)
+      expect(run(padded)?.kind).toBe("block")
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
