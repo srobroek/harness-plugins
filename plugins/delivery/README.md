@@ -320,10 +320,11 @@ either action into `ask`, so every call in a root session prompts. A deny rule
 still wins. A subagent session (one with a parent) is not prompted, because it
 cannot answer: an allowed request stays allowed. If the session lookup fails, the
 prompt stays. A subagent is still gated by its own `delivery_land` and
-`delivery_cleanup` permission, and `delivery_land` still checks that
-`requireApproval` names the head SHA, that the checks are green, and that it
-merges at most once. Set the `confirm` option to `false` to let your permission
-rules decide on their own.
+`delivery_cleanup` permission, and by `delivery_land`'s own checks: a call that
+would merge must pass `expectHeadSha` naming the PR head, and it merges at most
+once. Approval and green checks are required only when the call sets
+`requireApproval` and `requireGreenChecks`; the `shepherd` agent always sets both.
+Set the `confirm` option to `false` to let your permission rules decide on their own.
 
 ## Receipts
 
