@@ -190,18 +190,20 @@ describe("githubReviewEnforcement", () => {
 
 describe("gitlabReviewEnforcement", () => {
   const settings = { reset_approvals_on_push: true, disable_overriding_approvers_per_merge_request: true }
-  test("needs a rule requiring an approval, reset on push, and no per-MR override of the approvers", () => {
-    expect(gitlabReviewEnforcement(settings, [{ approvals_required: 1 }]).enforced).toBe(true)
-    expect(gitlabReviewEnforcement(settings, [{ approvals_required: 0 }, { approvals_required: 2 }]).enforced).toBe(true)
+  const state = (...required: number[]) => ({ rules: required.map((approvals_required) => ({ approvals_required })) })
+  test("needs an applicable mandatory rule, reset on push, and no per-MR override of the approvers", () => {
+    expect(gitlabReviewEnforcement(settings, state(1)).enforced).toBe(true)
+    expect(gitlabReviewEnforcement(settings, state(0, 2)).enforced).toBe(true)
   })
   test.each([
-    ["no rules", settings, []],
-    ["rules requiring nothing", settings, [{ approvals_required: 0 }]],
-    ["approvals that survive pushes", { ...settings, reset_approvals_on_push: false }, [{ approvals_required: 1 }]],
-    ["approvers editable per merge request", { ...settings, disable_overriding_approvers_per_merge_request: false }, [{ approvals_required: 1 }]],
-    ["unreadable settings", undefined, [{ approvals_required: 1 }]],
-    ["unreadable rules", settings, undefined],
-  ])("%s does not", (_name, projectSettings, rules) => {
-    expect(gitlabReviewEnforcement(projectSettings, rules).enforced).toBe(false)
+    ["no applicable rules (a rule scoped to another branch is absent from the state)", settings, state()],
+    ["rules requiring nothing", settings, state(0)],
+    ["approvals that survive pushes", { ...settings, reset_approvals_on_push: false }, state(1)],
+    ["approvers editable per merge request", { ...settings, disable_overriding_approvers_per_merge_request: false }, state(1)],
+    ["unreadable settings", undefined, state(1)],
+    ["an unreadable state", settings, undefined],
+    ["a state without rules", settings, {}],
+  ])("%s does not", (_name, projectSettings, approvalState) => {
+    expect(gitlabReviewEnforcement(projectSettings, approvalState).enforced).toBe(false)
   })
 })

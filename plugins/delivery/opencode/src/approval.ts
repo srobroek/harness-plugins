@@ -194,18 +194,21 @@ export function githubReviewEnforcement(rules: unknown, protection: unknown): En
 }
 
 /**
- * GitLab: a project approval rule requires at least one approval, approvals reset on push, and
- * merge requests may not change the approvers. Pure: takes `projects/<id>/approvals` and
- * `projects/<id>/approval_rules`, each `undefined` when unreadable.
+ * GitLab: the merge request's effective approval rules (`merge_requests/<n>/approval_state`, which
+ * lists only the rules that apply to this request's target branch) hold at least one mandatory rule
+ * (`approvals_required >= 1`), approvals reset on push, and merge requests may not change the
+ * approvers. A project rule scoped to another branch therefore never counts. Pure: takes
+ * `projects/<id>/approvals` and the approval state, each `undefined` when unreadable.
  */
-export function gitlabReviewEnforcement(settings: unknown, rules: unknown): Enforcement {
+export function gitlabReviewEnforcement(settings: unknown, state: unknown): Enforcement {
+  const rules = own(state, "rules")
   const required = Array.isArray(rules) && rules.some((rule) => count(own(rule, "approvals_required")) >= 1)
   const resets = own(settings, "reset_approvals_on_push") === true
   const locked = own(settings, "disable_overriding_approvers_per_merge_request") === true
-  if (required && resets && locked) return { enforced: true, via: "project approval rules" }
+  if (required && resets && locked) return { enforced: true, via: "the merge request's approval rules" }
   return {
     enforced: false,
-    reason: `the project does not provably require an approval, reset approvals on push and lock the approvers (approval required: ${required}, reset on push: ${resets}, approvers locked: ${locked})`,
+    reason: `the merge request does not provably have an applicable mandatory approval rule, reset approvals on push and lock the approvers (applicable rule requiring an approval: ${required}, reset on push: ${resets}, approvers locked: ${locked})`,
   }
 }
 
@@ -280,8 +283,8 @@ export async function readApproval(run: CliRunner, bound: Bound): Promise<Approv
   const reset = settings.ok ? own(settings.value, "reset_approvals_on_push") : undefined
   const trust = gitlabTrust(payload.value, bound.head, access, typeof reset === "boolean" ? reset : null)
   if (!trust.trusted) return { ...result, trusted: trust }
-  const approvalRules = await readJson(run, ["glab", "api", `projects/${project}/approval_rules`, ...host], bound)
-  const enforcement = gitlabReviewEnforcement(settings.ok ? settings.value : undefined, approvalRules.ok ? approvalRules.value : undefined)
+  const approvalState = await readJson(run, ["glab", "api", `projects/${project}/merge_requests/${bound.number}/approval_state`, ...host], bound)
+  const enforcement = gitlabReviewEnforcement(settings.ok ? settings.value : undefined, approvalState.ok ? approvalState.value : undefined)
   return { ...result, trusted: enforcement.enforced ? trust : { trusted: false, reason: enforcement.reason } }
 }
 
