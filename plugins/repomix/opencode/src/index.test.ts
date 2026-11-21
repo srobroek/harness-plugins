@@ -21,21 +21,31 @@ function fakeRepomix(seen: string[][]) {
   }
 }
 
-test("registers the tool, the skill and the npx prompt, and disposes them", async () => {
+test("registers the tool and the skill with no npx prompt, and disposes them", async () => {
   const fake = createFakeContext()
   const cleanup = await plugin.setup(fake.context)
   expect([...fake.tools.keys()]).toEqual([PACK_TOOL])
   expect([...fake.skills.keys()]).toEqual(["repomix"])
-  expect(fake.hooks("permission")).toEqual(["evaluate"])
+  expect(fake.hooks("permission")).toEqual([])
   await cleanup?.()
   expect(fake.active()).toBe(0)
   expect(fake.tools.size).toBe(0)
 })
 
-test("confirmPack=false leaves the npx fallback to the configured rules", async () => {
-  const fake = createFakeContext({ options: { confirmPack: false } })
-  await plugin.setup(fake.context)
-  expect(fake.hooks("permission")).toEqual([])
+test("confirmPack=true prompts for the npx fallback; a deny stays a deny and the default leaves an allow", async () => {
+  const npx = { sessionID: "ses_1", action: PACK_TOOL, resources: ["o/r"], metadata: { runner: "npx" } }
+  const on = createFakeContext({ options: { confirmPack: true } })
+  await plugin.setup(on.context)
+  expect(on.hooks("permission")).toEqual(["evaluate"])
+  const asked = await on.fire.permission("evaluate", { ...npx, effect: "allow" } as { effect: string })
+  expect(asked.effect).toBe("ask")
+  const denied = await on.fire.permission("evaluate", { ...npx, effect: "deny" } as { effect: string })
+  expect(denied.effect).toBe("deny")
+
+  const off = createFakeContext()
+  await plugin.setup(off.context)
+  const allowed = await off.fire.permission("evaluate", { ...npx, effect: "allow" } as { effect: string })
+  expect(allowed.effect).toBe("allow")
 })
 
 test("a pack asks for the resolved target and returns the path and metrics only", async () => {
@@ -84,6 +94,7 @@ test("refusals return before any permission prompt or run", async () => {
 test("the npx fallback is flagged for the prompt, and a rejection stops the run", async () => {
   const seen: string[][] = []
   const refused = createFakeContext({
+    options: { confirmPack: true },
     assert: () => {
       throw new Error("rejected")
     },

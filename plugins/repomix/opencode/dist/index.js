@@ -557,7 +557,7 @@ function confirmPack(evaluation) {
 
 // plugins/repomix/opencode/src/index.ts
 function parseOptions(options) {
-  return { confirmPack: options?.confirmPack !== false };
+  return { confirmPack: options?.confirmPack === true };
 }
 var isDirectory = (path) => {
   try {

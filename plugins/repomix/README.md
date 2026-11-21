@@ -13,8 +13,8 @@ opencode plugin add 'github:srobroek/harness-plugins::path:plugins/repomix/openc
 ```
 
 Install repomix globally (`mise use -g npm:repomix@1.18.1` or `npm i -g repomix`). Without
-it on PATH, the tool runs `npx --yes repomix@1.18.1` and asks first, because npx downloads
-code.
+it on PATH, the tool runs `npx --yes repomix@1.18.1`, because npx downloads code. Your
+permission rules decide whether that runs; set `confirmPack` (below) to prompt first.
 
 ## Tool
 
@@ -36,14 +36,15 @@ Every run:
   different refs diff cleanly.
 
 The tool asks permission as `repomix_pack`, with the absolute directory or `remote@ref` as
-the resource. When it would run through npx, an allowed call is turned into a prompt. Set
-the plugin option `confirmPack: false` to leave that to your permission rules:
+the resource. Your permission rules decide: an allowed call runs without a prompt, and a deny
+or ask rule always wins. To prompt when a pack would run through npx, even if a rule allows
+it, set the plugin option `confirmPack` to `true` (default `false`):
 
 ```jsonc
 {
   "plugins": [{
     "package": "github:srobroek/harness-plugins::path:plugins/repomix/opencode",
-    "options": { "confirmPack": false }
+    "options": { "confirmPack": true }
   }]
 }
 ```

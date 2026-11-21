@@ -367,7 +367,7 @@ type Evaluation = {
   message?: string
 }
 
-/** Turn an allowed pack that would run through npx into a prompt: npx downloads and runs code. */
+/** Opt-in (`confirmPack: true`): turn an allowed pack that would run through npx into a prompt, because npx downloads and runs code. */
 export function confirmPack(evaluation: Evaluation): void {
   if (evaluation.effect !== "allow" || evaluation.action !== PACK_TOOL || evaluation.metadata?.runner !== "npx") return
   evaluation.effect = "ask"
