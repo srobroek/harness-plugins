@@ -18,7 +18,7 @@
 
 ## The gate stops a command whose directory depends on a variable
 
-- **Symptom:** `cannot resolve the dynamic working directory before this mutation`
+- **Symptom:** `This command changes directory to a path only the shell can resolve`, followed by `Do not use cd: pass the shell tool's workdir parameter instead.`
 - **Cause:** The gate must know which ledger a `bd` mutation targets. It resolves a literal `cd <path> &&` prefix. It cannot resolve a directory that comes from a variable, a command substitution or another runtime value.
 - **Fix:** Pass the directory as the shell tool's `workdir`, and run the bare `bd` command. Do not compute the directory inside the command.
 
