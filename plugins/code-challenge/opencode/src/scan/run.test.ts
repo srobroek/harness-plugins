@@ -1,10 +1,9 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
-import type { SupervisedRun } from "@srobroek/opencode-lib/subprocess"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
+import { cleanup, exited, fakeExec, pythonRepo, RUFF_HIT, temp, withTools } from "./fixtures.ts"
 import { formatScan, readScanInput, registerScanTool, SCAN_DESCRIPTION, SCAN_TOOL } from "./index.ts"
 import { RECIPES } from "./recipes.ts"
 import { type Exec, runScan } from "./run.ts"
@@ -12,50 +11,8 @@ import { type Exec, runScan } from "./run.ts"
 // Real-process case: a /bin/sh fixture that prints and one that outlives a 2 s deadline.
 // Measured 2.2 s alone (the hung fixture waits out its deadline); 30 s leaves headroom for a loaded machine (AGENTS.md, Commands).
 setDefaultTimeout(30_000)
+afterAll(cleanup)
 
-const dirs: string[] = []
-function temp(): string {
-  const dir = mkdtempSync(join(tmpdir(), "challenge-scan-"))
-  dirs.push(dir)
-  return dir
-}
-afterAll(() => {
-  for (const dir of dirs) rmSync(dir, { recursive: true, force: true })
-})
-
-const exited = (stdout: string, exitCode = 0, stderr = ""): SupervisedRun => ({
-  kind: "exited",
-  exitCode,
-  signalCode: null,
-  stdout,
-  stderr,
-})
-
-const RUFF_HIT = JSON.stringify([
-  { code: "PERF401", filename: "a.py", location: { row: 5 }, message: "use a list comprehension" },
-  { code: "T201", filename: "a.py", location: { row: 9 }, message: "print found" },
-])
-
-function pythonRepo(): string {
-  const root = temp()
-  writeFileSync(join(root, "pyproject.toml"), "[project]\nname='x'\n")
-  writeFileSync(join(root, "a.py"), "print(1)\n")
-  return root
-}
-
-/** A fake exec answering by a fragment of the tool's argv; records every argv. */
-function fakeExec(answers: Record<string, SupervisedRun>, calls: string[][] = []): Exec {
-  return async (argv) => {
-    calls.push(argv)
-    const key = Object.keys(answers).find((k) => argv.join(" ").includes(k))
-    return key ? (answers[key] as SupervisedRun) : exited("", 0)
-  }
-}
-
-const withTools =
-  (...names: string[]) =>
-  (binary: string) =>
-    names.includes(binary) ? `/bin/${binary}` : null
 
 describe("runScan", () => {
   test("normalises hits, assigns lenses and tags rules enabled in the repo", async () => {
@@ -100,11 +57,11 @@ describe("runScan", () => {
   test("quick depth skips analyzers that need a build", async () => {
     const root = temp()
     writeFileSync(join(root, "go.mod"), "module x\n")
-    const calls: string[][] = []
+    const calls: Parameters<typeof fakeExec>[1] = []
     const which = withTools("golangci-lint", "go", "git")
     const report = await runScan({ root, depth: "quick" }, { exec: fakeExec({}, calls), which })
     expect(report.coverage.filter((c) => c.status === "skipped").map((c) => c.recipe)).toEqual(["golangci:lenses", "deadcode:go"])
-    expect(calls.some((c) => c.includes("/bin/golangci-lint"))).toBe(false)
+    expect(calls.some((c) => c.argv.includes("/bin/golangci-lint"))).toBe(false)
   })
 
   test("an exit code outside the accepted set is a gap carrying the first error line", async () => {
@@ -259,7 +216,7 @@ describe("tool registration", () => {
       depth: "quick",
     })
     expect(readScanInput({ root: "sub" }, "/base")).toMatchObject({ root: "/base/sub" })
-    expect(readScanInput({ runId: "../x" }, "/base")).toBe("runId may only hold letters, digits, dot, underscore and dash")
+    expect(readScanInput({ runId: "../x" }, "/base")).toMatch(/^runId must be 1-64 characters/)
     expect(readScanInput({ timeoutSeconds: 0 }, "/base")).toBe("timeoutSeconds must be a positive number")
   })
 

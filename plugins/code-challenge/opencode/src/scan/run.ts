@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { extname, join, relative, resolve } from "node:path"
+import { extname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { type Exec, MAX_STDERR_BYTES, MAX_STDOUT_BYTES, spawnTool } from "./exec.ts"
 import { parseOutput } from "./parsers.ts"
 import { pinOf } from "./pins.ts"
@@ -74,26 +74,56 @@ export function detectLanguages(root: string, files: readonly string[]): Languag
   return LANGUAGES.filter((l) => found.has(l))
 }
 
+/** Whether `abs` is the root or below it. Both must already be real paths. */
+function inside(root: string, abs: string): boolean {
+  const rel = relative(root, abs)
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+}
+
+const outside = (pattern: string): Error => new Error(`challenge_scan: path is outside the root: ${pattern}`)
+
+function realOrNull(path: string): string | null {
+  try {
+    return realpathSync(path)
+  } catch {
+    return null
+  }
+}
+
+/** Collect regular files below `dir`; symlinks are skipped, never followed. */
 function walk(dir: string, root: string, out: Set<string>): void {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isSymbolicLink()) continue
     if (entry.isDirectory()) {
       if (!SKIP_DIRS.has(entry.name)) walk(join(dir, entry.name), root, out)
     } else out.add(relative(root, join(dir, entry.name)))
   }
 }
 
-/** Expand files, directories and globs (relative to root) into existing root-relative files. */
+/**
+ * Expand files, directories and globs into existing root-relative files. `root` is a real
+ * path. A named path or a glob that leaves the root is an error; a symlink met while walking
+ * or globbing that leaves it is skipped.
+ */
 export function expandFiles(root: string, patterns: readonly string[]): string[] {
   const found = new Set<string>()
   for (const pattern of patterns) {
+    const isGlob = /[*?[{]/.test(pattern)
+    if (isGlob && (isAbsolute(pattern) || pattern.split("/").includes(".."))) throw outside(pattern)
     const abs = resolve(root, pattern)
-    if (existsSync(abs)) {
-      if (statSync(abs).isDirectory()) walk(abs, root, found)
-      else found.add(relative(root, abs))
+    if (!isGlob) {
+      if (!inside(root, abs)) throw outside(pattern)
+      const real = realOrNull(abs)
+      if (real === null) continue
+      if (!inside(root, real)) throw outside(pattern)
+      if (statSync(real).isDirectory()) walk(real, root, found)
+      else found.add(relative(root, real))
       continue
     }
     for (const match of new Bun.Glob(pattern).scanSync({ cwd: root, onlyFiles: true })) {
-      if (!match.split("/").some((part) => SKIP_DIRS.has(part))) found.add(match)
+      if (match.split("/").some((part) => SKIP_DIRS.has(part))) continue
+      const real = realOrNull(join(root, match))
+      if (real !== null && inside(root, real)) found.add(relative(root, real))
     }
   }
   return [...found].sort()
@@ -104,11 +134,21 @@ function missingMarker(root: string, markers: readonly string[] | undefined): st
   if (!markers) return null
   for (const spec of markers) {
     const [name = "", needle] = spec.split(":")
-    const path = join(root, name)
-    if (!existsSync(path)) continue
-    if (needle === undefined || readFileSync(path, "utf8").includes(needle)) return null
+    const stat = lstatOrNull(join(root, name))
+    if (stat === null || !stat.isFile() || stat.size > MAX_MARKER_BYTES) continue
+    if (needle === undefined || readFileSync(join(root, name), "utf8").includes(needle)) return null
   }
   return `no ${markers.map((m) => m.replace(":", " containing ")).join(" or ")} in the repository`
+}
+
+const MAX_MARKER_BYTES = 1024 * 1024
+
+function lstatOrNull(path: string): ReturnType<typeof lstatSync> | null {
+  try {
+    return lstatSync(path)
+  } catch {
+    return null
+  }
 }
 
 type Resolved = { prefix: string[] } | { gap: string }
@@ -140,9 +180,10 @@ export function resolveTool(recipe: Recipe, which: (b: string) => string | null,
   return { gap: `${recipe.binary} is not installed${runner}` }
 }
 
-function expandArgs(recipe: Recipe, cfg: string, out: string, files: readonly string[]): string[] {
+function expandArgs(recipe: Recipe, cfg: string, out: string, files: readonly string[], root: string): string[] {
   return recipe.args.flatMap((arg) => {
-    if (arg === "{files}") return files.length > 0 ? [...files] : ["."]
+    // Absolute paths never start with "-", so a file name cannot pass for an option.
+    if (arg === "{files}") return files.length > 0 ? files.map((f) => join(root, f)) : ["."]
     return [arg.replaceAll("{cfg}", cfg).replaceAll("{out}", out)]
   })
 }
@@ -190,6 +231,11 @@ async function gitDir(root: string, exec: Exec, which: (b: string) => string | n
   return run.kind === "exited" && run.exitCode === 0 ? run.stdout.trim() : null
 }
 
+/** A run id is one path segment: a word character first, then word characters, dots and dashes, at most 64. */
+export function validRunId(runId: string): boolean {
+  return /^\w[\w.-]{0,63}$/.test(runId)
+}
+
 const firstLine = (text: string): string => text.trim().split("\n")[0]?.slice(0, 200) ?? ""
 const slug = (id: string): string => id.replace(/[^\w.-]/g, "_")
 
@@ -203,11 +249,15 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
   const depth: Depth = input.depth ?? "standard"
   const lenses: readonly Lens[] = input.lenses && input.lenses.length > 0 ? input.lenses : LENSES
   const timeoutMs = Math.min(input.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000
-  if (input.runId !== undefined && !/^[\w.-]+$/.test(input.runId)) {
-    throw new Error(`challenge_scan: invalid runId "${input.runId}"`)
-  }
+  if (input.runId !== undefined && !validRunId(input.runId)) throw new Error(`challenge_scan: invalid runId "${input.runId}"`)
 
   const files = input.files && input.files.length > 0 ? expandFiles(root, input.files) : []
+  if (input.files !== undefined && input.files.length > 0 && files.length === 0) {
+    const coverage: CoverageEntry[] = [
+      { recipe: "*", tool: "-", language: "-", status: "skipped", reason: "the file list matched no files" },
+    ]
+    return { root, languages: [], depth, candidates: [], coverage, timings: [], rawDir: null }
+  }
   const languages = input.languages && input.languages.length > 0 ? input.languages : detectLanguages(root, files)
   const git = await gitDir(root, exec, which)
   if (input.runId !== undefined && git === null) {
@@ -270,7 +320,7 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
       for (const [file, content] of Object.entries(recipe.configFiles?.({ root, hasGitignore }) ?? {})) {
         writeFileSync(join(cfg, file), content)
       }
-      const argv = [...resolved.prefix, ...expandArgs(recipe, cfg, out, scoped)]
+      const argv = [...resolved.prefix, ...expandArgs(recipe, cfg, out, scoped, root)]
       const started = now()
       const run = await exec(argv, { cwd: root, timeoutMs, signal })
       const exitCode = run.kind === "exited" ? run.exitCode : null

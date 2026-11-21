@@ -1,6 +1,6 @@
 import { isAbsolute, resolve } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
-import { runScan, type ScanDeps } from "./run.ts"
+import { runScan, type ScanDeps, validRunId } from "./run.ts"
 import { DEPTHS, LANGUAGES, LENSES, type ScanInput, type ScanReport } from "./types.ts"
 
 export { parseOutput } from "./parsers.ts"
@@ -47,8 +47,8 @@ export function readScanInput(raw: unknown, base: string): ScanInput | string {
   const root = typeof input.root === "string" && input.root !== "" ? input.root : base
   const timeout = input.timeoutSeconds
   if (timeout !== undefined && (typeof timeout !== "number" || !(timeout > 0))) return "timeoutSeconds must be a positive number"
-  if (input.runId !== undefined && (typeof input.runId !== "string" || !/^[\w.-]+$/.test(input.runId))) {
-    return "runId may only hold letters, digits, dot, underscore and dash"
+  if (input.runId !== undefined && (typeof input.runId !== "string" || !validRunId(input.runId))) {
+    return "runId must be 1-64 characters of letters, digits, underscore, dot or dash, starting with a letter, digit or underscore"
   }
   if (input.depth !== undefined && !(DEPTHS as readonly unknown[]).includes(input.depth)) return `depth must be one of ${DEPTHS.join(", ")}`
   const files = Array.isArray(input.files) ? input.files.filter((f): f is string => typeof f === "string") : undefined
