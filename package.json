@@ -39,7 +39,7 @@
     "@opencode/client": "2.3.2",
     "@opencode/plugin": "2.3.2",
     "@opencode/theme": "2.3.2",
-    "@opentui/core": "0.9.3",
+    "@opentui/core": "0.9.7",
     "@opentui/solid": "0.9.3",
     "@semantic-release/changelog": "7.0.0",
     "@semantic-release/exec": "7.1.0",
