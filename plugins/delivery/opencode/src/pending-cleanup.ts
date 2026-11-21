@@ -168,6 +168,9 @@ export function explicitDeferral(ownership: Ownership): string | undefined {
 /** What `cleanupDelivery` hands `authorize`. */
 export type ExplicitRequest = { worktree: string; branch?: string; pr?: number; receiptBound?: boolean }
 
+/** Plugin-storage key of the attribution (the agent that ran the land) for a receipt's pending cleanup. */
+export const retryAgentKey = (receiptId: string): string => `retry-agent/${receiptId}`
+
 export async function authorizeExplicit(
   pending:
     | {
@@ -208,7 +211,7 @@ export type PendingDeps = {
    * (and receipt-bound exemption) an explicit `delivery_cleanup` gets. A throw is a denial: the
    * retry stops and the denial is recorded, so it is not tried again without a new explicit call.
    */
-  authorize: (sessionID: string, request: ExplicitRequest, agent?: string) => Promise<void>
+  authorize: (sessionID: string, request: ExplicitRequest, agent: string) => Promise<void>
   /** Test seam: the runner, bounds and clock the cleanup proofs use. */
   cleanup?: Pick<CleanupDeps, "run" | "bounds" | "now">
   /** Test seam: the git runner the repository observations use. */
@@ -330,19 +333,49 @@ export function createPendingCleanup(deps: PendingDeps) {
     // If the denial cannot be written to disk (the lock is busy, the store is unwritable), it is still
     // remembered here: the retry must never remove what was denied just because the record is missing.
     if (outcome.denied) deniedInMemory.set(receipt.receiptId, canonicalDirectory(path))
-    await write(receipt.receiptId, path, (existing) => {
-      const agent = outcome.agent ?? existing?.agent
-      return {
+    // Who ran the land is kept where a session cannot edit it (plugin storage, outside the repository
+    // and the worktree), never in the landing record under the git directory.
+    if (outcome.agent !== undefined) {
+      await ctx.storage.set(retryAgentKey(receipt.receiptId), {
         receiptId: receipt.receiptId,
-        worktree: path,
+        agent: outcome.agent,
+        worktree: canonicalDirectory(path),
         headRefOid: receipt.pr.headRefOid,
-        sessionID,
-        landedAt: existing?.landedAt ?? now(),
-        ...(agent === undefined ? {} : { agent }),
-        ...(existing?.nudged ? { nudged: true } : {}),
-        ...(outcome.denied ? { denied: { at: now(), sessionID } } : existing?.denied ? { denied: existing.denied } : {}),
-      }
-    })
+      })
+    }
+    await write(receipt.receiptId, path, (existing) => ({
+      receiptId: receipt.receiptId,
+      worktree: path,
+      headRefOid: receipt.pr.headRefOid,
+      sessionID,
+      landedAt: existing?.landedAt ?? now(),
+      ...(existing?.nudged ? { nudged: true } : {}),
+      ...(outcome.denied ? { denied: { at: now(), sessionID } } : existing?.denied ? { denied: existing.denied } : {}),
+    }))
+  }
+
+  /**
+   * The agent a retry asserts as: the stored attribution for this receipt, only when it exists and
+   * names this receipt's worktree and head. Anything else is no attribution, and a retry without
+   * one is refused (never asserted agentless).
+   */
+  const attributedAgent = async (receipt: LandingReceipt): Promise<string | undefined> => {
+    const path = receipt.worktree.path
+    if (path === null) return undefined
+    let stored: unknown
+    try {
+      stored = await ctx.storage.get(retryAgentKey(receipt.receiptId))
+    } catch {
+      return undefined
+    }
+    if (typeof stored !== "object" || stored === null) return undefined
+    const entry = stored as Record<string, unknown>
+    const agent = entry.agent
+    const matches =
+      entry.receiptId === receipt.receiptId &&
+      entry.worktree === canonicalDirectory(path) &&
+      entry.headRefOid === receipt.pr.headRefOid
+    return matches && typeof agent === "string" && agent !== "" ? agent : undefined
   }
 
   /** Receipts, newest first, whose worktree is `path`. */
@@ -552,6 +585,13 @@ export function createPendingCleanup(deps: PendingDeps) {
         if (sent && meta) await markNudged(receipt.receiptId, meta.worktree)
       } else if (decision.action === "retry") {
         retriedAt.set(receipt.receiptId, now())
+        // No stored attribution for this receipt means no principal to assert as, and an agentless
+        // assertion would skip the agent's own rules: refuse the retry and record a denial.
+        const agent = await attributedAgent(receipt)
+        if (agent === undefined) {
+          await deny(worktree, sessionID).catch(() => {})
+          continue
+        }
         let result: CleanupResult
         try {
           // `guard` re-checks ownership after the proofs and before the removal.
@@ -561,7 +601,7 @@ export function createPendingCleanup(deps: PendingDeps) {
             ...removal,
             authorize: async (request) => {
               try {
-                await deps.authorize(sessionID, request, meta?.agent)
+                await deps.authorize(sessionID, request, agent)
               } catch (error) {
                 // A refused retry is a denial like a refused explicit call: recorded, never retried unasked.
                 await deny(request.worktree, sessionID).catch(() => {})

@@ -366,7 +366,7 @@ export async function setupDelivery(
     authorize: (sessionID, request, agent) =>
       asserter(
         ctx,
-        { sessionID: sessionID as ToolContext["sessionID"], ...(agent === undefined ? {} : { agent: agent as ToolContext["agent"] }) },
+        { sessionID: sessionID as ToolContext["sessionID"], agent: agent as ToolContext["agent"] },
         CLEANUP_ACTION,
         gates,
       )(request.worktree, { ...request }, cleanupGate(request)),

@@ -10,7 +10,7 @@ import {
   writeLanding,
 } from "@srobroek/opencode-lib/worktree-claims"
 import { lockedWrite, lockFile, readHolds, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
-import { authorizeExplicit, createPendingCleanup } from "./pending-cleanup.ts"
+import { authorizeExplicit, createPendingCleanup, retryAgentKey } from "./pending-cleanup.ts"
 
 // Fixture setup creates several real Git repositories and measured about 20s under full-suite load;
 // keep three times that headroom instead of letting Bun's 5s default kill a child process mid-fixture.
@@ -2973,7 +2973,14 @@ describe("pending cleanup: one remover per worktree", () => {
         hookName === "experimental.idle" ? Promise.reject(new Error("unknown hook")) : original(hookName, callback)
     }
     let clock = NOW + 10
-    const pending = createPendingCleanup({
+    // The landing is attributed to an agent in plugin storage unless a test removes or changes the entry.
+    fake.storage.set(retryAgentKey(f.receipt.receiptId), {
+      receiptId: f.receipt.receiptId,
+      agent: "builder",
+      worktree: realpathSync(f.linked),
+      headRefOid: f.receipt.pr.headRefOid,
+    })
+    const base = createPendingCleanup({
       ctx: fake.context,
       cwd: f.main,
       env: f.env,
@@ -2989,6 +2996,11 @@ describe("pending cleanup: one remover per worktree", () => {
       ...(over.observe === undefined ? {} : { observe: over.observe }),
       ...(over.lock === undefined ? {} : { lock: over.lock }),
     })
+    // Landings are attributed to an agent unless a test says otherwise (`{ agent: undefined }`).
+    const pending = {
+      ...base,
+      record: (...args: Parameters<typeof base.record>) => base.record(args[0], args[1], { agent: "builder", ...args[2] }),
+    }
     const common = repositoryContext(f.main)?.commonDir as string
     const advance = (ms: number) => {
       clock += ms
@@ -3032,18 +3044,62 @@ describe("pending cleanup: one remover per worktree", () => {
     await h.pending.record(h.f.receipt, "ses_lead")
     await h.pending.start()
     await h.idle()
-    expect(h.asked).toEqual([{ sessionID: "ses_lead", worktree: real, receiptBound: true }])
+    expect(h.asked).toEqual([{ sessionID: "ses_lead", worktree: real, agent: "builder", receiptBound: true }])
     await h.finish()
   })
 
-  test("a retry asks as the agent that landed, so that agent's own permission rules apply", async () => {
+  test("a retry asks as the agent stored for the receipt, so that agent's own permission rules apply", async () => {
     const h = await harness("pending-retry-agent")
     await h.pending.record(h.f.receipt, "ses_lead", { agent: "shepherd" })
-    // A later plain record for the same receipt keeps the originating agent.
-    await h.pending.record(h.f.receipt, "ses_lead")
+    // A later plain record for the same receipt keeps the stored attribution.
+    await h.pending.record(h.f.receipt, "ses_lead", { agent: undefined })
     await h.pending.start()
     await h.idle()
     expect(h.asked.map((entry) => entry.agent)).toEqual(["shepherd"])
+    await h.finish()
+  })
+
+  const refusedRetry = async (h: Harness) => {
+    await h.pending.start()
+    await h.idle()
+    expect(h.asked).toEqual([])
+    expect(mutationCalls(h.scripted.calls)).toEqual([])
+    expect(removed(h)).toBe(false)
+    const landing = readLanding(h.common, h.f.receipt.receiptId)
+    expect(landing.kind === "present" && landing.value.denied !== undefined).toBe(true)
+    await h.finish()
+  }
+
+  test("a retry with no stored attribution is refused and recorded as a denial, never asserted agentless", async () => {
+    const h = await harness("pending-retry-unattributed")
+    h.fake.storage.delete(retryAgentKey(h.f.receipt.receiptId))
+    await h.pending.record(h.f.receipt, "ses_lead", { agent: undefined })
+    await refusedRetry(h)
+  })
+
+  test("a stored attribution that was removed makes the retry refuse", async () => {
+    const h = await harness("pending-retry-missing-entry")
+    await h.pending.record(h.f.receipt, "ses_lead")
+    h.fake.storage.delete(retryAgentKey(h.f.receipt.receiptId))
+    await refusedRetry(h)
+  })
+
+  test("a stored attribution for another worktree or head makes the retry refuse", async () => {
+    const h = await harness("pending-retry-mismatched-entry")
+    await h.pending.record(h.f.receipt, "ses_lead")
+    const key = retryAgentKey(h.f.receipt.receiptId)
+    h.fake.storage.set(key, { ...(h.fake.storage.get(key) as object), worktree: "/somewhere/else" })
+    await refusedRetry(h)
+  })
+
+  test("an agent written into the landing record under the git directory is ignored", async () => {
+    const h = await harness("pending-retry-tampered-record")
+    await h.pending.record(h.f.receipt, "ses_lead")
+    const file = landingFile(h.common, h.f.receipt.receiptId)
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), agent: "admin" }))
+    await h.pending.start()
+    await h.idle()
+    expect(h.asked.map((entry) => entry.agent)).toEqual(["builder"])
     await h.finish()
   })
 

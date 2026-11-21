@@ -50,8 +50,6 @@ export type LandingRecord = {
   /** The session that ran `delivery_land`. */
   sessionID: string
   landedAt: number
-  /** The agent that ran `delivery_land`: retries assert the cleanup permission as this agent, so its own rules apply. */
-  agent?: string
   /** The inline cleanup (or an explicit call) was refused; only an authorized explicit call clears it. */
   denied?: { at: number; sessionID: string }
   /** The beads reminder was sent. */
@@ -94,7 +92,6 @@ export function parseLanding(value: unknown): LandingRecord | undefined {
     headRefOid,
     sessionID,
     landedAt,
-    ...(text(value.agent) === undefined ? {} : { agent: text(value.agent) as string }),
     ...(deniedAt !== undefined && deniedBy ? { denied: { at: deniedAt, sessionID: deniedBy } } : {}),
     ...(value.nudged === true ? { nudged: true } : {}),
   }
