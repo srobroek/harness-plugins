@@ -1,3 +1,9 @@
+## agent-reviewer [0.10.1](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.10.0...agent-reviewer--v0.10.1) (2026-11-21)
+
+### Bug Fixes
+
+* **code-challenge:** close dogfood friction in skill, schema and validation ([043a8b3](https://github.com/srobroek/harness-plugins/commit/043a8b39057ec8fca54d09adebb0532c2154e330))
+
 ## agent-reviewer [0.10.0](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.9.0...agent-reviewer--v0.10.0) (2026-11-21)
 
 ### Features

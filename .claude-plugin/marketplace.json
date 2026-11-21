@@ -12,7 +12,7 @@
       "name": "agent-reviewer",
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "source": "./plugins/agent-reviewer/claude",
-      "version": "0.10.0",
+      "version": "0.10.1",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/agent-reviewer",
       "repository": "https://github.com/srobroek/harness-plugins"
