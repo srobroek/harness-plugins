@@ -63,7 +63,13 @@ export type ParserId =
  */
 export type InstallKind = "local" | "bunx" | "uvx" | "go-run" | "tool-dir"
 
-export type RecipeContext = { root: string; hasGitignore: boolean; toolsDir: string }
+export type RecipeContext = {
+  root: string
+  hasGitignore: boolean
+  toolsDir: string
+  /** The tool runs from its config directory, not the root, so root-relative settings (vcs) cannot apply. */
+  fromConfigDir: boolean
+}
 
 export type Recipe = {
   id: string
@@ -94,6 +100,11 @@ export type Recipe = {
    * Such a recipe only runs after the caller consented for the root.
    */
   executes?: string
+  /**
+   * Config files at the root that override `--config-path`. When one exists the recipe runs from its
+   * own config directory on an explicit list of files that are not git-ignored.
+   */
+  repoConfigNames?: readonly string[]
   /** Quick depth skips recipes that need a build or type-check. */
   needsBuild: boolean
   acceptedExitCodes: readonly number[]
