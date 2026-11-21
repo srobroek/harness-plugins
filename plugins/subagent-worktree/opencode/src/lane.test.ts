@@ -76,7 +76,6 @@ describe("readOptions", () => {
   test("defaults for the lifecycle options", () => {
     expect(readOptions(undefined)).toMatchObject({
       gates: true,
-      resumeGraceMs: 600_000,
       emptyGraceMs: 1_800_000,
       sweep: "report",
       minAgeHours: 24,

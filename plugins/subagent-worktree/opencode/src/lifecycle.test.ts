@@ -365,14 +365,6 @@ describe("execution events", () => {
     await cleanup()
   })
 
-  test("a lane resumed a minute ago is kept even when landed", async () => {
-    const { fake, worktree, cleanup } = await start({ ancestor: 0 }, { stored: [lane({ resumedAt: NOW - 60_000 })] })
-    fake.emit({ type: "session.idle", data: { sessionID: PARENT } })
-    await settle()
-    expect(worktree).toEqual([])
-    await cleanup()
-  })
-
   test("a squash-merged lane is found through a merged PR whose head equals the tip", async () => {
     const { fake, worktree, cleanup } = await start({ mergedHeads: [TIP] })
     fake.emit({ type: "session.idle", data: { sessionID: PARENT } })

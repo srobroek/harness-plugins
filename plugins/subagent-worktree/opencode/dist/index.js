@@ -897,7 +897,6 @@ function readOptions(options) {
     agents,
     base,
     gates: options?.gates !== false,
-    resumeGraceMs: positive(options?.resumeGraceMinutes, 10) * MINUTE,
     emptyGraceMs: positive(options?.emptyGraceMinutes, 30) * MINUTE,
     sweep,
     minAgeHours: positive(options?.minAgeHours, 24),
@@ -1750,7 +1749,7 @@ function noticeStillHolds(key, facts) {
 function sent(lane, key) {
   return lane.notices?.includes(key) === true;
 }
-function unmetFinished(lane, facts, policy) {
+function unmetFinished(facts) {
   if (facts.child === "unknown")
     return "the child's status is unknown";
   if (facts.child === "running")
@@ -1759,9 +1758,6 @@ function unmetFinished(lane, facts, policy) {
     return "the parent's status is unknown";
   if (facts.parent === "busy")
     return "the parent is mid-turn";
-  if (lane.resumedAt !== undefined && facts.now - lane.resumedAt < policy.resumeGraceMs) {
-    return `the child was resumed ${Math.max(0, Math.round((facts.now - lane.resumedAt) / MINUTE2))} min ago`;
-  }
   if (facts.busyTree !== undefined)
     return facts.busyTree;
   return;
@@ -1804,7 +1800,7 @@ function laneEventAction(lane, facts, event, policy) {
   }
   if (facts.ahead > 0) {
     if (landed) {
-      const unmet = unmetFinished(lane, facts, policy);
+      const unmet = unmetFinished(facts);
       return unmet === undefined ? { action: "remove", reason: "landed, clean, child finished and parent done", basis: "landed" } : { action: "defer", reason: `landed, but ${unmet}` };
     }
     if (failure) {
@@ -1813,7 +1809,7 @@ function laneEventAction(lane, facts, event, policy) {
     }
     return { action: "defer", reason: "not landed" };
   }
-  const unmet = unmetFinished(lane, facts, policy);
+  const unmet = unmetFinished(facts);
   if (unmet !== undefined)
     return { action: "defer", reason: `empty lane, but ${unmet}`, quiet: "reset" };
   if (lane.quietSince === undefined) {
@@ -2112,7 +2108,7 @@ function within3(path, root) {
 }
 function createLifecycle(deps) {
   const { ctx, options, git, now, load, save } = deps;
-  const policy = { resumeGraceMs: options.resumeGraceMs, emptyGraceMs: options.emptyGraceMs };
+  const policy = { emptyGraceMs: options.emptyGraceMs };
   const debounceMs = deps.debounceMs ?? 2000;
   const root = canonical(deps.worktreeRoot ?? defaultWorktreeRoot());
   const projectID = ctx.location.project?.id;
@@ -2316,9 +2312,6 @@ function createLifecycle(deps) {
           const claim = readClaim(common, directory);
           if (claimGeneration(claim) !== removal.gen)
             return "the lane was resumed";
-          if (claim.kind === "present" && claim.value.resumedAt !== undefined && now() - claim.value.resumedAt < options.resumeGraceMs) {
-            return "the lane was resumed recently";
-          }
           const failedWrite = unsafeHolds.get(canonical(directory));
           if (failedWrite !== undefined)
             return failedWrite;
@@ -2347,9 +2340,6 @@ function createLifecycle(deps) {
             const claim = readClaim(common, directory);
             if (claimGeneration(claim) !== removal.gen)
               return "the lane was resumed";
-            if (claim.kind === "present" && claim.value.resumedAt !== undefined && now() - claim.value.resumedAt < options.resumeGraceMs) {
-              return "the lane was resumed recently";
-            }
             const failedWrite = unsafeHolds.get(canonical(directory));
             if (failedWrite !== undefined)
               return failedWrite;
@@ -2616,16 +2606,14 @@ function createLifecycle(deps) {
       return keptBecause("error", `the lane's claim cannot be read: ${claim.reason}`);
     const stamps = [lane.resumedAt, claim?.kind === "present" ? claim.value.resumedAt : undefined].filter((at) => at !== undefined);
     const resumed = stamps.length === 0 ? undefined : Math.max(...stamps);
-    if (resumed !== undefined && resumed >= (options.since ?? now() - deps.options.resumeGraceMs))
+    if (resumed !== undefined && options.since !== undefined && resumed >= options.since)
       return keptBecause("running", "the child was resumed");
     const held = await holdReason(lane.directory, lane.parentDir);
     if (held !== undefined)
       return keptBecause("running", held);
-    if (!options.childDone) {
-      const child = await childState(ctx.session.get({ sessionID: lane.child }), deps.lookupMs, lane.child);
-      if (child === "running" || child === "unknown")
-        return keptBecause("running", `the child session is ${child}`);
-    }
+    const child = await childState(ctx.session.get({ sessionID: lane.child }), deps.lookupMs, lane.child);
+    if (child === "running" || child === "unknown")
+      return keptBecause("running", `the child session is ${child}`);
     return;
   };
   const PROOF_OF = { removed: "empty", merged: "merged", landed: "landed" };
@@ -2760,8 +2748,8 @@ function createLifecycle(deps) {
       console.error("subagent-worktree: resuming removals failed:", error instanceof Error ? error.message : error);
     }
   };
-  const removeForeground = async (lane) => (await finalize(lane, { childDone: true })).removed;
-  const removeAfterMerge = (lane, target) => finalize(lane, { target, retireAs: "merged" });
+  const removeForeground = async (lane, since) => (await finalize(lane, { since })).removed;
+  const removeAfterMerge = (lane, target, since) => finalize(lane, { target, retireAs: "merged", since });
   const act = async (lane, action, facts, event) => {
     if (action.action === "remove")
       return finalize(lane);
@@ -2803,7 +2791,7 @@ function createLifecycle(deps) {
     const stale = type !== "archived" && (lastStart.get(sessionID) ?? 0) > seq;
     let kept;
     if (ownLane && ENDS_LANE.has(type) && !stale) {
-      const done = await finalize(ownLane, { childDone: true, seq, since: at });
+      const done = await finalize(ownLane, { seq, since: at });
       if (done.removed)
         ownLane = undefined;
       else
@@ -3793,13 +3781,14 @@ ${skipped}`,
     let lane2 = await load(child);
     if (lane2?.state !== "active")
       return;
+    const since = now();
     const resultStatus = event.status === "error" ? "error" : metadata.status === "running" ? "running" : "completed";
     const status = await git2.status(lane2.directory, lane2.base);
     const childNow = await childState(ctx.session.get({ sessionID: child }), lookupMs, child);
     let removed = false;
     if (shouldRemove(status, resultStatus, childNow)) {
       try {
-        if (await lifecycle.removeForeground(lane2)) {
+        if (await lifecycle.removeForeground(lane2, since)) {
           removed = true;
           lane2 = { ...lane2, state: "removed" };
         }
@@ -3953,6 +3942,7 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
     if (stopped()) {
       return { content: `${MERGE_TOOL}: stopped before the merge; nothing was merged.`, metadata: { ok: false, stopped: true } };
     }
+    const since = now();
     const result = await git2.run(argv);
     const output = tail(`${result.stdout}
 ${result.stderr}`);
@@ -3973,7 +3963,7 @@ ${result.stderr}`);
     const summary = `${MERGE_TOOL}: merged ${lane2.branch} into ${decision.target} (${status?.ahead ?? 0} commits, --no-squash --no-ff).
 $ ${argv.join(" ")}
 ${output}`;
-    const finalized = await lifecycle.removeAfterMerge(lane2, decision.target).catch((error) => ({
+    const finalized = await lifecycle.removeAfterMerge(lane2, decision.target, since).catch((error) => ({
       removed: false,
       reason: errorMessage(error)
     }));

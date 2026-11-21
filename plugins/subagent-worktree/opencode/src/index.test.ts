@@ -1219,7 +1219,7 @@ describe("execute.after", () => {
       expect((event.input as { prompt: string }).prompt).toContain("isolated git worktree")
     })
 
-    test("a crash left a lane in removing with its checkout and claim: the resume finishes it, and a later resume still fences removal", async () => {
+    test("a crash left a lane in removing with its checkout and claim: the resume finishes it and revives the lane", async () => {
       const setup = await start()
       await spawn(setup)
       const active = lane(setup.fake)
@@ -1233,11 +1233,6 @@ describe("execute.after", () => {
       const revived = lane(setup.fake)
       expect(revived?.state).toBe("active")
       expect(setup.worktree.calls.filter((entry) => entry.method === "create")).toHaveLength(2)
-      // A real resume of the revived lane is recorded, so the empty-lane removal after it keeps the worktree.
-      await setup.fake.fire.tool("execute.before", call({ sessionID: "ses_fake1", prompt: "again" }))
-      await setup.fake.fire.tool("execute.after", completed("ses_fake1"))
-      expect(setup.worktree.calls.filter((entry) => entry.method === "remove")).toHaveLength(1)
-      expect(lane(setup.fake)?.state).toBe("active")
     })
 
     test("a lane left in removing is finished first, then the resume gets a fresh worktree", async () => {
