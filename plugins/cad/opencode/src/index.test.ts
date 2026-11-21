@@ -111,7 +111,8 @@ describe("agent boundaries", () => {
     for (const id of READERS) {
       expect(permissionEffect(rules(id), "edit", ".cad-work/x")).toBe("deny")
       expect(permissionEffect(rules(id), RUN_TOOL)).toBe("deny")
-      expect(permissionEffect(rules(id), "shell")).toBe("deny")
+      expect(permissionEffect(rules(id), "shell", "git log -3")).toBe("allow")
+      expect(permissionEffect(rules(id), "shell", "rm -rf x")).toBe("deny")
       expect(permissionEffect(rules(id), "read", "hw/parts/LMP-0001/part.yaml")).toBe("allow")
       expect(permissionEffect(rules(id), "webfetch")).toBe(id === "cad-sourcing-researcher" ? "allow" : "deny")
     }
