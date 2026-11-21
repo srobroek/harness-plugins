@@ -65,10 +65,11 @@ Move new shared code into `lib` instead of adding another edge.
 
 `plugins/safety` turns some `external_directory` asks into allows in `permission.hook("evaluate")` hooks that run before `denyUnanswerable`, because a subagent cannot answer a prompt. Each hook acts only on an `ask`, never overrides a deny, and has a pure decision function tested directly (`scratch-dirs.ts`, `skill-references.ts`, `steering-dirs.ts`, `repo-worktrees.ts`). A hook can be switched off through the plugin's `disable` list:
 
-- `scratch-dirs.ts`: the OpenCode temp folder and the project's worktree folder, for direct file tools and (`scratch-shell`) the `shell` tool when every resource is inside a pinned root.
+- `scratch-dirs.ts`: the OpenCode temp folder and the project's worktree folder, for direct file tools and (`scratch-shell`) the `shell` tool. For shell it only waives the `external_directory` ask when every parsed resource lies inside a pinned root; it does not confine the process, which can still read or write elsewhere as any allowed shell can. An empty resource list is never auto-approved.
 - `skill-references.ts` (`skill-references`): read-only tools inside listed skills' directories.
 - `steering-dirs.ts` (`steering-dirs`): read-only tools inside the `steeringDirs` option, default `~/.config/opencode/steering`, realpath-resolved, user-owned.
-- `repo-worktrees.ts` (`repo-worktrees`): read-only tools inside the worktrees `git worktree list --porcelain -z` reports for the session directory, cached 30 s per directory.
+- `repo-worktrees.ts` (`repo-worktrees`): read-only tools inside the worktrees of the session's repository. `git worktree list --porcelain -z` runs through `lib/src/safe-git.ts` flags and `lib/src/subprocess.ts` supervision with repository-selecting `GIT_*` variables cleared. Each path must link back reciprocally on disk (`.git` file and `<common-dir>/worktrees/<name>/gitdir`) and be user-owned. Roots are cached 30 s per directory with device and inode and re-checked on every use.
+- Roots are compared as canonical paths (`insideCanonical`), never re-resolved after the check.
 
 ## Standards
 
