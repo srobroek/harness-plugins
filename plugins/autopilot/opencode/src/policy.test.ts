@@ -1,8 +1,8 @@
-import { afterAll, beforeAll, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { endsWithQuestion, grantedMergeAsk, holdsLane, isAskTool, mergeMethodFlag, mergeRefusal, mergeResource, ownWorktreeAsk } from "./policy.ts"
+import { endsWithQuestion, grantedMergeAsk, holdsLane, identifyRoot, isAskTool, mergeRefusal, mergeResource, ownWorktreeAsk, recordableLane, rootIntact } from "./policy.ts"
 
 // --- auto-allow of the run's own worktrees ---------------------------------------------------
 
@@ -86,83 +86,99 @@ test.each([
   expect(grantedMergeAsk({ action, effect, resources, allow: [...allow] })).toBe(expected)
 })
 
-const view = (over: Record<string, unknown> = {}) => ({
-  state: "OPEN",
-  headRefOid: SHA,
-  author: { login: "bot" },
-  reviews: [{ state: "APPROVED", commit: { oid: SHA }, author: { login: "rev" } }],
-  comments: [],
-  ...over,
-})
-const green = [{ name: "ci", bucket: "pass", state: "SUCCESS" }]
+const view = (over: Record<string, unknown> = {}) => ({ state: "OPEN", headRefOid: SHA, baseRefName: "main", author: { login: "bot" }, ...over })
+const reviews = [{ user: { login: "rev" }, state: "APPROVED", commit_id: SHA }]
+const runs = [{ check_runs: [{ name: "ci", status: "completed", conclusion: "success" }] }]
+const status = { state: "success", statuses: [] }
+const repo = { squashMergeAllowed: true, rebaseMergeAllowed: false, mergeCommitAllowed: true }
+type Input = Parameters<typeof mergeRefusal>[0]
+const refusal = (over: Partial<Input> = {}) => mergeRefusal({ sha: SHA, method: "squash", view: view(), reviews, runs, status, required: undefined, repo, ...over })
 
 test("mergeRefusal passes an approved, green, matching PR", () => {
-  expect(mergeRefusal({ sha: SHA, view: view(), checks: green })).toBeUndefined()
+  expect(refusal()).toBeUndefined()
 })
 
-test("mergeRefusal accepts the author's VERDICT: APPROVE comment naming the head", () => {
-  const comment = { author: { login: "bot" }, body: `VERDICT: APPROVE\nhead ${SHA}` }
-  expect(mergeRefusal({ sha: SHA, view: view({ reviews: [], comments: [comment] }), checks: green })).toBeUndefined()
+test.each<[string, Partial<Input>, string]>([
+  ["the PR head moved (SHA mismatch)", { view: view({ headRefOid: OTHER }) }, "head"],
+  ["an unreadable view", { view: undefined }, "head"],
+  ["a merged PR", { view: view({ state: "MERGED" }) }, "state"],
+  ["an approval for an older head", { reviews: [{ user: { login: "rev" }, state: "APPROVED", commit_id: OTHER }] }, "approval"],
+  ["no reviews", { reviews: [] }, "approval"],
+  ["the PR author approving their own PR", { reviews: [{ user: { login: "bot" }, state: "APPROVED", commit_id: SHA }] }, "approval"],
+  ["an unreadable review list", { reviews: undefined }, "approval"],
+  ["a failing check", { runs: [{ check_runs: [{ name: "ci", status: "completed", conclusion: "failure" }] }] }, "checks"],
+  ["no checks", { runs: [{ check_runs: [] }] }, "checks"],
+  ["a required check that never ran", { required: ["deploy"] }, "deploy"],
+  ["a method the repository does not allow", { method: "rebase" }, "method"],
+  ["a method that is not one", { method: "fast-forward" }, "method"],
+  ["unreadable repository settings", { repo: undefined }, "method"],
+])("mergeRefusal refuses %s", (_name, over, word) => {
+  expect(refusal(over)).toContain(word)
 })
 
-test.each([
-  ["the PR head moved (SHA mismatch)", () => view({ headRefOid: OTHER }), green, "head"],
-  ["the approval is for an older head", () => view({ reviews: [{ state: "APPROVED", commit: { oid: OTHER } }] }), green, "approval"],
-  ["no approval at all", () => view({ reviews: [] }), green, "approval"],
-  ["a changes-requested review", () => view({ reviews: [{ state: "CHANGES_REQUESTED", commit: { oid: SHA } }] }), green, "approval"],
-  ["a verdict comment by someone else", () => view({ reviews: [], comments: [{ author: { login: "x" }, body: `VERDICT: APPROVE ${SHA}` }] }), green, "approval"],
-  ["a verdict comment that does not name the head", () => view({ reviews: [], comments: [{ author: { login: "bot" }, body: "VERDICT: APPROVE" }] }), green, "approval"],
-  ["a merged PR", () => view({ state: "MERGED" }), green, "state"],
-  ["a failing check", () => view(), [{ name: "ci", bucket: "fail" }], "checks"],
-  ["a pending check", () => view(), [{ name: "ci", bucket: "pending" }], "checks"],
-  ["no checks", () => view(), [], "checks"],
-  ["an unreadable check list", () => view(), undefined, "checks"],
-  ["an unreadable view", () => undefined, green, "head"],
-])("mergeRefusal refuses %s", (_name, make, checks, word) => {
-  expect(mergeRefusal({ sha: SHA, view: make(), checks })).toContain(word)
+test("a verdict comment by the author is not an approval", () => {
+  const withComment = { ...view(), comments: [{ author: { login: "bot" }, body: `VERDICT: APPROVE\n${SHA}` }] }
+  expect(refusal({ view: withComment, reviews: [] })).toContain("approval")
 })
 
 test("mergeRefusal refuses a SHA that is not 40 hex digits", () => {
-  expect(mergeRefusal({ sha: "abc", view: view({ headRefOid: "abc" }), checks: green })).toContain("sha")
+  expect(refusal({ sha: "abc", view: view({ headRefOid: "abc" }) })).toContain("sha")
 })
 
-test.each<[unknown, "--squash" | "--rebase" | "--merge" | undefined]>([
-  [{ squashMergeAllowed: true, rebaseMergeAllowed: true, mergeCommitAllowed: true }, "--squash"],
-  [{ squashMergeAllowed: false, rebaseMergeAllowed: true, mergeCommitAllowed: true }, "--rebase"],
-  [{ squashMergeAllowed: false, rebaseMergeAllowed: false, mergeCommitAllowed: true }, "--merge"],
-  [{ squashMergeAllowed: false, rebaseMergeAllowed: false, mergeCommitAllowed: false }, undefined],
-  [undefined, undefined],
-])("mergeMethodFlag(%p) is %p", (repo, expected) => {
-  expect(mergeMethodFlag(repo)).toBe(expected)
-})
+// --- root identity and lane recording --------------------------------------------------------
 
-test.each([
-  ["question", true],
-  ["parley_ask", true],
-  ["parley.wait", true],
-  ["tools.parley_end", true],
-  ["read", false],
-  ["autopilot_log", false],
-])("isAskTool(%p) is %p", (tool, expected) => {
-  expect(isAskTool(tool)).toBe(expected)
+const probe =
+  (table: Record<string, { dir?: boolean; link?: boolean; dev?: string; ino?: string }>) =>
+  (path: string) => {
+    const entry = table[path]
+    return entry === undefined ? undefined : { isDirectory: entry.dir ?? true, isSymbolicLink: entry.link ?? false, dev: entry.dev ?? "1", ino: entry.ino ?? "10" }
+  }
+const real = (map: Record<string, string>) => (path: string) => map[path]
+
+test("identifyRoot records the real path with dev and ino of a plain directory", () => {
+  expect(identifyRoot("/w/a", probe({ "/w/a": {} }), real({ "/w/a": "/real/a" }))).toEqual({ path: "/w/a", real: "/real/a", dev: "1", ino: "10" })
 })
 
 test.each([
-  ["explore", false],
-  ["code-reviewer", false],
-  ["researcher", false],
-  ["coder", true],
-  ["general", true],
-  [undefined, true],
-])("holdsLane(%p) is %p", (agent, expected) => {
-  expect(holdsLane(agent)).toBe(expected)
+  ["a symlink", { "/w/a": { link: true } }],
+  ["a file", { "/w/a": { dir: false } }],
+  ["a path that does not exist", {}],
+])("identifyRoot refuses %s", (_name, table) => {
+  expect(identifyRoot("/w/a", probe(table), real({ "/w/a": "/real/a" }))).toBeUndefined()
 })
 
-test.each([
-  ["Done. Should I also update the docs?", true],
-  ["Plan:\n\nLet me know which one you prefer.", true],
-  ["Closed the bead. What is left: nothing?\n\nMoving on to the next item.", false],
-  ["", false],
-])("endsWithQuestion(%p)", (text, expected) => {
-  expect(endsWithQuestion(text)).toBe(expected)
+describe("rootIntact", () => {
+  const recorded = { path: "/w/a", real: "/real/a", dev: "1", ino: "10" }
+  const canonical = real({ "/w/a": "/real/a" })
+  test.each([
+    ["the same directory", { "/w/a": {} }, canonical, true],
+    ["removed", {}, canonical, false],
+    ["replaced by a symlink", { "/w/a": { link: true } }, real({ "/w/a": "/elsewhere" }), false],
+    ["replaced by a symlink to the same place", { "/w/a": { link: true } }, canonical, false],
+    ["recreated with another inode", { "/w/a": { ino: "11" } }, canonical, false],
+    ["on another device", { "/w/a": { dev: "2" } }, canonical, false],
+    ["resolving elsewhere", { "/w/a": {} }, real({ "/w/a": "/real/b" }), false],
+    ["replaced by a file", { "/w/a": { dir: false } }, canonical, false],
+  ])("%s", (_name, table, canon, expected) => {
+    expect(rootIntact(recorded, probe(table), canon)).toBe(expected)
+  })
+})
+
+describe("recordableLane", () => {
+  const base = { agent: "coder", directory: "/w/a", listed: new Set(["/real/a", "/real/main"]), primary: new Set(["/real/main"]), canon: real({ "/w/a": "/real/a", "/w/main": "/real/main", "/w/gone": "/real/gone" }), linked: (dir: string) => dir !== "/w/main" }
+  test("a writer in a listed, linked, non-primary worktree is recorded", () => {
+    expect(recordableLane(base)).toBe(true)
+  })
+  test.each(["explore", "researcher", "code-reviewer", "pr-reviewer", "security-reviewer", "debug", "operator", "plan"])("a %s lane is not recorded", (agent) => {
+    expect(recordableLane({ ...base, agent })).toBe(false)
+  })
+  test("the primary checkout is not recorded, even though the project lists it", () => {
+    expect(recordableLane({ ...base, directory: "/w/main" })).toBe(false)
+  })
+  test("a directory the project does not list is not recorded", () => {
+    expect(recordableLane({ ...base, directory: "/w/gone" })).toBe(false)
+  })
+  test("a directory without a linked-worktree marker is not recorded", () => {
+    expect(recordableLane({ ...base, linked: () => false })).toBe(false)
+  })
 })

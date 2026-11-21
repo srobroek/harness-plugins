@@ -53,7 +53,7 @@ export const RunStateSchema = Schema.Struct({
   attempts: Schema.Record(Schema.String, Schema.Finite),
   children: Schema.Record(Schema.String, ChildStateSchema),
   parked: Strings,
-  worktrees: Schema.optionalKey(Strings),
+  worktrees: Schema.optionalKey(Schema.Array(Schema.Struct({ path: Schema.String, real: Schema.String, dev: Schema.String, ino: Schema.String }))),
   stopRequested: Schema.optionalKey(Schema.Boolean),
   stopReason: Schema.optionalKey(Schema.String),
   stoppedAt: Schema.optionalKey(Schema.Finite),

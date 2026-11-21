@@ -1,17 +1,36 @@
 import { randomUUID } from "node:crypto"
-import { realpathSync } from "node:fs"
+import { lstatSync, realpathSync } from "node:fs"
+import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Plugin } from "@opencode/plugin"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import { withEmbeddedWriteLock } from "@srobroek/opencode-lib/bd-embedded-write-lock"
 import { hostWarn, type Warn } from "@srobroek/opencode-lib/host-log"
 import { withLease } from "@srobroek/opencode-lib/lease-lock"
+import { requiredContexts } from "@srobroek/opencode-lib/pr-approval"
 import { registerSkills } from "@srobroek/opencode-lib/skill-files"
 import { classifyScope, deadlineAt, type Invocation, parseInvocation, type RunOptions } from "./args.ts"
 import { automationRequest, type TickBinding } from "./automation.ts"
 import { Activity, BD_READ_TIMEOUT_MS, childFrom, commitCount, readBeads, type SessionView, sessionBusy } from "./gather.ts"
 import { type JournalEntry, LOG_INPUT_SCHEMA, validateEntry } from "./journal.ts"
-import { DENY_QUESTION, EXTERNAL_DIRECTORY, endsWithQuestion, grantedMergeAsk, isAskTool, MERGE_ACTION, mergeMethodFlag, mergeRefusal, mergeResource, ownWorktreeAsk, REPROMPT } from "./policy.ts"
+import {
+  DENY_QUESTION,
+  EXTERNAL_DIRECTORY,
+  endsWithQuestion,
+  grantedMergeAsk,
+  identifyRoot,
+  isAskTool,
+  type Lstat,
+  MERGE_ACTION,
+  MERGE_METHODS,
+  mergeRefusal,
+  mergeResource,
+  ownWorktreeAsk,
+  REPROMPT,
+  type RootIdentity,
+  recordableLane,
+  rootIntact,
+} from "./policy.ts"
 import { autopilotRoot, findRun, type Run, RunDir, RunFileError, runCommand } from "./rundir.ts"
 import { countBeads, newRunState, type RunState, runIdFor, type Snapshot, TICK_MS, tick, tickPrompt } from "./state.ts"
 import { HANDOFF_LABEL, handoffDescription, renderSummary } from "./summary.ts"
@@ -74,9 +93,10 @@ const STATUS_INPUT = {
 const MERGE_INPUT = {
   type: "object",
   additionalProperties: false,
-  required: ["pr", "sha"],
+  required: ["pr", "sha", "method"],
   properties: {
     pr: { type: ["integer", "string"], description: "PR number" },
+    method: { type: "string", enum: [...MERGE_METHODS], description: "the repository's merge method; the repo must allow it" },
     sha: { type: "string", description: "the full 40-digit head commit that was reviewed" },
   },
 } as const
@@ -149,6 +169,22 @@ const realPath = (path: string): string | undefined => {
   } catch {
     return undefined
   }
+}
+
+/** `lstat` without following the last component; `undefined` when the path is gone. dev and ino are strings, since an inode can exceed 2^53. */
+const lstatProbe: Lstat = (path) => {
+  try {
+    const stat = lstatSync(path, { bigint: true })
+    return { isDirectory: stat.isDirectory(), isSymbolicLink: stat.isSymbolicLink(), dev: String(stat.dev), ino: String(stat.ino) }
+  } catch {
+    return undefined
+  }
+}
+
+/** Whether `directory` carries a linked worktree's `.git` file (the primary checkout has a `.git` directory). */
+const hasGitFile = (directory: string): boolean => {
+  const marker = lstatProbe(join(directory, ".git"))
+  return marker !== undefined && !marker.isDirectory && !marker.isSymbolicLink
 }
 
 /** One `gh` call. */
@@ -351,9 +387,10 @@ export class Autopilot {
       this.#children(state.sessionID),
       this.leadBusy(state.sessionID),
     ])
+    const places = await this.#worktrees()
     const children = kids.sessions
       .filter((kid): kid is SessionView & { id: string } => typeof kid?.id === "string")
-      .map((kid) => childFrom(kid, this.activity.lastSeen(kid.id), armedAt))
+      .map((kid) => childFrom(kid, this.activity.lastSeen(kid.id), armedAt, this.#laneRoot(kid, places)))
     return {
       now,
       beads: beads.beads,
@@ -799,16 +836,32 @@ export class Autopilot {
     const asked = { action: event.action, effect: event.effect, resources: event.resources }
     if (grantedMergeAsk({ ...asked, allow: state.options.allow })) return true
     if (event.action !== EXTERNAL_DIRECTORY || !state.worktrees?.length) return false
-    const listed = await this.ctx.worktree.list({ projectID: this.ctx.location.project.id }).catch(() => [])
-    const confirmed = new Set(listed.flatMap((entry) => realPath(entry.directory) ?? []))
-    const roots = state.worktrees.filter((root) => confirmed.has(realPath(root) ?? ""))
+    const { listed } = await this.#worktrees()
+    const roots = state.worktrees.filter((root) => listed.has(root.real) && rootIntact(root, lstatProbe, realPath)).map((root) => root.real)
     return ownWorktreeAsk({ ...asked, roots, canon: realPath })
   }
 
+  /** The real paths `worktree.list` shows for this project, and the project's primary checkout. */
+  async #worktrees(): Promise<{ listed: Set<string>; primary: Set<string> }> {
+    const project = this.ctx.location.project as { id?: string; directory?: string; canonical?: string } | undefined
+    const entries = project?.id === undefined ? [] : await this.ctx.worktree.list({ projectID: project.id } as never).catch(() => [])
+    const real = (paths: (string | undefined)[]) => new Set(paths.flatMap((path) => (path === undefined ? [] : (realPath(path) ?? []))))
+    return { listed: real(entries.map((entry) => entry.directory)), primary: real([project?.directory, project?.canonical]) }
+  }
+
+  /** The identity to record for a child's directory, when it is a linked worktree of a writer lane. */
+  #laneRoot(kid: SessionView, places: { listed: Set<string>; primary: Set<string> }): RootIdentity | undefined {
+    const directory = kid.location?.directory
+    if (typeof directory !== "string" || directory === "") return undefined
+    const agent = typeof kid.agent === "string" ? kid.agent : undefined
+    if (!recordableLane({ agent, directory, ...places, canon: realPath, linked: hasGitFile })) return undefined
+    return identifyRoot(directory, lstatProbe, realPath)
+  }
+
   /** `gh` JSON output, or `undefined` when the command failed or printed something else. */
-  async #gh(cwd: string, args: string[], tolerateExit = false): Promise<unknown> {
+  async #gh(cwd: string, args: string[]): Promise<unknown> {
     const result = await this.#run(cwd, "gh", args, GH_TIMEOUT_MS)
-    if (!result.ok && !(tolerateExit && result.stdout.trim() !== "")) return undefined
+    if (!result.ok) return undefined
     try {
       return JSON.parse(result.stdout)
     } catch {
@@ -821,9 +874,10 @@ export class Autopilot {
    * only under `--allow merge`), then the approval and checks are read from the forge, and `gh`
    * merges only if the head is still `sha`.
    */
-  async merge(sessionID: string, input: { pr?: unknown; sha?: unknown }): Promise<string> {
+  async merge(sessionID: string, input: { pr?: unknown; sha?: unknown; method?: unknown }): Promise<string> {
     const pr = String(input.pr ?? "").trim()
     const sha = String(input.sha ?? "").trim().toLowerCase()
+    const method = String(input.method ?? "")
     const journal = async (entry: Omit<JournalEntry, "ts">) => {
       const running = await this.runningFor(sessionID)
       try {
@@ -838,21 +892,28 @@ export class Autopilot {
     }
     if (!/^\d+$/.test(pr)) return refuse("pr must be a PR number")
     if (!/^[0-9a-f]{40}$/.test(sha)) return refuse("sha must be the full 40-digit head commit")
+    if (!(MERGE_METHODS as readonly string[]).includes(method)) return refuse(`method must be one of ${MERGE_METHODS.join(", ")}`)
     await this.ctx.permission.assert({ sessionID, action: MERGE_ACTION, resources: [mergeResource(pr, sha)] } as never)
     const cwd = await this.#sessionDirectory(sessionID)
-    const [view, checks, repo] = await Promise.all([
-      this.#gh(cwd, ["pr", "view", pr, "--json", "state,headRefOid,author,reviews,comments"]),
-      this.#gh(cwd, ["pr", "checks", pr, "--json", "name,state,bucket"], true),
+    const api = (path: string) => this.#gh(cwd, ["api", `repos/{owner}/{repo}/${path}`, "--paginate", "--slurp"])
+    const view = await this.#gh(cwd, ["pr", "view", pr, "--json", "state,headRefOid,baseRefName,author"])
+    const base = typeof (view as { baseRefName?: unknown } | undefined)?.baseRefName === "string" ? (view as { baseRefName: string }).baseRefName : ""
+    if (!/^[A-Za-z0-9._/-]+$/.test(base) || base.includes("..")) return refuse("the PR's base branch is unreadable or unusual")
+    const [reviews, runs, status, protection, rules, repo] = await Promise.all([
+      api(`pulls/${pr}/reviews`),
+      api(`commits/${sha}/check-runs`),
+      api(`commits/${sha}/status`),
+      this.#gh(cwd, ["api", `repos/{owner}/{repo}/branches/${base}/protection/required_status_checks`]),
+      api(`rules/branches/${base}`),
       this.#gh(cwd, ["repo", "view", "--json", "squashMergeAllowed,rebaseMergeAllowed,mergeCommitAllowed"]),
     ])
-    const refusal = mergeRefusal({ sha, view, checks })
+    const refusal = mergeRefusal({ sha, method, view, reviews, runs, status, required: requiredContexts(protection, rules), repo })
     if (refusal !== undefined) return refuse(refusal)
-    const method = mergeMethodFlag(repo)
-    if (method === undefined) return refuse("the repository allows no merge method, or its settings were unreadable")
-    const merged = await this.#run(cwd, "gh", ["pr", "merge", pr, "--match-head-commit", sha, method], GH_TIMEOUT_MS)
+    const flag = `--${method}`
+    const merged = await this.#run(cwd, "gh", ["pr", "merge", pr, "--match-head-commit", sha, flag], GH_TIMEOUT_MS)
     if (!merged.ok) return refuse(`gh pr merge failed: ${merged.stderr.trim().slice(0, 300)}`)
-    await journal({ type: "action", summary: `merged #${pr} at ${sha} (${method.slice(2)})`, evidence: sha })
-    return `merged #${pr} at ${sha} with ${method}`
+    await journal({ type: "action", summary: `merged #${pr} at ${sha} (${method})`, evidence: sha })
+    return `merged #${pr} at ${sha} with ${flag}`
   }
 
   /** Re-prompts a lead whose turn ended in a question, at most {@link MAX_REPROMPTS} times in a row. */
@@ -919,7 +980,7 @@ export async function setupAutopilot(ctx: Context, deps: Deps = {}): Promise<() 
         name: "autopilot_merge",
         description: MERGE_DESCRIPTION,
         input: MERGE_INPUT,
-        execute: async (input, tool) => ({ content: await pilot.merge(tool.sessionID, input as { pr?: unknown; sha?: unknown }) }),
+        execute: async (input, tool) => ({ content: await pilot.merge(tool.sessionID, input as { pr?: unknown; sha?: unknown; method?: unknown }) }),
       })
     }),
   )
