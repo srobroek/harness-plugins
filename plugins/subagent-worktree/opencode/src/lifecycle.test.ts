@@ -2383,6 +2383,18 @@ describe("finalize: round two", () => {
   })
 })
 
+describe("one notice per lane and reason", () => {
+  test("archiving then deleting a landed-dirty lane tells the parent once", async () => {
+    const { fake, cleanup } = await start({ ancestor: 0, porcelain: " M a.txt\n" })
+    fake.emit({ type: "session.archived", data: { sessionID: CHILD } })
+    await settle(100)
+    fake.emit({ type: "session.deleted", data: { sessionID: CHILD } })
+    await settle(100)
+    expect(synthetic(fake).filter((entry) => entry.sessionID === PARENT)).toHaveLength(1)
+    await cleanup()
+  })
+})
+
 describe("finalize: a resume and late changes fence the removal", () => {
   const removes = (worktree: Array<{ method: string }>) => worktree.filter((entry) => entry.method === "remove").length
   const empty = { head: BASE, ahead: 0 }
