@@ -35,6 +35,7 @@ const gate = () => {
   })
   return { opened, open }
 }
+const recordExpires = (path: string) => (JSON.parse(readFileSync(path, "utf8")) as LeaseRecord).expires
 const base = { owner: "test", host: HOST, leaseMs: 60_000, waitMs: 120 }
 
 describe("leaseAbandoned", () => {
@@ -165,17 +166,29 @@ describe("withLease", () => {
   test("the heartbeat renews the lease, so a long hold is not taken over while its holder works", async () => {
     const dir = scratch()
     const lock = join(dir, "a.lock")
-    const holderIn = gate()
+    const renewed = gate()
+    const contended = gate()
+    let holderToken = ""
     const holder = withLease(lock, { ...base, leaseMs: 80, renewMs: 15, waitMs: 1000 }, async () => {
-      holderIn.open()
-      // Real time must pass here: the hold outlives several leases, and only the heartbeat keeps it.
-      await new Promise((done) => setTimeout(done, 400))
+      holderToken = tokenOf(lock)
+      const firstExpiry = recordExpires(lock)
+      // Wait for state, not a delay: the heartbeat has written the lease past its first expiry, and that
+      // expiry has passed. A holder without a working heartbeat never reaches this; the cap fails the test.
+      const capped = Date.now() + 2000
+      while (!(Date.now() > firstExpiry && recordExpires(lock) > firstExpiry) && Date.now() < capped) {
+        await new Promise((done) => setTimeout(done, 5))
+      }
+      renewed.open()
+      await contended.opened
     })
-    await holderIn.opened
-    // Several leases old by now, but renewed: a contender with its own short patience must fail busy.
+    await renewed.opened
+    // The original lease is over, but renewed: a contender with its own short patience must fail busy.
     const contender = await withLease(lock, { ...base, leaseMs: 80, waitMs: 200 }, () => "stolen")
+    const tokenAfter = tokenOf(lock)
+    contended.open()
     await holder
     expect(contender).toMatchObject({ kind: "failed", busy: true })
+    expect(tokenAfter).toBe(holderToken)
   })
 
   test("an owner whose lease lapsed cannot unlink or overwrite its successor", async () => {
