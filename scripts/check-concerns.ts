@@ -49,7 +49,7 @@ export type Files = {
   /** Names of the entries (files and directories) directly inside `dir`. */
   entries(dir: string): string[]
 }
-export const diskFiles: Files = {
+const diskFiles: Files = {
   exists: (file) => existsSync(file),
   read: (file) => readFileSync(file, "utf8"),
   entries: (dir) => [...new Bun.Glob("*").scanSync({ cwd: dir, onlyFiles: false })],
@@ -62,11 +62,11 @@ export type DefaultKind =
   | { type: "shared" | "inherits"; id: string }
   | { type: "unknown" }
 
-export const SPEC_FILE = "plugins/toolchain/common/skills/toolchain-languages/references/concerns.md"
-export const SHARED_FILE = "plugins/toolchain/common/skills/toolchain-languages/references/shared-tools.md"
-export const GROUPS = ["testing", "quality", "iac"]
-export const STATUSES = ["active", "maintenance", "beta", "pre-1.0", "preview"]
-export const LANGUAGE_HEADER = ["Concern", "Default", "Maintenance", "Install", "Alternatives", "Use both when", "Run", "Avoid"]
+const SPEC_FILE = "plugins/toolchain/common/skills/toolchain-languages/references/concerns.md"
+const SHARED_FILE = "plugins/toolchain/common/skills/toolchain-languages/references/shared-tools.md"
+const GROUPS = ["testing", "quality", "iac"]
+const STATUSES = ["active", "maintenance", "beta", "pre-1.0", "preview"]
+const LANGUAGE_HEADER = ["Concern", "Default", "Maintenance", "Install", "Alternatives", "Use both when", "Run", "Avoid"]
 
 const CONCERN_HEADER = ["Id", "Name", "Group", "Definition", "N/A allowed for", "Run must include"]
 const SURFACE_HEADER = ["Surface", "Id", "N/A allowed for"]

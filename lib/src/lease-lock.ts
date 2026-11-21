@@ -34,15 +34,17 @@
 
 import { AsyncLocalStorage } from "node:async_hooks"
 import { randomUUID } from "node:crypto"
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, statSync, unlinkSync, writeSync } from "node:fs"
+import { closeSync, openSync, statSync, unlinkSync, writeSync } from "node:fs"
 import { hostname } from "node:os"
+
+import { readBounded } from "./bounded-read.ts"
+import { processAlive } from "./subprocess.ts"
 
 const LEASE_MS = 120_000
 const RENEW_MS = 20_000
 const WAIT_MS = 120_000
 const POLL_MS = 20
 const POLL_MAX_MS = 400
-const MAX_RECORD_BYTES = 64 * 1024
 
 /** What a hold records. */
 export type LeaseRecord = { host: string; pid: number; owner: string; token: string; taken: number; expires: number }
@@ -54,15 +56,6 @@ export type LeaseFacts = {
   leaseMs: number
   /** The record file's age, for a record that cannot be parsed. */
   ageMs: number
-}
-
-export function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM"
-  }
 }
 
 export function parseLeaseRecord(value: unknown): LeaseRecord | undefined {
@@ -82,31 +75,6 @@ export function leaseAbandoned(record: LeaseRecord | undefined, facts: LeaseFact
   if (record === undefined) return facts.ageMs > facts.leaseMs
   if (record.host === facts.host && !facts.alive(record.pid)) return true
   return facts.now > record.expires
-}
-
-type Read = { kind: "absent" } | { kind: "unreadable" } | { kind: "text"; text: string }
-
-/** A bounded read of a small regular file (beads' `readBounded`): never a FIFO, a symlink or a huge file. */
-function readBounded(path: string): Read {
-  let fd: number | undefined
-  try {
-    if (!lstatSync(path).isFile()) return { kind: "unreadable" }
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-    const info = fstatSync(fd)
-    if (!info.isFile() || info.size > MAX_RECORD_BYTES) return { kind: "unreadable" }
-    const buffer = Buffer.alloc(info.size)
-    let offset = 0
-    while (offset < buffer.length) {
-      const read = readSync(fd, buffer, offset, buffer.length - offset, offset)
-      if (read === 0) break
-      offset += read
-    }
-    return { kind: "text", text: buffer.toString("utf8", 0, offset) }
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT" ? { kind: "absent" } : { kind: "unreadable" }
-  } finally {
-    if (fd !== undefined) closeSync(fd)
-  }
 }
 
 export type LeaseOptions = {

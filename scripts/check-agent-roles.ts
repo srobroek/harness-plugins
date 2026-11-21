@@ -17,7 +17,7 @@ import { isModelRole, MODEL_ROLE_HEADER, MODEL_TIERS } from "../lib/src/model-ro
 export type Finding = { file: string; reason: string }
 
 /** Plugins whose agent `model` is a fallback, applied only when model-roles is absent. */
-export const FALLBACK_MODEL_PLUGINS = ["delivery"]
+const FALLBACK_MODEL_PLUGINS = ["delivery"]
 
 const FRONTMATTER = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/
 

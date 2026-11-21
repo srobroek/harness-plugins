@@ -1,4 +1,5 @@
 import { type Answer, publicAnswer } from "./answers.ts"
+import { isRecord, strings } from "./guards.ts"
 import { fromRoundDelivery, type RoundDelivery } from "./outbox.ts"
 import { type Question, validateQuestions } from "./questions.ts"
 import { awaitsDelivery, type Round } from "./rounds.ts"
@@ -50,9 +51,6 @@ export function toStored(round: Round, directory: string): StoredRound {
   }
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-
 /** A stored round, with the location that owns it. */
 export interface Restored {
   readonly round: Round
@@ -83,7 +81,6 @@ function decode(value: unknown): Restored | undefined {
   if (!answers.every(usable)) return undefined
   const delivery = value.delivery === undefined ? undefined : fromRoundDelivery(value.delivery)
   if (value.delivery !== undefined && delivery === undefined) return undefined
-  const strings = (input: unknown) => (Array.isArray(input) ? input.filter((item): item is string => typeof item === "string") : [])
   return {
     directory,
     round: {

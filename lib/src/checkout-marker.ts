@@ -7,44 +7,17 @@
  * target is accepted only when it provably belongs to the session repository.
  */
 
-import { closeSync, constants, fstatSync, lstatSync, openSync, readlinkSync, readSync } from "node:fs"
+import { lstatSync, readlinkSync } from "node:fs"
 import { dirname, join } from "node:path"
 
-/** `.git` entries and `commondir` files are one short line; anything bigger is not read. */
-const MAX_MARKER_BYTES = 64 * 1024
+import { readBounded } from "./bounded-read.ts"
 
 /**
- * - `absent`: nothing is at the path.
- * - `unreadable`: something is there, but it is not a small regular non-symlink file
- *   (a link, FIFO, device or huge file), or reading it failed.
- *
- * Mirrors the bounded read the beads plugin uses for ledger files; delivery cannot import
- * from beads, and this copy opens with `O_NOFOLLOW | O_NONBLOCK` after an `lstat` so a FIFO
- * or a link to one is refused without blocking. `maxBytes` defaults to the marker bound.
+ * The bounded read (`absent`, `unreadable` or `text`) is shared with the ledger reads in
+ * `bounded-read.ts`. Its default bound (64 KiB) suits `.git` entries and `commondir` files,
+ * which are one short line; `maxBytes` overrides it.
  */
-export type BoundedRead = { kind: "absent" } | { kind: "unreadable" } | { kind: "text"; text: string }
-
-export function readBounded(path: string, maxBytes: number = MAX_MARKER_BYTES): BoundedRead {
-  let fd: number | undefined
-  try {
-    if (!lstatSync(path).isFile()) return { kind: "unreadable" }
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
-    const info = fstatSync(fd)
-    if (!info.isFile() || info.size > maxBytes) return { kind: "unreadable" }
-    const buffer = Buffer.alloc(info.size)
-    let offset = 0
-    while (offset < buffer.length) {
-      const read = readSync(fd, buffer, offset, buffer.length - offset, offset)
-      if (read === 0) break
-      offset += read
-    }
-    return { kind: "text", text: buffer.toString("utf8", 0, offset) }
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT" ? { kind: "absent" } : { kind: "unreadable" }
-  } finally {
-    if (fd !== undefined) closeSync(fd)
-  }
-}
+export { type BoundedRead, readBounded } from "./bounded-read.ts"
 
 export type MarkerState = "same" | "foreign" | "unsafe" | "absent"
 

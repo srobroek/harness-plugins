@@ -798,9 +798,12 @@ describe("waiting for a busy ledger", () => {
     const store = mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "beads-lock-wait-"))
     try {
       liveHolder(store)
-      setTimeout(() => rmSync(join(store, "omp-embedded-write.lock")), 150)
       const started = Date.now()
-      const result = await hold(store, "waiter", 5000)
+      const waiting = hold(store, "waiter", 5000)
+      // `hold` runs synchronously up to its first pause: it has already found the lock busy and
+      // queued. Releasing now is therefore a release inside the wait, with no timer to race.
+      rmSync(join(store, "omp-embedded-write.lock"))
+      const result = await waiting
       expect(result.kind).toBe("held")
       expect(Date.now() - started).toBeLessThan(1500)
       release(store, "waiter")

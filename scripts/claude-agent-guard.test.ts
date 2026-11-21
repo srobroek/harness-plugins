@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -62,6 +62,7 @@ describe("guardDecision", () => {
 
 describe("claude-agent-guard executable", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "guard-"))
+  afterAll(() => rmSync(dir, { recursive: true, force: true }))
   writeFileSync(path.join(dir, "guards.json"), JSON.stringify(config))
   const run = async (stdin: string, guards = dir) => {
     const proc = Bun.spawn(["bun", path.join(import.meta.dir, "claude-agent-guard.ts")], {
@@ -91,6 +92,4 @@ describe("claude-agent-guard executable", () => {
     expect(code).toBe(0)
     expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe("ask")
   }, SPAWN_MS)
-
-  test("cleanup", () => rmSync(dir, { recursive: true, force: true }))
 })

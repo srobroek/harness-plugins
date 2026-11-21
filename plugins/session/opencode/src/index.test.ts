@@ -256,8 +256,15 @@ describe("a stop through the tool call's signal", () => {
       rmSync(dir, { recursive: true, force: true })
     }
   }
+  // The child writes its pid within tens of ms (measured: at most 46 ms over 40 runs); 5 s is about 100x slack and
+  // keeps a child that never starts from hanging until the 15 s test timeout with no message.
+  const PID_WAIT_MS = 5_000
   const pidOf = async (file: string): Promise<number> => {
-    while (!existsSync(file) || readFileSync(file, "utf8").trim() === "") await Bun.sleep(10)
+    const deadline = Date.now() + PID_WAIT_MS
+    while (!existsSync(file) || readFileSync(file, "utf8").trim() === "") {
+      if (Date.now() > deadline) throw new Error(`no pid in ${file} after ${PID_WAIT_MS} ms: the child never started`)
+      await Bun.sleep(10)
+    }
     return Number(readFileSync(file, "utf8").trim())
   }
   const gone = async (pid: number): Promise<boolean> => {

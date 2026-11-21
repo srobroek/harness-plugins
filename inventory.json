@@ -245,7 +245,7 @@
     },
     {
       "name": "autopilot",
-      "version": "1.3.0",
+      "version": "1.3.1",
       "description": "Unattended runs: /autopilot arms a no-questions session with a journal, a 4-minute tick and stop conditions.",
       "category": "development",
       "harnesses": {
@@ -309,7 +309,7 @@
     },
     {
       "name": "beads",
-      "version": "0.8.2",
+      "version": "0.8.3",
       "description": "Beads issue tracking: bd prime session context, shell gates on bd, git and gh commands, store pinning and the Beads skills.",
       "category": "development",
       "harnesses": {
@@ -424,7 +424,7 @@
     },
     {
       "name": "chezmoi",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "description": "Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill.",
       "category": "development",
       "harnesses": {
@@ -480,7 +480,7 @@
     },
     {
       "name": "code-challenge",
-      "version": "1.2.0",
+      "version": "1.3.0",
       "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
       "category": "development",
       "harnesses": {
@@ -545,7 +545,7 @@
     },
     {
       "name": "delivery",
-      "version": "0.10.0",
+      "version": "0.10.1",
       "description": "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
       "category": "development",
       "harnesses": {
@@ -1072,7 +1072,7 @@
     },
     {
       "name": "parley",
-      "version": "0.4.1",
+      "version": "0.4.2",
       "description": "Ask the user rounds of typed questions in a TUI panel, with recommended answers, notes and deferrals.",
       "category": "development",
       "harnesses": {
@@ -1238,7 +1238,7 @@
     },
     {
       "name": "safety",
-      "version": "0.10.0",
+      "version": "0.11.0",
       "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help, redaction of secret environment values from tool output, and a tool that stores a secret without a shell.",
       "category": "development",
       "harnesses": {

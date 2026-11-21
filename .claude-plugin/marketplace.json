@@ -48,7 +48,7 @@
       "name": "beads",
       "description": "Beads issue tracking: bd prime session context, shell gates on bd, git and gh commands, store pinning and the Beads skills.",
       "source": "./plugins/beads/claude",
-      "version": "0.8.2",
+      "version": "0.8.3",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/beads",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -57,7 +57,7 @@
       "name": "chezmoi",
       "description": "Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill.",
       "source": "./plugins/chezmoi/claude",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/chezmoi",
       "repository": "https://github.com/srobroek/harness-plugins"

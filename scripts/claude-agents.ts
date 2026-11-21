@@ -27,7 +27,7 @@ type Effect = "allow" | "deny" | "ask"
 type Rule = { action: string; resource: string; effect: Effect }
 
 /** OpenCode permission actions and the Claude Code tools they stand for, in output order. */
-export const TOOL_GROUPS: ReadonlyArray<{ actions: readonly string[]; tools: readonly string[] }> = [
+const TOOL_GROUPS: ReadonlyArray<{ actions: readonly string[]; tools: readonly string[] }> = [
   { actions: ["read"], tools: ["Read"] },
   { actions: ["grep"], tools: ["Grep"] },
   { actions: ["glob"], tools: ["Glob"] },

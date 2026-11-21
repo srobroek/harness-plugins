@@ -1734,8 +1734,8 @@ function readBoundedBytes(path, maxBytes) {
       closeSync(fd);
   }
 }
-function readBounded(path) {
-  const read = readBoundedBytes(path, MAX_LEDGER_FILE_BYTES);
+function readBounded(path, maxBytes = MAX_LEDGER_FILE_BYTES) {
+  const read = readBoundedBytes(path, maxBytes);
   if (read.kind === "absent")
     return { kind: "absent" };
   return read.kind === "bytes" ? { kind: "text", text: read.bytes.toString("utf8") } : { kind: "unreadable" };

@@ -1,3 +1,5 @@
+## autopilot [1.3.1](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.3.0...autopilot--v1.3.1) (2026-11-21)
+
 ## autopilot [1.3.0](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.2.0...autopilot--v1.3.0) (2026-11-21)
 
 ### Features

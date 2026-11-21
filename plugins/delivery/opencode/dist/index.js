@@ -424,23 +424,28 @@ function textAfterCleanup(text, report) {
 }
 
 // plugins/delivery/opencode/src/cleanup.ts
-import { existsSync as existsSync2, lstatSync as lstatSync3, realpathSync as realpathSync3 } from "fs";
+import { existsSync as existsSync2, lstatSync as lstatSync4, realpathSync as realpathSync3 } from "fs";
 import { basename as basename3, dirname as dirname4, isAbsolute as isAbsolute2, join as join4, resolve as resolve4, sep as sep2 } from "path";
 import { isDeepStrictEqual } from "util";
 
 // lib/src/checkout-marker.ts
-import { closeSync, constants, fstatSync, lstatSync, openSync, readlinkSync, readSync } from "fs";
+import { lstatSync as lstatSync2, readlinkSync } from "fs";
 import { dirname, join } from "path";
-var MAX_MARKER_BYTES = 64 * 1024;
-function readBounded(path, maxBytes = MAX_MARKER_BYTES) {
+
+// lib/src/bounded-read.ts
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "fs";
+var MAX_LEDGER_FILE_BYTES = 64 * 1024;
+function readBoundedBytes(path, maxBytes) {
   let fd;
   try {
     if (!lstatSync(path).isFile())
-      return { kind: "unreadable" };
+      return { kind: "unreadable", reason: "not-regular" };
     fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const info = fstatSync(fd);
-    if (!info.isFile() || info.size > maxBytes)
-      return { kind: "unreadable" };
+    if (!info.isFile())
+      return { kind: "unreadable", reason: "not-regular" };
+    if (info.size > maxBytes)
+      return { kind: "unreadable", reason: "too-large" };
     const buffer = Buffer.alloc(info.size);
     let offset = 0;
     while (offset < buffer.length) {
@@ -449,14 +454,25 @@ function readBounded(path, maxBytes = MAX_MARKER_BYTES) {
         break;
       offset += read;
     }
-    return { kind: "text", text: buffer.toString("utf8", 0, offset) };
+    return { kind: "bytes", bytes: offset === buffer.length ? buffer : buffer.subarray(0, offset) };
   } catch (error) {
-    return error.code === "ENOENT" ? { kind: "absent" } : { kind: "unreadable" };
+    const code = error.code;
+    if (code === "ENOENT")
+      return { kind: "absent" };
+    return code === "ELOOP" ? { kind: "unreadable", reason: "not-regular" } : { kind: "unreadable", reason: "io", code };
   } finally {
     if (fd !== undefined)
       closeSync(fd);
   }
 }
+function readBounded(path, maxBytes = MAX_LEDGER_FILE_BYTES) {
+  const read = readBoundedBytes(path, maxBytes);
+  if (read.kind === "absent")
+    return { kind: "absent" };
+  return read.kind === "bytes" ? { kind: "text", text: read.bytes.toString("utf8") } : { kind: "unreadable" };
+}
+
+// lib/src/checkout-marker.ts
 var MAX_LINKS = 40;
 function physical(path) {
   const pending = (path.startsWith("/") ? path : `${process.cwd()}/${path}`).split("/").reverse();
@@ -475,7 +491,7 @@ function physical(path) {
     }
     const candidate = `${resolved}/${part}`;
     try {
-      const stat = lstatSync(candidate);
+      const stat = lstatSync2(candidate);
       if (!stat.isSymbolicLink()) {
         resolved = candidate;
         isDirectory = stat.isDirectory();
@@ -511,7 +527,7 @@ function verifyCheckout(checkout, commonDir) {
   const workTree = checkout;
   let stat;
   try {
-    stat = lstatSync(entry);
+    stat = lstatSync2(entry);
   } catch (error) {
     const code = error.code;
     return { state: code === "ENOENT" || code === "ENOTDIR" ? "absent" : "unsafe" };
@@ -574,7 +590,7 @@ function stashesOnBranch(subjects, branch) {
 // plugins/delivery/package.json
 var package_default = {
   name: "delivery",
-  version: "0.10.0",
+  version: "0.10.1",
   description: "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
   private: true,
   type: "module",
@@ -1573,7 +1589,7 @@ import {
   fchmodSync,
   fstatSync as fstatSync2,
   linkSync,
-  lstatSync as lstatSync2,
+  lstatSync as lstatSync3,
   mkdirSync as mkdirSync2,
   opendirSync,
   openSync as openSync2,
@@ -1625,7 +1641,7 @@ var REPOSITORY_OBSERVATION_ARGS = [
 function physicalDirectory(path) {
   try {
     const real = realpathSync2(path);
-    return lstatSync2(real).isDirectory() ? real : null;
+    return lstatSync3(real).isDirectory() ? real : null;
   } catch {
     return null;
   }
@@ -1633,7 +1649,7 @@ function physicalDirectory(path) {
 function checkoutGitDirectory(checkout) {
   const marker = join3(checkout, ".git");
   try {
-    const stat = lstatSync2(marker);
+    const stat = lstatSync3(marker);
     if (stat.isDirectory())
       return physicalDirectory(marker);
     if (!stat.isFile() || stat.size > 4096)
@@ -1711,14 +1727,14 @@ function ledgerActive(dir) {
   const beads = join3(resolve2(dir), ".beads");
   let beadsStat;
   try {
-    beadsStat = lstatSync2(beads);
+    beadsStat = lstatSync3(beads);
   } catch (error) {
     return error.code !== "ENOENT";
   }
   if (!beadsStat.isDirectory())
     return true;
   try {
-    return !lstatSync2(join3(beads, "RETIRED")).isFile();
+    return !lstatSync3(join3(beads, "RETIRED")).isFile();
   } catch {
     return true;
   }
@@ -1754,7 +1770,7 @@ function provenReceiptDirectory(env, key) {
   for (const at of [root, dirname3(directory), directory]) {
     let stat;
     try {
-      stat = lstatSync2(at);
+      stat = lstatSync3(at);
     } catch (error) {
       return { ok: false, reason: missing(error), at, directory };
     }
@@ -2118,7 +2134,7 @@ function publish(temporary, target, payload) {
   }
   let safeMetadata = false;
   try {
-    const stat = lstatSync2(target);
+    const stat = lstatSync3(target);
     safeMetadata = !stat.isSymbolicLink() && stat.isFile() && (stat.mode & 511) === 384;
   } catch {}
   const existing = safeMetadata ? readBounded2(target) : null;
@@ -2663,7 +2679,7 @@ function canonicalReceiptPath(raw, cwd, directory) {
   const target = join4(directory, basename3(supplied));
   let stat;
   try {
-    stat = lstatSync3(target);
+    stat = lstatSync4(target);
   } catch {
     return refuse2("receipt.path", target, "an existing canonical non-symlink receipt file");
   }
@@ -2758,7 +2774,7 @@ async function runGit(run, cwd, args, timeoutMs, pin) {
 function worktreePathState(path) {
   let stat;
   try {
-    stat = lstatSync3(path);
+    stat = lstatSync4(path);
   } catch (error) {
     return error.code === "ENOENT" ? "absent" : "unsafe";
   }
@@ -3077,7 +3093,7 @@ async function registrationAbsence(cwd, trustedPath, run, refReadMs, pin) {
 }
 function pathAbsence(path) {
   try {
-    lstatSync3(path);
+    lstatSync4(path);
     return "present";
   } catch (error) {
     return error.code === "ENOENT" ? "absent" : "unknown";
@@ -5440,28 +5456,19 @@ function canonicalCheckout(commonDir, fallback) {
 
 // lib/src/worktree-locks.ts
 import { createHash as createHash3, randomUUID as randomUUID2 } from "crypto";
-import { accessSync, constants as constants5, mkdirSync as mkdirSync5, readdirSync as readdirSync3, readFileSync as readFileSync6, renameSync as renameSync2, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "fs";
+import { accessSync, constants as constants4, mkdirSync as mkdirSync5, readdirSync as readdirSync3, readFileSync as readFileSync6, renameSync as renameSync2, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "fs";
 import { join as join7 } from "path";
 
 // lib/src/lease-lock.ts
 import { AsyncLocalStorage } from "async_hooks";
 import { randomUUID } from "crypto";
-import { closeSync as closeSync3, constants as constants4, fstatSync as fstatSync3, lstatSync as lstatSync4, openSync as openSync3, readSync as readSync3, statSync, unlinkSync as unlinkSync2, writeSync } from "fs";
+import { closeSync as closeSync3, openSync as openSync3, statSync, unlinkSync as unlinkSync2, writeSync } from "fs";
 import { hostname } from "os";
 var LEASE_MS = 120000;
 var RENEW_MS = 20000;
 var WAIT_MS = 120000;
 var POLL_MS = 20;
 var POLL_MAX_MS = 400;
-var MAX_RECORD_BYTES = 64 * 1024;
-function processAlive3(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === "EPERM";
-  }
-}
 function parseLeaseRecord(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     return;
@@ -5479,31 +5486,6 @@ function leaseAbandoned(record, facts) {
     return true;
   return facts.now > record.expires;
 }
-function readBounded3(path) {
-  let fd;
-  try {
-    if (!lstatSync4(path).isFile())
-      return { kind: "unreadable" };
-    fd = openSync3(path, constants4.O_RDONLY | constants4.O_NOFOLLOW | constants4.O_NONBLOCK);
-    const info = fstatSync3(fd);
-    if (!info.isFile() || info.size > MAX_RECORD_BYTES)
-      return { kind: "unreadable" };
-    const buffer = Buffer.alloc(info.size);
-    let offset = 0;
-    while (offset < buffer.length) {
-      const read = readSync3(fd, buffer, offset, buffer.length - offset, offset);
-      if (read === 0)
-        break;
-      offset += read;
-    }
-    return { kind: "text", text: buffer.toString("utf8", 0, offset) };
-  } catch (error) {
-    return error.code === "ENOENT" ? { kind: "absent" } : { kind: "unreadable" };
-  } finally {
-    if (fd !== undefined)
-      closeSync3(fd);
-  }
-}
 var insideLock = new AsyncLocalStorage;
 var stealPathFor = (lock) => `${lock}.steal`;
 function backoffDelayMs(attempt, random = Math.random) {
@@ -5518,7 +5500,7 @@ var ageOf = (path, now) => {
   }
 };
 function abandoned(path, c) {
-  const record = readBounded3(path);
+  const record = readBounded(path);
   if (record.kind !== "text")
     return false;
   let parsed;
@@ -5535,7 +5517,7 @@ var recordFor = (c, token) => {
 };
 function stillOurs(lock, token, host) {
   try {
-    const record = readBounded3(lock);
+    const record = readBounded(lock);
     if (record.kind !== "text")
       return false;
     const parsed = parseLeaseRecord(JSON.parse(record.text));
@@ -5612,7 +5594,7 @@ async function withLease(lockPath, options, work) {
     steal: stealPathFor(lockPath),
     now: options.now ?? Date.now,
     host: options.host ?? hostname().split(".")[0] ?? "localhost",
-    alive: options.alive ?? processAlive3,
+    alive: options.alive ?? processAlive,
     leaseMs: options.leaseMs ?? LEASE_MS,
     owner: options.owner,
     afterJudged: options.seams?.afterJudged
@@ -5635,7 +5617,7 @@ async function withLease(lockPath, options, work) {
       const code = error.code;
       if (code !== "EEXIST")
         return { kind: "failed", reason: `the lock at ${lockPath} could not be taken (${code ?? "unknown error"})` };
-      if (readBounded3(lockPath).kind === "unreadable" || readBounded3(c.steal).kind === "unreadable") {
+      if (readBounded(lockPath).kind === "unreadable" || readBounded(c.steal).kind === "unreadable") {
         return { kind: "failed", reason: `the lock path ${lockPath} (or its steal lock) is not a small regular file, so its holder cannot be read safely` };
       }
       takeOverIfAbandoned(c);

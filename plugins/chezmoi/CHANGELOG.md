@@ -1,3 +1,9 @@
+## chezmoi [0.6.0](https://github.com/srobroek/harness-plugins/compare/chezmoi--v0.5.0...chezmoi--v0.6.0) (2026-11-21)
+
+### Features
+
+* **chezmoi:** fix one-off host changes directly instead of adding reconcile scripts ([92e3b16](https://github.com/srobroek/harness-plugins/commit/92e3b16cbf2ee80520cb59e47176ef945157a259))
+
 # Changelog
 
 ## [0.5.0](https://github.com/srobroek/opencode-plugins/compare/chezmoi--v0.4.0...chezmoi--v0.5.0) (2026-11-20)
