@@ -36,6 +36,12 @@ literal words only: writes through `sh -c`, the shell eval builtin, scripts, var
 - Prefer native chezmoi patterns over ad hoc symlink or copy schemes.
 - If a live target changed outside chezmoi, reconcile it back into source
   instead of patching around the generated copy.
+- A one-off change to hosts that already exist, such as adding or removing one entry
+  or fixing one live key, gets no reconcile machinery: no `run_once_` or
+  `run_onchange_` script, retirement list entry, or declared key that only exists so a
+  reconcile script carries it. Edit the live file on each affected host directly, and
+  change the source only where newly seeded hosts should differ. Reconcile code is for
+  state that must keep converging on every apply.
 - Temporary runtime experiments are allowed only when the user explicitly asks
   for them; record how to promote the result into source.
 - Resolve locations only through `chezmoi source-path` and `chezmoi managed`.
