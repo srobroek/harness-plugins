@@ -1,7 +1,7 @@
+import { isRecord } from "./guards.ts"
 import { DEFAULT_EMOJIS, optionLabel, type Question, recommendedValue, sliderBounds, sliderText } from "./questions.ts"
 import { structuredSummary, validateStructuredValue } from "./structured.ts"
 import { canonical } from "./value-json.ts"
-import { isRecord } from "./guards"
 
 export { canonical } from "./value-json.ts"
 

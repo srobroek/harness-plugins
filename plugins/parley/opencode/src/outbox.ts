@@ -1,4 +1,4 @@
-import { isRecord, strings } from "./guards"
+import { isRecord, strings } from "./guards.ts"
 /** Messages parley sends to a session for the TUI's fallback (a round the server never held), kept until the host admits them. */
 export const OUTBOX_KEY_PREFIX = "outbox:"
 /** A delivery that failed this many times stops retrying on its own and goes back to the user. */

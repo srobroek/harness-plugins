@@ -1,6 +1,6 @@
+import { isRecord } from "./guards.ts"
 import type { Question } from "./questions.ts"
 import { canonical as canon } from "./value-json.ts"
-import { isRecord } from "./guards"
 
 /** Kinds whose answers are structured objects described by `question.config`. */
 export const NEW_KINDS = [

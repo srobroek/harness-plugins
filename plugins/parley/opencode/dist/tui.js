@@ -31,6 +31,10 @@ import { tmpdir } from "os";
 import path from "path";
 import { createHostClipboard } from "@opentui/core";
 
+// plugins/parley/opencode/src/guards.ts
+var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+var strings = (input) => Array.isArray(input) ? input.filter((item) => typeof item === "string") : [];
+
 // plugins/parley/opencode/src/value-json.ts
 function canonical(value) {
   if (Array.isArray(value))
@@ -39,10 +43,6 @@ function canonical(value) {
     return `{${Object.keys(value).filter((key) => value[key] !== undefined).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
   return JSON.stringify(value);
 }
-
-// plugins/parley/opencode/src/guards.ts
-var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
-var strings = (input) => Array.isArray(input) ? input.filter((item) => typeof item === "string") : [];
 
 // plugins/parley/opencode/src/structured.ts
 var NEW_KINDS = [

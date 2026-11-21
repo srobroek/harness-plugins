@@ -1,5 +1,5 @@
+import { isRecord } from "./guards.ts"
 import { isStructured, NEW_KINDS, type StructuredConfig, validateStructuredQuestion } from "./structured.ts"
-import { isRecord } from "./guards"
 
 export const PHASE_ONE_KINDS = [
   "pick_one",

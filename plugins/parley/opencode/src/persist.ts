@@ -1,8 +1,8 @@
 import { type Answer, publicAnswer } from "./answers.ts"
+import { isRecord, strings } from "./guards.ts"
 import { fromRoundDelivery, type RoundDelivery } from "./outbox.ts"
 import { type Question, validateQuestions } from "./questions.ts"
 import { awaitsDelivery, type Round } from "./rounds.ts"
-import { isRecord, strings } from "./guards"
 
 /** Storage key prefix; one entry per round. */
 export const ROUND_KEY_PREFIX = "round:"
