@@ -387,7 +387,9 @@ export class Parley {
     const read = this.deps.readUpload
     if (!read) return
     for (const [id, answer] of round.answers) {
-      const loaded = filesOf(answer).map((file) => {
+      const files = filesOf(answer)
+      if (files.length === 0) continue
+      const loaded = files.map((file) => {
         if (file.data !== undefined || file.stored === undefined) return file
         const data = read(file.stored)
         return data === undefined ? file : { ...file, data }

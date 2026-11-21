@@ -580,6 +580,36 @@ describe("uploads after a reload", () => {
     return { second, outcome }
   }
 
+  test("a reload with uploads readable leaves answers without files untouched and still loads the bytes of uploads", async () => {
+    const mixed: Question[] = [
+      { id: "name", title: "Name", kind: "ask_text" },
+      { id: "host", title: "Host", kind: "pick_one", options: [{ id: "a", label: "Alpha" }, { id: "b", label: "Beta" }] },
+      { id: "tags", title: "Tags", kind: "pick_many", options: [{ id: "x", label: "X" }, { id: "y", label: "Y" }] },
+      { id: "key", title: "Key", kind: "ask_file" },
+    ]
+    const store = storeOver(new Map())
+    const extras: Extras = { save: () => "/private/key-copy", readUpload: () => "S0VZ" }
+    const first = instance(store, extras)
+    void first.service.ask({ questions: mixed }, { sessionID: "s" })
+    const roundID = await opened(first.service)
+    await first.service.submit({
+      roundID,
+      final: false,
+      answers: [
+        { id: "name", status: "answered", value: { text: "prod" } },
+        { id: "host", status: "answered", value: { selected: "b" } },
+        { id: "tags", status: "answered", value: { selected: ["x", "y"] } },
+        { id: "key", status: "answered", value: { files: [{ name: "k.pub", mime: "text/plain", data: "S0VZ" }] } },
+      ],
+    })
+    const second = await reload(first, store, extras)
+    const answers = second.service.rounds.get(roundID)?.answers
+    expect(answers?.get("name")?.value).toEqual({ text: "prod" })
+    expect(answers?.get("host")?.value).toEqual({ selected: "b" })
+    expect(answers?.get("tags")?.value).toEqual({ selected: ["x", "y"] })
+    expect((answers?.get("key")?.value as { files: unknown[] }).files[0]).toMatchObject({ name: "k.pub", stored: "/private/key-copy", data: "S0VZ" })
+  })
+
   test("uploads reach the session as text and file paths, never as bytes", async () => {
     const saved: Array<string | undefined> = []
     const { second } = await restoredFiles({
