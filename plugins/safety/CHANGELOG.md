@@ -1,3 +1,9 @@
+## safety [0.11.0](https://github.com/srobroek/harness-plugins/compare/safety--v0.10.0...safety--v0.11.0) (2026-11-21)
+
+### Features
+
+* **safety:** relax subagent external_directory asks ([dba194a](https://github.com/srobroek/harness-plugins/commit/dba194a44931234efb54cce1f8d16b7d4be07fd0))
+
 ## safety [0.10.0](https://github.com/srobroek/harness-plugins/compare/safety--v0.9.3...safety--v0.10.0) (2026-11-21)
 
 ### Features
