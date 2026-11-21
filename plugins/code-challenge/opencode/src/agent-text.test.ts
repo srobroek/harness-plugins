@@ -1,46 +1,115 @@
-import { expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 
 // The scout in dogfood round 2 was handed reference paths and read none of them, so the contract is pinned in
-// the texts a model reads. Assertions name the contract (read before analysing, a `References read:` reply line,
-// reject and re-ask once, the line in the analyse-lens step), not the exact wording.
+// the texts a model reads. Each check names an obligation, not a wording, and each has a negative case: the
+// shipped text with that one obligation removed must fail, which shows the check bites.
 const common = join(import.meta.dir, "..", "..", "common")
 const text = (...parts: string[]) => readFileSync(join(common, ...parts), "utf8")
 
 /** The text from the first match of `start` up to the next match of `end` after it (or the end of the source). */
 function section(source: string, start: RegExp, end: RegExp): string {
   const from = source.search(start)
-  expect(from).toBeGreaterThanOrEqual(0)
+  if (from < 0) return ""
   const to = source.slice(from + 1).search(end)
   return to < 0 ? source.slice(from) : source.slice(from, from + 1 + to)
 }
 
-test("code-challenger reads every lens reference before analysing, and ends its reply with a References read: line", () => {
-  const agent = text("agents", "code-challenger.md")
+/** `source` with `find` replaced; fails loudly when `find` is absent, so a rewording cannot turn a negative case into a no-op. */
+function without(source: string, find: RegExp, replacement = ""): string {
+  expect(source).toMatch(find)
+  return source.replace(find, replacement)
+}
+
+/** Obligations missing from a code-challenger prompt; empty when it keeps all of them. */
+function agentProblems(agent: string): string[] {
+  const problems: string[] = []
   const protocol = section(agent, /^## Protocol/m, /^## Rules/m)
-  // Reading comes first: the requirement to read the references appears before the step that reads the target.
-  const read = protocol.search(/lens reference/i)
+  const output = section(agent, /^## Output/m, /^$(?![\s\S])/)
+  const reads = protocol.search(/lens reference/i)
   const target = protocol.search(/\bRead the target\b/i)
-  expect(read).toBeGreaterThanOrEqual(0)
-  expect(read).toBeLessThan(target)
-  expect(protocol).toMatch(/before[^\n]*analy|analy[^\n]*after/i)
-  expect(section(agent, /^## Output/m, /^$(?![\s\S])/)).toContain("`References read:`")
-})
+  const firstStep = protocol.slice(0, target < 0 ? undefined : target)
+  if (!/\b(every|each|all)\b[\s\S]{0,60}lens reference/i.test(firstStep)) problems.push("every lens reference in the Brief")
+  if (!/evidence\.md/.test(firstStep)) problems.push("evidence.md")
+  if (reads < 0 || target < 0 || reads > target || !/\bbefore\b[\s\S]{0,40}\banaly/i.test(firstStep))
+    problems.push("read before analysis")
+  if (!output.includes("References read:")) problems.push("References read: line")
+  if (!/References read:[^\n]*\babsolute\b/i.test(output)) problems.push("absolute paths on the line")
+  return problems
+}
 
-test("the skill's CHALLENGE step rejects a scout reply without the References read: line or with fewer references, and re-asks once", () => {
-  const skill = text("skills", "code-challenge", "SKILL.md")
+/** Obligations missing from the skill's CHALLENGE step. */
+function skillProblems(skill: string): string[] {
+  const problems: string[] = []
   const step = section(skill, /^3\. CHALLENGE/m, /^4\. /m)
-  expect(step).toContain("`References read:`")
-  expect(step).toMatch(/reject/i)
-  expect(step).toMatch(/fewer|missing|short/i)
-  expect(step).toMatch(/re-ask|ask again|once/i)
-  expect(step).toMatch(/\bgap\b/i)
+  const reject = step.search(/\breject/i)
+  if (reject < 0 || !step.slice(reject).includes("References read:")) problems.push("reject a reply without the line")
+  if (!/fewer references|fewer than/i.test(step)) problems.push("reject a reply with fewer references")
+  const reask = step.search(/(re-ask|ask again)[^.]*\bonce\b/i)
+  if (reask < 0 || /twice|\bthree\b|repeatedly/i.test(step)) problems.push("re-ask exactly once")
+  const gap = step.slice(Math.max(reask, 0)).search(/\bgap\b/i)
+  if (reask < 0 || gap < 0) problems.push("record a gap after the second short reply")
+  return problems
+}
+
+/** Obligations missing from the analyse-lens step of mol-challenge-lens. */
+function formulaProblems(toml: string): string[] {
+  const data = Bun.TOML.parse(toml) as { steps?: { id: string; description?: string }[] }
+  const description = data.steps?.find((step) => step.id === "analyse-lens")?.description ?? ""
+  const problems: string[] = []
+  if (!description.includes("References read:")) problems.push("References read: line")
+  if (!/\babsolute\b/i.test(description)) problems.push("absolute paths")
+  return problems
+}
+
+const agent = text("agents", "code-challenger.md")
+const skill = text("skills", "code-challenge", "SKILL.md")
+const formula = text("formulas", "mol-challenge-lens.formula.toml")
+
+describe("code-challenger prompt", () => {
+  test("keeps every obligation", () => expect(agentProblems(agent)).toEqual([]))
+
+  test.each([
+    ["reading every lens reference", (s: string) => without(s, /read every lens reference named in the Brief/, "read the lens reference of the Brief"), "every lens reference in the Brief"],
+    ["reading evidence.md first", (s: string) => without(s, /evidence\.md/g, "it"), "evidence.md"],
+    ["reading before analysis", (s: string) => without(s, /BEFORE you analyse anything/), "read before analysis"],
+    ["the References read: line", (s: string) => without(s, /`References read:`/g, "a list"), "References read: line"],
+    ["absolute paths on the line", (s: string) => without(s, /lists the absolute paths/, "lists the paths"), "absolute paths on the line"],
+  ])("without %s it fails", (_name, mutate, problem) => {
+    expect(agentProblems(mutate(agent))).toContain(problem)
+  })
 })
 
-test("the analyse-lens step itself asks for the References read: line", () => {
-  const formula = Bun.TOML.parse(text("formulas", "mol-challenge-lens.formula.toml")) as {
-    steps: { id: string; description: string }[]
-  }
-  expect(formula.steps.find((step) => step.id === "analyse-lens")?.description).toContain("References read:")
+describe("the skill's CHALLENGE step", () => {
+  test("keeps every obligation", () => expect(skillProblems(skill)).toEqual([]))
+
+  test.each([
+    ["rejecting a reply without the line", (s: string) => without(s, /Reject a scout reply that lacks the line `References read:` or /, "Accept a scout reply that "), "reject a reply without the line"],
+    ["rejecting fewer references", (s: string) => without(s, /fewer references than the brief named/, "an odd number"), "reject a reply with fewer references"],
+    ["re-asking once", (s: string) => without(s, /re-ask once/, "keep re-asking"), "re-ask exactly once"],
+    ["re-asking more than once", (s: string) => without(s, /re-ask once/, "re-ask once, then twice more"), "re-ask exactly once"],
+    ["recording a gap", (s: string) => without(s, /record a gap/, "carry on"), "record a gap after the second short reply"],
+  ])("without %s it fails", (_name, mutate, problem) => {
+    expect(skillProblems(mutate(skill))).toContain(problem)
+  })
+})
+
+describe("mol-challenge-lens analyse-lens step", () => {
+  test("keeps every obligation", () => expect(formulaProblems(formula)).toEqual([]))
+
+  test.each([
+    ["the line", (s: string) => without(s, /`References read:`/, "a list"), "References read: line"],
+    ["absolute paths", (s: string) => without(s, /the absolute paths/, "the paths"), "absolute paths"],
+  ])("without %s it fails", (_name, mutate, problem) => {
+    expect(formulaProblems(mutate(formula))).toContain(problem)
+  })
+
+  test("the line only counts inside the analyse-lens step", () => {
+    const elsewhere = without(formula, /End the reply with a `References read:` line listing the absolute paths you read first\. /).replace(
+      "[[steps]]\nid = \"record-findings\"",
+      "# `References read:` absolute\n[[steps]]\nid = \"record-findings\"",
+    )
+    expect(formulaProblems(elsewhere)).toEqual(["References read: line", "absolute paths"])
+  })
 })

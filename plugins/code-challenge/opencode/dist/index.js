@@ -1083,7 +1083,6 @@ var require_spdx_expression_parse = __commonJS(function(exports, module) {
 
 // plugins/code-challenge/opencode/src/index.ts
 import { resolve as resolve2 } from "path";
-import { fileURLToPath as fileURLToPath4 } from "url";
 import { Plugin as Plugin2 } from "@opencode/plugin";
 
 // lib/src/agent-files.ts
@@ -2349,11 +2348,30 @@ function registerLibFacts(ctx, overrides = {}) {
   });
 }
 
+// plugins/code-challenge/opencode/src/read-grant.ts
+import { realpathSync as realpathSync2 } from "fs";
+import { join as join6 } from "path";
+import { fileURLToPath as fileURLToPath3 } from "url";
+function referenceReadRules(moduleUrl, warn = console.warn) {
+  const skills = fileURLToPath3(new URL("../skills", moduleUrl));
+  const references = join6(skills, "code-challenge", "references");
+  try {
+    const expected = join6(realpathSync2(skills), "code-challenge", "references");
+    const actual = realpathSync2(references);
+    if (actual === expected)
+      return directoryReadRules(references);
+    warn(`srobroek.code-challenge: ${references} resolves to ${actual}, not ${expected}; no read grant for the references`);
+  } catch (error) {
+    warn(`srobroek.code-challenge: cannot resolve ${references} (${error.code ?? "error"}); no read grant for the references`);
+  }
+  return [];
+}
+
 // plugins/code-challenge/opencode/src/validate.ts
 import { execFileSync } from "child_process";
-import { realpathSync as realpathSync2 } from "fs";
-import { dirname as dirname2, isAbsolute as isAbsolute2, join as join6, relative, sep } from "path";
-import { fileURLToPath as fileURLToPath3 } from "url";
+import { realpathSync as realpathSync3 } from "fs";
+import { dirname as dirname2, isAbsolute as isAbsolute2, join as join7, relative, sep } from "path";
+import { fileURLToPath as fileURLToPath4 } from "url";
 
 // lib/src/bounded-read.ts
 import { closeSync, constants, fstatSync, lstatSync as lstatSync2, openSync, readSync } from "fs";
@@ -2475,8 +2493,8 @@ var VALIDATE_INPUT = {
   required: ["run_dir"],
   additionalProperties: false
 };
-var SCHEMAS = join6(dirname2(fileURLToPath3(import.meta.url)), "..", "skills", "code-challenge", "references");
-var load = (name) => JSON.parse(readBoundedText(join6(SCHEMAS, name)));
+var SCHEMAS = join7(dirname2(fileURLToPath4(import.meta.url)), "..", "skills", "code-challenge", "references");
+var load = (name) => JSON.parse(readBoundedText(join7(SCHEMAS, name)));
 function failure(read) {
   if (read.kind === "absent")
     return "ENOENT: no such file or directory";
@@ -2496,7 +2514,7 @@ var reason = (cause) => cause instanceof Error ? cause.message : String(cause);
 function validateRun(runDir) {
   const errors = [];
   const read = (name) => {
-    const result = readBoundedBytes(join6(runDir, name), MAX_RUN_FILE_BYTES);
+    const result = readBoundedBytes(join7(runDir, name), MAX_RUN_FILE_BYTES);
     if (result.kind === "bytes")
       return result.bytes.toString("utf8");
     errors.push(`${name}: ${failure(result)}`);
@@ -2542,7 +2560,7 @@ function runRoots(directory) {
   for (const gitDir of out.split(`
 `).filter(Boolean)) {
     try {
-      roots.add(join6(realpathSync2(gitDir), "code-challenge"));
+      roots.add(join7(realpathSync3(gitDir), "code-challenge"));
     } catch {}
   }
   return [...roots];
@@ -2557,7 +2575,7 @@ function resolveRunDir(directory, runDir) {
   let real;
   try {
     roots = runRoots(directory);
-    real = realpathSync2(runDir);
+    real = realpathSync3(runDir);
   } catch (cause) {
     return { error: `${VALIDATE_TOOL}: cannot resolve run_dir: ${reason(cause).split(",")[0]}` };
   }
@@ -2593,7 +2611,6 @@ function registerValidateTool(ctx) {
 }
 
 // plugins/code-challenge/opencode/src/index.ts
-var REFERENCES_DIR = (moduleUrl) => fileURLToPath4(new URL("../skills/code-challenge/references", moduleUrl));
 var ID = "srobroek.code-challenge";
 var SETUP_DESCRIPTION = `Copy the code-challenge beads formulas into a beads workspace's .beads/formulas/.
 ` + "Covers the code-challenge full run and the mol-challenge-<phase> formulas, so bd mol pour finds them. Identical " + "copies stay; divergent ones are refused unless force=true; symlinked paths are always refused.";
@@ -2668,7 +2685,7 @@ async function setupCodeChallenge(ctx, moduleUrl) {
     if (skills.length > 0)
       registrations.push(await registerSkills(ctx.skill, skills));
     if (agents.length > 0)
-      registrations.push(await registerAgents(ctx.agent, agents, directoryReadRules(REFERENCES_DIR(moduleUrl)), mcpGrant(ctx.options?.tools, agentIds(agents))));
+      registrations.push(await registerAgents(ctx.agent, agents, referenceReadRules(moduleUrl), mcpGrant(ctx.options?.tools, agentIds(agents))));
   } catch (error) {
     await cleanup();
     throw error;

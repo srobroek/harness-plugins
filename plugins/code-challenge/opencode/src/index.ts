@@ -1,15 +1,15 @@
 import { resolve } from "node:path"
-import { fileURLToPath } from "node:url"
 import { Plugin } from "@opencode/plugin"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import type { ToolContext } from "@opencode/plugin/promise/tool"
-import { agentIds, directoryReadRules, registerAgents } from "@srobroek/opencode-lib/agent-files"
+import { agentIds, registerAgents } from "@srobroek/opencode-lib/agent-files"
 import { mcpGrant } from "@srobroek/opencode-lib/agent-tools"
 import { contentPaths } from "@srobroek/opencode-lib/content-plugin"
 import { registerSkills } from "@srobroek/opencode-lib/skill-files"
 import { COMMAND, challengePrompt } from "./command.ts"
 import { installFormulas, SETUP_TOOL } from "./formulas.ts"
 import { registerLibFacts } from "./lib-facts/index.ts"
+import { referenceReadRules } from "./read-grant.ts"
 import { registerValidateTool } from "./validate.ts"
 
 export { COMMAND, challengePrompt, parseInvocation, SKILL } from "./command.ts"
@@ -17,9 +17,6 @@ export { FORMULAS, installFormulas, SETUP_TOOL } from "./formulas.ts"
 export { DEPTHS, LENSES, PHASES } from "./lenses.ts"
 export { LIB_FACTS_TOOL } from "./lib-facts/index.ts"
 export { VALIDATE_TOOL } from "./validate.ts"
-
-// The skill's references/ in the installed plugin: outside the project, so a subagent could not read it without this grant.
-const REFERENCES_DIR = (moduleUrl: string) => fileURLToPath(new URL("../skills/code-challenge/references", moduleUrl))
 
 export const ID = "srobroek.code-challenge"
 
@@ -108,7 +105,7 @@ export async function setupCodeChallenge(ctx: Context, moduleUrl: string) {
     if (skills.length > 0) registrations.push(await registerSkills(ctx.skill, skills))
     if (agents.length > 0)
       registrations.push(
-        await registerAgents(ctx.agent, agents, directoryReadRules(REFERENCES_DIR(moduleUrl)), mcpGrant((ctx.options as Record<string, unknown> | undefined)?.tools, agentIds(agents))),
+        await registerAgents(ctx.agent, agents, referenceReadRules(moduleUrl), mcpGrant((ctx.options as Record<string, unknown> | undefined)?.tools, agentIds(agents))),
       )
   } catch (error) {
     await cleanup()
