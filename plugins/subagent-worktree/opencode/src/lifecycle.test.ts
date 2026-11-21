@@ -68,6 +68,8 @@ type World = {
   missing?: string[]
   /** Paths whose existence check fails with this errno code instead of answering. */
   statErrors?: Record<string, string>
+  /** Called after each existence check, with its path and answer. */
+  onExists?: (path: string, exists: boolean) => void
   /** Called inside the host removal. */
   onRemove?: () => void
   /** Called with every git command before it is answered. */
@@ -223,7 +225,9 @@ async function start(
     directoryExists: async (path: string) => {
       const code = state.statErrors?.[path]
       if (code !== undefined) throw Object.assign(new Error(`cannot stat ${path}`), { code })
-      return state.exists && !(state.missing ?? []).includes(path)
+      const exists = state.exists && !(state.missing ?? []).includes(path)
+      state.onExists?.(path, exists)
+      return exists
     },
     now: () => state.now,
     debounceMs: options.debounceMs ?? 1,
@@ -2655,6 +2659,34 @@ describe("an execution that fails because its location is gone", () => {
     expect(worktree).toEqual([])
     expect(moves(fake)).toEqual([])
     expect(stored(fake).state).toBe(seeded.state)
+    await cleanup()
+  })
+
+  test("a worktree that comes back right after the plugin's first look under the lock is never removed", async () => {
+    const common = mkdtempSync(join(tmpdir(), "common-"))
+    COMMONS.push(common)
+    const { fake, state, worktree, cleanup } = await start({ head: BASE, ahead: 0, missing: [WT] }, { common, lock: { waitMs: 5_000 } })
+    grandchild(fake)
+    let free!: () => void
+    let taken!: () => void
+    const acquired = new Promise<void>((done) => (taken = done))
+    const held = withDiskLock(common, WT, { sessionID: "ses_other", waitMs: 5_000 }, async () => {
+      taken()
+      await new Promise<void>((done) => (free = done))
+    })
+    await acquired
+    fake.emit(locationGone)
+    await settle(100)
+    // Every look from here on is under the lock: the first one still finds the worktree gone, then it is back.
+    state.onExists = (path, exists) => {
+      if (path !== WT || exists) return
+      state.missing = []
+      state.onExists = undefined
+    }
+    free()
+    await held
+    await settle(300)
+    expect(worktree.filter((entry) => entry.method === "remove")).toEqual([])
     await cleanup()
   })
 
