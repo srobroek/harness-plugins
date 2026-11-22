@@ -2138,8 +2138,10 @@ function createLifecycle(deps) {
     if (inside !== undefined && !await inside())
       return;
     const common = await deps.commonDir(parentDir);
-    if (common !== undefined)
-      bumpClaim(common, directory, now());
+    if (common === undefined)
+      return;
+    const generation = bumpClaim(common, directory, now());
+    return generation < 0 ? undefined : generation;
   });
   const spawnInto = (directory, parentDir, work) => withLock(directory, parentDir, async () => {
     if (!await deps.exists(directory))
@@ -2334,6 +2336,13 @@ function createLifecycle(deps) {
     const stamp = await resumeStampOf(lane);
     if ("removed" in stamp)
       return stamp;
+    if (options.call !== undefined) {
+      const common = await deps.commonDir(lane.parentDir);
+      const claim = common === undefined ? undefined : readClaim(common, lane.directory);
+      if (claim?.kind === "unreadable")
+        return keptBecause("error", `the lane's claim cannot be read: ${claim.reason}`);
+      return claim?.kind === "present" && claim.value.generation > options.call ? keptBecause("running", "the child was resumed") : undefined;
+    }
     if (stamp.at !== undefined && options.since !== undefined && stamp.at >= options.since)
       return keptBecause("running", "the child was resumed");
     return;
@@ -2647,7 +2656,7 @@ function createLifecycle(deps) {
       console.error(`subagent-worktree: moving ${sessionID} out of a removed worktree failed:`, error instanceof Error ? error.message : error);
     }
   };
-  const removeForeground = async (lane, since) => (await finalize(lane, { since })).removed;
+  const removeForeground = async (lane, fence) => (await finalize(lane, fence.call === undefined ? { since: fence.since } : { since: fence.since, call: fence.call })).removed;
   const removeAfterMerge = async (lane, target, since) => {
     try {
       await withLock(lane.directory, lane.parentDir, async () => {
@@ -3350,6 +3359,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     }
   };
   const notes = new Map;
+  const ownResumes = new Map;
   const treeSince = async (directory, head) => {
     const porcelain = await git2.porcelain(directory);
     if (porcelain === undefined)
@@ -3450,7 +3460,9 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
       if (released) {
         throw new Error(`subagent-worktree: not resuming ${child}: ${child} was released from ${released.directory}${released.to ? ` and the worktree handed to ${released.to}` : ""}, so it may not write again. Start a new subagent instead.`);
       }
-      await markResumed(input.sessionID);
+      const stamp = await markResumed(input.sessionID);
+      if (stamp !== undefined)
+        ownResumes.set(event.id, stamp);
       const note = resumeWorktreeNote(input);
       if (note)
         notes.set(event.id, note);
@@ -3671,7 +3683,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     const lane2 = await load(child);
     if (lane2?.state !== "active" && lane2?.state !== "removing")
       return;
-    await lifecycle.noteResume(lane2.directory, lane2.parentDir, async () => {
+    return lifecycle.noteResume(lane2.directory, lane2.parentDir, async () => {
       const fresh = await load(child);
       if (fresh?.state !== "active" || !await confirmLocation(fresh))
         return false;
@@ -3707,8 +3719,11 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
         release2(event.id);
     }
     const skipped = event.id === undefined ? undefined : notes.get(event.id);
-    if (event.id !== undefined)
+    const ownStamp = event.id === undefined ? undefined : ownResumes.get(event.id);
+    if (event.id !== undefined) {
       notes.delete(event.id);
+      ownResumes.delete(event.id);
+    }
     if (skipped) {
       if (event.status === "completed")
         event.result = { ...event.result, content: appendContent(event.result.content, skipped) };
@@ -3737,7 +3752,7 @@ ${skipped}`,
     let removed = false;
     if (shouldRemove(status, resultStatus, childNow)) {
       try {
-        if (await lifecycle.removeForeground(lane2, since)) {
+        if (await lifecycle.removeForeground(lane2, ownStamp === undefined ? { since } : { since, call: ownStamp })) {
           removed = true;
           lane2 = { ...lane2, state: "removed" };
         }

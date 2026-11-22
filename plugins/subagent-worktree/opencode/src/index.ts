@@ -383,6 +383,8 @@ export function createLanes(
 
   /** Skip notes by tool call id, appended to that call's result by `after`. */
   const notes = new Map<string, string>()
+  /** The claim generation of the resume a call made itself, by call id: its own end is not fenced by it. */
+  const ownResumes = new Map<string, number>()
 
   /** What changed in `directory` since a release recorded `head`: uncommitted changes, unpushed commits or another HEAD; undefined when nothing did. */
   const treeSince = async (directory: string, head: string): Promise<string | undefined> => {
@@ -514,7 +516,8 @@ export function createLanes(
           `subagent-worktree: not resuming ${child}: ${child} was released from ${released.directory}${released.to ? ` and the worktree handed to ${released.to}` : ""}, so it may not write again. Start a new subagent instead.`,
         )
       }
-      await markResumed(input.sessionID)
+      const stamp = await markResumed(input.sessionID)
+      if (stamp !== undefined) ownResumes.set(event.id, stamp)
       const note = resumeWorktreeNote(input)
       if (note) notes.set(event.id, note)
       return revive(event, input.sessionID, input.prompt)
@@ -740,12 +743,12 @@ export function createLanes(
   }
 
   /** A `subagent` call targeted this child: record it, so its lane is not removed from under a follow-up. */
-  const markResumed = async (child: string) => {
+  const markResumed = async (child: string): Promise<number | undefined> => {
     const lane = await load(child)
-    if (lane?.state !== "active" && lane?.state !== "removing") return
+    if (lane?.state !== "active" && lane?.state !== "removing") return undefined
     // Waits for a removal already under way, and fences any that collected its facts before this. The location
     // check and the bookkeeping run inside that same lock, on the lane as the last removal left it.
-    await lifecycle.noteResume(lane.directory, lane.parentDir, async () => {
+    return lifecycle.noteResume(lane.directory, lane.parentDir, async () => {
       const fresh = await load(child)
       // Retired or still `removing` while this call waited: `revive` finishes the removal and gives a fresh worktree; nothing is admitted here.
       if (fresh?.state !== "active" || !(await confirmLocation(fresh))) return false
@@ -785,7 +788,11 @@ export function createLanes(
       } else release(event.id)
     }
     const skipped = event.id === undefined ? undefined : notes.get(event.id)
-    if (event.id !== undefined) notes.delete(event.id)
+    const ownStamp = event.id === undefined ? undefined : ownResumes.get(event.id)
+    if (event.id !== undefined) {
+      notes.delete(event.id)
+      ownResumes.delete(event.id)
+    }
     if (skipped) {
       if (event.status === "completed") event.result = { ...event.result, content: appendContent(event.result.content, skipped) }
       else {
@@ -804,7 +811,7 @@ export function createLanes(
     let lane = await load(child)
     if (lane?.state !== "active") return
 
-    // A resume recorded after this point raced the removal and keeps the lane.
+    // A resume recorded after this point raced the removal and keeps the lane; the call's own resume, by its generation, did not.
     const since = now()
     const resultStatus = event.status === "error" ? "error" : metadata.status === "running" ? "running" : "completed"
     const status = await git.status(lane.directory, lane.base)
@@ -812,7 +819,7 @@ export function createLanes(
     let removed = false
     if (shouldRemove(status, resultStatus, childNow)) {
       try {
-        if (await lifecycle.removeForeground(lane, since)) {
+        if (await lifecycle.removeForeground(lane, ownStamp === undefined ? { since } : { since, call: ownStamp })) {
           // Retired inside the removal's critical section; the note below describes this removal.
           removed = true
           lane = { ...lane, state: "removed" }

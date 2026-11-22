@@ -1399,14 +1399,55 @@ describe("execute.after", () => {
     expect(lane(setup.fake)?.state).not.toBe("active")
   })
 
-  // The fence compares with `>=`: a resume stamped in the very millisecond the removal was decided cannot be ordered, so it keeps the lane.
-  test("a resume stamped in the same millisecond as the removal's fence keeps the lane", async () => {
+  // The call's own resume is stamped before its run, so in one millisecond it cannot be told from the removal's fence; it must not discard the call's own result.
+  test("a call's own resume, stamped in the same millisecond as its removal's fence, does not keep the lane", async () => {
     const setup = await start({ now: () => 1_000_000 })
     await spawn(setup)
     await setup.fake.fire.tool("execute.before", call({ sessionID: "ses_fake1", prompt: "one more thing" }))
     const event = await setup.fake.fire.tool("execute.after", completed("ses_fake1"))
+    expect((event.result as { content: string }).content).toContain('state="removed"')
+  })
+
+  // Another trigger's resume, stamped in the same millisecond, still fences: it gets a later stamp than the call's own.
+  test("a resume from another call in the same millisecond still keeps the lane", async () => {
+    const setup = await start({ now: () => 1_000_000 })
+    await spawn(setup)
+    await setup.fake.fire.tool("execute.before", call({ sessionID: "ses_fake1", prompt: "one more thing" }))
+    await setup.fake.fire.tool("execute.before", { ...call({ sessionID: "ses_fake1", prompt: "and another" }), id: "call_2" })
+    const event = await setup.fake.fire.tool("execute.after", completed("ses_fake1"))
     expect((event.result as { content: string }).content).not.toContain('state="removed"')
     expect(lane(setup.fake)?.state).toBe("active")
+  })
+
+  // Two resumes admitted in one millisecond: the recovery after a crash must still tell the second one's finished execution from an unfinished one by wall-clock time.
+  test("a removal interrupted after two same-millisecond resumes and a completed execution is finished by the restart", async () => {
+    const at = 1_000_000
+    const a = await start({ now: () => at })
+    await spawn(a)
+    await a.fake.fire.tool("execute.before", call({ sessionID: "ses_fake1", prompt: "one" }))
+    await a.fake.fire.tool("execute.before", { ...call({ sessionID: "ses_fake1", prompt: "two" }), id: "call_2" })
+    // The second resume's execution starts in that millisecond's successor at the earliest and ends later.
+    const child = a.fake.sessions.get("ses_fake1")
+    if (!child) throw new Error("no child")
+    Object.assign(child, { time: { busy: at + 1, idle: at + 2 } })
+    const active = lane(a.fake)
+    if (!active) throw new Error("no lane")
+    // The server died after the worktree was removed and before the sessions were moved.
+    a.fake.storage.set(laneKey("ses_fake1"), { ...active, state: "removing", removal: { retireAs: "removed", head: active.base } })
+    let restarted: Lifecycle | undefined
+    const b = await start({
+      now: () => at + 3,
+      commonDir: async () => a.common,
+      exists: async (path) => path !== active.directory,
+      onLifecycle: (value) => (restarted = value),
+      seed: (fake) => {
+        Object.assign(fake.context.storage, a.fake.context.storage)
+        fake.sessions.set("ses_fake1", child)
+      },
+    })
+    await restarted?.settle()
+    expect(lane(a.fake)?.state).toBe("removed")
+    expect(b.fake.sessions.get("ses_fake1")?.location).toEqual({ directory: REPO })
   })
 
   test("a commit that lands between the empty check and the HEAD read keeps the lane and its branch", async () => {

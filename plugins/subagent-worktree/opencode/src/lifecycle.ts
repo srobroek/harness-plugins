@@ -78,6 +78,8 @@ export type FinalizeOptions = {
   seq?: number
   /** When the accepted end event was seen: a resume recorded at or after it keeps the lane. */
   since?: number
+  /** The claim generation of the call's own resume: with it, a resume keeps the lane only when the claim's generation is above it, so the call's own resume never fences itself. */
+  call?: number
   /** The worktree was removed by someone else (delivery): skip the checks and the host removal, still move the sessions and retire. */
   gone?: boolean
   /** How the lane is retired; by default `removed` for an empty lane, `merged` for a `target` proof and `landed` otherwise. */
@@ -330,11 +332,18 @@ export function createLifecycle(deps: LifecycleDeps) {
    * because it did not admit the resume for an active lane, nothing is bumped. A stamp for a resume
    * that was not admitted would fence the very recovery that has to finish first.
    */
+  /**
+   * Returns the claim's generation after the bump, undefined when `inside` refused or there is no readable claim.
+   * Generations only grow, under the lock, so the call that made this resume fences its own end by it (`FinalizeOptions.call`):
+   * a later resume has a higher one. `resumedAt` stays plain wall-clock time, which crash recovery compares with session times.
+   */
   const noteResume = (directory: string, parentDir: string, inside?: () => Promise<boolean>) =>
-    withLock(directory, parentDir, async () => {
-      if (inside !== undefined && !(await inside())) return
+    withLock(directory, parentDir, async (): Promise<number | undefined> => {
+      if (inside !== undefined && !(await inside())) return undefined
       const common = await deps.commonDir(parentDir)
-      if (common !== undefined) bumpClaim(common, directory, now())
+      if (common === undefined) return undefined
+      const generation = bumpClaim(common, directory, now())
+      return generation < 0 ? undefined : generation
     })
 
   /**
@@ -573,6 +582,12 @@ export function createLifecycle(deps: LifecycleDeps) {
   const resumeRefusal = async (lane: Lane, options: FinalizeOptions): Promise<Finalized | undefined> => {
     const stamp = await resumeStampOf(lane)
     if ("removed" in stamp) return stamp
+    if (options.call !== undefined) {
+      const common = await deps.commonDir(lane.parentDir)
+      const claim = common === undefined ? undefined : readClaim(common, lane.directory)
+      if (claim?.kind === "unreadable") return keptBecause("error", `the lane's claim cannot be read: ${claim.reason}`)
+      return claim?.kind === "present" && claim.value.generation > options.call ? keptBecause("running", "the child was resumed") : undefined
+    }
     // `>=`: a resume stamped in the same millisecond as the fence cannot be ordered against it, so it keeps the lane; a later pass retries.
     if (stamp.at !== undefined && options.since !== undefined && stamp.at >= options.since) return keptBecause("running", "the child was resumed")
     return undefined
@@ -930,7 +945,8 @@ export function createLifecycle(deps: LifecycleDeps) {
   }
 
   /** A successful foreground `subagent` call just returned: its empty lane goes. */
-  const removeForeground = async (lane: Lane, since: number): Promise<boolean> => (await finalize(lane, { since })).removed
+  const removeForeground = async (lane: Lane, fence: { since: number; call?: number }): Promise<boolean> =>
+    (await finalize(lane, fence.call === undefined ? { since: fence.since } : { since: fence.since, call: fence.call })).removed
 
   /**
    * `wt merge` just merged the lane's branch into `target` and kept the checkout (`--no-remove`). The merge is recorded on
