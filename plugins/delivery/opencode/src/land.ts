@@ -273,8 +273,6 @@ export type LandOutcome =
       receiptPath: string
       text: string
       next: readonly string[]
-      /** Set when the pull request is of another repository than the session's; cleanup then runs from a session there. */
-      foreign?: true
     }
   /**
    * `mergeIssued` is true only when this call's merge was accepted by the forge and a
@@ -961,17 +959,17 @@ async function gitOutput(
  * invokes the same seam directly. The key, recorded root, and ledger verdict cannot
  * therefore come from different observations or layout heuristics.
  *
- * The seam reads through a synchronous callback and asks for exactly that one
- * observation, so the read is made here, through the abortable runner, and its
- * stdout is what the callback answers. Any other request is answered as a failed
- * read, which the seam turns into a refusal rather than a guess.
+ * The seam asks for exactly that one observation, so the read is made here, through
+ * the abortable runner with this call's Git environment, and its stdout is what the
+ * seam's runner answers. Any other request is answered as a failed read, which the
+ * seam turns into a refusal rather than a guess.
  */
 async function observeRepository(
   git: GitRead,
   cwd: string,
 ): Promise<{ key: string; canonicalRoot: string; commonDir: string; ledger: CanonicalLedger } | { reason: string }> {
   const printed = await git(REPOSITORY_OBSERVATION_ARGS)
-  const repository = repositoryContext(cwd, (argv) =>
+  const repository = await repositoryContext(cwd, (argv) =>
     argv.length === REPOSITORY_OBSERVATION_ARGS.length &&
     argv.every((part, index) => part === REPOSITORY_OBSERVATION_ARGS[index])
       ? printed
@@ -1055,9 +1053,9 @@ function nativeCloseoutSteps(receipt: LandingReceipt, receiptPath: string, merge
   return [...commands, "delivery_cleanup"]
 }
 
-/** The cleanup step for a landing of another repository: its claims and ledger are read only from a session there. */
-export function foreignCleanupStep(root: string): string {
-  return `delivery_cleanup from a session in ${root}`
+/** The cleanup step for a landing of another repository: the same tool, told which clone it runs in. */
+export function foreignCleanupStep(repo: string, root: string): string {
+  return `delivery_cleanup with repo ${JSON.stringify(repo)} and repoPath ${JSON.stringify(root)}`
 }
 
 /**
@@ -2135,7 +2133,7 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
 
   const foreign = retargeted.retargeted
   const root = receipt.repo.canonicalRoot
-  const cleanupStep = foreign ? foreignCleanupStep(root) : "delivery_cleanup"
+  const cleanupStep = foreign ? foreignCleanupStep(nameWithOwner, root) : "delivery_cleanup"
   const next = receipt.beads.ledgerActive
     ? [...nativeCloseoutSteps(receipt, receiptPath, proof.oid).slice(0, -1).map((step) => (foreign ? inClone(root, step) : step)), cleanupStep]
     : [cleanupStep]
@@ -2150,5 +2148,5 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
           .join("\n")}\n  ${cleanupStep} to remove the worktree and the local branch.`
       : `next: run ${cleanupStep} to remove the worktree and the local branch.`,
   ].join("\n")
-  return { ok: true, receipt, receiptPath, text, next, ...(foreign ? { foreign: true as const } : {}) }
+  return { ok: true, receipt, receiptPath, text, next }
 }

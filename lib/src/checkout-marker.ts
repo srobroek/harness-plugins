@@ -97,6 +97,49 @@ export function commondirValue(text: string): string | null {
 }
 
 /**
+ * The physical git common directory that the `.git` entry at or above `directory` names, read the
+ * way Git reads it (a `.git` directory, or a `gitdir:` file and its admin directory's `commondir`),
+ * or null when no entry is found or one is a symlink, unreadable or malformed.
+ *
+ * This is not repository discovery: `GIT_DIR`, ceiling directories and every other setting Git
+ * honours are ignored. A caller uses it only where a wrong answer fails closed.
+ */
+export function markedCommonDir(directory: string): string | null {
+  let dir = physical(directory)
+  while (dir !== null) {
+    const entry = join(dir, ".git")
+    let stat: ReturnType<typeof lstatSync> | undefined
+    try {
+      stat = lstatSync(entry)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      if (code !== "ENOENT" && code !== "ENOTDIR") return null
+    }
+    if (stat !== undefined) return stat.isSymbolicLink() ? null : commonDirOfEntry(dir, entry, stat.isDirectory())
+    const parent = dirname(dir)
+    dir = parent === dir ? null : parent
+  }
+  return null
+}
+
+/** The common directory a found `.git` entry names. */
+function commonDirOfEntry(dir: string, entry: string, isDirectory: boolean): string | null {
+  let gitDir: string | null
+  if (isDirectory) {
+    gitDir = physical(entry)
+  } else {
+    const marker = readBounded(entry)
+    const named = marker.kind === "text" ? gitFileValue(marker.text) : null
+    gitDir = named === null ? null : physicalFrom(dir, named)
+  }
+  if (gitDir === null) return null
+  const commondir = readBounded(join(gitDir, "commondir"))
+  if (commondir.kind === "absent") return gitDir
+  const value = commondir.kind === "text" ? commondirValue(commondir.text) : null
+  return value === null ? null : physicalFrom(gitDir, value)
+}
+
+/**
  * The environment that pins Git to a verified checkout: with `GIT_DIR`, `GIT_WORK_TREE`
  * and `GIT_COMMON_DIR` set, Git never rediscovers the repository through the `.git`
  * marker, so swapping that marker after verification cannot redirect it.

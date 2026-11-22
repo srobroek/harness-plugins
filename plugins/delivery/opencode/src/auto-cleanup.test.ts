@@ -86,6 +86,18 @@ test("the text swaps the cleanup instruction for the outcome", () => {
   expect(textAfterCleanup(text, { ok: false, skipped: true, reason: "x" })).toBe(text)
 })
 
+const FOREIGN_STEP = 'delivery_cleanup with repo "acme/widgets" and repoPath "/clones/widgets"'
+
+test("a finished cleanup of another repository drops its parameterised step from next", () => {
+  const next = ["cd '/clones/widgets' && env -u BEADS_DIR bd close x", FOREIGN_STEP]
+  expect(nextAfterCleanup(next, { ok: true })).toEqual(["cd '/clones/widgets' && env -u BEADS_DIR bd close x"])
+})
+
+test("a finished cleanup of another repository replaces its parameterised instruction in the text", () => {
+  const text = `landed\nnext: run ${FOREIGN_STEP} to remove the worktree and the local branch.`
+  expect(textAfterCleanup(text, { ok: true, removed: "/w/a" })).toBe("landed\ncleanup: removed /w/a and its local branch; nothing left to run.")
+})
+
 test("the text states what happened: removed with the ref kept, or already cleaned", () => {
   const text = "landed\nnext: run delivery_cleanup to remove the worktree and the local branch."
   expect(textAfterCleanup(text, { ok: true, removed: "/w/a", localRefDeleted: false, kept: ["local branch b left in place"] })).toBe(

@@ -173,6 +173,11 @@ function shared(): Shared {
   return state as Shared
 }
 
+/** Drops the process-wide state, so the next call starts from an empty one. For tests. */
+export function resetLifecycleState(): void {
+  delete (globalThis as { [SHARED]?: unknown })[SHARED]
+}
+
 /** A session lookup; `known` is false when the host could not report the session. */
 type Resolved = { known: boolean; parentID: string | undefined }
 

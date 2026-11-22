@@ -135,6 +135,11 @@ describe("staleSkipNotice", () => {
     expect(notice).toContain("Do not stage or commit")
     expect(notice).not.toContain("bd export")
   })
+  test("qualifies the Dolt advice: only with a remote, a stale skip alone needs none", () => {
+    const notice = staleSkipNotice("Imported 3 issues (2 stale skipped; use --allow-stale)") ?? ""
+    expect(notice).toContain("only when a Dolt remote is configured")
+    expect(notice).toContain("needs no remote operation")
+  })
   test("bd's plain-text form counts too", () => {
     expect(staleSkipNotice("Imported 3 issues from .beads/issues.jsonl (2 stale skipped; use --allow-stale to restore older rows)")).toContain(
       "2 row(s)",

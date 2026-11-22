@@ -4290,7 +4290,7 @@ function decideBdUpdateCloseParsed(parsed) {
 
 // plugins/beads/opencode/src/ledger-context.ts
 import { existsSync as existsSync5, lstatSync as lstatSync4, realpathSync as realpathSync6 } from "fs";
-import { dirname as dirname5, join as join6, resolve as resolve6 } from "path";
+import { basename as basename3, dirname as dirname5, join as join6, resolve as resolve6 } from "path";
 var SAFE_PREFIX = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 function findLedger(from) {
   const start = resolve6(from);
@@ -4363,6 +4363,13 @@ function canonical3(path) {
 function sameStore(a, b, cwd) {
   return canonical3(resolve6(cwd, a)) === canonical3(resolve6(cwd, b));
 }
+function ownerRoot(store, identity) {
+  if (basename3(store) === ".beads")
+    return dirname5(store);
+  if (basename3(identity) === ".git")
+    return dirname5(identity);
+  return store;
+}
 function foreignLedger(input) {
   const store = canonical3(input.store);
   const here = input.identity(input.cwd);
@@ -4373,7 +4380,7 @@ function foreignLedger(input) {
     return;
   if (here === there)
     return;
-  return { store, ledgerRoot: dirname5(store) };
+  return { store, ledgerRoot: ownerRoot(store, there) };
 }
 var WRONG_PROJECT = "pass the shell tool's `workdir` for the right repository (and unset BEADS_DIR) instead of `cd`";
 function ledgerRepoMismatch(input) {

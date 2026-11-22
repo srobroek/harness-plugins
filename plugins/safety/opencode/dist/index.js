@@ -2325,6 +2325,74 @@ function hostWarn(source) {
   };
 }
 
+// plugins/safety/opencode/src/asked-watch.ts
+function abortableSleep(ms, signal, timers = globalThis) {
+  return new Promise((resolve) => {
+    if (signal.aborted)
+      return resolve();
+    const done = () => {
+      timers.clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = timers.setTimeout(done, ms);
+    timer.unref?.();
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+var DEFAULT_RESUBSCRIBE_DELAYS_MS = [1000, 5000, 15000];
+var errorName = (error) => error instanceof Error ? error.name : typeof error;
+function watchAsked(deps) {
+  const { signal } = deps;
+  const sleep = deps.sleep ?? abortableSleep;
+  const delays = deps.delaysMs ?? DEFAULT_RESUBSCRIBE_DELAYS_MS;
+  let current;
+  const consume = async () => {
+    try {
+      current = deps.subscribe();
+    } catch (error) {
+      return errorName(error);
+    }
+    for (;; ) {
+      let next;
+      try {
+        next = await current.next();
+      } catch (error) {
+        return signal.aborted ? undefined : errorName(error);
+      }
+      if (signal.aborted)
+        return;
+      if (next.done)
+        return "stream ended";
+      await deps.handle(next.value);
+    }
+  };
+  const run = async () => {
+    for (let attempt = 1;; attempt++) {
+      const failure = await consume();
+      if (failure === undefined || signal.aborted)
+        return;
+      const delay = delays[attempt - 1];
+      deps.onFailure({ error: failure, attempt, willRetry: delay !== undefined });
+      if (delay === undefined)
+        return;
+      await sleep(delay, signal);
+      if (signal.aborted)
+        return;
+    }
+  };
+  return {
+    done: run(),
+    stop: () => {
+      try {
+        Promise.resolve(current?.return?.()).catch(() => {
+          return;
+        });
+      } catch {}
+    }
+  };
+}
+
 // plugins/safety/opencode/src/close-keywords.ts
 var KEYWORDS = new Set(["close", "closes", "closed", "fix", "fixes", "fixed", "resolve", "resolves", "resolved"]);
 var REF = /^(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#[0-9]+|GH-[0-9]+/i;
@@ -6816,9 +6884,9 @@ async function storeSecret(input, deps) {
 }
 
 // plugins/safety/opencode/src/skill-references.ts
-import { realpathSync as realpathSync8 } from "fs";
+import { lstatSync as lstatSync4, realpathSync as realpathSync8 } from "fs";
 import { homedir as homedir8 } from "os";
-import { basename as basename5, dirname as dirname8, relative as relative4 } from "path";
+import { basename as basename5, dirname as dirname8, join as join10, relative as relative4 } from "path";
 var READ_ONLY_TOOLS = new Set(["read", "glob", "grep", "list"]);
 function real(path) {
   try {
@@ -6826,6 +6894,29 @@ function real(path) {
   } catch {
     return;
   }
+}
+var SKILL_SUBDIRECTORIES = ["references", "scripts", "assets", "templates"];
+function absent(path) {
+  try {
+    lstatSync4(path);
+    return false;
+  } catch (error) {
+    return error.code === "ENOENT";
+  }
+}
+function dedicated(dir) {
+  return basename5(dirname8(dir)) === "skills" && absent(join10(dir, ".git"));
+}
+function trustedRoots(dir) {
+  if (dedicated(dir))
+    return [dir];
+  const roots = [];
+  for (const name of SKILL_SUBDIRECTORIES) {
+    const sub = real(join10(dir, name));
+    if (sub !== undefined && sub !== dir && !relative4(dir, sub).startsWith(".."))
+      roots.push(sub);
+  }
+  return roots;
 }
 function skillDirectories(skills, home = homedir8()) {
   const realHome = real(home);
@@ -6841,7 +6932,8 @@ function skillDirectories(skills, home = homedir8()) {
     const toHome = relative4(dir, realHome);
     if (dir === "/" || !(toHome === ".." || toHome.startsWith("../")))
       continue;
-    dirs.add(dir);
+    for (const root of trustedRoots(dir))
+      dirs.add(root);
   }
   return [...dirs];
 }
@@ -6856,14 +6948,14 @@ function allowSkillReads(evaluation, dirs) {
     return;
   if (evaluation.resources.length === 0 || dirs.length === 0)
     return;
-  if (evaluation.resources.every((resource) => inside(resource, dirs)))
+  if (evaluation.resources.every((resource) => insideCanonical(resource, dirs)))
     evaluation.effect = "allow";
 }
 
 // plugins/safety/opencode/src/steering-dirs.ts
 import { realpathSync as realpathSync9 } from "fs";
 import { homedir as homedir9 } from "os";
-import { isAbsolute as isAbsolute12, join as join10 } from "path";
+import { isAbsolute as isAbsolute12, join as join11 } from "path";
 var DEFAULT_STEERING_DIRS = ["~/.config/opencode/steering"];
 function readSteeringDirs(raw) {
   if (!Array.isArray(raw))
@@ -6873,7 +6965,7 @@ function readSteeringDirs(raw) {
 function steeringRoots(dirs, home = homedir9(), uid) {
   const roots = [];
   for (const dir of dirs) {
-    const expanded = dir === "~" || dir.startsWith("~/") ? join10(home, dir.slice(1)) : dir;
+    const expanded = dir === "~" || dir.startsWith("~/") ? join11(home, dir.slice(1)) : dir;
     if (!isAbsolute12(expanded))
       continue;
     try {
@@ -6920,7 +7012,7 @@ function denyUnanswerable(evaluation, session) {
 
 // plugins/safety/opencode/src/subagent-reads.ts
 import { homedir as homedir10 } from "os";
-import { basename as basename6, isAbsolute as isAbsolute13, join as join11 } from "path";
+import { basename as basename6, isAbsolute as isAbsolute13, join as join12 } from "path";
 var SHELL_TOOLS = new Set(["shell", "bash"]);
 var SECRET_LOCATIONS = [
   "~/.ssh",
@@ -6935,7 +7027,7 @@ var SECRET_LOCATIONS = [
 ];
 var ENV_FILE = /\.env(\.|$)/;
 function expand(location, home) {
-  return location === "~" || location.startsWith("~/") ? join11(home, location.slice(1)) : location;
+  return location === "~" || location.startsWith("~/") ? join12(home, location.slice(1)) : location;
 }
 function isSecretResource(resource, extra = [], home = homedir10()) {
   const expanded = expand(resource, home);
@@ -7348,48 +7440,23 @@ function createPlugin(overrides = {}) {
       }) : undefined;
       const watching = new AbortController;
       const errorName = (error) => error instanceof Error ? error.name : typeof error;
-      const watchFailed = (error) => {
-        if (watching.signal.aborted)
-          return;
-        warn("permission prompt watch stopped; prompts a later plugin raises in subagent sessions are no longer rejected", { error });
-      };
-      let asked;
-      if (on("subagent-prompts")) {
-        try {
-          asked = ctx.event.subscribe({ types: ["permission.asked"], signal: watching.signal })[Symbol.asyncIterator]();
-        } catch (error) {
-          watchFailed(errorName(error));
-        }
-      }
-      if (asked) {
-        const events = asked;
-        (async () => {
-          for (;; ) {
-            let next;
-            try {
-              next = await events.next();
-            } catch (error) {
-              return watchFailed(errorName(error));
-            }
-            if (next.done)
-              return watchFailed("stream ended");
-            if (watching.signal.aborted)
-              return;
-            const event = next.value;
-            if (event.type !== "permission.asked" || event.data === undefined)
-              continue;
-            await rejectUnanswerable(event.data).catch((error) => warn("could not reject a subagent's permission prompt", {
-              sessionID: event.data?.sessionID,
-              error: errorName(error)
-            }));
-          }
-        })();
-      }
+      const watch = on("subagent-prompts") ? watchAsked({
+        subscribe: () => ctx.event.subscribe({ types: ["permission.asked"], signal: watching.signal })[Symbol.asyncIterator](),
+        handle: async (event) => {
+          const { type, data } = event;
+          if (type !== "permission.asked" || data === undefined)
+            return;
+          await rejectUnanswerable(data).catch((error) => warn("could not reject a subagent's permission prompt", { sessionID: data.sessionID, error: errorName(error) }));
+        },
+        onFailure: ({ error, attempt, willRetry }) => warn(willRetry ? `permission prompt watch failed; resubscribing (attempt ${attempt})` : "permission prompt watch stopped; prompts a later plugin raises in subagent sessions are no longer rejected", { error }),
+        signal: watching.signal,
+        ...overrides.watch
+      }) : undefined;
       async function rejectUnanswerable(request) {
         if (typeof request.sessionID !== "string" || typeof request.id !== "string")
           return;
         const message = unanswerableDenial({ action: request.action ?? "permission", resources: request.resources ?? [], message: request.message }, await sessionInfo(request.sessionID));
-        if (message === undefined)
+        if (message === undefined || watching.signal.aborted)
           return;
         await ctx.permission.reply({ sessionID: request.sessionID, requestID: request.id, decision: "reject", message });
       }
@@ -7421,7 +7488,7 @@ function createPlugin(overrides = {}) {
         await unanswerable?.dispose();
         await subagentReads?.dispose();
         watching.abort();
-        asked?.return?.();
+        watch?.stop();
         await confirmCommand.dispose();
         await secretTool.dispose();
         await after.dispose();

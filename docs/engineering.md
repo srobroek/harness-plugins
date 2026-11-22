@@ -58,9 +58,9 @@ Current exceptions, found by searching relative imports under `plugins/*/opencod
 
 Move new shared code into `lib` instead of adding another edge.
 
-`lib/src/session-lanes.ts` holds the lane session helpers (`laneSessions`, `moveSessionsHome`, `isSessionNotFound`, `insideDirectory`) that `subagent-worktree` and `delivery` use. Both move a lane's sessions (its root and every session below it by parent ID) home after the worktree is removed, never by a project-wide listing:
+`lib/src/session-lanes.ts` holds the lane session helpers (`laneSessions`, `moveSessionsHome`, `isSessionNotFound`, `insideDirectory`) that `subagent-worktree` and `delivery` use. Both move a lane's sessions (its root and every session below it by parent ID that sits in the worktree) home after the worktree is removed, never by a project-wide listing:
 
-- `subagent-worktree` removes a lane through one path, `finalize` in `plugins/subagent-worktree/opencode/src/lifecycle.ts`, under the worktree's disk lock. It records the lane as `removing`, re-proves liveness and the tree, removes the worktree, moves the sessions and retires the lane. A failed move or an incomplete listing leaves the lane in `removing` until a later trigger finishes it.
+- `subagent-worktree` removes a lane through one path, `finalize` in `plugins/subagent-worktree/opencode/src/lifecycle.ts`, under the worktree's disk lock. It records the lane as `removing`, re-proves liveness and the tree, removes the worktree, moves the sessions and retires the lane. A failed move or an incomplete listing leaves the lane in `removing` until a later trigger finishes it. Every plugin start also finishes the lanes it finds in `removing`. A `session.execution.failed` with `Location not found` for a lane's child or a session below it moves the lane's sessions home through the same path, but only when the lane's worktree is gone from disk. The plugin runs no background sweep and no project-wide session repair. `subagent_worktree_sweep` runs on demand.
 - `delivery` wraps the helpers in `plugins/delivery/opencode/src/lane-move.ts`. After it removes a worktree and proves it absent, it moves the lane's sessions that sit in the worktree or below it to the canonical checkout. A failed move, an unreadable session or an incomplete listing is reported in the cleanup result and never fails the cleanup; only a session the host says does not exist is dropped silently.
 
 `subagent-worktree` runs git automatically in lanes and checkouts whose config it does not control. So `spawnRunner` in `plugins/subagent-worktree/opencode/src/git.ts` gives every `git` command `untrustedLocalGitArgs()` and the environment from `untrustedLocalGitEnv()`, both in `lib/src/safe-git.ts`. The environment drops every inherited `GIT_*` variable except `GIT_CONFIG_GLOBAL`. It also drops `PAGER`, `EDITOR`, `VISUAL` and `SSH_ASKPASS`. The dropped variables include these:
@@ -108,6 +108,16 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 - `repo-worktrees.ts` (`repo-worktrees`): read-only tools inside the worktrees of the session's repository. `git worktree list --porcelain -z` runs through `lib/src/safe-git.ts` flags and `lib/src/subprocess.ts` supervision with repository-selecting `GIT_*` variables cleared. Each path must link back reciprocally on disk (`.git` file and `<common-dir>/worktrees/<name>/gitdir`) and be user-owned. Roots are cached 30 s per directory with device and inode and re-checked on every use.
 - Roots are compared as canonical paths (`insideCanonical`), never re-resolved after the check.
 - `subagent-external-reads` (below) already allows any non-secret read or shell ask in a subagent session. The relaxations above stay narrower and also apply to root sessions; with `subagent-external-reads` disabled they are what lets a subagent read these places.
+
+### safety permission.asked backstop
+
+`plugins/safety/opencode/src/asked-watch.ts` owns the second layer of the `subagent-prompts` feature: a plugin whose evaluate hook runs after safety's can still raise a prompt in a subagent session, so `index.ts` subscribes to `permission.asked` and rejects such prompts through `permission.reply`. `index.ts` is a thin adapter: it supplies `subscribe`, the handler (`rejectUnanswerable`) and the warning text; `watchAsked` owns the loop. With `subagent-prompts` disabled nothing subscribes.
+
+- Retry bound: a stream error, a stream that ends, or a `subscribe()` that throws is one failure. After a failure the watch waits and resubscribes, at most 3 times (4 subscriptions in all). Each failure warns with the error name only (`permission prompt watch failed; resubscribing (attempt N)`); the last one warns `permission prompt watch stopped; …` and the watch ends. The evaluate hook keeps denying.
+- Backoff: 1 s, 5 s, 15 s (`DEFAULT_RESUBSCRIBE_DELAYS_MS`; the array length is the bound). `abortableSleep` waits on an unref'd timer and returns at once on abort. A subscription that works resets nothing: the bound counts failures over the plugin's life.
+- Teardown: the cleanup function aborts `watching.signal`, then calls `stop()`. Abort ends a backoff sleep, suppresses every warning and ends the loop. `stop()` calls the live iterator's `return()` without awaiting it, because a pending read may never settle, and swallows a rejection from it. A lookup in flight at teardown checks the signal before `permission.reply`, so no reply goes out after teardown.
+- Race: the watch is reactive, so a user's answer can land before the reply. Then the reply fails or is a no-op, a failure is warned about, and the user's decision stands.
+- Tests: `asked-watch.test.ts` drives the real sleeper with controlled timers; `index.test.ts` injects `sleep` and `delaysMs` through `Overrides.watch`. Neither waits on the wall clock.
 
 ## Standards
 
@@ -195,6 +205,22 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 - Lifecycle: a session stays reserved from its notice until its attempt ends, and is nudged at most once per plugin process. State is in memory only. The cleanup returned by `setup` aborts the subscription and disposes the nudger; a disposed nudger ignores later notices and an in-flight lookup posts nothing. A failed subscription is logged with its cause through `console.warn`; an abort is silent.
 - Decision logic (`needsNudge`, `isRestartNotice`, `createRestartNudger` with injected `schedule`) is pure and tested directly; `setupRestartNudge` is the adapter.
 
+## delivery: cleanup in another repository
+
+`delivery_land` with `repo` and a clone (`repoPath` or a `worktree`) keys the receipt by the target repository. Every later cleanup of that receipt runs in the clone. This covers the inline cleanup, an explicit `delivery_cleanup` and the turn-end retry. `repositoryCoordination` in `plugins/delivery/opencode/src/pending-cleanup.ts` binds the cleanup to the target. `cleanupDelivery` takes it as `CleanupDeps.coordinate`.
+
+- Delivery reads and writes the coordination files under the target's git common directory: claims and landing records, holds and denials, and the removal lock.
+- If the clone now resolves to another common directory, delivery removes nothing.
+- The final checks wait on listings, so right before the removal call delivery proves both `.git` markers again, synchronously. It checks the worktree's and the directory the removal runs from, and refuses if either changed.
+- Delivery keys its in-memory vetoes by canonical worktree path and shares them across repositories. Before any wait, it publishes each veto.
+- The last check lists the sessions in the worktree across all projects.
+- If the sessions in the clone and the worktree name exactly one project id, delivery removes the worktree through OpenCode's registry. With any other answer it refuses the removal.
+- `cleanupDelivery` without `coordinate` still refuses another repository.
+
+The clone registry is `<receipts root>/.clones/<session repo key>.json` (`clone-registry.ts`). It lists the key and canonical root of each repository that the session's repository landed into, newest first. The turn-end retry, the idle-hook holds and gc read it, and check each root's key again first. Each update takes a lease lock (`lib/src/lease-lock.ts`) beside the file and replaces the file by rename. Past 32 entries, the oldest entries with no pending receipts go. An entry with pending receipts stays.
+
+Each plugin instance also keeps the clones it registered in memory, and those win over the file. A failed write leaves its own holds and retry intact. A landing record reaches the target before the registry write starts, and each clone's holds are written without waiting on any other clone.
+
 ## Commands
 
 AGENTS.md Commands lists every script. The `justfile` has one recipe per script, and `just verify` runs every gate CI runs ([decision 0006](decisions/0006-bun-and-just.md)): installs use `bun install --frozen-lockfile` and the lockfile is `bun.lock`, never npm. `bun run check` is `harness-kit check`: `build --check` for the generated files, then validation of each Claude Code tree. It does not run typecheck, lint, tests or the content checks. The `cad:*` scripts need network.
@@ -215,6 +241,16 @@ Both jobs validate the patch against the workflow's generated-path allowlist. It
 
 `renovate.json` ignores that bot's exact author email through `gitIgnoredAuthors`. Renovate can then rebase or update branches containing regeneration commits.
 
-The push job commits as `github-actions[bot]` with Git hooks disabled. Branch names pass through quoted environment variables, not shell-source interpolation. If the remote head has moved, the job leaves regeneration to the next run. Git's fast-forward check prevents overwriting a concurrent push. After pushing with `GITHUB_TOKEN`, the job dispatches `ci.yml` on the PR branch. The final head receives the existing CI checks, including the vendored cad check. This uses GitHub's [documented dispatch exception](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow) to token-triggered workflow suppression. It needs no App token or PAT.
+The push job commits as `github-actions[bot]` with Git hooks disabled. Branch names pass through quoted environment variables, not shell-source interpolation. If the remote head moves, the job leaves regeneration to the next run. Git's fast-forward check prevents overwriting a concurrent push.
+
+After pushing with `GITHUB_TOKEN`, the job dispatches `ci.yml` on the PR branch. This uses GitHub's [documented dispatch exception](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow). Pull request runs from pushes made with `GITHUB_TOKEN` need approval. The fork-contributor approval setting does not remove this token-triggered gate. Dispatch runs need no App token or PAT.
+
+GitHub [excludes dispatched job checks from PR checks](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/defining-the-mergeability-of-pull-requests/troubleshooting-required-status-checks#checks-from-some-workflow-jobs-are-not-evaluated), even on the correct head SHA. `ci-publish.yml` listens for dispatched CI starting or completing through `workflow_run`. It publishes [commit statuses](https://docs.github.com/en/rest/commits/statuses) named `check / check`, `repo-checks` and `changes` on that SHA.
+
+The publisher runs inline default-branch code, with no checkout, install, artifact download or cache. Its job has `statuses: write` and read access to Actions, contents and pull requests. It accepts only the latest dispatch for an open, same-repository Renovate PR whose current head matches the run.
+
+The CI definition on the branch must match the publisher's default-branch revision, except for version updates at approved `uses:` entries. These are the harness-kit check workflow tag and SHA pins for checkout, setup-node and setup-bun. The publisher rejects changes to steps, conditions, permissions or action repository names.
+
+A running dispatch receives pending statuses. Success needs a successful run, all three required jobs succeeding, and the cad job succeeding or being skipped. Failed, canceled, missing or skipped required jobs produce failure statuses. Repository Actions approval settings remain unchanged.
 
 `.github/workflows/release.yml` runs on pushes to `main`. It calls the harness-kit release workflow, which runs multi-semantic-release (`release.config.mjs`, `.multi-releaserc`) and tags each plugin `<name>--v<version>`. The `prepareCmd` from `scripts/release-preset.mjs` (used by `release.config.mjs` and `plugins/cad/release.config.mjs`) runs `scripts/build.ts <name>` after `harness-kit stamp`, because a bundle can embed its plugin's `package.json` (delivery's receipts carry the version) and the release commit must carry the rebuilt `opencode/dist`. A `feat` or `fix` commit, and with the repository rules a `refactor` or `docs` commit, under `plugins/<name>/` cuts a release. A new plugin needs no manifest entry: any directory under `plugins/` is a workspace package.
