@@ -2,7 +2,16 @@ import { execFileSync } from "node:child_process"
 import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs"
 import { basename, dirname, join, resolve } from "node:path"
 import type { ParsedCommand } from "@srobroek/opencode-lib/beads-shell"
-import { ACCEPTED_FORMS, beadIn, MAX_BODY_BYTES, mayCreatePr, type ReadFile, readPrCreate, TRAILER_RULE } from "./pr-create-form.ts"
+import {
+  ACCEPTED_FORMS,
+  beadIn,
+  MAX_BODY_BYTES,
+  mayCreatePr,
+  type ReadFile,
+  readPrCreate,
+  TRAILER_RULE,
+  validRepository,
+} from "./pr-create-form.ts"
 
 /**
  * A PR that names no bead is a PR nobody can trace back to a decision.
@@ -88,6 +97,9 @@ export function repositoryControlled(repo: string | null): RepositoryControl {
       kind: "unknown",
       reason: "Repository permission could not be determined because the repository could not be identified",
     }
+  // The name reaches `gh repo view` as an argument; one that is not a repository name could be an option.
+  if (!validRepository(repo))
+    return { kind: "unknown", reason: "Repository permission could not be determined because the repository name is not OWNER/REPO or HOST/OWNER/REPO" }
   try {
     const permission = execFileSync(
       "gh",
@@ -162,6 +174,8 @@ export type PrBeadLinkDeps = {
   /** The repository's control, asked only when the command does not already name a bead. `false` means no ledger. */
   control: (repo: string | null, cwd: string) => boolean | RepositoryControl
   note?: LedgerNote
+  /** The session environment; `GH_REPO` in it is the repository `gh` uses when the command names none. */
+  env?: NodeJS.ProcessEnv
 }
 
 export type PrBeadLinkDecision = { block: true; reason: string; resolution: string }
@@ -174,7 +188,10 @@ export function decidePrBeadLink(parsed: ParsedCommand, cwd: string, deps: PrBea
   if (!mayCreatePr(parsed)) return null
   const read = readPrCreate(parsed.command, readBodyFile(cwd))
   if (read.kind === "form" && beadIn(read.body.text) !== undefined) return null
-  const control = deps.control(read.kind === "form" ? read.repo : null, cwd)
+  // gh's own order: the command's --repo, else GH_REPO, else the checkout (null). An empty GH_REPO is unset.
+  const inherited = deps.env?.GH_REPO
+  const repo = (read.kind === "form" ? read.repo : null) ?? (inherited === undefined || inherited === "" ? null : inherited)
+  const control = deps.control(repo, cwd)
   if (control === false || (control !== true && control.kind === "uncontrolled")) return null
   const subject =
     read.kind === "form"

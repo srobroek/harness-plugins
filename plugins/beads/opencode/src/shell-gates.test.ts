@@ -108,6 +108,29 @@ describe("decideShell", () => {
     if (decision.kind === "allow") expect(decision.advisories.join("\n")).toContain("BEADS_ACTOR")
   })
 
+  test("the repository lookup gets GH_REPO from the session environment when the command names none", async () => {
+    const seen: (string | null)[] = []
+    const repositoryControl = (repo: string | null) => {
+      seen.push(repo)
+      return { kind: "controlled" as const }
+    }
+    const env = { PATH: process.env.PATH, BEADS_DIR: store, GH_REPO: "o/r" }
+    await decideShell("gh pr create --title t --body x", root, deps({ env, repositoryControl }))
+    await decideShell("gh pr create -R a/b --title t --body x", root, deps({ env, repositoryControl }))
+    expect(seen).toEqual(["o/r", "a/b"])
+  })
+
+  test("refuses a PR created through the API when the repository is controlled", async () => {
+    const decision = await decideShell(
+      "gh api repos/o/r/pulls -f title=t -f head=h -f base=main",
+      root,
+      deps({ repositoryControl: () => ({ kind: "controlled" }) }),
+    )
+    expect(decision).toMatchObject({ kind: "block", gate: "pr-bead-link-gate" })
+    const read = await decideShell("gh api repos/o/r/pulls", root, deps({ repositoryControl: () => ({ kind: "controlled" }) }))
+    expect(read.kind).toBe("allow")
+  })
+
   test("refuses a PR without a bead trailer when the repository is controlled", async () => {
     const decision = await decideShell(
       'gh pr create --title t --body "no trailer here"',

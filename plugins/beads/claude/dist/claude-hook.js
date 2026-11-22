@@ -4686,6 +4686,67 @@ var basename5 = (value) => value.slice(value.lastIndexOf("/") + 1);
 function opaque(word, text) {
   return word.expands || /\$['"]/.test(text.slice(word.start, word.end));
 }
+var API_VALUE_LONG = new Set([
+  "--method",
+  "--field",
+  "--raw-field",
+  "--input",
+  "--header",
+  "--jq",
+  "--template",
+  "--preview",
+  "--cache",
+  "--hostname"
+]);
+var API_VALUE_SHORT = new Set(["X", "f", "F", "H", "q", "t", "p"]);
+var API_BODY_LONG = new Set(["--field", "--raw-field", "--input"]);
+var API_BODY_SHORT = new Set(["f", "F"]);
+var PULLS_ENDPOINT = /^(?:https?:\/\/[^/]+)?\/?repos\/[^/]+\/[^/]+\/pulls\/?(?:[?#].*)?$/i;
+function apiMayCreate(values, opaques) {
+  let method;
+  let hasBody = false;
+  const endpoints = [];
+  const take = (i, inline) => inline === undefined ? { value: values[i + 1] ?? "", opaque: opaques[i + 1] === true } : { value: inline, opaque: opaques[i] === true };
+  for (let i = 0;i < values.length; i++) {
+    const word = values[i];
+    if (word === "--")
+      continue;
+    if (!word.startsWith("-") || word === "-") {
+      endpoints.push({ value: word, opaque: opaques[i] === true });
+      continue;
+    }
+    if (word.startsWith("--")) {
+      const eq = word.indexOf("=");
+      const name = eq < 0 ? word : word.slice(0, eq);
+      if (!API_VALUE_LONG.has(name))
+        continue;
+      const value = take(i, eq < 0 ? undefined : word.slice(eq + 1));
+      if (eq < 0)
+        i++;
+      if (name === "--method")
+        method = value;
+      else if (API_BODY_LONG.has(name))
+        hasBody = true;
+      continue;
+    }
+    for (let c = 1;c < word.length; c++) {
+      const letter = word[c];
+      if (!API_VALUE_SHORT.has(letter))
+        continue;
+      const rest = word.slice(c + 1);
+      const value = take(i, rest === "" ? undefined : rest);
+      if (rest === "")
+        i++;
+      if (letter === "X")
+        method = value;
+      else if (API_BODY_SHORT.has(letter))
+        hasBody = true;
+      break;
+    }
+  }
+  const post = method === undefined ? hasBody : method.opaque || method.value.toUpperCase() === "POST";
+  return post && endpoints.some((endpoint) => endpoint.opaque || PULLS_ENDPOINT.test(endpoint.value));
+}
 function wordsMayCreate(values, opaques) {
   const first = values.indexOf("pr");
   if (first >= 0 && values.slice(first + 1).some((value) => value === "create" || value === "new"))
@@ -4697,6 +4758,8 @@ function wordsMayCreate(values, opaques) {
     if (basename5(value) === "gh") {
       const operand = values[i + 1];
       if (operand !== undefined && !GH_BUILTINS.has(operand))
+        return true;
+      if (operand === "api" && opaques[i + 1] !== true && apiMayCreate(values.slice(i + 2), opaques.slice(i + 2)))
         return true;
     }
     if (anyOpaque && WATCHED.has(basename5(value)))
@@ -4841,6 +4904,8 @@ function repositoryControlled(repo) {
       kind: "unknown",
       reason: "Repository permission could not be determined because the repository could not be identified"
     };
+  if (!validRepository(repo))
+    return { kind: "unknown", reason: "Repository permission could not be determined because the repository name is not OWNER/REPO or HOST/OWNER/REPO" };
   try {
     const permission = execFileSync("gh", ["repo", "view", repo, "--json", "viewerPermission", "--jq", ".viewerPermission"], {
       encoding: "utf8",
@@ -4904,7 +4969,9 @@ function decidePrBeadLink(parsed, cwd, deps) {
   const read = readPrCreate(parsed.command, readBodyFile(cwd));
   if (read.kind === "form" && beadIn(read.body.text) !== undefined)
     return null;
-  const control = deps.control(read.kind === "form" ? read.repo : null, cwd);
+  const inherited = deps.env?.GH_REPO;
+  const repo = (read.kind === "form" ? read.repo : null) ?? (inherited === undefined || inherited === "" ? null : inherited);
+  const control = deps.control(repo, cwd);
   if (control === false || control !== true && control.kind === "uncontrolled")
     return null;
   const subject = read.kind === "form" ? `${REASON} Looked at ${read.body.source}, not the branch or the title.` : `This command may create a PR in a form the bead gate cannot read exactly: ${read.rule}. ${OPT_OUT}`;
@@ -5038,6 +5105,7 @@ async function decide(original, cwd, deps) {
   if (on("pr-bead-link-gate")) {
     const decision = decidePrBeadLink(parsed, cwd, {
       control: deps.repositoryControl ?? repositoryControlFor,
+      env: deps.env,
       note: () => {
         const ledger = findLedger(cwd);
         return ledger === undefined ? undefined : describeLedger(ledger);

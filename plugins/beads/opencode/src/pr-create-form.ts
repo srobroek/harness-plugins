@@ -74,7 +74,7 @@ const REPOSITORY_NAME = /^[A-Za-z0-9._-]+$/
  * so a repository may start with `.`, `-` or `_` (`owner/.github`). The first component never starts with
  * `-`, because the value reaches `gh repo view` as an argument.
  */
-function validRepository(value: string): boolean {
+export function validRepository(value: string): boolean {
   const parts = value.split("/")
   if (parts.length < 2 || parts.length > 3) return false
   if (parts[0]?.startsWith("-")) return false
@@ -258,6 +258,60 @@ function opaque(word: ShellWord, text: string): boolean {
   return word.expands || /\$['"]/.test(text.slice(word.start, word.end))
 }
 
+/** `gh api` flags that take a value. Letters are the short forms. */
+const API_VALUE_LONG = new Set([
+  "--method", "--field", "--raw-field", "--input", "--header", "--jq", "--template", "--preview", "--cache", "--hostname",
+])
+const API_VALUE_SHORT = new Set(["X", "f", "F", "H", "q", "t", "p"])
+const API_BODY_LONG = new Set(["--field", "--raw-field", "--input"])
+const API_BODY_SHORT = new Set(["f", "F"])
+/** The pull request collection: `repos/OWNER/REPO/pulls`, with an optional host, leading or trailing slash and query. */
+const PULLS_ENDPOINT = /^(?:https?:\/\/[^/]+)?\/?repos\/[^/]+\/[^/]+\/pulls\/?(?:[?#].*)?$/i
+
+/**
+ * Whether the words after `gh api` may create a PR: a POST to the pull collection. gh sends POST for
+ * `-X POST` and for any `-f`, `-F`, `--field`, `--raw-field` or `--input` unless `-X` says otherwise.
+ * A word the gate cannot read as method or endpoint counts as a match, so an unclear call is refused.
+ */
+function apiMayCreate(values: string[], opaques: boolean[]): boolean {
+  let method: { value: string; opaque: boolean } | undefined
+  let hasBody = false
+  const endpoints: { value: string; opaque: boolean }[] = []
+  const take = (i: number, inline: string | undefined): { value: string; opaque: boolean } =>
+    inline === undefined ? { value: values[i + 1] ?? "", opaque: opaques[i + 1] === true } : { value: inline, opaque: opaques[i] === true }
+  for (let i = 0; i < values.length; i++) {
+    const word = values[i] as string
+    if (word === "--") continue
+    if (!word.startsWith("-") || word === "-") {
+      endpoints.push({ value: word, opaque: opaques[i] === true })
+      continue
+    }
+    if (word.startsWith("--")) {
+      const eq = word.indexOf("=")
+      const name = eq < 0 ? word : word.slice(0, eq)
+      if (!API_VALUE_LONG.has(name)) continue
+      const value = take(i, eq < 0 ? undefined : word.slice(eq + 1))
+      if (eq < 0) i++
+      if (name === "--method") method = value
+      else if (API_BODY_LONG.has(name)) hasBody = true
+      continue
+    }
+    // A short flag or cluster: the first value-taking letter takes the rest of the word, else the next word.
+    for (let c = 1; c < word.length; c++) {
+      const letter = word[c] as string
+      if (!API_VALUE_SHORT.has(letter)) continue
+      const rest = word.slice(c + 1)
+      const value = take(i, rest === "" ? undefined : rest)
+      if (rest === "") i++
+      if (letter === "X") method = value
+      else if (API_BODY_SHORT.has(letter)) hasBody = true
+      break
+    }
+  }
+  const post = method === undefined ? hasBody : method.opaque || method.value.toUpperCase() === "POST"
+  return post && endpoints.some((endpoint) => endpoint.opaque || PULLS_ENDPOINT.test(endpoint.value))
+}
+
 function wordsMayCreate(values: string[], opaques: boolean[]): boolean {
   const first = values.indexOf("pr")
   if (first >= 0 && values.slice(first + 1).some((value) => value === "create" || value === "new")) return true
@@ -267,6 +321,7 @@ function wordsMayCreate(values: string[], opaques: boolean[]): boolean {
     if (basename(value) === "gh") {
       const operand = values[i + 1]
       if (operand !== undefined && !GH_BUILTINS.has(operand)) return true
+      if (operand === "api" && opaques[i + 1] !== true && apiMayCreate(values.slice(i + 2), opaques.slice(i + 2))) return true
     }
     if (anyOpaque && WATCHED.has(basename(value))) return true
   }

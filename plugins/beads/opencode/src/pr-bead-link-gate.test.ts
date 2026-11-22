@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { parse } from "@srobroek/opencode-lib/beads-shell"
@@ -74,6 +74,21 @@ describe("repository subprocess contract", () => {
 })
 
 describe("repository control", () => {
+  test.each(["--json", "-R", "a", "a/b/c/d", "a/..", "a b/c"])("a repository name %p fails closed without running gh", (name) => {
+    const dir = mkdtempSync(join(tmpdir(), "beads-gh-"))
+    const ran = join(dir, "ran")
+    writeExecutable(join(dir, "gh"), `#!/bin/sh\ntouch '${ran}'\necho WRITE\n`)
+    const previousPath = process.env.PATH
+    process.env.PATH = `${dir}:${previousPath ?? ""}`
+    try {
+      expect(repositoryControlled(name).kind).toBe("unknown")
+      expect(existsSync(ran)).toBe(false)
+    } finally {
+      process.env.PATH = previousPath
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   test("only write-capable viewer permissions control", () => {
     for (const permission of ["WRITE", "MAINTAIN", "ADMIN"]) expect(controlledByViewerPermission(permission)).toBe(true)
     for (const permission of ["READ", "TRIAGE", null, undefined, ""])
@@ -272,6 +287,41 @@ describe("decidePrBeadLink", () => {
     decide("gh pr create --title t -R o/r --body x", deps)
     decide("gh pr create -R o/r --fill", deps)
     expect(seen).toEqual(["o/r", null])
+  })
+
+  describe("GH_REPO from the session environment", () => {
+    const seen: (string | null)[] = []
+    const spy = (env: NodeJS.ProcessEnv): PrBeadLinkDeps => ({
+      env,
+      control: (repo) => {
+        seen.push(repo)
+        return false
+      },
+    })
+    test.each<[string, string, NodeJS.ProcessEnv, string | null]>([
+      ["names no repository", "gh pr create --title t --body x", { GH_REPO: "o/r" }, "o/r"],
+      ["names no repository, host form", "gh pr create --title t --body x", { GH_REPO: "h.example/o/r" }, "h.example/o/r"],
+      ["has --repo, which wins", "gh pr create -R a/b --body x", { GH_REPO: "o/r" }, "a/b"],
+      ["is unreadable", "gh pr create -R o/r --fill", { GH_REPO: "x/y" }, "x/y"],
+      ["is empty", "gh pr create --title t --body x", { GH_REPO: "" }, null],
+      ["is unset", "gh pr create --title t --body x", {}, null],
+      ["is invalid, so the lookup sees it and fails closed", "gh pr create --body x", { GH_REPO: "--json" }, "--json"],
+    ])("the lookup gets it when the form %s", (_name, command, env, expected) => {
+      seen.length = 0
+      decide(command, spy(env))
+      expect(seen).toEqual([expected])
+    })
+
+    test("a bead-less PR is refused when GH_REPO is controlled and the checkout's repository is not", () => {
+      const control: PrBeadLinkDeps["control"] = (repo) => (repo === "o/r" ? { kind: "controlled" } : { kind: "uncontrolled" })
+      expect(decide("gh pr create --title t --body x", { env: { GH_REPO: "o/r" }, control })).not.toBeNull()
+      expect(decide("gh pr create --title t --body x", { env: {}, control })).toBeNull()
+    })
+  })
+
+  test("an api call that creates a PR is refused as a form the gate cannot read", () => {
+    const decision = decide("gh api repos/o/r/pulls -f title=t")
+    expect(decision?.reason).toContain("the command is not `gh pr create` or `gh pr new`")
   })
 
   test.each<[string, PrBeadLinkDeps["control"]]>([
