@@ -62,8 +62,8 @@ const BINARY_MAGICS = [
  */
 const FRAMEWORK = /pre-commit|\bprek\b|husky|lefthook|\bbd hooks\b|beads/i
 
-/** A path token whose last segment is the framework's own executable or script (`pre-commit`, `husky.sh`). */
-const FRAMEWORK_BASENAME = /^\.?(?:pre-commit|prek|husky|lefthook|beads)(?:\.sh)?$/i
+/** A path token whose last segment is the framework's own executable or script (`pre-commit`, `husky.sh`, `bd`). */
+const FRAMEWORK_BASENAME = /^(?:\.?(?:pre-commit|prek|husky|lefthook|beads)(?:\.sh)?|bd)$/i
 
 const PATH_TOKEN = /[^\s"'`=<>|;&()]*\/[^\s"'`=<>|;&()]*/g
 

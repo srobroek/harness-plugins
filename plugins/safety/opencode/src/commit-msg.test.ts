@@ -89,6 +89,8 @@ describe("classifyHook framework detection", () => {
     // v0.5.0 cmd/add.go addHook: no LEFTHOOK guard either.
     ["lefthook 0.5", '#!/bin/bash\n\n# If can\'t find lefthook in global scope\n# we suppose it in local npm package\nif ! type lefthook >/dev/null\nthen\n  exec npx lefthook run commit-msg $@\nelse\n  exec lefthook run commit-msg $@\nfi\n'],
     // A framework hook that names its own paths must still be refused.
+    ["beads dispatcher by absolute path", '#!/bin/sh\n/usr/local/bin/bd hooks run commit-msg "$@"\n'],
+    ["beads dispatcher by $HOME path", '#!/bin/sh\n$HOME/.local/bin/bd hooks run commit-msg "$@"\n'],
     ["husky running its own script", '#!/bin/sh\nsh .husky/_/husky.sh\nnpx commitlint --edit "$1"\n'],
     ["pre-commit run from a cache path", '#!/bin/sh\nexec "$HOME/.cache/pre-commit/venv/bin/pre-commit" run --hook-stage commit-msg\n'],
     ["beads section", "#!/usr/bin/env sh\n# --- BEGIN BEADS INTEGRATION v0.56.1 ---\nbd hooks run commit-msg \"$@\"\n# --- END BEADS INTEGRATION v0.56.1 ---\n"],
@@ -98,6 +100,10 @@ describe("classifyHook framework detection", () => {
   ]
   test.each(generated)("refuses a hook written by %s", (_name, hook) => {
     expect(classifyHook(bytes(hook))).toBe("framework")
+  })
+
+  test("treats a plain hook with a path whose segment merely starts with bd as a script", () => {
+    expect(classifyHook(bytes('#!/bin/sh\necho ran >> "/x/bd-tmp/ran"\n/x/bd-tmp/run hooks run\n'))).toBe("script")
   })
 
   test.each(["beads", "husky", "lefthook", "pre-commit", "prek"])("treats a plain hook that names a %s path as a script", (word) => {

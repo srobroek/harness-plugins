@@ -46,7 +46,7 @@ var BINARY_MAGICS = [
   [127, 69, 76, 70]
 ];
 var FRAMEWORK = /pre-commit|\bprek\b|husky|lefthook|\bbd hooks\b|beads/i;
-var FRAMEWORK_BASENAME = /^\.?(?:pre-commit|prek|husky|lefthook|beads)(?:\.sh)?$/i;
+var FRAMEWORK_BASENAME = /^(?:\.?(?:pre-commit|prek|husky|lefthook|beads)(?:\.sh)?|bd)$/i;
 var PATH_TOKEN = /[^\s"'`=<>|;&()]*\/[^\s"'`=<>|;&()]*/g;
 function withoutPaths(text) {
   return text.replace(PATH_TOKEN, (token) => FRAMEWORK_BASENAME.test(token.slice(token.lastIndexOf("/") + 1)) ? token : " ");
