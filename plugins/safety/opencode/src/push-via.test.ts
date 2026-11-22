@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process"
 import { mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { hardGate, MESSAGES } from "./guards.ts"
+import { untrustedLocalGitEnv } from "@srobroek/opencode-lib/safe-git"
+import { type GuardID, hardGate } from "./guards.ts"
 import { hostOf, pushVia, type RemoteResolver, readPushVia } from "./push-via.ts"
 import { walkShell } from "./shell.ts"
 
@@ -137,7 +138,23 @@ describe("pushVia allows", () => {
     ["a subshell cd", "(cd sub && git push)"],
     ["a nested shell after cd", "cd sub; bash -c 'git push'"],
     ["a wrapper directory around a nested shell", "env -C /elsewhere bash -c 'git push'"],
+    ["a single-quoted leading cd", "cd 'sub' && git push"],
+    ["a double-quoted leading cd", 'cd "sub" && git push'],
+    ["a leading cd to a variable", "cd $DIR && git push"],
+    ["a leading cd to a home path", "cd ~/x && git push"],
   ])("a directory that changes before the push (%s) fails open", (_name, source) => {
+    expect(run(source)).toBeUndefined()
+  })
+
+  test.each([
+    ["GIT_DIR assignment", "GIT_DIR=/x/.git git push"],
+    ["GIT_WORK_TREE assignment", "GIT_WORK_TREE=/x git push"],
+    ["GIT_COMMON_DIR assignment", "GIT_COMMON_DIR=/x git push"],
+    ["env wrapper", "env GIT_DIR=/x/.git git push"],
+    ["an export", "export GIT_DIR=/x/.git; git push"],
+    ["--git-dir", "git --git-dir=/x/.git push"],
+    ["--work-tree", "git --work-tree /x push"],
+  ])("a repository selector (%s) fails open", (_name, source) => {
     expect(run(source)).toBeUndefined()
   })
 
@@ -185,6 +202,10 @@ describe("pushVia asks the resolver for the pushed remote", () => {
     ["git push -o --repo=https://a.example/b", undefined],
     ["git push --push-option --repo=x origin", "origin"],
     ["git push --repo=https://a.example/b mirror", "mirror"],
+    ["git push -vo ci.skip origin", "origin"],
+    ["git push -vo ci.skip", undefined],
+    ["git push -vofoo origin", "origin"],
+    ["git push -4u origin", "origin"],
   ])("%s asks about %s", (source, remote) => {
     expect(remoteOf(source)).toBe(remote)
   })
@@ -218,12 +239,29 @@ describe("hardGate integration", () => {
   test("refuses with the push-via guard, naming host, command and directory", () => {
     const refusal = hardGate("git push", "/work/repo", options)
     expect(refusal?.guard).toBe("push-via")
-    expect(refusal?.reason).toBe(MESSAGES["push-via"]("github.com", "dgit", "/work/repo"))
-    expect(refusal?.reason).toContain("`dgit -C /work/repo push`")
+    expect(refusal?.reason).toBe(
+      "Blocked by safety (push-via-guard): a plain `git push` to github.com cannot work on this host. Push with `dgit -C /work/repo push` instead (same arguments), and push WIP often so commits are not lost.",
+    )
   })
 
   test("quotes a directory with a space in the hint", () => {
-    expect(MESSAGES["push-via"]("github.com", "dgit", "/work/my repo")).toContain("`dgit -C '/work/my repo' push`")
+    expect(hardGate("git -C '/work/my repo' push", "/work/repo", options)?.reason).toContain(
+      "`dgit -C '/work/my repo' push`",
+    )
+  })
+
+  test.each([
+    ["GIT_DIR", { GIT_DIR: "/x/.git" }],
+    ["GIT_WORK_TREE", { GIT_WORK_TREE: "/x" }],
+    ["GIT_COMMON_DIR", { GIT_COMMON_DIR: "/x" }],
+    ["GIT_CONFIG_COUNT", { GIT_CONFIG_COUNT: "1" }],
+    ["GIT_CONFIG_GLOBAL", { GIT_CONFIG_GLOBAL: "/x" }],
+  ])("an inherited %s fails open", (_name, env) => {
+    expect(hardGate("git push", "/work/repo", { ...options, env })).toBeUndefined()
+  })
+
+  test("an unrelated inherited variable still refuses", () => {
+    expect(hardGate("git push", "/work/repo", { ...options, env: { GIT_TERMINAL_PROMPT: "0" } })?.guard).toBe("push-via")
   })
 
   test("is off without the option", () => {
@@ -236,11 +274,16 @@ describe("hardGate integration", () => {
 })
 
 describe("default resolver with real git", () => {
-  const git = (cwd: string, ...args: string[]) => spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" })
-
-  // An empty HOME, so the developer's own global git config (insteadOf rules) cannot change the outcome.
+  // An empty HOME, so the developer's own global git config (insteadOf rules) cannot change the outcome,
+  // and no inherited GIT_DIR or similar can steer a fixture command into a real repository.
   const home = realpathSync(mkdtempSync(join(tmpdir(), "push-via-home-")))
   afterAll(() => rmSync(home, { recursive: true }))
+  const gitEnv = untrustedLocalGitEnv({ PATH: Bun.env.PATH, HOME: home, XDG_CONFIG_HOME: home, GIT_CONFIG_NOSYSTEM: "1" })
+
+  const git = (cwd: string, ...args: string[]) => {
+    const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8", env: gitEnv })
+    if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`)
+  }
 
   const withRepo = (url: string, setup: (dir: string) => void, check: (dir: string) => void) => {
     const dir = realpathSync(mkdtempSync(join(tmpdir(), "push-via-")))
@@ -255,6 +298,58 @@ describe("default resolver with real git", () => {
   }
   const guardOf = (dir: string, source: string) =>
     hardGate(source, dir, { pushVia: CONFIG, env: { PATH: Bun.env.PATH, HOME: home, XDG_CONFIG_HOME: home } })?.guard
+
+  // origin is on github, lab is on gitlab; the bare push picks one by config.
+  const twoRemotes = (...settings: Array<[string, string]>) => (dir: string) => {
+    git(dir, "remote", "add", "lab", GITLAB)
+    for (const [key, value] of settings) git(dir, "config", key, value)
+  }
+
+  test.each([
+    ["branch.<name>.remote", [["branch.main.remote", "lab"]], undefined],
+    ["remote.pushDefault", [["remote.pushDefault", "lab"]], undefined],
+    ["remote.pushDefault beats branch.<name>.remote", [["remote.pushDefault", "lab"], ["branch.main.remote", "origin"]], undefined],
+    ["branch.<name>.remote beats the origin fallback", [["branch.main.remote", "origin"]], "push-via"],
+    ["branch.<name>.pushRemote beats remote.pushDefault", [["remote.pushDefault", "lab"], ["branch.main.pushRemote", "origin"]], "push-via"],
+    ["origin when nothing is configured", [], "push-via"],
+  ] as Array<[string, Array<[string, string]>, GuardID | undefined]>)("a bare push: %s", (_name, settings, guard) => {
+    withRepo(GITHUB, twoRemotes(...settings), (dir) => expect(guardOf(dir, "git push")).toBe(guard))
+  })
+
+  test("a remote name containing a slash is resolved as a name, by its push URL", () => {
+    withRepo(
+      GITLAB,
+      (dir) => {
+        git(dir, "remote", "add", "team/lab", GITHUB)
+        git(dir, "config", "remote.team/lab.pushurl", GITLAB)
+      },
+      (dir) => expect(guardOf(dir, "git push team/lab")).toBeUndefined(),
+    )
+  })
+
+  test("a remote name containing a slash is refused when its push URL is on the host", () => {
+    withRepo(
+      GITLAB,
+      (dir) => git(dir, "remote", "add", "team/hub", GITHUB),
+      (dir) => expect(guardOf(dir, "git push team/hub")).toBe("push-via"),
+    )
+  })
+
+  test("an explicit URL fails open when a pushInsteadOf rule exists", () => {
+    withRepo(
+      GITLAB,
+      (dir) => git(dir, "config", "url.https://gitlab.example.com/.pushInsteadOf", "https://github.com/"),
+      (dir) => expect(guardOf(dir, "git push https://github.com/a/b.git")).toBeUndefined(),
+    )
+  })
+
+  test("an explicit URL on the host is refused when no pushInsteadOf rule exists", () => {
+    withRepo(
+      GITLAB,
+      () => {},
+      (dir) => expect(guardOf(dir, "git push https://github.com/a/b.git")).toBe("push-via"),
+    )
+  })
 
   test("reads origin's URL for a bare push", () => {
     withRepo(

@@ -11,7 +11,7 @@ import { shellWriteTargets } from "@srobroek/opencode-lib"
 import { hasAttribution } from "./attribution.ts"
 import { historyRewrite } from "./history-rewrite.ts"
 import { CHECK_FAILED_MESSAGE, NESTING_MESSAGE, OP_MESSAGE, opGuard, type ProviderTypes } from "./op-guard.ts"
-import { gitRemoteResolver, type PushViaConfig, pushVia, type RemoteResolver } from "./push-via.ts"
+import { gitRemoteResolver, type PushViaConfig, pushVia, type RemoteResolver, repositorySelected } from "./push-via.ts"
 import {
   base,
   type Command,
@@ -356,7 +356,7 @@ export function hardGate(source: string, cwd: string, options: GuardOptions = {}
       const reason = historyRewrite(commands, cwd, options.tempRoots, options.env)
       if (reason !== undefined) refusal = { guard: "history-rewrite", reason }
     }
-    if (refusal === undefined && on("push-via") && options.pushVia !== undefined) {
+    if (refusal === undefined && on("push-via") && options.pushVia !== undefined && !repositorySelected(options.env)) {
       const resolveRemote = options.resolveRemote ?? gitRemoteResolver(options.env ?? {})
       const push = pushVia(commands, cwd, options.pushVia, resolveRemote)
       if (push !== undefined)

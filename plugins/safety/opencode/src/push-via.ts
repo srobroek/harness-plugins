@@ -12,6 +12,7 @@
 
 import { spawnSync } from "node:child_process"
 import { resolve } from "node:path"
+import { leadingCdCwd } from "@srobroek/opencode-lib"
 import { SAFE_GIT_ARGS, untrustedLocalGitEnv } from "@srobroek/opencode-lib/safe-git"
 import { base, type Command, gitInvocation } from "./shell.ts"
 
@@ -59,21 +60,25 @@ function git(cwd: string, args: string[], inherited: Readonly<Record<string, str
 }
 
 // Reads local config only; never contacts a remote. A remote name goes through
-// `remote get-url --push --all` (`pushurl` and `pushInsteadOf` apply, every URL is listed); a URL
-// or path goes through `ls-remote --get-url`, git's own `insteadOf` rewrite, which prints without connecting.
+// `remote get-url --push --all` (`pushurl` and `pushInsteadOf` apply, every URL is listed). Only a word that is
+// not a configured remote and looks like a URL or path is an explicit URL: it goes through `ls-remote --get-url`
+// (git's own `insteadOf` rewrite, printed without connecting), unless a `pushInsteadOf` rule exists, which that
+// command does not apply and this guard does not model, so the destination is unknown.
 export function gitRemoteResolver(inherited: Readonly<Record<string, string | undefined>>): RemoteResolver {
   return (cwd, remote) => {
-    if (remote !== undefined && /[/:]/.test(remote)) return git(cwd, ["ls-remote", "--get-url", "--", remote], inherited)
-    let name = remote
-    if (name === undefined) {
-      const branch = git(cwd, ["symbolic-ref", "-q", "--short", "HEAD"], inherited)?.[0]
-      const configured = (key: string) => git(cwd, ["config", "--get", key], inherited)?.[0]
-      name =
-        (branch === undefined ? undefined : configured(`branch.${branch}.pushRemote`)) ??
-        configured("remote.pushDefault") ??
-        (branch === undefined ? undefined : configured(`branch.${branch}.remote`)) ??
-        "origin"
+    if (remote !== undefined) {
+      const named = git(cwd, ["remote", "get-url", "--push", "--all", "--", remote], inherited)
+      if (named !== undefined || !/[/:]/.test(remote)) return named
+      if (git(cwd, ["config", "--get-regexp", "^url\\..*\\.pushinsteadof$"], inherited) !== undefined) return undefined
+      return git(cwd, ["ls-remote", "--get-url", "--", remote], inherited)
     }
+    const branch = git(cwd, ["symbolic-ref", "-q", "--short", "HEAD"], inherited)?.[0]
+    const configured = (key: string) => git(cwd, ["config", "--get", key], inherited)?.[0]
+    const name =
+      (branch === undefined ? undefined : configured(`branch.${branch}.pushRemote`)) ??
+      configured("remote.pushDefault") ??
+      (branch === undefined ? undefined : configured(`branch.${branch}.remote`)) ??
+      "origin"
     return git(cwd, ["remote", "get-url", "--push", "--all", "--", name], inherited)
   }
 }
@@ -121,7 +126,8 @@ function pushArgs(args: readonly string[]): PushArgs {
       if (valued === "repo") repo = value
       continue
     }
-    if (arg.startsWith("-o") && arg.length === 2) i++
+    // A short cluster (`-vo VALUE`): `o` takes the rest of the cluster, or the next word when it ends it.
+    if (/^-[A-Za-z0-9]+$/.test(arg) && arg.endsWith("o") && arg.slice(1).indexOf("o") === arg.length - 2) i++
   }
   return { help, remote: positional[0] ?? repo }
 }
@@ -135,15 +141,17 @@ function changesDirectory(command: Command): boolean {
   return (first === "builtin" || first === "command") && second !== undefined && CD_FAMILY.has(second)
 }
 
-// The one `cd` the caller has already applied to `cwd` (`leadingCdCwd`): `cd DIR && …` at the start of the call.
+// The one `cd` the caller has already applied to `cwd`: exactly what the shared `leadingCdCwd` accepts.
+// Anything it declines (quotes, `~`, `$`, globs) leaves `cwd` unmoved, so the directory is unknown.
 function isLeadingCd(command: Command): boolean {
   return (
     command.index === 0 &&
     command.context === "top" &&
     command.argv.length === 2 &&
-    /^\s*cd\s+[^\s;&|]+\s*&&/.test(command.source)
+    leadingCdCwd(command.source, UNMOVED) !== UNMOVED
   )
 }
+const UNMOVED = "\0unmoved"
 
 // Whether a `cd`, or a wrapper's directory around a nested shell, may have moved the shell before `command` runs.
 function directoryUncertain(commands: readonly Command[], command: Command): boolean {
@@ -173,6 +181,14 @@ export type PushRefusal = {
   dir: string
 }
 
+// Variables that select the repository or inject config; git reads them where this guard cannot.
+const SELECTOR = /GIT_(?:CONFIG|DIR|WORK_TREE|COMMON_DIR)/
+
+// Whether the inherited environment selects a repository or injects config (the guard then fails open).
+export function repositorySelected(env: Readonly<Record<string, string | undefined>> | undefined): boolean {
+  return Object.keys(env ?? {}).some((name) => SELECTOR.test(name))
+}
+
 // The first plain `git push` to `config.host`, or `undefined`.
 export function pushVia(
   commands: readonly Command[],
@@ -180,7 +196,7 @@ export function pushVia(
   config: PushViaConfig,
   resolveRemote: RemoteResolver,
 ): PushRefusal | undefined {
-  if (commands.some((command) => command.source.includes("GIT_CONFIG"))) return undefined
+  if (commands.some((command) => SELECTOR.test(command.source))) return undefined
   for (const command of commands) {
     if (base(command.argv[0]) !== "git") continue
     const invocation = gitInvocation(command.argv)

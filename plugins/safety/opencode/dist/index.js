@@ -4487,14 +4487,17 @@ function git(cwd, args, inherited) {
 }
 function gitRemoteResolver(inherited) {
   return (cwd, remote) => {
-    if (remote !== undefined && /[/:]/.test(remote))
+    if (remote !== undefined) {
+      const named = git(cwd, ["remote", "get-url", "--push", "--all", "--", remote], inherited);
+      if (named !== undefined || !/[/:]/.test(remote))
+        return named;
+      if (git(cwd, ["config", "--get-regexp", "^url\\..*\\.pushinsteadof$"], inherited) !== undefined)
+        return;
       return git(cwd, ["ls-remote", "--get-url", "--", remote], inherited);
-    let name = remote;
-    if (name === undefined) {
-      const branch = git(cwd, ["symbolic-ref", "-q", "--short", "HEAD"], inherited)?.[0];
-      const configured = (key) => git(cwd, ["config", "--get", key], inherited)?.[0];
-      name = (branch === undefined ? undefined : configured(`branch.${branch}.pushRemote`)) ?? configured("remote.pushDefault") ?? (branch === undefined ? undefined : configured(`branch.${branch}.remote`)) ?? "origin";
     }
+    const branch = git(cwd, ["symbolic-ref", "-q", "--short", "HEAD"], inherited)?.[0];
+    const configured = (key) => git(cwd, ["config", "--get", key], inherited)?.[0];
+    const name = (branch === undefined ? undefined : configured(`branch.${branch}.pushRemote`)) ?? configured("remote.pushDefault") ?? (branch === undefined ? undefined : configured(`branch.${branch}.remote`)) ?? "origin";
     return git(cwd, ["remote", "get-url", "--push", "--all", "--", name], inherited);
   };
 }
@@ -4538,7 +4541,7 @@ function pushArgs(args) {
         repo = value;
       continue;
     }
-    if (arg.startsWith("-o") && arg.length === 2)
+    if (/^-[A-Za-z0-9]+$/.test(arg) && arg.endsWith("o") && arg.slice(1).indexOf("o") === arg.length - 2)
       i++;
   }
   return { help, remote: positional[0] ?? repo };
@@ -4552,8 +4555,9 @@ function changesDirectory2(command) {
   return (first === "builtin" || first === "command") && second !== undefined && CD_FAMILY.has(second);
 }
 function isLeadingCd(command) {
-  return command.index === 0 && command.context === "top" && command.argv.length === 2 && /^\s*cd\s+[^\s;&|]+\s*&&/.test(command.source);
+  return command.index === 0 && command.context === "top" && command.argv.length === 2 && leadingCdCwd(command.source, UNMOVED) !== UNMOVED;
 }
+var UNMOVED = "\x00unmoved";
 function directoryUncertain(commands, command) {
   for (const earlier of commands) {
     if (earlier.index >= command.index)
@@ -4580,8 +4584,12 @@ function configOverride(argv, end) {
   }
   return false;
 }
+var SELECTOR = /GIT_(?:CONFIG|DIR|WORK_TREE|COMMON_DIR)/;
+function repositorySelected(env) {
+  return Object.keys(env ?? {}).some((name) => SELECTOR.test(name));
+}
 function pushVia(commands, cwd, config, resolveRemote) {
-  if (commands.some((command) => command.source.includes("GIT_CONFIG")))
+  if (commands.some((command) => SELECTOR.test(command.source)))
     return;
   for (const command of commands) {
     if (base(command.argv[0]) !== "git")
@@ -4883,7 +4891,7 @@ function hardGate(source, cwd, options = {}) {
       if (reason !== undefined)
         refusal = { guard: "history-rewrite", reason };
     }
-    if (refusal === undefined && on("push-via") && options.pushVia !== undefined) {
+    if (refusal === undefined && on("push-via") && options.pushVia !== undefined && !repositorySelected(options.env)) {
       const resolveRemote = options.resolveRemote ?? gitRemoteResolver(options.env ?? {});
       const push = pushVia(commands, cwd, options.pushVia, resolveRemote);
       if (push !== undefined)
