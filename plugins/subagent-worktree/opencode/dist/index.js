@@ -1483,6 +1483,10 @@ function createGit(run) {
         return;
       return { ahead: Number.parseInt(ahead, 10) || 0, dirty: porcelain !== "" };
     },
+    unpushed: async (directory) => {
+      const count = await git(directory, "rev-list", "--count", "@{upstream}..HEAD");
+      return count !== undefined && /^\d+$/.test(count) ? Number(count) : undefined;
+    },
     changedFiles: async (directory, target) => isSafeBranchName(target) ? files(await git(directory, "diff", "--no-ext-diff", "--name-only", "-z", `${target}...HEAD`)) : undefined,
     trackedDirty: async (directory) => {
       const changed = await unfiltered(directory, "status", "--porcelain", "--untracked-files=no", "--", ...TRACKED_DIRTY_PATHSPEC);
@@ -2910,9 +2914,55 @@ function createLifecycle(deps) {
   return { start, dispose, handleEvent, onIdle, onLanding, keep, removeForeground, removeAfterMerge, resumeRemovals, noteResume, spawnInto, sweep: runSweep, settle };
 }
 
+// plugins/subagent-worktree/opencode/src/release.ts
+var RELEASE_PREFIX = "release/";
+function releaseKey(child) {
+  return `${RELEASE_PREFIX}${child}`;
+}
+function parseRelease(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    return;
+  const record = value;
+  for (const key of ["child", "directory", "by", "head"]) {
+    if (typeof record[key] !== "string" || record[key] === "")
+      return;
+  }
+  if (typeof record.at !== "number" || typeof record.reason !== "string")
+    return;
+  if (record.to !== undefined && typeof record.to !== "string")
+    return;
+  return value;
+}
+function decideRelease(facts) {
+  const { child } = facts;
+  if (child.state === "unknown")
+    return { release: false, reason: "cannot read session state; try again" };
+  if (child.state !== "deleted") {
+    return {
+      release: false,
+      reason: "the writer's session still exists, so a run, shell or background job of it may still write to the worktree. " + "In OpenCode, stop it and delete its session, then release again"
+    };
+  }
+  if (child.owner !== facts.caller)
+    return { release: false, reason: "only the session that spawned the writer can release it" };
+  if (facts.holds !== undefined)
+    return { release: false, reason: `work is still running on the worktree: ${facts.holds}. Stop it or wait for it to finish` };
+  const { tree } = facts;
+  if (tree === undefined)
+    return { release: false, reason: "cannot read the worktree" };
+  if (tree.dirty)
+    return { release: false, reason: "the worktree has uncommitted changes; commit and push them, or discard them, first" };
+  if (tree.unpushed === undefined)
+    return { release: false, reason: "the worktree's branch has no upstream; push it (git push -u) first" };
+  if (tree.unpushed > 0) {
+    return { release: false, reason: `the worktree has ${tree.unpushed} commit${tree.unpushed === 1 ? "" : "s"} not pushed to its upstream; push first` };
+  }
+  return { release: true };
+}
+
 // plugins/subagent-worktree/opencode/src/index.ts
 var MERGE_DESCRIPTION = `Merge a subagent's worktree branch back, report one lane, or list every active lane.
-` + "The subagent tool result names the lane (branch, base, sessionID). " + 'method "wt-merge" runs `wt merge <target> --no-squash --no-ff --no-hooks` from the subagent worktree, keeping its commits, ' + "and removes the worktree on success; a conflict keeps the worktree and reports the output. " + "The worktree must be committed and clean, and the target checkout must have no uncommitted or untracked changes to files the lane changes. " + 'method "keep" (with reason) records that an unmerged lane is kept on purpose, so the idle gate stops nudging about it. method "none" only reports the lane status. method "list" (no sessionID) reports every active lane in the project ' + "with commits ahead, uncommitted changes, and orphaned lanes; missing worktrees move their child sessions back.";
+` + "The subagent tool result names the lane (branch, base, sessionID). " + 'method "wt-merge" runs `wt merge <target> --no-squash --no-ff --no-hooks` from the subagent worktree, keeping its commits, ' + "and removes the worktree on success; a conflict keeps the worktree and reports the output. " + "The worktree must be committed and clean, and the target checkout must have no uncommitted or untracked changes to files the lane changes. " + 'method "keep" (with reason) records that an unmerged lane is kept on purpose, so the idle gate stops nudging about it. method "none" only reports the lane status. method "list" (no sessionID) reports every active lane in the project ' + "with commits ahead, uncommitted changes, and orphaned lanes; missing worktrees move their child sessions back. " + 'method "release" (with reason) hands the lane of a dead writer you spawned to the next writer spawned into its worktree: ' + "the writer's session must be deleted (stop it and delete it in OpenCode first), and the worktree clean and pushed.";
 var SWEEP_TOOL = "subagent_worktree_sweep";
 var SWEEP_DESCRIPTION = `Report, or on request remove, finished agent lanes. Runs only when called.
 ` + "Each active lane whose subagent session is deleted or archived is checked as `finalize` checks it: not running, clean, no stash or operation, " + 'and its tip is the lane base, or an ancestor of origin/main, or a delivery landing record. Mode "report" (default) lists what would be removed and what is kept, and why. ' + 'Mode "prune" removes the removable ones through `finalize`, never forced, and touches no remote branch.';
@@ -2930,9 +2980,9 @@ var MERGE_INPUT = {
       type: "string",
       description: 'From the subagent tool result; required unless method is "list"'
     },
-    method: { type: "string", enum: ["wt-merge", "none", "list", "keep"] },
+    method: { type: "string", enum: ["wt-merge", "none", "list", "keep", "release"] },
     target: { type: "string", description: "Defaults to the lane's base branch" },
-    reason: { type: "string", description: 'Why the lane is kept; used by method "keep"' }
+    reason: { type: "string", description: 'Why the lane is kept (method "keep") or the writer released (method "release")' }
   }
 };
 var directoryExists = async (path) => {
@@ -2980,25 +3030,39 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
       return;
     }
     const guard = (write) => lockedWrite(common, lane2.directory, { sessionID: lane2.child, now, ...lock ?? {} }, write);
-    if (!claims(lane2))
-      return guard(() => removeClaim(common, lane2.directory));
-    const existing = readClaim(common, lane2.directory);
-    if (existing.kind === "present" && existing.value.sessionID === lane2.child && existing.value.branch === lane2.branch)
+    const current = (read) => read.kind === "present" && read.value.sessionID === lane2.child && read.value.branch === lane2.branch;
+    if (claims(lane2) && current(readClaim(common, lane2.directory)))
       return;
-    await guard(() => writeClaim(common, {
-      directory: lane2.directory,
-      branch: lane2.branch,
-      sessionID: lane2.child,
-      parentID: lane2.parent,
-      createdAt: now()
-    }));
+    await guard(async () => {
+      if (await handedOff(lane2.child))
+        return;
+      if (!claims(lane2))
+        return removeClaim(common, lane2.directory);
+      if (current(readClaim(common, lane2.directory)))
+        return;
+      writeClaim(common, {
+        directory: lane2.directory,
+        branch: lane2.branch,
+        sessionID: lane2.child,
+        parentID: lane2.parent,
+        createdAt: now()
+      });
+    });
   };
   const save = async (lane2) => {
-    if (claims(lane2))
-      await syncClaim(lane2);
-    await ctx.storage.set(laneKey(lane2.child), lane2);
-    if (!claims(lane2))
-      await syncClaim(lane2);
+    const write = async () => {
+      if (await handedOff(lane2.child)) {
+        console.error(`subagent-worktree: not saving the lane of ${lane2.child}: its worktree was handed to another writer`);
+        return;
+      }
+      if (claims(lane2))
+        await syncClaim(lane2);
+      await ctx.storage.set(laneKey(lane2.child), lane2);
+      if (!claims(lane2))
+        await syncClaim(lane2);
+    };
+    const common = await commonDirOf(lane2.parentDir);
+    return common === undefined ? write() : lockedWrite(common, lane2.directory, { sessionID: lane2.child, now, ...lock ?? {} }, write);
   };
   const getSession = (sessionID) => ctx.session.get({ sessionID }).then((session) => session, () => {
     return;
@@ -3109,6 +3173,52 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     }
   };
   const notes = new Map;
+  const releasesIn = async (directory) => {
+    const found = [];
+    let after;
+    do {
+      const page = await ctx.storage.scan({ prefix: RELEASE_PREFIX, ...after === undefined ? {} : { after } });
+      for (const entry of page.entries) {
+        const release2 = parseRelease(entry.value);
+        if (release2?.directory === directory)
+          found.push(release2);
+      }
+      after = page.next;
+    } while (after !== undefined);
+    return found;
+  };
+  const handedOff = async (child) => parseRelease(await ctx.storage.get(releaseKey(child)))?.to !== undefined;
+  const handOver = async (directory, child, parent) => {
+    const undo = [];
+    try {
+      for (const release2 of await releasesIn(directory)) {
+        const owned = await load(release2.child);
+        const ownsHere = owned?.state === "active" && await normalize(owned.directory) === directory;
+        if (release2.to !== undefined && !ownsHere)
+          continue;
+        await ctx.storage.set(releaseKey(release2.child), { ...release2, to: child });
+        const step = { saved: false, removed: false };
+        undo.push(async () => {
+          await ctx.storage.set(releaseKey(release2.child), release2);
+          if ((step.saved || step.removed) && owned)
+            await save(owned);
+          if (step.saved)
+            await ctx.storage.remove(laneKey(child));
+        });
+        if (owned && ownsHere) {
+          step.saved = true;
+          await save({ ...owned, child, parent, handedOver: { from: release2.child, at: now() } });
+          step.removed = true;
+          await ctx.storage.remove(laneKey(release2.child));
+        }
+      }
+    } catch (error) {
+      for (const step of undo.reverse()) {
+        await step().catch((failure) => console.error("subagent-worktree: could not undo a failed worktree handover", failure));
+      }
+      throw error;
+    }
+  };
   const reservations = new Map;
   let sequence = 0;
   const hasStarted = async (child) => {
@@ -3138,7 +3248,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
         reservations.delete(directory);
     }
   };
-  const release = (callId) => {
+  const release2 = (callId) => {
     for (const [directory, reservation] of reservations)
       if (reservation.callId === callId)
         reservations.delete(directory);
@@ -3151,6 +3261,11 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
       return;
     event.input = withoutWorktree(event.input);
     if (input.sessionID !== undefined) {
+      const child = input.sessionID;
+      const released = parseRelease(await ctx.storage.get(releaseKey(child)));
+      if (released) {
+        throw new Error(`subagent-worktree: not resuming ${child}: ${child} was released from ${released.directory}${released.to ? ` and the worktree handed to ${released.to}` : ""}, so it may not write again. Start a new subagent instead.`);
+      }
       await markResumed(input.sessionID);
       const note = resumeWorktreeNote(input);
       if (note)
@@ -3245,6 +3360,8 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
           if (reserved && hold && reserved.token === hold.token)
             reserved.child = child;
           await ctx.session.move({ sessionID: child, directory: plan.worktree.directory });
+          if (hold?.writer)
+            await handOver(hold.directory, child, event.sessionID);
         });
         event.input = { ...event.input, sessionID: child, prompt: startPrompt(input.prompt, plan.worktree) };
       } catch (error) {
@@ -3286,7 +3403,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     try {
       await begin(event);
     } catch (error) {
-      release(event.id);
+      release2(event.id);
       throw error;
     }
   };
@@ -3403,7 +3520,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
               reservation.child = started;
         }
       } else
-        release(event.id);
+        release2(event.id);
     }
     const skipped = event.id === undefined ? undefined : notes.get(event.id);
     if (event.id !== undefined)
@@ -3521,6 +3638,71 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
     const directory = worktreeForBranch(entries, target);
     return directory === undefined ? [] : git2.localFiles(directory);
   };
+  const writerFacts = async (child) => {
+    const lookup = Promise.resolve(ctx.session.get({ sessionID: child }));
+    const state = await childState(lookup, lookupMs, child);
+    const raw = state === "unknown" ? undefined : await lookup.catch(() => {
+      return;
+    });
+    const time = raw?.time ?? {};
+    const busy = toMillis2(time.busy);
+    const idle = toMillis2(time.idle);
+    const updated = toMillis2(time.updated);
+    return {
+      state,
+      ...typeof raw?.parentID === "string" ? { parentID: raw.parentID } : {},
+      ...typeof raw?.location?.directory === "string" ? { directory: raw.location.directory } : {},
+      ...busy === undefined ? {} : { busy },
+      ...idle === undefined ? {} : { idle },
+      ...updated === undefined ? {} : { updated }
+    };
+  };
+  const releaseWriter = async (child, reason, tool) => {
+    const refuse = (why) => ({ content: `${MERGE_TOOL}: not released: ${why}`, metadata: { ok: false, reason: why } });
+    const lane2 = await load(child);
+    await ctx.permission.assert({
+      sessionID: tool.sessionID,
+      agent: tool.agent,
+      action: MERGE_TOOL,
+      resources: [lane2?.branch ?? child],
+      source: { type: "tool", messageID: tool.messageID, id: tool.id }
+    });
+    if (parseRelease(await ctx.storage.get(releaseKey(child))))
+      return refuse(`${child} is already released`);
+    const caller = await getSession(tool.sessionID);
+    if (!caller)
+      return refuse("cannot read the calling session");
+    const where = lane2?.state === "active" ? lane2.directory : (await writerFacts(child)).directory;
+    if (where === undefined)
+      return refuse(`cannot find the worktree of ${child}`);
+    const found = await locate(caller.location.directory, where);
+    if (!found.lookup.ok)
+      return refuse(found.lookup.reason);
+    const directory = found.lookup.worktree.directory;
+    const checkout = caller.location.directory;
+    return lifecycle.spawnInto(directory, checkout, async () => {
+      if (parseRelease(await ctx.storage.get(releaseKey(child))))
+        return refuse(`${child} is already released`);
+      const facts = await writerFacts(child);
+      const owner = facts.parentID ?? lane2?.parent;
+      const common = await commonDirOf(checkout);
+      const holds = common === undefined ? "the git common directory cannot be found, so running work cannot be ruled out" : holdsState(common, directory, now());
+      const porcelain = await git2.porcelain(directory);
+      const tree = porcelain === undefined ? undefined : { dirty: porcelain !== "", unpushed: await git2.unpushed(directory) };
+      const decision = decideRelease({ caller: tool.sessionID, child: { state: facts.state, ...owner === undefined ? {} : { owner } }, holds, tree });
+      if (!decision.release)
+        return refuse(decision.reason);
+      const head = await git2.head(directory);
+      if (head === undefined)
+        return refuse(`cannot read HEAD in ${directory}`);
+      const record = { child, directory, by: tool.sessionID, at: now(), head, reason };
+      await ctx.storage.set(releaseKey(child), record);
+      return {
+        content: `${MERGE_TOOL}: released ${child} from ${directory} at ${head.slice(0, 12)} (its session is deleted). Spawn the next writer with worktree "${directory}"${lane2?.state === "active" ? `; it takes over the lane on ${lane2.branch}` : ""}.`,
+        metadata: { ok: true, release: record }
+      };
+    });
+  };
   const merge = async (input, tool) => {
     const stopped = () => tool.signal?.aborted === true;
     if (stopped()) {
@@ -3540,6 +3722,8 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
     if (!input.sessionID) {
       return { content: `${MERGE_TOOL}: sessionID is required for method "${input.method}"`, metadata: { ok: false } };
     }
+    if (input.method === "release")
+      return releaseWriter(input.sessionID, input.reason?.trim() || "released by its parent", tool);
     let lane2 = await load(input.sessionID);
     if (input.method === "keep") {
       await ctx.permission.assert({
@@ -3727,6 +3911,7 @@ export {
   MERGE_DESCRIPTION,
   MERGE_INPUT,
   MERGE_TOOL,
+  RELEASE_PREFIX,
   RESERVATION_MS,
   RESUME_WORKTREE_NOTE,
   SESSION_LOOKUP_MS,
@@ -3750,6 +3935,7 @@ export {
   createPlugin,
   decideIsolation,
   decideMerge,
+  decideRelease,
   decideWriterGuard,
   src_default as default,
   diffCommand,
@@ -3769,10 +3955,12 @@ export {
   overlap,
   parseLane,
   parseModel,
+  parseRelease,
   parseWorktrees,
   planStart,
   readOptions,
   readSubagentInput,
+  releaseKey,
   reservationStatus,
   resumeWorktreeNote,
   rewritePrompt,
