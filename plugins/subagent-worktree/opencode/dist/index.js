@@ -1281,6 +1281,17 @@ function mergeArgs(directory, target) {
 function isSafeBranchName(name) {
   return name !== "" && !name.startsWith("-") && !name.includes("..") && !/[\s\x00-\x1f\x7f]/.test(name);
 }
+var BRANCH_PREFIX = "refs/heads/";
+function branchRef(name) {
+  if (!isSafeBranchName(name) || name.startsWith("refs/"))
+    return;
+  return `${BRANCH_PREFIX}${name}`;
+}
+function storedBranchRef(value) {
+  if (typeof value !== "string")
+    return;
+  return value.startsWith(BRANCH_PREFIX) ? branchRef(value.slice(BRANCH_PREFIX.length)) : branchRef(value);
+}
 function isConflict(output) {
   return /conflict|could not apply|resolve all conflicts|needs merge/i.test(output);
 }
@@ -1467,6 +1478,13 @@ function createGit(run) {
     return overrides === undefined ? undefined : git(directory, ...overrides, ...args);
   };
   const files = (output) => output?.split("\x00").filter((file) => file !== "");
+  const branchTip = async (directory, ref) => {
+    if (!ref.startsWith("refs/heads/"))
+      return;
+    const oid = await git(directory, "show-ref", "--verify", "--hash", ref);
+    return oid !== undefined && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(oid) ? oid : undefined;
+  };
+  const isAncestor = async (directory, tip, ref) => (await run(["git", "-C", directory, "merge-base", "--is-ancestor", tip, ref])).code === 0;
   return {
     run,
     unsupported: async () => {
@@ -1507,7 +1525,12 @@ function createGit(run) {
     commonDir: (directory) => git(directory, "rev-parse", "--path-format=absolute", "--git-common-dir"),
     head: (directory) => git(directory, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"),
     porcelain: (directory) => unfiltered(directory, "status", "--porcelain"),
-    isAncestor: async (directory, tip, ref) => (await run(["git", "-C", directory, "merge-base", "--is-ancestor", tip, ref])).code === 0,
+    isAncestor,
+    branchTip,
+    branchContains: async (directory, tip, ref) => {
+      const at = await branchTip(directory, ref);
+      return at !== undefined && await isAncestor(directory, tip, at);
+    },
     stashSubjects: (directory) => git(directory, "stash", "list", "--format=%gs"),
     gitDir: (directory) => git(directory, "rev-parse", "--absolute-git-dir"),
     deleteBranchAt: async (directory, name, oid) => (await run(["git", "-C", directory, "update-ref", "-d", `refs/heads/${name}`, oid])).code === 0,
@@ -2123,18 +2146,17 @@ function createLifecycle(deps) {
     const records = await deliveryRecords(lane.directory, lane.parentDir);
     return records.heads.includes(oid) || await reachedMain(lane, oid);
   };
-  const localBranchRef = (target) => `refs/heads/${target}`;
   const recordedRef = (lane, oid) => {
     const merged = lane.mergedInto;
-    if (merged === undefined || typeof merged.target !== "string" || merged.target === "" || merged.head !== oid)
+    if (merged === undefined || merged.head !== oid)
       return;
-    return localBranchRef(merged.target);
+    return storedBranchRef(merged.target);
   };
   const mergedLocally = async (lane, oid) => {
     const ref = recordedRef(lane, oid);
     if (ref === undefined)
       return;
-    return await git.isAncestor(lane.directory, oid, ref) ? ref : undefined;
+    return await git.branchContains(lane.directory, oid, ref) ? ref : undefined;
   };
   const updateLane = (lane, change) => withLock(lane.directory, lane.parentDir, async () => {
     const stored = await load(lane.child);
@@ -2341,16 +2363,17 @@ function createLifecycle(deps) {
     if (busy !== undefined)
       return keptBecause("dirty", busy);
     if (earlier?.head === oid) {
-      const within = earlier.retireAs === "merged" ? earlier.within ?? recordedRef(lane, oid) : undefined;
-      if (within === undefined)
+      if (earlier.retireAs !== "merged")
         return { proof: PROOF_OF[earlier.retireAs], oid };
-      if (await git.isAncestor(lane.directory, oid, within))
-        return { proof: "merged", oid, within };
+      const ref = earlier.within !== undefined ? storedBranchRef(earlier.within) : recordedRef(lane, oid) ?? storedBranchRef(lane.target);
+      if (ref !== undefined && await git.branchContains(lane.directory, oid, ref))
+        return { proof: "merged", oid, within: ref };
     }
     if (oid === lane.base)
       return { proof: "empty", oid };
-    if (options.target !== undefined && await git.isAncestor(lane.directory, oid, options.target))
-      return { proof: "merged", oid, within: options.target };
+    const target = options.target === undefined ? undefined : branchRef(options.target);
+    if (target !== undefined && await git.branchContains(lane.directory, oid, target))
+      return { proof: "merged", oid, within: target };
     const merged = await mergedLocally(lane, oid);
     if (merged !== undefined)
       return { proof: "merged", oid, within: merged };
@@ -2367,7 +2390,7 @@ function createLifecycle(deps) {
     const busy = await busyTreeOf(lane.directory, lane.branch);
     if (busy !== undefined)
       return keptBecause("dirty", busy);
-    if (within !== undefined && !await git.isAncestor(lane.directory, oid, within))
+    if (within !== undefined && !await git.branchContains(lane.directory, oid, within))
       return keptBecause("unmerged", `${within} no longer contains HEAD`);
     return;
   };
@@ -2623,9 +2646,10 @@ function createLifecycle(deps) {
         if (stored?.state !== "active" || canonical(stored.directory) !== canonical(lane.directory))
           return;
         const head = await git.head(stored.directory);
-        if (head === undefined || !await git.isAncestor(stored.directory, head, localBranchRef(target)))
+        const ref = branchRef(target);
+        if (head === undefined || ref === undefined || !await git.branchContains(stored.directory, head, ref))
           return;
-        await save({ ...stored, mergedInto: { target, head } });
+        await save({ ...stored, mergedInto: { target: ref, head } });
       });
     } catch (error) {
       console.error(`subagent-worktree: the merge of ${lane.directory} into ${target} was not recorded:`, error instanceof Error ? error.message : error);
@@ -4022,6 +4046,7 @@ export {
   WRITER_LIVENESS_NOTE,
   annotation,
   blockingReservation,
+  branchRef,
   childReleasesLane,
   childState,
   containingWorktree,
@@ -4067,6 +4092,7 @@ export {
   slug,
   spawnRunner,
   startPrompt,
+  storedBranchRef,
   tail,
   targetsExternalDirectory,
   uncommittedOnly,
