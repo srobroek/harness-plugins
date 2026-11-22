@@ -993,6 +993,9 @@ function readOptions(options) {
 function laneKey(child) {
   return `${LANE_PREFIX}${child}`;
 }
+function laneStoreKey(lane) {
+  return laneKey(lane.id ?? lane.child);
+}
 function parseLane(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value))
     return;
@@ -1006,6 +1009,8 @@ function parseLane(value) {
   if (lane.target !== undefined && typeof lane.target !== "string")
     return;
   if (lane.title !== undefined && typeof lane.title !== "string")
+    return;
+  if (lane.id !== undefined && (typeof lane.id !== "string" || lane.id === ""))
     return;
   return value;
 }
@@ -2212,16 +2217,6 @@ function createLifecycle(deps) {
   };
   const keptBecause = (kept, reason) => ({ removed: false, kept, reason });
   const HANDED_OVER = "its worktree was handed to another writer, whose lane keeps it";
-  const settleHandover = async (lane) => {
-    try {
-      if (await deps.releasedTo(lane.child) === undefined)
-        return false;
-      return await withLock(lane.directory, lane.parentDir, () => deps.handedOff(lane));
-    } catch (error) {
-      console.error(`subagent-worktree: could not check the handover of ${lane.child}:`, error instanceof Error ? error.message : error);
-      return true;
-    }
-  };
   const startedSince = (sessionIDs, seq) => {
     for (const id of sessionIDs) {
       if (shutdownPending.has(id))
@@ -2411,8 +2406,6 @@ function createLifecycle(deps) {
         if (stored === undefined || canonical(stored.directory) !== canonical(lane.directory) || stored.state !== "active" && stored.state !== "removing") {
           return keptBecause("retired", "the lane is already retired");
         }
-        if (await deps.handedOff(stored))
-          return keptBecause("handed-over", HANDED_OVER);
         const earlier = stored.state === "removing" ? stored.removal : undefined;
         const looks = options.ifGone === true || options.gone !== true && earlier?.pending === undefined;
         const onDisk = looks && await deps.exists(stored.directory);
@@ -2823,8 +2816,6 @@ function createLifecycle(deps) {
     const fence = { seq: eventSeq, since: now() };
     if (!await deps.exists(lane.directory))
       return { ...entry, verdict: "keep", reason: "its worktree directory is gone and the lane was not retired (removed outside the plugin)", needsPerson: true };
-    if (await settleHandover(lane))
-      return { ...entry, verdict: "keep", reason: HANDED_OVER };
     const child = await childState(ctx.session.get({ sessionID: lane.child }), deps.lookupMs, lane.child);
     if (!childReleasesLane(child))
       return { ...entry, verdict: "keep", reason: `its subagent session is ${child}` };
@@ -2900,11 +2891,7 @@ function createLifecycle(deps) {
         gatesActive = false;
       }
     }
-    serial(async () => {
-      for (const lane of (await deps.scan()).filter((candidate) => candidate.state === "active" || candidate.state === "removing"))
-        await settleHandover(lane);
-      await resumeRemovals(() => true, { seq: 0 });
-    });
+    serial(() => resumeRemovals(() => true, { seq: 0 }));
   };
   const dispose = async () => {
     disposed = true;
@@ -2951,18 +2938,7 @@ function parseRelease(value) {
     return;
   if (record.to !== undefined && typeof record.to !== "string")
     return;
-  if (record.toParent !== undefined && typeof record.toParent !== "string")
-    return;
   return value;
-}
-function repairHandover(old, record, successor, now) {
-  if (record?.to === undefined || record.child !== old.child)
-    return { kind: "none" };
-  if (successor !== undefined)
-    return { kind: "drop-old" };
-  if (old.state !== "active")
-    return { kind: "hold" };
-  return { kind: "complete", lane: { ...old, child: record.to, parent: record.toParent ?? old.parent, handedOver: { from: old.child, at: now } } };
 }
 function decideRelease(facts) {
   const { child } = facts;
@@ -3041,7 +3017,16 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
 }
 function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, exists = directoryExists, now = Date.now, reserveMs = RESERVATION_MS, debounceMs, commonDirOverride, lock) {
-  const load = async (child) => parseLane(await ctx.storage.get(laneKey(child)));
+  const load = async (child) => {
+    const own = parseLane(await ctx.storage.get(laneKey(child)));
+    if (own !== undefined)
+      return own.child === child ? own : undefined;
+    return (await scan()).find((lane2) => lane2.child === child);
+  };
+  const superseded = async (lane2) => {
+    const stored = parseLane(await ctx.storage.get(laneStoreKey(lane2)));
+    return stored !== undefined && stored.child !== lane2.child;
+  };
   const commonDirs = new Map;
   const commonDirOf = async (parentDir) => {
     const known = commonDirs.get(parentDir);
@@ -3065,7 +3050,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     if (claims(lane2) && current(readClaim(common, lane2.directory)))
       return;
     await guard(async () => {
-      if (await handedOff(lane2.child))
+      if (await superseded(lane2))
         return;
       if (!claims(lane2))
         return removeClaim(common, lane2.directory);
@@ -3082,13 +3067,13 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
   };
   const save = async (lane2) => {
     const write = async () => {
-      if (await handedOff(lane2.child)) {
+      if (await superseded(lane2)) {
         console.error(`subagent-worktree: not saving the lane of ${lane2.child}: its worktree was handed to another writer`);
         return false;
       }
       if (claims(lane2))
         await syncClaim(lane2);
-      await ctx.storage.set(laneKey(lane2.child), lane2);
+      await ctx.storage.set(laneStoreKey(lane2), lane2);
       if (!claims(lane2))
         await syncClaim(lane2);
       return true;
@@ -3205,36 +3190,6 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     }
   };
   const notes = new Map;
-  const releasesIn = async (directory) => {
-    const found = [];
-    let after;
-    do {
-      const page = await ctx.storage.scan({ prefix: RELEASE_PREFIX, ...after === undefined ? {} : { after } });
-      for (const entry of page.entries) {
-        const release2 = parseRelease(entry.value);
-        if (release2?.directory === directory)
-          found.push(release2);
-      }
-      after = page.next;
-    } while (after !== undefined);
-    return found;
-  };
-  const handedOff = async (child) => parseRelease(await ctx.storage.get(releaseKey(child)))?.to !== undefined;
-  const settleHandover = async (lane2) => {
-    const record = parseRelease(await ctx.storage.get(releaseKey(lane2.child)));
-    if (record?.to === undefined)
-      return false;
-    try {
-      const repair = repairHandover(lane2, record, await load(record.to), now());
-      if (repair.kind === "complete" && !await save(repair.lane))
-        return true;
-      if (repair.kind === "complete" || repair.kind === "drop-old")
-        await ctx.storage.remove(laneKey(lane2.child));
-    } catch (error) {
-      console.error(`subagent-worktree: could not finish the handover of ${lane2.child} to ${record.to}:`, errorMessage(error));
-    }
-    return true;
-  };
   const treeSince = async (directory, head) => {
     const porcelain = await git2.porcelain(directory);
     if (porcelain === undefined)
@@ -3248,41 +3203,40 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     return now === head ? undefined : `HEAD moved from ${head.slice(0, 12)} to ${now === undefined ? "an unreadable commit" : now.slice(0, 12)}`;
   };
   const handOver = async (directory, child, parent) => {
-    const undo = [];
-    try {
-      for (const release2 of await releasesIn(directory)) {
-        const owned = await load(release2.child);
-        const ownsHere = owned?.state === "active" && await normalize(owned.directory) === directory;
-        if (release2.to !== undefined && !ownsHere)
-          continue;
-        const drift = await treeSince(directory, release2.head);
-        if (drift !== undefined) {
-          if (release2.to === undefined)
-            await ctx.storage.remove(releaseKey(release2.child));
-          throw new Error(`${drift} since ${release2.child} was released, so its lane was not handed over. Check ${directory}, then release ${release2.child} again`);
-        }
-        await ctx.storage.set(releaseKey(release2.child), { ...release2, to: child, toParent: parent });
-        const step = { saved: false, removed: false };
-        undo.push(async () => {
-          await ctx.storage.set(releaseKey(release2.child), release2);
-          if ((step.saved || step.removed) && owned)
-            await save(owned);
-          if (step.saved)
-            await ctx.storage.remove(laneKey(child));
-        });
-        if (owned && ownsHere) {
-          step.saved = true;
-          await save({ ...owned, child, parent, handedOver: { from: release2.child, at: now() } });
-          step.removed = true;
-          await ctx.storage.remove(laneKey(release2.child));
-        }
-      }
-    } catch (error) {
-      for (const step of undo.reverse()) {
-        await step().catch((failure) => console.error("subagent-worktree: could not undo a failed worktree handover", failure));
-      }
-      throw error;
+    let owned;
+    for (const lane2 of await scan()) {
+      if (lane2.state === "active" && await normalize(lane2.directory) === directory)
+        owned = lane2;
     }
+    if (owned === undefined || owned.child === child)
+      return;
+    const release2 = parseRelease(await ctx.storage.get(releaseKey(owned.child)));
+    if (release2 === undefined || release2.directory !== directory) {
+      if (owned.handedOver === undefined)
+        return;
+      throw new Error(`${directory} was handed to ${owned.child}, whose lane it is. Send ${owned.child} a follow-up (pass sessionID: "${owned.child}"), or release ${owned.child} first.`);
+    }
+    const drift = await treeSince(directory, release2.head);
+    if (drift !== undefined) {
+      await ctx.storage.remove(releaseKey(release2.child));
+      throw new Error(`${drift} since ${release2.child} was released, so its lane was not handed over. Check ${directory}, then release ${release2.child} again`);
+    }
+    const common = await commonDirOf(owned.parentDir);
+    if (common === undefined)
+      throw new Error(`cannot find the git common directory of ${owned.parentDir} to claim ${directory}`);
+    const next = { ...owned, id: owned.id ?? owned.child, child, parent, handedOver: { from: owned.child, at: now() } };
+    const from = owned;
+    await lockedWrite(common, directory, { sessionID: child, now, ...lock ?? {} }, async () => {
+      const stored = parseLane(await ctx.storage.get(laneStoreKey(from)));
+      if (stored?.state !== "active" || stored.child !== from.child) {
+        throw new Error(`the lane of ${directory} no longer belongs to the released ${from.child}${stored ? ` (it names ${stored.child})` : ""}`);
+      }
+      writeClaim(common, { directory, branch: next.branch, sessionID: child, parentID: parent, createdAt: now() });
+      await ctx.storage.set(laneStoreKey(from), next);
+    });
+    await ctx.storage.set(releaseKey(release2.child), { ...release2, to: child }).catch((error) => {
+      console.error(`subagent-worktree: could not record the handover of ${release2.child} to ${child}:`, errorMessage(error));
+    });
   };
   const reservations = new Map;
   let sequence = 0;
@@ -3888,8 +3842,6 @@ The merge is done, but the worktree stays at ${lane2.directory} (branch ${lane2.
     load,
     save,
     scan,
-    handedOff: settleHandover,
-    releasedTo: async (child) => parseRelease(await ctx.storage.get(releaseKey(child)))?.to,
     getSession,
     moveHome,
     removeWorktree,
@@ -3978,7 +3930,6 @@ export {
   MERGE_DESCRIPTION,
   MERGE_INPUT,
   MERGE_TOOL,
-  RELEASE_PREFIX,
   RESERVATION_MS,
   RESUME_WORKTREE_NOTE,
   SESSION_LOOKUP_MS,
@@ -4015,6 +3966,7 @@ export {
   isUnbornHead,
   isUncommittedOnly,
   laneKey,
+  laneStoreKey,
   liveness,
   mergeArgs,
   notice,
@@ -4028,7 +3980,6 @@ export {
   readOptions,
   readSubagentInput,
   releaseKey,
-  repairHandover,
   reservationStatus,
   resumeWorktreeNote,
   rewritePrompt,
