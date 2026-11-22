@@ -1289,6 +1289,52 @@ describe("a write whose store an inherited BEADS_DB selects (bd 1.3.1: BEADS_DIR
     expect(JSON.stringify(result)).toContain("BEADS_DB")
   })
 
+  // Every way a shell can give BEADS_DB another value before the write. The inherited store is either
+  // missing (the write would run unlocked) or embedded (the write would be locked, then redirected).
+  const reassigners: [string, () => string][] = [
+    ["a for loop variable", () => `for BEADS_DB in ${join(other, "beads.db")}; do bd close bd-1; done`],
+    ["a select loop variable", () => `select BEADS_DB in ${join(other, "beads.db")}; do bd close bd-1; done`],
+    ["read", () => "read BEADS_DB; bd close bd-1"],
+    ["getopts", () => "getopts a BEADS_DB; bd close bd-1"],
+    ["printf -v", () => "printf -v BEADS_DB %s x; bd close bd-1"],
+    ["declare", () => `declare BEADS_DB=${join(other, "beads.db")}; bd close bd-1`],
+    ["typeset", () => `typeset BEADS_DB=${join(other, "beads.db")}; bd close bd-1`],
+    ["local", () => `local BEADS_DB=${join(other, "beads.db")}; bd close bd-1`],
+    ["mapfile", () => "mapfile BEADS_DB < /dev/null; bd close bd-1"],
+    ["let", () => "let BEADS_DB=1; bd close bd-1"],
+    ["a := expansion", () => `: \${BEADS_DB:=${join(other, "beads.db")}}; bd close bd-1`],
+    ["an arithmetic assignment", () => "(( BEADS_DB = 1 )); bd close bd-1"],
+  ]
+  describe.each([
+    ["missing", () => join(root, "missing", ".beads", "beads.db")],
+    ["embedded", () => join(store, "beads.db")],
+  ])("with an inherited %s store", (_kind, inherited) => {
+    test.each(reassigners)("refuses %s of BEADS_DB", (_name, command) => {
+      const result = targets(command(), inherited())
+      expect(result.kind).toBe("refused")
+      expect(JSON.stringify(result)).toContain("BEADS_DB")
+    })
+  })
+
+  test("a read of BEADS_DB after the write does not refuse it", () => {
+    expect(targets("bd close bd-1; echo $BEADS_DB", join(store, "beads.db"))).toEqual({ kind: "stores", stores: [store] })
+  })
+
+  test.each([
+    ["the same path", () => join(store, "beads.db")],
+    ["a trailing-slash and dotted spelling", () => `${root}/./.beads/beads.db`],
+  ])("an inline BEADS_DB naming %s as the inherited one is unchanged, so the write is locked", (_name, value) => {
+    expect(targets(`BEADS_DB=${value()} bd close bd-1`, join(store, "beads.db"))).toEqual({ kind: "stores", stores: [store] })
+  })
+
+  test.each([
+    ["a different store", () => `BEADS_DB=${join(other, "beads.db")} bd close bd-1`],
+    ["a value the shell computes", () => "BEADS_DB=$X bd close bd-1"],
+    ["an appended value", () => `BEADS_DB+=x bd close bd-1`],
+  ])("an inline BEADS_DB naming %s is still refused", (_name, command) => {
+    expect(targets(command(), join(store, "beads.db")).kind).toBe("refused")
+  })
+
   test("a BEADS_DB change is harmless once BEADS_DIR names the store", () => {
     const result = embeddedWriteTargets(`BEADS_DB=${join(other, "beads.db")} bd close bd-1`, root, scrubbedBeadsEnv({ BEADS_DIR: store }))
     expect(result).toEqual({ kind: "stores", stores: [store] })

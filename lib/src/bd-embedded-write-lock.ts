@@ -669,6 +669,7 @@ const SOURCE_RUNNERS: Record<string, true> = {
 const ASSIGNING: Record<string, true> = {
   declare: true,
   getopts: true,
+  let: true,
   local: true,
   mapfile: true,
   printf: true,
@@ -918,7 +919,7 @@ export function planEmbeddedWrites(
       const argv = shape.child.slice(1)
       const child = invocationFromArgv(argv.map((word) => word.value))
       if (child === undefined || !isWrite(child, argv)) continue
-      const resolved = resolveWrite(child, shape.assignments, state, env, command)
+      const resolved = resolveWrite(child, shape.assignments, state, env, command, command.slice(0, item.words[0]?.start ?? 0))
       if ("problem" in resolved) {
         unresolvedWrite = true
         unresolved?.(child)
@@ -938,7 +939,7 @@ export function planEmbeddedWrites(
     const invocation = invocationFromArgv(shape.args.map((word) => word.value))
     // `bd`, `bd --version` and `bd --help` carry no verb: recognised, and no write.
     if (invocation === undefined || !isWrite(invocation, shape.args)) continue
-    const resolved = resolveWrite(invocation, shape.assignments, state, env, command)
+    const resolved = resolveWrite(invocation, shape.assignments, state, env, command, command.slice(0, item.words[0]?.start ?? 0))
     if ("problem" in resolved) {
       unresolvedWrite = true
       unresolved?.(invocation)
@@ -1297,6 +1298,8 @@ function resolveWrite(
   state: ShellState,
   env: NodeJS.ProcessEnv,
   source: string,
+  /** The command text before this simple command: every earlier way the shell could have changed `BEADS_DB`. */
+  before: string,
 ): ResolvedWriteTarget | { problem: Problem } {
   const write = `\`bd ${invocation.verb}\``
   for (const flag of STORE_FLAGS) {
@@ -1327,12 +1330,32 @@ function resolveWrite(
   // send the write to a different store than the one locked: refuse rather than guess.
   const dbEffective =
     directory === undefined && db === undefined && (beadsDir.kind === "known" ? (beadsDir.value ?? "") === "" : false)
-  const ownDbChange = assignments.find((word) => BEADS_DB_WORD.test(word.value))
-  const dbCause = ownDbChange === undefined ? state.beadsDbCause : source.slice(ownDbChange.start, ownDbChange.end)
+  // An inline literal that names the inherited store again changes nothing. Anything else the shell
+  // does with the name earlier (a loop variable, `let`, `${BEADS_DB:=...}`, an arithmetic assignment,
+  // or any assigner not listed) is not followed, so a mention of `BEADS_DB` before the write refuses it.
+  const inheritedDb = env.BEADS_DB ?? ""
+  const dbCwd = state.cwd.kind === "known" ? state.cwd.cwd : undefined
+  const unchangedInline = (word: ShellWord): boolean => {
+    const value = word.value.slice("BEADS_DB=".length)
+    return (
+      word.value.startsWith("BEADS_DB=") &&
+      !word.expands &&
+      !DEFERRED_VALUE.test(value) &&
+      value !== "" &&
+      inheritedDb !== "" &&
+      dbCwd !== undefined &&
+      canonicalStore(storeFromBeadsDb(value, dbCwd)) === canonicalStore(storeFromBeadsDb(inheritedDb, dbCwd))
+    )
+  }
+  const ownDbChange = assignments.find((word) => BEADS_DB_WORD.test(word.value) && !unchangedInline(word))
+  const dbCause =
+    ownDbChange !== undefined
+      ? source.slice(ownDbChange.start, ownDbChange.end)
+      : (state.beadsDbCause ?? (before.includes("BEADS_DB") ? "an earlier use of BEADS_DB" : undefined))
   if (dbEffective && dbCause !== undefined) {
     return {
       problem: {
-        part: `${write} runs with \`BEADS_DB\` changed by \`${dbCause}\`, which the lock does not follow`,
+        part: `${write} runs where \`BEADS_DB\` may have been changed (\`${dbCause}\`), which the lock does not follow`,
         fix: "Set `BEADS_DIR` to a literal path instead, or leave `BEADS_DB` as the session inherited it.",
       },
     }
@@ -1346,7 +1369,6 @@ function resolveWrite(
     }
   }
   if (state.cwd.kind === "dynamic") return { problem: state.cwd.problem }
-  const inheritedDb = env.BEADS_DB ?? ""
   const relativeDb = dbEffective && inheritedDb !== "" && !isAbsolute(inheritedDb)
   const relative =
     db !== undefined

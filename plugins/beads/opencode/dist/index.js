@@ -2376,6 +2376,7 @@ var SOURCE_RUNNERS = {
 var ASSIGNING = {
   declare: true,
   getopts: true,
+  let: true,
   local: true,
   mapfile: true,
   printf: true,
@@ -2488,7 +2489,7 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
       const child = invocationFromArgv(argv.map((word) => word.value));
       if (child === undefined || !isWrite(child, argv))
         continue;
-      const resolved = resolveWrite(child, shape.assignments, state, env, command);
+      const resolved = resolveWrite(child, shape.assignments, state, env, command, command.slice(0, item.words[0]?.start ?? 0));
       if ("problem" in resolved) {
         unresolvedWrite = true;
         unresolved?.(child);
@@ -2505,7 +2506,7 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
     const invocation = invocationFromArgv(shape.args.map((word) => word.value));
     if (invocation === undefined || !isWrite(invocation, shape.args))
       continue;
-    const resolved = resolveWrite(invocation, shape.assignments, state, env, command);
+    const resolved = resolveWrite(invocation, shape.assignments, state, env, command, command.slice(0, item.words[0]?.start ?? 0));
     if ("problem" in resolved) {
       unresolvedWrite = true;
       unresolved?.(invocation);
@@ -2806,7 +2807,7 @@ function hasFunctionDefinition(items) {
 function obfuscatedName(source) {
   return /["'\\]/.test(source) && !/^(["'])[^"'\\]*\1$/.test(source);
 }
-function resolveWrite(invocation, assignments, state, env, source) {
+function resolveWrite(invocation, assignments, state, env, source, before) {
   const write = `\`bd ${invocation.verb}\``;
   for (const flag of STORE_FLAGS) {
     const value = globalValue(invocation.globals, [flag]);
@@ -2830,12 +2831,18 @@ function resolveWrite(invocation, assignments, state, env, source) {
   const directory = globalValue(invocation.globals, ["-C", "--directory"]);
   const db = globalValue(invocation.globals, ["--db"]);
   const dbEffective = directory === undefined && db === undefined && (beadsDir.kind === "known" ? (beadsDir.value ?? "") === "" : false);
-  const ownDbChange = assignments.find((word) => BEADS_DB_WORD.test(word.value));
-  const dbCause = ownDbChange === undefined ? state.beadsDbCause : source.slice(ownDbChange.start, ownDbChange.end);
+  const inheritedDb = env.BEADS_DB ?? "";
+  const dbCwd = state.cwd.kind === "known" ? state.cwd.cwd : undefined;
+  const unchangedInline = (word) => {
+    const value = word.value.slice("BEADS_DB=".length);
+    return word.value.startsWith("BEADS_DB=") && !word.expands && !DEFERRED_VALUE.test(value) && value !== "" && inheritedDb !== "" && dbCwd !== undefined && canonicalStore(storeFromBeadsDb(value, dbCwd)) === canonicalStore(storeFromBeadsDb(inheritedDb, dbCwd));
+  };
+  const ownDbChange = assignments.find((word) => BEADS_DB_WORD.test(word.value) && !unchangedInline(word));
+  const dbCause = ownDbChange !== undefined ? source.slice(ownDbChange.start, ownDbChange.end) : state.beadsDbCause ?? (before.includes("BEADS_DB") ? "an earlier use of BEADS_DB" : undefined);
   if (dbEffective && dbCause !== undefined) {
     return {
       problem: {
-        part: `${write} runs with \`BEADS_DB\` changed by \`${dbCause}\`, which the lock does not follow`,
+        part: `${write} runs where \`BEADS_DB\` may have been changed (\`${dbCause}\`), which the lock does not follow`,
         fix: "Set `BEADS_DIR` to a literal path instead, or leave `BEADS_DB` as the session inherited it."
       }
     };
@@ -2850,7 +2857,6 @@ function resolveWrite(invocation, assignments, state, env, source) {
   }
   if (state.cwd.kind === "dynamic")
     return { problem: state.cwd.problem };
-  const inheritedDb = env.BEADS_DB ?? "";
   const relativeDb = dbEffective && inheritedDb !== "" && !isAbsolute3(inheritedDb);
   const relative = db !== undefined ? !isAbsolute3(db) && (directory === undefined || !isAbsolute3(directory)) : directory !== undefined ? !isAbsolute3(directory) : relativeDb;
   if (relative && !state.cwd.certain) {
