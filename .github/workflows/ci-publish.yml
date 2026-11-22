@@ -72,7 +72,7 @@ jobs:
             if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error('Missing CI definition');
             return Buffer.from(file.content, 'base64').toString('utf8')
               .replace(/^(\s+uses: srobroek\/harness-kit\/\.github\/workflows\/check\.yml)@v\d+\.\d+\.\d+$/gm, '$1@VERSION')
-              .replace(/^(\s+- uses: (?:actions\/checkout|actions\/setup-node|oven-sh\/setup-bun))@[a-f0-9]{40}(?: # v\d+(?:\.\d+){0,2})?$/gm, '$1@SHA');
+              .replace(/^(\s+- uses: (?:actions\/checkout|actions\/setup-node|oven-sh\/setup-bun|jdx\/mise-action))@[a-f0-9]{40}(?: # v\d+(?:\.\d+){0,2})?$/gm, '$1@SHA');
           };
           if (!headCi.sha || (headCi.sha !== trustedCi.sha && normalizeCi(headCi) !== normalizeCi(trustedCi))) {
             throw new Error('CI definition differs from the trusted default branch');

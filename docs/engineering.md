@@ -255,7 +255,7 @@ GitHub [excludes dispatched job checks from PR checks](https://docs.github.com/e
 
 The publisher accepts `workflow_dispatch` only on the default branch. It runs inline code, with no checkout, install, artifact download or cache. Its job has `statuses: write` and read access to Actions, contents and pull requests. It validates the numeric run ID and accepts only the latest CI dispatch for an open, same-repository Renovate PR whose current head matches the run.
 
-The CI definition on the branch must match the publisher's default-branch revision, except for version updates at approved `uses:` entries. These are the harness-kit check workflow tag and SHA pins for checkout, setup-node and setup-bun. The publisher rejects changes to steps, conditions, permissions or action repository names. `ci.yml` also uses `jdx/mise-action`, which the publisher's normalizer does not cover, so a Renovate PR that bumps that SHA fails the comparison and gets no statuses until `ci-publish.yml` learns the action.
+The CI definition on the branch must match the publisher's default-branch revision, except for version updates at approved `uses:` entries. These are the harness-kit check workflow tag and SHA pins for checkout, setup-node, setup-bun and mise-action. The publisher rejects changes to steps, conditions, permissions or action repository names.
 
 A running dispatch receives pending statuses. The publisher polls every thirty seconds for up to twenty minutes, then fails if CI has not completed. Success needs a successful run, all three required jobs succeeding, and the cad job succeeding or being skipped. Failed, canceled, missing or skipped required jobs produce failure statuses. Repository Actions approval settings remain unchanged.
 
