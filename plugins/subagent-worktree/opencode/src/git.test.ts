@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
+import { appendFile, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { env } from "node:process"
 import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
 import { createGit, spawnRunner } from "./git.ts"
 import { mergeArgs, parseWorktrees } from "./lane.ts"
@@ -190,61 +191,204 @@ describe.skipIf(!Bun.which("wt"))("automatic merge against a repository with a c
   })
 })
 
-describe("a filter driver the repository's own attributes select runs during no automatic read", () => {
+describe("createGit() in a checkout whose config and attributes select a filter driver", () => {
   let root: string
-  beforeAll(async () => {
-    root = await mkdtemp(join(tmpdir(), "subagent-worktree-filter-"))
-  })
-  afterAll(() => rm(root, { recursive: true, force: true }))
-
+  const git = createGit(spawnRunner)
   const sh = async (cwd: string, ...args: string[]) => {
     const child = Bun.spawn(["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { stdout: "ignore", stderr: "ignore" })
     expect(await child.exited).toBe(0)
   }
-  const fired = (marker: string) => Bun.file(marker).exists()
-
   /**
-   * A repository whose `.git/info/attributes` gives a.txt a clean filter that writes `marker`, with a.txt changed on
-   * disk but dated to the past, so that git must hash it (and so run the filter) to see whether it differs.
-   * `.git/info/attributes` is outside the `GIT_ATTR_SOURCE` the hardened environment sets.
+   * A committed repository whose `a.txt` was rewritten with content of the same size and dated to the past, so git must
+   * hash it (and so run a clean filter) to see the change. `attributes` go to `.git/info/attributes`: unlike a work-tree
+   * `.gitattributes`, the empty `GIT_ATTR_SOURCE` of the hardened environment does not cover that file.
    */
-  const hostile = async (name: string) => {
-    const repo = join(root, name)
-    const marker = join(root, `${name}.fired`)
-    await sh(root, "init", "--quiet", "--initial-branch=main", repo)
-    await writeFile(join(repo, "a.txt"), "one")
-    await sh(repo, "add", "a.txt")
+  const repoWithEditedFile = async (attributes: string | Buffer = "") => {
+    const repo = await mkdtemp(join(root, "repo-"))
+    await sh(repo, "init", "--quiet", "--initial-branch=main")
+    await writeFile(join(repo, "a.txt"), "first\n")
+    await sh(repo, "add", ".")
     await sh(repo, "commit", "--quiet", "-m", "init")
-    await sh(repo, "config", "filter.evil.clean", `touch ${marker}; cat`)
-    await writeFile(join(repo, ".git", "info", "attributes"), "a.txt filter=evil\n")
-    await writeFile(join(repo, "a.txt"), "two")
+    if (attributes.length > 0) await writeFile(join(repo, ".git", "info", "attributes"), attributes)
+    await writeFile(join(repo, "a.txt"), "other\n")
     await utimes(join(repo, "a.txt"), 946_684_800, 946_684_800)
-    return { repo, marker }
+    return { repo, marker: join(repo, "..", `${repo.split("/").at(-1)}.ran`) }
   }
+  const ran = (marker: string) => Bun.file(marker).exists()
+  const globalConfig = () => join(root, "global.gitconfig")
+  let savedGlobal: string | undefined
+
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), "subagent-worktree-hostile-"))
+    // The user's own global config is trusted; each test writes the one it needs.
+    savedGlobal = env.GIT_CONFIG_GLOBAL
+    env.GIT_CONFIG_GLOBAL = globalConfig()
+    await writeFile(globalConfig(), "")
+  })
+  afterAll(async () => {
+    if (savedGlobal === undefined) delete env.GIT_CONFIG_GLOBAL
+    else env.GIT_CONFIG_GLOBAL = savedGlobal
+    await rm(root, { recursive: true, force: true })
+  })
+
+  // Each read that compares the work tree with the index or HEAD hashes changed files, which runs clean filters.
+  // Each returns what shows that it saw the exact change: the dirty flag, the porcelain line, or the file name.
+  const reads = [
+    ["status", (repo: string) => git.status(repo, "HEAD").then((s) => s?.dirty)],
+    ["porcelain", (repo: string) => git.porcelain(repo)],
+    ["trackedDirty", (repo: string) => git.trackedDirty(repo)],
+    ["localFiles", (repo: string) => git.localFiles(repo)],
+  ] as const
+  const sawTheChange: Record<(typeof reads)[number][0], unknown> = { status: true, porcelain: "M a.txt", trackedDirty: true, localFiles: ["a.txt"] }
 
   test("the fixture is live: the hardened environment alone does not stop the filter", async () => {
-    const { repo, marker } = await hostile("control")
+    const { repo, marker } = await repoWithEditedFile("a.txt filter=evil\n")
+    await sh(repo, "config", "filter.evil.clean", `touch '${marker}'; cat`)
     const result = await spawnRunner(["git", "-C", repo, "status", "--porcelain"])
-    expect({ code: result.code, out: result.stdout.trim(), fired: await fired(marker) }).toEqual({ code: 0, out: "M a.txt", fired: true })
+    expect({ code: result.code, out: result.stdout.trim(), ran: await ran(marker) }).toEqual({ code: 0, out: "M a.txt", ran: true })
+  })
+
+  test.each(reads)("%s does not run the clean filter .git/info/attributes selects, and still sees the change", async (name, read) => {
+    const { repo, marker } = await repoWithEditedFile("a.txt filter=evil\n")
+    await sh(repo, "config", "filter.evil.clean", `touch '${marker}'; cat`)
+    await sh(repo, "config", "filter.evil.required", "true")
+    expect(await read(repo)).toEqual(sawTheChange[name] as never)
+    expect(await ran(marker)).toBe(false)
+  })
+
+  test.each(reads)("%s does not run a clean filter whose driver name is empty", async (name, read) => {
+    const { repo, marker } = await repoWithEditedFile("a.txt filter=\n")
+    await appendFile(join(repo, ".git", "config"), `[filter ""]\n\tclean = touch '${marker}'; cat\n`)
+    expect(await read(repo)).toEqual(sawTheChange[name] as never)
+    expect(await ran(marker)).toBe(false)
+  })
+
+  // A driver name that is not UTF-8 cannot be passed back to git as a `-c` key, so every read refuses.
+  const refusals = [
+    ["status", (repo: string) => git.status(repo, "HEAD")],
+    ["porcelain", (repo: string) => git.porcelain(repo)],
+    ["trackedDirty", (repo: string) => git.trackedDirty(repo).catch(() => undefined)],
+    ["localFiles", (repo: string) => git.localFiles(repo)],
+  ] as const
+
+  test.each(refusals)("%s refuses, without running it, a filter whose driver name is not UTF-8", async (_, read) => {
+    const name = Buffer.from([0xff, 0xfe])
+    const { repo, marker } = await repoWithEditedFile(Buffer.concat([Buffer.from("a.txt filter="), name, Buffer.from("\n")]))
+    await appendFile(join(repo, ".git", "config"), Buffer.concat([Buffer.from('[filter "'), name, Buffer.from(`"]\n\tclean = touch '${marker}'; cat\n`)]))
+    expect(await read(repo)).toBeUndefined()
+    expect(await ran(marker)).toBe(false)
   })
 
   test.each([
-    ["porcelain", (git: ReturnType<typeof createGit>, repo: string) => git.porcelain(repo)],
-    ["status", async (git: ReturnType<typeof createGit>, repo: string) => (await git.status(repo, "HEAD"))?.dirty],
-    ["trackedDirty", (git: ReturnType<typeof createGit>, repo: string) => git.trackedDirty(repo)],
-    ["localFiles", (git: ReturnType<typeof createGit>, repo: string) => git.localFiles(repo)],
-  ])("%s runs no filter and still sees the change", async (name, read) => {
-    const { repo, marker } = await hostile(`read-${name}`)
-    const result = await read(createGit(spawnRunner), repo)
-    expect(await fired(marker)).toBe(false)
-    expect(result).toBeTruthy()
+    ["a dotted, mixed-case driver name", "Ev.il", "filter.Ev.il.process"],
+    ["a long-running process filter", "evil", "filter.evil.process"],
+  ])("status does not run %s", async (_, driver, key) => {
+    const { repo, marker } = await repoWithEditedFile(`a.txt filter=${driver}\n`)
+    await sh(repo, "config", key, `touch '${marker}'; cat`)
+    expect((await git.status(repo, "HEAD"))?.dirty).toBe(true)
+    expect(await ran(marker)).toBe(false)
   })
 
-  test("a repository whose drivers cannot be listed is refused, not read unfiltered", async () => {
-    const git = createGit(async (argv) => (argv.includes("--list") ? { code: 128, stdout: "", stderr: "fatal" } : spawnRunner(argv)))
-    const { repo, marker } = await hostile("refused")
-    expect(await git.porcelain(repo)).toBeUndefined()
-    expect(await fired(marker)).toBe(false)
+  test("status does not run a clean filter that a conditional include defines", async () => {
+    const { repo, marker } = await repoWithEditedFile("a.txt filter=evil\n")
+    const included = join(repo, "..", `${repo.split("/").at(-1)}.inc`)
+    await writeFile(included, `[filter "evil"]\n\tclean = touch '${marker}'; cat\n`)
+    await sh(repo, "config", "includeIf.onbranch:main.path", included)
+    expect((await git.status(repo, "HEAD"))?.dirty).toBe(true)
+    expect(await ran(marker)).toBe(false)
+  })
+
+  test("status does not run a global filter driver whose program the checkout supplies", async () => {
+    const { repo, marker } = await repoWithEditedFile("a.txt filter=mine\n")
+    // git runs a filter from the work tree root, so a relative command is the checkout's own file.
+    writeExecutable(join(repo, "clean.sh"), `#!/bin/sh\ntouch '${marker}'\ncat\n`)
+    await writeFile(globalConfig(), `[filter "mine"]\n\tclean = ./clean.sh\n`)
+    try {
+      expect((await git.status(repo, "HEAD"))?.dirty).toBe(true)
+      expect(await ran(marker)).toBe(false)
+    } finally {
+      await writeFile(globalConfig(), "")
+    }
+  })
+
+  test.each([
+    ["git failed to list them", { code: 128, stdout: "", stderr: "fatal: bad config line 1" }],
+    ["the listing was cut off", { code: 0, stdout: "filter.evil.clean\0filter.evil.requ", stderr: "" }],
+  ])("status does not run when the filter drivers cannot be read because %s", async (_, listing) => {
+    const commands: string[][] = []
+    const fake = createGit(async (argv) => {
+      commands.push(argv)
+      return argv.includes("config") ? listing : { code: 0, stdout: "", stderr: "" }
+    })
+    expect(await fake.status("/repo", "HEAD")).toBeUndefined()
+    expect(commands.some((argv) => argv.includes("status"))).toBe(false)
+  })
+
+  test("status refuses, without running it, a filter whose driver name cannot be overridden", async () => {
+    const { repo, marker } = await repoWithEditedFile("a.txt filter=a=b\n")
+    await sh(repo, "config", "filter.a=b.clean", `touch '${marker}'; cat`)
+    expect(await git.status(repo, "HEAD")).toBeUndefined()
+    expect(await ran(marker)).toBe(false)
+  })
+
+  /** Run `work` with `vars` in the host environment that spawnRunner inherits, then restore it. */
+  const withEnv = async <T>(vars: Record<string, string>, work: () => Promise<T>): Promise<T> => {
+    const saved = Object.fromEntries(Object.keys(vars).map((name) => [name, env[name]]))
+    Object.assign(env, vars)
+    try {
+      return await work()
+    } finally {
+      for (const [name, value] of Object.entries(saved)) {
+        if (value === undefined) delete env[name]
+        else env[name] = value
+      }
+    }
+  }
+
+  test.each(reads)("%s runs no repository filter when the inherited GIT_CONFIG names an empty file", async (name, read) => {
+    const { repo, marker } = await repoWithEditedFile("a.txt filter=evil\n")
+    await sh(repo, "config", "filter.evil.clean", `touch '${marker}'; cat`)
+    const empty = join(repo, "..", `${repo.split("/").at(-1)}.empty-config`)
+    await writeFile(empty, "")
+    expect(await withEnv({ GIT_CONFIG: empty }, () => read(repo) as Promise<unknown>)).toEqual(sawTheChange[name] as never)
+    expect(await ran(marker)).toBe(false)
+  })
+
+  // A clean checkout must read as clean whatever repository, work tree or index an inherited variable names.
+  test.each([
+    ["GIT_DIR", async (other: string) => join(other, ".git")],
+    ["GIT_WORK_TREE", async (other: string) => other],
+    ["GIT_INDEX_FILE", async (other: string) => join(other, "missing-index")],
+    ["GIT_COMMON_DIR", async (other: string) => join(other, ".git")],
+  ])("porcelain reads the checkout's own repository when %s is inherited", async (name, value) => {
+    const { repo } = await repoWithEditedFile()
+    await sh(repo, "checkout", "--quiet", "--", "a.txt")
+    const other = await mkdtemp(join(root, "other-"))
+    await sh(other, "init", "--quiet")
+    await writeFile(join(other, "b.txt"), "b\n")
+    await sh(other, "add", "b.txt")
+    await sh(other, "commit", "--quiet", "-m", "other")
+    expect(await withEnv({ [name]: await value(other) }, () => git.porcelain(repo))).toBe("")
+  })
+
+  test("trackedDirty sees a change when GIT_LITERAL_PATHSPECS is inherited", async () => {
+    const { repo } = await repoWithEditedFile()
+    expect(await withEnv({ GIT_LITERAL_PATHSPECS: "1" }, () => git.trackedDirty(repo))).toBe(true)
+  })
+
+  test("porcelain writes no trace file when GIT_TRACE is inherited", async () => {
+    const { repo, marker } = await repoWithEditedFile()
+    await withEnv({ GIT_TRACE: marker }, () => git.porcelain(repo))
+    expect(await ran(marker)).toBe(false)
+  })
+
+  test("deleteBranchAt does not run the repository's hooks", async () => {
+    const { repo, marker } = await repoWithEditedFile()
+    await sh(repo, "branch", "doomed")
+    const oid = await git.commit(repo, "doomed")
+    writeExecutable(join(repo, ".git", "hooks", "reference-transaction"), `#!/bin/sh\ntouch '${marker}'\n`)
+    expect(await git.deleteBranchAt(repo, "doomed", oid ?? "")).toBe(true)
+    expect(await ran(marker)).toBe(false)
   })
 })
 
