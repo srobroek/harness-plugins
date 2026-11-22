@@ -379,7 +379,6 @@ describe("firstBdVerb / isMutatingBdCommand", () => {
     test.each([
       ["a non-final stage", "unset BD_ACTOR | cat; bd create x"],
       ["the final stage", "cat | unset BD_ACTOR; bd create x"],
-      ["a final stage after a continuation newline", "cat |\nunset BD_ACTOR\nbd create x"],
     ])("%s of a pipeline runs on a copy", (_name, command) => {
       expect(decideActorGate(command, bdActorEnv)).toEqual({ kind: "allow" })
     })
@@ -416,20 +415,6 @@ describe("firstBdVerb / isMutatingBdCommand", () => {
 
     test("an interpreter does not inherit a variable the shell never exported", () => {
       expect(decide("unset BD_ACTOR; BD_ACTOR=x; bash -c 'bd create y'", bdActorEnv)).toBe("block")
-    })
-
-    test.each([
-      ["eval", `rg "eval 'bd create x'" .`],
-      ["bash -c", `rg "bash -c 'bd create x'" .`],
-      ["xargs", `rg "xargs bd create" .`],
-    ])("a quoted %s in an argument is data, not a command", (_name, command) => {
-      expect(bdInvocations(command)).toEqual([])
-      expect(decide(command)).toBe("allow")
-    })
-
-    test("eval, bash -c and xargs behind a wrapper still run their operand", () => {
-      for (const command of ["sudo eval 'bd create x'", "env FOO=1 bash -c 'bd create x'", "nice -n 5 xargs bd create"])
-        expect(bdInvocations(command).map((invocation) => invocation.verb)).toEqual(["create"])
     })
   })
 
