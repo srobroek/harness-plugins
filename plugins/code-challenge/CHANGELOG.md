@@ -1,3 +1,9 @@
+## code-challenge [1.4.0](https://github.com/srobroek/harness-plugins/compare/code-challenge--v1.3.1...code-challenge--v1.4.0) (2026-11-22)
+
+### Features
+
+* **code-challenge:** add scope lens for design and docs conformance ([#116](https://github.com/srobroek/harness-plugins/issues/116)) ([8a9680b](https://github.com/srobroek/harness-plugins/commit/8a9680b0874b19b956a5a37d7d250269f7570def))
+
 ## code-challenge [1.3.1](https://github.com/srobroek/harness-plugins/compare/code-challenge--v1.3.0...code-challenge--v1.3.1) (2026-11-21)
 
 ### Bug Fixes
