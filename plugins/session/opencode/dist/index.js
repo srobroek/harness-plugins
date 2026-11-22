@@ -1612,54 +1612,47 @@ function readsScriptFromStdin(values) {
   }
   return true;
 }
-function stdinScriptSources(item, values) {
-  if (!readsScriptFromStdin(values))
-    return [];
-  const script = stdinSource(item);
-  if (script !== undefined)
-    return [script];
-  return duplicatesStdin(item) ? documentSources(item) : [];
-}
-function commandTextSources(text) {
-  const found = [];
-  let unknown = false;
-  for (const match of text.matchAll(/\b(?:bash|sh|zsh|dash|ksh)\s+-c\s+((?:'[^']*')|(?:"[^"]*")|[^\s;&|]+)/g)) {
-    const value = match[1];
-    if (!value || value.startsWith('"$') || value.startsWith("'$"))
-      unknown = true;
-    else
-      found.push({ source: value.replace(/^['"]|['"]$/g, ""), sameShell: false });
-  }
-  for (const match of text.matchAll(/\beval\s+((?:'[^']*')|(?:"[^"]*")|[^\s;&|]+)/g)) {
-    const value = match[1];
-    if (value?.startsWith("$"))
-      unknown = true;
-    else if (value)
-      found.push({ source: value.replace(/^['"]|['"]$/g, ""), sameShell: true });
-  }
-  for (const match of text.matchAll(/\bxargs(?:\s+-[^\s;&|]+)*\s+([^;&|]+?)(?=\s*(?:[;&|]|$))/g)) {
-    const value = match[1]?.trim();
-    if (value?.startsWith("$"))
-      unknown = true;
-    else if (value)
-      found.push({ source: value.replace(/^['"]|['"]$/g, ""), sameShell: false });
-  }
-  return { found, unknown };
-}
 function nestedSources(source) {
   const scan = scanShell(source, { executableSubstitutionsOnly: true });
   const sources = [...scan.substitutions];
+  let unknown = !scan.complete;
   for (const item of scan.items) {
     if (item.kind !== "command")
       continue;
     let first = 0;
     while (first < item.words.length && /^[A-Za-z_]\w*=/.test(source.slice(item.words[first]?.start, item.words[first]?.end)))
       first++;
-    sources.push(...stdinScriptSources(item, item.words.slice(first).map((word) => word.value)));
+    const values = item.words.slice(first).map((word) => word.value);
+    if (!readsScriptFromStdin(values))
+      continue;
+    const script = stdinSource(item);
+    if (script !== undefined)
+      sources.push(script);
+    else if (duplicatesStdin(item))
+      sources.push(...documentSources(item));
   }
-  const text = commandTextSources(source);
-  sources.push(...text.found.map((entry) => entry.source));
-  return { sources, unknown: !scan.complete || text.unknown };
+  for (const match of source.matchAll(/\b(?:bash|sh|zsh|dash|ksh)\s+-c\s+((?:'[^']*')|(?:"[^"]*")|[^\s;&|]+)/g)) {
+    const value = match[1];
+    if (!value || value.startsWith('"$') || value.startsWith("'$"))
+      unknown = true;
+    else
+      sources.push(value.replace(/^['"]|['"]$/g, ""));
+  }
+  for (const match of source.matchAll(/\beval\s+((?:'[^']*')|(?:"[^"]*")|[^\s;&|]+)/g)) {
+    const value = match[1];
+    if (value?.startsWith("$"))
+      unknown = true;
+    else if (value)
+      sources.push(value.replace(/^['"]|['"]$/g, ""));
+  }
+  for (const match of source.matchAll(/\bxargs(?:\s+-[^\s;&|]+)*\s+([^;&|]+?)(?=\s*(?:[;&|]|$))/g)) {
+    const value = match[1]?.trim();
+    if (value?.startsWith("$"))
+      unknown = true;
+    else if (value)
+      sources.push(value.replace(/^['"]|['"]$/g, ""));
+  }
+  return { sources, unknown };
 }
 function staticParse(command) {
   if (command.length > 64000)
