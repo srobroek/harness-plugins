@@ -6,7 +6,7 @@ import { Error as ToolError } from "@opencode/plugin/promise/tool"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import { landingFile, readClaim, removeClaim, writeClaim, writeLanding } from "@srobroek/opencode-lib/worktree-claims"
 import { lockFile, readHolds, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
-import type { RunResult } from "./git.ts"
+import { type RunResult, type Runner, spawnRunner } from "./git.ts"
 import { createPlugin } from "./index.ts"
 import { type Lane, laneKey } from "./lane.ts"
 import { type Lifecycle, within } from "./lifecycle.ts"
@@ -82,6 +82,8 @@ const lane = (over: Partial<Lane> = {}): Lane => ({
 })
 
 function runner(world: World, log: string[][]) {
+  /** The commit a fake branch ref resolves to: 40 hex digits of its own, never a lane commit. */
+  const branchTipOf = (ref: string) => Bun.hash(ref).toString(16).padStart(40, "c").slice(-40)
   return async (argv: string[]): Promise<RunResult> => {
     log.push(argv)
     const ok = (stdout = "") => ({ code: 0, stdout, stderr: "" })
@@ -96,10 +98,14 @@ function runner(world: World, log: string[][]) {
     if (cmd.startsWith("rev-parse --verify --quiet refs/heads/")) return ok(`${world.branchOid}\n`)
     if (cmd === "symbolic-ref --quiet --short HEAD") return world.onBranch ? ok("lane-a\n") : { code: 1, stdout: "", stderr: "" }
     if (cmd.startsWith("update-ref -d")) return { code: world.updateRefFails ? 1 : 0, stdout: "", stderr: "" }
+    // An exact branch ref exists while `contains` lists it; it resolves to a commit of its own, which `merge-base` maps back.
+    const exact = /^show-ref --verify --hash (refs\/heads\/\S+)$/.exec(cmd)?.[1]
+    if (exact !== undefined) return world.contains?.[exact] === undefined ? { code: 1, stdout: "", stderr: "" } : ok(`${branchTipOf(exact)}\n`)
     if (cmd.startsWith("merge-base --is-ancestor")) {
       // Only the commit the proof was about is an ancestor; a different tip is not.
-      const [, , oid, ref] = cmd.split(" ")
-      if (ref === MAIN0) return { code: world.inMainAtCreation && oid === TIP ? 0 : 1, stdout: "", stderr: "" }
+      const [, , oid, arg] = cmd.split(" ")
+      if (arg === MAIN0) return { code: world.inMainAtCreation && oid === TIP ? 0 : 1, stdout: "", stderr: "" }
+      const ref = Object.keys(world.contains ?? {}).find((name) => branchTipOf(name) === arg) ?? arg
       const contained = ref === undefined ? undefined : world.contains?.[ref]
       if (contained !== undefined) return { code: oid !== undefined && contained.includes(oid) ? 0 : 1, stdout: "", stderr: "" }
       return { code: world.ancestor === 0 && oid === TIP ? 0 : 1, stdout: "", stderr: "" }
@@ -120,6 +126,8 @@ async function start(
     common?: string
     world?: World
     lock?: Record<string, unknown>
+    /** Run git through this instead of the fake world (a real repository, say). */
+    run?: Runner
   } = {},
 ) {
   const state: World = options.world ?? {
@@ -193,7 +201,7 @@ async function start(
       lifecycle = created
     },
     commonDir: async () => common,
-    run: runner(state, log),
+    run: options.run ?? runner(state, log),
     lookupMs: 20,
     directoryExists: async (path: string) => {
       const code = state.statErrors?.[path]
@@ -960,7 +968,7 @@ describe("a merge into a local target is a merged proof later", () => {
     const after = stored(fake)
     expect({ merged, mergedInto: after.mergedInto, outcome: after.outcome?.kind }).toEqual({
       merged: true,
-      mergedInto: { target: "main", head: TIP },
+      mergedInto: { target: "refs/heads/main", head: TIP },
       outcome: "failed",
     })
     await cleanup()
@@ -3036,4 +3044,79 @@ describe("an execution that fails because its location is gone", () => {
     expect(stored(fake).state).toBe("active")
     await cleanup()
   })
+})
+
+describe("recovery proves a merge target by its exact branch ref, in a real repository", () => {
+  // Real git with a test-only identity; hooks and signing off so the machine's config cannot interfere.
+  const raw = (cwd: string, ...args: string[]) => {
+    const run = Bun.spawnSync(
+      ["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args],
+      { stdout: "pipe", stderr: "pipe" },
+    )
+    if (run.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${run.stderr.toString()}`)
+    return run.stdout.toString().trim()
+  }
+  const branchExists = (repo: string, ref: string) =>
+    Bun.spawnSync(["git", "-C", repo, "show-ref", "--verify", "--quiet", ref], { stdout: "ignore", stderr: "ignore" }).exitCode === 0
+
+  /**
+   * A lane branch merged into `main`, a tag also named `main` at that merge (so it contains the lane's head), then
+   * `move` changes the branch. The lane is left `removing` with the short target name a foreground merge recorded.
+   */
+  const repository = (move: (repo: string, base: string) => void) => {
+    const root = mkdtempSync(join(tmpdir(), "subagent-worktree-tag-"))
+    COMMONS.push(root)
+    const repo = join(root, "repo")
+    raw(root, "init", "--quiet", "--initial-branch=main", repo)
+    writeFileSync(join(repo, "a.txt"), "a\n")
+    raw(repo, "add", "a.txt")
+    raw(repo, "commit", "--quiet", "-m", "base")
+    const base = raw(repo, "rev-parse", "HEAD")
+    const worktree = join(root, "lane")
+    raw(repo, "worktree", "add", "--quiet", "-b", "lane-a", worktree)
+    writeFileSync(join(worktree, "b.txt"), "b\n")
+    raw(worktree, "add", "b.txt")
+    raw(worktree, "commit", "--quiet", "-m", "work")
+    const head = raw(worktree, "rev-parse", "HEAD")
+    raw(repo, "merge", "--quiet", "--no-ff", "--no-edit", "lane-a")
+    raw(repo, "tag", "main", "main")
+    move(repo, base)
+    const record = lane({
+      directory: worktree,
+      parentDir: repo,
+      base,
+      mainAtCreation: base,
+      target: "main",
+      state: "removing",
+      removal: { retireAs: "merged", head, within: "main" },
+      mergedInto: { target: "main", head },
+    })
+    return { repo, record }
+  }
+
+  test.each([
+    ["the branch was reset behind the lane's head", (repo: string, base: string) => raw(repo, "update-ref", "refs/heads/main", base)],
+    [
+      "the branch was deleted",
+      (repo: string) => {
+        raw(repo, "checkout", "--quiet", "--detach")
+        raw(repo, "update-ref", "-d", "refs/heads/main")
+      },
+    ],
+  ])(
+    "a tag named like the target that contains HEAD proves nothing when %s",
+    async (_name, move) => {
+      const { repo, record } = repository(move)
+      const { fake, worktree, quiet, cleanup } = await start({}, { stored: [record], run: spawnRunner })
+      await quiet()
+      expect({ removes: worktree.filter((entry) => entry.method === "remove").length, branch: branchExists(repo, "refs/heads/lane-a"), state: stored(fake).state }).toEqual({
+        removes: 0,
+        branch: true,
+        state: "active",
+      })
+      await cleanup()
+    },
+    // Real git: about 1 s per case measured on a loaded machine; 30 s leaves room.
+    30_000,
+  )
 })

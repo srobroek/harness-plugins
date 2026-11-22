@@ -39,7 +39,7 @@ import {
 } from "./events.ts"
 import type { Git } from "./git.ts"
 import { LANDING_TOOLS, laneForLanding } from "./landing.ts"
-import { childReleasesLane, childState, isRunning, type Lane, laneStoreKey, type Options } from "./lane.ts"
+import { branchRef, childReleasesLane, childState, isRunning, type Lane, laneStoreKey, type Options, storedBranchRef } from "./lane.ts"
 import { formatSweep, orderEntries, type SweepEntry, type SweepMode } from "./sweep.ts"
 
 /** Epoch milliseconds from a number, Date or date string; undefined otherwise. */
@@ -346,21 +346,18 @@ export function createLifecycle(deps: LifecycleDeps) {
     return records.heads.includes(oid) || (await reachedMain(lane, oid))
   }
 
-  /** A stored target is read as a local branch ref, never as an option or another kind of ref. */
-  const localBranchRef = (target: string): string => `refs/heads/${target}`
-
-  /** The local branch ref an explicit merge recorded, when `oid` is the head it recorded; nothing is proven yet. */
+  /** The exact branch ref an explicit merge recorded (`refs/heads/<name>`, or an older record's short name), when `oid` is the head it recorded; nothing is proven yet. */
   const recordedRef = (lane: Lane, oid: string): string | undefined => {
     const merged = lane.mergedInto
-    if (merged === undefined || typeof merged.target !== "string" || merged.target === "" || merged.head !== oid) return undefined
-    return localBranchRef(merged.target)
+    if (merged === undefined || merged.head !== oid) return undefined
+    return storedBranchRef(merged.target)
   }
 
-  /** The local branch ref an explicit merge recorded, when `oid` is the head it recorded and that ref still contains it now. */
+  /** The branch ref an explicit merge recorded, when `oid` is the head it recorded and that exact branch still contains it now. */
   const mergedLocally = async (lane: Lane, oid: string): Promise<string | undefined> => {
     const ref = recordedRef(lane, oid)
     if (ref === undefined) return undefined
-    return (await git.isAncestor(lane.directory, oid, ref)) ? ref : undefined
+    return (await git.branchContains(lane.directory, oid, ref)) ? ref : undefined
   }
 
   // --- actions ------------------------------------------------------------------------------
@@ -608,13 +605,15 @@ export function createLifecycle(deps: LifecycleDeps) {
     const busy = await busyTreeOf(lane.directory, lane.branch)
     if (busy !== undefined) return keptBecause("dirty", busy)
     if (earlier?.head === oid) {
-      const within = earlier.retireAs === "merged" ? (earlier.within ?? recordedRef(lane, oid)) : undefined
-      if (within === undefined) return { proof: PROOF_OF[earlier.retireAs], oid }
-      if (await git.isAncestor(lane.directory, oid, within)) return { proof: "merged", oid, within }
+      if (earlier.retireAs !== "merged") return { proof: PROOF_OF[earlier.retireAs], oid }
+      // The branch the merge was proven in: the record's (a short name in an older one), else the merge record's, else the lane's target.
+      const ref = earlier.within !== undefined ? storedBranchRef(earlier.within) : (recordedRef(lane, oid) ?? storedBranchRef(lane.target))
+      if (ref !== undefined && (await git.branchContains(lane.directory, oid, ref))) return { proof: "merged", oid, within: ref }
     }
     if (oid === lane.base) return { proof: "empty", oid }
-    // A merged proof names the ref that contains HEAD: the removal proves it again after its last await.
-    if (options.target !== undefined && (await git.isAncestor(lane.directory, oid, options.target))) return { proof: "merged", oid, within: options.target }
+    // A merged proof names the exact branch ref that contains HEAD: the removal proves it again after its last await.
+    const target = options.target === undefined ? undefined : branchRef(options.target)
+    if (target !== undefined && (await git.branchContains(lane.directory, oid, target))) return { proof: "merged", oid, within: target }
     const merged = await mergedLocally(lane, oid)
     if (merged !== undefined) return { proof: "merged", oid, within: merged }
     if (await isLanded(lane, oid)) return { proof: "landed", oid }
@@ -628,7 +627,7 @@ export function createLifecycle(deps: LifecycleDeps) {
     if ((await git.porcelain(lane.directory)) !== "") return keptBecause("dirty", "the tree changed after the checks")
     const busy = await busyTreeOf(lane.directory, lane.branch)
     if (busy !== undefined) return keptBecause("dirty", busy)
-    if (within !== undefined && !(await git.isAncestor(lane.directory, oid, within))) return keptBecause("unmerged", `${within} no longer contains HEAD`)
+    if (within !== undefined && !(await git.branchContains(lane.directory, oid, within))) return keptBecause("unmerged", `${within} no longer contains HEAD`)
     return undefined
   }
 
@@ -930,8 +929,10 @@ export function createLifecycle(deps: LifecycleDeps) {
         const stored = await load(lane.child)
         if (stored?.state !== "active" || canonical(stored.directory) !== canonical(lane.directory)) return
         const head = await git.head(stored.directory)
-        if (head === undefined || !(await git.isAncestor(stored.directory, head, localBranchRef(target)))) return
-        await save({ ...stored, mergedInto: { target, head } })
+        // Stored as the exact branch ref, so no tag or other ref of the same short name can stand in for it later.
+        const ref = branchRef(target)
+        if (head === undefined || ref === undefined || !(await git.branchContains(stored.directory, head, ref))) return
+        await save({ ...stored, mergedInto: { target: ref, head } })
       })
     } catch (error) {
       console.error(`subagent-worktree: the merge of ${lane.directory} into ${target} was not recorded:`, error instanceof Error ? error.message : error)
