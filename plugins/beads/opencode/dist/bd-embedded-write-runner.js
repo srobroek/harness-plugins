@@ -1262,71 +1262,97 @@ var CLOSERS = new Set(["fi", "done", "esac"]);
 var BRANCHES = new Set(["else", "elif"]);
 var ASSIGNMENT2 = /^[A-Za-z_]\w*=/;
 var basename = (word) => word.split("/").pop() ?? word;
-function applyActorBuiltin(state, shellVars, values, conditional) {
+var actorVarOf = (arg) => ACTOR_VARS.find((candidate) => arg === candidate || arg.startsWith(`${candidate}=`));
+function exportedState(vars) {
+  const state = {};
+  for (const variable of ACTOR_VARS) {
+    const entry = vars[variable];
+    if (entry === undefined || entry.exported === undefined)
+      continue;
+    if (entry.exported && typeof entry.value === "string")
+      state[variable] = entry.value;
+    else if (!entry.exported || entry.value === null)
+      state[variable] = null;
+  }
+  return state;
+}
+function shellVarsOf(state) {
+  const vars = {};
+  for (const variable of ACTOR_VARS) {
+    const value = state[variable];
+    if (value !== undefined)
+      vars[variable] = { value, exported: value !== null };
+  }
+  return vars;
+}
+function applyActorBuiltin(vars, values) {
   const name = values[0];
   if (name !== "export" && name !== "unset")
     return;
   const unexport = name === "export" && values.slice(1).some((arg) => /^-[a-zA-Z]*n/.test(arg));
   for (const arg of values.slice(1)) {
-    const variable = ACTOR_VARS.find((candidate) => arg === candidate || arg.startsWith(`${candidate}=`));
+    const variable = actorVarOf(arg);
     if (variable === undefined)
       continue;
-    if (conditional)
-      continue;
-    if (name === "unset") {
-      state[variable] = null;
-      delete shellVars[variable];
-    } else if (unexport)
-      state[variable] = null;
+    const current = vars[variable];
+    if (name === "unset")
+      vars[variable] = { value: null, exported: false };
     else if (arg.includes("="))
-      state[variable] = arg.slice(variable.length + 1);
-    else if (shellVars[variable] !== undefined)
-      state[variable] = shellVars[variable];
+      vars[variable] = { value: arg.slice(variable.length + 1), exported: !unexport };
+    else if (unexport)
+      vars[variable] = { value: current?.value, exported: false };
+    else if (current !== undefined && current.value !== null)
+      vars[variable] = { value: current.value, exported: true };
+  }
+}
+function applyActorAssignments(vars, assignments) {
+  for (const assignment of assignments) {
+    const variable = actorVarOf(assignment);
+    if (variable !== undefined)
+      vars[variable] = { value: assignment.slice(variable.length + 1), exported: vars[variable]?.exported };
   }
 }
 function bdInvocations(command, inherited = {}) {
   return readCommand(command, inherited).invocations;
 }
+function actorStateAt(command, inherited = {}) {
+  const { marks } = readCommand(command, inherited);
+  return (offset) => marks.findLast((mark) => mark.start <= offset)?.state ?? inherited;
+}
 function readCommand(command, inherited) {
   const out = [];
+  const marks = [];
   const scan = scanShell(command, { executableSubstitutionsOnly: true });
-  let state = { ...inherited };
+  let vars = shellVarsOf(inherited);
   const scopes = [];
-  let shellVars = {};
   let compounds = 0;
-  let andChained = false;
-  let orChained = false;
-  let chainChanges = [];
+  let chain = null;
   const unclaimed = [...scan.substitutions];
-  for (const item of scan.items) {
+  for (const [index, item] of scan.items.entries()) {
     if (item.kind === "operator") {
       if (item.operator === "(") {
-        scopes.push({ state, shellVars });
-        state = { ...state };
-        shellVars = { ...shellVars };
+        scopes.push({ vars, chain });
+        vars = { ...vars };
+        chain = null;
       } else if (item.operator === ")" && scopes.length > 0)
-        ({ state, shellVars } = scopes.pop());
-      else if (item.operator === "&&")
-        andChained = true;
-      else if (item.operator === "||")
-        orChained = true;
+        ({ vars, chain } = scopes.pop());
+      else if ((item.operator === "&&" || item.operator === "||") && chain === null)
+        chain = { ...vars };
       else if (item.operator === ";" || item.operator === `
 ` || item.operator === "&") {
-        for (const { variable, previous, value } of chainChanges) {
-          if (state[variable] !== value)
-            continue;
-          if (previous === undefined)
-            delete state[variable];
-          else
-            state[variable] = previous;
-        }
-        chainChanges = [];
-        andChained = false;
-        orChained = false;
+        if (chain !== null)
+          vars = chain;
+        chain = null;
       }
       continue;
     }
+    const following = scan.items[index + 1];
+    const inPipe = following?.kind === "operator" && (following.operator === "|" || following.operator === "|&");
+    const here = inPipe ? { ...vars } : vars;
+    const before = exportedState(here);
     const spans = [...item.words, ...item.redirects];
+    if (spans.length > 0)
+      marks.push({ start: Math.min(...spans.map((w) => w.start)), state: before });
     const texts = [];
     if (spans.length > 0) {
       texts.push(command.slice(Math.min(...spans.map((w) => w.start)), Math.max(...spans.map((w) => w.end))));
@@ -1342,7 +1368,7 @@ ${document.body}__HEREDOC_END__
         const at = unclaimed.indexOf(source);
         if (at >= 0)
           unclaimed.splice(at, 1);
-        out.push(...bdInvocations(source, state));
+        out.push(...bdInvocations(source, before));
       }
     }
     const words = item.words;
@@ -1369,23 +1395,15 @@ ${document.body}__HEREDOC_END__
       a++;
     const assigned = words.slice(k, a).map((word) => word.value);
     const values = words.slice(a).map((word) => word.value);
-    if (values.length === 0) {
-      if (compounds === 0 && !orChained)
-        for (const word of assigned) {
-          const variable = ACTOR_VARS.find((candidate) => word.startsWith(`${candidate}=`));
-          if (variable !== undefined)
-            shellVars[variable] = word.slice(variable.length + 1);
-        }
-      continue;
+    if (compounds === 0) {
+      if (values.length === 0)
+        applyActorAssignments(here, assigned);
+      else
+        applyActorBuiltin(here, values);
     }
-    const before = { ...state };
-    applyActorBuiltin(state, shellVars, values, compounds > 0 || orChained);
-    if (andChained)
-      for (const variable of ACTOR_VARS) {
-        const value = state[variable];
-        if (value !== undefined && value !== before[variable])
-          chainChanges.push({ variable, previous: before[variable], value });
-      }
+    if (values.length === 0)
+      continue;
+    const state = exportedState(here);
     const found = resolveBd(values, assigned);
     if (found !== undefined) {
       const scanned = scanGlobals(values, found.next);
@@ -1416,9 +1434,10 @@ ${document.body}__HEREDOC_END__
         out.push(...bdInvocations(script, scriptState));
     }
   }
+  const final = exportedState(vars);
   for (const source of unclaimed)
-    out.push(...bdInvocations(source, state));
-  return { invocations: out, state };
+    out.push(...bdInvocations(source, final));
+  return { invocations: out, marks };
 }
 function resolveBd(values, assigned) {
   let i = 0;
@@ -1666,7 +1685,23 @@ function decideActorParsed(parsed, env = process.env, inherited = {}) {
   if (typeof candidate.command !== "string" || !Array.isArray(candidate.nested)) {
     return { kind: "block", reason: "command could not be parsed" };
   }
-  return decideActorGate(candidate.command, env, inherited);
+  let advisory = false;
+  const own = decideActorGate(candidate.command, env, inherited);
+  if (own.kind === "block")
+    return own;
+  if (own.kind === "advisory")
+    advisory = true;
+  const stateAt = actorStateAt(candidate.command, inherited);
+  for (const child of candidate.nested) {
+    const text = child?.command;
+    const at = typeof text === "string" ? candidate.command.indexOf(text) : -1;
+    const decision = decideActorParsed(child, env, at < 0 ? inherited : stateAt(at));
+    if (decision.kind === "block")
+      return decision;
+    if (decision.kind === "advisory")
+      advisory = true;
+  }
+  return advisory ? { kind: "advisory", text: ADVISORY_TEXT } : { kind: "allow" };
 }
 function decideActorGate(command, env = process.env, inherited = {}) {
   let advisory = false;
