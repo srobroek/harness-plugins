@@ -12,7 +12,7 @@
 
 import type { ChildState } from "./lane.ts"
 
-export const RELEASE_PREFIX = "release/"
+const RELEASE_PREFIX = "release/"
 
 export function releaseKey(child: string): string {
   return `${RELEASE_PREFIX}${child}`
