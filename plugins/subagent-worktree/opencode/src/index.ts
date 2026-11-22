@@ -56,7 +56,7 @@ import {
   worktreeName,
   writerRefusal,
 } from "./lane.ts"
-import { type BuildSeams, createLifecycle, toMillis } from "./lifecycle.ts"
+import { type BuildSeams, createLifecycle, type Lifecycle, toMillis } from "./lifecycle.ts"
 
 export * from "./git.ts"
 export * from "./lane.ts"
@@ -122,11 +122,12 @@ export type Overrides = {
   now?: () => number
   reserveMs?: number
   debounceMs?: number
-  sweepDelayMs?: number
   age?: (directory: string) => Promise<number | undefined>
   commonDir?: (directory: string) => Promise<string | undefined>
   lock?: Parameters<typeof createLifecycle>[0]["lock"]
   build?: BuildSeams
+  /** Test seam: receives the lifecycle, so a test can await `settle()` instead of sleeping. */
+  lifecycle?: (lifecycle: Lifecycle) => void
 }
 
 const directoryExists = async (path: string) => {
@@ -163,7 +164,6 @@ export function createLanes(
   now: () => number = Date.now,
   reserveMs = RESERVATION_MS,
   debounceMs?: number,
-  sweepDelayMs?: number,
   age?: (directory: string) => Promise<number | undefined>,
   commonDirOverride?: (directory: string) => Promise<string | undefined>,
   lock?: Parameters<typeof createLifecycle>[0]["lock"],
@@ -919,7 +919,6 @@ export function createLanes(
     moveHome,
     removeWorktree,
     ...(debounceMs === undefined ? {} : { debounceMs }),
-    ...(sweepDelayMs === undefined ? {} : { sweepDelayMs }),
     ...(age === undefined ? {} : { age }),
     commonDir: commonDirOf,
     ...(lock === undefined ? {} : { lock }),
@@ -942,7 +941,8 @@ export function createPlugin(overrides: Overrides = {}) {
     async setup(ctx) {
       const options = readOptions(ctx.options)
       const git = createGit(overrides.run ?? spawnRunner)
-      const lanes = createLanes(ctx, options, git, overrides.suffix ?? randomSuffix, overrides.lookupMs, overrides.directoryExists, overrides.now, overrides.reserveMs, overrides.debounceMs, overrides.sweepDelayMs, overrides.age, overrides.commonDir, overrides.lock, overrides.build)
+      const lanes = createLanes(ctx, options, git, overrides.suffix ?? randomSuffix, overrides.lookupMs, overrides.directoryExists, overrides.now, overrides.reserveMs, overrides.debounceMs, overrides.age, overrides.commonDir, overrides.lock, overrides.build)
+      overrides.lifecycle?.(lanes.lifecycle)
       const registrations: { dispose: () => Promise<void> }[] = []
       const cleanup = async () => {
         for (const registration of registrations.reverse()) await registration.dispose()

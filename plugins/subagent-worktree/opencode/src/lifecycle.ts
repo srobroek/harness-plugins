@@ -5,7 +5,8 @@
  *  - lane sync on a landing (`delivery_land` / `delivery_cleanup` results),
  *  - session execution events (failed, interrupted, succeeded, idle), debounced,
  *  - `experimental.idle` gates for a child and for a lead,
- *  - a throttled backstop sweep.
+ *  - a sweep, on demand.
+ * On start it finishes every removal a crash or a failed move left in `removing`.
  * Every removal is a non-force host removal; nothing here deletes a remote branch.
  */
 
@@ -14,8 +15,8 @@ import { stat, statfs } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
-import { canonicalCheckout, evictSessions, repairStrandedSessions, type SessionApi } from "@srobroek/opencode-lib/session-eviction"
-import { isSessionNotFound, type LaneSessionClient, laneSessions, moveSessionsHome } from "@srobroek/opencode-lib/session-lanes"
+import { canonicalCheckout, evictSessions, type SessionApi } from "@srobroek/opencode-lib/session-eviction"
+import { isSessionNotFound, type LaneSessionClient, laneSessions, MAX_LANE_DEPTH, moveSessionsHome } from "@srobroek/opencode-lib/session-lanes"
 import { bumpClaim, claimGeneration, forgetNotice, landingsFor, listLandings, readClaim, readNotices, recordNotice } from "@srobroek/opencode-lib/worktree-claims"
 import { holdsState, type LockOptions, lockedWorktreeRemoval, lockedWrite, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
 import { OPERATION_MARKERS, operationsInProgress, stashesOnBranch } from "@srobroek/opencode-lib/worktree-state"
@@ -27,6 +28,7 @@ import {
   failureReason,
   gateMessage,
   idleGateAction,
+  isLocationNotFound,
   type LaneAction,
   type LaneEvent,
   type LaneFacts,
@@ -63,7 +65,6 @@ const EVENT_TYPES = [
   "session.execution.interrupted",
   "session.execution.succeeded",
   "session.idle",
-  "session.created",
   "session.execution.started",
   "session.archived",
   "session.deleted",
@@ -85,10 +86,12 @@ export type FinalizeOptions = {
   gone?: boolean
   /** How the lane is retired; by default `removed` for an empty lane, `merged` for a `target` proof and `landed` otherwise. */
   retireAs?: "removed" | "merged" | "landed"
+  /** The caller acts on the worktree being gone: one that exists under the lock is kept, unchecked and unremoved. */
+  ifGone?: boolean
 }
 export type Finalized =
   | { removed: true }
-  | { removed: false; kept: "retired" | "running" | "dirty" | "unmerged" | "denied" | "pending" | "error"; reason: string }
+  | { removed: false; kept: "retired" | "running" | "dirty" | "unmerged" | "denied" | "pending" | "present" | "error"; reason: string }
 
 type SessionLike = { id: string; parentID?: string; projectID: string; location: { directory: string }; time?: Record<string, unknown> }
 
@@ -107,7 +110,6 @@ export type LifecycleDeps = {
   removeWorktree: (projectID: string, directory: string, force: boolean) => Promise<void>
   /** Debounce for the event pass; the brief asks for about 2 s. */
   debounceMs?: number
-  sweepDelayMs?: number
   worktreeRoot?: string
   /** The repository's git common directory, where claims and delivery's landing records live. */
   commonDir: (directory: string) => Promise<string | undefined>
@@ -781,18 +783,30 @@ export function createLifecycle(deps: LifecycleDeps) {
     return { ids }
   }
 
-  /** Whether the child may be running, read fresh: a pending shutdown resume, a resume, a start since `seq`, a background job, or a running or unknown session. */
-  const liveRefusal = async (lane: Lane, options: FinalizeOptions, seq: number): Promise<Finalized | undefined> => {
-    const started = startedSince([lane.child], seq)
-    if (started !== undefined) return started
-    // A resume stamps the claim (any instance) and the lane record under this lock; its execution may not have started yet.
+  /** The latest resume stamp on the lane record or its claim, written under the lane's lock when a resume is admitted, before its execution starts. */
+  const resumeStampOf = async (lane: Lane): Promise<{ at?: number } | Finalized> => {
     const common = await deps.commonDir(lane.parentDir)
     const claim = common === undefined ? undefined : readClaim(common, lane.directory)
     if (claim?.kind === "unreadable") return keptBecause("error", `the lane's claim cannot be read: ${claim.reason}`)
     const stamps = [lane.resumedAt, claim?.kind === "present" ? claim.value.resumedAt : undefined].filter((at): at is number => at !== undefined)
-    const resumed = stamps.length === 0 ? undefined : Math.max(...stamps)
+    return stamps.length === 0 ? {} : { at: Math.max(...stamps) }
+  }
+
+  /** A resume stamped at or after the removal's fence (`since`) raced it and keeps the lane. */
+  const resumeRefusal = async (lane: Lane, options: FinalizeOptions): Promise<Finalized | undefined> => {
+    const stamp = await resumeStampOf(lane)
+    if ("removed" in stamp) return stamp
     // `>=`: a resume stamped in the same millisecond as the fence cannot be ordered against it, so it keeps the lane; a later pass retries.
-    if (resumed !== undefined && options.since !== undefined && resumed >= options.since) return keptBecause("running", "the child was resumed")
+    if (stamp.at !== undefined && options.since !== undefined && stamp.at >= options.since) return keptBecause("running", "the child was resumed")
+    return undefined
+  }
+
+  /** Whether the child may be running, read fresh: a pending shutdown resume, a resume, a start since `seq`, a background job, or a running or unknown session. */
+  const liveRefusal = async (lane: Lane, options: FinalizeOptions, seq: number): Promise<Finalized | undefined> => {
+    const started = startedSince([lane.child], seq)
+    if (started !== undefined) return started
+    const resumed = await resumeRefusal(lane, options)
+    if (resumed !== undefined) return resumed
     const held = await holdReason(lane.directory, lane.parentDir)
     if (held !== undefined) return keptBecause("running", held)
     const child = await childState(ctx.session.get({ sessionID: lane.child } as never), deps.lookupMs, lane.child)
@@ -838,20 +852,80 @@ export function createLifecycle(deps: LifecycleDeps) {
   }
 
   /**
-   * Move the lane's sessions (the child and everything it spawned, plus any an earlier call could not move) to the
-   * parent's checkout, else the repository's canonical one. `pending` lists the ones that failed; `incomplete` says
-   * the listing may have missed some. Either keeps the lane from retiring.
+   * Move one session home unless it may be running: `refusal` (decided for the lane), a running session, or a pending
+   * shutdown resume or an execution start since `seq` (read synchronously, right before the move call). `pending`
+   * keeps it for a later call.
    */
-  const moveLaneSessions = async (lane: Lane, common: string | undefined, earlier: readonly string[] = []) => {
+  const moveIfIdle = async (id: string, session: SessionLike, destination: string, seq: number, refusal?: Finalized): Promise<"moved" | "pending"> => {
+    if (refusal !== undefined) {
+      console.error(`subagent-worktree: ${refusal.removed ? id : refusal.reason}; ${id} is not moved yet`)
+      return "pending"
+    }
+    if (toMillis(session.time?.archived) === undefined && isRunning({ busy: toMillis(session.time?.busy), idle: toMillis(session.time?.idle) })) {
+      console.error(`subagent-worktree: ${id} is running; it is not moved yet`)
+      return "pending"
+    }
+    const started = startedSince([id], seq)
+    if (started !== undefined) {
+      console.error(`subagent-worktree: ${started.removed ? id : started.reason}; it is not moved yet`)
+      return "pending"
+    }
+    // Nothing is awaited between the look above and the move call.
+    const [result] = await moveSessionsHome(sessionClient, [id], destination)
+    if (result?.status !== "error") return "moved"
+    console.error(`subagent-worktree: could not move ${id} to ${destination}: ${result.reason}`)
+    return "pending"
+  }
+
+  /**
+   * Move the lane's sessions (the child and everything it spawned that sits in the worktree, plus any an earlier call
+   * could not move) to the parent's checkout, else the repository's canonical one. A descendant elsewhere (in its own
+   * lane's worktree, say) stays, and so does every session that may be running (see `moveIfIdle`): running work held
+   * on the worktree keeps them all, and an admitted resume keeps the child. `pending` lists the ones that failed,
+   * could not be read or may be running; `incomplete` says the listing may have missed some. Either keeps the lane
+   * from retiring. Runs under the lane's lock, as a resume and a hold write do.
+   */
+  const moveLaneSessions = async (lane: Lane, common: string | undefined, seq: number, options: FinalizeOptions, treeWasGone: boolean, earlier: readonly string[] = []) => {
+    const held = await holdReason(lane.directory, lane.parentDir)
+    const holds = held === undefined ? undefined : keptBecause("running", held)
+    const fenced = await resumeRefusal(lane, options)
+    const stamp = await resumeStampOf(lane)
+    /**
+     * A resume stamped at or after the fence keeps the child. When the worktree was already gone (a recovery: no
+     * liveness was proven before this move), so does any admitted resume not yet settled by the child's own evidence:
+     * an archive after the stamp, or an execution that started after it and then went idle. A time in the stamp's own
+     * millisecond cannot be ordered against it, so it settles nothing.
+     */
+    const resumeOf = (session: SessionLike): Finalized | undefined => {
+      if (fenced !== undefined) return fenced
+      if (!treeWasGone) return undefined
+      if ("removed" in stamp) return stamp
+      if (stamp.at === undefined) return undefined
+      const archived = toMillis(session.time?.archived)
+      if (archived !== undefined && archived > stamp.at) return undefined
+      const busy = toMillis(session.time?.busy)
+      const idle = toMillis(session.time?.idle)
+      if (busy !== undefined && idle !== undefined && busy > stamp.at && idle > busy) return undefined
+      return keptBecause("running", "a resume of the child was admitted and has not finished")
+    }
     const found = await laneSessions(sessionClient, lane.child)
     if (!found.complete) console.error(`subagent-worktree: the session listing of ${lane.child} is incomplete; moving the ${found.ids.length} found`)
     const destination = (await deps.exists(lane.parentDir)) ? lane.parentDir : canonicalCheckout(common, lane.parentDir)
-    const results = await moveSessionsHome(sessionClient, [...new Set([...found.ids, ...earlier])], destination)
     const pending: string[] = []
-    for (const result of results) {
-      if (result.status !== "error") continue
-      pending.push(result.id)
-      console.error(`subagent-worktree: could not move ${result.id} to ${destination}: ${result.reason}`)
+    const worktree = canonical(lane.directory)
+    for (const id of new Set([...found.ids, ...earlier])) {
+      // The host keeps a moved session's old location until the move, so this reads where it sits even after the removal.
+      const session = await lookupSession(id)
+      if (session === "missing") continue
+      const directory = session === "unknown" ? undefined : session.location?.directory
+      if (session === "unknown" || typeof directory !== "string") {
+        pending.push(id)
+        console.error(`subagent-worktree: could not read ${id}; it is not moved yet`)
+        continue
+      }
+      // The child always belongs to the lane; a descendant only while it sits in the worktree.
+      if (id !== lane.child && !within(canonical(directory), worktree) && !within(directory, lane.directory)) continue
+      if ((await moveIfIdle(id, session, destination, seq, holds ?? (id === lane.child ? resumeOf(session) : undefined))) === "pending") pending.push(id)
     }
     return { pending, incomplete: !found.complete }
   }
@@ -865,6 +939,8 @@ export function createLifecycle(deps: LifecycleDeps) {
    * A lane found in `removing` (a crash, or those pending moves) is finished the same way.
    */
   const finalize = async (lane: Lane, options: FinalizeOptions = {}): Promise<Finalized> => {
+    // The trigger's place in the event order, taken before the lock is waited for: a start seen meanwhile counts.
+    const seq = options.seq ?? eventSeq
     try {
       return await withLock(lane.directory, lane.parentDir, async (): Promise<Finalized> => {
         const common = await deps.commonDir(lane.parentDir)
@@ -872,10 +948,14 @@ export function createLifecycle(deps: LifecycleDeps) {
         if (stored === undefined || canonical(stored.directory) !== canonical(lane.directory) || (stored.state !== "active" && stored.state !== "removing")) {
           return keptBecause("retired", "the lane is already retired")
         }
-        const seq = options.seq ?? eventSeq
         const earlier = stored.state === "removing" ? stored.removal : undefined
+        // One read decides both: whether `ifGone` refuses, and whether the worktree is removed. Two reads would let a
+        // worktree that comes back between them pass the first and reach the host removal through the second.
+        const looks = options.ifGone === true || (options.gone !== true && earlier?.pending === undefined)
+        const onDisk = looks && (await deps.exists(stored.directory))
+        if (options.ifGone === true && onDisk) return keptBecause("present", "the worktree exists")
         // Once the host removed the worktree, a retry only moves sessions: a directory that exists again is not this removal's.
-        const present = options.gone !== true && earlier?.pending === undefined && (await deps.exists(stored.directory))
+        const present = options.gone !== true && earlier?.pending === undefined && onDisk
         let proof: "empty" | "merged" | "landed" | undefined
         let head: string | undefined
         let deleteAt: string | undefined
@@ -924,7 +1004,7 @@ export function createLifecycle(deps: LifecycleDeps) {
         }
         await ctx.worktree.refresh({ projectID: stored.projectID } as never).catch(() => {})
         if (deleteAt !== undefined) await git.deleteBranchAt(stored.parentDir, stored.branch, deleteAt)
-        const moved = await moveLaneSessions(stored, common, earlier?.pending)
+        const moved = await moveLaneSessions(stored, common, seq, options, !present, earlier?.pending)
         // Update only the record this removal is about: a resume may have revived the child in a fresh worktree meanwhile.
         const latest = (await load(stored.child)) ?? stored
         if (latest.state !== "removing" || canonical(latest.directory) !== canonical(stored.directory)) return { removed: true }
@@ -944,11 +1024,58 @@ export function createLifecycle(deps: LifecycleDeps) {
   }
 
   /** Finish every removal a crash or a failed move left in `removing` that `match` selects. Never throws. */
-  const resumeRemovals = async (match: (lane: Lane) => boolean = () => true) => {
+  const resumeRemovals = async (match: (lane: Lane) => boolean = () => true, options: FinalizeOptions = {}) => {
+    // One sequence, the caller's or taken now, for every lane: a start seen while an earlier lane is finished counts for the rest.
+    const fenced = { ...options, seq: options.seq ?? eventSeq }
     try {
-      for (const lane of (await deps.scan()).filter((candidate) => candidate.state === "removing" && match(candidate))) await finalize(lane)
+      for (const lane of (await deps.scan()).filter((candidate) => candidate.state === "removing" && match(candidate))) await finalize(lane, fenced)
     } catch (error) {
       console.error("subagent-worktree: resuming removals failed:", error instanceof Error ? error.message : error)
+    }
+  }
+
+  /**
+   * A session's execution failed because its location is gone. When it is a lane's child or below one, and that
+   * lane's worktree is gone from disk, its sessions go home: an active or removing lane through `finalize` (which
+   * moves the child and every descendant, then retires it), a retired lane by moving just this session, and only
+   * when it is not the lane's child, which a resume moves into a fresh worktree. The error alone moves nothing. `seq`
+   * is the failure's place in the event order: a start after it, even one seen before the lock, keeps that session.
+   */
+  const rehome = async (sessionID: string, seq: number) => {
+    try {
+      const byChild = new Map((await deps.scan()).map((lane) => [lane.child, lane]))
+      const failed = await withinLookup(deps.getSession(sessionID))
+      let session = failed
+      let lane: Lane | undefined
+      // The nearest ancestor (or the session itself) that is a lane's child owns it.
+      for (let depth = 0; depth <= MAX_LANE_DEPTH && session !== undefined && lane === undefined; depth++) {
+        lane = byChild.get(session.id)
+        if (lane === undefined) session = session.parentID === undefined ? undefined : await withinLookup(deps.getSession(session.parentID))
+      }
+      if (failed === undefined || lane === undefined || (await deps.exists(lane.directory))) return
+      if (lane.state === "active" || lane.state === "removing") {
+        // Gone is read again under the lock: a worktree back by then is left as it is.
+        await finalize(lane, { ifGone: true, seq })
+        return
+      }
+      if (sessionID === lane.child) return
+      const owner = lane
+      await withLock(owner.directory, owner.parentDir, async () => {
+        // Re-read under the lock: the worktree may be back, the lane revived elsewhere, the session moved meanwhile.
+        if (await deps.exists(owner.directory)) return
+        const latest = await load(owner.child)
+        if (latest === undefined || latest.state === "active" || latest.state === "removing" || canonical(latest.directory) !== canonical(owner.directory)) return
+        const current = await lookupSession(sessionID)
+        if (current === "missing" || current === "unknown") return
+        const directory = current.location?.directory
+        if (typeof directory !== "string" || !within(canonical(directory), canonical(owner.directory))) return
+        const common = await deps.commonDir(owner.parentDir)
+        const destination = (await deps.exists(owner.parentDir)) ? owner.parentDir : canonicalCheckout(common, owner.parentDir)
+        const held = await holdReason(owner.directory, owner.parentDir)
+        await moveIfIdle(sessionID, current, destination, seq, held === undefined ? undefined : keptBecause("running", held))
+      })
+    } catch (error) {
+      console.error(`subagent-worktree: moving ${sessionID} out of a removed worktree failed:`, error instanceof Error ? error.message : error)
     }
   }
 
@@ -987,7 +1114,8 @@ export function createLifecycle(deps: LifecycleDeps) {
   const TERMINAL = new Set(["succeeded", "idle", "failed", "interrupted"])
 
   const pass = async (sessionID: string, type: string, reason: string | undefined, eventID: string | undefined, seq: number, at: number) => {
-    await resumeRemovals((lane) => lane.child === sessionID || lane.parent === sessionID)
+    // The event's own sequence: a start after it keeps what a removal of it would move, through every retry.
+    await resumeRemovals((lane) => lane.child === sessionID || lane.parent === sessionID, { seq })
     const lanes = await deps.scan()
     const own = lanes.find((lane) => lane.child === sessionID && lane.state === "active")
     const led = lanes.filter((lane) => lane.parent === sessionID && lane.child !== sessionID && lane.state === "active")
@@ -1067,10 +1195,6 @@ export function createLifecycle(deps: LifecycleDeps) {
   const handleEvent = (raw: unknown) => {
     const event = raw as { id?: unknown; type?: string; data?: { sessionID?: unknown; error?: unknown; reason?: unknown } }
     const eventID = typeof event.id === "string" ? event.id : undefined
-    if (event.type === "session.created") {
-      void maybeSweep()
-      return
-    }
     const sessionID = event.data?.sessionID
     if (typeof sessionID !== "string") return
     // A new execution, or any end other than a shutdown, settles whether the host resumes the turn.
@@ -1084,6 +1208,10 @@ export function createLifecycle(deps: LifecycleDeps) {
       case "session.deleted":
         return schedule(sessionID, "archived")
       case "session.execution.failed":
+        if (!disposed && isLocationNotFound(event.data?.error)) {
+          const seq = eventSeq
+          void serial(() => rehome(sessionID, seq))
+        }
         return schedule(sessionID, "failed", failureReason(event.data?.error), eventID)
       case "session.execution.interrupted": {
         const reason = typeof event.data?.reason === "string" ? event.data.reason : "interrupted"
@@ -1119,11 +1247,12 @@ export function createLifecycle(deps: LifecycleDeps) {
 
   const onIdle = async (input: IdleInput) => {
     if (disposed) return
+    // The gate's fence, taken before it queues and before any hold or status is read: an execution start or a resume
+    // recorded after it keeps a lane the gate removes or finishes, even one seen while the gate waited.
+    const planned: Fence = { seq: eventSeq, since: now() }
     // A hook never throws: a coordination error means a deferred outcome (logged), never a removal.
     await serial(async () => {
       const related = (lane: Lane) => lane.child === input.sessionID || lane.parent === input.sessionID
-      // Captured before any hold or status is read: a resume or an execution start after it keeps the lane the gate removes.
-      const planned: Fence = { seq: eventSeq, since: now() }
       const jobs = input.background ?? []
       // If what is running could not be recorded, running work cannot be ruled out: nothing is removed this time.
       let holdsFailed = false
@@ -1163,7 +1292,7 @@ export function createLifecycle(deps: LifecycleDeps) {
       for (const lane of (await deps.scan()).filter((candidate) => (candidate.state === "active" || candidate.state === "removing") && related(candidate))) {
         busyOf.set(lane.child, await recordHolds(lane))
       }
-      await resumeRemovals(related)
+      await resumeRemovals(related, planned)
       const lanes = (await deps.scan()).filter((lane) => lane.state === "active" && related(lane))
       if (lanes.length === 0) return
       for (const lane of lanes) await deps.ensureClaim(lane)
@@ -1217,8 +1346,6 @@ export function createLifecycle(deps: LifecycleDeps) {
   }
 
   // --- sweep --------------------------------------------------------------------------------
-
-  const sweepKey = () => `sweep/at/${projectID ?? "none"}`
 
   /** A child that is running, or whose lookup gave no answer, may be building: its directories stay. */
   const keepsBuild = (child: ChildState | undefined) => child === "running" || child === "unknown"
@@ -1435,43 +1562,6 @@ export function createLifecycle(deps: LifecycleDeps) {
     return next
   }
 
-  /**
-   * Heal sessions stranded by earlier removals (including ones other tools made): every session of this
-   * project whose directory no longer exists is moved to the canonical checkout of its repository, else
-   * the project root. Such a session cannot run, so this is safe. Each move is logged.
-   */
-  const repairSessions = async () => {
-    if (projectID === undefined) return
-    const lanes = await deps.scan()
-    const parentOf = new Map(lanes.map((lane) => [lane.child, lane.parentDir]))
-    // The project's own checkout: where this plugin runs. Its repository's canonical checkout is its fallback.
-    const projectRoot = ctx.location.directory
-    const canonicalMain = canonicalCheckout(await deps.commonDir(projectRoot), projectRoot)
-    const result = await repairStrandedSessions(ctx.session as unknown as SessionApi, {
-      projectID,
-      // In order: the checkout the lane came from, the repository's canonical checkout, the project root.
-      // The helper moves only to the first that exists, so a removed linked checkout is skipped.
-      destinationsFor: (session) => [...new Set([parentOf.get(session.id), canonicalMain, projectRoot].filter((path): path is string => path !== undefined))],
-      exists: deps.exists,
-      log: (line) => console.error(`subagent-worktree: ${line}`),
-    })
-    if ("error" in result) console.error(`subagent-worktree: session repair skipped: ${result.error}`)
-  }
-
-  /** The background sweep: off, or throttled to once per `intervalHours` per project. */
-  const maybeSweep = async () => {
-    if (disposed || options.sweep === "off" || projectID === undefined) return
-    try {
-      const last = (await ctx.storage.get(sweepKey())) as number | undefined
-      if (typeof last === "number" && now() - last < options.intervalHours * HOUR) return
-      await ctx.storage.set(sweepKey(), now())
-      await repairSessions().catch((error) => console.error("subagent-worktree: session repair failed:", error))
-      await runSweep(options.sweep)
-    } catch (error) {
-      console.error("subagent-worktree: sweep failed", error)
-    }
-  }
-
   /** Record an explicit keep: the gate stays quiet about this lane until its state token changes. */
   const keep = async (child: string, reason: string): Promise<Lane | undefined> => {
     const lane = await load(child)
@@ -1510,13 +1600,9 @@ export function createLifecycle(deps: LifecycleDeps) {
         gatesActive = false
       }
     }
-    if (options.sweep !== "off") {
-      const timer = setTimeout(() => {
-        timers.delete(timer)
-        void maybeSweep()
-      }, deps.sweepDelayMs ?? 30_000)
-      timers.add(timer)
-    }
+    // A crash or a failed move left these removals half done. In the background: setup must not wait on git and the host.
+    // Every execution start this instance sees from now on keeps the lane (`seq` 0), even one seen before the lock is taken.
+    void serial(() => resumeRemovals(() => true, { seq: 0 }))
   }
 
   const dispose = async () => {
@@ -1533,12 +1619,18 @@ export function createLifecycle(deps: LifecycleDeps) {
   }
 
   /** Wait for scheduled and running passes; for tests and shutdown. */
+  /** Wait until no pass is scheduled and the serial chain is quiet, including work queued while waiting; tests await it. */
   const settle = async () => {
-    while (pending.size > 0) await new Promise((done) => setTimeout(done, debounceMs + 1))
-    await Promise.allSettled([chain, sweepChain])
+    for (;;) {
+      while (pending.size > 0) await new Promise((done) => setTimeout(done, debounceMs + 1))
+      const current = chain
+      const sweeping = sweepChain
+      await Promise.allSettled([current, sweeping])
+      if (current === chain && sweeping === sweepChain && pending.size === 0) return
+    }
   }
 
-  return { start, dispose, handleEvent, onIdle, onLanding, keep, removeForeground, removeAfterMerge, resumeRemovals, noteResume, spawnInto, sweep: runSweep, maybeSweep, settle }
+  return { start, dispose, handleEvent, onIdle, onLanding, keep, removeForeground, removeAfterMerge, resumeRemovals, noteResume, spawnInto, sweep: runSweep, settle }
 }
 
 export type Lifecycle = ReturnType<typeof createLifecycle>
