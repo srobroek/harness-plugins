@@ -73,33 +73,44 @@ export function gitRemoteResolver(inherited: Environment): RemoteResolver {
     }
     const branch = git(cwd, ["symbolic-ref", "-q", "--short", "HEAD"], env)?.[0]
     const configured = (key: string) => git(cwd, ["config", "--get", key], env)?.[0]
+    // git's order (remote.c: remotes_pushremote_for_branch, remotes_remote_for_branch): the branch's pushRemote,
+    // `remote.pushDefault`, the branch's remote, the only configured remote when there is exactly one, else `origin`.
+    const remotes = git(cwd, ["remote"], env)
+    if (remotes === undefined) return undefined
     const name =
       (branch === undefined ? undefined : configured(`branch.${branch}.pushRemote`)) ??
       configured("remote.pushDefault") ??
       (branch === undefined ? undefined : configured(`branch.${branch}.remote`)) ??
-      "origin"
+      (remotes.length === 1 ? remotes[0] : "origin")
     return git(cwd, ["remote", "get-url", "--push", "--all", "--", name], env)
   }
 }
 
-// Long options of `git push` that take a value, and long options sharing a prefix with them
-// that git would otherwise report as ambiguous.
+// Every long option of `git push` (git-push(1)); git accepts any unique prefix, and `--no-` forms of the boolean ones.
 const VALUED_LONG = ["repo", "push-option", "receive-pack", "exec"]
-const OTHER_LONG = ["recurse-submodules"]
+const BOOLEAN_LONG = [
+  "all", "branches", "prune", "mirror", "delete", "tags", "follow-tags", "atomic", "dry-run", "porcelain", "force",
+  "force-if-includes", "thin", "progress", "verbose", "quiet", "set-upstream", "verify", "ipv4", "ipv6", "help",
+]
+const OTHER_LONG = ["force-with-lease", "signed", "recurse-submodules", "no-push-option"]
+const LONG_OPTIONS = [...VALUED_LONG, ...OTHER_LONG, ...BOOLEAN_LONG, ...BOOLEAN_LONG.map((name) => `no-${name}`)]
 
-function valuedLong(name: string): string | undefined {
-  if (VALUED_LONG.includes(name)) return name
-  if (name.length < 3) return undefined
-  const matches = [...VALUED_LONG, ...OTHER_LONG].filter((long) => long.startsWith(name))
+type LongOption = { name: string; valued: boolean }
+
+// The option a `--name` stands for: an exact match, else the only option it prefixes; `undefined` when it is
+// unknown or ambiguous (git would refuse the call or pick differently, so the destination is not judged).
+function longOption(name: string): LongOption | undefined {
+  const matches = LONG_OPTIONS.includes(name) ? [name] : LONG_OPTIONS.filter((long) => name !== "" && long.startsWith(name))
   const only = matches[0]
-  return matches.length === 1 && only !== undefined && VALUED_LONG.includes(only) ? only : undefined
+  return matches.length === 1 && only !== undefined ? { name: only, valued: VALUED_LONG.includes(only) } : undefined
 }
 
-type PushArgs = { help: boolean; remote: string | undefined }
+type PushArgs = { help: boolean; unknown: boolean; remote: string | undefined }
 
 // git takes a positional repository over `--repo`; `-o`/`--push-option` and the other valued options consume their value.
 function pushArgs(args: readonly string[]): PushArgs {
   let help = false
+  let unknown = false
   let repo: string | undefined
   const positional: string[] = []
   let options = true
@@ -119,16 +130,21 @@ function pushArgs(args: readonly string[]): PushArgs {
     }
     if (arg.startsWith("--")) {
       const [name = "", ...rest] = arg.slice(2).split("=")
-      const valued = valuedLong(name)
-      if (valued === undefined) continue
+      const option = longOption(name)
+      if (option === undefined) {
+        unknown = true
+        continue
+      }
+      if (option.name === "help") help = true
+      if (!option.valued) continue
       const value = rest.length > 0 ? rest.join("=") : args[++i]
-      if (valued === "repo") repo = value
+      if (option.name === "repo") repo = value
       continue
     }
     // A short cluster (`-vo VALUE`): `o` takes the rest of the cluster, or the next word when it ends it.
     if (/^-[A-Za-z0-9]+$/.test(arg) && arg.endsWith("o") && arg.slice(1).indexOf("o") === arg.length - 2) i++
   }
-  return { help, remote: positional[0] ?? repo }
+  return { help, unknown, remote: positional[0] ?? repo }
 }
 
 export type PushRefusal = {
@@ -144,16 +160,11 @@ export function repositorySelected(env: Environment | undefined): boolean {
   return Object.keys(env ?? {}).some((name) => SELECTOR.test(name))
 }
 
-// A word with no quote, escape, expansion, glob, brace or tilde in it: its source text is its value.
-const LITERAL = /^[A-Za-z0-9_./@:+=,%-]+$/
-
+// A word the shell passes on as written: unquoted, nothing to expand (no parameter, substitution, tilde, glob or brace).
 const literalWords = (command: Command): boolean =>
   command.words !== undefined &&
   command.words.length === command.argv.length &&
-  command.argv.every((word, i) => {
-    const at = command.words?.[i]
-    return at !== undefined && command.source.slice(at.start, at.end) === word && LITERAL.test(word)
-  })
+  command.words.every((word, i) => !word.quoted && !word.expands && command.source.slice(word.start, word.end) === command.argv[i])
 
 // The directory of a literal `git [-C DIR]... push ARGS`, with the push arguments; `undefined` for any other shape.
 function literalPush(command: Command | undefined, cwd: string): { dir: string; args: string[] } | undefined {
@@ -183,8 +194,8 @@ export function pushVia(
 ): PushRefusal | undefined {
   const push = literalPush(commands[0], cwd)
   if (push === undefined) return undefined
-  const { help, remote } = pushArgs(push.args)
-  if (help) return undefined
+  const { help, unknown, remote } = pushArgs(push.args)
+  if (help || unknown) return undefined
   let urls: string[] | undefined
   try {
     urls = resolveRemote(push.dir, remote)
