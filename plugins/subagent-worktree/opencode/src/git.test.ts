@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createGit, spawnRunner } from "./git.ts"
-import { mergeArgs } from "./lane.ts"
+import { mergeArgs, parseWorktrees } from "./lane.ts"
 
 // Real git repositories: 1.6 s at load average 49; 30 s leaves headroom for a loaded machine (AGENTS.md, Testing).
 setDefaultTimeout(30_000)
@@ -37,6 +37,18 @@ describe("createGit().isUnborn on real repositories", () => {
   test("is false outside a repository", async () => {
     const plain = await mkdtemp(join(root, "plain-"))
     expect(await git.isUnborn(plain)).toBe(false)
+  })
+
+  test("worktrees lists a checkout whose path holds a newline as one entry", async () => {
+    const repo = await mkdtemp(join(root, "listing-"))
+    await sh(repo, "init", "--quiet", "--initial-branch=main")
+    await sh(repo, "commit", "--quiet", "--allow-empty", "-m", "init")
+    const odd = join(root, "odd\nname")
+    await sh(repo, "worktree", "add", "--quiet", "-b", "lane", odd)
+    // A line-based listing would split the newline in the path into a second record that lacks its branch.
+    const entries = parseWorktrees((await git.worktrees(repo)) ?? "")
+    expect(entries?.map((entry) => entry.branch).sort()).toEqual(["lane", "main"])
+    expect(entries?.some((entry) => entry.directory.endsWith("odd\nname"))).toBe(true)
   })
 
   test("trackedDirty includes staged and unstaged changes but excludes untracked files", async () => {

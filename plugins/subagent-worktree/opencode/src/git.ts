@@ -146,8 +146,8 @@ export function createGit(run: Runner) {
       (await run(["git", "-C", directory, "update-ref", "-d", `refs/heads/${name}`, oid])).code === 0,
     /** Drop registry entries whose directory is gone. */
     pruneWorktrees: async (directory: string) => (await git(directory, "worktree", "prune")) !== undefined,
-    /** `git worktree list --porcelain`. */
-    worktrees: (directory: string) => git(directory, "worktree", "list", "--porcelain"),
+    /** `git worktree list --porcelain -z`: NUL-separated, so a path holding a newline stays one field. */
+    worktrees: (directory: string) => git(directory, "worktree", "list", "--porcelain", "-z"),
   }
 }
 

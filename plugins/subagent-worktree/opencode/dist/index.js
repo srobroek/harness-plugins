@@ -1445,7 +1445,7 @@ function createGit(run) {
     gitDir: (directory) => git(directory, "rev-parse", "--absolute-git-dir"),
     deleteBranchAt: async (directory, name, oid) => (await run(["git", "-C", directory, "update-ref", "-d", `refs/heads/${name}`, oid])).code === 0,
     pruneWorktrees: async (directory) => await git(directory, "worktree", "prune") !== undefined,
-    worktrees: (directory) => git(directory, "worktree", "list", "--porcelain")
+    worktrees: (directory) => git(directory, "worktree", "list", "--porcelain", "-z")
   };
 }
 
