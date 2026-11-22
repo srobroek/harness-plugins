@@ -1,8 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
   commandFromInput,
-  commandSegments,
-  invocation,
   leadingCdCwd,
   parse,
   parsedInvocations,
@@ -102,20 +100,6 @@ test("reports an open quote, substitution or here-document as incomplete", () =>
   for (const source of ["echo 'open", 'echo "open', "echo $(bd list", "cat <<EOF\nbody", "cat <<EOF"]) {
     expect(scanShell(source).complete).toBe(false)
   }
-})
-
-test("splits segments at operators outside quotes", () => {
-  expect(commandSegments("a && b 'c;d' | e")).toEqual(["a ", "&&", " b 'c;d' ", "|", " e"])
-})
-
-test("finds an invocation behind env and wrapper prefixes, never behind a quoted word", () => {
-  expect(invocation("env FOO=1 -u BAR sudo git push", ["git", "push"])?.map((token) => token.value)).toEqual([
-    "git",
-    "push",
-  ])
-  expect(invocation("/usr/bin/git push origin", ["git", "push"])?.length).toBe(3)
-  expect(invocation("'git' push", ["git", "push"])).toBeNull()
-  expect(invocation("echo git push", ["git", "push"])).toBeNull()
 })
 
 test("resolves a leading literal cd against cwd", () => {

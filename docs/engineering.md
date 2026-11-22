@@ -41,6 +41,8 @@ examples/           example projects included in typecheck
 
 A plugin has `package.json`, `agents.src/` or `common/` (skills, agents, formulas), and one directory per harness: `opencode/` with `src/`, a committed `dist/` and one shim per entry declared in `agent-plugins.entries` (`index.js` for a server entry, `tui.js` for a TUI entry), and `claude/` where the plugin ships to Claude Code. AGENTS.md Generated files says which of these are sources.
 
+The `beads` PR bead gate does not port upstream's shell decoding (ANSI-C words, `env -S`, wrapper directories). `plugins/beads/opencode/src/pr-create-form.ts` accepts only literal `gh pr create`/`gh pr new` forms: a single command, `--body` or a relative regular `--body-file`, and a `Bead:`, `Closes-Bead:` or `Bead-Id:` line. Any other form that may reach `gh pr create` is refused in a gated repository, with the accepted form shown.
+
 ## Dependency direction
 
 Intended rules:
