@@ -450,6 +450,26 @@ describe("subagent claim release", () => {
     await t.cleanup()
   })
 
+  test("a claim under a command-local BD_ACTOR is released as that actor, and its lease and heartbeat end", async () => {
+    const parent = sid("parent")
+    const child = sid("child")
+    const bd = ledger({ "proj-1": { status: "in_progress", assignee: "me/chosen" } })
+    const t = await start([{ id: parent }, { id: child, parentID: parent }], { run: bd.run })
+    const call = { tool: "subagent", sessionID: parent, agent: "build", messageID: "m", id: "call_bgc", input: { prompt: "x", background: true } }
+    await t.fake.fire.tool("execute.before", call)
+    await t.fake.fire.tool("execute.after", { ...call, status: "completed" as const, result: { content: "started", metadata: { sessionID: child, status: "running" } } })
+    await t.shell(child, "BD_ACTOR=me/chosen bd update proj-1 --claim", claimJson({ "proj-1": "me/chosen" }))
+    const held = Object.values((await t.fake.context.storage.get(`leases/${child}`)) as Record<string, unknown>)
+    expect(held).toEqual([expect.objectContaining({ id: "proj-1", actor: "me/chosen" })])
+    expect(t.clock.callbacks.size).toBe(1)
+    await t.emit("session.execution.succeeded", child)
+    expect(bd.calls.filter((args) => args[0] === "unclaim")).toEqual([["unclaim", "proj-1", "--reason", expect.any(String), "--if-assignee", "me/chosen"]])
+    expect(bd.rows["proj-1"]).toEqual({ status: "open" })
+    expect(await t.fake.context.storage.get(`leases/${child}`)).toEqual({})
+    expect(t.clock.callbacks.size).toBe(0)
+    await t.cleanup()
+  })
+
   describe("a background subagent that goes idle with its own background work still running", () => {
     const working = (child: string) => ({ sessionID: child, background: [{ kind: "shell", sessionID: child, shellID: "sh_1", command: "sleep 240" }] })
     const claimedChild = async () => {
