@@ -1166,6 +1166,43 @@ describe("execute.after", () => {
       expect(lane(setup.fake)?.state).toBe("active")
     })
 
+    test("a new execution that starts while the removal waits for the lane lock keeps the lane", async () => {
+      // The disk lock calls `sleep` each time it has to wait for another holder: that is the signal that the removal is queued.
+      let queued!: () => void
+      const waiting = new Promise<void>((done) => (queued = done))
+      let armed = false
+      const setup = await start({
+        lock: {
+          sleep: async (ms: number) => {
+            if (armed) queued()
+            await new Promise((done) => setTimeout(done, Math.min(ms, 5)))
+          },
+        },
+      })
+      await spawn(setup)
+      const directory = lane(setup.fake)?.directory ?? ""
+      // The child is archived when the foreground call returns, so the removal goes ahead; another holder has the lane lock, so it queues.
+      setTime(setup, { busy: 1000, idle: 2000, archived: 3000 })
+      let free!: () => void
+      let taken!: () => void
+      const acquired = new Promise<void>((done) => (taken = done))
+      const held = withDiskLock(setup.common, directory, { sessionID: "ses_other", waitMs: 5_000 }, async () => {
+        taken()
+        await new Promise<void>((done) => (free = done))
+      })
+      await acquired
+      armed = true
+      const finishing = setup.fake.fire.tool("execute.after", completed("ses_fake1"))
+      await waiting
+      // A resume unarchives the child and starts a new execution before the removal gets the lock.
+      setTime(setup, { busy: 3000, idle: 2000 })
+      free()
+      await held
+      await finishing
+      expect(removed(setup)).toBe(false)
+      expect(lane(setup.fake)?.state).toBe("active")
+    })
+
     test("a session lookup that fails keeps the lane", async () => {
       const setup = await start()
       await spawn(setup)
