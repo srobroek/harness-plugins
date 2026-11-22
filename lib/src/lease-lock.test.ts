@@ -168,22 +168,27 @@ describe("withLease", () => {
     const lock = join(dir, "a.lock")
     const renewed = gate()
     const contended = gate()
+    // Lease time is this injected clock, never the wall clock, so a starved runner cannot lapse the lease.
+    let clock = Date.now()
+    const now = () => clock
+    const leaseMs = 80
     let holderToken = ""
-    const holder = withLease(lock, { ...base, leaseMs: 80, renewMs: 15, waitMs: 1000 }, async () => {
+    const holder = withLease(lock, { ...base, now, leaseMs, renewMs: 15, waitMs: 1000 }, async () => {
       holderToken = tokenOf(lock)
       const firstExpiry = recordExpires(lock)
-      // Wait for state, not a delay: the heartbeat has written the lease past its first expiry, and that
-      // expiry has passed. A holder without a working heartbeat never reaches this; the cap fails the test.
-      const capped = Date.now() + 2000
-      while (!(Date.now() > firstExpiry && recordExpires(lock) > firstExpiry) && Date.now() < capped) {
+      // Step the clock past the first expiry. Only a renewal can then write an expiry beyond it, so
+      // waiting for that state is waiting for the heartbeat; the cap only bounds a heartbeat that never runs.
+      clock = firstExpiry + 1
+      const capped = Date.now() + 30_000
+      while (recordExpires(lock) <= firstExpiry && Date.now() < capped) {
         await new Promise((done) => setTimeout(done, 5))
       }
       renewed.open()
       await contended.opened
     })
     await renewed.opened
-    // The original lease is over, but renewed: a contender with its own short patience must fail busy.
-    const contender = await withLease(lock, { ...base, leaseMs: 80, waitMs: 200 }, () => "stolen")
+    // The original lease is over, but renewed: a contender on the same clock must fail busy.
+    const contender = await withLease(lock, { ...base, now, leaseMs, waitMs: 200 }, () => "stolen")
     const tokenAfter = tokenOf(lock)
     contended.open()
     await holder
@@ -200,13 +205,17 @@ describe("withLease", () => {
     const stalledRelease = gate()
     const successorIn = gate()
     const successorRelease = gate()
-    const stalled = withLease(lock, { ...base, leaseMs: 40, renewMs: 60_000, waitMs: 1000 }, async () => {
+    // Lease time is an injected clock: the stalled owner's lease lapses when the test says so, not after 40 wall ms.
+    let clock = Date.now()
+    const now = () => clock
+    const stalled = withLease(lock, { ...base, now, leaseMs: 40, renewMs: 60_000, waitMs: 1000 }, async () => {
       // No renewals: the lease lapses while this owner is stalled, until the successor holds the lock.
       stalledIn.open()
       await stalledRelease.opened
     })
     await stalledIn.opened
-    const successor = withLease(lock, { ...base, leaseMs: 60_000, waitMs: 1000 }, async () => {
+    clock += 41
+    const successor = withLease(lock, { ...base, now, leaseMs: 60_000, waitMs: 1000 }, async () => {
       successorToken = tokenOf(lock)
       successorIn.open()
       await successorRelease.opened
