@@ -152,6 +152,15 @@ function ledger(rows: Record<string, Row> = {}, fallbackHolder?: string) {
       const held = Object.entries(rows).filter(([, row]) => row.assignee === assignee && row.status === status && (row.store === undefined || row.store === env.BEADS_DIR))
       return { output: JSON.stringify({ data: held.map(([rowId, row]) => ({ id: rowId, issue_type: "task", ...row })), schema_version: 1 }) }
     }
+    if (verb === "update" && args.includes("--status")) {
+      // A guarded status change applies only while the row still matches its --if-* conditions, as bd's does.
+      const flag = (name: string) => args[args.indexOf(name) + 1]
+      const row = rows[id]
+      if (row === undefined || (args.includes("--if-status") && row.status !== flag("--if-status")) || (args.includes("--if-assignee") && (row.assignee ?? "") !== flag("--if-assignee")))
+        return { failure: "bd exited with code 1: guard mismatch" }
+      rows[id] = { ...row, status: flag("--status") as string }
+      return { output: "null" }
+    }
     if (verb === "heartbeat") return { output: JSON.stringify({ data: { id }, schema_version: 1 }) }
     return { output: "null" }
   }
@@ -451,9 +460,10 @@ describe("subagent claim release", () => {
     await t.emit("session.execution.succeeded", child)
     const released = bd.calls.filter((args) => args[0] !== "gate")
     expect(released.filter((args) => args[0] === "unclaim")).toHaveLength(1)
-    // The guarded check reads the holder before the release, and the release restores the blocked status.
+    // The guarded check reads the holder before the release; the final ledger state, which only holds when the
+    // restore runs after the unclaim, is a parked bead nobody holds.
     expect(released.findIndex((args) => args[0] === "show")).toBeLessThan(released.findIndex((args) => args[0] === "unclaim"))
-    expect(released.find((args) => args[0] === "update")?.slice(0, 4)).toEqual(["update", "proj-9", "--status", "blocked"])
+    expect(bd.rows["proj-9"]).toEqual({ status: "blocked" })
     const [told] = t.synthetics()
     expect(told).toMatchObject({ sessionID: parent, resume: false, metadata: { source: BEADS_SOURCE } })
     expect(told?.text).toContain(`finished background subagent session ${child} were released`)
