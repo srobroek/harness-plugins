@@ -817,7 +817,7 @@ export function createPendingCleanup(deps: PendingDeps) {
   const gc = async (receipt?: LandingReceipt) => {
     const repos = [own, ...(await clones())]
     const named = receipt === undefined ? null : await repositoryOf(receipt)
-    if (named !== null && named.foreign && !repos.some((repo) => repo.cwd === named.cwd)) repos.push(named)
+    if (named?.foreign === true && !repos.some((repo) => repo.cwd === named.cwd)) repos.push(named)
     for (const repo of repos) await gcIn(repo)
   }
 

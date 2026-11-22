@@ -19,11 +19,23 @@ let cleanupResult: CleanupResult
 let cleanupCalls: Array<{ params: unknown; deps: CleanupDeps }> = []
 let repo = ""
 let common = ""
+/** A second repository, for a landing of another repository than the session's. */
+let clone = ""
+let sessionRepo = { key: "", canonicalRoot: "" }
+let cloneRepo = { key: "", canonicalRoot: "" }
+/** The repository the landing receipt names. */
+let landed = sessionRepo
 
 beforeAll(async () => {
   repo = mkdtempSync(join(tmpdir(), "land-repo-"))
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo })
-  common = (await repositoryContext(repo))?.commonDir as string
+  const own = await repositoryContext(repo)
+  common = own?.commonDir as string
+  sessionRepo = { key: own?.key as string, canonicalRoot: own?.ledger.root as string }
+  clone = mkdtempSync(join(tmpdir(), "land-clone-"))
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: clone })
+  const other = await repositoryContext(clone)
+  cloneRepo = { key: other?.key as string, canonicalRoot: other?.ledger.root as string }
   mock.module("./cleanup.ts", () => ({
     ...originalCleanup,
     cleanupDelivery: async (params: unknown, _cwd: string, deps: CleanupDeps) => {
@@ -39,7 +51,7 @@ beforeAll(async () => {
     landPullRequest: async () => ({
       ok: true,
       receiptPath: "/r/receipt.json",
-      receipt: { receiptId: "r7", pr: { number: 7, mergeCommitOid: "abc", headRefOid: "h".repeat(40) }, worktree: { path: "/w/a" }, repo: { nameWithOwner: "o/r", canonicalRoot: "/clone" }, beads: { ledgerActive } },
+      receipt: { receiptId: "r7", pr: { number: 7, mergeCommitOid: "abc", headRefOid: "h".repeat(40) }, worktree: { path: "/w/a" }, repo: { nameWithOwner: "o/r", ...landed }, beads: { ledgerActive } },
       text: "landed\nnext: run delivery_cleanup to remove the worktree and the local branch.",
       next: ["delivery_cleanup"],
     }),
@@ -47,14 +59,16 @@ beforeAll(async () => {
 })
 afterAll(() => {
   rmSync(repo, { recursive: true, force: true })
+  rmSync(clone, { recursive: true, force: true })
   mock.module("./cleanup.ts", () => originalCleanup)
   mock.module("./land.ts", () => originalLand)
 })
 beforeEach(() => {
   removeLanding(common, "r7")
   ledgerActive = false
+  landed = sessionRepo
   cleanupCalls = []
-  cleanupResult = { ok: true, receipt: { worktree: { path: "/w/a", localRefDeleted: true }, branch: { name: "b" } }, path: "/r", remoteBranchAbsence: "absent", alreadyCleaned: false, localRefDeleted: true, report: { removed: ["worktree /w/a"], skipped: [] } } as never
+  cleanupResult = { ok: true, receipt: { worktree: { path: "/w/a", localRefDeleted: true }, branch: { name: "b" }, repo: { nameWithOwner: "o/r", ...sessionRepo } }, path: "/r", remoteBranchAbsence: "absent", alreadyCleaned: false, localRefDeleted: true, report: { removed: ["worktree /w/a"], skipped: [] } } as never
 })
 
 type Result = { output: { ok: boolean; next: string[]; cleanup?: Record<string, unknown> }; content: string }
@@ -124,8 +138,9 @@ test("an active ledger skips inline cleanup so the closeout commands run first",
 })
 
 test("a landing in another repository cleans up inline in that clone, coordinated there", async () => {
-  const { result } = await land({}, { repo: "o/r", repoPath: "/clone" })
-  expect(cleanupCalls.map((c) => c.params)).toEqual([{ receipt: "/r/receipt.json", repo: "o/r", repoPath: "/clone" }])
+  landed = cloneRepo
+  const { result } = await land({}, { repo: "o/r", repoPath: clone })
+  expect(cleanupCalls.map((c) => c.params)).toEqual([{ receipt: "/r/receipt.json", repo: "o/r", repoPath: cloneRepo.canonicalRoot }])
   expect(typeof cleanupCalls[0]?.deps.coordinate).toBe("function")
   expect(result.output.cleanup).toMatchObject({ ok: true })
 })
@@ -160,7 +175,7 @@ test("a claim on another worktree does not stop cleanup", async () => {
 })
 
 test("a lane claimed between the decision and the removal is refused at the last check", async () => {
-  cleanupResult = { ok: true, receipt: { worktree: { path: "/w/a", localRefDeleted: true }, branch: { name: "b" } }, path: "/r", remoteBranchAbsence: "absent", alreadyCleaned: false, localRefDeleted: true, report: { removed: ["worktree /w/a"], skipped: [] } } as never
+  cleanupResult = { ok: true, receipt: { worktree: { path: "/w/a", localRefDeleted: true }, branch: { name: "b" }, repo: { nameWithOwner: "o/r", ...sessionRepo } }, path: "/r", remoteBranchAbsence: "absent", alreadyCleaned: false, localRefDeleted: true, report: { removed: ["worktree /w/a"], skipped: [] } } as never
   const claimBeforeAuthorize = (assert: { action: string }) => {
     if (assert.action === "delivery_cleanup") claimLane()
   }
