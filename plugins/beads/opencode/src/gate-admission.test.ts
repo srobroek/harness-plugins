@@ -5,6 +5,7 @@ import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
 import {
   admitBdMutation,
   type BdRun,
+  bdStoreDir,
   changesDirectoryDynamically,
   envelopeData,
   formatGateAdvisory,
@@ -223,6 +224,40 @@ describe("lifecycleBdEnvironment", () => {
     const env = lifecycleBdEnvironment("/nowhere", { BEADS_DOLT_SHARED_SERVER: "1", PATH: "/bin" })
     expect(env).toMatchObject({ BEADS_DOLT_SHARED_SERVER: "", BD_NO_PAGER: "1", BD_NON_INTERACTIVE: "1", BD_DOLT_AUTO_START: "false", NO_COLOR: "1" })
     expect(lifecycleBdEnvironment("/nowhere", { BEADS_DIR: "/explicit" }).BEADS_DIR).toBe("/explicit")
+  })
+})
+
+describe("startup gate reads with an inherited BEADS_DB", () => {
+  // A checkout whose own `.beads` the session pin would pick, and a second store BEADS_DB names.
+  const fixture = () => {
+    const root = realpathSync(mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "beads-startup-db-")))
+    Bun.spawnSync(["git", "init", "-q", root])
+    mkdirSync(join(root, ".beads"), { recursive: true })
+    mkdirSync(join(root, "other", ".beads"), { recursive: true })
+    return { root, own: join(root, ".beads"), other: join(root, "other", ".beads") }
+  }
+
+  test("a read keeps the BEADS_DB ledger instead of installing the session pin", () => {
+    const { root, own, other } = fixture()
+    try {
+      expect(lifecycleBdEnvironment(root, {}).BEADS_DIR).toBe(own)
+      const env = lifecycleBdEnvironment(root, { BEADS_DB: join(other, "beads.db") })
+      expect(env.BEADS_DIR).toBeUndefined()
+      expect(env.BEADS_DB).toBe(join(other, "beads.db"))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("the store a read opens is the BEADS_DB ledger, not the checkout's own", () => {
+    const { root, own, other } = fixture()
+    try {
+      expect(bdStoreDir(root, {})).toBe(own)
+      expect(bdStoreDir(root, { BEADS_DB: join(other, "beads.db") })).toBe(other)
+      expect(bdStoreDir(root, { BEADS_DIR: own, BEADS_DB: join(other, "beads.db") })).toBe(own)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 

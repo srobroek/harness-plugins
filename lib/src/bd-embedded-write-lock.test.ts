@@ -1255,3 +1255,52 @@ describe("who chose the ledger a write lands in", () => {
     },
   )
 })
+
+describe("a write whose store an inherited BEADS_DB selects (bd 1.3.1: BEADS_DIR unset)", () => {
+  let root = ""
+  let store = ""
+  let other = ""
+  beforeAll(() => {
+    root = realpathSync(mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "beads-lock-db-")))
+    store = join(root, ".beads")
+    other = join(root, "other", ".beads")
+    for (const dir of [store, other, join(root, "sub")]) {
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, "metadata.json"), "{}")
+    }
+  })
+  afterAll(() => rmSync(root, { recursive: true, force: true }))
+
+  const targets = (command: string, beadsDb: string) => embeddedWriteTargets(command, root, scrubbedBeadsEnv({ BEADS_DB: beadsDb }))
+
+  test("locks the store the inherited BEADS_DB names", () => {
+    expect(targets("bd close bd-1", join(store, "beads.db"))).toEqual({ kind: "stores", stores: [store] })
+  })
+
+  // The runner injects BEADS_DIR for the store the planner chose, so a BEADS_DB the shell changed
+  // would send the write to the wrong store: refuse any change the planner does not follow.
+  test.each([
+    ["an inline assignment", () => `BEADS_DB=${join(other, "beads.db")} bd close bd-1`],
+    ["an export", () => `export BEADS_DB=${join(other, "beads.db")}; bd close bd-1`],
+    ["an unset", () => "unset BEADS_DB; bd close bd-1"],
+  ])("refuses %s of BEADS_DB before the write", (_name, command) => {
+    const result = targets(command(), join(store, "beads.db"))
+    expect(result.kind).toBe("refused")
+    expect(JSON.stringify(result)).toContain("BEADS_DB")
+  })
+
+  test("a BEADS_DB change is harmless once BEADS_DIR names the store", () => {
+    const result = embeddedWriteTargets(`BEADS_DB=${join(other, "beads.db")} bd close bd-1`, root, scrubbedBeadsEnv({ BEADS_DIR: store }))
+    expect(result).toEqual({ kind: "stores", stores: [store] })
+  })
+
+  test("resolves a relative BEADS_DB against a working directory that is certain", () => {
+    expect(targets("bd close bd-1", ".beads/beads.db")).toEqual({ kind: "stores", stores: [store] })
+  })
+
+  test("refuses a relative BEADS_DB after a cd that may not have run", () => {
+    const result = targets("cd sub || true; bd close bd-1", ".beads/beads.db")
+    expect(result.kind).toBe("refused")
+    expect(JSON.stringify(result)).toContain("BEADS_DB")
+  })
+})

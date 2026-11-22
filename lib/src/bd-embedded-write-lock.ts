@@ -581,6 +581,9 @@ function mentionsBd(source: string): boolean {
 /** A `NAME=` or `NAME+=` assignment, matched on the word's source so the name is unquoted. */
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*\+?=/
 
+/** An assignment to, or a bare name of, `BEADS_DB`: what an `export`, `unset` or assignment may change. */
+const BEADS_DB_WORD = /^BEADS_DB(?:\+?=|$)/
+
 /** A `BEADS_DIR` assignment's value, matched on the word after quote removal. */
 const BEADS_DIR_ASSIGNMENT = /^BEADS_DIR(\+?)=/
 
@@ -776,7 +779,12 @@ type BeadsDirState =
   | { kind: "known"; value: string | undefined; assigned: boolean }
   | { kind: "unknown"; cause: string }
 /** What the shell has done to the working directory and `BEADS_DIR` by this point. */
-type ShellState = { cwd: CwdState; beadsDir: BeadsDirState }
+type ShellState = {
+  cwd: CwdState
+  beadsDir: BeadsDirState
+  /** Set once the command changes `BEADS_DB` in a way the planner does not follow; the source text that did. */
+  beadsDbCause?: string
+}
 
 type OtherShape = { kind: "other"; assignments: ShellWord[]; head: ShellWord | undefined; args: ShellWord[] }
 type CommandShape =
@@ -1179,12 +1187,18 @@ function applyEffects(
   const uncertain = context.scoped || context.conditional
   const { head, args } = shape
   if (head === undefined) {
+    const changed = shape.assignments.find((word) => BEADS_DB_WORD.test(word.value))
+    if (changed !== undefined) state.beadsDbCause = source.slice(changed.start, changed.end)
     // A bare assignment updates an exported variable in place, so it is treated as
     // exported: if it was not, the rewrite exports the value it resolved anyway.
     for (const word of shape.assignments) assignBeadsDir(state, word, source, uncertain)
     return
   }
   const name = head.expands ? "" : commandName(head)
+  if (name === "export" || name === "unset" || ASSIGNING[name] === true) {
+    const changed = args.find((word) => BEADS_DB_WORD.test(word.value))
+    if (changed !== undefined) state.beadsDbCause = source.slice(changed.start, changed.end)
+  }
   if (name === "cd") {
     const operands = args.filter((word) => word.value !== "--" && !/^-[LPe@]+$/.test(word.value))
     const target = operands[0]
@@ -1215,7 +1229,10 @@ function applyEffects(
         fix: "Use a literal `cd DIR &&` prefix or the tool's cwd field, or run the write as its own tool call.",
       },
     }
-    if (name !== "pushd" && name !== "popd") state.beadsDir = { kind: "unknown", cause: name }
+    if (name !== "pushd" && name !== "popd") {
+      state.beadsDir = { kind: "unknown", cause: name }
+      state.beadsDbCause = name
+    }
     return
   }
   if (name === "export") {
@@ -1305,6 +1322,21 @@ function resolveWrite(
   }
   const directory = globalValue(invocation.globals, ["-C", "--directory"])
   const db = globalValue(invocation.globals, ["--db"])
+  // bd reads `BEADS_DB` only when `--db`, `-C` and `BEADS_DIR` leave the store open. The runner then
+  // injects `BEADS_DIR` for the store planned here, so a `BEADS_DB` the shell changed would
+  // send the write to a different store than the one locked: refuse rather than guess.
+  const dbEffective =
+    directory === undefined && db === undefined && (beadsDir.kind === "known" ? (beadsDir.value ?? "") === "" : false)
+  const ownDbChange = assignments.find((word) => BEADS_DB_WORD.test(word.value))
+  const dbCause = ownDbChange === undefined ? state.beadsDbCause : source.slice(ownDbChange.start, ownDbChange.end)
+  if (dbEffective && dbCause !== undefined) {
+    return {
+      problem: {
+        part: `${write} runs with \`BEADS_DB\` changed by \`${dbCause}\`, which the lock does not follow`,
+        fix: "Set `BEADS_DIR` to a literal path instead, or leave `BEADS_DB` as the session inherited it.",
+      },
+    }
+  }
   if (directory === undefined && db === undefined && beadsDir.kind === "unknown") {
     return {
       problem: {
@@ -1314,14 +1346,17 @@ function resolveWrite(
     }
   }
   if (state.cwd.kind === "dynamic") return { problem: state.cwd.problem }
+  const inheritedDb = env.BEADS_DB ?? ""
+  const relativeDb = dbEffective && inheritedDb !== "" && !isAbsolute(inheritedDb)
   const relative =
     db !== undefined
       ? !isAbsolute(db) && (directory === undefined || !isAbsolute(directory))
-      : directory !== undefined && !isAbsolute(directory)
+      : directory !== undefined ? !isAbsolute(directory) : relativeDb
   if (relative && !state.cwd.certain) {
+    const flag = db !== undefined ? "--db" : directory !== undefined ? "-C" : "BEADS_DB"
     return {
       problem: {
-        part: `${write} resolves a relative \`${db === undefined ? "-C" : "--db"}\` path after a \`cd\` the lock cannot confirm ran`,
+        part: `${write} resolves a relative \`${flag}\` path after a \`cd\` the lock cannot confirm ran`,
         fix: "Give it an absolute path, or start the command with `cd DIR &&` joined to the write by `&&` alone.",
       },
     }

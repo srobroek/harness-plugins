@@ -2078,6 +2078,7 @@ function mentionsBd(source) {
   return BD_WORD.test(source) || BD_WORD.test(source.replace(/["'\\]/g, ""));
 }
 var ASSIGNMENT3 = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
+var BEADS_DB_WORD = /^BEADS_DB(?:\+?=|$)/;
 var BEADS_DIR_ASSIGNMENT = /^BEADS_DIR(\+?)=/;
 var LIST_PREFIXES = new Set(["then", "else", "do"]);
 var COMPOUND_OPENERS = { if: true, case: true, for: true, select: true, while: true, until: true };
@@ -2479,11 +2480,19 @@ function applyEffects(shape, state, source, context) {
   const uncertain = context.scoped || context.conditional;
   const { head, args } = shape;
   if (head === undefined) {
+    const changed = shape.assignments.find((word) => BEADS_DB_WORD.test(word.value));
+    if (changed !== undefined)
+      state.beadsDbCause = source.slice(changed.start, changed.end);
     for (const word of shape.assignments)
       assignBeadsDir(state, word, source, uncertain);
     return;
   }
   const name = head.expands ? "" : commandName(head);
+  if (name === "export" || name === "unset" || ASSIGNING[name] === true) {
+    const changed = args.find((word) => BEADS_DB_WORD.test(word.value));
+    if (changed !== undefined)
+      state.beadsDbCause = source.slice(changed.start, changed.end);
+  }
   if (name === "cd") {
     const operands = args.filter((word) => word.value !== "--" && !/^-[LPe@]+$/.test(word.value));
     const target = operands[0];
@@ -2509,8 +2518,10 @@ function applyEffects(shape, state, source, context) {
         fix: "Use a literal `cd DIR &&` prefix or the tool's cwd field, or run the write as its own tool call."
       }
     };
-    if (name !== "pushd" && name !== "popd")
+    if (name !== "pushd" && name !== "popd") {
       state.beadsDir = { kind: "unknown", cause: name };
+      state.beadsDbCause = name;
+    }
     return;
   }
   if (name === "export") {
@@ -2581,6 +2592,17 @@ function resolveWrite(invocation, assignments, state, env, source) {
   }
   const directory = globalValue(invocation.globals, ["-C", "--directory"]);
   const db = globalValue(invocation.globals, ["--db"]);
+  const dbEffective = directory === undefined && db === undefined && (beadsDir.kind === "known" ? (beadsDir.value ?? "") === "" : false);
+  const ownDbChange = assignments.find((word) => BEADS_DB_WORD.test(word.value));
+  const dbCause = ownDbChange === undefined ? state.beadsDbCause : source.slice(ownDbChange.start, ownDbChange.end);
+  if (dbEffective && dbCause !== undefined) {
+    return {
+      problem: {
+        part: `${write} runs with \`BEADS_DB\` changed by \`${dbCause}\`, which the lock does not follow`,
+        fix: "Set `BEADS_DIR` to a literal path instead, or leave `BEADS_DB` as the session inherited it."
+      }
+    };
+  }
   if (directory === undefined && db === undefined && beadsDir.kind === "unknown") {
     return {
       problem: {
@@ -2591,11 +2613,14 @@ function resolveWrite(invocation, assignments, state, env, source) {
   }
   if (state.cwd.kind === "dynamic")
     return { problem: state.cwd.problem };
-  const relative = db !== undefined ? !isAbsolute3(db) && (directory === undefined || !isAbsolute3(directory)) : directory !== undefined && !isAbsolute3(directory);
+  const inheritedDb = env.BEADS_DB ?? "";
+  const relativeDb = dbEffective && inheritedDb !== "" && !isAbsolute3(inheritedDb);
+  const relative = db !== undefined ? !isAbsolute3(db) && (directory === undefined || !isAbsolute3(directory)) : directory !== undefined ? !isAbsolute3(directory) : relativeDb;
   if (relative && !state.cwd.certain) {
+    const flag = db !== undefined ? "--db" : directory !== undefined ? "-C" : "BEADS_DB";
     return {
       problem: {
-        part: `${write} resolves a relative \`${db === undefined ? "-C" : "--db"}\` path after a \`cd\` the lock cannot confirm ran`,
+        part: `${write} resolves a relative \`${flag}\` path after a \`cd\` the lock cannot confirm ran`,
         fix: "Give it an absolute path, or start the command with `cd DIR &&` joined to the write by `&&` alone."
       }
     };
