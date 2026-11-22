@@ -1,8 +1,12 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
 import { processAlive } from "@srobroek/opencode-lib/subprocess"
+
+// Each case spawns the hook executable. The slow gate check on an embedded store measured 4.37-4.59 s over 3 runs
+// (Bun default 5 s) and the next slowest case 2.2 s; under load that margin disappears, so the file default is 30 s.
+setDefaultTimeout(30_000)
 
 /** The runner's store flags, as the gate writes them: the real path held, the path as named. */
 const runnerStore = (store: string): string[] => ["--beads-store", realpathSync(store), "--beads-store-selected", store]
