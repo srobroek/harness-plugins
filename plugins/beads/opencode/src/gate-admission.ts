@@ -40,10 +40,9 @@ export const EMBEDDED_PIN_ENV: Readonly<Record<string, string>> = { BEADS_DOLT_S
 /** The environment for a plugin-internal `bd` read from `cwd`. */
 export function lifecycleBdEnvironment(cwd: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...base }
-  // bd opens an inherited BEADS_DB when BEADS_DIR is unset; a pin would take the ledger away from it.
-  if ((env.BEADS_DIR === undefined || env.BEADS_DIR === "") && (env.BEADS_DB === undefined || env.BEADS_DB === "")) {
+  if (env.BEADS_DIR === undefined || env.BEADS_DIR === "") {
     delete env.BEADS_DIR
-    const resolved = sessionPinFor(cwd)
+    const resolved = ambientStore(cwd, env)
     if (resolved !== undefined) env.BEADS_DIR = resolved
   }
   return boundedBdEnvironment(env)
@@ -60,16 +59,20 @@ function boundedBdEnvironment(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   }
 }
 
-/** The store directory bd would open from `cwd` under `env`. */
+/** The directory's own `.beads`, when it exists. */
+function ownBeads(cwd: string): string | undefined {
+  const dir = join(cwd, ".beads")
+  try {
+    return statSync(dir).isDirectory() ? dir : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** The store directory bd would open from `cwd` under `env`: `BEADS_DIR`, then `./.beads`, then `BEADS_DB`. */
 export function bdStoreDir(cwd: string, env: NodeJS.ProcessEnv): string | undefined {
-  const selected = env.BEADS_DIR
-  const dir = selected
-    ? isAbsolute(selected)
-      ? selected
-      : resolve(cwd, selected)
-    : env.BEADS_DB
-      ? storeFromBeadsDb(env.BEADS_DB, cwd)
-      : join(cwd, ".beads")
+  const dir = ambientStore(cwd, env, ownBeads)
+  if (dir === undefined) return undefined
   try {
     return statSync(dir).isDirectory() ? resolve(dir) : undefined
   } catch {
