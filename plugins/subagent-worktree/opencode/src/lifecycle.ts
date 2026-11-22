@@ -87,7 +87,7 @@ export type FinalizeOptions = {
 }
 export type Finalized =
   | { removed: true }
-  | { removed: false; kept: "retired" | "running" | "dirty" | "unmerged" | "denied" | "pending" | "present" | "error"; reason: string }
+  | { removed: false; kept: "retired" | "running" | "dirty" | "unmerged" | "denied" | "pending" | "present" | "error" | "handed-over"; reason: string }
 
 type SessionLike = { id: string; parentID?: string; projectID: string; location: { directory: string }; time?: Record<string, unknown> }
 
@@ -99,8 +99,15 @@ export type LifecycleDeps = {
   exists: (path: string) => Promise<boolean>
   lookupMs: number
   load: (child: string) => Promise<Lane | undefined>
-  save: (lane: Lane) => Promise<unknown>
+  /** Store a lane; resolves false when the write was refused (the lane's writer was handed over). */
+  save: (lane: Lane) => Promise<boolean | void>
   scan: () => Promise<Lane[]>
+  /**
+   * Called with the worktree's lock held: whether `lane`'s writer was handed over to another writer. If so, it
+   * first finishes a handover a restart interrupted (the successor's lane, then dropping `lane`), and never
+   * removes anything. A lane it reports true for must not be removed, evicted or retired through.
+   */
+  handedOff: (lane: Lane) => Promise<boolean>
   getSession: (sessionID: string) => Promise<SessionLike | undefined>
   moveHome: (lane: Lane) => Promise<void>
   removeWorktree: (projectID: string, directory: string, force: boolean) => Promise<void>
@@ -460,6 +467,13 @@ export function createLifecycle(deps: LifecycleDeps) {
   }
 
   const keptBecause = (kept: Extract<Finalized, { removed: false }>["kept"], reason: string): Finalized => ({ removed: false, kept, reason })
+  const HANDED_OVER = "its worktree was handed to another writer, whose lane keeps it"
+  /** `deps.handedOff` under the worktree's lock, for callers that do not hold it. A failure counts as handed over. */
+  const settleHandover = (lane: Lane): Promise<boolean> =>
+    withLock(lane.directory, lane.parentDir, () => deps.handedOff(lane)).catch((error) => {
+      console.error(`subagent-worktree: could not check the handover of ${lane.child}:`, error instanceof Error ? error.message : error)
+      return true
+    })
 
   /** Synchronous: a pending shutdown resume of, or an execution start since `seq` by, any of `sessionIDs`. */
   const startedSince = (sessionIDs: readonly string[], seq: number): Finalized | undefined => {
@@ -678,6 +692,8 @@ export function createLifecycle(deps: LifecycleDeps) {
         if (stored === undefined || canonical(stored.directory) !== canonical(lane.directory) || (stored.state !== "active" && stored.state !== "removing")) {
           return keptBecause("retired", "the lane is already retired")
         }
+        // A handed-over writer's lane belongs to its successor: no removal, eviction or retirement goes through it.
+        if (await deps.handedOff(stored)) return keptBecause("handed-over", HANDED_OVER)
         const earlier = stored.state === "removing" ? stored.removal : undefined
         // One read decides both: whether `ifGone` refuses, and whether the worktree is removed. Two reads would let a
         // worktree that comes back between them pass the first and reach the host removal through the second.
@@ -699,7 +715,8 @@ export function createLifecycle(deps: LifecycleDeps) {
         }
         const retireAs = options.retireAs ?? (proof === "merged" ? "merged" : proof === "landed" ? "landed" : proof === "empty" ? "removed" : (earlier?.retireAs ?? "removed"))
         const removal: NonNullable<Lane["removal"]> = { retireAs, ...(head === undefined ? {} : { head }), ...(earlier?.pending === undefined ? {} : { pending: earlier.pending }) }
-        await save({ ...stored, state: "removing", removal })
+        // Fail closed: a refused write means the lane is not ours to remove any more.
+        if ((await save({ ...stored, state: "removing", removal })) === false) return keptBecause("handed-over", HANDED_OVER)
         if (present) {
           // Every async look comes first: liveness, then the descendants and their sessions.
           const live = await liveRefusal(stored, options, seq)
@@ -1142,6 +1159,7 @@ export function createLifecycle(deps: LifecycleDeps) {
     // A lane still active whose directory is gone was removed outside the plugin (a removal of ours leaves the lane `removing`, which `resumeRemovals` finishes): the host cannot even
     // look up its child, so it is reported for a person and left alone.
     if (!(await deps.exists(lane.directory))) return { ...entry, verdict: "keep", reason: "its worktree directory is gone and the lane was not retired (removed outside the plugin)", needsPerson: true }
+    if (await settleHandover(lane)) return { ...entry, verdict: "keep", reason: HANDED_OVER }
     // Only a deleted or archived subagent session releases its lane; a live one, or one that cannot be read, keeps it.
     const child = await childState(ctx.session.get({ sessionID: lane.child } as never), deps.lookupMs, lane.child)
     if (!childReleasesLane(child)) return { ...entry, verdict: "keep", reason: `its subagent session is ${child}` }
@@ -1222,7 +1240,11 @@ export function createLifecycle(deps: LifecycleDeps) {
     }
     // A crash or a failed move left these removals half done. In the background: setup must not wait on git and the host.
     // Every execution start this instance sees from now on keeps the lane (`seq` 0), even one seen before the lock is taken.
-    void serial(() => resumeRemovals(() => true, { seq: 0 }))
+    // A handover a restart interrupted is finished first, so no recovery looks at the old writer's lane.
+    void serial(async () => {
+      for (const lane of (await deps.scan()).filter((candidate) => candidate.state === "active" || candidate.state === "removing")) await settleHandover(lane)
+      await resumeRemovals(() => true, { seq: 0 })
+    })
   }
 
   const dispose = async () => {

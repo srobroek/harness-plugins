@@ -57,7 +57,7 @@ import {
   writerRefusal,
 } from "./lane.ts"
 import { createLifecycle, type Lifecycle, toMillis } from "./lifecycle.ts"
-import { decideRelease, parseRelease, RELEASE_PREFIX, type Release, releaseKey } from "./release.ts"
+import { decideRelease, parseRelease, RELEASE_PREFIX, type Release, releaseKey, repairHandover } from "./release.ts"
 
 export * from "./git.ts"
 export * from "./lane.ts"
@@ -214,17 +214,19 @@ export function createLanes(
     })
   }
 
-  const save = async (lane: Lane) => {
+  /** Store `lane` and its claim; resolves false, writing nothing, when its writer was handed over. */
+  const save = async (lane: Lane): Promise<boolean> => {
     const write = async () => {
       // The lane of a writer whose worktree was handed over lives on under the new writer: a stale copy is dropped.
       if (await handedOff(lane.child)) {
         console.error(`subagent-worktree: not saving the lane of ${lane.child}: its worktree was handed to another writer`)
-        return
+        return false
       }
       // Claim first when activating (no record without its claim), record first when retiring (no claim without its record).
       if (claims(lane)) await syncClaim(lane)
       await ctx.storage.set(laneKey(lane.child), lane)
       if (!claims(lane)) await syncClaim(lane)
+      return true
     }
     // The check and both writes run under the worktree's lock (re-entrant), which a handover holds from start to end.
     const common = await commonDirOf(lane.parentDir)
@@ -381,6 +383,35 @@ export function createLanes(
   const handedOff = async (child: string) => parseRelease(await ctx.storage.get(releaseKey(child)))?.to !== undefined
 
   /**
+   * The lifecycle's fence (`LifecycleDeps.handedOff`), called with the worktree's lock held. When `lane`'s writer was
+   * handed over, finish what a restart may have interrupted (see `repairHandover`) and report true. It never removes
+   * a worktree; a failed repair still reports true, so the lane stays fenced and a later pass tries again.
+   */
+  const settleHandover = async (lane: Lane): Promise<boolean> => {
+    const record = parseRelease(await ctx.storage.get(releaseKey(lane.child)))
+    if (record?.to === undefined) return false
+    try {
+      const repair = repairHandover(lane, record, await load(record.to), now())
+      if (repair.kind === "complete" && !(await save(repair.lane))) return true
+      if (repair.kind === "complete" || repair.kind === "drop-old") await ctx.storage.remove(laneKey(lane.child))
+    } catch (error) {
+      console.error(`subagent-worktree: could not finish the handover of ${lane.child} to ${record.to}:`, errorMessage(error))
+    }
+    return true
+  }
+
+  /** What changed in `directory` since a release recorded `head`: uncommitted changes, unpushed commits or another HEAD; undefined when nothing did. */
+  const treeSince = async (directory: string, head: string): Promise<string | undefined> => {
+    const porcelain = await git.porcelain(directory)
+    if (porcelain === undefined) return "the worktree cannot be read"
+    if (porcelain !== "") return "the worktree has uncommitted changes"
+    const unpushed = await git.unpushed(directory)
+    if (unpushed !== 0) return unpushed === undefined ? "the worktree's branch has no upstream" : "the worktree has commits not pushed to its upstream"
+    const now = await git.head(directory)
+    return now === head ? undefined : `HEAD moved from ${head.slice(0, 12)} to ${now === undefined ? "an unreadable commit" : now.slice(0, 12)}`
+  }
+
+  /**
    * Bind the worktree to `child`, the writer `parent` just moved into it. Every release from it that names no
    * writer yet, or whose released child still owns its lane there (an earlier handover failed), now
    * names `child`, and the released child's active lane becomes `child`'s, with `parent` as its parent, so its claim and removal
@@ -394,7 +425,15 @@ export function createLanes(
         const owned = await load(release.child)
         const ownsHere = owned?.state === "active" && (await normalize(owned.directory)) === directory
         if (release.to !== undefined && !ownsHere) continue
-        await ctx.storage.set(releaseKey(release.child), { ...release, to: child })
+        // Under the lock, before any write: the worktree the successor takes over is the one that was released.
+        const drift = await treeSince(directory, release.head)
+        if (drift !== undefined) {
+          // The release no longer describes the worktree: void it, so the old lane stays and can be released again.
+          if (release.to === undefined) await ctx.storage.remove(releaseKey(release.child))
+          throw new Error(`${drift} since ${release.child} was released, so its lane was not handed over. Check ${directory}, then release ${release.child} again`)
+        }
+        // The record names the successor and its parent first: from here a restart finishes the handover (`settleHandover`).
+        await ctx.storage.set(releaseKey(release.child), { ...release, to: child, toParent: parent })
         const step = { saved: false, removed: false }
         undo.push(async () => {
           // The record first: until it names no writer, the old lane cannot be saved again. Saving it puts its claim back too.
@@ -1068,6 +1107,7 @@ export function createLanes(
     load,
     save,
     scan,
+    handedOff: settleHandover,
     getSession,
     moveHome,
     removeWorktree,
