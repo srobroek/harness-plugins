@@ -317,6 +317,17 @@ describe("firstBdVerb / isMutatingBdCommand", () => {
       expect(decideActorGate(command, bdActorEnv)).toEqual({ kind: "allow" })
     })
 
+    test("a background job inside a brace group leaves an export before the group in force", () => {
+      expect(decideActorGate("export BD_ACTOR=me/x && { sleep 1 & } ; bd create x", emptyEnv)).toEqual({ kind: "allow" })
+    })
+
+    test.each([
+      ["command", "command echo export BD_ACTOR; bd create x"],
+      ["builtin", "builtin echo unset BD_ACTOR; bd create x"],
+    ])("a %s wrapper whose command is not a variable builtin changes nothing", (_name, command) => {
+      expect(decideActorGate(command, bdActorEnv)).toEqual({ kind: "allow" })
+    })
+
     test.each([
       ["a later && member, after the chain", "true && unset BD_ACTOR; bd create x"],
       ["a || member, after the chain", "true || unset BD_ACTOR; bd create x"],
