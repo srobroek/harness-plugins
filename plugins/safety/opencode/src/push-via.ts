@@ -13,7 +13,7 @@
 
 import { spawnSync } from "node:child_process"
 import { resolve } from "node:path"
-import { SAFE_GIT_ARGS, hardenedGitEnv } from "@srobroek/opencode-lib/safe-git"
+import { hardenedGitEnv, SAFE_GIT_ARGS } from "@srobroek/opencode-lib/safe-git"
 import type { Command } from "./shell.ts"
 
 export type PushViaConfig = { host: string; command: string }
