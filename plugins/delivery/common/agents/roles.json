@@ -5,6 +5,7 @@
     "researcher": "standard",
     "pr-reviewer": "reviewer",
     "operator": "cheap",
-    "shepherd": "standard"
+    "shepherd": "standard",
+    "orchestrator": "orchestrate"
   }
 }

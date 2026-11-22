@@ -238,6 +238,14 @@ describe("agents", () => {
     }
   })
 
+  test("setup registers the orchestrator with its tier header, step limit and no spawn of itself", async () => {
+    const { fake } = await load()
+    const orchestrator = fake.agents.get("orchestrator")
+    expect(orchestrator?.steps).toBe(500)
+    expect(orchestrator?.request).toEqual({ headers: { "x-opencode-model-role": "orchestrate" } })
+    expect(orchestrator?.permissions).toContainEqual({ action: "subagent", resource: "orchestrator", effect: "deny" })
+  })
+
   test("a created agent takes the file's fields; the model is set only when available", async () => {
     const { fake } = await load()
     const implementer = fake.agents.get("implementer") as Record<string, unknown>

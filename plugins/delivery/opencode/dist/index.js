@@ -33,6 +33,7 @@ var MCP_EXCLUDED_AGENTS = new Set([
   "journey-validator",
   "mechanic",
   "operator",
+  "orchestrator",
   "pr-reviewer",
   "seance",
   "shepherd",
@@ -263,7 +264,8 @@ var AGENT_IDS = [
   "researcher",
   "pr-reviewer",
   "operator",
-  "shepherd"
+  "shepherd",
+  "orchestrator"
 ];
 var FRONTMATTER2 = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 function agentPath(id) {
