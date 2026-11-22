@@ -6,7 +6,7 @@ import type { Context } from "@opencode/plugin/promise/plugin"
 import { type Result, Error as ToolError } from "@opencode/plugin/promise/tool"
 import { toJsonSchema, withOptionalString } from "@srobroek/opencode-lib/tool-schema"
 import { readClaim, removeClaim, writeClaim } from "@srobroek/opencode-lib/worktree-claims"
-import { lockedWrite } from "@srobroek/opencode-lib/worktree-locks"
+import { holdsState, lockedWrite } from "@srobroek/opencode-lib/worktree-locks"
 import { createGit, type Git, type Runner, spawnRunner } from "./git.ts"
 import {
   annotation,
@@ -25,6 +25,7 @@ import {
   type Lane,
   type LaneReport,
   laneKey,
+  laneStoreKey,
   liveness,
   MERGE_TOOL,
   mergeArgs,
@@ -57,9 +58,11 @@ import {
   writerRefusal,
 } from "./lane.ts"
 import { createLifecycle, type Lifecycle, toMillis } from "./lifecycle.ts"
+import { decideRelease, parseRelease, type Release, releaseKey } from "./release.ts"
 
 export * from "./git.ts"
 export * from "./lane.ts"
+export * from "./release.ts"
 
 export const MERGE_DESCRIPTION =
   "Merge a subagent's worktree branch back, report one lane, or list every active lane.\n" +
@@ -68,7 +71,9 @@ export const MERGE_DESCRIPTION =
   "and removes the worktree on success; a conflict keeps the worktree and reports the output. " +
   "The worktree must be committed and clean, and the target checkout must have no uncommitted or untracked changes to files the lane changes. " +
   'method "keep" (with reason) records that an unmerged lane is kept on purpose, so the idle gate stops nudging about it. method "none" only reports the lane status. method "list" (no sessionID) reports every active lane in the project ' +
-  "with commits ahead, uncommitted changes, and orphaned lanes; missing worktrees move their child sessions back."
+  "with commits ahead, uncommitted changes, and orphaned lanes; missing worktrees move their child sessions back. " +
+  'method "release" (with reason) hands the lane of a dead writer you spawned to the next writer spawned into its worktree: ' +
+  "the writer's session must be deleted (stop it and delete it in OpenCode first), and the worktree clean and pushed."
 
 export const SWEEP_TOOL = "subagent_worktree_sweep"
 
@@ -93,13 +98,13 @@ export const MERGE_INPUT = {
       type: "string",
       description: 'From the subagent tool result; required unless method is "list"',
     },
-    method: { type: "string", enum: ["wt-merge", "none", "list", "keep"] },
+    method: { type: "string", enum: ["wt-merge", "none", "list", "keep", "release"] },
     target: { type: "string", description: "Defaults to the lane's base branch" },
-    reason: { type: "string", description: 'Why the lane is kept; used by method "keep"' },
+    reason: { type: "string", description: 'Why the lane is kept (method "keep") or the writer released (method "release")' },
   },
 } as const
 
-type MergeInput = { sessionID?: string; method: "wt-merge" | "none" | "list" | "keep"; target?: string; reason?: string }
+type MergeInput = { sessionID?: string; method: "wt-merge" | "none" | "list" | "keep" | "release"; target?: string; reason?: string }
 
 type Session = {
   id: string
@@ -165,7 +170,20 @@ export function createLanes(
   commonDirOverride?: (directory: string) => Promise<string | undefined>,
   lock?: Parameters<typeof createLifecycle>[0]["lock"],
 ) {
-  const load = async (child: string) => parseLane(await ctx.storage.get(laneKey(child)))
+  /**
+   * The lane `child` writes in. A lane keeps the key of the child it was made for (`id`), so a lane handed over to
+   * `child` is found by its `child` field; a key whose lane now names another child is not `child`'s lane any more.
+   */
+  const load = async (child: string): Promise<Lane | undefined> => {
+    const own = parseLane(await ctx.storage.get(laneKey(child)))
+    if (own !== undefined) return own.child === child ? own : undefined
+    return (await scan()).find((lane) => lane.child === child)
+  }
+  /** Whether `lane` is a stale copy: its record now names another writer, so it may not be written again. */
+  const superseded = async (lane: Lane) => {
+    const stored = parseLane(await ctx.storage.get(laneStoreKey(lane)))
+    return stored !== undefined && stored.child !== lane.child
+  }
   /** The repository's git common directory: where a lane's claim lives. Cached per checkout. */
   const commonDirs = new Map<string, string>()
   const commonDirOf = async (parentDir: string): Promise<string | undefined> => {
@@ -191,25 +209,42 @@ export function createLanes(
     }
     // Claim writes take the worktree's lock briefly (re-entrant inside a removal), so none lands between a remover's last look and its removal.
     const guard = <T>(write: () => T) => lockedWrite(common, lane.directory, { sessionID: lane.child, now, ...(lock ?? {}) }, write)
-    if (!claims(lane)) return guard(() => removeClaim(common, lane.directory))
-    const existing = readClaim(common, lane.directory)
-    if (existing.kind === "present" && existing.value.sessionID === lane.child && existing.value.branch === lane.branch) return
-    await guard(() =>
+    const current = (read: ReturnType<typeof readClaim>) =>
+      read.kind === "present" && read.value.sessionID === lane.child && read.value.branch === lane.branch
+    // A claim that already names this lane needs no write, so no lock.
+    if (claims(lane) && current(readClaim(common, lane.directory))) return
+    // Under the same lock as a handover: a lane read before its writer was handed over must not take the claim back.
+    await guard(async () => {
+      if (await superseded(lane)) return
+      if (!claims(lane)) return removeClaim(common, lane.directory)
+      if (current(readClaim(common, lane.directory))) return
       writeClaim(common, {
         directory: lane.directory,
         branch: lane.branch,
         sessionID: lane.child,
         parentID: lane.parent,
         createdAt: now(),
-      }),
-    )
+      })
+    })
   }
 
-  const save = async (lane: Lane) => {
-    // Claim first when activating (no record without its claim), record first when retiring (no claim without its record).
-    if (claims(lane)) await syncClaim(lane)
-    await ctx.storage.set(laneKey(lane.child), lane)
-    if (!claims(lane)) await syncClaim(lane)
+  /** Store `lane` and its claim; resolves false, writing nothing, when its record now names another writer. */
+  const save = async (lane: Lane): Promise<boolean> => {
+    const write = async () => {
+      // A copy read before a handover would put the old writer back: the record names the new one, so the copy is dropped.
+      if (await superseded(lane)) {
+        console.error(`subagent-worktree: not saving the lane of ${lane.child}: its worktree was handed to another writer`)
+        return false
+      }
+      // Claim first when activating (no record without its claim), record first when retiring (no claim without its record).
+      if (claims(lane)) await syncClaim(lane)
+      await ctx.storage.set(laneStoreKey(lane), lane)
+      if (!claims(lane)) await syncClaim(lane)
+      return true
+    }
+    // The check and both writes run under the worktree's lock (re-entrant), which a handover holds from start to end.
+    const common = await commonDirOf(lane.parentDir)
+    return common === undefined ? write() : lockedWrite(common, lane.directory, { sessionID: lane.child, now, ...(lock ?? {}) }, write)
   }
 
   const getSession = (sessionID: string) =>
@@ -343,6 +378,71 @@ export function createLanes(
   /** Skip notes by tool call id, appended to that call's result by `after`. */
   const notes = new Map<string, string>()
 
+  /** What changed in `directory` since a release recorded `head`: uncommitted changes, unpushed commits or another HEAD; undefined when nothing did. */
+  const treeSince = async (directory: string, head: string): Promise<string | undefined> => {
+    const porcelain = await git.porcelain(directory)
+    if (porcelain === undefined) return "the worktree cannot be read"
+    if (porcelain !== "") return "the worktree has uncommitted changes"
+    const unpushed = await git.unpushed(directory)
+    if (unpushed !== 0) return unpushed === undefined ? "the worktree's branch has no upstream" : "the worktree has commits not pushed to its upstream"
+    const now = await git.head(directory)
+    return now === head ? undefined : `HEAD moved from ${head.slice(0, 12)} to ${now === undefined ? "an unreadable commit" : now.slice(0, 12)}`
+  }
+
+  /**
+   * Bind the worktree to `child`, the writer `parent` just moved into it. The caller holds the worktree's lock
+   * (`spawnInto`). When the worktree's active lane belongs to a released writer, that lane becomes `child`'s in one
+   * write of the same record: `child`, `parent` and `handedOver` change, the key (`id`) does not, so the worktree
+   * never has two lanes and nothing needs undoing. The write is a compare-and-set: it happens only while the
+   * record still names the released writer and the worktree is clean, pushed and at the released HEAD. A lane
+   * that was handed over before takes a new writer only through a release of its current writer.
+   */
+  const handOver = async (directory: string, child: string, parent: string) => {
+    let owned: Lane | undefined
+    for (const lane of await scan()) {
+      if (lane.state === "active" && (await normalize(lane.directory)) === directory) owned = lane
+    }
+    if (owned === undefined || owned.child === child) return
+    const release = parseRelease(await ctx.storage.get(releaseKey(owned.child)))
+    if (release === undefined || release.directory !== directory) {
+      if (owned.handedOver === undefined) return
+      throw new Error(
+        `${directory} was handed to ${owned.child}, whose lane it is. Send ${owned.child} a follow-up (pass sessionID: "${owned.child}"), or release ${owned.child} first.`,
+      )
+    }
+    // The re-proof sits directly before the write, under the same lock: the successor takes over the worktree that was released.
+    const drift = await treeSince(directory, release.head)
+    if (drift !== undefined) {
+      // The release no longer describes the worktree: void it, so the old lane stays and can be released again.
+      await ctx.storage.remove(releaseKey(release.child))
+      throw new Error(`${drift} since ${release.child} was released, so its lane was not handed over. Check ${directory}, then release ${release.child} again`)
+    }
+    const common = await commonDirOf(owned.parentDir)
+    if (common === undefined) throw new Error(`cannot find the git common directory of ${owned.parentDir} to claim ${directory}`)
+    const next: Lane = { ...owned, id: owned.id ?? owned.child, child, parent, handedOver: { from: owned.child, at: now() } }
+    const from = owned
+    await lockedWrite(common, directory, { sessionID: child, now, ...(lock ?? {}) }, async () => {
+      const stored = parseLane(await ctx.storage.get(laneStoreKey(from)))
+      if (stored?.state !== "active" || stored.child !== from.child) {
+        throw new Error(`the lane of ${directory} no longer belongs to the released ${from.child}${stored ? ` (it names ${stored.child})` : ""}`)
+      }
+      // The claim names the new writer first: no lane record without its claim.
+      writeClaim(common, { directory, branch: next.branch, sessionID: child, parentID: parent, createdAt: now() })
+      try {
+        // The one write that hands the lane over.
+        await ctx.storage.set(laneStoreKey(from), next)
+      } catch (error) {
+        // The record still names the released writer: its claim goes back through the normal sync, under the lock this
+        // write holds. A restart here leaves the same state, and the old lane's next claim sync does the same.
+        await syncClaim(from).catch((sync) => console.error(`subagent-worktree: could not put back the claim of ${from.child}:`, errorMessage(sync)))
+        throw error
+      }
+    })
+    // Audit only: nothing reads `to` to decide anything.
+    await ctx.storage.set(releaseKey(release.child), { ...release, to: child }).catch((error) => {
+      console.error(`subagent-worktree: could not record the handover of ${release.child} to ${child}:`, errorMessage(error))
+    })
+  }
 
   /** Worktrees reserved by an in-flight writer spawn, by canonical path; see `Reservation`. */
   const reservations = new Map<string, Reservation>()
@@ -400,6 +500,14 @@ export function createLanes(
     if (!input) return
     event.input = withoutWorktree(event.input)
     if (input.sessionID !== undefined) {
+      const child = input.sessionID
+      // A released child's session is deleted, so the host cannot run it; the record keeps the refusal clear.
+      const released = parseRelease(await ctx.storage.get(releaseKey(child)))
+      if (released) {
+        throw new Error(
+          `subagent-worktree: not resuming ${child}: ${child} was released from ${released.directory}${released.to ? ` and the worktree handed to ${released.to}` : ""}, so it may not write again. Start a new subagent instead.`,
+        )
+      }
       await markResumed(input.sessionID)
       const note = resumeWorktreeNote(input)
       if (note) notes.set(event.id, note)
@@ -487,6 +595,7 @@ export function createLanes(
           const reserved = hold && reservations.get(hold.directory)
           if (reserved && hold && reserved.token === hold.token) reserved.child = child
           await ctx.session.move({ sessionID: child, directory: plan.worktree.directory } as never)
+          if (hold?.writer) await handOver(hold.directory, child, event.sessionID)
         })
         event.input = { ...(event.input as object), sessionID: child, prompt: startPrompt(input.prompt, plan.worktree) }
       } catch (error) {
@@ -790,6 +899,73 @@ export function createLanes(
     return directory === undefined ? [] : git.localFiles(directory)
   }
 
+  /** What `session.get` says about a writer: its state, owner and execution times. */
+  const writerFacts = async (child: string) => {
+    const lookup = Promise.resolve(ctx.session.get({ sessionID: child } as never)) as Promise<unknown>
+    const state = await childState(lookup, lookupMs, child)
+    const raw = (state === "unknown" ? undefined : await lookup.catch(() => undefined)) as
+      | { parentID?: unknown; location?: { directory?: unknown }; time?: Record<string, unknown> }
+      | undefined
+    const time = raw?.time ?? {}
+    const busy = toMillis(time.busy)
+    const idle = toMillis(time.idle)
+    const updated = toMillis(time.updated)
+    return {
+      state,
+      ...(typeof raw?.parentID === "string" ? { parentID: raw.parentID } : {}),
+      ...(typeof raw?.location?.directory === "string" ? { directory: raw.location.directory } : {}),
+      ...(busy === undefined ? {} : { busy }),
+      ...(idle === undefined ? {} : { idle }),
+      ...(updated === undefined ? {} : { updated }),
+    }
+  }
+
+  /**
+   * `method: "release"`: hand the worktree of a deleted writer `child` to the next writer (see `release.ts`).
+   * Runs under the worktree's lock, like a spawn into it, so the record and a handover never interleave.
+   * A deleted session cannot run again, so nothing is interrupted and no resume can race the release.
+   */
+  const releaseWriter = async (child: string, reason: string, tool: { sessionID: string; agent: string; messageID: string; id: string }): Promise<Result> => {
+    const refuse = (why: string): Result => ({ content: `${MERGE_TOOL}: not released: ${why}`, metadata: { ok: false, reason: why } })
+    const lane = await load(child)
+    await ctx.permission.assert({
+      sessionID: tool.sessionID,
+      agent: tool.agent,
+      action: MERGE_TOOL,
+      resources: [lane?.branch ?? child],
+      source: { type: "tool", messageID: tool.messageID, id: tool.id },
+    } as never)
+    if (parseRelease(await ctx.storage.get(releaseKey(child)))) return refuse(`${child} is already released`)
+    const caller = await getSession(tool.sessionID)
+    if (!caller) return refuse("cannot read the calling session")
+    const where = lane?.state === "active" ? lane.directory : (await writerFacts(child)).directory
+    if (where === undefined) return refuse(`cannot find the worktree of ${child}`)
+    const found = await locate(caller.location.directory, where)
+    if (!found.lookup.ok) return refuse(found.lookup.reason)
+    const directory = found.lookup.worktree.directory
+    const checkout = caller.location.directory
+    return lifecycle.spawnInto(directory, checkout, async () => {
+      // Read again under the lock: a release queued behind another must not overwrite its record.
+      if (parseRelease(await ctx.storage.get(releaseKey(child)))) return refuse(`${child} is already released`)
+      const facts = await writerFacts(child)
+      const owner = facts.parentID ?? lane?.parent
+      const common = await commonDirOf(checkout)
+      const holds = common === undefined ? "the git common directory cannot be found, so running work cannot be ruled out" : holdsState(common, directory, now())
+      const porcelain = await git.porcelain(directory)
+      const tree = porcelain === undefined ? undefined : { dirty: porcelain !== "", unpushed: await git.unpushed(directory) }
+      const decision = decideRelease({ caller: tool.sessionID, child: { state: facts.state, ...(owner === undefined ? {} : { owner }) }, holds, tree })
+      if (!decision.release) return refuse(decision.reason)
+      const head = await git.head(directory)
+      if (head === undefined) return refuse(`cannot read HEAD in ${directory}`)
+      const record: Release = { child, directory, by: tool.sessionID, at: now(), head, reason }
+      await ctx.storage.set(releaseKey(child), record)
+      return {
+        content: `${MERGE_TOOL}: released ${child} from ${directory} at ${head.slice(0, 12)} (its session is deleted). Spawn the next writer with worktree "${directory}"${lane?.state === "active" ? `; it takes over the lane on ${lane.branch}` : ""}.`,
+        metadata: { ok: true, release: record },
+      }
+    })
+  }
+
   const merge = async (
     input: MergeInput,
     tool: { sessionID: string; agent: string; messageID: string; id: string; signal?: AbortSignal },
@@ -813,6 +989,7 @@ export function createLanes(
     if (!input.sessionID) {
       return { content: `${MERGE_TOOL}: sessionID is required for method "${input.method}"`, metadata: { ok: false } }
     }
+    if (input.method === "release") return releaseWriter(input.sessionID, input.reason?.trim() || "released by its parent", tool)
     let lane = await load(input.sessionID)
     if (input.method === "keep") {
       await ctx.permission.assert({

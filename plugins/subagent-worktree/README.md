@@ -75,6 +75,67 @@ checkout has staged or unstaged changes to tracked files, automatic writers run 
 Untracked files alone do not skip isolation. Passing a worktree path or branch forces a lane
 for an otherwise eligible writer, even if the caller's checkout is dirty; those edits are not copied.
 
+### One writer per worktree
+
+When a call names a worktree with `worktree` and another writer child runs there, the plugin
+refuses a writer that it does not isolate. The refusal names the running session.
+Send that session a follow-up (pass its `sessionID`), or stop it. A writer spawn reserves the
+worktree until its child starts, so the plugin refuses a second spawn at the same moment. The guard
+has three limits:
+
+1. It coordinates spawns within one OpenCode server only. The reservation lives in the plugin's
+   memory. The plugin does not coordinate spawns from separate server instances, or writers that
+   start outside the `subagent` tool. Keep one orchestrator per worktree.
+2. A session lookup that fails or takes longer than 2 seconds does not refuse. The spawn goes
+   ahead, and its result warns that no live writer check ran.
+3. It checks only writers that a call sends into a worktree named by `worktree`. It does not check
+   a writer that runs in the caller's directory without `worktree`. An isolated writer gets a fresh
+   worktree.
+
+A writer whose server died during a run still looks running until it runs again. It blocks its
+worktree and keeps its lane. To free the worktree:
+
+1. Close any terminal the old writer opened, and stop the writer in OpenCode.
+2. Delete its session. Deleting a session stops its run, its shell commands (SIGTERM, then SIGKILL),
+   its background jobs and its subagents in the OpenCode server that runs them. It does not close a
+   terminal, a process that detached, or a run in another OpenCode server, so step 1 comes first.
+   The guard then lets a new writer into the worktree.
+3. To hand the old writer's lane to the new writer, call `subagent_worktree_merge` with
+   `method: "release"`, the old writer's `sessionID` and a `reason`.
+
+The release needs all of these:
+
+- The host reports the writer's session as deleted. An idle or archived session can still have a
+  run, shell or background job that writes to the worktree. The plugin cannot see all of that work.
+  So while the session exists, the release refuses and asks you to stop and delete the session.
+- The writer's lane names the caller as its parent.
+- No hold is recorded on the worktree for running work.
+- The worktree has no uncommitted or untracked changes.
+- The branch has an upstream that has every commit (`git rev-list --count @{upstream}..HEAD` is 0).
+- No other release of the writer has written its record. The plugin reads the record again under
+  the lock.
+
+The release runs under the worktree's lock and writes a record under `release/<sessionID>` in
+plugin storage. The record names the worktree, the caller and `HEAD`, with the reason and the time.
+After a release:
+
+- The plugin refuses every `subagent` call that resumes the released writer.
+- When the released writer owned a lane for that worktree, the next writer that a call moves into
+  the worktree takes over the lane. The plugin rewrites the same lane record in one storage write:
+  the new child, its parent and `handedOver`. The lane's claim names the new child. The plugin
+  drops any later write of the old lane or its claim.
+- The handover writes only while the lane still names the released writer. A second server that
+  tries to hand the same worktree over finds the new writer and refuses, so one writer wins.
+- The record notes the new writer as `to`, for the audit trail only.
+- Before the new writer takes over, the plugin checks again that the worktree is clean, pushed and
+  at the `HEAD` the release recorded. If anything changed, the spawn fails, the old lane stays and
+  the release is voided, so you can check the worktree and release again.
+- A restart during a handover needs no repair. Before the write the released lane is unchanged and
+  the next spawn takes it over. After the write the worktree has one lane, the new writer's. When the
+  write fails, the spawn fails, the released lane gets its claim back, and the next spawn tries again.
+- A new writer whose call failed after the takeover holds the lane like any writer. Delete its
+  session and release it to hand the worktree on.
+
 ### Writers
 
 `execute.before` on the `subagent` tool. It skips the call when it continues a session (`sessionID`
@@ -115,6 +176,7 @@ plugin instance.
 | `method: "wt-merge"` | Runs `wt -C <worktree> merge <target> --no-squash --no-ff --no-remove --no-hooks`, then removes the checkout through the removal path (see below). |
 | `method: "none"` | Reports the lane status only. |
 | `method: "list"` | Reports every active lane in the caller's project. |
+| `method: "release"` | Frees the worktree of a dead writer, so the parent can spawn a new writer into it (see One writer per worktree). |
 | `target` | Branch to merge into. Defaults to the branch the caller was on. |
 
 For `wt-merge` and `none` the tool asserts the `subagent_worktree_merge` permission for the lane

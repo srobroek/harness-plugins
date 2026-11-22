@@ -87,7 +87,7 @@ export type FinalizeOptions = {
 }
 export type Finalized =
   | { removed: true }
-  | { removed: false; kept: "retired" | "running" | "dirty" | "unmerged" | "denied" | "pending" | "present" | "error"; reason: string }
+  | { removed: false; kept: "retired" | "running" | "dirty" | "unmerged" | "denied" | "pending" | "present" | "error" | "handed-over"; reason: string }
 
 type SessionLike = { id: string; parentID?: string; projectID: string; location: { directory: string }; time?: Record<string, unknown> }
 
@@ -99,7 +99,8 @@ export type LifecycleDeps = {
   exists: (path: string) => Promise<boolean>
   lookupMs: number
   load: (child: string) => Promise<Lane | undefined>
-  save: (lane: Lane) => Promise<unknown>
+  /** Store a lane; resolves false when the write was refused (its record names another writer now). */
+  save: (lane: Lane) => Promise<boolean>
   scan: () => Promise<Lane[]>
   getSession: (sessionID: string) => Promise<SessionLike | undefined>
   moveHome: (lane: Lane) => Promise<void>
@@ -460,6 +461,7 @@ export function createLifecycle(deps: LifecycleDeps) {
   }
 
   const keptBecause = (kept: Extract<Finalized, { removed: false }>["kept"], reason: string): Finalized => ({ removed: false, kept, reason })
+  const HANDED_OVER = "its worktree was handed to another writer, whose lane keeps it"
 
   /** Synchronous: a pending shutdown resume of, or an execution start since `seq` by, any of `sessionIDs`. */
   const startedSince = (sessionIDs: readonly string[], seq: number): Finalized | undefined => {
@@ -699,7 +701,8 @@ export function createLifecycle(deps: LifecycleDeps) {
         }
         const retireAs = options.retireAs ?? (proof === "merged" ? "merged" : proof === "landed" ? "landed" : proof === "empty" ? "removed" : (earlier?.retireAs ?? "removed"))
         const removal: NonNullable<Lane["removal"]> = { retireAs, ...(head === undefined ? {} : { head }), ...(earlier?.pending === undefined ? {} : { pending: earlier.pending }) }
-        await save({ ...stored, state: "removing", removal })
+        // Fail closed: a refused write means the lane is not ours to remove any more.
+        if ((await save({ ...stored, state: "removing", removal })) === false) return keptBecause("handed-over", HANDED_OVER)
         if (present) {
           // Every async look comes first: liveness, then the descendants and their sessions.
           const live = await liveRefusal(stored, options, seq)
