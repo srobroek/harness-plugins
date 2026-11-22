@@ -115,7 +115,18 @@ export type Eviction = { ok: true; moved: string[] } | { ok: false; reason: stri
  */
 export async function evictSessions(
   api: SessionApi,
-  options: { projectID: string | undefined; directory: string; destination: string; exclude?: ReadonlySet<string> },
+  options: {
+    projectID: string | undefined
+    directory: string
+    destination: string
+    exclude?: ReadonlySet<string>
+    /**
+     * The listing is a snapshot and each move is awaited, so a session that starts after the listing would still be
+     * moved. When given, each move is fenced: `fresh` reads the session again (a reason to refuse, or undefined), then
+     * `started` is read synchronously, with nothing awaited between it and the move call.
+     */
+    guard?: { fresh: (session: SessionLike) => Promise<string | undefined>; started: (session: SessionLike) => string | undefined }
+  },
 ): Promise<Eviction> {
   const sessions = await listProjectSessions(api, options.projectID)
   if (sessions === undefined) return { ok: false, reason: `the sessions of the project could not all be listed, so who is in ${options.directory} is unknown` }
@@ -129,6 +140,10 @@ export async function evictSessions(
   if (running) return { ok: false, reason: `session ${running.id} is running in ${options.directory}` }
   const moved: string[] = []
   for (const session of inside) {
+    if (options.guard) {
+      const why = (await options.guard.fresh(session)) ?? options.guard.started(session)
+      if (why !== undefined) return { ok: false, reason: `${why}; nothing was removed` }
+    }
     try {
       await api.move({ sessionID: session.id, directory: options.destination } as never)
       moved.push(session.id)

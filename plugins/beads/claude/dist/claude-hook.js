@@ -7,7 +7,7 @@ import { appendFileSync } from "fs";
 // plugins/beads/opencode/src/gate-admission.ts
 import { randomUUID } from "crypto";
 import { existsSync as existsSync2, realpathSync as realpathSync3, statSync as statSync3 } from "fs";
-import { dirname as dirname3, isAbsolute as isAbsolute3, join as join2, resolve as resolve3 } from "path";
+import { dirname as dirname3, join as join2, resolve as resolve3 } from "path";
 
 // lib/src/shell-tokenizer.ts
 var SEPARATORS = new Set([";", "&", "|", "(", ")", `
@@ -280,123 +280,11 @@ var WRAPPERS = {
   until: true,
   do: true
 };
-function commandSegments(command) {
-  const out = [];
-  let start = 0;
-  let quote = null;
-  let escaped = false;
-  for (let i = 0;i < command.length; i++) {
-    const ch = command[i];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (quote === "'") {
-      if (ch === "'")
-        quote = null;
-      continue;
-    }
-    if (quote === '"') {
-      if (ch === "\\")
-        escaped = true;
-      else if (ch === '"')
-        quote = null;
-      continue;
-    }
-    if (ch === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (ch === "'" || ch === '"') {
-      quote = ch;
-      continue;
-    }
-    const two = command.slice(i, i + 2);
-    if (two === "&&" || two === "||") {
-      out.push(command.slice(start, i), two);
-      i++;
-      start = i + 1;
-      continue;
-    }
-    if (ch === ";" || ch === "&" || ch === "|" || ch === `
-` || ch === "(" || ch === ")" || ch === "{" || ch === "}") {
-      out.push(command.slice(start, i), ch);
-      start = i + 1;
-    }
-  }
-  out.push(command.slice(start));
-  return out;
-}
 function tokenize(segment) {
   return tokenizeShell(segment, { preserveBackslashes: true }).map(({ value, startsQuoted }) => ({
     value,
     quoted: startsQuoted
   }));
-}
-function invocation(segment, argv) {
-  const tokens = tokenize(segment);
-  const head = argv[0];
-  if (!head)
-    return null;
-  let start = 0;
-  while (start < tokens.length) {
-    const token = tokens[start];
-    if (!token || token.quoted)
-      return null;
-    const basename = token.value.split("/").pop() ?? token.value;
-    if (basename === head)
-      break;
-    if (basename === "env") {
-      start++;
-      while (start < tokens.length) {
-        const option = tokens[start];
-        if (!option || option.quoted)
-          return null;
-        const value = option.value;
-        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(value)) {
-          start++;
-          continue;
-        }
-        if (value === "--") {
-          start++;
-          break;
-        }
-        if (value === "-i" || value === "--ignore-environment") {
-          start++;
-          continue;
-        }
-        if (value === "-u" || value === "--unset") {
-          start++;
-          if (start >= tokens.length || tokens[start]?.quoted)
-            return null;
-          start++;
-          continue;
-        }
-        if (value.startsWith("--unset=") || value.startsWith("-u") && value.length > 2) {
-          start++;
-          continue;
-        }
-        if (value.startsWith("-")) {
-          start++;
-          continue;
-        }
-        break;
-      }
-      continue;
-    }
-    if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(token.value) && !token.value.startsWith("-") && WRAPPERS[basename] !== true)
-      return null;
-    start++;
-  }
-  for (const [offset, word] of argv.entries()) {
-    const token = tokens[start + offset];
-    if (!token || token.quoted)
-      return null;
-    const value = offset === 0 ? token.value.split("/").pop() ?? token.value : token.value;
-    if (value !== word)
-      return null;
-  }
-  return tokens.slice(start);
 }
 function scanShell(source, options = {}) {
   const items = [];
@@ -1777,12 +1665,12 @@ import {
   writeSync
 } from "fs";
 import { hostname } from "os";
-import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute2, join, resolve as resolve2 } from "path";
+import { basename as basename3, dirname as dirname2, isAbsolute as isAbsolute2, join, resolve as resolve2 } from "path";
 
 // lib/src/beads-store.ts
 import { spawnSync } from "child_process";
 import { lstatSync, realpathSync, statSync } from "fs";
-import { dirname, isAbsolute, resolve } from "path";
+import { basename as basename2, dirname, isAbsolute, resolve } from "path";
 function repoIdentity(cwd) {
   if (cwd.includes("\x00"))
     return;
@@ -1847,6 +1735,20 @@ function sessionPinFor(cwd) {
   if (isDir(local))
     return local;
   return;
+}
+function storeFromBeadsDb(value, cwd) {
+  const path = resolve(cwd, value);
+  return basename2(path) === ".beads" ? path : dirname(path);
+}
+function ambientStore(cwd, env, walkUp = sessionPinFor) {
+  const dir = env.BEADS_DIR;
+  if (dir !== undefined && dir !== "")
+    return resolve(cwd, dir);
+  const found = walkUp(cwd);
+  if (found !== undefined)
+    return found;
+  const db = env.BEADS_DB;
+  return db !== undefined && db !== "" ? storeFromBeadsDb(db, cwd) : undefined;
 }
 function isDir(path) {
   try {
@@ -2106,10 +2008,7 @@ function selectedStoreFor(globals, cwd, env) {
   }
   if (directory !== undefined)
     return sessionPinFor(base);
-  const pinned = env.BEADS_DIR;
-  if (pinned !== undefined && pinned !== "")
-    return absolute(pinned, cwd);
-  return sessionPinFor(cwd);
+  return ambientStore(cwd, env);
 }
 function absolute(path, cwd) {
   return isAbsolute2(path) ? path : resolve2(cwd, path);
@@ -2150,6 +2049,59 @@ function mentionsBd(source) {
   return BD_WORD.test(source) || BD_WORD.test(source.replace(/["'\\]/g, ""));
 }
 var ASSIGNMENT3 = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
+var DB_VARIABLE = /BEADS_DB|BD_DB/;
+var SKIPS_STORE_INIT = new Set([
+  "bash",
+  "bootstrap",
+  "codex-hook",
+  "completion",
+  "context",
+  "cursor-hook",
+  "doctor",
+  "dolt",
+  "fish",
+  "formula",
+  "help",
+  "hook",
+  "hooks",
+  "human",
+  "init",
+  "merge",
+  "metrics",
+  "onboard",
+  "powershell",
+  "prime",
+  "quickstart",
+  "schema",
+  "send-metrics",
+  "setup",
+  "version",
+  "where",
+  "worktree",
+  "zsh"
+]);
+var OPENS_STORE = {
+  dolt: new Set(["push", "pull", "commit"]),
+  human: new Set(["list", "respond", "dismiss", "stats"])
+};
+var MIGRATE_SKIPS_STORE_INIT = new Set([
+  "from-server-to-proxied-server",
+  "from-proxied-server-to-server",
+  "from-shared-server-to-proxied-server",
+  "from-proxied-server-to-shared-server",
+  "legacy-sqlite"
+]);
+function skipsStoreInit({ verb, args }) {
+  const positional = args.filter((arg) => !arg.startsWith("-"));
+  const sub = positional[0];
+  if (verb === "migrate")
+    return sub !== undefined && MIGRATE_SKIPS_STORE_INIT.has(sub);
+  if (!SKIPS_STORE_INIT.has(verb) || sub === undefined)
+    return SKIPS_STORE_INIT.has(verb);
+  if (verb === "dolt" && sub === "remote")
+    return positional.length < 2;
+  return OPENS_STORE[verb]?.has(sub) !== true;
+}
 var BEADS_DIR_ASSIGNMENT = /^BEADS_DIR(\+?)=/;
 var LIST_PREFIXES = new Set(["then", "else", "do"]);
 var COMPOUND_OPENERS = { if: true, case: true, for: true, select: true, while: true, until: true };
@@ -2653,6 +2605,15 @@ function resolveWrite(invocation, assignments, state, env, source) {
   }
   const directory = globalValue(invocation.globals, ["-C", "--directory"]);
   const db = globalValue(invocation.globals, ["--db"]);
+  const dbSource = (env.BEADS_DB ?? "") !== "" ? "the environment sets `BEADS_DB`" : (env.BD_DB ?? "") !== "" ? "the environment sets `BD_DB`" : DB_VARIABLE.test(source) ? "the command mentions `BEADS_DB` or `BD_DB`" : undefined;
+  if (dbSource !== undefined && skipsStoreInit(invocation) && db === undefined) {
+    return {
+      problem: {
+        part: `${write} skips bd's store init, so bd 1.3.1 picks its store from \`BEADS_DB\` or \`BD_DB\` before \`BEADS_DIR\`, and ${dbSource}`,
+        fix: "Name the store on the write with `bd --db /path/.beads ...`; `BEADS_DIR` does not override `BEADS_DB` for this command."
+      }
+    };
+  }
   if (directory === undefined && db === undefined && beadsDir.kind === "unknown") {
     return {
       problem: {
@@ -3108,7 +3069,7 @@ function bunBinary() {
 }
 function resolveBunBinary(options = {}) {
   const execPath = options.execPath ?? process.execPath;
-  const own = basename2(execPath);
+  const own = basename3(execPath);
   if (own === "bun" || own === "bun.exe")
     return execPath;
   const onPath = options.which?.("bun");
@@ -3124,7 +3085,7 @@ function resolveBunBinary(options = {}) {
   if (mise === null || mise === undefined || options.miseWhich === undefined)
     return;
   const resolved = options.miseWhich(mise);
-  return resolved !== undefined && basename2(resolved).startsWith("bun") && existsSync(resolved) ? resolved : undefined;
+  return resolved !== undefined && basename3(resolved).startsWith("bun") && existsSync(resolved) ? resolved : undefined;
 }
 function quote(word) {
   return `'${word.replaceAll("'", "'\\''")}'`;
@@ -3135,7 +3096,7 @@ function withRunner(command, writes, runner, waitMs) {
   for (const write of [...writes].sort((left, right) => left.offset - right.offset)) {
     const store = quote(write.store);
     const selected = ` ${RUNNER_SELECTED_FLAG} ${quote(write.selected)}`;
-    out += `${command.slice(cursor, write.offset)}BEADS_DOLT_SHARED_SERVER= BEADS_DIR=${store} ${quote(runner.interpreter)} ${quote(runner.script)} ${RUNNER_STORE_FLAG} ${store}${selected} ${RUNNER_WAIT_FLAG} ${Math.round(waitMs)} -- `;
+    out += `${command.slice(cursor, write.offset)}BEADS_DOLT_SHARED_SERVER= BEADS_DIR=${store} BEADS_DB= BD_DB= ${quote(runner.interpreter)} ${quote(runner.script)} ${RUNNER_STORE_FLAG} ${store}${selected} ${RUNNER_WAIT_FLAG} ${Math.round(waitMs)} -- `;
     cursor = write.offset;
   }
   return out + command.slice(cursor);
@@ -3325,7 +3286,7 @@ function lifecycleBdEnvironment(cwd, base = process.env) {
   const env = { ...base };
   if (env.BEADS_DIR === undefined || env.BEADS_DIR === "") {
     delete env.BEADS_DIR;
-    const resolved = sessionPinFor(cwd);
+    const resolved = ambientStore(cwd, env);
     if (resolved !== undefined)
       env.BEADS_DIR = resolved;
   }
@@ -3341,9 +3302,18 @@ function boundedBdEnvironment(base) {
     NO_COLOR: "1"
   };
 }
+function ownBeads(cwd) {
+  const dir = join2(cwd, ".beads");
+  try {
+    return statSync3(dir).isDirectory() ? dir : undefined;
+  } catch {
+    return;
+  }
+}
 function bdStoreDir(cwd, env) {
-  const selected = env.BEADS_DIR;
-  const dir = selected ? isAbsolute3(selected) ? selected : resolve3(cwd, selected) : join2(cwd, ".beads");
+  const dir = ambientStore(cwd, env, ownBeads);
+  if (dir === undefined)
+    return;
   try {
     return statSync3(dir).isDirectory() ? resolve3(dir) : undefined;
   } catch {
@@ -4391,7 +4361,7 @@ function decideBdUpdateCloseParsed(parsed) {
 
 // plugins/beads/opencode/src/ledger-context.ts
 import { existsSync as existsSync5, lstatSync as lstatSync4, realpathSync as realpathSync6 } from "fs";
-import { basename as basename3, dirname as dirname5, join as join6, resolve as resolve6 } from "path";
+import { basename as basename4, dirname as dirname5, join as join6, resolve as resolve6 } from "path";
 var SAFE_PREFIX = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 function findLedger(from) {
   const start = resolve6(from);
@@ -4465,9 +4435,9 @@ function sameStore(a, b, cwd) {
   return canonical3(resolve6(cwd, a)) === canonical3(resolve6(cwd, b));
 }
 function ownerRoot(store, identity) {
-  if (basename3(store) === ".beads")
+  if (basename4(store) === ".beads")
     return dirname5(store);
-  if (basename3(identity) === ".git")
+  if (basename4(identity) === ".git")
     return dirname5(identity);
   return store;
 }
@@ -4499,40 +4469,329 @@ function unplacedBdRefusal(input) {
 
 // plugins/beads/opencode/src/pr-bead-link-gate.ts
 import { execFileSync } from "child_process";
-import { closeSync as closeSync4, constants as constants3, existsSync as existsSync6, fstatSync as fstatSync2, lstatSync as lstatSync5, openSync as openSync4, readSync as readSync3 } from "fs";
-import { dirname as dirname6, join as join7, resolve as resolve7 } from "path";
-var MAX_COMMAND_LENGTH = 64000;
-var BEAD_REF = /(?:^|\s|\\[nrt])(?:Bead|Closes-Bead|Bead-Id):\s*[A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9]+/i;
-var GH_TIMEOUT_MS = 1e4;
-var VALUE_FLAGS3 = {
-  "--title": true,
-  "-t": true,
-  "--base": true,
-  "-B": true,
-  "--head": true,
-  "-H": true,
-  "--repo": true,
-  "-R": true,
-  "--reviewer": true,
-  "-r": true,
-  "--assignee": true,
-  "-a": true,
-  "--label": true,
-  "-l": true,
-  "--project": true,
-  "-p": true,
-  "--milestone": true,
-  "-m": true,
-  "--body-file": true,
-  "-F": true,
-  "--template": true,
-  "-T": true
-};
-var REASON = "This PR names no bead. A live ledger requires a Bead: <id>, Closes-Bead: <id>, or Bead-Id: <id> trailer. To opt out, retire the nearest ledger with this gate's regular-file .beads/RETIRED marker; No-Bead: is not accepted.";
-function withLedger(reason, note) {
-  const text = note?.();
-  return text === undefined ? reason : `${reason} ${text}`;
+import { closeSync as closeSync4, constants as constants3, existsSync as existsSync6, fstatSync as fstatSync2, lstatSync as lstatSync5, openSync as openSync4, readSync as readSync3, realpathSync as realpathSync7 } from "fs";
+import { basename as basename6, dirname as dirname6, join as join7, resolve as resolve7 } from "path";
+
+// plugins/beads/opencode/src/pr-create-form.ts
+var MAX_BODY_BYTES = 64000;
+var ACCEPTED_FORMS = [
+  "Accepted form: one command alone, `gh pr create` or `gh pr new`, with exactly one body flag:",
+  "`--body V`, `--body=V` or `-b V`, or `--body-file P`, `--body-file=P` or `-F P`.",
+  "P is a bare relative path without `..` or a leading `-` or `~`, in a directory that is not a symlink,",
+  `to a regular UTF-8 file of at most ${MAX_BODY_BYTES} bytes without a NUL.`,
+  "Flags that take a value, as a long flag (`--title V` or `--title=V`) or a short flag with a separate word (`-t V`):",
+  "title -t, base -B, head -H, repo -R (OWNER/REPO), reviewer -r, assignee -a, label -l, milestone -m, project -p.",
+  "Flags without a value: `--draft`/`-d`, `--no-maintainer-edit`, `--dry-run`.",
+  "A word is bare (letters, digits and `_@%+=:,./-`), 'single-quoted', or \"double-quoted\" without `$`, a backtick or `\\`.",
+  "Words are separated by spaces, tabs or a backslash-newline.",
+  "Not accepted: operators, redirections, assignments, wrappers, substitutions, `--`, short-flag clusters,",
+  "a short flag with its value attached, positional words, and the flags --fill, --web, --editor, --template, --recover and --attach."
+].join(" ");
+var TRAILER_RULE = "Name the bead on a line of its own in the body: `Bead: <id>`, `Closes-Bead: <id>` or `Bead-Id: <id>`, with no other text on the line.";
+var BEAD_LINE = /^[ \t]*(?:Bead|Closes-Bead|Bead-Id):[ \t]*([A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9]+)[ \t]*$/i;
+function beadIn(body) {
+  for (const line of body.split(`
+`)) {
+    const id = BEAD_LINE.exec(line.endsWith("\r") ? line.slice(0, -1) : line)?.[1];
+    if (id !== undefined)
+      return id;
+  }
+  return;
 }
+var BARE = /^[A-Za-z0-9_@%+=:,./-]+$/;
+var SINGLE = /^'([^']*)'$/;
+var DOUBLE = /^"([^"$`\\]*)"$/;
+var LONG_WITH_VALUE = /^(--[A-Za-z][A-Za-z-]*)=(.+)$/s;
+var CONTROL = /[\x00-\x08\x0b-\x1f\x7f]/;
+var GAP = /^(?:[ \t]|\\\n)+$/;
+var REPOSITORY_NAME = /^[A-Za-z0-9._-]+$/;
+function validRepository(value) {
+  const parts = value.split("/");
+  if (parts.length < 2 || parts.length > 3)
+    return false;
+  if (parts[0]?.startsWith("-"))
+    return false;
+  return parts.every((part) => REPOSITORY_NAME.test(part) && part !== "." && part !== "..");
+}
+function wordValue(span) {
+  if (BARE.test(span))
+    return span;
+  return SINGLE.exec(span)?.[1] ?? DOUBLE.exec(span)?.[1];
+}
+var BODY_FLAGS = new Set(["--body", "-b"]);
+var FILE_FLAGS = new Set(["--body-file", "-F"]);
+var VALUED_FLAGS = {
+  "--title": "--title",
+  "-t": "--title",
+  "--base": "--base",
+  "-B": "--base",
+  "--head": "--head",
+  "-H": "--head",
+  "--repo": "--repo",
+  "-R": "--repo",
+  "--reviewer": "--reviewer",
+  "-r": "--reviewer",
+  "--assignee": "--assignee",
+  "-a": "--assignee",
+  "--label": "--label",
+  "-l": "--label",
+  "--milestone": "--milestone",
+  "-m": "--milestone",
+  "--project": "--project",
+  "-p": "--project"
+};
+var BOOLEAN_FLAGS = new Set(["--draft", "-d", "--no-maintainer-edit", "--dry-run"]);
+var refuse = (rule) => ({ kind: "refused", rule });
+function printable(span) {
+  const name = /^-{1,2}[A-Za-z][A-Za-z-]{0,40}/.exec(span)?.[0];
+  return name === undefined ? "a word" : `\`${name}\``;
+}
+function pathRule(span, path) {
+  if (span !== path)
+    return "its path is quoted; write it as a bare word";
+  if (path === "-")
+    return "it reads the body from standard input";
+  if (path.startsWith("/"))
+    return "its path is absolute; use a relative path";
+  if (path.startsWith("-") || path.startsWith("~"))
+    return "its path starts with `-` or `~`";
+  if (path.split("/").includes(".."))
+    return "its path goes through `..`";
+  return;
+}
+function readPrCreate(source, readFile) {
+  const text = source.replace(/^[ \t\n]+|[ \t\n]+$/g, "");
+  const scan = scanShell(text);
+  if (!scan.complete)
+    return refuse("the command has an unclosed quote, substitution or here-document");
+  if (scan.substitutions.length > 0)
+    return refuse("the command holds a substitution");
+  const [item, ...rest] = scan.items;
+  if (item === undefined || item.kind !== "command" || rest.length > 0)
+    return refuse("`gh pr create` is not the only command: no operators, pipes, groups or other commands");
+  if (item.redirects.length > 0 || item.hereDocuments.length > 0)
+    return refuse("the command has a redirection");
+  const words = item.words;
+  const spans = words.map((word) => text.slice(word.start, word.end));
+  const separated = words.every((word, i) => {
+    const before = words[i - 1];
+    return before === undefined ? word.start === 0 : GAP.test(text.slice(before.end, word.start));
+  });
+  if (!separated)
+    return refuse("the words are not separated by single spaces, tabs or backslash-newlines");
+  if ((words.at(-1)?.end ?? 0) !== text.length)
+    return refuse("the command has a comment or text after its last word");
+  if (spans[0] !== "gh")
+    return refuse("the command word is not a bare `gh`");
+  if (spans[1] !== "pr" || spans[2] !== "create" && spans[2] !== "new")
+    return refuse("the command is not `gh pr create` or `gh pr new`, as bare words");
+  let body;
+  let file;
+  let bodies = 0;
+  let repo = null;
+  for (let i = 3;i < spans.length; i++) {
+    const span = spans[i];
+    if (!span.startsWith("-"))
+      return refuse(`the word at position ${i + 1} is not a flag or a flag's value`);
+    if (span === "--")
+      return refuse("`--` is not accepted");
+    const inline = LONG_WITH_VALUE.exec(span) ?? undefined;
+    const name = inline?.[1] ?? span;
+    const known = BODY_FLAGS.has(name) || FILE_FLAGS.has(name) || VALUED_FLAGS[name] !== undefined;
+    if (BOOLEAN_FLAGS.has(name) && inline === undefined)
+      continue;
+    if (!known) {
+      const cluster = /^-[^-]/.test(span) && span.length > 2;
+      return refuse(cluster ? `${printable(span)} is a short flag with an attached value or a cluster; use one flag per word with a separate value` : `${printable(span)} is not an accepted flag`);
+    }
+    const valueSpan = inline === undefined ? spans[++i] : inline[2];
+    if (valueSpan === undefined)
+      return refuse(`${printable(span)} has no value`);
+    const value = wordValue(valueSpan);
+    if (value === undefined)
+      return refuse(`the value of ${printable(span)} is not a bare, 'single-quoted' or "double-quoted" word without \`$\`, a backtick or \`\\\``);
+    if (CONTROL.test(value))
+      return refuse(`the value of ${printable(span)} holds a control character`);
+    if (BODY_FLAGS.has(name)) {
+      bodies++;
+      body = { text: value, source: "the --body text" };
+    } else if (FILE_FLAGS.has(name)) {
+      bodies++;
+      file = { path: value, span: valueSpan };
+    } else if (VALUED_FLAGS[name] === "--repo") {
+      if (!validRepository(value))
+        return refuse("the --repo value is not OWNER/REPO or HOST/OWNER/REPO");
+      repo = value;
+    }
+  }
+  if (bodies === 0)
+    return refuse("it has no --body or --body-file");
+  if (bodies > 1)
+    return refuse("it has more than one body flag");
+  if (body !== undefined)
+    return { kind: "form", body, repo };
+  const named = file;
+  const lexical = pathRule(named.span, named.path);
+  if (lexical !== undefined)
+    return refuse(`--body-file: ${lexical}`);
+  const read = readFile(named.path);
+  if (!read.ok)
+    return { ...refuse(`--body-file ${named.path}: ${read.reason}`), ...read.cause === undefined ? {} : { cause: read.cause } };
+  return { kind: "form", body: { text: read.text, source: `--body-file ${named.path}` }, repo };
+}
+var GH_BUILTINS = new Set([
+  "agent-task",
+  "alias",
+  "api",
+  "attestation",
+  "auth",
+  "browse",
+  "cache",
+  "codespace",
+  "completion",
+  "config",
+  "copilot",
+  "discussion",
+  "event",
+  "extension",
+  "gist",
+  "gpg-key",
+  "help",
+  "issue",
+  "label",
+  "licenses",
+  "org",
+  "pr",
+  "preview",
+  "project",
+  "release",
+  "repo",
+  "ruleset",
+  "run",
+  "search",
+  "secret",
+  "skill",
+  "ssh-key",
+  "status",
+  "variable",
+  "workflow",
+  "--help",
+  "--version"
+]);
+var WATCHED = new Set(["gh", "pr", "create", "new"]);
+var ASSIGNMENT4 = /^[A-Za-z_][A-Za-z0-9_]*=/;
+var MAX_RESCAN_DEPTH = 4;
+var basename5 = (value) => value.slice(value.lastIndexOf("/") + 1);
+function opaque(word, text) {
+  return word.expands || /\$['"]/.test(text.slice(word.start, word.end));
+}
+function wordsMayCreate(values, opaques) {
+  const first = values.indexOf("pr");
+  if (first >= 0 && values.slice(first + 1).some((value) => value === "create" || value === "new"))
+    return true;
+  const anyOpaque = opaques.some(Boolean);
+  for (const [i, value] of values.entries()) {
+    if (opaques[i] === true)
+      continue;
+    if (basename5(value) === "gh") {
+      const operand = values[i + 1];
+      if (operand !== undefined && !GH_BUILTINS.has(operand))
+        return true;
+    }
+    if (anyOpaque && WATCHED.has(basename5(value)))
+      return true;
+  }
+  const commandIndex = values.findIndex((value) => !ASSIGNMENT4.test(value));
+  if (opaques[commandIndex] === true)
+    return true;
+  return false;
+}
+function stdinTexts(item, text) {
+  return [
+    ...item.hereDocuments.map((document) => ({ text: document.body, opaque: false })),
+    ...item.redirects.filter((word) => word.hereString === true).map((word) => ({ text: word.value, opaque: opaque(word, text) }))
+  ];
+}
+function textNamesGh(text) {
+  if (/\bgh\b/.test(text) || /\bpr\b[\s\S]*\b(?:create|new)\b/.test(text))
+    return true;
+  const scan = scanShell(text);
+  if (!scan.complete)
+    return true;
+  return scan.items.some((item) => {
+    if (item.kind !== "command")
+      return false;
+    const opaques = item.words.map((word) => opaque(word, text));
+    const first = item.words.findIndex((word) => !ASSIGNMENT4.test(word.value));
+    return item.words.some((word, i) => opaques[i] !== true && basename5(word.value) === "gh" || i === first && opaques[i] === true);
+  });
+}
+function stdinMayCreate(item, text, depth) {
+  const documents = stdinTexts(item, text);
+  if (documents.length === 0)
+    return false;
+  if (depth >= MAX_RESCAN_DEPTH)
+    return true;
+  return documents.some((document) => document.opaque || textMayCreate(document.text, depth + 1) || textNamesGh(document.text));
+}
+var SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash"]);
+var COMMAND_FLAG = /^-[A-Za-z]*c[A-Za-z]*$/;
+function shellTextIn(values, opaques) {
+  const found = [];
+  const literal = (from) => values.slice(from).filter((_, i) => opaques[from + i] !== true);
+  for (const [i, value] of values.entries()) {
+    if (opaques[i] === true)
+      continue;
+    const name = basename5(value);
+    if (name === "env")
+      found.push(...literal(i + 1));
+    else if (SHELLS.has(name)) {
+      const flag = values.findIndex((word, j) => j > i && opaques[j] !== true && COMMAND_FLAG.test(word));
+      const script = flag < 0 || opaques[flag + 1] === true ? undefined : values[flag + 1];
+      if (script !== undefined)
+        found.push(script);
+    } else if (value === "eval" || value === "source" || value === ".") {
+      const words = literal(i + 1);
+      if (words.length > 0)
+        found.push(words.join(" "));
+    }
+  }
+  return found;
+}
+function textMayCreate(text, depth) {
+  const scan = scanShell(text);
+  if (!scan.complete)
+    return wordsMayCreate(text.split(/[\s'"]+/), []);
+  for (const item of scan.items) {
+    if (item.kind !== "command")
+      continue;
+    const values = item.words.map((word) => word.value);
+    const opaques = item.words.map((word) => opaque(word, text));
+    if (wordsMayCreate(values, opaques))
+      return true;
+    if (stdinMayCreate(item, text, depth))
+      return true;
+    const scripts = shellTextIn(values, opaques);
+    if (scripts.length === 0)
+      continue;
+    if (depth >= MAX_RESCAN_DEPTH)
+      return true;
+    if (scripts.some((script) => textMayCreate(script, depth + 1)))
+      return true;
+  }
+  return false;
+}
+function levels(parsed) {
+  return [parsed, ...parsed.nested.flatMap(levels)];
+}
+function mayCreatePr(parsed) {
+  return levels(parsed).some((level) => textMayCreate(level.command, 0));
+}
+
+// plugins/beads/opencode/src/pr-bead-link-gate.ts
+var GH_TIMEOUT_MS = 1e4;
+var REASON = "This PR names no bead. A live ledger requires a Bead: <id>, Closes-Bead: <id>, or Bead-Id: <id> trailer. To opt out, retire the nearest ledger with this gate's regular-file .beads/RETIRED marker; No-Bead: is not accepted.";
+var OPT_OUT = "To opt out, retire the nearest ledger with this gate's regular-file .beads/RETIRED marker; No-Bead: is not accepted.";
 function beadsActive(dir) {
   let current = resolve7(dir);
   for (;; ) {
@@ -4550,114 +4809,8 @@ function beadsActive(dir) {
     current = parent;
   }
 }
-function readBodyOfGhCreate(segment, readFile) {
-  const tokens = invocation(segment, ["gh", "pr", "create"]);
-  if (!tokens)
-    return null;
-  let body = null;
-  let file = null;
-  for (let i = 3;i < tokens.length; i++) {
-    const token = tokens[i];
-    if (!token)
-      continue;
-    if (!token.quoted && token.value === "--")
-      break;
-    if (token.quoted)
-      continue;
-    if (token.value === "--body-file" || token.value === "-F") {
-      file = tokens[i + 1]?.value ?? null;
-      i++;
-      continue;
-    }
-    if (token.value.startsWith("--body-file=")) {
-      file = token.value.slice("--body-file=".length);
-      continue;
-    }
-    if (VALUE_FLAGS3[token.value]) {
-      i++;
-      continue;
-    }
-    if (token.value === "--body" || token.value === "-b") {
-      body = tokens[i + 1]?.value ?? "";
-      i++;
-      continue;
-    }
-    if (token.value.startsWith("--body=")) {
-      body = token.value.slice("--body=".length);
-      continue;
-    }
-    const cluster = /^-([A-Za-z]*)b(=?)(.*)$/.exec(token.value);
-    if (cluster && !token.value.startsWith("--")) {
-      const attached = cluster[3] ?? "";
-      body = attached.length > 0 || cluster[2] === "=" ? attached : tokens[++i]?.value ?? "";
-    }
-  }
-  if (body !== null)
-    return { text: body, source: "the --body text" };
-  if (file !== null && file !== "-" && readFile) {
-    const text = readFile(file);
-    if (text !== undefined)
-      return { text, source: `--body-file ${file}` };
-  }
-  return null;
-}
-function decidePrCreate(body, active, note, source) {
-  if (active === false || typeof active !== "boolean" && active.kind === "uncontrolled")
-    return null;
-  if (body === null)
-    return null;
-  if (BEAD_REF.test(body))
-    return null;
-  const looked = source === undefined ? "" : ` Looked at ${source}, not the branch or the title.`;
-  if (typeof active !== "boolean" && active.kind === "unknown") {
-    return {
-      block: true,
-      reason: withLedger(`${active.reason}. This PR must name a bead while repository control is unknown.${looked}`, note)
-    };
-  }
-  return { block: true, reason: withLedger(`${REASON}${looked}`, note) };
-}
-function decideCommand(command, active, note, options = {}) {
-  if (command.length > MAX_COMMAND_LENGTH)
-    return null;
-  const segments = commandSegments(command);
-  const readFile = segments.length === 1 ? options.readFile : undefined;
-  for (const segment of segments) {
-    const read = readBodyOfGhCreate(segment, readFile);
-    const body = read?.text ?? null;
-    if (body === null || BEAD_REF.test(body))
-      continue;
-    const decision = decidePrCreate(body, typeof active === "function" ? active(segment) : active, note, read?.source);
-    if (decision)
-      return decision;
-  }
-  return null;
-}
 function controlledByViewerPermission(permission) {
   return permission === "WRITE" || permission === "MAINTAIN" || permission === "ADMIN";
-}
-function repositoryFromGhCreate(command) {
-  const tokens = invocation(command, ["gh", "pr", "create"]);
-  if (!tokens)
-    return null;
-  let selected = null;
-  for (let i = 3;i < tokens.length; i += 1) {
-    const token = tokens[i];
-    const value = token.value;
-    if (value === "--repo" || value === "-R") {
-      const next = tokens[++i];
-      selected = next?.value ?? null;
-    } else if (value.startsWith("--repo=")) {
-      selected = value.slice(7);
-    } else if (value.startsWith("-R") && value.length > 2) {
-      selected = value.slice(2);
-    } else if (/^-[A-Za-z]*R.+$/.test(value) && value.length > 3) {
-      selected = value.slice(value.indexOf("R") + 1);
-    } else if (value.startsWith("-") && VALUE_FLAGS3[value] === true) {
-      i += 1;
-    }
-  }
-  return selected && /^(?:[^/\s]+\/)?[^/\s]+\/[^/\s]+$/.test(selected) ? selected : null;
 }
 function repositoryFromView(view) {
   if (typeof view.nameWithOwner !== "string")
@@ -4699,25 +4852,25 @@ function repositoryControlled(repo) {
     return { kind: "unknown", reason: `Repository permission could not be determined: ${failure}` };
   }
 }
-function decideCommandParsed(parsed, active, note, options) {
-  const decision = decideCommand(parsed.command, active, note, options);
-  if (decision)
-    return decision;
-  for (const child of parsed.nested) {
-    const nested = decideCommandParsed(child, active, note, options);
-    if (nested)
-      return nested;
-  }
-  return null;
+function repositoryControlFor(repo, cwd) {
+  if (!beadsActive(cwd))
+    return false;
+  return repositoryControlled(repo ?? repositoryFromCurrentCheckout(cwd));
 }
-function bodyFileReader(cwd) {
+function readBodyFile(cwd) {
   return (path) => {
     let fd;
     try {
-      fd = openSync4(resolve7(cwd, path), constants3.O_RDONLY | constants3.O_NONBLOCK);
-      if (!fstatSync2(fd).isFile())
-        return;
-      const buffer = Buffer.alloc(MAX_COMMAND_LENGTH + 1);
+      const directory = resolve7(realpathSync7(cwd), dirname6(path));
+      if (realpathSync7(directory) !== directory)
+        return { ok: false, reason: "its directory is or goes through a symlink" };
+      fd = openSync4(join7(directory, basename6(path)), constants3.O_RDONLY | constants3.O_NOFOLLOW | constants3.O_NONBLOCK);
+      const stat = fstatSync2(fd);
+      if (!stat.isFile())
+        return { ok: false, reason: "it is not a regular file" };
+      if (stat.size > MAX_BODY_BYTES)
+        return { ok: false, reason: `it is larger than ${MAX_BODY_BYTES} bytes` };
+      const buffer = Buffer.alloc(MAX_BODY_BYTES + 1);
       let length = 0;
       while (length < buffer.length) {
         const read = readSync3(fd, buffer, length, buffer.length - length, null);
@@ -4725,19 +4878,42 @@ function bodyFileReader(cwd) {
           break;
         length += read;
       }
-      return length > MAX_COMMAND_LENGTH ? undefined : buffer.toString("utf8", 0, length);
-    } catch {
-      return;
+      if (length > MAX_BODY_BYTES)
+        return { ok: false, reason: `it is larger than ${MAX_BODY_BYTES} bytes` };
+      const bytes = buffer.subarray(0, length);
+      if (bytes.includes(0))
+        return { ok: false, reason: "it holds a NUL byte" };
+      try {
+        return { ok: true, text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes) };
+      } catch {
+        return { ok: false, reason: "it is not valid UTF-8" };
+      }
+    } catch (error) {
+      const code = error.code;
+      return { ok: false, reason: `it could not be opened as a regular file${code === undefined ? "" : ` (${code})`}`, cause: error };
     } finally {
       if (fd !== undefined)
         closeSync4(fd);
     }
   };
 }
-function repositoryControlFor(segment, cwd) {
-  if (!beadsActive(cwd))
-    return false;
-  return repositoryControlled(repositoryFromGhCreate(segment) ?? repositoryFromCurrentCheckout(cwd));
+function decidePrBeadLink(parsed, cwd, deps) {
+  if (!mayCreatePr(parsed))
+    return null;
+  const read = readPrCreate(parsed.command, readBodyFile(cwd));
+  if (read.kind === "form" && beadIn(read.body.text) !== undefined)
+    return null;
+  const control = deps.control(read.kind === "form" ? read.repo : null, cwd);
+  if (control === false || control !== true && control.kind === "uncontrolled")
+    return null;
+  const subject = read.kind === "form" ? `${REASON} Looked at ${read.body.source}, not the branch or the title.` : `This command may create a PR in a form the bead gate cannot read exactly: ${read.rule}. ${OPT_OUT}`;
+  const unknown = control !== true && control.kind === "unknown" ? `${control.reason}. A PR must name a bead, in an exact form, while repository control is unknown. ` : "";
+  const note = deps.note?.();
+  return {
+    block: true,
+    reason: `${unknown}${subject}${note === undefined ? "" : ` ${note}`}`,
+    resolution: `${ACCEPTED_FORMS} ${TRAILER_RULE}`
+  };
 }
 
 // plugins/beads/opencode/src/shell-gates.ts
@@ -4859,13 +5035,15 @@ async function decide(original, cwd, deps) {
   if (crossRepo !== undefined)
     return block("bd-embedded-write-lock", crossRepo, "use the right `workdir`, or assign BEADS_DIR in the command line itself, then retry");
   if (on("pr-bead-link-gate")) {
-    const control = deps.repositoryControl ?? repositoryControlFor;
-    const decision = decideCommandParsed(parsed, (segment) => control(segment, cwd), () => {
-      const ledger = findLedger(cwd);
-      return ledger === undefined ? undefined : describeLedger(ledger);
-    }, { readFile: bodyFileReader(cwd) });
+    const decision = decidePrBeadLink(parsed, cwd, {
+      control: deps.repositoryControl ?? repositoryControlFor,
+      note: () => {
+        const ledger = findLedger(cwd);
+        return ledger === undefined ? undefined : describeLedger(ledger);
+      }
+    });
     if (decision)
-      return block("pr-bead-link-gate", decision.reason, "add the bead trailer to the PR body and retry");
+      return block("pr-bead-link-gate", decision.reason, decision.resolution);
   }
   if (on("bd-embedded-write-lock")) {
     const embedded = await decideEmbeddedWrite(parsed, cwd, deps.env, deps.callID, deadline, deps.runnerLookup ?? embeddedWriteRunner, writeWaitFromOptions(options), targets.plan);
@@ -4902,10 +5080,10 @@ function withoutInheritedPin(env) {
   return rest;
 }
 function shellPin(cwd, env, pinFor = sessionPinFor) {
-  const explicit = withoutInheritedPin(env).BEADS_DIR;
-  if (explicit !== undefined && explicit !== "")
+  const own = withoutInheritedPin(env);
+  if (own.BEADS_DIR !== undefined && own.BEADS_DIR !== "")
     return;
-  return pinFor(cwd);
+  return ambientStore(cwd, { ...own, BEADS_DIR: undefined }, pinFor);
 }
 function selectStore(cwd, base, pinFor = sessionPinFor) {
   const own = withoutInheritedPin(base);
@@ -4928,6 +5106,7 @@ function pinnedEnvironment(cwd, base, pinFor = sessionPinFor) {
 // plugins/beads/opencode/src/claude-hook.ts
 var CONTEXT_CAP = 1e4;
 var TRUNCATED = "\n\n[beads context truncated; run `bd prime` for the rest]";
+var EXPANSION = /[$`]/;
 var GATED_WORD = /(?:^|[^\w.-])(?:bd|git|gh)(?=$|[^\w.-])/;
 function claudeActor(input) {
   if (input.agent_id === undefined || input.agent_id === "")
@@ -4944,7 +5123,7 @@ async function claudeDecision(input, deps) {
   if (typeof command !== "string" || command.trim() === "")
     return;
   const actor = claudeActor(input);
-  if (!GATED_WORD.test(command))
+  if (!GATED_WORD.test(command) && !GATED_WORD.test(command.replace(/['"\\]/g, "")) && !EXPANSION.test(command))
     return actor === undefined ? undefined : {
       hookSpecificOutput: {
         hookEventName: "PreToolUse",

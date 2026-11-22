@@ -5,7 +5,7 @@ import { type SupervisedRun, supervise } from "@srobroek/opencode-lib/subprocess
 
 export const PACK_TOOL = "repomix_pack"
 /** The repomix the npx fallback runs; a repomix on PATH is used as installed. */
-export const REPOMIX_VERSION = "1.18.1"
+export const REPOMIX_VERSION = "1.19.0"
 export const DEFAULT_TIMEOUT_SECONDS = 300
 const MAX_TIMEOUT_SECONDS = 900
 export const TOP_FILES = 10

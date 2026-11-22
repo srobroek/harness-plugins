@@ -5,6 +5,7 @@ import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
 import {
   admitBdMutation,
   type BdRun,
+  bdStoreDir,
   changesDirectoryDynamically,
   envelopeData,
   formatGateAdvisory,
@@ -228,6 +229,50 @@ describe("lifecycleBdEnvironment", () => {
     const env = lifecycleBdEnvironment("/nowhere", { BEADS_DOLT_SHARED_SERVER: "1", PATH: "/bin" })
     expect(env).toMatchObject({ BEADS_DOLT_SHARED_SERVER: "", BD_NO_PAGER: "1", BD_NON_INTERACTIVE: "1", BD_DOLT_AUTO_START: "false", NO_COLOR: "1" })
     expect(lifecycleBdEnvironment("/nowhere", { BEADS_DIR: "/explicit" }).BEADS_DIR).toBe("/explicit")
+  })
+})
+
+describe("startup gate reads with an inherited BEADS_DB", () => {
+  // A checkout whose own `.beads` the session pin would pick, and a second store BEADS_DB names.
+  const fixture = () => {
+    const root = realpathSync(mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "beads-startup-db-")))
+    Bun.spawnSync(["git", "init", "-q", root])
+    mkdirSync(join(root, ".beads"), { recursive: true })
+    mkdirSync(join(root, "other", ".beads"), { recursive: true })
+    return { root, own: join(root, ".beads"), other: join(root, "other", ".beads") }
+  }
+
+  test("a read pins the checkout's own store: bd 1.3.1 ignores BEADS_DB when a .beads is found", () => {
+    const { root, own, other } = fixture()
+    try {
+      expect(lifecycleBdEnvironment(root, { BEADS_DB: join(other, "beads.db") }).BEADS_DIR).toBe(own)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test("with no store for the directory, a read pins the store BEADS_DB names", () => {
+    const { root, other } = fixture()
+    const bare = realpathSync(mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "beads-startup-bare-")))
+    try {
+      expect(lifecycleBdEnvironment(bare, { BEADS_DB: join(other, "beads.db") }).BEADS_DIR).toBe(other)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+      rmSync(bare, { recursive: true, force: true })
+    }
+  })
+
+  test("the store a read opens follows BEADS_DIR, then the directory's .beads, then BEADS_DB", () => {
+    const { root, own, other } = fixture()
+    const bare = realpathSync(mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "beads-startup-bare-")))
+    try {
+      expect(bdStoreDir(root, { BEADS_DB: join(other, "beads.db") })).toBe(own)
+      expect(bdStoreDir(bare, { BEADS_DB: join(other, "beads.db") })).toBe(other)
+      expect(bdStoreDir(bare, { BEADS_DIR: own, BEADS_DB: join(other, "beads.db") })).toBe(own)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+      rmSync(bare, { recursive: true, force: true })
+    }
   })
 })
 

@@ -17,9 +17,7 @@ import {
 export {
   type CommandPosition,
   commandFromInput,
-  commandSegments,
   interpreterCommandString,
-  invocation,
   leadingCdCwd,
   type ParsedCommand,
   type ParsedInvocation,

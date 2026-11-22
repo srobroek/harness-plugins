@@ -65,7 +65,10 @@ export const CONTEXT_CAP = 10_000
 
 const TRUNCATED = "\n\n[beads context truncated; run `bd prime` for the rest]"
 
-/** Commands no gate looks at skip the gates: no `bd`, `git` or `gh` word anywhere. */
+/** A parameter, command or arithmetic expansion, or a backtick substitution. */
+const EXPANSION = /[$`]/
+
+/** Commands no gate looks at skip the gates: no `bd`, `git` or `gh` word anywhere, with or without its quotes, and no expansion. */
 const GATED_WORD = /(?:^|[^\w.-])(?:bd|git|gh)(?=$|[^\w.-])/
 
 /**
@@ -98,7 +101,9 @@ export async function claudeDecision(input: HookInput, deps: ClaudeDeps): Promis
   const actor = claudeActor(input)
   // No gate looks at a command without bd, git or gh, but a script or tool it runs may call `bd`,
   // so a subagent's command still starts with its actor.
-  if (!GATED_WORD.test(command))
+  // Quotes and backslashes are dropped first, so `g''h` is the word `gh` the shell will run. A `$` or a
+  // backtick may put a program in command position, which `mayCreatePr` reads as a possible `gh`.
+  if (!GATED_WORD.test(command) && !GATED_WORD.test(command.replace(/['"\\]/g, "")) && !EXPANSION.test(command))
     return actor === undefined
       ? undefined
       : {

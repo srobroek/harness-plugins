@@ -20,7 +20,7 @@ import {
   writeSync
 } from "fs";
 import { hostname } from "os";
-import { basename, dirname as dirname2, isAbsolute as isAbsolute2, join, resolve as resolve2 } from "path";
+import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute2, join, resolve as resolve2 } from "path";
 
 // lib/src/shell-tokenizer.ts
 var SEPARATORS = new Set([";", "&", "|", "(", ")", `
@@ -314,7 +314,7 @@ var TRUTHY = { "": true, "1": true, t: true, T: true, TRUE: true, true: true, Tr
 // lib/src/beads-store.ts
 import { spawnSync } from "child_process";
 import { lstatSync, realpathSync, statSync } from "fs";
-import { dirname, isAbsolute, resolve } from "path";
+import { basename, dirname, isAbsolute, resolve } from "path";
 function repoIdentity(cwd) {
   if (cwd.includes("\x00"))
     return;
@@ -379,6 +379,20 @@ function sessionPinFor(cwd) {
   if (isDir(local))
     return local;
   return;
+}
+function storeFromBeadsDb(value, cwd) {
+  const path = resolve(cwd, value);
+  return basename(path) === ".beads" ? path : dirname(path);
+}
+function ambientStore(cwd, env, walkUp = sessionPinFor) {
+  const dir = env.BEADS_DIR;
+  if (dir !== undefined && dir !== "")
+    return resolve(cwd, dir);
+  const found = walkUp(cwd);
+  if (found !== undefined)
+    return found;
+  const db = env.BEADS_DB;
+  return db !== undefined && db !== "" ? storeFromBeadsDb(db, cwd) : undefined;
 }
 function isDir(path) {
   try {
@@ -529,10 +543,7 @@ function selectedStoreFor(globals, cwd, env) {
   }
   if (directory !== undefined)
     return sessionPinFor(base);
-  const pinned = env.BEADS_DIR;
-  if (pinned !== undefined && pinned !== "")
-    return absolute(pinned, cwd);
-  return sessionPinFor(cwd);
+  return ambientStore(cwd, env);
 }
 function absolute(path, cwd) {
   return isAbsolute2(path) ? path : resolve2(cwd, path);
@@ -566,6 +577,47 @@ function embeddedStoreFor(cwd, env = process.env) {
   const store = storeFor([], cwd, env);
   return store !== undefined && embedded(store) ? store : undefined;
 }
+var SKIPS_STORE_INIT = new Set([
+  "bash",
+  "bootstrap",
+  "codex-hook",
+  "completion",
+  "context",
+  "cursor-hook",
+  "doctor",
+  "dolt",
+  "fish",
+  "formula",
+  "help",
+  "hook",
+  "hooks",
+  "human",
+  "init",
+  "merge",
+  "metrics",
+  "onboard",
+  "powershell",
+  "prime",
+  "quickstart",
+  "schema",
+  "send-metrics",
+  "setup",
+  "version",
+  "where",
+  "worktree",
+  "zsh"
+]);
+var OPENS_STORE = {
+  dolt: new Set(["push", "pull", "commit"]),
+  human: new Set(["list", "respond", "dismiss", "stats"])
+};
+var MIGRATE_SKIPS_STORE_INIT = new Set([
+  "from-server-to-proxied-server",
+  "from-proxied-server-to-server",
+  "from-shared-server-to-proxied-server",
+  "from-proxied-server-to-shared-server",
+  "legacy-sqlite"
+]);
 var LIST_PREFIXES = new Set(["then", "else", "do"]);
 function ageOf(path) {
   try {
@@ -1095,12 +1147,24 @@ async function withLease(lockPath, options, work) {
 
 // lib/src/safe-git.ts
 import { devNull } from "os";
-var SAFE_GIT_ARGS = [
-  "-c",
-  "core.fsmonitor=false",
-  "-c",
-  `core.hooksPath=${devNull}`,
-  "--no-optional-locks"
+var SAFE_GIT_CONFIG = [
+  ["core.fsmonitor", "false"],
+  ["core.hooksPath", devNull]
+];
+var SAFE_GIT_ARGS = [...SAFE_GIT_CONFIG.flatMap(([key, value]) => ["-c", `${key}=${value}`]), "--no-optional-locks"];
+var HARDENED_GIT_CONFIG = [
+  ...SAFE_GIT_CONFIG,
+  ["core.attributesFile", devNull],
+  ["log.showSignature", "false"],
+  ["gpg.program", devNull],
+  ["gpg.ssh.program", devNull],
+  ["gpg.x509.program", devNull],
+  ["commit.gpgSign", "false"],
+  ["tag.gpgSign", "false"],
+  ["gpg.ssh.defaultKeyCommand", ""],
+  ["core.sshCommand", ""],
+  ["credential.helper", ""],
+  ["diff.external", ""]
 ];
 
 // lib/src/skill-files.ts
@@ -2183,7 +2247,7 @@ function releaseClaims(root, names) {
 // plugins/autopilot/opencode/src/review-export.ts
 import { createHash, randomUUID as randomUUID3 } from "crypto";
 import { lstatSync as lstatSync3, mkdirSync as mkdirSync2, readdirSync as readdirSync2, renameSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "fs";
-import { basename as basename2, dirname as dirname4, join as join4, sep } from "path";
+import { basename as basename3, dirname as dirname4, join as join4, sep } from "path";
 var REVIEW_DIR = "review";
 var MANIFEST = "manifest.json";
 var DEFAULT_LIMITS = { files: 300, diffBytes: 4 * 1024 * 1024, fileBytes: 512 * 1024, totalBytes: 8 * 1024 * 1024 };
@@ -2444,7 +2508,7 @@ function verifyExport(dir, recordedHash) {
   if (!read.ok)
     return read;
   const { manifest } = read;
-  if (basename2(dir) !== recordedHash || basename2(dirname4(dir)) !== manifest.head)
+  if (basename3(dir) !== recordedHash || basename3(dirname4(dir)) !== manifest.head)
     return refuse(`${dir} is not named <head>/<manifest hash> as its manifest says`);
   const expectedDirs = new Set;
   for (const file of manifest.files) {

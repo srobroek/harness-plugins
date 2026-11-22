@@ -18,7 +18,7 @@ import {
   writeSync
 } from "fs";
 import { hostname } from "os";
-import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute3, join, resolve as resolve3 } from "path";
+import { basename as basename3, dirname as dirname2, isAbsolute as isAbsolute3, join, resolve as resolve3 } from "path";
 
 // lib/src/shell-tokenizer.ts
 var SEPARATORS = new Set([";", "&", "|", "(", ")", `
@@ -291,123 +291,11 @@ var WRAPPERS = {
   until: true,
   do: true
 };
-function commandSegments(command) {
-  const out = [];
-  let start = 0;
-  let quote = null;
-  let escaped = false;
-  for (let i = 0;i < command.length; i++) {
-    const ch = command[i];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (quote === "'") {
-      if (ch === "'")
-        quote = null;
-      continue;
-    }
-    if (quote === '"') {
-      if (ch === "\\")
-        escaped = true;
-      else if (ch === '"')
-        quote = null;
-      continue;
-    }
-    if (ch === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (ch === "'" || ch === '"') {
-      quote = ch;
-      continue;
-    }
-    const two = command.slice(i, i + 2);
-    if (two === "&&" || two === "||") {
-      out.push(command.slice(start, i), two);
-      i++;
-      start = i + 1;
-      continue;
-    }
-    if (ch === ";" || ch === "&" || ch === "|" || ch === `
-` || ch === "(" || ch === ")" || ch === "{" || ch === "}") {
-      out.push(command.slice(start, i), ch);
-      start = i + 1;
-    }
-  }
-  out.push(command.slice(start));
-  return out;
-}
 function tokenize(segment) {
   return tokenizeShell(segment, { preserveBackslashes: true }).map(({ value, startsQuoted }) => ({
     value,
     quoted: startsQuoted
   }));
-}
-function invocation(segment, argv) {
-  const tokens = tokenize(segment);
-  const head = argv[0];
-  if (!head)
-    return null;
-  let start = 0;
-  while (start < tokens.length) {
-    const token = tokens[start];
-    if (!token || token.quoted)
-      return null;
-    const basename = token.value.split("/").pop() ?? token.value;
-    if (basename === head)
-      break;
-    if (basename === "env") {
-      start++;
-      while (start < tokens.length) {
-        const option = tokens[start];
-        if (!option || option.quoted)
-          return null;
-        const value = option.value;
-        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(value)) {
-          start++;
-          continue;
-        }
-        if (value === "--") {
-          start++;
-          break;
-        }
-        if (value === "-i" || value === "--ignore-environment") {
-          start++;
-          continue;
-        }
-        if (value === "-u" || value === "--unset") {
-          start++;
-          if (start >= tokens.length || tokens[start]?.quoted)
-            return null;
-          start++;
-          continue;
-        }
-        if (value.startsWith("--unset=") || value.startsWith("-u") && value.length > 2) {
-          start++;
-          continue;
-        }
-        if (value.startsWith("-")) {
-          start++;
-          continue;
-        }
-        break;
-      }
-      continue;
-    }
-    if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(token.value) && !token.value.startsWith("-") && WRAPPERS[basename] !== true)
-      return null;
-    start++;
-  }
-  for (const [offset, word] of argv.entries()) {
-    const token = tokens[start + offset];
-    if (!token || token.quoted)
-      return null;
-    const value = offset === 0 ? token.value.split("/").pop() ?? token.value : token.value;
-    if (value !== word)
-      return null;
-  }
-  return tokens.slice(start);
 }
 function scanShell(source, options = {}) {
   const items = [];
@@ -1842,7 +1730,7 @@ function decideActorParsed(parsed, env = process.env) {
 // lib/src/beads-store.ts
 import { spawnSync } from "child_process";
 import { lstatSync, realpathSync, statSync } from "fs";
-import { dirname, isAbsolute as isAbsolute2, resolve as resolve2 } from "path";
+import { basename as basename2, dirname, isAbsolute as isAbsolute2, resolve as resolve2 } from "path";
 function configuredStore(options, projectRoot) {
   if (!("store" in options))
     return;
@@ -1929,6 +1817,20 @@ function sessionPinFor(cwd) {
   if (isDir(local))
     return local;
   return;
+}
+function storeFromBeadsDb(value, cwd) {
+  const path = resolve2(cwd, value);
+  return basename2(path) === ".beads" ? path : dirname(path);
+}
+function ambientStore(cwd, env, walkUp = sessionPinFor) {
+  const dir = env.BEADS_DIR;
+  if (dir !== undefined && dir !== "")
+    return resolve2(cwd, dir);
+  const found = walkUp(cwd);
+  if (found !== undefined)
+    return found;
+  const db = env.BEADS_DB;
+  return db !== undefined && db !== "" ? storeFromBeadsDb(db, cwd) : undefined;
 }
 function isDir(path) {
   try {
@@ -2188,10 +2090,7 @@ function selectedStoreFor(globals, cwd, env) {
   }
   if (directory !== undefined)
     return sessionPinFor(base);
-  const pinned = env.BEADS_DIR;
-  if (pinned !== undefined && pinned !== "")
-    return absolute(pinned, cwd);
-  return sessionPinFor(cwd);
+  return ambientStore(cwd, env);
 }
 function absolute(path, cwd) {
   return isAbsolute3(path) ? path : resolve3(cwd, path);
@@ -2232,6 +2131,59 @@ function mentionsBd(source) {
   return BD_WORD.test(source) || BD_WORD.test(source.replace(/["'\\]/g, ""));
 }
 var ASSIGNMENT3 = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
+var DB_VARIABLE = /BEADS_DB|BD_DB/;
+var SKIPS_STORE_INIT = new Set([
+  "bash",
+  "bootstrap",
+  "codex-hook",
+  "completion",
+  "context",
+  "cursor-hook",
+  "doctor",
+  "dolt",
+  "fish",
+  "formula",
+  "help",
+  "hook",
+  "hooks",
+  "human",
+  "init",
+  "merge",
+  "metrics",
+  "onboard",
+  "powershell",
+  "prime",
+  "quickstart",
+  "schema",
+  "send-metrics",
+  "setup",
+  "version",
+  "where",
+  "worktree",
+  "zsh"
+]);
+var OPENS_STORE = {
+  dolt: new Set(["push", "pull", "commit"]),
+  human: new Set(["list", "respond", "dismiss", "stats"])
+};
+var MIGRATE_SKIPS_STORE_INIT = new Set([
+  "from-server-to-proxied-server",
+  "from-proxied-server-to-server",
+  "from-shared-server-to-proxied-server",
+  "from-proxied-server-to-shared-server",
+  "legacy-sqlite"
+]);
+function skipsStoreInit({ verb, args }) {
+  const positional = args.filter((arg) => !arg.startsWith("-"));
+  const sub = positional[0];
+  if (verb === "migrate")
+    return sub !== undefined && MIGRATE_SKIPS_STORE_INIT.has(sub);
+  if (!SKIPS_STORE_INIT.has(verb) || sub === undefined)
+    return SKIPS_STORE_INIT.has(verb);
+  if (verb === "dolt" && sub === "remote")
+    return positional.length < 2;
+  return OPENS_STORE[verb]?.has(sub) !== true;
+}
 var BEADS_DIR_ASSIGNMENT = /^BEADS_DIR(\+?)=/;
 var LIST_PREFIXES = new Set(["then", "else", "do"]);
 var COMPOUND_OPENERS = { if: true, case: true, for: true, select: true, while: true, until: true };
@@ -2735,6 +2687,15 @@ function resolveWrite(invocation, assignments, state, env, source) {
   }
   const directory = globalValue(invocation.globals, ["-C", "--directory"]);
   const db = globalValue(invocation.globals, ["--db"]);
+  const dbSource = (env.BEADS_DB ?? "") !== "" ? "the environment sets `BEADS_DB`" : (env.BD_DB ?? "") !== "" ? "the environment sets `BD_DB`" : DB_VARIABLE.test(source) ? "the command mentions `BEADS_DB` or `BD_DB`" : undefined;
+  if (dbSource !== undefined && skipsStoreInit(invocation) && db === undefined) {
+    return {
+      problem: {
+        part: `${write} skips bd's store init, so bd 1.3.1 picks its store from \`BEADS_DB\` or \`BD_DB\` before \`BEADS_DIR\`, and ${dbSource}`,
+        fix: "Name the store on the write with `bd --db /path/.beads ...`; `BEADS_DIR` does not override `BEADS_DB` for this command."
+      }
+    };
+  }
   if (directory === undefined && db === undefined && beadsDir.kind === "unknown") {
     return {
       problem: {
@@ -3190,7 +3151,7 @@ function bunBinary() {
 }
 function resolveBunBinary(options = {}) {
   const execPath = options.execPath ?? process.execPath;
-  const own = basename2(execPath);
+  const own = basename3(execPath);
   if (own === "bun" || own === "bun.exe")
     return execPath;
   const onPath = options.which?.("bun");
@@ -3206,7 +3167,7 @@ function resolveBunBinary(options = {}) {
   if (mise === null || mise === undefined || options.miseWhich === undefined)
     return;
   const resolved = options.miseWhich(mise);
-  return resolved !== undefined && basename2(resolved).startsWith("bun") && existsSync(resolved) ? resolved : undefined;
+  return resolved !== undefined && basename3(resolved).startsWith("bun") && existsSync(resolved) ? resolved : undefined;
 }
 function quote(word) {
   return `'${word.replaceAll("'", "'\\''")}'`;
@@ -3217,7 +3178,7 @@ function withRunner(command, writes, runner, waitMs) {
   for (const write of [...writes].sort((left, right) => left.offset - right.offset)) {
     const store = quote(write.store);
     const selected = ` ${RUNNER_SELECTED_FLAG} ${quote(write.selected)}`;
-    out += `${command.slice(cursor, write.offset)}BEADS_DOLT_SHARED_SERVER= BEADS_DIR=${store} ${quote(runner.interpreter)} ${quote(runner.script)} ${RUNNER_STORE_FLAG} ${store}${selected} ${RUNNER_WAIT_FLAG} ${Math.round(waitMs)} -- `;
+    out += `${command.slice(cursor, write.offset)}BEADS_DOLT_SHARED_SERVER= BEADS_DIR=${store} BEADS_DB= BD_DB= ${quote(runner.interpreter)} ${quote(runner.script)} ${RUNNER_STORE_FLAG} ${store}${selected} ${RUNNER_WAIT_FLAG} ${Math.round(waitMs)} -- `;
     cursor = write.offset;
   }
   return out + command.slice(cursor);
