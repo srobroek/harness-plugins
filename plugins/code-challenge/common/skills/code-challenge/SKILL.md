@@ -1,6 +1,6 @@
 ---
 name: code-challenge
-description: Challenges code for simplification, performance, stability, hand-rolled code and structure; triggers on challenge this code.
+description: Challenges code for scope against its design, simplification, performance, stability and structure; triggers on challenge this code.
 ---
 
 # Code challenge
@@ -9,6 +9,7 @@ Challenge existing code and return findings with evidence. Plan only: this skill
 
 TRIGGER
 + a request to find simplification, performance, stability, dead-code, library or structure wins in existing code
++ a request to check code against its design or docs: missing requirements, drift, scope creep, features built beyond the design
 + a large diff, a new module or a new dependency that needs a second look
 - reviewing a diff for defects before merge -> `code-reviewer` agent
 - a single suspected bug -> `quality-code-design`
@@ -39,7 +40,7 @@ MUST Write `decisions.jsonl` as you go: every decision, blocker, ambiguity, choi
 MUST Store the run in `<git-dir>/code-challenge/<run-id>/`: [references/run-storage.md](references/run-storage.md).
 NOT Report a performance claim without a measurement. A suspicion is a `hypothesis`.
 NOT Report a finding as `proven` from analyzer output alone.
-NOT Invent a lens or an analyzer rule; use the twelve lenses below.
+NOT Invent a lens or an analyzer rule; use the thirteen lenses below.
 
 ## Lenses
 
@@ -47,6 +48,7 @@ One reference per lens, each with what to look for, the evidence needed and the 
 
 | Lens | Reference |
 |---|---|
+| scope (design and docs conformance) | [lens-scope.md](references/lens-scope.md) |
 | simplification | [lens-simplification.md](references/lens-simplification.md) |
 | over-engineering | [lens-over-engineering.md](references/lens-over-engineering.md) |
 | optimisation (algorithm) | [lens-optimisation.md](references/lens-optimisation.md) |
@@ -68,10 +70,10 @@ One reference per lens, each with what to look for, the evidence needed and the 
 
 1. INTAKE: LOAD [references/intake-questions.md](references/intake-questions.md) and ask its batch (interactive), or infer the answers and ask only for a missing target or depth (autonomous). Create the run directory and `run_id`. -> `intake.json` written; the pluggability answer and its signal logged to `decisions.jsonl`.
 2. SCAN: LOAD [references/scan.md](references/scan.md) and run the analyzers for the languages in the target; `quick` skips build-needing ones. -> `scan.json` listing every hit with tool, rule, `path:line` and whether the rule is enabled in the repo, and every analyzer that could not run named as a gap.
-3. CHALLENGE: for each selected lens, LOAD its reference and spawn one `code-challenger` agent per lens in parallel (standard tier), with a brief naming the lens, the target, the scan hits and the frozen surfaces. The brief MUST list the absolute paths of `references/lens-<lens>.md` and `references/evidence.md`, resolved from the skill's base directory: a scout sees a sampled file list and otherwise reads no lens reference. When the host caps parallel subagents, group related lenses and run the scouts one after another: simplification, over-engineering and dead-code; optimisation, performance and efficiency; the rest by pairs. A grouped brief names every lens and reference path of its group. Log the grouping as a `choice` line in `decisions.jsonl` and name it in `gaps`. Reject a scout reply that lacks the line `References read:` or lists fewer references than the brief named (every lens reference of its group plus `evidence.md`); re-ask once with the missing paths. If the second reply is still short, record a gap naming the lens and the unread references, and mark its findings as read without the reference. The scouts and the critic only read and reply; you (the lead) spawn them, merge the replies, collapse one root cause into one finding, and write every file. -> `findings.json` with each finding at a locator, a tier and a test-protection value.
+3. CHALLENGE: for each selected lens, LOAD its reference and spawn one `code-challenger` agent per lens in parallel (standard tier), with a brief naming the lens, the target, the scan hits and the frozen surfaces, and for the scope lens the design sources from `intake.json`. The brief MUST list the absolute paths of `references/lens-<lens>.md` and `references/evidence.md`, resolved from the skill's base directory: a scout sees a sampled file list and otherwise reads no lens reference. When the host caps parallel subagents, group related lenses and run the scouts one after another: simplification, over-engineering and dead-code; scope alone; optimisation, performance and efficiency; the rest by pairs. A grouped brief names every lens and reference path of its group. Log the grouping as a `choice` line in `decisions.jsonl` and name it in `gaps`. Reject a scout reply that lacks the line `References read:` or lists fewer references than the brief named (every lens reference of its group plus `evidence.md`); re-ask once with the missing paths. If the second reply is still short, record a gap naming the lens and the unread references, and mark its findings as read without the reference. The scouts and the critic only read and reply; you (the lead) spawn them, merge the replies, collapse one root cause into one finding, and write every file. -> `findings.json` with each finding at a locator, a tier and a test-protection value.
 4. RESEARCH (standard, deep): for each library-lens finding LOAD [references/library-scoring.md](references/library-scoring.md); gather facts, score 2 to 4 candidates, apply the gates. -> `research.json` with per-criterion scores, gate results and the "keep what exists" baseline for each finding.
 5. REFUTE (standard, deep): you send the findings to the `refactor-challenger` agent (reviewer tier) as a brief of observable facts only: locator, claim, tool or reading, proposal, evidence. Split a finding that bundles proposals which can be decided separately into one entry per proposal, each with its own tier, blast radius and contract flag. Keep what was observed in the code, what is inferred from it and what a command reproduced in separate fields. An empty reply is not a verdict: send the same brief again once; if the second reply is empty too, log a `blocker` line and mark those findings unrefuted. -> `verdicts.json` with KEEP, DOWNGRADE or DROP and a cited rationale per finding; a DROP leaves the offer list.
-6. DECIDE: LOAD [references/decide.md](references/decide.md). Interactive: batches of up to 12 through `parley_ask`. Autonomous: accept only a surviving, `proven` or `measured`, low-blast-radius finding that keeps its contract; defer the rest. -> every finding has a status and `decided_by`, with one `decisions.jsonl` line each.
+6. DECIDE: LOAD [references/decide.md](references/decide.md). Interactive: batches of up to 12 through `parley_ask`. Autonomous: accept only a surviving, `proven` or `measured`, low-blast-radius finding that keeps its contract and is not a scope finding; defer the rest. -> every finding has a status and `decided_by`, with one `decisions.jsonl` line each.
 7. DELIVER: write `report.json` against [references/report.schema.json](references/report.schema.json) and `decisions.jsonl` against [references/decisions.schema.json](references/decisions.schema.json); print the report in chat; create the epic and child beads for accepted findings (standard, deep); draft the PR comment. -> both files pass `challenge_validate`, the chat report names the run directory, and the comment is posted only after the user confirms.
 
 ## Subagents

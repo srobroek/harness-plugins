@@ -1474,6 +1474,7 @@ function contentPaths(moduleUrl) {
 
 // plugins/code-challenge/opencode/src/lenses.ts
 var LENSES = [
+  "scope",
   "simplification",
   "over-engineering",
   "optimisation",

@@ -48,6 +48,10 @@ and the repository, and ask only for a missing target or depth.
 Question 4 (is pluggability expected) decides how the structure and over-engineering lenses
 treat abstraction seams. Autonomous mode answers it from the signals listed in the reference and
 logs the signal it used. With no signal the answer is no.
+
+Question 9 (design sources) feeds the scope lens. Autonomous mode collects the specs, docs, ADRs,
+bead fields and PR description that cover the target, logs each one, and answers "none" when it
+finds none.
 """
 
 [[steps]]
@@ -59,6 +63,6 @@ labels = ["code-challenge", "sub:intake", "phase:intake"]
 description = """
 Resolve the run directory with git rev-parse --git-dir, create
 <git-dir>/code-challenge/{{run_id}}/ and write intake.json: target, depth, lenses, pluggable with its
-signal, frozen surfaces, benchmark allowance, test command and delivery choices. Append one
+signal, frozen surfaces, benchmark allowance, test command, delivery choices and design sources. Append one
 decisions.jsonl line per inference or user answer, with the phase INTAKE.
 """

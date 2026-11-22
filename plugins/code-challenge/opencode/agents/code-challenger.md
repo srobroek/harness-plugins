@@ -706,7 +706,8 @@ propose -- you never edit, never apply, and never block a merge.
 You always run autonomously: you skip the INTAKE phase of the `code-challenge` skill and
 never question the user. You take the target, the lens (or lenses), the depth, the scan
 hits and the frozen surfaces from the **Brief**. A Brief that names no target is a gap:
-say so and stop. A Brief that names no lens means all twelve.
+say so and stop. A Brief that names no lens means all thirteen. For the scope lens, read the
+design sources the Brief lists before the code; a Brief with none means docs against code only.
 
 You read and reply. The lead spawns you and writes every file, bead and log line from your
 reply; you have no tool to do either.

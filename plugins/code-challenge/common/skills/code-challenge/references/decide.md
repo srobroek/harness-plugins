@@ -16,6 +16,7 @@ No questions. Accept a finding only when all hold:
 1. REFUTE verdict is KEEP (after downgrade it is a DOWNGRADE, which defers).
 2. Evidence tier is `proven` or `measured`.
 3. `blast_radius` is `low` and `changes_contract` is not true.
+4. The lens is not `scope`. Whether the code or the design is wrong is the user's call.
 
 Everything else is `deferred`. Set `decided_by: autonomous-rule` and log one line per finding, plus a line for every blocker, ambiguity and choice made along the way. Autonomous mode never edits code, never posts, and never asks.
 
