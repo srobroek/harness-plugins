@@ -877,19 +877,6 @@ export function createLanes(
     return directory === undefined ? [] : git.localFiles(directory)
   }
 
-  /** A lookup that settles to undefined when it fails or takes longer than the lookup time. */
-  const settled = async <T>(work: Promise<T>): Promise<T | undefined> => {
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const timeout = new Promise<undefined>((done) => {
-      timer = setTimeout(() => done(undefined), lookupMs)
-    })
-    try {
-      return await Promise.race([work.catch(() => undefined), timeout])
-    } finally {
-      clearTimeout(timer)
-    }
-  }
-
   /** What `session.get` says about a writer: its state, owner and execution times. */
   const writerFacts = async (child: string) => {
     const lookup = Promise.resolve(ctx.session.get({ sessionID: child } as never)) as Promise<unknown>

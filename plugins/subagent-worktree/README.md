@@ -81,38 +81,26 @@ has three limits:
    worktree.
 
 A writer whose server died during a run still looks running until it runs again, so it blocks its
-worktree. Its parent can free the worktree with `subagent_worktree_merge` and `method: "release"`.
-Pass the writer's `sessionID` and a `reason`. The release needs all of these:
+worktree and keeps its lane. Stop that writer and delete its session in OpenCode. The guard then
+lets a new writer into the worktree. To hand the old writer's lane to the new writer, call
+`subagent_worktree_merge` with `method: "release"`, the old writer's `sessionID` and a `reason`.
+The release needs all of these:
 
-- The caller spawned the writer.
-- No background work is known to run. The writer's last idle gate listed no shell, job or
-  background subagent, and no hold is recorded on the worktree. A writer whose latest run started
-  in this server counts as known only when that run ended at or after an empty idle gate that came
-  after its start. An idle gate can let the same run go on, and what the run starts then is not
-  recorded. So any run activity of the writer after the gate (a step, a tool call, a shell, a failure
-  or an interrupt) voids the gate. Only a normal end, and events that change nothing about the run,
-  leave it standing. If the plugin stops receiving host events, no gate counts. Otherwise the plugin refuses. To release such a writer, stop its run first. With `gates: false`, or on a host
-  without the idle gate, the plugin cannot see background work, so it refuses every release.
-- No `subagent` call that resumes the writer is in flight. A background resume counts as in flight
-  until the writer's next run has started, since its run may not show when the call returns.
-- No other release of the writer has written its record. The plugin reads the record again under
-  the lock.
-- The writer is gone (deleted or archived), or idle with no open tool call. A run that never
-  ended, or an open tool call, counts only after 10 minutes without a change to the session. Before
-  the release, the plugin interrupts that run, so a run still live in this server cannot write again.
+- The host reports the writer's session as deleted. While the session exists, even when it is
+  idle or archived, a run, shell or background job of it may still write to the worktree. The
+  plugin cannot see all of that work, so it refuses and asks you to stop and delete the session.
+- The writer's lane names the caller as its parent.
+- No hold is recorded on the worktree for running work.
 - The worktree has no uncommitted or untracked changes.
 - The branch has an upstream that has every commit (`git rev-list --count @{upstream}..HEAD` is 0).
+- No other release of the writer has written its record. The plugin reads the record again under
+  the lock.
 
 The release runs under the worktree's lock and writes a record under `release/<sessionID>` in
-plugin storage. The record names the worktree, the caller and `HEAD`, with the reason and the time. It
-also says whether the release interrupted a run. After the interrupt the plugin reads the writer and
-the worktree again. A new run, a change to the tree or `HEAD`, or new background work makes the
-plugin delete the record and refuse the release. After a release:
+plugin storage. The record names the worktree, the caller and `HEAD`, with the reason and the time.
+After a release:
 
-- The guard ignores the released writer in that worktree. While the release is under way, the
-  guard still counts the writer.
-- The plugin refuses every `subagent` call that resumes the released writer, and every such call
-  that arrives while the release is under way.
+- The plugin refuses every `subagent` call that resumes the released writer.
 - The record names the next writer that a call moves into the worktree, as `to`.
 - When the released writer owned a lane for that worktree, the new writer takes over the lane. The
   plugin stores the lane under the new child with `handedOver`, and the lane's claim names the new
