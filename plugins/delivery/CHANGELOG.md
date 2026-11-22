@@ -1,3 +1,5 @@
+## delivery [0.10.6](https://github.com/srobroek/harness-plugins/compare/delivery--v0.10.5...delivery--v0.10.6) (2026-11-22)
+
 ## delivery [0.10.5](https://github.com/srobroek/harness-plugins/compare/delivery--v0.10.4...delivery--v0.10.5) (2026-11-22)
 
 ### Bug Fixes
