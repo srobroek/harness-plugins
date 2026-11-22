@@ -13,7 +13,7 @@
 
 import { spawnSync } from "node:child_process"
 import { resolve } from "node:path"
-import { SAFE_GIT_ARGS, untrustedLocalGitEnv } from "@srobroek/opencode-lib/safe-git"
+import { SAFE_GIT_ARGS, hardenedGitEnv } from "@srobroek/opencode-lib/safe-git"
 import type { Command } from "./shell.ts"
 
 export type PushViaConfig = { host: string; command: string }
@@ -63,7 +63,7 @@ function git(cwd: string, args: string[], env: Record<string, string>): string[]
 // (git's own `insteadOf` rewrite, printed without connecting), unless a `pushInsteadOf` rule exists, which that
 // command does not apply and this guard does not model, so the destination is unknown.
 export function gitRemoteResolver(inherited: Environment): RemoteResolver {
-  const env = untrustedLocalGitEnv(inherited)
+  const env = hardenedGitEnv(inherited)
   return (cwd, remote) => {
     if (remote !== undefined) {
       const named = git(cwd, ["remote", "get-url", "--push", "--all", "--", remote], env)

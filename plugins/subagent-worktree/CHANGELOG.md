@@ -1,3 +1,36 @@
+## subagent-worktree [0.8.0](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.7.0...subagent-worktree--v0.8.0) (2026-11-22)
+
+### Features
+
+* **subagent-worktree:** remove lanes through one finalize path ([59eb833](https://github.com/srobroek/harness-plugins/commit/59eb833e5a84bfabcd5be1c1d8c8438dd73e9b50)), closes [#59](https://github.com/srobroek/harness-plugins/issues/59) [#81](https://github.com/srobroek/harness-plugins/issues/81)
+
+### Bug Fixes
+
+* **subagent-worktree:** disable filter drivers for reads that hash the work tree ([780eda5](https://github.com/srobroek/harness-plugins/commit/780eda579f53f9a5eff358c5a1cbe174ab04fd41)), closes [#79](https://github.com/srobroek/harness-plugins/issues/79) [#96](https://github.com/srobroek/harness-plugins/issues/96)
+* **subagent-worktree:** drop inherited command-scope git config before pinning ([87b5a17](https://github.com/srobroek/harness-plugins/commit/87b5a1797a290420239d374ebcda92aa6685b35d)), closes [#96](https://github.com/srobroek/harness-plugins/issues/96)
+* **subagent-worktree:** drop inherited repository selectors from the hardened git env ([60c5723](https://github.com/srobroek/harness-plugins/commit/60c572351ff7a6f3e6b7c748e71eca45f2820196)), closes [#96](https://github.com/srobroek/harness-plugins/issues/96)
+* **subagent-worktree:** fence each eviction move against a start ([511dfa8](https://github.com/srobroek/harness-plugins/commit/511dfa8e2c5ffd9079fdb7f47932b93d0b73022f)), closes [#96](https://github.com/srobroek/harness-plugins/issues/96)
+* **subagent-worktree:** keep the eviction guard after the on-demand sweep landed ([e9ff146](https://github.com/srobroek/harness-plugins/commit/e9ff146f450cde8e39e0d505d22cf2519b948cf7))
+* **subagent-worktree:** move other sessions out of the checkout before removing it ([067f343](https://github.com/srobroek/harness-plugins/commit/067f343fdda68138ec381a4ff0184caa4089a83b))
+* **subagent-worktree:** order the lock-wait race test with a barrier ([ebc4abd](https://github.com/srobroek/harness-plugins/commit/ebc4abd4794865029e637a527b6b40a8722e099d))
+* **subagent-worktree:** prove HEAD and the tree again after the eviction ([fff6758](https://github.com/srobroek/harness-plugins/commit/fff67587df40e5401241985cf894159ed1590936)), closes [#96](https://github.com/srobroek/harness-plugins/issues/96)
+* **subagent-worktree:** read liveness again after evicting the other sessions ([336d460](https://github.com/srobroek/harness-plugins/commit/336d4609f123d53c1271c39925b492d910d71c43))
+* **subagent-worktree:** read the worktree list NUL-separated ([b00e988](https://github.com/srobroek/harness-plugins/commit/b00e98803913476cddb4931e33aed0e7c3a20263))
+* **subagent-worktree:** refuse every git transport in the hardened env ([c1c5888](https://github.com/srobroek/harness-plugins/commit/c1c58887cb92012932a9f58c69616f51af5ca983)), closes [#79](https://github.com/srobroek/harness-plugins/issues/79) [#79](https://github.com/srobroek/harness-plugins/issues/79)
+* **subagent-worktree:** require git 2.45 and run automatic git hardened ([3b6c86c](https://github.com/srobroek/harness-plugins/commit/3b6c86c81349e8fb65322aca3b6c68ec101d8869))
+* **subagent-worktree:** restore the filter-driver edge-case regressions ([a3c417d](https://github.com/srobroek/harness-plugins/commit/a3c417df253c9bb59207ee0757e35f840fefb8fc)), closes [#79](https://github.com/srobroek/harness-plugins/issues/79) [#96](https://github.com/srobroek/harness-plugins/issues/96)
+* **subagent-worktree:** restore the resume-fence regressions for two instances and a queued success ([2c992df](https://github.com/srobroek/harness-plugins/commit/2c992df86021cb036dc96b2cac9a3ecf5ce5704a))
+* **subagent-worktree:** test a signed commit and merge against real git ([804015c](https://github.com/srobroek/harness-plugins/commit/804015cbc3eff030c0ee45604367dadbac5f93db))
+* **subagent-worktree:** test the git-version refusal through the real spawnRunner ([819110d](https://github.com/srobroek/harness-plugins/commit/819110d30808c6e5cc8baac6a6dcc4f689051dec))
+* **subagent-worktree:** test the hardening against real git, program by program ([9fb2eff](https://github.com/srobroek/harness-plugins/commit/9fb2eff6bc77a120dbc69c9ad04df3d1e9840e0c)), closes [#96](https://github.com/srobroek/harness-plugins/issues/96)
+* **worktrunk:** harden the git env and skip project hooks ([5adff10](https://github.com/srobroek/harness-plugins/commit/5adff10b20abf498a702b767ec61448c15f86858))
+
+## subagent-worktree [0.7.0](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.6.5...subagent-worktree--v0.7.0) (2026-11-22)
+
+### Features
+
+* **subagent-worktree:** on-demand sweep through finalize; one notice per lane and reason ([dd4867f](https://github.com/srobroek/harness-plugins/commit/dd4867f95b2704190fdfc6cc6ceb31144b843aa0))
+
 ## subagent-worktree [0.6.5](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.6.4...subagent-worktree--v0.6.5) (2026-11-22)
 
 ### Bug Fixes

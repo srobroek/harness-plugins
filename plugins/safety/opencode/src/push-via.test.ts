@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process"
 import { mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { untrustedLocalGitEnv } from "@srobroek/opencode-lib/safe-git"
+import { hardenedGitEnv } from "@srobroek/opencode-lib/safe-git"
 import { type GuardID, hardGate } from "./guards.ts"
 import { hostOf, pushVia, type RemoteResolver, readPushVia } from "./push-via.ts"
 import { walkShell } from "./shell.ts"
@@ -313,7 +313,7 @@ describe("default resolver with real git", () => {
   // and no inherited GIT_DIR or similar can steer a fixture command into a real repository.
   const home = realpathSync(mkdtempSync(join(tmpdir(), "push-via-home-")))
   afterAll(() => rmSync(home, { recursive: true }))
-  const gitEnv = untrustedLocalGitEnv({ PATH: Bun.env.PATH, HOME: home, XDG_CONFIG_HOME: home, GIT_CONFIG_NOSYSTEM: "1" })
+  const gitEnv = hardenedGitEnv({ PATH: Bun.env.PATH, HOME: home, XDG_CONFIG_HOME: home, GIT_CONFIG_NOSYSTEM: "1" })
 
   const git = (cwd: string, ...args: string[]) => {
     const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8", env: gitEnv })

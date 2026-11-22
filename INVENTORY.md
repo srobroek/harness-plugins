@@ -11,7 +11,7 @@
 | agent-seance | 0.7.1 | development | global | opencode |
 | architecture | 0.8.1 | development | global | opencode, claude |
 | ast-grep | 1.2.1 | development | global | opencode, claude |
-| autopilot | 1.3.2 | development | global | opencode |
+| autopilot | 1.3.3 | development | global | opencode |
 | aws | 0.7.1 | development | global | opencode, claude |
 | beads | 0.8.6 | development | project | opencode, claude |
 | build | 0.7.1 | development | project | opencode |
@@ -20,7 +20,7 @@
 | claude-compat | 0.4.0 | development | project | opencode |
 | code-challenge | 1.3.1 | development | global | opencode |
 | debate | 0.5.1 | productivity | global | opencode, claude |
-| delivery | 0.10.4 | development | global | opencode |
+| delivery | 0.10.5 | development | global | opencode |
 | dep-update | 0.6.1 | development | global | opencode |
 | design | 0.9.1 | development | project | opencode, claude |
 | docs | 0.4.0 | development | global | opencode |
@@ -39,14 +39,14 @@
 | project | 0.9.1 | productivity | global | opencode, claude |
 | quality | 0.13.1 | development | global | opencode, claude |
 | repomix | 0.4.1 | development | global | opencode, claude |
-| safety | 0.11.3 | development | global | opencode |
+| safety | 0.11.5 | development | global | opencode |
 | session | 0.4.1 | development | global | opencode |
 | speckit | 0.10.2 | development | project | opencode, claude |
 | statusline | 0.4.0 | development | global | opencode |
-| subagent-worktree | 0.6.5 | development | global | opencode |
+| subagent-worktree | 0.8.0 | development | global | opencode |
 | toolchain | 0.7.2 | development | global | opencode, claude |
 | trunk-dev | 0.9.0 | development | global | opencode, claude |
 | whats-new | 0.4.0 | development | global | opencode |
-| worktrunk | 0.5.0 | development | project | opencode, claude |
+| worktrunk | 0.5.1 | development | project | opencode, claude |
 
 Each plugin's own `INVENTORY.md` lists what it ships per harness.

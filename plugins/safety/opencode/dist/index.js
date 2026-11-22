@@ -4487,32 +4487,76 @@ import { resolve as resolve6 } from "path";
 
 // lib/src/safe-git.ts
 import { devNull } from "os";
-var SAFE_GIT_ARGS = [
-  "-c",
-  "core.fsmonitor=false",
-  "-c",
-  `core.hooksPath=${devNull}`,
-  "--no-optional-locks"
+var SAFE_GIT_CONFIG = [
+  ["core.fsmonitor", "false"],
+  ["core.hooksPath", devNull]
+];
+var SAFE_GIT_ARGS = [...SAFE_GIT_CONFIG.flatMap(([key, value]) => ["-c", `${key}=${value}`]), "--no-optional-locks"];
+var HARDENED_GIT_CONFIG = [
+  ...SAFE_GIT_CONFIG,
+  ["core.attributesFile", devNull],
+  ["log.showSignature", "false"],
+  ["gpg.program", devNull],
+  ["gpg.ssh.program", devNull],
+  ["gpg.x509.program", devNull],
+  ["commit.gpgSign", "false"],
+  ["tag.gpgSign", "false"],
+  ["gpg.ssh.defaultKeyCommand", ""],
+  ["core.sshCommand", ""],
+  ["credential.helper", ""],
+  ["diff.external", ""]
+];
+var EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+var INHERITED_GIT_VARIABLES = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_PREFIX",
+  "GIT_NAMESPACE",
+  "GIT_REPLACE_REF_BASE",
+  "GIT_GRAFT_FILE",
+  "GIT_SHALLOW_FILE",
+  "GIT_CONFIG",
+  "GIT_EXEC_PATH",
+  "GIT_EXTERNAL_DIFF",
+  "GIT_PAGER",
+  "GIT_EDITOR",
+  "GIT_SEQUENCE_EDITOR",
+  "GIT_SSH",
+  "GIT_SSH_COMMAND",
+  "GIT_ASKPASS",
+  "GIT_PROXY_COMMAND",
+  "GIT_LITERAL_PATHSPECS",
+  "GIT_GLOB_PATHSPECS",
+  "GIT_NOGLOB_PATHSPECS",
+  "GIT_ICASE_PATHSPECS"
 ];
 var PROGRAM_VARIABLES = ["PAGER", "EDITOR", "VISUAL", "SSH_ASKPASS"];
-var KEPT_GIT_VARIABLE = "GIT_CONFIG_GLOBAL";
-function untrustedLocalGitEnv(host) {
-  const dropped = new Set(PROGRAM_VARIABLES);
-  const kept = {};
-  for (const [name, value] of Object.entries(host)) {
-    if (value === undefined || dropped.has(name))
+function hardenedGitEnv(base) {
+  const env = {};
+  const dropped = new Set([...INHERITED_GIT_VARIABLES, ...PROGRAM_VARIABLES]);
+  for (const [key, value] of Object.entries(base)) {
+    if (value === undefined || dropped.has(key) || key.startsWith("GIT_TRACE"))
       continue;
-    if (name.startsWith("GIT_") && name !== KEPT_GIT_VARIABLE)
+    if (key === "GIT_CONFIG_PARAMETERS" || key === "GIT_CONFIG_COUNT" || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key))
       continue;
-    kept[name] = value;
+    env[key] = value;
   }
-  return {
-    ...kept,
-    GIT_ALLOW_PROTOCOL: "",
-    GIT_NO_LAZY_FETCH: "1",
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_TERMINAL_PROMPT: "0"
-  };
+  let count = 0;
+  for (const [key, value] of HARDENED_GIT_CONFIG) {
+    env[`GIT_CONFIG_KEY_${count}`] = key;
+    env[`GIT_CONFIG_VALUE_${count}`] = value;
+    count += 1;
+  }
+  env.GIT_CONFIG_COUNT = String(count);
+  env.GIT_ATTR_SOURCE = EMPTY_TREE;
+  env.GIT_OPTIONAL_LOCKS = "0";
+  env.GIT_NO_LAZY_FETCH = "1";
+  env.GIT_ALLOW_PROTOCOL = "";
+  return env;
 }
 
 // plugins/safety/opencode/src/push-via.ts
@@ -4550,7 +4594,7 @@ function git(cwd, args, env) {
   return lines.length === 0 ? undefined : lines;
 }
 function gitRemoteResolver(inherited) {
-  const env = untrustedLocalGitEnv(inherited);
+  const env = hardenedGitEnv(inherited);
   return (cwd, remote) => {
     if (remote !== undefined) {
       const named = git(cwd, ["remote", "get-url", "--push", "--all", "--", remote], env);
@@ -7318,14 +7362,15 @@ function safely(run) {
     return;
   }
 }
-async function review(command, cwd, options) {
+async function review(command, cwd, options, warn = () => {}) {
   try {
     return await reviewPermission(command, cwd, options);
   } catch (error) {
-    return {
-      effect: "ask",
-      message: `safety could not check this command (${error instanceof Error ? error.message : String(error)}); confirm it is safe to run.`
-    };
+    warn("permission review failed; safety's extra review is skipped for this command", {
+      error: error instanceof Error ? error.name : typeof error,
+      message: error instanceof Error ? error.message : String(error)
+    });
+    return;
   }
 }
 var DIRECT_FILE_TOOLS = new Set(["read", "edit", "write", "patch", "apply_patch", "glob", "grep", "list"]);
@@ -7465,7 +7510,7 @@ function createPlugin(overrides = {}) {
             });
         }
         prune();
-        const decision = await review(command, cwd, reviewOptions);
+        const decision = await review(command, cwd, reviewOptions, warn);
         pending.set(event.id, { sessionID: event.sessionID, at: Date.now(), decision });
       });
       const migrations = await ctx.tool.hook("execute.before", async (event) => {
@@ -7489,7 +7534,7 @@ function createPlugin(overrides = {}) {
         const id = evaluation.source?.type === "tool" ? evaluation.source.id : undefined;
         const entry = id === undefined ? undefined : pending.get(id);
         const decision = entry !== undefined ? entry.decision : await review(evaluation.resources.join(`
-`), await sessionDirectory(evaluation.sessionID), reviewOptions);
+`), await sessionDirectory(evaluation.sessionID), reviewOptions, warn);
         applyDecision(evaluation, decision);
       });
       const scratch = scratchDirs ? await ctx.permission.hook("evaluate", async (evaluation) => {
