@@ -1,3 +1,9 @@
+## safety [0.12.0](https://github.com/srobroek/harness-plugins/compare/safety--v0.11.5...safety--v0.12.0) (2026-11-22)
+
+### Features
+
+* **safety:** refuse plain git push to a configured host (pushVia) ([#88](https://github.com/srobroek/harness-plugins/issues/88)) ([e101dde](https://github.com/srobroek/harness-plugins/commit/e101dde80fb5da9b3bfb8ffdee68cf8a6cf01eed))
+
 ## safety [0.11.5](https://github.com/srobroek/harness-plugins/compare/safety--v0.11.4...safety--v0.11.5) (2026-11-22)
 
 ### Bug Fixes
