@@ -87,7 +87,7 @@ export async function runInlineCleanup(run: () => Promise<CleanupResult>): Promi
   }
 }
 
-/** The cleanup step, plain or naming another repository's clone (`delivery_cleanup with repo ...`). */
+/** The cleanup step, plain or naming another repository's clone (`delivery_cleanup repo=... repoPath=...`). */
 const isCleanupStep = (step: string): boolean => step === "delivery_cleanup" || step.startsWith("delivery_cleanup ")
 
 /** `next` after landing: the cleanup step stays only while cleanup has not finished. */

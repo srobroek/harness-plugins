@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { hostname, tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import { addClone, MAX_CLONES, parseClones, readClones, registryFile, withClone } from "./clone-registry.ts"
+import { addClone, MAX_CLONES, mergeClone, parseClones, readClones, registryFile, settleReceipts, withClone, withoutReceipts } from "./clone-registry.ts"
 
 const A = { key: "a".repeat(16), root: "/repos/a" }
 const B = { key: "b".repeat(16), root: "/repos/b" }
@@ -66,6 +66,36 @@ describe("addClone", () => {
     expect(readClones(receipts, SESSION)).toEqual([B, A])
   })
 
+  test("reads a registry file as 0.10.5 wrote it, and a new landing is added beside its entries", async () => {
+    const receipts = store()
+    const file = registryFile(receipts, SESSION)
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, JSON.stringify([A, B]))
+    expect(readClones(receipts, SESSION)).toEqual([A, B])
+    const C = { key: "d".repeat(16), root: "/repos/c", receiptIds: ["r1"] }
+    await addClone(receipts, SESSION, C, () => false)
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual([C, A, B])
+  })
+
+  test("a second landing in the same repository adds its receipt id to the entry", async () => {
+    const receipts = store()
+    await addClone(receipts, SESSION, { ...A, receiptIds: ["r1"] }, () => false)
+    await addClone(receipts, SESSION, { ...A, receiptIds: ["r2"] }, () => false)
+    expect(readClones(receipts, SESSION)).toEqual([{ ...A, receiptIds: ["r1", "r2"] }])
+  })
+
+  test("settling the last receipt removes the entry; an older entry without ids is untouched", async () => {
+    const receipts = store()
+    const file = registryFile(receipts, SESSION)
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, JSON.stringify([{ ...A, receiptIds: ["r1", "r2"] }, B]))
+    await settleReceipts(receipts, SESSION, A.key, new Set(["r1"]))
+    expect(readClones(receipts, SESSION)).toEqual([{ ...A, receiptIds: ["r2"] }, B])
+    await settleReceipts(receipts, SESSION, A.key, new Set(["r2"]))
+    await settleReceipts(receipts, SESSION, B.key, new Set(["r9"]))
+    expect(readClones(receipts, SESSION)).toEqual([B])
+  })
+
   test("waits for a live writer's lock instead of writing past it", async () => {
     const receipts = store()
     await addClone(receipts, SESSION, A, () => false)
@@ -86,6 +116,19 @@ describe("addClone", () => {
     expect(readFileSync(file, "utf8")).toBe("{not json")
   })
 
+  test("keeps the parse error as the cause of an unparseable registry's refusal", async () => {
+    const receipts = store()
+    const file = registryFile(receipts, SESSION)
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, "{not json")
+    const failure = await addClone(receipts, SESSION, B, () => false).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).cause).toBeInstanceOf(SyntaxError)
+  })
+
   test("refuses to replace a registry file it cannot read, naming the cause", async () => {
     const receipts = store()
     await addClone(receipts, SESSION, A, () => false)
@@ -104,5 +147,15 @@ describe("addClone", () => {
       chmodSync(file, 0o600)
     }
     expect(readFileSync(file, "utf8")).toBe(before)
+  })
+})
+
+describe("mergeClone and withoutReceipts", () => {
+  test("an entry without ids stays without: it means every pending receipt", () => {
+    expect(mergeClone(A, { ...A, receiptIds: ["r1"] })).toEqual(A)
+    expect(withoutReceipts(A, new Set(["r1"]))).toEqual(A)
+  })
+  test("the new root wins and the ids are the union", () => {
+    expect(mergeClone({ ...A, receiptIds: ["r1"] }, { ...A, root: "/moved", receiptIds: ["r2"] })).toEqual({ ...A, root: "/moved", receiptIds: ["r1", "r2"] })
   })
 })

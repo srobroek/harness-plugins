@@ -56,7 +56,7 @@ import {
   type RemovalFacts,
   type RepositoryIdentity,
 } from "./cleanup.ts"
-import { addClone, type CloneEntry, readClones } from "./clone-registry.ts"
+import { addClone, type CloneEntry, mergeClone, readClones, settleReceipts, withoutReceipts } from "./clone-registry.ts"
 import { inClone } from "./land.ts"
 import {
   closeoutCommands,
@@ -164,6 +164,21 @@ export function selectWindow<T extends { receiptId: string }>(
     .map((entry) => entry.candidate)
 }
 
+/**
+ * Positive evidence that a receipt needs no more cleanup: it is readable and cleaned, or a readable
+ * later receipt supersedes it. A missing directory or an unreadable receipt is never evidence.
+ */
+export function receiptSettled(directory: string, receiptId: string): boolean {
+  try {
+    const own = readReceipt(resolve(directory, `${receiptId}.json`))
+    if (!own.ok) return false
+    if (own.receipt.outcome === "cleaned" || own.receipt.worktree.removed) return true
+    return listReceipts(directory).some((receipt) => receipt.supersedes === receiptId)
+  } catch {
+    return false
+  }
+}
+
 /** An explicit `delivery_cleanup` was authorized but its target belongs to a lane: nothing is removed here. */
 export class CleanupDeferred extends Error {
   constructor(readonly deferred: string) {
@@ -269,7 +284,7 @@ export function createPendingCleanup(deps: PendingDeps) {
   const retriedAt = new Map<string, number>()
   const attemptedAt = new Map<string, number>()
   /** Clones registered by this instance, kept here too: a registry write that fails still leaves them found. */
-  const registered = new Map<string, string>()
+  const registered = new Map<string, CloneEntry>()
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const pendingIdle = new Set<string>()
   let disposed = false
@@ -401,14 +416,24 @@ export function createPendingCleanup(deps: PendingDeps) {
     return pendingReceipts(receipts).length > 0
   }
 
-  /** Persist `receipt`'s clone in the registry file; a failure is logged, and the in-memory entry still holds. */
-  const persistClone = async (receipt: LandingReceipt) => {
+  /** The registry entry for `receipt`'s landing: where the clone is, and which receipt the session landed there. */
+  const cloneEntryFor = (receipt: LandingReceipt, commonDir: string): CloneEntry => ({
+    key: receipt.repo.key,
+    root: receipt.repo.canonicalRoot,
+    commonDir,
+    repo: receipt.repo.nameWithOwner,
+    receiptIds: [receipt.receiptId],
+    addedAt: now(),
+  })
+
+  /** Persist `entry` in the registry file; a failure is logged, and the in-memory entry still holds. */
+  const persistClone = async (entry: CloneEntry) => {
     const mine = own.veto() ?? (await own.observe())
     if (mine === null) return
     try {
-      await addClone(env, mine.key, { key: receipt.repo.key, root: receipt.repo.canonicalRoot }, (entry) => mayHavePending(entry.key))
+      await addClone(env, mine.key, entry, (known) => mayHavePending(known.key))
     } catch (error) {
-      console.error(`delivery: could not record the clone ${receipt.repo.canonicalRoot}: ${error instanceof Error ? error.message : String(error)}`)
+      console.error(`delivery: could not record the clone ${entry.root}: ${error instanceof Error ? error.message : String(error)}`, error)
     }
   }
 
@@ -417,11 +442,9 @@ export function createPendingCleanup(deps: PendingDeps) {
    * registry file and from this instance's own registrations, which win for the same key. No git runs.
    */
   const cloneEntries = (sessionKey: string): CloneEntry[] => {
-    const entries = new Map(readClones(env, sessionKey).map((entry) => [entry.key, entry.root]))
-    for (const [key, root] of registered) entries.set(key, root)
-    return [...entries]
-      .filter(([key]) => key !== sessionKey && mayHavePending(key))
-      .map(([key, root]) => ({ key, root }))
+    const entries = new Map(readClones(env, sessionKey).map((entry) => [entry.key, entry]))
+    for (const [key, entry] of registered) entries.set(key, mergeClone(entries.get(key), entry))
+    return [...entries.values()].filter((entry) => entry.key !== sessionKey && mayHavePending(entry.key))
   }
 
   /** The repository a clone entry names, if its root still resolves to the recorded key. */
@@ -571,15 +594,7 @@ export function createPendingCleanup(deps: PendingDeps) {
   const dropEvidence = async (repo: Repository, receiptId: string): Promise<boolean> => {
     const key = await repo.key()
     if (key === null) return false
-    const directory = resolve(receiptDirectory(env, key))
-    try {
-      const mine = readReceipt(resolve(directory, `${receiptId}.json`))
-      if (!mine.ok) return false
-      if (mine.receipt.outcome === "cleaned" || mine.receipt.worktree.removed) return true
-      return listReceipts(directory).some((receipt) => receipt.supersedes === receiptId)
-    } catch {
-      return false
-    }
+    return receiptSettled(resolve(receiptDirectory(env, key)), receiptId)
   }
 
   /** Delete a landing record under its worktree's lock, only if it is still not denied and the evidence still holds. */
@@ -624,9 +639,11 @@ export function createPendingCleanup(deps: PendingDeps) {
     const repo = await repositoryOf(receipt)
     if (repo === null) return
     // This instance's holds and retry see the clone at once; the record is written before the registry is.
-    if (repo.foreign) registered.set(receipt.repo.key, receipt.repo.canonicalRoot)
+    const commonDir = repo.veto()?.commonDir ?? (await repo.observe())?.commonDir
+    const entry = repo.foreign && commonDir !== undefined ? cloneEntryFor(receipt, commonDir) : undefined
+    if (entry !== undefined) registered.set(entry.key, mergeClone(registered.get(entry.key), entry))
     await recordIn(repo, receipt, sessionID, outcome)
-    if (repo.foreign) await persistClone(receipt)
+    if (entry !== undefined) await persistClone(entry)
   }
 
   /** Receipts, newest first, whose worktree is `path`. */
@@ -847,34 +864,86 @@ export function createPendingCleanup(deps: PendingDeps) {
    * authorized re-arm clears it first). If the receipt directory is missing or unreadable, or the
    * receipt cannot be parsed, nothing is deleted.
    */
-  const gcIn = async (repo: Repository) => {
+  const gcIn = async (repo: Repository): Promise<boolean> => {
     const recorded = await landings(repo)
-    if (recorded.common === null || recorded.unreadable) return
+    if (recorded.common === null || recorded.unreadable) return false
     for (const entry of recorded.byReceipt.values()) {
       // A cheap look first; the decision is made again, under the lock, from the record and receipts as they are then.
       if (entry.denied !== undefined || !(await dropEvidence(repo, entry.receiptId))) continue
       await dropLanding(repo, recorded.common, entry)
     }
+    return true
   }
 
-  /** {@link gcIn} for the session's repository, the clones with pending receipts, and `receipt`'s repository. */
+  /**
+   * Drop `entry`'s receipts that are settled, or that `finished` names (a cleanup that just succeeded),
+   * from the registry. The target's landing records are collected first, because once the registration
+   * is gone nothing else would find them; records that could not all be read keep the registration for a
+   * later pass. A failure is reported and keeps it too. An entry with no receipt list (older) is left to
+   * the count rule.
+   */
+  const settleClone = async (sessionKey: string, entry: CloneEntry, finished: ReadonlySet<string> = new Set()) => {
+    if (entry.receiptIds === undefined) return
+    const directory = resolve(receiptDirectory(env, entry.key))
+    const settled = new Set(entry.receiptIds.filter((id) => finished.has(id) || receiptSettled(directory, id)))
+    if (settled.size === 0) return
+    try {
+      const repo = await cloneAt(entry)
+      if (repo === null || !(await gcIn(repo))) {
+        console.error(`delivery: landing records of ${entry.repo ?? entry.root} could not all be read; keeping its clone registration`)
+        return
+      }
+      // Another receipt of that repository (one this session never registered) may still need the
+      // clone to be found: keep the registration while any receipt is pending, or cannot be listed.
+      // `listReceipts` reads a directory it cannot open as an empty one, so the directory is read first.
+      let pendingLeft: boolean
+      try {
+        readdirSync(directory)
+        pendingLeft = pendingReceipts(listReceipts(directory)).some((receipt) => !settled.has(receipt.receiptId))
+      } catch {
+        pendingLeft = true
+      }
+      if (pendingLeft) return
+      const known = registered.get(entry.key)
+      const left = known === undefined ? null : withoutReceipts(known, settled)
+      if (left === null) registered.delete(entry.key)
+      else registered.set(entry.key, left)
+      await settleReceipts(env, sessionKey, entry.key, settled)
+    } catch (error) {
+      console.error(`delivery: clone registry gc failed for ${entry.repo ?? entry.root}`, error)
+    }
+  }
+
+  /** {@link settleClone} for every registration of the session's repository. */
+  const gcClones = async () => {
+    const mine = own.veto() ?? (await own.observe())
+    if (mine === null) return
+    const entries = new Map(readClones(env, mine.key).map((entry) => [entry.key, entry]))
+    for (const [key, entry] of registered) entries.set(key, mergeClone(entries.get(key), entry))
+    for (const entry of entries.values()) if (entry.key !== mine.key) await settleClone(mine.key, entry)
+  }
+
+  /** {@link gcIn} for the session's repository, the clones with pending receipts, and `receipt`'s repository; then the registry. */
   const gc = async (receipt?: LandingReceipt) => {
     const repos = [own, ...(await clones())]
     const named = receipt === undefined ? null : await repositoryOf(receipt)
     if (named?.foreign === true && !repos.some((repo) => repo.cwd === named.cwd)) repos.push(named)
     for (const repo of repos) await gcIn(repo)
+    await gcClones()
   }
 
   /** One pass over `repo`'s pending receipts for a finished turn of `sessionID`. */
-  const runIn = async (repo: Repository, sessionID: string, idle: boolean) => {
+  const runIn = async (repo: Repository, sessionID: string, idle: boolean): Promise<Set<string>> => {
+    /** The receipts this pass found done: their worktree is gone, or the cleanup just succeeded. */
+    const finished = new Set<string>()
     const key = await repo.key()
-    if (key === null) return
+    if (key === null) return finished
     const directory = resolve(receiptDirectory(env, key))
     let pending: LandingReceipt[]
     try {
       pending = pendingReceipts(listReceipts(directory))
     } catch {
-      return
+      return finished
     }
     const idOf = (receipt: Pick<LandingReceipt, "receiptId">) => `${key}/${receipt.receiptId}`
     const recorded = await landings(repo)
@@ -884,6 +953,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     for (const receipt of pending) {
       if (receipt.worktree.path !== null && !existsSync(receipt.worktree.path)) {
         doneIds.add(idOf(receipt))
+        finished.add(receipt.receiptId)
         // Gone is evidence the worktree is done, but never erases a denial.
         if (recorded.common !== null && recorded.byReceipt.get(receipt.receiptId)?.denied === undefined) {
           await dropLanding(repo, recorded.common, { receiptId: receipt.receiptId, worktree: receipt.worktree.path }, false)
@@ -906,7 +976,7 @@ export function createPendingCleanup(deps: PendingDeps) {
       limit,
     })
     for (const receipt of window) {
-      if (disposed) return
+      if (disposed) return finished
       attemptedAt.set(idOf(receipt), now())
       const path = resolve(directory, `${receipt.receiptId}.json`)
       const meta = recorded.byReceipt.get(receipt.receiptId)
@@ -950,21 +1020,29 @@ export function createPendingCleanup(deps: PendingDeps) {
         // A refusal is silent: the proofs say what is missing and a later turn end tries again.
         if (result.ok) {
           doneIds.add(idOf(receipt))
+          finished.add(receipt.receiptId)
           if (recorded.common !== null && recorded.byReceipt.get(receipt.receiptId)?.denied === undefined) {
             await dropLanding(repo, recorded.common, { receiptId: receipt.receiptId, worktree }, false)
           }
         }
       }
     }
+    return finished
   }
 
   /** One pass over the session's repository, then over each clone it landed into that has pending receipts. */
   const run = async (sessionID: string, idle: boolean) => {
     await runIn(own, sessionID, idle)
-    for (const repo of await clones()) {
-      if (disposed) return
-      await runIn(repo, sessionID, idle)
+    const mine = own.veto() ?? (await own.observe())
+    if (mine !== null) {
+      for (const entry of cloneEntries(mine.key)) {
+        if (disposed) return
+        const repo = await cloneAt(entry)
+        if (repo === null) continue
+        await settleClone(mine.key, entry, await runIn(repo, sessionID, idle))
+      }
     }
+    await gcClones()
   }
 
   const retryNow = (sessionID: string, idle: boolean) =>
