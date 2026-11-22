@@ -284,8 +284,8 @@ const PULLS_URL_PATH = /\/repos\/([^/]+)\/([^/]+)\/pulls\/?$/i
 
 /**
  * Where a `gh api` call that may create a PR sends it, as the name `gh repo view` takes
- * (`OWNER/REPO` or `HOST/OWNER/REPO`). `null` means the repository gh fills a `{owner}/{repo}`
- * placeholder from: `GH_REPO`, else the checkout. A destination the gate cannot read is `UNRESOLVED`,
+ * (`HOST/OWNER/REPO`). `null` means the checkout, which fills a `{owner}/{repo}` placeholder when
+ * `GH_REPO` is unset. A destination the gate cannot read is `UNRESOLVED`,
  * which is no repository name, so the lookup fails closed on it.
  */
 export type ApiTarget = { repo: string | null }
@@ -300,30 +300,41 @@ function urlHost(authority: string): string {
   return /^api\..+\.ghe\.com$/.test(host) ? host.slice(4) : host
 }
 
-/** The repository of one endpoint that names the pull collection, or undefined when it does not. */
-function apiTarget(endpoint: Word, hostFlag: Word | undefined, envHost: string | undefined): ApiTarget | undefined {
-  if (endpoint.opaque) return { repo: UNRESOLVED }
+/**
+ * The repository of one endpoint that names the pull collection, or undefined when it does not.
+ * The name always carries its host, so the lookup never resolves it against an inherited `GH_HOST`.
+ * gh fills `{owner}` and `{repo}` from `GH_REPO` (owner and name only, the host stays the endpoint's)
+ * or else from the checkout, whose host the gate cannot see: that is allowed on github.com only.
+ */
+function apiTarget(endpoint: Word, hostFlag: Word | undefined, env: NodeJS.ProcessEnv): ApiTarget | undefined {
+  const unresolved = { repo: UNRESOLVED }
+  if (endpoint.opaque) return unresolved
   const text = endpoint.value.replace(/[?#].*$/s, "")
   const url = URL_ENDPOINT.exec(text)
-  let host: string | undefined
+  let host: string
   let match: RegExpExecArray | null
   if (url !== null) {
     match = PULLS_URL_PATH.exec(url[2] ?? "")
     host = urlHost(url[1] as string)
   } else {
     match = PULLS_PATH.exec(text)
-    if (hostFlag?.opaque === true) host = UNRESOLVED
-    else host = hostFlag?.value ?? envHost
+    if (hostFlag?.opaque === true) return match === null ? undefined : unresolved
+    host = (hostFlag?.value ?? env.GH_HOST ?? "").toLowerCase()
+    if (host === "") host = DEFAULT_HOST
   }
   if (match === null) return undefined
-  if (host !== undefined && host !== DEFAULT_HOST && !HOSTNAME.test(host)) return { repo: UNRESOLVED }
-  const prefix = host === undefined || host === DEFAULT_HOST ? "" : `${host}/`
+  if (!HOSTNAME.test(host)) return unresolved
   const [owner, name] = [match[1] as string, match[2] as string]
   const placeholders = [owner, name].filter((part) => /^\{.*\}$/.test(part)).length
-  // gh fills `{owner}` and `{repo}` from the current repository, on github.com or the host of its remote.
-  if (placeholders === 2) return { repo: prefix === "" ? null : UNRESOLVED }
-  if (placeholders === 1) return { repo: UNRESOLVED }
-  return { repo: `${prefix}${owner}/${name}` }
+  if (placeholders === 1) return unresolved
+  if (placeholders === 0) return { repo: `${host}/${owner}/${name}` }
+  const inherited = env.GH_REPO === undefined || env.GH_REPO === "" ? undefined : env.GH_REPO
+  if (inherited === undefined) return { repo: host === DEFAULT_HOST && !env.GH_HOST ? null : UNRESOLVED }
+  if (!validRepository(inherited)) return unresolved
+  const parts = inherited.split("/")
+  const own = parts.length === 3 ? (parts.shift() as string).toLowerCase() : undefined
+  if (own !== undefined && own !== host) return unresolved
+  return { repo: `${host}/${parts.join("/")}` }
 }
 
 /**
@@ -375,8 +386,7 @@ function apiTargets(values: string[], opaques: boolean[], env: NodeJS.ProcessEnv
   }
   const post = method === undefined ? hasBody : method.opaque || method.value.toUpperCase() === "POST"
   if (!post) return []
-  const envHost = env.GH_HOST === undefined || env.GH_HOST === "" ? undefined : env.GH_HOST.toLowerCase()
-  return endpoints.flatMap((endpoint) => apiTarget(endpoint, hostFlag, envHost) ?? [])
+  return endpoints.flatMap((endpoint) => apiTarget(endpoint, hostFlag, env) ?? [])
 }
 
 /** What one scan of a command found: whether it may create a PR, where its `gh api` calls would, and whether anything else may. */

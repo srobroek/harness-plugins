@@ -192,12 +192,12 @@ export function decidePrBeadLink(parsed: ParsedCommand, cwd: string, deps: PrBea
   if (read.kind === "form" && beadIn(read.body.text) !== undefined) return null
   // gh's own order: the command's --repo, else GH_REPO, else the checkout (null). An empty GH_REPO is unset.
   const inherited = env.GH_REPO === undefined || env.GH_REPO === "" ? null : env.GH_REPO
-  // A `gh api` call goes to the repository its endpoint names, its placeholders to the one above. Any
+  // A `gh api` call goes to the repository its endpoint names, with its host (scanCreate resolves placeholders). Any
   // other reason it may create a PR is judged against the repository above as well.
   const repos =
     read.kind === "form"
       ? [read.repo ?? inherited]
-      : [...found.api.map((target) => target.repo ?? inherited), ...(found.other || found.api.length === 0 ? [inherited] : [])]
+      : [...found.api.map((target) => target.repo), ...(found.other || found.api.length === 0 ? [inherited] : [])]
   let control: boolean | RepositoryControl = false
   for (const repo of new Set(repos)) {
     const result = deps.control(repo, cwd)

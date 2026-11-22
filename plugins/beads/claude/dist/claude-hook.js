@@ -4713,9 +4713,10 @@ function urlHost(authority) {
     return DEFAULT_HOST;
   return /^api\..+\.ghe\.com$/.test(host) ? host.slice(4) : host;
 }
-function apiTarget(endpoint, hostFlag, envHost) {
+function apiTarget(endpoint, hostFlag, env) {
+  const unresolved = { repo: UNRESOLVED };
   if (endpoint.opaque)
-    return { repo: UNRESOLVED };
+    return unresolved;
   const text = endpoint.value.replace(/[?#].*$/s, "");
   const url = URL_ENDPOINT.exec(text);
   let host;
@@ -4726,22 +4727,31 @@ function apiTarget(endpoint, hostFlag, envHost) {
   } else {
     match = PULLS_PATH.exec(text);
     if (hostFlag?.opaque === true)
-      host = UNRESOLVED;
-    else
-      host = hostFlag?.value ?? envHost;
+      return match === null ? undefined : unresolved;
+    host = (hostFlag?.value ?? env.GH_HOST ?? "").toLowerCase();
+    if (host === "")
+      host = DEFAULT_HOST;
   }
   if (match === null)
     return;
-  if (host !== undefined && host !== DEFAULT_HOST && !HOSTNAME.test(host))
-    return { repo: UNRESOLVED };
-  const prefix = host === undefined || host === DEFAULT_HOST ? "" : `${host}/`;
+  if (!HOSTNAME.test(host))
+    return unresolved;
   const [owner, name] = [match[1], match[2]];
   const placeholders = [owner, name].filter((part) => /^\{.*\}$/.test(part)).length;
-  if (placeholders === 2)
-    return { repo: prefix === "" ? null : UNRESOLVED };
   if (placeholders === 1)
-    return { repo: UNRESOLVED };
-  return { repo: `${prefix}${owner}/${name}` };
+    return unresolved;
+  if (placeholders === 0)
+    return { repo: `${host}/${owner}/${name}` };
+  const inherited = env.GH_REPO === undefined || env.GH_REPO === "" ? undefined : env.GH_REPO;
+  if (inherited === undefined)
+    return { repo: host === DEFAULT_HOST && !env.GH_HOST ? null : UNRESOLVED };
+  if (!validRepository(inherited))
+    return unresolved;
+  const parts = inherited.split("/");
+  const own = parts.length === 3 ? parts.shift().toLowerCase() : undefined;
+  if (own !== undefined && own !== host)
+    return unresolved;
+  return { repo: `${host}/${parts.join("/")}` };
 }
 function apiTargets(values, opaques, env) {
   let method;
@@ -4794,8 +4804,7 @@ function apiTargets(values, opaques, env) {
   const post = method === undefined ? hasBody : method.opaque || method.value.toUpperCase() === "POST";
   if (!post)
     return [];
-  const envHost = env.GH_HOST === undefined || env.GH_HOST === "" ? undefined : env.GH_HOST.toLowerCase();
-  return endpoints.flatMap((endpoint) => apiTarget(endpoint, hostFlag, envHost) ?? []);
+  return endpoints.flatMap((endpoint) => apiTarget(endpoint, hostFlag, env) ?? []);
 }
 function otherReason(state) {
   state.other = true;
@@ -5059,7 +5068,7 @@ function decidePrBeadLink(parsed, cwd, deps) {
   if (read.kind === "form" && beadIn(read.body.text) !== undefined)
     return null;
   const inherited = env.GH_REPO === undefined || env.GH_REPO === "" ? null : env.GH_REPO;
-  const repos = read.kind === "form" ? [read.repo ?? inherited] : [...found.api.map((target) => target.repo ?? inherited), ...found.other || found.api.length === 0 ? [inherited] : []];
+  const repos = read.kind === "form" ? [read.repo ?? inherited] : [...found.api.map((target) => target.repo), ...found.other || found.api.length === 0 ? [inherited] : []];
   let control = false;
   for (const repo of new Set(repos)) {
     const result = deps.control(repo, cwd);

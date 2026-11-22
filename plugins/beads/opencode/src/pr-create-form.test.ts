@@ -232,7 +232,6 @@ describe("mayCreatePr", () => {
     ["gh api -X=POST after a boolean flag", "gh api -i -X=POST repos/o/r/pulls"],
     ["gh api a boolean cluster before a field flag", "gh api -if title=t repos/o/r/pulls"],
     ["gh api a GHES absolute URL", "gh api -X POST https://ghe.example/api/v3/repos/o/r/pulls"],
-    ["gh api an api.github.com URL with a field", "gh api https://api.github.com/repos/o/r/pulls -f title=t"],
     ["gh api a data-residency URL with a field", "gh api https://api.acme.ghe.com/repos/o/r/pulls -f title=t"],
     ["gh api an absolute URL with placeholders", "gh api -X POST 'https://ghe.example/api/v3/repos/{owner}/{repo}/pulls'"],
     ["gh api with an expanding method", "gh api -X $M repos/o/r/pulls"],
@@ -259,6 +258,7 @@ describe("mayCreatePr", () => {
     ["gh api -X=GET with a field", "gh api -X=GET repos/o/r/pulls -f state=open"],
     ["gh api an absolute URL to issues", "gh api -X POST https://ghe.example/api/v3/repos/o/r/issues"],
     ["gh api a GET of an absolute pulls URL", "gh api https://api.github.com/repos/o/r/pulls"],
+    ["gh api explicit GET with an expanding query value", 'gh api -X GET repos/o/r/pulls -f state="$S"'],
     ["gh api GET with a jq flag", "gh api repos/o/r/pulls -q '.[0].number'"],
     ["gh version", "gh --version"],
     ["gh without an operand", "which gh"],
@@ -287,17 +287,21 @@ describe("scanCreate: where a gh api call creates its PR", () => {
   const repos = (command: string, env?: NodeJS.ProcessEnv) => scan(command, env).api.map((target) => target.repo)
 
   test.each([
-    ["a relative endpoint", "gh api repos/o/r/pulls -f t=1", {}, "o/r"],
+    ["a relative endpoint", "gh api repos/o/r/pulls -f t=1", {}, "github.com/o/r"],
     ["--hostname", "gh api --hostname ghe.example repos/o/r/pulls -f t=1", {}, "ghe.example/o/r"],
     ["--hostname=", "gh api --hostname=ghe.example repos/o/r/pulls -f t=1", {}, "ghe.example/o/r"],
-    ["--hostname github.com", "gh api --hostname github.com repos/o/r/pulls -f t=1", {}, "o/r"],
+    ["--hostname github.com", "gh api --hostname github.com repos/o/r/pulls -f t=1", {}, "github.com/o/r"],
     ["GH_HOST", "gh api repos/o/r/pulls -f t=1", { GH_HOST: "ghe.example" }, "ghe.example/o/r"],
-    ["--hostname over GH_HOST", "gh api --hostname github.com repos/o/r/pulls -f t=1", { GH_HOST: "ghe.example" }, "o/r"],
+    ["--hostname over GH_HOST", "gh api --hostname github.com repos/o/r/pulls -f t=1", { GH_HOST: "ghe.example" }, "github.com/o/r"],
     ["a GHES URL", "gh api -X POST https://ghe.example/api/v3/repos/o/r/pulls", {}, "ghe.example/o/r"],
     ["a GHES URL over --hostname", "gh api --hostname github.com -X POST https://ghe.example/api/v3/repos/o/r/pulls", {}, "ghe.example/o/r"],
-    ["an api.github.com URL", "gh api -f t=1 https://api.github.com/repos/o/r/pulls", {}, "o/r"],
+    ["an api.github.com URL", "gh api -f t=1 https://api.github.com/repos/o/r/pulls", {}, "github.com/o/r"],
     ["a data-residency URL", "gh api -f t=1 https://api.acme.ghe.com/repos/o/r/pulls", {}, "acme.ghe.com/o/r"],
-    ["both placeholders", "gh api 'repos/{owner}/{repo}/pulls' -f t=1", {}, null],
+    ["both placeholders, no GH_REPO: the checkout", "gh api 'repos/{owner}/{repo}/pulls' -f t=1", {}, null],
+    ["placeholders from GH_REPO", "gh api 'repos/{owner}/{repo}/pulls' -f t=1", { GH_REPO: "x/y" }, "github.com/x/y"],
+    ["placeholders from a host-qualified GH_REPO on its host", "gh api --hostname ghe.example 'repos/{owner}/{repo}/pulls' -f t=1", { GH_REPO: "ghe.example/x/y" }, "ghe.example/x/y"],
+    ["placeholders keep the endpoint's host, not GH_REPO's absence of one", "gh api --hostname ghe.example 'repos/{owner}/{repo}/pulls' -f t=1", { GH_REPO: "x/y" }, "ghe.example/x/y"],
+    ["placeholders on the GH_HOST host", "gh api 'repos/{owner}/{repo}/pulls' -f t=1", { GH_REPO: "ghe.example/x/y", GH_HOST: "ghe.example" }, "ghe.example/x/y"],
   ])("%s", (_name, command, env, expected) => {
     expect(repos(command, env)).toEqual([expected])
   })
@@ -308,6 +312,10 @@ describe("scanCreate: where a gh api call creates its PR", () => {
     ["an expanding endpoint", "gh api $EP -f t=1", {}],
     ["an expanding hostname", "gh api --hostname $H repos/o/r/pulls -f t=1", {}],
     ["a URL with user info", "gh api -f t=1 https://u@ghe.example/api/v3/repos/o/r/pulls", {}],
+    ["placeholders on another host, no GH_REPO", "gh api --hostname ghe.example 'repos/{owner}/{repo}/pulls' -f t=1", {}],
+    ["placeholders under GH_HOST, no GH_REPO", "gh api 'repos/{owner}/{repo}/pulls' -f t=1", { GH_HOST: "ghe.example" }],
+    ["placeholders whose GH_REPO is on another host", "gh api 'repos/{owner}/{repo}/pulls' -f t=1", { GH_REPO: "ghe.example/x/y" }],
+    ["placeholders whose GH_REPO is invalid", "gh api 'repos/{owner}/{repo}/pulls' -f t=1", { GH_REPO: "--json" }],
     ["an invalid GH_HOST", "gh api repos/o/r/pulls -f t=1", { GH_HOST: "a b" }],
   ])("%s is unresolved, a name no lookup accepts", (_name, command, env) => {
     const [repo, ...rest] = repos(command, env)
@@ -321,7 +329,7 @@ describe("scanCreate: where a gh api call creates its PR", () => {
     expect(scan("gh pr create --body x").other).toBe(true)
     const both = scan("gh api repos/o/r/pulls -f t=1 && gh pr create --body x")
     expect(both).toMatchObject({ may: true, other: true })
-    expect(both.api.map((target) => target.repo)).toEqual(["o/r"])
+    expect(both.api.map((target) => target.repo)).toEqual(["github.com/o/r"])
   })
 
   test("a call that cannot create a PR has no target", () => {

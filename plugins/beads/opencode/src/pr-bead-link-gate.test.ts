@@ -14,7 +14,7 @@ import {
   readBodyFile,
   repositoryControlled,
 } from "./pr-bead-link-gate.ts"
-import { ACCEPTED_FORMS, MAX_BODY_BYTES, TRAILER_RULE } from "./pr-create-form.ts"
+import { ACCEPTED_FORMS, MAX_BODY_BYTES, TRAILER_RULE, validRepository } from "./pr-create-form.ts"
 
 describe("repository subprocess contract", () => {
   test("uses gh repo view's viewerPermission output contract", () => {
@@ -328,14 +328,36 @@ describe("decidePrBeadLink", () => {
       decide(command, { control, env })
 
     test("the endpoint's repository decides, not GH_REPO", () => {
-      expect(gate(api, writeTo("o/r"), { GH_REPO: "x/y" })).not.toBeNull()
-      expect(gate(api, writeTo("x/y"), { GH_REPO: "x/y" })).toBeNull()
+      expect(gate(api, writeTo("github.com/o/r"), { GH_REPO: "x/y" })).not.toBeNull()
+      expect(gate(api, writeTo("github.com/x/y", "x/y"), { GH_REPO: "x/y" })).toBeNull()
     })
 
     test("placeholders resolve through GH_REPO, as gh does", () => {
       const placeholders = "gh api 'repos/{owner}/{repo}/pulls' -f title=t"
-      expect(gate(placeholders, writeTo("x/y"), { GH_REPO: "x/y" })).not.toBeNull()
-      expect(gate(placeholders, writeTo("o/r"), { GH_REPO: "x/y" })).toBeNull()
+      expect(gate(placeholders, writeTo("github.com/x/y"), { GH_REPO: "x/y" })).not.toBeNull()
+      expect(gate(placeholders, writeTo("github.com/o/r"), { GH_REPO: "x/y" })).toBeNull()
+    })
+
+    test("placeholders take only the owner and name from GH_REPO and keep the endpoint's host", () => {
+      const command = "gh api --hostname ghe.example 'repos/{owner}/{repo}/pulls' -f title=t"
+      expect(gate(command, writeTo("ghe.example/x/y"), { GH_REPO: "x/y" })).not.toBeNull()
+      expect(gate(command, writeTo("x/y", "github.com/x/y"), { GH_REPO: "x/y" })).toBeNull()
+      expect(gate(command, writeTo("ghe.example/x/y"), { GH_REPO: "ghe.example/x/y" })).not.toBeNull()
+    })
+
+    test("placeholders whose GH_REPO names another host fail closed", () => {
+      const seen: (string | null)[] = []
+      decide("gh api 'repos/{owner}/{repo}/pulls' -f title=t", { env: { GH_REPO: "ghe.example/x/y" }, control: (repo) => (seen.push(repo), false) })
+      expect(seen).toHaveLength(1)
+      expect(validRepository(seen[0] as string)).toBe(false)
+    })
+
+    test("an explicit github.com endpoint is looked up on github.com whatever GH_HOST says", () => {
+      const env = { GH_HOST: "ghe.example" }
+      for (const command of ["gh api -f t=1 https://api.github.com/repos/o/r/pulls", "gh api --hostname github.com -f t=1 repos/o/r/pulls"]) {
+        expect(gate(command, writeTo("github.com/o/r"), env)).not.toBeNull()
+        expect(gate(command, writeTo("ghe.example/o/r", "o/r"), env)).toBeNull()
+      }
     })
 
     test("placeholders without GH_REPO resolve through the checkout (null)", () => {
@@ -350,7 +372,7 @@ describe("decidePrBeadLink", () => {
       ["a GHES URL", "gh api -f t=1 https://ghe.example/api/v3/repos/o/r/pulls", {}],
     ])("the host comes from %s", (_name, command, env) => {
       expect(gate(command, writeTo("ghe.example/o/r"), env)).not.toBeNull()
-      expect(gate(command, writeTo("o/r"), env)).toBeNull()
+      expect(gate(command, writeTo("github.com/o/r", "o/r"), env)).toBeNull()
     })
 
     test("an unresolved destination is looked up under a name that fails closed", () => {
@@ -364,7 +386,7 @@ describe("decidePrBeadLink", () => {
     test("a pr create beside the api call is judged against its own repository too", () => {
       const command = `${api} && gh pr create --body x`
       expect(gate(command, writeTo("x/y"), { GH_REPO: "x/y" })).not.toBeNull()
-      expect(gate(command, writeTo("o/r"), { GH_REPO: "x/y" })).not.toBeNull()
+      expect(gate(command, writeTo("github.com/o/r"), { GH_REPO: "x/y" })).not.toBeNull()
       expect(gate(command, writeTo("z/z"), { GH_REPO: "x/y" })).toBeNull()
     })
   })
