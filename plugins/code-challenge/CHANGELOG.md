@@ -1,3 +1,13 @@
+## code-challenge [1.5.0](https://github.com/srobroek/harness-plugins/compare/code-challenge--v1.4.0...code-challenge--v1.5.0) (2026-11-22)
+
+### Features
+
+* **delivery:** ship the orchestrator agent ([#121](https://github.com/srobroek/harness-plugins/issues/121)) ([53f33c0](https://github.com/srobroek/harness-plugins/commit/53f33c016315732220a7c87066267931ee87f514))
+
+### Bug Fixes
+
+* **code-challenge:** close five dogfood friction gaps in the skill text ([#120](https://github.com/srobroek/harness-plugins/issues/120)) ([4a7dac3](https://github.com/srobroek/harness-plugins/commit/4a7dac3eff8684b6da163f93b38eb24ae7f6b2ea))
+
 ## code-challenge [1.4.0](https://github.com/srobroek/harness-plugins/compare/code-challenge--v1.3.1...code-challenge--v1.4.0) (2026-11-22)
 
 ### Features
