@@ -312,7 +312,6 @@ describe("firstBdVerb / isMutatingBdCommand", () => {
 
     test.each([
       ["a subshell", "(unset BD_ACTOR); bd create x"],
-      ["a background job", "unset BD_ACTOR & bd create x"],
       ["a non-final pipeline stage", "unset BD_ACTOR | cat; bd create x"],
     ])("an unset in %s leaves the ambient actor in force", (_name, command) => {
       expect(decideActorGate(command, bdActorEnv)).toEqual({ kind: "allow" })
@@ -326,6 +325,11 @@ describe("firstBdVerb / isMutatingBdCommand", () => {
       ["the final pipeline stage", "cat | unset BD_ACTOR; bd create x"],
       ["eval", "eval 'unset BD_ACTOR'; bd create x"],
       ["declare", "declare -x BD_ACTOR=; bd create x"],
+      ["a command -p wrapper", "command -p export BD_ACTOR=me/x; bd create x"],
+      ["a command -- wrapper", "command -- unset BD_ACTOR; bd create x"],
+      ["a builtin wrapper", "builtin unset BD_ACTOR; bd create x"],
+      ["a background job", "unset BD_ACTOR & bd create x"],
+      ["a background brace group", "{ unset BD_ACTOR; } & bd create x"],
     ])("a change in %s leaves the actor unverified, neither refused nor allowed", (_name, command) => {
       expect(decideActorGate(command, bdActorEnv)).toEqual({
         kind: "advisory",
