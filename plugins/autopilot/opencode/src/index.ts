@@ -218,7 +218,7 @@ export type WriteLock = <T>(cwd: string, owner: string, write: () => Promise<T>,
 
 const embeddedLock: WriteLock = (cwd, owner, write, env) => withEmbeddedWriteLock(cwd, owner, write, env)
 
-export type Deps = { run?: Run; now?: () => number; ticks?: Ticks; lock?: WriteLock; warn?: Warn; ledger?: LedgerHost }
+export type Deps = { run?: Run; now?: () => number; ticks?: Ticks; lock?: WriteLock; warn?: Warn; ledger?: LedgerHost; readPauseMs?: number }
 
 /** How long a state transition waits for another instance's hold on the run lock. */
 const RUN_LOCK_WAIT_MS = 60_000
@@ -325,6 +325,7 @@ export class Autopilot {
   readonly armed = new Map<string, Armed>()
   readonly #run: Run
   readonly #now: () => number
+  readonly #readPauseMs: number | undefined
   readonly #ticks: Ticks
   readonly #lock: WriteLock
   readonly #ledgers: LedgerHost
@@ -342,6 +343,7 @@ export class Autopilot {
   ) {
     this.#run = deps.run ?? runCommand
     this.#now = deps.now ?? Date.now
+    this.#readPauseMs = deps.readPauseMs
     this.#warn = deps.warn ?? (() => {})
     this.activity = new Activity(this.#now)
     this.#ticks = deps.ticks ?? new Ticks(realClock, this.#warn)
@@ -508,6 +510,7 @@ export class Autopilot {
       this.#children(state.sessionID),
       this.leadBusy(state.sessionID),
     ])
+    if (beads.problem !== undefined) this.#journalScopeUnknown(dir, beads.problem)
     const places = await this.#worktrees()
     const children = kids.sessions
       .filter((kid): kid is SessionView & { id: string } => typeof kid?.id === "string")
@@ -524,6 +527,13 @@ export class Autopilot {
       journal: dir.journal(),
       leadBusy,
     }
+  }
+
+  /** Journal an unconfirmed scope read as a blocker, once while it lasts; the run keeps going and never stops on it. */
+  #journalScopeUnknown(dir: RunDir, problem: string): void {
+    const summary = `scope read unconfirmed, not treated as finished: ${problem}`
+    if (dir.journal().some((entry) => entry.type === "blocker" && entry.summary === summary)) return
+    dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary })
   }
 
   /** Every direct child of `sessionID`, page by page, and whether the listing reached its end. */
@@ -921,7 +931,7 @@ export class Autopilot {
 
   async #readBeads(state: RunState): Promise<BeadView> {
     const ledger = this.#ledgerOf(state)
-    return ledger === undefined ? { beads: [], ready: [], blocked: [], ok: false } : readBeads(state.directory, this.#run, ledger)
+    return ledger === undefined ? { beads: [], ready: [], blocked: [], ok: false } : readBeads(state.directory, this.#run, ledger, state.scope.kind === "bead" ? { scopeId: state.scope.id, ...(this.#readPauseMs !== undefined ? { pauseMs: this.#readPauseMs } : {}) } : {})
   }
 
   /**

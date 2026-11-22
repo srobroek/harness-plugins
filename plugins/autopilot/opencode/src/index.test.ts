@@ -117,7 +117,7 @@ async function start(storage?: Record<string, unknown>) {
     storage,
     sessions: [lead(), { id: "ses_child", parentID: "ses_lead", agent: "coder", time: {} }, { id: "ses_grand", parentID: "ses_child", time: {} }, { id: "ses_other", time: {} }],
   })
-  cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock, warn, ledger: ledgerHost })
+  cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock, warn, ledger: ledgerHost, readPauseMs: 0 })
 }
 
 async function command(text: string, sessionID = "ses_lead"): Promise<string> {
@@ -265,6 +265,18 @@ describe("tick", () => {
     await armed()
     beads = { list: [{ id: "p-1", status: "closed" }], ready: [], blocked: [] }
     expect(await status(tickInput())).toMatchObject({ done: true, stop: "scope finished" })
+  })
+
+  test("an empty list for the scope epic is unknown: no stop, and one blocker in the journal", async () => {
+    await armed()
+    beads = { list: [], ready: [], blocked: [] }
+    const result = await status(tickInput())
+    expect(result.done).toBeUndefined()
+    expect(result.prompt).toContain("beads unread")
+    await status(tickInput())
+    const blockers = journal().filter((entry) => entry.type === "blocker")
+    expect(blockers).toHaveLength(1)
+    expect(blockers[0]?.summary).toContain("p-1")
   })
 })
 
@@ -1076,7 +1088,7 @@ test("startup reads every page of armed runs from storage", async () => {
   const host = fake.context.storage as unknown as { scan: (input: { prefix: string; after?: string; limit?: number }) => Promise<unknown> }
   const scan = host.scan
   host.scan = (input) => scan({ ...input, limit: Math.min(input.limit ?? 100, 100) })
-  cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock, warn, ledger: ledgerHost })
+  cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock, warn, ledger: ledgerHost, readPauseMs: 0 })
   expect(await denied("question", "ses_lead")).toBe(DENY_QUESTION)
 })
 

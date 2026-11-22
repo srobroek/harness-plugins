@@ -2137,7 +2137,8 @@ function parseArray(text) {
 }
 var ids = (items) => items.map((item) => item?.id).filter((id) => typeof id === "string");
 var BD_READ_TIMEOUT_MS = 90000;
-async function readBeads(directory, run, ledger) {
+var isWork = (bead) => bead.issue_type !== "epic" && !(bead.labels ?? []).includes("autopilot-handoff");
+async function readOnce(directory, run, ledger) {
   const env = ledgerEnv(ledger);
   const [list, ready, blocked] = await Promise.all([
     run(directory, "bd", ["list", "--all", "--brief", "--json", "--limit", "0"], BD_READ_TIMEOUT_MS, env),
@@ -2151,6 +2152,38 @@ async function readBeads(directory, run, ledger) {
     return [{ id: item.id, status: item.status, parent: item.parent ?? null, ...item.issue_type ? { issue_type: item.issue_type } : {}, labels: item.labels ?? null }];
   });
   return { beads, ready: ids(parseArray(ready.stdout)), blocked: ids(parseArray(blocked.stdout)), ok: list.ok && ready.ok && blocked.ok };
+}
+async function scopeProblem(directory, run, ledger, scopeId, view) {
+  if (!view.beads.some((bead) => bead.id === scopeId))
+    return `bd list did not return the scope bead ${scopeId}`;
+  const all = new Map(view.beads.map((bead) => [bead.id, bead]));
+  const scope = { kind: "bead", id: scopeId };
+  if (view.beads.some((bead) => bead.status !== "closed" && isWork(bead) && inScope(bead, scope, all)))
+    return;
+  const children = await run(directory, "bd", ["children", scopeId, "--json"], BD_READ_TIMEOUT_MS, ledgerEnv(ledger));
+  if (!children.ok)
+    return `bd children ${scopeId} failed, so a scope with no open work cannot be confirmed`;
+  const open = parseArray(children.stdout).filter((raw) => {
+    const item = raw;
+    return typeof item?.status === "string" && item.status !== "closed" && isWork(item);
+  });
+  return open.length > 0 ? `bd list shows no open work under ${scopeId} but bd children shows ${open.length} open` : undefined;
+}
+async function readBeads(directory, run, ledger, options = {}) {
+  const { scopeId, attempts = 3, pauseMs = 2000 } = options;
+  let view = { beads: [], ready: [], blocked: [], ok: false };
+  for (let attempt = 0;attempt < attempts; attempt++) {
+    if (attempt > 0 && pauseMs > 0)
+      await new Promise((done) => setTimeout(done, pauseMs));
+    view = await readOnce(directory, run, ledger);
+    if (!view.ok)
+      continue;
+    const problem = scopeId === undefined ? undefined : await scopeProblem(directory, run, ledger, scopeId, view);
+    if (problem === undefined)
+      return view;
+    view = { ...view, ok: false, problem };
+  }
+  return view;
 }
 async function commitCount(directory, run) {
   const result = await run(directory, "git", ["rev-list", "--all", "--count"]);
@@ -3372,6 +3405,7 @@ class Autopilot {
   armed = new Map;
   #run;
   #now;
+  #readPauseMs;
   #ticks;
   #lock;
   #ledgers;
@@ -3384,6 +3418,7 @@ class Autopilot {
     this.ctx = ctx;
     this.#run = deps.run ?? runCommand;
     this.#now = deps.now ?? Date.now;
+    this.#readPauseMs = deps.readPauseMs;
     this.#warn = deps.warn ?? (() => {});
     this.activity = new Activity(this.#now);
     this.#ticks = deps.ticks ?? new Ticks(realClock, this.#warn);
@@ -3532,6 +3567,8 @@ class Autopilot {
       this.#children(state2.sessionID),
       this.leadBusy(state2.sessionID)
     ]);
+    if (beads.problem !== undefined)
+      this.#journalScopeUnknown(dir, beads.problem);
     const places = await this.#worktrees();
     const children = kids.sessions.filter((kid) => typeof kid?.id === "string").map((kid) => childFrom(kid, this.activity.lastSeen(kid.id), armedAt, this.#laneRoot(kid, places)));
     return {
@@ -3546,6 +3583,12 @@ class Autopilot {
       journal: dir.journal(),
       leadBusy
     };
+  }
+  #journalScopeUnknown(dir, problem) {
+    const summary2 = `scope read unconfirmed, not treated as finished: ${problem}`;
+    if (dir.journal().some((entry) => entry.type === "blocker" && entry.summary === summary2))
+      return;
+    dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: summary2 });
   }
   async#children(sessionID) {
     const sessions = [];
@@ -3940,7 +3983,7 @@ class Autopilot {
   }
   async#readBeads(state2) {
     const ledger = this.#ledgerOf(state2);
-    return ledger === undefined ? { beads: [], ready: [], blocked: [], ok: false } : readBeads(state2.directory, this.#run, ledger);
+    return ledger === undefined ? { beads: [], ready: [], blocked: [], ok: false } : readBeads(state2.directory, this.#run, ledger, state2.scope.kind === "bead" ? { scopeId: state2.scope.id, ...this.#readPauseMs !== undefined ? { pauseMs: this.#readPauseMs } : {} } : {});
   }
   async#bdWrite(state2, args2, bead) {
     const refuse = (stderr) => ({ ok: false, stdout: "", stderr });

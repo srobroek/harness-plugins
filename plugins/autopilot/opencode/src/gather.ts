@@ -3,7 +3,7 @@
 import { ledgerEnv } from "./ledger.ts"
 import type { RootIdentity } from "./policy.ts"
 import type { Run } from "./rundir.ts"
-import type { Bead, Child } from "./state.ts"
+import { type Bead, type Child, inScope } from "./state.ts"
 
 function parseArray(text: string): unknown[] {
   const start = text.indexOf("[")
@@ -18,13 +18,31 @@ function parseArray(text: string): unknown[] {
 
 const ids = (items: unknown[]) => items.map((item) => (item as { id?: unknown })?.id).filter((id): id is string => typeof id === "string")
 
-export type BeadView = { beads: Bead[]; ready: string[]; blocked: string[]; ok: boolean }
+export type BeadView = {
+  beads: Bead[]
+  ready: string[]
+  blocked: string[]
+  ok: boolean
+  /** Why a scope check failed, when that is why `ok` is false. */
+  problem?: string
+}
 
 /** A cold embedded store can take 30-50 s for one read. */
 export const BD_READ_TIMEOUT_MS = 90_000
 
+export type ReadOptions = {
+  /** The scope bead of a bead-scoped run. It must be listed, and an answer with no open work under it is cross-checked. */
+  scopeId?: string
+  /** Reads before an unknown answer stands. */
+  attempts?: number
+  /** Wait between reads, in milliseconds. */
+  pauseMs?: number
+}
+
+const isWork = (bead: { issue_type?: string; labels?: string[] | null }) => bead.issue_type !== "epic" && !(bead.labels ?? []).includes("autopilot-handoff")
+
 /** `bd list --all`, `bd ready` and `bd blocked`, as JSON, from `ledger` and no other. */
-export async function readBeads(directory: string, run: Run, ledger: string): Promise<BeadView> {
+async function readOnce(directory: string, run: Run, ledger: string): Promise<BeadView> {
   const env = ledgerEnv(ledger)
   const [list, ready, blocked] = await Promise.all([
     run(directory, "bd", ["list", "--all", "--brief", "--json", "--limit", "0"], BD_READ_TIMEOUT_MS, env),
@@ -37,6 +55,40 @@ export async function readBeads(directory: string, run: Run, ledger: string): Pr
     return [{ id: item.id, status: item.status, parent: item.parent ?? null, ...(item.issue_type ? { issue_type: item.issue_type } : {}), labels: item.labels ?? null }]
   })
   return { beads, ready: ids(parseArray(ready.stdout)), blocked: ids(parseArray(blocked.stdout)), ok: list.ok && ready.ok && blocked.ok }
+}
+
+/**
+ * A scope read that cannot be trusted is unknown, not empty. An existing scope bead must be listed, and
+ * a list with no open work under it must agree with `bd children`, which reads the same store another
+ * way. Returns the reason the read is not trusted, or `undefined`.
+ */
+async function scopeProblem(directory: string, run: Run, ledger: string, scopeId: string, view: BeadView): Promise<string | undefined> {
+  if (!view.beads.some((bead) => bead.id === scopeId)) return `bd list did not return the scope bead ${scopeId}`
+  const all = new Map(view.beads.map((bead) => [bead.id, bead]))
+  const scope = { kind: "bead", id: scopeId } as const
+  if (view.beads.some((bead) => bead.status !== "closed" && isWork(bead) && inScope(bead, scope, all))) return undefined
+  const children = await run(directory, "bd", ["children", scopeId, "--json"], BD_READ_TIMEOUT_MS, ledgerEnv(ledger))
+  if (!children.ok) return `bd children ${scopeId} failed, so a scope with no open work cannot be confirmed`
+  const open = parseArray(children.stdout).filter((raw) => {
+    const item = raw as { status?: unknown; issue_type?: string; labels?: string[] | null }
+    return typeof item?.status === "string" && item.status !== "closed" && isWork(item)
+  })
+  return open.length > 0 ? `bd list shows no open work under ${scopeId} but bd children shows ${open.length} open` : undefined
+}
+
+/** The beads of one ledger, read up to `attempts` times until the read is complete and, for a bead scope, plausible. */
+export async function readBeads(directory: string, run: Run, ledger: string, options: ReadOptions = {}): Promise<BeadView> {
+  const { scopeId, attempts = 3, pauseMs = 2_000 } = options
+  let view: BeadView = { beads: [], ready: [], blocked: [], ok: false }
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0 && pauseMs > 0) await new Promise((done) => setTimeout(done, pauseMs))
+    view = await readOnce(directory, run, ledger)
+    if (!view.ok) continue
+    const problem = scopeId === undefined ? undefined : await scopeProblem(directory, run, ledger, scopeId, view)
+    if (problem === undefined) return view
+    view = { ...view, ok: false, problem }
+  }
+  return view
 }
 
 /** Commits reachable from any ref; a rising count means someone committed. */
