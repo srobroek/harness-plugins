@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { parse } from "@srobroek/opencode-lib/beads-shell"
-import { ACCEPTED_FORMS, beadIn, mayCreatePr, type ReadFile, readPrCreate, TRAILER_RULE } from "./pr-create-form.ts"
+import { ACCEPTED_FORMS, beadIn, mayCreatePr, type ReadFile, readPrCreate, scanCreate, TRAILER_RULE, validRepository } from "./pr-create-form.ts"
 
 const noFile: ReadFile = () => ({ ok: false, reason: "unexpected file read" })
 
@@ -213,6 +213,30 @@ describe("mayCreatePr", () => {
     ["with a gh alias in a heredoc fed to a shell", "sh <<EOF\ngh mkpr\nEOF"],
     ["with an expanding here-string fed to a wrapped shell", 'env sh <<<"$CMD"'],
     ["with an expanding command word in a heredoc fed to a shell", "sh <<EOF\n$A x\nEOF"],
+    ["gh api POSTing to pulls with -X", "gh api -X POST repos/o/r/pulls -f title=t"],
+    ["gh api POSTing to pulls with --method=", "gh api --method=post repos/o/r/pulls"],
+    ["gh api -XPOST attached", "gh api -XPOST repos/o/r/pulls"],
+    ["gh api with -f implying POST", "gh api repos/o/r/pulls -f title=t -f head=h -f base=main"],
+    ["gh api with -F implying POST", "gh api repos/o/r/pulls -F draft=true"],
+    ["gh api with --field implying POST", "gh api repos/o/r/pulls --field title=t"],
+    ["gh api with --raw-field implying POST", "gh api repos/o/r/pulls --raw-field title=t"],
+    ["gh api with --input implying POST", "gh api repos/o/r/pulls --input body.json"],
+    ["gh api with an attached -f", "gh api repos/o/r/pulls -ftitle=t"],
+    ["gh api with a leading slash and trailing slash", "gh api /repos/o/r/pulls/ -f title=t"],
+    ["gh api with placeholders", "gh api repos/{owner}/{repo}/pulls -f title=t"],
+    ["gh api with a full URL", "gh api https://api.github.com/repos/o/r/pulls -f title=t"],
+    ["gh api with the flags first", "gh api -f title=t -H 'Accept: x' repos/o/r/pulls"],
+    ["gh api behind a wrapper", "timeout 30 gh api repos/o/r/pulls -f title=t"],
+    ["gh api in sh -c", "sh -c 'gh api repos/o/r/pulls -f title=t'"],
+    ["gh api -X=POST, a short assignment", "gh api -X=POST repos/o/r/pulls"],
+    ["gh api -X=POST after a boolean flag", "gh api -i -X=POST repos/o/r/pulls"],
+    ["gh api a boolean cluster before a field flag", "gh api -if title=t repos/o/r/pulls"],
+    ["gh api a GHES absolute URL", "gh api -X POST https://ghe.example/api/v3/repos/o/r/pulls"],
+    ["gh api a data-residency URL with a field", "gh api https://api.acme.ghe.com/repos/o/r/pulls -f title=t"],
+    ["gh api an absolute URL with placeholders", "gh api -X POST 'https://ghe.example/api/v3/repos/{owner}/{repo}/pulls'"],
+    ["gh api with an expanding method", "gh api -X $M repos/o/r/pulls"],
+    ["gh api with an expanding endpoint and a field", "gh api $EP -f title=t"],
+    ["gh api with an expanding endpoint and POST", "gh api -X POST \"$EP\""],
   ])("%s", (_name, command) => {
     expect(mayCreatePr(parse(command))).toBe(true)
   })
@@ -223,6 +247,19 @@ describe("mayCreatePr", () => {
     ["gh run watch", "gh run watch 42"],
     ["gh issue create", "gh issue create --title t --body b"],
     ["gh api", "gh api repos/o/r/pulls"],
+    ["gh api GET with a query", "gh api 'repos/o/r/pulls?state=open' --paginate"],
+    ["gh api explicit GET with fields as query", "gh api -X GET repos/o/r/pulls -f state=open"],
+    ["gh api GET of one pull", "gh api repos/o/r/pulls/3"],
+    ["gh api POST to issues", "gh api repos/o/r/issues -f title=t"],
+    ["gh api POST to a pull's comments", "gh api repos/o/r/pulls/3/comments -f body=b"],
+    ["gh api graphql with fields", "gh api graphql -f query='query { viewer { login } }'"],
+    ["gh api PUT merge", "gh api -X PUT repos/o/r/pulls/3/merge -f sha=abc"],
+    ["gh api -i=false is not a field flag", "gh api -i=false repos/o/r/pulls"],
+    ["gh api -X=GET with a field", "gh api -X=GET repos/o/r/pulls -f state=open"],
+    ["gh api an absolute URL to issues", "gh api -X POST https://ghe.example/api/v3/repos/o/r/issues"],
+    ["gh api a GET of an absolute pulls URL", "gh api https://api.github.com/repos/o/r/pulls"],
+    ["gh api explicit GET with an expanding query value", 'gh api -X GET repos/o/r/pulls -f state="$S"'],
+    ["gh api GET with a jq flag", "gh api repos/o/r/pulls -q '.[0].number'"],
     ["gh version", "gh --version"],
     ["gh without an operand", "which gh"],
     ["git push", "git push origin main"],
@@ -242,5 +279,60 @@ describe("mayCreatePr", () => {
     ["harmless text into a wrapped shell", "env bash <<<'echo hi'"],
   ])("not %s", (_name, command) => {
     expect(mayCreatePr(parse(command))).toBe(false)
+  })
+})
+
+describe("scanCreate: where a gh api call creates its PR", () => {
+  const scan = (command: string, env: NodeJS.ProcessEnv = {}) => scanCreate(parse(command), env)
+  const repos = (command: string, env?: NodeJS.ProcessEnv) => scan(command, env).api.map((target) => target.repo)
+
+  test.each([
+    ["a relative endpoint", "gh api repos/o/r/pulls -f t=1", {}, "github.com/o/r"],
+    ["--hostname", "gh api --hostname ghe.example repos/o/r/pulls -f t=1", {}, "ghe.example/o/r"],
+    ["--hostname=", "gh api --hostname=ghe.example repos/o/r/pulls -f t=1", {}, "ghe.example/o/r"],
+    ["--hostname github.com", "gh api --hostname github.com repos/o/r/pulls -f t=1", {}, "github.com/o/r"],
+    ["GH_HOST", "gh api repos/o/r/pulls -f t=1", { GH_HOST: "ghe.example" }, "ghe.example/o/r"],
+    ["--hostname over GH_HOST", "gh api --hostname github.com repos/o/r/pulls -f t=1", { GH_HOST: "ghe.example" }, "github.com/o/r"],
+    ["a GHES URL", "gh api -X POST https://ghe.example/api/v3/repos/o/r/pulls", {}, "ghe.example/o/r"],
+    ["a GHES URL over --hostname", "gh api --hostname github.com -X POST https://ghe.example/api/v3/repos/o/r/pulls", {}, "ghe.example/o/r"],
+    ["an api.github.com URL", "gh api -f t=1 https://api.github.com/repos/o/r/pulls", {}, "github.com/o/r"],
+    ["a data-residency URL", "gh api -f t=1 https://api.acme.ghe.com/repos/o/r/pulls", {}, "acme.ghe.com/o/r"],
+    ["both placeholders, no GH_REPO: the checkout", "gh api 'repos/{owner}/{repo}/pulls' -f t=1", {}, null],
+    ["placeholders from GH_REPO", "gh api 'repos/{owner}/{repo}/pulls' -f t=1", { GH_REPO: "x/y" }, "github.com/x/y"],
+    ["placeholders from a host-qualified GH_REPO on its host", "gh api --hostname ghe.example 'repos/{owner}/{repo}/pulls' -f t=1", { GH_REPO: "ghe.example/x/y" }, "ghe.example/x/y"],
+    ["placeholders keep the endpoint's host, not GH_REPO's absence of one", "gh api --hostname ghe.example 'repos/{owner}/{repo}/pulls' -f t=1", { GH_REPO: "x/y" }, "ghe.example/x/y"],
+    ["placeholders on the GH_HOST host", "gh api 'repos/{owner}/{repo}/pulls' -f t=1", { GH_REPO: "ghe.example/x/y", GH_HOST: "ghe.example" }, "ghe.example/x/y"],
+  ])("%s", (_name, command, env, expected) => {
+    expect(repos(command, env)).toEqual([expected])
+  })
+
+  test.each([
+    ["one placeholder", "gh api 'repos/{owner}/r/pulls' -f t=1", {}],
+    ["placeholders on another host", "gh api --hostname ghe.example 'repos/{owner}/{repo}/pulls' -f t=1", {}],
+    ["an expanding endpoint", "gh api $EP -f t=1", {}],
+    ["an expanding hostname", "gh api --hostname $H repos/o/r/pulls -f t=1", {}],
+    ["a URL with user info", "gh api -f t=1 https://u@ghe.example/api/v3/repos/o/r/pulls", {}],
+    ["placeholders on another host, no GH_REPO", "gh api --hostname ghe.example 'repos/{owner}/{repo}/pulls' -f t=1", {}],
+    ["placeholders under GH_HOST, no GH_REPO", "gh api 'repos/{owner}/{repo}/pulls' -f t=1", { GH_HOST: "ghe.example" }],
+    ["placeholders whose GH_REPO is on another host", "gh api 'repos/{owner}/{repo}/pulls' -f t=1", { GH_REPO: "ghe.example/x/y" }],
+    ["placeholders whose GH_REPO is invalid", "gh api 'repos/{owner}/{repo}/pulls' -f t=1", { GH_REPO: "--json" }],
+    ["an invalid GH_HOST", "gh api repos/o/r/pulls -f t=1", { GH_HOST: "a b" }],
+  ])("%s is unresolved, a name no lookup accepts", (_name, command, env) => {
+    const [repo, ...rest] = repos(command, env)
+    expect(rest).toEqual([])
+    expect(repo).not.toBeNull()
+    expect(validRepository(repo as string)).toBe(false)
+  })
+
+  test("a non-api reason is reported beside the api targets", () => {
+    expect(scan("gh api repos/o/r/pulls -f t=1").other).toBe(false)
+    expect(scan("gh pr create --body x").other).toBe(true)
+    const both = scan("gh api repos/o/r/pulls -f t=1 && gh pr create --body x")
+    expect(both).toMatchObject({ may: true, other: true })
+    expect(both.api.map((target) => target.repo)).toEqual(["github.com/o/r"])
+  })
+
+  test("a call that cannot create a PR has no target", () => {
+    expect(scan("gh api repos/o/r/pulls")).toEqual({ may: false, api: [], other: false })
   })
 })

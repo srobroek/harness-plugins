@@ -253,6 +253,7 @@ async function decide(original: string, cwd: string, deps: ShellGateDeps): Promi
   if (on("pr-bead-link-gate")) {
     const decision = decidePrBeadLink(parsed, cwd, {
       control: deps.repositoryControl ?? repositoryControlFor,
+      env: deps.env,
       note: () => {
         const ledger = findLedger(cwd)
         return ledger === undefined ? undefined : describeLedger(ledger)
