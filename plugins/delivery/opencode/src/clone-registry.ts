@@ -9,7 +9,8 @@
  *
  * Updates are serialized under a lease lock beside the file and replace it by rename, so a reader
  * never sees half a file and no writer drops another's entry. An entry whose repository still has
- * pending receipts is never dropped to stay under {@link MAX_CLONES}.
+ * pending receipts is never dropped to stay under {@link MAX_CLONES}. An update refuses, and leaves
+ * the file as it is, when the file exists but cannot be read or parsed.
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { isAbsolute, join } from "node:path"
@@ -33,13 +34,18 @@ export function registryFile(env: NodeJS.ProcessEnv, sessionKey: string): string
 
 /** The entries of a registry file's text; anything malformed is dropped. Pure. */
 export function parseClones(text: string): CloneEntry[] {
+  return entriesOf(text) ?? []
+}
+
+/** The entries of a registry file's text, or null when the text is not a JSON list. Malformed entries are dropped. Pure. */
+function entriesOf(text: string): CloneEntry[] | null {
   let raw: unknown
   try {
     raw = JSON.parse(text)
   } catch {
-    return []
+    return null
   }
-  if (!Array.isArray(raw)) return []
+  if (!Array.isArray(raw)) return null
   return raw.flatMap((entry): CloneEntry[] => {
     const { key, root } = (entry ?? {}) as { key?: unknown; root?: unknown }
     return typeof key === "string" && KEY.test(key) && typeof root === "string" && isAbsolute(root) ? [{ key, root }] : []
@@ -60,12 +66,31 @@ export function withClone(entries: readonly CloneEntry[], entry: CloneEntry, pen
   return next.filter((known) => !drop.has(known))
 }
 
+/** The registry's entries for discovery: one that is absent, unreadable or unparseable gives none. */
 export function readClones(env: NodeJS.ProcessEnv, sessionKey: string): CloneEntry[] {
   try {
     return parseClones(readFileSync(registryFile(env, sessionKey), "utf8"))
   } catch {
     return []
   }
+}
+
+/**
+ * The registry file as an update must see it: absent (no file) is empty, and any other read
+ * failure, or text that is not a JSON list, is an error naming the cause, so the update never
+ * replaces entries it could not read.
+ */
+function loadForUpdate(file: string): CloneEntry[] {
+  let text: string
+  try {
+    text = readFileSync(file, "utf8")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+    throw new Error(`the clone registry ${file} cannot be read (${error instanceof Error ? error.message : String(error)}); it was left unchanged`)
+  }
+  const entries = entriesOf(text)
+  if (entries === null) throw new Error(`the clone registry ${file} cannot be parsed as a JSON list; it was left unchanged`)
+  return entries
 }
 
 /** Add `entry` under the registry's lock; throws when the lock cannot be taken or the file written. */
@@ -79,7 +104,7 @@ export async function addClone(
   const file = registryFile(env, sessionKey)
   mkdirSync(join(receiptDirectory(env), ".clones"), { recursive: true })
   const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: options.waitMs ?? LOCK_WAIT_MS }, () => {
-    const current = readClones(env, sessionKey)
+    const current = loadForUpdate(file)
     if (current[0]?.key === entry.key && current[0].root === entry.root) return
     const temporary = `${file}.${process.pid}.${Date.now()}.tmp`
     writeFileSync(temporary, `${JSON.stringify(withClone(current, entry, pending))}\n`, { mode: 0o600 })

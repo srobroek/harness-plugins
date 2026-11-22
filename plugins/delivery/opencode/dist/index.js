@@ -3159,6 +3159,20 @@ function safeExecutionCwd(receipt, records, invocationCwd) {
   const main = records[0];
   return main !== undefined && physicalPath(main.path) !== target && worktreePathState(main.path) === "directory" ? main.path : null;
 }
+function markersStillBound(boundary, executionDir, executionPin) {
+  const checks = [
+    ["worktree.marker", boundary.cwd, boundary.pin],
+    ["worktree.executionCwd", executionDir, executionPin]
+  ];
+  for (const [field, directory, pin] of checks) {
+    const verdict = physicalPath(directory) === directory ? verifyCheckout(directory, boundary.common) : { state: "moved" };
+    const same = verdict.state === "same" && verdict.pin.GIT_DIR === pin.GIT_DIR && verdict.pin.GIT_COMMON_DIR === pin.GIT_COMMON_DIR;
+    if (!same) {
+      return refuse2(field, `${directory} (.git ${verdict.state === "same" ? "names another admin directory" : verdict.state}) at the moment of removal`, "the marker proved before the final checks, unchanged when the removal starts; nothing was removed");
+    }
+  }
+  return null;
+}
 function nextReceiptEpoch(receipt, now) {
   const observed = Math.trunc(now());
   const prior = Date.parse(receipt.emittedAt);
@@ -3336,6 +3350,9 @@ async function cleanupInRepository(params, cwd, deps) {
     }
     if (signal?.aborted === true)
       return refuse2("signal", "an abort", "no interrupt before the worktree removal; nothing was removed");
+    const rebound = markersStillBound(boundary, executionDir, executionPin);
+    if (rebound !== null)
+      return rebound;
     if (route === "host" && deps.host !== undefined) {
       try {
         await deps.host.remove(targetPath);
@@ -5858,14 +5875,17 @@ function registryFile(env, sessionKey) {
   return join8(receiptDirectory(env), ".clones", `${sessionKey}.json`);
 }
 function parseClones(text) {
+  return entriesOf(text) ?? [];
+}
+function entriesOf(text) {
   let raw;
   try {
     raw = JSON.parse(text);
   } catch {
-    return [];
+    return null;
   }
   if (!Array.isArray(raw))
-    return [];
+    return null;
   return raw.flatMap((entry) => {
     const { key, root } = entry ?? {};
     return typeof key === "string" && KEY.test(key) && typeof root === "string" && isAbsolute3(root) ? [{ key, root }] : [];
@@ -5888,11 +5908,25 @@ function readClones(env, sessionKey) {
     return [];
   }
 }
+function loadForUpdate(file) {
+  let text;
+  try {
+    text = readFileSync7(file, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT")
+      return [];
+    throw new Error(`the clone registry ${file} cannot be read (${error instanceof Error ? error.message : String(error)}); it was left unchanged`);
+  }
+  const entries = entriesOf(text);
+  if (entries === null)
+    throw new Error(`the clone registry ${file} cannot be parsed as a JSON list; it was left unchanged`);
+  return entries;
+}
 async function addClone(env, sessionKey, entry, pending, options = {}) {
   const file = registryFile(env, sessionKey);
   mkdirSync6(join8(receiptDirectory(env), ".clones"), { recursive: true });
   const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: options.waitMs ?? LOCK_WAIT_MS }, () => {
-    const current = readClones(env, sessionKey);
+    const current = loadForUpdate(file);
     if (current[0]?.key === entry.key && current[0].root === entry.root)
       return;
     const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;

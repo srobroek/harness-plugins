@@ -1381,6 +1381,30 @@ function safeExecutionCwd(receipt: LandingReceipt, records: WorktreeRecord[], in
     : null
 }
 
+/**
+ * The target and the directory the removal runs from, proved again against the common directory the
+ * boundary bound, with the admin directories the earlier proofs pinned. Synchronous: the caller runs
+ * the removal right after it, so a `.git` swapped during an earlier wait is caught. Null when both hold.
+ */
+function markersStillBound(boundary: TargetIdentity, executionDir: string, executionPin: GitPin): CleanupFailure | null {
+  const checks: ReadonlyArray<readonly [string, string, GitPin]> = [
+    ["worktree.marker", boundary.cwd, boundary.pin],
+    ["worktree.executionCwd", executionDir, executionPin],
+  ]
+  for (const [field, directory, pin] of checks) {
+    const verdict = physicalPath(directory) === directory ? verifyCheckout(directory, boundary.common) : ({ state: "moved" } as const)
+    const same = verdict.state === "same" && verdict.pin.GIT_DIR === pin.GIT_DIR && verdict.pin.GIT_COMMON_DIR === pin.GIT_COMMON_DIR
+    if (!same) {
+      return refuse(
+        field,
+        `${directory} (.git ${verdict.state === "same" ? "names another admin directory" : verdict.state}) at the moment of removal`,
+        "the marker proved before the final checks, unchanged when the removal starts; nothing was removed",
+      )
+    }
+  }
+  return null
+}
+
 function nextReceiptEpoch(receipt: LandingReceipt, now: () => number): number {
   const observed = Math.trunc(now())
   const prior = Date.parse(receipt.emittedAt)
@@ -1622,6 +1646,10 @@ async function cleanupInRepository(
     // An interrupt that arrived during the final lookup still stops the call; once the removal starts, nothing does.
     if ((signal as AbortSignal | undefined)?.aborted === true)
       return refuse("signal", "an abort", "no interrupt before the worktree removal; nothing was removed")
+    // The markers were proved before the host listing and the final check, both of which wait. They are
+    // proved again here, synchronously, so no wait sits between this proof and the removal call.
+    const rebound = markersStillBound(boundary, executionDir, executionPin)
+    if (rebound !== null) return rebound
     if (route === "host" && deps.host !== undefined) {
       try {
         await deps.host.remove(targetPath)

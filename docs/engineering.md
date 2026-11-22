@@ -201,6 +201,7 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 
 - Delivery reads and writes the coordination files under the target's git common directory: claims and landing records, holds and denials, and the removal lock.
 - If the clone now resolves to another common directory, delivery removes nothing.
+- The final checks wait on listings, so right before the removal call delivery proves both `.git` markers again, synchronously. It checks the worktree's and the directory the removal runs from, and refuses if either changed.
 - Delivery keys its in-memory vetoes by canonical worktree path and shares them across repositories. Before any wait, it publishes each veto.
 - The last check lists the sessions in the worktree across all projects.
 - If the sessions in the clone and the worktree name exactly one project id, delivery removes the worktree through OpenCode's registry. With any other answer it refuses the removal.

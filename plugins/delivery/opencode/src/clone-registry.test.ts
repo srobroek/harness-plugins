@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { hostname, tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { addClone, MAX_CLONES, parseClones, readClones, registryFile, withClone } from "./clone-registry.ts"
@@ -75,5 +75,28 @@ describe("addClone", () => {
     writeFileSync(`${file}.lock`, JSON.stringify({ host: hostname(), pid: process.pid, owner: "other writer", token: "t", taken: now, expires: now + 60_000 }))
     await expect(addClone(receipts, SESSION, B, () => false, { waitMs: 50 })).rejects.toThrow("could not be updated")
     expect(readClones(receipts, SESSION)).toEqual([A])
+  })
+
+  test("refuses to replace a registry file it cannot parse, naming the cause", async () => {
+    const receipts = store()
+    const file = registryFile(receipts, SESSION)
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, "{not json")
+    await expect(addClone(receipts, SESSION, B, () => false)).rejects.toThrow(/cannot be parsed/)
+    expect(readFileSync(file, "utf8")).toBe("{not json")
+  })
+
+  test("refuses to replace a registry file it cannot read, naming the cause", async () => {
+    const receipts = store()
+    await addClone(receipts, SESSION, A, () => false)
+    const file = registryFile(receipts, SESSION)
+    const before = readFileSync(file, "utf8")
+    chmodSync(file, 0o000)
+    try {
+      await expect(addClone(receipts, SESSION, B, () => false)).rejects.toThrow(/EACCES/)
+    } finally {
+      chmodSync(file, 0o600)
+    }
+    expect(readFileSync(file, "utf8")).toBe(before)
   })
 })

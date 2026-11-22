@@ -4536,6 +4536,36 @@ describe("cleanup of another repository's landing runs against that repository",
     await h.finish()
   })
 
+  test.each([
+    ["git", false],
+    ["the host registry", true],
+  ] as const)("a .git marker swapped while the final session listing waits refuses the removal through %s", async (_route, host) => {
+    const h = await foreignHarness(`foreign-swap-${host ? "host" : "git"}`, {
+      hostListsTarget: host,
+      sessions: (f) => [idleSession("ses_root", "prj_target", f.main)],
+    })
+    const session = h.fake.context.session as unknown as { list: (query: Record<string, unknown>) => Promise<unknown> }
+    const list = session.list.bind(session)
+    let swapped = false
+    let listings = 0
+    session.list = async (query) => {
+      // The worktree's session listings: the section's recheck under the lock, then the final check
+      // just before the removal. The second is suspended here, after every identity proof.
+      if (query.archived === false && query.directory === h.f.linked && ++listings === 2) {
+        swapped = true
+        writeFileSync(join(h.f.linked, ".git"), readFileSync(join(h.s.linked, ".git")))
+      }
+      return list(query)
+    }
+    const reason = refusal(await h.explicit())
+    expect(swapped).toBe(true)
+    expect(reason).toContain("worktree.marker")
+    expect(commandCalls(h.scripted.calls, "git").filter((argv) => argv[1] === "worktree" && argv[2] === "remove")).toEqual([])
+    expect(h.hostRemoved).toEqual([])
+    expect(existsSync(h.f.linked)).toBe(true)
+    await h.finish()
+  })
+
   test("a denied landing in the target repository is not retried", async () => {
     const h = await foreignHarness("foreign-denied")
     await h.pending.record(h.f.receipt, "ses_lead", { denied: true })
