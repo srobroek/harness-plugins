@@ -1,3 +1,9 @@
+## safety [0.11.4](https://github.com/srobroek/harness-plugins/compare/safety--v0.11.3...safety--v0.11.4) (2026-11-22)
+
+### Bug Fixes
+
+* **safety:** defer to host rules when the internal review fails ([a40b658](https://github.com/srobroek/harness-plugins/commit/a40b658d169c4aa5a050178d7a719953a881444f))
+
 ## safety [0.11.3](https://github.com/srobroek/harness-plugins/compare/safety--v0.11.2...safety--v0.11.3) (2026-11-22)
 
 ### Bug Fixes
