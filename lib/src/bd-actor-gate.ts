@@ -223,6 +223,12 @@ export function bdInvocations(command: string): BdInvocation[] {
   return readShell(command, { nested: false, touched: actorTouched(parse(command)) })
 }
 
+/** An `&&` / `||` chain after its first command: the variables then, and whether a `||` has come. */
+interface Chain {
+  base: ShellVars
+  or: boolean
+}
+
 /**
  * Read `command`. At the top level the actor variables are followed through `;`, newline, `&&`, `||`,
  * `&`, subshells and brace groups. Full shell emulation is out of scope: a change the gate cannot place
@@ -238,9 +244,9 @@ function readShell(command: string, context: { nested: boolean; touched: boolean
   // The variables as the current list began; a list run in the background changes nothing after it.
   let list: ShellVars = {}
   // Set after the first command of an `&&` / `||` chain: the variables then, and whether a `||` has come.
-  let chain: { base: ShellVars; or: boolean } | null = null
+  let chain: Chain | null = null
   // A subshell `( … )` runs on a copy; whatever it does ends with it.
-  const scopes: Array<{ vars: ShellVars; list: ShellVars; chain: typeof chain }> = []
+  const scopes: Array<{ vars: ShellVars; list: ShellVars; chain: Chain | null }> = []
   // Compound-command depth: a body may not run, so what it changes is unverified.
   let compounds = 0
   const isPipe = (other: (typeof scan.items)[number] | undefined): boolean =>
