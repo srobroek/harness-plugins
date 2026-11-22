@@ -737,6 +737,12 @@ export function createLifecycle(deps: LifecycleDeps) {
             await save(stored)
             return keptBecause("running", evicted.reason)
           }
+          // The eviction awaited listings and moves: a start, a resume or a hold that landed meanwhile still keeps the worktree.
+          const afterEviction = (await liveRefusal(stored, options, seq)) ?? startedSince([stored.child, ...descendants.ids], seq)
+          if (afterEviction !== undefined) {
+            await save(stored)
+            return afterEviction
+          }
           try {
             await deps.removeWorktree(stored.projectID, stored.directory, false)
           } catch (error) {
