@@ -1,3 +1,9 @@
+## delivery [0.10.3](https://github.com/srobroek/harness-plugins/compare/delivery--v0.10.2...delivery--v0.10.3) (2026-11-22)
+
+### Bug Fixes
+
+* **delivery:** run repository observations on an async git child ([#82](https://github.com/srobroek/harness-plugins/issues/82)) ([4923124](https://github.com/srobroek/harness-plugins/commit/492312408a994465698b61e6b4497459953748d2))
+
 ## delivery [0.10.2](https://github.com/srobroek/harness-plugins/compare/delivery--v0.10.1...delivery--v0.10.2) (2026-11-21)
 
 ### Bug Fixes
