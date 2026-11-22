@@ -5276,10 +5276,10 @@ ${next.slice(0, -1).map((step) => `  ${step}`).join(`
 
 // plugins/delivery/opencode/src/pending-cleanup.ts
 import { existsSync as existsSync4, readdirSync as readdirSync4 } from "fs";
-import { join as join9, resolve as resolve8 } from "path";
+import { join as join9, resolve as resolve7 } from "path";
 
 // lib/src/session-eviction.ts
-import { basename as basename4, dirname as dirname5, resolve as resolve7 } from "path";
+import { basename as basename4, dirname as dirname5 } from "path";
 
 // lib/src/session-lanes.ts
 function insideDirectory(path, directory) {
@@ -5538,7 +5538,7 @@ function canonicalCheckout(commonDir, fallback) {
 
 // lib/src/worktree-locks.ts
 import { createHash as createHash3, randomUUID as randomUUID2 } from "crypto";
-import { accessSync, constants as constants4, mkdirSync as mkdirSync5, readdirSync as readdirSync3, readFileSync as readFileSync6, renameSync as renameSync2, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "fs";
+import { mkdirSync as mkdirSync5, readdirSync as readdirSync3, readFileSync as readFileSync6, renameSync as renameSync2, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "fs";
 import { join as join7 } from "path";
 
 // lib/src/lease-lock.ts
@@ -6155,7 +6155,7 @@ function createPendingCleanup(deps) {
     return context !== null && context.key === receipt.repo.key ? repositoryAt({ common: context.commonDir, root }) : null;
   };
   const mayHavePending = (key) => {
-    const directory = resolve8(receiptDirectory(env, key));
+    const directory = resolve7(receiptDirectory(env, key));
     let names;
     try {
       names = readdirSync4(directory);
@@ -6299,9 +6299,9 @@ function createPendingCleanup(deps) {
     const key = await repo.key();
     if (key === null)
       return false;
-    const directory = resolve8(receiptDirectory(env, key));
+    const directory = resolve7(receiptDirectory(env, key));
     try {
-      const mine = readReceipt(resolve8(directory, `${receiptId}.json`));
+      const mine = readReceipt(resolve7(directory, `${receiptId}.json`));
       if (!mine.ok)
         return false;
       if (mine.receipt.outcome === "cleaned" || mine.receipt.worktree.removed)
@@ -6357,7 +6357,7 @@ function createPendingCleanup(deps) {
     if (key === null)
       return [];
     const want = canonicalDirectory(path);
-    return pendingReceipts(listReceipts(resolve8(receiptDirectory(env, key)))).filter((receipt) => receipt.worktree.path !== null && canonicalDirectory(receipt.worktree.path) === want);
+    return pendingReceipts(listReceipts(resolve7(receiptDirectory(env, key)))).filter((receipt) => receipt.worktree.path !== null && canonicalDirectory(receipt.worktree.path) === want);
   };
   const denyIn = (repo) => async (worktree, sessionID) => {
     deniedWorktrees.add(canonicalDirectory(worktree));
@@ -6528,7 +6528,7 @@ function createPendingCleanup(deps) {
     const key = await repo.key();
     if (key === null)
       return;
-    const directory = resolve8(receiptDirectory(env, key));
+    const directory = resolve7(receiptDirectory(env, key));
     let pending;
     try {
       pending = pendingReceipts(listReceipts(directory));
@@ -6564,7 +6564,7 @@ function createPendingCleanup(deps) {
       if (disposed)
         return;
       attemptedAt.set(idOf(receipt), now());
-      const path = resolve8(directory, `${receipt.receiptId}.json`);
+      const path = resolve7(directory, `${receipt.receiptId}.json`);
       const meta = recorded.byReceipt.get(receipt.receiptId);
       const recentlyTried = now() - (retriedAt.get(idOf(receipt)) ?? Number.NEGATIVE_INFINITY) < RETRY_WINDOW_MS;
       const worktree = receipt.worktree.path;
@@ -6686,7 +6686,7 @@ function createPendingCleanup(deps) {
     const { commonDir: common, key } = location;
     let pending;
     try {
-      pending = pendingReceipts(listReceipts(resolve8(receiptDirectory(env, key)))).slice(0, 100);
+      pending = pendingReceipts(listReceipts(resolve7(receiptDirectory(env, key)))).slice(0, 100);
     } catch {
       return;
     }

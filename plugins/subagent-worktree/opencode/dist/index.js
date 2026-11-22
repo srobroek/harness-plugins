@@ -3,7 +3,7 @@
 // plugins/subagent-worktree/opencode/src/index.ts
 import { realpath, stat } from "fs/promises";
 import { homedir } from "os";
-import { join as join4, resolve as resolve4 } from "path";
+import { join as join4, resolve as resolve3 } from "path";
 import { Plugin } from "@opencode/plugin";
 import { Error as ToolError } from "@opencode/plugin/promise/tool";
 
@@ -214,7 +214,7 @@ function landingsFor(records, directory) {
 
 // lib/src/worktree-locks.ts
 import { createHash as createHash2, randomUUID as randomUUID2 } from "crypto";
-import { accessSync, constants as constants3, mkdirSync as mkdirSync2, readdirSync as readdirSync2, readFileSync as readFileSync2, renameSync as renameSync2, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "fs";
+import { mkdirSync as mkdirSync2, readdirSync as readdirSync2, readFileSync as readFileSync2, renameSync as renameSync2, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "fs";
 import { join as join2 } from "path";
 
 // lib/src/lease-lock.ts
@@ -1513,10 +1513,10 @@ function createGit(run) {
 
 // plugins/subagent-worktree/opencode/src/lifecycle.ts
 import { existsSync as existsSync2, realpathSync as realpathSync2 } from "fs";
-import { join as join3, resolve as resolve3 } from "path";
+import { join as join3, resolve as resolve2 } from "path";
 
 // lib/src/session-eviction.ts
-import { basename, dirname, resolve as resolve2 } from "path";
+import { basename, dirname } from "path";
 var MAX_PAGES2 = 100;
 var toMillis = (value) => {
   if (typeof value === "number")
@@ -1946,7 +1946,7 @@ var canonical = (path) => {
   try {
     return realpathSync2(path);
   } catch {
-    return resolve3(path);
+    return resolve2(path);
   }
 };
 function within3(path, root) {
@@ -3027,7 +3027,7 @@ var directoryExists = async (path) => {
 };
 var TIMED_OUT = Symbol("timed out");
 var randomSuffix = () => crypto.randomUUID().slice(0, 6);
-var normalize = (path) => realpath(path).catch(() => resolve4(path));
+var normalize = (path) => realpath(path).catch(() => resolve3(path));
 function appendContent(content, note) {
   if (content === undefined)
     return note;
@@ -3155,7 +3155,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     const parsed = porcelain === undefined ? undefined : parseWorktrees(porcelain);
     const entries = parsed === undefined ? undefined : await Promise.all(parsed.map(async (entry) => ({ ...entry, directory: await normalize(entry.directory) })));
     const raw = requested.startsWith("~/") ? join4(homedir(), requested.slice(2)) : requested;
-    const path = await normalize(resolve4(parentDir, raw));
+    const path = await normalize(resolve3(parentDir, raw));
     const current = entries && containingWorktree(await normalize(parentDir), entries)?.directory;
     return { lookup: findWorktree(requested, path, entries), current };
   };
