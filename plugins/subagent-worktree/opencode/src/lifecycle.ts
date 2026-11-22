@@ -725,6 +725,18 @@ export function createLifecycle(deps: LifecycleDeps) {
             await save(stored)
             return late
           }
+          // Every other session in the checkout, whoever started it: a running one keeps the worktree, an idle one goes
+          // to the canonical checkout first. The lane's own sessions move home after the removal, below, where a failed move is retried.
+          const evicted = await evictSessions(ctx.session as unknown as SessionApi, {
+            projectID: stored.projectID,
+            directory: stored.directory,
+            destination: canonicalCheckout(common, stored.parentDir),
+            exclude: new Set([stored.child, ...descendants.ids]),
+          })
+          if (!evicted.ok) {
+            await save(stored)
+            return keptBecause("running", evicted.reason)
+          }
           try {
             await deps.removeWorktree(stored.projectID, stored.directory, false)
           } catch (error) {

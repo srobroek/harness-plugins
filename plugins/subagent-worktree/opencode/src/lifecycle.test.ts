@@ -2229,6 +2229,71 @@ describe("finalize: the lane's descendants in the worktree protect it", () => {
   })
 })
 
+describe("sessions of other tools are moved out of a worktree before it is removed", () => {
+  const removes = (worktree: Array<{ method: string }>) => worktree.filter((entry) => entry.method === "remove").length
+  const empty = { head: BASE, ahead: 0 }
+  const moves = (fake: Fake) =>
+    fake.calls.filter((entry) => entry.method === "session.move").map((entry) => entry.input as { sessionID: string; directory: string })
+  const addSession = (fake: Fake, id: string, directory: string, time: Record<string, number> = { busy: 1, idle: 2 }) =>
+    fake.sessions.set(id, { id, projectID: "prj", location: { directory }, time })
+
+  test("an idle session of another tool inside the lane is moved to the checkout first, then the worktree goes", async () => {
+    const { fake, state, worktree, cleanup } = await start(empty)
+    addSession(fake, "ses_other", WT)
+    let movedAtRemoval: string[] = []
+    state.onRemove = () => {
+      movedAtRemoval = moves(fake).map((move) => move.sessionID)
+    }
+    fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await until(() => removes(worktree) > 0)
+    expect(movedAtRemoval).toContain("ses_other")
+    expect(moves(fake).find((move) => move.sessionID === "ses_other")).toEqual({ sessionID: "ses_other", directory: REPO })
+    await cleanup()
+  })
+
+  test("an archived idle session inside the lane is moved out too", async () => {
+    const { fake, worktree, cleanup } = await start(empty)
+    addSession(fake, "ses_shelved", WT, { busy: 9, idle: 2, archived: 3 })
+    fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await until(() => removes(worktree) > 0)
+    expect(moves(fake).find((move) => move.sessionID === "ses_shelved")).toEqual({ sessionID: "ses_shelved", directory: REPO })
+    await cleanup()
+  })
+
+  test("a running session inside the worktree keeps it", async () => {
+    const { fake, worktree, cleanup } = await start(empty)
+    addSession(fake, "ses_busy", `${WT}/pkg`, { busy: 9, idle: 2 })
+    fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await settle(150)
+    expect(removes(worktree)).toBe(0)
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+
+  test("a failed move keeps the worktree, and the lane's own child stays in it", async () => {
+    const { fake, worktree, cleanup } = await start(empty)
+    addSession(fake, "ses_other", WT)
+    const session = fake.context.session as unknown as { move: (input: { sessionID: string; directory: string }) => Promise<unknown> }
+    const original = session.move.bind(session)
+    session.move = (input) => (input.sessionID === "ses_other" ? Promise.reject(new Error("host refused")) : original(input))
+    fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await settle(150)
+    expect(removes(worktree)).toBe(0)
+    expect(fake.sessions.get(CHILD)?.location).toEqual({ directory: WT })
+    await cleanup()
+  })
+
+  test("a sweep removal moves such sessions out as well", async () => {
+    const { fake, worktree, cleanup } = await start({ ancestor: 0, age: 3 * 24 * 3_600_000, time: ARCHIVED })
+    addSession(fake, "ses_other", WT)
+    const execute = fake.tools.get("subagent_worktree_sweep")?.execute as (i: unknown, c: unknown) => Promise<unknown>
+    await execute({ mode: "prune" }, tool)
+    expect(removes(worktree)).toBe(1)
+    expect(moves(fake).some((move) => move.sessionID === "ses_other")).toBe(true)
+    await cleanup()
+  })
+})
+
 describe("a lane's removal leaves a nested lane where it is", () => {
   test("a descendant that works in its own lane's worktree is not moved with its ancestor's lane", async () => {
     const NESTED = "/wt/lane-b"

@@ -2294,6 +2294,16 @@ function createLifecycle(deps) {
             await save(stored);
             return late;
           }
+          const evicted = await evictSessions(ctx.session, {
+            projectID: stored.projectID,
+            directory: stored.directory,
+            destination: canonicalCheckout(common, stored.parentDir),
+            exclude: new Set([stored.child, ...descendants.ids])
+          });
+          if (!evicted.ok) {
+            await save(stored);
+            return keptBecause("running", evicted.reason);
+          }
           try {
             await deps.removeWorktree(stored.projectID, stored.directory, false);
           } catch (error) {
