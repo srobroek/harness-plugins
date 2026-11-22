@@ -4,7 +4,7 @@ import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { Tool } from "@opencode/plugin/effect"
 import { createFakeContext, type FakeAssert, type FakeSession, type FakeSkill } from "@srobroek/opencode-lib/testing"
-import plugin, { applyDecision, confirmSecretCommand, createPlugin, type Evaluation, readOptions, shellCwd } from "./index.ts"
+import plugin, { applyDecision, confirmSecretCommand, createPlugin, type Evaluation, type Overrides, readOptions, shellCwd } from "./index.ts"
 import { FNOX_CONFIG_MESSAGE, FNOX_INDIRECT_MESSAGE, FNOX_STORE_MESSAGE, VALUE_MESSAGE } from "./op-guard.ts"
 import { INVESTIGATE_NOTICE } from "./package-investigate.ts"
 import { FORCE_PUSH_MESSAGE } from "./permission.ts"
@@ -29,6 +29,8 @@ type Load = {
   sessions?: FakeSession[]
   skills?: FakeSkill[]
   warn?: (message: string, data?: Record<string, unknown>) => void
+  /** Replaces the review options of the plugin. */
+  review?: NonNullable<Overrides["review"]>
   /** Backoff seams of the prompt watch; the default waits on the wall clock. */
   watch?: { delaysMs?: readonly number[]; sleep?: (ms: number, signal: AbortSignal) => Promise<void> }
   /** Replaces host methods on the fake context before the plugin sets up. */
@@ -49,7 +51,7 @@ async function load(options: Record<string, unknown> = {}, more: Load = {}) {
   })
   more.patch?.(fake.context)
   const cleanup = await createPlugin({
-    review: { gh: async () => "[]", timeoutMs: 30_000, budgetMs: 120_000 },
+    review: more.review ?? { gh: async () => "[]", timeoutMs: 30_000, budgetMs: 120_000 },
     env: more.env ?? {},
     ...(more.guard ? { guard: more.guard } : {}),
     ...(more.scratchRoots ? { scratch: { roots: more.scratchRoots } } : {}),
@@ -237,6 +239,30 @@ describe("permission decisions", () => {
     const { evaluate } = await load()
     expect((await evaluate(undefined, ["git status", "git push -f"])).effect).toBe("deny")
     expect((await evaluate("unknown", ["git status"])).effect).toBe("allow")
+  })
+
+  describe("when the internal review throws", () => {
+    // `reset --hard` spawns git; a spawn that throws is how a git probe failing under load looks.
+    const RESET = "git reset --hard HEAD~1"
+    const broken = {
+      spawn: async () => {
+        throw new Error("probe timed out")
+      },
+    }
+
+    test("no decision is made: the host's effect stands, and each failure is logged", async () => {
+      const warnings: Array<{ message: string; data?: Record<string, unknown> }> = []
+      const warn = (message: string, data?: Record<string, unknown>) => warnings.push({ message, ...(data ? { data } : {}) })
+      const { before, evaluate } = await load({}, { warn, review: broken })
+      await before("c1", RESET)
+      expect((await evaluate("c1", [RESET])).effect).toBe("allow")
+      expect((await evaluate(undefined, [RESET])).effect).toBe("allow")
+      expect((await evaluate("c1", [RESET], "ask")).effect).toBe("ask")
+      expect((await evaluate("c1", [RESET], "deny")).effect).toBe("deny")
+      expect(warnings.length).toBe(2)
+      expect(warnings[0]?.message).toContain("review failed")
+      expect(warnings[0]?.data).toMatchObject({ error: "Error", message: "probe timed out" })
+    })
   })
 
   test("non-shell evaluations are left alone", async () => {
