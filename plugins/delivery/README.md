@@ -53,9 +53,14 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
   - It refuses unless one of the clone's own remotes names `repo`.
   - The bead ledger and every other check read that clone. The tool writes the receipt
     under the clone's repository key and canonical root.
-  - The tool does not clean up such a landing. That repository's lane claims, holds and
-    bead ledger can't be read from this session. `next` scopes the bead close-out
-    commands to the clone and ends with `delivery_cleanup from a session in <root>`.
+  - The cleanup after such a landing uses that repository's own coordination: its lane
+    claims, landing records, holds and removal lock live under its git common directory.
+    `next` scopes the bead close-out commands to the clone and ends with
+    `delivery_cleanup repo=<owner>/<name> repoPath=<root>`.
+  - A cleanup that does not finish is retried at the turn end of the session that landed
+    it. The session lists such clones in `<receipts root>/.clones/<session repo key>.json`,
+    so a restart finds them. An entry is dropped once its receipts are cleaned or
+    superseded and that repository's landing records are collected.
   - Name only clones you control. The tool trusts the clone like the session directory.
   - With no `repo`, or the session's own, a `worktree` must belong to the session
     repository. Any other `worktree` fails before Git runs in it.

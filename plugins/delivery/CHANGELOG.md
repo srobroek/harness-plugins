@@ -1,3 +1,16 @@
+## delivery [0.11.0](https://github.com/srobroek/harness-plugins/compare/delivery--v0.10.6...delivery--v0.11.0) (2026-11-22)
+
+### Features
+
+* **delivery:** register clones with their receipts and collect them at gc ([356b0e8](https://github.com/srobroek/harness-plugins/commit/356b0e8d1563e3533d272ee0a19a01a7a52532d4)), closes [#94](https://github.com/srobroek/harness-plugins/issues/94)
+
+### Bug Fixes
+
+* **delivery:** keep a clone registered when its receipt directory cannot be opened ([4de6356](https://github.com/srobroek/harness-plugins/commit/4de63562df43c90b9faa35d58c77842212b42b5e))
+* **delivery:** keep a clone registered while another receipt of it is pending ([d6c7d69](https://github.com/srobroek/harness-plugins/commit/d6c7d69da8b1fa992055f688a88465711737e944))
+* **delivery:** run close-out commands for another repository as bd -C ([2e73a29](https://github.com/srobroek/harness-plugins/commit/2e73a2906a9cda0ca96c12a22166cb111d97287f))
+* **delivery:** test that an unparseable registry refusal keeps the SyntaxError as cause ([5e384c9](https://github.com/srobroek/harness-plugins/commit/5e384c9057de64f95cbacfccaecf8d1d3f4ff141))
+
 ## delivery [0.10.6](https://github.com/srobroek/harness-plugins/compare/delivery--v0.10.5...delivery--v0.10.6) (2026-11-22)
 
 ## delivery [0.10.5](https://github.com/srobroek/harness-plugins/compare/delivery--v0.10.4...delivery--v0.10.5) (2026-11-22)

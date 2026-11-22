@@ -627,7 +627,7 @@ function stashesOnBranch(subjects, branch) {
 // plugins/delivery/package.json
 var package_default = {
   name: "delivery",
-  version: "0.10.6",
+  version: "0.11.0",
   description: "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
   private: true,
   type: "module",
@@ -4537,10 +4537,12 @@ function nativeCloseoutSteps(receipt, receiptPath, mergeSha) {
   return [...commands, "delivery_cleanup"];
 }
 function foreignCleanupStep(repo, root) {
-  return `delivery_cleanup with repo ${JSON.stringify(repo)} and repoPath ${JSON.stringify(root)}`;
+  return `delivery_cleanup repo=${repo} repoPath=${/\s/.test(root) ? JSON.stringify(root) : root}`;
 }
 function inClone(root, command) {
-  return `cd '${root.replaceAll("'", `'\\''`)}' && env -u BEADS_DIR ${command}`;
+  if (!command.startsWith("bd "))
+    throw new Error(`inClone takes a bd command, got ${JSON.stringify(command)}`);
+  return `bd -C '${root.replaceAll("'", `'\\''`)}' ${command.slice("bd ".length)}`;
 }
 function missingBeadIdentity(ids, branch, ledger) {
   if (!ledger.active || ids.length > 0)
@@ -5899,12 +5901,36 @@ function entriesOf(text) {
   if (!Array.isArray(raw))
     return null;
   return raw.flatMap((entry) => {
-    const { key, root } = entry ?? {};
-    return typeof key === "string" && KEY.test(key) && typeof root === "string" && isAbsolute3(root) ? [{ key, root }] : [];
+    const { key, root, commonDir, repo, receiptIds, addedAt } = entry ?? {};
+    if (typeof key !== "string" || !KEY.test(key) || typeof root !== "string" || !isAbsolute3(root))
+      return [];
+    return [
+      {
+        key,
+        root,
+        ...typeof commonDir === "string" && isAbsolute3(commonDir) ? { commonDir } : {},
+        ...typeof repo === "string" ? { repo } : {},
+        ...Array.isArray(receiptIds) && receiptIds.every((id) => typeof id === "string") ? { receiptIds } : {},
+        ...typeof addedAt === "number" ? { addedAt } : {}
+      }
+    ];
   });
 }
+function mergeClone(known, entry) {
+  if (known === undefined)
+    return entry;
+  const ids = known.receiptIds === undefined || entry.receiptIds === undefined ? undefined : [...new Set([...known.receiptIds, ...entry.receiptIds])];
+  const { receiptIds: _ids, ...rest } = entry;
+  return { ...rest, ...ids === undefined ? {} : { receiptIds: ids } };
+}
+function withoutReceipts(entry, ids) {
+  if (entry.receiptIds === undefined)
+    return entry;
+  const left = entry.receiptIds.filter((id) => !ids.has(id));
+  return left.length === 0 ? null : { ...entry, receiptIds: left };
+}
 function withClone(entries, entry, pending = () => false) {
-  const next = [entry, ...entries.filter((known) => known.key !== entry.key)];
+  const next = [mergeClone(entries.find((known) => known.key === entry.key), entry), ...entries.filter((known) => known.key !== entry.key)];
   const drop = new Set;
   for (let index = next.length - 1;index > 0 && next.length - drop.size > MAX_CLONES; index--) {
     const candidate = next[index];
@@ -5931,6 +5957,13 @@ function loadForUpdate(file) {
       cause: error
     });
   }
+  try {
+    JSON.parse(text);
+  } catch (error) {
+    throw new Error(`the clone registry ${file} cannot be parsed (${error instanceof Error ? error.message : String(error)}); it was left unchanged`, {
+      cause: error
+    });
+  }
   const entries = entriesOf(text);
   if (entries === null)
     throw new Error(`the clone registry ${file} cannot be parsed as a JSON list; it was left unchanged`);
@@ -5941,10 +5974,26 @@ async function addClone(env, sessionKey, entry, pending, options = {}) {
   mkdirSync6(join8(receiptDirectory(env), ".clones"), { recursive: true });
   const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: options.waitMs ?? LOCK_WAIT_MS }, () => {
     const current = loadForUpdate(file);
-    if (current[0]?.key === entry.key && current[0].root === entry.root)
+    const merged = mergeClone(current[0]?.key === entry.key ? current[0] : undefined, entry);
+    if (current[0]?.key === entry.key && JSON.stringify(current[0]) === JSON.stringify(merged))
       return;
     const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
     writeFileSync6(temporary, `${JSON.stringify(withClone(current, entry, pending))}
+`, { mode: 384 });
+    renameSync3(temporary, file);
+  });
+  if (result.kind === "failed")
+    throw new Error(`the clone registry ${file} could not be updated: ${result.reason}`);
+}
+async function settleReceipts(env, sessionKey, key, ids, options = {}) {
+  const file = registryFile(env, sessionKey);
+  const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: options.waitMs ?? LOCK_WAIT_MS }, () => {
+    const current = loadForUpdate(file);
+    const next = current.flatMap((entry) => entry.key === key ? withoutReceipts(entry, ids) ?? [] : [entry]);
+    if (JSON.stringify(next) === JSON.stringify(current))
+      return;
+    const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync6(temporary, `${JSON.stringify(next)}
 `, { mode: 384 });
     renameSync3(temporary, file);
   });
@@ -6047,6 +6096,18 @@ function pendingReceipts(receipts) {
 }
 function selectWindow(candidates, options) {
   return candidates.filter((candidate) => !options.skip(candidate)).map((candidate, index) => ({ candidate, index, at: options.lastAttempt(candidate) ?? Number.NEGATIVE_INFINITY })).sort((a, b) => a.at === b.at ? a.index - b.index : a.at < b.at ? -1 : 1).slice(0, options.limit).map((entry) => entry.candidate);
+}
+function receiptSettled(directory, receiptId) {
+  try {
+    const own = readReceipt(resolve7(directory, `${receiptId}.json`));
+    if (!own.ok)
+      return false;
+    if (own.receipt.outcome === "cleaned" || own.receipt.worktree.removed)
+      return true;
+    return listReceipts(directory).some((receipt) => receipt.supersedes === receiptId);
+  } catch {
+    return false;
+  }
 }
 
 class CleanupDeferred extends Error {
@@ -6177,21 +6238,29 @@ function createPendingCleanup(deps) {
     }
     return pendingReceipts(receipts).length > 0;
   };
-  const persistClone = async (receipt) => {
+  const cloneEntryFor = (receipt, commonDir) => ({
+    key: receipt.repo.key,
+    root: receipt.repo.canonicalRoot,
+    commonDir,
+    repo: receipt.repo.nameWithOwner,
+    receiptIds: [receipt.receiptId],
+    addedAt: now()
+  });
+  const persistClone = async (entry) => {
     const mine = own.veto() ?? await own.observe();
     if (mine === null)
       return;
     try {
-      await addClone(env, mine.key, { key: receipt.repo.key, root: receipt.repo.canonicalRoot }, (entry) => mayHavePending(entry.key));
+      await addClone(env, mine.key, entry, (known) => mayHavePending(known.key));
     } catch (error) {
-      console.error(`delivery: could not record the clone ${receipt.repo.canonicalRoot}: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`delivery: could not record the clone ${entry.root}: ${error instanceof Error ? error.message : String(error)}`, error);
     }
   };
   const cloneEntries = (sessionKey) => {
-    const entries = new Map(readClones(env, sessionKey).map((entry) => [entry.key, entry.root]));
-    for (const [key, root] of registered)
-      entries.set(key, root);
-    return [...entries].filter(([key]) => key !== sessionKey && mayHavePending(key)).map(([key, root]) => ({ key, root }));
+    const entries = new Map(readClones(env, sessionKey).map((entry) => [entry.key, entry]));
+    for (const [key, entry] of registered)
+      entries.set(key, mergeClone(entries.get(key), entry));
+    return [...entries.values()].filter((entry) => entry.key !== sessionKey && mayHavePending(entry.key));
   };
   const cloneAt = async (entry) => {
     const repo = await repositoryOf({ repo: { key: entry.key, canonicalRoot: entry.root } });
@@ -6299,17 +6368,7 @@ function createPendingCleanup(deps) {
     const key = await repo.key();
     if (key === null)
       return false;
-    const directory = resolve7(receiptDirectory(env, key));
-    try {
-      const mine = readReceipt(resolve7(directory, `${receiptId}.json`));
-      if (!mine.ok)
-        return false;
-      if (mine.receipt.outcome === "cleaned" || mine.receipt.worktree.removed)
-        return true;
-      return listReceipts(directory).some((receipt) => receipt.supersedes === receiptId);
-    } catch {
-      return false;
-    }
+    return receiptSettled(resolve7(receiptDirectory(env, key)), receiptId);
   };
   const dropLanding = async (repo, common, record, needsEvidence = true) => locked(repo, record.worktree, async () => {
     const current = readLanding(common, record.receiptId);
@@ -6347,11 +6406,13 @@ function createPendingCleanup(deps) {
     const repo = await repositoryOf(receipt);
     if (repo === null)
       return;
-    if (repo.foreign)
-      registered.set(receipt.repo.key, receipt.repo.canonicalRoot);
+    const commonDir = repo.veto()?.commonDir ?? (await repo.observe())?.commonDir;
+    const entry = repo.foreign && commonDir !== undefined ? cloneEntryFor(receipt, commonDir) : undefined;
+    if (entry !== undefined)
+      registered.set(entry.key, mergeClone(registered.get(entry.key), entry));
     await recordIn(repo, receipt, sessionID, outcome);
-    if (repo.foreign)
-      await persistClone(receipt);
+    if (entry !== undefined)
+      await persistClone(entry);
   };
   const receiptsAt = (key, path) => {
     if (key === null)
@@ -6509,12 +6570,57 @@ function createPendingCleanup(deps) {
   const gcIn = async (repo) => {
     const recorded = await landings(repo);
     if (recorded.common === null || recorded.unreadable)
-      return;
+      return false;
     for (const entry of recorded.byReceipt.values()) {
       if (entry.denied !== undefined || !await dropEvidence(repo, entry.receiptId))
         continue;
       await dropLanding(repo, recorded.common, entry);
     }
+    return true;
+  };
+  const settleClone = async (sessionKey, entry, finished = new Set) => {
+    if (entry.receiptIds === undefined)
+      return;
+    const directory = resolve7(receiptDirectory(env, entry.key));
+    const settled = new Set(entry.receiptIds.filter((id) => finished.has(id) || receiptSettled(directory, id)));
+    if (settled.size === 0)
+      return;
+    try {
+      const repo = await cloneAt(entry);
+      if (repo === null || !await gcIn(repo)) {
+        console.error(`delivery: landing records of ${entry.repo ?? entry.root} could not all be read; keeping its clone registration`);
+        return;
+      }
+      let pendingLeft;
+      try {
+        readdirSync4(directory);
+        pendingLeft = pendingReceipts(listReceipts(directory)).some((receipt) => !settled.has(receipt.receiptId));
+      } catch {
+        pendingLeft = true;
+      }
+      if (pendingLeft)
+        return;
+      const known = registered.get(entry.key);
+      const left = known === undefined ? null : withoutReceipts(known, settled);
+      if (left === null)
+        registered.delete(entry.key);
+      else
+        registered.set(entry.key, left);
+      await settleReceipts(env, sessionKey, entry.key, settled);
+    } catch (error) {
+      console.error(`delivery: clone registry gc failed for ${entry.repo ?? entry.root}`, error);
+    }
+  };
+  const gcClones = async () => {
+    const mine = own.veto() ?? await own.observe();
+    if (mine === null)
+      return;
+    const entries = new Map(readClones(env, mine.key).map((entry) => [entry.key, entry]));
+    for (const [key, entry] of registered)
+      entries.set(key, mergeClone(entries.get(key), entry));
+    for (const entry of entries.values())
+      if (entry.key !== mine.key)
+        await settleClone(mine.key, entry);
   };
   const gc = async (receipt) => {
     const repos = [own, ...await clones()];
@@ -6523,17 +6629,19 @@ function createPendingCleanup(deps) {
       repos.push(named);
     for (const repo of repos)
       await gcIn(repo);
+    await gcClones();
   };
   const runIn = async (repo, sessionID, idle) => {
+    const finished = new Set;
     const key = await repo.key();
     if (key === null)
-      return;
+      return finished;
     const directory = resolve7(receiptDirectory(env, key));
     let pending;
     try {
       pending = pendingReceipts(listReceipts(directory));
     } catch {
-      return;
+      return finished;
     }
     const idOf = (receipt) => `${key}/${receipt.receiptId}`;
     const recorded = await landings(repo);
@@ -6542,6 +6650,7 @@ function createPendingCleanup(deps) {
     for (const receipt of pending) {
       if (receipt.worktree.path !== null && !existsSync4(receipt.worktree.path)) {
         doneIds.add(idOf(receipt));
+        finished.add(receipt.receiptId);
         if (recorded.common !== null && recorded.byReceipt.get(receipt.receiptId)?.denied === undefined) {
           await dropLanding(repo, recorded.common, { receiptId: receipt.receiptId, worktree: receipt.worktree.path }, false);
         }
@@ -6562,7 +6671,7 @@ function createPendingCleanup(deps) {
     });
     for (const receipt of window) {
       if (disposed)
-        return;
+        return finished;
       attemptedAt.set(idOf(receipt), now());
       const path = resolve7(directory, `${receipt.receiptId}.json`);
       const meta = recorded.byReceipt.get(receipt.receiptId);
@@ -6599,20 +6708,29 @@ function createPendingCleanup(deps) {
         }
         if (result.ok) {
           doneIds.add(idOf(receipt));
+          finished.add(receipt.receiptId);
           if (recorded.common !== null && recorded.byReceipt.get(receipt.receiptId)?.denied === undefined) {
             await dropLanding(repo, recorded.common, { receiptId: receipt.receiptId, worktree }, false);
           }
         }
       }
     }
+    return finished;
   };
   const run = async (sessionID, idle) => {
     await runIn(own, sessionID, idle);
-    for (const repo of await clones()) {
-      if (disposed)
-        return;
-      await runIn(repo, sessionID, idle);
+    const mine = own.veto() ?? await own.observe();
+    if (mine !== null) {
+      for (const entry of cloneEntries(mine.key)) {
+        if (disposed)
+          return;
+        const repo = await cloneAt(entry);
+        if (repo === null)
+          continue;
+        await settleClone(mine.key, entry, await runIn(repo, sessionID, idle));
+      }
     }
+    await gcClones();
   };
   const retryNow = (sessionID, idle) => disposed ? Promise.resolve() : serial(() => run(sessionID, idle)).catch((error) => console.error("delivery: pending cleanup failed", error));
   const schedule = (sessionID, idle) => {

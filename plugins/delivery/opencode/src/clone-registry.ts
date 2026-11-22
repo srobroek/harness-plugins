@@ -7,6 +7,12 @@
  * target's key and canonical checkout root, newest first. An entry only says where to look: the
  * root is observed again, and must still have the recorded key, before anything is read there.
  *
+ * An entry may also name the receipts the session landed there (`receiptIds`), the target's git
+ * common directory, its `owner/name` and when it was added. Such an entry is dropped once every one of
+ * its receipts is settled and the target's landing records are collected. The file is a JSON list of
+ * `{key, root}` objects, as 0.10.5 wrote it: those fields are optional, so an older file reads as it
+ * did, and its entries (no `receiptIds`) are kept by the count rule alone.
+ *
  * Updates are serialized under a lease lock beside the file and replace it by rename, so a reader
  * never sees half a file and no writer drops another's entry. An entry whose repository still has
  * pending receipts is never dropped to stay under {@link MAX_CLONES}. An update refuses, and leaves
@@ -17,7 +23,17 @@ import { isAbsolute, join } from "node:path"
 import { withLease } from "@srobroek/opencode-lib/lease-lock"
 import { receiptDirectory } from "./landing-receipt.ts"
 
-export type CloneEntry = { key: string; root: string }
+export type CloneEntry = {
+  key: string
+  root: string
+  /** The target's git common directory, where its claims and landing records live. */
+  commonDir?: string
+  /** The target's `owner/name`. */
+  repo?: string
+  /** The receipts this session landed there that are not yet settled. Absent on an entry an older version wrote. */
+  receiptIds?: string[]
+  addedAt?: number
+}
 
 /** Entries with nothing pending beyond this many are dropped, oldest first. */
 export const MAX_CLONES = 32
@@ -47,9 +63,38 @@ function entriesOf(text: string): CloneEntry[] | null {
   }
   if (!Array.isArray(raw)) return null
   return raw.flatMap((entry): CloneEntry[] => {
-    const { key, root } = (entry ?? {}) as { key?: unknown; root?: unknown }
-    return typeof key === "string" && KEY.test(key) && typeof root === "string" && isAbsolute(root) ? [{ key, root }] : []
+    const { key, root, commonDir, repo, receiptIds, addedAt } = (entry ?? {}) as Record<string, unknown>
+    if (typeof key !== "string" || !KEY.test(key) || typeof root !== "string" || !isAbsolute(root)) return []
+    return [
+      {
+        key,
+        root,
+        ...(typeof commonDir === "string" && isAbsolute(commonDir) ? { commonDir } : {}),
+        ...(typeof repo === "string" ? { repo } : {}),
+        ...(Array.isArray(receiptIds) && receiptIds.every((id) => typeof id === "string") ? { receiptIds: receiptIds as string[] } : {}),
+        ...(typeof addedAt === "number" ? { addedAt } : {}),
+      },
+    ]
   })
+}
+
+/**
+ * `entry` merged into the known entry for its key: the new root and details win, and the receipt ids
+ * are the union. An entry without ids (older) stays without: it says "look at every pending receipt",
+ * which a list of some would narrow. Pure.
+ */
+export function mergeClone(known: CloneEntry | undefined, entry: CloneEntry): CloneEntry {
+  if (known === undefined) return entry
+  const ids = known.receiptIds === undefined || entry.receiptIds === undefined ? undefined : [...new Set([...known.receiptIds, ...entry.receiptIds])]
+  const { receiptIds: _ids, ...rest } = entry
+  return { ...rest, ...(ids === undefined ? {} : { receiptIds: ids }) }
+}
+
+/** The entry for `key` without `ids`; null when it listed receipts and none is left. An entry with no list is unchanged. Pure. */
+export function withoutReceipts(entry: CloneEntry, ids: ReadonlySet<string>): CloneEntry | null {
+  if (entry.receiptIds === undefined) return entry
+  const left = entry.receiptIds.filter((id) => !ids.has(id))
+  return left.length === 0 ? null : { ...entry, receiptIds: left }
 }
 
 /**
@@ -57,7 +102,7 @@ function entriesOf(text: string): CloneEntry[] | null {
  * with nothing `pending` are dropped; one with pending receipts stays, whatever the count. Pure.
  */
 export function withClone(entries: readonly CloneEntry[], entry: CloneEntry, pending: (entry: CloneEntry) => boolean = () => false): CloneEntry[] {
-  const next = [entry, ...entries.filter((known) => known.key !== entry.key)]
+  const next = [mergeClone(entries.find((known) => known.key === entry.key), entry), ...entries.filter((known) => known.key !== entry.key)]
   const drop = new Set<CloneEntry>()
   for (let index = next.length - 1; index > 0 && next.length - drop.size > MAX_CLONES; index--) {
     const candidate = next[index] as CloneEntry
@@ -90,6 +135,13 @@ function loadForUpdate(file: string): CloneEntry[] {
       cause: error,
     })
   }
+  try {
+    JSON.parse(text)
+  } catch (error) {
+    throw new Error(`the clone registry ${file} cannot be parsed (${error instanceof Error ? error.message : String(error)}); it was left unchanged`, {
+      cause: error,
+    })
+  }
   const entries = entriesOf(text)
   if (entries === null) throw new Error(`the clone registry ${file} cannot be parsed as a JSON list; it was left unchanged`)
   return entries
@@ -107,9 +159,33 @@ export async function addClone(
   mkdirSync(join(receiptDirectory(env), ".clones"), { recursive: true })
   const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: options.waitMs ?? LOCK_WAIT_MS }, () => {
     const current = loadForUpdate(file)
-    if (current[0]?.key === entry.key && current[0].root === entry.root) return
+    const merged = mergeClone(current[0]?.key === entry.key ? current[0] : undefined, entry)
+    if (current[0]?.key === entry.key && JSON.stringify(current[0]) === JSON.stringify(merged)) return
     const temporary = `${file}.${process.pid}.${Date.now()}.tmp`
     writeFileSync(temporary, `${JSON.stringify(withClone(current, entry, pending))}\n`, { mode: 0o600 })
+    renameSync(temporary, file)
+  })
+  if (result.kind === "failed") throw new Error(`the clone registry ${file} could not be updated: ${result.reason}`)
+}
+
+/**
+ * Settle receipts of the entry for `key` under the registry's lock: it loses `ids`, and goes when none
+ * is left. An entry with no list, or no entry, is unchanged. Throws like {@link addClone}.
+ */
+export async function settleReceipts(
+  env: NodeJS.ProcessEnv,
+  sessionKey: string,
+  key: string,
+  ids: ReadonlySet<string>,
+  options: { waitMs?: number } = {},
+): Promise<void> {
+  const file = registryFile(env, sessionKey)
+  const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: options.waitMs ?? LOCK_WAIT_MS }, () => {
+    const current = loadForUpdate(file)
+    const next = current.flatMap((entry) => (entry.key === key ? (withoutReceipts(entry, ids) ?? []) : [entry]))
+    if (JSON.stringify(next) === JSON.stringify(current)) return
+    const temporary = `${file}.${process.pid}.${Date.now()}.tmp`
+    writeFileSync(temporary, `${JSON.stringify(next)}\n`, { mode: 0o600 })
     renameSync(temporary, file)
   })
   if (result.kind === "failed") throw new Error(`the clone registry ${file} could not be updated: ${result.reason}`)
