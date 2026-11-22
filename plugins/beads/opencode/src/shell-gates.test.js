@@ -1,0 +1,567 @@
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
+import { parse } from "@srobroek/opencode-lib/beads-shell";
+import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture";
+import { setBdShowRunForTests } from "./bd-close-gate.ts";
+import { GateAdmitter } from "./gate-admission.ts";
+import { decideShell, hasBdEdit, ledgerWriteRefusal, withActorPrefix } from "./shell-gates.ts";
+import { gateDeps } from "./test-support.ts";
+// Real child processes; 30 s leaves headroom for a loaded machine (AGENTS.md, Testing).
+setDefaultTimeout(30_000);
+describe("decideShell", () => {
+    let root = "";
+    let store = "";
+    beforeAll(() => {
+        root = mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "beads-shell-gates-"));
+        store = join(root, ".beads");
+        mkdirSync(store);
+        writeFileSync(join(store, "metadata.json"), "{}");
+        setBdShowRunForTests((argv) => ({
+            exitCode: 0,
+            stdout: JSON.stringify(argv
+                .filter((word) => /^proj-/.test(word))
+                .map((id) => ({ id, issue_type: id === "proj-gate" ? "gate" : "task" }))),
+        }));
+    });
+    afterAll(() => {
+        setBdShowRunForTests(null);
+        rmSync(root, { recursive: true, force: true });
+    });
+    const deps = (overrides = {}) => gateDeps({ env: { PATH: process.env.PATH, BEADS_DIR: store }, ...overrides });
+    test("refuses an unparseable command", async () => {
+        expect(await decideShell("echo 'unterminated", root, deps())).toMatchObject({ kind: "block", gate: "bash-gates" });
+        expect(await decideShell("bd close 'proj-1", root, deps())).toMatchObject({ kind: "block" });
+    });
+    test("update-close is refused before the close lookup runs", async () => {
+        const decision = await decideShell("bd update proj-gate --status closed", root, deps());
+        expect(decision).toMatchObject({ kind: "block", gate: "bd-update-close-gate" });
+    });
+    test("refuses closing a gate bead", async () => {
+        const decision = await decideShell('bd close proj-gate --reason "x"', root, deps({ actor: "a/b/c" }));
+        expect(decision).toMatchObject({ kind: "block", gate: "bd-close-gate" });
+    });
+    test("refuses an unguarded unclaim", async () => {
+        expect(await decideShell("bd unclaim proj-1", root, deps())).toMatchObject({ gate: "bd-unclaim-gate" });
+    });
+    test("an apostrophe in a double-quoted default does not stop an ordinary command", async () => {
+        for (const command of [
+            `echo "\${X:-can't}"`,
+            `echo "\${X:-it's} and \${Y:-isn't}"`,
+            `echo "\${X:-{}"`,
+            `echo "\${X:-$(printf '{"a":1}')}"`,
+        ]) {
+            expect(await decideShell(command, root, deps())).toMatchObject({ kind: "allow" });
+        }
+    });
+    test("a main-session create that names no actor passes without an actor advisory", async () => {
+        const decision = await decideShell("bd create --title t", root, deps());
+        expect(decision).toMatchObject({ kind: "allow", advisories: [] });
+    });
+    test("warns, without refusing, a subagent command that clears its injected actor", async () => {
+        const decision = await decideShell("BD_ACTOR= bd create --title t", root, deps({ actor: "a/b/c" }));
+        expect(decision.kind).toBe("allow");
+        if (decision.kind === "allow") {
+            const text = decision.advisories.join("\n");
+            expect(text).toContain("BD_ACTOR");
+            expect(text).not.toContain("set a literal");
+        }
+    });
+    test.each([
+        [undefined, 30000],
+        [45000, 45000],
+        [0, 0],
+    ])("forwards embeddedWriteWaitMs %p to the runner as %p ms", async (configured, expected) => {
+        const options = configured === undefined ? {} : { embeddedWriteWaitMs: configured };
+        const decision = await decideShell("bd update proj-1 --claim", root, deps({ actor: "a/b/c", options }));
+        if (decision.kind !== "allow")
+            throw new Error(JSON.stringify(decision));
+        expect(decision.command).toContain(`--beads-wait-ms ${expected} -- bd update`);
+    });
+    test.each([
+        ['BEADS_ACTOR=opencode/o/t bd comments add proj-1 "fix in progress; say retry; bd create x"'],
+        ['bd comments add proj-1 "fix in progress; say retry; bd create x"'],
+        ['bd comments add proj-1 "bd create foo"'],
+        ["FOO=1 BEADS_ACTOR=x bd create --title t"],
+    ])("does not refuse %s", async (command) => {
+        expect(await decideShell(command, root, deps())).not.toMatchObject({ gate: "bd-actor-gate" });
+    });
+    test("a subagent is warned about a real create after quoted text mentioning an actor", async () => {
+        const decision = await decideShell('echo "BEADS_ACTOR=x"; BD_ACTOR= bd create --title t', root, deps({ actor: "a/b/c" }));
+        expect(decision.kind).toBe("allow");
+        if (decision.kind === "allow")
+            expect(decision.advisories.join("\n")).toContain("BEADS_ACTOR");
+    });
+    test("refuses a PR without a bead trailer when the repository is controlled", async () => {
+        const decision = await decideShell('gh pr create --title t --body "no trailer here"', root, deps({ repositoryControl: () => ({ kind: "controlled" }) }));
+        expect(decision).toMatchObject({ kind: "block", gate: "pr-bead-link-gate" });
+        const linked = await decideShell('gh pr create --title t --body "Bead: proj-1 fixes it"', root, deps({ repositoryControl: () => ({ kind: "controlled" }) }));
+        expect(linked.kind).toBe("allow");
+    });
+    describe("ledger context wiring", () => {
+        let repoA = "";
+        let repoB = "";
+        beforeAll(() => {
+            repoA = join(root, "repo-a");
+            repoB = join(root, "repo-b");
+            for (const repo of [repoA, repoB]) {
+                mkdirSync(join(repo, ".beads"), { recursive: true });
+                writeFileSync(join(repo, ".beads", "metadata.json"), `{"dolt_database":"db_${repo.slice(-1)}"}`);
+                execFileSync("git", ["init", "-q", repo]);
+            }
+        });
+        const leaked = () => ({ PATH: process.env.PATH, BEADS_DIR: join(repoB, ".beads") });
+        test("a bd create into another repository's ledger is refused, naming the ledger and the override", async () => {
+            const decision = await decideShell("bd create --title t", repoA, deps({ actor: "a/b/c", env: leaked() }));
+            if (decision.kind !== "block")
+                throw new Error(JSON.stringify(decision));
+            expect(decision.gate).toBe("bd-embedded-write-lock");
+            expect(decision.cause).toContain(realpathSync(join(repoB, ".beads")));
+            expect(decision.cause).toContain("BEADS_DIR=<path> bd");
+        });
+        test.each([
+            ["bd update proj-1 --status open"],
+            ["bd close proj-1 --reason x"],
+            ["bd comments add proj-1 note"],
+            ["bd unclaim proj-1 --if-assignee a/b/c"],
+            ["bd heartbeat proj-1"],
+            ["bd orphans --fix"],
+            ["bd some-future-verb proj-1"],
+        ])("the same refusal covers the store write %p", async (command) => {
+            const decision = await decideShell(command, repoA, deps({ env: leaked() }));
+            expect(decision.kind === "block" ? decision.cause : "").toContain("belongs to");
+        });
+        test.each([
+            ["bd list"],
+            ["bd show proj-1 --json"],
+            ["bd ready"],
+            ["bd orphans"],
+            ["bd create --help"],
+            ["bd init --prefix x"],
+            ["bd bootstrap --yes"],
+        ])("a read, or a command that creates its own ledger, stays allowed: %p", async (command) => {
+            expect((await decideShell(command, repoA, deps({ env: leaked() }))).kind).toBe("allow");
+        });
+        test.each([
+            ["a prefix", (ledger) => `BEADS_DIR=${ledger} bd create --title t`],
+            ["an export", (ledger) => `export BEADS_DIR=${ledger}; bd create --title t`],
+        ])("a command that assigns BEADS_DIR itself (%s) may write to that ledger", async (_name, build) => {
+            // Built here, after beforeAll has made the repositories: a path read at collection time is empty.
+            const ledger = join(repoB, ".beads");
+            expect(isAbsolute(ledger)).toBe(true);
+            const env = { PATH: process.env.PATH, BEADS_DIR: join(repoA, ".beads") };
+            const decision = await decideShell(build(ledger), repoA, deps({ env }));
+            expect(decision.kind).toBe("allow");
+        });
+        test.each([
+            ["exec 'bd' create --title t"],
+            ['exec "bd" create --title t'],
+            ["exec bd create --title t"],
+            ["env 'bd' create --title t"],
+            ["command 'bd' create --title t"],
+            ["nohup 'bd' create --title t"],
+            ["echo proj-1 | xargs bd show"],
+            ["timeout 60 'bd' create --title t"],
+            ["sh -c 'bd create --title t'"],
+            ["id=$(bd create --title t --silent)"],
+            ["B=bd; $B create --title t"],
+        ])("a bd the gate cannot place is refused while the ambient ledger is foreign: %p", async (command) => {
+            const decision = await decideShell(command, repoA, deps({ env: leaked() }));
+            expect(decision.kind).toBe("block");
+            // Whichever gate refuses first, the gate's own message names the ledger and the fix.
+            const refusal = ledgerWriteRefusal(command, repoA, leaked());
+            expect(refusal).toContain(realpathSync(join(repoB, ".beads")));
+            expect(refusal).toContain("its own simple command");
+        });
+        test.each([
+            ['"b"d create --title t'],
+            ["b''d create --title t"],
+            ["\\bd create --title t"],
+            ['"b"d list'],
+            ["alias b=bd\nb create --title t"],
+            ["alias b=bd; b create --title t"],
+            ["f() { bd create --title t; }; f"],
+            ["function f { bd create --title t; }; f"],
+            ["f() { export BEADS_DIR=__B__; }; f; bd create --title t"],
+            ["f() { :; }; export BEADS_DIR=__B__; bd create --title t"],
+        ])("an alias, a function or a quote-split name is refused outright while the ambient ledger is foreign: %j", async (template) => {
+            const command = template.replaceAll("__B__", join(repoB, ".beads"));
+            const decision = await decideShell(command, repoA, deps({ env: leaked() }));
+            if (decision.kind !== "block")
+                throw new Error(JSON.stringify(decision));
+            expect(decision.gate).toBe("bd-embedded-write-lock");
+            expect(decision.cause).toContain(realpathSync(join(repoB, ".beads")));
+        });
+        test.each([
+            ['"b"d create --title t'],
+            ["b''d create --title t"],
+            ["\\bd create --title t"],
+            ["alias b=bd\nb create --title t"],
+            ["f() { bd create --title t; }; f"],
+        ])("the same shapes are not refused by the foreign-ledger gate in the own-ledger case: %j", (command) => {
+            const own = { PATH: process.env.PATH, BEADS_DIR: join(repoA, ".beads") };
+            expect(ledgerWriteRefusal(command, repoA, own)).toBeUndefined();
+            const configuredStore = join(repoB, ".beads");
+            expect(ledgerWriteRefusal(command, repoA, leaked(), { configuredStore })).toBeUndefined();
+        });
+        test.each([['"b"d list'], ["alias b=bd\nb list"], ["f() { bd list; }; f"]])("while the ambient ledger is foreign these shapes are refused even for a read, with the reason named: %j", (command) => {
+            const refusal = ledgerWriteRefusal(command, repoA, leaked());
+            expect(refusal).toContain("its own simple command");
+            expect(refusal).toMatch(/quote-split|alias|shell function/);
+        });
+        test("a literal BEADS_DIR= does not excuse a quote-split name: the name is refused outright", () => {
+            const command = `BEADS_DIR=${join(repoB, ".beads")} "b"d create --title t`;
+            expect(ledgerWriteRefusal(command, repoA, leaked())).toContain("quote-split");
+        });
+        test.each([["git diff -- 'bd'"], ["git log -- 'bd'"], ["grep -r 'bd' ."]])("a command that only names bd as an operand is allowed in an own-ledger repository: %j", async (command) => {
+            const own = { PATH: process.env.PATH, BEADS_DIR: join(repoA, ".beads") };
+            expect((await decideShell(command, repoA, deps({ env: own }))).kind).toBe("allow");
+        });
+        test.each([
+            ["flock LOCKFILE bd create --title t"],
+            ["taskset 0x1 bd create --title t"],
+            ["timeout 5 bd show x-1"],
+            ["nice -n 5 bd close x-1"],
+            ["ionice -c 3 bd create --title t"],
+            ["sudo -u build bd create --title t"],
+            ["find . -exec bd close {} ;"],
+            ["xargs bd show"],
+            ["exec bd create --title t"],
+        ])("a wrapper followed by bd is refused without parsing while the ambient ledger is foreign: %j", async (command) => {
+            const decision = await decideShell(command, repoA, deps({ env: leaked() }));
+            if (decision.kind !== "block")
+                throw new Error(JSON.stringify(decision));
+            expect(decision.cause).toContain(realpathSync(join(repoB, ".beads")));
+        });
+        test.each([["flock LOCKFILE bd create --title t"], ["taskset 0x1 bd create --title t"], ["timeout 5 bd show x-1"]])("the refusal for a wrapped bd names the fix: BEADS_DIR=<path> on the command line, or bd on its own: %j", (command) => {
+            const refusal = ledgerWriteRefusal(command, repoA, leaked());
+            expect(refusal).toContain("BEADS_DIR=<path>");
+            expect(refusal).toContain("its own simple command");
+        });
+        test.each([["flock LOCKFILE bd create --title t"], ["taskset 0x1 bd create --title t"]])("the foreign-ledger gate leaves the wrapped form alone in the own-ledger case and with options.store: %j", (command) => {
+            const own = { PATH: process.env.PATH, BEADS_DIR: join(repoA, ".beads") };
+            expect(ledgerWriteRefusal(command, repoA, own)).toBeUndefined();
+            const configuredStore = join(repoB, ".beads");
+            expect(ledgerWriteRefusal(command, repoA, leaked(), { configuredStore })).toBeUndefined();
+        });
+        test.each([
+            ["flock LOCKFILE bd create --title t", "flock"],
+            ["taskset 0x1 bd create --title t", "taskset"],
+            ["BEADS_DIR=__A__ flock LOCKFILE bd create --title t", "flock"],
+        ])("an unquoted bd behind a wrapper is refused by the write lock in an own embedded ledger: %j", async (template, wrapper) => {
+            const command = template.replaceAll("__A__", join(repoA, ".beads"));
+            const own = { PATH: process.env.PATH, BEADS_DIR: join(repoA, ".beads") };
+            const decision = await decideShell(command, repoA, deps({ env: own }));
+            if (decision.kind !== "block")
+                throw new Error(JSON.stringify(decision));
+            expect(decision.gate).toBe("bd-embedded-write-lock");
+            expect(decision.cause).toContain(`launched through \`${wrapper}\``);
+        });
+        test.each([
+            ["flock LOCKFILE 'bd' show x-1"],
+            ["taskset 0x1 \"bd\" list"],
+            ["flock LOCKFILE 'bd' create --title t"],
+        ])("a quoted bd read behind flock or taskset is refused under a foreign ledger by the wrapper rule alone: %j", async (command) => {
+            // Quoted, so the write lock's own launch check does not see it: only the wrapper rule can refuse it.
+            const refusal = ledgerWriteRefusal(command, repoA, leaked());
+            expect(refusal).toContain("BEADS_DIR=<path>");
+            expect(refusal).toContain(realpathSync(join(repoB, ".beads")));
+            const decision = await decideShell(command, repoA, deps({ env: leaked() }));
+            if (decision.kind !== "block")
+                throw new Error(JSON.stringify(decision));
+            expect(decision.cause).toContain("BEADS_DIR=<path>");
+            const own = { PATH: process.env.PATH, BEADS_DIR: join(repoA, ".beads") };
+            expect(ledgerWriteRefusal(command, repoA, own)).toBeUndefined();
+        });
+        test.each([
+            [(b) => `BEADS_DIR=${b} bd create --title t`, "allow"],
+            [(b) => `BEADS_DIR=${b} flock LOCKFILE 'bd' create --title t`, "allow"],
+            [(b) => `BEADS_DIR=${b} taskset 0x1 'bd' create --title t`, "allow"],
+            [(b) => `BEADS_DIR=${b} flock LOCKFILE bd create --title t`, "lock"],
+        ])("a literal BEADS_DIR= on the command line stays the override for the foreign-ledger gate: %#", async (build, expected) => {
+            const command = build(join(repoB, ".beads"));
+            expect(ledgerWriteRefusal(command, repoA, leaked())).toBeUndefined();
+            // The constructed command goes through every gate. An unquoted wrapped bd is still the write lock's to refuse.
+            const decision = await decideShell(command, repoA, deps({ env: leaked() }));
+            if (expected === "allow")
+                expect(decision.kind).toBe("allow");
+            else {
+                if (decision.kind !== "block")
+                    throw new Error(JSON.stringify(decision));
+                expect(decision.cause).toContain("launched through `flock`");
+                expect(decision.cause).not.toContain("BEADS_DIR=<path>");
+            }
+        });
+        test("the gate itself refuses a quoted xargs launcher the shell parser would also refuse", () => {
+            const foreign = { PATH: process.env.PATH, BEADS_DIR: join(repoB, ".beads") };
+            expect(ledgerWriteRefusal("echo proj-1 | xargs 'bd' close", repoA, foreign)).toContain("its own simple command");
+        });
+        test.each([["exec 'bd' create --title t"], ["echo proj-1 | xargs bd show"]])("the foreign-ledger gate lets a bd it cannot place pass when the ambient ledger is the project's own or options.store: %p", (command) => {
+            const own = { PATH: process.env.PATH, BEADS_DIR: join(repoA, ".beads") };
+            expect(ledgerWriteRefusal(command, repoA, own)).toBeUndefined();
+            const foreign = { PATH: process.env.PATH, BEADS_DIR: join(repoB, ".beads") };
+            expect(ledgerWriteRefusal(command, repoA, foreign)).toContain("its own simple command");
+            expect(ledgerWriteRefusal(command, repoA, foreign, { configuredStore: join(repoB, ".beads") })).toBeUndefined();
+        });
+        test("a store the plugin was configured with (options.store) is not refused", async () => {
+            const configuredStore = join(repoB, ".beads");
+            const decision = await decideShell("bd create --title t", repoA, deps({ env: leaked(), configuredStore }));
+            expect(decision.kind).toBe("allow");
+        });
+        test("a create into the repository's own ledger carries none", async () => {
+            const decision = await decideShell("bd create --title t", repoA, deps({ actor: "a/b/c", env: { PATH: process.env.PATH, BEADS_DIR: join(repoA, ".beads") } }));
+            expect(decision.kind === "allow" ? decision.advisories : ["x"]).toEqual([]);
+        });
+        test("a PR-link refusal names the ledger it read and where it walked from", async () => {
+            const sub = join(repoA, "sub");
+            mkdirSync(sub, { recursive: true });
+            const decision = await decideShell('gh pr create --title t --body "no trailer"', sub, deps({ repositoryControl: () => ({ kind: "controlled" }) }));
+            if (decision.kind !== "block")
+                throw new Error(JSON.stringify(decision));
+            expect(decision.cause).toContain(JSON.stringify(join(repoA, ".beads")));
+            expect(decision.cause).toContain('prefix "db_a"');
+            expect(decision.cause).toContain(`walking up from ${JSON.stringify(sub)}`);
+        });
+        test("with the write lock disabled, a hostile ledger file neither hangs nor yields a refusal", async () => {
+            const hostileRoot = join(root, "repo-fifo");
+            mkdirSync(join(hostileRoot, ".beads"), { recursive: true });
+            execFileSync("mkfifo", [join(hostileRoot, ".beads", "metadata.json")]);
+            execFileSync("git", ["init", "-q", hostileRoot]);
+            const env = { PATH: process.env.PATH, BEADS_DIR: join(hostileRoot, ".beads") };
+            const off = { gates: { "bd-embedded-write-lock": { enabled: false } } };
+            const decision = await decideShell("bd create --title t", repoA, deps({ actor: "a/b/c", env, options: off }));
+            expect(decision.kind === "allow" ? decision.advisories : ["x"]).toEqual([]);
+            // Enabled, the same ledger still reaches the lock rather than skipping it.
+            const on = await decideShell("bd create --title t", hostileRoot, deps({ actor: "a/b/c", env }));
+            expect(on.kind).toBe("allow");
+            expect(on.kind === "allow" ? on.command : "").toContain("bd-embedded-write-runner");
+        });
+        test("admission's dynamic-cwd refusal tells the agent to pass workdir", async () => {
+            const decision = await decideShell("cd $WORKTREE && bd update proj-1 --claim", root, deps({ actor: "a/b/c" }));
+            if (decision.kind !== "block")
+                throw new Error(JSON.stringify(decision));
+            expect(decision.gate).toBe("beads-gate-admission");
+            expect(decision.cause).toContain("pass the shell tool's `workdir` parameter");
+        });
+        test("--actor and --json before create do not suppress the refusal", () => {
+            const env = { BEADS_DIR: join(repoB, ".beads") };
+            for (const command of ["bd --actor x create --title t", "bd --json create --title t"])
+                expect(ledgerWriteRefusal(command, repoA, env)).toContain("`workdir`");
+        });
+        test("target selectors and help forms are not refused", () => {
+            const env = { BEADS_DIR: join(repoB, ".beads") };
+            for (const command of [
+                `bd -C ${repoB} create --title t`,
+                `bd --db ${join(repoB, ".beads")} create --title t`,
+                "bd --global create --title t",
+                "bd create --help",
+                "bd list",
+            ])
+                expect(ledgerWriteRefusal(command, repoA, env)).toBeUndefined();
+        });
+        test("an export or unset of BEADS_DIR earlier in the command decides who chose the ledger", () => {
+            const own = { BEADS_DIR: join(repoA, ".beads") };
+            expect(ledgerWriteRefusal(`export BEADS_DIR=${join(repoB, ".beads")}; bd create --title t`, repoA, own)).toBeUndefined();
+            const other = { BEADS_DIR: join(repoB, ".beads") };
+            expect(ledgerWriteRefusal("unset BEADS_DIR; bd create --title t", repoA, other)).toBeUndefined();
+            // An unset followed by nothing leaves the inherited value in force for a later write.
+            expect(ledgerWriteRefusal("echo hi; bd create --title t", repoA, other)).toContain("belongs to");
+        });
+    });
+    test("runs an embedded write under the runner and keeps the actor prefix outermost", async () => {
+        const decision = await decideShell("bd update proj-1 --claim", root, deps({ actor: "opencode/r/general/s" }));
+        if (decision.kind !== "allow")
+            throw new Error(JSON.stringify(decision));
+        const held = realpathSync(store);
+        // The store as named rides along for the runner's last check, whether or not it is canonical.
+        expect(decision.command).toBe(`unset BEADS_ACTOR; export BD_ACTOR='opencode/r/general/s'; BEADS_DOLT_SHARED_SERVER= BEADS_DIR='${held}' '/opt/bun' '/opt/beads/src/bd-embedded-write-runner.ts' --beads-store '${held}' --beads-store-selected '${store}' --beads-wait-ms 30000 -- bd update proj-1 --claim`);
+    });
+    test("leaves reads unwrapped", async () => {
+        const decision = await decideShell("bd show proj-1 --json", root, deps());
+        expect(decision).toEqual({ kind: "allow", command: "bd show proj-1 --json", advisories: [] });
+    });
+    test("a gate's verdict notice rides along once as an advisory", async () => {
+        const gates = JSON.stringify([{ id: "proj-g1", await_type: "human", status: "open", description: "" }]);
+        const admitter = new GateAdmitter(async () => ({ output: gates }));
+        const first = await decideShell("bd update proj-1 --claim", root, deps({ actor: "a/b/c", admitter }));
+        if (first.kind !== "allow")
+            throw new Error(JSON.stringify(first));
+        expect(first.advisories.join("\n")).toContain("1 open beads gate(s)");
+        const second = await decideShell("bd update proj-2 --claim", root, deps({ actor: "a/b/c", admitter }));
+        expect(second.kind === "allow" ? second.advisories : ["x"]).toEqual([]);
+    });
+    test("admission refuses while gates cannot be verified", async () => {
+        const admitter = new GateAdmitter(async () => ({ failure: "store locked" }));
+        const decision = await decideShell("bd update proj-1 --claim", root, deps({ actor: "a/b/c", admitter }));
+        expect(decision).toMatchObject({ kind: "block", gate: "beads-gate-admission" });
+    });
+});
+describe("helpers", () => {
+    test("hasBdEdit finds bd edit, also nested, and skips help", () => {
+        expect(hasBdEdit(parse("bd edit proj-1"))).toBe(true);
+        expect(hasBdEdit(parse("echo $(bd edit proj-1)"))).toBe(true);
+        expect(hasBdEdit(parse("bd edit --help"))).toBe(false);
+        expect(hasBdEdit(parse("echo bd edit"))).toBe(false);
+    });
+    test("withActorPrefix quotes the actor", () => {
+        expect(withActorPrefix("bd list", "it's")).toBe("unset BEADS_ACTOR; export BD_ACTOR='it'\\''s'; bd list");
+    });
+});
+describe("a close after the command changes its store", () => {
+    // Ledger A holds proj-1 as a task; ledger B holds it as a gate. The write lands in B.
+    let root = "";
+    let repoA = "";
+    let repoB = "";
+    const lookups = [];
+    const admitted = [];
+    beforeAll(() => {
+        root = realpathSync(mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "beads-close-target-")));
+        repoA = join(root, "repo-a");
+        repoB = join(root, "repo-b");
+        for (const repo of [repoA, repoB]) {
+            mkdirSync(join(repo, ".beads"), { recursive: true });
+            writeFileSync(join(repo, ".beads", "metadata.json"), "{}");
+            execFileSync("git", ["init", "-q", repo]);
+        }
+        setBdShowRunForTests((argv, cwd, _deadline, env) => {
+            // bd opens BEADS_DIR when it is set, else the ledger of the directory it runs in.
+            const store = env?.BEADS_DIR ? env.BEADS_DIR : join(cwd, ".beads");
+            lookups.push({ store, argv });
+            const type = store === join(repoB, ".beads") ? "gate" : "task";
+            return { exitCode: 0, stdout: JSON.stringify([{ id: "proj-1", issue_type: type }]) };
+        });
+    });
+    afterAll(() => {
+        setBdShowRunForTests(null);
+        rmSync(root, { recursive: true, force: true });
+    });
+    const admitter = {
+        admit: async (cwd, env) => {
+            admitted.push(env.BEADS_DIR ? env.BEADS_DIR : join(cwd, ".beads"));
+            return undefined;
+        },
+        verify: () => undefined,
+    };
+    test.each([
+        ["an export", (a, b) => [`export BEADS_DIR=${b}/.beads; bd close proj-1`, a, `${a}/.beads`]],
+        ["a cd into the other repository", (a, b) => [`cd ${b} && bd close proj-1`, a, ""]],
+        ["an unset", (a, b) => ["unset BEADS_DIR; bd close proj-1", b, `${a}/.beads`]],
+    ])("after %s, the lookup and admission read the store the write targets", async (_case, shape) => {
+        const [command, cwd, ambient] = shape(repoA, repoB);
+        lookups.length = 0;
+        admitted.length = 0;
+        const decision = await decideShell(command, cwd, gateDeps({
+            admitter,
+            options: { gates: { "bd-embedded-write-lock": false } },
+            env: { PATH: process.env.PATH, BEADS_DIR: ambient },
+        }));
+        expect(lookups.map((lookup) => lookup.store)).toEqual([join(repoB, ".beads")]);
+        expect(admitted).toEqual([join(repoB, ".beads")]);
+        expect(decision.kind).toBe("block");
+    });
+    test("a close whose store the shell picks at run time is refused", async () => {
+        const decision = await decideShell("export BEADS_DIR=$OTHER; bd close proj-1", repoA, gateDeps({
+            admitter,
+            options: { gates: { "bd-embedded-write-lock": false, "beads-gate-admission": false } },
+            env: { PATH: process.env.PATH, BEADS_DIR: `${repoA}/.beads` },
+        }));
+        expect(decision).toMatchObject({ kind: "block", gate: "bd-close-gate", cause: expect.stringMatching(/run time/) });
+    });
+});
+describe("a write whose store is not settled when it is checked", () => {
+    // Ledgers A and B are embedded stores; `bare` has no ledger at all.
+    let root = "";
+    let storeA = "";
+    let storeB = "";
+    let bare = "";
+    const admitter = { admit: async () => undefined, verify: () => undefined };
+    beforeAll(() => {
+        root = realpathSync(mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "beads-unsettled-")));
+        storeA = join(root, "a", ".beads");
+        storeB = join(root, "b", ".beads");
+        bare = join(root, "bare");
+        for (const store of [storeA, storeB]) {
+            mkdirSync(store, { recursive: true });
+            writeFileSync(join(store, "metadata.json"), "{}");
+        }
+        mkdirSync(bare);
+    });
+    afterAll(() => rmSync(root, { recursive: true, force: true }));
+    const realRunner = () => ({ interpreter: process.execPath, script: join(import.meta.dir, "bd-embedded-write-runner.ts") });
+    test("a store link that moves from A to B between the check and the run is refused", async () => {
+        const link = join(root, "link");
+        symlinkSync(storeA, link);
+        const bin = join(root, "bin");
+        const ran = join(root, "bd-ran");
+        mkdirSync(bin);
+        writeExecutable(join(bin, "bd"), `#!/bin/sh\nprintf '%s' "$BEADS_DIR" > ${JSON.stringify(ran)}\n`);
+        const env = { PATH: `${bin}:${process.env.PATH}`, BEADS_DIR: link };
+        const decision = await decideShell("bd update proj-1 --status open", bare, gateDeps({ admitter, env, runnerLookup: realRunner, options: { gates: { "beads-gate-admission": false } } }));
+        if (decision.kind !== "allow")
+            throw new Error(JSON.stringify(decision));
+        rmSync(link);
+        symlinkSync(storeB, link);
+        const run = Bun.spawnSync(["/bin/sh", "-c", decision.command], { cwd: bare, env, stdout: "pipe", stderr: "pipe" });
+        expect(existsSync(ran)).toBe(false);
+        expect(run.exitCode).not.toBe(0);
+        expect(run.stderr.toString()).toContain(link);
+    });
+    test("a canonical store directory that becomes a link to another store before the run is refused", async () => {
+        const repo = join(root, "swap");
+        const store = join(repo, ".beads");
+        mkdirSync(store, { recursive: true });
+        writeFileSync(join(store, "metadata.json"), "{}");
+        const bin = join(root, "swap-bin");
+        const ran = join(root, "swap-bd-ran");
+        mkdirSync(bin);
+        writeExecutable(join(bin, "bd"), `#!/bin/sh\nprintf '%s' "$BEADS_DIR" > ${JSON.stringify(ran)}\n`);
+        const env = { PATH: `${bin}:${process.env.PATH}`, BEADS_DIR: store };
+        const decision = await decideShell("bd update proj-1 --status open", bare, gateDeps({ admitter, env, runnerLookup: realRunner, options: { gates: { "beads-gate-admission": false } } }));
+        if (decision.kind !== "allow")
+            throw new Error(JSON.stringify(decision));
+        renameSync(store, join(repo, ".beads-checked"));
+        symlinkSync(storeB, store);
+        const run = Bun.spawnSync(["/bin/sh", "-c", decision.command], { cwd: bare, env, stdout: "pipe", stderr: "pipe" });
+        expect(existsSync(ran)).toBe(false);
+        expect(run.exitCode).toBe(120);
+    });
+    test("a close is looked up at the store's real path, the one the write runs in", async () => {
+        const link = join(root, "close-link");
+        symlinkSync(storeA, link);
+        const stores = [];
+        setBdShowRunForTests((_argv, _cwd, _deadline, env) => {
+            stores.push(env?.BEADS_DIR);
+            return { exitCode: 0, stdout: JSON.stringify([{ id: "proj-1", issue_type: "task" }]) };
+        });
+        try {
+            await decideShell("bd close proj-1", bare, gateDeps({ admitter, env: { PATH: process.env.PATH, BEADS_DIR: link } }));
+        }
+        finally {
+            setBdShowRunForTests(null);
+        }
+        expect(stores).toEqual([storeA]);
+    });
+    test.each([
+        ["a run-time export, with no store in reach", "export BEADS_DIR=$X; bd update proj-1 --status open"],
+        ["an export behind &&", `false && export BEADS_DIR=<B>; bd update proj-1 --status open`],
+        ["an export behind ||", `true || export BEADS_DIR=<B>; bd update proj-1 --status open`],
+        ["an export inside if", `if false; then export BEADS_DIR=<B>; fi; bd update proj-1 --status open`],
+    ])("a write after %s is refused", async (_case, shape) => {
+        const command = shape.replace("<B>", storeB);
+        for (const admission of [true, false]) {
+            const decision = await decideShell(command, bare, gateDeps({
+                admitter,
+                env: { PATH: process.env.PATH },
+                runnerLookup: realRunner,
+                options: { gates: { "beads-gate-admission": admission } },
+            }));
+            expect(decision.kind).toBe("block");
+        }
+    });
+    test("a read after an export behind && runs as written", async () => {
+        const command = `false && export BEADS_DIR=${storeB}; bd show proj-1`;
+        const decision = await decideShell(command, bare, gateDeps({ admitter, env: { PATH: process.env.PATH } }));
+        expect(decision).toMatchObject({ kind: "allow", command });
+    });
+});

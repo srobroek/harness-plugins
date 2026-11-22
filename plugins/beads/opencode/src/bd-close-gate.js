@@ -1,0 +1,152 @@
+/**
+ * Refuse `bd close` on a gate bead.
+ *
+ * A gate's id is an ordinary bd id, so nothing in the command reveals what is
+ * being closed: `issue_type: gate` is the only marker and it lives in the
+ * database. The former advisory could only infer intent from shapes such as a placeholder
+ * naming a gate, a reason mentioning one, or a gate id piped from `bd gate list`.
+ * This database-aware gate closes that hole by resolving every literal id on the
+ * command line through
+ * `bd show --json` and blocks when any of them is a gate.
+ *
+ * Advisory-class, but database lookup failures fail closed at the Bash dispatcher.
+ * An unreachable database, a missing `bd`, or malformed lookup output refuses the
+ * close without gate proof. A command whose ids are shell variables, or `bd close`
+ * with no id at all, has no lookup to perform and remains allowed.
+ */
+import { supervise } from "@srobroek/opencode-lib/subprocess";
+/** The shell gates' shared 25,000 ms budget also bounds every gate lookup. */
+const TIMEOUT_MS = 25_000;
+let injectedRun = null;
+/** Replace the `bd show` seam. Pass `null` to restore the real one. */
+export function setBdShowRunForTests(fn) {
+    injectedRun = fn;
+}
+function timeoutError() {
+    return new Error("bd show lookup timed out; gate types remain unverified");
+}
+/**
+ * Canonical ids among a `bd show --json` reply whose `issue_type` is `gate`.
+ *
+ * An unavailable or incomplete reply is a refusal: allowing a close without
+ * proving its type would make the gate safety check a silent no-op.
+ */
+function parseGateRows(result) {
+    if (result.exitCode !== 0)
+        throw new Error(`bd show lookup failed with exit code ${result.exitCode}; gate types remain unverified`);
+    let parsed;
+    try {
+        parsed = JSON.parse(result.stdout);
+    }
+    catch {
+        throw new Error("bd show returned unreadable JSON; gate types remain unverified");
+    }
+    if (parsed !== null &&
+        typeof parsed === "object" &&
+        !Array.isArray(parsed) &&
+        "schema_version" in parsed &&
+        "data" in parsed)
+        parsed = parsed.data;
+    if (!Array.isArray(parsed))
+        throw new Error("bd show returned no issue array; gate types remain unverified");
+    const gates = [];
+    for (const row of parsed) {
+        if (!row || typeof row !== "object")
+            throw new Error("bd show returned malformed issues; gate types remain unverified");
+        const issue = row;
+        if (typeof issue.id !== "string" || typeof issue.issue_type !== "string") {
+            throw new Error("bd show omitted issue identity or type; gate types remain unverified");
+        }
+        if (issue.issue_type === "gate")
+            gates.push(issue.id);
+    }
+    return gates;
+}
+export function denyReason(gateIds) {
+    return (`blocked by beads (a gate bead is resolved, never closed): ${gateIds.join(", ")} ` +
+        "is a gate. `bd close` on it flips status to closed and does unblock the waiting " +
+        "bead, so nothing fails loudly -- but no gate resolution happens. A `human` gate " +
+        "loses the decision it stood for, and a `timer`/`gh:run`/`gh:pr`/`bead` gate is " +
+        "asserted satisfied without anything evaluating it. Run `bd gate check` to have the " +
+        "conditions evaluated, or `bd gate resolve <gate-id>` for the manual human answer; " +
+        "then `bd close <step-id> --reason ...` on the step the gate blocked. `--force` does " +
+        "not lift this guard: it forces the same unrecorded close.");
+}
+import { closeSites } from "@srobroek/opencode-lib/beads-shell";
+async function asyncShowRun(argv, cwd, deadline = Date.now() + TIMEOUT_MS, base = process.env) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0)
+        throw timeoutError();
+    const proc = Bun.spawn(argv, {
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...base, BD_JSON_ENVELOPE: "1", BD_NO_PAGER: "1", BD_NON_INTERACTIVE: "1" },
+    });
+    const run = await supervise(proc, { timeoutMs: remaining });
+    if (run.kind === "lost")
+        throw new Error("bd show ended without an exit status; gate types remain unverified");
+    if (run.kind !== "exited" || Date.now() >= deadline)
+        throw timeoutError();
+    return { exitCode: run.exitCode, stdout: run.stdout };
+}
+async function gateIdsAmongAsync(ids, dbArgs, cwd, deadline, env) {
+    if (ids.length === 0)
+        return [];
+    if (Date.now() >= deadline)
+        throw timeoutError();
+    const run = injectedRun === null
+        ? (argv, dir, limit) => asyncShowRun(argv, dir, limit, env)
+        : async (argv, dir, limit) => injectedRun?.(argv, dir, limit, env) ?? asyncShowRun(argv, dir, limit, env);
+    const result = await run(["bd", ...dbArgs, "show", ...ids, "--json"], cwd, deadline);
+    if (Date.now() >= deadline)
+        throw timeoutError();
+    return parseGateRows(result);
+}
+/**
+ * Evaluate parsed command positions recursively, using async lookups at the shell boundary.
+ *
+ * `targets` are the command's write targets as the write lock resolves them. A top-level
+ * close is looked up where its write lands: in the directory and with the `BEADS_DIR` the
+ * command's own `cd`, `export`, `unset` and prefixes leave it. A close whose store the
+ * shell picks only at run time is refused, since its gate type cannot be read first.
+ */
+export async function decideBdCloseParsed(parsed, cwd = process.cwd(), deadline, env = process.env, targets) {
+    const sharedDeadline = deadline ?? Date.now() + TIMEOUT_MS;
+    for (const position of parsed.commands) {
+        const invocations = closeSites(position.raw);
+        if (invocations.length === 0)
+            continue;
+        const gates = new Set();
+        for (const invocation of invocations) {
+            const site = lookupSite(invocation, cwd, env, targets?.get(invocation.shape));
+            for (const id of await gateIdsAmongAsync(invocation.ids, invocation.dbArgs, site.cwd, sharedDeadline, site.env))
+                gates.add(id);
+        }
+        if (gates.size > 0)
+            return { block: true, reason: denyReason([...gates]) };
+    }
+    for (const child of parsed.nested) {
+        const decision = await decideBdCloseParsed(child, cwd, sharedDeadline, env);
+        if (decision)
+            return decision;
+    }
+    return undefined;
+}
+/** The directory and environment one close's lookup runs with. */
+function lookupSite(invocation, cwd, env, target) {
+    if (target === undefined) {
+        // A command-local `BEADS_DIR=` reaches this `bd` alone, so its lookup opens that store.
+        return { cwd, env: invocation.beadsDir === undefined ? env : { ...env, BEADS_DIR: invocation.beadsDir } };
+    }
+    if ("unresolved" in target)
+        throw new Error("bd close selects its store only at run time; gate types remain unverified");
+    const lookupEnv = { ...env };
+    // The canonical store, as the runner holds and writes it, not a path that may move.
+    const store = target.store ?? target.beadsDir;
+    if (store === undefined || store === "")
+        delete lookupEnv.BEADS_DIR;
+    else
+        lookupEnv.BEADS_DIR = store;
+    return { cwd: target.cwd, env: lookupEnv };
+}

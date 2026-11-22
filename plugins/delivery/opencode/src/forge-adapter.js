@@ -1,0 +1,1524 @@
+/**
+ * GitHub and GitLab adapters for the branch-deletion half of a landing.
+ *
+ * A landing has two provable halves: the pull request merged, and its source
+ * branch is gone from the remote. This module owns the second half for GitHub
+ * and GitLab, and owns exactly one honest answer for everything else:
+ * `"unknown"`.
+ *
+ * Four properties hold throughout this file.
+ *
+ * Every command is an argv array with a bounded timeout. Nothing reaches a
+ * shell, so a branch name can never become a command. The one argv-level attack
+ * that survives an array — a value starting with `-` that the CLI reads as an
+ * option — is rejected before the command is built. Every command runs through
+ * {@link runCli}, which an abort signal can end as well as the deadline.
+ *
+ * A setting changes only when a caller asks. {@link autoDeleteSetting} reads;
+ * {@link enableAutoDelete} writes; nothing in this module calls
+ * {@link enableAutoDelete}, so no read, merge, or verification path can mutate a
+ * repository's configuration as a side effect.
+ *
+ * Absence is observed, never inferred, and observed somewhere a caller named. A
+ * merge that requested deletion, and a settings field reading `"on"`, are requests
+ * and intentions. Two observations return `"absent"`: `git ls-remote` failing to find
+ * the exact ref, asked from an explicit working directory where the remote name
+ * resolves, and, for GitHub, the forge API answering an explicit null for the exact ref
+ * of a repository it shows the caller ({@link githubBranchVerdict}). A
+ * timeout, a malformed response, a permission failure, and a protected or
+ * ruleset-blocked deletion all stay `"unknown"`, and `"unknown"` is never promoted.
+ *
+ * A forge is a runtime value, not a compile-time promise. {@link Forge} arrives
+ * from a receipt, a JSON payload, or another package, so every function that
+ * dispatches on it narrows to the literal `"github"` or `"gitlab"` and refuses
+ * anything else by name. Nothing falls through to a default provider: a
+ * repository recorded as `"bitbucket"` must not be merged with `glab`.
+ *
+ * This is a library module shared by the delivery tools; it registers nothing.
+ */
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { devNull, tmpdir } from "node:os";
+import { basename, dirname, join, resolve, sep } from "node:path";
+import { readBounded } from "@srobroek/opencode-lib/checkout-marker";
+import { SAFE_GIT_ARGS } from "@srobroek/opencode-lib/safe-git";
+import { supervise } from "@srobroek/opencode-lib/subprocess";
+export { SAFE_GIT_ARGS };
+export const MERGE_METHODS = ["squash", "merge", "rebase"];
+/**
+ * Wall-clock ceiling for every command this module issues.
+ *
+ * A forge API call crosses the network, so the bound is generous; it exists so
+ * that an unreachable remote or a credential helper waiting on a prompt degrades
+ * to `"unknown"` instead of hanging a session.
+ */
+export const FORGE_TIMEOUT_MS = 10_000;
+/**
+ * Ambient variables that redirect a forge command away from the repository the
+ * caller resolved locally. Every forge command must use this same environment.
+ * Credentials and ordinary process state are retained; only repository and host
+ * selectors are removed.
+ */
+const FORGE_REDIRECTORS = [
+    "GH_REPO",
+    "GH_HOST",
+    "GITLAB_HOST",
+    "GL_HOST",
+    "GITLAB_URI",
+    "GITLAB_API_HOST",
+];
+/** Return a null-prototype copy of `env` without forge host/repository redirectors. */
+export function forgeEnvironment(env) {
+    const clean = Object.create(null);
+    for (const [key, value] of Object.entries(env)) {
+        if (value === undefined || FORGE_REDIRECTORS.includes(key))
+            continue;
+        clean[key] = value;
+    }
+    return clean;
+}
+/** Upper bound on nested GitLab group segments plus the project (20 + 1). */
+const GITLAB_MAX_PATH_SEGMENTS = 21;
+/**
+ * Hosts whose remotes this module can act on and the canonical CLI/API target
+ * each verified transport host names.
+ *
+ * `ssh.github.com` and `altssh.gitlab.com` are each vendor's documented
+ * alternate SSH endpoint for networks that block port 22. They are transport
+ * hosts only: forge CLI and API calls stay pinned to the vendor's canonical
+ * host. `gitlab.aws.dev` is the one self-hosted GitLab instance recognised, by
+ * name: its git-over-SSH endpoint `ssh.gitlab.aws.dev` serves no API, so a remote
+ * on either host addresses the API at `gitlab.aws.dev`. Any other self-hosted
+ * instance is deliberately not recognised, because its API dialect is not
+ * verified here.
+ *
+ * A host is attacker-influenced input. The allowlist therefore has a null
+ * prototype, is frozen, and is read through an own-property descriptor rather
+ * than a dynamic property access that could consult polluted prototypes.
+ */
+const GITHUB_TARGET = Object.freeze({ forge: "github", canonicalHost: "github.com" });
+const GITLAB_TARGET = Object.freeze({ forge: "gitlab", canonicalHost: "gitlab.com" });
+const GITLAB_AWS_TARGET = Object.freeze({ forge: "gitlab", canonicalHost: "gitlab.aws.dev" });
+const FORGE_HOSTS = Object.freeze(Object.assign(Object.create(null), {
+    "github.com": GITHUB_TARGET,
+    "ssh.github.com": GITHUB_TARGET,
+    "gitlab.com": GITLAB_TARGET,
+    "altssh.gitlab.com": GITLAB_TARGET,
+    "gitlab.aws.dev": GITLAB_AWS_TARGET,
+    "ssh.gitlab.aws.dev": GITLAB_AWS_TARGET,
+}));
+/**
+ * The only transports whose host this module will trust.
+ *
+ * `https` and `ssh` are what GitHub and GitLab.com actually serve. Everything
+ * else is refused rather than parsed: `file://` and a local path name no host at
+ * all, `git://` is unauthenticated and GitHub no longer serves it, `http://`
+ * is not a transport either vendor offers, and a custom scheme is by definition
+ * unverified. Each becomes `"unknown"`, which is the safe answer — a caller that
+ * cannot identify the forge refuses instead of guessing one.
+ */
+const ALLOWED_SCHEME = /^(?:https|ssh):\/\//i;
+/** Any scheme at all, used only to tell "unverified scheme" from "no scheme". */
+const ANY_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
+/**
+ * The scp-like spelling Git accepts without a scheme: `[user@]host:path`.
+ *
+ * The colon must come before any slash, which is what separates
+ * `git@github.com:o/r` from a bare `github.com/o/r` and from `/Users/me/repo`.
+ * Both of those name no host and are deliberately not recognised.
+ */
+const SCP_LIKE = /^(?:[^@/:]+@)?([^@/:]+):(?!\/)/;
+const REPO_SEGMENT = /^[A-Za-z0-9._-]+$/;
+/**
+ * What a Git remote name may be.
+ *
+ * `git remote get-url` and `git ls-remote` take the name as an argument, so a
+ * leading `-` would be read as a flag. The charset is the one Git spells a
+ * configured remote with, which also excludes whitespace and control characters:
+ * a value outside it names no remote this repository configures, and guessing
+ * which remote was meant is how a read ends up answered by another repository.
+ *
+ * The tail is asserted with `(?![\s\S])` rather than `$`. Both are exact today —
+ * ECMAScript's `$` matches only at the end of input unless `multiline` is set,
+ * unlike Perl and Python, where it also matches before a final newline. The
+ * difference is what `$` would mean after an edit this pattern cannot see: it is
+ * exported and spent by two tools, and adding an `m` flag, or reusing the source in
+ * a multiline pattern, would silently widen `origin` to `origin\n` and hand a
+ * trailing newline to a command. `(?![\s\S])` cannot be relaxed by a flag.
+ */
+export const REMOTE_NAME = /^[A-Za-z0-9._][A-Za-z0-9._/-]*(?![\s\S])/;
+/**
+ * Characters that disqualify a branch name.
+ *
+ * `~^:?*[]\` and whitespace are what `git check-ref-format` itself forbids. The
+ * shell operators after them are not Git's rule and are refused anyway: a
+ * refusal from this module quotes the command it could not complete, and an
+ * operator inside a branch name would turn that diagnostic into working shell
+ * the moment a human or an agent pasted it. Nothing here is ever executed
+ * through a shell, so this is the second lock, not the first.
+ */
+const REF_FORBIDDEN = /[~^:?*[\]\\\s;&|<>$`(){}'"!#]/;
+const POSITIVE_INTEGER = /^[1-9][0-9]*$/;
+/**
+ * Command-line protocol and helper policy for the one Git observation.
+ *
+ * The general deny blocks unknown remote helpers; the explicit allows retain
+ * the three non-executable transports this observation needs. The `ext` deny
+ * overrides a repository-local allow. The remaining pins neutralise executable
+ * helper choices from repository config: an upload-pack override, an SSH command,
+ * an askpass program, or a credential helper must not turn a read into code
+ * execution controlled by the checkout.
+ */
+const LS_REMOTE_PROTOCOL_POLICY = [
+    "-c",
+    "protocol.allow=never",
+    "-c",
+    "protocol.file.allow=always",
+    "-c",
+    "protocol.https.allow=always",
+    "-c",
+    "protocol.ssh.allow=always",
+    "-c",
+    "protocol.ext.allow=never",
+    "-c",
+    "core.sshCommand=ssh",
+    "-c",
+    "core.askPass=",
+    "-c",
+    "credential.helper=",
+    "-c",
+    "credential.interactive=never",
+];
+/**
+ * A clean environment for Git observations.
+ *
+ * Git's `GIT_SSH*`, `GIT_PROXY_COMMAND`, `GIT_EXEC_PATH`, repository/worktree
+ * selectors, and environment-backed config variables all change what a read
+ * observes or select executables without appearing in argv. Preserve ordinary
+ * process state, discard every inherited `GIT_*` control plus SSH's askpass
+ * hook, then add back only the non-executable protocol allowlist and the
+ * non-interactive prompt setting these observations own.
+ */
+export function gitObservationEnvironment(source = process.env) {
+    const env = Object.create(null);
+    for (const [key, value] of Object.entries(source)) {
+        if (value === undefined || key.startsWith("GIT_") || key === "SSH_ASKPASS" || key === "SSH_ASKPASS_REQUIRE")
+            continue;
+        env[key] = value;
+    }
+    env.GIT_ALLOW_PROTOCOL = "file:https:ssh";
+    env.GIT_TERMINAL_PROMPT = "0";
+    // A local read never fetches missing objects from a promisor remote (git >= 2.44;
+    // older Git ignores it). The explicit fetch stays the only network path.
+    env.GIT_NO_LAZY_FETCH = "1";
+    return env;
+}
+/** Git object ids emitted by `ls-remote`: SHA-1 or SHA-256, in canonical case. */
+const GIT_OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+/**
+ * Control characters, checked by code point rather than by a regex class so the
+ * literal stays free of the control bytes it is meant to reject.
+ */
+function hasControlCharacter(value) {
+    for (let index = 0; index < value.length; index++) {
+        const code = value.charCodeAt(index);
+        if (code < 0x20 || code === 0x7f)
+            return true;
+    }
+    return false;
+}
+/**
+ * The one remote URL `git remote get-url` printed, or null when its stdout is not
+ * exactly one record.
+ *
+ * Trimming this output is what makes it dangerous. WHATWG `URL` removes every ASCII
+ * tab, LF, and CR from its input before parsing, so `https://git<TAB>hub.com/o/r`
+ * and `https://github.com/o/r<LF>@evil.example/x` are read here as ordinary GitHub
+ * URLs while Git, handed the raw bytes, resolves something else or nothing at all.
+ * Two records — a repository configured with several URLs, or output nobody
+ * expected — collapse the same way once the separator is stripped. Where two parsers
+ * disagree about what was named there is no safe answer to pick, so this one refuses.
+ *
+ * At most one terminal LF or CRLF is removed, because that is Git's record
+ * terminator. Everything else must already be exact: no control character anywhere,
+ * nothing empty, and no leading or trailing whitespace. Nothing is normalised —
+ * a value that needs repair to be usable is a value nobody verified.
+ */
+export function singleRemoteRecord(stdout) {
+    const record = stdout.endsWith("\r\n") ? stdout.slice(0, -2) : stdout.endsWith("\n") ? stdout.slice(0, -1) : stdout;
+    if (record === "" || hasControlCharacter(record) || record !== record.trim())
+        return null;
+    return record;
+}
+/**
+ * Whether a value is safe to pass as one argv element.
+ *
+ * Quoting is not the concern — an argv array has no shell to quote for. What
+ * remains is option injection: a remote named `--upload-pack=...` is read by Git
+ * as a flag no matter how carefully it was passed. Empty strings and control
+ * characters are refused for the same reason: neither can name a real remote.
+ */
+function isSafeArgument(value) {
+    return value !== "" && !value.startsWith("-") && !hasControlCharacter(value);
+}
+/**
+ * Whether `branch` is a Git branch name this module will build a ref from.
+ *
+ * The subset of `git check-ref-format` that matters here. It is applied before
+ * any command is built, so a hostile name such as `x; rm -rf .` — which is not a
+ * valid ref, because refs cannot contain whitespace — never reaches a command
+ * line at all.
+ */
+function isValidBranchName(branch) {
+    if (!isSafeArgument(branch))
+        return false;
+    if (REF_FORBIDDEN.test(branch))
+        return false;
+    if (branch === "@" || branch.includes("..") || branch.includes("@{"))
+        return false;
+    for (const component of branch.split("/")) {
+        if (component === "" || component.startsWith("."))
+            return false;
+        if (component.endsWith(".") || component.endsWith(".lock"))
+            return false;
+    }
+    return true;
+}
+/**
+ * Validate the repository path one forge accepts.
+ *
+ * GitHub accepts exactly `owner/name`. GitLab additionally accepts bounded
+ * nested groups. The path remains host-free data; GitLab callers disambiguate
+ * it from a configured host alias by prefixing the canonical host returned by
+ * {@link forgeTarget}. A `.` or `..` segment is refused because it would walk
+ * the forge API path the caller asked for into a different resource.
+ */
+export function normalizeRepoPath(forge, repo) {
+    const supported = supportedForge(forge);
+    if (supported === null)
+        return null;
+    const segments = repo.trim().split("/");
+    const maxSegments = supported === "github" ? 2 : GITLAB_MAX_PATH_SEGMENTS;
+    if (segments.length < 2 || segments.length > maxSegments)
+        return null;
+    for (const segment of segments) {
+        if (!REPO_SEGMENT.test(segment))
+            return null;
+        if (segment === "." || segment === ".." || segment.startsWith("-"))
+            return null;
+    }
+    return segments.join("/");
+}
+/**
+ * Host of a Git remote URL, lowercased, or null when the spelling names none
+ * this module is willing to trust.
+ *
+ * Exactly three spellings are recognised: `https://[user[:pass]@]host[:port]/p`,
+ * `ssh://[user@]host[:port]/p`, and the scp-like `[user@]host:p`. An unverified
+ * scheme, a bare `host/p` with no scheme, a relative path, and an absolute path
+ * all yield null. Recognising fewer spellings than Git accepts is deliberate:
+ * the cost is an `"unknown"` a caller refuses on, and the alternative is
+ * classifying a string nobody verified as a forge remote.
+ *
+ * The two URL forms are parsed with `URL`, not by scanning for delimiters. A
+ * hand-rolled scan has to know that the authority ends at the first `/`, `?`, or
+ * `#`, and that userinfo only counts inside it. Miss the `?` and `#` and
+ * `https://evil.example?@github.com/` reads as GitHub, because the `@` in the
+ * query looks like userinfo. `URL` implements the grammar, and also handles
+ * IPv6 literals, ports, percent-encoding, and IDN-to-punycode, so a homoglyph
+ * host becomes `xn--...` and simply fails the allowlist.
+ *
+ * A backslash anywhere is refused before parsing. WHATWG `URL` folds `\` to `/`
+ * for special schemes, so it reads `https://github.com\@evil.example/` as host
+ * `github.com`, while RFC 3986 — which is what curl and therefore Git follow —
+ * reads the authority as `github.com\@evil.example`, host `evil.example`. Where
+ * two parsers disagree about which host will be contacted, there is no safe
+ * answer to give, and no legitimate remote to either forge contains one.
+ */
+function hostOf(remoteUrl) {
+    for (let index = 0; index < remoteUrl.length; index++) {
+        const code = remoteUrl.charCodeAt(index);
+        if (code <= 0x1f || code === 0x7f)
+            return null;
+    }
+    const url = remoteUrl.trim();
+    if (url === "" || url.includes("\\"))
+        return null;
+    if (ALLOWED_SCHEME.test(url)) {
+        try {
+            const host = new URL(url).hostname.toLowerCase();
+            return host === "" ? null : host;
+        }
+        catch {
+            return null;
+        }
+    }
+    // A scheme that is not allowlisted is rejected outright, never re-parsed as
+    // though it were scp-like: `git://github.com:9418/o/r` has a colon before a
+    // slash and would otherwise pass for GitHub.
+    if (ANY_SCHEME.test(url))
+        return null;
+    const scpHost = SCP_LIKE.exec(url)?.[1];
+    return scpHost === undefined || scpHost === "" ? null : scpHost.toLowerCase();
+}
+/**
+ * Write `input` to a child's stdin and close it. A child that exits without reading
+ * all of it closes the pipe first; its exit status is then the observation, so the
+ * write error is not.
+ */
+async function feed(stdin, input) {
+    try {
+        await stdin.write(input);
+        await stdin.end();
+    }
+    catch {
+        // See above: the exit status reports what the child did.
+    }
+}
+/**
+ * The abortable runner: one bounded child process, argv array, no shell.
+ *
+ * It spawns asynchronously because a synchronous spawn blocks the event loop for the
+ * whole command: an interrupt is never delivered, so a hung `gh` holds the session
+ * until its timeout. Here the
+ * deadline and the caller's `signal` both end the command, and an already-aborted
+ * signal starts nothing.
+ *
+ * Ending a command ends its whole process group. The child is started in a group
+ * of its own and the group is sent SIGKILL, because killing only the direct child
+ * leaves its children running — a shell's `sleep`, a CLI's credential helper — and
+ * an orphan that inherited stdout holds the pipe open, so a read waiting for EOF
+ * would outlive the deadline it exists to enforce. The readers are cancelled with
+ * the group for the same reason. A command that was ended reports `ok: false`, with
+ * whatever output arrived before it. The wait never depends on the exit event alone
+ * ({@link supervise}): a child that is gone without one reports `ok: false` too.
+ *
+ * Stdin is not connected unless `input` is given, so nothing can wait on a prompt.
+ * Every failure collapses into the {@link CliResult} contract rather than throwing, so
+ * a missing CLI and a hung network are indistinguishable from the caller's point of
+ * view — both are simply not an observation.
+ */
+export const runCli = async (argv, options) => {
+    if (argv.length === 0) {
+        return { ok: false, exitCode: null, stdout: "", stderr: "", error: "no command to run" };
+    }
+    const timeout = Math.max(1, Math.trunc(options.timeoutMs));
+    const { signal, input } = options;
+    if (options.signal?.aborted === true) {
+        return {
+            ok: false,
+            exitCode: null,
+            stdout: "",
+            stderr: "",
+            error: `${argv[0]} was not started: the call was aborted`,
+        };
+    }
+    let proc;
+    try {
+        proc = Bun.spawn(argv, {
+            cwd: options.cwd,
+            env: options.env,
+            stdin: input === undefined ? "ignore" : "pipe",
+            stdout: "pipe",
+            stderr: "pipe",
+            detached: true,
+        });
+    }
+    catch (cause) {
+        const error = cause instanceof Error ? cause.message : String(cause);
+        return { ok: false, exitCode: null, stdout: "", stderr: "", error };
+    }
+    const child = proc;
+    const run = supervise(child, { timeoutMs: timeout, signal, group: true });
+    if (input !== undefined && child.stdin !== undefined)
+        await feed(child.stdin, input);
+    const result = await run;
+    const { stdout: out, stderr: err } = result;
+    const failed = (error) => ({ ok: false, exitCode: null, stdout: out, stderr: err, error });
+    if (result.kind === "timeout")
+        return failed(`${argv[0]} was killed by the ${timeout}ms timeout`);
+    if (result.kind === "aborted")
+        return failed(`${argv[0]} was killed by an abort`);
+    if (result.kind === "lost")
+        return failed(`${argv[0]} ended without reporting an exit status`);
+    if (result.signalCode !== null)
+        return failed(`${argv[0]} was terminated by ${result.signalCode}`);
+    return { ok: true, exitCode: result.exitCode, stdout: out, stderr: err };
+};
+/**
+ * Resolve an allowlisted remote to the forge and canonical host its CLI/API
+ * must target. Alternate SSH transport hosts never escape into forge commands.
+ */
+export function forgeTarget(remoteUrl) {
+    if (remoteUrl === null)
+        return null;
+    const host = hostOf(remoteUrl);
+    if (host === null)
+        return null;
+    const descriptor = Object.getOwnPropertyDescriptor(FORGE_HOSTS, host);
+    if (descriptor === undefined || !("value" in descriptor))
+        return null;
+    const target = descriptor.value;
+    if (target === GITHUB_TARGET)
+        return GITHUB_TARGET;
+    if (target === GITLAB_TARGET)
+        return GITLAB_TARGET;
+    if (target === GITLAB_AWS_TARGET)
+        return GITLAB_AWS_TARGET;
+    return null;
+}
+/** Classify a remote URL. An unverified remote has no adapter. */
+export function detectForge(remoteUrl) {
+    return forgeTarget(remoteUrl)?.forge ?? "unknown";
+}
+/**
+ * `owner/name` from a remote URL.
+ *
+ * Only the path is taken. The host and the transport were already judged by
+ * {@link forgeTarget}, which is the function that owns that decision; re-deciding
+ * them here would be a second opinion about which forge and CLI host a URL names.
+ */
+export function repoPathFromRemote(remoteUrl) {
+    const url = remoteUrl.trim();
+    if (url === "")
+        return null;
+    let path;
+    if (ALLOWED_SCHEME.test(url)) {
+        try {
+            path = new URL(url).pathname;
+        }
+        catch {
+            return null;
+        }
+    }
+    else {
+        const scp = /^(?:[^@/:]+@)?[^@/:]+:(?!\/)(.+)$/.exec(url);
+        const tail = scp?.[1];
+        if (tail === undefined)
+            return null;
+        path = tail;
+    }
+    const trimmed = path
+        .replace(/^\/+/, "")
+        .replace(/\/+$/, "")
+        .replace(/\.git$/i, "");
+    return trimmed === "" ? null : trimmed;
+}
+/**
+ * The whole scp-like spelling, matched end to end, with the parts named.
+ *
+ * {@link SCP_LIKE} anchors only the prefix, which is all {@link hostOf} needs. A
+ * redaction cannot work from a prefix match: `user:pass@host:path` matches that
+ * prefix with `user` as the host and leaves `pass@host:path` as the remainder, so
+ * echoing the remainder would echo the password. This pattern accounts for every
+ * character instead, and three exclusions are what make it safe to echo: the user
+ * and host charsets have no `:`, and the path has no `@`, so no arrangement of a
+ * `user:secret@host:path` string can match it — the host cannot span the `:`, and
+ * the path cannot span the `@`.
+ *
+ * A bracketed IPv6 literal is deliberately not accepted. Git's scp-like syntax
+ * cannot express one unambiguously, and no address literal is ever an allowlisted
+ * forge host, so the only thing supporting it would add is a second way to match.
+ */
+const WHOLE_SCP_LIKE = /^(?:([A-Za-z0-9._-]+)@)?([A-Za-z0-9.-]+):([^@?#\s]+)$/;
+/** What a remote URL is replaced by when no spelling this module reads accounts for it. */
+const UNREADABLE_REMOTE = "<unreadable remote url>";
+/**
+ * A remote URL reduced to what may be quoted: transport, host, port, and path.
+ *
+ * A remote URL is written into receipts and into refusal messages, and a receipt
+ * is a file: a remote spelled `https://user:token@github.com/o/r` would copy that
+ * token into a second place it then lives forever. A query string and a fragment
+ * go the same way — `?token=...` is a documented way to smuggle a credential into
+ * a URL, and neither part addresses a Git repository.
+ *
+ * Nothing is ever returned that this function did not account for in full. A URL
+ * that parses is rebuilt from `URL`, keeping the exact host, port, and path that
+ * were classified and dropping userinfo, query, and fragment. A scp-like remote is
+ * rebuilt from a whole-string match as `host:path`, dropping the username. Every
+ * other spelling — an unverified scheme, a URL `URL` rejects, anything shaped like
+ * nothing at all — becomes {@link UNREADABLE_REMOTE}, because a value no parser
+ * here agrees on is a value whose secret-bearing parts cannot be located, and a
+ * diagnostic is not worth copying an unknown string into a file that outlives it.
+ */
+export function redactRemote(remoteUrl) {
+    const url = remoteUrl.trim();
+    if (ALLOWED_SCHEME.test(url)) {
+        let parsed;
+        try {
+            parsed = new URL(url);
+        }
+        catch {
+            return UNREADABLE_REMOTE;
+        }
+        if (parsed.username === "" && parsed.password === "" && parsed.search === "" && parsed.hash === "")
+            return url;
+        parsed.username = "";
+        parsed.password = "";
+        parsed.search = "";
+        parsed.hash = "";
+        return parsed.toString();
+    }
+    const scp = WHOLE_SCP_LIKE.exec(url);
+    const host = scp?.[2];
+    const path = scp?.[3];
+    return host === undefined || path === undefined ? UNREADABLE_REMOTE : `${host}:${path}`;
+}
+/**
+ * Render a failed invocation as a refusal reason.
+ *
+ * The joined argv is a human-readable label, never a command: it is only ever
+ * interpolated into prose. Naming the observed and the expected exit status is
+ * required, so a refusal can be acted on without
+ * re-running anything.
+ */
+function describeFailure(argv, result) {
+    const label = argv.join(" ");
+    if (result.error !== undefined)
+        return `${label} did not complete: ${result.error}`;
+    const observed = result.exitCode === null ? "no exit status" : `exit ${result.exitCode}`;
+    const stderr = result.stderr.trim();
+    const detail = stderr === "" ? "" : `; stderr: ${stderr.slice(0, 400)}`;
+    return `${label} observed ${observed}, expected exit 0${detail}`;
+}
+/**
+ * The forge this module has an adapter for, or null.
+ *
+ * The single gate every dispatching function passes through, and the reason they
+ * can dispatch at all. `Forge` is a compile-time promise that a runtime value
+ * crossing a package or receipt boundary does not keep, so membership is tested
+ * positively against the two literals. A negative test — `forge !== "unknown"` —
+ * would let `"bitbucket"` through to whichever provider happened to sit in the
+ * `else` branch.
+ */
+function supportedForge(forge) {
+    return forge === "github" || forge === "gitlab" ? forge : null;
+}
+const GITLAB_HOSTS = Object.freeze([
+    GITLAB_TARGET.canonicalHost,
+    GITLAB_AWS_TARGET.canonicalHost,
+]);
+/** The GitLab API host, tested positively for the same reason {@link supportedForge} is: it becomes an argv element. */
+function supportedGitlabHost(host) {
+    return GITLAB_HOSTS.find((known) => known === host) ?? null;
+}
+/**
+ * Read GitLab's boolean out of the project object `glab api` returns.
+ *
+ * `glab api` has no `--jq` — its flag set offers `--output json|ndjson` and
+ * nothing else — so the project is fetched whole and the one field is read here.
+ *
+ * The field must be an **own data property** holding a boolean. Three narrower
+ * checks than they look:
+ *
+ * An array is refused outright. `typeof [] === "object"` and an array is not
+ * null, so a JSON array would otherwise reach the property read; a GitLab project
+ * is an object, and a list is a different response shape that must not be
+ * interpreted as one.
+ *
+ * `Object.getOwnPropertyDescriptor` is used rather than `in` or a plain read,
+ * because both consult the prototype chain. If anything in the process has set
+ * `Object.prototype.remove_source_branch_after_merge = true` — prototype
+ * pollution, from any dependency in the session — then `in` finds it and a plain
+ * read returns a boolean, and this function would report `"on"` for a project
+ * that never had the setting. Reporting a deletion setting as configured when it
+ * is not is exactly the promotion of `"unknown"` this module exists to prevent.
+ *
+ * A descriptor with no `value` key is an accessor, and an accessor is refused
+ * rather than invoked: a getter is attacker-supplied code, and reading a
+ * repository setting must not execute anything.
+ */
+function removeSourceBranchAfterMerge(payload) {
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload))
+        return null;
+    const descriptor = Object.getOwnPropertyDescriptor(payload, "remove_source_branch_after_merge");
+    if (descriptor === undefined || !("value" in descriptor))
+        return null;
+    const value = descriptor.value;
+    return typeof value === "boolean" ? value : null;
+}
+/**
+ * Read the forge's own source-branch-deletion-on-merge setting.
+ *
+ * GitHub calls it `delete_branch_on_merge` and `gh api` can project the field
+ * server-side with `--jq`, so the response is the bare boolean. GitLab calls it
+ * `remove_source_branch_after_merge` and `glab api` has no `--jq`, so the whole
+ * project object comes back and the field is read in TypeScript. Both are reads:
+ * this function issues no mutating argv on any path.
+ *
+ * `"unknown"` covers every case where the field was not read as a boolean — a
+ * forge with no adapter, an unusable repository path, a missing CLI, a timeout, a
+ * non-zero exit, and any response that is not a boolean in the expected place. It
+ * is not a default; a caller that needs the setting to be `"on"` refuses on
+ * `"unknown"`.
+ *
+ * `run` receives no `cwd`: both reads name the repository in the request path.
+ * A caller that needs one binds it by wrapping the runner. `gitlabHost` is the
+ * canonical API host {@link forgeTarget} resolved; GitHub ignores it.
+ */
+export async function autoDeleteSetting(forge, repo, run = runCli, gitlabHost = "gitlab.com") {
+    const supported = supportedForge(forge);
+    if (supported === null)
+        return "unknown";
+    const path = normalizeRepoPath(supported, repo);
+    if (path === null)
+        return "unknown";
+    const host = supportedGitlabHost(gitlabHost);
+    if (supported === "gitlab" && host === null)
+        return "unknown";
+    const argv = supported === "github"
+        ? ["gh", "api", `repos/${path}`, "--jq", ".delete_branch_on_merge"]
+        : ["glab", "api", `projects/${encodeURIComponent(path)}`, "--hostname", host ?? GITLAB_TARGET.canonicalHost];
+    const result = await run(argv, { timeoutMs: FORGE_TIMEOUT_MS });
+    if (!result.ok || result.exitCode !== 0 || result.error !== undefined)
+        return "unknown";
+    const text = result.stdout.trim();
+    if (text === "")
+        return "unknown";
+    let parsed;
+    try {
+        parsed = JSON.parse(text);
+    }
+    catch {
+        return "unknown";
+    }
+    const value = supported === "github" ? parsed : removeSourceBranchAfterMerge(parsed);
+    if (value === true)
+        return "on";
+    if (value === false)
+        return "off";
+    return "unknown";
+}
+/**
+ * Turn the forge's deletion-on-merge setting on. A setup action only.
+ *
+ * Nothing in this module calls this function, and nothing should call it except
+ * a caller acting on an explicit setup request: changing a repository's
+ * configuration as a side effect of landing one branch would alter every future
+ * merge by every contributor.
+ *
+ * Both endpoints take a boolean, so both writes use the typed field flag — `-F`
+ * on `gh` and on `glab`, where `-f`/`--raw-field` would send the string
+ * `"true"`. `glab`'s `-F` also defaults the method to POST, which is why `-X PUT`
+ * is passed explicitly rather than relied upon.
+ *
+ * `ok: true` means the forge accepted the request, which is still not proof that
+ * the setting is on. A caller that needs proof re-reads with
+ * {@link autoDeleteSetting}.
+ */
+export async function enableAutoDelete(forge, repo, run = runCli, gitlabHost = "gitlab.com") {
+    const supported = supportedForge(forge);
+    if (supported === null) {
+        return {
+            ok: false,
+            reason: `forge is ${JSON.stringify(forge)}, expected "github" or "gitlab": no settings API is known for this remote`,
+        };
+    }
+    const path = normalizeRepoPath(supported, repo);
+    if (path === null) {
+        const expected = supported === "github" ? '"<owner>/<name>"' : '"<group>/<project>", optionally with nested groups';
+        return { ok: false, reason: `repo is ${JSON.stringify(repo)}, expected ${expected}` };
+    }
+    const host = supportedGitlabHost(gitlabHost);
+    if (supported === "gitlab" && host === null) {
+        return {
+            ok: false,
+            reason: `gitlabHost is ${JSON.stringify(gitlabHost)}, expected one of ${GITLAB_HOSTS.map((value) => JSON.stringify(value)).join(", ")}`,
+        };
+    }
+    const argv = supported === "github"
+        ? ["gh", "api", "-X", "PATCH", `repos/${path}`, "-F", "delete_branch_on_merge=true"]
+        : [
+            "glab",
+            "api",
+            "-X",
+            "PUT",
+            `projects/${encodeURIComponent(path)}`,
+            "--hostname",
+            host ?? GITLAB_TARGET.canonicalHost,
+            "-F",
+            "remove_source_branch_after_merge=true",
+        ];
+    const result = await run(argv, { timeoutMs: FORGE_TIMEOUT_MS });
+    if (!result.ok || result.exitCode !== 0 || result.error !== undefined) {
+        return { ok: false, reason: describeFailure(argv, result) };
+    }
+    return { ok: true };
+}
+/**
+ * Resolve the deletion request without consulting an inherited value or
+ * invoking an accessor. Only an own data property containing a boolean can
+ * override the safe default of requesting deletion.
+ */
+function shouldDeleteSourceBranch(options) {
+    if (typeof options !== "object" || options === null || Array.isArray(options))
+        return true;
+    const descriptor = Object.getOwnPropertyDescriptor(options, "deleteBranch");
+    if (descriptor === undefined || !("value" in descriptor))
+        return true;
+    return typeof descriptor.value === "boolean" ? descriptor.value : true;
+}
+/**
+ * The argv that merges `pr` and, by default, requests source-branch deletion.
+ *
+ * Building the command is all this does. The returned argv is a *request*: a
+ * zero exit from it proves the merge, never that the branch is gone. Only
+ * {@link remoteBranchAbsent} can answer that.
+ *
+ * An unsupported forge throws rather than returning a guess, because there is no
+ * argv that is correct-but-unproven here: any fabricated CLI name would either
+ * fail obscurely or, worse, hit an unrelated binary.
+ */
+export function mergeArgs(forge, pr, options = {}) {
+    const supported = supportedForge(forge);
+    if (supported === null) {
+        throw new Error(`mergeArgs cannot choose a CLI: forge is ${JSON.stringify(forge)}, expected "github" or "gitlab"`);
+    }
+    const number = typeof pr === "number" ? String(pr) : pr.trim();
+    if (!POSITIVE_INTEGER.test(number)) {
+        throw new Error(`mergeArgs refuses pr ${JSON.stringify(pr)}, expected a positive integer`);
+    }
+    const deleteBranch = shouldDeleteSourceBranch(options);
+    const methodDescriptor = Object.getOwnPropertyDescriptor(options, "mergeMethod");
+    const requestedMethod = methodDescriptor !== undefined && "value" in methodDescriptor ? methodDescriptor.value : undefined;
+    const method = requestedMethod === undefined ? "squash" : requestedMethod;
+    if (!MERGE_METHODS.includes(method)) {
+        throw new Error(`mergeArgs refuses mergeMethod ${JSON.stringify(method)}, expected one of "squash", "merge", "rebase"`);
+    }
+    const subjectDescriptor = Object.getOwnPropertyDescriptor(options, "squashSubject");
+    const subject = subjectDescriptor !== undefined && "value" in subjectDescriptor ? subjectDescriptor.value : undefined;
+    if (subject !== undefined) {
+        if (method !== "squash") {
+            throw new Error(`mergeArgs refuses squashSubject with mergeMethod ${JSON.stringify(method)}: only a squash takes a subject`);
+        }
+        if (typeof subject !== "string" || subject.trim() === "" || hasControlCharacter(subject)) {
+            throw new Error(`mergeArgs refuses squashSubject ${JSON.stringify(subject)}, expected one non-empty line`);
+        }
+    }
+    const strategy = method === "squash" ? "--squash" : method === "merge" ? "--merge" : "--rebase";
+    if (supported === "github") {
+        const argv = ["gh", "pr", "merge", number, strategy];
+        if (typeof subject === "string")
+            argv.push("--subject", subject);
+        if (deleteBranch)
+            argv.push("--delete-branch");
+        return argv;
+    }
+    const argv = ["glab", "mr", "merge", number];
+    if (method !== "merge")
+        argv.push(strategy);
+    if (typeof subject === "string")
+        argv.push("--squash-message", subject);
+    if (deleteBranch)
+        argv.push("--remove-source-branch");
+    return argv;
+}
+/**
+ * Read the GitHub repository policy relevant to an explicit merge-commit landing.
+ * GitLab has no equivalent field in the API contract used by this adapter, so its
+ * policy is unknown rather than guessed. A failed or malformed read is also unknown;
+ * callers only refuse when the forge explicitly reports `false`.
+ */
+export async function allowMergeCommit(forge, repo, run = runCli) {
+    const supported = supportedForge(forge);
+    if (supported !== "github")
+        return "unknown";
+    const path = normalizeRepoPath(supported, repo);
+    if (path === null)
+        return "unknown";
+    const argv = ["gh", "api", `repos/${path}`, "--jq", ".allow_merge_commit"];
+    const result = await run(argv, { timeoutMs: FORGE_TIMEOUT_MS });
+    if (!result.ok || result.exitCode !== 0 || result.error !== undefined)
+        return "unknown";
+    const value = result.stdout.trim();
+    if (value === "true")
+        return true;
+    if (value === "false")
+        return false;
+    return "unknown";
+}
+/**
+ * Whether stdout is exactly one `<oid>\t<ref>` record for `expectedRef`.
+ *
+ * An exact-ref query should return at most one record. Extra, duplicate, blank,
+ * unrelated, or non-canonical records are not partial proof; they make the
+ * observation unknown. One final LF is accepted because it is Git's normal
+ * record terminator. CRLF and embedded newlines are rejected rather than
+ * normalised at this trust boundary.
+ */
+function stdoutProvesExactHead(stdout, expectedRef) {
+    if (stdout === "")
+        return false;
+    const record = stdout.endsWith("\n") ? stdout.slice(0, -1) : stdout;
+    if (record === "" || record.includes("\n") || record.includes("\r"))
+        return false;
+    const separator = record.indexOf("\t");
+    if (separator <= 0 || record.indexOf("\t", separator + 1) !== -1)
+        return false;
+    return GIT_OID.test(record.slice(0, separator)) && record.slice(separator + 1) === expectedRef;
+}
+/**
+ * The verdict one `ls-remote` result proves about the ref that was asked for.
+ *
+ * Both probe modes read a result the same way, and the reading is the whole
+ * contract: this is the only place that turns a Git result into `"absent"`; the
+ * forge-API reading is {@link githubBranchVerdict}.
+ */
+function absenceVerdict(result, ref) {
+    if (!result.ok || result.error !== undefined)
+        return "unknown";
+    if (result.exitCode === 0)
+        return stdoutProvesExactHead(result.stdout, ref) ? "present" : "unknown";
+    if (result.exitCode === 2 && result.stdout === "" && result.stderr === "")
+        return "absent";
+    return "unknown";
+}
+/**
+ * The exact-ref query both probe modes issue, for a remote Git can already resolve.
+ *
+ * `remote` is an operand, so it is a name in both modes: in name mode the caller's,
+ * in URL mode {@link PROBE_REMOTE}, whose URL is configured in the environment. No
+ * URL is ever built into this argv.
+ */
+function lsRemoteArgv(remote, ref) {
+    return [
+        "git",
+        ...LS_REMOTE_PROTOCOL_POLICY,
+        "ls-remote",
+        "--exit-code",
+        "--heads",
+        "--upload-pack=git-upload-pack",
+        remote,
+        ref,
+    ];
+}
+/**
+ * The `ls-remote` that names the commit a remote's base branch points at, or null when an
+ * operand is not one this module will put on a command line. It reads one ref and writes
+ * nothing; the caller fetches the printed id by id and compares exact ids, so no ref or
+ * `FETCH_HEAD` is ever trusted.
+ */
+export function remoteBranchTipArgv(remote, branch) {
+    if (!REMOTE_NAME.test(remote) || !isSafeArgument(remote) || !isValidBranchName(branch))
+        return null;
+    return lsRemoteArgv(remote, `refs/heads/${branch}`);
+}
+/** The refspecs for `wants`, none with a destination, or null when one is not a whole id or a valid branch. */
+function fetchRefspecs(wants) {
+    const refspecs = [];
+    for (const oid of wants.oids ?? []) {
+        if (!GIT_OID.test(oid))
+            return null;
+        refspecs.push(oid);
+    }
+    if (wants.branch !== undefined) {
+        if (!isValidBranchName(wants.branch))
+            return null;
+        refspecs.push(`refs/heads/${wants.branch}`);
+    }
+    return refspecs.length === 0 ? null : refspecs;
+}
+/**
+ * The checkout-config pins every fetch of landed commits carries, whatever its transport.
+ *
+ * The fetch writes into the checkout's object store, so it runs in the checkout and reads
+ * that checkout's config. Hooks and the filesystem monitor are pointed at nothing.
+ * `core.alternateRefsCommand` is reset because Git runs it through the shell during
+ * negotiation to list an alternate's tips: measured on Git 2.56, a checkout cloned with
+ * `--shared` and that key set ran the command on `git fetch`, and with the empty pin it ran
+ * nothing and the fetch still completed.
+ */
+const FETCH_CHECKOUT_PINS = [
+    "-c",
+    `core.hooksPath=${devNull}`,
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.alternateRefsCommand=",
+];
+/** The fetch verb and the options that make it write objects and nothing else. */
+const FETCH_OBJECTS_ONLY = [
+    "fetch",
+    "--quiet",
+    "--no-tags",
+    "--no-recurse-submodules",
+    "--no-write-fetch-head",
+    "--no-auto-maintenance",
+];
+/** Wall-clock ceiling for one fetch of landed commits: it moves objects, not one ref line. */
+export const FETCH_TIMEOUT_MS = 30_000;
+/**
+ * The fetch that brings a landing's commits into the local object store, or null
+ * when an operand is not one this module will put on a command line.
+ *
+ * A forge merges on the server, so the merge commit it names does not exist locally
+ * until something fetches it, and every local proof of its shape reads it. Each
+ * `want` is either a whole object id — fetched by id, which both forges serve for
+ * reachable commits — or a branch, spelled in full as `refs/heads/<branch>`.
+ *
+ * Nothing is written but objects: no refspec has a destination, `FETCH_HEAD` is not
+ * written, and tags, submodules, and automatic maintenance stay off, so the fetch
+ * moves no ref a later read or cleanup observes. It carries the same transport and
+ * helper pins as the absence probe, plus {@link FETCH_CHECKOUT_PINS}, so a checkout's
+ * config chooses no program this fetch runs.
+ *
+ * This fetch speaks the remote's own transport, so on SSH it gets plain `ssh`. A GitHub
+ * landing uses {@link githubFetchCommitsArgv} instead; GitLab still comes here.
+ */
+export function fetchCommitsArgv(remote, wants) {
+    if (!REMOTE_NAME.test(remote) || !isSafeArgument(remote))
+        return null;
+    const refspecs = fetchRefspecs(wants);
+    if (refspecs === null)
+        return null;
+    return [
+        "git",
+        ...LS_REMOTE_PROTOCOL_POLICY,
+        ...FETCH_CHECKOUT_PINS,
+        ...FETCH_OBJECTS_ONLY,
+        "--upload-pack=git-upload-pack",
+        remote,
+        ...refspecs,
+    ];
+}
+/** The one GitHub origin this module reads refs from and fetches commits over. */
+const GITHUB_ORIGIN = "https://github.com";
+/**
+ * The HTTPS URL of a GitHub repository, built from its verified `owner/name`, or null when
+ * `repo` is not one. It names the repository and no user, so it holds no credential and may
+ * appear in argv and in a receipt.
+ */
+export function githubFetchUrl(repo) {
+    const path = normalizeRepoPath("github", repo);
+    return path === null ? null : `${GITHUB_ORIGIN}/${path}.git`;
+}
+/**
+ * The fetch that brings a GitHub landing's commits over HTTPS, or null when an operand is
+ * not one this module will put on a command line. It runs only through
+ * {@link fetchGithubCommits}, which gives it a repository of its own.
+ *
+ * Why HTTPS and not the remote's own transport (srobroek/opencode-plugins#248): the
+ * name-mode fetch pins `core.sshCommand=ssh` so checkout config never chooses an
+ * executable, and a user whose SSH routing lives in `core.sshCommand` then gets plain ssh,
+ * the wrong key, and a fetch that waits out its deadline. The local proofs (merge-tree,
+ * patch ids, ancestry) need the commits as objects, so the forge's compare API cannot
+ * replace this fetch. Every id it fetches was already named by the forge API, so the
+ * server it reaches cannot change what is proved: objects are content-addressed.
+ *
+ * This fetch carries the user's token, so no checkout config may shape the connection:
+ * `http.curloptResolve` with `http.sslCAInfo` sends github.com to another host that a
+ * forged certificate vouches for, and `http.proxy`, `http.sslCert`, `http.extraHeader` and
+ * any `http.<url>.*` key a later Git adds do as much. No pin list can deny them all, so
+ * {@link fetchGithubCommits} reads no checkout config at all. The pins here are what the
+ * fetch itself needs: HTTPS as the only transport, one credential helper, `gh auth
+ * git-credential` scoped to `https://github.com` after `credential.helper=` empties the
+ * list (the helper `gh auth setup-git` installs, and the program every GitHub read here
+ * already runs), no askpass and no prompt. {@link FETCH_CHECKOUT_PINS} keep hooks, the
+ * filesystem monitor and the alternate-refs command off, since the checkout's object
+ * directory may name alternates.
+ */
+export function githubFetchCommitsArgv(repo, wants) {
+    const url = githubFetchUrl(repo);
+    const refspecs = fetchRefspecs(wants);
+    if (url === null || refspecs === null)
+        return null;
+    return [
+        "git",
+        "-c",
+        "protocol.allow=never",
+        "-c",
+        "protocol.https.allow=always",
+        "-c",
+        "core.askPass=",
+        "-c",
+        "credential.helper=",
+        "-c",
+        `credential.${GITHUB_ORIGIN}.helper=!gh auth git-credential`,
+        "-c",
+        "credential.interactive=never",
+        "-c",
+        `http.${url}.sslVerify=true`,
+        "-c",
+        `http.${url}.saveCookies=false`,
+        ...FETCH_CHECKOUT_PINS,
+        ...FETCH_OBJECTS_ONLY,
+        url,
+        ...refspecs,
+    ];
+}
+/**
+ * The environment for {@link githubFetchCommitsArgv}: {@link gitObservationEnvironment}
+ * without forge redirectors, HTTPS as the only protocol, and no global or system config
+ * file, so a user-level `url."git@github.com:".insteadOf` cannot send the fetch back to ssh.
+ * `gh`'s own token and config directory are inherited for the credential helper, and the
+ * ambient `https_proxy` stays the user's.
+ */
+export function githubFetchEnvironment(source = process.env) {
+    const env = Object.assign(Object.create(null), gitObservationEnvironment(forgeEnvironment(source)));
+    env.GIT_ALLOW_PROTOCOL = "https";
+    env.GIT_CONFIG_GLOBAL = devNull;
+    env.GIT_CONFIG_NOSYSTEM = "1";
+    return env;
+}
+/**
+ * The `git rev-parse` arguments whose output {@link readCheckoutObjects} reads, in this
+ * order: the object format, the object directory, the shallow file, and every ref's id.
+ */
+export const CHECKOUT_OBJECTS_ARGS = [
+    "rev-parse",
+    "--show-object-format",
+    "--git-path",
+    "objects",
+    "--git-path",
+    "shallow",
+    "--all",
+];
+/** Whether `path` is `directory` itself or below it, compared as physical paths. */
+function within(directory, path) {
+    return path === directory || path.startsWith(directory.endsWith(sep) ? directory : `${directory}${sep}`);
+}
+/**
+ * Read {@link CHECKOUT_OBJECTS_ARGS} output from `cwd` into {@link CheckoutObjects}, or the
+ * reason it is not usable.
+ *
+ * The object directory is resolved against `cwd`, made physical, and must sit inside the
+ * verified common directory `commonDir`: a checkout whose `objects` is a symlink elsewhere
+ * would otherwise have this fetch write into a directory nobody verified. The shallow file
+ * is read from the same place, when there is one, and every id must be whole and canonical.
+ */
+export function readCheckoutObjects(stdout, cwd, commonDir) {
+    const label = `git ${CHECKOUT_OBJECTS_ARGS.join(" ")}`;
+    const lines = (stdout ?? "").split("\n").filter((line) => line !== "");
+    const [format, objects, shallowPath, ...refs] = lines;
+    if (stdout === null || (format !== "sha1" && format !== "sha256") || objects === undefined || shallowPath === undefined) {
+        return { reason: `${label}: observed no object format and git paths, expected "sha1" or "sha256" then two paths` };
+    }
+    let common;
+    let objectDirectory;
+    try {
+        common = realpathSync(commonDir);
+        objectDirectory = realpathSync(resolve(cwd, objects));
+    }
+    catch {
+        return { reason: `${label}: observed object directory ${JSON.stringify(objects)} that does not resolve, expected one inside ${commonDir}` };
+    }
+    if (!within(common, objectDirectory)) {
+        return { reason: `${label}: observed object directory ${objectDirectory}, expected one inside the verified ${common}` };
+    }
+    const oid = format === "sha1" ? /^[0-9a-f]{40}$/ : /^[0-9a-f]{64}$/;
+    if (!refs.every((ref) => oid.test(ref)))
+        return { reason: `${label}: observed a ref id that is not a whole ${format} id` };
+    let shallow = [];
+    const shallowFile = resolve(cwd, shallowPath);
+    let physicalShallow;
+    try {
+        // The directory made physical, the file itself not: a link there is refused below.
+        physicalShallow = join(realpathSync(dirname(shallowFile)), basename(shallowFile));
+    }
+    catch {
+        return { reason: `${label}: observed a shallow path ${shallowFile} whose directory does not resolve` };
+    }
+    // Read without following a link and without blocking: a FIFO here would otherwise hold the
+    // event loop with a synchronous read that never returns. Git writes this file itself, as
+    // a regular file of one id per line, so anything else is refused, not interpreted.
+    const read = within(common, physicalShallow) ? readBounded(physicalShallow, MAX_SHALLOW_BYTES) : { kind: "unreadable" };
+    if (read.kind === "unreadable") {
+        return {
+            reason: `${label}: observed a shallow file ${shallowFile} that is not a regular file of at most ${MAX_SHALLOW_BYTES} bytes inside ${common}`,
+        };
+    }
+    if (read.kind === "text") {
+        shallow = read.text.split("\n").filter((line) => line !== "");
+        if (!shallow.every((line) => oid.test(line)))
+            return { reason: `${label}: observed a shallow file that is not one id per line` };
+    }
+    return { objectDirectory, objectFormat: format, haves: [...new Set(refs)], shallow };
+}
+/** The largest shallow file read: 4 MiB, about 100 000 boundary commits of SHA-1 or 60 000 of SHA-256. */
+const MAX_SHALLOW_BYTES = 4 * 1024 * 1024;
+/**
+ * The repository a GitHub fetch runs as: a bare one this module writes, whose config holds
+ * only the object format, whose refs are the checkout's ids under `refs/haves/` (so the
+ * fetch negotiates like one in the checkout instead of asking for whole history: measured
+ * 6 objects against 606 on a 200-commit fixture), and whose shallow file is the checkout's.
+ */
+function isolatedFetchRepository(directory, checkout) {
+    const gitDir = join(directory, "fetch.git");
+    const config = checkout.objectFormat === "sha256"
+        ? "[core]\n\trepositoryformatversion = 1\n\tbare = true\n[extensions]\n\tobjectFormat = sha256\n"
+        : PROBE_CONFIG;
+    try {
+        mkdirSync(join(gitDir, "objects"), { recursive: true });
+        mkdirSync(join(gitDir, "refs"), { recursive: true });
+        writeFileSync(join(gitDir, "HEAD"), PROBE_HEAD);
+        writeFileSync(join(gitDir, "config"), config);
+        writeFileSync(join(gitDir, "packed-refs"), checkout.haves.map((oid, index) => `${oid} refs/haves/${index}\n`).join(""));
+        if (checkout.shallow.length > 0)
+            writeFileSync(join(gitDir, "shallow"), `${checkout.shallow.join("\n")}\n`);
+        return gitDir;
+    }
+    catch {
+        return null;
+    }
+}
+/**
+ * Fetch a GitHub landing's commits into the checkout's object directory without reading
+ * any checkout config, and say what ran.
+ *
+ * The fetch runs with `GIT_DIR` at {@link isolatedFetchRepository}, from that directory, and
+ * with no global or system config, so the only configuration Git reads is two `core` lines
+ * and the argv pins: no `http.*`, `credential.*`, `url.*`, `remote.*` or `include` key
+ * from the checkout, its worktrees, the home directory or `/etc` applies. Discovery never
+ * happens, so no ceiling is needed. `GIT_OBJECT_DIRECTORY` points at the checkout's
+ * verified object directory, which is where the proofs read: Git writes the received pack
+ * (or loose objects) there, takes the checkout's `objects/info/alternates` into account,
+ * and moves no ref of the checkout, only of the throwaway repository, which is removed.
+ * Measured on Git 2.56 for a plain clone, a `--shared` clone, a linked worktree, a
+ * SHA-256 repository and a shallow clone: the fetched commits read back from the checkout.
+ */
+export async function fetchGithubCommits(repo, wants, checkout, run = runCli, environment = process.env) {
+    const argv = githubFetchCommitsArgv(repo, wants);
+    if (argv === null)
+        return null;
+    const failed = (error) => ({ argv, result: { ok: false, exitCode: null, stdout: "", stderr: "", error } });
+    let neutral;
+    try {
+        neutral = realpathSync(mkdtempSync(join(tmpdir(), "forge-fetch-")));
+    }
+    catch {
+        return failed("no directory for the isolated fetch repository could be created");
+    }
+    try {
+        const gitDir = isolatedFetchRepository(neutral, checkout);
+        if (gitDir === null)
+            return failed("the isolated fetch repository could not be written");
+        const env = Object.assign(Object.create(null), githubFetchEnvironment(environment), {
+            GIT_DIR: gitDir,
+            GIT_OBJECT_DIRECTORY: checkout.objectDirectory,
+        });
+        return { argv, result: await run(argv, { cwd: neutral, timeoutMs: FETCH_TIMEOUT_MS, env }) };
+    }
+    finally {
+        try {
+            rmSync(neutral, { recursive: true, force: true });
+        }
+        catch {
+            // The repository holds refs and config only; the OS reclaims a leftover directory.
+        }
+    }
+}
+/**
+ * One GraphQL read: the repository, by the name it answers to, and the one exact ref.
+ *
+ * GraphQL rather than `GET repos/{owner}/{repo}/git/ref/heads/{branch}`: that REST call
+ * answers the same `404 Not Found` for a missing ref and for a repository the token cannot
+ * see (GitHub hides private repositories behind 404), so its 404 cannot prove absence.
+ * Here a readable repository answers `nameWithOwner`, and an absent ref is an explicit
+ * `ref: null` beside it; an unreadable one is `repository: null` with `errors`.
+ */
+const GITHUB_BRANCH_QUERY = "query($owner: String!, $name: String!, $ref: String!) { repository(owner: $owner, name: $name) { nameWithOwner ref(qualifiedName: $ref) { prefix name target { __typename oid } } } }";
+/**
+ * The `gh api graphql` read of `refs/heads/<branch>` in a GitHub repository, or null when
+ * `repo` is not an `owner/name` or `branch` is not a branch this module builds a ref from.
+ * The host is pinned with `--hostname`, and every variable is a raw `-f` string, so no
+ * value is read as a file, a number or a `{owner}` placeholder.
+ */
+function githubBranchArgv(repo, branch) {
+    const path = normalizeRepoPath("github", repo);
+    if (path === null || !isValidBranchName(branch))
+        return null;
+    const [owner = "", name = ""] = path.split("/");
+    return [
+        "gh",
+        "api",
+        "graphql",
+        "--hostname",
+        GITHUB_TARGET.canonicalHost,
+        "-f",
+        `query=${GITHUB_BRANCH_QUERY}`,
+        "-f",
+        `owner=${owner}`,
+        "-f",
+        `name=${name}`,
+        "-f",
+        `ref=refs/heads/${branch}`,
+    ];
+}
+/**
+ * An own data property of a JSON object, or null. Arrays, inherited values and accessors
+ * are refused for the reasons {@link removeSourceBranchAfterMerge} gives.
+ */
+function ownData(holder, key) {
+    if (typeof holder !== "object" || holder === null || Array.isArray(holder))
+        return null;
+    const descriptor = Object.getOwnPropertyDescriptor(holder, key);
+    return descriptor === undefined || !("value" in descriptor) ? null : { value: descriptor.value };
+}
+/**
+ * The observation one {@link githubBranchArgv} result proves about `refs/heads/<branch>`.
+ *
+ * `"absent"` needs a completed read with exit 0, a JSON object with no `errors`, the
+ * repository answering as `repo` (GitHub's spelling may differ in case), and `ref` present
+ * and explicitly null. `"present"` needs that ref to be exactly `refs/heads/<branch>`
+ * pointing at a commit with a whole object id. Anything else, including a timeout, a 401,
+ * 403 or rate limit (each a non-zero `gh` exit), malformed JSON, and a ref for some other
+ * name, is `"unknown"` with the reason.
+ */
+export function githubBranchVerdict(result, repo, branch) {
+    const ref = `refs/heads/${branch}`;
+    const label = `gh api graphql (${ref} of ${repo})`;
+    const unknown = (observed) => ({ verdict: "unknown", reason: `${label}: ${observed}` });
+    if (!result.ok || result.error !== undefined || result.exitCode !== 0) {
+        return { verdict: "unknown", reason: describeFailure([label], result) };
+    }
+    let payload;
+    try {
+        payload = JSON.parse(result.stdout);
+    }
+    catch {
+        return unknown("observed output that is not JSON, expected one GraphQL response object");
+    }
+    if (ownData(payload, "errors") !== null) {
+        return unknown(`observed GraphQL errors ${JSON.stringify(ownData(payload, "errors")?.value).slice(0, 300)}`);
+    }
+    const repository = ownData(ownData(payload, "data")?.value, "repository")?.value;
+    const name = ownData(repository, "nameWithOwner")?.value;
+    if (typeof name !== "string" || name.toLowerCase() !== repo.toLowerCase()) {
+        return unknown(`observed repository ${JSON.stringify(name ?? null)}, expected ${JSON.stringify(repo)}`);
+    }
+    const field = ownData(repository, "ref");
+    if (field === null)
+        return unknown("observed no ref field, expected the ref or an explicit null");
+    if (field.value === null)
+        return { verdict: "absent" };
+    const target = ownData(field.value, "target")?.value;
+    const oid = ownData(target, "oid")?.value;
+    if (ownData(field.value, "prefix")?.value !== "refs/heads/" ||
+        ownData(field.value, "name")?.value !== branch ||
+        ownData(target, "__typename")?.value !== "Commit" ||
+        typeof oid !== "string" ||
+        !GIT_OID.test(oid)) {
+        return unknown(`observed a ref that is not ${ref} at a commit id, expected exactly that ref or null`);
+    }
+    return { verdict: "present", oid };
+}
+/**
+ * Observe `refs/heads/<branch>` of a GitHub repository through the forge API, with the
+ * user's `gh` credentials and no Git transport at all, so no SSH configuration can make the
+ * answer wait or come from somewhere else. The command runs with {@link forgeEnvironment}
+ * and `GH_HOST` pinned to the host `--hostname` names. A caller binds its abort signal into
+ * `run`.
+ */
+export async function observeGithubBranch(repo, branch, run = runCli, environment = process.env) {
+    const path = normalizeRepoPath("github", repo);
+    const argv = path === null ? null : githubBranchArgv(path, branch);
+    if (path === null || argv === null) {
+        return {
+            verdict: "unknown",
+            reason: `gh api graphql: observed repository ${JSON.stringify(repo)} and branch ${JSON.stringify(branch)}, expected "<owner>/<name>" and a valid branch name`,
+        };
+    }
+    const env = Object.assign(Object.create(null), forgeEnvironment(environment), {
+        GH_HOST: GITHUB_TARGET.canonicalHost,
+    });
+    return githubBranchVerdict(await run(argv, { timeoutMs: FORGE_TIMEOUT_MS, env }), path, branch);
+}
+/**
+ * The remote name a URL probe puts on the command line.
+ *
+ * Opaque and fixed: it identifies nothing and is safe in a process listing, a
+ * refusal, or a log. The URL it stands for is configured in the child's
+ * environment instead.
+ */
+const PROBE_REMOTE = "delivery-absence-probe";
+/**
+ * The repository a URL probe runs inside: the least Git accepts, and nothing else.
+ *
+ * Written with filesystem calls rather than `git init`, because a probe must not
+ * depend on spawning a second Git to isolate the first, and because an injected
+ * runner would have to answer that spawn too. Git accepts a directory with these
+ * four entries as a bare repository, which is all `ls-remote` needs: it never reads
+ * an object, a ref, or a work tree here.
+ */
+const PROBE_HEAD = "ref: refs/heads/main\n";
+const PROBE_CONFIG = "[core]\n\trepositoryformatversion = 0\n\tbare = true\n";
+function isolatedProbeRepository(directory) {
+    const gitDir = join(directory, "probe.git");
+    try {
+        mkdirSync(join(gitDir, "objects"), { recursive: true });
+        mkdirSync(join(gitDir, "refs"), { recursive: true });
+        writeFileSync(join(gitDir, "HEAD"), PROBE_HEAD);
+        writeFileSync(join(gitDir, "config"), PROBE_CONFIG);
+        return gitDir;
+    }
+    catch {
+        return null;
+    }
+}
+/**
+ * The environment for a URL probe: the URL itself, and no config file that could
+ * rewrite it.
+ *
+ * `GIT_CONFIG_COUNT` and its numbered key/value pair are a config source Git reads
+ * directly, so `remote.<opaque>.url` exists for exactly this child process and for
+ * no one else. That is the point: argv is world-readable — `ps` shows it to every
+ * user on the host, and it reaches logs and crash reports — while a child's
+ * environment is visible to the process itself and to root. A remote URL may carry
+ * `user:token@` userinfo or a `?token=` query, so the URL travels here and the
+ * command line carries {@link PROBE_REMOTE}.
+ *
+ * Written on top of {@link gitObservationEnvironment}, never beside it, because
+ * that function discards every inherited `GIT_*` name and would strip all of these
+ * if they were set first. `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM` remove the
+ * file-based config sources, so the injected pair is the only configuration Git has:
+ * no `url.<base>.insteadOf` from a worktree, a home directory, or `/etc` can rewrite
+ * the URL the caller resolved.
+ *
+ * `GIT_DIR` closes the last way in, and it has to be `GIT_DIR` rather than a fence
+ * around discovery. A neutral directory is only neutral if Git cannot walk out of it,
+ * and `os.tmpdir()` answers from ambient `TMPDIR`, `TMP`, or `TEMP`: whoever sets
+ * those chooses where the probe directory is created, including inside a checkout.
+ * `GIT_CEILING_DIRECTORIES` alone was measured doing nothing for this read — with the
+ * ceiling set to the probe directory, a parent checkout's local
+ * `url.<base>.insteadOf` still rewrote the probe URL and `ls-remote` answered from the
+ * repository that rewrite named. Pointing `GIT_DIR` at a repository this module
+ * created removes discovery instead of fencing it: Git uses the repository it is
+ * given, and the only local config in play is the two `core` lines written into it.
+ * The ceiling is kept as a second line, not as the defence.
+ *
+ * Ordinary process state, credentials, and SSH's own configuration are untouched: an
+ * unauthenticated or unreachable probe is a different answer, and this one must stay
+ * able to succeed.
+ */
+function urlProbeEnvironment(source, url, probeDirectory, gitDir) {
+    const env = Object.assign(Object.create(null), gitObservationEnvironment(source));
+    env.GIT_CONFIG_GLOBAL = devNull;
+    env.GIT_CONFIG_NOSYSTEM = "1";
+    env.GIT_CONFIG_COUNT = "1";
+    env.GIT_CONFIG_KEY_0 = `remote.${PROBE_REMOTE}.url`;
+    env.GIT_CONFIG_VALUE_0 = url;
+    env.GIT_CEILING_DIRECTORIES = probeDirectory;
+    env.GIT_DIR = gitDir;
+    return env;
+}
+/** Prepare the probe {@link remoteBranchAbsent} describes, or null when its answer is already `"unknown"`. */
+function absenceProbe(remoteOrUrl, branch, cwd, environment) {
+    if (!isSafeArgument(remoteOrUrl) || !isValidBranchName(branch))
+        return null;
+    const ref = `refs/heads/${branch}`;
+    // URL mode is entered only for a spelling {@link forgeTarget} has already verified
+    // — an allowlisted host reached over an allowlisted transport — never by guessing
+    // that a string looks URL-ish, so no unverified scheme can select it.
+    //
+    // A URL names its repository outright, and the one thing that could still change
+    // which repository is contacted is `url.<base>.insteadOf`, which rewrites URLs and
+    // not just remote names. `extensions.worktreeConfig` can scope such a rewrite to
+    // whichever worktree happens to answer the question, which is how a probe asked
+    // after a worktree is gone ends up at a different repository and reports a branch
+    // absent that still exists.
+    //
+    // So the probe runs from a directory that is not a checkout, with no global and no
+    // system file, and the directory is removed whatever the outcome — and the URL
+    // itself never reaches the command line. It is configured for this one child
+    // through {@link urlProbeEnvironment}, and argv names {@link PROBE_REMOTE}: `ps`
+    // shows argv to every user on the host, so a `user:token@` or `?token=` URL on a
+    // command line is a credential published to the machine.
+    if (forgeTarget(remoteOrUrl) !== null) {
+        let neutral;
+        try {
+            // Resolved to its physical path: `os.tmpdir()` answers from ambient TMPDIR and
+            // that path is commonly a symlink, while the ceiling below must name the path
+            // Git resolves.
+            neutral = realpathSync(mkdtempSync(join(tmpdir(), "forge-ls-remote-")));
+        }
+        catch {
+            // A probe with nowhere neutral to run cannot prove absence.
+            return null;
+        }
+        const dispose = () => {
+            try {
+                rmSync(neutral, { recursive: true, force: true });
+            }
+            catch {
+                // The probe repository holds four entries and no object; a verdict is not
+                // worth throwing over a directory the OS will reclaim.
+            }
+        };
+        // Without a repository of its own, Git goes looking for one, and the ambient
+        // TMPDIR decides what it finds.
+        const gitDir = isolatedProbeRepository(neutral);
+        if (gitDir === null) {
+            dispose();
+            return null;
+        }
+        return {
+            argv: lsRemoteArgv(PROBE_REMOTE, ref),
+            options: {
+                cwd: neutral,
+                timeoutMs: FORGE_TIMEOUT_MS,
+                env: urlProbeEnvironment(environment, remoteOrUrl, neutral, gitDir),
+            },
+            ref,
+            dispose,
+        };
+    }
+    // Name mode, unchanged: a remote name resolves only inside the repository that
+    // configures it, so the directory stays required and stays the caller's. A name is
+    // not a secret, so it stays an operand.
+    if (cwd.trim() === "")
+        return null;
+    return {
+        argv: lsRemoteArgv(remoteOrUrl, ref),
+        options: { cwd, timeoutMs: FORGE_TIMEOUT_MS, env: gitObservationEnvironment(environment) },
+        ref,
+        dispose: () => undefined,
+    };
+}
+/**
+ * Whether `branch` is gone from `remoteOrUrl`, observed against the exact ref, from
+ * inside `cwd`.
+ *
+ * `remoteOrUrl` is either a configured remote name or a URL, and which one a caller
+ * passes decides what the answer is about. A name is re-resolved by whichever
+ * repository and worktree answers the question — `git remote get-url` expands
+ * `insteadOf`, and `extensions.worktreeConfig` scopes such a rewrite to one
+ * worktree — so a caller that already resolved a URL, or whose target worktree is
+ * gone, passes the URL and asks about the repository it means. An `"absent"` verdict
+ * reached against the wrong repository is a false absence, and a false absence is
+ * what marks a branch deleted that still exists.
+ *
+ * `cwd` stays an explicit argument for both spellings rather than whatever directory
+ * the process happens to be in: a name has nowhere else to resolve, and a URL still
+ * needs a repository for the protocol and helper pins below. An empty `cwd` is
+ * `"unknown"` for the same reason: there is no directory to be right about.
+ *
+ * Only the verdict is returned. A URL may carry credentials, and this function never
+ * puts what it was given into its result, so no caller can leak one by quoting it.
+ *
+ * `git ls-remote --exit-code` reports exit 2 when no ref matched. That status
+ * proves `"absent"` only with empty stdout and stderr. Exit 0 proves
+ * `"present"` only when stdout is exactly one canonical object-id record for
+ * the requested ref. Empty, malformed, unrelated, duplicate, or contradictory
+ * output stays `"unknown"`, as does every other status, timeout, or spawn
+ * failure.
+ *
+ * The ref is spelled in full as `refs/heads/<branch>`, not as a bare name or a
+ * pattern, so `feature` cannot be answered by `feature-2`.
+ *
+ * This is the only Git observation in the module that returns `"absent"`, and it only
+ * ever does so from this observation. No merge result, deletion response, or
+ * setting value reaches it. A GitHub caller that knows its repository asks
+ * {@link observeGithubBranch} instead, which uses no Git transport.
+ *
+ * A caller binds its abort signal into `run`, so an interrupt ends a hung probe.
+ */
+export async function remoteBranchAbsent(remoteOrUrl, branch, cwd, run = runCli, environment = process.env) {
+    const probe = absenceProbe(remoteOrUrl, branch, cwd, environment);
+    if (probe === null)
+        return "unknown";
+    try {
+        return absenceVerdict(await run(probe.argv, probe.options), probe.ref);
+    }
+    finally {
+        probe.dispose();
+    }
+}

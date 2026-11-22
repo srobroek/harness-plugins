@@ -1,0 +1,459 @@
+import { isAbsolute, join, resolve } from "node:path";
+import { Plugin } from "@opencode/plugin";
+import { bdInvocations, isMutatingBdCommand } from "@srobroek/opencode-lib/bd-actor-gate";
+import { agentActor, GateRefusal, gateEnabled, sessionChain, shellInput, } from "@srobroek/opencode-lib/beads-host";
+import { configuredStore, sessionPinFor } from "@srobroek/opencode-lib/beads-store";
+import { appendResultText, shellExit } from "@srobroek/opencode-lib/shell-result";
+import { registerSkills } from "@srobroek/opencode-lib/skill-files";
+import { isShellTool, SHELL_TOOL, shellAliasInput } from "@srobroek/opencode-lib/tool-targets";
+import { claimResultOutput, claimResultTexts } from "./bd-lease-gate.ts";
+import { confirmClaims, contentionAdvisory, inspectClaim, readClaimState, recordClaimTransitions, withJson, } from "./claims.ts";
+import { forkNotice } from "./fork-notice.ts";
+import { bdStoreDir, EMBEDDED_PIN_ENV, environmentForCommand, GateAdmitter, lifecycleBdEnvironment, runBdResult, staleSkipNotice, } from "./gate-admission.ts";
+import { GoalRpc } from "./goal.ts";
+import { Heartbeats, heartbeatOnce, leaseEndingIds, nextLeases, readLeases } from "./heartbeat.ts";
+import { BEADS_SOURCE, Lifecycle } from "./lifecycle.ts";
+import { PRIME_WAIT_MS, readPrime, storedPrime } from "./prime.ts";
+import { plannedStores } from "./reconcile.ts";
+import { sessionStartAdvisories } from "./session-start.ts";
+import { actorEnvironment, decideShell, TOOL_CALL_BUDGET_MS } from "./shell-gates.ts";
+import { dropInheritedPin, pinnedEnvironment, pinShell, pinVariables, withoutInheritedPin } from "./store-pin.ts";
+import { registerAgentRouting } from "./subagent-routing.ts";
+export { decideShell } from "./shell-gates.ts";
+const SUBAGENT_TOOL = "subagent";
+/** The skills this plugin ships, each in `skills/<name>/SKILL.md`. */
+export const SKILL_NAMES = [
+    "beads-ledger",
+    "beads-evidence",
+    "beads-setup",
+    "beads-contention-retry",
+    "beads-preflight",
+    "beads-guide",
+];
+/** `skills/` at the package root; `src/` and the bundled `dist/` both sit one level below it. */
+export const SKILLS_DIRECTORY = join(import.meta.dir, "..", "skills");
+const PIN_CACHE_MS = 5_000;
+export { pinnedEnvironment, shellPin } from "./store-pin.ts";
+/** What the agent is told about a claim the plugin cannot prove: no heartbeat, no automatic release. */
+const untrackedClaim = (reason) => `Beads: this claim is not tracked, so its lease is not renewed and it is not released automatically (${reason}). Run it as a single plain bd command to have the plugin track it.`;
+/** Serialise read-modify-write on one storage key within this instance. */
+function keyedQueue() {
+    const tails = new Map();
+    return (key, task) => {
+        const previous = tails.get(key) ?? Promise.resolve();
+        const next = previous.then(task, task);
+        const settled = next.catch(() => undefined);
+        tails.set(key, settled);
+        void settled.then(() => {
+            if (tails.get(key) === settled)
+                tails.delete(key);
+        });
+        return next;
+    };
+}
+async function bounded(pending, ms, fallback) {
+    let timer;
+    const timeout = new Promise((resolve) => {
+        timer = setTimeout(() => resolve(fallback), ms);
+    });
+    try {
+        return await Promise.race([pending, timeout]);
+    }
+    finally {
+        clearTimeout(timer);
+    }
+}
+export async function setupBeads(ctx, deps = {}) {
+    const options = ctx.options;
+    const directory = ctx.location.directory;
+    let store;
+    try {
+        store = configuredStore(options, ctx.location.project?.directory ?? directory);
+    }
+    catch (error) {
+        const refuse = () => { throw error; };
+        const tool = await ctx.tool.hook("execute.before", (event) => {
+            if (isShellTool(event.tool) || event.tool === SUBAGENT_TOOL)
+                refuse();
+        });
+        const shell = await ctx.shell.hook("create.before", refuse);
+        const context = await ctx.session.hook("context", refuse);
+        return async () => {
+            await tool.dispose();
+            await shell.dispose();
+            await context.dispose();
+        };
+    }
+    const on = (gate) => gateEnabled(options, gate);
+    const admitter = new GateAdmitter(deps.run);
+    const pinFor = store === undefined ? (deps.pinFor ?? sessionPinFor) : () => store;
+    const baseEnv = () => {
+        // A server started from a pinned shell inherits that shell's pin; each session resolves its own.
+        const env = withoutInheritedPin(deps.env ?? process.env);
+        return store === undefined ? env : { ...env, ...EMBEDDED_PIN_ENV, BEADS_DIR: store };
+    };
+    const pending = new Map();
+    const chains = new Map();
+    const pins = new Map();
+    const queue = keyedQueue();
+    const run = deps.run ?? runBdResult;
+    const detach = deps.detach ??
+        ((task) => {
+            void task.catch((error) => console.error("srobroek.beads: detached task failed", error));
+        });
+    const heartbeatNoticed = new Set();
+    const heartbeats = new Heartbeats(async (sessionID, key, lease) => {
+        const failure = await heartbeatOnce(lease, run, baseEnv());
+        if (failure === undefined)
+            return;
+        const leaseKey = `leases/${sessionID}`;
+        const leases = await queue(leaseKey, async () => {
+            const current = readLeases(await ctx.storage.get(leaseKey));
+            delete current[key];
+            await ctx.storage.set(leaseKey, current);
+            return current;
+        });
+        heartbeats.run(sessionID, leases);
+        const notice = `${sessionID}\0${lease.id}`;
+        if (heartbeatNoticed.has(notice))
+            return;
+        heartbeatNoticed.add(notice);
+        await ctx.session
+            .synthetic({
+            sessionID,
+            text: `Beads lease heartbeat failed for ${lease.id}; the claim may no longer be held (${failure}). Check it with bd show ${lease.id} --json before continuing work on it.`,
+            delivery: "queue",
+            resume: false,
+            metadata: { source: BEADS_SOURCE, kind: "heartbeat" },
+        })
+            .catch(() => undefined);
+    }, deps.clock, detach);
+    const lifecycle = new Lifecycle({
+        ctx,
+        run,
+        env: baseEnv,
+        queue,
+        heartbeats,
+        nudge: on("beads-stop-nudge"),
+        release: on("beads-claim-release"),
+        goal: deps.goal ?? (async (sessionID) => ctx.rpc(GoalRpc).get({ sessionID })),
+        detach,
+        holdTimer: deps.holdTimer,
+        maxRuns: deps.maxRuns,
+    });
+    const cachedPinFor = (cwd) => {
+        const hit = pins.get(cwd);
+        if (hit !== undefined && Date.now() - hit.at < PIN_CACHE_MS)
+            return hit.pin;
+        const pin = pinFor(cwd);
+        pins.set(cwd, { at: Date.now(), pin });
+        return pin;
+    };
+    const chainFor = (sessionID, agent) => {
+        const key = `${sessionID}\0${agent}`;
+        let chain = chains.get(key);
+        if (chain === undefined) {
+            // A failed lookup would pass a subagent off as a main session, which gets no actor, so
+            // such a chain is not remembered: the next call looks the parent up again.
+            let failed = false;
+            chain = sessionChain(sessionID, agent, async (id) => {
+                try {
+                    return (await ctx.session.get({ sessionID: id }));
+                }
+                catch (error) {
+                    failed = true;
+                    throw error;
+                }
+            });
+            chains.set(key, chain);
+            void chain.then(() => {
+                if (failed && chains.get(key) === chain)
+                    chains.delete(key);
+            });
+        }
+        return chain;
+    };
+    // Start the location's gate verification now, so the first mutation rarely waits.
+    const locationEnv = lifecycleBdEnvironment(directory, baseEnv());
+    if (on("beads-gate-admission") && bdStoreDir(directory, locationEnv) !== undefined)
+        admitter.verify(directory, locationEnv);
+    const prime = on("beads-prime") ? readPrime(directory, locationEnv, deps.run).catch(() => "") : Promise.resolve("");
+    const before = await ctx.tool.hook("execute.before", async (event) => {
+        const deadline = Date.now() + TOOL_CALL_BUDGET_MS;
+        if (event.tool === SUBAGENT_TOOL) {
+            lifecycle.subagentStarted(event.sessionID, event.id, event.input);
+            return;
+        }
+        if (!isShellTool(event.tool))
+            return;
+        const call = shellInput(event.tool === SHELL_TOOL ? event.input : shellAliasInput(event.input), directory);
+        if (call === undefined || call.command.trim() === "")
+            return;
+        const chain = await chainFor(event.sessionID, event.agent);
+        const env = pinnedEnvironment(call.cwd, baseEnv(), cachedPinFor);
+        const actor = agentActor(chain);
+        // Any shell call of a subagent may write under its actor (a function, a script, a status update),
+        // so none runs while an older release of this session is mid-mutation.
+        if (actor !== undefined)
+            await lifecycle.awaitRelease(event.sessionID);
+        // A claim is tracked only when bd's own `--json` confirms it, so ask for that on a claim the
+        // plugin could track. bd then prints the claimed issue as JSON instead of one status line.
+        const injected = actor;
+        const advisories = [];
+        let command = call.command;
+        if (on("beads-claim-tracking")) {
+            const inspected = inspectClaim(call.command, call.cwd, actorEnvironment(environmentForCommand(call.command, env), injected), {
+                injected,
+                inherited: pinnedEnvironment(call.cwd, baseEnv(), cachedPinFor),
+            });
+            if (inspected.kind === "claim" && !inspected.plan.json) {
+                command = withJson(call.command, inspected.plan);
+                advisories.push("Beads: added --json to this claim so the plugin can confirm it from bd's own output and track it; the result is bd's JSON.");
+            }
+        }
+        const decision = await decideShell(command, call.cwd, {
+            options,
+            actor,
+            env,
+            admitter,
+            callID: event.id,
+            deadline,
+            runnerLookup: deps.runnerLookup,
+            repositoryControl: deps.repositoryControl,
+            configuredStore: store,
+        });
+        if (decision.kind === "block")
+            throw new GateRefusal(decision.gate, decision.cause, decision.resolution);
+        if (decision.command !== call.command)
+            event.input = { ...event.input, command: decision.command };
+        if (actor !== undefined) {
+            // Remember where this subagent works, so its end can ask bd what it holds under its actor.
+            const stores = plannedStores(call.command, call.cwd, env);
+            if (stores.length > 0)
+                await lifecycle.recordScope(event.sessionID, actor, stores);
+        }
+        pending.set(event.id, {
+            command,
+            cwd: call.cwd,
+            injected,
+            advisories: [...advisories, ...decision.advisories],
+        });
+    });
+    const routing = await registerAgentRouting(ctx, { run: deps.run, env: baseEnv });
+    const pin = await ctx.shell.hook("create.before", (event) => {
+        // With automatic pinning off the shell still drops a pin it inherited, since every gate
+        // resolves without it; it just gets no new one.
+        if (!on("beads-dir-pin") && store === undefined)
+            return dropInheritedPin(event.env);
+        const cwd = isAbsolute(event.cwd) ? event.cwd : resolve(directory, event.cwd);
+        if (store === undefined)
+            pinShell(cwd, event.env, cachedPinFor);
+        else
+            Object.assign(event.env, pinVariables(store));
+    });
+    const after = await ctx.tool.hook("execute.after", async (event) => {
+        if (event.tool === SUBAGENT_TOOL) {
+            const text = await lifecycle.subagentEnded(event.sessionID, event.id, event.status === "completed" ? event.result : undefined);
+            if (text !== undefined && event.status === "completed")
+                event.result = appendResultText(event.result, text);
+            return;
+        }
+        if (event.tool !== "shell")
+            return;
+        const call = pending.get(event.id);
+        pending.delete(event.id);
+        if (event.status !== "completed")
+            return;
+        const result = event.result;
+        const advisories = [...(call?.advisories ?? [])];
+        const output = claimResultOutput(result);
+        const contention = contentionAdvisory(output);
+        if (contention !== undefined)
+            advisories.push(contention);
+        if (call !== undefined && on("beads-claim-tracking") && bdInvocations(call.command).length === 0) {
+            // A claim typed behind the embedded-write runner is invisible to the gates below; warn once.
+            const wrapped = inspectClaim(call.command, call.cwd, actorEnvironment(pinnedEnvironment(call.cwd, baseEnv(), cachedPinFor), call.injected), {
+                injected: call.injected,
+                inherited: pinnedEnvironment(call.cwd, baseEnv(), cachedPinFor),
+            });
+            if (wrapped.kind === "refused")
+                advisories.push(untrackedClaim(wrapped.reason));
+        }
+        if (call !== undefined && bdInvocations(call.command).length > 0) {
+            const stale = staleSkipNotice(output);
+            if (stale !== undefined) {
+                const key = `stale-advised/${event.sessionID}`;
+                if ((await ctx.storage.get(key)) !== true) {
+                    await ctx.storage.set(key, true);
+                    advisories.push(stale);
+                }
+            }
+            if (on("beads-claim-tracking") && isMutatingBdCommand(call.command) && shellExit(result) !== 0) {
+                const failed = inspectClaim(call.command, call.cwd, actorEnvironment(pinnedEnvironment(call.cwd, baseEnv(), cachedPinFor), call.injected), {
+                    injected: call.injected,
+                    inherited: pinnedEnvironment(call.cwd, baseEnv(), cachedPinFor),
+                });
+                if (failed.kind !== "none")
+                    advisories.push(untrackedClaim(`the claim failed (exit ${shellExit(result) ?? "unknown"})`));
+            }
+            if (on("beads-claim-tracking") && isMutatingBdCommand(call.command) && shellExit(result) === 0) {
+                const key = `claims/${event.sessionID}`;
+                // The command ran after the actor prefix, so its actor resolves from that prefix's environment.
+                const env = actorEnvironment(environmentForCommand(call.command, pinnedEnvironment(call.cwd, baseEnv(), cachedPinFor)), call.injected);
+                const invocations = bdInvocations(call.command);
+                const inspected = inspectClaim(call.command, call.cwd, env, {
+                    injected: call.injected,
+                    inherited: pinnedEnvironment(call.cwd, baseEnv(), cachedPinFor),
+                });
+                let confirmed = [];
+                if (inspected.kind === "refused")
+                    advisories.push(untrackedClaim(inspected.reason));
+                else if (inspected.kind === "claim") {
+                    const outcome = confirmClaims(inspected.plan, claimResultTexts(result));
+                    confirmed = outcome.confirmed;
+                    if (!outcome.jsonFound)
+                        advisories.push(untrackedClaim("bd printed no --json output to confirm it"));
+                    else if (outcome.unconfirmed.length > 0)
+                        advisories.push(untrackedClaim(`bd's --json output did not show ${outcome.unconfirmed.join(", ")} as in_progress under ${[...inspected.plan.candidates].join(" or ") || "a known actor"}`));
+                }
+                const [before, state] = await queue(key, async () => {
+                    const state = readClaimState(await ctx.storage.get(key));
+                    const before = readClaimState(state);
+                    recordClaimTransitions(state, call.command, call.cwd, env, invocations, confirmed);
+                    if (JSON.stringify(state) !== JSON.stringify(before))
+                        await ctx.storage.set(key, state);
+                    return [before, state];
+                });
+                if (on("bd-lease-heartbeat")) {
+                    const leaseKey = `leases/${event.sessionID}`;
+                    const leases = await queue(leaseKey, async () => {
+                        const current = readLeases(await ctx.storage.get(leaseKey));
+                        const next = nextLeases(current, before, state, leaseEndingIds(invocations));
+                        if (JSON.stringify(next) !== JSON.stringify(current))
+                            await ctx.storage.set(leaseKey, next);
+                        return next;
+                    });
+                    heartbeats.run(event.sessionID, leases);
+                }
+            }
+        }
+        if (advisories.length > 0)
+            event.result = appendResultText(result, advisories.join("\n\n"));
+    });
+    // Compaction and generate requests get the same system prompt as the session's turns, so
+    // they reuse the turns' prompt cache instead of rewriting the whole conversation.
+    const primeHook = async (event) => {
+        if (!on("beads-prime") && !on("beads-session-advisories"))
+            return;
+        const key = `prime/${event.sessionID}`;
+        const text = await queue(key, async () => {
+            const stored = storedPrime(await ctx.storage.get(key));
+            if (stored !== undefined)
+                return stored;
+            const parts = [await bounded(prime, PRIME_WAIT_MS, "")];
+            // Session-start advisories are frozen with the prime text, so the system prompt stays cacheable.
+            if (on("beads-session-advisories") && (await lifecycle.parentOf(event.sessionID)) === undefined)
+                parts.push(...sessionStartAdvisories(directory, {
+                    env: baseEnv(),
+                    binaryHooks: on("binary-git-hooks"),
+                    pinFor,
+                    ...deps.start,
+                }));
+            const fresh = parts.filter((part) => part !== "").join("\n\n");
+            await ctx.storage.set(key, { text: fresh });
+            return fresh;
+        });
+        if (text !== "")
+            event.system.push({ type: "text", text });
+    };
+    const context = await ctx.session.hook("context", primeHook);
+    const compaction = await ctx.session.hook("compaction", primeHook);
+    const generate = await ctx.session.hook("generate", primeHook);
+    const promptHook = await ctx.session.hook("prompt", async (event) => {
+        try {
+            await lifecycle.prompt(event.sessionID, event.metadata);
+        }
+        catch (error) {
+            console.error("srobroek.beads: prompt hook failed", error);
+        }
+    });
+    const idleHook = await ctx.session.hook("experimental.idle", (event) => {
+        // A throw here would kill the session that went idle.
+        try {
+            lifecycle.idle(event);
+        }
+        catch (error) {
+            console.error("srobroek.beads: idle hook failed", error);
+        }
+    });
+    // `session.fork` exists from OpenCode 2.3.0 (experimental); an older host rejects the name.
+    const forkHook = on("beads-session-advisories")
+        ? await Promise.resolve()
+            .then(() => ctx.session.hook("fork", (async (event) => {
+            try {
+                const session = (await ctx.session.get({ sessionID: event.sessionID }));
+                const original = session?.fork?.sessionID;
+                if (original === undefined)
+                    return;
+                const text = forkNotice(original, readClaimState(await ctx.storage.get(`claims/${original}`)));
+                if (text === undefined)
+                    return;
+                await ctx.session.synthetic({
+                    sessionID: event.sessionID,
+                    text,
+                    delivery: "queue",
+                    resume: false,
+                    metadata: { source: BEADS_SOURCE, kind: "fork" },
+                });
+            }
+            catch (error) {
+                console.error("srobroek.beads: fork hook failed", error);
+            }
+        })))
+            .catch(() => undefined)
+        : undefined;
+    const skills = on("beads-skills")
+        ? await registerSkills(ctx.skill, SKILL_NAMES.map((name) => join(deps.skillsDirectory ?? SKILLS_DIRECTORY, name, "SKILL.md")))
+        : undefined;
+    const abort = new AbortController();
+    const iterator = ctx.event.subscribe({ signal: abort.signal })[Symbol.asyncIterator]();
+    void (async () => {
+        for (;;) {
+            const next = await iterator.next().catch(() => ({ done: true, value: undefined }));
+            if (next.done)
+                return;
+            try {
+                await lifecycle.handleEvent(next.value);
+            }
+            catch (error) {
+                console.error("srobroek.beads: event handling failed", error);
+            }
+            finally {
+                deps.eventHandled?.(next.value);
+            }
+        }
+    })();
+    return async () => {
+        abort.abort();
+        await iterator.return?.();
+        heartbeats.dispose();
+        lifecycle.dispose();
+        await skills?.dispose();
+        await idleHook.dispose();
+        await forkHook?.dispose();
+        await promptHook.dispose();
+        await generate.dispose();
+        await compaction.dispose();
+        await context.dispose();
+        await after.dispose();
+        await pin.dispose();
+        await before.dispose();
+        pending.clear();
+        chains.clear();
+        await routing();
+    };
+}
+export default Plugin.define({
+    id: "srobroek.beads",
+    setup: (ctx) => setupBeads(ctx),
+});

@@ -1,0 +1,346 @@
+import { describe, expect, test } from "bun:test";
+import { render, summarise } from "./format.ts";
+import { NOTES_HINT } from "./notes.ts";
+import { Parley, settingsFrom } from "./service.ts";
+import { BUILTIN } from "./takeover.ts";
+import { opened } from "./test-wait.ts";
+const settings = { fallback: "none", questionTool: "takeover", disabled: false, heartbeatWindowMs: 30_000 };
+const questions = [
+    { id: "auth.storage", title: "Storage", kind: "pick_one", options: [{ id: "sqlite", label: "SQLite" }, { id: "pg", label: "Postgres" }], recommended: "sqlite" },
+    { id: "auth.ttl", title: "TTL", kind: "slider", min: 0, max: 60, recommended: 30 },
+];
+function setup(overrides = {}, questionTool) {
+    const events = [];
+    const service = new Parley({
+        settings: { ...settings, ...overrides },
+        emit: async (event) => {
+            events.push(event);
+        },
+        ...(questionTool ? { questionTool: async () => questionTool } : {}),
+    });
+    return { service, events };
+}
+describe("settingsFrom", () => {
+    test("reads options and env", () => {
+        expect(settingsFrom({ fallback: "question" }, {})).toMatchObject({ fallback: "question", disabled: false });
+        expect(settingsFrom({}, { PARLEY_DISABLE: "1" }).disabled).toBe(true);
+        expect(settingsFrom({ heartbeat_window_s: 5 }, {}).heartbeatWindowMs).toBe(5000);
+    });
+});
+describe("Parley", () => {
+    test("returns unavailable at once without an attached TUI", async () => {
+        const { service, events } = setup();
+        const started = Date.now();
+        const { result } = await service.ask({ questions }, { sessionID: "s" });
+        expect(result).toMatchObject({ status: "unavailable", reason: "no_tui" });
+        expect(Date.now() - started).toBeLessThan(100);
+        expect(events).toEqual([]);
+        expect((await setup({ disabled: true }).service.ask({ questions }, { sessionID: "s" })).result.reason).toBe("disabled");
+    });
+    test("round trip through attach, pending and submit with ids preserved", async () => {
+        const { service, events } = setup();
+        service.attach({ clientID: "tui" });
+        const progress = [];
+        const asking = service.ask({ questions, title: "Auth" }, { sessionID: "s", progress: async (update) => void progress.push(update) });
+        await opened(service);
+        expect(events[0]).toMatchObject({ sessionID: "s", action: "opened" });
+        const [round] = service.pending({ sessionID: "s" }).rounds;
+        if (!round)
+            throw new Error("no pending round");
+        expect(round.questions.map((q) => q.id)).toEqual(["auth.storage", "auth.ttl"]);
+        expect((await service.submit({
+            roundID: round.roundID,
+            answers: [
+                { id: "auth.storage", status: "answered", value: { selected: "pg" }, note: "only for v1" },
+                { id: "auth.ttl", status: "deferred", note: "ask ops" },
+            ],
+        })).ok).toBe(true);
+        const { result, questions: asked } = await asking;
+        expect(result).toMatchObject({ status: "submitted", round: 1, channel: "tui", pending: [] });
+        expect(result.answers).toEqual([
+            { id: "auth.storage", status: "answered", value: { selected: "pg" }, accepted_recommendation: false, note: "only for v1" },
+            { id: "auth.ttl", status: "deferred", note: "ask ops" },
+        ]);
+        expect(events.at(-1)).toMatchObject({ action: "closed", status: "submitted" });
+        expect(progress.at(-1)).toEqual({ round: 1, answered: 2, total: 2 });
+        expect(summarise(result, asked)).toContain("Q1 auth.storage [answered] → Postgres (note: only for v1)");
+    });
+    test("abort cancels the round in the UI", async () => {
+        const { service, events } = setup();
+        service.attach({ clientID: "tui" });
+        const controller = new AbortController();
+        const asking = service.ask({ questions }, { sessionID: "s", signal: controller.signal });
+        await opened(service);
+        controller.abort();
+        const { result } = await asking;
+        expect(result).toMatchObject({ status: "cancelled", reason: "aborted" });
+        expect(events.at(-1)).toMatchObject({ action: "closed", status: "cancelled", reason: "aborted" });
+        expect(service.pending({}).rounds).toEqual([]);
+    });
+    test("wait none returns at once and parley_wait picks the answers up", async () => {
+        const { service } = setup();
+        service.attach({ clientID: "tui" });
+        const first = await service.ask({ questions, wait: "none" }, { sessionID: "s" });
+        expect(first.result.status).toBe("open");
+        expect(service.pending({}).rounds[0]?.deadline).toBeUndefined();
+        // wait() extends the deadline before its first await, so the deadline is readable at once.
+        const waiting = service.wait({}, { sessionID: "s" });
+        const roundID = service.pending({}).rounds[0]?.roundID ?? "";
+        expect(service.pending({}).rounds[0]?.deadline).toBeGreaterThan(Date.now());
+        await service.submit({ roundID, answers: [{ id: "auth.storage", status: "accepted" }] });
+        const { result } = await waiting;
+        expect(result).toMatchObject({ status: "submitted", pending: ["auth.ttl"] });
+        expect(result.answers[0]).toMatchObject({ id: "auth.storage", status: "accepted", value: { selected: "sqlite" } });
+        expect((await service.wait({}, { sessionID: "other" })).result.status).toBe("none");
+    });
+    test("a timeout closes the round, tells the TUI and returns timeout", async () => {
+        const { service, events } = setup();
+        service.attach({ clientID: "tui" });
+        const asking = service.ask({ questions, timeout_s: "0.02" }, { sessionID: "s" });
+        await opened(service);
+        expect(service.pending({}).rounds[0]?.deadline).toBeGreaterThan(Date.now() - 5);
+        const { result } = await asking;
+        expect(result).toMatchObject({ status: "timeout", reason: "timeout", pending: ["auth.storage", "auth.ttl"] });
+        expect(service.pending({}).rounds).toEqual([]);
+        expect(events.at(-1)).toMatchObject({ action: "closed", status: "timeout", reason: "timeout" });
+        expect(render(result, questions).content).toContain("did not answer in time");
+        expect((await service.wait({}, { sessionID: "s" })).result.status).toBe("timeout");
+    });
+    test("a call that times out before a longer one leaves the round open", async () => {
+        const { service } = setup();
+        service.attach({ clientID: "tui" });
+        const long = service.ask({ questions: [questions[0]], timeout_s: 5 }, { sessionID: "s" });
+        await opened(service);
+        const short = await service.ask({ questions: [questions[1]], timeout_s: 0.01 }, { sessionID: "s" });
+        expect(short.result.status).toBe("timeout");
+        const roundID = service.pending({}).rounds[0]?.roundID ?? "";
+        expect(roundID).not.toBe("");
+        await service.submit({ roundID, answers: [{ id: "auth.storage", status: "accepted" }] });
+        expect((await long).result.status).toBe("submitted");
+    });
+    test("questions asked mid-round join the open round", async () => {
+        const { service, events } = setup();
+        service.attach({ clientID: "tui" });
+        await service.ask({ questions: [questions[0]], wait: "none" }, { sessionID: "s" });
+        await service.ask({ questions: [questions[1]], wait: "none" }, { sessionID: "s" });
+        expect(events.map((event) => event.action)).toEqual(["opened", "updated"]);
+        expect(service.pending({}).rounds[0]?.questions).toHaveLength(2);
+    });
+    test("invalid questions throw", async () => {
+        const { service } = setup();
+        service.attach({ clientID: "tui" });
+        await expect(service.ask({ questions: [{ ...questions[0], recommended: "nope" }] }, { sessionID: "s" })).rejects.toThrow("unknown option");
+    });
+    test("end cancels the open round and notifies", async () => {
+        const { service, events } = setup();
+        service.attach({ clientID: "tui" });
+        await service.ask({ questions, wait: "none" }, { sessionID: "s" });
+        expect(await service.end("s", "Thanks")).toEqual({ ok: true, closed: 1 });
+        expect(events.at(-1)).toMatchObject({ action: "ended", message: "Thanks" });
+    });
+    test("user cancel returns cancelled", async () => {
+        const { service } = setup();
+        service.attach({ clientID: "tui" });
+        const asking = service.ask({ questions }, { sessionID: "s" });
+        await opened(service);
+        await service.cancel({ roundID: service.pending({}).rounds[0]?.roundID ?? "" });
+        expect((await asking).result).toMatchObject({ status: "cancelled", reason: "user_closed" });
+    });
+});
+describe("question-tool fallback", () => {
+    const choice = [questions[0], { id: "go", title: "Go?", kind: "confirm", recommended: "yes" }];
+    test("asks through the question tool when no TUI is attached", async () => {
+        let received;
+        const tool = {
+            execute: async (input) => {
+                received = input;
+                return { output: { answers: [["Postgres"], ["Yes (Recommended)"]] } };
+            },
+        };
+        const { service } = setup({ fallback: "question" }, tool);
+        const { result } = await service.ask({ questions: choice }, { sessionID: "s", tool: { id: "call" } });
+        expect(received.questions).toHaveLength(2);
+        expect(result).toMatchObject({ status: "submitted", channel: "question" });
+        expect(result.answers.map((a) => [a.id, a.status])).toEqual([
+            ["auth.storage", "answered"],
+            ["go", "accepted"],
+        ]);
+    });
+    test("maps a dismissal to cancelled", async () => {
+        const tool = {
+            execute: async () => {
+                throw new Error("The user dismissed this question");
+            },
+        };
+        const { result } = await setup({ fallback: "question" }, tool).service.ask({ questions: choice }, { sessionID: "s" });
+        expect(result).toMatchObject({ status: "cancelled", reason: "dismissed" });
+    });
+    test("unsupported kinds stay unavailable", async () => {
+        const tool = { execute: async () => ({}) };
+        const { result } = await setup({ fallback: "question" }, tool).service.ask({ questions }, { sessionID: "s" });
+        expect(result.status).toBe("unavailable");
+        expect(result.reason).toContain("auth.ttl");
+    });
+});
+describe("render", () => {
+    test("strips file data from output and sends it as file content", () => {
+        const { output, content } = render({
+            status: "submitted",
+            round: 1,
+            answers: [
+                { id: "shot", status: "answered", value: { files: [{ name: "a.png", mime: "image/png", size: 3, data: "aGk=" }] } },
+            ],
+            pending: [],
+        }, [{ id: "shot", title: "Shot", kind: "ask_image" }]);
+        expect(JSON.stringify(output)).not.toContain("aGk=");
+        expect(Array.isArray(content) && content[1]).toEqual({
+            type: "file",
+            uri: "data:image/png;base64,aGk=",
+            mime: "image/png",
+            name: "a.png",
+        });
+    });
+});
+describe("close", () => {
+    test("releases blocked calls", async () => {
+        const { service } = setup();
+        service.attach({ clientID: "tui" });
+        const asking = service.ask({ questions }, { sessionID: "s" });
+        await opened(service);
+        service.close();
+        expect((await asking).result).toMatchObject({ status: "cancelled", reason: "plugin_unloaded" });
+    });
+});
+describe("render uploads", () => {
+    const files = (file) => ({
+        status: "submitted",
+        answers: [{ id: "f", status: "answered", value: { files: [file] } }],
+        pending: [],
+    });
+    const question = [{ id: "f", title: "F", kind: "ask_file" }];
+    test("inlines text files", () => {
+        const { content } = render(files({ name: "n.txt", mime: "text/plain;charset=utf-8", size: 2, data: "aGk=" }), question);
+        expect(content).toContain("--- f: n.txt ---\nhi");
+    });
+    test("hands other files to save", () => {
+        const { content } = render(files({ name: "a.bin", mime: "application/zip", size: 2, data: "aGk=" }), question, () => "/tmp/a.bin");
+        expect(content).toContain("saved to /tmp/a.bin");
+    });
+});
+describe("question takeover", () => {
+    const prompts = [
+        {
+            question: "Which database?",
+            header: "Database",
+            options: [
+                { label: "SQLite (Recommended)", description: "Embedded" },
+                { label: "Postgres", description: "Server" },
+            ],
+        },
+    ];
+    test("leaves the call to the built-in tool without a heartbeat, or when off", async () => {
+        const { service, events } = setup();
+        expect(await service.takeover({ questions: prompts }, { sessionID: "s" })).toBe(BUILTIN);
+        expect(service.takeoverWanted()).toBe(false);
+        const off = setup({ questionTool: "off" }).service;
+        off.attach({ clientID: "tui" });
+        expect(await off.takeover({ questions: prompts }, { sessionID: "s" })).toBe(BUILTIN);
+        expect(off.takeoverWanted()).toBe(false);
+        expect(events).toEqual([]);
+    });
+    test("runs the call as a parley round and answers in the native shape", async () => {
+        const { service, events } = setup();
+        service.attach({ clientID: "tui" });
+        expect(service.takeoverWanted()).toBe(true);
+        const asking = service.takeover({ questions: prompts }, { sessionID: "s" });
+        await opened(service);
+        expect(events[0]).toMatchObject({ action: "opened" });
+        const [round] = service.pending({ sessionID: "s" }).rounds;
+        expect(round?.questions[0]).toMatchObject({ id: "q1", kind: "pick_one", recommended: "o1" });
+        await service.submit({
+            roundID: round?.roundID ?? "",
+            answers: [{ id: "q1", status: "accepted", note: "fine for now" }],
+        });
+        const result = (await asking);
+        expect(result?.output).toEqual({ answers: [["SQLite (Recommended)"]] });
+        expect(result?.content).toBe(`User has answered your questions: "Which database?"="SQLite (Recommended)". You can now continue with the user's answers in mind.\nNote on "Which database?": fine for now\n${NOTES_HINT}`);
+    });
+    test("a dismissed round goes to the built-in tool, whose form the TUI cancels", async () => {
+        const { service } = setup();
+        service.attach({ clientID: "tui" });
+        const asking = service.takeover({ questions: prompts }, { sessionID: "s", callID: "call_1" });
+        await opened(service);
+        const [round] = service.pending({}).rounds;
+        expect(round?.callIDs).toEqual(["call_1"]);
+        await service.cancel({ roundID: round?.roundID ?? "" });
+        expect(await asking).toBe(BUILTIN);
+    });
+    test("tells an attached TUI when a call goes to the built-in tool", async () => {
+        const { service, events } = setup();
+        await service.handedToBuiltin("s", "call_1");
+        expect(events).toEqual([]);
+        service.attach({ clientID: "tui" });
+        await service.handedToBuiltin("s", "call_1");
+        expect(events).toEqual([{ sessionID: "s", roundID: "", action: "native", callID: "call_1" }]);
+    });
+    test("any other cancellation fails the call", async () => {
+        const { service } = setup();
+        service.attach({ clientID: "tui" });
+        const asking = service.takeover({ questions: prompts }, { sessionID: "s" });
+        await opened(service);
+        await service.end("s");
+        await expect(asking).rejects.toThrow("cancelled before the user answered (ended)");
+    });
+    test("parley_ask rounds carry no call ids", async () => {
+        const { service } = setup();
+        service.attach({ clientID: "tui" });
+        void service.ask({ questions: [{ id: "a", title: "A", kind: "ask_text" }] }, { sessionID: "s", callID: "call_2" });
+        await opened(service);
+        expect(service.pending({}).rounds[0]?.callIDs).toBeUndefined();
+    });
+    test("calls parley cannot map go to the built-in tool", async () => {
+        const { service } = setup();
+        service.attach({ clientID: "tui" });
+        const single = [{ ...prompts[0], options: [{ label: "Only", description: "" }] }];
+        expect(await service.takeover({ questions: single }, { sessionID: "s" })).toBe(BUILTIN);
+    });
+});
+describe("round ownership", () => {
+    const prompts = [
+        { question: "Which database?", header: "Database", options: [{ label: "SQLite (Recommended)", description: "Embedded" }, { label: "Postgres", description: "Server" }] },
+    ];
+    async function open(warn) {
+        const events = [];
+        const service = new Parley({ settings, emit: async (e) => void events.push(e), deliver: async () => { }, ...(warn ? { warn } : {}) });
+        service.attach({ clientID: "tui" });
+        const asking = service.takeover({ questions: prompts }, { sessionID: "s1" });
+        await opened(service);
+        const [round] = service.pending({ sessionID: "s1" }).rounds;
+        return { service, asking, roundID: round?.roundID ?? "" };
+    }
+    const answers = [{ id: "q1", status: "accepted" }];
+    test("a submit from another session is rejected and leaves the round open and unanswered", async () => {
+        const { service, roundID } = await open();
+        const out = await service.submit({ roundID, sessionID: "s2", answers });
+        expect(out).toEqual({ ok: false, errors: [`round ${roundID} belongs to another session`] });
+        expect(service.pending({ sessionID: "s1" }).rounds).toHaveLength(1);
+        expect(service.rounds.get(roundID)).toMatchObject({ status: "open", answers: new Map() });
+    });
+    test("a submit from the owning session succeeds", async () => {
+        const { service, roundID, asking } = await open();
+        expect((await service.submit({ roundID, sessionID: "s1", answers })).ok).toBe(true);
+        expect(await asking).not.toBe(BUILTIN);
+    });
+    test("a deliver for another session's round is rejected", async () => {
+        const { service, roundID } = await open();
+        const out = await service.deliver({ sessionID: "s2", roundID, questions: [], answers: [] });
+        expect(out).toEqual({ ok: false, errors: [`round ${roundID} belongs to another session`] });
+    });
+    test("a submit without a session id is accepted with one warning", async () => {
+        const warnings = [];
+        const { service, roundID } = await open((m) => void warnings.push(m));
+        expect((await service.submit({ roundID, answers, final: false })).ok).toBe(true);
+        await service.submit({ roundID, answers, final: false });
+        expect(warnings).toHaveLength(1);
+    });
+});

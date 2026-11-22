@@ -1,11 +1,11 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { spawnSync } from "node:child_process"
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { untrustedLocalGitEnv } from "@srobroek/opencode-lib/safe-git"
 import { type GuardID, hardGate } from "./guards.ts"
-import { gitRemoteResolver, hostOf, pushVia, type RemoteResolver, readPushVia } from "./push-via.ts"
+import { hostOf, pushVia, type RemoteResolver, readPushVia } from "./push-via.ts"
 import { walkShell } from "./shell.ts"
 
 // Real-git tests spawn `git init`, `git remote` and `git config`; each case takes well under 1 s locally.
@@ -44,22 +44,14 @@ describe("hostOf", () => {
   })
 })
 
-describe("pushVia refuses a plain git push to the host", () => {
+describe("pushVia refuses a literal git push to the host", () => {
   test.each([
     ["bare push", "git push"],
     ["named remote", "git push origin main"],
     ["options before the remote", "git push -u --force-with-lease origin HEAD"],
     ["-C directory", "git -C /elsewhere push"],
-    ["env assignment prefix", "GIT_TERMINAL_PROMPT=0 git push origin"],
-    ["env wrapper", "env FOO=1 git push"],
-    ["env -C directory", "env -C /via git push"],
-    ["env with an assignment and a push flag", "env FOO=1 git push -u origin"],
     ["followed by more commands", "git push && echo pushed"],
     ["followed by a pipeline stage", "git push | tail -3"],
-    ["after a leading cd", "cd sub && git push origin main"],
-    ["path to git", "/usr/bin/git push"],
-    ["an unrelated -c override", "git -c user.name=a -c core.pager=cat push"],
-    ["a $HOME path", "git -C $HOME/repo push"],
   ])("%s", (_name, source) => {
     expect(run(source)).toBeDefined()
   })
@@ -69,8 +61,6 @@ describe("pushVia refuses a plain git push to the host", () => {
     ["git push", "/work/repo"],
     ["git -C sub push", "/work/repo/sub"],
     ["git -C /a -C b push", "/a/b"],
-    ["env -C /via git push", "/via"],
-    ["cd sub && git push", "/work/repo"],
   ])("%s runs in %s", (source, dir) => {
     expect(run(source)).toBe(dir)
   })
@@ -96,7 +86,7 @@ describe("pushVia allows", () => {
     expect(run(source)).toBeUndefined()
   })
 
-  test("a remote on another host", () => {
+  test("a literal push to another host", () => {
     expect(run("git push origin", at(GITLAB))).toBeUndefined()
   })
 
@@ -119,10 +109,6 @@ describe("pushVia allows", () => {
     expect(run("git push", boom)).toBeUndefined()
   })
 
-  test("--git-dir, whose repository this reader cannot place", () => {
-    expect(run("git --git-dir=/x/.git push")).toBeUndefined()
-  })
-
   test.each([
     ["-h", "git push -h"],
     ["--help", "git push --help"],
@@ -130,116 +116,52 @@ describe("pushVia allows", () => {
   ])("a help-only call (%s)", (_name, source) => {
     expect(run(source)).toBeUndefined()
   })
+})
 
+// By the user's decision the guard judges only a literal first `git push`; each of these shapes fails open
+// even though the resolver would place the remote on the host.
+describe("pushVia fails open for anything but a literal first git push", () => {
   test.each([
-    ["a quoted leading cd", "cd 'sub' && git push"],
-    ["a double-quoted leading cd", 'cd "sub" && git push'],
-    ["a leading cd to a variable", "cd $DIR && git push"],
-    ["a leading cd to a home path", "cd ~/x && git push"],
-    ["cd then push", "cd sub; git push"],
-    ["pushd", "pushd sub && git push"],
-    ["popd", "popd; git push"],
-    ["a subshell cd", "(cd sub && git push)"],
-    ["a nested shell after cd", "cd sub; bash -c 'git push'"],
-    ["a wrapper directory around a nested shell", "env -C /elsewhere bash -c 'git push'"],
-  ])("a directory the leading cd rule cannot place (%s) fails open", (_name, source) => {
-    expect(run(source)).toBeUndefined()
-  })
-
-  test.each([
-    ["a read-only builtin", "echo hi; git push"],
-    ["a true", "true && git push"],
-    ["a commit (hooks run)", "git add -A && git commit -m x && git push"],
-    ["a status", "git status && git push"],
-    ["fetch --set-upstream (moves the push destination)", "git fetch --set-upstream origin main && git push"],
-    ["a redirect that rewrites config", "printf '[remote \"origin\"]' > .git/config; git push"],
-    ["an append that rewrites config", "echo x >> .git/config && git push"],
-    ["reset", "git reset --hard && git push"],
-    ["restore", "git restore . && git push"],
-    ["stash", "git stash && git push"],
-    ["a remote rewritten", `git remote set-url origin ${GITLAB} && git push`],
-    ["a remote added", `git remote add lab ${GITLAB}; git push lab`],
-    ["a branch created", "git checkout -b topic && git push"],
-    ["config set", "git config remote.pushDefault lab && git push"],
-    ["a build", "bun run build && git push"],
-    ["a script run by a shell", "bash script.sh; git push"],
-    ["a cd after the leading cd", "cd a && cd b && git push"],
-  ])("an earlier command (%s) fails open", (_name, source) => {
-    expect(run(source)).toBeUndefined()
-  })
-
-  test.each([
-    ["a nested shell script", "bash -c 'git push origin'"],
-    ["a command substitution", "echo $(git push)"],
-    ["a substitution elsewhere in the call", "git push && echo $(date)"],
-    ["a remote removed in a substitution", "echo $(git remote remove origin); git push"],
-    ["an eval", "eval 'git push'"],
-  ])("a nested or substituted command (%s) fails open", (_name, source) => {
-    expect(run(source)).toBeUndefined()
-  })
-
-  test.each([
-    ["stderr redirected", "git push 2>&1"],
-    ["stdout redirected", "git push > /tmp/log"],
-    ["stdin redirected", "git push < /dev/null"],
-  ])("a redirect on the push itself (%s) fails open", (_name, source) => {
-    expect(run(source)).toBeUndefined()
-  })
-
-  test.each([
-    ["-u", "env -u XDG_CONFIG_HOME git push"],
-    ["-u HOME", "env -u HOME git push origin"],
-    ["--unset", "env --unset=GIT_DIR git push"],
-    ["-i", "env -i PATH=/usr/bin git push"],
-    ["--ignore-environment", "env --ignore-environment git push"],
-    ["a path to env", "/usr/bin/env -u HOME git push"],
-    ["a cluster", "env -iC /x git push"],
-  ])("an env wrapper that unsets variables (%s) fails open", (_name, source) => {
-    expect(run(source)).toBeUndefined()
-  })
-
-  test.each([
-    ["a dotdot after a link", "git -C link/.. push"],
-    ["a leading dotdot", "git -C ../other push"],
-    ["a dotdot in a second -C", "git -C /work/repo -C sub/../x push"],
-    ["a wrapper directory with dotdot", "env -C /a/../b git push"],
-  ])("a directory operand with .. (%s) fails open", (_name, source) => {
-    expect(run(source)).toBeUndefined()
-  })
-
-  test.each([
-    ["GIT_DIR assignment", "GIT_DIR=/x/.git git push"],
-    ["GIT_WORK_TREE assignment", "GIT_WORK_TREE=/x git push"],
-    ["GIT_COMMON_DIR assignment", "GIT_COMMON_DIR=/x git push"],
-    ["env wrapper", "env GIT_DIR=/x/.git git push"],
-    ["an export", "export GIT_DIR=/x/.git; git push"],
+    ["env wrapper", "env FOO=1 git push"],
+    ["env -C", "env -C /via git push"],
+    ["env -u", "env -u HOME git push"],
+    ["env -i", "env -i PATH=/usr/bin git push"],
+    ["exec", "exec git push"],
+    ["command", "command git push"],
+    ["nohup", "nohup git push"],
+    ["sudo", "sudo git push"],
+    ["doas", "doas git push"],
+    ["inline assignment", "GIT_TERMINAL_PROMPT=0 git push origin"],
+    ["HOME assignment", "HOME=/x git push"],
+    ["quoted env control", "'HOME'=/x git push"],
+    ["quoted command word", "'git' push"],
+    ["quoted subcommand", 'git "push"'],
+    ["escaped word", "git pu\\sh"],
+    ["path to git", "/usr/bin/git push"],
+    ["variable in a directory", "git -C $HOME/repo push"],
+    ["variable in the remote", "git push $REMOTE"],
+    ["tilde directory", "git -C ~/repo push"],
+    ["glob remote", "git push or*"],
+    ["command substitution", "git push $(echo origin)"],
+    ["backtick substitution", "git push `echo origin`"],
+    ["a substitution elsewhere", "echo $(git push)"],
+    ["-c override", "git -c remote.origin.url=x push"],
+    ["--config-env", "git --config-env=remote.origin.url=X push"],
     ["--git-dir", "git --git-dir=/x/.git push"],
     ["--work-tree", "git --work-tree /x push"],
-  ])("a repository selector (%s) fails open", (_name, source) => {
-    expect(run(source)).toBeUndefined()
-  })
-
-  test.each([
-    ["-c remote url", `git -c remote.origin.url=${GITLAB} push`],
-    ["-c include.path", "git -c include.path=/x/extra.cfg push"],
-    ["-c includeIf", "git -c includeIf.gitdir:/work/.path=/x/extra.cfg push"],
-    ["--config-env include.path", "git --config-env=include.path=EXTRA push"],
-    ["--config-env includeIf", "git --config-env includeIf.gitdir:/work/.path=EXTRA push"],
-    ["HOME assignment", "HOME=/x git push"],
-    ["XDG_CONFIG_HOME assignment", "XDG_CONFIG_HOME=/x git push"],
-    ["HOME through env", "env HOME=/x git push"],
-    ["HOME export", "export HOME=/x; git push"],
-    ["XDG_CONFIG_HOME export", "export XDG_CONFIG_HOME=/x && git push"],
-    ["-c remote pushurl", `git -c remote.origin.pushurl=${GITLAB} push origin`],
-    ["-c url insteadOf", "git -c url.https://gitlab.example.com/.insteadOf=https://github.com/ push"],
-    ["-c url pushInsteadOf", "git -c url.x.pushInsteadOf=y push"],
-    ["-c remote.pushDefault", "git -c remote.pushDefault=mirror push"],
-    ["-c uppercase key", "git -c Remote.Origin.URL=x push"],
-    ["--config-env remote url", "git --config-env=remote.origin.url=MIRROR push"],
-    ["--config-env split", "git --config-env remote.origin.url=MIRROR push"],
-    ["GIT_CONFIG_COUNT", "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.url GIT_CONFIG_VALUE_0=x git push"],
-    ["GIT_CONFIG_PARAMETERS", "GIT_CONFIG_PARAMETERS=x git push"],
-  ])("a config override that can move the destination (%s) fails open", (_name, source) => {
+    ["-C with ..", "git -C link/.. push"],
+    ["-C without a value", "git -C"],
+    ["redirect on the push", "git push 2>&1"],
+    ["subshell", "(git push)"],
+    ["brace group", "{ git push; }"],
+    ["negation", "! git push"],
+    ["nested shell", "bash -c 'git push origin'"],
+    ["eval", "eval 'git push'"],
+    ["a leading cd", "cd sub && git push"],
+    ["an earlier command", "echo hi; git push"],
+    ["an earlier commit", "git add -A && git commit -m x && git push"],
+    ["an export", "export GIT_DIR=/x/.git; git push"],
+  ])("%s", (_name, source) => {
     expect(run(source)).toBeUndefined()
   })
 })
@@ -410,42 +332,6 @@ describe("default resolver with real git", () => {
       GITLAB,
       (dir) => git(dir, "config", "url.https://gitlab.example.com/.pushInsteadOf", "https://github.com/"),
       (dir) => expect(guardOf(dir, "git push https://github.com/a/b.git")).toBeUndefined(),
-    )
-  })
-
-  // The system config is root-owned and trusted, and the real push reads it, so the resolver does too
-  // (repository config stays hardened by the command-line overrides). GIT_CONFIG_SYSTEM only relocates it for the test.
-  const withSystemConfig = (check: (dir: string, resolver: ReturnType<typeof gitRemoteResolver>) => void) => {
-    const file = join(home, "system.gitconfig")
-    writeFileSync(file, '[url "https://gitlab.example.com/"]\n\tpushInsteadOf = https://github.com/\n')
-    try {
-      withRepo(
-        GITHUB,
-        () => {},
-        (dir) =>
-          check(dir, gitRemoteResolver({ PATH: Bun.env.PATH, HOME: home, XDG_CONFIG_HOME: home }, { GIT_CONFIG_SYSTEM: file })),
-      )
-    } finally {
-      rmSync(file)
-    }
-  }
-
-  test("a system pushInsteadOf rule applies to a remote name", () => {
-    withSystemConfig((dir, resolver) => expect(resolver(dir, "origin")?.map(hostOf)).toEqual(["gitlab.example.com"]))
-  })
-
-  test("a system pushInsteadOf rule makes an explicit URL unknown", () => {
-    withSystemConfig((dir, resolver) => expect(resolver(dir, "https://github.com/a/b.git")).toBeUndefined())
-  })
-
-  test("without a system rule the same remote resolves to the host", () => {
-    withRepo(
-      GITHUB,
-      () => {},
-      (dir) =>
-        expect(
-          gitRemoteResolver({ PATH: Bun.env.PATH, HOME: home, XDG_CONFIG_HOME: home })(dir, "origin")?.map(hostOf),
-        ).toEqual(["github.com"]),
     )
   })
 

@@ -1,0 +1,55 @@
+import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
+import { applyOwnedAgent, isCopyOf } from "@srobroek/opencode-lib/agent-fallback";
+import { permissionEffect, readAgentFile } from "@srobroek/opencode-lib/agent-files";
+import { createFakeContext } from "@srobroek/opencode-lib/testing";
+import plugin, { AGENTS_DIR, RESEARCHER } from "./index.ts";
+const file = readAgentFile(join(AGENTS_DIR, `${RESEARCHER}.md`));
+describe("researcher agent", () => {
+    test("registers researcher and disposes it", async () => {
+        const fake = createFakeContext();
+        const cleanup = await plugin.setup(fake.context);
+        expect(fake.skills.size).toBe(0);
+        expect(fake.agents.get(RESEARCHER)).toMatchObject({
+            mode: "subagent",
+            request: { headers: { "x-opencode-model-role": "standard" } },
+        });
+        expect(fake.agents.get(RESEARCHER)?.model).toBeUndefined();
+        await cleanup?.();
+        expect(fake.active()).toBe(0);
+    });
+    test("allows web and code reads and only explore as a child", async () => {
+        const fake = createFakeContext();
+        await plugin.setup(fake.context);
+        const rules = fake.agents.get(RESEARCHER)?.permissions;
+        for (const action of ["read", "grep", "glob", "execute", "lsp_hover", "webfetch", "websearch", "shell", "repomix_pack"])
+            expect(permissionEffect(rules, action)).toBe("allow");
+        expect(permissionEffect(rules, "skill", "repomix")).toBe("allow");
+        for (const skill of ["lang-rust", "quality-code-design"])
+            expect(permissionEffect(rules, "skill", skill)).toBe("allow");
+        for (const skill of ["beads-guide", "chezmoi-editor"])
+            expect(permissionEffect(rules, "skill", skill)).toBe("deny");
+        for (const action of ["edit", "write", "question", "some_plugin_tool"])
+            expect(permissionEffect(rules, action)).toBe("deny");
+        expect(permissionEffect(rules, "subagent", "explore")).toBe("allow");
+        for (const child of ["general", "implementer", "researcher"])
+            expect(permissionEffect(rules, "subagent", child)).toBe("deny");
+        expect(permissionEffect(rules, "external_directory")).toBe("ask");
+    });
+    test("the prompt is bead-aware but not bead-only", () => {
+        expect(file.system).toContain('bd comment ID "FINDING"');
+        expect(file.system).toContain("If it names no bead, the brief's question is the scope");
+        expect(file.system).toContain("VERDICT: DONE|BLOCKED");
+    });
+});
+describe("shared agent copies", () => {
+    test("another plugin's researcher keeps its fields and gains these permissions after its own", () => {
+        const own = { action: "edit", resource: "*", effect: "allow" };
+        const draft = { system: "mine", permissions: [own] };
+        expect(isCopyOf(draft, file)).toBe(false);
+        applyOwnedAgent(draft, file, { ...draft });
+        expect(draft.system).toBe("mine");
+        expect(draft.permissions[0]).toEqual(own);
+        expect(draft.permissions.slice(1)).toEqual(file.permissions);
+    });
+});

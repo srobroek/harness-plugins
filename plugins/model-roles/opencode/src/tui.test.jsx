@@ -1,0 +1,686 @@
+import { describe, expect, test } from "bun:test";
+import tui from "./tui.tsx";
+const ESC = Symbol("esc");
+const key = (bind, on) => ({ trigger: bind, on });
+const models = [
+    { ref: "a/one", variants: ["low", "high"] },
+    { ref: "b/two", variants: [] },
+    { ref: "c/three", variants: [] },
+];
+const tier = (name, configured) => ({
+    name,
+    builtin: true,
+    source: "derived",
+    purpose: `${name} things`,
+    distinctVendor: false,
+    cost: "",
+    candidates: [],
+    resolved: "a/one",
+    ...(configured === undefined ? {} : { configured }),
+});
+function harness(script, opts = {}) {
+    const saved = {};
+    const setCalls = [];
+    const agentCalls = [];
+    const savedAgents = {};
+    const stateCalls = [];
+    const toasts = [];
+    let unseenFindings = [...(opts.findings ?? [])];
+    const seenCalls = [];
+    const seen = [];
+    let pending;
+    const queue = [...script];
+    const next = async (o) => {
+        seen.push(o);
+        const step = queue.shift();
+        if (step === undefined)
+            throw new Error(`unscripted dialog: ${o.title}`);
+        const result = step(o);
+        if (typeof result === "object" && result !== null && "trigger" in result) {
+            const { trigger, on } = result;
+            const action = o.actions?.find((a) => a.bind === trigger);
+            if (action === undefined)
+                throw new Error(`no action ${trigger}`);
+            const closed = new Promise((resolve) => {
+                pending = resolve;
+            });
+            action.onTrigger(on);
+            return closed;
+        }
+        return result === ESC ? undefined : result;
+    };
+    const dialog = {
+        select: (o) => next(o),
+        prompt: (o) => next(o),
+        confirm: (o) => next(o),
+        alert: (o) => next(o),
+        clear: () => pending?.(undefined),
+    };
+    const rpc = {
+        state: async (input) => {
+            stateCalls.push(input);
+            const tiers = [tier("cheap", saved.cheap), tier("strong", saved.strong)].map((t) => {
+                const d = input.draft?.[t.name];
+                return d === undefined ? t : { ...t, resolved: d === null ? "auto/default" : `draft:${JSON.stringify(d)}` };
+            });
+            const agentRow = (id, fallback) => {
+                const tierName = savedAgents[id] ?? fallback?.tier;
+                const source = savedAgents[id] === undefined ? fallback?.source : "options";
+                return tierName === undefined ? { id } : { id, tier: tierName, source, resolved: "a/one#high" };
+            };
+            const agents = [agentRow("build", { tier: "strong", source: "header" }), agentRow("plan")];
+            return { tiers, models, agents, config: "/cfg", ...(opts.project === undefined ? {} : { agentConfig: { origin: "project", path: opts.project } }) };
+        },
+        usage: async () => opts.usage ?? { days: 90, tiers: [] },
+        findings: async () => ({ findings: unseenFindings }),
+        seen: async (input) => {
+            seenCalls.push(`${input.tier}/${input.agent}`);
+            unseenFindings = unseenFindings.filter((f) => !(f.tier === input.tier && f.agent === input.agent));
+            return {};
+        },
+        setAgent: async (input) => {
+            if (opts.setAgentFails !== undefined)
+                throw new Error(opts.setAgentFails);
+            agentCalls.push(input);
+            if (input.tier === null)
+                delete savedAgents[input.agent];
+            else
+                savedAgents[input.agent] = input.tier;
+            return { path: "/cfg", ...(opts.writeWarning === undefined ? {} : { warnings: [opts.writeWarning] }), ...(opts.project === undefined ? {} : { shadowedBy: opts.project }) };
+        },
+        set: async (input) => {
+            if (opts.setFails !== undefined)
+                throw new Error(opts.setFails);
+            setCalls.push(input);
+            if (input.value === null)
+                delete saved[input.tier];
+            else
+                saved[input.tier] = opts.persist?.(input.value) ?? input.value;
+            return { path: "/cfg", warnings: opts.writeWarning === undefined ? [] : [opts.writeWarning], ...(opts.project === undefined ? {} : { shadowedBy: opts.project }) };
+        },
+    };
+    let command;
+    const context = {
+        location: { directory: "/repo" },
+        client: { rpc: () => rpc },
+        data: { session: { get: () => undefined }, location: { default: () => ({ directory: "/repo" }) } },
+        ui: {
+            dialog,
+            router: { current: () => ({ type: "home" }) },
+            toast: { show: (t) => toasts.push(t) },
+            slot: (s) => {
+                // Only the command slot is rendered; the badge needs the host's renderer.
+                if (s.append === "app")
+                    s.render();
+                return () => { };
+            },
+        },
+        keymap: {
+            layer: (factory) => {
+                command = factory().commands[0]?.run;
+            },
+        },
+    };
+    const run = async () => {
+        await tui.setup(context);
+        command?.();
+        for (let i = 0; i < 200 && queue.length > 0; i++)
+            await Bun.sleep(1);
+        await Bun.sleep(5);
+        expect(queue).toHaveLength(0);
+    };
+    return { run, saved, agentCalls, setCalls, stateCalls, toasts, seen, seenCalls };
+}
+const pick = (value) => () => value;
+const esc = () => ESC;
+const titles = (o) => (o.options ?? []).map((x) => x.title);
+describe("/tiers editor", () => {
+    test("Esc in Models keeps the draft; Save writes once and the tier list reloads", async () => {
+        const h = harness([
+            pick("strong"),
+            pick("models"),
+            pick("b/two"), // toggle
+            pick("a/one"), // toggle
+            esc, // back to the tier menu, draft kept
+            (o) => {
+                expect(o.title).toBe("Tier strong");
+                expect(o.options?.find((x) => x.value === "models")).toMatchObject({ description: "b/two, a/one" });
+                return "save";
+            },
+            (o) => {
+                expect(o.title).toBe("Model tiers"); // list reloaded after the save
+                return ESC;
+            },
+        ]);
+        await h.run();
+        expect(h.setCalls).toEqual([{ tier: "strong", value: { model: ["b/two", "a/one"] } }]);
+        expect(h.toasts.at(-1)?.variant).toBe("success");
+        expect(h.stateCalls.length).toBeGreaterThanOrEqual(2);
+    });
+    test("after Save the tier is reopened from the reloaded state, not the draft", async () => {
+        // The server stores what it normalised: an extra effort the draft never had.
+        const h = harness([
+            pick("strong"),
+            pick("models"),
+            pick("a/one"),
+            () => key("ctrl+e", "a/one"),
+            pick("high"),
+            esc,
+            pick("save"),
+            pick("strong"), // reopen the saved tier
+            (o) => {
+                expect(o.options?.find((x) => x.value === "models")).toMatchObject({ description: "a/one#high" });
+                expect(o.options?.find((x) => x.value === "effort")).toMatchObject({ description: "max" });
+                return "models";
+            },
+            (o) => {
+                expect(titles(o)[0]).toBe("☑ 1. a/one#high");
+                return ESC;
+            },
+            esc,
+            esc,
+        ], { persist: (value) => ({ ...value, effort: "max" }) });
+        await h.run();
+        expect(h.setCalls).toHaveLength(1);
+    });
+    test("Reset then a change still asks before discarding, and previews the draft", async () => {
+        let asked = false;
+        const h = harness([
+            pick("strong"),
+            pick("reset"),
+            pick("models"),
+            pick("b/two"),
+            esc,
+            esc, // Esc at the menu with a change after Reset
+            () => {
+                asked = true;
+                return true;
+            },
+            esc,
+        ]);
+        await h.run();
+        expect(asked).toBe(true);
+        expect(h.setCalls).toEqual([]);
+        expect(h.stateCalls).toContainEqual({ draft: { strong: { model: ["b/two"] } } });
+    });
+    test("two tiers edited in one session start fresh each time", async () => {
+        const h = harness([
+            pick("cheap"),
+            pick("models"),
+            pick("b/two"),
+            esc,
+            pick("save"),
+            pick("strong"),
+            (o) => {
+                expect(o.options?.find((x) => x.value === "models")).toMatchObject({ description: "auto: none" });
+                return "models";
+            },
+            (o) => {
+                expect(titles(o)[0]).toBe("☐ a/one"); // nothing carried over from cheap
+                return pick("c/three")(o);
+            },
+            esc,
+            pick("save"),
+            esc,
+        ]);
+        await h.run();
+        expect(h.setCalls).toEqual([
+            { tier: "cheap", value: { model: ["b/two"] } },
+            { tier: "strong", value: { model: ["c/three"] } },
+        ]);
+    });
+    test("ctrl+e pins a variant, reopening on the same row; the preview asks the server with the draft", async () => {
+        const h = harness([
+            pick("strong"),
+            pick("models"),
+            pick("a/one"),
+            (o) => {
+                expect(o.current).toBe("a/one");
+                return key("ctrl+e", "a/one");
+            },
+            (o) => {
+                expect(o.title).toBe("a/one: variant");
+                expect(titles(o)).toEqual(["Inherit tier effort (→ nearest variant)", "low", "high"]);
+                return "high";
+            },
+            (o) => {
+                expect(titles(o)[0]).toBe("☑ 1. a/one#high");
+                expect(o.current).toBe("a/one#high");
+                return ESC;
+            },
+            (o) => {
+                expect(o.options?.find((x) => x.value === "preview")?.title).toContain('"model":["a/one#high"]');
+                return "save";
+            },
+            esc,
+        ]);
+        await h.run();
+        expect(h.setCalls).toEqual([{ tier: "strong", value: { model: ["a/one#high"] } }]);
+        expect(h.stateCalls).toContainEqual({ draft: { strong: { model: ["a/one#high"] } } });
+    });
+    test("alt+up and alt+down reorder, ctrl+s saves from the Models screen", async () => {
+        const h = harness([
+            pick("strong"),
+            pick("models"),
+            pick("a/one"),
+            pick("b/two"),
+            pick("c/three"),
+            () => key("alt+up", "c/three"),
+            () => key("alt+up", "c/three"),
+            () => key("alt+down", "a/one"),
+            (o) => {
+                expect(titles(o).slice(0, 3)).toEqual(["☑ 1. c/three", "☑ 2. b/two", "☑ 3. a/one"]);
+                return key("ctrl+s");
+            },
+            esc,
+        ]);
+        await h.run();
+        expect(h.setCalls).toEqual([{ tier: "strong", value: { model: ["c/three", "b/two", "a/one"] } }]);
+    });
+    test("Cancel with changes confirms; declining keeps editing, accepting writes nothing", async () => {
+        const h = harness([
+            pick("strong"),
+            pick("models"),
+            pick("b/two"),
+            esc,
+            pick("cancel"),
+            (o) => {
+                expect(o.title).toBe("Discard changes to strong?");
+                return false;
+            },
+            (o) => {
+                expect(o.options?.find((x) => x.value === "models")).toMatchObject({ description: "b/two" });
+                return "cancel";
+            },
+            () => true,
+            esc,
+        ]);
+        await h.run();
+        expect(h.setCalls).toEqual([]);
+    });
+    test("Esc at the tier menu without changes leaves without asking", async () => {
+        const h = harness([pick("strong"), esc, esc]);
+        await h.run();
+        expect(h.setCalls).toEqual([]);
+    });
+    test("a validation error keeps the draft at the tier menu", async () => {
+        const h = harness([
+            pick("strong"),
+            pick("models"),
+            pick("b/two"),
+            esc,
+            pick("save"),
+            (o) => {
+                expect(o.options?.find((x) => x.value === "models")).toMatchObject({ description: "b/two" });
+                return "cancel";
+            },
+            () => true,
+            esc,
+        ], { setFails: "Unknown model b/two" });
+        await h.run();
+        expect(h.toasts.some((t) => t.variant === "error" && t.message.includes("Unknown model"))).toBe(true);
+    });
+    test("effort set from the tier menu is saved with the tier", async () => {
+        const h = harness([pick("strong"), pick("effort"), pick("high"), pick("save"), esc]);
+        await h.run();
+        expect(h.setCalls).toEqual([{ tier: "strong", value: { effort: "high" } }]);
+    });
+    test("Agents lists every agent in short rows; Enter opens its details, Esc goes back to the same row", async () => {
+        const h = harness([
+            pick("\u0000agents"),
+            (o) => {
+                expect(o.title).toBe("Agents");
+                expect(o.options).toMatchObject([
+                    { title: "build", description: "strong" },
+                    { title: "plan", description: "no tier" },
+                ]);
+                return "plan";
+            },
+            (o) => {
+                expect(o.title).toBe("Agent plan");
+                expect(titles(o)).toEqual(["Tier: no tier (session model)", "From: none", "Resolves to: the session model", "Change tier…", "Back"]);
+                return ESC;
+            },
+            (o) => {
+                expect(o.current).toBe("plan");
+                return ESC;
+            },
+            esc,
+        ]);
+        await h.run();
+        expect(h.agentCalls).toEqual([]);
+    });
+    test("Change tier saves the pick, shows the refreshed details, and the list stays on the row", async () => {
+        const h = harness([
+            pick("\u0000agents"),
+            pick("plan"),
+            pick("\u0000change"),
+            (o) => {
+                expect(o.title).toBe("plan: tier");
+                expect(o.current).toBe("\u0000agent-default");
+                expect(titles(o)).toEqual(["Agent default", "cheap", "strong"]);
+                return "cheap";
+            },
+            (o) => {
+                expect(titles(o)[0]).toBe("Tier: cheap"); // refreshed after the save
+                expect(titles(o)[1]).toBe("From: your setting");
+                return pick("\u0000change")(o);
+            },
+            (o) => {
+                expect(o.current).toBe("cheap"); // the current choice is marked
+                return pick("\u0000agent-default")(o);
+            },
+            (o) => {
+                expect(titles(o)[0]).toBe("Tier: no tier (session model)");
+                return ESC;
+            },
+            (o) => {
+                expect(o.title).toBe("Agents");
+                expect(o.current).toBe("plan");
+                return ESC;
+            },
+            esc,
+        ]);
+        await h.run();
+        expect(h.agentCalls).toEqual([
+            { agent: "plan", tier: "cheap" },
+            { agent: "plan", tier: null },
+        ]);
+        expect(h.toasts.map((t) => t.variant)).toEqual(["success", "success"]);
+    });
+    test("under a project config the details say so, and Change tier warns first; Cancel writes nothing", async () => {
+        const h = harness([
+            pick("\u0000agents"),
+            pick("build"),
+            (o) => {
+                expect(titles(o).join(" ")).toContain("Project config (/p/opencode.json) holds the");
+                return pick("\u0000change")(o);
+            },
+            (o) => {
+                expect(o.title).toBe("A project config sets the agents");
+                expect(String(o.message)).toContain("will not change this project's tier");
+                return false;
+            },
+            (o) => {
+                expect(o.title).toBe("Agent build");
+                return ESC;
+            },
+            esc,
+            esc,
+        ], { project: "/p/opencode.json" });
+        await h.run();
+        expect(h.agentCalls).toEqual([]);
+    });
+    test("a shadowed save after Save to global anyway says it changed nothing here", async () => {
+        const h = harness([pick("\u0000agents"), pick("plan"), pick("\u0000change"), () => true, pick("cheap"), esc, esc, esc], { project: "/p/opencode.json" });
+        await h.run();
+        expect(h.agentCalls).toEqual([{ agent: "plan", tier: "cheap" }]);
+        expect(h.toasts).toHaveLength(1);
+        expect(h.toasts[0]?.message).toContain("/p/opencode.json overrides it here");
+        expect(h.toasts[0]?.message).not.toContain("applied");
+    });
+    test("under a project config the tier list marks the tiers as shadowed", async () => {
+        const h = harness([
+            (o) => {
+                expect(String(o.placeholder)).toContain("/p/opencode.json");
+                expect(o.options.find((x) => x.title === "cheap")?.description).toContain("overridden by the project config");
+                return ESC;
+            },
+        ], { project: "/p/opencode.json" });
+        await h.run();
+    });
+    test("Save of a shadowed tier warns first; Cancel writes nothing", async () => {
+        const h = harness([
+            pick("strong"),
+            pick("models"),
+            pick("b/two"),
+            esc,
+            pick("save"),
+            (o) => {
+                expect(o.title).toBe("A project config sets the tiers");
+                expect(String(o.message)).toContain("will not change this project's tiers");
+                return false;
+            },
+            pick("cancel"),
+            () => true, // discard
+            esc,
+        ], { project: "/p/opencode.json" });
+        await h.run();
+        expect(h.setCalls).toEqual([]);
+        expect(h.toasts).toEqual([]);
+    });
+    test("a shadowed tier save after Save to global anyway says it changed nothing here", async () => {
+        const h = harness([pick("strong"), pick("models"), pick("b/two"), esc, pick("save"), () => true, esc], { project: "/p/opencode.json" });
+        await h.run();
+        expect(h.setCalls).toEqual([{ tier: "strong", value: { model: ["b/two"] } }]);
+        expect(h.toasts).toHaveLength(1);
+        expect(h.toasts[0]?.message).toContain("/p/opencode.json overrides it here");
+        expect(h.toasts[0]?.message).not.toContain("applied");
+    });
+    test("a write warning shows in the agent and tier save toasts", async () => {
+        const warning = "written; durability unconfirmed (EIO)";
+        const a = harness([pick("\u0000agents"), pick("plan"), pick("\u0000change"), pick("cheap"), esc, esc, esc], { writeWarning: warning });
+        await a.run();
+        expect(a.toasts).toHaveLength(1);
+        expect(a.toasts[0]).toMatchObject({ variant: "info" });
+        expect(a.toasts[0]?.message).toContain(warning);
+        const t = harness([pick("strong"), pick("models"), pick("b/two"), esc, pick("save"), esc], { writeWarning: warning });
+        await t.run();
+        expect(t.toasts[0]?.message).toContain(warning);
+    });
+    test("Esc in the tier picker writes nothing", async () => {
+        const h = harness([pick("\u0000agents"), pick("build"), pick("\u0000change"), esc, esc, esc, esc]);
+        await h.run();
+        expect(h.agentCalls).toEqual([]);
+        expect(h.toasts).toEqual([]);
+    });
+    test("an ambiguous-instance refusal shows like any save error", async () => {
+        const message = "Two model-roles entries are loaded (a, b); /tiers can't tell which one to edit. Edit the config by hand or remove one entry.";
+        const h = harness([pick("\u0000agents"), pick("build"), pick("\u0000change"), pick("cheap"), esc, esc, esc], { setAgentFails: message });
+        await h.run();
+        expect(h.agentCalls).toEqual([]);
+        expect(h.toasts).toEqual([{ message: `Agent build not saved: ${message}`, variant: "error" }]);
+    });
+    test("a refused agent save shows an error and keeps the details menu", async () => {
+        const h = harness([
+            pick("\u0000agents"),
+            pick("build"),
+            pick("\u0000change"),
+            pick("cheap"),
+            (o) => {
+                expect(o.title).toBe("Agent build");
+                return ESC;
+            },
+            esc,
+            esc,
+        ], { setAgentFails: "Unknown tier" });
+        await h.run();
+        expect(h.agentCalls).toEqual([]);
+        expect(h.toasts).toEqual([{ message: "Agent build not saved: Unknown tier", variant: "error" }]);
+    });
+    test("Add a tier asks name and purpose, then the same tier menu", async () => {
+        const h = harness([pick("\u0000add"), () => "docs", () => "writing docs", pick("models"), pick("b/two"), esc, pick("save"), esc]);
+        await h.run();
+        expect(h.setCalls).toEqual([{ tier: "docs", value: { model: ["b/two"], purpose: "writing docs" } }]);
+    });
+});
+describe("/tiers usage", () => {
+    const stats = (n, succeeded, cost) => ({
+        n,
+        succeeded,
+        failed: n - succeeded,
+        interrupted: 0,
+        successRate: succeeded / n,
+        ms: { mean: 2000, p50: 2000, p90: 3000 },
+        failoverRate: 0,
+        resumes: 0,
+        ...(cost === undefined ? {} : { cost }),
+    });
+    const usage = {
+        days: 90,
+        tiers: [
+            { tier: "cheap", total: stats(4, 3, 0.5), agents: [{ agent: "explore", ...stats(3, 3, 0.4) }, { agent: "build", ...stats(1, 0) }] },
+            { tier: "strong", total: stats(1, 1, 2), agents: [{ agent: "plan", ...stats(1, 1, 2) }] },
+        ],
+    };
+    test("lists a short row per tier; Enter shows the agents as disabled rows; Esc goes back", async () => {
+        const h = harness([
+            pick("\u0000usage"),
+            (o) => {
+                expect(o.title).toBe("Usage per tier");
+                expect(o.options).toEqual([
+                    { title: "cheap", value: "cheap", description: "4 runs · 75% ok · p50 2s · ttft n/a · $0.500" },
+                    { title: "strong", value: "strong", description: "1 run · 100% ok · p50 2s · ttft n/a · $2.00" },
+                ]);
+                return "cheap";
+            },
+            (o) => {
+                expect(o.title).toBe("Usage: cheap");
+                expect(o.options).toEqual([
+                    { title: "explore", value: "explore", description: "3 runs · 100% ok · p50 2s · ttft n/a · $0.400", disabled: true },
+                    { title: "build", value: "build", description: "1 run · 0% ok · p50 2s · ttft n/a · n/a", disabled: true },
+                ]);
+                return ESC;
+            },
+            esc, // back from the tier list
+            (o) => {
+                expect(o.title).toBe("Model tiers");
+                return ESC;
+            },
+        ], { usage });
+        await h.run();
+        expect(h.setCalls).toEqual([]);
+    });
+    test("a tier with exploration arms lists them after its agents", async () => {
+        const withArms = {
+            days: 90,
+            tiers: [{ tier: "cheap", total: stats(3, 2), agents: [{ agent: "explore", ...stats(3, 2) }], arms: [{ arm: "p/m#high", ...stats(2, 2) }, { arm: "p/m#low", ...stats(1, 0) }] }],
+        };
+        const h = harness([
+            pick("\u0000usage"),
+            () => "cheap",
+            (o) => {
+                expect(o.options).toEqual([
+                    { title: "explore", value: "explore", description: "3 runs · 67% ok · p50 2s · ttft n/a · n/a", disabled: true },
+                    { title: "arm p/m#high", value: "\u0000arm:p/m#high", description: "2 runs · 100% ok · p50 2s · ttft n/a · n/a", disabled: true },
+                    { title: "arm p/m#low", value: "\u0000arm:p/m#low", description: "1 run · 0% ok · p50 2s · ttft n/a · n/a", disabled: true },
+                ]);
+                return ESC;
+            },
+            esc,
+            () => ESC,
+        ], { usage: withArms });
+        await h.run();
+    });
+    test("an empty ledger shows one disabled row", async () => {
+        const h = harness([
+            pick("\u0000usage"),
+            (o) => {
+                expect(o.options).toEqual([{ title: "No finished spawns recorded", value: "", disabled: true }]);
+                return ESC;
+            },
+            esc,
+        ]);
+        await h.run();
+    });
+    const recommend = {
+        days: 90,
+        tiers: [{ tier: "strong", total: stats(40, 30), agents: [{ agent: "coder", ...stats(40, 30) }] }],
+        assessments: [
+            { tier: "strong", agent: "coder", text: "recommend a/one#high: +8.1 pts (95% LB +5.3), cost/success $0.120 vs $0.140", assessment: { decision: "recommend", control: "a/one#low", arm: "a/one#high" }, live: "a/one#low" },
+        ],
+    };
+    test.each([
+        [true, [{ tier: "strong", value: { effort: "high" }, adopt: { agent: "coder", from: "a/one#low", to: "a/one#high" } }]],
+        [false, []],
+    ])("Adopt recommendation confirms with before and after (confirmed: %p), then writes through set", async (confirmed, calls) => {
+        const h = harness([
+            pick("\u0000usage"),
+            pick("strong"),
+            (o) => {
+                expect(o.options?.at(-1)).toEqual({ title: "Adopt recommendation (coder)", value: "\u0000adopt:coder", description: recommend.assessments[0]?.text });
+                return "\u0000adopt:coder";
+            },
+            (o) => {
+                expect(o.title).toBe("Adopt a/one#high for tier strong?");
+                expect(String(o.message)).toContain("Before: models: auto; effort: tier default\nAfter: models: auto; effort: high");
+                return confirmed;
+            },
+            esc, // the tier list again
+            esc,
+        ], { usage: recommend });
+        await h.run();
+        expect(h.setCalls).toEqual(calls);
+    });
+    test("a recommendation for a control the tier no longer resolves to offers no adopt", async () => {
+        const changed = { ...recommend, assessments: recommend.assessments.map((a) => ({ ...a, live: "b/two" })) };
+        const h = harness([
+            pick("\u0000usage"),
+            pick("strong"),
+            (o) => {
+                expect(o.options?.at(-1)).toEqual({
+                    title: "assessment coder",
+                    value: "\u0000assess:coder",
+                    description: `tier changed since this assessment; the recommendation no longer applies: ${recommend.assessments[0]?.text}`,
+                    disabled: true,
+                });
+                expect(o.options?.some((x) => String(x.value).startsWith("\u0000adopt:"))).toBe(false);
+                return ESC;
+            },
+            esc,
+            esc,
+        ], { usage: changed });
+        await h.run();
+        expect(h.setCalls).toEqual([]);
+    });
+});
+describe("/tiers announcements", () => {
+    const found = (agent, over = {}) => ({
+        tier: "strong",
+        agent,
+        verdict: "recommend",
+        arm: "a/one#high",
+        control: "a/one#low",
+        pts: "+8.1",
+        lb: "+5.3",
+        cost: "$0.120",
+        cost0: "$0.140",
+        at: 1,
+        seen: false,
+        ...over,
+    });
+    const usage = {
+        days: 90,
+        tiers: [{ tier: "strong", total: { n: 1, succeeded: 1, failed: 0, interrupted: 0, successRate: 1, ms: { mean: 1, p50: 1, p90: 1 }, failoverRate: 0, resumes: 0 }, agents: [] }],
+        assessments: [],
+    };
+    test("loading toasts each new finding once, as info, without marking it seen", async () => {
+        const h = harness([esc], { findings: [found("coder"), found("plan", { verdict: "rollback", arm: "a/one#low", control: "a/one#high" })] });
+        await h.run();
+        expect(h.toasts).toEqual([
+            { message: "model-roles: coder could use a/one#high (+8.1 pts, 95% LB +5.3, cost/success $0.120 vs $0.140). Review in /tiers.", variant: "info" },
+            { message: "model-roles: plan's adopted a/one#high now trails a/one#low. Review in /tiers.", variant: "info" },
+        ]);
+        expect(h.seenCalls).toEqual([]);
+    });
+    test("opening a tier's usage detail marks its findings seen and offers Dismiss", async () => {
+        const h = harness([
+            pick("\u0000usage"),
+            pick("strong"),
+            (o) => {
+                expect(o.options?.map((x) => x.title)).toContain("Dismiss announcement (coder)");
+                return ESC;
+            },
+            esc,
+            esc,
+        ], { usage, findings: [found("coder")] });
+        await h.run();
+        expect(h.seenCalls).toEqual(["strong/coder"]);
+    });
+    test("Dismiss marks the finding seen and says so", async () => {
+        const h = harness([pick("\u0000usage"), pick("strong"), pick("\u0000dismiss:coder"), esc, esc], { usage, findings: [found("coder")] });
+        await h.run();
+        expect(h.seenCalls).toContain("strong/coder");
+        expect(h.toasts.at(-1)?.message).toBe("Dismissed.");
+    });
+});

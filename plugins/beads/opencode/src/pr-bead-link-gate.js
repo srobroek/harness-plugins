@@ -1,0 +1,304 @@
+import { execFileSync } from "node:child_process";
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { commandSegments, invocation } from "@srobroek/opencode-lib/beads-shell";
+/**
+ * A PR that names no bead is a PR nobody can trace back to a decision.
+ *
+ * A live ledger requires a Bead, Closes-Bead, or Bead-Id trailer.
+ * A regular-file .beads/RETIRED marker opts out the nearest ledger.
+ * No-Bead: is not accepted; this marker belongs to the gate, not bd.
+ */
+const MAX_COMMAND_LENGTH = 64_000;
+// `$'a\nb'` reaches the gate undecoded, so a literal `\n`, `\r` or `\t` also separates a trailer from the line before it.
+const BEAD_REF = /(?:^|\s|\\[nrt])(?:Bead|Closes-Bead|Bead-Id):\s*[A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9]+/i;
+/**
+ * A `gh` API call that hangs must not spend the whole tool_call budget: the harness kills a
+ * gate handler at 30s, and two lookups plus the other gates have to fit inside that.
+ */
+const GH_TIMEOUT_MS = 10_000;
+/** Flags whose following token is a value, so a `--body` inside one is not the body. */
+const VALUE_FLAGS = {
+    "--title": true,
+    "-t": true,
+    "--base": true,
+    "-B": true,
+    "--head": true,
+    "-H": true,
+    "--repo": true,
+    "-R": true,
+    "--reviewer": true,
+    "-r": true,
+    "--assignee": true,
+    "-a": true,
+    "--label": true,
+    "-l": true,
+    "--project": true,
+    "-p": true,
+    "--milestone": true,
+    "-m": true,
+    "--body-file": true,
+    "-F": true,
+    "--template": true,
+    "-T": true,
+};
+export const REASON = "This PR names no bead. A live ledger requires a Bead: <id>, Closes-Bead: <id>, or Bead-Id: <id> trailer. To opt out, retire the nearest ledger with this gate's regular-file .beads/RETIRED marker; No-Bead: is not accepted.";
+function withLedger(reason, note) {
+    const text = note?.();
+    return text === undefined ? reason : `${reason} ${text}`;
+}
+export function beadsActive(dir) {
+    let current = resolve(dir);
+    for (;;) {
+        const beads = join(current, ".beads");
+        if (existsSync(beads)) {
+            try {
+                return !lstatSync(join(beads, "RETIRED")).isFile();
+            }
+            catch {
+                return true;
+            }
+        }
+        const parent = dirname(current);
+        if (parent === current)
+            return false;
+        current = parent;
+    }
+}
+/** The `--body` value of one `gh pr create` segment; `--body-file` is not read. */
+export function bodyOfGhCreate(segment) {
+    return readBodyOfGhCreate(segment)?.text ?? null;
+}
+/**
+ * The body of one `gh pr create` segment and where it came from: null when the segment
+ * creates no PR, and null when it creates one whose body is not visible here (`--fill`,
+ * an editor session, stdin, or a `--body-file` that `readFile` does not supply).
+ */
+export function readBodyOfGhCreate(segment, readFile) {
+    const tokens = invocation(segment, ["gh", "pr", "create"]);
+    if (!tokens)
+        return null;
+    let body = null;
+    let file = null;
+    for (let i = 3; i < tokens.length; i++) {
+        const token = tokens[i];
+        if (!token)
+            continue;
+        if (!token.quoted && token.value === "--")
+            break;
+        if (token.quoted)
+            continue;
+        if (token.value === "--body-file" || token.value === "-F") {
+            file = tokens[i + 1]?.value ?? null;
+            i++;
+            continue;
+        }
+        if (token.value.startsWith("--body-file=")) {
+            file = token.value.slice("--body-file=".length);
+            continue;
+        }
+        if (VALUE_FLAGS[token.value]) {
+            i++;
+            continue;
+        }
+        if (token.value === "--body" || token.value === "-b") {
+            body = tokens[i + 1]?.value ?? "";
+            i++;
+            continue;
+        }
+        if (token.value.startsWith("--body=")) {
+            body = token.value.slice("--body=".length);
+            continue;
+        }
+        // Short flags cluster, and `gh` accepts a value attached to the last one:
+        // `-db'no bead'` is a draft whose body is `no bead`, not a bodyless call.
+        const cluster = /^-([A-Za-z]*)b(=?)(.*)$/.exec(token.value);
+        if (cluster && !token.value.startsWith("--")) {
+            const attached = cluster[3] ?? "";
+            body = attached.length > 0 || cluster[2] === "=" ? attached : (tokens[++i]?.value ?? "");
+        }
+    }
+    if (body !== null)
+        return { text: body, source: "the --body text" };
+    if (file !== null && file !== "-" && readFile) {
+        const text = readFile(file);
+        if (text !== undefined)
+            return { text, source: `--body-file ${file}` };
+    }
+    return null;
+}
+export function decidePrCreate(body, active, note, source) {
+    if (active === false || (typeof active !== "boolean" && active.kind === "uncontrolled"))
+        return null;
+    if (body === null)
+        return null;
+    if (BEAD_REF.test(body))
+        return null;
+    const looked = source === undefined ? "" : ` Looked at ${source}, not the branch or the title.`;
+    if (typeof active !== "boolean" && active.kind === "unknown") {
+        return {
+            block: true,
+            reason: withLedger(`${active.reason}. This PR must name a bead while repository control is unknown.${looked}`, note),
+        };
+    }
+    return { block: true, reason: withLedger(`${REASON}${looked}`, note) };
+}
+/**
+ * Blocks when any `gh pr create` in the command carries neither a bead nor a truthful no-bead reason.
+ *
+ * `active` is resolved per segment and only for a segment whose answer actually depends on it,
+ * because resolving it reaches the network and this decides every bash call in the session.
+ */
+export function decideCommand(command, active, note, options = {}) {
+    if (command.length > MAX_COMMAND_LENGTH)
+        return null;
+    const segments = commandSegments(command);
+    // An earlier segment of a chain may write the body file, so it is read only from a lone command.
+    const readFile = segments.length === 1 ? options.readFile : undefined;
+    for (const segment of segments) {
+        const read = readBodyOfGhCreate(segment, readFile);
+        const body = read?.text ?? null;
+        // A segment that creates no PR, and one whose body already names a bead, decide null for
+        // every `active`. Resolving `active` ahead of them spent two synchronous `gh` API calls per
+        // segment on every bash call, so a slow `gh` exhausted the handler's budget.
+        if (body === null || BEAD_REF.test(body))
+            continue;
+        const decision = decidePrCreate(body, typeof active === "function" ? active(segment) : active, note, read?.source);
+        if (decision)
+            return decision;
+    }
+    return null;
+}
+/**
+ * The permission lookup deliberately fails closed: today's catch silently passed, but
+ * a bead-linkage gate is safer when an unreadable repository requires operator action.
+ */
+export function controlledByViewerPermission(permission) {
+    return permission === "WRITE" || permission === "MAINTAIN" || permission === "ADMIN";
+}
+export function repositoryFromGhCreate(command) {
+    const tokens = invocation(command, ["gh", "pr", "create"]);
+    if (!tokens)
+        return null;
+    let selected = null;
+    for (let i = 3; i < tokens.length; i += 1) {
+        const token = tokens[i];
+        const value = token.value;
+        if (value === "--repo" || value === "-R") {
+            const next = tokens[++i];
+            selected = next?.value ?? null;
+        }
+        else if (value.startsWith("--repo=")) {
+            selected = value.slice(7);
+        }
+        else if (value.startsWith("-R") && value.length > 2) {
+            selected = value.slice(2);
+        }
+        else if (/^-[A-Za-z]*R.+$/.test(value) && value.length > 3) {
+            selected = value.slice(value.indexOf("R") + 1);
+        }
+        else if (value.startsWith("-") && VALUE_FLAGS[value] === true) {
+            i += 1;
+        }
+    }
+    return selected && /^(?:[^/\s]+\/)?[^/\s]+\/[^/\s]+$/.test(selected) ? selected : null;
+}
+export function repositoryFromView(view) {
+    if (typeof view.nameWithOwner !== "string")
+        return null;
+    if (view.isFork === true)
+        return typeof view.parent?.nameWithOwner === "string" ? view.parent.nameWithOwner : null;
+    if (view.isFork === false)
+        return view.nameWithOwner;
+    return null;
+}
+export function repositoryFromCurrentCheckout(cwd) {
+    try {
+        const raw = execFileSync("gh", ["repo", "view", "--json", "nameWithOwner,isFork,parent"], {
+            cwd,
+            encoding: "utf8",
+            timeout: GH_TIMEOUT_MS,
+            // Only stdin is closed, so a `gh` that wants to prompt fails instead of hanging;
+            // stderr stays piped because `repositoryControlled` reports it as the refusal's cause.
+            stdio: ["ignore", "pipe", "pipe"],
+        });
+        return repositoryFromView(JSON.parse(raw));
+    }
+    catch {
+        return null;
+    }
+}
+export function repositoryControlled(repo) {
+    if (!repo)
+        return {
+            kind: "unknown",
+            reason: "Repository permission could not be determined because the repository could not be identified",
+        };
+    try {
+        const permission = execFileSync("gh", ["repo", "view", repo, "--json", "viewerPermission", "--jq", ".viewerPermission"], {
+            encoding: "utf8",
+            timeout: GH_TIMEOUT_MS,
+            stdio: ["ignore", "pipe", "pipe"],
+        }).trim();
+        return controlledByViewerPermission(permission) ? { kind: "controlled" } : { kind: "uncontrolled" };
+    }
+    catch (error) {
+        const failure = error instanceof Error ? error.message : String(error);
+        return { kind: "unknown", reason: `Repository permission could not be determined: ${failure}` };
+    }
+}
+/**
+ * Decide the whole command line and every recursively executed child. Segments are read
+ * from source text, not from joined argv, so a quoted `--body` keeps its spaces.
+ */
+export function decideCommandParsed(parsed, active, note, options) {
+    const decision = decideCommand(parsed.command, active, note, options);
+    if (decision)
+        return decision;
+    for (const child of parsed.nested) {
+        const nested = decideCommandParsed(child, active, note, options);
+        if (nested)
+            return nested;
+    }
+    return null;
+}
+/**
+ * Reads a body file relative to `cwd`. Only a regular file of at most the command cap is visible:
+ * the target is opened without blocking (so a FIFO cannot hang the open), the opened descriptor
+ * is checked (so a symlink is judged by its target), and the read is bounded.
+ */
+export function bodyFileReader(cwd) {
+    return (path) => {
+        let fd;
+        try {
+            fd = openSync(resolve(cwd, path), constants.O_RDONLY | constants.O_NONBLOCK);
+            if (!fstatSync(fd).isFile())
+                return undefined;
+            const buffer = Buffer.alloc(MAX_COMMAND_LENGTH + 1);
+            let length = 0;
+            while (length < buffer.length) {
+                const read = readSync(fd, buffer, length, buffer.length - length, null);
+                if (read === 0)
+                    break;
+                length += read;
+            }
+            return length > MAX_COMMAND_LENGTH ? undefined : buffer.toString("utf8", 0, length);
+        }
+        catch {
+            return undefined;
+        }
+        finally {
+            if (fd !== undefined)
+                closeSync(fd);
+        }
+    };
+}
+/**
+ * Whether a `gh pr create` segment from `cwd` is subject to the gate: a live ledger and
+ * a repository the viewer can write. Resolved only for segments whose body names no bead.
+ */
+export function repositoryControlFor(segment, cwd) {
+    if (!beadsActive(cwd))
+        return false;
+    return repositoryControlled(repositoryFromGhCreate(segment) ?? repositoryFromCurrentCheckout(cwd));
+}

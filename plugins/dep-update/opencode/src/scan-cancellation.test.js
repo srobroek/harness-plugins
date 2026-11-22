@@ -1,0 +1,144 @@
+import { describe, expect, setDefaultTimeout, spyOn, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fetchJson, queryRegistry, researchProject } from "@srobroek/opencode-lib/dep-bump";
+import { createFakeContext } from "@srobroek/opencode-lib/testing";
+import plugin from "./index.ts";
+// Child-process scan: 2.0 s at load average 49; 30 s leaves headroom for a loaded machine (AGENTS.md, Testing).
+setDefaultTimeout(30_000);
+async function scanTool() {
+    const fake = createFakeContext();
+    await plugin.setup(fake.context);
+    const execute = fake.tools.get("dep_scan")?.execute;
+    return (path, signal) => execute({ path }, { signal });
+}
+const outcome = (records) => records.map(({ name, status, reason }) => ({ name, status, reason }));
+function project(names = ["first", "second"]) {
+    const dir = mkdtempSync(join(tmpdir(), "dep-scan-cancel-"));
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ dependencies: Object.fromEntries(names.map((name) => [name, "1.0.0"])) }));
+    return dir;
+}
+function mockFetch(implementation) {
+    return spyOn(globalThis, "fetch").mockImplementation(Object.assign(implementation, { preconnect: () => { } }));
+}
+describe("scan cancellation", () => {
+    test("pre-cancelled callers stop before project or registry work and report an incomplete scan", async () => {
+        const controller = new AbortController();
+        const reason = new Error("stop scan");
+        controller.abort(reason);
+        const fetchMock = mockFetch(async () => {
+            throw new Error("unexpected fetch");
+        });
+        try {
+            expect(await researchProject("/nonexistent-cancelled-project", "", controller.signal)).toMatchObject({
+                exit: 0,
+                records: [],
+                complete: false,
+            });
+            await expect(queryRegistry("npm", "first", "1.0.0", "", controller.signal)).rejects.toBe(reason);
+            await expect(fetchJson("npm", "first", "https://registry.npmjs.org/first", "", controller.signal)).rejects.toBe(reason);
+            const { metadata } = await (await scanTool())("/nonexistent-cancelled-project", controller.signal);
+            expect(metadata).toMatchObject({ complete: false, records: [] });
+            expect(fetchMock).not.toHaveBeenCalled();
+        }
+        finally {
+            fetchMock.mockRestore();
+        }
+    });
+    for (const phase of ["request", "body"]) {
+        test(`in-flight ${phase} cancellation is an incomplete scan that never queries later dependencies`, async () => {
+            const dir = project();
+            const controller = new AbortController();
+            const reason = new Error("cancel active scan");
+            let started;
+            const active = new Promise((resolve) => {
+                started = resolve;
+            });
+            const requests = [];
+            const fetchMock = mockFetch(async (url, init) => {
+                requests.push(String(url));
+                const signal = init?.signal;
+                if (!signal)
+                    throw new Error("missing request signal");
+                const pending = () => new Promise((_resolve, reject) => {
+                    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+                    started();
+                });
+                if (phase === "request")
+                    return pending();
+                return { ok: true, json: pending };
+            });
+            try {
+                const result = (await scanTool())(dir, controller.signal);
+                await active;
+                controller.abort(reason);
+                const { metadata } = await result;
+                expect(metadata.complete).toBe(false);
+                expect(outcome(metadata.records)).toEqual([
+                    { name: "first", status: "UNCHECKED", reason: "not checked: cancelled" },
+                    { name: "second", status: "UNCHECKED", reason: "not checked: cancelled" },
+                ]);
+                expect(requests).toEqual(["https://registry.npmjs.org/first"]);
+            }
+            finally {
+                controller.abort(reason);
+                fetchMock.mockRestore();
+                rmSync(dir, { recursive: true, force: true });
+            }
+        });
+    }
+    test("the aggregate deadline is an incomplete scan: the cut-short query and the rest are unchecked", async () => {
+        const dir = project(["first", "second", "third"]);
+        const requests = [];
+        // `second` hangs until its request signal aborts, so only the scan deadline ends it.
+        const fetchMock = mockFetch(async (url, init) => {
+            requests.push(String(url));
+            if (!String(url).endsWith("/second"))
+                return Response.json({ "dist-tags": { latest: "1.0.1" }, versions: { "1.0.1": {} } });
+            const signal = init?.signal;
+            if (!signal)
+                throw new Error("missing request signal");
+            return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+        });
+        try {
+            const started = Date.now();
+            const result = await researchProject(dir, "", new AbortController().signal, 2_000);
+            expect(Date.now() - started).toBeLessThan(8_000);
+            expect(result.complete).toBe(false);
+            expect(outcome(result.records)).toEqual([
+                { name: "first", status: "OK", reason: undefined },
+                { name: "second", status: "UNCHECKED", reason: "not checked: scan deadline reached" },
+                { name: "third", status: "UNCHECKED", reason: "not checked: scan deadline reached" },
+            ]);
+            expect(requests).toEqual(["https://registry.npmjs.org/first", "https://registry.npmjs.org/second"]);
+            expect(result.stderr).toContain("PARTIAL: scan deadline reached; 2 dependencies were not checked.");
+        }
+        finally {
+            fetchMock.mockRestore();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    }, 15_000);
+    test("ordinary registry failures remain unresolvable and allow the next dependency", async () => {
+        const dir = project();
+        const requests = [];
+        const fetchMock = mockFetch(async (url) => {
+            requests.push(String(url));
+            if (requests.length === 1)
+                return new Response("denied", { status: 403 });
+            return Response.json({ "dist-tags": { latest: "1.0.1" }, versions: { "1.0.1": {} } });
+        });
+        try {
+            const result = await researchProject(dir, "", new AbortController().signal);
+            expect(outcome(result.records)).toEqual([
+                { name: "first", status: "UNRESOLVABLE", reason: "auth-required" },
+                { name: "second", status: "OK", reason: undefined },
+            ]);
+            expect(requests).toEqual(["https://registry.npmjs.org/first", "https://registry.npmjs.org/second"]);
+        }
+        finally {
+            fetchMock.mockRestore();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
