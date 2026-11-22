@@ -22,7 +22,7 @@ An `export` keyword alone does not make code public. Freeze what a consumer outs
 - a shared library's exports that have an importer outside their own package;
 - anything the docs describe.
 
-An export with no importer outside its own module tree (none in other packages, `tests/` or `scripts/`) is internal. Removing it changes no contract: a dead-code finding for it may carry `blast_radius: low` and `changes_contract: false`, provided the reachability searches in [lens-dead-code.md](lens-dead-code.md) found no importer. Log the frozen list to `intake.json`.
+An export that is none of the frozen surfaces above and has no importer outside its own module tree (none in other packages, `tests/` or `scripts/`) is internal. An entry point counts as frozen even with no source importer, because the host loads it through its manifest. Removing an internal export changes no contract: a dead-code finding for it may carry `blast_radius: low` and `changes_contract: false`, provided the reachability searches in [lens-dead-code.md](lens-dead-code.md) found no importer. Log the frozen list to `intake.json`.
 
 ## Design sources (question 9, autonomous)
 

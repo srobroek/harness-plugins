@@ -105,8 +105,9 @@ you report, not a field you invent.
    key, or documented behavior -- never "low-risk" regardless of how clean it looks.
    Public means a consumer outside the module tree can reach it: an entry point's
    exports, a registered tool or hook schema, a shared library export with outside
-   importers, or documented behavior. An `export` with no importer outside its own
-   module tree is internal; removing it changes no contract.
+   importers, or documented behavior. An `export` that is none of these and has no
+   importer outside its own module tree is internal; removing it changes no contract.
+   An entry point is public even with no source importer.
 5. For every finding on code no test protects, report that apart from the verdict.
 
 ## What you CAN do
