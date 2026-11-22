@@ -20,7 +20,7 @@ import {
   writeSync
 } from "fs";
 import { hostname } from "os";
-import { basename, dirname as dirname2, isAbsolute as isAbsolute2, join, resolve as resolve2 } from "path";
+import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute2, join, resolve as resolve2 } from "path";
 
 // lib/src/shell-tokenizer.ts
 var SEPARATORS = new Set([";", "&", "|", "(", ")", `
@@ -314,7 +314,7 @@ var TRUTHY = { "": true, "1": true, t: true, T: true, TRUE: true, true: true, Tr
 // lib/src/beads-store.ts
 import { spawnSync } from "child_process";
 import { lstatSync, realpathSync, statSync } from "fs";
-import { dirname, isAbsolute, resolve } from "path";
+import { basename, dirname, isAbsolute, resolve } from "path";
 function repoIdentity(cwd) {
   if (cwd.includes("\x00"))
     return;
@@ -379,6 +379,10 @@ function sessionPinFor(cwd) {
   if (isDir(local))
     return local;
   return;
+}
+function storeFromBeadsDb(value, cwd) {
+  const path = resolve(cwd, value);
+  return basename(path) === ".beads" ? path : dirname(path);
 }
 function isDir(path) {
   try {
@@ -532,6 +536,8 @@ function selectedStoreFor(globals, cwd, env) {
   const pinned = env.BEADS_DIR;
   if (pinned !== undefined && pinned !== "")
     return absolute(pinned, cwd);
+  if (env.BEADS_DB !== undefined && env.BEADS_DB !== "")
+    return storeFromBeadsDb(env.BEADS_DB, cwd);
   return sessionPinFor(cwd);
 }
 function absolute(path, cwd) {
@@ -2183,7 +2189,7 @@ function releaseClaims(root, names) {
 // plugins/autopilot/opencode/src/review-export.ts
 import { createHash, randomUUID as randomUUID3 } from "crypto";
 import { lstatSync as lstatSync3, mkdirSync as mkdirSync2, readdirSync as readdirSync2, renameSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "fs";
-import { basename as basename2, dirname as dirname4, join as join4, sep } from "path";
+import { basename as basename3, dirname as dirname4, join as join4, sep } from "path";
 var REVIEW_DIR = "review";
 var MANIFEST = "manifest.json";
 var DEFAULT_LIMITS = { files: 300, diffBytes: 4 * 1024 * 1024, fileBytes: 512 * 1024, totalBytes: 8 * 1024 * 1024 };
@@ -2444,7 +2450,7 @@ function verifyExport(dir, recordedHash) {
   if (!read.ok)
     return read;
   const { manifest } = read;
-  if (basename2(dir) !== recordedHash || basename2(dirname4(dir)) !== manifest.head)
+  if (basename3(dir) !== recordedHash || basename3(dirname4(dir)) !== manifest.head)
     return refuse(`${dir} is not named <head>/<manifest hash> as its manifest says`);
   const expectedDirs = new Set;
   for (const file of manifest.files) {

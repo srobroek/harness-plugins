@@ -116,9 +116,12 @@ The plugin follows `session.execution.*` events (`ctx.event.subscribe`). Every
 message it sends is a `session.synthetic` with `metadata.source: "srobroek.beads"`.
 
 - **Claim tracking.** The plugin tracks a claim only when it knows the ledger and the outcome.
-  A ledger the plugin's own process environment chooses is certain: the session pin, or any of
-  `BEADS_DIR`, `BEADS_DB`, `BD_DB`, `BD_SOCKET` and the `BEADS_DOLT_*`/`BEADS_PROXIED_SERVER_*`
-  variables set there. A command that overrides it is not tracked: a ledger selector anywhere
+  A ledger the plugin's own process environment chooses is certain when it follows bd 1.3.1's
+  order: `--db`, then `BEADS_DIR`, then `BEADS_DB` (a `.beads` directory is the store; any other
+  value, such as a database file, selects the directory that holds it), then the session pin or
+  the directory's `.beads`. An inherited `BEADS_DB` replaces the session pin. An inherited
+  `BD_DB`, `BD_SOCKET` or `BEADS_DOLT_*`/`BEADS_PROXIED_SERVER_*` variable leaves the claim
+  untracked, because bd does not read `BD_DB` as a store path and the others name a server. A command that overrides it is not tracked: a ledger selector anywhere
   in it (a word starting `-C`, `--db`, `--database`, `--directory`, `--global` or `--dolt-`),
   or a `BEADS_*`/`BD_*` assignment other than the actor. The one exception is an inline
   assignment of a ledger variable to the plugin's own value, compared as canonical paths

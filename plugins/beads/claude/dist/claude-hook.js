@@ -1626,12 +1626,12 @@ import {
   writeSync
 } from "fs";
 import { hostname } from "os";
-import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute2, join, resolve as resolve2 } from "path";
+import { basename as basename3, dirname as dirname2, isAbsolute as isAbsolute2, join, resolve as resolve2 } from "path";
 
 // lib/src/beads-store.ts
 import { spawnSync } from "child_process";
 import { lstatSync, realpathSync, statSync } from "fs";
-import { dirname, isAbsolute, resolve } from "path";
+import { basename as basename2, dirname, isAbsolute, resolve } from "path";
 function repoIdentity(cwd) {
   if (cwd.includes("\x00"))
     return;
@@ -1696,6 +1696,10 @@ function sessionPinFor(cwd) {
   if (isDir(local))
     return local;
   return;
+}
+function storeFromBeadsDb(value, cwd) {
+  const path = resolve(cwd, value);
+  return basename2(path) === ".beads" ? path : dirname(path);
 }
 function isDir(path) {
   try {
@@ -1958,6 +1962,8 @@ function selectedStoreFor(globals, cwd, env) {
   const pinned = env.BEADS_DIR;
   if (pinned !== undefined && pinned !== "")
     return absolute(pinned, cwd);
+  if (env.BEADS_DB !== undefined && env.BEADS_DB !== "")
+    return storeFromBeadsDb(env.BEADS_DB, cwd);
   return sessionPinFor(cwd);
 }
 function absolute(path, cwd) {
@@ -2957,7 +2963,7 @@ function bunBinary() {
 }
 function resolveBunBinary(options = {}) {
   const execPath = options.execPath ?? process.execPath;
-  const own = basename2(execPath);
+  const own = basename3(execPath);
   if (own === "bun" || own === "bun.exe")
     return execPath;
   const onPath = options.which?.("bun");
@@ -2973,7 +2979,7 @@ function resolveBunBinary(options = {}) {
   if (mise === null || mise === undefined || options.miseWhich === undefined)
     return;
   const resolved = options.miseWhich(mise);
-  return resolved !== undefined && basename2(resolved).startsWith("bun") && existsSync(resolved) ? resolved : undefined;
+  return resolved !== undefined && basename3(resolved).startsWith("bun") && existsSync(resolved) ? resolved : undefined;
 }
 function quote(word) {
   return `'${word.replaceAll("'", "'\\''")}'`;
@@ -3172,7 +3178,7 @@ var AUTO_GATE_TYPES = { timer: true, "gh:run": true, "gh:pr": true, bead: true }
 var EMBEDDED_PIN_ENV = { BEADS_DOLT_SHARED_SERVER: "" };
 function lifecycleBdEnvironment(cwd, base = process.env) {
   const env = { ...base };
-  if (env.BEADS_DIR === undefined || env.BEADS_DIR === "") {
+  if ((env.BEADS_DIR === undefined || env.BEADS_DIR === "") && (env.BEADS_DB === undefined || env.BEADS_DB === "")) {
     delete env.BEADS_DIR;
     const resolved = sessionPinFor(cwd);
     if (resolved !== undefined)
@@ -3192,7 +3198,7 @@ function boundedBdEnvironment(base) {
 }
 function bdStoreDir(cwd, env) {
   const selected = env.BEADS_DIR;
-  const dir = selected ? isAbsolute3(selected) ? selected : resolve3(cwd, selected) : join2(cwd, ".beads");
+  const dir = selected ? isAbsolute3(selected) ? selected : resolve3(cwd, selected) : env.BEADS_DB ? storeFromBeadsDb(env.BEADS_DB, cwd) : join2(cwd, ".beads");
   try {
     return statSync3(dir).isDirectory() ? resolve3(dir) : undefined;
   } catch {
@@ -4746,6 +4752,8 @@ function withoutInheritedPin(env) {
 function shellPin(cwd, env, pinFor = sessionPinFor) {
   const explicit = withoutInheritedPin(env).BEADS_DIR;
   if (explicit !== undefined && explicit !== "")
+    return;
+  if (env.BEADS_DB !== undefined && env.BEADS_DB !== "")
     return;
   return pinFor(cwd);
 }

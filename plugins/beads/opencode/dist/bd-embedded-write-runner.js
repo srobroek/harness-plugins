@@ -18,7 +18,7 @@ import {
   writeSync
 } from "fs";
 import { hostname } from "os";
-import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute3, join, resolve as resolve3 } from "path";
+import { basename as basename3, dirname as dirname2, isAbsolute as isAbsolute3, join, resolve as resolve3 } from "path";
 
 // lib/src/shell-tokenizer.ts
 var SEPARATORS = new Set([";", "&", "|", "(", ")", `
@@ -1682,7 +1682,7 @@ function decideActorGate(command, env = process.env, inherited = {}) {
 // lib/src/beads-store.ts
 import { spawnSync } from "child_process";
 import { lstatSync, realpathSync, statSync } from "fs";
-import { dirname, isAbsolute as isAbsolute2, resolve as resolve2 } from "path";
+import { basename as basename2, dirname, isAbsolute as isAbsolute2, resolve as resolve2 } from "path";
 function configuredStore(options, projectRoot) {
   if (!("store" in options))
     return;
@@ -1769,6 +1769,10 @@ function sessionPinFor(cwd) {
   if (isDir(local))
     return local;
   return;
+}
+function storeFromBeadsDb(value, cwd) {
+  const path = resolve2(cwd, value);
+  return basename2(path) === ".beads" ? path : dirname(path);
 }
 function isDir(path) {
   try {
@@ -2031,6 +2035,8 @@ function selectedStoreFor(globals, cwd, env) {
   const pinned = env.BEADS_DIR;
   if (pinned !== undefined && pinned !== "")
     return absolute(pinned, cwd);
+  if (env.BEADS_DB !== undefined && env.BEADS_DB !== "")
+    return storeFromBeadsDb(env.BEADS_DB, cwd);
   return sessionPinFor(cwd);
 }
 function absolute(path, cwd) {
@@ -3030,7 +3036,7 @@ function bunBinary() {
 }
 function resolveBunBinary(options = {}) {
   const execPath = options.execPath ?? process.execPath;
-  const own = basename2(execPath);
+  const own = basename3(execPath);
   if (own === "bun" || own === "bun.exe")
     return execPath;
   const onPath = options.which?.("bun");
@@ -3046,7 +3052,7 @@ function resolveBunBinary(options = {}) {
   if (mise === null || mise === undefined || options.miseWhich === undefined)
     return;
   const resolved = options.miseWhich(mise);
-  return resolved !== undefined && basename2(resolved).startsWith("bun") && existsSync(resolved) ? resolved : undefined;
+  return resolved !== undefined && basename3(resolved).startsWith("bun") && existsSync(resolved) ? resolved : undefined;
 }
 function quote(word) {
   return `'${word.replaceAll("'", "'\\''")}'`;

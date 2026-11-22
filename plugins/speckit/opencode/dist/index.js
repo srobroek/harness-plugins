@@ -2339,7 +2339,7 @@ import {
   writeSync
 } from "fs";
 import { hostname } from "os";
-import { basename as basename5, dirname as dirname5, isAbsolute as isAbsolute6, join as join7, resolve as resolve6 } from "path";
+import { basename as basename6, dirname as dirname5, isAbsolute as isAbsolute6, join as join7, resolve as resolve6 } from "path";
 
 // lib/src/shell-command.ts
 var INTERPRETERS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
@@ -2387,7 +2387,7 @@ var TRUTHY = { "": true, "1": true, t: true, T: true, TRUE: true, true: true, Tr
 // lib/src/beads-store.ts
 import { spawnSync } from "child_process";
 import { lstatSync as lstatSync3, realpathSync as realpathSync3, statSync as statSync2 } from "fs";
-import { dirname as dirname4, isAbsolute as isAbsolute5, resolve as resolve5 } from "path";
+import { basename as basename5, dirname as dirname4, isAbsolute as isAbsolute5, resolve as resolve5 } from "path";
 function repoIdentity(cwd) {
   if (cwd.includes("\x00"))
     return;
@@ -2452,6 +2452,10 @@ function sessionPinFor(cwd) {
   if (isDir(local))
     return local;
   return;
+}
+function storeFromBeadsDb(value, cwd) {
+  const path = resolve5(cwd, value);
+  return basename5(path) === ".beads" ? path : dirname4(path);
 }
 function isDir(path) {
   try {
@@ -2605,6 +2609,8 @@ function selectedStoreFor(globals, cwd, env) {
   const pinned = env.BEADS_DIR;
   if (pinned !== undefined && pinned !== "")
     return absolute(pinned, cwd);
+  if (env.BEADS_DB !== undefined && env.BEADS_DB !== "")
+    return storeFromBeadsDb(env.BEADS_DB, cwd);
   return sessionPinFor(cwd);
 }
 function absolute(path, cwd) {
