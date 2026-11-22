@@ -288,18 +288,19 @@ export type ClaimInspection = { kind: "none" } | { kind: "refused"; reason: stri
 const LEDGER_SELECTOR = /^(?:-C|--db|--database|--directory|--global|--dolt-)/u
 
 /**
- * The ledger variables the plugin keys a claim on. bd 1.3.1 opens `--db`, then `BEADS_DIR`, then
- * `BEADS_DB`, then the directory's own `.beads`. When the plugin's own process environment sets
- * one, that is the ledger every command of the session means; only a command that sets one to a
+ * The ledger variables the plugin keys a claim on. A bd 1.3.1 store command opens `--db`, then
+ * `BEADS_DIR`, then the `.beads` found from the directory, then `BEADS_DB` only when none is found;
+ * the plugin pins `BEADS_DIR` to that store. When the plugin's own process environment sets one,
+ * that is the ledger every command of the session means; only a command that sets one to a
  * different value is refused. Both values are paths, so two spellings of one place (a trailing
  * slash, a symlink) are the same ledger and are compared after `realpath`.
  */
 const KEYED_LEDGER_ENV: ReadonlySet<string> = new Set(["BEADS_DIR", "BEADS_DB"])
 
 /**
- * Ledger variables the plugin cannot key a claim on: `BD_DB` is not read by bd as a store path,
- * and the socket, Dolt and proxied-server variables name a server, not a store. An inherited one
- * leaves the store unknowable, so it refuses the claim.
+ * Ledger variables the plugin cannot key a claim on: bd's store commands never read `BD_DB` as a
+ * store path, and the socket, Dolt and proxied-server variables name a server, not a store. An
+ * inherited one leaves the store unknowable, so it refuses the claim.
  */
 const UNKEYED_LEDGER_ENV: readonly string[] = [
   "BD_DB",
