@@ -1281,6 +1281,17 @@ function mergeArgs(directory, target) {
 function isSafeBranchName(name) {
   return name !== "" && !name.startsWith("-") && !name.includes("..") && !/[\s\x00-\x1f\x7f]/.test(name);
 }
+var BRANCH_PREFIX = "refs/heads/";
+function branchRef(name) {
+  if (!isSafeBranchName(name) || name.startsWith("refs/"))
+    return;
+  return `${BRANCH_PREFIX}${name}`;
+}
+function storedBranchRef(value) {
+  if (typeof value !== "string")
+    return;
+  return value.startsWith(BRANCH_PREFIX) ? branchRef(value.slice(BRANCH_PREFIX.length)) : branchRef(value);
+}
 function isConflict(output) {
   return /conflict|could not apply|resolve all conflicts|needs merge/i.test(output);
 }
@@ -1467,6 +1478,13 @@ function createGit(run) {
     return overrides === undefined ? undefined : git(directory, ...overrides, ...args);
   };
   const files = (output) => output?.split("\x00").filter((file) => file !== "");
+  const branchTip = async (directory, ref) => {
+    if (!ref.startsWith("refs/heads/"))
+      return;
+    const oid = await git(directory, "show-ref", "--verify", "--hash", ref);
+    return oid !== undefined && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(oid) ? oid : undefined;
+  };
+  const isAncestor = async (directory, tip, ref) => (await run(["git", "-C", directory, "merge-base", "--is-ancestor", tip, ref])).code === 0;
   return {
     run,
     unsupported: async () => {
@@ -1507,7 +1525,12 @@ function createGit(run) {
     commonDir: (directory) => git(directory, "rev-parse", "--path-format=absolute", "--git-common-dir"),
     head: (directory) => git(directory, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"),
     porcelain: (directory) => unfiltered(directory, "status", "--porcelain"),
-    isAncestor: async (directory, tip, ref) => (await run(["git", "-C", directory, "merge-base", "--is-ancestor", tip, ref])).code === 0,
+    isAncestor,
+    branchTip,
+    branchContains: async (directory, tip, ref) => {
+      const at = await branchTip(directory, ref);
+      return at !== undefined && await isAncestor(directory, tip, at);
+    },
     stashSubjects: (directory) => git(directory, "stash", "list", "--format=%gs"),
     gitDir: (directory) => git(directory, "rev-parse", "--absolute-git-dir"),
     deleteBranchAt: async (directory, name, oid) => (await run(["git", "-C", directory, "update-ref", "-d", `refs/heads/${name}`, oid])).code === 0,
@@ -2074,7 +2097,7 @@ function createLifecycle(deps) {
     let landed = false;
     let openPr = false;
     if (status !== undefined && tip !== undefined && status.ahead > 0) {
-      landed = records.heads.includes(tip) || await reachedMain(lane, tip);
+      landed = records.heads.includes(tip) || await reachedMain(lane, tip) || await mergedLocally(lane, tip) !== undefined;
       if (!landed)
         openPr = (await openPrBranches(lane.parentDir)).has(lane.branch);
     }
@@ -2123,11 +2146,38 @@ function createLifecycle(deps) {
     const records = await deliveryRecords(lane.directory, lane.parentDir);
     return records.heads.includes(oid) || await reachedMain(lane, oid);
   };
+  const recordedRef = (lane, oid) => {
+    const merged = lane.mergedInto;
+    if (merged === undefined || merged.head !== oid)
+      return;
+    return storedBranchRef(merged.target);
+  };
+  const mergedLocally = async (lane, oid) => {
+    const ref = recordedRef(lane, oid);
+    if (ref === undefined)
+      return;
+    return await git.branchContains(lane.directory, oid, ref) ? ref : undefined;
+  };
+  const updateLane = (lane, change) => withLock(lane.directory, lane.parentDir, async () => {
+    const stored = await load(lane.child);
+    if (stored === undefined || stored.child !== lane.child || laneStoreKey(stored) !== laneStoreKey(lane))
+      return;
+    if (canonical(stored.directory) !== canonical(lane.directory))
+      return;
+    const next = change(stored);
+    if (next === undefined)
+      return;
+    return await save(next) ? next : undefined;
+  });
   const mark = async (child, key) => {
     const lane = await load(child);
     if (!lane)
       return;
-    await save({ ...lane, notices: [...lane.notices ?? [], key].slice(-20) });
+    try {
+      await updateLane(lane, (stored) => ({ ...stored, notices: [...stored.notices ?? [], key].slice(-20) }));
+    } catch (error) {
+      console.error(`subagent-worktree: notice ${key} for ${lane.directory} not recorded on the lane:`, error instanceof Error ? error.message : error);
+    }
   };
   const reserve = async (lane, key) => {
     try {
@@ -2312,24 +2362,37 @@ function createLifecycle(deps) {
     const busy = await busyTreeOf(lane.directory, lane.branch);
     if (busy !== undefined)
       return keptBecause("dirty", busy);
-    if (earlier?.head === oid)
-      return { proof: PROOF_OF[earlier.retireAs], oid };
+    if (earlier?.head === oid) {
+      if (earlier.retireAs !== "merged")
+        return { proof: PROOF_OF[earlier.retireAs], oid };
+      const ref = earlier.within !== undefined ? storedBranchRef(earlier.within) : recordedRef(lane, oid) ?? storedBranchRef(lane.target);
+      if (ref !== undefined && await git.branchContains(lane.directory, oid, ref))
+        return { proof: "merged", oid, within: ref };
+    }
     if (oid === lane.base)
       return { proof: "empty", oid };
-    if (options.target !== undefined && await git.isAncestor(lane.directory, oid, options.target))
-      return { proof: "merged", oid };
+    const target = options.target === undefined ? undefined : branchRef(options.target);
+    if (target !== undefined && await git.branchContains(lane.directory, oid, target))
+      return { proof: "merged", oid, within: target };
+    const merged = await mergedLocally(lane, oid);
+    if (merged !== undefined)
+      return { proof: "merged", oid, within: merged };
     if (await isLanded(lane, oid))
       return { proof: "landed", oid };
     return keptBecause("unmerged", "HEAD is neither merged nor landed");
   };
-  const treeDrift = async (lane, proven) => {
+  const treeDrift = async (lane, proven, within) => {
     const oid = await git.head(lane.directory);
     if (oid === undefined || oid !== proven)
       return keptBecause("unmerged", "HEAD moved after the checks");
     if (await git.porcelain(lane.directory) !== "")
       return keptBecause("dirty", "the tree changed after the checks");
     const busy = await busyTreeOf(lane.directory, lane.branch);
-    return busy === undefined ? undefined : keptBecause("dirty", busy);
+    if (busy !== undefined)
+      return keptBecause("dirty", busy);
+    if (within !== undefined && !await git.branchContains(lane.directory, oid, within))
+      return keptBecause("unmerged", `${within} no longer contains HEAD`);
+    return;
   };
   const moveIfIdle = async (id, session, destination, seq, refusal) => {
     if (refusal !== undefined) {
@@ -2414,18 +2477,30 @@ function createLifecycle(deps) {
         const present = options.gone !== true && earlier?.pending === undefined && onDisk;
         let proof;
         let head;
+        let within;
         let deleteAt;
         if (present) {
           const checked = await checkFinalize(stored, options, seq, earlier);
-          if (!("proof" in checked))
+          if (!("proof" in checked)) {
+            if (earlier !== undefined && !checked.removed && checked.kept === "unmerged") {
+              const { removal: _void, ...rest } = stored;
+              await save({ ...rest, state: "active" });
+            }
             return checked;
+          }
           proof = checked.proof;
           head = checked.oid;
+          within = checked.within;
           if (await git.branch(stored.directory) === stored.branch && await git.commit(stored.parentDir, `refs/heads/${stored.branch}`) === head)
             deleteAt = head;
         }
         const retireAs = options.retireAs ?? (proof === "merged" ? "merged" : proof === "landed" ? "landed" : proof === "empty" ? "removed" : earlier?.retireAs ?? "removed");
-        const removal = { retireAs, ...head === undefined ? {} : { head }, ...earlier?.pending === undefined ? {} : { pending: earlier.pending } };
+        const removal = {
+          retireAs,
+          ...head === undefined ? {} : { head },
+          ...within === undefined ? {} : { within },
+          ...earlier?.pending === undefined ? {} : { pending: earlier.pending }
+        };
         if (await save({ ...stored, state: "removing", removal }) === false)
           return keptBecause("handed-over", HANDED_OVER);
         if (present) {
@@ -2439,7 +2514,7 @@ function createLifecycle(deps) {
             await save(stored);
             return descendants;
           }
-          const drift = await treeDrift(stored, head);
+          const drift = await treeDrift(stored, head, within);
           if (drift !== undefined) {
             await save(stored);
             return drift;
@@ -2476,7 +2551,7 @@ function createLifecycle(deps) {
             await save(stored);
             return keptBecause("running", evicted.reason);
           }
-          const driftAfter = await treeDrift(stored, head);
+          const driftAfter = await treeDrift(stored, head, within);
           if (driftAfter !== undefined) {
             await save(stored);
             return driftAfter;
@@ -2564,14 +2639,30 @@ function createLifecycle(deps) {
     }
   };
   const removeForeground = async (lane, since) => (await finalize(lane, { since })).removed;
-  const removeAfterMerge = (lane, target, since) => finalize(lane, { target, retireAs: "merged", since });
+  const removeAfterMerge = async (lane, target, since) => {
+    try {
+      await withLock(lane.directory, lane.parentDir, async () => {
+        const stored = await load(lane.child);
+        if (stored?.state !== "active" || canonical(stored.directory) !== canonical(lane.directory))
+          return;
+        const head = await git.head(stored.directory);
+        const ref = branchRef(target);
+        if (head === undefined || ref === undefined || !await git.branchContains(stored.directory, head, ref))
+          return;
+        await save({ ...stored, mergedInto: { target: ref, head } });
+      });
+    } catch (error) {
+      console.error(`subagent-worktree: the merge of ${lane.directory} into ${target} was not recorded:`, error instanceof Error ? error.message : error);
+    }
+    return finalize(lane, { target, retireAs: "merged", since });
+  };
   const act = async (lane, action, facts, event, fence) => {
     if (action.action === "remove")
       return finalize(lane, fence);
     if (action.action === "defer" && action.quiet) {
       const quietSince = action.quiet === "start" ? facts.now : undefined;
       if (lane.quietSince !== quietSince)
-        await save({ ...await load(lane.child) ?? lane, ...quietSince === undefined ? { quietSince: undefined } : { quietSince } });
+        await updateLane(lane, (stored) => ({ ...stored, ...quietSince === undefined ? { quietSince: undefined } : { quietSince } }));
       return;
     }
     if (action.action === "notifyParent") {
@@ -2600,8 +2691,8 @@ function createLifecycle(deps) {
     if (ownLane && (type === "failed" || type === "interrupted")) {
       const why = reason ?? "no reason given";
       const id = eventID ?? `h${Bun.hash(`${sessionID}:${type}:${why}`)}`;
-      ownLane = { ...ownLane, outcome: { kind: type, at: now(), reason: why, id }, quietSince: undefined };
-      await save(ownLane);
+      const outcome = { kind: type, at: now(), reason: why, id };
+      ownLane = await updateLane(ownLane, (stored) => stored.state === "active" ? { ...stored, outcome, quietSince: undefined } : undefined);
     }
     const stale = type !== "archived" && (lastStart.get(sessionID) ?? 0) > seq;
     let kept;
@@ -2861,9 +2952,8 @@ function createLifecycle(deps) {
     if (lane?.state !== "active")
       return;
     const facts = await laneFacts(lane, { child: "unknown", parent: "unknown" });
-    const kept = { ...lane, kept: { reason, token: stateToken(facts) } };
-    await save(kept);
-    return kept;
+    const token = stateToken(facts);
+    return updateLane(lane, (stored) => stored.state === "active" ? { ...stored, kept: { reason, token } } : undefined);
   };
   const registrations = [];
   const abort = new AbortController;
@@ -2903,7 +2993,13 @@ function createLifecycle(deps) {
     pending.clear();
     for (const registration of registrations.reverse())
       await registration.dispose();
-    await Promise.allSettled([chain, sweepChain]);
+    for (;; ) {
+      const current = chain;
+      const sweeping = sweepChain;
+      await Promise.allSettled([current, sweeping]);
+      if (current === chain && sweeping === sweepChain)
+        break;
+    }
     for (const { lane } of [...unreleased.values()])
       await flushReleases(lane);
   };
@@ -2972,7 +3068,7 @@ var MERGE_DESCRIPTION = `Merge a subagent's worktree branch back, report one lan
 ` + "The subagent tool result names the lane (branch, base, sessionID). " + 'method "wt-merge" runs `wt merge <target> --no-squash --no-ff --no-hooks` from the subagent worktree, keeping its commits, ' + "and removes the worktree on success; a conflict keeps the worktree and reports the output. " + "The worktree must be committed and clean, and the target checkout must have no uncommitted or untracked changes to files the lane changes. " + 'method "keep" (with reason) records that an unmerged lane is kept on purpose, so the idle gate stops nudging about it. method "none" only reports the lane status. method "list" (no sessionID) reports every active lane in the project ' + "with commits ahead, uncommitted changes, and orphaned lanes; missing worktrees move their child sessions back. " + 'method "release" (with reason) hands the lane of a dead writer you spawned to the next writer spawned into its worktree: ' + "the writer's session must be deleted (stop it and delete it in OpenCode first), and the worktree clean and pushed.";
 var SWEEP_TOOL = "subagent_worktree_sweep";
 var SWEEP_DESCRIPTION = `Report, or on request remove, finished agent lanes. Runs only when called.
-` + "Each active lane whose subagent session is deleted or archived is checked as `finalize` checks it: not running, clean, no stash or operation, " + 'and its tip is the lane base, or an ancestor of origin/main, or a delivery landing record. Mode "report" (default) lists what would be removed and what is kept, and why. ' + 'Mode "prune" removes the removable ones through `finalize`, never forced, and touches no remote branch.';
+` + "Each active lane whose subagent session is deleted or archived is checked as `finalize` checks it: not running, clean, no stash or operation, " + 'and its tip is the lane base, or an ancestor of origin/main, or a delivery landing record, or the head a merge into a local target recorded, while it is still HEAD and that branch still contains it. Mode "report" (default) lists what would be removed and what is kept, and why. ' + 'Mode "prune" removes the removable ones through `finalize`, never forced, and touches no remote branch.';
 var SWEEP_INPUT = {
   type: "object",
   additionalProperties: false,
@@ -3950,6 +4046,7 @@ export {
   WRITER_LIVENESS_NOTE,
   annotation,
   blockingReservation,
+  branchRef,
   childReleasesLane,
   childState,
   containingWorktree,
@@ -3995,6 +4092,7 @@ export {
   slug,
   spawnRunner,
   startPrompt,
+  storedBranchRef,
   tail,
   targetsExternalDirectory,
   uncommittedOnly,

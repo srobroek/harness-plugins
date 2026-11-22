@@ -6,7 +6,7 @@ import { Error as ToolError } from "@opencode/plugin/promise/tool"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import { landingFile, readClaim, removeClaim, writeClaim, writeLanding } from "@srobroek/opencode-lib/worktree-claims"
 import { lockFile, readHolds, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
-import type { RunResult } from "./git.ts"
+import { type Runner, type RunResult, spawnRunner } from "./git.ts"
 import { createPlugin } from "./index.ts"
 import { type Lane, laneKey } from "./lane.ts"
 import { type Lifecycle, within } from "./lifecycle.ts"
@@ -34,6 +34,8 @@ type World = {
   porcelain: string
   /** `merge-base --is-ancestor` exit code. */
   ancestor: number
+  /** Refs whose answer overrides `ancestor`: the commits each ref contains. */
+  contains?: Record<string, string[]>
   /** The tip is already reachable from the main commit the lane was created at: no work of its own. */
   inMainAtCreation?: boolean
   openBranches: string[]
@@ -80,6 +82,8 @@ const lane = (over: Partial<Lane> = {}): Lane => ({
 })
 
 function runner(world: World, log: string[][]) {
+  /** The commit a fake branch ref resolves to: 40 hex digits of its own, never a lane commit. */
+  const branchTipOf = (ref: string) => Bun.hash(ref).toString(16).padStart(40, "c").slice(-40)
   return async (argv: string[]): Promise<RunResult> => {
     log.push(argv)
     const ok = (stdout = "") => ({ code: 0, stdout, stderr: "" })
@@ -94,10 +98,16 @@ function runner(world: World, log: string[][]) {
     if (cmd.startsWith("rev-parse --verify --quiet refs/heads/")) return ok(`${world.branchOid}\n`)
     if (cmd === "symbolic-ref --quiet --short HEAD") return world.onBranch ? ok("lane-a\n") : { code: 1, stdout: "", stderr: "" }
     if (cmd.startsWith("update-ref -d")) return { code: world.updateRefFails ? 1 : 0, stdout: "", stderr: "" }
+    // An exact branch ref exists while `contains` lists it; it resolves to a commit of its own, which `merge-base` maps back.
+    const exact = /^show-ref --verify --hash (refs\/heads\/\S+)$/.exec(cmd)?.[1]
+    if (exact !== undefined) return world.contains?.[exact] === undefined ? { code: 1, stdout: "", stderr: "" } : ok(`${branchTipOf(exact)}\n`)
     if (cmd.startsWith("merge-base --is-ancestor")) {
       // Only the commit the proof was about is an ancestor; a different tip is not.
-      const [, , oid, ref] = cmd.split(" ")
-      if (ref === MAIN0) return { code: world.inMainAtCreation && oid === TIP ? 0 : 1, stdout: "", stderr: "" }
+      const [, , oid, arg] = cmd.split(" ")
+      if (arg === MAIN0) return { code: world.inMainAtCreation && oid === TIP ? 0 : 1, stdout: "", stderr: "" }
+      const ref = Object.keys(world.contains ?? {}).find((name) => branchTipOf(name) === arg) ?? arg
+      const contained = ref === undefined ? undefined : world.contains?.[ref]
+      if (contained !== undefined) return { code: oid !== undefined && contained.includes(oid) ? 0 : 1, stdout: "", stderr: "" }
       return { code: world.ancestor === 0 && oid === TIP ? 0 : 1, stdout: "", stderr: "" }
     }
     if (cmd === "rev-parse --absolute-git-dir") return ok("/nonexistent/gitdir\n")
@@ -116,6 +126,8 @@ async function start(
     common?: string
     world?: World
     lock?: Record<string, unknown>
+    /** Run git through this instead of the fake world (a real repository, say). */
+    run?: Runner
   } = {},
 ) {
   const state: World = options.world ?? {
@@ -189,7 +201,7 @@ async function start(
       lifecycle = created
     },
     commonDir: async () => common,
-    run: runner(state, log),
+    run: options.run ?? runner(state, log),
     lookupMs: 20,
     directoryExists: async (path: string) => {
       const code = state.statErrors?.[path]
@@ -213,6 +225,10 @@ async function start(
     events,
     /** Resolves once no pass is scheduled and the lifecycle's serial chain is quiet: every queued recovery has run. */
     quiet: () => lifecycle?.settle() ?? Promise.resolve(),
+    lifecycle: (): Lifecycle => {
+      if (lifecycle === undefined) throw new Error("the lifecycle was not created")
+      return lifecycle
+    },
   }
 }
 
@@ -351,6 +367,30 @@ describe("execution events", () => {
     fake.emit({ type: "session.execution.failed", data: { sessionID: CHILD, error: {} } })
     await settle()
     expect(synthetic(fake)).toEqual([])
+  })
+
+  test("dispose waits for a follow-up that a running pass queues while dispose waits", async () => {
+    let disposing: Promise<void> | undefined
+    let followUpDone = false
+    let gateGone = false
+    const { fake, lifecycle, cleanup } = await start({
+      onGit: async () => {
+        if (disposing !== undefined) return
+        disposing = cleanup()
+        // The barrier: dispose unregisters the idle gate as its last step before it waits on the chains, so once the
+        // gate is gone it is waiting, and the follow-up is queued behind this pass after that wait began.
+        await until(() => !fake.hooks("session").includes("experimental.idle"))
+        gateGone = !fake.hooks("session").includes("experimental.idle")
+        void lifecycle()
+          .sweep("report")
+          .then(() => {
+            followUpDone = true
+          })
+      },
+    })
+    await lifecycle().sweep("report")
+    await disposing
+    expect({ gateGone, followUpDone }).toEqual({ gateGone: true, followUpDone: true })
   })
 })
 
@@ -757,6 +797,206 @@ describe("the idle gate reads every kind of background job", () => {
     fake.sessions.set("ses_unrelated", { id: "ses_unrelated", projectID: "prj", location: { directory: REPO } })
     await idle(fake, [{ kind: "shell", sessionID: "ses_unrelated", shellID: "sh", command: "ls" }])
     expect(worktree[0]?.method).toBe("remove")
+    await cleanup()
+  })
+})
+
+describe("a merge into a local target is a merged proof later", () => {
+  const running = { [CHILD]: { busy: 5, idle: 2 } }
+  const MAIN = "refs/heads/main"
+  type Started = Awaited<ReturnType<typeof start>>
+  /**
+   * Merge while the child runs (the checkout stays) with `main` containing `atMerge`, run `afterMerge`, then let the
+   * child end so the event pass finalizes without a target.
+   */
+  const mergeThenEnd = async (atMerge: string[], afterMerge: (started: Started) => void = () => {}) => {
+    const started = await start({ time: running, contains: { [MAIN]: atMerge } }, { stored: [lane({ target: "main" })] })
+    const states = laneWrites(started.fake)
+    const kept = await started.lifecycle().removeAfterMerge(stored(started.fake), "main", NOW)
+    expect(kept).toMatchObject({ removed: false, kept: "running" })
+    afterMerge(started)
+    const child = started.fake.sessions.get(CHILD)
+    if (child) child.time = { busy: 5, idle: 6, archived: 7 }
+    await deliver(started.fake, started.events, { type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    return { ...started, states }
+  }
+  const branchDeleted = (log: string[][]) => log.some((argv) => argv.includes("update-ref"))
+  const recorded = { target: "main", head: TIP }
+
+  /** Start again from `record`, as a restart after a crash right after `removing` was written, with the target reset. */
+  const recoverReset = async (record: Lane) => {
+    const { fake, worktree, log, quiet, cleanup } = await start({ contains: { [MAIN]: [] } }, { stored: [record] })
+    await quiet()
+    const after = stored(fake)
+    const outcome = { removes: worktree.length, branchDeleted: branchDeleted(log), state: after.state, removal: after.removal }
+    await cleanup()
+    return outcome
+  }
+  const keptActive = { removes: 0, branchDeleted: false, state: "active" as const, removal: undefined }
+
+  test("a removal a crash left half done is not finished once the target was reset: the record keeps the target it must stay in", async () => {
+    let removing: Lane | undefined
+    const { states, cleanup } = await mergeThenEnd([TIP], ({ fake }) => {
+      const storage = fake.context.storage as unknown as { set: (key: string, value: unknown) => Promise<void> }
+      const original = storage.set.bind(storage)
+      storage.set = (key, value) => {
+        if (key === laneKey(CHILD) && removing === undefined && (value as Lane).state === "removing") removing = structuredClone(value as Lane)
+        return original(key, value)
+      }
+    })
+    await decision(states)
+    await cleanup()
+    if (removing === undefined) throw new Error("no removing record was written")
+    // Without the merge record, only the ref stored in the removal record can tell recovery what to prove.
+    expect(await recoverReset({ ...removing, mergedInto: undefined })).toEqual(keptActive)
+  })
+
+  test("a removal a crash left half done, written before the target was stored, is not finished once the target was reset", async () => {
+    // The ref is rebuilt from the merge record.
+    expect(await recoverReset(lane({ target: "main", mergedInto: recorded, state: "removing", removal: { retireAs: "merged", head: TIP } }))).toEqual(keptActive)
+  })
+
+  describe("a clean, finished lane merged into a local branch is removed by its lead", () => {
+    const leadIdle = {
+      "the parent's idle pass": (started: Started) => deliver(started.fake, started.events, { type: "session.idle", data: { sessionID: PARENT } }),
+      "the lead's idle gate": (started: Started) => started.fake.fire.session("experimental.idle", { sessionID: PARENT, background: [] } as never),
+    }
+
+    test.each(Object.keys(leadIdle) as Array<keyof typeof leadIdle>)("when the child's end event was missed, through %s", async (trigger) => {
+      const started = await start({ contains: { [MAIN]: [TIP] } }, { stored: [lane({ target: "main", mergedInto: recorded })] })
+      await started.quiet()
+      await leadIdle[trigger](started)
+      await started.quiet()
+      expect({ removes: started.worktree.filter((entry) => entry.method === "remove").length, state: stored(started.fake).state }).toEqual({ removes: 1, state: "merged" })
+      await started.cleanup()
+    })
+
+    test("when its removal was refused for a dirty tree and the tree is clean later, through the lead's idle gate", async () => {
+      const started = await mergeThenEnd([TIP], ({ state }) => {
+        state.porcelain = " M a.txt\n"
+      })
+      await started.quiet()
+      expect(stored(started.fake).state).toBe("active")
+      started.state.porcelain = ""
+      await leadIdle["the lead's idle gate"](started)
+      await started.quiet()
+      expect({ removes: started.worktree.filter((entry) => entry.method === "remove").length, state: stored(started.fake).state }).toEqual({ removes: 1, state: "merged" })
+      await started.cleanup()
+    })
+  })
+
+  test("a lane whose merged head the target still contains is removed as merged", async () => {
+    const { fake, worktree, states, cleanup } = await mergeThenEnd([TIP])
+    expect(await decision(states)).toEqual(["removing", "merged"])
+    expect(worktree.map((entry) => entry.method)).toEqual(["remove", "refresh"])
+    expect(stored(fake).state).toBe("merged")
+    await cleanup()
+  })
+
+  test("a lane whose target was reset so it no longer contains the head is kept", async () => {
+    const { fake, worktree, quiet, cleanup } = await mergeThenEnd([TIP], ({ state }) => {
+      state.contains = { [MAIN]: [] }
+    })
+    await quiet()
+    expect({ removes: worktree.length, state: stored(fake).state }).toEqual({ removes: 0, state: "active" })
+    await cleanup()
+  })
+
+  test("a merge whose target did not contain HEAD records no proof, even once the target does", async () => {
+    const { fake, worktree, quiet, cleanup } = await mergeThenEnd([], ({ state }) => {
+      state.contains = { [MAIN]: [TIP] }
+    })
+    await quiet()
+    expect({ removes: worktree.length, state: stored(fake).state }).toEqual({ removes: 0, state: "active" })
+    await cleanup()
+  })
+
+  test("a recorded proof for another head than the current HEAD proves nothing, even when the target contains both", async () => {
+    const { fake, worktree, quiet, cleanup } = await mergeThenEnd([TIP, TIP2], ({ state }) => {
+      state.head = TIP2
+      state.branchOid = TIP2
+    })
+    await quiet()
+    expect({ removes: worktree.length, state: stored(fake).state }).toEqual({ removes: 0, state: "active" })
+    await cleanup()
+  })
+
+  test("a target reset while the other sessions are evicted keeps the worktree and the branch", async () => {
+    let reset = false
+    const { fake, worktree, log, states, cleanup } = await mergeThenEnd([TIP], ({ fake, state }) => {
+      const session = fake.context.session as unknown as { list: (input: { parentID?: string }) => Promise<unknown> }
+      const original = session.list.bind(session)
+      session.list = async (input) => {
+        const answer = await original(input)
+        // The eviction's project listing (no parentID): the target moves after the checks proved it.
+        if (input?.parentID === undefined && !reset) {
+          reset = true
+          state.contains = { [MAIN]: [] }
+        }
+        return answer
+      }
+    })
+    expect(await decision(states)).toEqual(["removing", "active"])
+    expect({ reset, removes: worktree.length, branchDeleted: branchDeleted(log), state: stored(fake).state }).toEqual({
+      reset: true,
+      removes: 0,
+      branchDeleted: false,
+      state: "active",
+    })
+    await cleanup()
+  })
+
+  test("an event pass that read the lanes before a merge recorded its proof keeps the proof", async () => {
+    const { fake, lifecycle, quiet, cleanup } = await start({ time: running, contains: { [MAIN]: [TIP] } }, { stored: [lane({ target: "main" })] })
+    await quiet()
+    const storage = fake.context.storage as unknown as { scan: (input: unknown) => Promise<unknown> }
+    const original = storage.scan.bind(storage)
+    let scans = 0
+    let merged = false
+    storage.scan = async (input) => {
+      const page = await original(input)
+      // The pass reads the lanes twice: once to finish removals, then for its own lane. The merge lands right after that read.
+      if (++scans === 2) {
+        await lifecycle().removeAfterMerge(stored(fake), "main", NOW)
+        merged = true
+      }
+      return page
+    }
+    fake.emit({ type: "session.execution.failed", data: { sessionID: CHILD, error: { message: "model gone" } } })
+    await until(() => merged)
+    await quiet()
+    const after = stored(fake)
+    expect({ merged, mergedInto: after.mergedInto, outcome: after.outcome?.kind }).toEqual({
+      merged: true,
+      mergedInto: { target: "refs/heads/main", head: TIP },
+      outcome: "failed",
+    })
+    await cleanup()
+  })
+})
+
+describe("a lane handed over while an event pass holds the old writer's copy", () => {
+  test("the pass writes nothing onto the record that now names the new writer", async () => {
+    const { fake, quiet, cleanup } = await start({ time: { [CHILD]: { busy: 5, idle: 2 } } })
+    await quiet()
+    const storage = fake.context.storage as unknown as { scan: (input: unknown) => Promise<unknown>; set: (key: string, value: unknown) => Promise<void> }
+    const original = storage.scan.bind(storage)
+    let scans = 0
+    let handed = false
+    storage.scan = async (input) => {
+      const page = await original(input)
+      // The pass reads the lanes twice; right after its own-lane read, the record is handed to another writer (same key).
+      if (++scans === 2) {
+        await storage.set(laneKey(CHILD), { ...stored(fake), child: "ses_next", handedOver: { from: CHILD, at: NOW } })
+        handed = true
+      }
+      return page
+    }
+    fake.emit({ type: "session.execution.failed", data: { sessionID: CHILD, error: { message: "model gone" } } })
+    await until(() => handed)
+    await quiet()
+    const after = stored(fake)
+    expect({ handed, child: after.child, outcome: after.outcome, state: after.state }).toEqual({ handed: true, child: "ses_next", outcome: undefined, state: "active" })
     await cleanup()
   })
 })
@@ -2804,4 +3044,104 @@ describe("an execution that fails because its location is gone", () => {
     expect(stored(fake).state).toBe("active")
     await cleanup()
   })
+})
+
+describe("recovery proves a merge target by its exact branch ref, in a real repository", () => {
+  // Real git with a test-only identity; hooks and signing off so the machine's config cannot interfere.
+  const raw = (cwd: string, ...args: string[]) => {
+    const run = Bun.spawnSync(
+      ["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args],
+      { stdout: "pipe", stderr: "pipe" },
+    )
+    if (run.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${run.stderr.toString()}`)
+    return run.stdout.toString().trim()
+  }
+  const branchExists = (repo: string, ref: string) =>
+    Bun.spawnSync(["git", "-C", repo, "show-ref", "--verify", "--quiet", ref], { stdout: "ignore", stderr: "ignore" }).exitCode === 0
+
+  /**
+   * A lane branch merged into `main`, a tag also named `main` at that merge (so it contains the lane's head), then
+   * `move` changes the branch. The lane is left `removing`: with the short target name a foreground merge recorded
+   * (`current`), or as a released build wrote it, with neither `removal.within` nor `mergedInto` (`legacy`), so only
+   * `lane.target` names the branch.
+   */
+  const repository = (move: (repo: string, base: string) => void, form: "current" | "legacy" = "current") => {
+    const root = mkdtempSync(join(tmpdir(), "subagent-worktree-tag-"))
+    COMMONS.push(root)
+    const repo = join(root, "repo")
+    raw(root, "init", "--quiet", "--initial-branch=main", repo)
+    writeFileSync(join(repo, "a.txt"), "a\n")
+    raw(repo, "add", "a.txt")
+    raw(repo, "commit", "--quiet", "-m", "base")
+    const base = raw(repo, "rev-parse", "HEAD")
+    const worktree = join(root, "lane")
+    raw(repo, "worktree", "add", "--quiet", "-b", "lane-a", worktree)
+    writeFileSync(join(worktree, "b.txt"), "b\n")
+    raw(worktree, "add", "b.txt")
+    raw(worktree, "commit", "--quiet", "-m", "work")
+    const head = raw(worktree, "rev-parse", "HEAD")
+    raw(repo, "merge", "--quiet", "--no-ff", "--no-edit", "lane-a")
+    raw(repo, "tag", "main", "main")
+    move(repo, base)
+    const record = lane({
+      directory: worktree,
+      parentDir: repo,
+      base,
+      mainAtCreation: base,
+      target: "main",
+      state: "removing",
+      ...(form === "current"
+        ? { removal: { retireAs: "merged" as const, head, within: "main" }, mergedInto: { target: "main", head } }
+        : { removal: { retireAs: "merged" as const, head } }),
+    })
+    return { repo, record }
+  }
+  const moves: Array<[string, (repo: string, base: string) => void]> = [
+    ["the branch was reset behind the lane's head", (repo, base) => raw(repo, "update-ref", "refs/heads/main", base)],
+    [
+      "the branch was deleted",
+      (repo) => {
+        raw(repo, "checkout", "--quiet", "--detach")
+        raw(repo, "update-ref", "-d", "refs/heads/main")
+      },
+    ],
+  ]
+  /** Recover `record` through the hardened runner: what the host removed, whether the lane branch is left, and the lane's state. */
+  const recover = async (repo: string, record: Lane) => {
+    const { fake, worktree, quiet, cleanup } = await start({}, { stored: [record], run: spawnRunner })
+    await quiet()
+    const outcome = { removes: worktree.filter((entry) => entry.method === "remove").length, branch: branchExists(repo, "refs/heads/lane-a"), state: stored(fake).state }
+    await cleanup()
+    return outcome
+  }
+  // Real git: about 1 s per case measured on a loaded machine; 30 s leaves room.
+  const REAL_GIT_MS = 30_000
+
+  test.each(moves)(
+    "a tag named like the target that contains HEAD proves nothing when %s",
+    async (_name, move) => {
+      const { repo, record } = repository(move)
+      expect(await recover(repo, record)).toEqual({ removes: 0, branch: true, state: "active" })
+    },
+    REAL_GIT_MS,
+  )
+
+  test(
+    "a record with neither the target ref nor a merge record finishes as merged while lane.target's branch contains HEAD",
+    async () => {
+      const { repo, record } = repository(() => {}, "legacy")
+      // The lane branch is deleted at the proven commit, as every merged removal does.
+      expect(await recover(repo, record)).toEqual({ removes: 1, branch: false, state: "merged" })
+    },
+    REAL_GIT_MS,
+  )
+
+  test.each(moves)(
+    "a record with neither the target ref nor a merge record keeps the lane when %s, though a tag of that name contains HEAD",
+    async (_name, move) => {
+      const { repo, record } = repository(move, "legacy")
+      expect(await recover(repo, record)).toEqual({ removes: 0, branch: true, state: "active" })
+    },
+    REAL_GIT_MS,
+  )
 })

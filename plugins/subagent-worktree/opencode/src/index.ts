@@ -80,7 +80,7 @@ export const SWEEP_TOOL = "subagent_worktree_sweep"
 export const SWEEP_DESCRIPTION =
   "Report, or on request remove, finished agent lanes. Runs only when called.\n" +
   'Each active lane whose subagent session is deleted or archived is checked as `finalize` checks it: not running, clean, no stash or operation, ' +
-  'and its tip is the lane base, or an ancestor of origin/main, or a delivery landing record. Mode "report" (default) lists what would be removed and what is kept, and why. ' +
+  'and its tip is the lane base, or an ancestor of origin/main, or a delivery landing record, or the head a merge into a local target recorded, while it is still HEAD and that branch still contains it. Mode "report" (default) lists what would be removed and what is kept, and why. ' +
   'Mode "prune" removes the removable ones through `finalize`, never forced, and touches no remote branch.'
 
 export const SWEEP_INPUT = {

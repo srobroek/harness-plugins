@@ -67,8 +67,13 @@ export type Lane = {
   outcome?: { kind: "failed" | "interrupted"; at: number; reason: string; id: string }
   /** Set when moving the child back into this lane failed: a resume must restore it or be refused. */
   fenced?: { reason: string; at: number }
-  /** Set while `state` is `removing`: how the lane retires, the commit that was proven, and the sessions still to move home. */
-  removal?: { retireAs: "removed" | "merged" | "landed"; head?: string; pending?: string[]; incomplete?: boolean }
+  /**
+   * Set while `state` is `removing`: how the lane retires, the commit that was proven, the ref that had to contain it
+   * for a merged proof (proven again on recovery), and the sessions still to move home.
+   */
+  removal?: { retireAs: "removed" | "merged" | "landed"; head?: string; within?: string; pending?: string[]; incomplete?: boolean }
+  /** An explicit merge kept the checkout: `head` was proven in branch `target` then (its exact ref, `refs/heads/<name>`; an older record holds the short name); a later removal proves it again. */
+  mergedInto?: { target: string; head: string }
   /** Since when the child and parent have been idle with the lane still empty. */
   quietSince?: number
   /** Keys of the notices already sent about this lane, so none repeats. */
@@ -523,6 +528,24 @@ export function mergeArgs(directory: string, target: string): string[] {
 export function isSafeBranchName(name: string): boolean {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this rejects
   return name !== "" && !name.startsWith("-") && !name.includes("..") && !/[\s\x00-\x1f\x7f]/.test(name)
+}
+
+const BRANCH_PREFIX = "refs/heads/"
+
+/**
+ * The exact ref of local branch `name` (a merge target as given), or undefined. A short name resolves through tags
+ * first (`main` is `refs/tags/main` when both exist), so a proof names the branch ref itself. A name that starts with
+ * `refs/` is refused: its ref could not be told apart from another branch's in a stored record.
+ */
+export function branchRef(name: string): string | undefined {
+  if (!isSafeBranchName(name) || name.startsWith("refs/")) return undefined
+  return `${BRANCH_PREFIX}${name}`
+}
+
+/** A merge target as a lane record stores it, as its exact branch ref: the ref itself, or a short name an older record kept. */
+export function storedBranchRef(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  return value.startsWith(BRANCH_PREFIX) ? branchRef(value.slice(BRANCH_PREFIX.length)) : branchRef(value)
 }
 
 /** Whether `wt merge` output describes a merge or rebase conflict. */

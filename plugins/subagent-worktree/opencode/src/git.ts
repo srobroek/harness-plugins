@@ -92,6 +92,14 @@ export function createGit(run: Runner) {
     return overrides === undefined ? undefined : git(directory, ...overrides, ...args)
   }
   const files = (output: string | undefined) => output?.split("\0").filter((file) => file !== "")
+  /** The commit an exact `refs/heads/<name>` ref points at; undefined when that ref does not exist (no other ref is tried). */
+  const branchTip = async (directory: string, ref: string) => {
+    if (!ref.startsWith("refs/heads/")) return undefined
+    const oid = await git(directory, "show-ref", "--verify", "--hash", ref)
+    return oid !== undefined && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(oid) ? oid : undefined
+  }
+  const isAncestor = async (directory: string, tip: string, ref: string) =>
+    (await run(["git", "-C", directory, "merge-base", "--is-ancestor", tip, ref])).code === 0
   return {
     run,
     /** Why the installed git cannot run hardened (too old or unreadable), or undefined. */
@@ -151,8 +159,13 @@ export function createGit(run: Runner) {
     /** The `git status --porcelain` text; undefined when git fails. */
     porcelain: (directory: string) => unfiltered(directory, "status", "--porcelain"),
     /** Whether `tip` is an ancestor of `ref` (exit 0). */
-    isAncestor: async (directory: string, tip: string, ref: string) =>
-      (await run(["git", "-C", directory, "merge-base", "--is-ancestor", tip, ref])).code === 0,
+    isAncestor,
+    branchTip,
+    /** Whether the exact branch ref `ref` exists and its commit contains `tip`; a missing branch contains nothing. */
+    branchContains: async (directory: string, tip: string, ref: string) => {
+      const at = await branchTip(directory, ref)
+      return at !== undefined && (await isAncestor(directory, tip, at))
+    },
     /** Stash subjects (`%gs`), one per line; undefined when git fails. */
     stashSubjects: (directory: string) => git(directory, "stash", "list", "--format=%gs"),
     /** The worktree's own git directory, absolute. */
