@@ -103,19 +103,15 @@ const BRANCHES = new Set(["else", "elif"])
 const ASSIGNMENT = /^[A-Za-z_]\w*=/
 const BOTH: Partial<Record<ActorVar, true>> = { BEADS_ACTOR: true, BD_ACTOR: true }
 
-/** Builtins other than `export` and `unset` that can set or clear a shell variable named in their arguments. */
+/** Builtins without modelled options that can set or clear a shell variable named in their arguments. */
 const VARIABLE_BUILTINS: Record<string, true> = {
-  declare: true,
   eval: true,
   getopts: true,
   let: true,
-  local: true,
   mapfile: true,
   printf: true,
   read: true,
   readarray: true,
-  readonly: true,
-  typeset: true,
 }
 
 const basename = (word: string): string => word.split("/").pop() ?? word
@@ -137,11 +133,9 @@ function childView(vars: ShellVars): { exported: ActorState; unverified: Partial
   return { exported, unverified }
 }
 
-/** Apply a command-position `export`, `export -n` or `unset` to the shell's actor variables. */
-function applyActorBuiltin(vars: ShellVars, values: string[]): void {
-  const name = values[0]
-  const unexport = name === "export" && values.slice(1).some((arg) => /^-[a-zA-Z]*n/.test(arg))
-  for (const arg of values.slice(1)) {
+/** Apply an `export`, `export -n` or `unset` whose options were already read to the shell's actor variables. */
+function applyActorBuiltin(vars: ShellVars, name: "export" | "unset", unexport: boolean, names: string[]): void {
+  for (const arg of names) {
     const variable = actorVarOf(arg)
     if (variable === undefined) continue
     const current = vars[variable]
@@ -152,6 +146,61 @@ function applyActorBuiltin(vars: ShellVars, values: string[]): void {
     else if (current === "unverified") continue
     else if (current !== undefined && current.value !== null) vars[variable] = { value: current.value, exported: true }
   }
+}
+
+/** Option letters each builtin accepts, from bash 5 `help`; an option outside them leaves its effect unknown. */
+const BUILTIN_OPTIONS: Record<string, string> = {
+  export: "fnp",
+  unset: "fnv",
+  declare: "aAfFgilnprtuxI",
+  typeset: "aAfFgilnprtuxI",
+  local: "aAfFgilnprtuxI",
+  readonly: "aAfp",
+}
+
+/** A builtin's option letters and the names after them, or `undefined` when an option is one the gate does not know. */
+function builtinArgs(name: string, args: string[]): { letters: string; names: string[] } | undefined {
+  const known = BUILTIN_OPTIONS[name] ?? ""
+  let letters = ""
+  let i = 0
+  for (; i < args.length; i++) {
+    const arg = args[i] as string
+    if (arg === "--") {
+      i++
+      break
+    }
+    if (arg.length < 2 || (arg[0] !== "-" && arg[0] !== "+")) break
+    for (const letter of arg.slice(1)) if (!known.includes(letter)) return undefined
+    letters += arg.slice(1)
+  }
+  return { letters, names: args.slice(i) }
+}
+
+/** The actor variables `args` mention anywhere. */
+const mentioned = (args: string[]): ActorVar[] =>
+  ACTOR_VARS.filter((variable) => args.some((arg) => arg.includes(variable)))
+
+/** What `export`, `unset` or a `declare`-family builtin does to the actor variables, read from its options. */
+function applyVariableBuiltin(vars: ShellVars, name: string, args: string[]): void {
+  const parsed = builtinArgs(name, args)
+  if (parsed === undefined) return markUnverified(vars, mentioned(args))
+  const { letters, names } = parsed
+  const has = (letter: string): boolean => letters.includes(letter)
+  if (name === "export") {
+    // `-f` names functions. `-p` alone prints; with names bash exports them and zsh only prints them.
+    if (has("f")) return
+    if (has("p")) return markUnverified(vars, mentioned(names))
+    return applyActorBuiltin(vars, "export", has("n"), names)
+  }
+  if (name === "unset") {
+    if (has("f") && !has("v")) return
+    // `-n` unsets a nameref itself, and the gate does not know which names are namerefs.
+    if (has("n") || has("f")) return markUnverified(vars, mentioned(names))
+    return applyActorBuiltin(vars, "unset", false, names)
+  }
+  // The declare family: `-p` only prints and `-f`/`-F` name functions; anything else may set or export.
+  if (has("p") || has("f") || has("F")) return
+  markUnverified(vars, mentioned(names))
 }
 
 /** A bare `NAME=value` sets the value and leaves the export flag alone. */
@@ -170,11 +219,8 @@ function afterCommand(vars: ShellVars, values: string[], assigned: string[]): Sh
   const command = values[0] === "builtin" || values[0] === "command" ? values.slice(1) : values
   const name = command[0]
   if (values.length === 0) applyActorAssignments(after, assigned)
-  else if (name === "export" || name === "unset") applyActorBuiltin(after, command)
-  else if (name !== undefined && VARIABLE_BUILTINS[name] === true)
-    for (const variable of ACTOR_VARS) {
-      if (command.slice(1).some((arg) => arg.includes(variable))) after[variable] = "unverified"
-    }
+  else if (name !== undefined && BUILTIN_OPTIONS[name] !== undefined) applyVariableBuiltin(after, name, command.slice(1))
+  else if (name !== undefined && VARIABLE_BUILTINS[name] === true) markUnverified(after, mentioned(command.slice(1)))
   return after
 }
 
