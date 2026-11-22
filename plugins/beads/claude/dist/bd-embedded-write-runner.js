@@ -1223,7 +1223,8 @@ function afterCommand(vars, values, assigned) {
     if (values[i] === "--")
       i++;
     const wrapped = values[i];
-    if (wrapped !== undefined && (BUILTIN_OPTIONS[wrapped] !== undefined || VARIABLE_BUILTINS[wrapped] === true))
+    const chained = wrapped === "command" || wrapped === "builtin";
+    if (wrapped !== undefined && (chained || BUILTIN_OPTIONS[wrapped] !== undefined || VARIABLE_BUILTINS[wrapped] === true))
       markUnverified(after, mentioned(values.slice(i + 1)));
   } else if (name !== undefined && BUILTIN_OPTIONS[name] !== undefined)
     applyVariableBuiltin(after, name, values.slice(1));
