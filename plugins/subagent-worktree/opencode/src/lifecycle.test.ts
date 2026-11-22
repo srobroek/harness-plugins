@@ -34,8 +34,8 @@ type World = {
   porcelain: string
   /** `merge-base --is-ancestor` exit code. */
   ancestor: number
-  /** Refs whose answer overrides `ancestor`: whether the ref contains the tip. */
-  contains?: Record<string, boolean>
+  /** Refs whose answer overrides `ancestor`: the commits each ref contains. */
+  contains?: Record<string, string[]>
   /** The tip is already reachable from the main commit the lane was created at: no work of its own. */
   inMainAtCreation?: boolean
   openBranches: string[]
@@ -101,7 +101,7 @@ function runner(world: World, log: string[][]) {
       const [, , oid, ref] = cmd.split(" ")
       if (ref === MAIN0) return { code: world.inMainAtCreation && oid === TIP ? 0 : 1, stdout: "", stderr: "" }
       const contained = ref === undefined ? undefined : world.contains?.[ref]
-      if (contained !== undefined) return { code: contained && oid === TIP ? 0 : 1, stdout: "", stderr: "" }
+      if (contained !== undefined) return { code: oid !== undefined && contained.includes(oid) ? 0 : 1, stdout: "", stderr: "" }
       return { code: world.ancestor === 0 && oid === TIP ? 0 : 1, stdout: "", stderr: "" }
     }
     if (cmd === "rev-parse --absolute-git-dir") return ok("/nonexistent/gitdir\n")
@@ -364,12 +364,15 @@ describe("execution events", () => {
   test("dispose waits for a follow-up that a running pass queues while dispose waits", async () => {
     let disposing: Promise<void> | undefined
     let followUpDone = false
-    const { lifecycle, cleanup } = await start({
+    let gateGone = false
+    const { fake, lifecycle, cleanup } = await start({
       onGit: async () => {
         if (disposing !== undefined) return
         disposing = cleanup()
-        // Let dispose reach its wait on the chains before the follow-up is queued behind this pass.
-        await settle(50)
+        // The barrier: dispose unregisters the idle gate as its last step before it waits on the chains, so once the
+        // gate is gone it is waiting, and the follow-up is queued behind this pass after that wait began.
+        await until(() => !fake.hooks("session").includes("experimental.idle"))
+        gateGone = !fake.hooks("session").includes("experimental.idle")
         void lifecycle()
           .sweep("report")
           .then(() => {
@@ -379,7 +382,7 @@ describe("execution events", () => {
     })
     await lifecycle().sweep("report")
     await disposing
-    expect(followUpDone).toBe(true)
+    expect({ gateGone, followUpDone }).toEqual({ gateGone: true, followUpDone: true })
   })
 })
 
@@ -792,21 +795,27 @@ describe("the idle gate reads every kind of background job", () => {
 
 describe("a merge into a local target is a merged proof later", () => {
   const running = { [CHILD]: { busy: 5, idle: 2 } }
-  /** Merge while the child runs (the checkout stays), then let the child end and the event pass finalize without a target. */
-  const mergeThenEnd = async (afterMerge: (state: World) => void) => {
-    const started = await start({ time: running, contains: { "refs/heads/main": true } }, { stored: [lane({ target: "main" })] })
+  const MAIN = "refs/heads/main"
+  type Started = Awaited<ReturnType<typeof start>>
+  /**
+   * Merge while the child runs (the checkout stays) with `main` containing `atMerge`, run `afterMerge`, then let the
+   * child end so the event pass finalizes without a target.
+   */
+  const mergeThenEnd = async (atMerge: string[], afterMerge: (started: Started) => void = () => {}) => {
+    const started = await start({ time: running, contains: { [MAIN]: atMerge } }, { stored: [lane({ target: "main" })] })
     const states = laneWrites(started.fake)
     const kept = await started.lifecycle().removeAfterMerge(stored(started.fake), "main", NOW)
     expect(kept).toMatchObject({ removed: false, kept: "running" })
-    afterMerge(started.state)
+    afterMerge(started)
     const child = started.fake.sessions.get(CHILD)
     if (child) child.time = { busy: 5, idle: 6, archived: 7 }
     await deliver(started.fake, started.events, { type: "session.execution.succeeded", data: { sessionID: CHILD } })
     return { ...started, states }
   }
+  const branchDeleted = (log: string[][]) => log.some((argv) => argv.includes("update-ref"))
 
   test("a lane whose merged head the target still contains is removed as merged", async () => {
-    const { fake, worktree, states, cleanup } = await mergeThenEnd(() => {})
+    const { fake, worktree, states, cleanup } = await mergeThenEnd([TIP])
     expect(await decision(states)).toEqual(["removing", "merged"])
     expect(worktree.map((entry) => entry.method)).toEqual(["remove", "refresh"])
     expect(stored(fake).state).toBe("merged")
@@ -814,12 +823,83 @@ describe("a merge into a local target is a merged proof later", () => {
   })
 
   test("a lane whose target was reset so it no longer contains the head is kept", async () => {
-    const { fake, worktree, quiet, cleanup } = await mergeThenEnd((state) => {
-      state.contains = { "refs/heads/main": false }
+    const { fake, worktree, quiet, cleanup } = await mergeThenEnd([TIP], ({ state }) => {
+      state.contains = { [MAIN]: [] }
     })
     await quiet()
-    expect(worktree).toEqual([])
-    expect(stored(fake).state).toBe("active")
+    expect({ removes: worktree.length, state: stored(fake).state }).toEqual({ removes: 0, state: "active" })
+    await cleanup()
+  })
+
+  test("a merge whose target did not contain HEAD records no proof, even once the target does", async () => {
+    const { fake, worktree, quiet, cleanup } = await mergeThenEnd([], ({ state }) => {
+      state.contains = { [MAIN]: [TIP] }
+    })
+    await quiet()
+    expect({ removes: worktree.length, state: stored(fake).state }).toEqual({ removes: 0, state: "active" })
+    await cleanup()
+  })
+
+  test("a recorded proof for another head than the current HEAD proves nothing, even when the target contains both", async () => {
+    const { fake, worktree, quiet, cleanup } = await mergeThenEnd([TIP, TIP2], ({ state }) => {
+      state.head = TIP2
+      state.branchOid = TIP2
+    })
+    await quiet()
+    expect({ removes: worktree.length, state: stored(fake).state }).toEqual({ removes: 0, state: "active" })
+    await cleanup()
+  })
+
+  test("a target reset while the other sessions are evicted keeps the worktree and the branch", async () => {
+    let reset = false
+    const { fake, worktree, log, states, cleanup } = await mergeThenEnd([TIP], ({ fake, state }) => {
+      const session = fake.context.session as unknown as { list: (input: { parentID?: string }) => Promise<unknown> }
+      const original = session.list.bind(session)
+      session.list = async (input) => {
+        const answer = await original(input)
+        // The eviction's project listing (no parentID): the target moves after the checks proved it.
+        if (input?.parentID === undefined && !reset) {
+          reset = true
+          state.contains = { [MAIN]: [] }
+        }
+        return answer
+      }
+    })
+    expect(await decision(states)).toEqual(["removing", "active"])
+    expect({ reset, removes: worktree.length, branchDeleted: branchDeleted(log), state: stored(fake).state }).toEqual({
+      reset: true,
+      removes: 0,
+      branchDeleted: false,
+      state: "active",
+    })
+    await cleanup()
+  })
+
+  test("an event pass that read the lanes before a merge recorded its proof keeps the proof", async () => {
+    const { fake, lifecycle, quiet, cleanup } = await start({ time: running, contains: { [MAIN]: [TIP] } }, { stored: [lane({ target: "main" })] })
+    await quiet()
+    const storage = fake.context.storage as unknown as { scan: (input: unknown) => Promise<unknown> }
+    const original = storage.scan.bind(storage)
+    let scans = 0
+    let merged = false
+    storage.scan = async (input) => {
+      const page = await original(input)
+      // The pass reads the lanes twice: once to finish removals, then for its own lane. The merge lands right after that read.
+      if (++scans === 2) {
+        await lifecycle().removeAfterMerge(stored(fake), "main", NOW)
+        merged = true
+      }
+      return page
+    }
+    fake.emit({ type: "session.execution.failed", data: { sessionID: CHILD, error: { message: "model gone" } } })
+    await until(() => merged)
+    await quiet()
+    const after = stored(fake)
+    expect({ merged, mergedInto: after.mergedInto, outcome: after.outcome?.kind }).toEqual({
+      merged: true,
+      mergedInto: { target: "main", head: TIP },
+      outcome: "failed",
+    })
     await cleanup()
   })
 })

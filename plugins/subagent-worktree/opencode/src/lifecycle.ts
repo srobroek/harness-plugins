@@ -348,19 +348,39 @@ export function createLifecycle(deps: LifecycleDeps) {
   /** A stored target is read as a local branch ref, never as an option or another kind of ref. */
   const localBranchRef = (target: string): string => `refs/heads/${target}`
 
-  /** `oid` is the head an explicit merge recorded, and that merge's local target still contains it now. */
-  const mergedLocally = async (lane: Lane, oid: string): Promise<boolean> => {
+  /** The local branch ref an explicit merge recorded, when `oid` is the head it recorded and that ref still contains it now. */
+  const mergedLocally = async (lane: Lane, oid: string): Promise<string | undefined> => {
     const merged = lane.mergedInto
-    if (merged === undefined || typeof merged.target !== "string" || merged.target === "" || merged.head !== oid) return false
-    return git.isAncestor(lane.directory, oid, localBranchRef(merged.target))
+    if (merged === undefined || typeof merged.target !== "string" || merged.target === "" || merged.head !== oid) return undefined
+    const ref = localBranchRef(merged.target)
+    return (await git.isAncestor(lane.directory, oid, ref)) ? ref : undefined
   }
 
   // --- actions ------------------------------------------------------------------------------
 
+  /**
+   * Read-modify-write of one lane under its lock, so a write built from an older snapshot cannot drop a field another
+   * writer set meanwhile (a merge's `mergedInto`, say). `change` gets the stored lane, read fresh, and returns the lane
+   * to write, or undefined to write nothing; a lane that is gone or now has another worktree is left alone. The caller
+   * must not hold the lane's lock.
+   */
+  const updateLane = (lane: Lane, change: (stored: Lane) => Lane | undefined): Promise<Lane | undefined> =>
+    withLock(lane.directory, lane.parentDir, async () => {
+      const stored = await load(lane.child)
+      if (stored === undefined || canonical(stored.directory) !== canonical(lane.directory)) return undefined
+      const next = change(stored)
+      if (next !== undefined) await save(next)
+      return next
+    })
+
   const mark = async (child: string, key: string) => {
     const lane = await load(child)
     if (!lane) return
-    await save({ ...lane, notices: [...(lane.notices ?? []), key].slice(-20) })
+    try {
+      await updateLane(lane, (stored) => ({ ...stored, notices: [...(stored.notices ?? []), key].slice(-20) }))
+    } catch (error) {
+      console.error(`subagent-worktree: notice ${key} for ${lane.directory} not recorded on the lane:`, error instanceof Error ? error.message : error)
+    }
   }
 
   /**
@@ -565,7 +585,7 @@ export function createLifecycle(deps: LifecycleDeps) {
     options: FinalizeOptions,
     seq: number,
     earlier: Lane["removal"],
-  ): Promise<{ proof: "empty" | "merged" | "landed"; oid: string } | Finalized> => {
+  ): Promise<{ proof: "empty" | "merged" | "landed"; oid: string; within?: string } | Finalized> => {
     const live = await liveRefusal(lane, options, seq)
     if (live !== undefined) return live
     const records = await deliveryRecords(lane.directory, lane.parentDir)
@@ -577,19 +597,23 @@ export function createLifecycle(deps: LifecycleDeps) {
     if (busy !== undefined) return keptBecause("dirty", busy)
     if (earlier?.head === oid) return { proof: PROOF_OF[earlier.retireAs], oid }
     if (oid === lane.base) return { proof: "empty", oid }
-    if (options.target !== undefined && (await git.isAncestor(lane.directory, oid, options.target))) return { proof: "merged", oid }
-    if (await mergedLocally(lane, oid)) return { proof: "merged", oid }
+    // A merged proof names the ref that contains HEAD: the removal proves it again after its last await.
+    if (options.target !== undefined && (await git.isAncestor(lane.directory, oid, options.target))) return { proof: "merged", oid, within: options.target }
+    const merged = await mergedLocally(lane, oid)
+    if (merged !== undefined) return { proof: "merged", oid, within: merged }
     if (await isLanded(lane, oid)) return { proof: "landed", oid }
     return keptBecause("unmerged", "HEAD is neither merged nor landed")
   }
 
-  /** Why the tree no longer matches what `checkFinalize` proved: HEAD moved, or a change, stash or operation appeared. */
-  const treeDrift = async (lane: Lane, proven: string | undefined): Promise<Finalized | undefined> => {
+  /** Why the tree no longer matches what `checkFinalize` proved: HEAD moved, a change, stash or operation appeared, or the merge target no longer contains HEAD. */
+  const treeDrift = async (lane: Lane, proven: string | undefined, within: string | undefined): Promise<Finalized | undefined> => {
     const oid = await git.head(lane.directory)
     if (oid === undefined || oid !== proven) return keptBecause("unmerged", "HEAD moved after the checks")
     if ((await git.porcelain(lane.directory)) !== "") return keptBecause("dirty", "the tree changed after the checks")
     const busy = await busyTreeOf(lane.directory, lane.branch)
-    return busy === undefined ? undefined : keptBecause("dirty", busy)
+    if (busy !== undefined) return keptBecause("dirty", busy)
+    if (within !== undefined && !(await git.isAncestor(lane.directory, oid, within))) return keptBecause("unmerged", `${within} no longer contains HEAD`)
+    return undefined
   }
 
   /**
@@ -699,12 +723,14 @@ export function createLifecycle(deps: LifecycleDeps) {
         const present = options.gone !== true && earlier?.pending === undefined && onDisk
         let proof: "empty" | "merged" | "landed" | undefined
         let head: string | undefined
+        let within: string | undefined
         let deleteAt: string | undefined
         if (present) {
           const checked = await checkFinalize(stored, options, seq, earlier)
           if (!("proof" in checked)) return checked
           proof = checked.proof
           head = checked.oid
+          within = checked.within
           // The branch goes only when it is the one checked out and still at the proven commit.
           if ((await git.branch(stored.directory)) === stored.branch && (await git.commit(stored.parentDir, `refs/heads/${stored.branch}`)) === head) deleteAt = head
         }
@@ -725,7 +751,7 @@ export function createLifecycle(deps: LifecycleDeps) {
             return descendants
           }
           // The tree proof is the last async step: a commit, a change, a stash or an operation made during any await above keeps the worktree.
-          const drift = await treeDrift(stored, head)
+          const drift = await treeDrift(stored, head, within)
           if (drift !== undefined) {
             await save(stored)
             return drift
@@ -764,8 +790,8 @@ export function createLifecycle(deps: LifecycleDeps) {
             await save(stored)
             return keptBecause("running", evicted.reason)
           }
-          // The eviction awaited listings and moves: a commit or a change, a resume or a hold that landed meanwhile keeps the worktree.
-          const driftAfter = await treeDrift(stored, head)
+          // The eviction awaited listings and moves: a commit or a change, a reset of the merge target, a resume or a hold that landed meanwhile keeps the worktree.
+          const driftAfter = await treeDrift(stored, head, within)
           if (driftAfter !== undefined) {
             await save(stored)
             return driftAfter
@@ -890,7 +916,7 @@ export function createLifecycle(deps: LifecycleDeps) {
     if (action.action === "remove") return finalize(lane, fence)
     if (action.action === "defer" && action.quiet) {
       const quietSince = action.quiet === "start" ? facts.now : undefined
-      if (lane.quietSince !== quietSince) await save({ ...((await load(lane.child)) ?? lane), ...(quietSince === undefined ? { quietSince: undefined } : { quietSince }) })
+      if (lane.quietSince !== quietSince) await updateLane(lane, (stored) => ({ ...stored, ...(quietSince === undefined ? { quietSince: undefined } : { quietSince }) }))
       return
     }
     if (action.action === "notifyParent") {
@@ -925,8 +951,9 @@ export function createLifecycle(deps: LifecycleDeps) {
       const why = reason ?? "no reason given"
       // Identity of the outcome, never its time: a replayed event keeps its key, a new failure gets a new one.
       const id = eventID ?? `h${Bun.hash(`${sessionID}:${type}:${why}`)}`
-      ownLane = { ...ownLane, outcome: { kind: type, at: now(), reason: why, id }, quietSince: undefined }
-      await save(ownLane)
+      const outcome: NonNullable<Lane["outcome"]> = { kind: type, at: now(), reason: why, id }
+      // The lanes were read before the claims were synced: the outcome is written onto the lane as stored now, under its lock.
+      ownLane = await updateLane(ownLane, (stored) => (stored.state === "active" ? { ...stored, outcome, quietSince: undefined } : undefined))
     }
     // The child's execution ended or its session went away: the one removal path decides. What it keeps for
     // dirty or unmerged work is announced below, once, by the same notices as every other pass.
@@ -1215,9 +1242,8 @@ export function createLifecycle(deps: LifecycleDeps) {
     const lane = await load(child)
     if (lane?.state !== "active") return undefined
     const facts = await laneFacts(lane, { child: "unknown", parent: "unknown" })
-    const kept = { ...lane, kept: { reason, token: stateToken(facts) } }
-    await save(kept)
-    return kept
+    const token = stateToken(facts)
+    return updateLane(lane, (stored) => (stored.state === "active" ? { ...stored, kept: { reason, token } } : undefined))
   }
 
   // --- registration -------------------------------------------------------------------------

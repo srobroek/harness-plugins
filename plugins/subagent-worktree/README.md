@@ -132,7 +132,9 @@ plugin removes the checkout through the same removal path as every other trigger
 removal), with the merge target as the proof: HEAD must be an ancestor of `target`. Then the lane is
 retired as `merged`. When the path keeps the lane (the child is running or was resumed, the tree
 changed), the merge commit still lands on the target. The checkout and the lane stay, and the result
-says why. On a conflict or other failure the worktree is kept and the `wt` output is returned.
+says why. The lane records the merge (`mergedInto`: the target and HEAD), but only when
+`refs/heads/<target>` contains HEAD, so a later trigger can remove it as merged once the child has
+ended. On a conflict or other failure the worktree is kept and the `wt` output is returned.
 
 `list` asserts the `subagent_worktree_merge` permission with resource `list` before reading any
 lane or session data. It reads every stored lane in the caller's project and reports the branch, worktree path,
@@ -176,6 +178,8 @@ reads everything fresh. The lane is kept unless all of these hold:
 4. **Proven.** HEAD is one of these commits. Proofs are keyed by commit, never by branch name.
    - the commit the lane started from (an empty lane);
    - an ancestor of the merge target;
+   - the head a `subagent_worktree_merge` into a local target recorded, while it is still HEAD and
+     `refs/heads/<target>` still contains it;
    - an ancestor of `origin/main` that was not already in `main` when the lane was created;
    - a PR head that `delivery_land` recorded for the worktree.
 
@@ -183,7 +187,8 @@ reads everything fresh. The lane is kept unless all of these hold:
    nothing: a squash-merged lane whose tip `origin/main` does not contain is kept.
 
 Then the lane is recorded as `removing`, and liveness and the tree are read once more. HEAD must
-still be the proven commit and the tree must still be clean. Then the worktree is removed. The local
+still be the proven commit and the tree must still be clean. A merged proof is proven again too: the
+merge target must still contain HEAD, before and after the other sessions are evicted. Then the worktree is removed. The local
 branch is deleted only when the worktree was on it and it still points at the proven commit
 (`git update-ref -d refs/heads/<branch> <oid>`), so a ref that moved is left alone. The lane's
 sessions move home, and the lane is retired as `removed`, `merged` or `landed`. A refusal at any
@@ -226,7 +231,7 @@ They remove an empty lane (no commits, clean) after the child and parent stay id
 | 2. Lane sync on a landing | An `execute.after` hook on `delivery_land` and `delivery_cleanup`: when the result shows the worktree removed (or its path gone), the lane is retired as `landed` and the worktree list is refreshed. `list` stops showing it. Results are read defensively (object, JSON or prose), and nothing happens when `delivery` is not installed. | Lanes whose worktree is still there. |
 | 3. Execution events | `session.execution.failed`, `.interrupted`, `.succeeded`, `session.idle`, `session.archived` and `session.deleted` for a lane child or the parent of lanes. One debounced pass (about 2 s) per session; `succeeded` and `idle` for one execution are one pass. It records how a child ended, tells the parent once when a failed or interrupted child left work, and starts the removal when the child's execution or session ended. | A hard crash or a restart: the server emits nothing. The next plugin start finishes every removal left in `removing`. |
 | 4. Idle gates | `experimental.idle`. A child idle with uncommitted changes gets one nudge per dirty state. A lead with finished lanes gets one message: landed and clean lanes are removed, an unresolved lane (commits, not landed, no open PR) is named once, a landed-but-dirty lane is reported once. Nothing is sent while one of its children runs, and at most one message per session every 15 s, because a message admitted in the hook fires the hook again. `subagent_worktree_merge` method `keep` (with `reason`) silences a lane until its state changes. | An interrupt or a failure: the hook does not fire for them. |
-| 5. Sweep | Lanes no event or gate reached: a crash, a restart, a lane whose lead never went idle. `subagent_worktree_sweep` checks each active lane whose subagent session is deleted or archived the way `finalize` does, and in `prune` mode removes the removable ones through `finalize`. Landed means an ancestor of `origin/main` (for the lane's own work) or a head delivery recorded; a pull request, merged or not, proves nothing. A lane with uncommitted, unmerged or denied work is reported as needing a person. | A squash-merged lane the forge merged but `origin/main` does not contain, and worktrees that are not lanes: delete them yourself. |
+| 5. Sweep | Lanes no event or gate reached: a crash, a restart, a lane whose lead never went idle. `subagent_worktree_sweep` checks each active lane whose subagent session is deleted or archived the way `finalize` does, and in `prune` mode removes the removable ones through `finalize`. Landed means an ancestor of `origin/main` (for the lane's own work) or a head delivery recorded; merged means the head a merge into a local target recorded, while it is still HEAD and that branch still contains it; a pull request, merged or not, proves nothing. A lane with uncommitted, unmerged or denied work is reported as needing a person. | A squash-merged lane the forge merged but `origin/main` does not contain, and worktrees that are not lanes: delete them yourself. |
 
 The sweep tool is on demand: it reports by default (`mode: "report"`), and removes only when called
 with `mode: "prune"`. The last plan is stored under `sweep/last`.
