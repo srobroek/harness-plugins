@@ -110,6 +110,13 @@ describe("ledgerRepoMismatch", () => {
     ).toContain("/h/repo")
   })
 
+  test("names the repository root, not its parent, as owner of a repo-root store", () => {
+    const warning =
+      ledgerRepoMismatch({ verb: "create", store: "/r", cwd: "/b", identity: identity({ "/r": "/r/.git", "/b": "/b/.git" }) }) ?? ""
+    expect(warning).toContain("belongs to \"/r\"")
+    expect(warning).not.toContain("belongs to \"/\"")
+  })
+
   test("stays silent for a store that is the repository root itself", () => {
     expect(
       ledgerRepoMismatch({ verb: "create", store: "/r", cwd: "/r/sub", identity: identity({ "/r": "/r/.git", "/r/sub": "/r/.git", "/": "/" }) }),

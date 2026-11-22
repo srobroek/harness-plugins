@@ -343,10 +343,10 @@ function invocation(segment, argv) {
     const token = tokens[start];
     if (!token || token.quoted)
       return null;
-    const basename = token.value.split("/").pop() ?? token.value;
-    if (basename === head)
+    const basename2 = token.value.split("/").pop() ?? token.value;
+    if (basename2 === head)
       break;
-    if (basename === "env") {
+    if (basename2 === "env") {
       start++;
       while (start < tokens.length) {
         const option = tokens[start];
@@ -384,7 +384,7 @@ function invocation(segment, argv) {
       }
       continue;
     }
-    if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(token.value) && !token.value.startsWith("-") && WRAPPERS[basename] !== true)
+    if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(token.value) && !token.value.startsWith("-") && WRAPPERS[basename2] !== true)
       return null;
     start++;
   }
@@ -1198,7 +1198,7 @@ var HEADER_ONLY = new Set(["for", "select", "case"]);
 var CLOSERS = new Set(["fi", "done", "esac"]);
 var BRANCHES = new Set(["else", "elif"]);
 var ASSIGNMENT2 = /^[A-Za-z_]\w*=/;
-var basename = (word) => word.split("/").pop() ?? word;
+var basename2 = (word) => word.split("/").pop() ?? word;
 function applyActorBuiltin(state, values, conditional) {
   const name = values[0];
   if (name !== "export" && name !== "unset")
@@ -1346,7 +1346,7 @@ function resolveBd(values, assigned) {
   const prefix = [...assigned];
   const unset = {};
   while (true) {
-    const word = basename(values[i] ?? "");
+    const word = basename2(values[i] ?? "");
     if (CONTROL_PREFIXES[word] === true) {
       i++;
       continue;
@@ -1406,7 +1406,7 @@ function resolveBd(values, assigned) {
     }
   }
   const word = values[i];
-  if (word === undefined || basename(word) !== "bd")
+  if (word === undefined || basename2(word) !== "bd")
     return;
   return { next: i + 1, prefix, unset };
 }
@@ -1626,7 +1626,7 @@ import {
   writeSync
 } from "fs";
 import { hostname } from "os";
-import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute2, join, resolve as resolve2 } from "path";
+import { basename as basename3, dirname as dirname2, isAbsolute as isAbsolute2, join, resolve as resolve2 } from "path";
 
 // lib/src/beads-store.ts
 import { spawnSync } from "child_process";
@@ -2957,7 +2957,7 @@ function bunBinary() {
 }
 function resolveBunBinary(options = {}) {
   const execPath = options.execPath ?? process.execPath;
-  const own = basename2(execPath);
+  const own = basename3(execPath);
   if (own === "bun" || own === "bun.exe")
     return execPath;
   const onPath = options.which?.("bun");
@@ -2973,7 +2973,7 @@ function resolveBunBinary(options = {}) {
   if (mise === null || mise === undefined || options.miseWhich === undefined)
     return;
   const resolved = options.miseWhich(mise);
-  return resolved !== undefined && basename2(resolved).startsWith("bun") && existsSync(resolved) ? resolved : undefined;
+  return resolved !== undefined && basename3(resolved).startsWith("bun") && existsSync(resolved) ? resolved : undefined;
 }
 function quote(word) {
   return `'${word.replaceAll("'", "'\\''")}'`;
@@ -4126,10 +4126,10 @@ function wrapperInvocations(parsed) {
       const token = position.argv[start];
       if (token === undefined)
         return;
-      const basename = token.split("/").pop() ?? token;
-      if (basename === "bd" && position.words[start]?.quoted !== true)
+      const basename2 = token.split("/").pop() ?? token;
+      if (basename2 === "bd" && position.words[start]?.quoted !== true)
         return position.argv.slice(start + 1);
-      if (basename === "env") {
+      if (basename2 === "env") {
         let index = start + 1;
         while (index < position.argv.length) {
           const option = position.argv[index];
@@ -4147,7 +4147,7 @@ function wrapperInvocations(parsed) {
         }
         return locate(index);
       }
-      if (basename === "command") {
+      if (basename2 === "command") {
         let index = start + 1;
         while (position.argv[index]?.startsWith("-") === true)
           index++;
@@ -4313,6 +4313,13 @@ function canonical3(path) {
 function sameStore(a, b, cwd) {
   return canonical3(resolve6(cwd, a)) === canonical3(resolve6(cwd, b));
 }
+function ownerRoot(store, identity) {
+  if (basename(store) === ".beads")
+    return dirname5(store);
+  if (basename(identity) === ".git")
+    return dirname5(identity);
+  return store;
+}
 function foreignLedger(input) {
   const store = canonical3(input.store);
   const here = input.identity(input.cwd);
@@ -4323,7 +4330,7 @@ function foreignLedger(input) {
     return;
   if (here === there)
     return;
-  return { store, ledgerRoot: dirname5(store) };
+  return { store, ledgerRoot: ownerRoot(store, there) };
 }
 var WRONG_PROJECT = "pass the shell tool's `workdir` for the right repository (and unset BEADS_DIR) instead of `cd`";
 function ledgerRepoMismatch(input) {
