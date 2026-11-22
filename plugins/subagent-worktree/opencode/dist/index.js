@@ -2133,12 +2133,14 @@ function createLifecycle(deps) {
   };
   const updateLane = (lane, change) => withLock(lane.directory, lane.parentDir, async () => {
     const stored = await load(lane.child);
-    if (stored === undefined || canonical(stored.directory) !== canonical(lane.directory))
+    if (stored === undefined || stored.child !== lane.child || laneStoreKey(stored) !== laneStoreKey(lane))
+      return;
+    if (canonical(stored.directory) !== canonical(lane.directory))
       return;
     const next = change(stored);
-    if (next !== undefined)
-      await save(next);
-    return next;
+    if (next === undefined)
+      return;
+    return await save(next) ? next : undefined;
   });
   const mark = async (child, key) => {
     const lane = await load(child);
