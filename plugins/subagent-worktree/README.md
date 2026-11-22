@@ -80,15 +80,19 @@ has three limits:
    a writer that runs in the caller's directory without `worktree`. An isolated writer gets a fresh
    worktree.
 
-A writer whose server died during a run still looks running until it runs again, so it blocks its
-worktree and keeps its lane. Stop that writer and delete its session in OpenCode. The guard then
-lets a new writer into the worktree. To hand the old writer's lane to the new writer, call
-`subagent_worktree_merge` with `method: "release"`, the old writer's `sessionID` and a `reason`.
+A writer whose server died during a run still looks running until it runs again. It blocks its
+worktree and keeps its lane. To free the worktree:
+
+1. Stop the old writer in OpenCode.
+2. Delete its session. The guard then lets a new writer into the worktree.
+3. To hand the old writer's lane to the new writer, call `subagent_worktree_merge` with
+   `method: "release"`, the old writer's `sessionID` and a `reason`.
+
 The release needs all of these:
 
-- The host reports the writer's session as deleted. While the session exists, even when it is
-  idle or archived, a run, shell or background job of it may still write to the worktree. The
-  plugin cannot see all of that work, so it refuses and asks you to stop and delete the session.
+- The host reports the writer's session as deleted. An idle or archived session can still have a
+  run, shell or background job that writes to the worktree. The plugin cannot see all of that work.
+  So while the session exists, the release refuses and asks you to stop and delete the session.
 - The writer's lane names the caller as its parent.
 - No hold is recorded on the worktree for running work.
 - The worktree has no uncommitted or untracked changes.
