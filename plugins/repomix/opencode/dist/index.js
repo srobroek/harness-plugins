@@ -286,7 +286,7 @@ function signalName(code) {
 
 // plugins/repomix/opencode/src/pack.ts
 var PACK_TOOL = "repomix_pack";
-var REPOMIX_VERSION = "1.18.1";
+var REPOMIX_VERSION = "1.19.0";
 var DEFAULT_TIMEOUT_SECONDS = 300;
 var MAX_TIMEOUT_SECONDS = 900;
 var TOP_FILES = 10;
