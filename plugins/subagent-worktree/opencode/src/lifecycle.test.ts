@@ -904,6 +904,32 @@ describe("a merge into a local target is a merged proof later", () => {
   })
 })
 
+describe("a lane handed over while an event pass holds the old writer's copy", () => {
+  test("the pass writes nothing onto the record that now names the new writer", async () => {
+    const { fake, quiet, cleanup } = await start({ time: { [CHILD]: { busy: 5, idle: 2 } } })
+    await quiet()
+    const storage = fake.context.storage as unknown as { scan: (input: unknown) => Promise<unknown>; set: (key: string, value: unknown) => Promise<void> }
+    const original = storage.scan.bind(storage)
+    let scans = 0
+    let handed = false
+    storage.scan = async (input) => {
+      const page = await original(input)
+      // The pass reads the lanes twice; right after its own-lane read, the record is handed to another writer (same key).
+      if (++scans === 2) {
+        await storage.set(laneKey(CHILD), { ...stored(fake), child: "ses_next", handedOver: { from: CHILD, at: NOW } })
+        handed = true
+      }
+      return page
+    }
+    fake.emit({ type: "session.execution.failed", data: { sessionID: CHILD, error: { message: "model gone" } } })
+    await until(() => handed)
+    await quiet()
+    const after = stored(fake)
+    expect({ handed, child: after.child, outcome: after.outcome, state: after.state }).toEqual({ handed: true, child: "ses_next", outcome: undefined, state: "active" })
+    await cleanup()
+  })
+})
+
 describe("a resume fences a removal", () => {
   test("without a resume the same pass removes it", async () => {
     const { fake, worktree, cleanup } = await start({ ancestor: 0 })

@@ -39,7 +39,7 @@ import {
 } from "./events.ts"
 import type { Git } from "./git.ts"
 import { LANDING_TOOLS, laneForLanding } from "./landing.ts"
-import { childReleasesLane, childState, isRunning, type Lane, type Options } from "./lane.ts"
+import { childReleasesLane, childState, isRunning, type Lane, laneStoreKey, type Options } from "./lane.ts"
 import { formatSweep, orderEntries, type SweepEntry, type SweepMode } from "./sweep.ts"
 
 /** Epoch milliseconds from a number, Date or date string; undefined otherwise. */
@@ -368,10 +368,12 @@ export function createLifecycle(deps: LifecycleDeps) {
   const updateLane = (lane: Lane, change: (stored: Lane) => Lane | undefined): Promise<Lane | undefined> =>
     withLock(lane.directory, lane.parentDir, async () => {
       const stored = await load(lane.child)
-      if (stored === undefined || canonical(stored.directory) !== canonical(lane.directory)) return undefined
+      // A handover rewrites the same record for another child: a lane whose record names another writer now is not ours to write (as `save`'s `superseded` fence).
+      if (stored === undefined || stored.child !== lane.child || laneStoreKey(stored) !== laneStoreKey(lane)) return undefined
+      if (canonical(stored.directory) !== canonical(lane.directory)) return undefined
       const next = change(stored)
-      if (next !== undefined) await save(next)
-      return next
+      if (next === undefined) return undefined
+      return (await save(next)) ? next : undefined
     })
 
   const mark = async (child: string, key: string) => {
