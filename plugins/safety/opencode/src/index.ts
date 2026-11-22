@@ -8,6 +8,7 @@ import { hostWarn, type Warn } from "@srobroek/opencode-lib/host-log"
 import { rewriteCloseKeywords } from "./close-keywords.ts"
 import { externalDirectories, sessionRoots, shellFlagDirectories } from "./flag-directories.ts"
 import { readConfigSnapshot, readProviderTypes } from "./fnox-config.ts"
+import { type PushViaConfig, readPushVia } from "./push-via.ts"
 import { GUARD_IDS, type GuardID, type GuardOptions, hardGate } from "./guards.ts"
 import { decideToolCall, type MigrationOptions, migrationOverride } from "./migrations.ts"
 import { createPackageAdvisor } from "./package-investigate.ts"
@@ -87,6 +88,8 @@ export type SafetyOptions = {
   steeringDirs: string[]
   /** Extra secret locations the `subagent-external-reads` check never allows. */
   secretPaths: string[]
+  /** Host whose plain `git push` is refused in favour of a wrapper command; off when absent. */
+  pushVia: PushViaConfig | undefined
 }
 
 /**
@@ -101,6 +104,7 @@ export type SafetyOptions = {
  * `disable: ["subagent-external-reads"]` stops allowing a subagent's read-only and shell `external_directory` asks;
  * `subagentSecretPaths` adds locations (`~/…` or absolute) to `SECRET_LOCATIONS` that stay denied.
  * `disable: ["subagent-prompts"]` lets a subagent session's asks prompt instead of failing at once.
+ * `pushVia: { host, command }` refuses a plain `git push` whose remote resolves to `host` and names `command -C <dir> push`; off by default.
  * `redactSecrets`, `redactNames` and `redactExclude` configure secret redaction.
  */
 export function readOptions(options: Readonly<Record<string, unknown>> | undefined): SafetyOptions {
@@ -117,6 +121,7 @@ export function readOptions(options: Readonly<Record<string, unknown>> | undefin
     scratchDirs: options?.scratchDirs !== false,
     steeringDirs: readSteeringDirs(options?.steeringDirs),
     secretPaths,
+    pushVia: readPushVia(options),
   }
 }
 
@@ -282,13 +287,14 @@ export function createPlugin(overrides: Overrides = {}) {
     async setup(ctx) {
       // Bound before the first await, while the fiber still carries the host's logger.
       const warn = overrides.warn ?? hostWarn("srobroek.safety")
-      const { disabled, redact, opAllow, scratchDirs, steeringDirs, secretPaths } = readOptions(ctx.options)
+      const { disabled, redact, opAllow, scratchDirs, steeringDirs, secretPaths, pushVia } = readOptions(ctx.options)
       const on = (id: FeatureID) => !disabled.has(id)
       const guardOptions = {
         env: overrides.env ?? process.env,
         ...overrides.guard,
         disabled: disabled as ReadonlySet<GuardID>,
         opAllow,
+        pushVia,
       }
       const reviewOptions: ReviewOptions = { ...overrides.review, disabled: disabled as ReadonlySet<DecisionID> }
       const pending = new Map<string, Pending>()
