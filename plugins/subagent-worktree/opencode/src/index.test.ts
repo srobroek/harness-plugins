@@ -749,6 +749,25 @@ describe("worktree argument", () => {
       expect(setup.fake.storage.get("release/ses_dead")).toBeUndefined()
     })
 
+    test("a release is refused when the session lookup fails", async () => {
+      const setup = await dead()
+      const get = setup.fake.context.session.get.bind(setup.fake.context.session)
+      Object.assign(setup.fake.context.session, {
+        get: async (input: { sessionID: string }) => {
+          if (input.sessionID === "ses_dead") throw new Error("database is locked")
+          return get(input as never)
+        },
+      })
+      expect((await release(setup, "ses_dead")).content).toMatch(/cannot read session state/)
+      expect(setup.fake.storage.get("release/ses_dead")).toBeUndefined()
+    })
+
+    test("a release fails, and records nothing, when the worktree cannot be locked", async () => {
+      const setup = await dead({ commonDir: async () => undefined })
+      await expect(release(setup, "ses_dead")).rejects.toThrow(/no git common directory to lock/)
+      expect(setup.fake.storage.get("release/ses_dead")).toBeUndefined()
+    })
+
     test("a released writer cannot be resumed", async () => {
       const setup = await dead()
       await release(setup, "ses_dead")
