@@ -66,13 +66,23 @@ export function withClone(entries: readonly CloneEntry[], entry: CloneEntry, pen
   return next.filter((known) => !drop.has(known))
 }
 
-/** The registry's entries for discovery: one that is absent, unreadable or unparseable gives none. */
+/**
+ * The registry's entries for discovery. An absent file is the empty list; any other read failure, or
+ * text that is not a JSON list, throws (the read failure as `cause`), so a caller never mistakes an
+ * unreadable registry for one with no clones.
+ */
 export function readClones(env: NodeJS.ProcessEnv, sessionKey: string): CloneEntry[] {
+  const file = registryFile(env, sessionKey)
+  let text: string
   try {
-    return parseClones(readFileSync(registryFile(env, sessionKey), "utf8"))
-  } catch {
-    return []
+    text = readFileSync(file, "utf8")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+    throw new Error(`the clone registry ${file} cannot be read (${error instanceof Error ? error.message : String(error)})`, { cause: error })
   }
+  const entries = entriesOf(text)
+  if (entries === null) throw new Error(`the clone registry ${file} cannot be parsed as a JSON list`)
+  return entries
 }
 
 /**
@@ -116,8 +126,8 @@ export async function addClone(
 }
 
 /** The error for a lease that could not be taken. */
-function leaseFailure(file: string, result: { reason: string }): Error {
-  return new Error(`the clone registry ${file} could not be updated: ${result.reason}`)
+function leaseFailure(file: string, result: { reason: string; cause?: unknown }): Error {
+  return new Error(`the clone registry ${file} could not be updated: ${result.reason}`, { cause: result.cause })
 }
 
 /** Drop the entry for `key` under the registry's lock; the file is deleted when it was the last. Throws as {@link addClone} does. */

@@ -56,7 +56,7 @@ import {
   type RemovalFacts,
   type RepositoryIdentity,
 } from "./cleanup.ts"
-import { addClone, type CloneEntry, readClones } from "./clone-registry.ts"
+import { addClone, type CloneEntry, readClones, removeClone } from "./clone-registry.ts"
 import { inClone } from "./land.ts"
 import {
   closeoutCommands,
@@ -270,6 +270,10 @@ export function createPendingCleanup(deps: PendingDeps) {
   const attemptedAt = new Map<string, number>()
   /** Clones registered by this instance, kept here too: a registry write that fails still leaves them found. */
   const registered = new Map<string, string>()
+  /** Why the clone registry could not be listed at the last attempt; while set, no other repository's worktree is removed. */
+  let discoveryFailure: string | undefined
+  /** Repositories (by canonical checkout) whose running work could not be recorded at the last report: nothing is removed there. */
+  const holdsUnknown = new Map<string, string>()
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const pendingIdle = new Set<string>()
   let disposed = false
@@ -413,14 +417,25 @@ export function createPendingCleanup(deps: PendingDeps) {
   }
 
   /**
-   * The clones the session's repository landed into that may have pending receipts, read from the
-   * registry file and from this instance's own registrations, which win for the same key. No git runs.
+   * The clones the session's repository landed into, read from the registry file and from this
+   * instance's own registrations, which win for the same key. No git runs. A clone with no pending
+   * receipt is listed only with `collectable`: it stays discoverable until its landing records are
+   * collected ({@link retire}). A registry that cannot be read throws, and until a later read
+   * succeeds {@link discoveryFailure} holds every clone, so nothing is cleaned on an incomplete list.
    */
-  const cloneEntries = (sessionKey: string): CloneEntry[] => {
-    const entries = new Map(readClones(env, sessionKey).map((entry) => [entry.key, entry.root]))
+  const cloneEntries = (sessionKey: string, collectable = false): CloneEntry[] => {
+    let listed: CloneEntry[]
+    try {
+      listed = readClones(env, sessionKey)
+      discoveryFailure = undefined
+    } catch (error) {
+      discoveryFailure = `the clones this session landed in could not be listed (${error instanceof Error ? error.message : String(error)})`
+      throw error
+    }
+    const entries = new Map(listed.map((entry) => [entry.key, entry.root]))
     for (const [key, root] of registered) entries.set(key, root)
     return [...entries]
-      .filter(([key]) => key !== sessionKey && mayHavePending(key))
+      .filter(([key]) => key !== sessionKey && (collectable || mayHavePending(key)))
       .map(([key, root]) => ({ key, root }))
   }
 
@@ -430,12 +445,25 @@ export function createPendingCleanup(deps: PendingDeps) {
     return repo?.foreign === true ? repo : null
   }
 
-  /** {@link cloneEntries} resolved, each on its own, so a stale one delays no other. */
+  /** {@link cloneEntries} resolved, each on its own, so a stale one delays no other. Throws when the registry cannot be read. */
   const clones = async (): Promise<Repository[]> => {
     const mine = own.veto() ?? (await own.observe())
     if (mine === null) return []
-    const found = await Promise.all(cloneEntries(mine.key).map(cloneAt))
+    const found = await Promise.all(cloneEntries(mine.key, true).map(cloneAt))
     return found.filter((repo): repo is Repository => repo !== null)
+  }
+
+  /**
+   * Forget a clone once its landing records were collected and no receipt there is pending: the
+   * registry file and this instance both drop it. Called only with a completed collection.
+   */
+  const retire = async (repo: Repository): Promise<void> => {
+    const key = await repo.key()
+    if (key === null || mayHavePending(key)) return
+    registered.delete(key)
+    const mine = own.veto() ?? (await own.observe())
+    if (mine === null) return
+    await removeClone(env, mine.key, key).catch((error) => console.error("delivery: could not drop the clone from the registry", error))
   }
 
   /**
@@ -677,6 +705,9 @@ export function createPendingCleanup(deps: PendingDeps) {
     // Background work any idle gate (this plugin's or the lane owner's) recorded for this directory,
     // and whether the store those records live in can be written at all.
     if (common === null) return "the git common directory could not be resolved"
+    if (repo.foreign && discoveryFailure !== undefined) return discoveryFailure
+    const unknownHolds = holdsUnknown.get(canonicalDirectory(repo.cwd))
+    if (unknownHolds !== undefined) return unknownHolds
     const failed = unsafe.get(canonicalDirectory(path))
     if (failed !== undefined) return failed
     const running = holdsState(common, path, now())
@@ -845,40 +876,57 @@ export function createPendingCleanup(deps: PendingDeps) {
    * Drop landing records in `repo`, only on positive evidence: the record's own receipt is readable
    * and is cleaned or superseded by a readable later one. A denial is never dropped here (an
    * authorized re-arm clears it first). If the receipt directory is missing or unreadable, or the
-   * receipt cannot be parsed, nothing is deleted.
+   * receipt cannot be parsed, nothing is deleted. Returns whether the collection was complete: false
+   * when the landing records could not all be read, so the caller keeps the clone registered.
    */
-  const gcIn = async (repo: Repository) => {
+  const gcIn = async (repo: Repository): Promise<boolean> => {
     const recorded = await landings(repo)
-    if (recorded.common === null || recorded.unreadable) return
+    if (recorded.common === null || recorded.unreadable) return false
     for (const entry of recorded.byReceipt.values()) {
       // A cheap look first; the decision is made again, under the lock, from the record and receipts as they are then.
       if (entry.denied !== undefined || !(await dropEvidence(repo, entry.receiptId))) continue
       await dropLanding(repo, recorded.common, entry)
     }
+    return true
   }
 
-  /** {@link gcIn} for the session's repository, the clones with pending receipts, and `receipt`'s repository. */
-  const gc = async (receipt?: LandingReceipt) => {
-    const repos = [own, ...(await clones())]
+  /**
+   * {@link gcIn} for the session's repository, the clones, and `receipt`'s repository. Returns whether
+   * every collection completed; a clone whose collection completed with nothing pending is retired.
+   */
+  const gc = async (receipt?: LandingReceipt): Promise<boolean> => {
+    let complete = true
+    const repos = [own]
+    try {
+      repos.push(...(await clones()))
+    } catch (error) {
+      complete = false
+      console.error("delivery: the clones could not be listed", error)
+    }
     const named = receipt === undefined ? null : await repositoryOf(receipt)
     if (named?.foreign === true && !repos.some((repo) => repo.cwd === named.cwd)) repos.push(named)
-    for (const repo of repos) await gcIn(repo)
+    for (const repo of repos) {
+      const collected = await gcIn(repo)
+      if (collected && repo.foreign) await retire(repo)
+      complete &&= collected
+    }
+    return complete
   }
 
-  /** One pass over `repo`'s pending receipts for a finished turn of `sessionID`. */
-  const runIn = async (repo: Repository, sessionID: string, idle: boolean) => {
+  /** One pass over `repo`'s pending receipts for a finished turn of `sessionID`. Returns whether its landing records were collected completely. */
+  const runIn = async (repo: Repository, sessionID: string, idle: boolean): Promise<boolean> => {
     const key = await repo.key()
-    if (key === null) return
+    if (key === null) return false
     const directory = resolve(receiptDirectory(env, key))
     let pending: LandingReceipt[]
     try {
       pending = pendingReceipts(listReceipts(directory))
     } catch {
-      return
+      return false
     }
     const idOf = (receipt: Pick<LandingReceipt, "receiptId">) => `${key}/${receipt.receiptId}`
     const recorded = await landings(repo)
-    await gcIn(repo)
+    const collected = await gcIn(repo)
     // A worktree that is gone is done, whatever the window holds.
     const present: LandingReceipt[] = []
     for (const receipt of pending) {
@@ -906,7 +954,7 @@ export function createPendingCleanup(deps: PendingDeps) {
       limit,
     })
     for (const receipt of window) {
-      if (disposed) return
+      if (disposed) return false
       attemptedAt.set(idOf(receipt), now())
       const path = resolve(directory, `${receipt.receiptId}.json`)
       const meta = recorded.byReceipt.get(receipt.receiptId)
@@ -956,14 +1004,26 @@ export function createPendingCleanup(deps: PendingDeps) {
         }
       }
     }
+    return collected
   }
 
-  /** One pass over the session's repository, then over each clone it landed into that has pending receipts. */
+  /**
+   * One pass over the session's repository, then over each clone it landed into. A registry that
+   * cannot be read ends the pass after the session's repository: with the clones unknown, none is cleaned.
+   * A clone whose records were collected, with no receipt pending, is forgotten.
+   */
   const run = async (sessionID: string, idle: boolean) => {
     await runIn(own, sessionID, idle)
-    for (const repo of await clones()) {
+    let found: Repository[]
+    try {
+      found = await clones()
+    } catch (error) {
+      console.error("delivery: the clones could not be listed; none is cleaned", error)
+      return
+    }
+    for (const repo of found) {
       if (disposed) return
-      await runIn(repo, sessionID, idle)
+      if (await runIn(repo, sessionID, idle)) await retire(repo)
     }
   }
 
@@ -1045,17 +1105,50 @@ export function createPendingCleanup(deps: PendingDeps) {
     const inClones = async () => {
       const mine = own.veto() ?? (await own.observe())
       if (mine === null) return
+      let entries: CloneEntry[]
+      try {
+        entries = cloneEntries(mine.key)
+      } catch (error) {
+        // The clones are unknown; discoveryFailure now holds every other repository's worktrees.
+        console.error("delivery: the clones could not be listed to record holds", error)
+        return
+      }
       await Promise.all(
-        cloneEntries(mine.key).map(async (entry) => {
-          const repo = await cloneAt(entry)
-          if (repo !== null) await writeHoldsIn(repo, sessionID, background, locationOf)
+        entries.map(async (entry) => {
+          const repo = await cloneAt(entry).catch(() => null)
+          if (repo === null) {
+            holdsUnknown.set(canonicalDirectory(entry.root), `the clone ${entry.root} could not be resolved to record its running work`)
+            return
+          }
+          await writeHoldsIn(repo, sessionID, background, locationOf)
         }),
       )
     }
     await Promise.all([writeHoldsIn(own, sessionID, background, locationOf), inClones()])
   }
 
+  /**
+   * {@link establishHolds} for one repository. When its holds cannot be established the repository
+   * refuses every removal ({@link holdsUnknown}) until a later report records them.
+   */
   const writeHoldsIn = async (
+    repo: Repository,
+    sessionID: string,
+    background: ReadonlyArray<BackgroundJob>,
+    locationOf: (id: string) => Promise<Location>,
+  ) => {
+    const guard = canonicalDirectory(repo.cwd)
+    try {
+      await establishHolds(repo, sessionID, background, locationOf)
+      holdsUnknown.delete(guard)
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error)
+      holdsUnknown.set(guard, `its running work could not be recorded (${why})`)
+      console.error(`delivery: could not record holds in ${repo.cwd}: ${why}`)
+    }
+  }
+
+  const establishHolds = async (
     repo: Repository,
     sessionID: string,
     background: ReadonlyArray<BackgroundJob>,
@@ -1063,13 +1156,17 @@ export function createPendingCleanup(deps: PendingDeps) {
   ) => {
     // Where the repository was last observed, so a hold reaches disk without a git wait.
     const location = repo.veto() ?? (await repo.observe())
-    if (location === null) return
+    if (location === null) throw new Error(`the repository at ${repo.cwd} could not be resolved`)
     const { commonDir: common, key } = location
     let pending: LandingReceipt[]
+    const directory = resolve(receiptDirectory(env, key))
     try {
-      pending = pendingReceipts(listReceipts(resolve(receiptDirectory(env, key)))).slice(0, 100)
-    } catch {
-      return
+      // `listReceipts` reads an unreadable directory as empty; only a missing one has no receipts.
+      readdirSync(directory)
+      pending = pendingReceipts(listReceipts(directory)).slice(0, 100)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return
+      throw new Error(`its receipts could not be listed (${error instanceof Error ? error.message : String(error)})`, { cause: error })
     }
     for (const receipt of pending) {
       const path = receipt.worktree.path

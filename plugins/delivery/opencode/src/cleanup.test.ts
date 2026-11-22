@@ -4123,7 +4123,7 @@ describe("pending cleanup: one remover per worktree", () => {
         receiptDirectory(h.f.env, key),
       )
       await h.pending.record(h.f.receipt, "ses_lead") // plain, and its receipt is superseded: deletable evidence
-      let collecting: Promise<void> | undefined
+      let collecting: Promise<unknown> | undefined
       // Same clock as delivery's, so the lease it takes is not already expired in its eyes.
       await withDiskLock(h.common, h.f.linked, { sessionID: "other writer", now: () => NOW + 10 }, async () => {
         // The cleanup starts and queues for the lock (it is another process, so it does not share this chain) ...

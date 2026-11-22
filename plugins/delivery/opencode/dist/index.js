@@ -5698,7 +5698,7 @@ async function withLease(lockPath, options, work) {
       }
       const code = error.code;
       if (code !== "EEXIST")
-        return { kind: "failed", reason: `the lock at ${lockPath} could not be taken (${code ?? "unknown error"})` };
+        return { kind: "failed", reason: `the lock at ${lockPath} could not be taken (${code ?? "unknown error"})`, cause: error };
       if (readBounded(lockPath).kind === "unreadable" || readBounded(c.steal).kind === "unreadable") {
         return { kind: "failed", reason: `the lock path ${lockPath} (or its steal lock) is not a small regular file, so its holder cannot be read safely` };
       }
@@ -5876,7 +5876,7 @@ function lockedWrite(commonDir, directory, options, write) {
 }
 
 // plugins/delivery/opencode/src/clone-registry.ts
-import { mkdirSync as mkdirSync6, readFileSync as readFileSync7, renameSync as renameSync3, writeFileSync as writeFileSync6 } from "fs";
+import { mkdirSync as mkdirSync6, readFileSync as readFileSync7, renameSync as renameSync3, rmSync as rmSync5, writeFileSync as writeFileSync6 } from "fs";
 import { isAbsolute as isAbsolute3, join as join8 } from "path";
 var MAX_CLONES = 32;
 var KEY = /^[0-9a-f]{16}$/;
@@ -5885,9 +5885,6 @@ function registryFile(env, sessionKey) {
   if (!KEY.test(sessionKey))
     throw new Error(`repo.key: observed ${JSON.stringify(sessionKey)}, expected 16 hex characters`);
   return join8(receiptDirectory(env), ".clones", `${sessionKey}.json`);
-}
-function parseClones(text) {
-  return entriesOf(text) ?? [];
 }
 function entriesOf(text) {
   let raw;
@@ -5914,11 +5911,19 @@ function withClone(entries, entry, pending = () => false) {
   return next.filter((known) => !drop.has(known));
 }
 function readClones(env, sessionKey) {
+  const file = registryFile(env, sessionKey);
+  let text;
   try {
-    return parseClones(readFileSync7(registryFile(env, sessionKey), "utf8"));
-  } catch {
-    return [];
+    text = readFileSync7(file, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT")
+      return [];
+    throw new Error(`the clone registry ${file} cannot be read (${error instanceof Error ? error.message : String(error)})`, { cause: error });
   }
+  const entries = entriesOf(text);
+  if (entries === null)
+    throw new Error(`the clone registry ${file} cannot be parsed as a JSON list`);
+  return entries;
 }
 function loadForUpdate(file) {
   let text;
@@ -5949,7 +5954,29 @@ async function addClone(env, sessionKey, entry, pending, options = {}) {
     renameSync3(temporary, file);
   });
   if (result.kind === "failed")
-    throw new Error(`the clone registry ${file} could not be updated: ${result.reason}`);
+    throw leaseFailure(file, result);
+}
+function leaseFailure(file, result) {
+  return new Error(`the clone registry ${file} could not be updated: ${result.reason}`, { cause: result.cause });
+}
+async function removeClone(env, sessionKey, key, options = {}) {
+  const file = registryFile(env, sessionKey);
+  const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: options.waitMs ?? LOCK_WAIT_MS }, () => {
+    const current = loadForUpdate(file);
+    if (!current.some((entry) => entry.key === key))
+      return;
+    const next = current.filter((entry) => entry.key !== key);
+    if (next.length === 0) {
+      rmSync5(file, { force: true });
+      return;
+    }
+    const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync6(temporary, `${JSON.stringify(next)}
+`, { mode: 384 });
+    renameSync3(temporary, file);
+  });
+  if (result.kind === "failed")
+    throw leaseFailure(file, result);
 }
 
 // plugins/delivery/opencode/src/lane-move.ts
@@ -6093,6 +6120,8 @@ function createPendingCleanup(deps) {
   const retriedAt = new Map;
   const attemptedAt = new Map;
   const registered = new Map;
+  let discoveryFailure;
+  const holdsUnknown = new Map;
   const timers = new Map;
   const pendingIdle = new Set;
   let disposed = false;
@@ -6187,11 +6216,19 @@ function createPendingCleanup(deps) {
       console.error(`delivery: could not record the clone ${receipt.repo.canonicalRoot}: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
-  const cloneEntries = (sessionKey) => {
-    const entries = new Map(readClones(env, sessionKey).map((entry) => [entry.key, entry.root]));
+  const cloneEntries = (sessionKey, collectable = false) => {
+    let listed;
+    try {
+      listed = readClones(env, sessionKey);
+      discoveryFailure = undefined;
+    } catch (error) {
+      discoveryFailure = `the clones this session landed in could not be listed (${error instanceof Error ? error.message : String(error)})`;
+      throw error;
+    }
+    const entries = new Map(listed.map((entry) => [entry.key, entry.root]));
     for (const [key, root] of registered)
       entries.set(key, root);
-    return [...entries].filter(([key]) => key !== sessionKey && mayHavePending(key)).map(([key, root]) => ({ key, root }));
+    return [...entries].filter(([key]) => key !== sessionKey && (collectable || mayHavePending(key))).map(([key, root]) => ({ key, root }));
   };
   const cloneAt = async (entry) => {
     const repo = await repositoryOf({ repo: { key: entry.key, canonicalRoot: entry.root } });
@@ -6201,8 +6238,18 @@ function createPendingCleanup(deps) {
     const mine = own.veto() ?? await own.observe();
     if (mine === null)
       return [];
-    const found = await Promise.all(cloneEntries(mine.key).map(cloneAt));
+    const found = await Promise.all(cloneEntries(mine.key, true).map(cloneAt));
     return found.filter((repo) => repo !== null);
+  };
+  const retire = async (repo) => {
+    const key = await repo.key();
+    if (key === null || mayHavePending(key))
+      return;
+    registered.delete(key);
+    const mine = own.veto() ?? await own.observe();
+    if (mine === null)
+      return;
+    await removeClone(env, mine.key, key).catch((error) => console.error("delivery: could not drop the clone from the registry", error));
   };
   const projectOf = async (root, directories) => {
     const ids = new Set;
@@ -6390,6 +6437,11 @@ function createPendingCleanup(deps) {
       return owned;
     if (common === null)
       return "the git common directory could not be resolved";
+    if (repo.foreign && discoveryFailure !== undefined)
+      return discoveryFailure;
+    const unknownHolds = holdsUnknown.get(canonicalDirectory(repo.cwd));
+    if (unknownHolds !== undefined)
+      return unknownHolds;
     const failed = unsafe.get(canonicalDirectory(path));
     if (failed !== undefined)
       return failed;
@@ -6509,35 +6561,48 @@ function createPendingCleanup(deps) {
   const gcIn = async (repo) => {
     const recorded = await landings(repo);
     if (recorded.common === null || recorded.unreadable)
-      return;
+      return false;
     for (const entry of recorded.byReceipt.values()) {
       if (entry.denied !== undefined || !await dropEvidence(repo, entry.receiptId))
         continue;
       await dropLanding(repo, recorded.common, entry);
     }
+    return true;
   };
   const gc = async (receipt) => {
-    const repos = [own, ...await clones()];
+    let complete = true;
+    const repos = [own];
+    try {
+      repos.push(...await clones());
+    } catch (error) {
+      complete = false;
+      console.error("delivery: the clones could not be listed", error);
+    }
     const named = receipt === undefined ? null : await repositoryOf(receipt);
     if (named?.foreign === true && !repos.some((repo) => repo.cwd === named.cwd))
       repos.push(named);
-    for (const repo of repos)
-      await gcIn(repo);
+    for (const repo of repos) {
+      const collected = await gcIn(repo);
+      if (collected && repo.foreign)
+        await retire(repo);
+      complete &&= collected;
+    }
+    return complete;
   };
   const runIn = async (repo, sessionID, idle) => {
     const key = await repo.key();
     if (key === null)
-      return;
+      return false;
     const directory = resolve8(receiptDirectory(env, key));
     let pending;
     try {
       pending = pendingReceipts(listReceipts(directory));
     } catch {
-      return;
+      return false;
     }
     const idOf = (receipt) => `${key}/${receipt.receiptId}`;
     const recorded = await landings(repo);
-    await gcIn(repo);
+    const collected = await gcIn(repo);
     const present = [];
     for (const receipt of pending) {
       if (receipt.worktree.path !== null && !existsSync4(receipt.worktree.path)) {
@@ -6562,7 +6627,7 @@ function createPendingCleanup(deps) {
     });
     for (const receipt of window) {
       if (disposed)
-        return;
+        return false;
       attemptedAt.set(idOf(receipt), now());
       const path = resolve8(directory, `${receipt.receiptId}.json`);
       const meta = recorded.byReceipt.get(receipt.receiptId);
@@ -6605,13 +6670,22 @@ function createPendingCleanup(deps) {
         }
       }
     }
+    return collected;
   };
   const run = async (sessionID, idle) => {
     await runIn(own, sessionID, idle);
-    for (const repo of await clones()) {
+    let found;
+    try {
+      found = await clones();
+    } catch (error) {
+      console.error("delivery: the clones could not be listed; none is cleaned", error);
+      return;
+    }
+    for (const repo of found) {
       if (disposed)
         return;
-      await runIn(repo, sessionID, idle);
+      if (await runIn(repo, sessionID, idle))
+        await retire(repo);
     }
   };
   const retryNow = (sessionID, idle) => disposed ? Promise.resolve() : serial(() => run(sessionID, idle)).catch((error) => console.error("delivery: pending cleanup failed", error));
@@ -6671,24 +6745,49 @@ function createPendingCleanup(deps) {
       const mine = own.veto() ?? await own.observe();
       if (mine === null)
         return;
-      await Promise.all(cloneEntries(mine.key).map(async (entry) => {
-        const repo = await cloneAt(entry);
-        if (repo !== null)
-          await writeHoldsIn(repo, sessionID, background, locationOf);
+      let entries;
+      try {
+        entries = cloneEntries(mine.key);
+      } catch (error) {
+        console.error("delivery: the clones could not be listed to record holds", error);
+        return;
+      }
+      await Promise.all(entries.map(async (entry) => {
+        const repo = await cloneAt(entry).catch(() => null);
+        if (repo === null) {
+          holdsUnknown.set(canonicalDirectory(entry.root), `the clone ${entry.root} could not be resolved to record its running work`);
+          return;
+        }
+        await writeHoldsIn(repo, sessionID, background, locationOf);
       }));
     };
     await Promise.all([writeHoldsIn(own, sessionID, background, locationOf), inClones()]);
   };
   const writeHoldsIn = async (repo, sessionID, background, locationOf) => {
+    const guard = canonicalDirectory(repo.cwd);
+    try {
+      await establishHolds(repo, sessionID, background, locationOf);
+      holdsUnknown.delete(guard);
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      holdsUnknown.set(guard, `its running work could not be recorded (${why})`);
+      console.error(`delivery: could not record holds in ${repo.cwd}: ${why}`);
+    }
+  };
+  const establishHolds = async (repo, sessionID, background, locationOf) => {
     const location = repo.veto() ?? await repo.observe();
     if (location === null)
-      return;
+      throw new Error(`the repository at ${repo.cwd} could not be resolved`);
     const { commonDir: common, key } = location;
     let pending;
+    const directory = resolve8(receiptDirectory(env, key));
     try {
-      pending = pendingReceipts(listReceipts(resolve8(receiptDirectory(env, key)))).slice(0, 100);
-    } catch {
-      return;
+      readdirSync4(directory);
+      pending = pendingReceipts(listReceipts(directory)).slice(0, 100);
+    } catch (error) {
+      if (error.code === "ENOENT")
+        return;
+      throw new Error(`its receipts could not be listed (${error instanceof Error ? error.message : String(error)})`, { cause: error });
     }
     for (const receipt of pending) {
       const path = receipt.worktree.path;
