@@ -58,6 +58,18 @@ permissions:
   - action: delivery_cleanup
     resource: "*"
     effect: allow
+  - action: seance_read
+    resource: "*"
+    effect: allow
+  - action: subagent_worktree_merge
+    resource: "*"
+    effect: allow
+  - action: todowrite
+    resource: "*"
+    effect: allow
+  - action: webfetch
+    resource: "*"
+    effect: allow
   - action: subagent
     resource: "*"
     effect: allow

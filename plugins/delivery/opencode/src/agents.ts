@@ -23,6 +23,7 @@ export const AGENT_IDS = [
   "pr-reviewer",
   "operator",
   "shepherd",
+  "orchestrator",
 ] as const
 export type AgentId = (typeof AGENT_IDS)[number]
 

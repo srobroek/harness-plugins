@@ -263,7 +263,8 @@ var AGENT_IDS = [
   "researcher",
   "pr-reviewer",
   "operator",
-  "shepherd"
+  "shepherd",
+  "orchestrator"
 ];
 var FRONTMATTER2 = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 function agentPath(id) {
