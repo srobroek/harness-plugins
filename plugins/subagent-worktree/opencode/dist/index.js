@@ -3642,7 +3642,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     return found;
   };
   const handedOff = async (child) => parseRelease(await ctx.storage.get(releaseKey(child)))?.to !== undefined;
-  const handOver = async (directory, child) => {
+  const handOver = async (directory, child, parent) => {
     const undo = [];
     try {
       for (const release2 of await releasesIn(directory)) {
@@ -3661,7 +3661,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
         });
         if (owned && ownsHere) {
           step.saved = true;
-          await save({ ...owned, child, handedOver: { from: release2.child, at: now() } });
+          await save({ ...owned, child, parent, handedOver: { from: release2.child, at: now() } });
           step.removed = true;
           await ctx.storage.remove(laneKey(release2.child));
         }
@@ -3814,7 +3814,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
             reserved.child = child;
           await ctx.session.move({ sessionID: child, directory: plan.worktree.directory });
           if (hold?.writer)
-            await handOver(hold.directory, child);
+            await handOver(hold.directory, child, event.sessionID);
         });
         event.input = { ...event.input, sessionID: child, prompt: startPrompt(input.prompt, plan.worktree) };
       } catch (error) {
