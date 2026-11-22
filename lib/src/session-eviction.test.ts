@@ -80,6 +80,12 @@ describe("listProjectSessions", () => {
     expect(found?.map((entry) => entry.id).sort()).toEqual(["live", "old"])
   })
 
+  test("a session of another project is dropped even when the host ignores the project filter", async () => {
+    const fake = api([[session("mine", "/x"), session("theirs", "/x", idle, "other")]], { ignoreProject: true })
+    const found = await listProjectSessions(fake, "prj")
+    expect(found?.map((entry) => entry.id)).toEqual(["mine"])
+  })
+
   test("an error or a malformed page is unknown, not empty", async () => {
     expect(await listProjectSessions(api([], { list: async () => Promise.reject(new Error("down")) }), "prj")).toBeUndefined()
     expect(await listProjectSessions(api([], { list: async () => ({ data: "nope" }) }), "prj")).toBeUndefined()
