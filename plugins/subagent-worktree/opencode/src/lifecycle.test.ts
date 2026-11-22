@@ -9,7 +9,7 @@ import { deleteDetached } from "./build-dirs.ts"
 import type { RunResult } from "./git.ts"
 import { createPlugin } from "./index.ts"
 import { type Lane, laneKey } from "./lane.ts"
-import { type BuildSeams, within } from "./lifecycle.ts"
+import { type BuildSeams, type Lifecycle, within } from "./lifecycle.ts"
 
 const PARENT = "ses_parent"
 const CHILD = "ses_child"
@@ -218,7 +218,11 @@ async function start(
     }
   }
   const log: string[][] = []
+  let lifecycle: Lifecycle | undefined
   const plugin = createPlugin({
+    lifecycle: (created) => {
+      lifecycle = created
+    },
     commonDir: async () => common,
     run: runner(state, log),
     lookupMs: 20,
@@ -236,7 +240,17 @@ async function start(
     ...(options.build === undefined ? {} : { build: options.build }),
   })
   const cleanup = (await plugin.setup(fake.context)) as () => Promise<void>
-  return { fake, state, worktree, log, cleanup, common, events }
+  return {
+    fake,
+    state,
+    worktree,
+    log,
+    cleanup,
+    common,
+    events,
+    /** Resolves once no pass is scheduled and the lifecycle's serial chain is quiet: every queued recovery has run. */
+    quiet: () => lifecycle?.settle() ?? Promise.resolve(),
+  }
 }
 
 const stored = (fake: Fake, child = CHILD) => fake.storage.get(laneKey(child)) as Lane
@@ -2228,7 +2242,7 @@ describe("finalize: stale events, apply-time liveness, pending moves and resumed
     /** Startup finishes a lane that is in `removing` when the plugin loads, so the lane gets there after the start. */
     const startThenCrash = async (world: Partial<World>) => {
       const started = await start(world, { stored: [] })
-      await settle()
+      await started.quiet()
       started.fake.storage.set(laneKey(CHILD), crashed())
       return started
     }
@@ -2346,9 +2360,9 @@ describe("finalize: round two", () => {
   })
 
   test("the idle hook records a running shell for a lane left in removing, and the worktree stays", async () => {
-    const { fake, worktree, cleanup } = await start(empty, { stored: [] })
+    const { fake, worktree, cleanup, quiet } = await start(empty, { stored: [] })
     // After the start: startup finishes a lane that is in `removing` when the plugin loads.
-    await settle()
+    await quiet()
     fake.storage.set(laneKey(CHILD), lane({ state: "removing", removal: { retireAs: "removed", head: BASE } }))
     await fake.fire.session("experimental.idle", {
       sessionID: PARENT,
@@ -2470,6 +2484,25 @@ describe("finalize: a resume and late changes fence the removal", () => {
     await fake.fire.session("experimental.idle", { sessionID: PARENT, background: [] } as never)
     expect(resumed).toBe(true)
     expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+
+  test("a resume admitted while the idle gate waits its turn keeps a landed lane, though the clock moved on before the gate ran", async () => {
+    const { fake, state, worktree, events, cleanup } = await start({ ancestor: 0 })
+    // An unrelated session's pass holds the lifecycle's one chain at its first scan.
+    const hold = holdNextScan(fake)
+    await deliver(fake, events, { type: "session.execution.succeeded", data: { sessionID: "ses_other" } })
+    await until(() => hold.isHeld())
+    const gate = fake.fire.session("experimental.idle", { sessionID: PARENT, background: [] } as never)
+    await resume(fake)
+    // A fence taken only once the gate runs would be later than the resume's stamp.
+    state.now += 1_000
+    hold.release()
+    await gate
+    expect(hold.isHeld()).toBe(true)
+    expect(worktree).toEqual([])
+    expect(fake.calls.filter((entry) => entry.method === "session.move")).toEqual([])
     expect(stored(fake).state).toBe("active")
     await cleanup()
   })
@@ -2648,7 +2681,7 @@ describe("a removal's session moves read where each session sits", () => {
   /** A removal that took the worktree away but still has `pending` moves, seeded after the start (which would finish it). */
   const startPending = async (pending: string[]) => {
     const started = await start({ exists: false }, { stored: [] })
-    await settle()
+    await started.quiet()
     started.fake.storage.set(laneKey(CHILD), lane({ state: "removing", removal: { retireAs: "removed", head: BASE, pending } }))
     return started
   }
@@ -2710,11 +2743,11 @@ describe("startup reconciles lanes left in removing", () => {
       await new Promise<void>((done) => (free = done))
     })
     await acquired
-    const { fake, worktree, events, cleanup } = await start({ head: BASE, ahead: 0, exists }, { stored: [crashed], common, lock: { waitMs: 5_000 } })
+    const { fake, worktree, events, cleanup, quiet } = await start({ head: BASE, ahead: 0, exists }, { stored: [crashed], common, lock: { waitMs: 5_000 } })
     await deliver(fake, events, { type: "session.execution.started", data: { sessionID: CHILD } })
     free()
     await held
-    await settle(300)
+    await quiet()
     expect(removes(worktree)).toEqual([])
     expect(moves(fake)).toEqual([])
     expect(stored(fake).state).toBe("removing")
@@ -2732,7 +2765,7 @@ describe("an execution that fails because its location is gone", () => {
   test("a child that starts while the failure waits for the lock stays where it is, though the tree is gone", async () => {
     const common = mkdtempSync(join(tmpdir(), "common-"))
     COMMONS.push(common)
-    const { fake, events, cleanup } = await start({ missing: [WT] }, { common, lock: { waitMs: 5_000 } })
+    const { fake, events, cleanup, quiet } = await start({ missing: [WT] }, { common, lock: { waitMs: 5_000 } })
     grandchild(fake)
     let free!: () => void
     let taken!: () => void
@@ -2746,8 +2779,7 @@ describe("an execution that fails because its location is gone", () => {
     await deliver(fake, events, { type: "session.execution.started", data: { sessionID: CHILD } })
     free()
     await held
-    await until(() => moves(fake).length > 0)
-    await settle(100)
+    await quiet()
     expect(moves(fake)).toEqual([["ses_grand", REPO]])
     expect(stored(fake).state).toBe("removing")
     expect(stored(fake).removal?.pending).toEqual([CHILD])
@@ -2758,12 +2790,12 @@ describe("an execution that fails because its location is gone", () => {
     ["the lane's child", { time: { [CHILD]: { busy: 5, idle: 2 } } }, CHILD],
     ["a sibling in the worktree", {}, "ses_sib"],
   ])("a failure in one descendant while %s runs moves only the failed one; the running one stays pending", async (_name, world, running) => {
-    const { fake, cleanup } = await start({ missing: [WT], ...world })
+    const { fake, events, cleanup, quiet } = await start({ missing: [WT], ...world })
     grandchild(fake)
     if (running === "ses_sib") fake.sessions.set("ses_sib", { id: "ses_sib", parentID: CHILD, projectID: "prj", location: { directory: WT }, time: { busy: 5, idle: 2 } })
-    fake.emit(locationGone)
-    await until(() => moves(fake).some(([id]) => id === "ses_grand"))
-    await settle(100)
+    await deliver(fake, events, locationGone)
+    await quiet()
+    expect(moves(fake).map(([id]) => id)).toContain("ses_grand")
     expect(moves(fake).map(([id]) => id)).not.toContain(running)
     expect(stored(fake).state).toBe("removing")
     expect(stored(fake).removal?.pending).toEqual([running])
@@ -2784,11 +2816,10 @@ describe("an execution that fails because its location is gone", () => {
   })
 
   test("a descendant left in the gone worktree of a retired lane moves home on its own", async () => {
-    const { fake, cleanup } = await start({ missing: [WT] }, { stored: [lane({ state: "landed" })] })
+    const { fake, events, cleanup, quiet } = await start({ missing: [WT] }, { stored: [lane({ state: "landed" })] })
     grandchild(fake)
-    fake.emit(locationGone)
-    await until(() => moves(fake).length > 0)
-    await settle(50)
+    await deliver(fake, events, locationGone)
+    await quiet()
     expect(moves(fake)).toEqual([["ses_grand", REPO]])
     expect(stored(fake).state).toBe("landed")
     await cleanup()
@@ -2823,7 +2854,7 @@ describe("an execution that fails because its location is gone", () => {
       deliver(fake, events, { type: "session.execution.interrupted", data: { sessionID: "ses_grand", reason: "shutdown" } })],
   ])("a descendant in the gone worktree of a retired lane stays where it is when %s", async (_name, running, meanwhile) => {
     const common = sharedCommon()
-    const { fake, events, cleanup } = await start({ missing: [WT] }, { stored: [lane({ state: "landed" })], common, lock: { waitMs: 5_000 } })
+    const { fake, events, cleanup, quiet } = await start({ missing: [WT] }, { stored: [lane({ state: "landed" })], common, lock: { waitMs: 5_000 } })
     grandchild(fake)
     const session = fake.sessions.get("ses_grand")
     if (session && running) session.time = { busy: 5, idle: 2 }
@@ -2831,7 +2862,7 @@ describe("an execution that fails because its location is gone", () => {
     await deliver(fake, events, locationGone)
     await meanwhile(fake, events)
     await release()
-    await settle(300)
+    await quiet()
     expect(moves(fake)).toEqual([])
     expect(stored(fake).state).toBe("landed")
     await cleanup()
@@ -2841,39 +2872,66 @@ describe("an execution that fails because its location is gone", () => {
     ["an active lane", "active"],
     ["a retired lane", "landed"],
   ] as const)("running work held on the gone worktree of %s keeps every idle session where it is", async (_name, state) => {
-    const { fake, common, cleanup } = await start({ missing: [WT] }, { stored: [lane({ state })] })
+    const { fake, common, events, cleanup, quiet } = await start({ missing: [WT] }, { stored: [lane({ state })] })
     grandchild(fake)
     // A live hold: the idle gate recorded a shell still running for the worktree.
     setHold(common, WT, "ses_x", [{ kind: "shell", id: "sh1" }], NOW)
-    fake.emit(locationGone)
-    // Done when the removal recorded what it kept pending, or retired the lane having moved everything.
-    if (state === "active") await until(() => stored(fake).removal?.pending !== undefined || stored(fake).state === "removed")
-    else await settle(300)
+    await deliver(fake, events, locationGone)
+    await quiet()
     expect(moves(fake)).toEqual([])
     await cleanup()
   })
 
   test("a child whose resume was admitted but has not started yet stays where it is when a descendant fails", async () => {
-    const { fake, cleanup } = await start({ missing: [WT] }, { stored: [lane({ resumedAt: NOW })] })
+    const { fake, events, cleanup, quiet } = await start({ missing: [WT] }, { stored: [lane({ resumedAt: NOW })] })
     grandchild(fake)
-    fake.emit(locationGone)
-    await until(() => moves(fake).some(([id]) => id === "ses_grand"))
-    await settle(100)
+    await deliver(fake, events, locationGone)
+    await quiet()
+    expect(moves(fake).map(([id]) => id)).toContain("ses_grand")
     expect(moves(fake).map(([id]) => id)).not.toContain(CHILD)
     expect(stored(fake).state).toBe("removing")
     expect(stored(fake).removal?.pending).toEqual([CHILD])
     await cleanup()
   })
 
+  // The resume is stamped at NOW. Only an archive after it, or an execution that started after it and then went idle, settles it;
+  // a time in the stamp's own millisecond cannot be ordered against it.
+  test.each([
+    ["its last idle is in the stamp's millisecond", { busy: 1, idle: NOW }],
+    ["its execution started in the stamp's millisecond", { busy: NOW, idle: NOW + 1 }],
+    ["it was archived in the stamp's millisecond", { busy: 1, idle: 2, archived: NOW }],
+  ])("an admitted resume of a child that %s is unfinished, so the child stays where it is", async (_name, time) => {
+    const { fake, events, cleanup, quiet } = await start({ missing: [WT], time: { [CHILD]: time } }, { stored: [lane({ resumedAt: NOW })] })
+    grandchild(fake)
+    await deliver(fake, events, locationGone)
+    await quiet()
+    expect(moves(fake).map(([id]) => id)).toEqual(["ses_grand"])
+    expect(stored(fake).removal?.pending).toEqual([CHILD])
+    await cleanup()
+  })
+
+  test.each([
+    ["archived after the resume", { busy: 1, idle: 2, archived: NOW + 1 }],
+    ["started after the resume and then went idle", { busy: NOW + 1, idle: NOW + 2 }],
+  ])("an admitted resume of a child %s is finished, so the child is moved home", async (_name, time) => {
+    const { fake, events, cleanup, quiet } = await start({ missing: [WT], time: { [CHILD]: time } }, { stored: [lane({ resumedAt: NOW })] })
+    grandchild(fake)
+    await deliver(fake, events, locationGone)
+    await quiet()
+    expect(moves(fake).map(([id]) => id).sort()).toEqual([CHILD, "ses_grand"].sort())
+    expect(stored(fake).state).toBe("removed")
+    await cleanup()
+  })
+
   test("the lane's child failing on its own gone location, then starting again, is not moved by the pass that follows", async () => {
     const common = sharedCommon()
-    const { fake, events, cleanup } = await start({ missing: [WT] }, { common, lock: { waitMs: 5_000 } })
+    const { fake, events, cleanup, quiet } = await start({ missing: [WT] }, { common, lock: { waitMs: 5_000 } })
     const release = await holdLock(common)
     await deliver(fake, events, { ...locationGone, data: { ...locationGone.data, sessionID: CHILD } })
     await deliver(fake, events, { type: "session.execution.started", data: { sessionID: CHILD } })
     await release()
     // The failure's debounced pass runs after the hook; both had to wait for the lock.
-    await settle(400)
+    await quiet()
     expect(moves(fake)).toEqual([])
     expect(stored(fake).state).toBe("removing")
     expect(stored(fake).removal?.pending).toEqual([CHILD])
@@ -2886,9 +2944,9 @@ describe("an execution that fails because its location is gone", () => {
   ])("the worktree of %s that is back by the time the lock is taken is neither removed nor emptied", async (_name, seeded) => {
     const common = mkdtempSync(join(tmpdir(), "common-"))
     COMMONS.push(common)
-    const { fake, state, worktree, cleanup } = await start({ head: BASE, ahead: 0, missing: [WT] }, { stored: [], common, lock: { waitMs: 5_000 } })
+    const { fake, state, worktree, events, cleanup, quiet } = await start({ head: BASE, ahead: 0, missing: [WT] }, { stored: [], common, lock: { waitMs: 5_000 } })
     // Seeded after the start, which finishes a lane in `removing` on its own.
-    await settle()
+    await quiet()
     fake.storage.set(laneKey(CHILD), seeded)
     grandchild(fake)
     // Another holder has the lane lock while the failure is handled; the worktree comes back meanwhile.
@@ -2900,12 +2958,20 @@ describe("an execution that fails because its location is gone", () => {
       await new Promise<void>((done) => (free = done))
     })
     await acquired
-    fake.emit(locationGone)
-    await settle(100)
-    state.missing = []
+    // The hook's first look, before it waits for the lock, finds the worktree gone; right after it, the worktree is back.
+    let looked = false
+    state.onExists = (path, exists) => {
+      if (path !== WT || exists) return
+      looked = true
+      state.missing = []
+      state.onExists = undefined
+    }
+    await deliver(fake, events, locationGone)
+    await until(() => looked)
     free()
     await held
-    await settle(300)
+    await quiet()
+    expect(looked).toBe(true)
     expect(worktree).toEqual([])
     expect(moves(fake)).toEqual([])
     expect(stored(fake).state).toBe(seeded.state)
@@ -2915,7 +2981,7 @@ describe("an execution that fails because its location is gone", () => {
   test("a worktree that comes back right after the plugin's first look under the lock is never removed", async () => {
     const common = mkdtempSync(join(tmpdir(), "common-"))
     COMMONS.push(common)
-    const { fake, state, worktree, cleanup } = await start({ head: BASE, ahead: 0, missing: [WT] }, { common, lock: { waitMs: 5_000 } })
+    const { fake, state, worktree, events, cleanup, quiet } = await start({ head: BASE, ahead: 0, missing: [WT] }, { common, lock: { waitMs: 5_000 } })
     grandchild(fake)
     let free!: () => void
     let taken!: () => void
@@ -2925,17 +2991,22 @@ describe("an execution that fails because its location is gone", () => {
       await new Promise<void>((done) => (free = done))
     })
     await acquired
-    fake.emit(locationGone)
-    await settle(100)
-    // Every look from here on is under the lock: the first one still finds the worktree gone, then it is back.
+    // The hook's first look is before the lock and its second is the first under it: that one still finds the worktree
+    // gone, and right after it the worktree is back.
+    let looks = 0
     state.onExists = (path, exists) => {
       if (path !== WT || exists) return
+      looks++
+      if (looks < 2) return
       state.missing = []
       state.onExists = undefined
     }
+    await deliver(fake, events, locationGone)
+    await until(() => looks >= 1)
     free()
     await held
-    await settle(300)
+    await quiet()
+    expect(looks).toBe(2)
     expect(worktree.filter((entry) => entry.method === "remove")).toEqual([])
     await cleanup()
   })
@@ -2944,10 +3015,10 @@ describe("an execution that fails because its location is gone", () => {
     ["the worktree still exists", {}, locationGone],
     ["the failure is not about the location", { missing: [WT] }, { ...locationGone, data: { sessionID: "ses_grand", error: { type: "ProviderError", message: "rate limited" } } }],
   ])("nothing moves when %s", async (_name, world, event) => {
-    const { fake, worktree, events, cleanup } = await start(world)
+    const { fake, worktree, events, cleanup, quiet } = await start(world)
     grandchild(fake)
     await deliver(fake, events, event)
-    await settle(100)
+    await quiet()
     expect(moves(fake)).toEqual([])
     expect(worktree).toEqual([])
     expect(stored(fake).state).toBe("active")

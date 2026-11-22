@@ -182,8 +182,10 @@ project-wide listing. A session below the child moves only when it sits in the l
 nested lane's child stays in its own worktree. A session whose location cannot be read stays pending.
 So does one that may be running: a running session, a pending shutdown resume, or an execution start
 seen after the removal was triggered (for the startup pass, after the plugin loaded). The child also
-stays while a resume of it was admitted, and every session stays while running work is held on the
-worktree. A running session is never moved.
+stays while a resume of it was admitted and has not settled. When the worktree was already gone, only
+the child's own evidence settles a resume: an archive after the resume, or an execution that started
+after it and then went idle. A time in the resume's own millisecond settles nothing. Every session
+stays while running work is held on the worktree. A running session is never moved.
 They move to the parent's checkout, or to the repository's canonical checkout
 when that is gone. The host moves a session whose directory is gone, so the move comes after the
 removal. A failed move or an incomplete listing leaves the lane in `removing` with the sessions

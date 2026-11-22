@@ -892,16 +892,21 @@ export function createLifecycle(deps: LifecycleDeps) {
     const stamp = await resumeStampOf(lane)
     /**
      * A resume stamped at or after the fence keeps the child. When the worktree was already gone (a recovery: no
-     * liveness was proven before this move), so does any admitted resume that has not finished: one stamped after the
-     * child last went idle may still be starting (its execution not seen yet) or running. Only the child's own idle ends it.
+     * liveness was proven before this move), so does any admitted resume not yet settled by the child's own evidence:
+     * an archive after the stamp, or an execution that started after it and then went idle. A time in the stamp's own
+     * millisecond cannot be ordered against it, so it settles nothing.
      */
     const resumeOf = (session: SessionLike): Finalized | undefined => {
       if (fenced !== undefined) return fenced
       if (!treeWasGone) return undefined
       if ("removed" in stamp) return stamp
       if (stamp.at === undefined) return undefined
+      const archived = toMillis(session.time?.archived)
+      if (archived !== undefined && archived > stamp.at) return undefined
+      const busy = toMillis(session.time?.busy)
       const idle = toMillis(session.time?.idle)
-      return idle === undefined || stamp.at > idle ? keptBecause("running", "a resume of the child was admitted and has not finished") : undefined
+      if (busy !== undefined && idle !== undefined && busy > stamp.at && idle > busy) return undefined
+      return keptBecause("running", "a resume of the child was admitted and has not finished")
     }
     const found = await laneSessions(sessionClient, lane.child)
     if (!found.complete) console.error(`subagent-worktree: the session listing of ${lane.child} is incomplete; moving the ${found.ids.length} found`)
@@ -1614,9 +1619,15 @@ export function createLifecycle(deps: LifecycleDeps) {
   }
 
   /** Wait for scheduled and running passes; for tests and shutdown. */
+  /** Wait until no pass is scheduled and the serial chain is quiet, including work queued while waiting; tests await it. */
   const settle = async () => {
-    while (pending.size > 0) await new Promise((done) => setTimeout(done, debounceMs + 1))
-    await Promise.allSettled([chain, sweepChain])
+    for (;;) {
+      while (pending.size > 0) await new Promise((done) => setTimeout(done, debounceMs + 1))
+      const current = chain
+      const sweeping = sweepChain
+      await Promise.allSettled([current, sweeping])
+      if (current === chain && sweeping === sweepChain && pending.size === 0) return
+    }
   }
 
   return { start, dispose, handleEvent, onIdle, onLanding, keep, removeForeground, removeAfterMerge, resumeRemovals, noteResume, spawnInto, sweep: runSweep, settle }

@@ -2717,8 +2717,14 @@ function createLifecycle(deps) {
         return stamp;
       if (stamp.at === undefined)
         return;
+      const archived = toMillis2(session.time?.archived);
+      if (archived !== undefined && archived > stamp.at)
+        return;
+      const busy = toMillis2(session.time?.busy);
       const idle = toMillis2(session.time?.idle);
-      return idle === undefined || stamp.at > idle ? keptBecause("running", "a resume of the child was admitted and has not finished") : undefined;
+      if (busy !== undefined && idle !== undefined && busy > stamp.at && idle > busy)
+        return;
+      return keptBecause("running", "a resume of the child was admitted and has not finished");
     };
     const found = await laneSessions(sessionClient, lane.child);
     if (!found.complete)
@@ -3345,9 +3351,15 @@ function createLifecycle(deps) {
       await flushReleases(lane);
   };
   const settle = async () => {
-    while (pending.size > 0)
-      await new Promise((done) => setTimeout(done, debounceMs + 1));
-    await Promise.allSettled([chain, sweepChain]);
+    for (;; ) {
+      while (pending.size > 0)
+        await new Promise((done) => setTimeout(done, debounceMs + 1));
+      const current = chain;
+      const sweeping = sweepChain;
+      await Promise.allSettled([current, sweeping]);
+      if (current === chain && sweeping === sweepChain && pending.size === 0)
+        return;
+    }
   };
   return { start, dispose, handleEvent, onIdle, onLanding, keep, removeForeground, removeAfterMerge, resumeRemovals, noteResume, spawnInto, sweep: runSweep, settle };
 }
@@ -4101,6 +4113,7 @@ function createPlugin(overrides = {}) {
       const options = readOptions(ctx.options);
       const git2 = createGit(overrides.run ?? spawnRunner);
       const lanes = createLanes(ctx, options, git2, overrides.suffix ?? randomSuffix, overrides.lookupMs, overrides.directoryExists, overrides.now, overrides.reserveMs, overrides.debounceMs, overrides.age, overrides.commonDir, overrides.lock, overrides.build);
+      overrides.lifecycle?.(lanes.lifecycle);
       const registrations = [];
       const cleanup = async () => {
         for (const registration of registrations.reverse())
