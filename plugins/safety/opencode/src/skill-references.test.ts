@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { allowSkillReads, listedSkills, skillDirectories } from "./skill-references.ts"
@@ -52,6 +52,83 @@ describe("skillDirectories", () => {
     const evaluation = { action: "external_directory", resources: [join(home, ".ssh/*")], effect: "ask" }
     allowSkillReads(evaluation, skillDirectories([{ path: at("links/home/SKILL.md") }], home))
     expect(evaluation.effect).toBe("ask")
+  })
+})
+
+describe("skill directories that are not dedicated skill folders", () => {
+  let fixture: string
+  let home: string
+  const at = (...parts: string[]) => join(fixture, ...parts)
+  const ask = (resource: string) => {
+    const evaluation = { action: "external_directory", resources: [resource], effect: "ask" }
+    return evaluation
+  }
+  const allowed = (skillPath: string, resource: string) => {
+    const evaluation = ask(resource)
+    allowSkillReads(evaluation, skillDirectories([{ path: skillPath }], home))
+    return evaluation.effect === "allow"
+  }
+  beforeAll(() => {
+    fixture = mkdtempSync(join(realpathSync(tmpdir()), "safety-skill-scope-"))
+    home = at("users/me")
+    mkdirSync(home, { recursive: true })
+    // a repository root holding a SKILL.md, with a .git directory, a references/ directory and other files
+    mkdirSync(at("repo/.git"), { recursive: true })
+    mkdirSync(at("repo/references"))
+    mkdirSync(at("repo/src"))
+    // a worktree-style repository root: .git is a file
+    mkdirSync(at("wt/skills/s/references"), { recursive: true })
+    writeFileSync(at("wt/skills/s/.git"), "gitdir: elsewhere")
+    // a broad directory that is not under skills/
+    mkdirSync(at("broad/scripts"), { recursive: true })
+    mkdirSync(at("broad/other"))
+    // a dedicated skill folder
+    mkdirSync(at("plug/skills/good/references"), { recursive: true })
+    mkdirSync(at("plug/skills/good/misc"))
+    // references/ linking out of the skill directory, and a skill link into a broad directory
+    mkdirSync(at("out/secret"), { recursive: true })
+    mkdirSync(at("broad2"))
+    symlinkSync(at("out/secret"), at("broad2/references"))
+    symlinkSync(at("broad"), at("plug/skills/linked-broad"))
+  })
+  afterAll(() => rmSync(fixture, { recursive: true, force: true }))
+
+  test("a dedicated skill folder is trusted whole", () => {
+    expect(allowed(at("plug/skills/good/SKILL.md"), at("plug/skills/good/misc/*"))).toBe(true)
+  })
+
+  test("a trailing slash on a requested path stays inside the skill folder", () => {
+    expect(allowed(at("plug/skills/good/SKILL.md"), at("plug/skills/good/misc/"))).toBe(true)
+  })
+
+  test("a repository root with a .git directory does not allow its other directories", () => {
+    expect(allowed(at("repo/SKILL.md"), at("repo/src/*"))).toBe(false)
+  })
+
+  test("a repository root still allows its references/ directory", () => {
+    expect(allowed(at("repo/SKILL.md"), at("repo/references/*"))).toBe(true)
+  })
+
+  test("a skills/<dir> folder with a .git file is not trusted whole", () => {
+    expect(allowed(at("wt/skills/s/SKILL.md"), at("wt/skills/s/.git"))).toBe(false)
+    expect(allowed(at("wt/skills/s/SKILL.md"), at("wt/skills/s/references/*"))).toBe(true)
+  })
+
+  test("a broad directory outside skills/ allows only its conventional subdirectories", () => {
+    expect(allowed(at("broad/SKILL.md"), at("broad/other/*"))).toBe(false)
+    expect(allowed(at("broad/SKILL.md"), at("broad/scripts/*"))).toBe(true)
+  })
+
+  test("a skills/ link to a broad directory follows the real directory", () => {
+    expect(allowed(at("plug/skills/linked-broad/SKILL.md"), at("broad/other/*"))).toBe(false)
+  })
+
+  test("a references/ link that leaves the skill directory is not trusted", () => {
+    expect(allowed(at("broad2/SKILL.md"), at("out/secret/*"))).toBe(false)
+  })
+
+  test("a requested path that climbs out of an allowed subdirectory is refused", () => {
+    expect(allowed(at("repo/SKILL.md"), at("repo/references/../src/*"))).toBe(false)
   })
 })
 
