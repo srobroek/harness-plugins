@@ -63,32 +63,11 @@ Move new shared code into `lib` instead of adding another edge.
 - `subagent-worktree` removes a lane through one path, `finalize` in `plugins/subagent-worktree/opencode/src/lifecycle.ts`, under the worktree's disk lock. It records the lane as `removing`, re-proves liveness and the tree, removes the worktree, moves the sessions and retires the lane. A failed move or an incomplete listing leaves the lane in `removing` until a later trigger finishes it. Every plugin start also finishes the lanes it finds in `removing`. A `session.execution.failed` with `Location not found` for a lane's child or a session below it moves the lane's sessions home through the same path, but only when the lane's worktree is gone from disk. The plugin runs no background sweep and no project-wide session repair. `subagent_worktree_sweep` runs on demand.
 - `delivery` wraps the helpers in `plugins/delivery/opencode/src/lane-move.ts`. After it removes a worktree and proves it absent, it moves the lane's sessions that sit in the worktree or below it to the canonical checkout. A failed move, an unreadable session or an incomplete listing is reported in the cleanup result and never fails the cleanup; only a session the host says does not exist is dropped silently.
 
-`subagent-worktree` runs git automatically in lanes and checkouts whose config it does not control. So `spawnRunner` in `plugins/subagent-worktree/opencode/src/git.ts` gives every `git` command `untrustedLocalGitArgs()` and the environment from `untrustedLocalGitEnv()`, both in `lib/src/safe-git.ts`. The environment drops every inherited `GIT_*` variable except `GIT_CONFIG_GLOBAL`. It also drops `PAGER`, `EDITOR`, `VISUAL` and `SSH_ASKPASS`. The dropped variables include these:
+`subagent-worktree` runs git automatically in lanes and checkouts whose config it does not control. So `spawnRunner` in `plugins/subagent-worktree/opencode/src/git.ts` runs `git`, `wt` and `gh` with the environment from `hardenedGitEnv()` in `lib/src/safe-git.ts`. It carries the hardening as `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` (command scope, like `-c`), so the git calls that `wt` and `gh` make inherit it, and it sets `GIT_ATTR_SOURCE` to the empty tree, `GIT_OPTIONAL_LOCKS=0` and `GIT_NO_LAZY_FETCH=1`. The settings turn off fsmonitor, hooks, the global attributes file, signing and the signature programs, `diff.external`, `core.sshCommand`, `credential.helper` and lazy fetch. The empty attribute source means no worktree `.gitattributes` can select a filter, diff or merge driver. `wt merge` runs with `--no-hooks`, so committed project hooks do not run.
 
-| Why | Variables |
-| --- | --- |
-| The filter-driver listing and the command could read different config | `GIT_CONFIG`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`, `GIT_CONFIG_SYSTEM` |
-| They select another repository, work tree or index | `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` |
-| They name programs | `GIT_EXEC_PATH`, `GIT_EXTERNAL_DIFF`, `GIT_PAGER`, `GIT_EDITOR`, `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_ASKPASS`, `GIT_PROXY_COMMAND` |
-| They write files or change what a read sees | `GIT_TRACE*`, `GIT_*_PATHSPECS`, `GIT_NAMESPACE`, `GIT_REPLACE_REF_BASE` |
+`GIT_NO_LAZY_FETCH` and `GIT_ATTR_SOURCE` need git 2.45, so the plugin reads `git --version` once per process and fails closed: with an older or unreadable git, commands exit 126 with "subagent-worktree needs git 2.45+ for safe automatic merges" and a spawn of an isolated writer is refused. The plugin trusts each repository's local, unversioned `.git/config` and worktree configs, including `includeIf` sections. The hardening covers what versioned content can select, not that config. The plugin reads `git worktree list --porcelain -z` and refuses malformed output.
 
-`GIT_CONFIG_GLOBAL`, `HOME` and `XDG_CONFIG_HOME` stay, because the listing and the command read the global config the same way. Together, the arguments and the environment disable these:
-
-`GIT_CONFIG_GLOBAL`, `HOME` and `XDG_CONFIG_HOME` stay, because the listing and the command read the global config the same way. Together, the arguments and the environment disable these:
-
-- fsmonitor, hooks and the global attributes file
-- `diff.external`
-- every transport
-- `core.sshCommand`, `credential.helper` and `core.askPass`
-- signature checks (`log.showSignature`) and the signature programs
-- system config, terminal prompts and lazy fetch
-
-Before a status or a work-tree diff, the plugin lists the filter drivers in the same directory (`FILTER_DRIVER_LISTING`). It disables every driver it finds, including the user's global ones such as git-lfs. The repository picks the driver, and it can supply the program that a relative command runs. It refuses to run the command when the listing fails or a driver name is not UTF-8 or contains `=`. The plugin reads `git worktree list --porcelain -z` and refuses malformed output. The minimum git version stays as it is, so these risks remain:
-
-- `GIT_NO_LAZY_FETCH` needs git 2.45. Older git still starts a lazy fetch and relies on the transport refusal (`GIT_ALLOW_PROTOCOL` set empty).
-- `git status` recursing into a submodule runs with the submodule's own filter drivers.
-- A config change between the driver listing and the command is not seen. Git evaluates conditional includes (`includeIf`) the same way for both, because both run in the same directory.
-- `wt` commands (`wt list`, `wt merge`) run without these settings.
+The divergences of `subagent-worktree` from opencode-plugins are listed under `Approved departures` below.
 
 With git-lfs disabled, an LFS file whose index entry is stale reads as modified. A lane then looks dirty and is kept, never removed.
 
@@ -128,6 +107,12 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 - Approved departures:
   - `code-challenge` names its tool `challenge_setup`, not `code_challenge_setup` as `<name>_<verb>` would give. The skill's other two tools, `challenge_lib_facts` and `challenge_scan`, share the same `challenge_` namespace, so one short prefix (reserved in `RESERVED_TOOL_PREFIXES`) covers the family and the agents' permission rules.
   - `code-challenge` `challenge_scan` runs analyzers without a sandbox, by user decision. It discloses the risk and asks for consent instead (see Code-challenge scan below).
+  - `subagent-worktree` diverges from opencode-plugins `289814b`, `891c0bc` and `e6ec82b` on purpose, to keep protections upstream's final cut dropped or never had:
+    - Resume fence: `finalize` takes the accepted end's sequence and the time the end was seen (`since`), and a resume stamped at or after it keeps the lane. There is no `resumeGraceMs`.
+    - Directory-wide eviction and a liveness re-check after it: every session in the checkout is read, and running ones keep the worktree.
+    - Holds are recorded for active and removing lanes before crash recovery runs.
+    - `ifGone`, `spawnInto` (a spawn runs under the worktree's removal lock) and `isSessionNotFound` handling stay; there is no `session.created` repair of stranded sessions and no periodic sweep timer.
+    - `git worktree list --porcelain -z` is read NUL-separated and malformed output is refused, so a path with a newline parses (`parseWorktrees` in `lane.ts`).
 
 ## Read-only shell rules and subagent reads
 

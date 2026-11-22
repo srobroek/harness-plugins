@@ -718,76 +718,67 @@ function lockedWrite(commonDir, directory, options, write) {
   return withDiskLock(commonDir, directory, { waitMs: 1e4, ...options }, async () => write());
 }
 
-// plugins/subagent-worktree/opencode/src/git.ts
-import { env as hostEnv } from "process";
-
 // lib/src/safe-git.ts
 import { devNull } from "os";
-var SAFE_GIT_ARGS = [
-  "-c",
-  "core.fsmonitor=false",
-  "-c",
-  `core.hooksPath=${devNull}`,
-  "--no-optional-locks"
+var SAFE_GIT_CONFIG = [
+  ["core.fsmonitor", "false"],
+  ["core.hooksPath", devNull]
 ];
-function untrustedLocalGitArgs() {
-  return [
-    ...SAFE_GIT_ARGS,
-    "-c",
-    `core.attributesFile=${devNull}`,
-    "-c",
-    "diff.external=",
-    "-c",
-    "core.sshCommand=",
-    "-c",
-    "credential.helper=",
-    "-c",
-    "core.askPass=",
-    "-c",
-    "log.showSignature=false",
-    "-c",
-    "gpg.program=",
-    "-c",
-    "gpg.ssh.program=",
-    "-c",
-    "gpg.x509.program="
-  ];
-}
-var PROGRAM_VARIABLES = ["PAGER", "EDITOR", "VISUAL", "SSH_ASKPASS"];
-var KEPT_GIT_VARIABLE = "GIT_CONFIG_GLOBAL";
-function untrustedLocalGitEnv(host) {
-  const dropped = new Set(PROGRAM_VARIABLES);
-  const kept = {};
-  for (const [name, value] of Object.entries(host)) {
-    if (value === undefined || dropped.has(name))
-      continue;
-    if (name.startsWith("GIT_") && name !== KEPT_GIT_VARIABLE)
-      continue;
-    kept[name] = value;
-  }
-  return {
-    ...kept,
-    GIT_ALLOW_PROTOCOL: "",
-    GIT_NO_LAZY_FETCH: "1",
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_TERMINAL_PROMPT: "0"
-  };
-}
-var FILTER_DRIVER_LISTING = ["config", "--name-only", "-z", "--list"];
-function filterDriverOverrides(listing) {
-  const keys = listing.split("\x00");
-  if (keys.pop() !== "")
+var SAFE_GIT_ARGS = [...SAFE_GIT_CONFIG.flatMap(([key, value]) => ["-c", `${key}=${value}`]), "--no-optional-locks"];
+var HARDENED_GIT_CONFIG = [
+  ...SAFE_GIT_CONFIG,
+  ["core.attributesFile", devNull],
+  ["log.showSignature", "false"],
+  ["gpg.program", devNull],
+  ["gpg.ssh.program", devNull],
+  ["gpg.x509.program", devNull],
+  ["commit.gpgSign", "false"],
+  ["tag.gpgSign", "false"],
+  ["gpg.ssh.defaultKeyCommand", ""],
+  ["core.sshCommand", ""],
+  ["credential.helper", ""],
+  ["diff.external", ""]
+];
+var EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+var GIT_MIN_VERSION = [2, 45, 0];
+function parseGitVersion(text) {
+  const match = /git version (\d+)\.(\d+)(?:\.(\d+))?/.exec(text);
+  if (!match)
     return;
-  const drivers = new Set;
-  for (const key of keys) {
-    const last = key.lastIndexOf(".");
-    if (!key.startsWith("filter.") || last < "filter.".length)
-      continue;
-    drivers.add(key.slice("filter.".length, last));
+  return [Number(match[1]), Number(match[2]), Number(match[3] ?? 0)];
+}
+var GIT_VERSION_MESSAGE = "subagent-worktree needs git 2.45+ for safe automatic merges";
+function gitVersionProblem(text) {
+  const version = parseGitVersion(text);
+  if (!version)
+    return GIT_VERSION_MESSAGE;
+  for (const [index, minimum] of GIT_MIN_VERSION.entries()) {
+    const have = version[index] ?? 0;
+    if (have > minimum)
+      return;
+    if (have < minimum)
+      return GIT_VERSION_MESSAGE;
   }
-  if ([...drivers].some((driver) => driver.includes("=") || driver.includes("\uFFFD")))
-    return;
-  return [...drivers].flatMap((driver) => ["clean=", "smudge=", "process=", "required=false"].flatMap((setting) => ["-c", `filter.${driver}.${setting}`]));
+  return;
+}
+function hardenedGitEnv(base) {
+  const env = {};
+  for (const [key, value] of Object.entries(base))
+    if (value !== undefined)
+      env[key] = value;
+  const existing = Number.parseInt(env.GIT_CONFIG_COUNT ?? "", 10);
+  let count = Number.isInteger(existing) && existing > 0 ? existing : 0;
+  for (const [key, value] of HARDENED_GIT_CONFIG) {
+    env[`GIT_CONFIG_KEY_${count}`] = key;
+    env[`GIT_CONFIG_VALUE_${count}`] = value;
+    count += 1;
+  }
+  env.GIT_CONFIG_COUNT = String(count);
+  env.GIT_ATTR_SOURCE = EMPTY_TREE;
+  env.GIT_OPTIONAL_LOCKS = "0";
+  env.GIT_NO_LAZY_FETCH = "1";
+  delete env.GIT_EXTERNAL_DIFF;
+  return env;
 }
 
 // lib/src/patterns.ts
@@ -1058,6 +1049,8 @@ function planStart(facts) {
     return { kind: "default", ...resumeWorktreeNote(input) ? { note: RESUME_WORKTREE_NOTE } : {} };
   if (input.worktree === false)
     return { kind: "default" };
+  if (!isolation.isolate && isolation.refuse)
+    return { kind: "refuse", reason: isolation.reason };
   if (input.worktree === undefined && isolation.isolate && facts.trackedDirty)
     return { kind: "default", note: DIRTY_CHECKOUT_NOTE };
   if (input.worktree === undefined || lookup === undefined)
@@ -1104,6 +1097,8 @@ function decideIsolation(facts) {
     return { isolate: false, reason: "read-only agent (edit denied)" };
   if (facts.callerIsChild)
     return { isolate: false, reason: "caller is a child session" };
+  if (facts.gitUnsupported)
+    return { isolate: false, reason: facts.gitUnsupported, refuse: true };
   if (!facts.isGit)
     return { isolate: false, reason: "not a git checkout" };
   return { isolate: true };
@@ -1224,7 +1219,10 @@ No commits and a clean tree, so the worktree was removed. Continuing this sessio
 `);
 }
 function mergeArgs(directory, target) {
-  return ["wt", "-C", directory, "merge", target, "--no-squash", "--no-ff", "--no-remove", "--yes"];
+  return ["wt", "-C", directory, "merge", target, "--no-squash", "--no-ff", "--no-remove", "--no-hooks"];
+}
+function isSafeBranchName(name) {
+  return name !== "" && !name.startsWith("-") && !name.includes("..") && !/[\s\x00-\x1f\x7f]/.test(name);
 }
 function isConflict(output) {
   return /conflict|could not apply|resolve all conflicts|needs merge/i.test(output);
@@ -1349,18 +1347,37 @@ var FENCED_REASON = "another writer spawn took over this worktree while it waite
 
 // plugins/subagent-worktree/opencode/src/git.ts
 var GIT_TIMEOUT_MS = 60000;
+var GIT_RUNNING_PROGRAMS = new Set(["git", "wt", "gh"]);
+var versionProblem;
+function installedGitProblem() {
+  versionProblem ??= (async () => {
+    try {
+      const child = Bun.spawn(["git", "--version"], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      const run = await supervise(child, { timeoutMs: GIT_TIMEOUT_MS });
+      return gitVersionProblem(run.kind === "exited" ? run.stdout : "");
+    } catch {
+      return gitVersionProblem("");
+    }
+  })();
+  return versionProblem;
+}
 var spawnRunner = async (argv, options) => {
-  const git = argv[0] === "git";
-  const command = git ? ["git", ...untrustedLocalGitArgs(), ...argv.slice(1)] : argv;
   try {
-    const child = Bun.spawn(command, {
+    let env;
+    if (GIT_RUNNING_PROGRAMS.has(argv[0] ?? "")) {
+      const problem = argv.includes("--version") ? undefined : await installedGitProblem();
+      if (problem)
+        return { code: 126, stdout: "", stderr: problem };
+      env = hardenedGitEnv(Bun.env);
+    }
+    const child = Bun.spawn(argv, {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
-      ...git ? { env: untrustedLocalGitEnv(hostEnv) } : {},
-      ...options?.cwd ? { cwd: options.cwd } : {}
+      ...options?.cwd ? { cwd: options.cwd } : {},
+      ...env ? { env } : {}
     });
-    const run = await supervise(child, git ? { timeoutMs: GIT_TIMEOUT_MS } : {});
+    const run = await supervise(child, argv[0] === "git" ? { timeoutMs: GIT_TIMEOUT_MS } : {});
     if (run.kind === "exited")
       return { code: run.exitCode, stdout: run.stdout, stderr: run.stderr };
     const why = run.kind === "timeout" ? `timed out after ${GIT_TIMEOUT_MS / 1000}s` : "ended without an exit status";
@@ -1386,15 +1403,14 @@ function createGit(run) {
     const result = await run(["git", "-C", directory, ...args]);
     return result.code === 0 ? result.stdout.trim() : undefined;
   };
-  const unfiltered = async (directory, ...args) => {
-    const listing = await run(["git", "-C", directory, ...FILTER_DRIVER_LISTING]);
-    const none = listing.code === 1 && listing.stdout === "";
-    const overrides = none ? [] : listing.code === 0 ? filterDriverOverrides(listing.stdout) : undefined;
-    return overrides === undefined ? undefined : git(directory, ...overrides, ...args);
-  };
   const files = (output) => output?.split("\x00").filter((file) => file !== "");
   return {
     run,
+    unsupported: async () => {
+      const result = await run(["git", "--version"]);
+      return gitVersionProblem(result.code === 0 ? result.stdout : "");
+    },
+    isBranchName: async (directory, name) => isSafeBranchName(name) && await git(directory, "check-ref-format", "--branch", name) !== undefined,
     isWorkTree: async (directory) => await git(directory, "rev-parse", "--is-inside-work-tree") === "true",
     commit: (directory, ref) => git(directory, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`),
     isUnborn: async (directory) => isUnbornHead(await readHeadFacts(run, directory)),
@@ -1404,32 +1420,32 @@ function createGit(run) {
     deleteBranch: async (directory, name) => await git(directory, "branch", "--quiet", "-d", name) !== undefined,
     status: async (directory, base) => {
       const ahead = await git(directory, "rev-list", "--count", `${base}..HEAD`);
-      const porcelain = await unfiltered(directory, "status", "--porcelain");
+      const porcelain = await git(directory, "status", "--porcelain");
       if (ahead === undefined || porcelain === undefined)
         return;
       return { ahead: Number.parseInt(ahead, 10) || 0, dirty: porcelain !== "" };
     },
-    changedFiles: async (directory, target) => files(await git(directory, "diff", "--name-only", "-z", `${target}...HEAD`)),
+    changedFiles: async (directory, target) => isSafeBranchName(target) ? files(await git(directory, "diff", "--no-ext-diff", "--name-only", "-z", `${target}...HEAD`)) : undefined,
     trackedDirty: async (directory) => {
-      const changed = await unfiltered(directory, "status", "--porcelain", "--untracked-files=no", "--", ...TRACKED_DIRTY_PATHSPEC);
+      const changed = await git(directory, "status", "--porcelain", "--untracked-files=no", "--", ...TRACKED_DIRTY_PATHSPEC);
       if (changed === undefined)
         throw new Error(`subagent-worktree: cannot read tracked changes in ${directory}`);
       return changed !== "";
     },
     localFiles: async (directory) => {
-      const changed = files(await unfiltered(directory, "diff", "--name-only", "-z", "HEAD"));
+      const changed = files(await git(directory, "diff", "--name-only", "-z", "HEAD"));
       const untracked = files(await git(directory, "ls-files", "--others", "--exclude-standard", "--full-name", "-z"));
       return changed && untracked ? [...changed, ...untracked] : undefined;
     },
     commonDir: (directory) => git(directory, "rev-parse", "--path-format=absolute", "--git-common-dir"),
     head: (directory) => git(directory, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"),
-    porcelain: (directory) => unfiltered(directory, "status", "--porcelain"),
+    porcelain: (directory) => git(directory, "status", "--porcelain"),
     isAncestor: async (directory, tip, ref) => (await run(["git", "-C", directory, "merge-base", "--is-ancestor", tip, ref])).code === 0,
-    stashSubjects: (directory) => git(directory, "stash", "list", "--no-show-signature", "--format=%gs"),
+    stashSubjects: (directory) => git(directory, "stash", "list", "--format=%gs"),
     gitDir: (directory) => git(directory, "rev-parse", "--absolute-git-dir"),
     deleteBranchAt: async (directory, name, oid) => (await run(["git", "-C", directory, "update-ref", "-d", `refs/heads/${name}`, oid])).code === 0,
     pruneWorktrees: async (directory) => await git(directory, "worktree", "prune") !== undefined,
-    worktrees: (directory) => git(directory, "worktree", "list", "--porcelain", "-z")
+    worktrees: (directory) => git(directory, "worktree", "list", "--porcelain")
   };
 }
 
@@ -2715,7 +2731,7 @@ function createLifecycle(deps) {
 
 // plugins/subagent-worktree/opencode/src/index.ts
 var MERGE_DESCRIPTION = `Merge a subagent's worktree branch back, report one lane, or list every active lane.
-` + "The subagent tool result names the lane (branch, base, sessionID). " + 'method "wt-merge" runs `wt merge <target> --no-squash --no-ff --yes` from the subagent worktree, keeping its commits, ' + "and removes the worktree on success; a conflict keeps the worktree and reports the output. " + "The worktree must be committed and clean, and the target checkout must have no uncommitted or untracked changes to files the lane changes. " + 'method "keep" (with reason) records that an unmerged lane is kept on purpose, so the idle gate stops nudging about it. method "none" only reports the lane status. method "list" (no sessionID) reports every active lane in the project ' + "with commits ahead, uncommitted changes, and orphaned lanes; missing worktrees move their child sessions back.";
+` + "The subagent tool result names the lane (branch, base, sessionID). " + 'method "wt-merge" runs `wt merge <target> --no-squash --no-ff --no-hooks` from the subagent worktree, keeping its commits, ' + "and removes the worktree on success; a conflict keeps the worktree and reports the output. " + "The worktree must be committed and clean, and the target checkout must have no uncommitted or untracked changes to files the lane changes. " + 'method "keep" (with reason) records that an unmerged lane is kept on purpose, so the idle gate stops nudging about it. method "none" only reports the lane status. method "list" (no sessionID) reports every active lane in the project ' + "with commits ahead, uncommitted changes, and orphaned lanes; missing worktrees move their child sessions back.";
 var SWEEP_TOOL = "subagent_worktree_sweep";
 var SWEEP_DESCRIPTION = `Report, or on request remove, finished agent lanes. Runs only when called.
 ` + "Each active lane whose subagent session is deleted or archived is checked as `finalize` checks it: not running, clean, no stash or operation, " + 'and its tip is the lane base, or an ancestor of origin/main, or a delivery landing record. Mode "report" (default) lists what would be removed and what is kept, and why. ' + 'Mode "prune" removes the removable ones through `finalize`, never forced, and touches no remote branch.';
@@ -2974,6 +2990,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
       callerPermissions: parent.permissions,
       callerIsChild: Boolean(parent.parentID),
       isGit: start ? start.lookup.ok : await git2.isWorkTree(parentDir),
+      gitUnsupported: await git2.unsupported(),
       projectDir: parentDir,
       homeDir: homedir()
     });
@@ -3377,6 +3394,10 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
       return { content: annotation(lane2, status, false), metadata: { ok: true, lane: lane2 } };
     }
     const target = input.target ?? lane2?.target;
+    if (target !== undefined && lane2 && !await git2.isBranchName(lane2.directory, target)) {
+      const reason = `${JSON.stringify(target)} is not a valid branch name`;
+      return { content: `${MERGE_TOOL}: not merged: ${reason}`, metadata: { ok: false, reason } };
+    }
     const ready = lane2?.state === "active" && lane2.parent === tool.sessionID && target && status && status.ahead > 0;
     const files = ready && lane2 && !status.dirty ? { laneFiles: await git2.changedFiles(lane2.directory, target), localFiles: await targetChanges(lane2, target) } : {};
     const decision = decideMerge({
@@ -3555,6 +3576,7 @@ export {
   formatLaneList,
   isConflict,
   isRunning,
+  isSafeBranchName,
   isSessionNotFound,
   isUnbornHead,
   isUncommittedOnly,
