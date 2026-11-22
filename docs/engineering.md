@@ -208,7 +208,7 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 
 The clone registry is `<receipts root>/.clones/<session repo key>.json` (`clone-registry.ts`). It lists the key and canonical root of each repository that the session's repository landed into, newest first. The turn-end retry, the idle-hook holds and gc read it, and check each root's key again first. Each update takes a lease lock (`lib/src/lease-lock.ts`) beside the file and replaces the file by rename. Past 32 entries, the oldest entries with no pending receipts go. An entry with pending receipts stays.
 
-Each plugin instance also keeps the clones it registered in memory, so a failed write leaves its own holds and retry intact.
+Each plugin instance also keeps the clones it registered in memory, and those win over the file. A failed write leaves its own holds and retry intact. A landing record reaches the target before the registry write starts, and each clone's holds are written without waiting on any other clone.
 
 ## Commands
 

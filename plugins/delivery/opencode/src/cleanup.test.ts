@@ -4269,7 +4269,7 @@ describe("cleanup of another repository's landing runs against that repository",
         : scripted.run(argv, commandOptions)
     const fake = createFakeContext({ directory: s.main, projectID: "prj_session", sessions: over.sessions?.(f) ?? [] })
     const hostRemoved: Array<{ projectID: string; directory: string }> = []
-    const pending = createPendingCleanup({
+    const make = () => createPendingCleanup({
       ctx: fake.context,
       cwd: s.main,
       env: f.env,
@@ -4289,6 +4289,7 @@ describe("cleanup of another repository's landing runs against that repository",
       cleanup: { run: stripped(run), now: () => NOW + 10, bounds: HEAVY_FIXTURE_BOUNDS },
       now: () => NOW + 10,
     })
+    const pending = make()
     await pending.prime()
     const targetCommon = (await repositoryContext(f.main))?.commonDir as string
     const sessionCommon = (await repositoryContext(s.main))?.commonDir as string
@@ -4309,7 +4310,7 @@ describe("cleanup of another repository's landing runs against that repository",
       rmSync(f.root, { recursive: true, force: true })
       rmSync(s.root, { recursive: true, force: true })
     }
-    return { f, s, scripted, fake, pending, targetCommon, sessionCommon, explicit, idle, hostRemoved, finish }
+    return { f, s, scripted, fake, pending, another: make, targetCommon, sessionCommon, explicit, idle, hostRemoved, finish }
   }
   const idleSession = (id: string, projectID: string, directory: string) => ({ id, projectID, location: { directory }, time: { updated: 1 } })
 
@@ -4426,6 +4427,20 @@ describe("cleanup of another repository's landing runs against that repository",
     await h.idle()
     expect(existsSync(h.f.linked)).toBe(false)
     expect(readLanding(h.targetCommon, h.f.receipt.receiptId)).toEqual({ kind: "missing" })
+    await h.finish()
+  })
+
+  test("an instance started later retries the clone an earlier one registered", async () => {
+    const h = await foreignHarness("foreign-fresh")
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.dispose()
+    const fresh = h.another()
+    await fresh.prime()
+    await fresh.start()
+    h.fake.emit({ type: "session.idle", data: { sessionID: "ses_lead" } })
+    await fresh.settle()
+    expect(existsSync(h.f.linked)).toBe(false)
+    await fresh.dispose()
     await h.finish()
   })
 

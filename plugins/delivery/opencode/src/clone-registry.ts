@@ -74,10 +74,11 @@ export async function addClone(
   sessionKey: string,
   entry: CloneEntry,
   pending: (entry: CloneEntry) => boolean,
+  options: { waitMs?: number } = {},
 ): Promise<void> {
   const file = registryFile(env, sessionKey)
   mkdirSync(join(receiptDirectory(env), ".clones"), { recursive: true })
-  const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: LOCK_WAIT_MS }, () => {
+  const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: options.waitMs ?? LOCK_WAIT_MS }, () => {
     const current = readClones(env, sessionKey)
     if (current[0]?.key === entry.key && current[0].root === entry.root) return
     const temporary = `${file}.${process.pid}.${Date.now()}.tmp`

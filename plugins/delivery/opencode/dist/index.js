@@ -5246,8 +5246,8 @@ ${next.slice(0, -1).map((step) => `  ${step}`).join(`
 }
 
 // plugins/delivery/opencode/src/pending-cleanup.ts
-import { existsSync as existsSync4 } from "fs";
-import { resolve as resolve8 } from "path";
+import { existsSync as existsSync4, readdirSync as readdirSync4 } from "fs";
+import { join as join9, resolve as resolve8 } from "path";
 
 // lib/src/session-eviction.ts
 import { basename as basename4, dirname as dirname5, resolve as resolve7 } from "path";
@@ -5888,10 +5888,10 @@ function readClones(env, sessionKey) {
     return [];
   }
 }
-async function addClone(env, sessionKey, entry, pending) {
+async function addClone(env, sessionKey, entry, pending, options = {}) {
   const file = registryFile(env, sessionKey);
   mkdirSync6(join8(receiptDirectory(env), ".clones"), { recursive: true });
-  const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: LOCK_WAIT_MS }, () => {
+  const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: options.waitMs ?? LOCK_WAIT_MS }, () => {
     const current = readClones(env, sessionKey);
     if (current[0]?.key === entry.key && current[0].root === entry.root)
       return;
@@ -5958,6 +5958,7 @@ async function moveLaneHome(client, lane, destination) {
 }
 
 // plugins/delivery/opencode/src/pending-cleanup.ts
+var RECEIPT_FILE2 = /^\d+-(?:[0-9a-f]{12}|nomerge)\.json$/;
 var RETRY_WINDOW_MS = 5000;
 var DEBOUNCE_MS = 2000;
 var MAX_PER_PASS = 20;
@@ -6037,6 +6038,7 @@ function createPendingCleanup(deps) {
   const sessionLookupMs = deps.sessionLookupMs ?? SESSION_LOOKUP_MS;
   const unsafe = new Map;
   const deniedInMemory = new Map;
+  const deniedKey = (receipt) => `${receipt.repo.key}/${receipt.receiptId}`;
   const deniedWorktrees = new Set;
   let holdReportsInFlight = 0;
   const doneIds = new Set;
@@ -6104,48 +6106,55 @@ function createPendingCleanup(deps) {
     const context = await repositoryContext(root, deps.observe, observationMs);
     return context !== null && context.key === receipt.repo.key ? repositoryAt({ common: context.commonDir, root }) : null;
   };
-  const hasPending = (key) => {
+  const mayHavePending = (key) => {
+    const directory = resolve8(receiptDirectory(env, key));
+    let names;
     try {
-      return pendingReceipts(listReceipts(resolve8(receiptDirectory(env, key)))).length > 0;
-    } catch {
-      return true;
+      names = readdirSync4(directory);
+    } catch (error) {
+      return error.code !== "ENOENT";
     }
+    const receipts = [];
+    for (const name of names) {
+      if (!RECEIPT_FILE2.test(name))
+        continue;
+      try {
+        const read = readReceipt(join9(directory, name));
+        if (!read.ok)
+          return true;
+        receipts.push(read.receipt);
+      } catch {
+        return true;
+      }
+    }
+    return pendingReceipts(receipts).length > 0;
   };
-  const register = async (receipt) => {
-    registered.set(receipt.repo.key, receipt.repo.canonicalRoot);
+  const persistClone = async (receipt) => {
     const mine = own.veto() ?? await own.observe();
     if (mine === null)
       return;
     try {
-      await addClone(env, mine.key, { key: receipt.repo.key, root: receipt.repo.canonicalRoot }, (entry) => hasPending(entry.key));
+      await addClone(env, mine.key, { key: receipt.repo.key, root: receipt.repo.canonicalRoot }, (entry) => mayHavePending(entry.key));
     } catch (error) {
       console.error(`delivery: could not record the clone ${receipt.repo.canonicalRoot}: ${error instanceof Error ? error.message : String(error)}`);
     }
+  };
+  const cloneEntries = (sessionKey) => {
+    const entries = new Map(readClones(env, sessionKey).map((entry) => [entry.key, entry.root]));
+    for (const [key, root] of registered)
+      entries.set(key, root);
+    return [...entries].filter(([key]) => key !== sessionKey && mayHavePending(key)).map(([key, root]) => ({ key, root }));
+  };
+  const cloneAt = async (entry) => {
+    const repo = await repositoryOf({ repo: { key: entry.key, canonicalRoot: entry.root } });
+    return repo?.foreign === true ? repo : null;
   };
   const clones = async () => {
     const mine = own.veto() ?? await own.observe();
     if (mine === null)
       return [];
-    const found = [];
-    const entries = new Map(readClones(env, mine.key).map((entry) => [entry.key, entry.root]));
-    for (const [key, root] of registered)
-      if (!entries.has(key))
-        entries.set(key, root);
-    for (const [key, root] of entries) {
-      const entry = { key, root };
-      if (entry.key === mine.key)
-        continue;
-      try {
-        if (pendingReceipts(listReceipts(resolve8(receiptDirectory(env, entry.key)))).length === 0)
-          continue;
-      } catch {
-        continue;
-      }
-      const repo = await repositoryOf({ repo: { key: entry.key, canonicalRoot: entry.root } });
-      if (repo?.foreign === true)
-        found.push(repo);
-    }
-    return found;
+    const found = await Promise.all(cloneEntries(mine.key).map(cloneAt));
+    return found.filter((repo) => repo !== null);
   };
   const projectOf = async (root, directories) => {
     const ids = new Set;
@@ -6267,7 +6276,7 @@ function createPendingCleanup(deps) {
     if (path === null)
       return;
     if (outcome.denied)
-      deniedInMemory.set(receipt.receiptId, canonicalDirectory(path));
+      deniedInMemory.set(deniedKey(receipt), canonicalDirectory(path));
     const location = repo.veto() ?? await repo.observe();
     if (location === null)
       return;
@@ -6286,13 +6295,15 @@ function createPendingCleanup(deps) {
     if (path === null)
       return;
     if (outcome.denied)
-      deniedInMemory.set(receipt.receiptId, canonicalDirectory(path));
+      deniedInMemory.set(deniedKey(receipt), canonicalDirectory(path));
     const repo = await repositoryOf(receipt);
     if (repo === null)
       return;
     if (repo.foreign)
-      await register(receipt);
+      registered.set(receipt.repo.key, receipt.repo.canonicalRoot);
     await recordIn(repo, receipt, sessionID, outcome);
+    if (repo.foreign)
+      await persistClone(receipt);
   };
   const receiptsAt = (key, path) => {
     if (key === null)
@@ -6491,13 +6502,13 @@ function createPendingCleanup(deps) {
     }
     const laneOwned = new Set;
     for (const receipt of present) {
-      if (recorded.byReceipt.get(receipt.receiptId)?.denied !== undefined || deniedInMemory.has(receipt.receiptId))
+      if (recorded.byReceipt.get(receipt.receiptId)?.denied !== undefined || deniedInMemory.has(idOf(receipt)))
         continue;
       if (receipt.worktree.path !== null && (await ownership(receipt.worktree.path, repo)).owner !== "none")
         laneOwned.add(receipt.receiptId);
     }
     const window = selectWindow(present, {
-      skip: (receipt) => recorded.byReceipt.get(receipt.receiptId)?.denied !== undefined || deniedInMemory.has(receipt.receiptId) || laneOwned.has(receipt.receiptId),
+      skip: (receipt) => recorded.byReceipt.get(receipt.receiptId)?.denied !== undefined || deniedInMemory.has(idOf(receipt)) || laneOwned.has(receipt.receiptId),
       lastAttempt: (receipt) => attemptedAt.get(idOf(receipt)),
       limit
     });
@@ -6608,10 +6619,17 @@ function createPendingCleanup(deps) {
       }
       return found;
     };
-    await Promise.all([
-      writeHoldsIn(own, sessionID, background, locationOf),
-      clones().then((repos) => Promise.all(repos.map((repo) => writeHoldsIn(repo, sessionID, background, locationOf))))
-    ]);
+    const inClones = async () => {
+      const mine = own.veto() ?? await own.observe();
+      if (mine === null)
+        return;
+      await Promise.all(cloneEntries(mine.key).map(async (entry) => {
+        const repo = await cloneAt(entry);
+        if (repo !== null)
+          await writeHoldsIn(repo, sessionID, background, locationOf);
+      }));
+    };
+    await Promise.all([writeHoldsIn(own, sessionID, background, locationOf), inClones()]);
   };
   const writeHoldsIn = async (repo, sessionID, background, locationOf) => {
     const location = repo.veto() ?? await repo.observe();

@@ -26,8 +26,8 @@
  * carries it out.
  */
 
-import { existsSync } from "node:fs"
-import { resolve } from "node:path"
+import { existsSync, readdirSync } from "node:fs"
+import { join, resolve } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import { canonicalCheckout } from "@srobroek/opencode-lib/session-eviction"
 import {
@@ -56,7 +56,7 @@ import {
   type RemovalFacts,
   type RepositoryIdentity,
 } from "./cleanup.ts"
-import { addClone, readClones } from "./clone-registry.ts"
+import { addClone, type CloneEntry, readClones } from "./clone-registry.ts"
 import { inClone } from "./land.ts"
 import {
   closeoutCommands,
@@ -71,6 +71,9 @@ import {
   repositoryContext,
 } from "./landing-receipt.ts"
 import { type LaneClient, laneSessionsIn, moveLaneHome } from "./lane-move.ts"
+
+/** A receipt file's name: `<epoch>-<merge oid prefix>.json` (see `receiptId`). */
+const RECEIPT_FILE = /^\d+-(?:[0-9a-f]{12}|nomerge)\.json$/
 
 /** The same receipt is not retried within this window: an event and the idle hook fire for one turn end. */
 export const RETRY_WINDOW_MS = 5_000
@@ -254,8 +257,9 @@ export function createPendingCleanup(deps: PendingDeps) {
   // this instance coordinates: a veto is published here, before any wait, whichever one it is in.
   /** Worktrees whose hold could not be recorded: nothing is removed from them until a later write succeeds. */
   const unsafe = new Map<string, string>()
-  /** Denials that could not be written to disk, until an authorized re-arm. */
+  /** Denials that could not be written to disk, until an authorized re-arm; keyed by {@link deniedKey}, valued by canonical worktree. */
   const deniedInMemory = new Map<string, string>()
+  const deniedKey = (receipt: Pick<LandingReceipt, "receiptId" | "repo">) => `${receipt.repo.key}/${receipt.receiptId}`
   /** Worktrees an explicit `delivery_cleanup` was refused for, published before any wait; cleared only by `arm`. */
   const deniedWorktrees = new Set<string>()
   /** Idle-hook reports of running work whose holds are not written yet; any one keeps every worktree. */
@@ -371,50 +375,67 @@ export function createPendingCleanup(deps: PendingDeps) {
     return context !== null && context.key === receipt.repo.key ? repositoryAt({ common: context.commonDir, root }) : null
   }
 
-  /** Whether `key`'s receipt directory has pending receipts; an unreadable one counts as pending. */
-  const hasPending = (key: string): boolean => {
+  /**
+   * Whether `key`'s receipt directory may still hold a pending receipt: an absent directory has none;
+   * one that cannot be read, or a receipt file in it that does not parse, may.
+   */
+  const mayHavePending = (key: string): boolean => {
+    const directory = resolve(receiptDirectory(env, key))
+    let names: string[]
     try {
-      return pendingReceipts(listReceipts(resolve(receiptDirectory(env, key)))).length > 0
-    } catch {
-      return true
+      names = readdirSync(directory)
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== "ENOENT"
     }
+    const receipts: LandingReceipt[] = []
+    for (const name of names) {
+      if (!RECEIPT_FILE.test(name)) continue
+      try {
+        const read = readReceipt(join(directory, name))
+        if (!read.ok) return true
+        receipts.push(read.receipt)
+      } catch {
+        return true
+      }
+    }
+    return pendingReceipts(receipts).length > 0
   }
 
-  /** Remember that the session's repository landed into `receipt`'s, so its retry, holds and gc look there. */
-  const register = async (receipt: LandingReceipt) => {
-    // In memory first, before any wait: this instance's holds and retry see the clone even if the file write fails.
-    registered.set(receipt.repo.key, receipt.repo.canonicalRoot)
+  /** Persist `receipt`'s clone in the registry file; a failure is logged, and the in-memory entry still holds. */
+  const persistClone = async (receipt: LandingReceipt) => {
     const mine = own.veto() ?? (await own.observe())
     if (mine === null) return
     try {
-      await addClone(env, mine.key, { key: receipt.repo.key, root: receipt.repo.canonicalRoot }, (entry) => hasPending(entry.key))
+      await addClone(env, mine.key, { key: receipt.repo.key, root: receipt.repo.canonicalRoot }, (entry) => mayHavePending(entry.key))
     } catch (error) {
       console.error(`delivery: could not record the clone ${receipt.repo.canonicalRoot}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
   /**
-   * The other repositories the session's has landed into that still have pending receipts, each
-   * found at the key it was recorded with. A root that now names another repository is skipped.
+   * The clones the session's repository landed into that may have pending receipts, read from the
+   * registry file and from this instance's own registrations, which win for the same key. No git runs.
    */
+  const cloneEntries = (sessionKey: string): CloneEntry[] => {
+    const entries = new Map(readClones(env, sessionKey).map((entry) => [entry.key, entry.root]))
+    for (const [key, root] of registered) entries.set(key, root)
+    return [...entries]
+      .filter(([key]) => key !== sessionKey && mayHavePending(key))
+      .map(([key, root]) => ({ key, root }))
+  }
+
+  /** The repository a clone entry names, if its root still resolves to the recorded key. */
+  const cloneAt = async (entry: CloneEntry): Promise<Repository | null> => {
+    const repo = await repositoryOf({ repo: { key: entry.key, canonicalRoot: entry.root } } as Pick<LandingReceipt, "repo">)
+    return repo?.foreign === true ? repo : null
+  }
+
+  /** {@link cloneEntries} resolved, each on its own, so a stale one delays no other. */
   const clones = async (): Promise<Repository[]> => {
     const mine = own.veto() ?? (await own.observe())
     if (mine === null) return []
-    const found: Repository[] = []
-    const entries = new Map(readClones(env, mine.key).map((entry) => [entry.key, entry.root]))
-    for (const [key, root] of registered) if (!entries.has(key)) entries.set(key, root)
-    for (const [key, root] of entries) {
-      const entry = { key, root }
-      if (entry.key === mine.key) continue
-      try {
-        if (pendingReceipts(listReceipts(resolve(receiptDirectory(env, entry.key)))).length === 0) continue
-      } catch {
-        continue
-      }
-      const repo = await repositoryOf({ repo: { key: entry.key, canonicalRoot: entry.root } } as Pick<LandingReceipt, "repo">)
-      if (repo?.foreign === true) found.push(repo)
-    }
-    return found
+    const found = await Promise.all(cloneEntries(mine.key).map(cloneAt))
+    return found.filter((repo): repo is Repository => repo !== null)
   }
 
   /**
@@ -576,7 +597,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     if (path === null) return
     // If the denial cannot be written to disk (the lock is busy, the store is unwritable), it is still
     // remembered here: the retry must never remove what was denied just because the record is missing.
-    if (outcome.denied) deniedInMemory.set(receipt.receiptId, canonicalDirectory(path))
+    if (outcome.denied) deniedInMemory.set(deniedKey(receipt), canonicalDirectory(path))
     // Written where the repository was last observed, so the record reaches disk without a git wait.
     const location = repo.veto() ?? (await repo.observe())
     if (location === null) return
@@ -599,11 +620,13 @@ export function createPendingCleanup(deps: PendingDeps) {
     const path = receipt.worktree.path
     if (path === null) return
     // Before any wait, whichever repository the receipt turns out to be in.
-    if (outcome.denied) deniedInMemory.set(receipt.receiptId, canonicalDirectory(path))
+    if (outcome.denied) deniedInMemory.set(deniedKey(receipt), canonicalDirectory(path))
     const repo = await repositoryOf(receipt)
     if (repo === null) return
-    if (repo.foreign) await register(receipt)
+    // This instance's holds and retry see the clone at once; the record is written before the registry is.
+    if (repo.foreign) registered.set(receipt.repo.key, receipt.repo.canonicalRoot)
     await recordIn(repo, receipt, sessionID, outcome)
+    if (repo.foreign) await persistClone(receipt)
   }
 
   /** Receipts, newest first, whose worktree is `path`. */
@@ -870,14 +893,14 @@ export function createPendingCleanup(deps: PendingDeps) {
     // Lane ownership is read for every candidate the window's filter looks at, before it runs.
     const laneOwned = new Set<string>()
     for (const receipt of present) {
-      if (recorded.byReceipt.get(receipt.receiptId)?.denied !== undefined || deniedInMemory.has(receipt.receiptId)) continue
+      if (recorded.byReceipt.get(receipt.receiptId)?.denied !== undefined || deniedInMemory.has(idOf(receipt))) continue
       if (receipt.worktree.path !== null && (await ownership(receipt.worktree.path, repo)).owner !== "none") laneOwned.add(receipt.receiptId)
     }
     const window = selectWindow(present, {
       // Denied and lane-owned receipts need no attempt; they must not take a slot.
       skip: (receipt) =>
         recorded.byReceipt.get(receipt.receiptId)?.denied !== undefined ||
-        deniedInMemory.has(receipt.receiptId) ||
+        deniedInMemory.has(idOf(receipt)) ||
         laneOwned.has(receipt.receiptId),
       lastAttempt: (receipt) => attemptedAt.get(idOf(receipt)),
       limit,
@@ -1017,11 +1040,19 @@ export function createPendingCleanup(deps: PendingDeps) {
       }
       return found
     }
-    // Each repository's holds are written side by side, so none waits behind another's lookups and locks.
-    await Promise.all([
-      writeHoldsIn(own, sessionID, background, locationOf),
-      clones().then((repos) => Promise.all(repos.map((repo) => writeHoldsIn(repo, sessionID, background, locationOf)))),
-    ])
+    // Each repository's holds are written side by side, so none waits behind another's lookups, locks
+    // or observation (a stale clone that needs git delays only itself).
+    const inClones = async () => {
+      const mine = own.veto() ?? (await own.observe())
+      if (mine === null) return
+      await Promise.all(
+        cloneEntries(mine.key).map(async (entry) => {
+          const repo = await cloneAt(entry)
+          if (repo !== null) await writeHoldsIn(repo, sessionID, background, locationOf)
+        }),
+      )
+    }
+    await Promise.all([writeHoldsIn(own, sessionID, background, locationOf), inClones()])
   }
 
   const writeHoldsIn = async (

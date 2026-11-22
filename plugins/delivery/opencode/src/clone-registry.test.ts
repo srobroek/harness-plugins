@@ -1,5 +1,8 @@
-import { describe, expect, test } from "bun:test"
-import { MAX_CLONES, parseClones, withClone } from "./clone-registry.ts"
+import { afterAll, describe, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { hostname, tmpdir } from "node:os"
+import { dirname, join } from "node:path"
+import { addClone, MAX_CLONES, parseClones, readClones, registryFile, withClone } from "./clone-registry.ts"
 
 const A = { key: "a".repeat(16), root: "/repos/a" }
 const B = { key: "b".repeat(16), root: "/repos/b" }
@@ -40,5 +43,37 @@ describe("parseClones", () => {
 
   test("keeps the well-formed entries beside a malformed one", () => {
     expect(parseClones(JSON.stringify([A, { key: 7 }, B]))).toEqual([A, B])
+  })
+})
+
+describe("addClone", () => {
+  const roots: string[] = []
+  afterAll(() => {
+    for (const root of roots) rmSync(root, { recursive: true, force: true })
+  })
+  /** A receipts root of its own; only `DELIVERY_RECEIPTS_DIR` is read. */
+  const store = (): NodeJS.ProcessEnv => {
+    const root = mkdtempSync(join(tmpdir(), "delivery-clones-"))
+    roots.push(root)
+    return { DELIVERY_RECEIPTS_DIR: join(root, "receipts") }
+  }
+  const SESSION = "c".repeat(16)
+
+  test("adds each repository to the session's file", async () => {
+    const receipts = store()
+    await addClone(receipts, SESSION, A, () => false)
+    await addClone(receipts, SESSION, B, () => false)
+    expect(readClones(receipts, SESSION)).toEqual([B, A])
+  })
+
+  test("waits for a live writer's lock instead of writing past it", async () => {
+    const receipts = store()
+    await addClone(receipts, SESSION, A, () => false)
+    const file = registryFile(receipts, SESSION)
+    mkdirSync(dirname(file), { recursive: true })
+    const now = Date.now()
+    writeFileSync(`${file}.lock`, JSON.stringify({ host: hostname(), pid: process.pid, owner: "other writer", token: "t", taken: now, expires: now + 60_000 }))
+    await expect(addClone(receipts, SESSION, B, () => false, { waitMs: 50 })).rejects.toThrow("could not be updated")
+    expect(readClones(receipts, SESSION)).toEqual([A])
   })
 })
