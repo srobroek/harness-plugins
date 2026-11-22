@@ -120,9 +120,8 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
     - `git.test.ts` also restores the edge cases of the #79 filter suite against the new fixture (the filter comes from `.git/info/attributes`, since `GIT_ATTR_SOURCE` already covers `.gitattributes`): empty, non-UTF-8, dotted and unrepresentable driver names, process filters, conditional-include and global-config drivers, a truncated or failed driver listing, an inherited `GIT_CONFIG`, repository selectors, `GIT_LITERAL_PATHSPECS`, `GIT_TRACE` and a hook on `deleteBranchAt`. Removing the driver suppression fails 16 of them; making the refusals non-fatal fails the other 7.
     - Reads that hash work-tree files (`status`, the work-tree `diff`) run with every configured filter driver disabled (`filterDriverOverrides` in `lib/src/safe-git.ts`), because `GIT_ATTR_SOURCE` leaves `.git/info/attributes` in force. A listing that fails or names a driver `-c` cannot override refuses the read. Upstream relies on the empty attribute source alone. The `wt` and `gh` children still rely on it alone.
     - `hardenedGitEnv` drops the inherited repository selectors (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR` and the object-store variables), the program variables, `GIT_TRACE*` and the pathspec switches before it applies the hardening. Upstream keeps them.
-  - Known limitations of `subagent-worktree`, all older than the port and left as they are:
+  - Known limitations of `subagent-worktree`, older than the port and left as they are:
     - The `wt` and `gh` children rely on `GIT_ATTR_SOURCE` alone, so a filter driver selected in `.git/info/attributes` still runs in them. Only the plugin's own reads disable drivers by name.
-    - The sweep's eviction (`removeVerified`) does not use the `evictSessions` guard that `finalize` uses, so an unrelated session that starts after the sweep's listing can still be moved.
     - The transport refusal of #79 (`GIT_ALLOW_PROTOCOL` set empty) is not part of upstream's hardening and was not restored; the plugin's own git calls stay local.
 
 ## Read-only shell rules and subagent reads

@@ -846,6 +846,10 @@ function wildcardMatch(value, pattern) {
 }
 
 // lib/src/session-lanes.ts
+function insideDirectory(path, directory) {
+  const root = directory.replace(/\/+$/, "");
+  return path === root || path.startsWith(`${root}/`);
+}
 var MAX_LANE_DEPTH = 8;
 var LANE_CALL_TIMEOUT_MS = 1e4;
 var MAX_PAGES = 20;
@@ -1508,10 +1512,96 @@ import { join as join3, resolve as resolve3 } from "path";
 
 // lib/src/session-eviction.ts
 import { basename, dirname, resolve as resolve2 } from "path";
+var MAX_PAGES2 = 100;
+var toMillis = (value) => {
+  if (typeof value === "number")
+    return value;
+  if (value instanceof Date)
+    return value.getTime();
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  }
+  return;
+};
+function sessionRunning(session) {
+  if (session.time?.archived !== undefined && session.time.archived !== null)
+    return false;
+  const busy = toMillis(session.time?.busy);
+  const idle = toMillis(session.time?.idle);
+  return busy !== undefined && (idle === undefined || busy > idle);
+}
 function canonicalCheckout(commonDir, fallback) {
   if (commonDir !== undefined && basename(commonDir) === ".git")
     return dirname(commonDir);
   return fallback;
+}
+async function listPass(api, projectID, archived) {
+  const found = [];
+  let query = { ...projectID === undefined ? {} : { project: projectID }, archived, limit: 100 };
+  try {
+    for (let pages = 0;pages < MAX_PAGES2; pages++) {
+      const page = await api.list(query);
+      if (!page || !Array.isArray(page.data))
+        return;
+      for (const raw of page.data) {
+        const session = raw;
+        if (typeof session?.id === "string")
+          found.push(session);
+      }
+      const next = page.cursor?.next;
+      if (!next)
+        return found;
+      query = { cursor: next };
+    }
+  } catch {
+    return;
+  }
+  return;
+}
+async function listProjectSessions(api, projectID) {
+  const live = await listPass(api, projectID, false);
+  const shelved = live === undefined ? undefined : await listPass(api, projectID, true);
+  if (live === undefined || shelved === undefined)
+    return;
+  const byId = new Map;
+  for (const session of [...live, ...shelved]) {
+    if (projectID !== undefined && session.projectID !== undefined && session.projectID !== projectID)
+      continue;
+    byId.set(session.id, session);
+  }
+  return [...byId.values()];
+}
+async function evictSessions(api, options) {
+  const sessions = await listProjectSessions(api, options.projectID);
+  if (sessions === undefined)
+    return { ok: false, reason: `the sessions of the project could not all be listed, so who is in ${options.directory} is unknown` };
+  const target = canonicalDirectory(options.directory);
+  const inside = sessions.filter((session) => {
+    if (options.exclude?.has(session.id))
+      return false;
+    const where = session.location?.directory;
+    return typeof where === "string" && insideDirectory(canonicalDirectory(where), target);
+  });
+  const running = inside.find(sessionRunning);
+  if (running)
+    return { ok: false, reason: `session ${running.id} is running in ${options.directory}` };
+  const moved = [];
+  for (const session of inside) {
+    if (options.guard) {
+      const why = await options.guard.fresh(session) ?? options.guard.started(session);
+      if (why !== undefined)
+        return { ok: false, reason: `${why}; nothing was removed` };
+    }
+    try {
+      await api.move({ sessionID: session.id, directory: options.destination });
+      moved.push(session.id);
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      return { ok: false, reason: `session ${session.id} could not be moved out of ${options.directory} (${why}); nothing was removed` };
+    }
+  }
+  return { ok: true, moved };
 }
 
 // lib/src/worktree-state.ts
@@ -1823,7 +1913,7 @@ function formatSweep(entries, mode) {
 }
 
 // plugins/subagent-worktree/opencode/src/lifecycle.ts
-function toMillis(value) {
+function toMillis2(value) {
   if (typeof value === "number")
     return value;
   if (value instanceof Date)
@@ -1895,7 +1985,7 @@ function createLifecycle(deps) {
     const session = await withinLookup(deps.getSession(sessionID));
     if (!session)
       return "unknown";
-    return isRunning({ busy: toMillis(session.time?.busy), idle: toMillis(session.time?.idle) }) ? "running" : "finished";
+    return isRunning({ busy: toMillis2(session.time?.busy), idle: toMillis2(session.time?.idle) }) ? "running" : "finished";
   };
   const openPrCache = new Map;
   const openPrBranches = async (parentDir) => {
@@ -2157,9 +2247,9 @@ function createLifecycle(deps) {
       if (!within3(canonical(directory), worktree))
         continue;
       ids.push(id);
-      if (toMillis(session.time?.archived) !== undefined)
+      if (toMillis2(session.time?.archived) !== undefined)
         continue;
-      if (isRunning({ busy: toMillis(session.time?.busy), idle: toMillis(session.time?.idle) }))
+      if (isRunning({ busy: toMillis2(session.time?.busy), idle: toMillis2(session.time?.idle) }))
         return keptBecause("running", `${id} is running in the worktree`);
     }
     return { ids };
@@ -2235,7 +2325,7 @@ function createLifecycle(deps) {
       console.error(`subagent-worktree: ${refusal.removed ? id : refusal.reason}; ${id} is not moved yet`);
       return "pending";
     }
-    if (toMillis(session.time?.archived) === undefined && isRunning({ busy: toMillis(session.time?.busy), idle: toMillis(session.time?.idle) })) {
+    if (toMillis2(session.time?.archived) === undefined && isRunning({ busy: toMillis2(session.time?.busy), idle: toMillis2(session.time?.idle) })) {
       console.error(`subagent-worktree: ${id} is running; it is not moved yet`);
       return "pending";
     }
@@ -2264,11 +2354,11 @@ function createLifecycle(deps) {
         return stamp;
       if (stamp.at === undefined)
         return;
-      const archived = toMillis(session.time?.archived);
+      const archived = toMillis2(session.time?.archived);
       if (archived !== undefined && archived > stamp.at)
         return;
-      const busy = toMillis(session.time?.busy);
-      const idle = toMillis(session.time?.idle);
+      const busy = toMillis2(session.time?.busy);
+      const idle = toMillis2(session.time?.idle);
       if (busy !== undefined && idle !== undefined && busy > stamp.at && idle > busy)
         return;
       return keptBecause("running", "a resume of the child was admitted and has not finished");
@@ -2351,7 +2441,24 @@ function createLifecycle(deps) {
             projectID: stored.projectID,
             directory: stored.directory,
             destination: canonicalCheckout(common, stored.parentDir),
-            exclude: new Set([stored.child, ...descendants.ids])
+            exclude: new Set([stored.child, ...descendants.ids]),
+            guard: {
+              fresh: async (session) => {
+                const now = await lookupSession(session.id);
+                if (now === "missing")
+                  return;
+                if (now === "unknown")
+                  return `the state of ${session.id} cannot be read`;
+                if (toMillis2(now.time?.archived) === undefined && isRunning({ busy: toMillis2(now.time?.busy), idle: toMillis2(now.time?.idle) })) {
+                  return `${session.id} is running in the worktree`;
+                }
+                return;
+              },
+              started: (session) => {
+                const started = startedSince([session.id], seq);
+                return started === undefined || started.removed ? undefined : started.reason;
+              }
+            }
           });
           if (!evicted.ok) {
             await save(stored);
@@ -2979,8 +3086,8 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
         if (typeof raw.id !== "string")
           continue;
         const time = raw.time ?? {};
-        const busy = toMillis(time.busy);
-        const idle = toMillis(time.idle);
+        const busy = toMillis2(time.busy);
+        const idle = toMillis2(time.idle);
         const session = {
           id: raw.id,
           ...typeof raw.parentID === "string" ? { parentID: raw.parentID } : {},

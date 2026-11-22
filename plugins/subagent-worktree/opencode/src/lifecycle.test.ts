@@ -2426,8 +2426,8 @@ describe("sessions of other tools are moved out of a worktree before it is remov
     await cleanup()
   })
 
-  test("a sweep removal moves such sessions out as well", async () => {
-    const { fake, worktree, cleanup } = await start({ ancestor: 0, age: 3 * 24 * 3_600_000, time: ARCHIVED })
+  test("a sweep removal (now through finalize) moves such sessions out as well", async () => {
+    const { fake, worktree, cleanup } = await start({ ancestor: 0 })
     addSession(fake, "ses_other", WT)
     const execute = fake.tools.get("subagent_worktree_sweep")?.execute as (i: unknown, c: unknown) => Promise<unknown>
     await execute({ mode: "prune" }, tool)

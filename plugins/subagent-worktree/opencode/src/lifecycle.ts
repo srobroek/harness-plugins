@@ -13,7 +13,7 @@
 import { existsSync, realpathSync } from "node:fs"
 import { join, resolve } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
-import { canonicalCheckout, } from "@srobroek/opencode-lib/session-eviction"
+import { canonicalCheckout, evictSessions, type SessionApi } from "@srobroek/opencode-lib/session-eviction"
 import { isSessionNotFound, type LaneSessionClient, laneSessions, MAX_LANE_DEPTH, moveSessionsHome } from "@srobroek/opencode-lib/session-lanes"
 import { bumpClaim, forgetNotice, landingsFor, listLandings, readClaim, readNotices, recordNotice } from "@srobroek/opencode-lib/worktree-claims"
 import { holdsState, type LockOptions, lockedWrite, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
