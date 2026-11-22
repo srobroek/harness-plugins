@@ -6872,7 +6872,7 @@ function allowSkillReads(evaluation, dirs) {
     return;
   if (evaluation.resources.length === 0 || dirs.length === 0)
     return;
-  if (evaluation.resources.every((resource) => inside(resource, dirs)))
+  if (evaluation.resources.every((resource) => insideCanonical(resource, dirs)))
     evaluation.effect = "allow";
 }
 

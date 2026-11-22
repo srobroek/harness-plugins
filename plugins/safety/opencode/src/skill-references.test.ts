@@ -111,12 +111,30 @@ describe("skill directories that are not dedicated skill folders", () => {
 
   test("a skills/<dir> folder with a .git file is not trusted whole", () => {
     expect(allowed(at("wt/skills/s/SKILL.md"), at("wt/skills/s/.git"))).toBe(false)
+  })
+
+  test("a skills/<dir> folder with a .git file still allows its references/ directory", () => {
     expect(allowed(at("wt/skills/s/SKILL.md"), at("wt/skills/s/references/*"))).toBe(true)
   })
 
-  test("a broad directory outside skills/ allows only its conventional subdirectories", () => {
+  test("a broad directory outside skills/ does not allow its other directories", () => {
     expect(allowed(at("broad/SKILL.md"), at("broad/other/*"))).toBe(false)
+  })
+
+  test("a broad directory outside skills/ allows its scripts/ directory", () => {
     expect(allowed(at("broad/SKILL.md"), at("broad/scripts/*"))).toBe(true)
+  })
+
+  test("a references/ directory swapped for an outside link after the roots were computed is not allowed", () => {
+    mkdirSync(at("race/references"), { recursive: true })
+    mkdirSync(at("race-out"))
+    writeFileSync(at("race-out/secret"), "x")
+    const dirs = skillDirectories([{ path: at("race/SKILL.md") }], home)
+    rmSync(at("race/references"), { recursive: true })
+    symlinkSync(at("race-out"), at("race/references"))
+    const evaluation = ask(at("race/references/secret"))
+    allowSkillReads(evaluation, dirs)
+    expect(evaluation.effect).toBe("ask")
   })
 
   test("a skills/ link to a broad directory follows the real directory", () => {

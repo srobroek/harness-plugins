@@ -8,7 +8,7 @@
 import { existsSync, realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join, relative } from "node:path"
-import { inside } from "./scratch-dirs.ts"
+import { insideCanonical } from "./scratch-dirs.ts"
 
 type Evaluation = { readonly action: string; readonly resources: ReadonlyArray<string>; effect: string }
 
@@ -81,5 +81,5 @@ export function listedSkills(listed: unknown): ReadonlyArray<{ readonly path?: u
 export function allowSkillReads(evaluation: Evaluation, dirs: readonly string[]): void {
   if (evaluation.action !== "external_directory" || evaluation.effect !== "ask") return
   if (evaluation.resources.length === 0 || dirs.length === 0) return
-  if (evaluation.resources.every((resource) => inside(resource, dirs))) evaluation.effect = "allow"
+  if (evaluation.resources.every((resource) => insideCanonical(resource, dirs))) evaluation.effect = "allow"
 }
