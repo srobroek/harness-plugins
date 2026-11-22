@@ -339,6 +339,7 @@ describe("firstBdVerb / isMutatingBdCommand", () => {
       ["a command -p wrapper", "command -p export BD_ACTOR=me/x; bd create x"],
       ["a command -- wrapper", "command -- unset BD_ACTOR; bd create x"],
       ["a builtin wrapper", "builtin unset BD_ACTOR; bd create x"],
+      ["a wrapper around a wrapper", "command builtin unset BD_ACTOR; bd create x"],
       ["a background job", "unset BD_ACTOR & bd create x"],
       ["a background brace group", "{ unset BD_ACTOR; } & bd create x"],
     ])("a change in %s leaves the actor unverified, neither refused nor allowed", (_name, command) => {

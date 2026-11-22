@@ -236,7 +236,12 @@ function afterCommand(vars: ShellVars, values: string[], assigned: string[]): Sh
     while (name === "command" && values[i]?.startsWith("-") === true && values[i] !== "--") i++
     if (values[i] === "--") i++
     const wrapped = values[i]
-    if (wrapped !== undefined && (BUILTIN_OPTIONS[wrapped] !== undefined || VARIABLE_BUILTINS[wrapped] === true))
+    // A wrapper around another wrapper is not followed further: what it mentions is unverified.
+    const chained = wrapped === "command" || wrapped === "builtin"
+    if (
+      wrapped !== undefined &&
+      (chained || BUILTIN_OPTIONS[wrapped] !== undefined || VARIABLE_BUILTINS[wrapped] === true)
+    )
       markUnverified(after, mentioned(values.slice(i + 1)))
   } else if (name !== undefined && BUILTIN_OPTIONS[name] !== undefined) applyVariableBuiltin(after, name, values.slice(1))
   else if (name !== undefined && VARIABLE_BUILTINS[name] === true) markUnverified(after, mentioned(values.slice(1)))
