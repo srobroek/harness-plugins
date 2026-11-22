@@ -172,9 +172,14 @@ describe("push-via", () => {
     await before("c1", "git remote set-url origin https://gitlab.example.com/acme/repo.git && git push origin main")
   })
 
-  test("a commit-then-push chain is still refused", async () => {
+  test("a commit-then-push chain fails open: the commit runs hooks that can change state", async () => {
     const { before } = await load({ pushVia }, { guard: onGithub })
-    await expect(before("c1", "git add -A && git commit -m wip && git push", "/project")).rejects.toThrow(/push-via-guard/)
+    await before("c1", "git add -A && git commit -m wip && git push", "/project")
+  })
+
+  test("a push that opens the call, then a chain, is still refused", async () => {
+    const { before } = await load({ pushVia }, { guard: onGithub })
+    await expect(before("c1", "git push origin main && echo done", "/project")).rejects.toThrow(/push-via-guard/)
   })
 })
 
