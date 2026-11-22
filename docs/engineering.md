@@ -67,9 +67,10 @@ Move new shared code into `lib` instead of adding another edge.
 
 - The rules are pure functions in `plugins/subagent-worktree/opencode/src/release.ts`. `index.ts` collects the facts under the worktree's disk lock (`lifecycle.spawnInto`).
 - A release needs the writer's parent as the caller. The writer is gone, idle with no open tool call, or quiet for `RELEASE_QUIET_MS` (10 minutes). After the quiet time the plugin interrupts the stale run.
-- A release also needs a clean worktree whose upstream has every commit.
-- The record goes under `release/<child>` in plugin storage before the interrupt. The plugin refuses every later resume of that child. A run that starts during the release deletes the record again.
-- The guard skips released sessions in that worktree. The next writer moved into the worktree becomes the record's `to`. It takes over the released writer's active lane (`handedOver`) and the lane's claim.
+- A release also needs a clean worktree whose upstream has every commit, and no known background work. With `gates` on, `index.ts` registers an observing `experimental.idle` hook. The hook keeps each session's last background jobs in memory, and the release also reads the worktree's holds with `holdsState`. Without the hook every release is refused.
+- In-memory sets `releasing` and `resuming` exclude a release and a resume of the same child. Each side checks the other and registers with no await in between. A resume also re-reads the record after it registers.
+- The record goes under `release/<child>` in plugin storage before the interrupt. The plugin refuses every later resume of that child. After the interrupt it reads the child and the tree again: a new run, a dirty tree, a moved `HEAD`, a missing upstream commit or new background work deletes the record again.
+- The guard skips released sessions in that worktree, but not while their release is under way. The next writer moved into the worktree becomes the record's `to` first, and takes over the released writer's active lane (`handedOver`) and the lane's claim. A failed takeover is undone. When the record names a new writer, `save` and `syncClaim` drop every write of the old child's lane or claim. A lifecycle pass that read the old lane earlier cannot bring it back.
 
 `subagent-worktree` runs git automatically in lanes and checkouts whose config it does not control. So `spawnRunner` in `plugins/subagent-worktree/opencode/src/git.ts` gives every `git` command `untrustedLocalGitArgs()` and the environment from `untrustedLocalGitEnv()`, both in `lib/src/safe-git.ts`. The environment drops every inherited `GIT_*` variable except `GIT_CONFIG_GLOBAL`. It also drops `PAGER`, `EDITOR`, `VISUAL` and `SSH_ASKPASS`. The dropped variables include these:
 

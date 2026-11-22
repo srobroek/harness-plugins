@@ -85,6 +85,10 @@ worktree. Its parent can free the worktree with `subagent_worktree_merge` and `m
 Pass the writer's `sessionID` and a `reason`. The release needs all of these:
 
 - The caller spawned the writer.
+- No background work is known to run. The writer's last idle gate listed no shell, job or
+  background subagent, and no hold is recorded on the worktree. With `gates: false`, or on a host
+  without the idle gate, the plugin cannot see background work, so it refuses every release.
+- No `subagent` call that resumes the writer is in flight.
 - The writer is gone (deleted or archived), or idle with no open tool call. A run that never
   ended, or an open tool call, counts only after 10 minutes without a change to the session. Before
   the release, the plugin interrupts that run, so a run still live in this server cannot write again.
@@ -93,15 +97,19 @@ Pass the writer's `sessionID` and a `reason`. The release needs all of these:
 
 The release runs under the worktree's lock and writes a record under `release/<sessionID>` in
 plugin storage. The record names the worktree, the caller and `HEAD`, with the reason and the time. It
-also says whether the release interrupted a run. When the writer starts a new run during the release, the
-plugin deletes the record and refuses the release. After a release:
+also says whether the release interrupted a run. After the interrupt the plugin reads the writer and
+the worktree again. A new run, a change to the tree or `HEAD`, or new background work makes the
+plugin delete the record and refuse the release. After a release:
 
-- The guard ignores the released writer in that worktree.
-- The plugin refuses every `subagent` call that resumes the released writer.
+- The guard ignores the released writer in that worktree. While the release is under way, the
+  guard still counts the writer.
+- The plugin refuses every `subagent` call that resumes the released writer, and every such call
+  that arrives while the release is under way.
 - The record names the next writer that a call moves into the worktree, as `to`.
 - When the released writer owned a lane for that worktree, the new writer takes over the lane. The
   plugin stores the lane under the new child with `handedOver`, and the lane's claim names the new
-  child.
+  child. The plugin drops any later write of the old lane or its claim. When the takeover fails, the
+  plugin puts back the old lane, its claim and the record.
 
 ### Writers
 

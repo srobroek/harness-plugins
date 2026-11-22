@@ -6,7 +6,7 @@ import type { Context } from "@opencode/plugin/promise/plugin"
 import { type Result, Error as ToolError } from "@opencode/plugin/promise/tool"
 import { toJsonSchema, withOptionalString } from "@srobroek/opencode-lib/tool-schema"
 import { readClaim, removeClaim, writeClaim } from "@srobroek/opencode-lib/worktree-claims"
-import { lockedWrite } from "@srobroek/opencode-lib/worktree-locks"
+import { holdsState, lockedWrite } from "@srobroek/opencode-lib/worktree-locks"
 import { createGit, type Git, type Runner, spawnRunner } from "./git.ts"
 import {
   annotation,
@@ -192,6 +192,8 @@ export function createLanes(
    * error: an unclaimed lane would have a second remover.
    */
   const syncClaim = async (lane: Lane) => {
+    // A lane read before its writer was released and handed over must not take the claim back.
+    if (await handedOff(lane.child)) return
     const common = await commonDirOf(lane.parentDir)
     if (common === undefined) {
       if (claims(lane)) throw new Error(`subagent-worktree: cannot find the git common directory of ${lane.parentDir} to claim ${lane.directory}`)
@@ -214,6 +216,11 @@ export function createLanes(
   }
 
   const save = async (lane: Lane) => {
+    // The lane of a writer whose worktree was handed over lives on under the new writer: a stale copy is dropped.
+    if (await handedOff(lane.child)) {
+      console.error(`subagent-worktree: not saving the lane of ${lane.child}: its worktree was handed to another writer`)
+      return
+    }
     // Claim first when activating (no record without its claim), record first when retiring (no claim without its record).
     if (claims(lane)) await syncClaim(lane)
     await ctx.storage.set(laneKey(lane.child), lane)
@@ -366,27 +373,71 @@ export function createLanes(
     return found
   }
 
-  /** `sessionsIn`, with the sessions released from `directory` marked, so the guard skips them. */
+  /** `sessionsIn`, with the sessions released from `directory` marked, so the guard skips them. A release still under way does not count. */
   const writersIn = async (projectID: string, directory: string): Promise<WriterSession[] | undefined> => {
     const sessions = await sessionsIn(projectID, directory)
     if (sessions === undefined) return undefined
-    const released = new Set((await releasesIn(directory)).map((release) => release.child))
+    const released = new Set((await releasesIn(directory)).map((release) => release.child).filter((child) => !releasing.has(child)))
     return sessions.map((session) => (released.has(session.id) ? { ...session, released: true } : session))
   }
 
   /**
-   * Bind the worktree to `child`, the writer just moved into it: every release from it that names no
-   * writer yet now names `child`, and a released child's active lane becomes `child`'s, so its claim and
-   * removal follow the writer that is there now.
+   * Admission between a release and a resume of the same child, in this plugin instance. Each side checks
+   * the other's set and adds itself with no await in between, so at most one of them goes ahead.
+   * `releasing`: children whose release is under way. `resuming`: resumed child by `subagent` call id,
+   * until that call's `after` (or its failure in `before`).
+   */
+  const releasing = new Set<string>()
+  const resuming = new Map<string, string>()
+
+  /** The background work each session reported at its last idle gate (shells, code mode jobs, background subagents). */
+  const background = new Map<string, string>()
+  /** Whether this plugin sees idle gates at all; without them background work cannot be ruled out. */
+  let idleObserved = false
+  const noteIdle = (input: { sessionID?: unknown; background?: ReadonlyArray<{ kind?: unknown; shellID?: unknown; jobID?: unknown; childSessionID?: unknown }> }) => {
+    if (typeof input.sessionID !== "string") return
+    const jobs = (input.background ?? []).map((job) => `${String(job.kind)} ${String(job.shellID ?? job.jobID ?? job.childSessionID ?? "")}`.trim())
+    if (jobs.length === 0) background.delete(input.sessionID)
+    else background.set(input.sessionID, jobs.join(", "))
+  }
+
+  /** Whether `child` was released and its worktree handed to another writer: no lane or claim of it may be written again. */
+  const handedOff = async (child: string) => parseRelease(await ctx.storage.get(releaseKey(child)))?.to !== undefined
+
+  /**
+   * Bind the worktree to `child`, the writer just moved into it. Every release from it that names no
+   * writer yet, or whose released child still owns its lane there (an earlier handover failed), now
+   * names `child`, and the released child's active lane becomes `child`'s, so its claim and removal
+   * follow the writer that is there now. The record names `child` first, which fences any stale write
+   * of the old lane or claim. A failure puts back what this handover changed and throws.
    */
   const handOver = async (directory: string, child: string) => {
-    for (const release of (await releasesIn(directory)).filter((candidate) => candidate.to === undefined)) {
-      const owned = await load(release.child)
-      if (owned?.state === "active" && (await normalize(owned.directory)) === directory) {
-        await save({ ...owned, child, handedOver: { from: release.child, at: now() } })
-        await ctx.storage.remove(laneKey(release.child))
+    const undo: Array<() => Promise<void>> = []
+    try {
+      for (const release of await releasesIn(directory)) {
+        const owned = await load(release.child)
+        const ownsHere = owned?.state === "active" && (await normalize(owned.directory)) === directory
+        if (release.to !== undefined && !ownsHere) continue
+        await ctx.storage.set(releaseKey(release.child), { ...release, to: child })
+        const step = { saved: false, removed: false }
+        undo.push(async () => {
+          // The record first: until it names no writer, the old lane cannot be saved again. Saving it puts its claim back too.
+          await ctx.storage.set(releaseKey(release.child), release)
+          if ((step.saved || step.removed) && owned) await save(owned)
+          if (step.saved) await ctx.storage.remove(laneKey(child))
+        })
+        if (owned && ownsHere) {
+          await save({ ...owned, child, handedOver: { from: release.child, at: now() } })
+          step.saved = true
+          await ctx.storage.remove(laneKey(release.child))
+          step.removed = true
+        }
       }
-      await ctx.storage.set(releaseKey(release.child), { ...release, to: child })
+    } catch (error) {
+      for (const step of undo.reverse()) {
+        await step().catch((failure) => console.error("subagent-worktree: could not undo a failed worktree handover", failure))
+      }
+      throw error
     }
   }
 
@@ -431,6 +482,7 @@ export function createLanes(
   }
 
   const release = (callId: string) => {
+    resuming.delete(callId)
     for (const [directory, reservation] of reservations) if (reservation.callId === callId) reservations.delete(directory)
   }
 
@@ -447,12 +499,19 @@ export function createLanes(
     if (!input) return
     event.input = withoutWorktree(event.input)
     if (input.sessionID !== undefined) {
-      const released = parseRelease(await ctx.storage.get(releaseKey(input.sessionID)))
-      if (released) {
+      const child = input.sessionID
+      const refuseReleased = (released: Release | undefined): never => {
         throw new Error(
-          `subagent-worktree: not resuming ${input.sessionID}: ${input.sessionID} was released from ${released.directory}${released.to ? ` and the worktree handed to ${released.to}` : ""}, so it may not write again. Start a new subagent instead.`,
+          `subagent-worktree: not resuming ${child}: ${released ? `${child} was released from ${released.directory}${released.to ? ` and the worktree handed to ${released.to}` : ""}` : `${child} is being released from its worktree`}, so it may not write again. Start a new subagent instead.`,
         )
       }
+      const released = parseRelease(await ctx.storage.get(releaseKey(child)))
+      // No await between the check and the registration: a release that starts later sees this resume and refuses.
+      if (released || releasing.has(child)) refuseReleased(released)
+      resuming.set(event.id, child)
+      // A release that finished while the first read was pending wrote its record before this registration.
+      const recorded = parseRelease(await ctx.storage.get(releaseKey(child)))
+      if (recorded) refuseReleased(recorded)
       await markResumed(input.sessionID)
       const note = resumeWorktreeNote(input)
       if (note) notes.set(event.id, note)
@@ -712,6 +771,8 @@ export function createLanes(
     ),
   ) => {
     if (event.tool !== SUBAGENT_TOOL) return
+    // The resumed call has returned: from here the child's own state (running, recently active) keeps a release away.
+    if (event.id !== undefined) resuming.delete(event.id)
     const reported = (event.status === "completed" ? event.result.metadata : event.error.metadata) as { status?: unknown } | undefined
     if (event.id !== undefined) {
       if (event.status === "completed" && reported?.status === "running") {
@@ -879,9 +940,10 @@ export function createLanes(
 
   /**
    * `method: "release"`: free the worktree of a dead writer `child` for a new writer (see `release.ts`).
-   * Runs under the worktree's lock, like a spawn into it. The record is written before the old run is
-   * interrupted, so a resume from then on is refused; a run that started after the facts were read
-   * undoes the release.
+   * Runs under the worktree's lock, like a spawn into it, and excludes a resume of `child` in flight
+   * (`resuming`). The record is written before the old run is interrupted, so a resume from then on is
+   * refused. After the interrupt the writer and the worktree are read again: a new run, a change to the
+   * tree or HEAD, or new background work undoes the release.
    */
   const releaseWriter = async (child: string, reason: string, tool: { sessionID: string; agent: string; messageID: string; id: string }): Promise<Result> => {
     const refuse = (why: string): Result => ({ content: `${MERGE_TOOL}: not released: ${why}`, metadata: { ok: false, reason: why } })
@@ -896,27 +958,42 @@ export function createLanes(
     if (parseRelease(await ctx.storage.get(releaseKey(child)))) return refuse(`${child} is already released`)
     const caller = await getSession(tool.sessionID)
     if (!caller) return refuse("cannot read the calling session")
-    const before = await writerFacts(child)
-    const where = lane?.state === "active" ? lane.directory : before.directory
+    const where = lane?.state === "active" ? lane.directory : (await writerFacts(child)).directory
     if (where === undefined) return refuse(`cannot find the worktree of ${child}`)
     const found = await locate(caller.location.directory, where)
     if (!found.lookup.ok) return refuse(found.lookup.reason)
     const directory = found.lookup.worktree.directory
-    return lifecycle.spawnInto(directory, caller.location.directory, async () => {
+    const checkout = caller.location.directory
+    /** Clean status, upstream coverage and HEAD; undefined parts when git cannot read them. */
+    const proveTree = async () => {
+      const porcelain = await git.porcelain(directory)
+      const tree = porcelain === undefined ? undefined : { dirty: porcelain !== "", unpushed: await git.unpushed(directory) }
+      return { tree, head: await git.head(directory) }
+    }
+    /** Background work of the child (from its last idle gate) and holds recorded on the worktree. */
+    const running = async () => {
+      const common = await commonDirOf(checkout)
+      const held = common === undefined ? "the git common directory cannot be found, so running work cannot be ruled out" : holdsState(common, directory, now())
+      const unseen = idleObserved ? undefined : "idle gates are off or unsupported, so background work cannot be ruled out"
+      return [background.get(child), held, unseen].filter((why) => why !== undefined).join("; ") || undefined
+    }
+    const locked = async (): Promise<Result> => {
+      const before = await writerFacts(child)
       const gone = before.state === "deleted" || before.state === "archived"
       const openTool = gone ? undefined : hasOpenToolCall(await settled(Promise.resolve(ctx.session.context({ sessionID: child } as never)) as Promise<unknown>))
-      const porcelain = await git.porcelain(directory)
       const owner = before.parentID ?? lane?.parent
+      const proof = await proveTree()
       const decision = decideRelease({
         caller: tool.sessionID,
         child: { ...before, ...(owner === undefined ? {} : { owner }) },
         openTool,
-        tree: porcelain === undefined ? undefined : { dirty: porcelain !== "", unpushed: await git.unpushed(directory) },
+        background: await running(),
+        tree: proof.tree,
         now: now(),
         quietMs: RELEASE_QUIET_MS,
       })
       if (!decision.release) return refuse(decision.reason)
-      const head = await git.head(directory)
+      const head = proof.head
       if (head === undefined) return refuse(`cannot read HEAD in ${directory}`)
       const record: Release = { child, directory, by: tool.sessionID, at: now(), head, reason, interrupted: decision.interrupt }
       await ctx.storage.set(releaseKey(child), record)
@@ -925,6 +1002,13 @@ export function createLanes(
         const after = await writerFacts(child)
         if (after.state === "unknown") throw new Error(`cannot read ${child} after the release`)
         if (after.state === "running" && (after.busy ?? 0) > (before.busy ?? 0)) throw new Error(`${child} started a new run while it was being released`)
+        // The old run may have written until the interrupt took effect: prove the tree again.
+        const again = await proveTree()
+        if (again.tree === undefined || again.tree.dirty || again.tree.unpushed !== 0 || again.head !== head) {
+          throw new Error(`the worktree changed while ${child} was being released; check ${directory} and release again`)
+        }
+        const still = await running()
+        if (still !== undefined) throw new Error(`background work is still running: ${still}`)
       } catch (error) {
         await ctx.storage.remove(releaseKey(child))
         return refuse(errorMessage(error))
@@ -933,6 +1017,17 @@ export function createLanes(
       return {
         content: `${MERGE_TOOL}: released ${child} from ${directory} at ${head.slice(0, 12)} (${how}); it cannot be resumed. Spawn the next writer with worktree "${directory}"${lane?.state === "active" ? `; it takes over the lane on ${lane.branch}` : ""}.`,
         metadata: { ok: true, release: record },
+      }
+    }
+    return lifecycle.spawnInto(directory, checkout, async () => {
+      // No await between these checks and the mark: a resume that registers later sees `releasing` and refuses.
+      if ([...resuming.values()].includes(child)) return refuse(`a resume of ${child} is in flight; wait for that subagent call to return`)
+      if (releasing.has(child)) return refuse(`a release of ${child} is already under way`)
+      releasing.add(child)
+      try {
+        return await locked()
+      } finally {
+        releasing.delete(child)
       }
     })
   }
@@ -1077,7 +1172,17 @@ export function createLanes(
     },
   })
 
-  return { before, after, merge, load, lifecycle }
+  return {
+    before,
+    after,
+    merge,
+    load,
+    lifecycle,
+    noteIdle,
+    observingIdle: (on: boolean) => {
+      idleObserved = on
+    },
+  }
 }
 
 export function createPlugin(overrides: Overrides = {}) {
@@ -1096,6 +1201,14 @@ export function createPlugin(overrides: Overrides = {}) {
         registrations.push(await ctx.tool.hook("execute.before", lanes.before))
         registrations.push(await ctx.tool.hook("execute.after", lanes.after as never))
         registrations.push(await ctx.tool.hook("execute.after", lanes.lifecycle.onLanding as never))
+        // Observes only: a release refuses a writer whose last idle gate listed background work. With gates off,
+        // or on a host without the hook, background work cannot be seen, and every release is refused.
+        if (options.gates) {
+          try {
+            registrations.push(await ctx.session.hook("experimental.idle" as never, lanes.noteIdle as never))
+            lanes.observingIdle(true)
+          } catch {}
+        }
         registrations.push({ dispose: lanes.lifecycle.dispose })
         await lanes.lifecycle.start()
         registrations.push(

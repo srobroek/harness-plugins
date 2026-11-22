@@ -3406,6 +3406,8 @@ function decideRelease(facts) {
     return { release: false, reason: "cannot read session state; try again" };
   if (child.owner !== facts.caller)
     return { release: false, reason: "only the session that spawned the writer can release it" };
+  if (facts.background !== undefined)
+    return { release: false, reason: `background work is still running: ${facts.background}. Stop it or wait for it to finish` };
   let interrupt = false;
   if (child.state !== "deleted" && child.state !== "archived") {
     if (facts.openTool === undefined)
@@ -3498,6 +3500,8 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
   };
   const claims = (lane2) => lane2.state === "active" || lane2.state === "removing";
   const syncClaim = async (lane2) => {
+    if (await handedOff(lane2.child))
+      return;
     const common = await commonDirOf(lane2.parentDir);
     if (common === undefined) {
       if (claims(lane2))
@@ -3519,6 +3523,10 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     }));
   };
   const save = async (lane2) => {
+    if (await handedOff(lane2.child)) {
+      console.error(`subagent-worktree: not saving the lane of ${lane2.child}: its worktree was handed to another writer`);
+      return;
+    }
     if (claims(lane2))
       await syncClaim(lane2);
     await ctx.storage.set(laneKey(lane2.child), lane2);
@@ -3652,17 +3660,52 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     const sessions = await sessionsIn(projectID, directory);
     if (sessions === undefined)
       return;
-    const released = new Set((await releasesIn(directory)).map((release2) => release2.child));
+    const released = new Set((await releasesIn(directory)).map((release2) => release2.child).filter((child) => !releasing.has(child)));
     return sessions.map((session) => released.has(session.id) ? { ...session, released: true } : session);
   };
+  const releasing = new Set;
+  const resuming = new Map;
+  const background = new Map;
+  let idleObserved = false;
+  const noteIdle = (input) => {
+    if (typeof input.sessionID !== "string")
+      return;
+    const jobs = (input.background ?? []).map((job) => `${String(job.kind)} ${String(job.shellID ?? job.jobID ?? job.childSessionID ?? "")}`.trim());
+    if (jobs.length === 0)
+      background.delete(input.sessionID);
+    else
+      background.set(input.sessionID, jobs.join(", "));
+  };
+  const handedOff = async (child) => parseRelease(await ctx.storage.get(releaseKey(child)))?.to !== undefined;
   const handOver = async (directory, child) => {
-    for (const release2 of (await releasesIn(directory)).filter((candidate) => candidate.to === undefined)) {
-      const owned = await load(release2.child);
-      if (owned?.state === "active" && await normalize(owned.directory) === directory) {
-        await save({ ...owned, child, handedOver: { from: release2.child, at: now() } });
-        await ctx.storage.remove(laneKey(release2.child));
+    const undo = [];
+    try {
+      for (const release2 of await releasesIn(directory)) {
+        const owned = await load(release2.child);
+        const ownsHere = owned?.state === "active" && await normalize(owned.directory) === directory;
+        if (release2.to !== undefined && !ownsHere)
+          continue;
+        await ctx.storage.set(releaseKey(release2.child), { ...release2, to: child });
+        const step = { saved: false, removed: false };
+        undo.push(async () => {
+          await ctx.storage.set(releaseKey(release2.child), release2);
+          if ((step.saved || step.removed) && owned)
+            await save(owned);
+          if (step.saved)
+            await ctx.storage.remove(laneKey(child));
+        });
+        if (owned && ownsHere) {
+          await save({ ...owned, child, handedOver: { from: release2.child, at: now() } });
+          step.saved = true;
+          await ctx.storage.remove(laneKey(release2.child));
+          step.removed = true;
+        }
       }
-      await ctx.storage.set(releaseKey(release2.child), { ...release2, to: child });
+    } catch (error) {
+      for (const step of undo.reverse()) {
+        await step().catch((failure) => console.error("subagent-worktree: could not undo a failed worktree handover", failure));
+      }
+      throw error;
     }
   };
   const reservations = new Map;
@@ -3695,6 +3738,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     }
   };
   const release2 = (callId) => {
+    resuming.delete(callId);
     for (const [directory, reservation] of reservations)
       if (reservation.callId === callId)
         reservations.delete(directory);
@@ -3707,10 +3751,17 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
       return;
     event.input = withoutWorktree(event.input);
     if (input.sessionID !== undefined) {
-      const released = parseRelease(await ctx.storage.get(releaseKey(input.sessionID)));
-      if (released) {
-        throw new Error(`subagent-worktree: not resuming ${input.sessionID}: ${input.sessionID} was released from ${released.directory}${released.to ? ` and the worktree handed to ${released.to}` : ""}, so it may not write again. Start a new subagent instead.`);
-      }
+      const child = input.sessionID;
+      const refuseReleased = (released) => {
+        throw new Error(`subagent-worktree: not resuming ${child}: ${released ? `${child} was released from ${released.directory}${released.to ? ` and the worktree handed to ${released.to}` : ""}` : `${child} is being released from its worktree`}, so it may not write again. Start a new subagent instead.`);
+      };
+      const released = parseRelease(await ctx.storage.get(releaseKey(child)));
+      if (released || releasing.has(child))
+        refuseReleased(released);
+      resuming.set(event.id, child);
+      const recorded = parseRelease(await ctx.storage.get(releaseKey(child)));
+      if (recorded)
+        refuseReleased(recorded);
       await markResumed(input.sessionID);
       const note = resumeWorktreeNote(input);
       if (note)
@@ -3954,6 +4005,8 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
   const after = async (event) => {
     if (event.tool !== SUBAGENT_TOOL)
       return;
+    if (event.id !== undefined)
+      resuming.delete(event.id);
     const reported = event.status === "completed" ? event.result.metadata : event.error.metadata;
     if (event.id !== undefined) {
       if (event.status === "completed" && reported?.status === "running") {
@@ -4129,30 +4182,43 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
     const caller = await getSession(tool.sessionID);
     if (!caller)
       return refuse("cannot read the calling session");
-    const before = await writerFacts(child);
-    const where = lane2?.state === "active" ? lane2.directory : before.directory;
+    const where = lane2?.state === "active" ? lane2.directory : (await writerFacts(child)).directory;
     if (where === undefined)
       return refuse(`cannot find the worktree of ${child}`);
     const found = await locate(caller.location.directory, where);
     if (!found.lookup.ok)
       return refuse(found.lookup.reason);
     const directory = found.lookup.worktree.directory;
-    return lifecycle.spawnInto(directory, caller.location.directory, async () => {
+    const checkout = caller.location.directory;
+    const proveTree = async () => {
+      const porcelain = await git2.porcelain(directory);
+      const tree = porcelain === undefined ? undefined : { dirty: porcelain !== "", unpushed: await git2.unpushed(directory) };
+      return { tree, head: await git2.head(directory) };
+    };
+    const running = async () => {
+      const common = await commonDirOf(checkout);
+      const held = common === undefined ? "the git common directory cannot be found, so running work cannot be ruled out" : holdsState(common, directory, now());
+      const unseen = idleObserved ? undefined : "idle gates are off or unsupported, so background work cannot be ruled out";
+      return [background.get(child), held, unseen].filter((why) => why !== undefined).join("; ") || undefined;
+    };
+    const locked = async () => {
+      const before = await writerFacts(child);
       const gone = before.state === "deleted" || before.state === "archived";
       const openTool = gone ? undefined : hasOpenToolCall(await settled(Promise.resolve(ctx.session.context({ sessionID: child }))));
-      const porcelain = await git2.porcelain(directory);
       const owner = before.parentID ?? lane2?.parent;
+      const proof = await proveTree();
       const decision = decideRelease({
         caller: tool.sessionID,
         child: { ...before, ...owner === undefined ? {} : { owner } },
         openTool,
-        tree: porcelain === undefined ? undefined : { dirty: porcelain !== "", unpushed: await git2.unpushed(directory) },
+        background: await running(),
+        tree: proof.tree,
         now: now(),
         quietMs: RELEASE_QUIET_MS
       });
       if (!decision.release)
         return refuse(decision.reason);
-      const head = await git2.head(directory);
+      const head = proof.head;
       if (head === undefined)
         return refuse(`cannot read HEAD in ${directory}`);
       const record = { child, directory, by: tool.sessionID, at: now(), head, reason, interrupted: decision.interrupt };
@@ -4165,6 +4231,13 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
           throw new Error(`cannot read ${child} after the release`);
         if (after.state === "running" && (after.busy ?? 0) > (before.busy ?? 0))
           throw new Error(`${child} started a new run while it was being released`);
+        const again = await proveTree();
+        if (again.tree === undefined || again.tree.dirty || again.tree.unpushed !== 0 || again.head !== head) {
+          throw new Error(`the worktree changed while ${child} was being released; check ${directory} and release again`);
+        }
+        const still = await running();
+        if (still !== undefined)
+          throw new Error(`background work is still running: ${still}`);
       } catch (error) {
         await ctx.storage.remove(releaseKey(child));
         return refuse(errorMessage(error));
@@ -4174,6 +4247,18 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
         content: `${MERGE_TOOL}: released ${child} from ${directory} at ${head.slice(0, 12)} (${how}); it cannot be resumed. Spawn the next writer with worktree "${directory}"${lane2?.state === "active" ? `; it takes over the lane on ${lane2.branch}` : ""}.`,
         metadata: { ok: true, release: record }
       };
+    };
+    return lifecycle.spawnInto(directory, checkout, async () => {
+      if ([...resuming.values()].includes(child))
+        return refuse(`a resume of ${child} is in flight; wait for that subagent call to return`);
+      if (releasing.has(child))
+        return refuse(`a release of ${child} is already under way`);
+      releasing.add(child);
+      try {
+        return await locked();
+      } finally {
+        releasing.delete(child);
+      }
     });
   };
   const merge = async (input, tool) => {
@@ -4308,7 +4393,17 @@ The merge is done, but the worktree stays at ${lane2.directory} (branch ${lane2.
       }
     }
   });
-  return { before, after, merge, load, lifecycle };
+  return {
+    before,
+    after,
+    merge,
+    load,
+    lifecycle,
+    noteIdle,
+    observingIdle: (on) => {
+      idleObserved = on;
+    }
+  };
 }
 function createPlugin(overrides = {}) {
   return Plugin.define({
@@ -4327,6 +4422,12 @@ function createPlugin(overrides = {}) {
         registrations.push(await ctx.tool.hook("execute.before", lanes.before));
         registrations.push(await ctx.tool.hook("execute.after", lanes.after));
         registrations.push(await ctx.tool.hook("execute.after", lanes.lifecycle.onLanding));
+        if (options.gates) {
+          try {
+            registrations.push(await ctx.session.hook("experimental.idle", lanes.noteIdle));
+            lanes.observingIdle(true);
+          } catch {}
+        }
         registrations.push({ dispose: lanes.lifecycle.dispose });
         await lanes.lifecycle.start();
         registrations.push(await ctx.tool.transform((editor) => {

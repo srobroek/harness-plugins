@@ -75,6 +75,8 @@ export type ReleaseFacts = {
   }
   /** The child's transcript has a tool call that has not ended; undefined when it cannot be read. */
   openTool: boolean | undefined
+  /** Background work the child or the worktree still runs (shells, jobs, background subagents), or undefined when none is known. */
+  background: string | undefined
   /** The worktree's state: uncommitted changes, and commits its upstream lacks (undefined without an upstream). */
   tree: { dirty: boolean; unpushed: number | undefined } | undefined
   now: number
@@ -86,6 +88,7 @@ export type ReleaseDecision = { release: true; interrupt: boolean } | { release:
 /**
  * Whether a writer child may be released from its worktree. All of these must hold:
  * - the caller spawned it;
+ * - no background work of it, or held on the worktree, is known to run;
  * - it is gone (deleted or archived) or idle with no open tool call, or it may still be running
  *   (its last run never ended, or a tool call is open) but nothing about it changed for `quietMs`:
  *   then the release interrupts it first, so a run still live in this server cannot write again;
@@ -95,6 +98,8 @@ export function decideRelease(facts: ReleaseFacts): ReleaseDecision {
   const { child } = facts
   if (child.state === "unknown") return { release: false, reason: "cannot read session state; try again" }
   if (child.owner !== facts.caller) return { release: false, reason: "only the session that spawned the writer can release it" }
+  // A background shell or job can write after its session ended, and the release does not stop it.
+  if (facts.background !== undefined) return { release: false, reason: `background work is still running: ${facts.background}. Stop it or wait for it to finish` }
   let interrupt = false
   if (child.state !== "deleted" && child.state !== "archived") {
     if (facts.openTool === undefined) return { release: false, reason: "cannot read the tool calls of the writer; try again" }

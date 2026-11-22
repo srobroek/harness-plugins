@@ -9,7 +9,8 @@ import { readClaim, writeLanding } from "@srobroek/opencode-lib/worktree-claims"
 import { withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
 import type { RunResult } from "./git.ts"
 import { createPlugin, SWEEP_TOOL } from "./index.ts"
-import { type Lane, laneKey, MERGE_TOOL, SUBAGENT_PREAMBLE, UNBORN_NOTE } from "./lane.ts"
+import { LANE_PREFIX, type Lane, laneKey, MERGE_TOOL, SUBAGENT_PREAMBLE, UNBORN_NOTE } from "./lane.ts"
+import type { Lifecycle } from "./lifecycle.ts"
 
 const BASE = "0123456789abcdef0123456789abcdef01234567"
 const PARENT = "ses_parent"
@@ -119,6 +120,9 @@ async function start(
     onRemove?: () => void
     /** Test seam for the on-disk lock. */
     lock?: Record<string, unknown>
+    /** Receives the lifecycle, so a test can deliver host events and await `settle()`. */
+    onLifecycle?: (lifecycle: Lifecycle) => void
+    debounceMs?: number
   } = {},
 ): Promise<Setup> {
   const fake = createFakeContext({
@@ -214,7 +218,7 @@ async function start(
     // `wt merge --no-remove` keeps the checkout, so the child stays in it; only the verified removal moves it home.
     if (argv[0] === "wt") expect(fake.sessions.get("ses_fake1")?.location).not.toEqual({ directory: REPO })
     return fakeRun(repo, log)(argv)
-  }, suffix: () => "abc123", lookupMs: 20, directoryExists: options.exists ?? (async () => true), ...(options.now ? { now: options.now } : {}), ...(options.lock ? { lock: options.lock } : {}), reserveMs: 60_000 })
+  }, suffix: () => "abc123", lookupMs: 20, directoryExists: options.exists ?? (async () => true), ...(options.now ? { now: options.now } : {}), ...(options.lock ? { lock: options.lock } : {}), ...(options.onLifecycle ? { lifecycle: options.onLifecycle } : {}), ...(options.debounceMs === undefined ? {} : { debounceMs: options.debounceMs }), reserveMs: 60_000 })
   const cleanup = (await plugin.setup(fake.context)) as () => Promise<void>
   return { common, fake, repo, log, worktree, cleanup }
 }
@@ -674,6 +678,37 @@ describe("worktree argument", () => {
       writerIn(setup, "ses_dead", 11 * MINUTE)
       return setup
     }
+    /** Hold the release at a step: its first `git status` (before the record is written) or its interrupt (after). */
+    const holdAt = (setup: Setup, step: "status" | "interrupt") => {
+      let open: () => void = () => {}
+      const gate = new Promise<void>((done) => (open = done))
+      let arrive: () => void = () => {}
+      const reached = new Promise<void>((done) => (arrive = done))
+      if (step === "interrupt") {
+        Object.assign(setup.fake.context.session, {
+          interrupt: async () => {
+            arrive()
+            await gate
+            return { interrupted: false }
+          },
+        })
+      } else {
+        let held = false
+        setup.repo.onCommand = async (cmd) => {
+          if (held || cmd !== "status --porcelain") return
+          held = true
+          arrive()
+          await gate
+        }
+      }
+      return { reached, open: () => open() }
+    }
+    /** How a spawn settles within `ms`: its error message, its child, or "pending" while it still waits (on the release's lock). */
+    const settleWithin = (spawned: Promise<{ input: unknown }>, ms: number) =>
+      Promise.race([
+        spawned.then((event) => sessionID(event) ?? "no child", (error: Error) => error.message),
+        new Promise<string>((done) => setTimeout(() => done("pending"), ms)),
+      ])
 
     test("a dead writer is released, and a new writer can spawn into its worktree", async () => {
       const setup = await dead()
@@ -751,6 +786,105 @@ describe("worktree argument", () => {
       const setup = await dead()
       await release(setup, "ses_dead")
       await expect(spawn(setup, { agent: "pinned", sessionID: "ses_dead", prompt: "go on" })).rejects.toThrow(/ses_dead was released/)
+    })
+
+    test("a writer whose last idle gate listed background work is not released", async () => {
+      const setup = await dead()
+      await setup.fake.fire.session("experimental.idle", { sessionID: "ses_dead", background: [{ kind: "shell", sessionID: "ses_dead", shellID: "sh_1", command: "sleep 600" }] })
+      const result = await release(setup, "ses_dead")
+      expect(result.content).toMatch(/background work is still running: shell sh_1/)
+      expect(interrupts(setup)).toEqual([])
+    })
+
+    test("a resume of the writer that is still in flight blocks its release", async () => {
+      const setup = await dead()
+      await spawn(setup, { agent: "pinned", sessionID: "ses_dead", prompt: "go on" })
+      const result = await release(setup, "ses_dead")
+      expect(result.content).toMatch(/a resume of ses_dead is in flight/)
+      expect(setup.fake.storage.get("release/ses_dead")).toBeUndefined()
+    })
+
+    test("a writer spawned while the release is under way is still refused", async () => {
+      const setup = await dead()
+      const held = holdAt(setup, "interrupt")
+      const releasing = release(setup, "ses_dead")
+      await held.reached
+      const spawned = spawn(setup, { agent: "pinned", worktree: "feat" })
+      spawned.catch(() => {})
+      // The guard refuses at once; a spawn that got past it would wait for the release's lock.
+      expect(await settleWithin(spawned, 500)).toMatch(/live writer session ses_dead/)
+      held.open()
+      expect((await releasing).metadata.ok).toBe(true)
+    })
+
+    test("a resume that arrives before the release has written its record is refused", async () => {
+      const setup = await dead()
+      const held = holdAt(setup, "status")
+      const releasing = release(setup, "ses_dead")
+      await held.reached
+      await expect(spawn(setup, { agent: "pinned", sessionID: "ses_dead", prompt: "go on" })).rejects.toThrow(/ses_dead is being released/)
+      held.open()
+      await releasing
+    })
+
+    test("a change to the worktree while the old run is interrupted undoes the release", async () => {
+      const setup = await dead()
+      Object.assign(setup.fake.context.session, {
+        interrupt: async () => {
+          setup.repo.dirty = true
+          return { interrupted: true }
+        },
+      })
+      const result = await release(setup, "ses_dead")
+      expect(result.content).toMatch(/the worktree changed while ses_dead was being released/)
+      expect(setup.fake.storage.get("release/ses_dead")).toBeUndefined()
+    })
+
+    describe("a released writer's lane", () => {
+      const owned: Lane = { child: "ses_dead", parent: PARENT, projectID: "prj", directory: OTHER, branch: "feat", base: BASE, parentDir: REPO, state: "active" }
+      const claimant = (setup: Setup) => {
+        const claim = readClaim(setup.common, OTHER)
+        return claim.kind === "present" ? claim.value.sessionID : undefined
+      }
+
+      test("a stale copy of the old lane, saved after the handover, does not come back or take the claim", async () => {
+        let lifecycle!: Lifecycle
+        const setup = await start({ now: () => NOW, debounceMs: 1, onLifecycle: (value) => (lifecycle = value) })
+        writerIn(setup, "ses_dead", 11 * MINUTE)
+        setup.fake.storage.set(laneKey("ses_dead"), owned)
+        await release(setup, "ses_dead")
+        await spawn(setup, { agent: "pinned", worktree: "feat" })
+        // The lifecycle read the lanes before the handover: its scan still returns the old lane.
+        const scan = setup.fake.context.storage.scan.bind(setup.fake.context.storage)
+        Object.assign(setup.fake.context.storage, {
+          scan: async (input: { prefix: string }) => {
+            const page = await scan(input as never)
+            return input.prefix === LANE_PREFIX ? { ...page, entries: [...page.entries, { key: laneKey("ses_dead"), value: owned }] } : page
+          },
+        })
+        lifecycle.handleEvent({ id: "evt_1", type: "session.execution.interrupted", data: { sessionID: "ses_dead", reason: "user" } })
+        await lifecycle.settle()
+        expect(lane(setup.fake, "ses_dead")).toBeUndefined()
+        expect(claimant(setup)).toBe("ses_fake1")
+      })
+
+      test("a handover that fails puts the old lane, its claim and the record back", async () => {
+        const setup = await dead()
+        setup.fake.storage.set(laneKey("ses_dead"), owned)
+        await release(setup, "ses_dead")
+        const remove = setup.fake.context.storage.remove.bind(setup.fake.context.storage)
+        Object.assign(setup.fake.context.storage, {
+          remove: async (key: string) => {
+            if (key === laneKey("ses_dead")) throw new Error("storage unavailable")
+            return remove(key)
+          },
+        })
+        await expect(spawn(setup, { agent: "pinned", worktree: "feat" })).rejects.toThrow(/storage unavailable/)
+        expect(lane(setup.fake, "ses_dead")).toEqual(owned)
+        expect(lane(setup.fake, "ses_fake1")).toBeUndefined()
+        expect(claimant(setup)).toBe("ses_dead")
+        expect((setup.fake.storage.get("release/ses_dead") as { to?: string }).to).toBeUndefined()
+      })
     })
   })
 
