@@ -31,6 +31,39 @@ const bash = (command: string, extra: Partial<HookInput> = {}): HookInput => ({
 })
 
 describe("claudeDecision", () => {
+  test.each([
+    ["a quote-split gh", "g''h pr create --title t --body x"],
+    ["a backslash in gh", "g\\h pr create --title t --body x"],
+    ["a double-quoted g", '"g"h pr create --title t --body x'],
+    ["a quote-split gh in bash -lc", "bash -lc 'g\"\"h pr create --body x'"],
+  ])("a gated repository refuses %s even though the raw command has no gh word", async (_name, command) => {
+    const output = await claudeDecision(bash(command), { ...deps(), repositoryControl: () => ({ kind: "controlled" }) })
+    expect(output?.hookSpecificOutput).toMatchObject({ permissionDecision: "deny" })
+    expect(output?.hookSpecificOutput.permissionDecisionReason).toEndWith("(beads gate pr-bead-link-gate)")
+  })
+
+  test.each([
+    ["a variable holding the command", 'c="gh pr create --body x"; $c'],
+    ["a variable as the whole command", "$EDITOR notes.md"],
+    ["a variable command word with pr create", "$GH pr create --title t --body x"],
+    ["a variable read from a file", "c=$(cat cmd.txt); $c"],
+    ["a substitution as the command", "$(printf 'gh pr create --body x')"],
+    ["a backtick substitution as the command", "`printf 'gh pr create --body x'`"],
+  ])("a gated repository refuses %s", async (_name, command) => {
+    const output = await claudeDecision(bash(command), { ...deps(), repositoryControl: () => ({ kind: "controlled" }) })
+    expect(output?.hookSpecificOutput).toMatchObject({ permissionDecision: "deny" })
+    expect(output?.hookSpecificOutput.permissionDecisionReason).toEndWith("(beads gate pr-bead-link-gate)")
+  })
+
+  test("a command with no $, backtick, bd, git or gh still skips the gates", async () => {
+    const controlled = { ...deps(), repositoryControl: () => ({ kind: "controlled" as const }) }
+    expect(await claudeDecision(bash("ls -l notes.md"), controlled)).toBeUndefined()
+  })
+
+  test("a command with no bd, git or gh word, even without its quotes, still runs unchanged", async () => {
+    expect(await claudeDecision(bash("echo 'hello' && ls \"x\""), deps())).toBeUndefined()
+  })
+
   test("denies a gate refusal and names the gate", async () => {
     const output = await claudeDecision(bash("bd edit proj-1"), deps())
     expect(output?.hookSpecificOutput).toMatchObject({ hookEventName: "PreToolUse", permissionDecision: "deny" })

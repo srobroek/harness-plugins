@@ -271,7 +271,8 @@ function wordsMayCreate(values: string[], opaques: boolean[]): boolean {
     if (anyOpaque && WATCHED.has(basename(value))) return true
   }
   const commandIndex = values.findIndex((value) => !ASSIGNMENT.test(value))
-  if (opaques[commandIndex] === true && opaques.some((flag, i) => flag && i !== commandIndex)) return true
+  // A variable or substitution in command position can name any program, `gh` included.
+  if (opaques[commandIndex] === true) return true
   return false
 }
 
@@ -310,6 +311,35 @@ function stdinMayCreate(item: SimpleCommand, text: string, depth: number): boole
   return documents.some((document) => document.opaque || textMayCreate(document.text, depth + 1) || textNamesGh(document.text))
 }
 
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash"])
+/** `-c` alone or inside a flag cluster such as `-lc` and `-ec`. */
+const COMMAND_FLAG = /^-[A-Za-z]*c[A-Za-z]*$/
+
+/**
+ * The strings in one command that the shell runs again as text, so each is read as a command line:
+ * every literal word after `env` (`env -S 'gh pr create'`), the script of a shell's `-c`, and the
+ * literal words after `eval`, `source` and `.`, joined as `eval` joins them. A word the gate cannot
+ * read is not a string it can rescan; it stays opaque.
+ */
+function shellTextIn(values: string[], opaques: boolean[]): string[] {
+  const found: string[] = []
+  const literal = (from: number): string[] => values.slice(from).filter((_, i) => opaques[from + i] !== true)
+  for (const [i, value] of values.entries()) {
+    if (opaques[i] === true) continue
+    const name = basename(value)
+    if (name === "env") found.push(...literal(i + 1))
+    else if (SHELLS.has(name)) {
+      const flag = values.findIndex((word, j) => j > i && opaques[j] !== true && COMMAND_FLAG.test(word))
+      const script = flag < 0 || opaques[flag + 1] === true ? undefined : values[flag + 1]
+      if (script !== undefined) found.push(script)
+    } else if (value === "eval" || value === "source" || value === ".") {
+      const words = literal(i + 1)
+      if (words.length > 0) found.push(words.join(" "))
+    }
+  }
+  return found
+}
+
 function textMayCreate(text: string, depth: number): boolean {
   const scan = scanShell(text)
   if (!scan.complete) return wordsMayCreate(text.split(/[\s'"]+/), [])
@@ -319,11 +349,10 @@ function textMayCreate(text: string, depth: number): boolean {
     const opaques = item.words.map((word) => opaque(word, text))
     if (wordsMayCreate(values, opaques)) return true
     if (stdinMayCreate(item, text, depth)) return true
-    const env = values.findIndex((value, i) => basename(value) === "env" && opaques[i] !== true)
-    if (env < 0) continue
-    // Whatever follows `env` may be shell text (`env -S 'gh pr create'`): read each word as a command line.
+    const scripts = shellTextIn(values, opaques)
+    if (scripts.length === 0) continue
     if (depth >= MAX_RESCAN_DEPTH) return true
-    if (values.slice(env + 1).some((value) => textMayCreate(value, depth + 1))) return true
+    if (scripts.some((script) => textMayCreate(script, depth + 1))) return true
   }
   return false
 }
@@ -335,7 +364,8 @@ function levels(parsed: ParsedCommand): ParsedCommand[] {
 /**
  * Whether any simple command at any nesting level may run `gh pr create`: the words `pr` and
  * later `create` or `new` behind any wrapper, a `gh` operand that could be an alias or extension,
- * a word the gate cannot read next to a literal `gh`, `pr`, `create` or `new`, or a heredoc or
+ * a word the gate cannot read next to a literal `gh`, `pr`, `create` or `new`, a command word the
+ * gate cannot read, a string that `env`, `sh -c`, `eval` or `source` runs again as text, or a heredoc or
  * here-string whose text trips any of those rules, whichever command receives it.
  */
 export function mayCreatePr(parsed: ParsedCommand): boolean {

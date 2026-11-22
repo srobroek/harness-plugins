@@ -45,6 +45,8 @@ The `beads` PR bead gate does not port upstream's shell decoding (ANSI-C words, 
 
 The gate judges the text of every heredoc and here-string, whichever command receives it, because `cat <<EOF | sh`, `tee >(sh) <<EOF` and a git shell alias all run it. Text that may create a PR as shell, names `gh`, has `pr` before `create` or `new`, holds a command word the gate cannot read, or is an expanding here-string is refused. Tradeoff: in a gated repository a commit-message heredoc that mentions `gh pr create` is refused too. Write the message without those words, or pass it with `-m`.
 
+The gate catches an agent that forgets the bead or writes a form it cannot read. It is not a boundary against deliberate evasion: a script written in one call and run in a later one, `eval` of a built string, an alias, and a command built from variables all get past it. Only a server-side required check can give a hard guarantee.
+
 ## Dependency direction
 
 Intended rules:

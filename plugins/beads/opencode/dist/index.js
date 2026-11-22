@@ -6058,7 +6058,7 @@ function wordsMayCreate(values, opaques) {
       return true;
   }
   const commandIndex = values.findIndex((value) => !ASSIGNMENT4.test(value));
-  if (opaques[commandIndex] === true && opaques.some((flag, i) => flag && i !== commandIndex))
+  if (opaques[commandIndex] === true)
     return true;
   return false;
 }
@@ -6090,6 +6090,30 @@ function stdinMayCreate(item, text, depth) {
     return true;
   return documents.some((document) => document.opaque || textMayCreate(document.text, depth + 1) || textNamesGh(document.text));
 }
+var SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash"]);
+var COMMAND_FLAG = /^-[A-Za-z]*c[A-Za-z]*$/;
+function shellTextIn(values, opaques) {
+  const found = [];
+  const literal = (from) => values.slice(from).filter((_, i) => opaques[from + i] !== true);
+  for (const [i, value] of values.entries()) {
+    if (opaques[i] === true)
+      continue;
+    const name = basename5(value);
+    if (name === "env")
+      found.push(...literal(i + 1));
+    else if (SHELLS.has(name)) {
+      const flag = values.findIndex((word, j) => j > i && opaques[j] !== true && COMMAND_FLAG.test(word));
+      const script = flag < 0 || opaques[flag + 1] === true ? undefined : values[flag + 1];
+      if (script !== undefined)
+        found.push(script);
+    } else if (value === "eval" || value === "source" || value === ".") {
+      const words = literal(i + 1);
+      if (words.length > 0)
+        found.push(words.join(" "));
+    }
+  }
+  return found;
+}
 function textMayCreate(text, depth) {
   const scan = scanShell(text);
   if (!scan.complete)
@@ -6103,12 +6127,12 @@ function textMayCreate(text, depth) {
       return true;
     if (stdinMayCreate(item, text, depth))
       return true;
-    const env = values.findIndex((value, i) => basename5(value) === "env" && opaques[i] !== true);
-    if (env < 0)
+    const scripts = shellTextIn(values, opaques);
+    if (scripts.length === 0)
       continue;
     if (depth >= MAX_RESCAN_DEPTH)
       return true;
-    if (values.slice(env + 1).some((value) => textMayCreate(value, depth + 1)))
+    if (scripts.some((script) => textMayCreate(script, depth + 1)))
       return true;
   }
   return false;
