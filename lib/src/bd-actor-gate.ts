@@ -74,10 +74,20 @@ export interface BdInvocation {
   unset: Partial<Record<ActorVar, true>>
 }
 
-/** A string is an exported value, `null` a variable a shell `unset` cleared, absent one never touched here. */
-type ActorValues = Partial<Record<ActorVar, string>>
-
+/** A string is an exported value, `null` a variable a shell `unset` cleared or unexported, absent one never touched here. */
 type ActorState = Partial<Record<ActorVar, string | null>>
+
+/**
+ * One actor variable as the shell holds it. `value` is `undefined` while the ambient environment's value
+ * stands and `null` once unset; `exported` is `undefined` while the ambient environment decides. An
+ * assignment changes only `value`, an export only `exported`, so the two stay in step.
+ */
+interface ShellVar {
+  value: string | null | undefined
+  exported: boolean | undefined
+}
+
+type ShellVars = Partial<Record<ActorVar, ShellVar>>
 
 const OPENERS = new Set(["if", "while", "until", "for", "select", "case"])
 const HEADER_ONLY = new Set(["for", "select", "case"])
@@ -87,26 +97,53 @@ const ASSIGNMENT = /^[A-Za-z_]\w*=/
 
 const basename = (word: string): string => word.split("/").pop() ?? word
 
-/**
- * Apply a command-position `export NAME=value`, `export NAME` or `unset NAME` to the running actor state.
- * `shellVars` holds the values bare `NAME=value` assignments gave shell variables: a name-only export
- * publishes that value, and `export -n` takes the variable out of the environment again.
- */
-function applyActorBuiltin(state: ActorState, shellVars: ActorValues, values: string[], conditional: boolean): void {
+const actorVarOf = (arg: string): ActorVar | undefined =>
+  ACTOR_VARS.find((candidate) => arg === candidate || arg.startsWith(`${candidate}=`))
+
+/** What a child process inherits: an exported value, `null` for a variable the shell removed from the environment. */
+function exportedState(vars: ShellVars): ActorState {
+  const state: ActorState = {}
+  for (const variable of ACTOR_VARS) {
+    const entry = vars[variable]
+    if (entry === undefined || entry.exported === undefined) continue
+    if (entry.exported && typeof entry.value === "string") state[variable] = entry.value
+    else if (!entry.exported || entry.value === null) state[variable] = null
+  }
+  return state
+}
+
+function shellVarsOf(state: ActorState): ShellVars {
+  const vars: ShellVars = {}
+  for (const variable of ACTOR_VARS) {
+    const value = state[variable]
+    if (value !== undefined) vars[variable] = { value, exported: value !== null }
+  }
+  return vars
+}
+
+/** Apply a command-position `export`, `export -n` or `unset` to the shell's actor variables. */
+function applyActorBuiltin(vars: ShellVars, values: string[]): void {
   const name = values[0]
   if (name !== "export" && name !== "unset") return
   const unexport = name === "export" && values.slice(1).some((arg) => /^-[a-zA-Z]*n/.test(arg))
   for (const arg of values.slice(1)) {
-    const variable = ACTOR_VARS.find((candidate) => arg === candidate || arg.startsWith(`${candidate}=`))
+    const variable = actorVarOf(arg)
     if (variable === undefined) continue
-    // Where the command may not run, an export is only a possibility and changes nothing we rely on.
-    if (conditional) continue
-    if (name === "unset") {
-      state[variable] = null
-      delete shellVars[variable]
-    } else if (unexport) state[variable] = null
-    else if (arg.includes("=")) state[variable] = arg.slice(variable.length + 1)
-    else if (shellVars[variable] !== undefined) state[variable] = shellVars[variable]
+    const current = vars[variable]
+    if (name === "unset") vars[variable] = { value: null, exported: false }
+    else if (arg.includes("=")) vars[variable] = { value: arg.slice(variable.length + 1), exported: !unexport }
+    else if (unexport) vars[variable] = { value: current?.value, exported: false }
+    // A name-only export publishes the current value; an unset variable has none to publish.
+    else if (current !== undefined && current.value !== null) vars[variable] = { value: current.value, exported: true }
+  }
+}
+
+/** A bare `NAME=value` sets the value and leaves the export flag alone. */
+function applyActorAssignments(vars: ShellVars, assignments: string[]): void {
+  for (const assignment of assignments) {
+    const variable = actorVarOf(assignment)
+    if (variable !== undefined)
+      vars[variable] = { value: assignment.slice(variable.length + 1), exported: vars[variable]?.exported }
   }
 }
 
@@ -123,48 +160,59 @@ export function bdInvocations(command: string, inherited: ActorState = {}): BdIn
   return readCommand(command, inherited).invocations
 }
 
-function readCommand(command: string, inherited: ActorState): { invocations: BdInvocation[]; state: ActorState } {
+/**
+ * The actor state in force where the command word at `offset` runs. A child the parser found by other
+ * means (`eval`, `xargs`, a wrapped interpreter, a descriptor-fed script) is checked under this state,
+ * never under the state at the end of the line.
+ */
+export function actorStateAt(command: string, inherited: ActorState = {}): (offset: number) => ActorState {
+  const { marks } = readCommand(command, inherited)
+  return (offset) => marks.findLast((mark) => mark.start <= offset)?.state ?? inherited
+}
+
+function readCommand(
+  command: string,
+  inherited: ActorState,
+): { invocations: BdInvocation[]; marks: Array<{ start: number; state: ActorState }> } {
   const out: BdInvocation[] = []
+  const marks: Array<{ start: number; state: ActorState }> = []
   const scan = scanShell(command, { executableSubstitutionsOnly: true })
-  let state: ActorState = { ...inherited }
-  // A subshell `( … )` gets a copy of the actor state; its exports end with it.
-  const scopes: Array<{ state: ActorState; shellVars: ActorValues }> = []
-  // Shell variables a bare `NAME=value` set: not in the environment until an `export NAME`.
-  let shellVars: ActorValues = {}
-  // Compound-command depth and whether this list continued after `&&` / `||`: exports there are conditional.
+  let vars: ShellVars = shellVarsOf(inherited)
+  // A subshell `( … )` runs on a copy; whatever it does ends with it.
+  const scopes: Array<{ vars: ShellVars; chain: ShellVars | null }> = []
+  // Compound-command depth: a body may not run, so what it does changes nothing we rely on.
   let compounds = 0
-  let andChained = false
-  let orChained = false
-  // Exports and unsets made inside an `&&` chain hold for the rest of that chain only: the left side may fail.
-  let chainChanges: Array<{ variable: ActorVar; previous: string | null | undefined; value: string | null }> = []
+  // The variables as they stood when the current `&&` / `||` chain began. What the chain's later commands
+  // do depends on its left side, so the chain ends by restoring this snapshot.
+  let chain: ShellVars | null = null
   // Substitutions not claimed by a command's own words (here-document bodies) run with the final state.
   const unclaimed = [...scan.substitutions]
 
-  for (const item of scan.items) {
+  for (const [index, item] of scan.items.entries()) {
     if (item.kind === "operator") {
       if (item.operator === "(") {
-        scopes.push({ state, shellVars })
-        state = { ...state }
-        shellVars = { ...shellVars }
-      } else if (item.operator === ")" && scopes.length > 0) ({ state, shellVars } = scopes.pop() as (typeof scopes)[number])
-      else if (item.operator === "&&") andChained = true
-      else if (item.operator === "||") orChained = true
+        scopes.push({ vars, chain })
+        vars = { ...vars }
+        chain = null
+      } else if (item.operator === ")" && scopes.length > 0) ({ vars, chain } = scopes.pop() as (typeof scopes)[number])
+      else if ((item.operator === "&&" || item.operator === "||") && chain === null) chain = { ...vars }
       else if (item.operator === ";" || item.operator === "\n" || item.operator === "&") {
-        for (const { variable, previous, value } of chainChanges) {
-          if (state[variable] !== value) continue
-          if (previous === undefined) delete state[variable]
-          else state[variable] = previous
-        }
-        chainChanges = []
-        andChained = false
-        orChained = false
+        if (chain !== null) vars = chain
+        chain = null
       }
       continue
     }
 
+    // A non-final pipeline stage runs in a subshell: it sees the variables but changes none.
+    const following = scan.items[index + 1]
+    const inPipe = following?.kind === "operator" && (following.operator === "|" || following.operator === "|&")
+    const here = inPipe ? { ...vars } : vars
+    const before = exportedState(here)
+    const spans = [...item.words, ...item.redirects]
+    if (spans.length > 0) marks.push({ start: Math.min(...spans.map((w) => w.start)), state: before })
+
     // A substitution runs where its command does, with the exports in force at that point.
     // An unquoted here-document body expands in the shell that owns the command.
-    const spans = [...item.words, ...item.redirects]
     const texts: string[] = []
     if (spans.length > 0) {
       texts.push(command.slice(Math.min(...spans.map((w) => w.start)), Math.max(...spans.map((w) => w.end))))
@@ -176,7 +224,7 @@ function readCommand(command: string, inherited: ActorState): { invocations: BdI
       for (const source of scanShell(text, { executableSubstitutionsOnly: true }).substitutions) {
         const at = unclaimed.indexOf(source)
         if (at >= 0) unclaimed.splice(at, 1)
-        out.push(...bdInvocations(source, state))
+        out.push(...bdInvocations(source, before))
       }
     }
 
@@ -202,22 +250,12 @@ function readCommand(command: string, inherited: ActorState): { invocations: BdI
     while (a < words.length && ASSIGNMENT.test(command.slice(words[a]?.start, words[a]?.end))) a++
     const assigned = words.slice(k, a).map((word) => word.value)
     const values = words.slice(a).map((word) => word.value)
-    if (values.length === 0) {
-      if (compounds === 0 && !orChained)
-        for (const word of assigned) {
-          const variable = ACTOR_VARS.find((candidate) => word.startsWith(`${candidate}=`))
-          if (variable !== undefined) shellVars[variable] = word.slice(variable.length + 1)
-        }
-      continue
+    if (compounds === 0) {
+      if (values.length === 0) applyActorAssignments(here, assigned)
+      else applyActorBuiltin(here, values)
     }
-    const before = { ...state }
-    applyActorBuiltin(state, shellVars, values, compounds > 0 || orChained)
-    if (andChained)
-      for (const variable of ACTOR_VARS) {
-        const value = state[variable]
-        if (value !== undefined && value !== before[variable])
-          chainChanges.push({ variable, previous: before[variable], value })
-      }
+    if (values.length === 0) continue
+    const state = exportedState(here)
     const found = resolveBd(values, assigned)
     if (found !== undefined) {
       const scanned = scanGlobals(values, found.next)
@@ -246,8 +284,9 @@ function readCommand(command: string, inherited: ActorState): { invocations: BdI
       if (script !== undefined) out.push(...bdInvocations(script, scriptState))
     }
   }
-  for (const source of unclaimed) out.push(...bdInvocations(source, state))
-  return { invocations: out, state }
+  const final = exportedState(vars)
+  for (const source of unclaimed) out.push(...bdInvocations(source, final))
+  return { invocations: out, marks }
 }
 
 /** The `bd` word after shell assignments and transparent wrappers, with what those wrappers set. */
@@ -596,9 +635,23 @@ export function decideActorParsed(
   }
   // Decide on the original command text. Re-joining argv with spaces drops quoting, so a
   // quoted "; bd create" would become a command and prefix assignments would vanish.
-  // Substitutions, `bash -c` bodies and here-documents are read in order by `bdInvocations`, each with
-  // the state at its own position; rechecking `nested` with the final state would apply a later unset to them.
-  return decideActorGate(candidate.command, env, inherited)
+  // Substitutions, `bash -c` bodies and here-documents are read in order by `decideActorGate`. The children the
+  // parser found by other means (`eval`, `xargs`, wrapped interpreters, descriptor-fed scripts) are checked under
+  // the state where they run, found by locating the child's text in the command; when it cannot be
+  // located, under the state the whole command started with.
+  let advisory = false
+  const own = decideActorGate(candidate.command, env, inherited)
+  if (own.kind === "block") return own
+  if (own.kind === "advisory") advisory = true
+  const stateAt = actorStateAt(candidate.command, inherited)
+  for (const child of candidate.nested) {
+    const text = (child as { command?: unknown } | null)?.command
+    const at = typeof text === "string" ? candidate.command.indexOf(text) : -1
+    const decision = decideActorParsed(child, env, at < 0 ? inherited : stateAt(at))
+    if (decision.kind === "block") return decision
+    if (decision.kind === "advisory") advisory = true
+  }
+  return advisory ? { kind: "advisory", text: ADVISORY_TEXT } : { kind: "allow" }
 }
 
 /**

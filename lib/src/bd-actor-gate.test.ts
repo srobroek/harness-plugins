@@ -326,6 +326,61 @@ describe("firstBdVerb / isMutatingBdCommand", () => {
     }
   })
 
+  describe("children the parser finds, checked where they run", () => {
+    const decide = (command: string, env = emptyEnv) => decideActorParsed(parse(command), env).kind
+
+    test.each([
+      ["eval", "eval 'bd create x'"],
+      ["xargs", "echo y | xargs bd create"],
+      ["a wrapped interpreter", "timeout 5 bash -c 'bd create x'"],
+      ["a descriptor-fed script", "bash 3<<<'bd create y' 0<&3"],
+    ])("a create under %s with no actor is refused", (_name, command) => {
+      expect(decide(command)).toBe("block")
+    })
+
+    test("a child runs under an export made before it", () => {
+      expect(decide("export BD_ACTOR=a; eval 'bd create x'")).toBe("allow")
+    })
+
+    test("a child does not see an unset made after it", () => {
+      expect(decide("eval 'bd create x'; unset BD_ACTOR", bdActorEnv)).toBe("allow")
+    })
+
+    test("a child sees an unset made before it", () => {
+      expect(decide("unset BD_ACTOR; eval 'bd create x'", bdActorEnv)).toBe("block")
+    })
+  })
+
+  describe("the actor variables follow one shell model", () => {
+    const actors = (command: string) => bdInvocations(command).map((invocation) => invocation.exported.BD_ACTOR)
+
+    test("an export assignment replaces the value a name-only export publishes later", () => {
+      expect(actors("BD_ACTOR=old; export BD_ACTOR=new; export -n BD_ACTOR; export BD_ACTOR; bd create x")).toEqual(["new"])
+    })
+
+    test("an unexport and re-export keeps the actor", () => {
+      expect(decideActorGate("export BD_ACTOR=x; export -n BD_ACTOR; export BD_ACTOR; bd create x", emptyEnv)).toEqual({
+        kind: "allow",
+      })
+    })
+
+    test("a skipped && assignment does not persist", () => {
+      expect(decideActorGate("unset BD_ACTOR; false && BD_ACTOR=x; export BD_ACTOR; bd create x", bdActorEnv).kind).toBe("block")
+    })
+
+    test("a chain ends on the snapshot taken before it, not on an intermediate state", () => {
+      expect(actors("export BD_ACTOR=a; true && export BD_ACTOR=b && export BD_ACTOR=c; bd create x")).toEqual(["a"])
+    })
+
+    test("a subshell inside a chain neither leaks into nor loses the chain", () => {
+      expect(actors("export BD_ACTOR=a; true && (export BD_ACTOR=b; bd create x); bd create y")).toEqual(["b", "a"])
+    })
+
+    test("a non-final pipeline stage runs on a copy", () => {
+      expect(decideActorGate("unset BD_ACTOR | cat; bd create x", bdActorEnv)).toEqual({ kind: "allow" })
+    })
+  })
+
   test("env assignments after removal restore actor attribution", () => {
     for (const command of [
       "env -i BD_ACTOR=actor/x bd update bead-1 --claim",
