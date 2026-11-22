@@ -39,7 +39,7 @@ Every worker step carries `execution_mode = "subagent"` and an `execution_agent_
 ## Bonding
 
 ```bash
-export BEADS_ACTOR=you
+# Inside OpenCode the beads plugin sets the actor; run by hand, bd uses your git identity.
 root=$(bd mol pour cad-product --var product=widget --var scope=hw/)
 root=$(printf '%s\n' "$root" | sed -n 's/.*Root issue: //p')
 parts=$(bd list --parent "$root" --label fanout --label phase:parts --json | jq -r '.[0].id')
