@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { Error as ToolError } from "@opencode/plugin/promise/tool"
 import { outsideLocks } from "@srobroek/opencode-lib/lease-lock"
 import { createFakeContext, type FakeContext } from "@srobroek/opencode-lib/testing"
-import { readClaim, writeLanding } from "@srobroek/opencode-lib/worktree-claims"
+import { readClaim, writeClaim, writeLanding } from "@srobroek/opencode-lib/worktree-claims"
 import { setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
 import type { RunResult } from "./git.ts"
 import { createPlugin, SWEEP_TOOL } from "./index.ts"
@@ -128,6 +128,8 @@ async function start(
     /** Receives the lifecycle, so a test can deliver host events and await `settle()`. */
     onLifecycle?: (lifecycle: Lifecycle) => void
     debounceMs?: number
+    /** Writes the state a crash left behind (plugin storage, the git common directory) before the plugin starts. */
+    seed?: (fake: FakeContext, common: string) => void
   } = {},
 ): Promise<Setup> {
   const fake = createFakeContext({
@@ -224,6 +226,7 @@ async function start(
     if (argv[0] === "wt") expect(fake.sessions.get("ses_fake1")?.location).not.toEqual({ directory: REPO })
     return fakeRun(repo, log)(argv)
   }, suffix: () => "abc123", lookupMs: 20, directoryExists: options.exists ?? (async () => true), ...(options.now ? { now: options.now } : {}), ...(options.lock ? { lock: options.lock } : {}), ...(options.onLifecycle ? { lifecycle: options.onLifecycle } : {}), ...(options.debounceMs === undefined ? {} : { debounceMs: options.debounceMs }), reserveMs: 60_000 })
+  options.seed?.(fake, common)
   const cleanup = (await plugin.setup(fake.context)) as () => Promise<void>
   return { common, fake, repo, log, worktree, cleanup }
 }
@@ -809,6 +812,74 @@ describe("worktree argument", () => {
     })
 
     describe("a released writer's lane", () => {
+      describe("a restart in the middle of a handover", () => {
+        const successor: Lane = { ...owned, child: "ses_next", parent: PARENT, handedOver: { from: "ses_dead", at: NOW } }
+        const record = { child: "ses_dead", directory: OTHER, by: PARENT, at: NOW, head: OTHER_HEAD, reason: "its server died", to: "ses_next", toParent: PARENT }
+        const claimFor = (common: string, sessionID: string) =>
+          writeClaim(common, { directory: OTHER, branch: "feat", sessionID, parentID: PARENT, createdAt: NOW })
+        const sweep = (setup: Setup) => {
+          const tool = setup.fake.tools.get(SWEEP_TOOL) as unknown as { execute: (i: unknown, c: unknown) => Promise<{ content: string }> }
+          return tool.execute({ mode: "prune" }, { sessionID: PARENT, agent: "build", messageID: "m", id: "c" })
+        }
+
+        test.each([
+          ["after the record names the successor, before its lane is saved", { successorClaim: false, successorLane: false }],
+          ["after the successor's claim is written, before its lane is saved", { successorClaim: true, successorLane: false }],
+          ["after the successor's lane is saved, before the old lane is removed", { successorClaim: true, successorLane: true }],
+        ])("a restart %s finishes the handover and keeps the successor's worktree", async (_name, state) => {
+          let lifecycle!: Lifecycle
+          const setup = await start({
+            now: () => NOW,
+            onLifecycle: (value) => (lifecycle = value),
+            seed: (fake, common) => {
+              fake.storage.set(laneKey("ses_dead"), owned)
+              fake.storage.set("release/ses_dead", record)
+              if (state.successorLane) fake.storage.set(laneKey("ses_next"), successor)
+              claimFor(common, state.successorClaim ? "ses_next" : "ses_dead")
+              // The successor was moved in and went idle; the old writer's session is deleted.
+              fake.sessions.set("ses_next", { id: "ses_next", parentID: PARENT, projectID: "prj", location: { directory: OTHER }, time: { busy: NOW - 2, idle: NOW - 1 } })
+            },
+          })
+          await lifecycle.settle()
+          expect(lane(setup.fake, "ses_dead")).toBeUndefined()
+          expect(lane(setup.fake, "ses_next")).toEqual(successor)
+          await sweep(setup)
+          await lifecycle.settle()
+          expect(setup.worktree.calls.filter((call) => call.method === "remove")).toEqual([])
+          expect(setup.fake.sessions.get("ses_next")?.location).toEqual({ directory: OTHER })
+          expect(lane(setup.fake, "ses_next")?.state).toBe("active")
+          expect(claimant(setup)).toBe("ses_next")
+        })
+
+        test("a sweep never removes or evicts through a handed-off lane, even when the old lane cannot be dropped", async () => {
+          let lifecycle!: Lifecycle
+          const setup = await start({
+            now: () => NOW,
+            repo: { ahead: 0 },
+            onLifecycle: (value) => (lifecycle = value),
+            seed: (fake, common) => {
+              fake.storage.set(laneKey("ses_dead"), owned)
+              fake.storage.set("release/ses_dead", record)
+              fake.storage.set(laneKey("ses_next"), successor)
+              claimFor(common, "ses_next")
+              fake.sessions.set("ses_next", { id: "ses_next", parentID: PARENT, projectID: "prj", location: { directory: OTHER }, time: { busy: NOW - 2, idle: NOW - 1 } })
+              const remove = fake.context.storage.remove.bind(fake.context.storage)
+              Object.assign(fake.context.storage, {
+                remove: async (key: string) => {
+                  if (key === laneKey("ses_dead")) throw new Error("storage unavailable")
+                  return remove(key as never)
+                },
+              })
+            },
+          })
+          await lifecycle.settle()
+          const result = await sweep(setup)
+          await lifecycle.settle()
+          expect(setup.worktree.calls.filter((call) => call.method === "remove")).toEqual([])
+          expect(setup.fake.sessions.get("ses_next")?.location).toEqual({ directory: OTHER })
+          expect(result.content).toMatch(/handed/)
+        })
+      })
       test("a stale copy of the old lane, saved after the handover, does not come back or take the claim", async () => {
         let lifecycle!: Lifecycle
         const setup = await dead({ debounceMs: 1, onLifecycle: (value) => (lifecycle = value) })
