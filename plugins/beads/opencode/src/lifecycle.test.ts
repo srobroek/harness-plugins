@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { BACKGROUND_HOLD_MS, type HoldTimer } from "@srobroek/opencode-lib/idle-background"
@@ -14,6 +14,7 @@ import {
   goalEnded,
   isPluginPrompt,
   readExecutionEvent,
+  resetLifecycleState,
   rootStopAction,
   subagentChild,
 } from "./lifecycle.ts"
@@ -116,7 +117,10 @@ class FakeHoldTimer implements HoldTimer {
 }
 
 const roots: string[] = []
+// The lifecycle state is process-wide; every case starts from and leaves an empty one.
+beforeEach(resetLifecycleState)
 afterEach(() => {
+  resetLifecycleState()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
@@ -773,9 +777,7 @@ describe("skills", () => {
 describe("shared state from an older instance", () => {
   const KEY = Symbol.for("srobroek.beads.lifecycle")
   const holder = globalThis as Record<symbol, unknown>
-  afterEach(() => {
-    delete holder[KEY]
-  })
+  afterEach(resetLifecycleState)
 
   test("an object without idle and held is backfilled and the idle hook does not throw", async () => {
     const old = { events: new Set(), deferred: new Set(), foreground: new Map(), releases: new Map(), reported: new WeakSet() }
@@ -933,7 +935,8 @@ describe("reconciliation follows the run it belongs to", () => {
       }
       return bd.run(cwd, args, deadline, env)
     }
-    const t = await start([{ id: parent }, { id: child, parentID: parent }], { run })
+    const sibling = sid("sibling")
+    const t = await start([{ id: parent }, { id: child, parentID: parent }, { id: sibling, parentID: parent }], { run })
     mkdirSync(join(t.directory, ".beads"))
     await t.shell(child, hidden, "claimed")
     await t.emit("session.execution.started", child)
@@ -949,7 +952,12 @@ describe("reconciliation follows the run it belongs to", () => {
       claimed = true
     })
     try {
-      await new Promise<void>((resolve) => setImmediate(resolve))
+      // A sibling with no release in flight runs the same hook path, started after the claim above.
+      // Once its call returns, an unfenced claim would have passed its mutation boundary too.
+      await t.fake.fire.tool("execute.before", {
+        tool: "shell", sessionID: sibling, agent: "general", messageID: "msg_3", id: "sibling_claim",
+        input: { command: "bd update proj-4 --claim" },
+      })
       expect(claimed).toBe(false)
     } finally {
       open.resolve()
@@ -1044,7 +1052,6 @@ describe("reconciliation follows the run it belongs to", () => {
     const other = sid("other")
     const mine = `opencode/${parent}/general/${child}`
     const bd = ledger({ "proj-3": { status: "in_progress", assignee: mine } })
-    ;(globalThis as { [key: symbol]: { runs?: Map<string, number> } })[Symbol.for("srobroek.beads.lifecycle")]?.runs?.clear()
     const t = await start([{ id: parent }, { id: child, parentID: parent }, { id: other }], { run: bd.run, maxRuns: 1 })
     mkdirSync(join(t.directory, ".beads"))
     await t.shell(child, hidden, "claimed")
@@ -1068,7 +1075,6 @@ describe("reconciliation follows the run it belongs to", () => {
     const other = sid("other")
     const mine = `opencode/${parent}/general/${child}`
     const bd = ledger({ "proj-3": { status: "in_progress", assignee: mine } })
-    ;(globalThis as { [key: symbol]: { runs?: Map<string, number> } })[Symbol.for("srobroek.beads.lifecycle")]?.runs?.clear()
     const t = await start([{ id: parent }, { id: child, parentID: parent }, { id: other }], { run: bd.run, maxRuns: 1 })
     mkdirSync(join(t.directory, ".beads"))
     await t.shell(child, hidden, "claimed")
@@ -1092,8 +1098,6 @@ describe("reconciliation follows the run it belongs to", () => {
     const other = sid("other")
     const mine = `opencode/${parent}/general/${child}`
     const bd = ledger({ "proj-3": { status: "in_progress", assignee: mine } })
-    // Earlier cases leave run entries in the process-wide state; start from an empty counter table.
-    ;(globalThis as { [key: symbol]: { runs?: Map<string, number> } })[Symbol.for("srobroek.beads.lifecycle")]?.runs?.clear()
     const t = await start([{ id: parent }, { id: child, parentID: parent }, { id: other }], { run: bd.run, maxRuns: 1 })
     mkdirSync(join(t.directory, ".beads"))
     await t.shell(child, hidden, "claimed")
