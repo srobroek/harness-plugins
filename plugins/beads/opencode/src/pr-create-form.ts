@@ -1,4 +1,4 @@
-import { type ParsedCommand, type ShellWord, scanShell } from "@srobroek/opencode-lib/beads-shell"
+import { type ParsedCommand, type ShellWord, type SimpleCommand, scanShell } from "@srobroek/opencode-lib/beads-shell"
 
 /**
  * What the PR bead-link gate accepts, and what it treats as a possible `gh pr create`.
@@ -30,8 +30,8 @@ export const ACCEPTED_FORMS = [
 export const TRAILER_RULE =
   "Name the bead on a line of its own in the body: `Bead: <id>`, `Closes-Bead: <id>` or `Bead-Id: <id>`, with no other text on the line."
 
-/** The text of a body file, or why the gate will not read it. */
-export type FileRead = { ok: true; text: string } | { ok: false; reason: string }
+/** The text of a body file, or why the gate will not read it. `cause` is the error behind a failed open; it is never shown. */
+export type FileRead = { ok: true; text: string } | { ok: false; reason: string; cause?: unknown }
 
 /** Reads the `--body-file` path `P`, a bare relative path that already passed the lexical rules. */
 export type ReadFile = (path: string) => FileRead
@@ -44,7 +44,7 @@ export type PrCreateRead =
       /** The `--repo` value, an `OWNER/REPO` or `HOST/OWNER/REPO`, or null when the command names none. */
       repo: string | null
     }
-  | { kind: "refused"; rule: string }
+  | { kind: "refused"; rule: string; cause?: unknown }
 
 const BEAD_LINE = /^[ \t]*(?:Bead|Closes-Bead|Bead-Id):[ \t]*([A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9]+)[ \t]*$/i
 
@@ -67,7 +67,19 @@ const LONG_WITH_VALUE = /^(--[A-Za-z][A-Za-z-]*)=(.+)$/s
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control character is exactly what this refuses
 const CONTROL = /[\x00-\x08\x0b-\x1f\x7f]/
 const GAP = /^(?:[ \t]|\\\n)+$/
-const REPOSITORY = /^(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)?[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/
+const REPOSITORY_NAME = /^[A-Za-z0-9._-]+$/
+
+/**
+ * `OWNER/REPO` or `HOST/OWNER/REPO`. Each component uses GitHub's name characters and is not `.` or `..`,
+ * so a repository may start with `.`, `-` or `_` (`owner/.github`). The first component never starts with
+ * `-`, because the value reaches `gh repo view` as an argument.
+ */
+function validRepository(value: string): boolean {
+  const parts = value.split("/")
+  if (parts.length < 2 || parts.length > 3) return false
+  if (parts[0]?.startsWith("-")) return false
+  return parts.every((part) => REPOSITORY_NAME.test(part) && part !== "." && part !== "..")
+}
 
 /** The text a word stands for, or undefined when its source is not one of the three accepted shapes. */
 function wordValue(span: string): string | undefined {
@@ -177,7 +189,7 @@ export function readPrCreate(source: string, readFile: ReadFile): PrCreateRead {
       bodies++
       file = { path: value, span: valueSpan }
     } else if (VALUED_FLAGS[name] === "--repo") {
-      if (!REPOSITORY.test(value)) return refuse("the --repo value is not OWNER/REPO or HOST/OWNER/REPO")
+      if (!validRepository(value)) return refuse("the --repo value is not OWNER/REPO or HOST/OWNER/REPO")
       repo = value
     }
   }
@@ -189,7 +201,7 @@ export function readPrCreate(source: string, readFile: ReadFile): PrCreateRead {
   const lexical = pathRule(named.span, named.path)
   if (lexical !== undefined) return refuse(`--body-file: ${lexical}`)
   const read = readFile(named.path)
-  if (!read.ok) return refuse(`--body-file ${named.path}: ${read.reason}`)
+  if (!read.ok) return { ...refuse(`--body-file ${named.path}: ${read.reason}`), ...(read.cause === undefined ? {} : { cause: read.cause }) }
   return { kind: "form", body: { text: read.text, source: `--body-file ${named.path}` }, repo }
 }
 
@@ -263,6 +275,41 @@ function wordsMayCreate(values: string[], opaques: boolean[]): boolean {
   return false
 }
 
+/** Text the command's standard input carries: each here-document body and each here-string word. */
+function stdinTexts(item: SimpleCommand, text: string): { text: string; opaque: boolean }[] {
+  return [
+    ...item.hereDocuments.map((document) => ({ text: document.body, opaque: false })),
+    ...item.redirects.filter((word) => word.hereString === true).map((word) => ({ text: word.value, opaque: opaque(word, text) })),
+  ]
+}
+
+/** Whether the text mentions `gh`, however it is spelled, or runs a command it cannot name. */
+function textNamesGh(text: string): boolean {
+  // An interpreter that is not a shell (`python3 <<EOF … os.system('gh pr create')`) hides the words in a string.
+  if (/\bgh\b/.test(text) || /\bpr\b[\s\S]*\b(?:create|new)\b/.test(text)) return true
+  const scan = scanShell(text)
+  if (!scan.complete) return true
+  return scan.items.some((item) => {
+    if (item.kind !== "command") return false
+    const opaques = item.words.map((word) => opaque(word, text))
+    const first = item.words.findIndex((word) => !ASSIGNMENT.test(word.value))
+    return item.words.some((word, i) => (opaques[i] !== true && basename(word.value) === "gh") || (i === first && opaques[i] === true))
+  })
+}
+
+/**
+ * A heredoc or here-string may reach `gh pr create` whichever command receives it: `cat <<EOF | sh`,
+ * `tee >(sh) <<EOF` and a git shell alias all run it. So the text decides, never the command. It
+ * counts when it may create a PR as shell, names `gh` in any spelling, has `pr` before `create` or
+ * `new`, holds a command word the gate cannot read, or is an expanding here-string.
+ */
+function stdinMayCreate(item: SimpleCommand, text: string, depth: number): boolean {
+  const documents = stdinTexts(item, text)
+  if (documents.length === 0) return false
+  if (depth >= MAX_RESCAN_DEPTH) return true
+  return documents.some((document) => document.opaque || textMayCreate(document.text, depth + 1) || textNamesGh(document.text))
+}
+
 function textMayCreate(text: string, depth: number): boolean {
   const scan = scanShell(text)
   if (!scan.complete) return wordsMayCreate(text.split(/[\s'"]+/), [])
@@ -271,6 +318,7 @@ function textMayCreate(text: string, depth: number): boolean {
     const values = item.words.map((word) => word.value)
     const opaques = item.words.map((word) => opaque(word, text))
     if (wordsMayCreate(values, opaques)) return true
+    if (stdinMayCreate(item, text, depth)) return true
     const env = values.findIndex((value, i) => basename(value) === "env" && opaques[i] !== true)
     if (env < 0) continue
     // Whatever follows `env` may be shell text (`env -S 'gh pr create'`): read each word as a command line.
@@ -287,7 +335,8 @@ function levels(parsed: ParsedCommand): ParsedCommand[] {
 /**
  * Whether any simple command at any nesting level may run `gh pr create`: the words `pr` and
  * later `create` or `new` behind any wrapper, a `gh` operand that could be an alias or extension,
- * or a word the gate cannot read next to a literal `gh`, `pr`, `create` or `new`.
+ * a word the gate cannot read next to a literal `gh`, `pr`, `create` or `new`, or a heredoc or
+ * here-string whose text trips any of those rules, whichever command receives it.
  */
 export function mayCreatePr(parsed: ParsedCommand): boolean {
   return levels(parsed).some((level) => textMayCreate(level.command, 0))

@@ -175,6 +175,21 @@ describe("readBodyFile", () => {
     if (!read.ok) expect(read.reason).toContain(reason)
   })
 
+  test("an open failure keeps the caught error as its cause and shows only the errno code", () => {
+    const read = readBodyFile(dir)("nope.md")
+    expect(read.ok).toBe(false)
+    if (read.ok) return
+    expect(read.cause).toBeInstanceOf(Error)
+    expect((read.cause as NodeJS.ErrnoException).code).toBe("ENOENT")
+    expect(read.reason).toContain("(ENOENT)")
+    expect(read.reason).not.toContain((read.cause as Error).message)
+  })
+
+  test("a refusal for a file's content has no cause", () => {
+    const read = readBodyFile(dir)("bad.md")
+    expect(read).not.toHaveProperty("cause")
+  })
+
   // The test took 0.2 s alone (3 runs); 15 s covers the 10 s child deadline plus load.
   test("refuses a FIFO without blocking", { timeout: 15_000 }, () => {
     const made = spawnSync("mkfifo", [join(dir, "pipe")])

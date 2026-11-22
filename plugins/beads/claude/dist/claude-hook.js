@@ -4353,7 +4353,15 @@ var DOUBLE = /^"([^"$`\\]*)"$/;
 var LONG_WITH_VALUE = /^(--[A-Za-z][A-Za-z-]*)=(.+)$/s;
 var CONTROL = /[\x00-\x08\x0b-\x1f\x7f]/;
 var GAP = /^(?:[ \t]|\\\n)+$/;
-var REPOSITORY = /^(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)?[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
+var REPOSITORY_NAME = /^[A-Za-z0-9._-]+$/;
+function validRepository(value) {
+  const parts = value.split("/");
+  if (parts.length < 2 || parts.length > 3)
+    return false;
+  if (parts[0]?.startsWith("-"))
+    return false;
+  return parts.every((part) => REPOSITORY_NAME.test(part) && part !== "." && part !== "..");
+}
 function wordValue(span) {
   if (BARE.test(span))
     return span;
@@ -4460,7 +4468,7 @@ function readPrCreate(source, readFile) {
       bodies++;
       file = { path: value, span: valueSpan };
     } else if (VALUED_FLAGS[name] === "--repo") {
-      if (!REPOSITORY.test(value))
+      if (!validRepository(value))
         return refuse("the --repo value is not OWNER/REPO or HOST/OWNER/REPO");
       repo = value;
     }
@@ -4477,7 +4485,7 @@ function readPrCreate(source, readFile) {
     return refuse(`--body-file: ${lexical}`);
   const read = readFile(named.path);
   if (!read.ok)
-    return refuse(`--body-file ${named.path}: ${read.reason}`);
+    return { ...refuse(`--body-file ${named.path}: ${read.reason}`), ...read.cause === undefined ? {} : { cause: read.cause } };
   return { kind: "form", body: { text: read.text, source: `--body-file ${named.path}` }, repo };
 }
 var GH_BUILTINS = new Set([
@@ -4547,6 +4555,34 @@ function wordsMayCreate(values, opaques) {
     return true;
   return false;
 }
+function stdinTexts(item, text) {
+  return [
+    ...item.hereDocuments.map((document) => ({ text: document.body, opaque: false })),
+    ...item.redirects.filter((word) => word.hereString === true).map((word) => ({ text: word.value, opaque: opaque(word, text) }))
+  ];
+}
+function textNamesGh(text) {
+  if (/\bgh\b/.test(text) || /\bpr\b[\s\S]*\b(?:create|new)\b/.test(text))
+    return true;
+  const scan = scanShell(text);
+  if (!scan.complete)
+    return true;
+  return scan.items.some((item) => {
+    if (item.kind !== "command")
+      return false;
+    const opaques = item.words.map((word) => opaque(word, text));
+    const first = item.words.findIndex((word) => !ASSIGNMENT4.test(word.value));
+    return item.words.some((word, i) => opaques[i] !== true && basename5(word.value) === "gh" || i === first && opaques[i] === true);
+  });
+}
+function stdinMayCreate(item, text, depth) {
+  const documents = stdinTexts(item, text);
+  if (documents.length === 0)
+    return false;
+  if (depth >= MAX_RESCAN_DEPTH)
+    return true;
+  return documents.some((document) => document.opaque || textMayCreate(document.text, depth + 1) || textNamesGh(document.text));
+}
 function textMayCreate(text, depth) {
   const scan = scanShell(text);
   if (!scan.complete)
@@ -4557,6 +4593,8 @@ function textMayCreate(text, depth) {
     const values = item.words.map((word) => word.value);
     const opaques = item.words.map((word) => opaque(word, text));
     if (wordsMayCreate(values, opaques))
+      return true;
+    if (stdinMayCreate(item, text, depth))
       return true;
     const env = values.findIndex((value, i) => basename5(value) === "env" && opaques[i] !== true);
     if (env < 0)
@@ -4677,7 +4715,7 @@ function readBodyFile(cwd) {
       }
     } catch (error) {
       const code = error.code;
-      return { ok: false, reason: `it could not be opened as a regular file${code === undefined ? "" : ` (${code})`}` };
+      return { ok: false, reason: `it could not be opened as a regular file${code === undefined ? "" : ` (${code})`}`, cause: error };
     } finally {
       if (fd !== undefined)
         closeSync4(fd);

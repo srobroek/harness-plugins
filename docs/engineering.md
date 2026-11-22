@@ -43,6 +43,8 @@ A plugin has `package.json`, `agents.src/` or `common/` (skills, agents, formula
 
 The `beads` PR bead gate does not port upstream's shell decoding (ANSI-C words, `env -S`, wrapper directories). `plugins/beads/opencode/src/pr-create-form.ts` accepts only literal `gh pr create`/`gh pr new` forms: a single command, `--body` or a relative regular `--body-file`, and a `Bead:`, `Closes-Bead:` or `Bead-Id:` line. Any other form that may reach `gh pr create` is refused in a gated repository, with the accepted form shown.
 
+The gate judges the text of every heredoc and here-string, whichever command receives it, because `cat <<EOF | sh`, `tee >(sh) <<EOF` and a git shell alias all run it. Text that may create a PR as shell, names `gh`, has `pr` before `create` or `new`, holds a command word the gate cannot read, or is an expanding here-string is refused. Tradeoff: in a gated repository a commit-message heredoc that mentions `gh pr create` is refused too. Write the message without those words, or pass it with `-m`.
+
 ## Dependency direction
 
 Intended rules:

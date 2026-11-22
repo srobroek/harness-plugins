@@ -48,6 +48,9 @@ describe("readPrCreate: forms it reads", () => {
     ["every valued flag", "gh pr create -t t -B b -H h -r r -a a -l l -m m -p p --body x", "x", null],
     ["--repo", "gh pr create --body x --repo o/r", "x", "o/r"],
     ["-R with a host, the last one winning", "gh pr create -R a/b -R ghe.example.com/o/r --body x", "x", "ghe.example.com/o/r"],
+    ["a repository that starts with a dot", "gh pr create --body x -R owner/.github", "x", "owner/.github"],
+    ["a repository that starts with an underscore or a dash", "gh pr create --body x -R owner/_-x", "x", "owner/_-x"],
+    ["a dotted repository on a host", "gh pr create --body x -R ghe.example.com/o/a.b_c-d", "x", "ghe.example.com/o/a.b_c-d"],
     ["tabs and repeated spaces between words", "gh  pr\tcreate   --body\tx", "x", null],
     ["a backslash-newline continuation", "gh pr create \\\n  --title t \\\n  --body x", "x", null],
     ["surrounding whitespace and a final newline", "\n  gh pr create --body x \n", "x", null],
@@ -115,6 +118,9 @@ describe("readPrCreate: forms it refuses, naming the rule", () => {
     ["--recover", "gh pr create --recover k", "`--recover` is not an accepted flag"],
     ["--attach", "gh pr create --attach a", "`--attach` is not an accepted flag"],
     ["a repo that is no OWNER/REPO", "gh pr create -R justname --body x", "--repo value"],
+    ["a repo named .", "gh pr create -R owner/. --body x", "--repo value"],
+    ["a repo named ..", "gh pr create -R owner/.. --body x", "--repo value"],
+    ["a repo with a fourth component", "gh pr create -R a/b/c/d --body x", "--repo value"],
     ["a repo that starts with a dash", "gh pr create -R -x/y --body x", "--repo value"],
     ["a quoted body-file path", "gh pr create -F 'b.md'", "quoted"],
     ["standard input as the body file", "gh pr create -F -", "standard input"],
@@ -131,6 +137,16 @@ describe("readPrCreate: forms it refuses, naming the rule", () => {
   test("a file the reader refuses is refused with the path and the reader's reason", () => {
     const read = readPrCreate("gh pr create -F b.md", () => ({ ok: false, reason: "it is not a regular file" }))
     expect(read).toEqual({ kind: "refused", rule: "--body-file b.md: it is not a regular file" })
+  })
+
+  test("a file failure keeps the reader's cause and shows only its reason", () => {
+    const cause = new Error("EACCES: permission denied, open '/secret/path/b.md'")
+    const read = readPrCreate("gh pr create -F b.md", () => ({ ok: false, reason: "it could not be opened", cause }))
+    expect(read).toEqual({ kind: "refused", rule: "--body-file b.md: it could not be opened", cause })
+  })
+
+  test("a refusal that is not a file failure has no cause", () => {
+    expect(readPrCreate("gh pr create --fill", noFile)).not.toHaveProperty("cause")
   })
 
   test("a refusal never echoes a body", () => {
@@ -170,6 +186,20 @@ describe("mayCreatePr", () => {
     ["with an expanding word beside create", "x create $Y"],
     ["with two expanding words, one the command", "$A $B"],
     ["in a chain", "git push && gh pr create --body x"],
+    ["in a heredoc fed to cat that mentions the words", "cat <<EOF\nrun gh pr create later\nEOF"],
+    ["in a heredoc fed to git commit that mentions the words", "git commit -F - <<'EOF'\nrun gh pr create later\nEOF"],
+    ["in a heredoc piped to a shell", "cat <<'EOF' | sh\ngh pr create --body x\nEOF"],
+    ["in a heredoc fed to tee with a process substitution", "tee >(sh) <<'EOF'\ngh pr create --body x\nEOF"],
+    ["in a heredoc fed to git with a shell alias", "git -c alias.x='!sh' x <<'EOF'\ngh pr create --body x\nEOF"],
+    ["in a heredoc fed to bd", "bd create --body-file - <<EOF\ngh pr create --body x\nEOF"],
+    ["with pr and later new in a heredoc fed to cat", "cat <<EOF\nthe pr is new\nEOF"],
+    ["with an expanding here-string fed to cat", 'cat <<<"$X"'],
+    ["in a heredoc fed to a wrapped shell", "env sh <<'EOF'\ngh pr create --body x\nEOF"],
+    ["in a here-string fed to a shell", "bash <<<'gh pr create --body x'"],
+    ["in a heredoc fed to an unknown command", "mytool <<EOF\ngh pr create --body x\nEOF"],
+    ["with a gh alias in a heredoc fed to a shell", "sh <<EOF\ngh mkpr\nEOF"],
+    ["with an expanding here-string fed to a wrapped shell", 'env sh <<<"$CMD"'],
+    ["with an expanding command word in a heredoc fed to a shell", "sh <<EOF\n$A x\nEOF"],
   ])("%s", (_name, command) => {
     expect(mayCreatePr(parse(command))).toBe(true)
   })
@@ -189,6 +219,9 @@ describe("mayCreatePr", () => {
     ["env without a PR", "env FOO=1 ls"],
     ["env -S without a PR", "env -S 'ls -l'"],
     ["two expanding arguments", "ls $A $B"],
+    ["a heredoc into git commit", "git commit -F - <<'EOF'\nfix: a thing\nEOF"],
+    ["harmless text into a shell", "sh <<EOF\necho hi\nEOF"],
+    ["harmless text into a wrapped shell", "env bash <<<'echo hi'"],
   ])("not %s", (_name, command) => {
     expect(mayCreatePr(parse(command))).toBe(false)
   })

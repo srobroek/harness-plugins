@@ -150,7 +150,8 @@ export function readBodyFile(cwd: string): ReadFile {
       }
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code
-      return { ok: false, reason: `it could not be opened as a regular file${code === undefined ? "" : ` (${code})`}` }
+      // The reason is shown to the user; the error itself can name paths, so it stays on `cause`.
+      return { ok: false, reason: `it could not be opened as a regular file${code === undefined ? "" : ` (${code})`}`, cause: error }
     } finally {
       if (fd !== undefined) closeSync(fd)
     }
