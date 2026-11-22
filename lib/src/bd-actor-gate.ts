@@ -104,19 +104,19 @@ const ASSIGNMENT = /^[A-Za-z_]\w*=/
 const BOTH: Partial<Record<ActorVar, true>> = { BEADS_ACTOR: true, BD_ACTOR: true }
 
 /** Builtins other than `export` and `unset` that can set or clear a shell variable named in their arguments. */
-const VARIABLE_BUILTINS = new Set([
-  "declare",
-  "eval",
-  "getopts",
-  "let",
-  "local",
-  "mapfile",
-  "printf",
-  "read",
-  "readarray",
-  "readonly",
-  "typeset",
-])
+const VARIABLE_BUILTINS: Record<string, true> = {
+  declare: true,
+  eval: true,
+  getopts: true,
+  let: true,
+  local: true,
+  mapfile: true,
+  printf: true,
+  read: true,
+  readarray: true,
+  readonly: true,
+  typeset: true,
+}
 
 const basename = (word: string): string => word.split("/").pop() ?? word
 
@@ -171,7 +171,7 @@ function afterCommand(vars: ShellVars, values: string[], assigned: string[]): Sh
   const name = command[0]
   if (values.length === 0) applyActorAssignments(after, assigned)
   else if (name === "export" || name === "unset") applyActorBuiltin(after, command)
-  else if (name !== undefined && VARIABLE_BUILTINS.has(name))
+  else if (name !== undefined && VARIABLE_BUILTINS[name] === true)
     for (const variable of ACTOR_VARS) {
       if (command.slice(1).some((arg) => arg.includes(variable))) after[variable] = "unverified"
     }
