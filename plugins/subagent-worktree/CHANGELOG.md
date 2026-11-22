@@ -1,3 +1,9 @@
+## subagent-worktree [0.7.0](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.6.5...subagent-worktree--v0.7.0) (2026-11-22)
+
+### Features
+
+* **subagent-worktree:** on-demand sweep through finalize; one notice per lane and reason ([dd4867f](https://github.com/srobroek/harness-plugins/commit/dd4867f95b2704190fdfc6cc6ceb31144b843aa0))
+
 ## subagent-worktree [0.6.5](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.6.4...subagent-worktree--v0.6.5) (2026-11-22)
 
 ### Bug Fixes
