@@ -10,7 +10,6 @@ import * as Logger from "effect/Logger"
 import { type AgentAssessment, assessmentRows } from "./assess.ts"
 import reference from "./fixtures/reference.json"
 import work from "./fixtures/work-models.json"
-import { GUARD_LOOKUP_TIMEOUT_MS } from "./guard.ts"
 import plugin, { CHILD_LOOKUP_MS, MAX_REREGISTER, type ModelRef, readAgents, readTiers, setExploreRandom, setHoldTimer, spawnTarget } from "./index.ts"
 import { adoptPlan } from "./tiers-draft.ts"
 import type { TierRow } from "./tiers-ui.ts"
@@ -334,9 +333,11 @@ const pastBound = async <T,>(start: () => Promise<T>, boundMs: number): Promise<
     jest.useRealTimers()
   }
 }
+/** The default guard lookup bound the spec promises, owned by the tests so a changed constant fails them. */
+const DEFAULT_LOOKUP_BOUND_MS = 5000
 /** `lookups` is how many bounded lookups stall one after the other: the caller-vendor session is read twice. */
 const spawnPastBound = (host: ReturnType<typeof createHost>, input: Record<string, unknown>, lookups = 1) =>
-  pastBound(() => host.spawn("subagent", input), lookups * GUARD_LOOKUP_TIMEOUT_MS)
+  pastBound(() => host.spawn("subagent", input), lookups * DEFAULT_LOOKUP_BOUND_MS)
 
 /**
  * A lookup that stalls until the test releases it. The test asserts the call under test finished while
@@ -655,7 +656,7 @@ describe("subagent model guard", () => {
             const cleanup = await Effect.runPromise(Effect.promise(() => setup(host)).pipe(Effect.provide(Logger.layer([capture]))))
             fault(host)
             await spawnPastBound(host, input, site === "caller-vendor" ? 2 : 1)
-            expect(lines.join("\n")).toContain(`${text} did not answer within ${GUARD_LOOKUP_TIMEOUT_MS} ms; the spawn goes on without it`)
+            expect(lines.join("\n")).toContain(`${text} did not answer within 5000 ms; the spawn goes on without it`)
             host.close()
             await cleanup()
           },
@@ -2997,6 +2998,8 @@ describe("tiers rpc", () => {
       try {
         await body(host, file)
       } finally {
+        // A failing body must not leave plugin cleanup waiting on a stalled lookup or disposal.
+        gate.release()
         host.close()
         await cleanup()
       }
@@ -3798,10 +3801,13 @@ describe("tiers rpc", () => {
               return { dispose: () => gate.wait.then(() => registration.dispose()) }
             }
             // A first reload makes the stalling registration the current one; the second disposes it.
-            await host.rpc("set", { tier: "cheap", value: { model: [sonnet55] } })?.catch(() => {})
-            await pastBound(async () => host.rpc("set", { tier: "cheap", value: { model: ["amazon-bedrock/global.anthropic.claude-haiku-5-5"] } })?.catch(() => {}), 20)
-            expect(gate.released).toBe(false)
-            gate.release()
+            try {
+              await host.rpc("set", { tier: "cheap", value: { model: [sonnet55] } })?.catch(() => {})
+              await pastBound(async () => host.rpc("set", { tier: "cheap", value: { model: ["amazon-bedrock/global.anthropic.claude-haiku-5-5"] } })?.catch(() => {}), 20)
+              expect(gate.released).toBe(false)
+            } finally {
+              gate.release()
+            }
             await host.spawn("subagent", { agent: "plain", prompt: "x", tier: "cheap" })
           },
           [{ id: "worker", request: header("cheap") }],
@@ -3903,17 +3909,18 @@ describe("tiers rpc", () => {
               return original()
             }
           else host.setSessionGet(() => gate.wait.then(() => ({ id: "s1" })))
-          // The spawn's lookup stalls; the reload that follows must finish within the same 20 ms bound.
-          const spawning = pastBound(async () => {
+          // The spawn's lookup stalls; the reload and the spawn that waits on it must finish within the bounds, on the fake clock.
+          const model = await pastBound(async () => {
             const stalled = host.spawn("subagent", { agent: "plain", prompt: "x", ...(site === "pre-spawn agent" ? {} : { tier: "reviewer" }) }).catch(() => {})
             for (let i = 0; i < 50; i++) await Promise.resolve()
             writeFileSync(file, `{ "plugins": [{ "package": "/x/plugins/model-roles", "options": { "guard": { "lookupTimeoutMs": 20 }, "tiers": { "cheap": { "model": ["${sonnet55}"], "effort": "high" } } } }] }\n`)
             host.emit({ type: "config.updated", data: {} })
+            for (let i = 0; i < 50; i++) await Promise.resolve()
             await stalled
-          }, site === "pre-spawn agent" ? 20 : 40)
-          await spawning
-          await settle()
-          expect((await host.spawn("subagent", { agent: "plain", prompt: "x", tier: "cheap" }, "build", "s1", "c2")).model).toBe(`${sonnet55}#high`)
+            // The reload is seen done only through the next spawn, which waits for it.
+            return (await host.spawn("subagent", { agent: "plain", prompt: "x", tier: "cheap" }, "build", "s1", "c2")).model
+          }, site === "pre-spawn agent" ? 20 : 60)
+          expect(model).toBe(`${sonnet55}#high`)
           expect(gate.released).toBe(false)
         },
         [],
