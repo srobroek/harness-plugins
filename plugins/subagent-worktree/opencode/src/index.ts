@@ -878,7 +878,7 @@ export function createLanes(
   }
 
   /**
-   * `method: "release"`: free the worktree of a dead writer `input.sessionID` for a new writer (see `release.ts`).
+   * `method: "release"`: free the worktree of a dead writer `child` for a new writer (see `release.ts`).
    * Runs under the worktree's lock, like a spawn into it. The record is written before the old run is
    * interrupted, so a resume from then on is refused; a run that started after the facts were read
    * undoes the release.
