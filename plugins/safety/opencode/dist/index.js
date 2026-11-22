@@ -4547,7 +4547,7 @@ function pushArgs(args) {
   return { help, remote: positional[0] ?? repo };
 }
 var CD_FAMILY = new Set(["cd", "pushd", "popd", "chdir"]);
-var CONFIG_KEY = /^(?:remote|url|branch)\./i;
+var CONFIG_KEY = /^(?:remote|url|branch|include|includeif)\./i;
 function changesDirectory2(command) {
   const [first, second] = command.argv;
   if (CD_FAMILY.has(base(first)))
@@ -4585,11 +4585,46 @@ function configOverride(argv, end) {
   return false;
 }
 var SELECTOR = /GIT_(?:CONFIG|DIR|WORK_TREE|COMMON_DIR)/;
+var CONFIG_HOME = /(?:^|[\s;&|(])(?:HOME|XDG_CONFIG_HOME)=/;
+var READ_ONLY = new Set(["echo", "printf", "true", "false", ":", "pwd", "test", "[", "[[", "eval"]);
+var GIT_LOCAL = new Set([
+  "add",
+  "commit",
+  "status",
+  "log",
+  "diff",
+  "show",
+  "tag",
+  "fetch",
+  "rm",
+  "mv",
+  "restore",
+  "reset",
+  "stash",
+  "blame",
+  "rev-parse",
+  "ls-files"
+]);
+function mayChangeGitState(command) {
+  const name = base(command.argv[0]);
+  if (command.argv.length === 0 || READ_ONLY.has(name) || CD_FAMILY.has(name))
+    return false;
+  if (SHELLS.has(name))
+    return !command.argv.includes("-c");
+  const invocation = gitInvocation(command.argv);
+  if (invocation !== undefined)
+    return !GIT_LOCAL.has(invocation.subcommand);
+  return true;
+}
+function stateMayChange(commands, push) {
+  return commands.some((other) => other !== push && (other.index < push.index || other.context === "substitution") && mayChangeGitState(other));
+}
+var hasDotDot = (path) => path.split("/").includes("..");
 function repositorySelected(env) {
   return Object.keys(env ?? {}).some((name) => SELECTOR.test(name));
 }
 function pushVia(commands, cwd, config, resolveRemote) {
-  if (commands.some((command) => SELECTOR.test(command.source)))
+  if (commands.some((command) => SELECTOR.test(command.source) || CONFIG_HOME.test(command.source)))
     return;
   for (const command of commands) {
     if (base(command.argv[0]) !== "git")
@@ -4599,7 +4634,9 @@ function pushVia(commands, cwd, config, resolveRemote) {
       continue;
     if (configOverride(command.argv, invocation.offset - 1))
       continue;
-    if (directoryUncertain(commands, command))
+    if (directoryUncertain(commands, command) || stateMayChange(commands, command))
+      continue;
+    if ([...command.directories, ...invocation.chdirs].some(hasDotDot))
       continue;
     const { help, remote } = pushArgs(invocation.args);
     if (help)

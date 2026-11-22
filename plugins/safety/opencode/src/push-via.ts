@@ -14,7 +14,7 @@ import { spawnSync } from "node:child_process"
 import { resolve } from "node:path"
 import { leadingCdCwd } from "@srobroek/opencode-lib"
 import { SAFE_GIT_ARGS, untrustedLocalGitEnv } from "@srobroek/opencode-lib/safe-git"
-import { base, type Command, gitInvocation } from "./shell.ts"
+import { base, type Command, gitInvocation, SHELLS } from "./shell.ts"
 
 export type PushViaConfig = { host: string; command: string }
 
@@ -133,7 +133,8 @@ function pushArgs(args: readonly string[]): PushArgs {
 }
 
 const CD_FAMILY: ReadonlySet<string> = new Set(["cd", "pushd", "popd", "chdir"])
-const CONFIG_KEY = /^(?:remote|url|branch)\./i
+// `include.path` and `includeIf.*` pull in whole config files, which can hold any of the others.
+const CONFIG_KEY = /^(?:remote|url|branch|include|includeif)\./i
 
 function changesDirectory(command: Command): boolean {
   const [first, second] = command.argv
@@ -183,6 +184,51 @@ export type PushRefusal = {
 
 // Variables that select the repository or inject config; git reads them where this guard cannot.
 const SELECTOR = /GIT_(?:CONFIG|DIR|WORK_TREE|COMMON_DIR)/
+// `HOME` or `XDG_CONFIG_HOME` set in the call moves the global config; reading `$HOME` does not.
+const CONFIG_HOME = /(?:^|[\s;&|(])(?:HOME|XDG_CONFIG_HOME)=/
+
+// Commands that never change a remote, a branch or config, so a push after them still goes where it did before.
+const READ_ONLY: ReadonlySet<string> = new Set(["echo", "printf", "true", "false", ":", "pwd", "test", "[", "[[", "eval"])
+const GIT_LOCAL: ReadonlySet<string> = new Set([
+  "add",
+  "commit",
+  "status",
+  "log",
+  "diff",
+  "show",
+  "tag",
+  "fetch",
+  "rm",
+  "mv",
+  "restore",
+  "reset",
+  "stash",
+  "blame",
+  "rev-parse",
+  "ls-files",
+])
+
+// Whether `command` could change a remote, a branch or config. Unknown programs, scripts and git aliases could.
+function mayChangeGitState(command: Command): boolean {
+  const name = base(command.argv[0])
+  if (command.argv.length === 0 || READ_ONLY.has(name) || CD_FAMILY.has(name)) return false
+  // A shell given `-c` has its script walked as commands of its own; a script file is opaque.
+  if (SHELLS.has(name)) return !command.argv.includes("-c")
+  const invocation = gitInvocation(command.argv)
+  if (invocation !== undefined) return !GIT_LOCAL.has(invocation.subcommand)
+  return true
+}
+
+// Whether a command that runs before `push` (earlier in the call, or inside a substitution) could change
+// where the push goes; the destination is then read from state the call is about to alter.
+function stateMayChange(commands: readonly Command[], push: Command): boolean {
+  return commands.some(
+    (other) =>
+      other !== push && (other.index < push.index || other.context === "substitution") && mayChangeGitState(other),
+  )
+}
+
+const hasDotDot = (path: string) => path.split("/").includes("..")
 
 // Whether the inherited environment selects a repository or injects config (the guard then fails open).
 export function repositorySelected(env: Readonly<Record<string, string | undefined>> | undefined): boolean {
@@ -196,13 +242,15 @@ export function pushVia(
   config: PushViaConfig,
   resolveRemote: RemoteResolver,
 ): PushRefusal | undefined {
-  if (commands.some((command) => SELECTOR.test(command.source))) return undefined
+  if (commands.some((command) => SELECTOR.test(command.source) || CONFIG_HOME.test(command.source))) return undefined
   for (const command of commands) {
     if (base(command.argv[0]) !== "git") continue
     const invocation = gitInvocation(command.argv)
     if (invocation?.subcommand !== "push" || invocation.overridden) continue
     if (configOverride(command.argv, invocation.offset - 1)) continue
-    if (directoryUncertain(commands, command)) continue
+    if (directoryUncertain(commands, command) || stateMayChange(commands, command)) continue
+    // A `..` after a symlink resolves physically in git but lexically here.
+    if ([...command.directories, ...invocation.chdirs].some(hasDotDot)) continue
     const { help, remote } = pushArgs(invocation.args)
     if (help) continue
     const dir = [...command.directories, ...invocation.chdirs].reduce((at, chdir) => resolve(at, chdir), cwd)

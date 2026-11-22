@@ -166,6 +166,16 @@ describe("push-via", () => {
     const { before } = await load({ pushVia, disable: ["push-via"] }, { guard: onGithub })
     await before("c1", "git push origin main")
   })
+
+  test("a chain that rewrites the remote before pushing is not judged against the old URL", async () => {
+    const { before } = await load({ pushVia }, { guard: onGithub })
+    await before("c1", "git remote set-url origin https://gitlab.example.com/acme/repo.git && git push origin main")
+  })
+
+  test("a commit-then-push chain is still refused", async () => {
+    const { before } = await load({ pushVia }, { guard: onGithub })
+    await expect(before("c1", "git add -A && git commit -m wip && git push", "/project")).rejects.toThrow(/push-via-guard/)
+  })
 })
 
 describe("migration-edit", () => {

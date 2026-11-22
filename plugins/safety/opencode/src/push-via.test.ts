@@ -59,6 +59,10 @@ describe("pushVia refuses a plain git push to the host", () => {
     ["command substitution", "echo $(git push)"],
     ["path to git", "/usr/bin/git push"],
     ["an unrelated -c override", "git -c user.name=a -c core.pager=cat push"],
+    ["only read-only builtins before", "true && echo ready; printf x; git push"],
+    ["a shell script launcher", "bash -c 'git push'"],
+    ["safe git commands before", "git status && git fetch origin && git add -A && git commit -m x && git push"],
+    ["a $HOME path", "git -C $HOME/repo push"],
   ])("%s", (_name, source) => {
     expect(run(source)).toBeDefined()
   })
@@ -147,6 +151,33 @@ describe("pushVia allows", () => {
   })
 
   test.each([
+    ["a remote rewritten before", `git remote set-url origin ${GITLAB} && git push`],
+    ["a remote added before", `git remote add lab ${GITLAB}; git push lab`],
+    ["a remote removed in a substitution", "echo $(git remote remove origin); git push"],
+    ["a branch created before", "git checkout -b topic && git push"],
+    ["a branch switched before", "git switch topic && git push"],
+    ["a branch renamed before", "git branch -m topic && git push"],
+    ["config set before", "git config remote.pushDefault lab && git push"],
+    ["a build before", "bun run build && git push"],
+
+    ["an unknown program before", "make && git push"],
+    ["a script run by a shell before", "bash script.sh; git push"],
+    ["a git alias before", "git sync && git push"],
+    ["a nested script that rewrites first", `bash -c 'git remote set-url origin ${GITLAB}; git push'`],
+  ])("a command before the push that may change git state (%s) fails open", (_name, source) => {
+    expect(run(source)).toBeUndefined()
+  })
+
+  test.each([
+    ["a dotdot after a link", "git -C link/.. push"],
+    ["a leading dotdot", "git -C ../other push"],
+    ["a dotdot in a second -C", "git -C /work/repo -C sub/../x push"],
+    ["a wrapper directory with dotdot", "env -C /a/../b git push"],
+  ])("a directory operand with .. (%s) fails open", (_name, source) => {
+    expect(run(source)).toBeUndefined()
+  })
+
+  test.each([
     ["GIT_DIR assignment", "GIT_DIR=/x/.git git push"],
     ["GIT_WORK_TREE assignment", "GIT_WORK_TREE=/x git push"],
     ["GIT_COMMON_DIR assignment", "GIT_COMMON_DIR=/x git push"],
@@ -160,6 +191,15 @@ describe("pushVia allows", () => {
 
   test.each([
     ["-c remote url", `git -c remote.origin.url=${GITLAB} push`],
+    ["-c include.path", "git -c include.path=/x/extra.cfg push"],
+    ["-c includeIf", "git -c includeIf.gitdir:/work/.path=/x/extra.cfg push"],
+    ["--config-env include.path", "git --config-env=include.path=EXTRA push"],
+    ["--config-env includeIf", "git --config-env includeIf.gitdir:/work/.path=EXTRA push"],
+    ["HOME assignment", "HOME=/x git push"],
+    ["XDG_CONFIG_HOME assignment", "XDG_CONFIG_HOME=/x git push"],
+    ["HOME through env", "env HOME=/x git push"],
+    ["HOME export", "export HOME=/x; git push"],
+    ["XDG_CONFIG_HOME export", "export XDG_CONFIG_HOME=/x && git push"],
     ["-c remote pushurl", `git -c remote.origin.pushurl=${GITLAB} push origin`],
     ["-c url insteadOf", "git -c url.https://gitlab.example.com/.insteadOf=https://github.com/ push"],
     ["-c url pushInsteadOf", "git -c url.x.pushInsteadOf=y push"],
