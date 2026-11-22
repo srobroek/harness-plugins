@@ -36,16 +36,8 @@ const gate = () => {
   return { opened, open }
 }
 const recordExpires = (path: string) => (JSON.parse(readFileSync(path, "utf8")) as LeaseRecord).expires
-/**
- * `waitMs` is a wall-clock deadline `withLease` checks after every takeover attempt, so a starved runner that
- * overruns it turns a takeover that worked into a "busy" failure. A test that expects the lock to be gotten
- * therefore waits PATIENT (success returns at once, so it costs nothing); a test that expects "busy" waits
- * NO_WAIT, so its verdict does not depend on how long the wait is.
- */
 const RENEWAL_CAP_MS = 2000
-const PATIENT = 60_000
-const NO_WAIT = 1
-const base = { owner: "test", host: HOST, leaseMs: 60_000, waitMs: PATIENT }
+const base = { owner: "test", host: HOST, leaseMs: 60_000, waitMs: 120 }
 
 describe("leaseAbandoned", () => {
   const facts = { now: 1000, host: HOST, alive: () => true, leaseMs: 100, ageMs: 0 }
@@ -101,7 +93,7 @@ describe("withLease", () => {
     const firstIn = gate()
     const release = gate()
     const secondWaiting = gate()
-    const first = withLease(lock, base, async () => {
+    const first = withLease(lock, { ...base, waitMs: 2000 }, async () => {
       order.push("a-in")
       firstIn.open()
       await release.opened
@@ -112,6 +104,7 @@ describe("withLease", () => {
       lock,
       {
         ...base,
+        waitMs: 2000,
         // The second holder sleeps only after it found the lock busy, so its first sleep proves it is waiting.
         sleep: async (ms) => {
           secondWaiting.open()
@@ -132,7 +125,7 @@ describe("withLease", () => {
     const dir = scratch()
     const lock = join(dir, "a.lock")
     plant(lock, record())
-    const out = await withLease(lock, { ...base, waitMs: NO_WAIT }, () => 1)
+    const out = await withLease(lock, base, () => 1)
     expect(out).toMatchObject({ kind: "failed", busy: true })
     expect(tokenOf(lock)).toBe("theirs")
   })
@@ -157,10 +150,10 @@ describe("withLease", () => {
     const dir = scratch()
     const lock = join(dir, "a.lock")
     plant(lock, "{not json")
-    expect((await withLease(lock, { ...base, waitMs: NO_WAIT }, () => 1)).kind).toBe("failed")
+    expect((await withLease(lock, { ...base, leaseMs: 60_000 }, () => 1)).kind).toBe("failed")
     const old = new Date(Date.now() - 120_000)
     utimesSync(lock, old, old)
-    expect((await withLease(lock, base, () => 1)).kind).toBe("done")
+    expect((await withLease(lock, { ...base, leaseMs: 60_000 }, () => 1)).kind).toBe("done")
   })
 
   test("a path that is not a regular file is never judged or taken over", async () => {
@@ -181,33 +174,35 @@ describe("withLease", () => {
     const now = () => clock
     const leaseMs = 80
     let holderToken = ""
-    const holder = withLease(lock, { ...base, now, leaseMs, renewMs: 15 }, async () => {
+    const holder = withLease(lock, { ...base, now, leaseMs, renewMs: 15, waitMs: 1000 }, async () => {
       holderToken = tokenOf(lock)
       inside.open()
       await done.opened
     })
     await inside.opened
-    // Three renewals in a row. Each round puts the clock past the current expiry, so only a renewal can keep
-    // the hold alive; waiting for the expiry to move is waiting for that renewal. The cap only bounds a
-    // heartbeat that stopped (a 15 ms heartbeat has 2 s to run once); a healthy one never gets near it.
-    let expiry = recordExpires(lock)
-    for (let round = 0; round < 3; round++) {
-      clock = expiry + 1
-      const capped = Date.now() + RENEWAL_CAP_MS
-      while (recordExpires(lock) <= expiry) {
-        if (Date.now() >= capped) throw new Error(`no renewal within ${RENEWAL_CAP_MS} ms (round ${round})`)
-        await new Promise((tick) => setTimeout(tick, 5))
+    try {
+      // Three renewals in a row. Each round puts the clock past the current expiry, so only a renewal can keep
+      // the hold alive; waiting for the expiry to move is waiting for that renewal. The cap only bounds a
+      // heartbeat that stopped (a 15 ms heartbeat has 2 s to run once); a healthy one never gets near it.
+      let expiry = recordExpires(lock)
+      for (let round = 0; round < 3; round++) {
+        clock = expiry + 1
+        const capped = Date.now() + RENEWAL_CAP_MS
+        while (recordExpires(lock) <= expiry) {
+          if (Date.now() >= capped) throw new Error(`no renewal within ${RENEWAL_CAP_MS} ms (round ${round})`)
+          await new Promise((tick) => setTimeout(tick, 5))
+        }
+        expect(recordExpires(lock)).toBeGreaterThan(expiry)
+        expiry = recordExpires(lock)
+        // The lease it started with is over, but renewed: a contender on the same clock must fail busy.
+        const contender = await withLease(lock, { ...base, now, leaseMs, waitMs: 200 }, () => "stolen")
+        expect(contender).toMatchObject({ kind: "failed", busy: true })
+        expect(tokenOf(lock)).toBe(holderToken)
       }
-      expect(recordExpires(lock)).toBeGreaterThan(expiry)
-      expiry = recordExpires(lock)
-      // The lease it started with is over, but renewed: a contender on the same clock must fail busy.
-      // NO_WAIT ends its wait at once; the verdict is the same however long it would wait.
-      const contender = await withLease(lock, { ...base, now, leaseMs, waitMs: NO_WAIT }, () => "stolen")
-      expect(contender).toMatchObject({ kind: "failed", busy: true })
-      expect(tokenOf(lock)).toBe(holderToken)
+    } finally {
+      done.open()
+      await holder
     }
-    done.open()
-    await holder
   })
 
   test("an owner whose lease lapsed cannot unlink or overwrite its successor", async () => {
@@ -222,14 +217,14 @@ describe("withLease", () => {
     // Lease time is an injected clock: the stalled owner's lease lapses when the test says so, not after 40 wall ms.
     let clock = Date.now()
     const now = () => clock
-    const stalled = withLease(lock, { ...base, now, leaseMs: 40, renewMs: 60_000 }, async () => {
+    const stalled = withLease(lock, { ...base, now, leaseMs: 40, renewMs: 60_000, waitMs: 1000 }, async () => {
       // No renewals: the lease lapses while this owner is stalled, until the successor holds the lock.
       stalledIn.open()
       await stalledRelease.opened
     })
     await stalledIn.opened
     clock += 41
-    const successor = withLease(lock, { ...base, now, leaseMs: 60_000 }, async () => {
+    const successor = withLease(lock, { ...base, now, leaseMs: 60_000, waitMs: 1000 }, async () => {
       successorToken = tokenOf(lock)
       successorIn.open()
       await successorRelease.opened
@@ -250,7 +245,7 @@ describe("withLease", () => {
   test("re-entrant along one call chain: the inner call does not wait on the outer", async () => {
     const dir = scratch()
     const lock = join(dir, "a.lock")
-    const out = await withLease(lock, base, async () => (await withLease(lock, base, () => "inner")).kind)
+    const out = await withLease(lock, base, async () => (await withLease(lock, { ...base, waitMs: 20 }, () => "inner")).kind)
     expect(out).toEqual({ kind: "done", value: "done" })
   })
 
@@ -261,7 +256,7 @@ describe("withLease", () => {
       plant(lock, record({ host: "other", expires: Date.now() - 1000, token: "old" }))
       const out = await withLease(lock, {
         ...base,
-        waitMs: NO_WAIT,
+        waitMs: 60,
         seams: {
           // Between B judging the old hold abandoned and B opening the steal lock, A completes its own
           // takeover and holds a fresh lease (planted synchronously, as A's takeover would leave it).
@@ -280,7 +275,7 @@ describe("withLease", () => {
       const steal = `${lock}.steal`
       plant(lock, record({ host: "other", expires: Date.now() - 1000, token: "stale" }))
       plant(steal, record({ token: "someone-mid-takeover" }))
-      const out = await withLease(lock, { ...base, waitMs: NO_WAIT }, () => "ran")
+      const out = await withLease(lock, base, () => "ran")
       expect(out).toMatchObject({ kind: "failed", busy: true })
       expect(tokenOf(steal)).toBe("someone-mid-takeover")
       expect(tokenOf(lock)).toBe("stale")
@@ -292,7 +287,7 @@ describe("withLease", () => {
       const steal = `${lock}.steal`
       plant(lock, record({ host: "other", expires: Date.now() - 1000, token: "stale" }))
       plant(steal, record({ pid: 999_999, token: "crashed-stealer" }))
-      const out = await withLease(lock, { ...base, alive: (pid) => pid !== 999_999 }, () => "ran")
+      const out = await withLease(lock, { ...base, waitMs: 500, alive: (pid) => pid !== 999_999 }, () => "ran")
       expect(out).toEqual({ kind: "done", value: "ran" })
     })
   })
