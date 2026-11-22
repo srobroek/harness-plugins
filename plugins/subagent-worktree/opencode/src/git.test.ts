@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "
 import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
 import { createGit, spawnRunner } from "./git.ts"
 import { mergeArgs, parseWorktrees } from "./lane.ts"
 
@@ -244,5 +245,87 @@ describe("a filter driver the repository's own attributes select runs during no 
     const { repo, marker } = await hostile("refused")
     expect(await git.porcelain(repo)).toBeUndefined()
     expect(await fired(marker)).toBe(false)
+  })
+})
+
+describe("programs a repository's own config or hooks name do not run during automatic git calls", () => {
+  let root: string
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), "subagent-worktree-programs-"))
+  })
+  afterAll(() => rm(root, { recursive: true, force: true }))
+
+  const raw = async (cwd: string, ...args: string[]) => {
+    const child = Bun.spawn(["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { stdout: "pipe", stderr: "ignore" })
+    const out = await new Response(child.stdout).text()
+    expect(await child.exited).toBe(0)
+    return out.trim()
+  }
+  const fired = (marker: string) => Bun.file(marker).exists()
+  /** A repository with one commit, and a script that writes `marker` when something runs it. */
+  const repoWith = async (name: string) => {
+    const repo = join(root, name)
+    const marker = join(root, `${name}.fired`)
+    const script = join(root, `${name}.sh`)
+    await raw(root, "init", "--quiet", "--initial-branch=main", repo)
+    await writeFile(join(repo, "a.txt"), "one")
+    await raw(repo, "add", "a.txt")
+    await raw(repo, "commit", "--quiet", "-m", "init")
+    writeExecutable(script, `#!/bin/sh\ntouch ${marker}\nexit 1\n`)
+    return { repo, marker, script }
+  }
+  /** Runs `argv` once without the hardening (the control, which must reach the program) and once through `spawnRunner`. */
+  const bothWays = async (argv: string[], marker: string) => {
+    const control = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore" })
+    await control.exited
+    const unhardened = await fired(marker)
+    await rm(marker, { force: true })
+    await spawnRunner(argv)
+    return { unhardened, hardened: await fired(marker) }
+  }
+
+  test("core.fsmonitor in the repository's config is not run by git status", async () => {
+    const { repo, marker, script } = await repoWith("fsmonitor")
+    await raw(repo, "config", "core.fsmonitor", script)
+    expect(await bothWays(["git", "-C", repo, "status", "--porcelain"], marker)).toEqual({ unhardened: true, hardened: false })
+  })
+
+  test("a hook in the repository's .git/hooks is not run by a switch", async () => {
+    const { repo, marker, script } = await repoWith("hook")
+    writeExecutable(join(repo, ".git", "hooks", "post-checkout"), `#!/bin/sh\nexec ${script}\n`)
+    const result = await bothWays(["git", "-C", repo, "switch", "--quiet", "main"], marker)
+    expect(result).toEqual({ unhardened: true, hardened: false })
+  })
+
+  test("core.hooksPath in the repository's config is not honoured", async () => {
+    const { repo, marker, script } = await repoWith("hookspath")
+    const hooks = join(root, "hookspath-hooks")
+    await mkdir(hooks)
+    writeExecutable(join(hooks, "post-checkout"), `#!/bin/sh\nexec ${script}\n`)
+    await raw(repo, "config", "core.hooksPath", hooks)
+    expect(await bothWays(["git", "-C", repo, "switch", "--quiet", "main"], marker)).toEqual({ unhardened: true, hardened: false })
+  })
+
+  // Two layers stop it (log.showSignature=false and the blanked program), so each is removed together with the other to show the test notices.
+  test.each(["gpg.program", "gpg.ssh.program", "gpg.x509.program"])("%s is not run to verify a signed commit that git log shows", async (key) => {
+    const { repo, marker, script } = await repoWith(`signature-${key}`)
+    // A commit that carries a signature header, so `log.showSignature` verifies it with the program for its format.
+    const format = key === "gpg.ssh.program" ? "SSH SIGNATURE" : key === "gpg.x509.program" ? "SIGNED MESSAGE" : "PGP SIGNATURE"
+    const tree = await raw(repo, "rev-parse", "HEAD^{tree}")
+    const parent = await raw(repo, "rev-parse", "HEAD")
+    const body = `tree ${tree}\nparent ${parent}\nauthor t <t@example.com> 1 +0000\ncommitter t <t@example.com> 1 +0000\ngpgsig -----BEGIN ${format}-----\n \n AAAA\n -----END ${format}-----\n\nsigned\n`
+    await writeFile(join(root, `${key}.commit`), body)
+    const signed = await raw(repo, "hash-object", "-t", "commit", "-w", join(root, `${key}.commit`))
+    await raw(repo, "update-ref", "HEAD", signed)
+    await raw(repo, "config", "log.showSignature", "true")
+    await raw(repo, "config", key, script)
+    if (key === "gpg.x509.program") await raw(repo, "config", "gpg.format", "x509")
+    if (key === "gpg.ssh.program") {
+      await raw(repo, "config", "gpg.format", "ssh")
+      // With a signers file git asks the program for the signer first, which is the call that must not happen.
+      await writeFile(join(root, "signers"), "")
+      await raw(repo, "config", "gpg.ssh.allowedSignersFile", join(root, "signers"))
+    }
+    expect(await bothWays(["git", "-C", repo, "log", "-1"], marker)).toEqual({ unhardened: true, hardened: false })
   })
 })
