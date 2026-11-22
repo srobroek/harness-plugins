@@ -172,7 +172,7 @@ describe("pushVia reads option abbreviations as git does", () => {
     ["git push --push ci.skip origin", "origin"],
     ["git push --ex /x origin", "origin"],
     ["git push --rece /x origin", "origin"],
-    ["git push --rec=check origin", "origin"],
+    ["git push --recu=check origin", "origin"],
     ["git push --rep https://a.example/b", "https://a.example/b"],
     ["git push --force-with origin", "origin"],
   ])("%s asks about %s", (source, remote) => {
@@ -190,6 +190,7 @@ describe("pushVia reads option abbreviations as git does", () => {
 
   test.each([
     ["an ambiguous prefix", "git push --re origin"],
+    ["a prefix git reports as ambiguous (receive-pack, recurse-submodules)", "git push --rec=check origin"],
     ["an ambiguous prefix shared by negations", "git push --no- origin"],
     ["an unknown long option", "git push --frobnicate origin"],
     ["an unknown option with a value", "git push --frobnicate=1 origin"],
