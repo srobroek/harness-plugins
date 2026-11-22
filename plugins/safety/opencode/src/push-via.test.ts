@@ -166,6 +166,48 @@ describe("pushVia fails open for anything but a literal first git push", () => {
   })
 })
 
+describe("pushVia reads option abbreviations as git does", () => {
+  test.each([
+    ["git push --pu ci.skip origin", "origin"],
+    ["git push --push ci.skip origin", "origin"],
+    ["git push --ex /x origin", "origin"],
+    ["git push --rece /x origin", "origin"],
+    ["git push --rec=check origin", "origin"],
+    ["git push --rep https://a.example/b", "https://a.example/b"],
+    ["git push --force-with origin", "origin"],
+  ])("%s asks about %s", (source, remote) => {
+    let seen: string | undefined = "<not asked>"
+    run(source, (_cwd, asked) => {
+      seen = asked
+      return [GITHUB]
+    })
+    expect(seen).toBe(remote)
+  })
+
+  test("a prefix of a value-taking option still refuses a push to the host", () => {
+    expect(run("git push --pu ci.skip origin")).toBeDefined()
+  })
+
+  test.each([
+    ["an ambiguous prefix", "git push --re origin"],
+    ["an ambiguous prefix shared by negations", "git push --no- origin"],
+    ["an unknown long option", "git push --frobnicate origin"],
+    ["an unknown option with a value", "git push --frobnicate=1 origin"],
+  ])("%s fails open", (_name, source) => {
+    expect(run(source)).toBeUndefined()
+  })
+})
+
+describe("pushVia treats unquoted non-ASCII words as literal", () => {
+  test("a -C directory with accents resolves and refuses", () => {
+    expect(run("git -C /work/café push")).toBe("/work/café")
+  })
+
+  test("a quoted non-ASCII directory still fails open", () => {
+    expect(run("git -C '/work/café' push")).toBeUndefined()
+  })
+})
+
 describe("pushVia asks the resolver for the pushed remote", () => {
   const remoteOf = (source: string): string | undefined => {
     let seen: string | undefined = "<not asked>"
@@ -394,6 +436,34 @@ describe("default resolver with real git", () => {
       GITLAB,
       (dir) => git(dir, "config", "url.https://gitlab.example.com/.insteadOf", "https://github.com/"),
       (dir) => expect(guardOf(dir, "git push https://github.com/a/b.git")).toBeUndefined(),
+    )
+  })
+
+  // git: branch.<name>.remote, else the only configured remote, else `origin` (remote.c, remotes_remote_for_branch).
+  test("a bare push with only a github remote named upstream is refused", () => {
+    withRepo(
+      GITHUB,
+      (dir) => git(dir, "remote", "rename", "origin", "upstream"),
+      (dir) => expect(guardOf(dir, "git push")).toBe("push-via"),
+    )
+  })
+
+  test("a bare push with a lone gitlab remote named upstream passes", () => {
+    withRepo(
+      GITLAB,
+      (dir) => git(dir, "remote", "rename", "origin", "upstream"),
+      (dir) => expect(guardOf(dir, "git push")).toBeUndefined(),
+    )
+  })
+
+  test("with several remotes and no origin the push target is unknown, so it fails open", () => {
+    withRepo(
+      GITHUB,
+      (dir) => {
+        git(dir, "remote", "rename", "origin", "upstream")
+        git(dir, "remote", "add", "lab", GITLAB)
+      },
+      (dir) => expect(guardOf(dir, "git push")).toBeUndefined(),
     )
   })
 
