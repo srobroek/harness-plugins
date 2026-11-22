@@ -1,3 +1,9 @@
+## beads [0.8.10](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.9...beads--v0.8.10) (2026-11-22)
+
+### Bug Fixes
+
+* **beads:** gate gh api PR creation and read GH_REPO in the PR bead gate ([5d77809](https://github.com/srobroek/harness-plugins/commit/5d778092c66936634a907080cfa9b941d3cdff61)), closes [#99](https://github.com/srobroek/harness-plugins/issues/99) [#100](https://github.com/srobroek/harness-plugins/issues/100)
+
 ## beads [0.8.9](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.8...beads--v0.8.9) (2026-11-22)
 
 ### Bug Fixes
