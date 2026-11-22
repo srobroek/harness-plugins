@@ -165,7 +165,7 @@ describe("a .git probe that cannot say the entry is absent", () => {
     chmodSync(at("skills/unreadable"), 0o600)
   })
   afterAll(() => {
-    chmodSync(at("skills/unreadable"), 0o700)
+    chmodSync(at("skills/unreadable"), 0o700) // check-test-executables: restores a directory's mode, not a script
     rmSync(fixture, { recursive: true, force: true })
   })
 
