@@ -8,7 +8,7 @@ The repository is a workspace of OpenCode V2 plugins written in TypeScript, and 
 
 | Tool | Version | Source |
 | --- | --- | --- |
-| bun | 1.4.5 | `.mise.toml`, `bun-version` in `.github/workflows/ci.yml` |
+| bun | 1.4.5 | `.mise.toml`; CI installs it with `jdx/mise-action` |
 | TypeScript | 7.0.2 | `package.json` |
 | Biome | 2.6.8 | `package.json`; linter only, the formatter is off (`biome.json`) |
 | `@opencode/plugin`, `client`, `theme` | 2.3.2 | `package.json` |
@@ -19,7 +19,8 @@ The repository is a workspace of OpenCode V2 plugins written in TypeScript, and 
 | `jsonc-parser` | 3.3.1 | `package.json`; `model-roles` edits JSONC config files with it |
 | `spdx-expression-parse` | 5.0.0 | `package.json`; `code-challenge` parses SPDX licence expressions with it (types: `@types/spdx-expression-parse` 4.0.0) |
 | just | 1.59.0 | `.mise.toml`; task runner, `justfile` |
-| `@srobroek/harness-kit` | 1.5.0 | `package.json`, workflow tags in `.github/workflows` |
+| mise | 2026.11.10 | `version` of `jdx/mise-action` (v5.2.10, SHA-pinned) in `.github/workflows/ci.yml` and `renovate-regenerate.yml` |
+| `@srobroek/harness-kit` | 1.7.0 | `package.json`, workflow tags in `.github/workflows` |
 
 `smol-toml` is a runtime `dependency` of `lib`, so it ships in the bundles that import it.
 
@@ -111,7 +112,7 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 [AGENTS.md](../AGENTS.md) Conventions covers bundles, generated files, vendored `plugins/cad` files, agents, skills, pitfalls and descriptions. Checks enforce most of it. This page adds:
 
 - Renovate (`renovate.json`) extends the `srobroek/harness-kit` preset and adds six regex custom managers. Two read exact PyPI and npm pins in Markdown sources: `uv run --with PKG==VER`, `uvx PKG@VER`, `npx [-y] PKG@X.Y.Z` and `npm:PKG@X.Y.Z`. Two read the same pins in `plugins/<name>/common/.mcp.json`. One reads `REPOMIX_VERSION` in `plugins/repomix/opencode/src/pack.ts`. One reads the exact analyzer pins in `plugins/code-challenge/opencode/src/scan/pins.ts` (see Code-challenge scan below); each pin sits on the line after a `// renovate: datasource=<npm|pypi|go> depName=<package>` annotation, and a test keeps the manager's regex and the file in step. The Markdown managers select source files only: `docs/` and `lib/`, plugin READMEs, `common/` and `agents.src/`, and `opencode/src/` Markdown. Copies that `harness-kit build` writes are not selected. A package rule disables these managers for the vendored `plugins/cad/common` and `plugins/cad/opencode`. Version pins in skills and docs use the shapes these managers match.
-- The preset also moves `@srobroek/harness-kit` (package pin), the `srobroek/harness-kit` workflow tags and the versions quoted in any Markdown file (`srobroek/harness-kit/.github/workflows/<file>.yml@vX.Y.Z`, `@srobroek/harness-kit@X.Y.Z`) in one `harness-kit` group. `.github/workflows/renovate-regenerate.yml` runs `bun run build` on same-repository Renovate PRs to regenerate the copies.
+- The preset also moves `@srobroek/harness-kit` (package pin), the `srobroek/harness-kit` workflow tags and the versions quoted in any Markdown file (`srobroek/harness-kit/.github/workflows/<file>.yml@vX.Y.Z`, `@srobroek/harness-kit@X.Y.Z`) in one `harness-kit` group. `.github/workflows/renovate-regenerate.yml` runs `just build` on same-repository Renovate PRs to regenerate the copies.
 - Approved departures:
   - `code-challenge` names its tool `challenge_setup`, not `code_challenge_setup` as `<name>_<verb>` would give. The skill's other two tools, `challenge_lib_facts` and `challenge_scan`, share the same `challenge_` namespace, so one short prefix (reserved in `RESERVED_TOOL_PREFIXES`) covers the family and the agents' permission rules.
   - `code-challenge` `challenge_scan` runs analyzers without a sandbox, by user decision. It discloses the risk and asks for consent instead (see Code-challenge scan below).
@@ -233,12 +234,12 @@ AGENTS.md Commands lists every script. The `justfile` has one recipe per script,
 `.github/workflows/ci.yml` runs on pushes to `main`, pull requests and `workflow_dispatch`:
 
 - `check` calls the reusable harness-kit workflow, pinned to the same tag as the package. It runs `bun install --frozen-lockfile`, `harness-kit check`, `bun test` and `tsc`.
-- `repo-checks` runs `bun install --frozen-lockfile`, then lint, `build:check`, `plugin-table:check`, `steering`, `pitfalls`, `agent-roles`, `descriptions`, `concerns`, `scripts/check-release-prepare.ts` (in a temporary checkout, makes the delivery and cad bundles stale, runs each release prepare step and fails if a bundle is still stale), `scripts/check-test-executables.ts` and the Python unit tests of the shipped scripts.
-- `cad` runs `cad:check` when `plugins/cad`, `scripts/sync-cad.ts` or the workflow changes.
+- `repo-checks` installs bun and just with `jdx/mise-action`, runs `just install`, then the recipes `lint`, `build-check`, `plugin-table-check`, `steering`, `pitfalls`, `agent-roles`, `descriptions`, `concerns`, `release-prepare-check`, `test-executables` and the Python unit tests of the shipped scripts. `release-prepare-check` (`scripts/check-release-prepare.ts`) makes the delivery and cad bundles stale in a temporary checkout, runs each release prepare step and fails if a bundle is still stale.
+- `cad` runs `just cad-check` when `plugins/cad`, `scripts/sync-cad.ts` or the workflow changes.
 
 `renovate-regenerate.yml` accepts only `opened` and `synchronize` events from `renovate[bot]`, for that bot's same-repository PRs on `renovate/` branches. Both job guards reject forks. It skips heads whose commit subject is `chore(deps): regenerate generated copies`.
 
-The build job has only `contents: read`. It checks out the event's head SHA without persisted credentials, runs install/build/check and uploads a generated-file patch. SHA-pinned first-party upload/download actions transfer that patch within the same workflow run. The push job uses a separate runner with `contents: write`, `pull-requests: read` and `actions: write`. It runs no npm command or repository code, and checkout persists no credentials.
+The build job has only `contents: read`. It checks out the event's head SHA without persisted credentials, runs `bun install --frozen-lockfile`, then `just build` and `just check`. It uploads a generated-file patch. SHA-pinned first-party upload/download actions transfer that patch within the same workflow run. The push job uses a separate runner with `contents: write`, `pull-requests: read` and `actions: write`. It runs no bun or just command or repository code, and checkout persists no credentials.
 
 Both jobs validate the patch against the workflow's generated-path allowlist. It covers inventories, manifests, harness copies, bundles, runtime copies, shims, Claude hook output and composed/translated agents. Composed agents require a matching `agents.src/` file. Translations require an existing OpenCode form. Source changes, vendored cad common files and cad examples fail validation. The validator accepts UTF-8 text only and rejects binary data, symlinks and special file modes. Executable harness copies must match their `common/` source's mode. This preserves the shipped preflight scripts; bundles cannot acquire execute bits. The push job checks paths and modes in a temporary Git index before applying the patch to its checkout.
 
@@ -254,7 +255,7 @@ GitHub [excludes dispatched job checks from PR checks](https://docs.github.com/e
 
 The publisher accepts `workflow_dispatch` only on the default branch. It runs inline code, with no checkout, install, artifact download or cache. Its job has `statuses: write` and read access to Actions, contents and pull requests. It validates the numeric run ID and accepts only the latest CI dispatch for an open, same-repository Renovate PR whose current head matches the run.
 
-The CI definition on the branch must match the publisher's default-branch revision, except for version updates at approved `uses:` entries. These are the harness-kit check workflow tag and SHA pins for checkout, setup-node and setup-bun. The publisher rejects changes to steps, conditions, permissions or action repository names.
+The CI definition on the branch must match the publisher's default-branch revision, except for version updates at approved `uses:` entries. These are the harness-kit check workflow tag and SHA pins for checkout, setup-node and setup-bun. The publisher rejects changes to steps, conditions, permissions or action repository names. `ci.yml` also uses `jdx/mise-action`, which the publisher's normalizer does not cover, so a Renovate PR that bumps that SHA fails the comparison and gets no statuses until `ci-publish.yml` learns the action.
 
 A running dispatch receives pending statuses. The publisher polls every thirty seconds for up to twenty minutes, then fails if CI has not completed. Success needs a successful run, all three required jobs succeeding, and the cad job succeeding or being skipped. Failed, canceled, missing or skipped required jobs produce failure statuses. Repository Actions approval settings remain unchanged.
 

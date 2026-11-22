@@ -11,12 +11,12 @@
 
 - Tooling comes from `@srobroek/harness-kit`, pinned exactly in `package.json` and configured by `harness-kit.json`. Do not copy its scripts into this repository. `scripts/` holds what is specific to these plugins: bundling, agent composition and translation, and content checks.
 - The package version and the workflow tags (`srobroek/harness-kit/.github/workflows/*.yml@vX.Y.Z`) are the same version. Bump them together, run `bun run build`, and commit as `chore(deps): bump @srobroek/harness-kit to X.Y.Z`.
-- `bun` must be on `PATH` to run `harness-kit`.
+- `bun` and `just` must be on `PATH`. `mise install` installs both at the versions in `.mise.toml`. Run `harness-kit` through `bunx harness-kit` or the `package.json` scripts.
 - Stack, toolchain versions, layout and CI: [docs/engineering.md](docs/engineering.md).
 
 ## Commands
 
-- `bun install --frozen-lockfile`, then `bun run build` (`scripts/build.ts`, then `harness-kit build`).
+- `just install` (`bun install --frozen-lockfile`), then `just build` (`scripts/build.ts`, then `harness-kit build`). Each `just` recipe runs the `package.json` script of the same name, so `bun run build` does the same.
 - `bun run check` is `harness-kit check`: generated files are current and every Claude Code tree validates. `bun run build:check` is the same for the bundles and composed agents.
 - `just verify` runs every gate CI runs; `justfile` has one recipe per script. Use bun for installs and scripts, never npm.
 - `bun test`, `bun run typecheck` and `bun run lint` (Biome).
