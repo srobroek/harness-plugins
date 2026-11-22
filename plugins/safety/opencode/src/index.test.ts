@@ -138,6 +138,36 @@ describe("hard gates", () => {
   })
 })
 
+describe("push-via", () => {
+  const pushVia = { host: "github.com", command: "dgit" }
+  const onGithub = { resolveRemote: () => ["https://github.com/acme/repo.git"] }
+
+  test("refuses a plain git push when pushVia is configured", async () => {
+    const { before } = await load({ pushVia }, { guard: onGithub })
+    await expect(before("c1", "git push origin main", "/project")).rejects.toThrow(/push-via-guard.*`dgit -C \/project push`/)
+  })
+
+  test("lets the configured command through", async () => {
+    const { before } = await load({ pushVia }, { guard: onGithub })
+    await before("c1", "dgit -C /project push")
+  })
+
+  test("is off when pushVia is not configured", async () => {
+    const { before } = await load({}, { guard: onGithub })
+    await before("c1", "git push origin main")
+  })
+
+  test("is off when a malformed pushVia is configured", async () => {
+    const { before } = await load({ pushVia: { host: "github.com" } }, { guard: onGithub })
+    await before("c1", "git push origin main")
+  })
+
+  test("disable: [push-via] turns it off", async () => {
+    const { before } = await load({ pushVia, disable: ["push-via"] }, { guard: onGithub })
+    await before("c1", "git push origin main")
+  })
+})
+
 describe("migration-edit", () => {
   /** A directory with `migrations/0001_init.sql` and `0002_add.sql`, outside git. */
   function project(): string {

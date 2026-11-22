@@ -4481,55 +4481,130 @@ function git(cwd, args, inherited) {
   });
   if (result.status !== 0)
     return;
-  const text = result.stdout.trim();
-  return text === "" ? undefined : text;
+  const lines = result.stdout.split(`
+`).filter((line) => line !== "");
+  return lines.length === 0 ? undefined : lines;
 }
 function gitRemoteResolver(inherited) {
   return (cwd, remote) => {
+    if (remote !== undefined && /[/:]/.test(remote))
+      return git(cwd, ["ls-remote", "--get-url", "--", remote], inherited);
     let name = remote;
     if (name === undefined) {
-      const branch = git(cwd, ["symbolic-ref", "-q", "--short", "HEAD"], inherited);
-      const configured = (key) => git(cwd, ["config", "--get", key], inherited);
+      const branch = git(cwd, ["symbolic-ref", "-q", "--short", "HEAD"], inherited)?.[0];
+      const configured = (key) => git(cwd, ["config", "--get", key], inherited)?.[0];
       name = (branch === undefined ? undefined : configured(`branch.${branch}.pushRemote`)) ?? configured("remote.pushDefault") ?? (branch === undefined ? undefined : configured(`branch.${branch}.remote`)) ?? "origin";
     }
-    return git(cwd, ["remote", "get-url", "--push", name], inherited);
+    return git(cwd, ["remote", "get-url", "--push", "--all", "--", name], inherited);
   };
 }
-var PUSH_VALUED = new Set(["--repo", "-o", "--push-option", "--receive-pack", "--exec"]);
-function pushedRemote(args) {
-  for (let i = 0;i < args.length && args[i] !== "--"; i++) {
-    const arg = args[i];
-    if (arg.startsWith("--repo="))
-      return arg.slice("--repo=".length);
-    if (arg === "--repo")
-      return args[i + 1];
-  }
-  return positionals(args, PUSH_VALUED)[0];
+var VALUED_LONG = ["repo", "push-option", "receive-pack", "exec"];
+var OTHER_LONG = ["recurse-submodules"];
+function valuedLong(name) {
+  if (VALUED_LONG.includes(name))
+    return name;
+  if (name.length < 3)
+    return;
+  const matches = [...VALUED_LONG, ...OTHER_LONG].filter((long) => long.startsWith(name));
+  const only = matches[0];
+  return matches.length === 1 && only !== undefined && VALUED_LONG.includes(only) ? only : undefined;
 }
-function quoted(path) {
-  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`;
+function pushArgs(args) {
+  let help = false;
+  let repo;
+  const positional = [];
+  let options = true;
+  for (let i = 0;i < args.length; i++) {
+    const arg = args[i];
+    if (!options || !arg.startsWith("-") || arg === "-") {
+      positional.push(arg);
+      continue;
+    }
+    if (arg === "--") {
+      options = false;
+      continue;
+    }
+    if (arg === "-h" || arg === "--help") {
+      help = true;
+      continue;
+    }
+    if (arg.startsWith("--")) {
+      const [name = "", ...rest] = arg.slice(2).split("=");
+      const valued = valuedLong(name);
+      if (valued === undefined)
+        continue;
+      const value = rest.length > 0 ? rest.join("=") : args[++i];
+      if (valued === "repo")
+        repo = value;
+      continue;
+    }
+    if (arg.startsWith("-o") && arg.length === 2)
+      i++;
+  }
+  return { help, remote: positional[0] ?? repo };
+}
+var CD_FAMILY = new Set(["cd", "pushd", "popd", "chdir"]);
+var CONFIG_KEY = /^(?:remote|url|branch)\./i;
+function changesDirectory2(command) {
+  const [first, second] = command.argv;
+  if (CD_FAMILY.has(base(first)))
+    return true;
+  return (first === "builtin" || first === "command") && second !== undefined && CD_FAMILY.has(second);
+}
+function isLeadingCd(command) {
+  return command.index === 0 && command.context === "top" && command.argv.length === 2 && /^\s*cd\s+[^\s;&|]+\s*&&/.test(command.source);
+}
+function directoryUncertain(commands, command) {
+  for (const earlier of commands) {
+    if (earlier.index >= command.index)
+      break;
+    if (changesDirectory2(earlier) && !isLeadingCd(earlier))
+      return true;
+    if (command.context !== "top" && earlier.directories.length > 0)
+      return true;
+  }
+  return false;
+}
+function configOverride(argv, end) {
+  for (let i = 1;i < end; i++) {
+    const word = argv[i];
+    let entry;
+    if (word === "-c" || word === "--config-env")
+      entry = argv[++i];
+    else if (word.startsWith("--config-env="))
+      entry = word.slice("--config-env=".length);
+    else if (word.startsWith("-c") && word.length > 2)
+      entry = word.slice(2);
+    if (entry !== undefined && CONFIG_KEY.test(entry))
+      return true;
+  }
+  return false;
 }
 function pushVia(commands, cwd, config, resolveRemote) {
+  if (commands.some((command) => command.source.includes("GIT_CONFIG")))
+    return;
   for (const command of commands) {
     if (base(command.argv[0]) !== "git")
       continue;
     const invocation = gitInvocation(command.argv);
-    if (invocation?.subcommand !== "push")
+    if (invocation?.subcommand !== "push" || invocation.overridden)
       continue;
-    const remote = pushedRemote(invocation.args);
+    if (configOverride(command.argv, invocation.offset - 1))
+      continue;
+    if (directoryUncertain(commands, command))
+      continue;
+    const { help, remote } = pushArgs(invocation.args);
+    if (help)
+      continue;
     const dir = [...command.directories, ...invocation.chdirs].reduce((at, chdir) => resolve6(at, chdir), cwd);
-    let url;
+    let urls;
     try {
-      if (remote !== undefined && /[/:]/.test(remote))
-        url = remote;
-      else if (!invocation.overridden)
-        url = resolveRemote(dir, remote);
+      urls = resolveRemote(dir, remote);
     } catch {
       continue;
     }
-    if (url === undefined || hostOf(url) !== config.host)
-      continue;
-    return `Blocked by safety (push-via-guard): a plain \`git push\` to ${config.host} cannot work on this host. Push with \`${config.command} -C ${quoted(dir)} push\` instead (same arguments), and push WIP often so commits are not lost.`;
+    if (urls?.some((url) => hostOf(url) === config.host))
+      return { dir };
   }
   return;
 }
@@ -4546,6 +4621,9 @@ var GUARD_IDS = [
   "history-rewrite",
   "push-via"
 ];
+function shellPath(path) {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`;
+}
 var MESSAGES2 = {
   indirection: "Blocked by safety (bash-indirection-guard): this destructive command targets an unexpanded variable, command substitution, or backtick expression, so its path cannot be verified. Resolve the target and re-issue a literal command; a quoted variable is accepted only after a bare `--` end-of-options marker.",
   "remote-exec": "Blocked by safety (remote-exec-guard): this command would execute content fetched from the network without review: a download piped into a shell, a shell or `eval` running a fetch's output, or a netcat invocation with an exec flag. Download to a file, inspect it, and run only an explicitly reviewed script.",
@@ -4553,7 +4631,7 @@ var MESSAGES2 = {
   "worktree-tmp": "Blocked by safety (worktree-tmp-guard): do not create a worktree under /tmp or /private/tmp, where a container bind mount cannot see it. Use a path under $HOME, such as ~/tmp/worktrees/<repo>/<branch>.",
   "git-defender": "Blocked by safety (git-defender-user-only): only the user runs the Git Defender CLI. It acts under the user's corporate identity, so every subcommand is refused, read-looking ones included. Name the exact command you would have run and why, hand it to the user to run in their own terminal, and report the outcome you needed as unknown. Do not retry through eval, a wrapper, a script or a subagent.",
   "history-rewrite": "Blocked by safety (history-rewrite-guard): history-rewriting commands (`git filter-repo`, `git filter-branch`, `git replace`, `git update-ref -d` on a branch) must not run in place in a canonical checkout, and `filter-repo --force` must not run at all. Clone the repository into a temp directory and run the command there with the tool's workdir set to the clone.",
-  "push-via": "Blocked by safety (push-via-guard): push with the configured `pushVia` command instead of plain `git push`.",
+  "push-via": (host, command, dir) => `Blocked by safety (push-via-guard): a plain \`git push\` to ${host} cannot work on this host. Push with \`${command} -C ${shellPath(dir)} push\` instead (same arguments), and push WIP often so commits are not lost.`,
   "op-guard": OP_MESSAGE,
   "dns-delegation": "Blocked by safety (dns-delegation-guard): deleting a Route 53 hosted zone leaves any parent zone delegating to the deleted nameservers, a subdomain-takeover risk. Read ~/.config/opencode/steering/dns-delegation-cleanup.md, find the parent zone, then re-run with `DNS_PARENT_CHECKED=1` in front of the command to confirm you will delete the parent's NS (and DS) record set for the child and verify it. Do not report the zone as torn down until the parent delegation is gone."
 };
@@ -4807,9 +4885,9 @@ function hardGate(source, cwd, options = {}) {
     }
     if (refusal === undefined && on("push-via") && options.pushVia !== undefined) {
       const resolveRemote = options.resolveRemote ?? gitRemoteResolver(options.env ?? {});
-      const reason = pushVia(commands, cwd, options.pushVia, resolveRemote);
-      if (reason !== undefined)
-        refusal = { guard: "push-via", reason };
+      const push = pushVia(commands, cwd, options.pushVia, resolveRemote);
+      if (push !== undefined)
+        refusal = { guard: "push-via", reason: MESSAGES2["push-via"](options.pushVia.host, options.pushVia.command, push.dir) };
     }
   } catch (error) {
     failure = { error };
@@ -6811,7 +6889,7 @@ function outcome(result, stage) {
 function unsure(failure) {
   return failure.endsWith("was cancelled") ? "; the write may have completed, so check the store before retrying" : "";
 }
-function quoted2(word) {
+function quoted(word) {
   return `'${word.replaceAll("'", "'\\''")}'`;
 }
 function onePasswordProvider(target, snapshot) {
@@ -6925,7 +7003,7 @@ async function storeSecret(input, deps) {
     const reference = after.setting(provider, "vault") === target.vault ? short : `op://${target.vault}/${short}`;
     const recorded = outcome(await deps.run(fnoxSet([name, reference]), { cwd: common.cwd, env: common.env, timeoutMs: FNOX_TIMEOUT_MS }), "fnox set");
     if (recorded !== undefined) {
-      fail(`${recorded} after the 1Password item was created; record it with \`fnox set ${name} ${quoted2(reference)} --provider ${provider}\``);
+      fail(`${recorded} after the 1Password item was created; record it with \`fnox set ${name} ${quoted(reference)} --provider ${provider}\``);
     }
     return { name, reference, stored: true };
   } finally {
