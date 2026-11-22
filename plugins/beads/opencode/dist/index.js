@@ -1666,7 +1666,7 @@ function decideActorGate(command, env = process.env, inherited = {}) {
 // lib/src/beads-store.ts
 import { spawnSync } from "child_process";
 import { lstatSync, realpathSync, statSync } from "fs";
-import { dirname, isAbsolute as isAbsolute2, resolve as resolve2 } from "path";
+import { basename as basename2, dirname, isAbsolute as isAbsolute2, resolve as resolve2 } from "path";
 function configuredStore(options, projectRoot) {
   if (!("store" in options))
     return;
@@ -1753,6 +1753,20 @@ function sessionPinFor(cwd) {
   if (isDir(local))
     return local;
   return;
+}
+function storeFromBeadsDb(value, cwd) {
+  const path = resolve2(cwd, value);
+  return basename2(path) === ".beads" ? path : dirname(path);
+}
+function ambientStore(cwd, env, walkUp = sessionPinFor) {
+  const dir = env.BEADS_DIR;
+  if (dir !== undefined && dir !== "")
+    return resolve2(cwd, dir);
+  const found = walkUp(cwd);
+  if (found !== undefined)
+    return found;
+  const db = env.BEADS_DB;
+  return db !== undefined && db !== "" ? storeFromBeadsDb(db, cwd) : undefined;
 }
 function isDir(path) {
   try {
@@ -2013,7 +2027,7 @@ import {
   writeSync
 } from "fs";
 import { hostname } from "os";
-import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute3, join, resolve as resolve3 } from "path";
+import { basename as basename3, dirname as dirname2, isAbsolute as isAbsolute3, join, resolve as resolve3 } from "path";
 
 // lib/src/bounded-read.ts
 import { closeSync, constants, fstatSync, lstatSync as lstatSync2, openSync, readSync } from "fs";
@@ -2265,10 +2279,7 @@ function selectedStoreFor(globals, cwd, env) {
   }
   if (directory !== undefined)
     return sessionPinFor(base);
-  const pinned = env.BEADS_DIR;
-  if (pinned !== undefined && pinned !== "")
-    return absolute(pinned, cwd);
-  return sessionPinFor(cwd);
+  return ambientStore(cwd, env);
 }
 function absolute(path, cwd) {
   return isAbsolute3(path) ? path : resolve3(cwd, path);
@@ -2309,6 +2320,59 @@ function mentionsBd(source) {
   return BD_WORD.test(source) || BD_WORD.test(source.replace(/["'\\]/g, ""));
 }
 var ASSIGNMENT3 = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
+var DB_VARIABLE = /BEADS_DB|BD_DB/;
+var SKIPS_STORE_INIT = new Set([
+  "bash",
+  "bootstrap",
+  "codex-hook",
+  "completion",
+  "context",
+  "cursor-hook",
+  "doctor",
+  "dolt",
+  "fish",
+  "formula",
+  "help",
+  "hook",
+  "hooks",
+  "human",
+  "init",
+  "merge",
+  "metrics",
+  "onboard",
+  "powershell",
+  "prime",
+  "quickstart",
+  "schema",
+  "send-metrics",
+  "setup",
+  "version",
+  "where",
+  "worktree",
+  "zsh"
+]);
+var OPENS_STORE = {
+  dolt: new Set(["push", "pull", "commit"]),
+  human: new Set(["list", "respond", "dismiss", "stats"])
+};
+var MIGRATE_SKIPS_STORE_INIT = new Set([
+  "from-server-to-proxied-server",
+  "from-proxied-server-to-server",
+  "from-shared-server-to-proxied-server",
+  "from-proxied-server-to-shared-server",
+  "legacy-sqlite"
+]);
+function skipsStoreInit({ verb, args }) {
+  const positional = args.filter((arg) => !arg.startsWith("-"));
+  const sub = positional[0];
+  if (verb === "migrate")
+    return sub !== undefined && MIGRATE_SKIPS_STORE_INIT.has(sub);
+  if (!SKIPS_STORE_INIT.has(verb) || sub === undefined)
+    return SKIPS_STORE_INIT.has(verb);
+  if (verb === "dolt" && sub === "remote")
+    return positional.length < 2;
+  return OPENS_STORE[verb]?.has(sub) !== true;
+}
 var BEADS_DIR_ASSIGNMENT = /^BEADS_DIR(\+?)=/;
 var LIST_PREFIXES = new Set(["then", "else", "do"]);
 var COMPOUND_OPENERS = { if: true, case: true, for: true, select: true, while: true, until: true };
@@ -2812,6 +2876,15 @@ function resolveWrite(invocation, assignments, state, env, source) {
   }
   const directory = globalValue(invocation.globals, ["-C", "--directory"]);
   const db = globalValue(invocation.globals, ["--db"]);
+  const dbSource = (env.BEADS_DB ?? "") !== "" ? "the environment sets `BEADS_DB`" : (env.BD_DB ?? "") !== "" ? "the environment sets `BD_DB`" : DB_VARIABLE.test(source) ? "the command mentions `BEADS_DB` or `BD_DB`" : undefined;
+  if (dbSource !== undefined && skipsStoreInit(invocation) && db === undefined) {
+    return {
+      problem: {
+        part: `${write} skips bd's store init, so bd 1.3.1 picks its store from \`BEADS_DB\` or \`BD_DB\` before \`BEADS_DIR\`, and ${dbSource}`,
+        fix: "Name the store on the write with `bd --db /path/.beads ...`; `BEADS_DIR` does not override `BEADS_DB` for this command."
+      }
+    };
+  }
   if (directory === undefined && db === undefined && beadsDir.kind === "unknown") {
     return {
       problem: {
@@ -3267,7 +3340,7 @@ function bunBinary() {
 }
 function resolveBunBinary(options = {}) {
   const execPath = options.execPath ?? process.execPath;
-  const own = basename2(execPath);
+  const own = basename3(execPath);
   if (own === "bun" || own === "bun.exe")
     return execPath;
   const onPath = options.which?.("bun");
@@ -3283,7 +3356,7 @@ function resolveBunBinary(options = {}) {
   if (mise === null || mise === undefined || options.miseWhich === undefined)
     return;
   const resolved = options.miseWhich(mise);
-  return resolved !== undefined && basename2(resolved).startsWith("bun") && existsSync2(resolved) ? resolved : undefined;
+  return resolved !== undefined && basename3(resolved).startsWith("bun") && existsSync2(resolved) ? resolved : undefined;
 }
 function quote(word) {
   return `'${word.replaceAll("'", "'\\''")}'`;
@@ -3294,7 +3367,7 @@ function withRunner(command, writes, runner, waitMs) {
   for (const write of [...writes].sort((left, right) => left.offset - right.offset)) {
     const store = quote(write.store);
     const selected = ` ${RUNNER_SELECTED_FLAG} ${quote(write.selected)}`;
-    out += `${command.slice(cursor, write.offset)}BEADS_DOLT_SHARED_SERVER= BEADS_DIR=${store} ${quote(runner.interpreter)} ${quote(runner.script)} ${RUNNER_STORE_FLAG} ${store}${selected} ${RUNNER_WAIT_FLAG} ${Math.round(waitMs)} -- `;
+    out += `${command.slice(cursor, write.offset)}BEADS_DOLT_SHARED_SERVER= BEADS_DIR=${store} BEADS_DB= BD_DB= ${quote(runner.interpreter)} ${quote(runner.script)} ${RUNNER_STORE_FLAG} ${store}${selected} ${RUNNER_WAIT_FLAG} ${Math.round(waitMs)} -- `;
     cursor = write.offset;
   }
   return out + command.slice(cursor);
@@ -3335,7 +3408,7 @@ async function decideEmbeddedWrite(parsed, cwd, env, callID, deadline = Date.now
 // plugins/beads/opencode/src/gate-admission.ts
 import { randomUUID } from "crypto";
 import { existsSync as existsSync3, realpathSync as realpathSync3, statSync as statSync3 } from "fs";
-import { dirname as dirname3, isAbsolute as isAbsolute4, join as join2, resolve as resolve4 } from "path";
+import { dirname as dirname3, join as join2, resolve as resolve4 } from "path";
 
 // lib/src/subprocess.ts
 import { constants as constants2 } from "os";
@@ -3489,7 +3562,7 @@ function lifecycleBdEnvironment(cwd, base = process.env) {
   const env = { ...base };
   if (env.BEADS_DIR === undefined || env.BEADS_DIR === "") {
     delete env.BEADS_DIR;
-    const resolved = sessionPinFor(cwd);
+    const resolved = ambientStore(cwd, env);
     if (resolved !== undefined)
       env.BEADS_DIR = resolved;
   }
@@ -3505,9 +3578,18 @@ function boundedBdEnvironment(base) {
     NO_COLOR: "1"
   };
 }
+function ownBeads(cwd) {
+  const dir = join2(cwd, ".beads");
+  try {
+    return statSync3(dir).isDirectory() ? dir : undefined;
+  } catch {
+    return;
+  }
+}
 function bdStoreDir(cwd, env) {
-  const selected = env.BEADS_DIR;
-  const dir = selected ? isAbsolute4(selected) ? selected : resolve4(cwd, selected) : join2(cwd, ".beads");
+  const dir = ambientStore(cwd, env, ownBeads);
+  if (dir === undefined)
+    return;
   try {
     return statSync3(dir).isDirectory() ? resolve4(dir) : undefined;
   } catch {
@@ -3802,8 +3884,8 @@ function bdStoreForInvocation(invocation, cwd, env) {
   if (directory !== undefined)
     return canonicalStore2(sessionPinFor(base) ?? join2(base, ".beads"));
   const local = invocation.prefix.findLast((token) => token.startsWith("BEADS_DIR="))?.slice("BEADS_DIR=".length);
-  const pinned = local ?? env.BEADS_DIR;
-  return canonicalStore2(pinned === undefined || pinned === "" ? sessionPinFor(cwd) ?? join2(cwd, ".beads") : isAbsolute4(pinned) ? pinned : resolve4(cwd, pinned));
+  const named = local === undefined ? env : { ...env, BEADS_DIR: local };
+  return canonicalStore2(ambientStore(cwd, named) ?? join2(cwd, ".beads"));
 }
 function environmentForCommand(command, base) {
   const env = { ...base };
@@ -4113,20 +4195,19 @@ function claimEnabled(invocation) {
   return invocation.verb === "claim" || (invocation.verb === "update" || invocation.verb === "ready") && flags.claim;
 }
 var LEDGER_SELECTOR = /^(?:-C|--db|--database|--directory|--global|--dolt-)/u;
-var LEDGER_ENV = {
-  BEADS_DIR: "path",
-  BEADS_DB: "path",
-  BD_DB: "path",
-  BD_SOCKET: "path",
-  BEADS_DOLT_DATA_DIR: "path",
-  BEADS_DOLT_SERVER_SOCKET: "path",
-  BEADS_PROXIED_SERVER_ROOT_PATH: "path",
-  BEADS_PROXIED_SERVER_CONFIG: "path",
-  BEADS_DOLT_PORT: "scalar",
-  BEADS_DOLT_SERVER_HOST: "scalar",
-  BEADS_DOLT_SERVER_PORT: "scalar",
-  BEADS_DOLT_SERVER_MODE: "scalar"
-};
+var KEYED_LEDGER_ENV = new Set(["BEADS_DIR", "BEADS_DB"]);
+var UNKEYED_LEDGER_ENV = [
+  "BD_DB",
+  "BD_SOCKET",
+  "BEADS_DOLT_DATA_DIR",
+  "BEADS_DOLT_SERVER_SOCKET",
+  "BEADS_PROXIED_SERVER_ROOT_PATH",
+  "BEADS_PROXIED_SERVER_CONFIG",
+  "BEADS_DOLT_PORT",
+  "BEADS_DOLT_SERVER_HOST",
+  "BEADS_DOLT_SERVER_PORT",
+  "BEADS_DOLT_SERVER_MODE"
+];
 var isAssignment = (value) => /^[A-Za-z_][A-Za-z0-9_]*=/u.test(value);
 function samePath(a, b, cwd) {
   const canonical = (value) => {
@@ -4195,15 +4276,16 @@ function inspectClaim(command, cwd, env, { injected, inherited }) {
     return refuse("a word of the command is computed by the shell (a variable, substitution, glob, brace or ~)");
   if (item.words.slice(bdIndex + 1).some((word) => LEDGER_SELECTOR.test(word.value)))
     return refuse("it carries a ledger selector flag (-C, --db, --database, --directory, --global, --dolt-*)");
+  const unkeyed = UNKEYED_LEDGER_ENV.find((name) => (inherited[name] ?? "") !== "");
+  if (unkeyed !== undefined)
+    return refuse(`the plugin's environment sets ${unkeyed}, which names a ledger or server the plugin cannot key a claim on`);
   for (const word of prefix.filter((item) => /^(?:BEADS|BD)_(?!ACTOR=)/u.test(item.value))) {
     const at = word.value.indexOf("=");
     const name = word.value.slice(0, at);
     const own = inherited[name] ?? "";
-    const kind = LEDGER_ENV[name];
-    if (kind === undefined)
-      return refuse("it assigns a BEADS_* or BD_* variable other than the actor or a known ledger variable");
-    const inline = word.value.slice(at + 1);
-    if (own === "" || !(kind === "path" ? samePath(inline, own, cwd) : inline === own))
+    if (!KEYED_LEDGER_ENV.has(name))
+      return refuse("it assigns a BEADS_* or BD_* variable other than the actor, BEADS_DIR or BEADS_DB");
+    if (own === "" || !samePath(word.value.slice(at + 1), own, cwd))
       return refuse(`it assigns ${name} to a different ledger than the plugin's own environment names`);
   }
   if (invocation.args.includes("--"))
@@ -5747,7 +5829,7 @@ function decideBdUpdateCloseParsed(parsed) {
 
 // plugins/beads/opencode/src/ledger-context.ts
 import { existsSync as existsSync8, lstatSync as lstatSync3, realpathSync as realpathSync7 } from "fs";
-import { basename as basename3, dirname as dirname8, join as join5, resolve as resolve8 } from "path";
+import { basename as basename4, dirname as dirname8, join as join5, resolve as resolve8 } from "path";
 var SAFE_PREFIX = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 function findLedger(from) {
   const start = resolve8(from);
@@ -5821,9 +5903,9 @@ function sameStore(a, b, cwd) {
   return canonical3(resolve8(cwd, a)) === canonical3(resolve8(cwd, b));
 }
 function ownerRoot(store, identity) {
-  if (basename3(store) === ".beads")
+  if (basename4(store) === ".beads")
     return dirname8(store);
-  if (basename3(identity) === ".git")
+  if (basename4(identity) === ".git")
     return dirname8(identity);
   return store;
 }
@@ -6258,10 +6340,10 @@ function withoutInheritedPin(env) {
   return rest;
 }
 function shellPin(cwd, env, pinFor = sessionPinFor) {
-  const explicit = withoutInheritedPin(env).BEADS_DIR;
-  if (explicit !== undefined && explicit !== "")
+  const own = withoutInheritedPin(env);
+  if (own.BEADS_DIR !== undefined && own.BEADS_DIR !== "")
     return;
-  return pinFor(cwd);
+  return ambientStore(cwd, { ...own, BEADS_DIR: undefined }, pinFor);
 }
 function pinShell(cwd, env, pinFor = sessionPinFor) {
   const selection = selectStore(cwd, env, pinFor);
@@ -6270,10 +6352,11 @@ function pinShell(cwd, env, pinFor = sessionPinFor) {
   Object.assign(env, selection.set);
 }
 function dropInheritedPin(env) {
-  for (const name of selectStore("", env, () => {
+  if (env[PIN_MARKER_ENV] === undefined)
     return;
-  }).unset)
-    delete env[name];
+  if (inheritsPin(env))
+    delete env.BEADS_DIR;
+  delete env[PIN_MARKER_ENV];
 }
 function selectStore(cwd, base, pinFor = sessionPinFor) {
   const own = withoutInheritedPin(base);
@@ -6294,7 +6377,7 @@ function pinnedEnvironment(cwd, base, pinFor = sessionPinFor) {
 }
 
 // plugins/beads/opencode/src/subagent-routing.ts
-import { basename as basename4, dirname as dirname10 } from "path";
+import { basename as basename5, dirname as dirname10 } from "path";
 var ROUTING_GATE = "bead-agent-routing";
 var ROUTING_BUDGET_MS = 3000;
 var HIGH_TIER_AGENT = "implementer-high";
@@ -6314,7 +6397,7 @@ function beadIdsIn(prompt, prefix) {
 function ledgerPrefix2(store) {
   if (store === undefined)
     return;
-  const name = basename4(dirname10(store)).toLowerCase();
+  const name = basename5(dirname10(store)).toLowerCase();
   return /^[a-z][a-z0-9-]*$/.test(name) ? name : undefined;
 }
 var text = (value) => typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;

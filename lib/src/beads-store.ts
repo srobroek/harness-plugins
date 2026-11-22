@@ -10,7 +10,7 @@
 
 import { spawnSync } from "node:child_process"
 import { lstatSync, realpathSync, statSync } from "node:fs"
-import { dirname, isAbsolute, resolve } from "node:path"
+import { basename, dirname, isAbsolute, resolve } from "node:path"
 
 export function configuredStore(options: Readonly<Record<string, unknown>>, projectRoot: string): string | undefined {
   if (!("store" in options)) return undefined
@@ -96,6 +96,33 @@ export function sessionPinFor(cwd: string): string | undefined {
   }
   if (isDir(local)) return local
   return undefined
+}
+
+/**
+ * The `.beads` directory a `BEADS_DB` value names: a `.beads` directory is the store itself; any
+ * other value (a database file, `.beads/dolt`, `.beads/embeddeddolt`) selects the directory that holds it.
+ */
+export function storeFromBeadsDb(value: string, cwd: string): string {
+  const path = resolve(cwd, value)
+  return basename(path) === ".beads" ? path : dirname(path)
+}
+
+/**
+ * The store a bd 1.3.1 store command (`bd create`, `bd update`, `bd list`) opens from `cwd` when it
+ * names none with `--db` or `-C`: `BEADS_DIR`, then the `.beads` found from `cwd` (`walkUp`), then
+ * `BEADS_DB` only when none is found (cmd/bd/main.go `FindBeadsDir`, then `FindDatabasePath`).
+ */
+export function ambientStore(
+  cwd: string,
+  env: Readonly<Record<string, string | undefined>>,
+  walkUp: (cwd: string) => string | undefined = sessionPinFor,
+): string | undefined {
+  const dir = env.BEADS_DIR
+  if (dir !== undefined && dir !== "") return resolve(cwd, dir)
+  const found = walkUp(cwd)
+  if (found !== undefined) return found
+  const db = env.BEADS_DB
+  return db !== undefined && db !== "" ? storeFromBeadsDb(db, cwd) : undefined
 }
 
 function isDir(path: string): boolean {
