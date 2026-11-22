@@ -45,7 +45,11 @@ On every `shell` call (`tool.hook("execute.before")`), in this order, with one
    `timeout`, `sudo`, `xargs` and the like) is refused without parsing the wrapper's
    arguments. A literal `BEADS_DIR=<path>` on the command line is the override.
 10. `gh pr create` without a `Bead:`, `Closes-Bead:` or `Bead-Id:` trailer is
-   refused in a repository with a live ledger that you can write to.
+   refused in a repository with a live ledger that you can write to. The gate does not
+   decode shell: it reads one exact form (`gh pr create` or `gh pr new` alone, with one
+   `--body` or a relative regular `--body-file`) and refuses any other command that may
+   reach `gh pr create`, such as a chain, a wrapper, `env -S`, a `$'...'` word, a short-flag
+   cluster, `--fill`, or an alias. The refusal prints the accepted form.
 11. Each `bd` write to an embedded store is rewritten to run under
     `bd-embedded-write-runner`, which holds the store's write lock for exactly the
     life of the `bd` process. The lock files are shared with the omp plugin.
@@ -116,9 +120,18 @@ The plugin follows `session.execution.*` events (`ctx.event.subscribe`). Every
 message it sends is a `session.synthetic` with `metadata.source: "srobroek.beads"`.
 
 - **Claim tracking.** The plugin tracks a claim only when it knows the ledger and the outcome.
-  A ledger the plugin's own process environment chooses is certain: the session pin, or any of
-  `BEADS_DIR`, `BEADS_DB`, `BD_DB`, `BD_SOCKET` and the `BEADS_DOLT_*`/`BEADS_PROXIED_SERVER_*`
-  variables set there. A command that overrides it is not tracked: a ledger selector anywhere
+  It resolves the ledger once, in bd 1.3.1's order for store commands such as `bd update` and
+  `bd create`: `--db`, then `BEADS_DIR`, then the `.beads` found from the directory (the session
+  pin), then `BEADS_DB` only when no `.beads` is found. A `BEADS_DB` that is a `.beads` directory
+  names that store; any other value, such as a database file, selects the directory that holds
+  it. The plugin pins `BEADS_DIR` to the resolved store on its shells and its own `bd` calls, so
+  a later change to `BEADS_DB` cannot move a claim. Commands that skip bd's store init
+  (`bd where`, `bd dolt set`, `bd init`) use another order: `--db`, then `BEADS_DB`, then
+  `BD_DB`, then `BEADS_DIR`. The embedded write lock refuses such a write when `BEADS_DB` or
+  `BD_DB` is set or appears in the command, unless `--db` names the store. An inherited
+  `BD_DB`, `BD_SOCKET` or `BEADS_DOLT_*`/`BEADS_PROXIED_SERVER_*` variable leaves the claim
+  untracked, because bd's store commands do not read `BD_DB` as a store path and the others
+  name a server. A command that overrides it is not tracked: a ledger selector anywhere
   in it (a word starting `-C`, `--db`, `--database`, `--directory`, `--global` or `--dolt-`),
   or a `BEADS_*`/`BD_*` assignment other than the actor. The one exception is an inline
   assignment of a ledger variable to the plugin's own value, compared as canonical paths

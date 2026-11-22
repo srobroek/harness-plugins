@@ -244,6 +244,29 @@ test.each(["harness-kit", "action"])("allows a version-only update to an approve
   expect(f.statuses.map((status) => status.state)).toEqual(["success", "success", "success"])
 })
 
+// Every action the publisher's normalizer lists. setup-bun is not in the current ci.yml, so each test appends one pinned step per action.
+const listedActions = ["actions/checkout", "actions/setup-node", "oven-sh/setup-bun", "jdx/mise-action"]
+const withPins = (text: string, pins: Record<string, string>) =>
+  `${text}\n${Object.entries(pins).map(([action, sha]) => `      - uses: ${action}@${sha.repeat(40)} # v1.2.3`).join("\n")}\n`
+const pinsAt = (sha: string, bumped?: string) =>
+  Object.fromEntries([...listedActions, "actions/cache"].map((action) => [action, action === bumped ? "d" : sha]))
+
+test.each(listedActions)("allows a digest-only bump of a listed action: %s", async (action) => {
+  const f = fixture()
+  f.responses[`/contents/.github/workflows/ci.yml?ref=${"b".repeat(40)}`] = definition(withPins(trustedCi, pinsAt("a")), "trusted-pins")
+  f.responses[`/contents/.github/workflows/ci.yml?ref=${f.run.head_sha}`] = definition(withPins(trustedCi, pinsAt("a", action)), "bumped-pin")
+  await f.execute()
+  expect(f.statuses.map((status) => status.state)).toEqual(["success", "success", "success"])
+})
+
+test("rejects a digest-only bump of an action outside the list: actions/cache", async () => {
+  const f = fixture()
+  f.responses[`/contents/.github/workflows/ci.yml?ref=${"b".repeat(40)}`] = definition(withPins(trustedCi, pinsAt("a")), "trusted-pins")
+  f.responses[`/contents/.github/workflows/ci.yml?ref=${f.run.head_sha}`] = definition(withPins(trustedCi, pinsAt("a", "actions/cache")), "bumped-pin")
+  await expect(f.execute()).rejects.toThrow("CI definition differs")
+  expect(f.statuses).toEqual([])
+})
+
 test.each([
   ["another action owner", (text: string) => text.replace("actions/checkout@", "someone/checkout@")],
   ["another action", (text: string) => text.replace("actions/checkout@", "actions/upload-artifact@")],

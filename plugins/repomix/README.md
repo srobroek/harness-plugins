@@ -12,8 +12,8 @@ so it never lands in the context.
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/repomix/opencode'
 ```
 
-Install repomix globally (`mise use -g npm:repomix@1.18.1` or `npm i -g repomix`). Without
-it on PATH, the tool runs `npx --yes repomix@1.18.1`, because npx downloads code. Your
+Install repomix globally (`mise use -g npm:repomix@1.19.0` or `npm i -g repomix`). Without
+it on PATH, the tool runs `npx --yes repomix@1.19.0`, because npx downloads code. Your
 permission rules decide whether that runs; set `confirmPack` (below) to prompt first.
 
 ## Tool

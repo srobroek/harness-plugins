@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process"
-import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
-import { commandSegments, invocation, type ParsedCommand, type Token } from "@srobroek/opencode-lib/beads-shell"
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs"
+import { basename, dirname, join, resolve } from "node:path"
+import type { ParsedCommand } from "@srobroek/opencode-lib/beads-shell"
+import { ACCEPTED_FORMS, beadIn, MAX_BODY_BYTES, mayCreatePr, type ReadFile, readPrCreate, TRAILER_RULE } from "./pr-create-form.ts"
 
 /**
  * A PR that names no bead is a PR nobody can trace back to a decision.
@@ -9,11 +10,10 @@ import { commandSegments, invocation, type ParsedCommand, type Token } from "@sr
  * A live ledger requires a Bead, Closes-Bead, or Bead-Id trailer.
  * A regular-file .beads/RETIRED marker opts out the nearest ledger.
  * No-Bead: is not accepted; this marker belongs to the gate, not bd.
+ *
+ * The gate reads one exact form of `gh pr create` (`pr-create-form.ts`) and refuses every other
+ * command that may reach it, so it never has to agree with bash about what a command means.
  */
-
-const MAX_COMMAND_LENGTH = 64_000
-// `$'a\nb'` reaches the gate undecoded, so a literal `\n`, `\r` or `\t` also separates a trailer from the line before it.
-const BEAD_REF = /(?:^|\s|\\[nrt])(?:Bead|Closes-Bead|Bead-Id):\s*[A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9]+/i
 
 /**
  * A `gh` API call that hangs must not spend the whole tool_call budget: the harness kills a
@@ -21,39 +21,11 @@ const BEAD_REF = /(?:^|\s|\\[nrt])(?:Bead|Closes-Bead|Bead-Id):\s*[A-Za-z][A-Za-
  */
 const GH_TIMEOUT_MS = 10_000
 
-/** Flags whose following token is a value, so a `--body` inside one is not the body. */
-const VALUE_FLAGS: Record<string, true> = {
-  "--title": true,
-  "-t": true,
-  "--base": true,
-  "-B": true,
-  "--head": true,
-  "-H": true,
-  "--repo": true,
-  "-R": true,
-  "--reviewer": true,
-  "-r": true,
-  "--assignee": true,
-  "-a": true,
-  "--label": true,
-  "-l": true,
-  "--project": true,
-  "-p": true,
-  "--milestone": true,
-  "-m": true,
-  "--body-file": true,
-  "-F": true,
-  "--template": true,
-  "-T": true,
-}
-
 export const REASON =
   "This PR names no bead. A live ledger requires a Bead: <id>, Closes-Bead: <id>, or Bead-Id: <id> trailer. To opt out, retire the nearest ledger with this gate's regular-file .beads/RETIRED marker; No-Bead: is not accepted."
 
-function withLedger(reason: string, note: LedgerNote | undefined): string {
-  const text = note?.()
-  return text === undefined ? reason : `${reason} ${text}`
-}
+const OPT_OUT =
+  "To opt out, retire the nearest ledger with this gate's regular-file .beads/RETIRED marker; No-Bead: is not accepted."
 
 export function beadsActive(dir: string): boolean {
   let current = resolve(dir)
@@ -72,122 +44,10 @@ export function beadsActive(dir: string): boolean {
   }
 }
 
-/** Where the gate read a PR body, so a refusal can say what it looked at. */
-export type BodyRead = { text: string; source: string }
-
-/** Reads a `--body-file` path; undefined when the file cannot be read. */
-export type ReadBodyFile = (path: string) => string | undefined
-
-/** The `--body` value of one `gh pr create` segment; `--body-file` is not read. */
-export function bodyOfGhCreate(segment: string): string | null {
-  return readBodyOfGhCreate(segment)?.text ?? null
-}
-
-/**
- * The body of one `gh pr create` segment and where it came from: null when the segment
- * creates no PR, and null when it creates one whose body is not visible here (`--fill`,
- * an editor session, stdin, or a `--body-file` that `readFile` does not supply).
- */
-export function readBodyOfGhCreate(segment: string, readFile?: ReadBodyFile): BodyRead | null {
-  const tokens = invocation(segment, ["gh", "pr", "create"])
-  if (!tokens) return null
-  let body: string | null = null
-  let file: string | null = null
-  for (let i = 3; i < tokens.length; i++) {
-    const token = tokens[i]
-    if (!token) continue
-    if (!token.quoted && token.value === "--") break
-    if (token.quoted) continue
-    if (token.value === "--body-file" || token.value === "-F") {
-      file = tokens[i + 1]?.value ?? null
-      i++
-      continue
-    }
-    if (token.value.startsWith("--body-file=")) {
-      file = token.value.slice("--body-file=".length)
-      continue
-    }
-    if (VALUE_FLAGS[token.value]) {
-      i++
-      continue
-    }
-    if (token.value === "--body" || token.value === "-b") {
-      body = tokens[i + 1]?.value ?? ""
-      i++
-      continue
-    }
-    if (token.value.startsWith("--body=")) {
-      body = token.value.slice("--body=".length)
-      continue
-    }
-    // Short flags cluster, and `gh` accepts a value attached to the last one:
-    // `-db'no bead'` is a draft whose body is `no bead`, not a bodyless call.
-    const cluster = /^-([A-Za-z]*)b(=?)(.*)$/.exec(token.value)
-    if (cluster && !token.value.startsWith("--")) {
-      const attached = cluster[3] ?? ""
-      body = attached.length > 0 || cluster[2] === "=" ? attached : (tokens[++i]?.value ?? "")
-    }
-  }
-  if (body !== null) return { text: body, source: "the --body text" }
-  if (file !== null && file !== "-" && readFile) {
-    const text = readFile(file)
-    if (text !== undefined) return { text, source: `--body-file ${file}` }
-  }
-  return null
-}
-
 export type RepositoryControl = { kind: "controlled" } | { kind: "uncontrolled" } | { kind: "unknown"; reason: string }
 
 /** Names the ledger the gate read; called only when the gate is about to refuse. */
 export type LedgerNote = () => string | undefined
-
-export function decidePrCreate(
-  body: string | null,
-  active: boolean | RepositoryControl,
-  note?: LedgerNote,
-  source?: string,
-): { block: true; reason: string } | null {
-  if (active === false || (typeof active !== "boolean" && active.kind === "uncontrolled")) return null
-  if (body === null) return null
-  if (BEAD_REF.test(body)) return null
-  const looked = source === undefined ? "" : ` Looked at ${source}, not the branch or the title.`
-  if (typeof active !== "boolean" && active.kind === "unknown") {
-    return {
-      block: true,
-      reason: withLedger(`${active.reason}. This PR must name a bead while repository control is unknown.${looked}`, note),
-    }
-  }
-  return { block: true, reason: withLedger(`${REASON}${looked}`, note) }
-}
-
-/**
- * Blocks when any `gh pr create` in the command carries neither a bead nor a truthful no-bead reason.
- *
- * `active` is resolved per segment and only for a segment whose answer actually depends on it,
- * because resolving it reaches the network and this decides every bash call in the session.
- */
-export function decideCommand(
-  command: string,
-  active: boolean | RepositoryControl | ((segment: string) => boolean | RepositoryControl),
-  note?: LedgerNote,
-  options: { readFile?: ReadBodyFile } = {},
-): { block: true; reason: string } | null {
-  if (command.length > MAX_COMMAND_LENGTH) return null
-  const segments = commandSegments(command)
-  // An earlier segment of a chain may write the body file, so it is read only from a lone command.
-  const readFile = segments.length === 1 ? options.readFile : undefined
-  for (const segment of segments) {
-    const read = readBodyOfGhCreate(segment, readFile)
-    const body = read?.text ?? null
-    // A segment that creates no PR, and one whose body already names a bead, decide null for
-    // every `active`. Resolving `active` ahead of them spent two synchronous `gh` API calls per
-    // segment on every bash call, so a slow `gh` exhausted the handler's budget.
-    if (body === null || BEAD_REF.test(body)) continue
-    const decision = decidePrCreate(body, typeof active === "function" ? active(segment) : active, note, read?.source)
-    if (decision) return decision
-  }
-  return null
-}
 
 /**
  * The permission lookup deliberately fails closed: today's catch silently passed, but
@@ -195,29 +55,6 @@ export function decideCommand(
  */
 export function controlledByViewerPermission(permission: unknown): boolean {
   return permission === "WRITE" || permission === "MAINTAIN" || permission === "ADMIN"
-}
-
-export function repositoryFromGhCreate(command: string): string | null {
-  const tokens = invocation(command, ["gh", "pr", "create"])
-  if (!tokens) return null
-  let selected: string | null = null
-  for (let i = 3; i < tokens.length; i += 1) {
-    const token = tokens[i] as Token
-    const value = token.value
-    if (value === "--repo" || value === "-R") {
-      const next = tokens[++i]
-      selected = next?.value ?? null
-    } else if (value.startsWith("--repo=")) {
-      selected = value.slice(7)
-    } else if (value.startsWith("-R") && value.length > 2) {
-      selected = value.slice(2)
-    } else if (/^-[A-Za-z]*R.+$/.test(value) && value.length > 3) {
-      selected = value.slice(value.indexOf("R") + 1)
-    } else if (value.startsWith("-") && VALUE_FLAGS[value] === true) {
-      i += 1
-    }
-  }
-  return selected && /^(?:[^/\s]+\/)?[^/\s]+\/[^/\s]+$/.test(selected) ? selected : null
 }
 
 export type RepositoryView = { nameWithOwner?: unknown; isFork?: unknown; parent?: { nameWithOwner?: unknown } | null }
@@ -269,56 +106,88 @@ export function repositoryControlled(repo: string | null): RepositoryControl {
 }
 
 /**
- * Decide the whole command line and every recursively executed child. Segments are read
- * from source text, not from joined argv, so a quoted `--body` keeps its spaces.
+ * Whether the `gh pr create` that `repo` names (or the checkout at `cwd`, when it names none) is
+ * subject to the gate: a live ledger and a repository the viewer can write. Resolved only when
+ * the command does not already prove a bead, because it reaches the network.
  */
-export function decideCommandParsed(
-  parsed: ParsedCommand,
-  active: boolean | RepositoryControl | ((segment: string) => boolean | RepositoryControl),
-  note?: LedgerNote,
-  options?: { readFile?: ReadBodyFile },
-): { block: true; reason: string } | null {
-  const decision = decideCommand(parsed.command, active, note, options)
-  if (decision) return decision
-  for (const child of parsed.nested) {
-    const nested = decideCommandParsed(child, active, note, options)
-    if (nested) return nested
-  }
-  return null
+export function repositoryControlFor(repo: string | null, cwd: string): boolean | RepositoryControl {
+  if (!beadsActive(cwd)) return false
+  return repositoryControlled(repo ?? repositoryFromCurrentCheckout(cwd))
 }
 
 /**
- * Reads a body file relative to `cwd`. Only a regular file of at most the command cap is visible:
- * the target is opened without blocking (so a FIFO cannot hang the open), the opened descriptor
- * is checked (so a symlink is judged by its target), and the read is bounded.
+ * Reads the body file `path` (already bare, relative and free of `..`) relative to `cwd`.
+ *
+ * The directory must be what it says: its real path equals the lexical one, so no component is a
+ * symlink. The file is opened without following a symlink and without blocking (a FIFO cannot hang
+ * the open), the opened descriptor must be a regular file of at most `MAX_BODY_BYTES`, and its
+ * bytes must be UTF-8 without a NUL. A BOM is kept, so it stays in front of a trailer it would hide.
  */
-export function bodyFileReader(cwd: string): ReadBodyFile {
+export function readBodyFile(cwd: string): ReadFile {
   return (path) => {
     let fd: number | undefined
     try {
-      fd = openSync(resolve(cwd, path), constants.O_RDONLY | constants.O_NONBLOCK)
-      if (!fstatSync(fd).isFile()) return undefined
-      const buffer = Buffer.alloc(MAX_COMMAND_LENGTH + 1)
+      const directory = resolve(realpathSync(cwd), dirname(path))
+      if (realpathSync(directory) !== directory) return { ok: false, reason: "its directory is or goes through a symlink" }
+      fd = openSync(join(directory, basename(path)), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+      const stat = fstatSync(fd)
+      if (!stat.isFile()) return { ok: false, reason: "it is not a regular file" }
+      if (stat.size > MAX_BODY_BYTES) return { ok: false, reason: `it is larger than ${MAX_BODY_BYTES} bytes` }
+      const buffer = Buffer.alloc(MAX_BODY_BYTES + 1)
       let length = 0
       while (length < buffer.length) {
         const read = readSync(fd, buffer, length, buffer.length - length, null)
         if (read === 0) break
         length += read
       }
-      return length > MAX_COMMAND_LENGTH ? undefined : buffer.toString("utf8", 0, length)
-    } catch {
-      return undefined
+      if (length > MAX_BODY_BYTES) return { ok: false, reason: `it is larger than ${MAX_BODY_BYTES} bytes` }
+      const bytes = buffer.subarray(0, length)
+      if (bytes.includes(0)) return { ok: false, reason: "it holds a NUL byte" }
+      try {
+        return { ok: true, text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes) }
+      } catch {
+        return { ok: false, reason: "it is not valid UTF-8" }
+      }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      // The reason is shown to the user; the error itself can name paths, so it stays on `cause`.
+      return { ok: false, reason: `it could not be opened as a regular file${code === undefined ? "" : ` (${code})`}`, cause: error }
     } finally {
       if (fd !== undefined) closeSync(fd)
     }
   }
 }
 
+export type PrBeadLinkDeps = {
+  /** The repository's control, asked only when the command does not already name a bead. `false` means no ledger. */
+  control: (repo: string | null, cwd: string) => boolean | RepositoryControl
+  note?: LedgerNote
+}
+
+export type PrBeadLinkDecision = { block: true; reason: string; resolution: string }
+
 /**
- * Whether a `gh pr create` segment from `cwd` is subject to the gate: a live ledger and
- * a repository the viewer can write. Resolved only for segments whose body names no bead.
+ * Blocks a command that may create a PR unless it is an exact `gh pr create` form that names a
+ * bead. Where the repository has no ledger, or the viewer cannot write to it, nothing is refused.
  */
-export function repositoryControlFor(segment: string, cwd: string): boolean | RepositoryControl {
-  if (!beadsActive(cwd)) return false
-  return repositoryControlled(repositoryFromGhCreate(segment) ?? repositoryFromCurrentCheckout(cwd))
+export function decidePrBeadLink(parsed: ParsedCommand, cwd: string, deps: PrBeadLinkDeps): PrBeadLinkDecision | null {
+  if (!mayCreatePr(parsed)) return null
+  const read = readPrCreate(parsed.command, readBodyFile(cwd))
+  if (read.kind === "form" && beadIn(read.body.text) !== undefined) return null
+  const control = deps.control(read.kind === "form" ? read.repo : null, cwd)
+  if (control === false || (control !== true && control.kind === "uncontrolled")) return null
+  const subject =
+    read.kind === "form"
+      ? `${REASON} Looked at ${read.body.source}, not the branch or the title.`
+      : `This command may create a PR in a form the bead gate cannot read exactly: ${read.rule}. ${OPT_OUT}`
+  const unknown =
+    control !== true && control.kind === "unknown"
+      ? `${control.reason}. A PR must name a bead, in an exact form, while repository control is unknown. `
+      : ""
+  const note = deps.note?.()
+  return {
+    block: true,
+    reason: `${unknown}${subject}${note === undefined ? "" : ` ${note}`}`,
+    resolution: `${ACCEPTED_FORMS} ${TRAILER_RULE}`,
+  }
 }

@@ -11,9 +11,9 @@
 | agent-seance | 0.7.1 | development | global | opencode |
 | architecture | 0.8.1 | development | global | opencode, claude |
 | ast-grep | 1.2.1 | development | global | opencode, claude |
-| autopilot | 1.3.3 | development | global | opencode |
+| autopilot | 1.3.4 | development | global | opencode |
 | aws | 0.7.1 | development | global | opencode, claude |
-| beads | 0.8.6 | development | project | opencode, claude |
+| beads | 0.8.9 | development | project | opencode, claude |
 | build | 0.7.1 | development | project | opencode |
 | cad | 0.8.1 | development | project | opencode |
 | chezmoi | 0.6.0 | development | global | opencode, claude |
@@ -39,9 +39,9 @@
 | project | 0.9.1 | productivity | global | opencode, claude |
 | quality | 0.13.1 | development | global | opencode, claude |
 | repomix | 0.4.1 | development | global | opencode, claude |
-| safety | 0.11.5 | development | global | opencode |
+| safety | 0.12.0 | development | global | opencode |
 | session | 0.4.1 | development | global | opencode |
-| speckit | 0.10.2 | development | project | opencode, claude |
+| speckit | 0.10.3 | development | project | opencode, claude |
 | statusline | 0.4.0 | development | global | opencode |
 | subagent-worktree | 0.8.0 | development | global | opencode |
 | toolchain | 0.7.2 | development | global | opencode, claude |

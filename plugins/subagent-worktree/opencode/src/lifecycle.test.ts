@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -23,8 +23,10 @@ const TIP2 = "u".repeat(40)
 const MAIN0 = "m".repeat(40)
 const NOW = 100_000_000
 const COMMONS: string[] = []
-afterAll(() => {
-  for (const root of COMMONS) rmSync(root, { recursive: true, force: true })
+// Removed after each test, not once at the end: under `--rerun-each 20` the end-of-file hook deleted thousands of
+// directories at once and, on a loaded machine, exceeded bun's 5 s hook timeout (bead harness-plugins-a2n.8).
+afterEach(() => {
+  for (const root of COMMONS.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
 type World = {

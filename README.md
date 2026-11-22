@@ -147,13 +147,14 @@ strict YAML.
 - `.github/workflows/ci.yml` calls the reusable `check.yml` of harness-kit (`harness-kit check`,
   `bun test`, `tsc`), runs the `repo-checks` job (lint, `build:check`, the content checks and the
   Python tests of the shipped scripts) and, when `plugins/cad` changes, the `cad` job
-  (`scripts/sync-cad.ts --check`).
+  (`scripts/sync-cad.ts --check`). The two jobs it runs itself install bun and just from
+  `.mise.toml` and call `just` recipes.
 - `.github/workflows/release.yml` calls the reusable `release.yml` (multi-semantic-release). It
   tags each plugin as `<name>--v<version>`.
 
-Both pin harness-kit at the version of the package in `package.json`: `srobroek/harness-kit/.github/workflows/check.yml@v1.5.0` and `srobroek/harness-kit/.github/workflows/release.yml@v1.5.0`.
+Both pin harness-kit at the version of the package in `package.json`: `srobroek/harness-kit/.github/workflows/check.yml@v1.7.0` and `srobroek/harness-kit/.github/workflows/release.yml@v1.7.0`.
 Renovate moves the package and the workflow tags in one pull request, using the preset in
-`renovate.json`. That pull request needs `bun run build` on its branch before it passes
+`renovate.json`. That pull request needs `just build` on its branch before it passes
 `harness-kit check`.
 
 ## Migration notes

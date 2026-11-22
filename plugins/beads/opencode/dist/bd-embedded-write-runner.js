@@ -18,7 +18,7 @@ import {
   writeSync
 } from "fs";
 import { hostname } from "os";
-import { basename as basename2, dirname as dirname2, isAbsolute as isAbsolute3, join, resolve as resolve3 } from "path";
+import { basename as basename3, dirname as dirname2, isAbsolute as isAbsolute3, join, resolve as resolve3 } from "path";
 
 // lib/src/shell-tokenizer.ts
 var SEPARATORS = new Set([";", "&", "|", "(", ")", `
@@ -291,123 +291,11 @@ var WRAPPERS = {
   until: true,
   do: true
 };
-function commandSegments(command) {
-  const out = [];
-  let start = 0;
-  let quote = null;
-  let escaped = false;
-  for (let i = 0;i < command.length; i++) {
-    const ch = command[i];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (quote === "'") {
-      if (ch === "'")
-        quote = null;
-      continue;
-    }
-    if (quote === '"') {
-      if (ch === "\\")
-        escaped = true;
-      else if (ch === '"')
-        quote = null;
-      continue;
-    }
-    if (ch === "\\") {
-      escaped = true;
-      continue;
-    }
-    if (ch === "'" || ch === '"') {
-      quote = ch;
-      continue;
-    }
-    const two = command.slice(i, i + 2);
-    if (two === "&&" || two === "||") {
-      out.push(command.slice(start, i), two);
-      i++;
-      start = i + 1;
-      continue;
-    }
-    if (ch === ";" || ch === "&" || ch === "|" || ch === `
-` || ch === "(" || ch === ")" || ch === "{" || ch === "}") {
-      out.push(command.slice(start, i), ch);
-      start = i + 1;
-    }
-  }
-  out.push(command.slice(start));
-  return out;
-}
 function tokenize(segment) {
   return tokenizeShell(segment, { preserveBackslashes: true }).map(({ value, startsQuoted }) => ({
     value,
     quoted: startsQuoted
   }));
-}
-function invocation(segment, argv) {
-  const tokens = tokenize(segment);
-  const head = argv[0];
-  if (!head)
-    return null;
-  let start = 0;
-  while (start < tokens.length) {
-    const token = tokens[start];
-    if (!token || token.quoted)
-      return null;
-    const basename = token.value.split("/").pop() ?? token.value;
-    if (basename === head)
-      break;
-    if (basename === "env") {
-      start++;
-      while (start < tokens.length) {
-        const option = tokens[start];
-        if (!option || option.quoted)
-          return null;
-        const value = option.value;
-        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(value)) {
-          start++;
-          continue;
-        }
-        if (value === "--") {
-          start++;
-          break;
-        }
-        if (value === "-i" || value === "--ignore-environment") {
-          start++;
-          continue;
-        }
-        if (value === "-u" || value === "--unset") {
-          start++;
-          if (start >= tokens.length || tokens[start]?.quoted)
-            return null;
-          start++;
-          continue;
-        }
-        if (value.startsWith("--unset=") || value.startsWith("-u") && value.length > 2) {
-          start++;
-          continue;
-        }
-        if (value.startsWith("-")) {
-          start++;
-          continue;
-        }
-        break;
-      }
-      continue;
-    }
-    if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(token.value) && !token.value.startsWith("-") && WRAPPERS[basename] !== true)
-      return null;
-    start++;
-  }
-  for (const [offset, word] of argv.entries()) {
-    const token = tokens[start + offset];
-    if (!token || token.quoted)
-      return null;
-    const value = offset === 0 ? token.value.split("/").pop() ?? token.value : token.value;
-    if (value !== word)
-      return null;
-  }
-  return tokens.slice(start);
 }
 function scanShell(source, options = {}) {
   const items = [];
@@ -1261,80 +1149,223 @@ var HEADER_ONLY = new Set(["for", "select", "case"]);
 var CLOSERS = new Set(["fi", "done", "esac"]);
 var BRANCHES = new Set(["else", "elif"]);
 var ASSIGNMENT2 = /^[A-Za-z_]\w*=/;
+var BOTH = { BEADS_ACTOR: true, BD_ACTOR: true };
+var VARIABLE_BUILTINS = {
+  eval: true,
+  getopts: true,
+  let: true,
+  mapfile: true,
+  printf: true,
+  read: true,
+  readarray: true
+};
 var basename = (word) => word.split("/").pop() ?? word;
-function applyActorBuiltin(state, values, conditional) {
-  const name = values[0];
-  if (name !== "export" && name !== "unset")
-    return;
-  for (const arg of values.slice(1)) {
-    const variable = ACTOR_VARS.find((candidate) => arg === candidate || arg.startsWith(`${candidate}=`));
+var actorVarOf = (arg) => ACTOR_VARS.find((candidate) => arg === candidate || arg.startsWith(`${candidate}=`));
+function childView(vars) {
+  const exported = {};
+  const unverified = {};
+  for (const variable of ACTOR_VARS) {
+    const entry = vars[variable];
+    if (entry === "unverified")
+      unverified[variable] = true;
+    else if (entry === undefined || entry.exported === undefined)
+      continue;
+    else if (entry.exported && typeof entry.value === "string")
+      exported[variable] = entry.value;
+    else if (!entry.exported || entry.value === null)
+      exported[variable] = null;
+  }
+  return { exported, unverified };
+}
+function applyActorBuiltin(vars, name, unexport, names) {
+  for (const arg of names) {
+    const variable = actorVarOf(arg);
     if (variable === undefined)
       continue;
-    if (conditional)
-      continue;
+    const current = vars[variable];
     if (name === "unset")
-      delete state[variable];
+      vars[variable] = { value: null, exported: false };
     else if (arg.includes("="))
-      state[variable] = arg.slice(variable.length + 1);
+      vars[variable] = { value: arg.slice(variable.length + 1), exported: !unexport };
+    else if (unexport)
+      vars[variable] = { value: current === "unverified" ? undefined : current?.value, exported: false };
+    else if (current === "unverified")
+      continue;
+    else if (current !== undefined && current.value !== null)
+      vars[variable] = { value: current.value, exported: true };
   }
 }
-function bdInvocations(command, inherited = {}) {
-  return readCommand(command, inherited).invocations;
+var BUILTIN_OPTIONS = {
+  export: "fnp",
+  unset: "fnv",
+  declare: "aAfFgilnprtuxI",
+  typeset: "aAfFgilnprtuxI",
+  local: "aAfFgilnprtuxI",
+  readonly: "aAfp"
+};
+function builtinArgs(name, args) {
+  const known = BUILTIN_OPTIONS[name] ?? "";
+  let letters = "";
+  let i = 0;
+  for (;i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--") {
+      i++;
+      break;
+    }
+    if (arg.length < 2 || arg[0] !== "-" && arg[0] !== "+")
+      break;
+    for (const letter of arg.slice(1))
+      if (!known.includes(letter))
+        return;
+    letters += arg.slice(1);
+  }
+  return { letters, names: args.slice(i) };
 }
-function actorStateAfter(command, inherited = {}) {
-  return readCommand(command, inherited).state;
+var mentioned = (args) => ACTOR_VARS.filter((variable) => args.some((arg) => arg.includes(variable)));
+function applyVariableBuiltin(vars, name, args) {
+  const parsed = builtinArgs(name, args);
+  if (parsed === undefined) {
+    markUnverified(vars, mentioned(args));
+    return;
+  }
+  const { letters, names } = parsed;
+  const has = (letter) => letters.includes(letter);
+  if (name === "export") {
+    if (has("f"))
+      return;
+    if (has("p")) {
+      markUnverified(vars, mentioned(names));
+      return;
+    }
+    applyActorBuiltin(vars, "export", has("n"), names);
+    return;
+  }
+  if (name === "unset") {
+    if (has("f") && !has("v"))
+      return;
+    if (has("n") || has("f")) {
+      markUnverified(vars, mentioned(names));
+      return;
+    }
+    applyActorBuiltin(vars, "unset", false, names);
+    return;
+  }
+  if (has("p") || has("f") || has("F"))
+    return;
+  markUnverified(vars, mentioned(names));
 }
-function readCommand(command, inherited) {
+function applyActorAssignments(vars, assignments) {
+  for (const assignment of assignments) {
+    const variable = actorVarOf(assignment);
+    const current = variable === undefined ? undefined : vars[variable];
+    if (variable !== undefined && current !== "unverified")
+      vars[variable] = { value: assignment.slice(variable.length + 1), exported: current?.exported };
+  }
+}
+function afterCommand(vars, values, assigned) {
+  const after = { ...vars };
+  const name = values[0];
+  if (values.length === 0)
+    applyActorAssignments(after, assigned);
+  else if (name === "command" || name === "builtin") {
+    let i = 1;
+    while (name === "command" && values[i]?.startsWith("-") === true && values[i] !== "--")
+      i++;
+    if (values[i] === "--")
+      i++;
+    const wrapped = values[i];
+    const chained = wrapped === "command" || wrapped === "builtin";
+    if (wrapped !== undefined && (chained || BUILTIN_OPTIONS[wrapped] !== undefined || VARIABLE_BUILTINS[wrapped] === true))
+      markUnverified(after, mentioned(values.slice(i + 1)));
+  } else if (name !== undefined && BUILTIN_OPTIONS[name] !== undefined)
+    applyVariableBuiltin(after, name, values.slice(1));
+  else if (name !== undefined && VARIABLE_BUILTINS[name] === true)
+    markUnverified(after, mentioned(values.slice(1)));
+  return after;
+}
+var changedVars = (before, after) => ACTOR_VARS.filter((variable) => before[variable] !== after[variable]);
+function markUnverified(vars, variables) {
+  for (const variable of variables)
+    vars[variable] = "unverified";
+}
+function actorTouched(parsed) {
+  for (const item of scanShell(parsed.command, { executableSubstitutionsOnly: true }).items) {
+    if (item.kind !== "command")
+      continue;
+    const values = item.words.map((word) => word.value);
+    let first = 0;
+    while (first < values.length && ASSIGNMENT2.test(values[first] ?? ""))
+      first++;
+    if (resolveBd(values.slice(first), values.slice(0, first)) !== undefined)
+      continue;
+    if (values.some((value) => ACTOR_VARS.some((variable) => value.includes(variable))))
+      return true;
+    if (values.includes("env") && values.some((value) => value === "-" || value === "-i" || value === "--ignore-environment"))
+      return true;
+  }
+  return parsed.nested.some((child) => isParsed(child) && actorTouched(child));
+}
+function isParsed(value) {
+  if (value === null || typeof value !== "object")
+    return false;
+  const candidate = value;
+  return typeof candidate.command === "string" && Array.isArray(candidate.nested);
+}
+function bdInvocations(command) {
+  return readShell(command, { nested: false, touched: actorTouched(parse(command)) });
+}
+function readShell(command, context) {
   const out = [];
   const scan = scanShell(command, { executableSubstitutionsOnly: true });
-  let state = { ...inherited };
+  const child = { nested: true, touched: context.touched };
+  let vars = {};
+  let list = {};
+  let chain = null;
   const scopes = [];
+  const groups = [];
   let compounds = 0;
-  let andChained = false;
-  let orChained = false;
-  let chainExports = [];
-  const unclaimed = [...scan.substitutions];
-  for (const item of scan.items) {
+  const isPipe = (other) => other?.kind === "operator" && (other.operator === "|" || other.operator === "|&");
+  const endChain = () => {
+    if (chain !== null)
+      markUnverified(vars, changedVars(chain.base, vars));
+    chain = null;
+  };
+  for (const [index, item] of scan.items.entries()) {
     if (item.kind === "operator") {
-      if (item.operator === "(") {
-        scopes.push(state);
-        state = { ...state };
-      } else if (item.operator === ")" && scopes.length > 0)
-        state = scopes.pop();
-      else if (item.operator === "&&")
-        andChained = true;
-      else if (item.operator === "||")
-        orChained = true;
-      else if (item.operator === ";" || item.operator === `
-` || item.operator === "&") {
-        for (const { variable, value } of chainExports) {
-          if (state[variable] === value)
-            delete state[variable];
+      const operator = item.operator;
+      if (operator === "(") {
+        scopes.push({ vars, list, chain });
+        vars = { ...vars };
+        list = { ...vars };
+        chain = null;
+      } else if (operator === ")" && scopes.length > 0)
+        ({ vars, list, chain } = scopes.pop());
+      else if (operator === "{") {
+        groups.push({ list, chain });
+        list = { ...vars };
+        chain = null;
+      } else if (operator === "}" && groups.length > 0) {
+        endChain();
+        ({ list, chain } = groups.pop());
+      } else if (operator === "&&" || operator === "||") {
+        chain ??= { base: { ...vars }, or: false };
+        if (operator === "||") {
+          markUnverified(vars, changedVars(chain.base, vars));
+          chain.or = true;
         }
-        chainExports = [];
-        andChained = false;
-        orChained = false;
+      } else if (operator === ";" || operator === `
+`) {
+        endChain();
+        list = { ...vars };
+      } else if (operator === "&") {
+        endChain();
+        const changed = changedVars(list, vars);
+        vars = { ...list };
+        markUnverified(vars, changed);
+        list = { ...vars };
       }
       continue;
-    }
-    const spans = [...item.words, ...item.redirects];
-    const texts = [];
-    if (spans.length > 0) {
-      texts.push(command.slice(Math.min(...spans.map((w) => w.start)), Math.max(...spans.map((w) => w.end))));
-    }
-    for (const document of item.hereDocuments) {
-      if (!document.quoted)
-        texts.push(`:<<__HEREDOC_END__
-${document.body}__HEREDOC_END__
-`);
-    }
-    for (const text of texts) {
-      for (const source of scanShell(text, { executableSubstitutionsOnly: true }).substitutions) {
-        const at = unclaimed.indexOf(source);
-        if (at >= 0)
-          unclaimed.splice(at, 1);
-        out.push(...bdInvocations(source, state));
-      }
     }
     const words = item.words;
     let k = 0;
@@ -1360,49 +1391,48 @@ ${document.body}__HEREDOC_END__
       a++;
     const assigned = words.slice(k, a).map((word) => word.value);
     const values = words.slice(a).map((word) => word.value);
-    if (values.length === 0)
-      continue;
-    const before = { ...state };
-    applyActorBuiltin(state, values, compounds > 0 || orChained);
-    if (andChained)
-      for (const variable of ACTOR_VARS) {
-        const value = state[variable];
-        if (value !== undefined && value !== before[variable])
-          chainExports.push({ variable, value });
-      }
+    const inPipeline = isPipe(scan.items[index - 1]) || isPipe(scan.items[index + 1]);
     const found = resolveBd(values, assigned);
+    if (!context.nested && found === undefined) {
+      const after = afterCommand(vars, values, assigned);
+      const changed = changedVars(vars, after);
+      const finalStage = isPipe(scan.items[index - 1]) && !isPipe(scan.items[index + 1]);
+      if (changed.length > 0 && !(inPipeline && !finalStage)) {
+        if (finalStage || compounds > 0 || chain?.or === true)
+          markUnverified(vars, changed);
+        else
+          vars = after;
+      }
+    }
     if (found !== undefined) {
       const scanned = scanGlobals(values, found.next);
       const verb = values[scanned.next];
       if (verb !== undefined) {
+        const placed = !context.nested && !inPipeline;
+        const view = placed ? childView(vars) : { exported: {}, unverified: context.touched ? BOTH : {} };
         out.push({
           verb: verb.toLowerCase(),
           args: values.slice(scanned.next + 1),
           globals: scanned.globals,
           prefix: found.prefix,
-          exported: { ...state },
-          unset: found.unset
+          exported: view.exported,
+          unset: found.unset,
+          unverified: { ...view.unverified }
         });
       }
     }
-    const scriptState = { ...state };
-    for (const assignment of assigned) {
-      const variable = ACTOR_VARS.find((candidate) => assignment.startsWith(`${candidate}=`));
-      if (variable !== undefined)
-        scriptState[variable] = assignment.slice(variable.length + 1);
-    }
     const inline = interpreterCommandString(values);
     if (inline !== undefined)
-      out.push(...bdInvocations(inline, scriptState));
+      out.push(...readShell(inline, child));
     if (readsScriptFromStdin(values)) {
       const script = stdinSource(item);
       if (script !== undefined)
-        out.push(...bdInvocations(script, scriptState));
+        out.push(...readShell(script, child));
     }
   }
-  for (const source of unclaimed)
-    out.push(...bdInvocations(source, state));
-  return { invocations: out, state };
+  for (const source of scan.substitutions)
+    out.push(...readShell(source, child));
+  return out;
 }
 function resolveBd(values, assigned) {
   let i = 0;
@@ -1570,24 +1600,41 @@ var MOL_WRITES = {
   pour: true,
   squash: true
 };
+var literal = (value) => {
+  if (!value?.trim() || /[$`\\\0]/.test(value))
+    return null;
+  return value.trim();
+};
+function variableActor(invocation, variable, env) {
+  if (invocation.unset[variable] === true)
+    return null;
+  const assignment = invocation.prefix.findLast((token) => token.startsWith(`${variable}=`));
+  if (assignment !== undefined)
+    return literal(assignment.slice(variable.length + 1));
+  if (invocation.unverified[variable] === true)
+    return;
+  const exported = invocation.exported[variable];
+  if (exported === null)
+    return null;
+  return literal(exported ?? env[variable]);
+}
 function invocationActor(invocation, env) {
-  const literal = (value) => {
-    if (!value?.trim() || /[$`\\\0]/.test(value))
-      return null;
-    return value.trim();
-  };
-  const actorFlag = globalValue(invocation.globals, ["--actor"]);
-  const explicit = literal(actorFlag);
+  const explicit = literal(globalValue(invocation.globals, ["--actor"]));
   if (explicit !== null)
     return explicit;
-  const resolve = (variable) => {
-    if (invocation.unset[variable] === true)
-      return null;
-    const assignment = invocation.prefix.findLast((token) => token.startsWith(`${variable}=`));
-    const value = assignment !== undefined ? assignment.slice(variable.length + 1) : invocation.exported[variable] ?? env[variable];
-    return literal(value);
-  };
-  return resolve("BEADS_ACTOR") ?? resolve("BD_ACTOR");
+  const canonical = variableActor(invocation, "BEADS_ACTOR", env);
+  if (canonical === undefined)
+    return null;
+  return canonical ?? variableActor(invocation, "BD_ACTOR", env) ?? null;
+}
+function actorStatus(invocation, env) {
+  if (literal(globalValue(invocation.globals, ["--actor"])) !== null)
+    return "present";
+  const canonical = variableActor(invocation, "BEADS_ACTOR", env);
+  const legacy = variableActor(invocation, "BD_ACTOR", env);
+  if (typeof canonical === "string" || typeof legacy === "string")
+    return "present";
+  return canonical === undefined || legacy === undefined ? "unverified" : "missing";
 }
 function invocationFromArgv(args) {
   const scanned = scanGlobals(args, 0);
@@ -1600,7 +1647,8 @@ function invocationFromArgv(args) {
     globals: scanned.globals,
     prefix: [],
     exported: {},
-    unset: {}
+    unset: {},
+    unverified: {}
   };
 }
 function isMutatingInvocation({ verb, args }) {
@@ -1639,33 +1687,18 @@ var CREATING_VERBS = {
 };
 var CREATE_REASON = "bd create / `bd new` / `bd create-form` without BEADS_ACTOR or BD_ACTOR records the invoking human's git identity in created_by. Owner is always the git identity and never identifies the agent. The plugin starts every subagent shell call with BD_ACTOR, so this command removed or blanked it; drop the `unset` or the empty assignment and run the bare `bd` command.";
 var ADVISORY_TEXT = "BEADS_ACTOR and BD_ACTOR are unset on this mutating `bd` command. Without an actor, created_by records the invoking human's git identity; Owner is always the git identity and never identifies the agent. The plugin starts every subagent shell call with BD_ACTOR, so this command removed or blanked it; drop the `unset` or the empty assignment and run the bare `bd` command.";
-function decideActorParsed(parsed, env = process.env, inherited = {}) {
-  if (parsed === null || typeof parsed !== "object")
-    return { kind: "block", reason: "command could not be parsed" };
-  const candidate = parsed;
-  if (typeof candidate.command !== "string" || !Array.isArray(candidate.nested)) {
-    return { kind: "block", reason: "command could not be parsed" };
-  }
-  let advisory = false;
-  const own = decideActorGate(candidate.command, env, inherited);
-  if (own.kind === "block")
-    return own;
-  if (own.kind === "advisory")
-    advisory = true;
-  const after = actorStateAfter(candidate.command, inherited);
-  for (const child of candidate.nested) {
-    const decision = decideActorParsed(child, env, after);
-    if (decision.kind === "block")
-      return decision;
-    if (decision.kind === "advisory")
-      advisory = true;
-  }
-  return advisory ? { kind: "advisory", text: ADVISORY_TEXT } : { kind: "allow" };
-}
-function decideActorGate(command, env = process.env, inherited = {}) {
-  let advisory = false;
-  for (const invocation of bdInvocations(command, inherited)) {
-    if (!isMutatingInvocation(invocation) || invocationActor(invocation, env) !== null) {
+var UNVERIFIED_TEXT = "This command changes BEADS_ACTOR or BD_ACTOR where the actor gate cannot follow the change, or runs a mutating `bd` where the gate cannot place it (a command substitution, a pipeline stage, `eval`, a script run by `bash -c` or fed to a shell). The gate does not emulate the shell, so it cannot verify the actor of that `bd`. Run the `bd` command at the top level of the command line, or drop the change to the actor variables.";
+function decideInvocations(invocations, env) {
+  let missing = false;
+  let unverified = false;
+  for (const invocation of invocations) {
+    if (!isMutatingInvocation(invocation))
+      continue;
+    const status = actorStatus(invocation, env);
+    if (status === "present")
+      continue;
+    if (status === "unverified") {
+      unverified = true;
       continue;
     }
     const { verb, args } = invocation;
@@ -1674,15 +1707,31 @@ function decideActorGate(command, env = process.env, inherited = {}) {
       return { kind: "block", reason: CLAIM_REASON };
     if (CREATING_VERBS[verb] === true)
       return { kind: "block", reason: CREATE_REASON };
-    advisory = true;
+    missing = true;
   }
-  return advisory ? { kind: "advisory", text: ADVISORY_TEXT } : { kind: "allow" };
+  const texts = [...missing ? [ADVISORY_TEXT] : [], ...unverified ? [UNVERIFIED_TEXT] : []];
+  return texts.length > 0 ? { kind: "advisory", text: texts.join(" ") } : { kind: "allow" };
+}
+function decideActorParsed(parsed, env = process.env) {
+  if (!isParsed(parsed))
+    return { kind: "block", reason: "command could not be parsed" };
+  const touched = actorTouched(parsed);
+  const invocations = readShell(parsed.command, { nested: false, touched });
+  const pending = [...parsed.nested];
+  while (pending.length > 0) {
+    const child = pending.shift();
+    if (!isParsed(child))
+      return { kind: "block", reason: "command could not be parsed" };
+    invocations.push(...readShell(child.command, { nested: true, touched }));
+    pending.push(...child.nested);
+  }
+  return decideInvocations(invocations, env);
 }
 
 // lib/src/beads-store.ts
 import { spawnSync } from "child_process";
 import { lstatSync, realpathSync, statSync } from "fs";
-import { dirname, isAbsolute as isAbsolute2, resolve as resolve2 } from "path";
+import { basename as basename2, dirname, isAbsolute as isAbsolute2, resolve as resolve2 } from "path";
 function configuredStore(options, projectRoot) {
   if (!("store" in options))
     return;
@@ -1769,6 +1818,20 @@ function sessionPinFor(cwd) {
   if (isDir(local))
     return local;
   return;
+}
+function storeFromBeadsDb(value, cwd) {
+  const path = resolve2(cwd, value);
+  return basename2(path) === ".beads" ? path : dirname(path);
+}
+function ambientStore(cwd, env, walkUp = sessionPinFor) {
+  const dir = env.BEADS_DIR;
+  if (dir !== undefined && dir !== "")
+    return resolve2(cwd, dir);
+  const found = walkUp(cwd);
+  if (found !== undefined)
+    return found;
+  const db = env.BEADS_DB;
+  return db !== undefined && db !== "" ? storeFromBeadsDb(db, cwd) : undefined;
 }
 function isDir(path) {
   try {
@@ -2028,10 +2091,7 @@ function selectedStoreFor(globals, cwd, env) {
   }
   if (directory !== undefined)
     return sessionPinFor(base);
-  const pinned = env.BEADS_DIR;
-  if (pinned !== undefined && pinned !== "")
-    return absolute(pinned, cwd);
-  return sessionPinFor(cwd);
+  return ambientStore(cwd, env);
 }
 function absolute(path, cwd) {
   return isAbsolute3(path) ? path : resolve3(cwd, path);
@@ -2072,6 +2132,59 @@ function mentionsBd(source) {
   return BD_WORD.test(source) || BD_WORD.test(source.replace(/["'\\]/g, ""));
 }
 var ASSIGNMENT3 = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
+var DB_VARIABLE = /BEADS_DB|BD_DB/;
+var SKIPS_STORE_INIT = new Set([
+  "bash",
+  "bootstrap",
+  "codex-hook",
+  "completion",
+  "context",
+  "cursor-hook",
+  "doctor",
+  "dolt",
+  "fish",
+  "formula",
+  "help",
+  "hook",
+  "hooks",
+  "human",
+  "init",
+  "merge",
+  "metrics",
+  "onboard",
+  "powershell",
+  "prime",
+  "quickstart",
+  "schema",
+  "send-metrics",
+  "setup",
+  "version",
+  "where",
+  "worktree",
+  "zsh"
+]);
+var OPENS_STORE = {
+  dolt: new Set(["push", "pull", "commit"]),
+  human: new Set(["list", "respond", "dismiss", "stats"])
+};
+var MIGRATE_SKIPS_STORE_INIT = new Set([
+  "from-server-to-proxied-server",
+  "from-proxied-server-to-server",
+  "from-shared-server-to-proxied-server",
+  "from-proxied-server-to-shared-server",
+  "legacy-sqlite"
+]);
+function skipsStoreInit({ verb, args }) {
+  const positional = args.filter((arg) => !arg.startsWith("-"));
+  const sub = positional[0];
+  if (verb === "migrate")
+    return sub !== undefined && MIGRATE_SKIPS_STORE_INIT.has(sub);
+  if (!SKIPS_STORE_INIT.has(verb) || sub === undefined)
+    return SKIPS_STORE_INIT.has(verb);
+  if (verb === "dolt" && sub === "remote")
+    return positional.length < 2;
+  return OPENS_STORE[verb]?.has(sub) !== true;
+}
 var BEADS_DIR_ASSIGNMENT = /^BEADS_DIR(\+?)=/;
 var LIST_PREFIXES = new Set(["then", "else", "do"]);
 var COMPOUND_OPENERS = { if: true, case: true, for: true, select: true, while: true, until: true };
@@ -2575,6 +2688,15 @@ function resolveWrite(invocation, assignments, state, env, source) {
   }
   const directory = globalValue(invocation.globals, ["-C", "--directory"]);
   const db = globalValue(invocation.globals, ["--db"]);
+  const dbSource = (env.BEADS_DB ?? "") !== "" ? "the environment sets `BEADS_DB`" : (env.BD_DB ?? "") !== "" ? "the environment sets `BD_DB`" : DB_VARIABLE.test(source) ? "the command mentions `BEADS_DB` or `BD_DB`" : undefined;
+  if (dbSource !== undefined && skipsStoreInit(invocation) && db === undefined) {
+    return {
+      problem: {
+        part: `${write} skips bd's store init, so bd 1.3.1 picks its store from \`BEADS_DB\` or \`BD_DB\` before \`BEADS_DIR\`, and ${dbSource}`,
+        fix: "Name the store on the write with `bd --db /path/.beads ...`; `BEADS_DIR` does not override `BEADS_DB` for this command."
+      }
+    };
+  }
   if (directory === undefined && db === undefined && beadsDir.kind === "unknown") {
     return {
       problem: {
@@ -3030,7 +3152,7 @@ function bunBinary() {
 }
 function resolveBunBinary(options = {}) {
   const execPath = options.execPath ?? process.execPath;
-  const own = basename2(execPath);
+  const own = basename3(execPath);
   if (own === "bun" || own === "bun.exe")
     return execPath;
   const onPath = options.which?.("bun");
@@ -3046,7 +3168,7 @@ function resolveBunBinary(options = {}) {
   if (mise === null || mise === undefined || options.miseWhich === undefined)
     return;
   const resolved = options.miseWhich(mise);
-  return resolved !== undefined && basename2(resolved).startsWith("bun") && existsSync(resolved) ? resolved : undefined;
+  return resolved !== undefined && basename3(resolved).startsWith("bun") && existsSync(resolved) ? resolved : undefined;
 }
 function quote(word) {
   return `'${word.replaceAll("'", "'\\''")}'`;
@@ -3057,7 +3179,7 @@ function withRunner(command, writes, runner, waitMs) {
   for (const write of [...writes].sort((left, right) => left.offset - right.offset)) {
     const store = quote(write.store);
     const selected = ` ${RUNNER_SELECTED_FLAG} ${quote(write.selected)}`;
-    out += `${command.slice(cursor, write.offset)}BEADS_DOLT_SHARED_SERVER= BEADS_DIR=${store} ${quote(runner.interpreter)} ${quote(runner.script)} ${RUNNER_STORE_FLAG} ${store}${selected} ${RUNNER_WAIT_FLAG} ${Math.round(waitMs)} -- `;
+    out += `${command.slice(cursor, write.offset)}BEADS_DOLT_SHARED_SERVER= BEADS_DIR=${store} BEADS_DB= BD_DB= ${quote(runner.interpreter)} ${quote(runner.script)} ${RUNNER_STORE_FLAG} ${store}${selected} ${RUNNER_WAIT_FLAG} ${Math.round(waitMs)} -- `;
     cursor = write.offset;
   }
   return out + command.slice(cursor);

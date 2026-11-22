@@ -1,3 +1,21 @@
+## beads [0.8.9](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.8...beads--v0.8.9) (2026-11-22)
+
+### Bug Fixes
+
+* **beads:** a shell unset of the actor variable no longer escapes the actor gate ([#87](https://github.com/srobroek/harness-plugins/issues/87)) ([63068ec](https://github.com/srobroek/harness-plugins/commit/63068ec94d0d66daad129e8036e430fa6d7f8a30))
+
+## beads [0.8.8](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.7...beads--v0.8.8) (2026-11-22)
+
+### Bug Fixes
+
+* **beads:** refuse gh pr create forms the bead gate cannot read exactly ([600ee87](https://github.com/srobroek/harness-plugins/commit/600ee87fc0b3622d3e36c1aaa4ad18c8f99871e5)), closes [#66](https://github.com/srobroek/harness-plugins/issues/66)
+
+## beads [0.8.7](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.6...beads--v0.8.7) (2026-11-22)
+
+### Bug Fixes
+
+* **beads:** follow bd 1.3.1 ledger precedence for claim tracking ([#89](https://github.com/srobroek/harness-plugins/issues/89)) ([cbe4a76](https://github.com/srobroek/harness-plugins/commit/cbe4a76182c36d3b165e27ecbe311071a3068682))
+
 ## beads [0.8.6](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.5...beads--v0.8.6) (2026-11-22)
 
 ### Bug Fixes

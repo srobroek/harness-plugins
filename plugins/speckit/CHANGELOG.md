@@ -1,3 +1,9 @@
+## speckit [0.10.3](https://github.com/srobroek/harness-plugins/compare/speckit--v0.10.2...speckit--v0.10.3) (2026-11-22)
+
+### Bug Fixes
+
+* **beads:** follow bd 1.3.1 ledger precedence for claim tracking ([#89](https://github.com/srobroek/harness-plugins/issues/89)) ([cbe4a76](https://github.com/srobroek/harness-plugins/commit/cbe4a76182c36d3b165e27ecbe311071a3068682))
+
 ## speckit [0.10.2](https://github.com/srobroek/harness-plugins/compare/speckit--v0.10.1...speckit--v0.10.2) (2026-11-21)
 
 ### Bug Fixes

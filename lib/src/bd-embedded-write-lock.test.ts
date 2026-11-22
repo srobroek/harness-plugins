@@ -519,7 +519,7 @@ describe("compound commands", () => {
   const namedFor = (target: string): string => (target === held ? store : target === heldOther ? other : target)
   const runnerForm = (target: string, using = runner) => {
     const named = ` --beads-store-selected '${namedFor(target)}'`
-    return `BEADS_DOLT_SHARED_SERVER= BEADS_DIR='${target}' '${using.interpreter}' '${using.script}' --beads-store '${target}'${named} --beads-wait-ms 30000 -- `
+    return `BEADS_DOLT_SHARED_SERVER= BEADS_DIR='${target}' BEADS_DB= BD_DB= '${using.interpreter}' '${using.script}' --beads-store '${target}'${named} --beads-wait-ms 30000 -- `
   }
 
   beforeAll(() => {
@@ -1255,3 +1255,151 @@ describe("who chose the ledger a write lands in", () => {
     },
   )
 })
+
+describe("bd 1.3.1's store order for a write, with BEADS_DB inherited", () => {
+  // Measured on bd 1.3.1 with real stores. Store commands open `--db`, then `BEADS_DIR`, then the
+  // `.beads` found from the working directory, then `BEADS_DB` only when none is found. Commands that
+  // skip store init (`bd where`, `bd dolt set`, `bd init`, ...) read `BEADS_DB` and `BD_DB` before
+  // `BEADS_DIR` (cmd/bd/main.go `selectedNoDBBeadsDir`).
+  let base = ""
+  let checkout = ""
+  /** The `.beads` found from `checkout`, canonical, as the lock holds it. */
+  let own = ""
+  let other = ""
+  let moved = ""
+  let bare = ""
+  let bin = ""
+  let log = ""
+  beforeAll(() => {
+    base = realpathSync(mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "beads-lock-order-")))
+    checkout = join(base, "checkout")
+    own = join(checkout, ".beads")
+    other = join(base, "other", ".beads")
+    moved = join(base, "moved", ".beads")
+    bare = join(base, "bare")
+    bin = join(base, "bin")
+    log = join(base, "bd.log")
+    for (const dir of [own, other, moved]) {
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(join(dir, "metadata.json"), "{}")
+    }
+    for (const dir of [bare, bin]) mkdirSync(dir, { recursive: true })
+    // A stand-in `bd` that records the store variables it got and whether the lock in its
+    // BEADS_DIR names this very process as the writer.
+    writeExecutable(
+      join(bin, "bd"),
+      `#!/bin/sh\nheld=$(grep -c "\\"writer\\":$$[,}]" "$BEADS_DIR/omp-embedded-write.lock" 2>/dev/null)\nprintf 'dir=%s db=%s bd_db=%s held=%s\\n' "$BEADS_DIR" "\${BEADS_DB:-}" "\${BD_DB:-}" "$held" > ${JSON.stringify(log)}\n`,
+    )
+  })
+  afterAll(() => rmSync(base, { recursive: true, force: true }))
+
+  const inherited = (extra: Record<string, string> = {}) => scrubbedBeadsEnv({ BEADS_DB: join(other, "beads.db"), ...extra })
+  const real = () => ({ interpreter: process.execPath, script: join(import.meta.dir, "bd-embedded-write-runner.ts") })
+
+  /** Plan `command` under `env`, run the rewrite in bash with `childEnv` added, and return what the stand-in recorded. */
+  async function runRewritten(command: string, env: Record<string, string>, childEnv: Record<string, string> = {}) {
+    writeFileSync(log, "")
+    const decision = await decideEmbeddedWrite(
+      parse(command) as unknown as Parameters<typeof decideEmbeddedWrite>[0],
+      checkout,
+      env,
+      `order:${command}`,
+      Date.now() + 5000,
+      real,
+    )
+    expect(decision?.kind).toBe("rewrite")
+    if (decision?.kind !== "rewrite") return ""
+    const run = Bun.spawnSync(["bash", "-c", decision.command], {
+      cwd: checkout,
+      env: { ...env, PATH: `${bin}:${process.env.PATH ?? ""}`, ...childEnv },
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    expect(run.exitCode).toBe(0)
+    return readFileSync(log, "utf8").trim()
+  }
+
+  test("BEADS_DB is ignored where the working directory has a .beads: the write locks that store", () => {
+    expect(embeddedWriteTargets("bd close bd-1", checkout, inherited())).toEqual({ kind: "stores", stores: [own] })
+  })
+
+  test("with no .beads found, the write locks the store BEADS_DB names", () => {
+    expect(embeddedWriteTargets("bd close bd-1", bare, inherited())).toEqual({ kind: "stores", stores: [other] })
+  })
+
+  test("BEADS_DIR beats the .beads found", () => {
+    expect(embeddedWriteTargets("bd close bd-1", checkout, inherited({ BEADS_DIR: moved }))).toEqual({ kind: "stores", stores: [moved] })
+  })
+
+  test("--db beats BEADS_DIR, the .beads found and BEADS_DB", () => {
+    const result = embeddedWriteTargets(`bd --db ${moved} close bd-1`, checkout, inherited({ BEADS_DIR: other }))
+    expect(result).toEqual({ kind: "stores", stores: [moved] })
+  })
+
+  test.each([
+    ["an export before the write", () => `export BEADS_DB=${join(moved, "beads.db")}; bd close bd-1`, false],
+    ["an export of a computed name", () => `n=BEADS_; export "\${n}DB=${join(moved, "beads.db")}"; bd close bd-1`, false],
+    ["a BASH_ENV startup file", () => "bd close bd-1", true],
+  ])("a BEADS_DB changed by %s still writes under the lock of the store the gate pinned", async (_name, command, startupFile) => {
+    const startup = join(base, "startup.sh")
+    writeFileSync(startup, `export BEADS_DB=${join(moved, "beads.db")}\n`)
+    const recorded = await runRewritten(command(), inherited(), startupFile ? { BASH_ENV: startup } : {})
+    expect(recorded).toStartWith(`dir=${own} `)
+    expect(recorded).toEndWith(" held=1")
+  })
+
+  test("a write that skips store init runs with BEADS_DB and BD_DB cleared, so a BASH_ENV file cannot move it", async () => {
+    const startup = join(base, "startup-nodb.sh")
+    writeFileSync(startup, `export BEADS_DB=${join(moved, "beads.db")} BD_DB=${moved}\n`)
+    const recorded = await runRewritten("bd dolt set port 1", scrubbedBeadsEnv(), { BASH_ENV: startup })
+    expect(recorded).toBe(`dir=${own} db= bd_db= held=1`)
+  })
+
+  // Writes that skip store init, from main.go's noDbCommands, its skip-store annotations and the
+  // migrate subcommands that skip it.
+  test.each([
+    "bd dolt set port 1",
+    "bd dolt start",
+    "bd init --skip-hooks",
+    "bd bootstrap",
+    "bd hooks install",
+    "bd formula pour f",
+    "bd setup claude",
+    "bd doctor --fix",
+    "bd worktree create w",
+    "bd migrate from-server-to-proxied-server",
+  ])("refuses `%s` under an inherited BEADS_DB, naming --db and BEADS_DIR", (command) => {
+    const result = embeddedWriteTargets(command, checkout, inherited())
+    expect(result.kind).toBe("refused")
+    expect(JSON.stringify(result)).toContain("--db")
+    expect(JSON.stringify(result)).toContain("BEADS_DIR")
+  })
+
+  test.each([
+    ["BD_DB is inherited", "bd dolt set port 1", { BD_DB: "/x/.beads" }],
+    ["BEADS_DB is mentioned in the command", "echo $BEADS_DB; bd dolt set port 1", {}],
+    ["BD_DB is mentioned in the command", "BD_DB=/x/.beads bd dolt set port 1", {}],
+    // BEADS_DB beats BEADS_DIR for a command that skips store init, so a literal BEADS_DIR names nothing.
+    ["BEADS_DB is inherited and the write sets a literal BEADS_DIR", "BEADS_DIR=/x/.beads bd dolt set port 1", { BEADS_DB: "/y/.beads" }],
+  ])("refuses `bd dolt set` when %s", (_name, command, env) => {
+    const result = embeddedWriteTargets(command, checkout, scrubbedBeadsEnv(env))
+    expect(result.kind).toBe("refused")
+    expect(JSON.stringify(result)).toContain("--db")
+  })
+
+  test("a no-DB write that names its store with --db is locked on that store, since --db beats BEADS_DB", () => {
+    expect(embeddedWriteTargets(`bd --db ${moved} dolt set port 1`, checkout, inherited())).toEqual({ kind: "stores", stores: [moved] })
+  })
+
+  test.each(["bd dolt push", "bd dolt commit", "bd dolt remote add origin u", "bd close bd-1"])(
+    "`%s` opens the store, so an inherited BEADS_DB cannot move it: locked, not refused",
+    (command) => {
+      expect(embeddedWriteTargets(command, checkout, inherited())).toEqual({ kind: "stores", stores: [own] })
+    },
+  )
+
+  test.each(["bd where", "bd dolt show", "echo $BEADS_DB; bd where"])("`%s` is a read and passes under an inherited BEADS_DB", (command) => {
+    expect(embeddedWriteTargets(command, checkout, inherited())).toEqual({ kind: "stores", stores: [] })
+  })
+})
+
