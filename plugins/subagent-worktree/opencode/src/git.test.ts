@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createGit, spawnRunner } from "./git.ts"
@@ -186,5 +186,63 @@ describe.skipIf(!Bun.which("wt"))("automatic merge against a repository with a c
     expect({ code: result.code, stderr: result.stderr }).toEqual({ code: 0, stderr: expect.any(String) })
     expect(await Bun.file(join(main, "more.txt")).exists()).toBe(true)
     expect(await Bun.file(marker).exists()).toBe(false)
+  })
+})
+
+describe("a filter driver the repository's own attributes select runs during no automatic read", () => {
+  let root: string
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), "subagent-worktree-filter-"))
+  })
+  afterAll(() => rm(root, { recursive: true, force: true }))
+
+  const sh = async (cwd: string, ...args: string[]) => {
+    const child = Bun.spawn(["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { stdout: "ignore", stderr: "ignore" })
+    expect(await child.exited).toBe(0)
+  }
+  const fired = (marker: string) => Bun.file(marker).exists()
+
+  /**
+   * A repository whose `.git/info/attributes` gives a.txt a clean filter that writes `marker`, with a.txt changed on
+   * disk but dated to the past, so that git must hash it (and so run the filter) to see whether it differs.
+   * `.git/info/attributes` is outside the `GIT_ATTR_SOURCE` the hardened environment sets.
+   */
+  const hostile = async (name: string) => {
+    const repo = join(root, name)
+    const marker = join(root, `${name}.fired`)
+    await sh(root, "init", "--quiet", "--initial-branch=main", repo)
+    await writeFile(join(repo, "a.txt"), "one")
+    await sh(repo, "add", "a.txt")
+    await sh(repo, "commit", "--quiet", "-m", "init")
+    await sh(repo, "config", "filter.evil.clean", `touch ${marker}; cat`)
+    await writeFile(join(repo, ".git", "info", "attributes"), "a.txt filter=evil\n")
+    await writeFile(join(repo, "a.txt"), "two")
+    await utimes(join(repo, "a.txt"), 946_684_800, 946_684_800)
+    return { repo, marker }
+  }
+
+  test("the fixture is live: the hardened environment alone does not stop the filter", async () => {
+    const { repo, marker } = await hostile("control")
+    const result = await spawnRunner(["git", "-C", repo, "status", "--porcelain"])
+    expect({ code: result.code, out: result.stdout.trim(), fired: await fired(marker) }).toEqual({ code: 0, out: "M a.txt", fired: true })
+  })
+
+  test.each([
+    ["porcelain", (git: ReturnType<typeof createGit>, repo: string) => git.porcelain(repo)],
+    ["status", async (git: ReturnType<typeof createGit>, repo: string) => (await git.status(repo, "HEAD"))?.dirty],
+    ["trackedDirty", (git: ReturnType<typeof createGit>, repo: string) => git.trackedDirty(repo)],
+    ["localFiles", (git: ReturnType<typeof createGit>, repo: string) => git.localFiles(repo)],
+  ])("%s runs no filter and still sees the change", async (name, read) => {
+    const { repo, marker } = await hostile(`read-${name}`)
+    const result = await read(createGit(spawnRunner), repo)
+    expect(await fired(marker)).toBe(false)
+    expect(result).toBeTruthy()
+  })
+
+  test("a repository whose drivers cannot be listed is refused, not read unfiltered", async () => {
+    const git = createGit(async (argv) => (argv.includes("--list") ? { code: 128, stdout: "", stderr: "fatal" } : spawnRunner(argv)))
+    const { repo, marker } = await hostile("refused")
+    expect(await git.porcelain(repo)).toBeUndefined()
+    expect(await fired(marker)).toBe(false)
   })
 })

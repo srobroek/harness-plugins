@@ -810,6 +810,22 @@ function hardenedGitEnv(base) {
   env.GIT_NO_LAZY_FETCH = "1";
   return env;
 }
+var FILTER_DRIVER_LISTING = ["config", "--name-only", "-z", "--list"];
+function filterDriverOverrides(listing) {
+  const keys = listing.split("\x00");
+  if (keys.pop() !== "")
+    return;
+  const drivers = new Set;
+  for (const key of keys) {
+    const last = key.lastIndexOf(".");
+    if (!key.startsWith("filter.") || last < "filter.".length)
+      continue;
+    drivers.add(key.slice("filter.".length, last));
+  }
+  if ([...drivers].some((driver) => driver.includes("=") || driver.includes("\uFFFD")))
+    return;
+  return [...drivers].flatMap((driver) => ["clean=", "smudge=", "process=", "required=false"].flatMap((setting) => ["-c", `filter.${driver}.${setting}`]));
+}
 
 // lib/src/patterns.ts
 var compiled = new Map;
@@ -1433,6 +1449,12 @@ function createGit(run) {
     const result = await run(["git", "-C", directory, ...args]);
     return result.code === 0 ? result.stdout.trim() : undefined;
   };
+  const unfiltered = async (directory, ...args) => {
+    const listing = await run(["git", "-C", directory, ...FILTER_DRIVER_LISTING]);
+    const none = listing.code === 1 && listing.stdout === "";
+    const overrides = none ? [] : listing.code === 0 ? filterDriverOverrides(listing.stdout) : undefined;
+    return overrides === undefined ? undefined : git(directory, ...overrides, ...args);
+  };
   const files = (output) => output?.split("\x00").filter((file) => file !== "");
   return {
     run,
@@ -1450,26 +1472,26 @@ function createGit(run) {
     deleteBranch: async (directory, name) => await git(directory, "branch", "--quiet", "-d", name) !== undefined,
     status: async (directory, base) => {
       const ahead = await git(directory, "rev-list", "--count", `${base}..HEAD`);
-      const porcelain = await git(directory, "status", "--porcelain");
+      const porcelain = await unfiltered(directory, "status", "--porcelain");
       if (ahead === undefined || porcelain === undefined)
         return;
       return { ahead: Number.parseInt(ahead, 10) || 0, dirty: porcelain !== "" };
     },
     changedFiles: async (directory, target) => isSafeBranchName(target) ? files(await git(directory, "diff", "--no-ext-diff", "--name-only", "-z", `${target}...HEAD`)) : undefined,
     trackedDirty: async (directory) => {
-      const changed = await git(directory, "status", "--porcelain", "--untracked-files=no", "--", ...TRACKED_DIRTY_PATHSPEC);
+      const changed = await unfiltered(directory, "status", "--porcelain", "--untracked-files=no", "--", ...TRACKED_DIRTY_PATHSPEC);
       if (changed === undefined)
         throw new Error(`subagent-worktree: cannot read tracked changes in ${directory}`);
       return changed !== "";
     },
     localFiles: async (directory) => {
-      const changed = files(await git(directory, "diff", "--name-only", "-z", "HEAD"));
+      const changed = files(await unfiltered(directory, "diff", "--name-only", "-z", "HEAD"));
       const untracked = files(await git(directory, "ls-files", "--others", "--exclude-standard", "--full-name", "-z"));
       return changed && untracked ? [...changed, ...untracked] : undefined;
     },
     commonDir: (directory) => git(directory, "rev-parse", "--path-format=absolute", "--git-common-dir"),
     head: (directory) => git(directory, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"),
-    porcelain: (directory) => git(directory, "status", "--porcelain"),
+    porcelain: (directory) => unfiltered(directory, "status", "--porcelain"),
     isAncestor: async (directory, tip, ref) => (await run(["git", "-C", directory, "merge-base", "--is-ancestor", tip, ref])).code === 0,
     stashSubjects: (directory) => git(directory, "stash", "list", "--format=%gs"),
     gitDir: (directory) => git(directory, "rev-parse", "--absolute-git-dir"),

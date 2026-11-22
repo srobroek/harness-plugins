@@ -1,6 +1,6 @@
 /** The git and wt commands the plugin runs, behind a replaceable runner. */
 
-import { gitVersionProblem, hardenedGitEnv } from "@srobroek/opencode-lib/safe-git"
+import { FILTER_DRIVER_LISTING, filterDriverOverrides, gitVersionProblem, hardenedGitEnv } from "@srobroek/opencode-lib/safe-git"
 import { supervise } from "@srobroek/opencode-lib/subprocess"
 import { type HeadFacts, isSafeBranchName, isUnbornHead } from "./lane.ts"
 
@@ -80,6 +80,17 @@ export function createGit(run: Runner) {
     const result = await run(["git", "-C", directory, ...args])
     return result.code === 0 ? result.stdout.trim() : undefined
   }
+  /**
+   * A read that hashes work-tree files (status, or a diff against the work tree), with every configured filter driver
+   * disabled; undefined when the drivers cannot be listed or disabled. `.git/info/attributes` can still select a driver
+   * that `GIT_ATTR_SOURCE` does not cover.
+   */
+  const unfiltered = async (directory: string, ...args: string[]) => {
+    const listing = await run(["git", "-C", directory, ...FILTER_DRIVER_LISTING])
+    const none = listing.code === 1 && listing.stdout === ""
+    const overrides = none ? [] : listing.code === 0 ? filterDriverOverrides(listing.stdout) : undefined
+    return overrides === undefined ? undefined : git(directory, ...overrides, ...args)
+  }
   const files = (output: string | undefined) => output?.split("\0").filter((file) => file !== "")
   return {
     run,
@@ -105,7 +116,7 @@ export function createGit(run: Runner) {
     /** Commits on HEAD since `base`, and whether the tree has changes; undefined when git fails. */
     status: async (directory: string, base: string) => {
       const ahead = await git(directory, "rev-list", "--count", `${base}..HEAD`)
-      const porcelain = await git(directory, "status", "--porcelain")
+      const porcelain = await unfiltered(directory, "status", "--porcelain")
       if (ahead === undefined || porcelain === undefined) return undefined
       return { ahead: Number.parseInt(ahead, 10) || 0, dirty: porcelain !== "" }
     },
@@ -118,13 +129,13 @@ export function createGit(run: Runner) {
      * on every write, and a lane does not need the caller's ledger state.
      */
     trackedDirty: async (directory: string) => {
-      const changed = await git(directory, "status", "--porcelain", "--untracked-files=no", "--", ...TRACKED_DIRTY_PATHSPEC)
+      const changed = await unfiltered(directory, "status", "--porcelain", "--untracked-files=no", "--", ...TRACKED_DIRTY_PATHSPEC)
       if (changed === undefined) throw new Error(`subagent-worktree: cannot read tracked changes in ${directory}`)
       return changed !== ""
     },
     /** Uncommitted (staged or not) and untracked files, relative to the work tree root. */
     localFiles: async (directory: string) => {
-      const changed = files(await git(directory, "diff", "--name-only", "-z", "HEAD"))
+      const changed = files(await unfiltered(directory, "diff", "--name-only", "-z", "HEAD"))
       const untracked = files(await git(directory, "ls-files", "--others", "--exclude-standard", "--full-name", "-z"))
       return changed && untracked ? [...changed, ...untracked] : undefined
     },
@@ -133,7 +144,7 @@ export function createGit(run: Runner) {
     /** HEAD's commit id, or undefined when it does not resolve. */
     head: (directory: string) => git(directory, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"),
     /** The `git status --porcelain` text; undefined when git fails. */
-    porcelain: (directory: string) => git(directory, "status", "--porcelain"),
+    porcelain: (directory: string) => unfiltered(directory, "status", "--porcelain"),
     /** Whether `tip` is an ancestor of `ref` (exit 0). */
     isAncestor: async (directory: string, tip: string, ref: string) =>
       (await run(["git", "-C", directory, "merge-base", "--is-ancestor", tip, ref])).code === 0,

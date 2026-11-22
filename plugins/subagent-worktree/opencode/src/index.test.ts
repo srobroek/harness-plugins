@@ -78,6 +78,8 @@ function fakeRun(repo: Repo, log: string[][]) {
     if (cmd.startsWith("branch --quiet -d")) return ok()
     if (cmd.startsWith("stash list")) return ok()
     if (cmd.startsWith("update-ref -d")) return ok()
+    // No filter drivers are configured (an empty listing exits 1).
+    if (cmd === "config --name-only -z --list") return fail
     if (cmd === "worktree list --porcelain -z") return repo.git ? ok(repo.porcelain) : fail
     if (cmd === "diff --name-only -z HEAD") return ok(repo.local[dir]?.changed.map((file) => `${file}\0`).join("") ?? "")
     if (cmd === "ls-files --others --exclude-standard --full-name -z") {
