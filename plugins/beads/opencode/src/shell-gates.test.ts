@@ -116,7 +116,7 @@ describe("decideShell", () => {
     )
     expect(decision).toMatchObject({ kind: "block", gate: "pr-bead-link-gate" })
     const linked = await decideShell(
-      'gh pr create --title t --body "Bead: proj-1 fixes it"',
+      'gh pr create --title t --body "Fixes it.\nBead: proj-1"',
       root,
       deps({ repositoryControl: () => ({ kind: "controlled" }) }),
     )

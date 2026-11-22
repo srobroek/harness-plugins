@@ -46,117 +46,12 @@ const WRAPPERS: Record<string, true> = {
   do: true,
 }
 
-/** Split shell source at operators outside quoted words. */
-export function commandSegments(command: string): string[] {
-  const out: string[] = []
-  let start = 0
-  let quote: "'" | '"' | null = null
-  let escaped = false
-  for (let i = 0; i < command.length; i++) {
-    const ch = command[i]
-    if (escaped) {
-      escaped = false
-      continue
-    }
-    if (quote === "'") {
-      if (ch === "'") quote = null
-      continue
-    }
-    if (quote === '"') {
-      if (ch === "\\") escaped = true
-      else if (ch === '"') quote = null
-      continue
-    }
-    if (ch === "\\") {
-      escaped = true
-      continue
-    }
-    if (ch === "'" || ch === '"') {
-      quote = ch
-      continue
-    }
-    const two = command.slice(i, i + 2)
-    if (two === "&&" || two === "||") {
-      out.push(command.slice(start, i), two)
-      i++
-      start = i + 1
-      continue
-    }
-    if (ch === ";" || ch === "&" || ch === "|" || ch === "\n" || ch === "(" || ch === ")" || ch === "{" || ch === "}") {
-      out.push(command.slice(start, i), ch)
-      start = i + 1
-    }
-  }
-  out.push(command.slice(start))
-  return out
-}
-
 /** Preserve the historical token surface used by non-bash lifecycle helpers. */
 export function tokenize(segment: string): Token[] {
   return tokenizeShell(segment, { preserveBackslashes: true }).map(({ value, startsQuoted }) => ({
     value,
     quoted: startsQuoted,
   }))
-}
-
-/** Return argv beginning at a command name, accepting literal env/wrapper prefixes. */
-export function invocation(segment: string, argv: string[]): Token[] | null {
-  const tokens = tokenize(segment)
-  const head = argv[0]
-  if (!head) return null
-  let start = 0
-  while (start < tokens.length) {
-    const token = tokens[start]
-    if (!token || token.quoted) return null
-    const basename = token.value.split("/").pop() ?? token.value
-    if (basename === head) break
-    if (basename === "env") {
-      start++
-      while (start < tokens.length) {
-        const option = tokens[start]
-        if (!option || option.quoted) return null
-        const value = option.value
-        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(value)) {
-          start++
-          continue
-        }
-        if (value === "--") {
-          start++
-          break
-        }
-        if (value === "-i" || value === "--ignore-environment") {
-          start++
-          continue
-        }
-        if (value === "-u" || value === "--unset") {
-          start++
-          if (start >= tokens.length || tokens[start]?.quoted) return null
-          start++
-          continue
-        }
-        if (value.startsWith("--unset=") || (value.startsWith("-u") && value.length > 2)) {
-          start++
-          continue
-        }
-        if (value.startsWith("-")) {
-          start++
-          continue
-        }
-        break
-      }
-      continue
-    }
-    if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(token.value) && !token.value.startsWith("-") && WRAPPERS[basename] !== true)
-      return null
-    start++
-  }
-  for (const [offset, word] of argv.entries()) {
-    const token = tokens[start + offset]
-    if (!token || token.quoted) return null
-    const value = offset === 0 ? (token.value.split("/").pop() ?? token.value) : token.value
-    if (value !== word) return null
-  }
-  return tokens.slice(start)
 }
 
 export function leadingCdCwd(command: string, cwd: string): string {

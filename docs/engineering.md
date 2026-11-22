@@ -41,6 +41,12 @@ examples/           example projects included in typecheck
 
 A plugin has `package.json`, `agents.src/` or `common/` (skills, agents, formulas), and one directory per harness: `opencode/` with `src/`, a committed `dist/` and one shim per entry declared in `agent-plugins.entries` (`index.js` for a server entry, `tui.js` for a TUI entry), and `claude/` where the plugin ships to Claude Code. AGENTS.md Generated files says which of these are sources.
 
+The `beads` PR bead gate does not port upstream's shell decoding (ANSI-C words, `env -S`, wrapper directories). `plugins/beads/opencode/src/pr-create-form.ts` accepts only literal `gh pr create`/`gh pr new` forms: a single command, `--body` or a relative regular `--body-file`, and a `Bead:`, `Closes-Bead:` or `Bead-Id:` line. Any other form that may reach `gh pr create` is refused in a gated repository, with the accepted form shown.
+
+The gate judges the text of every heredoc and here-string, whichever command receives it, because `cat <<EOF | sh`, `tee >(sh) <<EOF` and a git shell alias all run it. Text that may create a PR as shell, names `gh`, has `pr` before `create` or `new`, holds a command word the gate cannot read, or is an expanding here-string is refused. Tradeoff: in a gated repository a commit-message heredoc that mentions `gh pr create` is refused too. Write the message without those words, or pass it with `-m`.
+
+The gate catches an agent that forgets the bead or writes a form it cannot read. It is not a boundary against deliberate evasion: a script written in one call and run in a later one, `eval` of a built string, an alias, and a command built from variables all get past it. Only a server-side required check can give a hard guarantee.
+
 ## Dependency direction
 
 Intended rules:

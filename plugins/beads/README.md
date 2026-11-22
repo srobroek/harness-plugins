@@ -45,7 +45,11 @@ On every `shell` call (`tool.hook("execute.before")`), in this order, with one
    `timeout`, `sudo`, `xargs` and the like) is refused without parsing the wrapper's
    arguments. A literal `BEADS_DIR=<path>` on the command line is the override.
 10. `gh pr create` without a `Bead:`, `Closes-Bead:` or `Bead-Id:` trailer is
-   refused in a repository with a live ledger that you can write to.
+   refused in a repository with a live ledger that you can write to. The gate does not
+   decode shell: it reads one exact form (`gh pr create` or `gh pr new` alone, with one
+   `--body` or a relative regular `--body-file`) and refuses any other command that may
+   reach `gh pr create`, such as a chain, a wrapper, `env -S`, a `$'...'` word, a short-flag
+   cluster, `--fill`, or an alias. The refusal prints the accepted form.
 11. Each `bd` write to an embedded store is rewritten to run under
     `bd-embedded-write-runner`, which holds the store's write lock for exactly the
     life of the `bd` process. The lock files are shared with the omp plugin.

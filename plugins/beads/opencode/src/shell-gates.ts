@@ -27,7 +27,7 @@ import { decideBdUpdateCloseParsed } from "./bd-update-close-gate.ts"
 import { protectBinaryHookCommands } from "./binary-hooks.ts"
 import { admitBdMutation, type GateAdmitter } from "./gate-admission.ts"
 import { describeLedger, findLedger, ledgerRepoMismatch, sameStore, unplacedBdRefusal } from "./ledger-context.ts"
-import { bodyFileReader, decideCommandParsed, type RepositoryControl, repositoryControlFor } from "./pr-bead-link-gate.ts"
+import { decidePrBeadLink, type RepositoryControl, repositoryControlFor } from "./pr-bead-link-gate.ts"
 
 /**
  * One budget for the whole call. OpenCode has no hook timeout, but a gate that waits
@@ -49,7 +49,8 @@ export type ShellGateDeps = {
   callID: string
   deadline: number
   runnerLookup?: () => EmbeddedWriteRunnerLookup
-  repositoryControl?: (segment: string, cwd: string) => boolean | RepositoryControl
+  /** Whether the repository the PR targets (`null`: the checkout at `cwd`) is gated: `false` has no ledger. */
+  repositoryControl?: (repo: string | null, cwd: string) => boolean | RepositoryControl
   /** The store `options.store` pins, when the project configured one: a deliberate ledger choice, never refused as foreign. */
   configuredStore?: string
 }
@@ -250,17 +251,14 @@ async function decide(original: string, cwd: string, deps: ShellGateDeps): Promi
   if (crossRepo !== undefined) return block("bd-embedded-write-lock", crossRepo, "use the right `workdir`, or assign BEADS_DIR in the command line itself, then retry")
 
   if (on("pr-bead-link-gate")) {
-    const control = deps.repositoryControl ?? repositoryControlFor
-    const decision = decideCommandParsed(
-      parsed,
-      (segment) => control(segment, cwd),
-      () => {
+    const decision = decidePrBeadLink(parsed, cwd, {
+      control: deps.repositoryControl ?? repositoryControlFor,
+      note: () => {
         const ledger = findLedger(cwd)
         return ledger === undefined ? undefined : describeLedger(ledger)
       },
-      { readFile: bodyFileReader(cwd) },
-    )
-    if (decision) return block("pr-bead-link-gate", decision.reason, "add the bead trailer to the PR body and retry")
+    })
+    if (decision) return block("pr-bead-link-gate", decision.reason, decision.resolution)
   }
 
   if (on("bd-embedded-write-lock")) {
