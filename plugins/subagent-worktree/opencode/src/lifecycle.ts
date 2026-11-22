@@ -1,6 +1,6 @@
 /**
  * The lane lifecycle adapter: it gathers facts from git, `gh`, `wt` and the host, hands
- * them to the pure decisions in `events.ts`, `landing.ts` and `sweep.ts`, and carries out
+ * them to the pure decisions in `events.ts` and `landing.ts`, and carries out
  * the answer. Four layers share it, each covering what the others miss:
  *  - lane sync on a landing (`delivery_land` / `delivery_cleanup` results),
  *  - session execution events (failed, interrupted, succeeded, idle), debounced,
@@ -11,16 +11,13 @@
  */
 
 import { existsSync, realpathSync } from "node:fs"
-import { stat, statfs } from "node:fs/promises"
-import { homedir } from "node:os"
 import { join, resolve } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
-import { canonicalCheckout, evictSessions, type SessionApi } from "@srobroek/opencode-lib/session-eviction"
+import { canonicalCheckout, } from "@srobroek/opencode-lib/session-eviction"
 import { isSessionNotFound, type LaneSessionClient, laneSessions, MAX_LANE_DEPTH, moveSessionsHome } from "@srobroek/opencode-lib/session-lanes"
-import { bumpClaim, claimGeneration, forgetNotice, landingsFor, listLandings, readClaim, readNotices, recordNotice } from "@srobroek/opencode-lib/worktree-claims"
-import { holdsState, type LockOptions, lockedWorktreeRemoval, lockedWrite, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
+import { bumpClaim, forgetNotice, landingsFor, listLandings, readClaim, readNotices, recordNotice } from "@srobroek/opencode-lib/worktree-claims"
+import { holdsState, type LockOptions, lockedWrite, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
 import { OPERATION_MARKERS, operationsInProgress, stashesOnBranch } from "@srobroek/opencode-lib/worktree-state"
-import { BUILD_GRACE_MS, type Detached, deleteDetached, detachBuildDirs, isLowDisk } from "./build-dirs.ts"
 import {
   archivedKeptNotice,
   type BackgroundJob,
@@ -42,8 +39,8 @@ import {
 } from "./events.ts"
 import type { Git } from "./git.ts"
 import { LANDING_TOOLS, laneForLanding } from "./landing.ts"
-import { type ChildState, childReleasesLane, childState, isRunning, type Lane, type Options } from "./lane.ts"
-import { formatPlan, type PlanEntry, planSweep, type WorktreeFacts } from "./sweep.ts"
+import { childReleasesLane, childState, isRunning, type Lane, type Options } from "./lane.ts"
+import { formatSweep, orderEntries, type SweepEntry, type SweepMode } from "./sweep.ts"
 
 /** Epoch milliseconds from a number, Date or date string; undefined otherwise. */
 export function toMillis(value: unknown): number | undefined {
@@ -56,7 +53,6 @@ export function toMillis(value: unknown): number | undefined {
   return undefined
 }
 
-const HOUR = 3_600_000
 const PROOF_TTL_MS = 5 * 60_000
 /** `--limit` of the batched pull request lists; a list this long may be cut off. */
 const PR_LIST_LIMIT = 200
@@ -110,35 +106,12 @@ export type LifecycleDeps = {
   removeWorktree: (projectID: string, directory: string, force: boolean) => Promise<void>
   /** Debounce for the event pass; the brief asks for about 2 s. */
   debounceMs?: number
-  worktreeRoot?: string
   /** The repository's git common directory, where claims and delivery's landing records live. */
   commonDir: (directory: string) => Promise<string | undefined>
   /** Make sure the lane's claim file exists (it is the lane's protection from every other remover). */
   ensureClaim: (lane: Lane) => Promise<void>
   /** Test seam for the on-disk lock (attempts, ttl, clock, liveness). */
   lock?: Partial<LockOptions>
-  /** Test seam: how long ago a worktree was created. */
-  age?: (directory: string) => Promise<number | undefined>
-  /** Seams for freeing build directories; the host passes none. */
-  build?: BuildSeams
-}
-
-export type BuildSeams = {
-  /** Free bytes on the disk holding `path`; undefined when unknown. */
-  freeBytes?: (path: string) => Promise<number | undefined>
-  /** Runs after the sweep read a worktree's facts, before the lock for freeing its build directories is taken. */
-  beforeLock?: (directory: string) => void | Promise<void>
-  /** Deletes one detached build directory, after the lock is released. */
-  deleteTrash?: (detached: Detached) => Promise<boolean>
-}
-
-const diskFreeBytes = async (path: string): Promise<number | undefined> => {
-  try {
-    const stats = await statfs(path)
-    return stats.bavail * stats.bsize
-  } catch {
-    return undefined
-  }
 }
 
 export const canonical = (path: string): string => {
@@ -147,11 +120,6 @@ export const canonical = (path: string): string => {
   } catch {
     return resolve(path)
   }
-}
-
-export function defaultWorktreeRoot(): string {
-  const data = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share")
-  return join(data, "opencode", "worktree")
 }
 
 /** Whether `path` is `root` or below it; trailing slashes on `root` are ignored. */
@@ -167,7 +135,6 @@ export function createLifecycle(deps: LifecycleDeps) {
   const { ctx, options, git, now, load, save } = deps
   const policy: LanePolicy = { emptyGraceMs: options.emptyGraceMs }
   const debounceMs = deps.debounceMs ?? 2000
-  const root = canonical(deps.worktreeRoot ?? defaultWorktreeRoot())
   const projectID = (ctx.location as { project?: { id?: string } }).project?.id
 
   let disposed = false
@@ -206,61 +173,33 @@ export function createLifecycle(deps: LifecycleDeps) {
     return isRunning({ busy: toMillis(session.time?.busy), idle: toMillis(session.time?.idle) }) ? "running" : "finished"
   }
 
-  // --- landed proofs ------------------------------------------------------------------------
+  // --- open pull requests -------------------------------------------------------------------
 
-  type Proofs = {
-    at: number
-    merged: Set<string>
-    open: Set<string>
-    /** The open list was read and is shorter than its limit, so a branch missing from `open` has no open pull request. */
-    openComplete: boolean
-    closed: Set<string>
-    integrated: Set<string>
-  }
-  const proofCache = new Map<string, Proofs>()
+  type OpenPrs = { at: number; branches: Set<string> }
+  const openPrCache = new Map<string, OpenPrs>()
 
-  /** One batched read per repository: merged PR heads, open PR branches, and `wt`'s integrated branches. Cached a few minutes. */
-  const proofsFor = async (parentDir: string): Promise<Proofs> => {
-    const cached = proofCache.get(parentDir)
-    if (cached && now() - cached.at < PROOF_TTL_MS) return cached
-    const proofs: Proofs = { at: now(), merged: new Set(), open: new Set(), openComplete: false, closed: new Set(), integrated: new Set() }
-    const json = async (argv: string[]): Promise<unknown> => {
-      const result = await git.run(argv, { cwd: parentDir })
-      if (result.code !== 0) return undefined
+  /**
+   * Branches with an open pull request, one batched `gh` read per repository, cached a few minutes. It only
+   * quiets the idle gate's "unresolved lane" nudge; it proves nothing about a landing. A failed read is empty.
+   */
+  const openPrBranches = async (parentDir: string): Promise<Set<string>> => {
+    const cached = openPrCache.get(parentDir)
+    if (cached && now() - cached.at < PROOF_TTL_MS) return cached.branches
+    const branches = new Set<string>()
+    const result = await git.run(["gh", "pr", "list", "--state", "open", "--json", "headRefName", "--limit", String(PR_LIST_LIMIT)], { cwd: parentDir })
+    if (result.code === 0) {
       try {
-        return JSON.parse(result.stdout)
+        const list: unknown = JSON.parse(result.stdout)
+        for (const pr of Array.isArray(list) ? list : []) {
+          const name = (pr as { headRefName?: unknown }).headRefName
+          if (typeof name === "string") branches.add(name)
+        }
       } catch {
-        return undefined
+        // an unreadable list is an empty one
       }
     }
-    const [merged, open, closed, listed] = await Promise.all([
-      json(["gh", "pr", "list", "--state", "merged", "--json", "headRefOid", "--limit", "200"]),
-      json(["gh", "pr", "list", "--state", "open", "--json", "headRefName", "--limit", String(PR_LIST_LIMIT)]),
-      // gh's "closed" state is closed without merging; merged pull requests are listed above.
-      json(["gh", "pr", "list", "--state", "closed", "--json", "headRefOid", "--limit", "200"]),
-      json(["wt", "-C", parentDir, "list", "--format", "json"]),
-    ])
-    for (const pr of Array.isArray(merged) ? merged : []) {
-      const oid = (pr as { headRefOid?: unknown }).headRefOid
-      if (typeof oid === "string") proofs.merged.add(oid)
-    }
-    for (const pr of Array.isArray(closed) ? closed : []) {
-      const oid = (pr as { headRefOid?: unknown }).headRefOid
-      if (typeof oid === "string") proofs.closed.add(oid)
-    }
-    proofs.openComplete = Array.isArray(open) && open.length < PR_LIST_LIMIT
-    for (const pr of Array.isArray(open) ? open : []) {
-      const name = (pr as { headRefName?: unknown }).headRefName
-      if (typeof name === "string") proofs.open.add(name)
-    }
-    const items = (listed as { items?: unknown } | undefined)?.items
-    for (const item of Array.isArray(items) ? items : []) {
-      // Keyed by commit, never by branch name: a branch that gained a commit since is not integrated.
-      const entry = item as { head?: { sha?: unknown }; display?: { state?: unknown } }
-      if (typeof entry.head?.sha === "string" && entry.display?.state === "integrated") proofs.integrated.add(entry.head.sha)
-    }
-    proofCache.set(parentDir, proofs)
-    return proofs
+    openPrCache.set(parentDir, { at: now(), branches })
+    return branches
   }
 
   /** The tree holds something git status does not show: a stash on the branch or an operation in progress. */
@@ -334,11 +273,7 @@ export function createLifecycle(deps: LifecycleDeps) {
     if (status !== undefined && tip !== undefined && status.ahead > 0) {
       // A head delivery recorded as landed counts only for the commit that is still the tip.
       landed = records.heads.includes(tip) || (await reachedMain(lane, tip))
-      if (!landed) {
-        const proofs = await proofsFor(lane.parentDir)
-        landed = proofs.merged.has(tip) || proofs.integrated.has(tip)
-        openPr = proofs.open.has(lane.branch)
-      }
+      if (!landed) openPr = (await openPrBranches(lane.parentDir)).has(lane.branch)
     }
     return {
       ...base,
@@ -355,15 +290,6 @@ export function createLifecycle(deps: LifecycleDeps) {
   }
 
   // --- one fence for every removal ----------------------------------------------------------
-
-  /**
-   * The resume generation, read from the lane's claim on disk (plugins load once per location, so a
-   * resume by another instance has to be visible here). -1 when there is no readable claim.
-   */
-  const generationOf = async (directory: string, parentDir: string): Promise<number> => {
-    const common = await deps.commonDir(parentDir)
-    return common === undefined ? -1 : claimGeneration(readClaim(common, directory))
-  }
 
   const localLocks = new Map<string, Promise<unknown>>()
 
@@ -413,188 +339,10 @@ export function createLifecycle(deps: LifecycleDeps) {
       return work()
     })
 
-  type Removal = {
-    directory: string
-    projectID: string
-    branch: string | undefined
-    parentDir: string
-    /** The generation read before the facts were collected. */
-    gen: number
-    /** `empty`: HEAD is the commit the lane started from. `landed`: `isLanded(HEAD)`. */
-    basis: "landed" | "empty"
-    /** The commit an empty lane started from. */
-    base?: string
-    /** Whether a commit is landed; evaluated against the one HEAD captured under the lock. */
-    isLanded: (oid: string) => Promise<boolean>
-    /** The lane whose child is moved home first, and whose record is retired inside the same critical section. */
-    lane?: Lane
-    /** Run under the lock, right before the removal: the refusal to honour, if any. */
-    recheck?: () => Promise<string | undefined>
-    /** The state the lane is retired in; by default `removed` for an empty lane and `landed` otherwise. */
-    retireAs?: "removed" | "merged" | "landed"
-  }
-
-  /**
-   * The sweep's removal path (lanes go through `finalize`), one critical section against one snapshot. Under the directory lock:
-   * the resume generation is unchanged; HEAD is read once, and every proof (empty, or landed),
-   * the clean tree and the branch ref are evaluated against that one commit; fresh re-reads of
-   * ownership, records and liveness agree; then the worktree is removed, the branch deleted with a
-   * compare-and-delete on that commit, and the lane retired with its claim, all before the lock is
-   * released, so a resume that was waiting sees the finished state and revives from it.
-   */
-  const removeVerified = async (removal: Removal): Promise<boolean> => {
-    const { directory, branch } = removal
-    try {
-      const common = await deps.commonDir(removal.parentDir)
-      if (common === undefined) return false
-      // Captured once under the lock and used by every proof and by the compare-and-delete.
-      let oid: string | undefined
-      let deleteBranch = false
-      const outcome = await queueLocally(canonical(directory), () =>
-        lockedWorktreeRemoval(common, directory, { sessionID: "subagent-worktree", now, ...deps.lock }, {
-          recheck: async () => {
-            // Re-read from disk under the lock: a resume by any instance bumps the generation and stamps resumedAt.
-            const claim = readClaim(common, directory)
-            if (claimGeneration(claim) !== removal.gen) return "the lane was resumed"
-            const failedWrite = unsafeHolds.get(canonical(directory))
-            if (failedWrite !== undefined) return failedWrite
-            const running = holdsState(common, directory, now())
-            if (running !== undefined) return running
-            oid = await git.head(directory)
-            if (oid === undefined) return "HEAD cannot be read"
-            if ((await git.porcelain(directory)) !== "") return "the tree is not clean"
-            if ((await busyTreeOf(directory, branch)) !== undefined) return "a stash or an operation is in progress"
-            const proven = removal.basis === "empty" ? oid === removal.base : await removal.isLanded(oid)
-            if (!proven) return "HEAD is not the commit the proof covers"
-            if (branch !== undefined && (await git.branch(directory)) === branch) {
-              // On the branch: the ref must be the commit captured above, or something moved it.
-              if ((await git.commit(removal.parentDir, `refs/heads/${branch}`)) !== oid) return "the branch moved"
-              deleteBranch = true
-            }
-            return undefined
-          },
-          remove: async () => {
-            // The last look at liveness: resume generation and window, running work, delivery's records, the
-            // child's and parent's status. It comes after every ref read and the move home, immediately
-            // before the host removal call, so nothing that changed during those reads can slip past it.
-            const finalRefusal = async (): Promise<string | undefined> => {
-              const claim = readClaim(common, directory)
-              if (claimGeneration(claim) !== removal.gen) return "the lane was resumed"
-              const failedWrite = unsafeHolds.get(canonical(directory))
-              if (failedWrite !== undefined) return failedWrite
-              const running = holdsState(common, directory, now())
-              if (running !== undefined) return running
-              return removal.recheck?.()
-            }
-            // Put the lane's child back where it was after a refusal. A failure to do so is not swallowed: the
-            // child would sit in the parent's checkout, so the lane is fenced until a resume restores it.
-            const restoreChild = async () => {
-              const lane = removal.lane
-              if (!lane || !(await deps.exists(directory).catch(() => false))) return
-              try {
-                await ctx.session.move({ sessionID: lane.child, directory } as never)
-              } catch (error) {
-                const why = error instanceof Error ? error.message : String(error)
-                console.error(`subagent-worktree: could not move ${lane.child} back to ${directory} (${why}); the lane is fenced until a resume restores it`)
-                const stored = (await load(lane.child)) ?? lane
-                await save({ ...stored, fenced: { reason: why, at: now() } }).catch(() => {})
-              }
-            }
-            try {
-              if (removal.lane) {
-                // A child that is still alive keeps its lane, so it is not even moved: a refused removal changes nothing.
-                // The decisive look is the last one below, right before the host removal.
-                const early = await childState(ctx.session.get({ sessionID: removal.lane.child } as never), deps.lookupMs, removal.lane.child)
-                if (!childReleasesLane(early)) {
-                  console.error(`subagent-worktree: not removing ${directory}: its child session is ${early}`)
-                  return false
-                }
-                await deps.moveHome(removal.lane)
-              }
-              if ((await finalRefusal()) !== undefined) {
-                await restoreChild()
-                return false
-              }
-              // Last, so nothing that refused above has moved anyone: every other idle session in the worktree
-              // goes to the checkout, or the removal is refused (a running one, a failed lookup or move).
-              const evicted = await evictSessions(ctx.session as unknown as SessionApi, {
-                projectID: removal.projectID,
-                directory,
-                destination: canonicalCheckout(common, removal.parentDir),
-                ...(removal.lane ? { exclude: new Set([removal.lane.child]) } : {}),
-              })
-              if (!evicted.ok) {
-                console.error(`subagent-worktree: not removing ${directory}: ${evicted.reason}`)
-                await restoreChild()
-                return false
-              }
-              // The last look, with nothing awaited between it and the host removal: the child session itself.
-              // Everything slower (the parent's status, eviction) happened before. A running or unknown child,
-              // or any failed lookup, keeps the lane; only a deleted or archived child releases it.
-              if (removal.lane) {
-                const child = await childState(ctx.session.get({ sessionID: removal.lane.child } as never), deps.lookupMs, removal.lane.child)
-                if (!childReleasesLane(child)) {
-                  console.error(`subagent-worktree: not removing ${directory}: its child session is ${child}`)
-                  await restoreChild()
-                  return false
-                }
-              }
-              await deps.removeWorktree(removal.projectID, directory, false)
-            } catch {
-              await restoreChild()
-              return false
-            }
-            await ctx.worktree.refresh({ projectID: removal.projectID } as never).catch(() => {})
-            if (deleteBranch && branch !== undefined && oid !== undefined) await git.deleteBranchAt(removal.parentDir, branch, oid)
-            if (removal.lane) {
-              // Retire only the record this removal is about: same directory, still active, same generation.
-              const stored = await load(removal.lane.child)
-              if (stored?.state === "active" && canonical(stored.directory) === canonical(directory) && claimGeneration(readClaim(common, directory)) === removal.gen) {
-                await save({ ...stored, state: removal.retireAs ?? (removal.basis === "empty" ? "removed" : "landed") })
-              }
-            }
-            return true
-          },
-        }),
-      )
-      return outcome.removed && outcome.value
-    } catch (error) {
-      // A coordination or bookkeeping error is a held outcome: logged, never thrown out of a hook, never a reason to remove.
-      console.error(`subagent-worktree: removal of ${directory} deferred:`, error instanceof Error ? error.message : error)
-      return false
-    }
-  }
-
-  /** Whether `oid` is landed: delivery recorded it, it is an ancestor of origin/main, or a merged PR / `wt` says so. Read fresh. */
-  const landedProof = (directory: string, parentDir: string, lane?: Lane) => async (oid: string): Promise<boolean> => {
-    const records = await deliveryRecords(directory, parentDir)
-    if (records.heads.includes(oid)) return true
-    // A lane's own work must have reached main; a worktree that is not a lane only needs its tip in main.
-    if (lane ? await reachedMain(lane, oid) : await git.isAncestor(directory, oid, "origin/main")) return true
-    const proofs = await proofsFor(parentDir)
-    return proofs.merged.has(oid) || proofs.integrated.has(oid)
-  }
-
-  /** True only when a fresh, successful lookup finds no open pull request from `branch`; any failure is false. */
-  const noOpenPrFrom = async (branch: string, parentDir: string): Promise<boolean> => {
-    const result = await git.run(["gh", "pr", "list", "--state", "open", "--head", branch, "--json", "number", "--limit", "1"], { cwd: parentDir })
-    if (result.code !== 0) return false
-    try {
-      const list: unknown = JSON.parse(result.stdout)
-      return Array.isArray(list) && list.length === 0
-    } catch {
-      return false
-    }
-  }
-
-  /**
-   * Whether `oid` heads a pull request closed without merging and a fresh lookup proves none is open from
-   * `branch` now; or is landed. Never trusts the cached open list. The ref is never deleted.
-   */
-  const closedProof = (directory: string, branch: string | undefined, parentDir: string, lane?: Lane) => async (oid: string): Promise<boolean> => {
-    if (await landedProof(directory, parentDir, lane)(oid)) return true
-    if (branch === undefined || !(await proofsFor(parentDir)).closed.has(oid)) return false
-    return noOpenPrFrom(branch, parentDir)
+  /** Whether `oid` is landed: delivery recorded it as this worktree's head, or the lane's own work reached origin/main. */
+  const isLanded = async (lane: Lane, oid: string): Promise<boolean> => {
+    const records = await deliveryRecords(lane.directory, lane.parentDir)
+    return records.heads.includes(oid) || (await reachedMain(lane, oid))
   }
 
   // --- actions ------------------------------------------------------------------------------
@@ -695,24 +443,6 @@ export function createLifecycle(deps: LifecycleDeps) {
       return false
     }
   }
-
-  /**
-   * What must still be true at the moment of removal, read fresh under the lock: delivery has not
-   * denied or hidden its records, the idle gate has not found work running, the child is finished
-   * and the parent idle now. `parentIdle` is true only when the idle hook itself is the evidence.
-   */
-  const recheckFor =
-    (lane: Lane | undefined, directory: string, parentDir: string, parentIdle: boolean, owner?: { minAgeMs: number }) =>
-    async (): Promise<string | undefined> => {
-      // Every sweep candidate, lane or not: nobody may be working in it now (all pages read, fail closed).
-      if (owner !== undefined && (await ownerOf(directory, owner.minAgeMs)) !== "no") return "its ownership could not be confirmed"
-      const records = await deliveryRecords(directory, parentDir)
-      if (records.block !== undefined) return records.block
-      if (lane === undefined) return undefined
-      // The child itself is checked last, in `removeVerified`, right before the host removal.
-      if (!parentIdle && (await statusOf(lane.parent)) !== "finished") return "the parent is not idle now"
-      return undefined
-    }
 
   /** Sessions a `shutdown` interruption left pending: the host resumes the turn, so the child is still running. */
   const shutdownPending = new Set<string>()
@@ -838,7 +568,7 @@ export function createLifecycle(deps: LifecycleDeps) {
     if (earlier?.head === oid) return { proof: PROOF_OF[earlier.retireAs], oid }
     if (oid === lane.base) return { proof: "empty", oid }
     if (options.target !== undefined && (await git.isAncestor(lane.directory, oid, options.target))) return { proof: "merged", oid }
-    if (await landedProof(lane.directory, lane.parentDir, lane)(oid)) return { proof: "landed", oid }
+    if (await isLanded(lane, oid)) return { proof: "landed", oid }
     return keptBecause("unmerged", "HEAD is neither merged nor landed")
   }
 
@@ -1145,8 +875,8 @@ export function createLifecycle(deps: LifecycleDeps) {
       const parent = await statusOf(ownLane.parent)
       const facts = await laneFacts(ownLane, { child: "finished", parent: parent === "finished" ? "idle" : parent === "running" ? "busy" : "unknown" })
       const action = laneEventAction(ownLane, facts, event, policy)
-      // A landed lane with a dirty tree already gets its own notice (one key) from `act`: no second one for the same state.
-      const noticed = action.action === "notifyParent" && action.key.startsWith("landed-dirty")
+      // A landed lane with a dirty tree has its own notice (one key, sent once by `act`): the archived notice never doubles it, on this pass or a later one.
+      const noticed = facts.landed && (facts.ahead ?? 0) > 0 && facts.dirty === true
       if (type === "archived" && kept && !kept.removed && (kept.kept === "dirty" || kept.kept === "unmerged") && !noticed) {
         // Once per state: the key names the head and the dirty state, never a time.
         await deliver(ownLane, `parent:archived:${facts.tip ?? "?"}:${facts.dirtyToken}`, ownLane.parent, archivedKeptNotice(ownLane, kept.reason))
@@ -1347,151 +1077,44 @@ export function createLifecycle(deps: LifecycleDeps) {
 
   // --- sweep --------------------------------------------------------------------------------
 
-  /** A child that is running, or whose lookup gave no answer, may be building: its directories stay. */
-  const keepsBuild = (child: ChildState | undefined) => child === "running" || child === "unknown"
+  const PROOF_TEXT = { empty: "empty: no commits of its own", merged: "merged", landed: "landed" } as const
 
-  type Entry = { directory: string }
-
-  /** Who works in `directory`: "unknown" (so the worktree is kept) unless every page of the lookup was read. */
-  const ownerOf = async (directory: string, minAgeMs: number): Promise<WorktreeFacts["owner"]> => {
-    if (projectID === undefined) return "unknown"
-    let query: Record<string, unknown> = { project: projectID, directory, archived: false, limit: 100 }
-    for (let pages = 0; pages < 20; pages++) {
-      const page = (await withinLookup(Promise.resolve(ctx.session.list(query as never)))) as
-        | { data?: unknown; cursor?: { next?: string } }
-        | undefined
-      if (!page || !Array.isArray(page.data)) return "unknown"
-      for (const raw of page.data as Array<{ time?: Record<string, unknown> }>) {
-        const busy = toMillis(raw.time?.busy)
-        const idle = toMillis(raw.time?.idle)
-        const updated = toMillis(raw.time?.updated)
-        if (isRunning({ busy, idle }) || (updated !== undefined && now() - updated < minAgeMs)) return "yes"
-      }
-      const next = page.cursor?.next
-      if (!next) return "no"
-      query = { cursor: next }
+  /** What `finalize` would do with an active lane, from its checks alone: nothing is written or removed. */
+  const previewFinalize = async (lane: Lane, fence: Fence): Promise<{ removable: true; reason: string } | { removable: false; reason: string; needsPerson: boolean }> => {
+    const checked = await checkFinalize(lane, fence, fence.seq, undefined)
+    if ("proof" in checked) {
+      const descendants = await descendantRefusal(lane)
+      if (!("ids" in descendants)) return { removable: false, reason: "reason" in descendants ? descendants.reason : "removable", needsPerson: false }
+      return { removable: true, reason: PROOF_TEXT[checked.proof] }
     }
-    return "unknown"
+    if (checked.removed) return { removable: true, reason: "removable" }
+    return { removable: false, reason: checked.reason, needsPerson: needsPerson(checked) }
   }
 
-  const ageOf = async (directory: string): Promise<number | undefined> => {
-    try {
-      const info = await stat(join(directory, ".git"))
-      const born = info.birthtimeMs > 0 ? info.birthtimeMs : info.mtimeMs
-      return Math.max(0, now() - born)
-    } catch {
-      return undefined
-    }
+  /** A refusal that only a person can resolve: uncommitted, unmerged or denied work. */
+  const needsPerson = (refusal: Extract<Finalized, { removed: false }>): boolean => refusal.kept === "dirty" || refusal.kept === "unmerged" || refusal.kept === "denied"
+
+  /** One lane's line of the sweep: in prune mode a removable lane goes through `finalize`, the one removal path. */
+  const sweepLane = async (lane: Lane, mode: SweepMode): Promise<SweepEntry> => {
+    const entry = { child: lane.child, directory: lane.directory, branch: lane.branch }
+    // Captured before the first child lookup: a resume or an execution start after it keeps the lane through the preview and `finalize`.
+    const fence: Fence = { seq: eventSeq, since: now() }
+    // A lane still active whose directory is gone was removed outside the plugin (a removal of ours leaves the lane `removing`, which `resumeRemovals` finishes): the host cannot even
+    // look up its child, so it is reported for a person and left alone.
+    if (!(await deps.exists(lane.directory))) return { ...entry, verdict: "keep", reason: "its worktree directory is gone and the lane was not retired (removed outside the plugin)", needsPerson: true }
+    // Only a deleted or archived subagent session releases its lane; a live one, or one that cannot be read, keeps it.
+    const child = await childState(ctx.session.get({ sessionID: lane.child } as never), deps.lookupMs, lane.child)
+    if (!childReleasesLane(child)) return { ...entry, verdict: "keep", reason: `its subagent session is ${child}` }
+    const preview = await previewFinalize(lane, fence)
+    if (!preview.removable) return { ...entry, verdict: "keep", reason: preview.reason, ...(preview.needsPerson ? { needsPerson: true as const } : {}) }
+    if (mode === "report") return { ...entry, verdict: "remove", reason: preview.reason }
+    const done = await finalize(lane, fence)
+    if (done.removed) return { ...entry, verdict: "remove", reason: preview.reason }
+    return { ...entry, verdict: "keep", reason: done.reason, ...(needsPerson(done) ? { needsPerson: true as const } : {}) }
   }
 
-  const sweepFacts = async (directory: string, lane: Lane | undefined, minAgeMs: number): Promise<WorktreeFacts> => {
-    const agentPath = lane !== undefined || [root, ...options.include.map(canonical)].some((base) => within(canonical(directory), base))
-    const base = { path: directory, agentPath, ...(lane ? { branch: lane.branch } : {}) }
-    if (!(await deps.exists(directory))) return { ...base, exists: false, owner: "unknown", ageMs: undefined, landed: false, dirty: undefined, ahead: undefined, unpushed: false }
-    const records = await deliveryRecords(directory, lane?.parentDir ?? ctx.location.directory)
-    const branch = lane?.branch ?? (await git.branch(directory))
-    const [tip, porcelain, listedOwner, ageMs, child] = await Promise.all([
-      git.head(directory),
-      git.porcelain(directory),
-      ownerOf(directory, minAgeMs),
-      (deps.age ?? ageOf)(directory),
-      lane === undefined ? undefined : childState(ctx.session.get({ sessionID: lane.child } as never), deps.lookupMs, lane.child),
-    ])
-    // A lane's subagent session that exists (running, idle, or a lookup that did not answer) keeps the lane;
-    // only a deleted or archived one releases it. The directory listing may miss the session, so it is read here.
-    const owner = listedOwner
-    const childAlive = child === "running" || child === "idle" || child === "unknown"
-    const status = await git.status(directory, "origin/main")
-    const busy = await busyTreeOf(directory, branch)
-    let landed = false
-    let closed = false
-    const parentDir = lane?.parentDir ?? ctx.location.directory
-    if (tip !== undefined && status !== undefined) {
-      landed = records.heads.includes(tip) || status.ahead === 0 || (await git.isAncestor(directory, tip, "origin/main"))
-      if (!landed) {
-        const proofs = await proofsFor(parentDir)
-        landed = proofs.merged.has(tip) || proofs.integrated.has(tip)
-        // A pull request from this branch that is open now overrides an older closed one for the same commit;
-        // an open list that failed or may be cut off proves nothing, so the lane is kept.
-        closed = !landed && branch !== undefined && proofs.closed.has(tip) && proofs.openComplete && !proofs.open.has(branch)
-      }
-    }
-    // Clean or dirty only in ignored files (status does not list ignored files), nothing running, and the owner gone for the grace period.
-    const freeBuild =
-      base.agentPath &&
-      !keepsBuild(child) &&
-      porcelain === "" &&
-      busy === undefined &&
-      (await holdReason(directory, parentDir)) === undefined &&
-      (await ownerOf(directory, await buildGraceMs(directory))) === "no"
-    const behindRemote = await git.run(["git", "-C", directory, "rev-list", "--count", "@{upstream}..HEAD"])
-    const unpushed = behindRemote.code === 0 ? Number.parseInt(behindRemote.stdout.trim(), 10) > 0 : (status?.ahead ?? 0) > 0
-    return {
-      ...base,
-      ...(branch ? { branch } : {}),
-      exists: true,
-      owner,
-      childAlive,
-      ageMs,
-      landed,
-      // A denial (or unreadable records) or a gate-held worktree reads as "dirty": quarantined, never pruned.
-      dirty:
-        porcelain === undefined
-          ? undefined
-          : porcelain !== "" || busy !== undefined || records.block !== undefined || (await holdReason(directory, lane?.parentDir ?? ctx.location.directory)) !== undefined,
-      ahead: status?.ahead,
-      unpushed,
-      closed,
-      freeBuild,
-    }
-  }
-
-  /** How long an owner must have been gone before build directories are freed: none on a nearly full disk. */
-  const buildGraceMs = async (directory: string): Promise<number> =>
-    isLowDisk(await (deps.build?.freeBytes ?? diskFreeBytes)(directory), options.lowDiskBytes) ? 0 : BUILD_GRACE_MS
-
-  /**
-   * Free the ignored build directories of one kept worktree. Under the same lock as a removal and after the
-   * same fresh checks (generation unchanged, nothing running, owner still gone, tree still free of changes)
-   * they are only renamed aside; the slow recursive delete runs after the lock is released, so a resume or a
-   * hold write is never kept waiting on it. Fails closed: a lock, git or lookup failure detaches nothing.
-   * A delete that fails leaves the detached directory in the worktree's git directory, out of git's view;
-   * the next pass deletes it, and removing the worktree deletes it with that directory.
-   */
-  const freeBuildOf = async (directory: string, parentDir: string, gen: number, lane: Lane | undefined): Promise<string[]> => {
-    await deps.build?.beforeLock?.(directory)
-    const detached = await detachUnderLock(directory, parentDir, gen, lane)
-    const freed: string[] = []
-    for (const entry of detached) {
-      if (await (deps.build?.deleteTrash ?? deleteDetached)(entry)) freed.push(entry.rel)
-      else console.error(`subagent-worktree: could not delete ${entry.trash}; it is left in place`)
-    }
-    return freed
-  }
-
-  const detachUnderLock = async (directory: string, parentDir: string, gen: number, lane: Lane | undefined): Promise<Detached[]> => {
-    try {
-      return await withLock(directory, parentDir, async () => {
-        const common = await deps.commonDir(parentDir)
-        if (common === undefined) return []
-        if (claimGeneration(readClaim(common, directory)) !== gen) return []
-        if (unsafeHolds.has(canonical(directory)) || holdsState(common, directory, now()) !== undefined) return []
-        if ((await git.porcelain(directory)) !== "" || (await busyTreeOf(directory, await git.branch(directory))) !== undefined) return []
-        const refusal = await recheckFor(lane, directory, parentDir, false, { minAgeMs: await buildGraceMs(directory) })()
-        if (refusal !== undefined) return []
-        // The directory listing can miss a running session, so the lane's child is looked up directly, right
-        // before the rename: running, unknown or a failed lookup keeps the build directories.
-        if (lane !== undefined && keepsBuild(await childState(ctx.session.get({ sessionID: lane.child } as never), deps.lookupMs, lane.child))) return []
-        return detachBuildDirs(git.run, canonical(directory))
-      })
-    } catch (error) {
-      console.error(`subagent-worktree: build directories of ${directory} left alone:`, error instanceof Error ? error.message : error)
-      return []
-    }
-  }
-
-  /** The plan for this project; with mode "prune" it is also carried out. Never forces, never touches a remote. */
-  const sweep = async (mode: "report" | "prune"): Promise<{ plan: PlanEntry[]; text: string }> => {
+  /** The report for this project's active lanes; with mode "prune" the removable ones are removed. Never forces, never touches a remote. */
+  const sweep = async (mode: SweepMode): Promise<{ plan: SweepEntry[]; text: string }> => {
     try {
       return await sweepUnsafe(mode)
     } catch (error) {
@@ -1501,62 +1124,19 @@ export function createLifecycle(deps: LifecycleDeps) {
     }
   }
 
-  const sweepUnsafe = async (mode: "report" | "prune"): Promise<{ plan: PlanEntry[]; text: string }> => {
+  const sweepUnsafe = async (mode: SweepMode): Promise<{ plan: SweepEntry[]; text: string }> => {
     if (projectID === undefined) return { plan: [], text: "subagent_worktree_sweep: the host reports no project." }
-    const minAgeMs = options.minAgeHours * HOUR
     // A pruning sweep also finishes removals a crash left half done; a report changes nothing.
     if (mode === "prune") await resumeRemovals()
-    const listed = (await withinLookup(Promise.resolve(ctx.worktree.list({ projectID } as never)))) as readonly Entry[] | undefined
     const lanes = (await deps.scan()).filter((lane) => lane.state === "active" && lane.projectID === projectID)
-    const byDir = new Map(lanes.map((lane) => [canonical(lane.directory), lane]))
-    const directories = new Map<string, string>()
-    for (const entry of listed ?? []) directories.set(canonical(entry.directory), entry.directory)
-    for (const lane of lanes) directories.set(canonical(lane.directory), lane.directory)
-    const facts: WorktreeFacts[] = []
-    const proven = new Map<string, { gen: number }>()
-    for (const [key, directory] of directories) {
-      // The commit and generation are read first: the removal runs only if both are unchanged.
-      const gen = await generationOf(directory, byDir.get(key)?.parentDir ?? ctx.location.directory)
-      facts.push(await sweepFacts(directory, byDir.get(key), minAgeMs))
-      proven.set(key, { gen })
-    }
-    const plan = planSweep(facts, { minAgeMs })
-    if (mode === "prune") {
-      for (const entry of plan) {
-        if (entry.verdict === "prune-registry") {
-          await git.pruneWorktrees(ctx.location.directory)
-          continue
-        }
-        const key = canonical(entry.path)
-        const lane = byDir.get(key)
-        const covered = proven.get(key)
-        if (covered === undefined) continue
-        const parentDir = lane?.parentDir ?? ctx.location.directory
-        if (entry.verdict !== "prune") {
-          if (entry.freeBuild && options.freeBuildDirs) {
-            const freed = await freeBuildOf(entry.path, parentDir, covered.gen, lane)
-            if (freed.length > 0) console.error(`subagent-worktree: freed ${freed.join(", ")} in ${entry.path}`)
-          }
-          continue
-        }
-        await removeVerified({
-          directory: entry.path,
-          projectID,
-          branch: entry.deleteBranch ? entry.branch : undefined,
-          parentDir,
-          gen: covered.gen,
-          basis: "landed",
-          isLanded: entry.closedUnmerged ? closedProof(entry.path, entry.branch, parentDir, lane) : landedProof(entry.path, parentDir, lane),
-          ...(lane ? { lane } : {}),
-          recheck: recheckFor(lane, entry.path, parentDir, false, { minAgeMs }),
-        })
-      }
-    }
+    const entries: SweepEntry[] = []
+    for (const lane of lanes) entries.push(await sweepLane(lane, mode))
+    const plan = orderEntries(entries)
     await ctx.storage.set("sweep/last", { at: now(), mode, plan })
-    return { plan, text: formatPlan(plan, mode) }
+    return { plan, text: formatSweep(plan, mode) }
   }
 
-  const runSweep = (mode: "report" | "prune") => {
+  const runSweep = (mode: SweepMode) => {
     const next = sweepChain.then(() => sweep(mode))
     sweepChain = next.catch(() => {})
     return next

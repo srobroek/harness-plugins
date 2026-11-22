@@ -74,28 +74,11 @@ describe("readOptions", () => {
     expect(readOptions(undefined)).toMatchObject({ agents: DEFAULT_AGENTS, base: "HEAD" })
   })
   test("defaults for the lifecycle options", () => {
-    expect(readOptions(undefined)).toMatchObject({
-      gates: true,
-      emptyGraceMs: 1_800_000,
-      sweep: "report",
-      minAgeHours: 24,
-      include: [],
-    })
-    expect(readOptions({ gates: false, sweep: "prune", minAgeHours: 2, include: ["/x", 1] })).toMatchObject({
-      gates: false,
-      sweep: "prune",
-      minAgeHours: 2,
-      include: ["/x"],
-    })
-    expect(readOptions({ sweep: "bogus", minAgeHours: -1 })).toMatchObject({ sweep: "report", minAgeHours: 24 })
+    expect(readOptions(undefined)).toMatchObject({ gates: true, emptyGraceMs: 1_800_000 })
+    expect(readOptions({ gates: false })).toMatchObject({ gates: false })
   })
-  test("freeBuildDirs follows the sweep mode unless set; lowDiskBytes is off by default", () => {
-    expect(readOptions(undefined)).toMatchObject({ freeBuildDirs: false, lowDiskBytes: 0 })
-    expect(readOptions({ sweep: "prune" })).toMatchObject({ freeBuildDirs: true })
-    expect(readOptions({ sweep: "off" })).toMatchObject({ freeBuildDirs: false })
-    expect(readOptions({ sweep: "prune", freeBuildDirs: false })).toMatchObject({ freeBuildDirs: false })
-    expect(readOptions({ freeBuildDirs: true, lowDiskBytes: 1000 })).toMatchObject({ freeBuildDirs: true, lowDiskBytes: 1000 })
-    expect(readOptions({ lowDiskBytes: -5 })).toMatchObject({ lowDiskBytes: 0 })
+  test("the removed sweep options are not read", () => {
+    expect(readOptions({ sweep: "prune", minAgeHours: 2, intervalHours: 1, include: ["/x"], freeBuildDirs: true, lowDiskBytes: 5 })).toEqual(readOptions(undefined))
   })
   test("reads agents and base, dropping junk", () => {
     expect(readOptions({ agents: ["a", 1, ""], base: " dev " })).toMatchObject({ agents: ["a"], base: "dev" })
@@ -558,6 +541,8 @@ describe("lane inventory", () => {
     expect(text).toContain("ORPHAN: child session gone, parent session gone")
     expect(text).toContain("exists only as uncommitted changes")
     expect(text).toContain("nothing was removed")
+    expect(text).toContain("subagent_worktree_sweep")
+    expect(text).not.toContain("wt remove")
   })
 })
 

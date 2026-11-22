@@ -56,7 +56,7 @@ import {
   worktreeName,
   writerRefusal,
 } from "./lane.ts"
-import { type BuildSeams, createLifecycle, type Lifecycle, toMillis } from "./lifecycle.ts"
+import { createLifecycle, type Lifecycle, toMillis } from "./lifecycle.ts"
 
 export * from "./git.ts"
 export * from "./lane.ts"
@@ -73,10 +73,10 @@ export const MERGE_DESCRIPTION =
 export const SWEEP_TOOL = "subagent_worktree_sweep"
 
 export const SWEEP_DESCRIPTION =
-  "Plan or prune landed, clean, abandoned agent worktrees; dirty or unlanded ones are only reported.\n" +
-  'Each worktree under OpenCode\'s worktree directory (and lane records) gets keep, prune, prune-registry or quarantine with a reason. ' +
-  'A worktree is pruned only when it landed (ancestor of origin/main, a merged PR at its tip, or wt integrated), is clean, has no live session, ' +
-  'and is older than minAgeHours. Removal is never forced and no remote branch is touched. Mode "report" (default) changes nothing.'
+  "Report, or on request remove, finished agent lanes. Runs only when called.\n" +
+  'Each active lane whose subagent session is deleted or archived is checked as `finalize` checks it: not running, clean, no stash or operation, ' +
+  'and its tip is the lane base, or an ancestor of origin/main, or a delivery landing record. Mode "report" (default) lists what would be removed and what is kept, and why. ' +
+  'Mode "prune" removes the removable ones through `finalize`, never forced, and touches no remote branch.'
 
 export const SWEEP_INPUT = {
   type: "object",
@@ -122,10 +122,8 @@ export type Overrides = {
   now?: () => number
   reserveMs?: number
   debounceMs?: number
-  age?: (directory: string) => Promise<number | undefined>
   commonDir?: (directory: string) => Promise<string | undefined>
   lock?: Parameters<typeof createLifecycle>[0]["lock"]
-  build?: BuildSeams
   /** Test seam: receives the lifecycle, so a test can await `settle()` instead of sleeping. */
   lifecycle?: (lifecycle: Lifecycle) => void
 }
@@ -164,10 +162,8 @@ export function createLanes(
   now: () => number = Date.now,
   reserveMs = RESERVATION_MS,
   debounceMs?: number,
-  age?: (directory: string) => Promise<number | undefined>,
   commonDirOverride?: (directory: string) => Promise<string | undefined>,
   lock?: Parameters<typeof createLifecycle>[0]["lock"],
-  build?: BuildSeams,
 ) {
   const load = async (child: string) => parseLane(await ctx.storage.get(laneKey(child)))
   /** The repository's git common directory: where a lane's claim lives. Cached per checkout. */
@@ -919,10 +915,8 @@ export function createLanes(
     moveHome,
     removeWorktree,
     ...(debounceMs === undefined ? {} : { debounceMs }),
-    ...(age === undefined ? {} : { age }),
     commonDir: commonDirOf,
     ...(lock === undefined ? {} : { lock }),
-    ...(build === undefined ? {} : { build }),
     ensureClaim: async (lane) => {
       try {
         await syncClaim(lane)
@@ -941,7 +935,7 @@ export function createPlugin(overrides: Overrides = {}) {
     async setup(ctx) {
       const options = readOptions(ctx.options)
       const git = createGit(overrides.run ?? spawnRunner)
-      const lanes = createLanes(ctx, options, git, overrides.suffix ?? randomSuffix, overrides.lookupMs, overrides.directoryExists, overrides.now, overrides.reserveMs, overrides.debounceMs, overrides.age, overrides.commonDir, overrides.lock, overrides.build)
+      const lanes = createLanes(ctx, options, git, overrides.suffix ?? randomSuffix, overrides.lookupMs, overrides.directoryExists, overrides.now, overrides.reserveMs, overrides.debounceMs, overrides.commonDir, overrides.lock)
       overrides.lifecycle?.(lanes.lifecycle)
       const registrations: { dispose: () => Promise<void> }[] = []
       const cleanup = async () => {
