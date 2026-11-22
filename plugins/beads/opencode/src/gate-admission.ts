@@ -19,7 +19,7 @@ import {
   writesStore,
 } from "@srobroek/opencode-lib/bd-embedded-write-lock"
 import { scanShell } from "@srobroek/opencode-lib/beads-shell"
-import { sessionPinFor, storeFromBeadsDb } from "@srobroek/opencode-lib/beads-store"
+import { ambientStore, sessionPinFor } from "@srobroek/opencode-lib/beads-store"
 import { supervise } from "@srobroek/opencode-lib/subprocess"
 
 /** The longest a mutating command waits for its store's gate verification. */
@@ -454,16 +454,8 @@ export function bdStoreForInvocation(
   }
   if (directory !== undefined) return canonicalStore(sessionPinFor(base) ?? join(base, ".beads"))
   const local = invocation.prefix.findLast((token) => token.startsWith("BEADS_DIR="))?.slice("BEADS_DIR=".length)
-  const pinned = local ?? env.BEADS_DIR
-  return canonicalStore(
-    pinned === undefined || pinned === ""
-      ? env.BEADS_DB !== undefined && env.BEADS_DB !== ""
-        ? storeFromBeadsDb(env.BEADS_DB, cwd)
-        : (sessionPinFor(cwd) ?? join(cwd, ".beads"))
-      : isAbsolute(pinned)
-        ? pinned
-        : resolve(cwd, pinned),
-  )
+  const named = local === undefined ? env : { ...env, BEADS_DIR: local }
+  return canonicalStore(ambientStore(cwd, named) ?? join(cwd, ".beads"))
 }
 
 /** Command-local `BEADS_DIR=` assignments on bd invocations override the ambient one. */

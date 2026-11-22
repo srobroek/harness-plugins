@@ -519,7 +519,7 @@ describe("compound commands", () => {
   const namedFor = (target: string): string => (target === held ? store : target === heldOther ? other : target)
   const runnerForm = (target: string, using = runner) => {
     const named = ` --beads-store-selected '${namedFor(target)}'`
-    return `BEADS_DOLT_SHARED_SERVER= BEADS_DIR='${target}' '${using.interpreter}' '${using.script}' --beads-store '${target}'${named} --beads-wait-ms 30000 -- `
+    return `BEADS_DOLT_SHARED_SERVER= BEADS_DIR='${target}' BEADS_DB= BD_DB= '${using.interpreter}' '${using.script}' --beads-store '${target}'${named} --beads-wait-ms 30000 -- `
   }
 
   beforeAll(() => {

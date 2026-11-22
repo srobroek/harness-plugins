@@ -441,7 +441,7 @@ describe("decideShell", () => {
     const held = realpathSync(store)
     // The store as named rides along for the runner's last check, whether or not it is canonical.
     expect(decision.command).toBe(
-      `unset BEADS_ACTOR; export BD_ACTOR='opencode/r/general/s'; BEADS_DOLT_SHARED_SERVER= BEADS_DIR='${held}' '/opt/bun' '/opt/beads/src/bd-embedded-write-runner.ts' --beads-store '${held}' --beads-store-selected '${store}' --beads-wait-ms 30000 -- bd update proj-1 --claim`,
+      `unset BEADS_ACTOR; export BD_ACTOR='opencode/r/general/s'; BEADS_DOLT_SHARED_SERVER= BEADS_DIR='${held}' BEADS_DB= BD_DB= '/opt/bun' '/opt/beads/src/bd-embedded-write-runner.ts' --beads-store '${held}' --beads-store-selected '${store}' --beads-wait-ms 30000 -- bd update proj-1 --claim`,
     )
   })
 
