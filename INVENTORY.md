@@ -41,7 +41,7 @@
 | repomix | 0.4.1 | development | global | opencode, claude |
 | safety | 0.11.5 | development | global | opencode |
 | session | 0.4.1 | development | global | opencode |
-| speckit | 0.10.2 | development | project | opencode, claude |
+| speckit | 0.10.3 | development | project | opencode, claude |
 | statusline | 0.4.0 | development | global | opencode |
 | subagent-worktree | 0.8.0 | development | global | opencode |
 | toolchain | 0.7.2 | development | global | opencode, claude |

@@ -1282,7 +1282,7 @@
     },
     {
       "name": "speckit",
-      "version": "0.10.2",
+      "version": "0.10.3",
       "description": "SpecKit on beads: a tasks.md guard, setup and bugfix skills, formulas, and the speckit-sync and speckit-verify subagents.",
       "category": "development",
       "harnesses": {
