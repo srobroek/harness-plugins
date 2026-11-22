@@ -1247,17 +1247,13 @@ var BRANCHES = new Set(["else", "elif"]);
 var ASSIGNMENT2 = /^[A-Za-z_]\w*=/;
 var BOTH = { BEADS_ACTOR: true, BD_ACTOR: true };
 var VARIABLE_BUILTINS = {
-  declare: true,
   eval: true,
   getopts: true,
   let: true,
-  local: true,
   mapfile: true,
   printf: true,
   read: true,
-  readarray: true,
-  readonly: true,
-  typeset: true
+  readarray: true
 };
 var basename = (word) => word.split("/").pop() ?? word;
 var actorVarOf = (arg) => ACTOR_VARS.find((candidate) => arg === candidate || arg.startsWith(`${candidate}=`));
@@ -1277,10 +1273,8 @@ function childView(vars) {
   }
   return { exported, unverified };
 }
-function applyActorBuiltin(vars, values) {
-  const name = values[0];
-  const unexport = name === "export" && values.slice(1).some((arg) => /^-[a-zA-Z]*n/.test(arg));
-  for (const arg of values.slice(1)) {
+function applyActorBuiltin(vars, name, unexport, names) {
+  for (const arg of names) {
     const variable = actorVarOf(arg);
     if (variable === undefined)
       continue;
@@ -1297,6 +1291,58 @@ function applyActorBuiltin(vars, values) {
       vars[variable] = { value: current.value, exported: true };
   }
 }
+var BUILTIN_OPTIONS = {
+  export: "fnp",
+  unset: "fnv",
+  declare: "aAfFgilnprtuxI",
+  typeset: "aAfFgilnprtuxI",
+  local: "aAfFgilnprtuxI",
+  readonly: "aAfp"
+};
+function builtinArgs(name, args) {
+  const known = BUILTIN_OPTIONS[name] ?? "";
+  let letters = "";
+  let i = 0;
+  for (;i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--") {
+      i++;
+      break;
+    }
+    if (arg.length < 2 || arg[0] !== "-" && arg[0] !== "+")
+      break;
+    for (const letter of arg.slice(1))
+      if (!known.includes(letter))
+        return;
+    letters += arg.slice(1);
+  }
+  return { letters, names: args.slice(i) };
+}
+var mentioned = (args) => ACTOR_VARS.filter((variable) => args.some((arg) => arg.includes(variable)));
+function applyVariableBuiltin(vars, name, args) {
+  const parsed = builtinArgs(name, args);
+  if (parsed === undefined)
+    return markUnverified(vars, mentioned(args));
+  const { letters, names } = parsed;
+  const has = (letter) => letters.includes(letter);
+  if (name === "export") {
+    if (has("f"))
+      return;
+    if (has("p"))
+      return markUnverified(vars, mentioned(names));
+    return applyActorBuiltin(vars, "export", has("n"), names);
+  }
+  if (name === "unset") {
+    if (has("f") && !has("v"))
+      return;
+    if (has("n") || has("f"))
+      return markUnverified(vars, mentioned(names));
+    return applyActorBuiltin(vars, "unset", false, names);
+  }
+  if (has("p") || has("f") || has("F"))
+    return;
+  markUnverified(vars, mentioned(names));
+}
 function applyActorAssignments(vars, assignments) {
   for (const assignment of assignments) {
     const variable = actorVarOf(assignment);
@@ -1311,13 +1357,10 @@ function afterCommand(vars, values, assigned) {
   const name = command[0];
   if (values.length === 0)
     applyActorAssignments(after, assigned);
-  else if (name === "export" || name === "unset")
-    applyActorBuiltin(after, command);
+  else if (name !== undefined && BUILTIN_OPTIONS[name] !== undefined)
+    applyVariableBuiltin(after, name, command.slice(1));
   else if (name !== undefined && VARIABLE_BUILTINS[name] === true)
-    for (const variable of ACTOR_VARS) {
-      if (command.slice(1).some((arg) => arg.includes(variable)))
-        after[variable] = "unverified";
-    }
+    markUnverified(after, mentioned(command.slice(1)));
   return after;
 }
 var changedVars = (before, after) => ACTOR_VARS.filter((variable) => before[variable] !== after[variable]);
