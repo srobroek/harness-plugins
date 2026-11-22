@@ -86,9 +86,12 @@ Pass the writer's `sessionID` and a `reason`. The release needs all of these:
 
 - The caller spawned the writer.
 - No background work is known to run. The writer's last idle gate listed no shell, job or
-  background subagent, and no hold is recorded on the worktree. With `gates: false`, or on a host
+  background subagent, and no hold is recorded on the worktree. A writer whose latest run started
+  in this server after its last idle gate, or that never reached one here, counts as unknown, so
+  the plugin refuses. To release it, stop that run first. With `gates: false`, or on a host
   without the idle gate, the plugin cannot see background work, so it refuses every release.
-- No `subagent` call that resumes the writer is in flight.
+- No `subagent` call that resumes the writer is in flight. A background resume counts as in flight
+  for 60 seconds after it returns, since its run may not show yet.
 - The writer is gone (deleted or archived), or idle with no open tool call. A run that never
   ended, or an open tool call, counts only after 10 minutes without a change to the session. Before
   the release, the plugin interrupts that run, so a run still live in this server cannot write again.

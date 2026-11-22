@@ -3500,8 +3500,6 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
   };
   const claims = (lane2) => lane2.state === "active" || lane2.state === "removing";
   const syncClaim = async (lane2) => {
-    if (await handedOff(lane2.child))
-      return;
     const common = await commonDirOf(lane2.parentDir);
     if (common === undefined) {
       if (claims(lane2))
@@ -3509,29 +3507,39 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
       return;
     }
     const guard = (write) => lockedWrite(common, lane2.directory, { sessionID: lane2.child, now, ...lock ?? {} }, write);
-    if (!claims(lane2))
-      return guard(() => removeClaim(common, lane2.directory));
-    const existing = readClaim(common, lane2.directory);
-    if (existing.kind === "present" && existing.value.sessionID === lane2.child && existing.value.branch === lane2.branch)
+    const current = (read) => read.kind === "present" && read.value.sessionID === lane2.child && read.value.branch === lane2.branch;
+    if (claims(lane2) && current(readClaim(common, lane2.directory)))
       return;
-    await guard(() => writeClaim(common, {
-      directory: lane2.directory,
-      branch: lane2.branch,
-      sessionID: lane2.child,
-      parentID: lane2.parent,
-      createdAt: now()
-    }));
+    await guard(async () => {
+      if (await handedOff(lane2.child))
+        return;
+      if (!claims(lane2))
+        return removeClaim(common, lane2.directory);
+      if (current(readClaim(common, lane2.directory)))
+        return;
+      writeClaim(common, {
+        directory: lane2.directory,
+        branch: lane2.branch,
+        sessionID: lane2.child,
+        parentID: lane2.parent,
+        createdAt: now()
+      });
+    });
   };
   const save = async (lane2) => {
-    if (await handedOff(lane2.child)) {
-      console.error(`subagent-worktree: not saving the lane of ${lane2.child}: its worktree was handed to another writer`);
-      return;
-    }
-    if (claims(lane2))
-      await syncClaim(lane2);
-    await ctx.storage.set(laneKey(lane2.child), lane2);
-    if (!claims(lane2))
-      await syncClaim(lane2);
+    const write = async () => {
+      if (await handedOff(lane2.child)) {
+        console.error(`subagent-worktree: not saving the lane of ${lane2.child}: its worktree was handed to another writer`);
+        return;
+      }
+      if (claims(lane2))
+        await syncClaim(lane2);
+      await ctx.storage.set(laneKey(lane2.child), lane2);
+      if (!claims(lane2))
+        await syncClaim(lane2);
+    };
+    const common = await commonDirOf(lane2.parentDir);
+    return common === undefined ? write() : lockedWrite(common, lane2.directory, { sessionID: lane2.child, now, ...lock ?? {} }, write);
   };
   const getSession = (sessionID) => ctx.session.get({ sessionID }).then((session) => session, () => {
     return;
@@ -3665,16 +3673,24 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
   };
   const releasing = new Set;
   const resuming = new Map;
+  const resumeInFlight = (child) => [...resuming.values()].some((entry) => entry.child === child && (entry.until === undefined || entry.until > now()));
   const background = new Map;
   let idleObserved = false;
+  const startedAt = now();
   const noteIdle = (input) => {
     if (typeof input.sessionID !== "string")
       return;
     const jobs = (input.background ?? []).map((job) => `${String(job.kind)} ${String(job.shellID ?? job.jobID ?? job.childSessionID ?? "")}`.trim());
-    if (jobs.length === 0)
-      background.delete(input.sessionID);
-    else
-      background.set(input.sessionID, jobs.join(", "));
+    background.set(input.sessionID, { jobs: jobs.length === 0 ? undefined : jobs.join(", "), at: now() });
+  };
+  const backgroundOf = (child, busy) => {
+    const seen = background.get(child);
+    if (seen?.jobs !== undefined)
+      return seen.jobs;
+    const ranHere = busy !== undefined && busy >= startedAt;
+    if (ranHere && (seen === undefined || seen.at < busy))
+      return `${child} ran in this server since its last idle gate, so background work since its last run cannot be ruled out`;
+    return;
   };
   const handedOff = async (child) => parseRelease(await ctx.storage.get(releaseKey(child)))?.to !== undefined;
   const handOver = async (directory, child) => {
@@ -3695,10 +3711,10 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
             await ctx.storage.remove(laneKey(child));
         });
         if (owned && ownsHere) {
-          await save({ ...owned, child, handedOver: { from: release2.child, at: now() } });
           step.saved = true;
-          await ctx.storage.remove(laneKey(release2.child));
+          await save({ ...owned, child, handedOver: { from: release2.child, at: now() } });
           step.removed = true;
+          await ctx.storage.remove(laneKey(release2.child));
         }
       }
     } catch (error) {
@@ -3758,7 +3774,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
       const released = parseRelease(await ctx.storage.get(releaseKey(child)));
       if (released || releasing.has(child))
         refuseReleased(released);
-      resuming.set(event.id, child);
+      resuming.set(event.id, { child });
       const recorded = parseRelease(await ctx.storage.get(releaseKey(child)));
       if (recorded)
         refuseReleased(recorded);
@@ -4005,9 +4021,14 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
   const after = async (event) => {
     if (event.tool !== SUBAGENT_TOOL)
       return;
-    if (event.id !== undefined)
-      resuming.delete(event.id);
     const reported = event.status === "completed" ? event.result.metadata : event.error.metadata;
+    if (event.id !== undefined) {
+      const entry = resuming.get(event.id);
+      if (entry && event.status === "completed" && reported?.status === "running")
+        entry.until = now() + reserveMs;
+      else
+        resuming.delete(event.id);
+    }
     if (event.id !== undefined) {
       if (event.status === "completed" && reported?.status === "running") {
         const started = event.result.metadata?.sessionID;
@@ -4195,11 +4216,11 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
       const tree = porcelain === undefined ? undefined : { dirty: porcelain !== "", unpushed: await git2.unpushed(directory) };
       return { tree, head: await git2.head(directory) };
     };
-    const running = async () => {
+    const running = async (busy) => {
       const common = await commonDirOf(checkout);
       const held = common === undefined ? "the git common directory cannot be found, so running work cannot be ruled out" : holdsState(common, directory, now());
       const unseen = idleObserved ? undefined : "idle gates are off or unsupported, so background work cannot be ruled out";
-      return [background.get(child), held, unseen].filter((why) => why !== undefined).join("; ") || undefined;
+      return [backgroundOf(child, busy), held, unseen].filter((why) => why !== undefined).join("; ") || undefined;
     };
     const locked = async () => {
       const before = await writerFacts(child);
@@ -4211,7 +4232,7 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
         caller: tool.sessionID,
         child: { ...before, ...owner === undefined ? {} : { owner } },
         openTool,
-        background: await running(),
+        background: await running(before.busy),
         tree: proof.tree,
         now: now(),
         quietMs: RELEASE_QUIET_MS
@@ -4235,7 +4256,7 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
         if (again.tree === undefined || again.tree.dirty || again.tree.unpushed !== 0 || again.head !== head) {
           throw new Error(`the worktree changed while ${child} was being released; check ${directory} and release again`);
         }
-        const still = await running();
+        const still = await running(after.busy);
         if (still !== undefined)
           throw new Error(`background work is still running: ${still}`);
       } catch (error) {
@@ -4249,7 +4270,7 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
       };
     };
     return lifecycle.spawnInto(directory, checkout, async () => {
-      if ([...resuming.values()].includes(child))
+      if (resumeInFlight(child))
         return refuse(`a resume of ${child} is in flight; wait for that subagent call to return`);
       if (releasing.has(child))
         return refuse(`a release of ${child} is already under way`);

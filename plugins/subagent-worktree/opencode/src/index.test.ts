@@ -804,6 +804,27 @@ describe("worktree argument", () => {
       expect(setup.fake.storage.get("release/ses_dead")).toBeUndefined()
     })
 
+    test("a background resume keeps the release away until its hold expires, even before its run shows", async () => {
+      let clock = NOW
+      const setup = await start({ now: () => clock })
+      writerIn(setup, "ses_dead", 11 * MINUTE)
+      await spawn(setup, { agent: "pinned", sessionID: "ses_dead", prompt: "go on" })
+      await setup.fake.fire.tool("execute.after", { ...completed("ses_dead"), result: { content: "started", metadata: { sessionID: "ses_dead", status: "running" } } })
+      expect((await release(setup, "ses_dead")).content).toMatch(/a resume of ses_dead is in flight/)
+      clock += 61_000
+      expect((await release(setup, "ses_dead")).metadata.ok).toBe(true)
+    })
+
+    test("a writer that ran in this server and has not reached an idle gate since is not released", async () => {
+      let clock = NOW - 20 * MINUTE
+      const setup = await start({ now: () => clock })
+      writerIn(setup, "ses_dead", 11 * MINUTE)
+      clock = NOW
+      expect((await release(setup, "ses_dead")).content).toMatch(/background work since its last run cannot be ruled out/)
+      await setup.fake.fire.session("experimental.idle", { sessionID: "ses_dead", background: [] })
+      expect((await release(setup, "ses_dead")).metadata.ok).toBe(true)
+    })
+
     test("a writer spawned while the release is under way is still refused", async () => {
       const setup = await dead()
       const held = holdAt(setup, "interrupt")
@@ -868,15 +889,57 @@ describe("worktree argument", () => {
         expect(claimant(setup)).toBe("ses_fake1")
       })
 
-      test("a handover that fails puts the old lane, its claim and the record back", async () => {
+      test("a lifecycle write of the old lane that waits on the handover's lock does not take the claim back", async () => {
+        let lifecycle!: Lifecycle
+        let waiting: () => void = () => {}
+        const queued = new Promise<void>((done) => (waiting = done))
+        // The lock's wait loop sleeps only while the lock is busy: its first sleep is the lifecycle waiting on the handover.
+        const sleep = (ms: number) => {
+          waiting()
+          return new Promise<void>((done) => setTimeout(done, ms))
+        }
+        const setup = await start({ now: () => NOW, debounceMs: 1, onLifecycle: (value) => (lifecycle = value), lock: { sleep } })
+        writerIn(setup, "ses_dead", 11 * MINUTE)
+        setup.fake.storage.set(laneKey("ses_dead"), owned)
+        await release(setup, "ses_dead")
+        let open: () => void = () => {}
+        const gate = new Promise<void>((done) => (open = done))
+        let arrive: () => void = () => {}
+        const handingOver = new Promise<void>((done) => (arrive = done))
+        const set = setup.fake.context.storage.set.bind(setup.fake.context.storage)
+        Object.assign(setup.fake.context.storage, {
+          set: async (key: string, value: { to?: string }) => {
+            if (key === "release/ses_dead" && value.to !== undefined) {
+              arrive()
+              await gate
+            }
+            return set(key, value as never)
+          },
+        })
+        const spawned = spawn(setup, { agent: "pinned", worktree: "feat" })
+        await handingOver
+        lifecycle.handleEvent({ id: "evt_1", type: "session.execution.interrupted", data: { sessionID: "ses_dead", reason: "user" } })
+        await queued
+        open()
+        await spawned
+        await lifecycle.settle()
+        expect(lane(setup.fake, "ses_dead")).toBeUndefined()
+        expect(claimant(setup)).toBe("ses_fake1")
+      })
+
+      test.each([
+        ["removing the old lane fails", "remove", laneKey("ses_dead")],
+        ["writing the new lane fails after its claim was written", "set", laneKey("ses_fake1")],
+      ] as const)("a handover in which %s puts the old lane, its claim and the record back", async (_name, method, failing) => {
         const setup = await dead()
         setup.fake.storage.set(laneKey("ses_dead"), owned)
         await release(setup, "ses_dead")
-        const remove = setup.fake.context.storage.remove.bind(setup.fake.context.storage)
+        const storage = setup.fake.context.storage as unknown as Record<string, (key: string, value?: unknown) => Promise<unknown>>
+        const original = storage[method]?.bind(storage)
         Object.assign(setup.fake.context.storage, {
-          remove: async (key: string) => {
-            if (key === laneKey("ses_dead")) throw new Error("storage unavailable")
-            return remove(key)
+          [method]: async (key: string, value?: unknown) => {
+            if (key === failing) throw new Error("storage unavailable")
+            return original?.(key, value)
           },
         })
         await expect(spawn(setup, { agent: "pinned", worktree: "feat" })).rejects.toThrow(/storage unavailable/)

@@ -192,8 +192,6 @@ export function createLanes(
    * error: an unclaimed lane would have a second remover.
    */
   const syncClaim = async (lane: Lane) => {
-    // A lane read before its writer was released and handed over must not take the claim back.
-    if (await handedOff(lane.child)) return
     const common = await commonDirOf(lane.parentDir)
     if (common === undefined) {
       if (claims(lane)) throw new Error(`subagent-worktree: cannot find the git common directory of ${lane.parentDir} to claim ${lane.directory}`)
@@ -201,30 +199,40 @@ export function createLanes(
     }
     // Claim writes take the worktree's lock briefly (re-entrant inside a removal), so none lands between a remover's last look and its removal.
     const guard = <T>(write: () => T) => lockedWrite(common, lane.directory, { sessionID: lane.child, now, ...(lock ?? {}) }, write)
-    if (!claims(lane)) return guard(() => removeClaim(common, lane.directory))
-    const existing = readClaim(common, lane.directory)
-    if (existing.kind === "present" && existing.value.sessionID === lane.child && existing.value.branch === lane.branch) return
-    await guard(() =>
+    const current = (read: ReturnType<typeof readClaim>) =>
+      read.kind === "present" && read.value.sessionID === lane.child && read.value.branch === lane.branch
+    // A claim that already names this lane needs no write, so no lock.
+    if (claims(lane) && current(readClaim(common, lane.directory))) return
+    // Under the same lock as a handover: a lane read before its writer was handed over must not take the claim back.
+    await guard(async () => {
+      if (await handedOff(lane.child)) return
+      if (!claims(lane)) return removeClaim(common, lane.directory)
+      if (current(readClaim(common, lane.directory))) return
       writeClaim(common, {
         directory: lane.directory,
         branch: lane.branch,
         sessionID: lane.child,
         parentID: lane.parent,
         createdAt: now(),
-      }),
-    )
+      })
+    })
   }
 
   const save = async (lane: Lane) => {
-    // The lane of a writer whose worktree was handed over lives on under the new writer: a stale copy is dropped.
-    if (await handedOff(lane.child)) {
-      console.error(`subagent-worktree: not saving the lane of ${lane.child}: its worktree was handed to another writer`)
-      return
+    const write = async () => {
+      // The lane of a writer whose worktree was handed over lives on under the new writer: a stale copy is dropped.
+      if (await handedOff(lane.child)) {
+        console.error(`subagent-worktree: not saving the lane of ${lane.child}: its worktree was handed to another writer`)
+        return
+      }
+      // Claim first when activating (no record without its claim), record first when retiring (no claim without its record).
+      if (claims(lane)) await syncClaim(lane)
+      await ctx.storage.set(laneKey(lane.child), lane)
+      if (!claims(lane)) await syncClaim(lane)
     }
-    // Claim first when activating (no record without its claim), record first when retiring (no claim without its record).
-    if (claims(lane)) await syncClaim(lane)
-    await ctx.storage.set(laneKey(lane.child), lane)
-    if (!claims(lane)) await syncClaim(lane)
+    // The check and both writes run under the worktree's lock (re-entrant), which a handover holds from start to end.
+    const common = await commonDirOf(lane.parentDir)
+    return common === undefined ? write() : lockedWrite(common, lane.directory, { sessionID: lane.child, now, ...(lock ?? {}) }, write)
   }
 
   const getSession = (sessionID: string) =>
@@ -385,20 +393,36 @@ export function createLanes(
    * Admission between a release and a resume of the same child, in this plugin instance. Each side checks
    * the other's set and adds itself with no await in between, so at most one of them goes ahead.
    * `releasing`: children whose release is under way. `resuming`: resumed child by `subagent` call id,
-   * until that call's `after` (or its failure in `before`).
+   * until that call's `after` (or its failure in `before`). A background resume keeps its entry until
+   * `until`, the same hold a background spawn's reservation gets, since its run may not show yet.
    */
   const releasing = new Set<string>()
-  const resuming = new Map<string, string>()
+  const resuming = new Map<string, { child: string; until?: number }>()
+  const resumeInFlight = (child: string) =>
+    [...resuming.values()].some((entry) => entry.child === child && (entry.until === undefined || entry.until > now()))
 
-  /** The background work each session reported at its last idle gate (shells, code mode jobs, background subagents). */
-  const background = new Map<string, string>()
+  /**
+   * The background work each session reported at its last idle gate (shells, code mode jobs, background
+   * subagents), and when. A session that ran in this server after its last report, or never reported,
+   * may have started background work that nothing recorded.
+   */
+  const background = new Map<string, { jobs: string | undefined; at: number }>()
   /** Whether this plugin sees idle gates at all; without them background work cannot be ruled out. */
   let idleObserved = false
+  /** When this plugin instance started: a run that began earlier belonged to another server instance. */
+  const startedAt = now()
   const noteIdle = (input: { sessionID?: unknown; background?: ReadonlyArray<{ kind?: unknown; shellID?: unknown; jobID?: unknown; childSessionID?: unknown }> }) => {
     if (typeof input.sessionID !== "string") return
     const jobs = (input.background ?? []).map((job) => `${String(job.kind)} ${String(job.shellID ?? job.jobID ?? job.childSessionID ?? "")}`.trim())
-    if (jobs.length === 0) background.delete(input.sessionID)
-    else background.set(input.sessionID, jobs.join(", "))
+    background.set(input.sessionID, { jobs: jobs.length === 0 ? undefined : jobs.join(", "), at: now() })
+  }
+  /** What is known about `child`'s background work, given the start of its latest run. */
+  const backgroundOf = (child: string, busy: number | undefined): string | undefined => {
+    const seen = background.get(child)
+    if (seen?.jobs !== undefined) return seen.jobs
+    const ranHere = busy !== undefined && busy >= startedAt
+    if (ranHere && (seen === undefined || seen.at < busy)) return `${child} ran in this server since its last idle gate, so background work since its last run cannot be ruled out`
+    return undefined
   }
 
   /** Whether `child` was released and its worktree handed to another writer: no lane or claim of it may be written again. */
@@ -427,10 +451,11 @@ export function createLanes(
           if (step.saved) await ctx.storage.remove(laneKey(child))
         })
         if (owned && ownsHere) {
-          await save({ ...owned, child, handedOver: { from: release.child, at: now() } })
+          // Marked before each write: a write that fails part way (the claim written, the lane not) is undone too.
           step.saved = true
-          await ctx.storage.remove(laneKey(release.child))
+          await save({ ...owned, child, handedOver: { from: release.child, at: now() } })
           step.removed = true
+          await ctx.storage.remove(laneKey(release.child))
         }
       }
     } catch (error) {
@@ -508,7 +533,7 @@ export function createLanes(
       const released = parseRelease(await ctx.storage.get(releaseKey(child)))
       // No await between the check and the registration: a release that starts later sees this resume and refuses.
       if (released || releasing.has(child)) refuseReleased(released)
-      resuming.set(event.id, child)
+      resuming.set(event.id, { child })
       // A release that finished while the first read was pending wrote its record before this registration.
       const recorded = parseRelease(await ctx.storage.get(releaseKey(child)))
       if (recorded) refuseReleased(recorded)
@@ -771,9 +796,14 @@ export function createLanes(
     ),
   ) => {
     if (event.tool !== SUBAGENT_TOOL) return
-    // The resumed call has returned: from here the child's own state (running, recently active) keeps a release away.
-    if (event.id !== undefined) resuming.delete(event.id)
     const reported = (event.status === "completed" ? event.result.metadata : event.error.metadata) as { status?: unknown } | undefined
+    if (event.id !== undefined) {
+      // A foreground resume has returned: from here the child's own state keeps a release away. A background
+      // resume's run may not show yet, so its entry holds until the same expiry as a background reservation.
+      const entry = resuming.get(event.id)
+      if (entry && event.status === "completed" && reported?.status === "running") entry.until = now() + reserveMs
+      else resuming.delete(event.id)
+    }
     if (event.id !== undefined) {
       if (event.status === "completed" && reported?.status === "running") {
         // A background child keeps the worktree reserved until a later check sees it busy, or the hold expires.
@@ -970,12 +1000,12 @@ export function createLanes(
       const tree = porcelain === undefined ? undefined : { dirty: porcelain !== "", unpushed: await git.unpushed(directory) }
       return { tree, head: await git.head(directory) }
     }
-    /** Background work of the child (from its last idle gate) and holds recorded on the worktree. */
-    const running = async () => {
+    /** Background work of the child (from its idle gates, given the start of its latest run) and holds recorded on the worktree. */
+    const running = async (busy: number | undefined) => {
       const common = await commonDirOf(checkout)
       const held = common === undefined ? "the git common directory cannot be found, so running work cannot be ruled out" : holdsState(common, directory, now())
       const unseen = idleObserved ? undefined : "idle gates are off or unsupported, so background work cannot be ruled out"
-      return [background.get(child), held, unseen].filter((why) => why !== undefined).join("; ") || undefined
+      return [backgroundOf(child, busy), held, unseen].filter((why) => why !== undefined).join("; ") || undefined
     }
     const locked = async (): Promise<Result> => {
       const before = await writerFacts(child)
@@ -987,7 +1017,7 @@ export function createLanes(
         caller: tool.sessionID,
         child: { ...before, ...(owner === undefined ? {} : { owner }) },
         openTool,
-        background: await running(),
+        background: await running(before.busy),
         tree: proof.tree,
         now: now(),
         quietMs: RELEASE_QUIET_MS,
@@ -1007,7 +1037,7 @@ export function createLanes(
         if (again.tree === undefined || again.tree.dirty || again.tree.unpushed !== 0 || again.head !== head) {
           throw new Error(`the worktree changed while ${child} was being released; check ${directory} and release again`)
         }
-        const still = await running()
+        const still = await running(after.busy)
         if (still !== undefined) throw new Error(`background work is still running: ${still}`)
       } catch (error) {
         await ctx.storage.remove(releaseKey(child))
@@ -1021,7 +1051,7 @@ export function createLanes(
     }
     return lifecycle.spawnInto(directory, checkout, async () => {
       // No await between these checks and the mark: a resume that registers later sees `releasing` and refuses.
-      if ([...resuming.values()].includes(child)) return refuse(`a resume of ${child} is in flight; wait for that subagent call to return`)
+      if (resumeInFlight(child)) return refuse(`a resume of ${child} is in flight; wait for that subagent call to return`)
       if (releasing.has(child)) return refuse(`a release of ${child} is already under way`)
       releasing.add(child)
       try {
