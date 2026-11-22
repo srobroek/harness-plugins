@@ -1867,29 +1867,6 @@ function parseLeanOptions(options) {
   return { agents: new Set(ids), drop: new Set(drop) };
 }
 
-// lib/src/session-lanes.ts
-function isSessionNotFound(error, sessionID) {
-  if (typeof error !== "object" || error === null)
-    return false;
-  const fields = error;
-  for (const status of [fields.status, fields.statusCode])
-    if (status !== undefined && status !== 404)
-      return false;
-  const message = typeof fields.message === "string" ? fields.message : "";
-  if (/\b(location|service|directory|project|worktree|agent)\b/i.test(message))
-    return false;
-  const kind = [fields.name, fields._tag].filter((value) => typeof value === "string");
-  if (kind.some((value) => /^session.?not.?found/i.test(value)))
-    return fields.sessionID === undefined || fields.sessionID === sessionID;
-  const named = fields.sessionID === sessionID || message.includes(sessionID);
-  if (!named)
-    return false;
-  return kind.some((value) => /not.?found/i.test(value)) || /not found|no session|no such session|does not exist/i.test(message);
-}
-
-// lib/src/worktree-claims.ts
-var MAX_FILE_BYTES = 64 * 1024;
-
 // lib/src/session-eviction.ts
 var toMillis = (value) => {
   if (typeof value === "number")
@@ -1908,6 +1885,26 @@ function sessionRunning(session) {
   const busy = toMillis(session.time?.busy);
   const idle = toMillis(session.time?.idle);
   return busy !== undefined && (idle === undefined || busy > idle);
+}
+
+// lib/src/session-lanes.ts
+function isSessionNotFound(error, sessionID) {
+  if (typeof error !== "object" || error === null)
+    return false;
+  const fields = error;
+  for (const status of [fields.status, fields.statusCode])
+    if (status !== undefined && status !== 404)
+      return false;
+  const message = typeof fields.message === "string" ? fields.message : "";
+  if (/\b(location|service|directory|project|worktree|agent)\b/i.test(message))
+    return false;
+  const kind = [fields.name, fields._tag].filter((value) => typeof value === "string");
+  if (kind.some((value) => /^session.?not.?found/i.test(value)))
+    return fields.sessionID === undefined || fields.sessionID === sessionID;
+  const named = fields.sessionID === sessionID || message.includes(sessionID);
+  if (!named)
+    return false;
+  return kind.some((value) => /not.?found/i.test(value)) || /not found|no session|no such session|does not exist/i.test(message);
 }
 
 // plugins/agent-efficiency/opencode/src/restart-nudge.ts
