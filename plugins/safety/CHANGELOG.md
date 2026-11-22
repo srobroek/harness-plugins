@@ -1,3 +1,21 @@
+## safety [0.11.5](https://github.com/srobroek/harness-plugins/compare/safety--v0.11.4...safety--v0.11.5) (2026-11-22)
+
+### Bug Fixes
+
+* **subagent-worktree:** require git 2.45 and run automatic git hardened ([3b6c86c](https://github.com/srobroek/harness-plugins/commit/3b6c86c81349e8fb65322aca3b6c68ec101d8869))
+
+## safety [0.11.4](https://github.com/srobroek/harness-plugins/compare/safety--v0.11.3...safety--v0.11.4) (2026-11-22)
+
+### Bug Fixes
+
+* **safety:** defer to host rules when the internal review fails ([a40b658](https://github.com/srobroek/harness-plugins/commit/a40b658d169c4aa5a050178d7a719953a881444f))
+
+## safety [0.11.3](https://github.com/srobroek/harness-plugins/compare/safety--v0.11.2...safety--v0.11.3) (2026-11-22)
+
+### Bug Fixes
+
+* **safety:** resubscribe and tear down the permission prompt watch safely ([#93](https://github.com/srobroek/harness-plugins/issues/93)) ([15b636e](https://github.com/srobroek/harness-plugins/commit/15b636e2fa61cbd5bf2be3be7f282751d07859af))
+
 ## safety [0.11.2](https://github.com/srobroek/harness-plugins/compare/safety--v0.11.1...safety--v0.11.2) (2026-11-22)
 
 ### Bug Fixes

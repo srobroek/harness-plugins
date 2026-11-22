@@ -5,6 +5,7 @@ import { Plugin } from "@opencode/plugin"
 import { Tool } from "@opencode/plugin/effect"
 import { appendResultText, isShellTool, leadingCdCwd, shellCall, WRITE_TOOLS } from "@srobroek/opencode-lib"
 import { hostWarn, type Warn } from "@srobroek/opencode-lib/host-log"
+import { type AskedWatchDeps, watchAsked } from "./asked-watch.ts"
 import { rewriteCloseKeywords } from "./close-keywords.ts"
 import { externalDirectories, sessionRoots, shellFlagDirectories } from "./flag-directories.ts"
 import { readConfigSnapshot, readProviderTypes } from "./fnox-config.ts"
@@ -157,15 +158,25 @@ function safely<T>(run: () => T): T | undefined {
   }
 }
 
-/** A permission review that fails internally asks the owner instead of guessing. */
-export async function review(command: string, cwd: string, options: ReviewOptions): Promise<Decision | undefined> {
+/**
+ * A permission review that fails internally (an unexpected exception such as a parser bug; handled probe timeouts still ask) makes no
+ * decision and logs the error. `undefined` means "defer to the host's permission rules", never "allow": the
+ * caller leaves the evaluation's effect as the host set it, so a configured deny or ask still applies.
+ */
+export async function review(
+  command: string,
+  cwd: string,
+  options: ReviewOptions,
+  warn: Warn = () => {},
+): Promise<Decision | undefined> {
   try {
     return await reviewPermission(command, cwd, options)
   } catch (error) {
-    return {
-      effect: "ask",
-      message: `safety could not check this command (${error instanceof Error ? error.message : String(error)}); confirm it is safe to run.`,
-    }
+    warn("permission review failed; safety's extra review is skipped for this command", {
+      error: error instanceof Error ? error.name : typeof error,
+      message: error instanceof Error ? error.message : String(error),
+    })
+    return undefined
   }
 }
 
@@ -196,6 +207,8 @@ export type Overrides = {
   worktrees?: { run?: GitRun; ttlMs?: number }
   secretStore?: Partial<Pick<StoreDeps, "run" | "which" | "env" | "home">>
   warn?: Warn
+  /** Backoff clock of the prompt watch. */
+  watch?: Pick<AskedWatchDeps, "delaysMs" | "sleep">
 }
 
 /** The model-facing schema of `safety_secret_store`; `parseRequest` checks every field again. */
@@ -364,7 +377,7 @@ export function createPlugin(overrides: Overrides = {}) {
             } as never)
         }
         prune()
-        const decision = await review(command, cwd, reviewOptions)
+        const decision = await review(command, cwd, reviewOptions, warn)
         pending.set(event.id, { sessionID: event.sessionID, at: Date.now(), decision })
       })
 
@@ -390,6 +403,7 @@ export function createPlugin(overrides: Overrides = {}) {
                 evaluation.resources.join("\n"),
                 await sessionDirectory(evaluation.sessionID),
                 reviewOptions,
+                warn,
               )
         applyDecision(evaluation as Evaluation, decision)
       })
@@ -578,52 +592,41 @@ export function createPlugin(overrides: Overrides = {}) {
 
       // A plugin whose evaluate hook runs after this one can still raise a prompt in a subagent session,
       // so every prompt the host raises in this location is checked again and rejected through the reply API.
+      // The evaluate hook above already denies a child's prompt; this watch is the second layer, and it is
+      // reactive: a user's answer can land first. Then the reply below is a no-op or a rejected call that
+      // is warned about, and the user's decision stands, so the race is benign.
       const watching = new AbortController()
       const errorName = (error: unknown) => (error instanceof Error ? error.name : typeof error)
-      // The evaluate hook above already denies a child's prompt; this watch is the second layer. When it
-      // cannot run, say so once: an abort is the teardown, anything else is a host failure.
-      const watchFailed = (error: string) => {
-        if (watching.signal.aborted) return
-        warn("permission prompt watch stopped; prompts a later plugin raises in subagent sessions are no longer rejected", { error })
-      }
-      let asked: AsyncIterator<unknown> | undefined
-      if (on("subagent-prompts")) {
-        try {
-          asked = ctx.event.subscribe({ types: ["permission.asked"], signal: watching.signal } as never)[Symbol.asyncIterator]()
-        } catch (error) {
-          watchFailed(errorName(error))
-        }
-      }
-      if (asked) {
-        const events = asked
-        void (async () => {
-          for (;;) {
-            let next: IteratorResult<unknown>
-            try {
-              next = await events.next()
-            } catch (error) {
-              return watchFailed(errorName(error))
-            }
-            if (next.done) return watchFailed("stream ended")
-            if (watching.signal.aborted) return
-            const event = next.value as { type?: string; data?: AskedRequest }
-            if (event.type !== "permission.asked" || event.data === undefined) continue
-            await rejectUnanswerable(event.data).catch((error: unknown) =>
-              warn("could not reject a subagent's permission prompt", {
-                sessionID: event.data?.sessionID,
-                error: errorName(error),
-              }),
-            )
-          }
-        })()
-      }
+      const watch = on("subagent-prompts")
+        ? watchAsked({
+            subscribe: () => ctx.event.subscribe({ types: ["permission.asked"], signal: watching.signal } as never)[Symbol.asyncIterator](),
+            handle: async (event) => {
+              const { type, data } = event as { type?: string; data?: AskedRequest }
+              if (type !== "permission.asked" || data === undefined) return
+              await rejectUnanswerable(data).catch((error: unknown) =>
+                warn("could not reject a subagent's permission prompt", { sessionID: data.sessionID, error: errorName(error) }),
+              )
+            },
+            // An abort is the teardown and never reaches here; anything else is a host failure.
+            onFailure: ({ error, attempt, willRetry }) =>
+              warn(
+                willRetry
+                  ? `permission prompt watch failed; resubscribing (attempt ${attempt})`
+                  : "permission prompt watch stopped; prompts a later plugin raises in subagent sessions are no longer rejected",
+                { error },
+              ),
+            signal: watching.signal,
+            ...overrides.watch,
+          })
+        : undefined
       async function rejectUnanswerable(request: AskedRequest): Promise<void> {
         if (typeof request.sessionID !== "string" || typeof request.id !== "string") return
         const message = unanswerableDenial(
           { action: request.action ?? "permission", resources: request.resources ?? [], message: request.message },
           await sessionInfo(request.sessionID),
         )
-        if (message === undefined) return
+        // The lookup can outlive the plugin; a reply after teardown would act on a stopped backstop.
+        if (message === undefined || watching.signal.aborted) return
         await ctx.permission.reply({ sessionID: request.sessionID, requestID: request.id, decision: "reject", message } as never)
       }
 
@@ -657,7 +660,7 @@ export function createPlugin(overrides: Overrides = {}) {
         await subagentReads?.dispose()
         watching.abort()
         // Ending the iterator ends the loop above; it is not awaited, since a pending read may never settle.
-        void asked?.return?.()
+        watch?.stop()
         await confirmCommand.dispose()
         await secretTool.dispose()
         await after.dispose()

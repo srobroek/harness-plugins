@@ -12,8 +12,6 @@ export { WORKTREE_PARAM, WORKTREE_PARAM_DESCRIPTION } from "@srobroek/opencode-l
 
 export const DEFAULT_AGENTS: readonly string[] = ["coder", "implementer", "implementer-high", "ui-implementer", "general"]
 
-export type SweepMode = "off" | "report" | "prune"
-
 export type Options = {
   /** Agents (id or name) whose subagent calls get a worktree. */
   agents: readonly string[]
@@ -23,15 +21,6 @@ export type Options = {
   gates: boolean
   /** An empty lane is removed only after its child and parent stayed idle this long. */
   emptyGraceMs: number
-  /** The sweep mode; it only sets the `freeBuildDirs` default, since the sweep runs on demand. */
-  sweep: SweepMode
-  minAgeHours: number
-  /** Extra roots, beyond OpenCode's worktree directory, the sweep may look in. */
-  include: readonly string[]
-  /** A pruning sweep also frees ignored build directories of kept lanes whose owner is gone. Follows `sweep`: on only for "prune". */
-  freeBuildDirs: boolean
-  /** Free space, in bytes, below which build directories are freed without the grace period; 0 turns that off. */
-  lowDiskBytes: number
 }
 
 const MINUTE = 60_000
@@ -45,19 +34,11 @@ export function readOptions(options: Readonly<Record<string, unknown>> | undefin
     ? options.agents.filter((agent): agent is string => typeof agent === "string" && agent !== "")
     : DEFAULT_AGENTS
   const base = typeof options?.base === "string" && options.base.trim() !== "" ? options.base.trim() : "HEAD"
-  const sweep = options?.sweep === "off" || options?.sweep === "prune" ? options.sweep : "report"
   return {
     agents,
     base,
     gates: options?.gates !== false,
     emptyGraceMs: positive(options?.emptyGraceMinutes, 30) * MINUTE,
-    sweep,
-    minAgeHours: positive(options?.minAgeHours, 24),
-    freeBuildDirs: typeof options?.freeBuildDirs === "boolean" ? options.freeBuildDirs : sweep === "prune",
-    lowDiskBytes: positive(options?.lowDiskBytes, 0),
-    include: Array.isArray(options?.include)
-      ? options.include.filter((root): root is string => typeof root === "string" && root !== "")
-      : [],
   }
 }
 
@@ -252,6 +233,7 @@ export function planStart(facts: {
   if (input.sessionID !== undefined)
     return { kind: "default", ...(resumeWorktreeNote(input) ? { note: RESUME_WORKTREE_NOTE } : {}) }
   if (input.worktree === false) return { kind: "default" }
+  if (!isolation.isolate && isolation.refuse) return { kind: "refuse", reason: isolation.reason }
   if (input.worktree === undefined && isolation.isolate && facts.trackedDirty)
     return { kind: "default", note: DIRTY_CHECKOUT_NOTE }
   if (input.worktree === undefined || lookup === undefined)
@@ -306,9 +288,11 @@ export type IsolationFacts = {
   callerIsChild: boolean
   /** Whether the caller's directory is inside a git work tree. */
   isGit: boolean
+  /** Why the installed git cannot run hardened; when set, an isolated writer is refused, not started in the caller's checkout. */
+  gitUnsupported?: string | undefined
 }
 
-export type Isolation = { isolate: true } | { isolate: false; reason: string }
+export type Isolation = { isolate: true } | { isolate: false; reason: string; refuse?: true }
 
 /** Whether a subagent call should run in a fresh worktree. */
 export function decideIsolation(facts: IsolationFacts): Isolation {
@@ -325,6 +309,7 @@ export function decideIsolation(facts: IsolationFacts): Isolation {
   if (facts.agent.mode === "primary") return { isolate: false, reason: "primary agent" }
   if (sessionIsReadOnly(facts.agent.permissions, facts.callerPermissions)) return { isolate: false, reason: "read-only agent (edit denied)" }
   if (facts.callerIsChild) return { isolate: false, reason: "caller is a child session" }
+  if (facts.gitUnsupported) return { isolate: false, reason: facts.gitUnsupported, refuse: true }
   if (!facts.isGit) return { isolate: false, reason: "not a git checkout" }
   return { isolate: true }
 }
@@ -513,11 +498,20 @@ export function annotation(lane: Lane, status: LaneStatus | undefined, removed: 
 }
 
 /**
- * `wt merge` argv that merges the lane branch into `target`, keeping its history. `--no-remove` keeps the
+ * `wt merge` argv that merges the lane branch into `target`, keeping its history. `--no-hooks` skips the
+ * project's committed `.config/wt.toml` hooks, which `--yes` would approve unseen and run (CWE-78); with no hook to
+ * approve, the merge needs no prompt suppression. `--no-remove` keeps the
  * checkout: the plugin removes it afterwards under the removal lock, and only for a child that is gone.
  */
 export function mergeArgs(directory: string, target: string): string[] {
-  return ["wt", "-C", directory, "merge", target, "--no-squash", "--no-ff", "--no-remove", "--yes"]
+  return ["wt", "-C", directory, "merge", target, "--no-squash", "--no-ff", "--no-remove", "--no-hooks"]
+}
+
+// Not empty, no leading "-" (an option), no whitespace or control characters, no "..".
+// `git check-ref-format --branch` has the final say (createGit().isBranchName).
+export function isSafeBranchName(name: string): boolean {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this rejects
+  return name !== "" && !name.startsWith("-") && !name.includes("..") && !/[\s\x00-\x1f\x7f]/.test(name)
 }
 
 /** Whether `wt merge` output describes a merge or rebase conflict. */
@@ -626,7 +620,7 @@ export function formatLaneList(reports: readonly LaneReport[], caller: string): 
   }
   if (reports.some((report) => orphanReasons(report).length > 0)) {
     lines.push(
-      "Orphaned lanes are reported only; nothing was removed. Review them and remove a worktree yourself (wt remove) once its work is merged or no longer needed.",
+      "Orphaned lanes are reported only; nothing was removed. Review them, then call subagent_worktree_sweep with mode 'prune' once their work is merged, or resolve them yourself.",
     )
   }
   lines.push("</subagent-worktree-lanes>")

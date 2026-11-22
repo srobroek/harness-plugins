@@ -2325,6 +2325,74 @@ function hostWarn(source) {
   };
 }
 
+// plugins/safety/opencode/src/asked-watch.ts
+function abortableSleep(ms, signal, timers = globalThis) {
+  return new Promise((resolve) => {
+    if (signal.aborted)
+      return resolve();
+    const done = () => {
+      timers.clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = timers.setTimeout(done, ms);
+    timer.unref?.();
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+var DEFAULT_RESUBSCRIBE_DELAYS_MS = [1000, 5000, 15000];
+var errorName = (error) => error instanceof Error ? error.name : typeof error;
+function watchAsked(deps) {
+  const { signal } = deps;
+  const sleep = deps.sleep ?? abortableSleep;
+  const delays = deps.delaysMs ?? DEFAULT_RESUBSCRIBE_DELAYS_MS;
+  let current;
+  const consume = async () => {
+    try {
+      current = deps.subscribe();
+    } catch (error) {
+      return errorName(error);
+    }
+    for (;; ) {
+      let next;
+      try {
+        next = await current.next();
+      } catch (error) {
+        return signal.aborted ? undefined : errorName(error);
+      }
+      if (signal.aborted)
+        return;
+      if (next.done)
+        return "stream ended";
+      await deps.handle(next.value);
+    }
+  };
+  const run = async () => {
+    for (let attempt = 1;; attempt++) {
+      const failure = await consume();
+      if (failure === undefined || signal.aborted)
+        return;
+      const delay = delays[attempt - 1];
+      deps.onFailure({ error: failure, attempt, willRetry: delay !== undefined });
+      if (delay === undefined)
+        return;
+      await sleep(delay, signal);
+      if (signal.aborted)
+        return;
+    }
+  };
+  return {
+    done: run(),
+    stop: () => {
+      try {
+        Promise.resolve(current?.return?.()).catch(() => {
+          return;
+        });
+      } catch {}
+    }
+  };
+}
+
 // plugins/safety/opencode/src/close-keywords.ts
 var KEYWORDS = new Set(["close", "closes", "closed", "fix", "fixes", "fixed", "resolve", "resolves", "resolved"]);
 var REF = /^(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#[0-9]+|GH-[0-9]+/i;
@@ -6066,12 +6134,24 @@ import { env as hostEnv } from "process";
 
 // lib/src/safe-git.ts
 import { devNull } from "os";
-var SAFE_GIT_ARGS = [
-  "-c",
-  "core.fsmonitor=false",
-  "-c",
-  `core.hooksPath=${devNull}`,
-  "--no-optional-locks"
+var SAFE_GIT_CONFIG = [
+  ["core.fsmonitor", "false"],
+  ["core.hooksPath", devNull]
+];
+var SAFE_GIT_ARGS = [...SAFE_GIT_CONFIG.flatMap(([key, value]) => ["-c", `${key}=${value}`]), "--no-optional-locks"];
+var HARDENED_GIT_CONFIG = [
+  ...SAFE_GIT_CONFIG,
+  ["core.attributesFile", devNull],
+  ["log.showSignature", "false"],
+  ["gpg.program", devNull],
+  ["gpg.ssh.program", devNull],
+  ["gpg.x509.program", devNull],
+  ["commit.gpgSign", "false"],
+  ["tag.gpgSign", "false"],
+  ["gpg.ssh.defaultKeyCommand", ""],
+  ["core.sshCommand", ""],
+  ["credential.helper", ""],
+  ["diff.external", ""]
 ];
 
 // plugins/safety/opencode/src/scratch-dirs.ts
@@ -7046,14 +7126,15 @@ function safely(run) {
     return;
   }
 }
-async function review(command, cwd, options) {
+async function review(command, cwd, options, warn = () => {}) {
   try {
     return await reviewPermission(command, cwd, options);
   } catch (error) {
-    return {
-      effect: "ask",
-      message: `safety could not check this command (${error instanceof Error ? error.message : String(error)}); confirm it is safe to run.`
-    };
+    warn("permission review failed; safety's extra review is skipped for this command", {
+      error: error instanceof Error ? error.name : typeof error,
+      message: error instanceof Error ? error.message : String(error)
+    });
+    return;
   }
 }
 var DIRECT_FILE_TOOLS = new Set(["read", "edit", "write", "patch", "apply_patch", "glob", "grep", "list"]);
@@ -7192,7 +7273,7 @@ function createPlugin(overrides = {}) {
             });
         }
         prune();
-        const decision = await review(command, cwd, reviewOptions);
+        const decision = await review(command, cwd, reviewOptions, warn);
         pending.set(event.id, { sessionID: event.sessionID, at: Date.now(), decision });
       });
       const migrations = await ctx.tool.hook("execute.before", async (event) => {
@@ -7216,7 +7297,7 @@ function createPlugin(overrides = {}) {
         const id = evaluation.source?.type === "tool" ? evaluation.source.id : undefined;
         const entry = id === undefined ? undefined : pending.get(id);
         const decision = entry !== undefined ? entry.decision : await review(evaluation.resources.join(`
-`), await sessionDirectory(evaluation.sessionID), reviewOptions);
+`), await sessionDirectory(evaluation.sessionID), reviewOptions, warn);
         applyDecision(evaluation, decision);
       });
       const scratch = scratchDirs ? await ctx.permission.hook("evaluate", async (evaluation) => {
@@ -7372,48 +7453,23 @@ function createPlugin(overrides = {}) {
       }) : undefined;
       const watching = new AbortController;
       const errorName = (error) => error instanceof Error ? error.name : typeof error;
-      const watchFailed = (error) => {
-        if (watching.signal.aborted)
-          return;
-        warn("permission prompt watch stopped; prompts a later plugin raises in subagent sessions are no longer rejected", { error });
-      };
-      let asked;
-      if (on("subagent-prompts")) {
-        try {
-          asked = ctx.event.subscribe({ types: ["permission.asked"], signal: watching.signal })[Symbol.asyncIterator]();
-        } catch (error) {
-          watchFailed(errorName(error));
-        }
-      }
-      if (asked) {
-        const events = asked;
-        (async () => {
-          for (;; ) {
-            let next;
-            try {
-              next = await events.next();
-            } catch (error) {
-              return watchFailed(errorName(error));
-            }
-            if (next.done)
-              return watchFailed("stream ended");
-            if (watching.signal.aborted)
-              return;
-            const event = next.value;
-            if (event.type !== "permission.asked" || event.data === undefined)
-              continue;
-            await rejectUnanswerable(event.data).catch((error) => warn("could not reject a subagent's permission prompt", {
-              sessionID: event.data?.sessionID,
-              error: errorName(error)
-            }));
-          }
-        })();
-      }
+      const watch = on("subagent-prompts") ? watchAsked({
+        subscribe: () => ctx.event.subscribe({ types: ["permission.asked"], signal: watching.signal })[Symbol.asyncIterator](),
+        handle: async (event) => {
+          const { type, data } = event;
+          if (type !== "permission.asked" || data === undefined)
+            return;
+          await rejectUnanswerable(data).catch((error) => warn("could not reject a subagent's permission prompt", { sessionID: data.sessionID, error: errorName(error) }));
+        },
+        onFailure: ({ error, attempt, willRetry }) => warn(willRetry ? `permission prompt watch failed; resubscribing (attempt ${attempt})` : "permission prompt watch stopped; prompts a later plugin raises in subagent sessions are no longer rejected", { error }),
+        signal: watching.signal,
+        ...overrides.watch
+      }) : undefined;
       async function rejectUnanswerable(request) {
         if (typeof request.sessionID !== "string" || typeof request.id !== "string")
           return;
         const message = unanswerableDenial({ action: request.action ?? "permission", resources: request.resources ?? [], message: request.message }, await sessionInfo(request.sessionID));
-        if (message === undefined)
+        if (message === undefined || watching.signal.aborted)
           return;
         await ctx.permission.reply({ sessionID: request.sessionID, requestID: request.id, decision: "reject", message });
       }
@@ -7445,7 +7501,7 @@ function createPlugin(overrides = {}) {
         await unanswerable?.dispose();
         await subagentReads?.dispose();
         watching.abort();
-        asked?.return?.();
+        watch?.stop();
         await confirmCommand.dispose();
         await secretTool.dispose();
         await after.dispose();

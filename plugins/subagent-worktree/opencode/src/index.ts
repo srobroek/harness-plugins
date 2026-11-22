@@ -56,7 +56,7 @@ import {
   worktreeName,
   writerRefusal,
 } from "./lane.ts"
-import { type BuildSeams, createLifecycle, type Lifecycle, toMillis } from "./lifecycle.ts"
+import { createLifecycle, type Lifecycle, toMillis } from "./lifecycle.ts"
 import { decideRelease, parseRelease, RELEASE_PREFIX, type Release, releaseKey } from "./release.ts"
 
 export * from "./git.ts"
@@ -66,7 +66,7 @@ export * from "./release.ts"
 export const MERGE_DESCRIPTION =
   "Merge a subagent's worktree branch back, report one lane, or list every active lane.\n" +
   "The subagent tool result names the lane (branch, base, sessionID). " +
-  'method "wt-merge" runs `wt merge <target> --no-squash --no-ff --yes` from the subagent worktree, keeping its commits, ' +
+  'method "wt-merge" runs `wt merge <target> --no-squash --no-ff --no-hooks` from the subagent worktree, keeping its commits, ' +
   "and removes the worktree on success; a conflict keeps the worktree and reports the output. " +
   "The worktree must be committed and clean, and the target checkout must have no uncommitted or untracked changes to files the lane changes. " +
   'method "keep" (with reason) records that an unmerged lane is kept on purpose, so the idle gate stops nudging about it. method "none" only reports the lane status. method "list" (no sessionID) reports every active lane in the project ' +
@@ -77,10 +77,10 @@ export const MERGE_DESCRIPTION =
 export const SWEEP_TOOL = "subagent_worktree_sweep"
 
 export const SWEEP_DESCRIPTION =
-  "Plan or prune landed, clean, abandoned agent worktrees; dirty or unlanded ones are only reported.\n" +
-  'Each worktree under OpenCode\'s worktree directory (and lane records) gets keep, prune, prune-registry or quarantine with a reason. ' +
-  'A worktree is pruned only when it landed (ancestor of origin/main, a merged PR at its tip, or wt integrated), is clean, has no live session, ' +
-  'and is older than minAgeHours. Removal is never forced and no remote branch is touched. Mode "report" (default) changes nothing.'
+  "Report, or on request remove, finished agent lanes. Runs only when called.\n" +
+  'Each active lane whose subagent session is deleted or archived is checked as `finalize` checks it: not running, clean, no stash or operation, ' +
+  'and its tip is the lane base, or an ancestor of origin/main, or a delivery landing record. Mode "report" (default) lists what would be removed and what is kept, and why. ' +
+  'Mode "prune" removes the removable ones through `finalize`, never forced, and touches no remote branch.'
 
 export const SWEEP_INPUT = {
   type: "object",
@@ -126,10 +126,8 @@ export type Overrides = {
   now?: () => number
   reserveMs?: number
   debounceMs?: number
-  age?: (directory: string) => Promise<number | undefined>
   commonDir?: (directory: string) => Promise<string | undefined>
   lock?: Parameters<typeof createLifecycle>[0]["lock"]
-  build?: BuildSeams
   /** Test seam: receives the lifecycle, so a test can await `settle()` instead of sleeping. */
   lifecycle?: (lifecycle: Lifecycle) => void
 }
@@ -168,10 +166,8 @@ export function createLanes(
   now: () => number = Date.now,
   reserveMs = RESERVATION_MS,
   debounceMs?: number,
-  age?: (directory: string) => Promise<number | undefined>,
   commonDirOverride?: (directory: string) => Promise<string | undefined>,
   lock?: Parameters<typeof createLifecycle>[0]["lock"],
-  build?: BuildSeams,
 ) {
   const load = async (child: string) => parseLane(await ctx.storage.get(laneKey(child)))
   /** The repository's git common directory: where a lane's claim lives. Cached per checkout. */
@@ -506,6 +502,7 @@ export function createLanes(
       callerPermissions: parent.permissions,
       callerIsChild: Boolean(parent.parentID),
       isGit: start ? start.lookup.ok : await git.isWorkTree(parentDir),
+      gitUnsupported: await git.unsupported(),
       projectDir: parentDir,
       homeDir: homedir(),
     })
@@ -1002,7 +999,11 @@ export function createLanes(
       return { content: annotation(lane, status, false), metadata: { ok: true, lane } }
     }
     const target = input.target ?? lane?.target
-    const ready = lane?.state === "active" && lane.parent === tool.sessionID && target && status && status.ahead > 0
+    // Before any git call that takes the target: a name that starts with "-" would be read as an option (CWE-88).
+    if (target !== undefined && lane && !(await git.isBranchName(lane.directory, target))) {
+      const reason = `${JSON.stringify(target)} is not a valid branch name`
+      return { content: `${MERGE_TOOL}: not merged: ${reason}`, metadata: { ok: false, reason } }
+    }    const ready = lane?.state === "active" && lane.parent === tool.sessionID && target && status && status.ahead > 0
     const files =
       ready && lane && !status.dirty
         ? { laneFiles: await git.changedFiles(lane.directory, target), localFiles: await targetChanges(lane, target) }
@@ -1020,8 +1021,8 @@ export function createLanes(
     }
     const argv = mergeArgs(lane.directory, decision.target)
     // Last stop point. From the session move through `wt merge` and the lane retirement the
-    // call runs to its end: `wt merge` runs the repository's merge hooks and removes the
-    // checkout, and killing it midway could leave a half-landed merge. The stop waits.
+    // call runs to its end: `wt merge` (with --no-hooks, so no project hooks run) merges, and the
+    // lane retirement removes the checkout; killing it midway could leave a half-landed merge. The stop waits.
     if (stopped()) {
       return { content: `${MERGE_TOOL}: stopped before the merge; nothing was merged.`, metadata: { ok: false, stopped: true } }
     }
@@ -1071,10 +1072,8 @@ export function createLanes(
     moveHome,
     removeWorktree,
     ...(debounceMs === undefined ? {} : { debounceMs }),
-    ...(age === undefined ? {} : { age }),
     commonDir: commonDirOf,
     ...(lock === undefined ? {} : { lock }),
-    ...(build === undefined ? {} : { build }),
     ensureClaim: async (lane) => {
       try {
         await syncClaim(lane)
@@ -1093,7 +1092,7 @@ export function createPlugin(overrides: Overrides = {}) {
     async setup(ctx) {
       const options = readOptions(ctx.options)
       const git = createGit(overrides.run ?? spawnRunner)
-      const lanes = createLanes(ctx, options, git, overrides.suffix ?? randomSuffix, overrides.lookupMs, overrides.directoryExists, overrides.now, overrides.reserveMs, overrides.debounceMs, overrides.age, overrides.commonDir, overrides.lock, overrides.build)
+      const lanes = createLanes(ctx, options, git, overrides.suffix ?? randomSuffix, overrides.lookupMs, overrides.directoryExists, overrides.now, overrides.reserveMs, overrides.debounceMs, overrides.commonDir, overrides.lock)
       overrides.lifecycle?.(lanes.lifecycle)
       const registrations: { dispose: () => Promise<void> }[] = []
       const cleanup = async () => {

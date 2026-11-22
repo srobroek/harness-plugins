@@ -207,6 +207,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PR_BRANCH: ${{ github.head_ref }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           gh auth setup-git
           remote_head=$(git ls-remote origin "refs/heads/$PR_BRANCH" | cut -f1)
@@ -218,4 +219,10 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git -c core.hooksPath=/dev/null -c commit.gpgsign=false commit -m 'chore(deps): regenerate generated copies'
           git -c core.hooksPath=/dev/null push origin "HEAD:refs/heads/$PR_BRANCH"
-          gh workflow run ci.yml --ref "$PR_BRANCH"
+          run_id=$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/dispatches" --method POST \
+            -H 'X-GitHub-Api-Version: 2026-03-10' -f ref="$PR_BRANCH" --jq '.workflow_run_id')
+          if [[ ! "$run_id" =~ ^[1-9][0-9]{0,19}$ ]]; then
+            echo 'CI dispatch returned no valid run ID; cannot start its publisher.' >&2
+            exit 1
+          fi
+          gh workflow run ci-publish.yml --ref "$DEFAULT_BRANCH" -f run_id="$run_id"

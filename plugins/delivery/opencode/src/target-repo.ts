@@ -81,13 +81,17 @@ export function notACloneReason(field: "repoPath" | "worktree", path: string): s
   return `${field}: observed ${JSON.stringify(path)}, expected the path of an existing Git checkout of the requested repo; nothing was merged or written`
 }
 
-export type Retargeted = { cwd: string; retargeted: boolean } | { reason: string }
+/** The directory to run in; a retargeted one also names its git common directory, where its coordination lives. */
+export type Retargeted =
+  | { cwd: string; retargeted: false }
+  | { cwd: string; retargeted: true; commonDir: string }
+  | { reason: string }
 
 /**
  * The directory the tool runs in: the session's when `repo` is absent, invalid (the
  * caller's own validation refuses that) or already the session repository's, else the
  * canonical checkout root of the clone named by `repoPath` or `worktree`, once that
- * clone's remotes are proved to name `repo`.
+ * clone's remotes are proved to name `repo`, with that clone's git common directory.
  */
 export async function retargetRepository(
   input: TargetInput,
@@ -125,5 +129,5 @@ export async function retargetRepository(
   if (!remotes.some((remote) => remote.path === repo)) {
     return { reason: cloneMismatchReason(repo, clone.field, dir, remotes) }
   }
-  return { cwd: context.ledger.root, retargeted: true }
+  return { cwd: context.ledger.root, retargeted: true, commonDir: context.commonDir }
 }

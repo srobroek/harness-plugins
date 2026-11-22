@@ -1,3 +1,9 @@
+## autopilot [1.3.3](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.3.2...autopilot--v1.3.3) (2026-11-22)
+
+### Bug Fixes
+
+* **subagent-worktree:** require git 2.45 and run automatic git hardened ([3b6c86c](https://github.com/srobroek/harness-plugins/commit/3b6c86c81349e8fb65322aca3b6c68ec101d8869))
+
 ## autopilot [1.3.2](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.3.1...autopilot--v1.3.2) (2026-11-21)
 
 ### Bug Fixes

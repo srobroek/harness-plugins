@@ -71,32 +71,11 @@ Move new shared code into `lib` instead of adding another edge.
 - The release reads its record again under the lock, so it refuses a second release queued behind the first.
 - The record goes under `release/<child>` in plugin storage. The plugin refuses every later resume of that child. The next writer moved into the worktree becomes the record's `to` first, and takes over the released writer's active lane (`handedOver`) and the lane's claim. A failed takeover is undone. When the record names a new writer, `save` and `syncClaim` drop every write of the old child's lane or claim. They check under the worktree's lock, which the handover holds throughout, so a lifecycle pass that read the old lane earlier cannot bring it back.
 
-`subagent-worktree` runs git automatically in lanes and checkouts whose config it does not control. So `spawnRunner` in `plugins/subagent-worktree/opencode/src/git.ts` gives every `git` command `untrustedLocalGitArgs()` and the environment from `untrustedLocalGitEnv()`, both in `lib/src/safe-git.ts`. The environment drops every inherited `GIT_*` variable except `GIT_CONFIG_GLOBAL`. It also drops `PAGER`, `EDITOR`, `VISUAL` and `SSH_ASKPASS`. The dropped variables include these:
+`subagent-worktree` runs git automatically in lanes and checkouts whose config it does not control. So `spawnRunner` in `plugins/subagent-worktree/opencode/src/git.ts` runs `git`, `wt` and `gh` with the environment from `hardenedGitEnv()` in `lib/src/safe-git.ts`. It carries the hardening as `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` (command scope, like `-c`), so the git calls that `wt` and `gh` make inherit it, and it sets `GIT_ATTR_SOURCE` to the empty tree, `GIT_OPTIONAL_LOCKS=0` and `GIT_NO_LAZY_FETCH=1`. The settings turn off fsmonitor, hooks, the global attributes file, signing and the signature programs, `diff.external`, `core.sshCommand`, `credential.helper` and lazy fetch. The empty attribute source means no worktree `.gitattributes` can select a filter, diff or merge driver. `wt merge` runs with `--no-hooks`, so committed project hooks do not run.
 
-| Why | Variables |
-| --- | --- |
-| The filter-driver listing and the command could read different config | `GIT_CONFIG`, `GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT`, `GIT_CONFIG_KEY_<n>`, `GIT_CONFIG_VALUE_<n>`, `GIT_CONFIG_SYSTEM` |
-| They select another repository, work tree or index | `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES` |
-| They name programs | `GIT_EXEC_PATH`, `GIT_EXTERNAL_DIFF`, `GIT_PAGER`, `GIT_EDITOR`, `GIT_SSH`, `GIT_SSH_COMMAND`, `GIT_ASKPASS`, `GIT_PROXY_COMMAND` |
-| They write files or change what a read sees | `GIT_TRACE*`, `GIT_*_PATHSPECS`, `GIT_NAMESPACE`, `GIT_REPLACE_REF_BASE` |
+`GIT_NO_LAZY_FETCH` and `GIT_ATTR_SOURCE` need git 2.45, so the plugin reads `git --version` once per process and fails closed: with an older or unreadable git, commands exit 126 with "subagent-worktree needs git 2.45+ for safe automatic merges" and a spawn of an isolated writer is refused. The plugin trusts each repository's local, unversioned `.git/config` and worktree configs, including `includeIf` sections. The hardening covers what versioned content can select, not that config. The plugin reads `git worktree list --porcelain -z` and refuses malformed output.
 
-`GIT_CONFIG_GLOBAL`, `HOME` and `XDG_CONFIG_HOME` stay, because the listing and the command read the global config the same way. Together, the arguments and the environment disable these:
-
-`GIT_CONFIG_GLOBAL`, `HOME` and `XDG_CONFIG_HOME` stay, because the listing and the command read the global config the same way. Together, the arguments and the environment disable these:
-
-- fsmonitor, hooks and the global attributes file
-- `diff.external`
-- every transport
-- `core.sshCommand`, `credential.helper` and `core.askPass`
-- signature checks (`log.showSignature`) and the signature programs
-- system config, terminal prompts and lazy fetch
-
-Before a status or a work-tree diff, the plugin lists the filter drivers in the same directory (`FILTER_DRIVER_LISTING`). It disables every driver it finds, including the user's global ones such as git-lfs. The repository picks the driver, and it can supply the program that a relative command runs. It refuses to run the command when the listing fails or a driver name is not UTF-8 or contains `=`. The plugin reads `git worktree list --porcelain -z` and refuses malformed output. The minimum git version stays as it is, so these risks remain:
-
-- `GIT_NO_LAZY_FETCH` needs git 2.45. Older git still starts a lazy fetch and relies on the transport refusal (`GIT_ALLOW_PROTOCOL` set empty).
-- `git status` recursing into a submodule runs with the submodule's own filter drivers.
-- A config change between the driver listing and the command is not seen. Git evaluates conditional includes (`includeIf`) the same way for both, because both run in the same directory.
-- `wt` commands (`wt list`, `wt merge`) run without these settings.
+The divergences of `subagent-worktree` from opencode-plugins are listed under `Approved departures` below.
 
 With git-lfs disabled, an LFS file whose index entry is stale reads as modified. A lane then looks dirty and is kept, never removed.
 
@@ -108,6 +87,8 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 
 ## safety permission relaxations
 
+`review()` in `plugins/safety/opencode/src/index.ts` wraps `reviewPermission`. When it throws an unexpected exception (handled probe timeouts become `ProbeTimeout`, which the destruction review turns into an ask, so they never reach this path), it returns `undefined` and logs a warning through the plugin's `warn` (`hostWarn`) each time. `applyDecision` treats `undefined` as no change, so the host's own effect (allow, ask or deny) decides; `undefined` never means allow. Both callers (the `execute.before` shell hook and the `evaluate` gate) pass `warn`.
+
 `plugins/safety` turns some `external_directory` asks into allows in `permission.hook("evaluate")` hooks that run before `denyUnanswerable`, because a subagent cannot answer a prompt. Each hook acts only on an `ask`, never overrides a deny, and has a pure decision function tested directly (`scratch-dirs.ts`, `skill-references.ts`, `steering-dirs.ts`, `repo-worktrees.ts`). A hook can be switched off through the plugin's `disable` list:
 
 - `scratch-dirs.ts`: the OpenCode temp folder and the project's worktree folder, for direct file tools and (`scratch-shell`) the `shell` tool. For shell it only waives the `external_directory` ask when every parsed resource lies inside a pinned root; it does not confine the process, which can still read or write elsewhere as any allowed shell can. An empty resource list is never auto-approved.
@@ -116,6 +97,16 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 - `repo-worktrees.ts` (`repo-worktrees`): read-only tools inside the worktrees of the session's repository. `git worktree list --porcelain -z` runs through `lib/src/safe-git.ts` flags and `lib/src/subprocess.ts` supervision with repository-selecting `GIT_*` variables cleared. Each path must link back reciprocally on disk (`.git` file and `<common-dir>/worktrees/<name>/gitdir`) and be user-owned. Roots are cached 30 s per directory with device and inode and re-checked on every use.
 - Roots are compared as canonical paths (`insideCanonical`), never re-resolved after the check.
 - `subagent-external-reads` (below) already allows any non-secret read or shell ask in a subagent session. The relaxations above stay narrower and also apply to root sessions; with `subagent-external-reads` disabled they are what lets a subagent read these places.
+
+### safety permission.asked backstop
+
+`plugins/safety/opencode/src/asked-watch.ts` owns the second layer of the `subagent-prompts` feature: a plugin whose evaluate hook runs after safety's can still raise a prompt in a subagent session, so `index.ts` subscribes to `permission.asked` and rejects such prompts through `permission.reply`. `index.ts` is a thin adapter: it supplies `subscribe`, the handler (`rejectUnanswerable`) and the warning text; `watchAsked` owns the loop. With `subagent-prompts` disabled nothing subscribes.
+
+- Retry bound: a stream error, a stream that ends, or a `subscribe()` that throws is one failure. After a failure the watch waits and resubscribes, at most 3 times (4 subscriptions in all). Each failure warns with the error name only (`permission prompt watch failed; resubscribing (attempt N)`); the last one warns `permission prompt watch stopped; …` and the watch ends. The evaluate hook keeps denying.
+- Backoff: 1 s, 5 s, 15 s (`DEFAULT_RESUBSCRIBE_DELAYS_MS`; the array length is the bound). `abortableSleep` waits on an unref'd timer and returns at once on abort. A subscription that works resets nothing: the bound counts failures over the plugin's life.
+- Teardown: the cleanup function aborts `watching.signal`, then calls `stop()`. Abort ends a backoff sleep, suppresses every warning and ends the loop. `stop()` calls the live iterator's `return()` without awaiting it, because a pending read may never settle, and swallows a rejection from it. A lookup in flight at teardown checks the signal before `permission.reply`, so no reply goes out after teardown.
+- Race: the watch is reactive, so a user's answer can land before the reply. Then the reply fails or is a no-op, a failure is warned about, and the user's decision stands.
+- Tests: `asked-watch.test.ts` drives the real sleeper with controlled timers; `index.test.ts` injects `sleep` and `delaysMs` through `Overrides.watch`. Neither waits on the wall clock.
 
 ## Standards
 
@@ -126,6 +117,22 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 - Approved departures:
   - `code-challenge` names its tool `challenge_setup`, not `code_challenge_setup` as `<name>_<verb>` would give. The skill's other two tools, `challenge_lib_facts` and `challenge_scan`, share the same `challenge_` namespace, so one short prefix (reserved in `RESERVED_TOOL_PREFIXES`) covers the family and the agents' permission rules.
   - `code-challenge` `challenge_scan` runs analyzers without a sandbox, by user decision. It discloses the risk and asks for consent instead (see Code-challenge scan below).
+  - `subagent-worktree` diverges from opencode-plugins `289814b`, `891c0bc` and `e6ec82b` on purpose, to keep protections upstream's final cut dropped or never had:
+    - Resume fence: `finalize` takes the accepted end's sequence and the time the end was seen (`since`), and a resume stamped at or after it keeps the lane. There is no `resumeGraceMs`.
+    - Directory-wide eviction and a liveness re-check after it: every session in the checkout is read, and running ones keep the worktree.
+    - Holds are recorded for active and removing lanes before crash recovery runs.
+    - `ifGone`, `spawnInto` (a spawn runs under the worktree's removal lock) and `isSessionNotFound` handling stay; there is no `session.created` repair of stranded sessions and no periodic sweep timer.
+    - `git worktree list --porcelain -z` is read NUL-separated and malformed output is refused, so a path with a newline parses (`parseWorktrees` in `lane.ts`).
+    - `hardenedGitEnv` sets an empty `GIT_ALLOW_PROTOCOL`, the transport refusal of #79, so a command that reaches for a remote runs none of the programs the repository names (upload-pack, `ext::`, ssh). Upstream relies on `GIT_NO_LAZY_FETCH` alone.
+    - `hardenedGitEnv` also drops the inherited command-scope config (`GIT_CONFIG_PARAMETERS`, `GIT_CONFIG_COUNT` and every `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`) and installs only its own overrides, so an inherited setting cannot turn a pinned one (`core.fsmonitor`, `core.hooksPath`) back on or add a `core.worktree`. Upstream appends to the inherited count.
+    - After the eviction `finalize` proves HEAD and the tree again (`treeDrift`) before the liveness read and the synchronous start check that sit directly in front of the host removal. Upstream and the first cut of this port checked the tree only before the eviction.
+    - `evictSessions` (`lib/src/session-eviction.ts`) takes a `guard`: before each move `finalize` reads the session again and checks the start events, with nothing awaited between that check and the move call, so an unrelated session that started after the listing is not moved. Upstream moves from the listing alone.
+    - `git.test.ts` runs real git against a hostile repository: a filter selected in `.git/info/attributes`, `core.fsmonitor`, a hook in `.git/hooks`, `core.hooksPath`, and a signature verifier for each of the three signature formats. Each has a control that reaches the program through the unhardened environment and fails when its defense is removed from `lib/src/safe-git.ts`. Upstream asserts the environment variables only.
+    - `git.test.ts` also restores the edge cases of the #79 filter suite against the new fixture (the filter comes from `.git/info/attributes`, since `GIT_ATTR_SOURCE` already covers `.gitattributes`): empty, non-UTF-8, dotted and unrepresentable driver names, process filters, conditional-include and global-config drivers, a truncated or failed driver listing, an inherited `GIT_CONFIG`, repository selectors, `GIT_LITERAL_PATHSPECS`, `GIT_TRACE` and a hook on `deleteBranchAt`. Removing the driver suppression fails 16 of them; making the refusals non-fatal fails the other 7.
+    - Reads that hash work-tree files (`status`, the work-tree `diff`) run with every configured filter driver disabled (`filterDriverOverrides` in `lib/src/safe-git.ts`), because `GIT_ATTR_SOURCE` leaves `.git/info/attributes` in force. A listing that fails or names a driver `-c` cannot override refuses the read. Upstream relies on the empty attribute source alone. The `wt` and `gh` children still rely on it alone.
+    - `hardenedGitEnv` drops the inherited repository selectors (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR` and the object-store variables), the program variables, `GIT_TRACE*` and the pathspec switches before it applies the hardening. Upstream keeps them.
+  - Known limitations of `subagent-worktree`, older than the port and left as they are:
+    - The `wt` and `gh` children rely on `GIT_ATTR_SOURCE` alone, so a filter driver selected in `.git/info/attributes` still runs in them. Only the plugin's own reads disable drivers by name.
 
 ## Read-only shell rules and subagent reads
 
@@ -203,6 +210,22 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 - Lifecycle: a session stays reserved from its notice until its attempt ends, and is nudged at most once per plugin process. State is in memory only. The cleanup returned by `setup` aborts the subscription and disposes the nudger; a disposed nudger ignores later notices and an in-flight lookup posts nothing. A failed subscription is logged with its cause through `console.warn`; an abort is silent.
 - Decision logic (`needsNudge`, `isRestartNotice`, `createRestartNudger` with injected `schedule`) is pure and tested directly; `setupRestartNudge` is the adapter.
 
+## delivery: cleanup in another repository
+
+`delivery_land` with `repo` and a clone (`repoPath` or a `worktree`) keys the receipt by the target repository. Every later cleanup of that receipt runs in the clone. This covers the inline cleanup, an explicit `delivery_cleanup` and the turn-end retry. `repositoryCoordination` in `plugins/delivery/opencode/src/pending-cleanup.ts` binds the cleanup to the target. `cleanupDelivery` takes it as `CleanupDeps.coordinate`.
+
+- Delivery reads and writes the coordination files under the target's git common directory: claims and landing records, holds and denials, and the removal lock.
+- If the clone now resolves to another common directory, delivery removes nothing.
+- The final checks wait on listings, so right before the removal call delivery proves both `.git` markers again, synchronously. It checks the worktree's and the directory the removal runs from, and refuses if either changed.
+- Delivery keys its in-memory vetoes by canonical worktree path and shares them across repositories. Before any wait, it publishes each veto.
+- The last check lists the sessions in the worktree across all projects.
+- If the sessions in the clone and the worktree name exactly one project id, delivery removes the worktree through OpenCode's registry. With any other answer it refuses the removal.
+- `cleanupDelivery` without `coordinate` still refuses another repository.
+
+The clone registry is `<receipts root>/.clones/<session repo key>.json` (`clone-registry.ts`). It lists the key and canonical root of each repository that the session's repository landed into, newest first. The turn-end retry, the idle-hook holds and gc read it, and check each root's key again first. Each update takes a lease lock (`lib/src/lease-lock.ts`) beside the file and replaces the file by rename. Past 32 entries, the oldest entries with no pending receipts go. An entry with pending receipts stays.
+
+Each plugin instance also keeps the clones it registered in memory, and those win over the file. A failed write leaves its own holds and retry intact. A landing record reaches the target before the registry write starts, and each clone's holds are written without waiting on any other clone.
+
 ## Commands
 
 AGENTS.md Commands lists every script. The `justfile` has one recipe per script, and `just verify` runs every gate CI runs ([decision 0006](decisions/0006-bun-and-just.md)): installs use `bun install --frozen-lockfile` and the lockfile is `bun.lock`, never npm. `bun run check` is `harness-kit check`: `build --check` for the generated files, then validation of each Claude Code tree. It does not run typecheck, lint, tests or the content checks. The `cad:*` scripts need network.
@@ -223,6 +246,20 @@ Both jobs validate the patch against the workflow's generated-path allowlist. It
 
 `renovate.json` ignores that bot's exact author email through `gitIgnoredAuthors`. Renovate can then rebase or update branches containing regeneration commits.
 
-The push job commits as `github-actions[bot]` with Git hooks disabled. Branch names pass through quoted environment variables, not shell-source interpolation. If the remote head has moved, the job leaves regeneration to the next run. Git's fast-forward check prevents overwriting a concurrent push. After pushing with `GITHUB_TOKEN`, the job dispatches `ci.yml` on the PR branch. The final head receives the existing CI checks, including the vendored cad check. This uses GitHub's [documented dispatch exception](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow) to token-triggered workflow suppression. It needs no App token or PAT.
+The push job commits as `github-actions[bot]` with Git hooks disabled. Branch names pass through quoted environment variables, not shell-source interpolation. If the remote head moves, the job leaves regeneration to the next run. Git's fast-forward check prevents overwriting a concurrent push.
+
+After pushing with `GITHUB_TOKEN`, the job dispatches `ci.yml` on the PR branch through the REST API. GitHub [returns the created run ID](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event). The job then explicitly dispatches `ci-publish.yml` on the default branch, passing only that run ID.
+
+Both dispatches use GitHub's [documented dispatch exception](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow). Other token-triggered events do not start unattended workflows. The publisher must not depend on a `workflow_run` event from token-dispatched CI. Pull request runs from pushes made with `GITHUB_TOKEN` [need approval](https://docs.github.com/en/actions/how-tos/writing-workflows/choosing-when-your-workflow-runs/triggering-a-workflow). These dispatches need no approval, App token or PAT.
+
+GitHub [excludes dispatched job checks from PR checks](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/defining-the-mergeability-of-pull-requests/troubleshooting-required-status-checks#checks-from-some-workflow-jobs-are-not-evaluated), even on the correct head SHA. `ci-publish.yml` publishes [commit statuses](https://docs.github.com/en/rest/commits/statuses) named `check / check`, `repo-checks` and `changes` on that SHA.
+
+The publisher accepts `workflow_dispatch` only on the default branch. It runs inline code, with no checkout, install, artifact download or cache. Its job has `statuses: write` and read access to Actions, contents and pull requests. It validates the numeric run ID and accepts only the latest CI dispatch for an open, same-repository Renovate PR whose current head matches the run.
+
+The CI definition on the branch must match the publisher's default-branch revision, except for version updates at approved `uses:` entries. These are the harness-kit check workflow tag and SHA pins for checkout, setup-node and setup-bun. The publisher rejects changes to steps, conditions, permissions or action repository names.
+
+A running dispatch receives pending statuses. The publisher polls every thirty seconds for up to twenty minutes, then fails if CI has not completed. Success needs a successful run, all three required jobs succeeding, and the cad job succeeding or being skipped. Failed, canceled, missing or skipped required jobs produce failure statuses. Repository Actions approval settings remain unchanged.
+
+After manually dispatching or rerunning CI, dispatch the publisher again on the default branch with the CI run ID: `gh workflow run ci-publish.yml --ref main -f run_id=<ci-run-id>`. No PR rebase is needed when its CI definition still matches the publisher's checks.
 
 `.github/workflows/release.yml` runs on pushes to `main`. It calls the harness-kit release workflow, which runs multi-semantic-release (`release.config.mjs`, `.multi-releaserc`) and tags each plugin `<name>--v<version>`. The `prepareCmd` from `scripts/release-preset.mjs` (used by `release.config.mjs` and `plugins/cad/release.config.mjs`) runs `scripts/build.ts <name>` after `harness-kit stamp`, because a bundle can embed its plugin's `package.json` (delivery's receipts carry the version) and the release commit must carry the rebuilt `opencode/dist`. A `feat` or `fix` commit, and with the repository rules a `refactor` or `docs` commit, under `plugins/<name>/` cuts a release. A new plugin needs no manifest entry: any directory under `plugins/` is a workspace package.

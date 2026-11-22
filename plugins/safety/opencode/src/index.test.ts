@@ -4,7 +4,7 @@ import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { Tool } from "@opencode/plugin/effect"
 import { createFakeContext, type FakeAssert, type FakeSession, type FakeSkill } from "@srobroek/opencode-lib/testing"
-import plugin, { applyDecision, confirmSecretCommand, createPlugin, type Evaluation, readOptions, shellCwd } from "./index.ts"
+import plugin, { applyDecision, confirmSecretCommand, createPlugin, type Evaluation, type Overrides, readOptions, shellCwd } from "./index.ts"
 import { FNOX_CONFIG_MESSAGE, FNOX_INDIRECT_MESSAGE, FNOX_STORE_MESSAGE, VALUE_MESSAGE } from "./op-guard.ts"
 import { INVESTIGATE_NOTICE } from "./package-investigate.ts"
 import { FORCE_PUSH_MESSAGE } from "./permission.ts"
@@ -29,6 +29,10 @@ type Load = {
   sessions?: FakeSession[]
   skills?: FakeSkill[]
   warn?: (message: string, data?: Record<string, unknown>) => void
+  /** Replaces the review options of the plugin. */
+  review?: NonNullable<Overrides["review"]>
+  /** Backoff seams of the prompt watch; the default waits on the wall clock. */
+  watch?: { delaysMs?: readonly number[]; sleep?: (ms: number, signal: AbortSignal) => Promise<void> }
   /** Replaces host methods on the fake context before the plugin sets up. */
   patch?: (context: any) => void
 }
@@ -47,12 +51,13 @@ async function load(options: Record<string, unknown> = {}, more: Load = {}) {
   })
   more.patch?.(fake.context)
   const cleanup = await createPlugin({
-    review: { gh: async () => "[]", timeoutMs: 30_000, budgetMs: 120_000 },
+    review: more.review ?? { gh: async () => "[]", timeoutMs: 30_000, budgetMs: 120_000 },
     env: more.env ?? {},
     ...(more.guard ? { guard: more.guard } : {}),
     ...(more.scratchRoots ? { scratch: { roots: more.scratchRoots } } : {}),
     ...(more.worktrees ? { worktrees: more.worktrees } : {}),
     warn: more.warn ?? (() => {}),
+    ...(more.watch ? { watch: more.watch } : {}),
   }).setup(fake.context)
   const before = (id: string, command: string, workdir?: string) =>
     fake.fire.tool("execute.before", {
@@ -234,6 +239,30 @@ describe("permission decisions", () => {
     const { evaluate } = await load()
     expect((await evaluate(undefined, ["git status", "git push -f"])).effect).toBe("deny")
     expect((await evaluate("unknown", ["git status"])).effect).toBe("allow")
+  })
+
+  describe("when the internal review throws", () => {
+    // `reset --hard` spawns git; a spawn that throws is how a git probe failing under load looks.
+    const RESET = "git reset --hard HEAD~1"
+    const broken = {
+      spawn: async () => {
+        throw new Error("probe timed out")
+      },
+    }
+
+    test("no decision is made: the host's effect stands, and each failure is logged", async () => {
+      const warnings: Array<{ message: string; data?: Record<string, unknown> }> = []
+      const warn = (message: string, data?: Record<string, unknown>) => warnings.push({ message, ...(data ? { data } : {}) })
+      const { before, evaluate } = await load({}, { warn, review: broken })
+      await before("c1", RESET)
+      expect((await evaluate("c1", [RESET])).effect).toBe("allow")
+      expect((await evaluate(undefined, [RESET])).effect).toBe("allow")
+      expect((await evaluate("c1", [RESET], "ask")).effect).toBe("ask")
+      expect((await evaluate("c1", [RESET], "deny")).effect).toBe("deny")
+      expect(warnings.length).toBe(2)
+      expect(warnings[0]?.message).toContain("review failed")
+      expect(warnings[0]?.data).toMatchObject({ error: "Error", message: "probe timed out" })
+    })
   })
 
   test("non-shell evaluations are left alone", async () => {
@@ -1043,6 +1072,136 @@ describe("prompts a subagent cannot answer", () => {
           "ask the parent session to run it or to grant deploy.\n\nDeploys need a human.",
       },
     ])
+  })
+
+  describe("permission prompt watch error paths", () => {
+    const delays = [10, 20, 30]
+    /** Records each requested backoff and resolves at once, so no test waits on the wall clock. */
+    const instantSleep = () => {
+      const slept: number[] = []
+      return { slept, sleep: async (ms: number) => void slept.push(ms) }
+    }
+    /**
+     * One scripted subscription per call; once the script runs out, every call gets a stream that never yields.
+     * An entry that throws fails `subscribe()` itself.
+     */
+    const scripted = (streams: Array<() => AsyncIterator<unknown>>) => {
+      let calls = 0
+      const subscribe = () => {
+        const stream = (streams[calls++] ?? (() => ({ next: () => new Promise<never>(() => {}) })))()
+        return { [Symbol.asyncIterator]: () => stream }
+      }
+      return { subscribe, calls: () => calls }
+    }
+    const rejecting = () => ({ next: () => Promise.reject(new TypeError("host down")) })
+    const ending = () => ({ next: () => Promise.resolve({ done: true as const, value: undefined }) })
+    const refusing = (): never => {
+      throw new RangeError("host refused")
+    }
+    /** One turn of the event loop: every promise continuation queued before it has run. For negative assertions only. */
+    const eventLoopTurn = () => new Promise<void>((resolve) => setImmediate(resolve))
+    const yielding = (...events: unknown[]) => {
+      const queue = [...events]
+      return () => ({
+        next: () => (queue.length > 0 ? Promise.resolve({ done: false as const, value: queue.shift() }) : new Promise<never>(() => {})),
+      })
+    }
+
+    test.each([
+      ["the stream rejects", rejecting, "TypeError"],
+      ["the stream ends", ending, "stream ended"],
+      ["subscribe() itself throws", refusing, "RangeError"],
+    ])("resubscribes when %s, warns on it, and rejects a prompt the replacement stream delivers", async (_, failure, reason) => {
+      const { sleep, slept } = instantSleep()
+      const script = scripted([failure, yielding(asked("per_2", "ses_grandchild"))])
+      const warnings: Array<[string, unknown]> = []
+      const { fake } = await load({}, {
+        sessions: family,
+        warn: (message, data) => void warnings.push([message, data]),
+        watch: { delaysMs: delays, sleep },
+        patch: (context) => {
+          context.event.subscribe = script.subscribe
+        },
+      })
+      await repliesSeen(fake, 1)
+      expect(fake.replies.map((reply) => reply.requestID)).toEqual(["per_2"])
+      expect(slept).toEqual([10])
+      expect(warnings).toEqual([["permission prompt watch failed; resubscribing (attempt 1)", { error: reason }]])
+    })
+
+    test("gives up after the bounded attempts, warning on each failure and once more when it stops", async () => {
+      const { sleep, slept } = instantSleep()
+      const warnings: Array<[string, unknown]> = []
+      const script = scripted([() => rejecting(), () => rejecting(), () => rejecting(), () => rejecting(), () => rejecting()])
+      const stopped = Promise.withResolvers<void>()
+      await load({}, {
+        sessions: family,
+        warn: (message, data) => {
+          warnings.push([message, data])
+          if (message.startsWith("permission prompt watch stopped")) stopped.resolve()
+        },
+        watch: { delaysMs: delays, sleep },
+        patch: (context) => {
+          context.event.subscribe = script.subscribe
+        },
+      })
+      await stopped.promise
+      // The first subscription plus one per delay; the fifth scripted stream is never opened.
+      expect(script.calls()).toBe(4)
+      expect(slept).toEqual(delays)
+      expect(warnings).toHaveLength(4)
+      expect(warnings.filter(([message]) => message.startsWith("permission prompt watch stopped"))).toHaveLength(1)
+      expect(warnings.every(([, data]) => JSON.stringify(data) === '{"error":"TypeError"}')).toBe(true)
+    })
+
+    test("a teardown whose iterator.return() rejects leaves no unhandled rejection", async () => {
+      const unhandled: unknown[] = []
+      const record = (reason: unknown) => void unhandled.push(reason)
+      process.on("unhandledRejection", record)
+      try {
+        const { cleanup } = await load({}, {
+          sessions: family,
+          patch: (context) => {
+            context.event.subscribe = () => ({
+              [Symbol.asyncIterator]: () => ({
+                next: () => new Promise<never>(() => {}),
+                return: () => Promise.reject(new Error("return failed")),
+              }),
+            })
+          },
+        })
+        await cleanup?.()
+        // An unhandled rejection is delivered after the microtask queue drains, one event-loop turn later.
+        await eventLoopTurn()
+        await eventLoopTurn()
+        expect(unhandled).toEqual([])
+      } finally {
+        process.off("unhandledRejection", record)
+      }
+    })
+
+    test("a lookup still in flight at teardown does not reply afterwards", async () => {
+      const lookup = Promise.withResolvers<unknown>()
+      const started = Promise.withResolvers<void>()
+      const { fake, cleanup } = await load({}, {
+        sessions: family,
+        patch: (context) => {
+          const get = context.session.get
+          context.session.get = (input: { sessionID: string }) => {
+            if (input.sessionID !== "ses_grandchild") return get(input)
+            started.resolve()
+            return lookup.promise
+          }
+        },
+      })
+      fake.emit(asked("per_late", "ses_grandchild"))
+      await started.promise
+      await cleanup?.()
+      lookup.resolve({ id: "ses_grandchild", parentID: "ses_child", location: { directory: LANE } })
+      // Absence of a reply has no signal to await: one turn runs every continuation the lookup queued.
+      await eventLoopTurn()
+      expect(fake.replies).toEqual([])
+    })
   })
 
   /** Resolves with the data of the first warning whose message starts with `prefix`. */
