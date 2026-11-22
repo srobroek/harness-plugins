@@ -1,5 +1,6 @@
-/** The twelve lenses, in the order the skill lists them. Each has `lens-<id>.md` beside the skill. */
+/** The thirteen lenses, in the order the skill lists them. Each has `lens-<id>.md` beside the skill. */
 export const LENSES = [
+  "scope",
   "simplification",
   "over-engineering",
   "optimisation",

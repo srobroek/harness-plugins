@@ -41,6 +41,7 @@
   "$defs": {
     "lens": {
       "enum": [
+        "scope",
         "simplification",
         "over-engineering",
         "optimisation",

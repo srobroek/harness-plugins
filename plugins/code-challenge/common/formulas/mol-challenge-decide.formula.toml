@@ -43,7 +43,7 @@ description = """
 Run the code-challenge skill, phase DECIDE, from run {{run_id}}, in {{mode}} mode. Interactive:
 offer the surviving findings through parley_ask in batches of up to 12, highest impact first.
 Autonomous: accept only a finding that REFUTE kept, whose evidence is proven or measured, whose
-blast radius is low and that keeps its contract; defer the rest. Never ask in autonomous mode.
+blast radius is low, that keeps its contract and that is not a scope finding; defer the rest. Never ask in autonomous mode.
 """
 
 [[steps]]

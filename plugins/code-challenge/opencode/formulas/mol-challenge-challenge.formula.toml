@@ -45,9 +45,10 @@ dispatching: for each lens selected in intake.json, bond mol-challenge-lens in p
 --var lens=<lens> --var target={{target}} --var run_id={{run_id}}, and put the scan hits for that
 lens, the frozen surfaces and the benchmark allowance in the bead. The scouts only analyse and
 reply; they spawn nothing and write nothing. When the host caps parallel subagents, group related
-lenses (simplification, over-engineering and dead-code; optimisation, performance and efficiency;
+lenses (simplification, over-engineering and dead-code; scope alone; optimisation, performance and efficiency;
 the rest by pairs), bond once per group with a comma-separated --var lens=<lens>,<lens>, and run the
-groups one after another. Log the grouping as a choice line in decisions.jsonl.
+groups one after another. Log the grouping as a choice line in decisions.jsonl. The scope lens bead
+also carries the design sources from intake.json.
 """
 
 [[steps]]
