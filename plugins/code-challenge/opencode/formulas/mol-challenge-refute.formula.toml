@@ -72,5 +72,6 @@ labels = ["code-challenge", "sub:refute", "phase:refute"]
 description = """
 You (the lead) write verdicts.json from the critic's reply with KEEP, DOWNGRADE or DROP and the cited rationale per finding. A DROP
 leaves the offer list and is reported as dropped. A DOWNGRADE lowers impact or evidence tier as the
-critic states. Never override a verdict without a logged decisions.jsonl line.
+critic states. Record the critic's tier, blast_radius and changes_contract per finding; DECIDE reads those
+in place of the scout's. Never override a verdict without a logged decisions.jsonl line.
 """
