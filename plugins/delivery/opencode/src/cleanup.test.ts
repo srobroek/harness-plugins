@@ -9,7 +9,7 @@ import {
   writeClaim,
   writeLanding,
 } from "@srobroek/opencode-lib/worktree-claims"
-import { lockedWrite, lockFile, readHolds, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
+import { holdsState, lockedWrite, lockFile, readHolds, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
 import { authorizeExplicit, createPendingCleanup } from "./pending-cleanup.ts"
 
 // Fixture setup creates several real Git repositories and measured about 20s under full-suite load;
@@ -60,6 +60,7 @@ import {
   type GitRunner,
   type LandingReceipt,
   listReceipts,
+  REPOSITORY_OBSERVATION_ARGS,
   readReceipt,
   receiptDirectory,
   repoKey,
@@ -3033,6 +3034,9 @@ describe("pending cleanup: one remover per worktree", () => {
       bounds?: Partial<CleanupBounds>
       observe?: GitRunner
       lock?: Record<string, unknown>
+      sessionLookupMs?: number
+      /** Prime the repository cache as `setupDelivery` does (default); false leaves it cold. */
+      prime?: boolean
     } = {},
   ) {
     const f = await fixture(name)
@@ -3058,7 +3062,9 @@ describe("pending cleanup: one remover per worktree", () => {
       now: () => clock,
       ...(over.observe === undefined ? {} : { observe: over.observe }),
       ...(over.lock === undefined ? {} : { lock: over.lock }),
+      ...(over.sessionLookupMs === undefined ? {} : { sessionLookupMs: over.sessionLookupMs }),
     })
+    if (over.prime !== false) await pending.prime()
     const common = (await repositoryContext(f.main))?.commonDir as string
     const advance = (ms: number) => {
       clock += ms
@@ -3747,6 +3753,7 @@ describe("pending cleanup: one remover per worktree", () => {
     }
     const list = async () => ({ data: busy ? [{ time: { busy: 2, idle: 1 } }] : [] })
     const dry = await harness("final-check-count", { observe, list })
+    observations = 0
     expect(await dry.pending.removalFor("ses_lead").finalCheck(dry.f.linked)).toBeUndefined()
     const total = observations
     await dry.finish()
@@ -3768,53 +3775,148 @@ describe("pending cleanup: one remover per worktree", () => {
   })
 
   describe("a veto that is still being written is honoured by the final check", () => {
-    // The next repository observation waits until released, so the call that makes it is caught
-    // in the middle of publishing its veto.
+    // While held, every repository observation of this instance waits until released, so a call that
+    // makes one is caught in the middle of publishing its veto. While failing, every one answers null.
     let gate: { started: () => void; wait: Promise<void> } | undefined
+    let failing = false
     const observe: GitRunner = async (argv, cwd, timeoutMs, signal) => {
+      if (failing) return null
       const held = gate
-      gate = undefined
       if (held !== undefined) {
         held.started()
         await held.wait
       }
       return spawnGit(argv, cwd, timeoutMs, signal)
     }
-    const holdNextObservation = () => {
+    const holdObservations = () => {
       const started = Promise.withResolvers<void>()
       const release = Promise.withResolvers<void>()
       gate = { started: started.resolve, wait: release.promise }
-      return { started: started.promise, release: release.resolve }
+      releaseGate = () => {
+        gate = undefined
+        release.resolve()
+      }
+      return { started: started.promise, release: releaseGate }
     }
-
-    test("a refused explicit cleanup keeps the worktree while its denial is being recorded", async () => {
-      const h = await harness("veto-deny", { observe })
-      const held = holdNextObservation()
-      const refused = h.pending
+    // A test that fails while holding must not leave the next one's observations held.
+    let releaseGate = () => {}
+    afterEach(() => {
+      releaseGate()
+      failing = false
+    })
+    /** A harness whose priming observed the repository, or, with `primed` false, whose priming failed. */
+    const vetoHarness = async (name: string, primed: boolean, over: Parameters<typeof harness>[1] = {}) => {
+      failing = !primed
+      try {
+        return await harness(name, { observe, ...over })
+      } finally {
+        failing = false
+      }
+    }
+    const refuseExplicit = (h: Harness) =>
+      h.pending
         .explicit(() => Promise.reject(new Error("rejected")), "ses_other")
         .authorize({ worktree: h.f.linked })
         .catch(() => {})
-      await held.started
-      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("cleanup was denied")
-      held.release()
-      await refused
-      await h.finish()
-    })
-
-    test("a background shell reported by the idle hook keeps the worktree while its hold is being recorded", async () => {
-      const h = await harness("veto-hold", { observe })
-      await h.pending.start()
-      const held = holdNextObservation()
-      const reported = h.fake.fire.session("experimental.idle", {
+    const shellReport = (h: Harness) =>
+      h.fake.fire.session("experimental.idle", {
         sessionID: "ses_x",
         background: [{ kind: "shell", sessionID: "ses_x", shellID: "sh1", command: `cd ${h.f.linked} && make test` }],
       } as never)
-      await held.started
-      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("running work")
+    /** Another delivery instance in the same repository, with no in-memory state of the first. */
+    const otherInstance = (h: Harness) =>
+      createPendingCleanup({ ctx: h.fake.context, cwd: h.f.main, env: h.f.env, host: () => undefined, now: () => NOW + 10 })
+    const priming = [
+      ["primed", true],
+      ["unprimed after a failed priming", false],
+    ] as const
+
+    test.each(priming)("%s: a refused explicit cleanup's denial is on disk for another instance before any git wait", async (_name, primed) => {
+      const h = await vetoHarness(`veto-deny-${primed}`, primed)
+      const other = otherInstance(h)
+      const held = holdObservations()
+      // The refusal finishes publishing, or this instance waits on git first.
+      await Promise.race([refuseExplicit(h), held.started])
+      expect(await other.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("cleanup was denied")
       held.release()
-      await reported
+      await other.dispose()
+      await h.finish()
+    })
+
+    test.each(priming)("%s: a background shell reported by the idle hook is on disk as a hold before any git wait", async (_name, primed) => {
+      const h = await vetoHarness(`veto-hold-${primed}`, primed)
+      await h.pending.start()
+      const held = holdObservations()
+      // The hook's first git wait (its cleanup pass) comes only after the hold is written.
+      await Promise.race([shellReport(h), held.started])
+      expect(holdsState(h.common, h.f.linked, NOW + 10)).toBeDefined()
+      held.release()
       await h.pending.settle()
       expect(removed(h)).toBe(false)
+      await h.finish()
+    })
+
+    test("a session lookup that never settles neither keeps the report open nor leaves the worktree unguarded", async () => {
+      const h = await harness("veto-hold-lookup", { sessionLookupMs: 50 })
+      ;(h.fake.context.session as unknown as { get: () => Promise<never> }).get = () => new Promise<never>(() => {})
+      await h.pending.start()
+      await h.fake.fire.session("experimental.idle", {
+        sessionID: "ses_x",
+        background: [{ kind: "subagent", sessionID: "ses_x", childSessionID: "ses_hung" }],
+      } as never)
+      const hold = holdsState(h.common, h.f.linked, NOW + 10)
+      expect(hold).toBeDefined()
+      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toBe(hold)
+      await h.finish()
+    })
+
+    const needsPermissions = process.getuid?.() === 0 ? test.skip : test
+    test("the receipts a report reads and the holds it writes come from one repository observation", async () => {
+      // Git answers the combined read for another repository and nothing else, so a location
+      // assembled from two sources would read this repository's receipts and write the holds
+      // into the other's common directory.
+      const other = await fixture("veto-pair-other")
+      const onlyCombinedRead: GitRunner = (argv, _cwd, timeoutMs, signal) =>
+        argv.length === REPOSITORY_OBSERVATION_ARGS.length && argv.every((part, i) => part === REPOSITORY_OBSERVATION_ARGS[i])
+          ? spawnGit(argv, other.main, timeoutMs, signal)
+          : null
+      const h = await harness("veto-pair", { observe: onlyCombinedRead })
+      await h.pending.start()
+      await shellReport(h)
+      const otherCommon = (await repositoryContext(other.main))?.commonDir as string
+      expect(readHolds(otherCommon, h.f.linked).holds).toEqual([])
+      await h.finish()
+      rmSync(other.root, { recursive: true, force: true })
+    })
+
+    needsPermissions("a hold that fails to be written while the final check lists sessions keeps the worktree", async () => {
+      // The final check's session listing waits until released; the report fails meanwhile.
+      const listing = Promise.withResolvers<void>()
+      const listed = Promise.withResolvers<void>()
+      let first = true
+      const list = async () => {
+        if (first) {
+          first = false
+          listed.resolve()
+          await listing.promise
+        }
+        return { data: [] }
+      }
+      const h = await harness("veto-hold-unwritable", { list })
+      await h.pending.start()
+      const check = h.pending.removalFor("ses_lead").finalCheck(h.f.linked)
+      await listed.promise
+      // The check's own writability probe has made the worktree's holds directory by now.
+      const holdsRoot = join(h.common, "opencode", "holds")
+      const holdsDir = join(holdsRoot, readdirSync(holdsRoot)[0] as string)
+      chmodSync(holdsDir, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        await shellReport(h)
+      } finally {
+        chmodSync(holdsDir, 0o755) // check-test-executables: directory permission, not a script
+      }
+      listing.resolve()
+      expect(await check).toContain("its running work could not be recorded")
       await h.finish()
     })
   })

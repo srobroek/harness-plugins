@@ -19,6 +19,7 @@ import {
 } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
+import { markedCommonDir } from "@srobroek/opencode-lib/checkout-marker"
 import { SAFE_GIT_ARGS } from "@srobroek/opencode-lib/safe-git"
 import { type CliOptions, runCli } from "./forge-adapter.ts"
 
@@ -316,6 +317,21 @@ function checkoutGitDirectory(checkout: string): string | null {
   }
 }
 
+/** The repository key: 16 hex characters of the SHA-256 of a physical git common directory. */
+function keyOf(commonDir: string): string {
+  return createHash("sha256").update(commonDir).digest("hex").slice(0, 16)
+}
+
+/**
+ * The repository that the `.git` entry at or above `cwd` names, read from the filesystem without
+ * running git ({@link markedCommonDir}), or null. It exists only so a veto can be written to disk
+ * before git has been observed; nothing proves or removes anything from it.
+ */
+export function markedRepository(cwd: string): { commonDir: string; key: string } | null {
+  const commonDir = markedCommonDir(cwd)
+  return commonDir === null ? null : { commonDir, key: keyOf(commonDir) }
+}
+
 /**
  * Parse Git's two newline-delimited paths without guessing through malformed or
  * ambiguous output. A path containing a newline cannot be represented by this
@@ -371,7 +387,7 @@ export async function repositoryContext(
 
   const root = physicalDirectory(candidate)
   if (root === null) return null
-  const key = createHash("sha256").update(paths.commonDir).digest("hex").slice(0, 16)
+  const key = keyOf(paths.commonDir)
   return {
     key,
     commonDir: paths.commonDir,
@@ -391,7 +407,7 @@ export async function repoKey(
   const common = printed.endsWith("\n") ? printed.slice(0, -1) : printed
   if (common === "" || common.includes("\n") || common.includes("\r") || common.includes("\0")) return null
   const real = physicalDirectory(isAbsolute(common) ? common : resolve(cwd, common))
-  return real === null ? null : createHash("sha256").update(real).digest("hex").slice(0, 16)
+  return real === null ? null : keyOf(real)
 }
 
 /**

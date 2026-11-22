@@ -346,6 +346,8 @@ export async function setupDelivery(
     host: () => hostWorktrees(ctx),
     ...overrides,
   })
+  // Before any tool or hook can run: a veto is then written to disk without waiting on git first.
+  await pending.prime()
 
   const tools = await ctx.tool.transform((editor) => {
     editor.add({
