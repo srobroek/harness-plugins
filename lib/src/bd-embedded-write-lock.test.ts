@@ -1081,7 +1081,11 @@ describe("registry left by another plugin version", () => {
         acquired = true
         return got
       })
-      await new Promise((resolve) => setTimeout(resolve, 200))
+      // `hold` runs synchronously up to its first wait, so the waiter is parked once the call returns: its
+      // ticket heads the queue with a wake handle set. Yield one macrotask and it must still not have acquired.
+      const queue = (holder[KEY] as { queues: Map<string, Array<{ wake?: unknown }>> }).queues.get(lock)
+      expect(queue?.[0]?.wake).toBeDefined()
+      await new Promise((resolve) => setImmediate(resolve))
       expect(acquired).toBe(false)
       release(store, "old")
       expect((await waiting).kind).toBe("held")
