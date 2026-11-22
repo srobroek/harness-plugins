@@ -11,6 +11,7 @@ import { shellWriteTargets } from "@srobroek/opencode-lib"
 import { hasAttribution } from "./attribution.ts"
 import { historyRewrite } from "./history-rewrite.ts"
 import { CHECK_FAILED_MESSAGE, NESTING_MESSAGE, OP_MESSAGE, opGuard, type ProviderTypes } from "./op-guard.ts"
+import { gitRemoteResolver, type PushViaConfig, pushVia, type RemoteResolver, repositorySelected } from "./push-via.ts"
 import {
   base,
   type Command,
@@ -33,6 +34,7 @@ export type GuardID =
   | "op-guard"
   | "dns-delegation"
   | "history-rewrite"
+  | "push-via"
 
 export const GUARD_IDS: readonly GuardID[] = [
   "indirection",
@@ -43,11 +45,17 @@ export const GUARD_IDS: readonly GuardID[] = [
   "op-guard",
   "dns-delegation",
   "history-rewrite",
+  "push-via",
 ]
 
 export type Refusal = { guard: GuardID; reason: string }
 
-export const MESSAGES: Record<GuardID, string> = {
+function shellPath(path: string): string {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`
+}
+
+/** Refusal text per guard; `push-via` is parameterised by the configured host, command and the push's directory. */
+export const MESSAGES: { [K in GuardID]: K extends "push-via" ? (host: string, command: string, dir: string) => string : string } = {
   indirection:
     "Blocked by safety (bash-indirection-guard): this destructive command targets an unexpanded variable, command substitution, or backtick expression, so its path cannot be verified. Resolve the target and re-issue a literal command; a quoted variable is accepted only after a bare `--` end-of-options marker.",
   "remote-exec":
@@ -60,6 +68,8 @@ export const MESSAGES: Record<GuardID, string> = {
     "Blocked by safety (git-defender-user-only): only the user runs the Git Defender CLI. It acts under the user's corporate identity, so every subcommand is refused, read-looking ones included. Name the exact command you would have run and why, hand it to the user to run in their own terminal, and report the outcome you needed as unknown. Do not retry through eval, a wrapper, a script or a subagent.",
   "history-rewrite":
     "Blocked by safety (history-rewrite-guard): history-rewriting commands (`git filter-repo`, `git filter-branch`, `git replace`, `git update-ref -d` on a branch) must not run in place in a canonical checkout, and `filter-repo --force` must not run at all. Clone the repository into a temp directory and run the command there with the tool's workdir set to the clone.",
+  "push-via": (host, command, dir) =>
+    `Blocked by safety (push-via-guard): a plain \`git push\` to ${host} cannot work on this host. Push with \`${command} -C ${shellPath(dir)} push\` instead (same arguments), and push WIP often so commits are not lost.`,
   "op-guard": OP_MESSAGE,
   "dns-delegation":
     "Blocked by safety (dns-delegation-guard): deleting a Route 53 hosted zone leaves any parent zone delegating to the deleted nameservers, a subdomain-takeover risk. Read ~/.config/opencode/steering/dns-delegation-cleanup.md, find the parent zone, then re-run with `DNS_PARENT_CHECKED=1` in front of the command to confirm you will delete the parent's NS (and DS) record set for the child and verify it. Do not report the zone as torn down until the parent delegation is gone.",
@@ -319,12 +329,16 @@ export type GuardOptions = {
   tempRoots?: readonly string[]
   /** The environment the shell inherits; the history-rewrite guard refuses when it already selects a repository. */
   env?: NodeJS.ProcessEnv
+  /** Off when absent: refuse a plain `git push` whose remote resolves to `host`, pointing at `command`. */
+  pushVia?: PushViaConfig
+  /** Test seam: replaces reading the remote URL from git. */
+  resolveRemote?: RemoteResolver
 }
 
 /** The first hard gate `source` trips, or `undefined`. */
 export function hardGate(source: string, cwd: string, options: GuardOptions = {}): Refusal | undefined {
   const on = (guard: GuardID) => options.disabled?.has(guard) !== true
-  const refuse = (guard: GuardID): Refusal => ({ guard, reason: MESSAGES[guard] })
+  const refuse = (guard: Exclude<GuardID, "push-via">): Refusal => ({ guard, reason: MESSAGES[guard] })
   // The other gates fail open (the caller treats a throw as "allow"); op-guard fails closed, so it
   // runs on its own and a throw above never skips it.
   let failure: { error: unknown } | undefined
@@ -341,6 +355,12 @@ export function hardGate(source: string, cwd: string, options: GuardOptions = {}
     else if (on("history-rewrite")) {
       const reason = historyRewrite(commands, cwd, options.tempRoots, options.env)
       if (reason !== undefined) refusal = { guard: "history-rewrite", reason }
+    }
+    if (refusal === undefined && on("push-via") && options.pushVia !== undefined && !repositorySelected(options.env)) {
+      const resolveRemote = options.resolveRemote ?? gitRemoteResolver(options.env ?? {})
+      const push = pushVia(commands, cwd, options.pushVia, resolveRemote)
+      if (push !== undefined)
+        refusal = { guard: "push-via", reason: MESSAGES["push-via"](options.pushVia.host, options.pushVia.command, push.dir) }
     }
   } catch (error) {
     failure = { error }
