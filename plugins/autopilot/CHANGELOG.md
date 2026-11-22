@@ -1,3 +1,9 @@
+## autopilot [1.3.4](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.3.3...autopilot--v1.3.4) (2026-11-22)
+
+### Bug Fixes
+
+* **beads:** follow bd 1.3.1 ledger precedence for claim tracking ([#89](https://github.com/srobroek/harness-plugins/issues/89)) ([cbe4a76](https://github.com/srobroek/harness-plugins/commit/cbe4a76182c36d3b165e27ecbe311071a3068682))
+
 ## autopilot [1.3.3](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.3.2...autopilot--v1.3.3) (2026-11-22)
 
 ### Bug Fixes
