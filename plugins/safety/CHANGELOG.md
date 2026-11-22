@@ -1,3 +1,9 @@
+## safety [0.12.1](https://github.com/srobroek/harness-plugins/compare/safety--v0.12.0...safety--v0.12.1) (2026-11-22)
+
+### Bug Fixes
+
+* **safety:** detect hook frameworks by generated markers ([c20a19f](https://github.com/srobroek/harness-plugins/commit/c20a19fe9a1957ceae8995395e6d3fdb6ceb0d3d))
+
 ## safety [0.12.0](https://github.com/srobroek/harness-plugins/compare/safety--v0.11.5...safety--v0.12.0) (2026-11-22)
 
 ### Features
