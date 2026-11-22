@@ -4565,7 +4565,7 @@ function gitRemoteResolver(inherited) {
     const remotes = git(cwd, ["remote"], env);
     if (remotes === undefined)
       return;
-    const name = (branch === undefined ? undefined : configured(`branch.${branch}.pushRemote`)) ?? configured("remote.pushDefault") ?? (branch === undefined ? undefined : configured(`branch.${branch}.remote`)) ?? (remotes.length === 1 ? remotes[0] : "origin");
+    const name = (branch === undefined ? undefined : configured(`branch.${branch}.pushRemote`)) ?? configured("remote.pushDefault") ?? (branch === undefined ? undefined : configured(`branch.${branch}.remote`)) ?? (remotes.length === 1 ? remotes[0] : undefined) ?? "origin";
     return git(cwd, ["remote", "get-url", "--push", "--all", "--", name], env);
   };
 }

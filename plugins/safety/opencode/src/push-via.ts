@@ -81,7 +81,8 @@ export function gitRemoteResolver(inherited: Environment): RemoteResolver {
       (branch === undefined ? undefined : configured(`branch.${branch}.pushRemote`)) ??
       configured("remote.pushDefault") ??
       (branch === undefined ? undefined : configured(`branch.${branch}.remote`)) ??
-      (remotes.length === 1 ? remotes[0] : "origin")
+      (remotes.length === 1 ? remotes[0] : undefined) ??
+      "origin"
     return git(cwd, ["remote", "get-url", "--push", "--all", "--", name], env)
   }
 }
