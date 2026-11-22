@@ -1304,6 +1304,11 @@ describe("a write whose store an inherited BEADS_DB selects (bd 1.3.1: BEADS_DIR
     ["let", () => "let BEADS_DB=1; bd close bd-1"],
     ["a := expansion", () => `: \${BEADS_DB:=${join(other, "beads.db")}}; bd close bd-1`],
     ["an arithmetic assignment", () => "(( BEADS_DB = 1 )); bd close bd-1"],
+    // The name is built at run time, so no literal `BEADS_DB` appears in the command.
+    ["an export of a computed name", () => `n=BEADS_; export "\${n}DB=${join(other, "beads.db")}"; bd close bd-1`],
+    ["printf -v with a computed name", () => 'n=BEADS_; printf -v "${n}DB" %s /x; bd close bd-1'],
+    ["read of a computed name from a here-document", () => 'n=BEADS_; read "${n}DB" <<EOF\n/x\nEOF\nbd close bd-1'],
+    ["a nameref to BEADS_DB", () => 'n=BEADS_; declare -n ref="${n}DB"; ref=/x; bd close bd-1'],
   ]
   describe.each([
     ["missing", () => join(root, "missing", ".beads", "beads.db")],
@@ -1316,8 +1321,23 @@ describe("a write whose store an inherited BEADS_DB selects (bd 1.3.1: BEADS_DIR
     })
   })
 
-  test("a read of BEADS_DB after the write does not refuse it", () => {
-    expect(targets("bd close bd-1; echo $BEADS_DB", join(store, "beads.db"))).toEqual({ kind: "stores", stores: [store] })
+  test("a plain `bd create x` under an inherited BEADS_DB is still locked on that store", () => {
+    expect(targets("bd create x", join(store, "beads.db"))).toEqual({ kind: "stores", stores: [store] })
+  })
+
+  test("a plain write with a redirection still counts as one plain command", () => {
+    expect(targets("bd close bd-1 > closed.txt 2>&1", join(store, "beads.db"))).toEqual({ kind: "stores", stores: [store] })
+  })
+
+  test.each([
+    ["a list", "bd list; bd close bd-1"],
+    ["a pipe", "echo x | bd close bd-1"],
+    ["a substitution", "bd close $(echo bd-1)"],
+    ["a group", "{ bd close bd-1; }"],
+  ])("refuses a write inside %s, with the BEADS_DIR workaround", (_name, command) => {
+    const result = targets(command, join(store, "beads.db"))
+    expect(result.kind).toBe("refused")
+    expect(JSON.stringify(result)).toContain("BEADS_DIR=/path")
   })
 
   test.each([

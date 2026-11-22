@@ -669,7 +669,6 @@ const SOURCE_RUNNERS: Record<string, true> = {
 const ASSIGNING: Record<string, true> = {
   declare: true,
   getopts: true,
-  let: true,
   local: true,
   mapfile: true,
   printf: true,
@@ -780,12 +779,7 @@ type BeadsDirState =
   | { kind: "known"; value: string | undefined; assigned: boolean }
   | { kind: "unknown"; cause: string }
 /** What the shell has done to the working directory and `BEADS_DIR` by this point. */
-type ShellState = {
-  cwd: CwdState
-  beadsDir: BeadsDirState
-  /** Set once the command changes `BEADS_DB` in a way the planner does not follow; the source text that did. */
-  beadsDbCause?: string
-}
+type ShellState = { cwd: CwdState; beadsDir: BeadsDirState }
 
 type OtherShape = { kind: "other"; assignments: ShellWord[]; head: ShellWord | undefined; args: ShellWord[] }
 type CommandShape =
@@ -872,6 +866,10 @@ export function planEmbeddedWrites(
   // command is reported as unplaced and no `BEADS_DIR` assignment in it counts as a choice.
   const definesFunction = hasFunctionDefinition(items)
   if (definesFunction) unplaced?.("the command defines a shell function, whose body the gate does not follow")
+  // The one shape in which an inherited `BEADS_DB` cannot have been changed first: a single simple
+  // command. Any other shell construct could assign it under a name built at run time.
+  const plainCommand =
+    scan.complete && scan.substitutions.length === 0 && items.length === 1 && items[0]?.kind === "command" && !definesFunction
   // Inside `if`/`case`/a loop, or behind `&&`/`||`, a command may not run at all.
   let compound = 0
   let unresolvedWrite = false
@@ -919,7 +917,7 @@ export function planEmbeddedWrites(
       const argv = shape.child.slice(1)
       const child = invocationFromArgv(argv.map((word) => word.value))
       if (child === undefined || !isWrite(child, argv)) continue
-      const resolved = resolveWrite(child, shape.assignments, state, env, command, command.slice(0, item.words[0]?.start ?? 0))
+      const resolved = resolveWrite(child, shape.assignments, state, env, command, plainCommand)
       if ("problem" in resolved) {
         unresolvedWrite = true
         unresolved?.(child)
@@ -939,7 +937,7 @@ export function planEmbeddedWrites(
     const invocation = invocationFromArgv(shape.args.map((word) => word.value))
     // `bd`, `bd --version` and `bd --help` carry no verb: recognised, and no write.
     if (invocation === undefined || !isWrite(invocation, shape.args)) continue
-    const resolved = resolveWrite(invocation, shape.assignments, state, env, command, command.slice(0, item.words[0]?.start ?? 0))
+    const resolved = resolveWrite(invocation, shape.assignments, state, env, command, plainCommand)
     if ("problem" in resolved) {
       unresolvedWrite = true
       unresolved?.(invocation)
@@ -1188,18 +1186,12 @@ function applyEffects(
   const uncertain = context.scoped || context.conditional
   const { head, args } = shape
   if (head === undefined) {
-    const changed = shape.assignments.find((word) => BEADS_DB_WORD.test(word.value))
-    if (changed !== undefined) state.beadsDbCause = source.slice(changed.start, changed.end)
     // A bare assignment updates an exported variable in place, so it is treated as
     // exported: if it was not, the rewrite exports the value it resolved anyway.
     for (const word of shape.assignments) assignBeadsDir(state, word, source, uncertain)
     return
   }
   const name = head.expands ? "" : commandName(head)
-  if (name === "export" || name === "unset" || ASSIGNING[name] === true) {
-    const changed = args.find((word) => BEADS_DB_WORD.test(word.value))
-    if (changed !== undefined) state.beadsDbCause = source.slice(changed.start, changed.end)
-  }
   if (name === "cd") {
     const operands = args.filter((word) => word.value !== "--" && !/^-[LPe@]+$/.test(word.value))
     const target = operands[0]
@@ -1230,10 +1222,7 @@ function applyEffects(
         fix: "Use a literal `cd DIR &&` prefix or the tool's cwd field, or run the write as its own tool call.",
       },
     }
-    if (name !== "pushd" && name !== "popd") {
-      state.beadsDir = { kind: "unknown", cause: name }
-      state.beadsDbCause = name
-    }
+    if (name !== "pushd" && name !== "popd") state.beadsDir = { kind: "unknown", cause: name }
     return
   }
   if (name === "export") {
@@ -1298,8 +1287,8 @@ function resolveWrite(
   state: ShellState,
   env: NodeJS.ProcessEnv,
   source: string,
-  /** The command text before this simple command: every earlier way the shell could have changed `BEADS_DB`. */
-  before: string,
+  /** Whether the whole command is this one simple command, so nothing before it can have changed `BEADS_DB`. */
+  plain: boolean,
 ): ResolvedWriteTarget | { problem: Problem } {
   const write = `\`bd ${invocation.verb}\``
   for (const flag of STORE_FLAGS) {
@@ -1328,12 +1317,13 @@ function resolveWrite(
   // bd reads `BEADS_DB` only when `--db`, `-C` and `BEADS_DIR` leave the store open. The runner then
   // injects `BEADS_DIR` for the store planned here, so a `BEADS_DB` the shell changed would
   // send the write to a different store than the one locked: refuse rather than guess.
-  const dbEffective =
-    directory === undefined && db === undefined && (beadsDir.kind === "known" ? (beadsDir.value ?? "") === "" : false)
-  // An inline literal that names the inherited store again changes nothing. Anything else the shell
-  // does with the name earlier (a loop variable, `let`, `${BEADS_DB:=...}`, an arithmetic assignment,
-  // or any assigner not listed) is not followed, so a mention of `BEADS_DB` before the write refuses it.
   const inheritedDb = env.BEADS_DB ?? ""
+  const dbEffective =
+    directory === undefined &&
+    db === undefined &&
+    (beadsDir.kind === "known" ? (beadsDir.value ?? "") === "" : false) &&
+    (inheritedDb !== "" || assignments.some((word) => BEADS_DB_WORD.test(word.value)))
+  // An inline literal that names the inherited store again changes nothing.
   const dbCwd = state.cwd.kind === "known" ? state.cwd.cwd : undefined
   const unchangedInline = (word: ShellWord): boolean => {
     const value = word.value.slice("BEADS_DB=".length)
@@ -1348,15 +1338,11 @@ function resolveWrite(
     )
   }
   const ownDbChange = assignments.find((word) => BEADS_DB_WORD.test(word.value) && !unchangedInline(word))
-  const dbCause =
-    ownDbChange !== undefined
-      ? source.slice(ownDbChange.start, ownDbChange.end)
-      : (state.beadsDbCause ?? (before.includes("BEADS_DB") ? "an earlier use of BEADS_DB" : undefined))
-  if (dbEffective && dbCause !== undefined) {
+  if (dbEffective && (!plain || ownDbChange !== undefined)) {
     return {
       problem: {
-        part: `${write} runs where \`BEADS_DB\` may have been changed (\`${dbCause}\`), which the lock does not follow`,
-        fix: "Set `BEADS_DIR` to a literal path instead, or leave `BEADS_DB` as the session inherited it.",
+        part: `${write} runs where \`BEADS_DB\` selects the store, and the command is ${plain ? `\`${source.slice(ownDbChange?.start, ownDbChange?.end)}\`, which changes it` : "not one plain `bd` command (it chains, pipes, nests, substitutes or defines functions), so the shell may have changed `BEADS_DB` first"}`,
+        fix: "Run the write as one plain `bd` command, or set `BEADS_DIR=/path` to a literal path (`BEADS_DIR=/path bd ...`), which `BEADS_DB` cannot override.",
       },
     }
   }
@@ -1369,13 +1355,12 @@ function resolveWrite(
     }
   }
   if (state.cwd.kind === "dynamic") return { problem: state.cwd.problem }
-  const relativeDb = dbEffective && inheritedDb !== "" && !isAbsolute(inheritedDb)
   const relative =
     db !== undefined
       ? !isAbsolute(db) && (directory === undefined || !isAbsolute(directory))
-      : directory !== undefined ? !isAbsolute(directory) : relativeDb
+      : directory !== undefined && !isAbsolute(directory)
   if (relative && !state.cwd.certain) {
-    const flag = db !== undefined ? "--db" : directory !== undefined ? "-C" : "BEADS_DB"
+    const flag = db === undefined ? "-C" : "--db"
     return {
       problem: {
         part: `${write} resolves a relative \`${flag}\` path after a \`cd\` the lock cannot confirm ran`,
