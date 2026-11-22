@@ -3660,7 +3660,7 @@ function staleSkipNotice(output) {
     return;
   return [
     `\`bd import\` skipped stale rows (${stale}): the JSONL export is BEHIND this database and local state was kept.`,
-    "Sync with Dolt: run `bd dolt pull` to take peer changes (and `bd dolt push` to share yours). Do not stage or commit `.beads/issues.jsonl`: it is an optional export, not the sync channel."
+    "A stale skip alone needs no remote operation. Use `bd dolt pull` to take peer changes (and `bd dolt push` to share yours) only when a Dolt remote is configured. Do not stage or commit `.beads/issues.jsonl`: it is an optional export, not the sync channel."
   ].join(" ");
 }
 function internalWriteOwner() {
@@ -5772,7 +5772,7 @@ function decideBdUpdateCloseParsed(parsed) {
 
 // plugins/beads/opencode/src/ledger-context.ts
 import { existsSync as existsSync8, lstatSync as lstatSync3, realpathSync as realpathSync7 } from "fs";
-import { dirname as dirname8, join as join5, resolve as resolve8 } from "path";
+import { basename as basename3, dirname as dirname8, join as join5, resolve as resolve8 } from "path";
 var SAFE_PREFIX = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 function findLedger(from) {
   const start = resolve8(from);
@@ -5845,6 +5845,13 @@ function canonical3(path) {
 function sameStore(a, b, cwd) {
   return canonical3(resolve8(cwd, a)) === canonical3(resolve8(cwd, b));
 }
+function ownerRoot(store, identity) {
+  if (basename3(store) === ".beads")
+    return dirname8(store);
+  if (basename3(identity) === ".git")
+    return dirname8(identity);
+  return store;
+}
 function foreignLedger(input) {
   const store = canonical3(input.store);
   const here = input.identity(input.cwd);
@@ -5855,7 +5862,7 @@ function foreignLedger(input) {
     return;
   if (here === there)
     return;
-  return { store, ledgerRoot: dirname8(store) };
+  return { store, ledgerRoot: ownerRoot(store, there) };
 }
 var WRONG_PROJECT = "pass the shell tool's `workdir` for the right repository (and unset BEADS_DIR) instead of `cd`";
 function ledgerRepoMismatch(input) {

@@ -1,3 +1,9 @@
+## beads [0.8.6](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.5...beads--v0.8.6) (2026-11-22)
+
+### Bug Fixes
+
+* **beads:** name the right ledger owner and qualify Dolt stale-skip advice ([#92](https://github.com/srobroek/harness-plugins/issues/92)) ([35ef5c8](https://github.com/srobroek/harness-plugins/commit/35ef5c8cba56ba394e49fd650085e7ca693c76d1))
+
 ## beads [0.8.5](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.4...beads--v0.8.5) (2026-11-21)
 
 ### Bug Fixes
