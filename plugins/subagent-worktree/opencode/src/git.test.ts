@@ -428,6 +428,43 @@ describe("programs a repository's own config or hooks name do not run during aut
     return { unhardened, hardened: await fired(marker) }
   }
 
+  describe("with SSH signing switched on in the repository", () => {
+    /** A repository where signing a commit asks `gpg.ssh.defaultKeyCommand` for a key, and that command writes `marker`. */
+    const signingRepo = async (name: string) => {
+      const { repo, marker, script } = await repoWith(name)
+      await raw(repo, "switch", "--quiet", "-c", "side")
+      await writeFile(join(repo, "side.txt"), "side")
+      await raw(repo, "add", "side.txt")
+      await raw(repo, "commit", "--quiet", "-m", "side")
+      await raw(repo, "switch", "--quiet", "main")
+      await writeFile(join(repo, "main.txt"), "main")
+      await raw(repo, "add", "main.txt")
+      await raw(repo, "commit", "--quiet", "-m", "main")
+      await raw(repo, "config", "gpg.format", "ssh")
+      await raw(repo, "config", "commit.gpgsign", "true")
+      await raw(repo, "config", "gpg.ssh.defaultKeyCommand", script)
+      return { repo, marker, before: await raw(repo, "rev-parse", "HEAD") }
+    }
+    const git = (repo: string, ...args: string[]) => ["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.com", ...args]
+
+    test.each([
+      ["commit", (repo: string) => git(repo, "commit", "--allow-empty", "-m", "x")],
+      ["merge", (repo: string) => git(repo, "merge", "--no-ff", "--no-edit", "side")],
+    ])("a %s runs no gpg.ssh.defaultKeyCommand through spawnRunner", async (name, argv) => {
+      const { repo, marker, before } = await signingRepo(`ssh-${name}`)
+      const hardened = await spawnRunner(argv(repo))
+      const hardenedRan = await fired(marker)
+      // The hardened run must have done the work: a refused or failed commit would also leave the marker absent.
+      const moved = (await raw(repo, "rev-parse", "HEAD")) !== before
+      await raw(repo, "reset", "--hard", before)
+      await rm(marker, { force: true })
+      // The control: the same call through plain git signs, so it asks the command for a key.
+      const control = Bun.spawn(argv(repo), { stdin: "ignore", stdout: "ignore", stderr: "ignore" })
+      await control.exited
+      expect({ code: hardened.code, moved, hardened: hardenedRan, unhardened: await fired(marker) }).toEqual({ code: 0, moved: true, hardened: false, unhardened: true })
+    })
+  })
+
   test("core.fsmonitor in the repository's config is not run by git status", async () => {
     const { repo, marker, script } = await repoWith("fsmonitor")
     await raw(repo, "config", "core.fsmonitor", script)
