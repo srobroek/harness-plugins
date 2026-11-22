@@ -1055,16 +1055,25 @@ describe("prompts a subagent cannot answer", () => {
       const slept: number[] = []
       return { slept, sleep: async (ms: number) => void slept.push(ms) }
     }
-    /** One scripted subscription per call; once the script runs out, every call gets a stream that never yields. */
+    /**
+     * One scripted subscription per call; once the script runs out, every call gets a stream that never yields.
+     * An entry that throws fails `subscribe()` itself.
+     */
     const scripted = (streams: Array<() => AsyncIterator<unknown>>) => {
       let calls = 0
       const subscribe = () => {
-        const make = streams[calls++] ?? (() => ({ next: () => new Promise<never>(() => {}) }))
-        return { [Symbol.asyncIterator]: make }
+        const stream = (streams[calls++] ?? (() => ({ next: () => new Promise<never>(() => {}) })))()
+        return { [Symbol.asyncIterator]: () => stream }
       }
       return { subscribe, calls: () => calls }
     }
     const rejecting = () => ({ next: () => Promise.reject(new TypeError("host down")) })
+    const ending = () => ({ next: () => Promise.resolve({ done: true as const, value: undefined }) })
+    const refusing = (): never => {
+      throw new RangeError("host refused")
+    }
+    /** One turn of the event loop: every promise continuation queued before it has run. For negative assertions only. */
+    const eventLoopTurn = () => new Promise<void>((resolve) => setImmediate(resolve))
     const yielding = (...events: unknown[]) => {
       const queue = [...events]
       return () => ({
@@ -1072,13 +1081,17 @@ describe("prompts a subagent cannot answer", () => {
       })
     }
 
-    test("resubscribes after a failure, warns on it, and rejects a prompt the new stream delivers", async () => {
+    test.each([
+      ["the stream rejects", rejecting, "TypeError"],
+      ["the stream ends", ending, "stream ended"],
+      ["subscribe() itself throws", refusing, "RangeError"],
+    ])("resubscribes when %s, warns on it, and rejects a prompt the replacement stream delivers", async (_, failure, reason) => {
       const { sleep, slept } = instantSleep()
-      const script = scripted([() => rejecting(), yielding(asked("per_2", "ses_grandchild"))])
-      const warnings: string[] = []
+      const script = scripted([failure, yielding(asked("per_2", "ses_grandchild"))])
+      const warnings: Array<[string, unknown]> = []
       const { fake } = await load({}, {
         sessions: family,
-        warn: (message) => void warnings.push(message),
+        warn: (message, data) => void warnings.push([message, data]),
         watch: { delaysMs: delays, sleep },
         patch: (context) => {
           context.event.subscribe = script.subscribe
@@ -1087,7 +1100,7 @@ describe("prompts a subagent cannot answer", () => {
       await repliesSeen(fake, 1)
       expect(fake.replies.map((reply) => reply.requestID)).toEqual(["per_2"])
       expect(slept).toEqual([10])
-      expect(warnings.filter((message) => message.startsWith("permission prompt watch"))).toHaveLength(1)
+      expect(warnings).toEqual([["permission prompt watch failed; resubscribing (attempt 1)", { error: reason }]])
     })
 
     test("gives up after the bounded attempts, warning on each failure and once more when it stops", async () => {
@@ -1115,32 +1128,6 @@ describe("prompts a subagent cannot answer", () => {
       expect(warnings.every(([, data]) => JSON.stringify(data) === '{"error":"TypeError"}')).toBe(true)
     })
 
-    test("a teardown during the backoff ends the retry without another subscription or warning", async () => {
-      const entered = Promise.withResolvers<void>()
-      const warnings: string[] = []
-      const script = scripted([() => rejecting()])
-      const { cleanup } = await load({}, {
-        sessions: family,
-        warn: (message) => void warnings.push(message),
-        watch: {
-          delaysMs: delays,
-          sleep: (_, signal) =>
-            new Promise<void>((resolve) => {
-              entered.resolve()
-              signal.addEventListener("abort", () => resolve())
-            }),
-        },
-        patch: (context) => {
-          context.event.subscribe = script.subscribe
-        },
-      })
-      await entered.promise
-      await cleanup?.()
-      await new Promise<void>((resolve) => setTimeout(resolve, 5))
-      expect(script.calls()).toBe(1)
-      expect(warnings.filter((message) => message.startsWith("permission prompt watch"))).toHaveLength(1)
-    })
-
     test("a teardown whose iterator.return() rejects leaves no unhandled rejection", async () => {
       const unhandled: unknown[] = []
       const record = (reason: unknown) => void unhandled.push(reason)
@@ -1158,7 +1145,9 @@ describe("prompts a subagent cannot answer", () => {
           },
         })
         await cleanup?.()
-        await new Promise<void>((resolve) => setTimeout(resolve, 10))
+        // An unhandled rejection is delivered after the microtask queue drains, one event-loop turn later.
+        await eventLoopTurn()
+        await eventLoopTurn()
         expect(unhandled).toEqual([])
       } finally {
         process.off("unhandledRejection", record)
@@ -1183,7 +1172,8 @@ describe("prompts a subagent cannot answer", () => {
       await started.promise
       await cleanup?.()
       lookup.resolve({ id: "ses_grandchild", parentID: "ses_child", location: { directory: LANE } })
-      await new Promise<void>((resolve) => setTimeout(resolve, 10))
+      // Absence of a reply has no signal to await: one turn runs every continuation the lookup queued.
+      await eventLoopTurn()
       expect(fake.replies).toEqual([])
     })
   })

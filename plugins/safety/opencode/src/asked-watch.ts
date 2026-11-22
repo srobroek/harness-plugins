@@ -4,16 +4,19 @@
  * clock are injected, so tests drive it without a wall-clock wait.
  */
 
+/** The two timer functions `abortableSleep` uses; a test passes a controlled pair. */
+export type SleepTimers = Pick<typeof globalThis, "setTimeout" | "clearTimeout">
+
 /** Waits `ms`, or returns early when `signal` aborts. Never rejects; the timer does not hold the process open. */
-export function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
+export function abortableSleep(ms: number, signal: AbortSignal, timers: SleepTimers = globalThis): Promise<void> {
   return new Promise((resolve) => {
     if (signal.aborted) return resolve()
     const done = () => {
-      clearTimeout(timer)
+      timers.clearTimeout(timer)
       signal.removeEventListener("abort", done)
       resolve()
     }
-    const timer = setTimeout(done, ms)
+    const timer = timers.setTimeout(done, ms)
     timer.unref?.()
     signal.addEventListener("abort", done, { once: true })
   })

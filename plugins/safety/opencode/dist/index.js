@@ -2326,16 +2326,16 @@ function hostWarn(source) {
 }
 
 // plugins/safety/opencode/src/asked-watch.ts
-function abortableSleep(ms, signal) {
+function abortableSleep(ms, signal, timers = globalThis) {
   return new Promise((resolve) => {
     if (signal.aborted)
       return resolve();
     const done = () => {
-      clearTimeout(timer);
+      timers.clearTimeout(timer);
       signal.removeEventListener("abort", done);
       resolve();
     };
-    const timer = setTimeout(done, ms);
+    const timer = timers.setTimeout(done, ms);
     timer.unref?.();
     signal.addEventListener("abort", done, { once: true });
   });
