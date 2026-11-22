@@ -1376,7 +1376,7 @@ describe("bd 1.3.1's store order for a write, with BEADS_DB inherited", () => {
   })
 
   test.each([
-    ["BD_DB is inherited", "bd dolt set port 1", { BD_DB: other }],
+    ["BD_DB is inherited", "bd dolt set port 1", { BD_DB: "/x/.beads" }],
     ["BEADS_DB is mentioned in the command", "echo $BEADS_DB; bd dolt set port 1", {}],
     ["BD_DB is mentioned in the command", "BD_DB=/x/.beads bd dolt set port 1", {}],
   ])("refuses `bd dolt set` when %s", (_name, command, env) => {
