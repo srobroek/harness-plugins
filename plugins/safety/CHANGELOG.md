@@ -1,3 +1,9 @@
+## safety [0.12.2](https://github.com/srobroek/harness-plugins/compare/safety--v0.12.1...safety--v0.12.2) (2026-11-22)
+
+### Bug Fixes
+
+* **safety:** allow a root session to read one non-secret file outside the repo ([0ffd2ec](https://github.com/srobroek/harness-plugins/commit/0ffd2ecef788365a379f6d1aeb8312df959b7fbf)), closes [#109](https://github.com/srobroek/harness-plugins/issues/109)
+
 ## safety [0.12.1](https://github.com/srobroek/harness-plugins/compare/safety--v0.12.0...safety--v0.12.1) (2026-11-22)
 
 ### Bug Fixes
