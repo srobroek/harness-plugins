@@ -1108,6 +1108,7 @@ export function createLanes(
     save,
     scan,
     handedOff: settleHandover,
+    releasedTo: async (child) => parseRelease(await ctx.storage.get(releaseKey(child)))?.to,
     getSession,
     moveHome,
     removeWorktree,

@@ -108,6 +108,8 @@ export type LifecycleDeps = {
    * removes anything. A lane it reports true for must not be removed, evicted or retired through.
    */
   handedOff: (lane: Lane) => Promise<boolean>
+  /** The writer `child`'s release record hands its worktree to, if any: one storage read, no lock. Only those lanes need `handedOff` under the lock. */
+  releasedTo: (child: string) => Promise<string | undefined>
   getSession: (sessionID: string) => Promise<SessionLike | undefined>
   moveHome: (lane: Lane) => Promise<void>
   removeWorktree: (projectID: string, directory: string, force: boolean) => Promise<void>
@@ -468,12 +470,19 @@ export function createLifecycle(deps: LifecycleDeps) {
 
   const keptBecause = (kept: Extract<Finalized, { removed: false }>["kept"], reason: string): Finalized => ({ removed: false, kept, reason })
   const HANDED_OVER = "its worktree was handed to another writer, whose lane keeps it"
-  /** `deps.handedOff` under the worktree's lock, for callers that do not hold it. A failure counts as handed over. */
-  const settleHandover = (lane: Lane): Promise<boolean> =>
-    withLock(lane.directory, lane.parentDir, () => deps.handedOff(lane)).catch((error) => {
+  /**
+   * `deps.handedOff` under the worktree's lock, for callers that do not hold it. Only a lane whose release record
+   * names a successor takes the lock, so no other lane waits on it. A failure counts as handed over.
+   */
+  const settleHandover = async (lane: Lane): Promise<boolean> => {
+    try {
+      if ((await deps.releasedTo(lane.child)) === undefined) return false
+      return await withLock(lane.directory, lane.parentDir, () => deps.handedOff(lane))
+    } catch (error) {
       console.error(`subagent-worktree: could not check the handover of ${lane.child}:`, error instanceof Error ? error.message : error)
       return true
-    })
+    }
+  }
 
   /** Synchronous: a pending shutdown resume of, or an execution start since `seq` by, any of `sessionIDs`. */
   const startedSince = (sessionIDs: readonly string[], seq: number): Finalized | undefined => {
