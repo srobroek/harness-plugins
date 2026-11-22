@@ -197,7 +197,7 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 
 ## delivery: cleanup in another repository
 
-`delivery_land` with `repo` and a clone (`repoPath` or a `worktree`) keys the receipt by the target repository. Every later cleanup of that receipt runs in the clone. This covers the inline cleanup, an explicit `delivery_cleanup` and the turn-end retry. `repositoryCoordination` in `plugins/delivery/opencode/src/pending-cleanup.ts` binds the cleanup to the target, and `cleanupDelivery` takes it as `CleanupDeps.coordinate`.
+`delivery_land` with `repo` and a clone (`repoPath` or a `worktree`) keys the receipt by the target repository. Every later cleanup of that receipt runs in the clone. This covers the inline cleanup, an explicit `delivery_cleanup` and the turn-end retry. `repositoryCoordination` in `plugins/delivery/opencode/src/pending-cleanup.ts` binds the cleanup to the target. `cleanupDelivery` takes it as `CleanupDeps.coordinate`.
 
 - Delivery reads and writes the coordination files under the target's git common directory: claims and landing records, holds and denials, and the removal lock.
 - If the clone now resolves to another common directory, delivery removes nothing.
@@ -206,7 +206,9 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 - If the sessions in the clone and the worktree name exactly one project id, delivery removes the worktree through OpenCode's registry. With any other answer it refuses the removal.
 - `cleanupDelivery` without `coordinate` still refuses another repository.
 
-The clone registry is `<receipts root>/.clones/<session repo key>.json` (`clone-registry.ts`). It lists the key and canonical root of each repository that the session's repository landed into, newest first, at most 32. The turn-end retry, the idle-hook holds and gc read it. Before they read a root, they check its key again. A write replaces the file by rename, so two racing writers can each drop the other's new entry. A dropped entry costs a missed retry, never a removal.
+The clone registry is `<receipts root>/.clones/<session repo key>.json` (`clone-registry.ts`). It lists the key and canonical root of each repository that the session's repository landed into, newest first. The turn-end retry, the idle-hook holds and gc read it, and check each root's key again first. Each update takes a lease lock (`lib/src/lease-lock.ts`) beside the file and replaces the file by rename. Past 32 entries, the oldest entries with no pending receipts go. An entry with pending receipts stays.
+
+Each plugin instance also keeps the clones it registered in memory, so a failed write leaves its own holds and retry intact.
 
 ## Commands
 

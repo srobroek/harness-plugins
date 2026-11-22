@@ -57,6 +57,7 @@ import {
   type RepositoryIdentity,
 } from "./cleanup.ts"
 import { addClone, readClones } from "./clone-registry.ts"
+import { inClone } from "./land.ts"
 import {
   closeoutCommands,
   type GitRunner,
@@ -118,12 +119,15 @@ export function pendingCleanupAction(
   return { action: "retry", reason: facts.beads === "closed" ? "beads closed" : "ledger state unknown; the proofs decide" }
 }
 
-/** The nudge text: which beads to close, with the commands. */
-export function nudgeText(receipt: LandingReceipt, receiptPath: string): string {
+/**
+ * The nudge text: which beads to close, with the commands. For another repository's landing,
+ * `clone` is its checkout, and each command runs there without the session's ledger pin.
+ */
+export function nudgeText(receipt: LandingReceipt, receiptPath: string, clone?: string): string {
   const sha = receipt.pr.mergeCommitOid ?? "missing"
   const commands = receipt.beads.ids.flatMap((id) => {
     const { update, close } = closeoutCommands(id, receipt.pr.number, sha, receiptPath)
-    return [update, close]
+    return clone === undefined ? [update, close] : [inClone(clone, update), inClone(clone, close)]
   })
   return `<system-reminder>Landed PR #${receipt.pr.number}: close beads ${receipt.beads.ids.join(", ")} (commands: ${commands.join("; ")}) so its worktree can be cleaned up.</system-reminder>`
 }
@@ -256,9 +260,12 @@ export function createPendingCleanup(deps: PendingDeps) {
   const deniedWorktrees = new Set<string>()
   /** Idle-hook reports of running work whose holds are not written yet; any one keeps every worktree. */
   let holdReportsInFlight = 0
+  // Receipt ids are unique only within one repository, so these are keyed by `<repo key>/<receipt id>`.
   const doneIds = new Set<string>()
   const retriedAt = new Map<string, number>()
   const attemptedAt = new Map<string, number>()
+  /** Clones registered by this instance, kept here too: a registry write that fails still leaves them found. */
+  const registered = new Map<string, string>()
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const pendingIdle = new Set<string>()
   let disposed = false
@@ -364,12 +371,23 @@ export function createPendingCleanup(deps: PendingDeps) {
     return context !== null && context.key === receipt.repo.key ? repositoryAt({ common: context.commonDir, root }) : null
   }
 
-  /** Remember that the session's repository landed into `receipt`'s, so its retry and gc look there. */
+  /** Whether `key`'s receipt directory has pending receipts; an unreadable one counts as pending. */
+  const hasPending = (key: string): boolean => {
+    try {
+      return pendingReceipts(listReceipts(resolve(receiptDirectory(env, key)))).length > 0
+    } catch {
+      return true
+    }
+  }
+
+  /** Remember that the session's repository landed into `receipt`'s, so its retry, holds and gc look there. */
   const register = async (receipt: LandingReceipt) => {
+    // In memory first, before any wait: this instance's holds and retry see the clone even if the file write fails.
+    registered.set(receipt.repo.key, receipt.repo.canonicalRoot)
     const mine = own.veto() ?? (await own.observe())
     if (mine === null) return
     try {
-      addClone(env, mine.key, { key: receipt.repo.key, root: receipt.repo.canonicalRoot })
+      await addClone(env, mine.key, { key: receipt.repo.key, root: receipt.repo.canonicalRoot }, (entry) => hasPending(entry.key))
     } catch (error) {
       console.error(`delivery: could not record the clone ${receipt.repo.canonicalRoot}: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -383,7 +401,10 @@ export function createPendingCleanup(deps: PendingDeps) {
     const mine = own.veto() ?? (await own.observe())
     if (mine === null) return []
     const found: Repository[] = []
-    for (const entry of readClones(env, mine.key)) {
+    const entries = new Map(readClones(env, mine.key).map((entry) => [entry.key, entry.root]))
+    for (const [key, root] of registered) if (!entries.has(key)) entries.set(key, root)
+    for (const [key, root] of entries) {
+      const entry = { key, root }
       if (entry.key === mine.key) continue
       try {
         if (pendingReceipts(listReceipts(resolve(receiptDirectory(env, entry.key)))).length === 0) continue
@@ -832,18 +853,19 @@ export function createPendingCleanup(deps: PendingDeps) {
     } catch {
       return
     }
+    const idOf = (receipt: Pick<LandingReceipt, "receiptId">) => `${key}/${receipt.receiptId}`
     const recorded = await landings(repo)
     await gcIn(repo)
     // A worktree that is gone is done, whatever the window holds.
     const present: LandingReceipt[] = []
     for (const receipt of pending) {
       if (receipt.worktree.path !== null && !existsSync(receipt.worktree.path)) {
-        doneIds.add(receipt.receiptId)
+        doneIds.add(idOf(receipt))
         // Gone is evidence the worktree is done, but never erases a denial.
         if (recorded.common !== null && recorded.byReceipt.get(receipt.receiptId)?.denied === undefined) {
           await dropLanding(repo, recorded.common, { receiptId: receipt.receiptId, worktree: receipt.worktree.path }, false)
         }
-      } else if (!doneIds.has(receipt.receiptId)) present.push(receipt)
+      } else if (!doneIds.has(idOf(receipt))) present.push(receipt)
     }
     // Lane ownership is read for every candidate the window's filter looks at, before it runs.
     const laneOwned = new Set<string>()
@@ -857,21 +879,21 @@ export function createPendingCleanup(deps: PendingDeps) {
         recorded.byReceipt.get(receipt.receiptId)?.denied !== undefined ||
         deniedInMemory.has(receipt.receiptId) ||
         laneOwned.has(receipt.receiptId),
-      lastAttempt: (receipt) => attemptedAt.get(receipt.receiptId),
+      lastAttempt: (receipt) => attemptedAt.get(idOf(receipt)),
       limit,
     })
     for (const receipt of window) {
       if (disposed) return
-      attemptedAt.set(receipt.receiptId, now())
+      attemptedAt.set(idOf(receipt), now())
       const path = resolve(directory, `${receipt.receiptId}.json`)
       const meta = recorded.byReceipt.get(receipt.receiptId)
-      const recentlyTried = now() - (retriedAt.get(receipt.receiptId) ?? Number.NEGATIVE_INFINITY) < RETRY_WINDOW_MS
+      const recentlyTried = now() - (retriedAt.get(idOf(receipt)) ?? Number.NEGATIVE_INFINITY) < RETRY_WINDOW_MS
       const worktree = receipt.worktree.path as string
       const hold = await holdAt(repo, await commonOf(repo), worktree)
       const beads = hold !== undefined || recentlyTried ? "unknown" : await ledgerState(receipt, repo.cwd, path, deps.cleanup?.run, undefined, observationMs, deps.observe)
       const decision = pendingCleanupAction(receipt, {
         worktreeGone: false,
-        done: doneIds.has(receipt.receiptId),
+        done: doneIds.has(idOf(receipt)),
         hold,
         beads,
         recentlyTried,
@@ -881,13 +903,13 @@ export function createPendingCleanup(deps: PendingDeps) {
         denied: false,
       })
       if (decision.action === "nudge") {
-        const sent = await ctx.session.synthetic({ sessionID, text: nudgeText(receipt, path) } as never).then(
+        const sent = await ctx.session.synthetic({ sessionID, text: nudgeText(receipt, path, repo.foreign ? repo.cwd : undefined) } as never).then(
           () => true,
           () => false,
         )
         if (sent && meta) await markNudged(receipt.receiptId, meta.worktree, repo)
       } else if (decision.action === "retry") {
-        retriedAt.set(receipt.receiptId, now())
+        retriedAt.set(idOf(receipt), now())
         let result: CleanupResult
         try {
           // `finalCheck` re-checks ownership after the proofs and before the removal. Another repository's
@@ -904,7 +926,7 @@ export function createPendingCleanup(deps: PendingDeps) {
         }
         // A refusal is silent: the proofs say what is missing and a later turn end tries again.
         if (result.ok) {
-          doneIds.add(receipt.receiptId)
+          doneIds.add(idOf(receipt))
           if (recorded.common !== null && recorded.byReceipt.get(receipt.receiptId)?.denied === undefined) {
             await dropLanding(repo, recorded.common, { receiptId: receipt.receiptId, worktree }, false)
           }
@@ -985,14 +1007,21 @@ export function createPendingCleanup(deps: PendingDeps) {
   }
 
   const writeHolds = async (sessionID: string, background: ReadonlyArray<BackgroundJob>) => {
-    const locations = new Map<string, Location>()
-    const locationOf = async (id: string): Promise<Location> => {
-      if (!locations.has(id)) locations.set(id, await sessionLocation(id))
-      return locations.get(id)
+    // One lookup per session, shared by every repository's writes.
+    const locations = new Map<string, Promise<Location>>()
+    const locationOf = (id: string): Promise<Location> => {
+      let found = locations.get(id)
+      if (found === undefined) {
+        found = sessionLocation(id)
+        locations.set(id, found)
+      }
+      return found
     }
-    // The session's repository first, before any clone is looked up.
-    await writeHoldsIn(own, sessionID, background, locationOf)
-    for (const repo of await clones()) await writeHoldsIn(repo, sessionID, background, locationOf)
+    // Each repository's holds are written side by side, so none waits behind another's lookups and locks.
+    await Promise.all([
+      writeHoldsIn(own, sessionID, background, locationOf),
+      clones().then((repos) => Promise.all(repos.map((repo) => writeHoldsIn(repo, sessionID, background, locationOf)))),
+    ])
   }
 
   const writeHoldsIn = async (

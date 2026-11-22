@@ -5851,6 +5851,7 @@ import { mkdirSync as mkdirSync6, readFileSync as readFileSync7, renameSync as r
 import { isAbsolute as isAbsolute3, join as join8 } from "path";
 var MAX_CLONES = 32;
 var KEY = /^[0-9a-f]{16}$/;
+var LOCK_WAIT_MS = 1e4;
 function registryFile(env, sessionKey) {
   if (!KEY.test(sessionKey))
     throw new Error(`repo.key: observed ${JSON.stringify(sessionKey)}, expected 16 hex characters`);
@@ -5870,8 +5871,15 @@ function parseClones(text) {
     return typeof key === "string" && KEY.test(key) && typeof root === "string" && isAbsolute3(root) ? [{ key, root }] : [];
   });
 }
-function withClone(entries, entry) {
-  return [entry, ...entries.filter((known) => known.key !== entry.key)].slice(0, MAX_CLONES);
+function withClone(entries, entry, pending = () => false) {
+  const next = [entry, ...entries.filter((known) => known.key !== entry.key)];
+  const drop = new Set;
+  for (let index = next.length - 1;index > 0 && next.length - drop.size > MAX_CLONES; index--) {
+    const candidate = next[index];
+    if (!pending(candidate))
+      drop.add(candidate);
+  }
+  return next.filter((known) => !drop.has(known));
 }
 function readClones(env, sessionKey) {
   try {
@@ -5880,16 +5888,20 @@ function readClones(env, sessionKey) {
     return [];
   }
 }
-function addClone(env, sessionKey, entry) {
+async function addClone(env, sessionKey, entry, pending) {
   const file = registryFile(env, sessionKey);
-  const current = readClones(env, sessionKey);
-  if (current[0]?.key === entry.key && current[0].root === entry.root)
-    return;
   mkdirSync6(join8(receiptDirectory(env), ".clones"), { recursive: true });
-  const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync6(temporary, `${JSON.stringify(withClone(current, entry))}
+  const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: LOCK_WAIT_MS }, () => {
+    const current = readClones(env, sessionKey);
+    if (current[0]?.key === entry.key && current[0].root === entry.root)
+      return;
+    const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync6(temporary, `${JSON.stringify(withClone(current, entry, pending))}
 `, { mode: 384 });
-  renameSync3(temporary, file);
+    renameSync3(temporary, file);
+  });
+  if (result.kind === "failed")
+    throw new Error(`the clone registry ${file} could not be updated: ${result.reason}`);
 }
 
 // plugins/delivery/opencode/src/lane-move.ts
@@ -5972,11 +5984,11 @@ function pendingCleanupAction(receipt, facts) {
   }
   return { action: "retry", reason: facts.beads === "closed" ? "beads closed" : "ledger state unknown; the proofs decide" };
 }
-function nudgeText(receipt, receiptPath) {
+function nudgeText(receipt, receiptPath, clone) {
   const sha = receipt.pr.mergeCommitOid ?? "missing";
   const commands = receipt.beads.ids.flatMap((id) => {
     const { update, close } = closeoutCommands(id, receipt.pr.number, sha, receiptPath);
-    return [update, close];
+    return clone === undefined ? [update, close] : [inClone(clone, update), inClone(clone, close)];
   });
   return `<system-reminder>Landed PR #${receipt.pr.number}: close beads ${receipt.beads.ids.join(", ")} (commands: ${commands.join("; ")}) so its worktree can be cleaned up.</system-reminder>`;
 }
@@ -6030,6 +6042,7 @@ function createPendingCleanup(deps) {
   const doneIds = new Set;
   const retriedAt = new Map;
   const attemptedAt = new Map;
+  const registered = new Map;
   const timers = new Map;
   const pendingIdle = new Set;
   let disposed = false;
@@ -6091,12 +6104,20 @@ function createPendingCleanup(deps) {
     const context = await repositoryContext(root, deps.observe, observationMs);
     return context !== null && context.key === receipt.repo.key ? repositoryAt({ common: context.commonDir, root }) : null;
   };
+  const hasPending = (key) => {
+    try {
+      return pendingReceipts(listReceipts(resolve8(receiptDirectory(env, key)))).length > 0;
+    } catch {
+      return true;
+    }
+  };
   const register = async (receipt) => {
+    registered.set(receipt.repo.key, receipt.repo.canonicalRoot);
     const mine = own.veto() ?? await own.observe();
     if (mine === null)
       return;
     try {
-      addClone(env, mine.key, { key: receipt.repo.key, root: receipt.repo.canonicalRoot });
+      await addClone(env, mine.key, { key: receipt.repo.key, root: receipt.repo.canonicalRoot }, (entry) => hasPending(entry.key));
     } catch (error) {
       console.error(`delivery: could not record the clone ${receipt.repo.canonicalRoot}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -6106,7 +6127,12 @@ function createPendingCleanup(deps) {
     if (mine === null)
       return [];
     const found = [];
-    for (const entry of readClones(env, mine.key)) {
+    const entries = new Map(readClones(env, mine.key).map((entry) => [entry.key, entry.root]));
+    for (const [key, root] of registered)
+      if (!entries.has(key))
+        entries.set(key, root);
+    for (const [key, root] of entries) {
+      const entry = { key, root };
       if (entry.key === mine.key)
         continue;
       try {
@@ -6450,16 +6476,17 @@ function createPendingCleanup(deps) {
     } catch {
       return;
     }
+    const idOf = (receipt) => `${key}/${receipt.receiptId}`;
     const recorded = await landings(repo);
     await gcIn(repo);
     const present = [];
     for (const receipt of pending) {
       if (receipt.worktree.path !== null && !existsSync4(receipt.worktree.path)) {
-        doneIds.add(receipt.receiptId);
+        doneIds.add(idOf(receipt));
         if (recorded.common !== null && recorded.byReceipt.get(receipt.receiptId)?.denied === undefined) {
           await dropLanding(repo, recorded.common, { receiptId: receipt.receiptId, worktree: receipt.worktree.path }, false);
         }
-      } else if (!doneIds.has(receipt.receiptId))
+      } else if (!doneIds.has(idOf(receipt)))
         present.push(receipt);
     }
     const laneOwned = new Set;
@@ -6471,22 +6498,22 @@ function createPendingCleanup(deps) {
     }
     const window = selectWindow(present, {
       skip: (receipt) => recorded.byReceipt.get(receipt.receiptId)?.denied !== undefined || deniedInMemory.has(receipt.receiptId) || laneOwned.has(receipt.receiptId),
-      lastAttempt: (receipt) => attemptedAt.get(receipt.receiptId),
+      lastAttempt: (receipt) => attemptedAt.get(idOf(receipt)),
       limit
     });
     for (const receipt of window) {
       if (disposed)
         return;
-      attemptedAt.set(receipt.receiptId, now());
+      attemptedAt.set(idOf(receipt), now());
       const path = resolve8(directory, `${receipt.receiptId}.json`);
       const meta = recorded.byReceipt.get(receipt.receiptId);
-      const recentlyTried = now() - (retriedAt.get(receipt.receiptId) ?? Number.NEGATIVE_INFINITY) < RETRY_WINDOW_MS;
+      const recentlyTried = now() - (retriedAt.get(idOf(receipt)) ?? Number.NEGATIVE_INFINITY) < RETRY_WINDOW_MS;
       const worktree = receipt.worktree.path;
       const hold = await holdAt(repo, await commonOf(repo), worktree);
       const beads = hold !== undefined || recentlyTried ? "unknown" : await ledgerState(receipt, repo.cwd, path, deps.cleanup?.run, undefined, observationMs, deps.observe);
       const decision = pendingCleanupAction(receipt, {
         worktreeGone: false,
-        done: doneIds.has(receipt.receiptId),
+        done: doneIds.has(idOf(receipt)),
         hold,
         beads,
         recentlyTried,
@@ -6496,11 +6523,11 @@ function createPendingCleanup(deps) {
         denied: false
       });
       if (decision.action === "nudge") {
-        const sent = await ctx.session.synthetic({ sessionID, text: nudgeText(receipt, path) }).then(() => true, () => false);
+        const sent = await ctx.session.synthetic({ sessionID, text: nudgeText(receipt, path, repo.foreign ? repo.cwd : undefined) }).then(() => true, () => false);
         if (sent && meta)
           await markNudged(receipt.receiptId, meta.worktree, repo);
       } else if (decision.action === "retry") {
-        retriedAt.set(receipt.receiptId, now());
+        retriedAt.set(idOf(receipt), now());
         let result;
         try {
           result = repo.foreign ? await cleanupDelivery({ receipt: path, repo: receipt.repo.nameWithOwner, repoPath: repo.cwd }, cwd, {
@@ -6512,7 +6539,7 @@ function createPendingCleanup(deps) {
           continue;
         }
         if (result.ok) {
-          doneIds.add(receipt.receiptId);
+          doneIds.add(idOf(receipt));
           if (recorded.common !== null && recorded.byReceipt.get(receipt.receiptId)?.denied === undefined) {
             await dropLanding(repo, recorded.common, { receiptId: receipt.receiptId, worktree }, false);
           }
@@ -6573,14 +6600,18 @@ function createPendingCleanup(deps) {
   };
   const writeHolds = async (sessionID, background) => {
     const locations = new Map;
-    const locationOf = async (id) => {
-      if (!locations.has(id))
-        locations.set(id, await sessionLocation(id));
-      return locations.get(id);
+    const locationOf = (id) => {
+      let found = locations.get(id);
+      if (found === undefined) {
+        found = sessionLocation(id);
+        locations.set(id, found);
+      }
+      return found;
     };
-    await writeHoldsIn(own, sessionID, background, locationOf);
-    for (const repo of await clones())
-      await writeHoldsIn(repo, sessionID, background, locationOf);
+    await Promise.all([
+      writeHoldsIn(own, sessionID, background, locationOf),
+      clones().then((repos) => Promise.all(repos.map((repo) => writeHoldsIn(repo, sessionID, background, locationOf))))
+    ]);
   };
   const writeHoldsIn = async (repo, sessionID, background, locationOf) => {
     const location = repo.veto() ?? await repo.observe();

@@ -10,12 +10,21 @@ describe("withClone", () => {
     expect(withClone([A, B], moved)).toEqual([moved, B])
   })
 
-  test(`keeps at most ${MAX_CLONES} repositories, dropping the oldest`, () => {
+  test(`past ${MAX_CLONES} repositories, drops the oldest with nothing pending`, () => {
     const many = Array.from({ length: MAX_CLONES }, (_, index) => ({ key: index.toString(16).padStart(16, "0"), root: `/repos/${index}` }))
     const next = withClone(many, B)
     expect(next).toHaveLength(MAX_CLONES)
     expect(next[0]).toEqual(B)
     expect(next.at(-1)).toEqual(many[MAX_CLONES - 2])
+  })
+
+  test("keeps a repository with pending receipts past the limit", () => {
+    const many = Array.from({ length: MAX_CLONES }, (_, index) => ({ key: index.toString(16).padStart(16, "0"), root: `/repos/${index}` }))
+    const oldest = many[MAX_CLONES - 1] as (typeof many)[number]
+    const next = withClone(many, B, (entry) => entry === oldest)
+    expect(next).toHaveLength(MAX_CLONES)
+    expect(next).toContainEqual(oldest)
+    expect(next).not.toContainEqual(many[MAX_CLONES - 2])
   })
 })
 

@@ -4257,11 +4257,11 @@ describe("cleanup of another repository's landing runs against that repository",
   const SESSION_URL = "https://github.com/other/session.git\n"
   async function foreignHarness(
     name: string,
-    over: { sessions?: (f: Fixture) => Array<Record<string, unknown> & { id: string }>; hostListsTarget?: boolean } = {},
+    over: { sessions?: (f: Fixture) => Array<Record<string, unknown> & { id: string }>; hostListsTarget?: boolean; beadStatus?: string } = {},
   ) {
     const f = await fixture(name)
     const s = await fixture(`${name}-session`)
-    const options: RunnerOptions = { beadStatus: "closed" }
+    const options: RunnerOptions = { beadStatus: over.beadStatus ?? "closed" }
     const scripted = runner(f, options)
     const run: CliRunner = (argv, commandOptions) =>
       argv[0] === "git" && argv.slice(-3, -1).join(" ") === "remote get-url" && commandOptions.cwd === s.main
@@ -4292,13 +4292,13 @@ describe("cleanup of another repository's landing runs against that repository",
     await pending.prime()
     const targetCommon = (await repositoryContext(f.main))?.commonDir as string
     const sessionCommon = (await repositoryContext(s.main))?.commonDir as string
-    const explicit = () =>
+    const explicit = (ask: () => Promise<void> = async () => {}) =>
       cleanupDelivery({ receipt: f.receiptPath, repo: "owner/repo", repoPath: f.main }, s.main, {
         run,
         now: () => NOW + 10,
         env: f.env,
         bounds: HEAVY_FIXTURE_BOUNDS,
-        ...pending.explicit(async () => {}, "ses_lead"),
+        ...pending.explicit(ask, "ses_lead"),
       })
     const idle = async () => {
       fake.emit({ type: "session.idle", data: { sessionID: "ses_lead" } })
@@ -4309,7 +4309,7 @@ describe("cleanup of another repository's landing runs against that repository",
       rmSync(f.root, { recursive: true, force: true })
       rmSync(s.root, { recursive: true, force: true })
     }
-    return { f, s, scripted, pending, targetCommon, sessionCommon, explicit, idle, hostRemoved, finish }
+    return { f, s, scripted, fake, pending, targetCommon, sessionCommon, explicit, idle, hostRemoved, finish }
   }
   const idleSession = (id: string, projectID: string, directory: string) => ({ id, projectID, location: { directory }, time: { updated: 1 } })
 
@@ -4367,6 +4367,47 @@ describe("cleanup of another repository's landing runs against that repository",
     const result = await h.explicit()
     expect(result.ok).toBe(true)
     expect(h.hostRemoved).toEqual([{ projectID: "prj_target", directory: h.f.linked }])
+    await h.finish()
+  })
+
+  test("a refused prompt is recorded as a denial in the target's common directory", async () => {
+    const h = await foreignHarness("foreign-refused")
+    await expect(h.explicit(async () => Promise.reject(new Error("denied by the user")))).rejects.toThrow("denied by the user")
+    expect(readLanding(h.targetCommon, h.f.receipt.receiptId)).toMatchObject({ kind: "present", value: { denied: { sessionID: "ses_lead" } } })
+    expect(readLanding(h.sessionCommon, h.f.receipt.receiptId).kind).toBe("missing")
+    expect(existsSync(h.f.linked)).toBe(true)
+    await h.finish()
+  })
+
+  test("a clone that resolves to another common directory than it was identified by is refused", async () => {
+    const h = await foreignHarness("foreign-moved")
+    const coordinated = await h.pending.coordinate("ses_lead")({ common: h.sessionCommon, root: h.f.main })
+    expect(coordinated).toMatchObject({ ok: false, reason: expect.stringContaining("repo.common") })
+    await h.finish()
+  })
+
+  test("the beads reminder for another repository's landing runs its commands in that clone", async () => {
+    const h = await foreignHarness("foreign-nudge", { beadStatus: "open" })
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    await h.idle()
+    const texts = h.fake.calls.filter((call) => call.method === "session.synthetic").map((call) => JSON.stringify(call.input))
+    expect(texts).toHaveLength(1)
+    expect(texts[0]).toContain(`cd '${h.f.main}' && env -u BEADS_DIR bd close delivery-17`)
+    expect(existsSync(h.f.linked)).toBe(true)
+    await h.finish()
+  })
+
+  test("a receipt id the session's repository also has does not keep the target's worktree from its retry", async () => {
+    const h = await foreignHarness("foreign-same-id")
+    // Both fixtures come from one template, so their receipts share the id.
+    expect(h.s.receipt.receiptId).toBe(h.f.receipt.receiptId)
+    writeReceipt(h.s.receipt, receiptDirectory(h.f.env, h.s.receipt.repo.key))
+    git(h.s.main, ["worktree", "remove", h.s.linked])
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    await h.idle()
+    expect(existsSync(h.f.linked)).toBe(false)
     await h.finish()
   })
 
