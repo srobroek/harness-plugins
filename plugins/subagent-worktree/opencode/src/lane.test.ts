@@ -604,7 +604,6 @@ describe("decideWriterGuard", () => {
     ["a child idle after its last run", [{ ...live, busy: 1000, idle: 2000 }]],
     ["a child that never ran", [{ id: "ses_new", parentID: "ses_parent" }]],
     ["a read-only child", [{ ...live, readOnly: true }]],
-    ["a released child", [{ ...live, released: true }]],
     ["a root session", [{ id: "ses_root", busy: 2000 }]],
     ["the caller itself", [{ id: "ses_parent", parentID: "ses_gp", busy: 2000 }]],
     ["no sessions", []],

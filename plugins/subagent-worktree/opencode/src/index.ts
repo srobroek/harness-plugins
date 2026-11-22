@@ -57,7 +57,7 @@ import {
   writerRefusal,
 } from "./lane.ts"
 import { type BuildSeams, createLifecycle, type Lifecycle, toMillis } from "./lifecycle.ts"
-import { decideRelease, hasOpenToolCall, parseRelease, RELEASE_PREFIX, RELEASE_QUIET_MS, type Release, releaseKey } from "./release.ts"
+import { decideRelease, parseRelease, RELEASE_PREFIX, type Release, releaseKey } from "./release.ts"
 
 export * from "./git.ts"
 export * from "./lane.ts"
@@ -71,8 +71,8 @@ export const MERGE_DESCRIPTION =
   "The worktree must be committed and clean, and the target checkout must have no uncommitted or untracked changes to files the lane changes. " +
   'method "keep" (with reason) records that an unmerged lane is kept on purpose, so the idle gate stops nudging about it. method "none" only reports the lane status. method "list" (no sessionID) reports every active lane in the project ' +
   "with commits ahead, uncommitted changes, and orphaned lanes; missing worktrees move their child sessions back. " +
-  'method "release" (with reason) frees the worktree of a dead writer you spawned, so a new writer can be spawned into it: the writer must be idle or gone, ' +
-  "or quiet for 10 minutes (its stale run is then interrupted), and the worktree clean and pushed. A released writer cannot be resumed."
+  'method "release" (with reason) hands the lane of a dead writer you spawned to the next writer spawned into its worktree: ' +
+  "the writer's session must be deleted (stop it and delete it in OpenCode first), and the worktree clean and pushed."
 
 export const SWEEP_TOOL = "subagent_worktree_sweep"
 
@@ -381,118 +381,6 @@ export function createLanes(
     return found
   }
 
-  /** `sessionsIn`, with the sessions released from `directory` marked, so the guard skips them. A release still under way does not count. */
-  const writersIn = async (projectID: string, directory: string): Promise<WriterSession[] | undefined> => {
-    const sessions = await sessionsIn(projectID, directory)
-    if (sessions === undefined) return undefined
-    const released = new Set((await releasesIn(directory)).map((release) => release.child).filter((child) => !releasing.has(child)))
-    return sessions.map((session) => (released.has(session.id) ? { ...session, released: true } : session))
-  }
-
-  /**
-   * Admission between a release and a resume of the same child, in this plugin instance. Each side checks
-   * the other's set and adds itself with no await in between, so at most one of them goes ahead.
-   * `releasing`: children whose release is under way. `resuming`: resumed child by `subagent` call id,
-   * until that call's `after` (or its failure in `before`). A background resume has returned before its
-   * run may show, so its entry keeps `since` (when it returned) and holds until the child's latest run
-   * started at or after it. A queued run that never starts keeps the release away in this instance.
-   */
-  const releasing = new Set<string>()
-  const resuming = new Map<string, { child: string; since?: number }>()
-  /** A resume of `child` whose call has not returned. */
-  const resumeInCall = (child: string) => [...resuming.values()].some((entry) => entry.child === child && entry.since === undefined)
-  /** A background resume of `child` whose run has not shown yet, given the start of the child's latest run; settled ones are dropped. */
-  const resumeQueued = (child: string, busy: number | undefined) => {
-    let queued = false
-    for (const [id, entry] of resuming) {
-      if (entry.child !== child || entry.since === undefined) continue
-      if (busy !== undefined && busy >= entry.since) resuming.delete(id)
-      else queued = true
-    }
-    return queued
-  }
-
-  /**
-   * The background work each session reported at its last idle gate (shells, code mode jobs, background
-   * subagents), and when. A session that ran in this server after its last report, or never reported,
-   * may have started background work that nothing recorded.
-   */
-  const background = new Map<string, { jobs: string | undefined; at: number }>()
-  /** Whether this plugin sees idle gates at all; without them background work cannot be ruled out. */
-  let idleObserved = false
-  /** The host event stream behind `noteActivity` ended: idle gates cannot be trusted any more. */
-  let activityEnded = false
-  /** When this plugin instance started: a run that began earlier belonged to another server instance. */
-  const startedAt = now()
-  const noteIdle = (input: { sessionID?: unknown; background?: ReadonlyArray<{ kind?: unknown; shellID?: unknown; jobID?: unknown; childSessionID?: unknown }> }) => {
-    if (typeof input.sessionID !== "string") return
-    const jobs = (input.background ?? []).map((job) => `${String(job.kind)} ${String(job.shellID ?? job.jobID ?? job.childSessionID ?? "")}`.trim())
-    background.set(input.sessionID, { jobs: jobs.length === 0 ? undefined : jobs.join(", "), at: now() })
-  }
-  /**
-   * Session events that say a run ended normally, or change nothing about what it runs. Every other
-   * `session.*` event about a child after its empty idle gate is run activity: the gate let the run go
-   * on, and what it started then was never listed, so that gate no longer counts (`noteActivity`).
-   */
-  const QUIET_EVENTS: ReadonlySet<string> = new Set([
-    "session.execution.succeeded",
-    "session.idle",
-    "session.usage.updated",
-    "session.viewed",
-    "session.renamed",
-    "session.metadata.updated",
-    "session.moved",
-    "session.permissions",
-    "session.archived",
-    "session.unarchived",
-    "session.deleted",
-  ])
-  const noteActivity = (raw: unknown) => {
-    const event = raw as { type?: unknown; created?: unknown; data?: { sessionID?: unknown } } | null
-    if (typeof event?.type !== "string" || !event.type.startsWith("session.") || QUIET_EVENTS.has(event.type)) return
-    const sessionID = event.data?.sessionID
-    if (typeof sessionID !== "string") return
-    const seen = background.get(sessionID)
-    if (seen === undefined || seen.jobs !== undefined) return
-    // An event from before the gate, delivered late, says nothing about after it. No time: assume after.
-    if (typeof event.created === "number" && event.created < seen.at) return
-    background.delete(sessionID)
-  }
-  /**
-   * Follow host events for `noteActivity` until the returned stop is called. If the stream ends or fails
-   * on its own, an empty gate can no longer be invalidated, so idle gates stop counting (fail closed).
-   */
-  const watchActivity = () => {
-    const abort = new AbortController()
-    const iterator = (ctx.event.subscribe({ signal: abort.signal } as never) as AsyncIterable<unknown>)[Symbol.asyncIterator]()
-    void (async () => {
-      for (;;) {
-        const next = await iterator.next().catch(() => ({ done: true as const, value: undefined }))
-        if (next.done) break
-        noteActivity(next.value)
-      }
-      activityEnded = true
-      idleObserved = false
-    })()
-    return async () => {
-      abort.abort()
-      await iterator.return?.()
-    }
-  }
-  /**
-   * What is known about `child`'s background work. A run that started before this plugin instance did
-   * belonged to a server that is gone, and so did its jobs. A run that started here counts as known only
-   * when it ended (`idle`) at or after an idle gate that came after its start and listed nothing: an idle
-   * gate can let the same run go on, and what it starts then is not recorded.
-   */
-  const backgroundOf = (child: string, busy: number | undefined, idle: number | undefined): string | undefined => {
-    const seen = background.get(child)
-    if (seen?.jobs !== undefined) return seen.jobs
-    if (busy === undefined || busy < startedAt) return undefined
-    if (seen !== undefined && seen.at >= busy && idle !== undefined && idle >= seen.at) return undefined
-    return `${child} ran in this server without ending at an empty idle gate, so background work since its last run cannot be ruled out`
-  }
-
   /** Whether `child` was released and its worktree handed to another writer: no lane or claim of it may be written again. */
   const handedOff = async (child: string) => parseRelease(await ctx.storage.get(releaseKey(child)))?.to !== undefined
 
@@ -575,7 +463,6 @@ export function createLanes(
   }
 
   const release = (callId: string) => {
-    resuming.delete(callId)
     for (const [directory, reservation] of reservations) if (reservation.callId === callId) reservations.delete(directory)
   }
 
@@ -593,18 +480,13 @@ export function createLanes(
     event.input = withoutWorktree(event.input)
     if (input.sessionID !== undefined) {
       const child = input.sessionID
-      const refuseReleased = (released: Release | undefined): never => {
+      // A released child's session is deleted, so the host cannot run it; the record keeps the refusal clear.
+      const released = parseRelease(await ctx.storage.get(releaseKey(child)))
+      if (released) {
         throw new Error(
-          `subagent-worktree: not resuming ${child}: ${released ? `${child} was released from ${released.directory}${released.to ? ` and the worktree handed to ${released.to}` : ""}` : `${child} is being released from its worktree`}, so it may not write again. Start a new subagent instead.`,
+          `subagent-worktree: not resuming ${child}: ${child} was released from ${released.directory}${released.to ? ` and the worktree handed to ${released.to}` : ""}, so it may not write again. Start a new subagent instead.`,
         )
       }
-      const released = parseRelease(await ctx.storage.get(releaseKey(child)))
-      // No await between the check and the registration: a release that starts later sees this resume and refuses.
-      if (released || releasing.has(child)) refuseReleased(released)
-      resuming.set(event.id, { child })
-      // A release that finished while the first read was pending wrote its record before this registration.
-      const recorded = parseRelease(await ctx.storage.get(releaseKey(child)))
-      if (recorded) refuseReleased(recorded)
       await markResumed(input.sessionID)
       const note = resumeWorktreeNote(input)
       if (note) notes.set(event.id, note)
@@ -647,7 +529,7 @@ export function createLanes(
         writer,
         directory,
         caller: event.sessionID,
-        sessions: await writersIn(parent.projectID, directory),
+        sessions: await sessionsIn(parent.projectID, directory),
       })
       if (guard.kind === "refuse") throw new Error(`subagent-worktree: ${guard.reason}`)
       if (guard.warn) notes.set(event.id, guard.warn)
@@ -666,7 +548,7 @@ export function createLanes(
         writer: hold.writer,
         directory: hold.directory,
         caller: event.sessionID,
-        sessions: await writersIn(parent.projectID, hold.directory),
+        sessions: await sessionsIn(parent.projectID, hold.directory),
       })
       if (fresh.kind === "refuse") throw new Error(`subagent-worktree: ${fresh.reason}`)
       if (fresh.warn) notes.set(event.id, fresh.warn)
@@ -866,13 +748,6 @@ export function createLanes(
     if (event.tool !== SUBAGENT_TOOL) return
     const reported = (event.status === "completed" ? event.result.metadata : event.error.metadata) as { status?: unknown } | undefined
     if (event.id !== undefined) {
-      // A foreground resume has returned: from here the child's own state keeps a release away. A background
-      // resume's run may not show yet, so its entry holds until the same expiry as a background reservation.
-      const entry = resuming.get(event.id)
-      if (entry && event.status === "completed" && reported?.status === "running") entry.since = now()
-      else resuming.delete(event.id)
-    }
-    if (event.id !== undefined) {
       if (event.status === "completed" && reported?.status === "running") {
         // A background child keeps the worktree reserved until a later check sees it busy, or the hold expires.
         const started = (event.result.metadata as { sessionID?: unknown } | undefined)?.sessionID
@@ -1037,11 +912,9 @@ export function createLanes(
   }
 
   /**
-   * `method: "release"`: free the worktree of a dead writer `child` for a new writer (see `release.ts`).
-   * Runs under the worktree's lock, like a spawn into it, and excludes a resume of `child` in flight
-   * (`resuming`). The record is written before the old run is interrupted, so a resume from then on is
-   * refused. After the interrupt the writer and the worktree are read again: a new run, a change to the
-   * tree or HEAD, or new background work undoes the release.
+   * `method: "release"`: hand the worktree of a deleted writer `child` to the next writer (see `release.ts`).
+   * Runs under the worktree's lock, like a spawn into it, so the record and a handover never interleave.
+   * A deleted session cannot run again, so nothing is interrupted and no resume can race the release.
    */
   const releaseWriter = async (child: string, reason: string, tool: { sessionID: string; agent: string; messageID: string; id: string }): Promise<Result> => {
     const refuse = (why: string): Result => ({ content: `${MERGE_TOOL}: not released: ${why}`, metadata: { ok: false, reason: why } })
@@ -1062,73 +935,24 @@ export function createLanes(
     if (!found.lookup.ok) return refuse(found.lookup.reason)
     const directory = found.lookup.worktree.directory
     const checkout = caller.location.directory
-    /** Clean status, upstream coverage and HEAD; undefined parts when git cannot read them. */
-    const proveTree = async () => {
-      const porcelain = await git.porcelain(directory)
-      const tree = porcelain === undefined ? undefined : { dirty: porcelain !== "", unpushed: await git.unpushed(directory) }
-      return { tree, head: await git.head(directory) }
-    }
-    /** Background work of the child (from its idle gates, given the start of its latest run) and holds recorded on the worktree. */
-    const running = async (facts: { busy?: number; idle?: number }) => {
-      const common = await commonDirOf(checkout)
-      const held = common === undefined ? "the git common directory cannot be found, so running work cannot be ruled out" : holdsState(common, directory, now())
-      const unseen = idleObserved ? undefined : "idle gates are off or unsupported, so background work cannot be ruled out"
-      return [backgroundOf(child, facts.busy, facts.idle), held, unseen].filter((why) => why !== undefined).join("; ") || undefined
-    }
-    const locked = async (): Promise<Result> => {
+    return lifecycle.spawnInto(directory, checkout, async () => {
       // Read again under the lock: a release queued behind another must not overwrite its record.
       if (parseRelease(await ctx.storage.get(releaseKey(child)))) return refuse(`${child} is already released`)
-      const before = await writerFacts(child)
-      if (resumeQueued(child, before.busy)) return refuse(`a resume of ${child} is in flight: its background run has not started yet; wait for it`)
-      const gone = before.state === "deleted" || before.state === "archived"
-      const openTool = gone ? undefined : hasOpenToolCall(await settled(Promise.resolve(ctx.session.context({ sessionID: child } as never)) as Promise<unknown>))
-      const owner = before.parentID ?? lane?.parent
-      const proof = await proveTree()
-      const decision = decideRelease({
-        caller: tool.sessionID,
-        child: { ...before, ...(owner === undefined ? {} : { owner }) },
-        openTool,
-        background: await running(before),
-        tree: proof.tree,
-        now: now(),
-        quietMs: RELEASE_QUIET_MS,
-      })
+      const facts = await writerFacts(child)
+      const owner = facts.parentID ?? lane?.parent
+      const common = await commonDirOf(checkout)
+      const holds = common === undefined ? "the git common directory cannot be found, so running work cannot be ruled out" : holdsState(common, directory, now())
+      const porcelain = await git.porcelain(directory)
+      const tree = porcelain === undefined ? undefined : { dirty: porcelain !== "", unpushed: await git.unpushed(directory) }
+      const decision = decideRelease({ caller: tool.sessionID, child: { state: facts.state, ...(owner === undefined ? {} : { owner }) }, holds, tree })
       if (!decision.release) return refuse(decision.reason)
-      const head = proof.head
+      const head = await git.head(directory)
       if (head === undefined) return refuse(`cannot read HEAD in ${directory}`)
-      const record: Release = { child, directory, by: tool.sessionID, at: now(), head, reason, interrupted: decision.interrupt }
+      const record: Release = { child, directory, by: tool.sessionID, at: now(), head, reason }
       await ctx.storage.set(releaseKey(child), record)
-      try {
-        if (decision.interrupt) await ctx.session.interrupt({ sessionID: child } as never)
-        const after = await writerFacts(child)
-        if (after.state === "unknown") throw new Error(`cannot read ${child} after the release`)
-        if (after.state === "running" && (after.busy ?? 0) > (before.busy ?? 0)) throw new Error(`${child} started a new run while it was being released`)
-        // The old run may have written until the interrupt took effect: prove the tree again.
-        const again = await proveTree()
-        if (again.tree === undefined || again.tree.dirty || again.tree.unpushed !== 0 || again.head !== head) {
-          throw new Error(`the worktree changed while ${child} was being released; check ${directory} and release again`)
-        }
-        const still = await running(after)
-        if (still !== undefined) throw new Error(`background work is still running: ${still}`)
-      } catch (error) {
-        await ctx.storage.remove(releaseKey(child))
-        return refuse(errorMessage(error))
-      }
-      const how = decision.interrupt ? "its stale run was interrupted" : gone ? "its session is gone" : "it was idle"
       return {
-        content: `${MERGE_TOOL}: released ${child} from ${directory} at ${head.slice(0, 12)} (${how}); it cannot be resumed. Spawn the next writer with worktree "${directory}"${lane?.state === "active" ? `; it takes over the lane on ${lane.branch}` : ""}.`,
+        content: `${MERGE_TOOL}: released ${child} from ${directory} at ${head.slice(0, 12)} (its session is deleted). Spawn the next writer with worktree "${directory}"${lane?.state === "active" ? `; it takes over the lane on ${lane.branch}` : ""}.`,
         metadata: { ok: true, release: record },
-      }
-    }
-    return lifecycle.spawnInto(directory, checkout, async () => {
-      // No await between these checks and the mark: a resume that registers later sees `releasing` and refuses.
-      if (resumeInCall(child)) return refuse(`a resume of ${child} is in flight; wait for that subagent call to return`)
-      if (releasing.has(child)) return refuse(`a release of ${child} is already under way`)
-      releasing.add(child)
-      try {
-        return await locked()
-      } finally {
-        releasing.delete(child)
       }
     })
   }
@@ -1273,18 +1097,7 @@ export function createLanes(
     },
   })
 
-  return {
-    before,
-    after,
-    merge,
-    load,
-    lifecycle,
-    noteIdle,
-    watchActivity,
-    observingIdle: (on: boolean) => {
-      idleObserved = on && !activityEnded
-    },
-  }
+  return { before, after, merge, load, lifecycle }
 }
 
 export function createPlugin(overrides: Overrides = {}) {
@@ -1303,16 +1116,6 @@ export function createPlugin(overrides: Overrides = {}) {
         registrations.push(await ctx.tool.hook("execute.before", lanes.before))
         registrations.push(await ctx.tool.hook("execute.after", lanes.after as never))
         registrations.push(await ctx.tool.hook("execute.after", lanes.lifecycle.onLanding as never))
-        // Observes only: a release refuses a writer whose last idle gate listed background work. With gates off,
-        // or on a host without the hook, background work cannot be seen, and every release is refused. Host
-        // events are followed first, so any run activity after an empty gate voids that gate.
-        if (options.gates) {
-          try {
-            registrations.push({ dispose: lanes.watchActivity() })
-            registrations.push(await ctx.session.hook("experimental.idle" as never, lanes.noteIdle as never))
-            lanes.observingIdle(true)
-          } catch {}
-        }
         registrations.push({ dispose: lanes.lifecycle.dispose })
         await lanes.lifecycle.start()
         registrations.push(

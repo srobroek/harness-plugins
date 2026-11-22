@@ -1,42 +1,33 @@
 import { describe, expect, test } from "bun:test"
-import { decideRelease, hasOpenToolCall, parseRelease, type ReleaseFacts } from "./release.ts"
+import { decideRelease, parseRelease, type ReleaseFacts } from "./release.ts"
 
-const MINUTE = 60_000
-const QUIET = 10 * MINUTE
-const NOW = 100 * MINUTE
-
-/** A child that last ran an hour ago and finished, owned by the caller, in a clean, pushed worktree. */
+/** A deleted child whose lane names the caller, in a clean, pushed worktree with no holds. */
 const base: ReleaseFacts = {
   caller: "ses_parent",
-  child: { state: "idle", owner: "ses_parent", busy: NOW - 60 * MINUTE, idle: NOW - 59 * MINUTE },
-  openTool: false,
-  background: undefined,
+  child: { state: "deleted", owner: "ses_parent" },
+  holds: undefined,
   tree: { dirty: false, unpushed: 0 },
-  now: NOW,
-  quietMs: QUIET,
 }
 
 describe("decideRelease", () => {
-  test.each([
-    ["an idle child", {}, false],
-    ["an archived child", { child: { state: "archived" as const, owner: "ses_parent" } }, false],
-    ["a deleted child whose lane names the caller", { child: { state: "deleted" as const, owner: "ses_parent" }, openTool: undefined }, false],
-    ["a child whose last run never ended, quiet for the bound", { child: { state: "running" as const, owner: "ses_parent", busy: NOW - QUIET } }, true],
-    ["an open tool call, quiet past the bound", { openTool: true }, true],
-  ] as const)("releases %s", (_name, override, interrupt) => {
-    expect(decideRelease({ ...base, ...override })).toEqual({ release: true, interrupt })
+  test("releases a deleted child that the caller spawned, in a clean, pushed worktree", () => {
+    expect(decideRelease(base)).toEqual({ release: true })
   })
 
   test.each([
-    ["a child that is running now", { child: { state: "running" as const, owner: "ses_parent", busy: NOW - MINUTE } }, /still running/],
-    ["a recent open tool call", { child: { ...base.child, idle: NOW - MINUTE }, openTool: true }, /still running/],
-    ["a recent update of a run that never ended", { child: { state: "running" as const, owner: "ses_parent", busy: NOW - QUIET - 1, updated: NOW - 1 } }, /still running/],
-    ["unreadable tool calls", { openTool: undefined }, /cannot read the tool calls/],
+    ["an idle child", "idle"],
+    ["a child whose last run never ended", "running"],
+    ["an archived child", "archived"],
+  ] as const)("refuses %s: only a deleted session proves its work has stopped", (_name, state) => {
+    const decision = decideRelease({ ...base, child: { state, owner: "ses_parent" } })
+    expect(decision.release === false && decision.reason).toMatch(/session still exists.*stop it and delete its session, then release again/)
+  })
+
+  test.each([
     ["an unreadable session", { child: { state: "unknown" as const } }, /cannot read session/],
-    ["another session's child", { child: { ...base.child, owner: "ses_other" } }, /only the session that spawned/],
-    ["a child with no known owner", { child: { state: "deleted" as const }, openTool: undefined }, /only the session that spawned/],
-    ["an idle child whose background shell still runs", { background: "shell sh_1" }, /background work is still running: shell sh_1/],
-    ["a gone child whose background shell still runs", { child: { state: "archived" as const, owner: "ses_parent" }, background: "shell sh_1" }, /background work/],
+    ["another session's child", { child: { state: "deleted" as const, owner: "ses_other" } }, /only the session that spawned/],
+    ["a child with no known owner", { child: { state: "deleted" as const } }, /only the session that spawned/],
+    ["work held on the worktree", { holds: "a delivery merge holds it" }, /work is still running on the worktree: a delivery merge holds it/],
     ["uncommitted changes", { tree: { dirty: true, unpushed: 0 } }, /uncommitted changes/],
     ["commits missing from the upstream", { tree: { dirty: false, unpushed: 2 } }, /2 commits not pushed/],
     ["no upstream", { tree: { dirty: false, unpushed: undefined } }, /no upstream/],
@@ -48,25 +39,12 @@ describe("decideRelease", () => {
   })
 })
 
-describe("hasOpenToolCall", () => {
-  const assistant = (status: string) => ({ type: "assistant", content: [{ type: "text", text: "x" }, { type: "tool", id: "t", name: "bash", state: { status } }] })
-
-  test.each([
-    ["a running tool call", [assistant("completed"), assistant("running")], true],
-    ["a streaming tool call", [assistant("streaming")], true],
-    ["only finished tool calls", [assistant("completed"), assistant("error")], false],
-    ["no messages", [], false],
-    ["a transcript that is not a list", { data: [] }, undefined],
-  ])("%s", (_name, messages, expected) => {
-    expect(hasOpenToolCall(messages)).toBe(expected)
-  })
-})
-
 describe("parseRelease", () => {
-  const record = { child: "ses_a", directory: "/wt/a", by: "ses_parent", at: 1, head: "abc", reason: "dead", interrupted: false }
+  const record = { child: "ses_a", directory: "/wt/a", by: "ses_parent", at: 1, head: "abc", reason: "dead" }
 
   test("reads a release record and rejects a malformed one", () => {
     expect(parseRelease(record)).toEqual(record)
+    expect(parseRelease({ ...record, to: "ses_b" })).toEqual({ ...record, to: "ses_b" })
     expect(parseRelease({ ...record, directory: "" })).toBeUndefined()
     expect(parseRelease("release")).toBeUndefined()
   })

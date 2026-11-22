@@ -643,10 +643,9 @@ export function tail(text: string, lines = 40): string {
 /**
  * A session in the target worktree, as `session.list` reports it. `busy` is the start of its
  * latest execution and `idle` the end of its latest completed one, both in epoch milliseconds.
- * `readOnly` is true when the session's agent cannot edit. `released` is true when its parent
- * released it from this worktree (see `release.ts`).
+ * `readOnly` is true when the session's agent cannot edit.
  */
-export type WriterSession = { id: string; parentID?: string; busy?: number; idle?: number; readOnly?: boolean; released?: boolean }
+export type WriterSession = { id: string; parentID?: string; busy?: number; idle?: number; readOnly?: boolean }
 
 /** Whether the latest execution started and has not ended: it began after the last completed one ended. */
 export function isRunning(session: Pick<WriterSession, "busy" | "idle">): boolean {
@@ -661,9 +660,9 @@ export const WRITER_LIVENESS_NOTE =
 /**
  * Whether a new writer subagent may start in an explicitly named worktree. A live writer is a
  * child session in that directory whose latest execution is still running (an earlier `outcome`
- * does not matter: a resumed session keeps it while it runs again) and that its parent has not
- * released. `sessions` is undefined when the lookup failed or timed out; uncertainty allows the
- * spawn and warns.
+ * does not matter: a resumed session keeps it while it runs again). A deleted session is not listed,
+ * so a released writer never counts. `sessions` is undefined when the lookup failed or timed out;
+ * uncertainty allows the spawn and warns.
  *
  * Known limits of the guard:
  * 1. It coordinates spawns within one OpenCode server instance only. The reservation that orders
@@ -686,7 +685,7 @@ export function decideWriterGuard(facts: {
   if (facts.sessions === undefined) return { kind: "allow", warn: WRITER_LIVENESS_NOTE }
   const live = facts.sessions.find(
     (session) =>
-      session.parentID !== undefined && session.id !== facts.caller && !session.readOnly && !session.released && isRunning(session),
+      session.parentID !== undefined && session.id !== facts.caller && !session.readOnly && isRunning(session),
   )
   if (!live) return { kind: "allow" }
   return { kind: "refuse", reason: writerRefusal(facts.directory, live.id) }
