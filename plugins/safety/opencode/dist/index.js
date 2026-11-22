@@ -4562,23 +4562,47 @@ function gitRemoteResolver(inherited) {
     }
     const branch = git(cwd, ["symbolic-ref", "-q", "--short", "HEAD"], env)?.[0];
     const configured = (key) => git(cwd, ["config", "--get", key], env)?.[0];
-    const name = (branch === undefined ? undefined : configured(`branch.${branch}.pushRemote`)) ?? configured("remote.pushDefault") ?? (branch === undefined ? undefined : configured(`branch.${branch}.remote`)) ?? "origin";
+    const remotes = git(cwd, ["remote"], env);
+    if (remotes === undefined)
+      return;
+    const name = (branch === undefined ? undefined : configured(`branch.${branch}.pushRemote`)) ?? configured("remote.pushDefault") ?? (branch === undefined ? undefined : configured(`branch.${branch}.remote`)) ?? (remotes.length === 1 ? remotes[0] : "origin");
     return git(cwd, ["remote", "get-url", "--push", "--all", "--", name], env);
   };
 }
 var VALUED_LONG = ["repo", "push-option", "receive-pack", "exec"];
-var OTHER_LONG = ["recurse-submodules"];
-function valuedLong(name) {
-  if (VALUED_LONG.includes(name))
-    return name;
-  if (name.length < 3)
-    return;
-  const matches = [...VALUED_LONG, ...OTHER_LONG].filter((long) => long.startsWith(name));
+var BOOLEAN_LONG = [
+  "all",
+  "branches",
+  "prune",
+  "mirror",
+  "delete",
+  "tags",
+  "follow-tags",
+  "atomic",
+  "dry-run",
+  "porcelain",
+  "force",
+  "force-if-includes",
+  "thin",
+  "progress",
+  "verbose",
+  "quiet",
+  "set-upstream",
+  "verify",
+  "ipv4",
+  "ipv6",
+  "help"
+];
+var OTHER_LONG = ["force-with-lease", "signed", "recurse-submodules", "no-push-option"];
+var LONG_OPTIONS = [...VALUED_LONG, ...OTHER_LONG, ...BOOLEAN_LONG, ...BOOLEAN_LONG.map((name) => `no-${name}`)];
+function longOption(name) {
+  const matches = LONG_OPTIONS.includes(name) ? [name] : LONG_OPTIONS.filter((long) => name !== "" && long.startsWith(name));
   const only = matches[0];
-  return matches.length === 1 && only !== undefined && VALUED_LONG.includes(only) ? only : undefined;
+  return matches.length === 1 && only !== undefined ? { name: only, valued: VALUED_LONG.includes(only) } : undefined;
 }
 function pushArgs(args) {
   let help = false;
+  let unknown = false;
   let repo;
   const positional = [];
   let options = true;
@@ -4598,28 +4622,30 @@ function pushArgs(args) {
     }
     if (arg.startsWith("--")) {
       const [name = "", ...rest] = arg.slice(2).split("=");
-      const valued = valuedLong(name);
-      if (valued === undefined)
+      const option = longOption(name);
+      if (option === undefined) {
+        unknown = true;
+        continue;
+      }
+      if (option.name === "help")
+        help = true;
+      if (!option.valued)
         continue;
       const value = rest.length > 0 ? rest.join("=") : args[++i];
-      if (valued === "repo")
+      if (option.name === "repo")
         repo = value;
       continue;
     }
     if (/^-[A-Za-z0-9]+$/.test(arg) && arg.endsWith("o") && arg.slice(1).indexOf("o") === arg.length - 2)
       i++;
   }
-  return { help, remote: positional[0] ?? repo };
+  return { help, unknown, remote: positional[0] ?? repo };
 }
 var SELECTOR = /GIT_(?:CONFIG|DIR|WORK_TREE|COMMON_DIR)/;
 function repositorySelected(env) {
   return Object.keys(env ?? {}).some((name) => SELECTOR.test(name));
 }
-var LITERAL = /^[A-Za-z0-9_./@:+=,%-]+$/;
-var literalWords = (command) => command.words !== undefined && command.words.length === command.argv.length && command.argv.every((word, i) => {
-  const at = command.words?.[i];
-  return at !== undefined && command.source.slice(at.start, at.end) === word && LITERAL.test(word);
-});
+var literalWords = (command) => command.words !== undefined && command.words.length === command.argv.length && command.words.every((word, i) => !word.quoted && !word.expands && command.source.slice(word.start, word.end) === command.argv[i]);
 function literalPush(command, cwd) {
   if (command === undefined || command.context !== "top" || command.argv[0] !== "git")
     return;
@@ -4645,8 +4671,8 @@ function pushVia(commands, cwd, config, resolveRemote) {
   const push = literalPush(commands[0], cwd);
   if (push === undefined)
     return;
-  const { help, remote } = pushArgs(push.args);
-  if (help)
+  const { help, unknown, remote } = pushArgs(push.args);
+  if (help || unknown)
     return;
   let urls;
   try {
