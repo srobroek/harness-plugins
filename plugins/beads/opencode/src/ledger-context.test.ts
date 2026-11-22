@@ -117,6 +117,14 @@ describe("ledgerRepoMismatch", () => {
     expect(warning).not.toContain("belongs to \"/\"")
   })
 
+  test.each([
+    ["a nested store takes the repository root from the git common dir", "/r/data/ledger", { "/r/data/ledger": "/r/.git" }, "/r"],
+    ["a non-.beads store outside git is its own owner", "/x/ledger", { "/x/ledger": "/x/ledger" }, "/x/ledger"],
+  ])("owner clause: %s", (_name, store, ids, owner) => {
+    const warning = ledgerRepoMismatch({ verb: "create", store, cwd: "/b", identity: identity({ ...ids, "/b": "/b/.git" }) }) ?? ""
+    expect(warning).toContain(`belongs to ${JSON.stringify(owner)},`)
+  })
+
   test("stays silent for a store that is the repository root itself", () => {
     expect(
       ledgerRepoMismatch({ verb: "create", store: "/r", cwd: "/r/sub", identity: identity({ "/r": "/r/.git", "/r/sub": "/r/.git", "/": "/" }) }),
