@@ -1,3 +1,9 @@
+## delivery [0.11.1](https://github.com/srobroek/harness-plugins/compare/delivery--v0.11.0...delivery--v0.11.1) (2026-11-22)
+
+### Bug Fixes
+
+* **subagent-worktree:** release a dead writer's worktree to a new writer ([#95](https://github.com/srobroek/harness-plugins/issues/95)) ([5e88065](https://github.com/srobroek/harness-plugins/commit/5e880653ad897ed41a69cc41658dc2f941d0ad96)), closes [#106](https://github.com/srobroek/harness-plugins/issues/106) [#99](https://github.com/srobroek/harness-plugins/issues/99) [#100](https://github.com/srobroek/harness-plugins/issues/100) [#109](https://github.com/srobroek/harness-plugins/issues/109)
+
 ## delivery [0.11.0](https://github.com/srobroek/harness-plugins/compare/delivery--v0.10.6...delivery--v0.11.0) (2026-11-22)
 
 ### Features

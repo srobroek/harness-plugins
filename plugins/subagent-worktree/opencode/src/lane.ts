@@ -77,10 +77,22 @@ export type Lane = {
   notices?: string[]
   /** An explicit keep: the gate stays quiet until the lane's state token changes. */
   kept?: { reason: string; token: string }
+  /** The lane was taken over from a released writer (`release/<from>` records why). */
+  handedOver?: { from: string; at: number }
+  /**
+   * The lane's storage key: the child it was created for. A handover changes `child` and `parent` in one write
+   * of the same record and keeps `id`, so a worktree's lane is never two records. Undefined means `child`.
+   */
+  id?: string
 }
 
 export function laneKey(child: string): string {
   return `${LANE_PREFIX}${child}`
+}
+
+/** Where `lane` is stored: under its `id`, which a handover keeps. */
+export function laneStoreKey(lane: Pick<Lane, "id" | "child">): string {
+  return laneKey(lane.id ?? lane.child)
 }
 
 export function parseLane(value: unknown): Lane | undefined {
@@ -92,6 +104,7 @@ export function parseLane(value: unknown): Lane | undefined {
   if (!["active", "removing", "removed", "merged", "landed"].includes(lane.state as string)) return undefined
   if (lane.target !== undefined && typeof lane.target !== "string") return undefined
   if (lane.title !== undefined && typeof lane.title !== "string") return undefined
+  if (lane.id !== undefined && (typeof lane.id !== "string" || lane.id === "")) return undefined
   return value as Lane
 }
 
@@ -654,8 +667,19 @@ export const WRITER_LIVENESS_NOTE =
 /**
  * Whether a new writer subagent may start in an explicitly named worktree. A live writer is a
  * child session in that directory whose latest execution is still running (an earlier `outcome`
- * does not matter: a resumed session keeps it while it runs again). `sessions` is undefined when the
- * lookup failed or timed out; uncertainty allows the spawn and warns.
+ * does not matter: a resumed session keeps it while it runs again). A deleted session is not listed,
+ * so a released writer never counts. `sessions` is undefined when the lookup failed or timed out;
+ * uncertainty allows the spawn and warns.
+ *
+ * Known limits of the guard:
+ * 1. It coordinates spawns within one OpenCode server instance only. The reservation that orders
+ *    concurrent spawns is in this plugin's memory, so spawns from separate server instances are not
+ *    coordinated, and neither are writers started outside the `subagent` tool.
+ * 2. A failed or timed-out session lookup does not refuse: the spawn goes ahead with
+ *    `WRITER_LIVENESS_NOTE` on its result.
+ * 3. It checks only a non-isolated writer spawned into a worktree named by `worktree` (a `move`
+ *    start, or the caller's own worktree). A writer that runs in the caller's directory without
+ *    `worktree` is not checked; an isolated writer gets a fresh worktree and needs no check.
  */
 export function decideWriterGuard(facts: {
   /** The agent can edit files. */
