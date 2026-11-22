@@ -183,20 +183,31 @@ const mentioned = (args: string[]): ActorVar[] =>
 /** What `export`, `unset` or a `declare`-family builtin does to the actor variables, read from its options. */
 function applyVariableBuiltin(vars: ShellVars, name: string, args: string[]): void {
   const parsed = builtinArgs(name, args)
-  if (parsed === undefined) return markUnverified(vars, mentioned(args))
+  if (parsed === undefined) {
+    markUnverified(vars, mentioned(args))
+    return
+  }
   const { letters, names } = parsed
   const has = (letter: string): boolean => letters.includes(letter)
   if (name === "export") {
     // `-f` names functions. `-p` alone prints; with names bash exports them and zsh only prints them.
     if (has("f")) return
-    if (has("p")) return markUnverified(vars, mentioned(names))
-    return applyActorBuiltin(vars, "export", has("n"), names)
+    if (has("p")) {
+      markUnverified(vars, mentioned(names))
+      return
+    }
+    applyActorBuiltin(vars, "export", has("n"), names)
+    return
   }
   if (name === "unset") {
     if (has("f") && !has("v")) return
     // `-n` unsets a nameref itself, and the gate does not know which names are namerefs.
-    if (has("n") || has("f")) return markUnverified(vars, mentioned(names))
-    return applyActorBuiltin(vars, "unset", false, names)
+    if (has("n") || has("f")) {
+      markUnverified(vars, mentioned(names))
+      return
+    }
+    applyActorBuiltin(vars, "unset", false, names)
+    return
   }
   // The declare family: `-p` only prints and `-f`/`-F` name functions; anything else may set or export.
   if (has("p") || has("f") || has("F")) return

@@ -1285,23 +1285,31 @@ function builtinArgs(name, args) {
 var mentioned = (args) => ACTOR_VARS.filter((variable) => args.some((arg) => arg.includes(variable)));
 function applyVariableBuiltin(vars, name, args) {
   const parsed = builtinArgs(name, args);
-  if (parsed === undefined)
-    return markUnverified(vars, mentioned(args));
+  if (parsed === undefined) {
+    markUnverified(vars, mentioned(args));
+    return;
+  }
   const { letters, names } = parsed;
   const has = (letter) => letters.includes(letter);
   if (name === "export") {
     if (has("f"))
       return;
-    if (has("p"))
-      return markUnverified(vars, mentioned(names));
-    return applyActorBuiltin(vars, "export", has("n"), names);
+    if (has("p")) {
+      markUnverified(vars, mentioned(names));
+      return;
+    }
+    applyActorBuiltin(vars, "export", has("n"), names);
+    return;
   }
   if (name === "unset") {
     if (has("f") && !has("v"))
       return;
-    if (has("n") || has("f"))
-      return markUnverified(vars, mentioned(names));
-    return applyActorBuiltin(vars, "unset", false, names);
+    if (has("n") || has("f")) {
+      markUnverified(vars, mentioned(names));
+      return;
+    }
+    applyActorBuiltin(vars, "unset", false, names);
+    return;
   }
   if (has("p") || has("f") || has("F"))
     return;
