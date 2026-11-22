@@ -1,21 +1,20 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { parse } from "@srobroek/opencode-lib/beads-shell"
 import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
 
 import {
   beadsActive,
-  bodyFileReader,
-  bodyOfGhCreate,
   controlledByViewerPermission,
-  decideCommand,
-  decidePrCreate,
-  REASON,
+  decidePrBeadLink,
+  type PrBeadLinkDeps,
+  readBodyFile,
   repositoryControlled,
-  repositoryFromGhCreate,
 } from "./pr-bead-link-gate.ts"
+import { ACCEPTED_FORMS, MAX_BODY_BYTES, TRAILER_RULE, validRepository } from "./pr-create-form.ts"
 
 describe("repository subprocess contract", () => {
   test("uses gh repo view's viewerPermission output contract", () => {
@@ -62,7 +61,7 @@ describe("repository subprocess contract", () => {
     try {
       const control = repositoryControlled("owner/repo")
       expect(control.kind).toBe("unknown")
-      const decision = decidePrCreate("plain prose", control)
+      const decision = decidePrBeadLink(parse("gh pr create --title t --body x"), dir, { control: () => control })
       expect(decision?.block).toBe(true)
       expect(decision?.reason).toContain("Repository permission could not be determined")
       expect(decision?.reason).toContain("permission lookup failed")
@@ -75,60 +74,25 @@ describe("repository subprocess contract", () => {
 })
 
 describe("repository control", () => {
+  test.each(["--json", "-R", "a", "a/b/c/d", "a/..", "a b/c"])("a repository name %p fails closed without running gh", (name) => {
+    const dir = mkdtempSync(join(tmpdir(), "beads-gh-"))
+    const ran = join(dir, "ran")
+    writeExecutable(join(dir, "gh"), `#!/bin/sh\ntouch '${ran}'\necho WRITE\n`)
+    const previousPath = process.env.PATH
+    process.env.PATH = `${dir}:${previousPath ?? ""}`
+    try {
+      expect(repositoryControlled(name).kind).toBe("unknown")
+      expect(existsSync(ran)).toBe(false)
+    } finally {
+      process.env.PATH = previousPath
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   test("only write-capable viewer permissions control", () => {
     for (const permission of ["WRITE", "MAINTAIN", "ADMIN"]) expect(controlledByViewerPermission(permission)).toBe(true)
     for (const permission of ["READ", "TRIAGE", null, undefined, ""])
       expect(controlledByViewerPermission(permission)).toBe(false)
-  })
-  test("resolves explicit repo and rejects ambiguous targets", () => {
-    expect(repositoryFromGhCreate("gh pr create --repo owner/old --repo=owner/new --body x")).toBe("owner/new")
-    expect(repositoryFromGhCreate('gh pr create "--repo" owner/quoted --body x')).toBe("owner/quoted")
-    expect(repositoryFromGhCreate("gh pr create -R owner/short --body x")).toBe("owner/short")
-    expect(repositoryFromGhCreate('gh pr create --title "--repo owner/fake" --body x')).toBeNull()
-    expect(repositoryFromGhCreate('gh pr create --body "--repo owner/fake"')).toBeNull()
-    expect(repositoryFromGhCreate("gh pr create -R owner/one -Rowner/two --body x")).toBe("owner/two")
-    expect(repositoryFromGhCreate("gh pr create -dRowner/two --body x")).toBe("owner/two")
-    expect(repositoryFromGhCreate('gh pr create --body "--repo owner/fake"')).toBeNull()
-    expect(repositoryFromGhCreate("gh pr create --repo ghe.example.com/owner/project --body x")).toBe(
-      "ghe.example.com/owner/project",
-    )
-  })
-})
-
-describe("bodyOfGhCreate", () => {
-  test("reads every real --body spelling, attached forms included", () => {
-    expect(bodyOfGhCreate("gh pr create --title t --body 'Bead: omp-1'")).toBe("Bead: omp-1")
-    expect(bodyOfGhCreate('gh pr create --body="Bead: omp-2"')).toBe("Bead: omp-2")
-    expect(bodyOfGhCreate("gh pr create -b 'Bead: omp-3'")).toBe("Bead: omp-3")
-    expect(bodyOfGhCreate("gh pr create -b'Bead: omp-4'")).toBe("Bead: omp-4")
-    expect(bodyOfGhCreate("gh pr create -b=Bead:omp-5")).toBe("Bead:omp-5")
-  })
-
-  test("does not read a --body that lives inside another flag's value", () => {
-    expect(bodyOfGhCreate("gh pr create --title 'add --body foo' --body 'Bead: omp-1'")).toBe("Bead: omp-1")
-    expect(bodyOfGhCreate("gh pr create --title 'x --body sneaky'")).toBeNull()
-  })
-
-  test("ignores --body-file, which the gate cannot read", () => {
-    expect(bodyOfGhCreate("gh pr create --body-file body.md")).toBeNull()
-    expect(bodyOfGhCreate("gh pr create --body-file=b.md --title t")).toBeNull()
-  })
-
-  test("reports no body for --fill", () => {
-    expect(bodyOfGhCreate("gh pr create --fill")).toBeNull()
-  })
-
-  test("ignores gh invocations that are not pr create", () => {
-    expect(bodyOfGhCreate("gh pr edit 4 --body 'no bead'")).toBeNull()
-    expect(bodyOfGhCreate("gh pr view 4 --json body")).toBeNull()
-  })
-
-  test("ignores a gh pr create that is not at command position", () => {
-    expect(bodyOfGhCreate("echo gh pr create --body 'no bead'")).toBeNull()
-  })
-
-  test("reads through env prefixes", () => {
-    expect(bodyOfGhCreate("GH_TOKEN=x gh pr create --body 'Bead: omp-9'")).toBe("Bead: omp-9")
   })
 })
 
@@ -139,7 +103,6 @@ describe("beads activity", () => {
     writeFileSync(join(root, ".beads", "RETIRED"), "")
     try {
       expect(beadsActive(root)).toBe(false)
-      expect(decidePrCreate("plain prose", beadsActive(root))).toBeNull()
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -151,7 +114,6 @@ describe("beads activity", () => {
       if (retired) mkdirSync(join(root, ".beads", "RETIRED"))
       try {
         expect(beadsActive(root)).toBe(true)
-        expect(decidePrCreate("plain prose", beadsActive(root))).not.toBeNull()
       } finally {
         rmSync(root, { recursive: true, force: true })
       }
@@ -164,7 +126,6 @@ describe("beads activity", () => {
     symlinkSync(join(root, "marker"), join(root, ".beads", "RETIRED"))
     try {
       expect(beadsActive(root)).toBe(true)
-      expect(decidePrCreate("plain prose", beadsActive(root))).not.toBeNull()
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -177,230 +138,273 @@ describe("beads activity", () => {
     mkdirSync(join(child, ".beads"), { recursive: true })
     try {
       expect(beadsActive(child)).toBe(true)
-      expect(decidePrCreate("plain prose", beadsActive(child))).not.toBeNull()
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
   })
 })
 
-describe("decidePrCreate", () => {
-  test("rejects internal linkage placeholders instead of treating them as an escape hatch", () => {
-    const _placeholder = ["No", "-Bead"].join("")
-    expect(decidePrCreate(`: revert of a bad merge`, true)).not.toBeNull()
-    expect(decidePrCreate(`:`, true)).not.toBeNull()
+describe("readBodyFile", () => {
+  let dir = ""
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "beads-bodyfile-"))
+    mkdirSync(join(dir, "sub"))
+    writeFileSync(join(dir, "ok.md"), "Adds a thing.\n\nBead: a-1\n")
+    writeFileSync(join(dir, "sub", "ok.md"), "in sub")
+    writeFileSync(join(dir, "edge.md"), "x".repeat(MAX_BODY_BYTES))
+    writeFileSync(join(dir, "big.md"), "x".repeat(MAX_BODY_BYTES + 1))
+    writeFileSync(join(dir, "bad.md"), Buffer.from([0x42, 0xff, 0xfe]))
+    writeFileSync(join(dir, "nul.md"), "a\0b")
+    writeFileSync(join(dir, "bom.md"), "\uFEFFBead: a-1")
+    mkdirSync(join(dir, "d"))
+    symlinkSync(join(dir, "sub"), join(dir, "l"))
+    symlinkSync(join(dir, "ok.md"), join(dir, "link.md"))
   })
+  afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
-  test("blocks a body naming neither route and explains both", () => {
-    const decision = decidePrCreate("Adds a fish alias.", true)
-    expect(decision).toEqual({ block: true, reason: REASON })
-    expect(decision?.reason).toContain("Bead: <id>")
-  })
-
-  test("allows Bead, Closes-Bead and several beads", () => {
-    expect(decidePrCreate("Bead: chezmoi-4rc2", true)).toBeNull()
-    expect(decidePrCreate("Closes-Bead: chezmoi-5vn", true)).toBeNull()
-    expect(decidePrCreate("Bead: omp-1\nBead: omp-2", true)).toBeNull()
-  })
-
-  test("stays silent where beads is not active", () => {
-    expect(decidePrCreate("Adds a fish alias.", false)).toBeNull()
-  })
-
-  test("does not accept a bare id or a bead-shaped word", () => {
-    expect(decidePrCreate("Fixes omp-plugins-dd1 somehow", true)).not.toBeNull()
-    expect(decidePrCreate("Beading: omp-1", true)).not.toBeNull()
-  })
-})
-
-describe("decideCommand", () => {
-  test("blocks a bead-less create anywhere in a chain", () => {
-    expect(decideCommand("gh pr create --body 'Bead: omp-1' && gh pr create --body 'nothing'", true)).not.toBeNull()
-  })
-
-  test("allows a chain whose creates all name beads", () => {
-    expect(decideCommand("gh pr create --body 'Bead: omp-1' ; gh pr create --body 'Bead: omp-2'", true)).toBeNull()
-  })
-
-  test("leaves a quoted separator inside a body intact", () => {
-    expect(decideCommand("gh pr create --body 'Bead: omp-1; and more'", true)).toBeNull()
-    expect(decideCommand("gh pr create --body 'no bead; just prose'", true)).not.toBeNull()
-  })
-
-  test("ignores unrelated gh commands", () => {
-    expect(decideCommand("gh pr list --state open", true)).toBeNull()
-    expect(decideCommand("gh run watch 42", true)).toBeNull()
-  })
-})
-
-describe("per-segment repository control", () => {
-  test("evaluates mixed targets independently in either order", () => {
-    const controlled = (segment: string) => segment.includes("controlled/repo")
-    expect(
-      decideCommand(
-        "gh pr create --repo external/repo --body plain && gh pr create --repo controlled/repo --body plain",
-        controlled,
-      ),
-    ).not.toBeNull()
-    expect(
-      decideCommand(
-        "gh pr create --repo controlled/repo --body plain && gh pr create --repo external/repo --body plain",
-        controlled,
-      ),
-    ).not.toBeNull()
-  })
-  test("handles three mixed targets without sharing classification", () => {
-    const controlled = (segment: string) => segment.includes("controlled/repo")
-    expect(
-      decideCommand(
-        "gh pr create --repo external/repo --body 'Bead: x-1' && gh pr create --repo controlled/repo --body plain && gh pr create --repo external/repo --body 'Bead: x-2'",
-        controlled,
-      ),
-    ).not.toBeNull()
-  })
-})
-
-describe("repository control lookup cost", () => {
-  test("classifies only a segment whose decision depends on it", () => {
-    const asked: string[] = []
-    const active = (segment: string) => {
-      asked.push(segment)
-      return true
-    }
-    // Resolving control spawns `gh`, twice, and this gate decides every bash call in the
-    // session: a command with no PR to judge must cost no lookup at all.
-    expect(decideCommand("git status && bd list && echo done", active)).toBeNull()
-    expect(asked).toEqual([])
-    // A create that already names a bead is allowed whatever the answer would have been.
-    expect(decideCommand("gh pr create --body 'Bead: omp-1'", active)).toBeNull()
-    expect(asked).toEqual([])
-    expect(decideCommand("gh pr create --body 'plain prose'", active)).not.toBeNull()
-    expect(asked).toHaveLength(1)
-  })
-})
-
-describe("short flag clusters", () => {
-  test("reads a body attached to a clustered -b", () => {
-    expect(bodyOfGhCreate("gh pr create -dbNoBead")).toBe("NoBead")
-    expect(bodyOfGhCreate("gh pr create -db 'Bead: omp-1'")).toBe("Bead: omp-1")
-  })
-
-  test("blocks a clustered bead-less body", () => {
-    expect(decideCommand("gh pr create -dbjust prose", true)).not.toBeNull()
-  })
-
-  test("leaves clusters without b alone", () => {
-    expect(bodyOfGhCreate("gh pr create -d --fill")).toBeNull()
-  })
-})
-
-describe("body sources are judged alike", () => {
-  const readFile = (files: Record<string, string>) => (path: string) => files[path]
-
-  test("reads a bead trailer through $'...' quoting, whose \\n is a newline to the shell", () => {
-    expect(decideCommand("gh pr create --body $'Summary\\n\\nBead: omp-1'", true)).toBeNull()
-    expect(decideCommand("gh pr create --body $'Summary\\n\\nno trailer'", true)).not.toBeNull()
-  })
-
-  test.each([
-    ["gh pr create --body-file b.md", "b.md"],
-    ["gh pr create --body-file=b.md", "b.md"],
-    ["gh pr create -F b.md --title t", "b.md"],
-  ])("reads the file named by %s", (command, path) => {
-    expect(decideCommand(command, true, undefined, { readFile: readFile({ [path]: "Bead: omp-1\n" }) })).toBeNull()
-    expect(decideCommand(command, true, undefined, { readFile: readFile({ [path]: "no trailer\n" }) })).not.toBeNull()
-  })
-
-  test("lets an unreadable or stdin body file through, as before", () => {
-    const none = { readFile: readFile({}) }
-    expect(decideCommand("gh pr create --body-file missing.md", true, undefined, none)).toBeNull()
-    expect(decideCommand("gh pr create --body-file -", true, undefined, none)).toBeNull()
-    expect(decideCommand("gh pr create --body-file b.md", true)).toBeNull()
-  })
-
-  test("does not read a body file that an earlier segment of the chain may write", () => {
-    const stale = { readFile: readFile({ "b.md": "no trailer\n" }) }
-    expect(decideCommand("printf 'Bead: omp-1' > b.md && gh pr create --body-file b.md", true, undefined, stale)).toBeNull()
-  })
-
-  test("a refusal names where it looked", () => {
-    const body = decideCommand("gh pr create --title t --body 'no trailer'", true)
-    expect(body?.reason).toContain("Looked at the --body text")
-    expect(body?.reason).toContain("not the branch or the title")
-    const file = decideCommand("gh pr create --body-file b.md", true, undefined, { readFile: readFile({ "b.md": "x" }) })
-    expect(file?.reason).toContain("Looked at --body-file b.md")
-  })
-})
-
-describe("body files on disk", () => {
-  const OVER_CAP = 64_001
-  const decide = (command: string, cwd: string) =>
-    decideCommand(command, true, undefined, { readFile: bodyFileReader(cwd) })
-  const withDir = (run: (dir: string) => void) => {
-    const dir = mkdtempSync(join(tmpdir(), "beads-bodyfile-"))
-    try {
-      run(dir)
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  }
-
-  test("refuses a readable file without a trailer and accepts one with it", () => {
-    withDir((dir) => {
-      writeFileSync(join(dir, "none.md"), "Adds a fish alias.\n")
-      writeFileSync(join(dir, "ok.md"), "Adds a fish alias.\n\nBead: omp-1\n")
-      expect(decide("gh pr create --body-file none.md", dir)?.reason).toContain("Looked at --body-file none.md")
-      expect(decide("gh pr create --body-file ok.md", dir)).toBeNull()
-    })
-  })
-
-  test("resolves a relative -F path against the supplied working directory", () => {
-    withDir((dir) => {
-      mkdirSync(join(dir, "sub"))
-      writeFileSync(join(dir, "sub", "b.md"), "no trailer\n")
-      expect(decide("gh pr create -F sub/b.md", dir)).not.toBeNull()
-      expect(decide("gh pr create -F sub/b.md", join(dir, "sub"))).toBeNull()
-    })
-  })
-
-  test("passes an oversized file, directly or through a symlink", () => {
-    withDir((dir) => {
-      writeFileSync(join(dir, "big.md"), "x".repeat(OVER_CAP))
-      symlinkSync(join(dir, "big.md"), join(dir, "link.md"))
-      expect(decide("gh pr create --body-file big.md", dir)).toBeNull()
-      expect(decide("gh pr create --body-file link.md", dir)).toBeNull()
-    })
+  test("reads a regular file relative to the working directory", () => {
+    expect(readBodyFile(dir)("ok.md")).toEqual({ ok: true, text: "Adds a thing.\n\nBead: a-1\n" })
+    expect(readBodyFile(dir)("sub/ok.md")).toEqual({ ok: true, text: "in sub" })
+    expect(readBodyFile(join(dir, "sub"))("ok.md")).toEqual({ ok: true, text: "in sub" })
   })
 
   test("reads a file of exactly the cap", () => {
-    withDir((dir) => {
-      writeFileSync(join(dir, "edge.md"), "x".repeat(64_000))
-      expect(decide("gh pr create --body-file edge.md", dir)).not.toBeNull()
+    expect(readBodyFile(dir)("edge.md")).toMatchObject({ ok: true })
+  })
+
+  test("keeps a BOM in the text, so it still hides a trailer from beadIn", () => {
+    expect(readBodyFile(dir)("bom.md")).toEqual({ ok: true, text: "\uFEFFBead: a-1" })
+  })
+
+  test.each([
+    ["a file over the cap", "big.md", "larger than"],
+    ["invalid UTF-8", "bad.md", "not valid UTF-8"],
+    ["a NUL byte", "nul.md", "NUL"],
+    ["a directory", "d", "not a regular file"],
+    ["a symlinked directory", "l/ok.md", "symlink"],
+    ["a symlinked final file", "link.md", "could not be opened"],
+    ["a missing file", "nope.md", "could not be opened"],
+  ])("refuses %s", (_name, path, reason) => {
+    const read = readBodyFile(dir)(path)
+    expect(read.ok).toBe(false)
+    if (!read.ok) expect(read.reason).toContain(reason)
+  })
+
+  test("an open failure keeps the caught error as its cause and shows only the errno code", () => {
+    const read = readBodyFile(dir)("nope.md")
+    expect(read.ok).toBe(false)
+    if (read.ok) return
+    expect(read.cause).toBeInstanceOf(Error)
+    expect((read.cause as NodeJS.ErrnoException).code).toBe("ENOENT")
+    expect(read.reason).toContain("(ENOENT)")
+    expect(read.reason).not.toContain((read.cause as Error).message)
+  })
+
+  test("a refusal for a file's content has no cause", () => {
+    const read = readBodyFile(dir)("bad.md")
+    expect(read).not.toHaveProperty("cause")
+  })
+
+  // The test took 0.2 s alone (3 runs); 15 s covers the 10 s child deadline plus load.
+  test("refuses a FIFO without blocking", { timeout: 15_000 }, () => {
+    const made = spawnSync("mkfifo", [join(dir, "pipe")])
+    if (made.status !== 0) {
+      console.warn("SKIPPED: mkfifo is unavailable")
+      return
+    }
+    const gate = join(import.meta.dir, "pr-bead-link-gate.ts")
+    const script = `import { readBodyFile } from ${JSON.stringify(gate)}
+console.log(JSON.stringify(readBodyFile(process.env.DIR ?? "")("pipe")))`
+    const child = spawnSync(process.execPath, ["-e", script], { env: { ...process.env, DIR: dir }, timeout: 10_000, encoding: "utf8" })
+    expect(child.error).toBeUndefined()
+    expect(JSON.parse(child.stdout)).toMatchObject({ ok: false, reason: expect.stringContaining("not a regular file") })
+  })
+})
+
+describe("decidePrBeadLink", () => {
+  const controlled: PrBeadLinkDeps = { control: () => ({ kind: "controlled" }) }
+  const decide = (command: string, deps: PrBeadLinkDeps = controlled, cwd = tmpdir()) => decidePrBeadLink(parse(command), cwd, deps)
+
+  test("passes a command that cannot create a PR without asking anything", () => {
+    const deps: PrBeadLinkDeps = {
+      control: () => {
+        throw new Error("lookup")
+      },
+      note: () => {
+        throw new Error("note")
+      },
+    }
+    expect(decide("gh pr list --state open", deps)).toBeNull()
+    expect(decide("git push origin main", deps)).toBeNull()
+  })
+
+  test("passes an exact form that names a bead without a repository lookup or a note", () => {
+    const deps: PrBeadLinkDeps = {
+      control: () => {
+        throw new Error("lookup")
+      },
+      note: () => {
+        throw new Error("note")
+      },
+    }
+    expect(decide("gh pr create --title t --body 'Bead: a-1'", deps)).toBeNull()
+  })
+
+  test("a bead-less exact form is refused with the old reason, the source it read and the accepted forms", () => {
+    const decision = decide("gh pr create --title t --body 'Adds a fish alias.'")
+    expect(decision?.reason).toContain("This PR names no bead.")
+    expect(decision?.reason).toContain("Looked at the --body text, not the branch or the title.")
+    expect(decision?.resolution).toBe(`${ACCEPTED_FORMS} ${TRAILER_RULE}`)
+  })
+
+  test("a form the gate cannot read is refused naming its one rule, and the body is never echoed", () => {
+    const decision = decide("gh pr create --title t --body 'SECRET-TEXT Bead: a-1' extra")
+    expect(decision?.reason).toContain("the word at position 8 is not a flag or a flag's value")
+    expect(decision?.reason).not.toContain("SECRET-TEXT")
+    expect(decision?.resolution).toBe(`${ACCEPTED_FORMS} ${TRAILER_RULE}`)
+  })
+
+  test("a body file is read from the working directory", () => {
+    const dir = mkdtempSync(join(tmpdir(), "beads-pr-link-"))
+    try {
+      writeFileSync(join(dir, "none.md"), "Adds a thing.\n")
+      writeFileSync(join(dir, "ok.md"), "Adds a thing.\n\nBead: a-1\n")
+      expect(decide("gh pr create --title t -F none.md", controlled, dir)?.reason).toContain("Looked at --body-file none.md")
+      expect(decide("gh pr create --title t -F ok.md", controlled, dir)).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("the repository lookup gets the --repo of the form, or null when the form is refused", () => {
+    const seen: (string | null)[] = []
+    const deps: PrBeadLinkDeps = {
+      control: (repo) => {
+        seen.push(repo)
+        return false
+      },
+    }
+    decide("gh pr create --title t -R o/r --body x", deps)
+    decide("gh pr create -R o/r --fill", deps)
+    expect(seen).toEqual(["o/r", null])
+  })
+
+  describe("GH_REPO from the session environment", () => {
+    const seen: (string | null)[] = []
+    const spy = (env: NodeJS.ProcessEnv): PrBeadLinkDeps => ({
+      env,
+      control: (repo) => {
+        seen.push(repo)
+        return false
+      },
+    })
+    test.each<[string, string, NodeJS.ProcessEnv, string | null]>([
+      ["names no repository", "gh pr create --title t --body x", { GH_REPO: "o/r" }, "o/r"],
+      ["names no repository, host form", "gh pr create --title t --body x", { GH_REPO: "h.example/o/r" }, "h.example/o/r"],
+      ["has --repo, which wins", "gh pr create -R a/b --body x", { GH_REPO: "o/r" }, "a/b"],
+      ["is unreadable", "gh pr create -R o/r --fill", { GH_REPO: "x/y" }, "x/y"],
+      ["is empty", "gh pr create --title t --body x", { GH_REPO: "" }, null],
+      ["is unset", "gh pr create --title t --body x", {}, null],
+      ["is invalid, so the lookup sees it and fails closed", "gh pr create --body x", { GH_REPO: "--json" }, "--json"],
+    ])("the lookup gets it when the form %s", (_name, command, env, expected) => {
+      seen.length = 0
+      decide(command, spy(env))
+      expect(seen).toEqual([expected])
+    })
+
+    test("a bead-less PR is refused when GH_REPO is controlled and the checkout's repository is not", () => {
+      const control: PrBeadLinkDeps["control"] = (repo) => (repo === "o/r" ? { kind: "controlled" } : { kind: "uncontrolled" })
+      expect(decide("gh pr create --title t --body x", { env: { GH_REPO: "o/r" }, control })).not.toBeNull()
+      expect(decide("gh pr create --title t --body x", { env: {}, control })).toBeNull()
     })
   })
 
-  test("passes a directory and a missing path", () => {
-    withDir((dir) => {
-      mkdirSync(join(dir, "d"))
-      expect(decide("gh pr create --body-file d", dir)).toBeNull()
-      expect(decide("gh pr create --body-file nope.md", dir)).toBeNull()
-    })
-  })
+  describe("a gh api call is judged by the repository it targets", () => {
+    const api = "gh api repos/o/r/pulls -f title=t"
+    /** Write access to the repositories named; everything else is read-only. */
+    const writeTo = (...names: string[]): PrBeadLinkDeps["control"] => (repo) =>
+      repo !== null && names.includes(repo) ? { kind: "controlled" } : { kind: "uncontrolled" }
+    const gate = (command: string, control: PrBeadLinkDeps["control"], env: NodeJS.ProcessEnv = {}) =>
+      decide(command, { control, env })
 
-  // The test took 0.16-0.25 s alone (3 runs); 15 s covers the 10 s child deadline plus load.
-  test("passes a FIFO without blocking", { timeout: 15_000 }, () => {
-    withDir((dir) => {
-      const made = spawnSync("mkfifo", [join(dir, "pipe")])
-      if (made.status !== 0) {
-        console.warn("SKIPPED: mkfifo is unavailable")
-        return
+    test("the endpoint's repository decides, not GH_REPO", () => {
+      expect(gate(api, writeTo("github.com/o/r"), { GH_REPO: "x/y" })).not.toBeNull()
+      expect(gate(api, writeTo("github.com/x/y", "x/y"), { GH_REPO: "x/y" })).toBeNull()
+    })
+
+    test("placeholders resolve through GH_REPO, as gh does", () => {
+      const placeholders = "gh api 'repos/{owner}/{repo}/pulls' -f title=t"
+      expect(gate(placeholders, writeTo("github.com/x/y"), { GH_REPO: "x/y" })).not.toBeNull()
+      expect(gate(placeholders, writeTo("github.com/o/r"), { GH_REPO: "x/y" })).toBeNull()
+    })
+
+    test("placeholders take only the owner and name from GH_REPO and keep the endpoint's host", () => {
+      const command = "gh api --hostname ghe.example 'repos/{owner}/{repo}/pulls' -f title=t"
+      expect(gate(command, writeTo("ghe.example/x/y"), { GH_REPO: "x/y" })).not.toBeNull()
+      expect(gate(command, writeTo("x/y", "github.com/x/y"), { GH_REPO: "x/y" })).toBeNull()
+      expect(gate(command, writeTo("ghe.example/x/y"), { GH_REPO: "ghe.example/x/y" })).not.toBeNull()
+    })
+
+    test("placeholders whose GH_REPO names another host fail closed", () => {
+      const seen: (string | null)[] = []
+      decide("gh api 'repos/{owner}/{repo}/pulls' -f title=t", { env: { GH_REPO: "ghe.example/x/y" }, control: (repo) => (seen.push(repo), false) })
+      expect(seen).toHaveLength(1)
+      expect(validRepository(seen[0] as string)).toBe(false)
+    })
+
+    test("an explicit github.com endpoint is looked up on github.com whatever GH_HOST says", () => {
+      const env = { GH_HOST: "ghe.example" }
+      for (const command of ["gh api -f t=1 https://api.github.com/repos/o/r/pulls", "gh api --hostname github.com -f t=1 repos/o/r/pulls"]) {
+        expect(gate(command, writeTo("github.com/o/r"), env)).not.toBeNull()
+        expect(gate(command, writeTo("ghe.example/o/r", "o/r"), env)).toBeNull()
       }
-      const gate = join(import.meta.dir, "pr-bead-link-gate.ts")
-      const script = `import { bodyFileReader, decideCommand } from ${JSON.stringify(gate)}
-console.log(JSON.stringify(decideCommand("gh pr create --body-file pipe", true, undefined, { readFile: bodyFileReader(process.env.DIR ?? "") })))`
-      const child = spawnSync(process.execPath, ["-e", script], { env: { ...process.env, DIR: dir }, timeout: 10_000, encoding: "utf8" })
-      expect(child.error).toBeUndefined()
-      expect(child.stdout.trim()).toBe("null")
     })
+
+    test("placeholders without GH_REPO resolve through the checkout (null)", () => {
+      const seen: (string | null)[] = []
+      decide("gh api 'repos/{owner}/{repo}/pulls' -f title=t", { control: (repo) => (seen.push(repo), false) })
+      expect(seen).toEqual([null])
+    })
+
+    test.each([
+      ["--hostname", "gh api --hostname ghe.example repos/o/r/pulls -f t=1", {}],
+      ["GH_HOST", api, { GH_HOST: "ghe.example" }],
+      ["a GHES URL", "gh api -f t=1 https://ghe.example/api/v3/repos/o/r/pulls", {}],
+    ])("the host comes from %s", (_name, command, env) => {
+      expect(gate(command, writeTo("ghe.example/o/r"), env)).not.toBeNull()
+      expect(gate(command, writeTo("github.com/o/r", "o/r"), env)).toBeNull()
+    })
+
+    test("an unresolved destination is looked up under a name that fails closed", () => {
+      const seen: (string | null)[] = []
+      decide("gh api $EP -f t=1", { control: (repo) => (seen.push(repo), false) })
+      expect(seen).toHaveLength(1)
+      expect(seen[0]).not.toBeNull()
+      expect(repositoryControlled(seen[0] as string).kind).toBe("unknown")
+    })
+
+    test("a pr create beside the api call is judged against its own repository too", () => {
+      const command = `${api} && gh pr create --body x`
+      expect(gate(command, writeTo("x/y"), { GH_REPO: "x/y" })).not.toBeNull()
+      expect(gate(command, writeTo("github.com/o/r"), { GH_REPO: "x/y" })).not.toBeNull()
+      expect(gate(command, writeTo("z/z"), { GH_REPO: "x/y" })).toBeNull()
+    })
+  })
+
+  test("an api call that creates a PR is refused as a form the gate cannot read", () => {
+    const decision = decide("gh api repos/o/r/pulls -f title=t")
+    expect(decision?.reason).toContain("the command is not `gh pr create` or `gh pr new`")
+  })
+
+  test.each<[string, PrBeadLinkDeps["control"]]>([
+    ["no ledger", () => false],
+    ["an uncontrolled repository", () => ({ kind: "uncontrolled" })],
+  ])("a bead-less PR passes for %s", (_name, control) => {
+    expect(decide("gh pr create --title t --body x", { control })).toBeNull()
+    expect(decide("env -S 'gh pr create'", { control })).toBeNull()
+  })
+
+  test("a bead-less PR is refused when the control is plain true", () => {
+    expect(decide("gh pr create --title t --body x", { control: () => true })).not.toBeNull()
   })
 })

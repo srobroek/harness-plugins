@@ -1,6 +1,6 @@
 /** The store pin a shell child gets: harness-neutral, shared by the OpenCode plugin and the Claude Code hook. */
 
-import { sessionPinFor } from "@srobroek/opencode-lib/beads-store"
+import { ambientStore, sessionPinFor } from "@srobroek/opencode-lib/beads-store"
 import { EMBEDDED_PIN_ENV } from "./gate-admission.ts"
 
 /**
@@ -34,14 +34,15 @@ export function withoutInheritedPin<T extends Record<string, string | undefined>
 }
 
 /**
- * The store a shell child in `cwd` should open: the checkout's own `.beads`, or the
- * primary checkout's from a linked worktree. `undefined` when `env` already chooses one
- * or there is none.
+ * The store a shell child in `cwd` should open, by bd 1.3.1's store-command order: the
+ * checkout's own `.beads` (or the primary checkout's from a linked worktree), else the store
+ * an inherited `BEADS_DB` names. Pinning it as `BEADS_DIR` means no later shell change to
+ * `BEADS_DB` can move a store command. `undefined` when `env` already chooses one or there is none.
  */
 export function shellPin(cwd: string, env: Record<string, string | undefined>, pinFor = sessionPinFor): string | undefined {
-  const explicit = withoutInheritedPin(env).BEADS_DIR
-  if (explicit !== undefined && explicit !== "") return undefined
-  return pinFor(cwd)
+  const own = withoutInheritedPin(env)
+  if (own.BEADS_DIR !== undefined && own.BEADS_DIR !== "") return undefined
+  return ambientStore(cwd, { ...own, BEADS_DIR: undefined }, pinFor)
 }
 
 /**
@@ -61,9 +62,12 @@ export function pinShell(
 /**
  * Drop an inherited pin from a child environment without pinning a new store: what the
  * child gets when automatic pinning is off, so it opens the ledger the gates assume.
+ * Resolves no store, so an inherited `BEADS_DB` cannot stand in as a replacement and keep the old pin.
  */
 export function dropInheritedPin(env: Record<string, string | undefined>): void {
-  for (const name of selectStore("", env, () => undefined).unset) delete env[name]
+  if (env[PIN_MARKER_ENV] === undefined) return
+  if (inheritsPin(env)) delete env.BEADS_DIR
+  delete env[PIN_MARKER_ENV]
 }
 
 /** The store a session starting in `cwd` uses, and the changes that give a shell it. */

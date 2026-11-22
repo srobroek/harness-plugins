@@ -40,13 +40,13 @@
 
 - **Symptom:** `worktree.owner: observed "a receipt or worktree of a repository other than this session's"` or `worktree.marker: observed`
 - **Cause:** The receipt or worktree belongs to a different repository, or the registered worktree's `.git` is now a symlink, FIFO or a file naming another repository. No Git ran in it.
-- **Fix:** Run `delivery_cleanup` from a session in the receipt's repository. For `worktree.marker`, inspect the worktree's `.git` by hand and do not run Git in it until it names this repository's `worktrees/` directory.
+- **Fix:** Pass `repo` and `repoPath` (the receipt's `repo.canonicalRoot`) so cleanup runs in that clone, or run `delivery_cleanup` from a session there. For `worktree.marker`, inspect the worktree's `.git` by hand and do not run Git in it until it names this repository's `worktrees/` directory.
 
-## `delivery_cleanup` refuses a `repo` of another repository
+## `delivery_cleanup` in another repository refuses on its project
 
-- **Symptom:** `a repository other than this session's; its lane claims, holds and bead ledger are not visible from here`
-- **Cause:** Cleanup must respect that repository's lane claims, holds and bead ledger, and this session reads only its own.
-- **Fix:** Run `delivery_cleanup` from a session in the root that the refusal names. `delivery_land` already ends its `next` with that step.
+- **Symptom:** `host worktree.list failed (the sessions name ..., expected exactly one OpenCode project for <root>`
+- **Cause:** OpenCode tracks a worktree per project. For another repository, delivery reads the project from the sessions in that clone and in the worktree. It removes nothing unless they name exactly one project, because a git removal could strand the host's entry.
+- **Fix:** With no session there, open one in the clone. With two projects, move or delete the sessions of the wrong one. Then call `delivery_cleanup` again with the same `repo` and `repoPath`.
 
 ## `gh pr checks --watch` finds no checks right after a push
 
@@ -82,7 +82,7 @@
 
 - **Symptom:** `already has a live writer session ses_` from subagent-worktree, or two writers committing to the same branch and worktree after OpenCode restarted
 - **Cause:** After a restart OpenCode resumes interrupted subagents on its own, and they show as running. Re-spawning a writer for the same branch then adds a second live session to that worktree. A writer whose server died and that never ran again also shows as running, so the guard refuses every new writer in its worktree.
-- **Fix:** After a restart, list your background work first. Re-spawn only sessions that are gone, never two writers per worktree. Send a follow-up (pass its `sessionID`) to the surviving session, or stop it before you spawn a new one. A dead writer blocks its worktree until you release it. First check that its worktree is clean and pushed. Then call `subagent_worktree_merge` with `method: "release"` and its `sessionID`. Then spawn the new writer into that worktree. The guard has three limits. It coordinates spawns within one OpenCode server instance only, so spawns from separate server instances are not coordinated: keep one orchestrator per worktree. A session lookup that fails or times out lets the spawn through with a warning. It checks only a writer spawned into a worktree named by `worktree`, not a writer that runs in place.
+- **Fix:** After a restart, list your background work first. Re-spawn only sessions that are gone, never two writers per worktree. Send a follow-up (pass its `sessionID`) to the surviving session, or stop it before you spawn a new one. A dead writer blocks its worktree until you free it. First stop that session, including any shell or terminal it left running, and check that its worktree is clean and pushed. Then delete the session in OpenCode. To hand its lane to the new writer, call `subagent_worktree_merge` with `method: "release"` and its `sessionID`; the release refuses while the session still exists. Then spawn the new writer into that worktree. The guard has three limits. It coordinates spawns within one OpenCode server instance only, so spawns from separate server instances are not coordinated: keep one orchestrator per worktree. A session lookup that fails or times out lets the spawn through with a warning. It checks only a writer spawned into a worktree named by `worktree`, not a writer that runs in place.
 
 ## Each push to main cancels the main run
 

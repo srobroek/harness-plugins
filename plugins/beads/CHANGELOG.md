@@ -1,3 +1,33 @@
+## beads [0.8.10](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.9...beads--v0.8.10) (2026-11-22)
+
+### Bug Fixes
+
+* **beads:** gate gh api PR creation and read GH_REPO in the PR bead gate ([5d77809](https://github.com/srobroek/harness-plugins/commit/5d778092c66936634a907080cfa9b941d3cdff61)), closes [#99](https://github.com/srobroek/harness-plugins/issues/99) [#100](https://github.com/srobroek/harness-plugins/issues/100)
+
+## beads [0.8.9](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.8...beads--v0.8.9) (2026-11-22)
+
+### Bug Fixes
+
+* **beads:** a shell unset of the actor variable no longer escapes the actor gate ([#87](https://github.com/srobroek/harness-plugins/issues/87)) ([63068ec](https://github.com/srobroek/harness-plugins/commit/63068ec94d0d66daad129e8036e430fa6d7f8a30))
+
+## beads [0.8.8](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.7...beads--v0.8.8) (2026-11-22)
+
+### Bug Fixes
+
+* **beads:** refuse gh pr create forms the bead gate cannot read exactly ([600ee87](https://github.com/srobroek/harness-plugins/commit/600ee87fc0b3622d3e36c1aaa4ad18c8f99871e5)), closes [#66](https://github.com/srobroek/harness-plugins/issues/66)
+
+## beads [0.8.7](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.6...beads--v0.8.7) (2026-11-22)
+
+### Bug Fixes
+
+* **beads:** follow bd 1.3.1 ledger precedence for claim tracking ([#89](https://github.com/srobroek/harness-plugins/issues/89)) ([cbe4a76](https://github.com/srobroek/harness-plugins/commit/cbe4a76182c36d3b165e27ecbe311071a3068682))
+
+## beads [0.8.6](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.5...beads--v0.8.6) (2026-11-22)
+
+### Bug Fixes
+
+* **beads:** name the right ledger owner and qualify Dolt stale-skip advice ([#92](https://github.com/srobroek/harness-plugins/issues/92)) ([35ef5c8](https://github.com/srobroek/harness-plugins/commit/35ef5c8cba56ba394e49fd650085e7ca693c76d1))
+
 ## beads [0.8.5](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.4...beads--v0.8.5) (2026-11-21)
 
 ### Bug Fixes

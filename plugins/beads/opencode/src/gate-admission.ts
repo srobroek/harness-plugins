@@ -19,7 +19,7 @@ import {
   writesStore,
 } from "@srobroek/opencode-lib/bd-embedded-write-lock"
 import { scanShell } from "@srobroek/opencode-lib/beads-shell"
-import { sessionPinFor } from "@srobroek/opencode-lib/beads-store"
+import { ambientStore, sessionPinFor } from "@srobroek/opencode-lib/beads-store"
 import { supervise } from "@srobroek/opencode-lib/subprocess"
 
 /** The longest a mutating command waits for its store's gate verification. */
@@ -42,7 +42,7 @@ export function lifecycleBdEnvironment(cwd: string, base: NodeJS.ProcessEnv = pr
   const env: NodeJS.ProcessEnv = { ...base }
   if (env.BEADS_DIR === undefined || env.BEADS_DIR === "") {
     delete env.BEADS_DIR
-    const resolved = sessionPinFor(cwd)
+    const resolved = ambientStore(cwd, env)
     if (resolved !== undefined) env.BEADS_DIR = resolved
   }
   return boundedBdEnvironment(env)
@@ -59,10 +59,20 @@ function boundedBdEnvironment(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   }
 }
 
-/** The store directory bd would open from `cwd` under `env`. */
+/** The directory's own `.beads`, when it exists. */
+function ownBeads(cwd: string): string | undefined {
+  const dir = join(cwd, ".beads")
+  try {
+    return statSync(dir).isDirectory() ? dir : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** The store directory bd would open from `cwd` under `env`: `BEADS_DIR`, then `./.beads`, then `BEADS_DB`. */
 export function bdStoreDir(cwd: string, env: NodeJS.ProcessEnv): string | undefined {
-  const selected = env.BEADS_DIR
-  const dir = selected ? (isAbsolute(selected) ? selected : resolve(cwd, selected)) : join(cwd, ".beads")
+  const dir = ambientStore(cwd, env, ownBeads)
+  if (dir === undefined) return undefined
   try {
     return statSync(dir).isDirectory() ? resolve(dir) : undefined
   } catch {
@@ -223,7 +233,7 @@ export function staleSkipNotice(output: string): string | undefined {
   if (stale === undefined) return undefined
   return [
     `\`bd import\` skipped stale rows (${stale}): the JSONL export is BEHIND this database and local state was kept.`,
-    "Sync with Dolt: run `bd dolt pull` to take peer changes (and `bd dolt push` to share yours). Do not stage or commit `.beads/issues.jsonl`: it is an optional export, not the sync channel.",
+    "A stale skip alone needs no remote operation. Use `bd dolt pull` to take peer changes (and `bd dolt push` to share yours) only when a Dolt remote is configured. Do not stage or commit `.beads/issues.jsonl`: it is an optional export, not the sync channel.",
   ].join(" ")
 }
 
@@ -447,14 +457,8 @@ export function bdStoreForInvocation(
   }
   if (directory !== undefined) return canonicalStore(sessionPinFor(base) ?? join(base, ".beads"))
   const local = invocation.prefix.findLast((token) => token.startsWith("BEADS_DIR="))?.slice("BEADS_DIR=".length)
-  const pinned = local ?? env.BEADS_DIR
-  return canonicalStore(
-    pinned === undefined || pinned === ""
-      ? (sessionPinFor(cwd) ?? join(cwd, ".beads"))
-      : isAbsolute(pinned)
-        ? pinned
-        : resolve(cwd, pinned),
-  )
+  const named = local === undefined ? env : { ...env, BEADS_DIR: local }
+  return canonicalStore(ambientStore(cwd, named) ?? join(cwd, ".beads"))
 }
 
 /** Command-local `BEADS_DIR=` assignments on bd invocations override the ambient one. */

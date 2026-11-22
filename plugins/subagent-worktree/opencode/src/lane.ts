@@ -12,8 +12,6 @@ export { WORKTREE_PARAM, WORKTREE_PARAM_DESCRIPTION } from "@srobroek/opencode-l
 
 export const DEFAULT_AGENTS: readonly string[] = ["coder", "implementer", "implementer-high", "ui-implementer", "general"]
 
-export type SweepMode = "off" | "report" | "prune"
-
 export type Options = {
   /** Agents (id or name) whose subagent calls get a worktree. */
   agents: readonly string[]
@@ -23,15 +21,6 @@ export type Options = {
   gates: boolean
   /** An empty lane is removed only after its child and parent stayed idle this long. */
   emptyGraceMs: number
-  /** The sweep mode; it only sets the `freeBuildDirs` default, since the sweep runs on demand. */
-  sweep: SweepMode
-  minAgeHours: number
-  /** Extra roots, beyond OpenCode's worktree directory, the sweep may look in. */
-  include: readonly string[]
-  /** A pruning sweep also frees ignored build directories of kept lanes whose owner is gone. Follows `sweep`: on only for "prune". */
-  freeBuildDirs: boolean
-  /** Free space, in bytes, below which build directories are freed without the grace period; 0 turns that off. */
-  lowDiskBytes: number
 }
 
 const MINUTE = 60_000
@@ -45,19 +34,11 @@ export function readOptions(options: Readonly<Record<string, unknown>> | undefin
     ? options.agents.filter((agent): agent is string => typeof agent === "string" && agent !== "")
     : DEFAULT_AGENTS
   const base = typeof options?.base === "string" && options.base.trim() !== "" ? options.base.trim() : "HEAD"
-  const sweep = options?.sweep === "off" || options?.sweep === "prune" ? options.sweep : "report"
   return {
     agents,
     base,
     gates: options?.gates !== false,
     emptyGraceMs: positive(options?.emptyGraceMinutes, 30) * MINUTE,
-    sweep,
-    minAgeHours: positive(options?.minAgeHours, 24),
-    freeBuildDirs: typeof options?.freeBuildDirs === "boolean" ? options.freeBuildDirs : sweep === "prune",
-    lowDiskBytes: positive(options?.lowDiskBytes, 0),
-    include: Array.isArray(options?.include)
-      ? options.include.filter((root): root is string => typeof root === "string" && root !== "")
-      : [],
   }
 }
 
@@ -96,10 +77,20 @@ export type Lane = {
   kept?: { reason: string; token: string }
   /** The lane was taken over from a released writer (`release/<from>` records why). */
   handedOver?: { from: string; at: number }
+  /**
+   * The lane's storage key: the child it was created for. A handover changes `child` and `parent` in one write
+   * of the same record and keeps `id`, so a worktree's lane is never two records. Undefined means `child`.
+   */
+  id?: string
 }
 
 export function laneKey(child: string): string {
   return `${LANE_PREFIX}${child}`
+}
+
+/** Where `lane` is stored: under its `id`, which a handover keeps. */
+export function laneStoreKey(lane: Pick<Lane, "id" | "child">): string {
+  return laneKey(lane.id ?? lane.child)
 }
 
 export function parseLane(value: unknown): Lane | undefined {
@@ -111,6 +102,7 @@ export function parseLane(value: unknown): Lane | undefined {
   if (!["active", "removing", "removed", "merged", "landed"].includes(lane.state as string)) return undefined
   if (lane.target !== undefined && typeof lane.target !== "string") return undefined
   if (lane.title !== undefined && typeof lane.title !== "string") return undefined
+  if (lane.id !== undefined && (typeof lane.id !== "string" || lane.id === "")) return undefined
   return value as Lane
 }
 
@@ -252,6 +244,7 @@ export function planStart(facts: {
   if (input.sessionID !== undefined)
     return { kind: "default", ...(resumeWorktreeNote(input) ? { note: RESUME_WORKTREE_NOTE } : {}) }
   if (input.worktree === false) return { kind: "default" }
+  if (!isolation.isolate && isolation.refuse) return { kind: "refuse", reason: isolation.reason }
   if (input.worktree === undefined && isolation.isolate && facts.trackedDirty)
     return { kind: "default", note: DIRTY_CHECKOUT_NOTE }
   if (input.worktree === undefined || lookup === undefined)
@@ -306,9 +299,11 @@ export type IsolationFacts = {
   callerIsChild: boolean
   /** Whether the caller's directory is inside a git work tree. */
   isGit: boolean
+  /** Why the installed git cannot run hardened; when set, an isolated writer is refused, not started in the caller's checkout. */
+  gitUnsupported?: string | undefined
 }
 
-export type Isolation = { isolate: true } | { isolate: false; reason: string }
+export type Isolation = { isolate: true } | { isolate: false; reason: string; refuse?: true }
 
 /** Whether a subagent call should run in a fresh worktree. */
 export function decideIsolation(facts: IsolationFacts): Isolation {
@@ -325,6 +320,7 @@ export function decideIsolation(facts: IsolationFacts): Isolation {
   if (facts.agent.mode === "primary") return { isolate: false, reason: "primary agent" }
   if (sessionIsReadOnly(facts.agent.permissions, facts.callerPermissions)) return { isolate: false, reason: "read-only agent (edit denied)" }
   if (facts.callerIsChild) return { isolate: false, reason: "caller is a child session" }
+  if (facts.gitUnsupported) return { isolate: false, reason: facts.gitUnsupported, refuse: true }
   if (!facts.isGit) return { isolate: false, reason: "not a git checkout" }
   return { isolate: true }
 }
@@ -513,11 +509,20 @@ export function annotation(lane: Lane, status: LaneStatus | undefined, removed: 
 }
 
 /**
- * `wt merge` argv that merges the lane branch into `target`, keeping its history. `--no-remove` keeps the
+ * `wt merge` argv that merges the lane branch into `target`, keeping its history. `--no-hooks` skips the
+ * project's committed `.config/wt.toml` hooks, which `--yes` would approve unseen and run (CWE-78); with no hook to
+ * approve, the merge needs no prompt suppression. `--no-remove` keeps the
  * checkout: the plugin removes it afterwards under the removal lock, and only for a child that is gone.
  */
 export function mergeArgs(directory: string, target: string): string[] {
-  return ["wt", "-C", directory, "merge", target, "--no-squash", "--no-ff", "--no-remove", "--yes"]
+  return ["wt", "-C", directory, "merge", target, "--no-squash", "--no-ff", "--no-remove", "--no-hooks"]
+}
+
+// Not empty, no leading "-" (an option), no whitespace or control characters, no "..".
+// `git check-ref-format --branch` has the final say (createGit().isBranchName).
+export function isSafeBranchName(name: string): boolean {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this rejects
+  return name !== "" && !name.startsWith("-") && !name.includes("..") && !/[\s\x00-\x1f\x7f]/.test(name)
 }
 
 /** Whether `wt merge` output describes a merge or rebase conflict. */
@@ -626,7 +631,7 @@ export function formatLaneList(reports: readonly LaneReport[], caller: string): 
   }
   if (reports.some((report) => orphanReasons(report).length > 0)) {
     lines.push(
-      "Orphaned lanes are reported only; nothing was removed. Review them and remove a worktree yourself (wt remove) once its work is merged or no longer needed.",
+      "Orphaned lanes are reported only; nothing was removed. Review them, then call subagent_worktree_sweep with mode 'prune' once their work is merged, or resolve them yourself.",
     )
   }
   lines.push("</subagent-worktree-lanes>")
@@ -643,10 +648,9 @@ export function tail(text: string, lines = 40): string {
 /**
  * A session in the target worktree, as `session.list` reports it. `busy` is the start of its
  * latest execution and `idle` the end of its latest completed one, both in epoch milliseconds.
- * `readOnly` is true when the session's agent cannot edit. `released` is true when its parent
- * released it from this worktree (see `release.ts`).
+ * `readOnly` is true when the session's agent cannot edit.
  */
-export type WriterSession = { id: string; parentID?: string; busy?: number; idle?: number; readOnly?: boolean; released?: boolean }
+export type WriterSession = { id: string; parentID?: string; busy?: number; idle?: number; readOnly?: boolean }
 
 /** Whether the latest execution started and has not ended: it began after the last completed one ended. */
 export function isRunning(session: Pick<WriterSession, "busy" | "idle">): boolean {
@@ -661,9 +665,9 @@ export const WRITER_LIVENESS_NOTE =
 /**
  * Whether a new writer subagent may start in an explicitly named worktree. A live writer is a
  * child session in that directory whose latest execution is still running (an earlier `outcome`
- * does not matter: a resumed session keeps it while it runs again) and that its parent has not
- * released. `sessions` is undefined when the lookup failed or timed out; uncertainty allows the
- * spawn and warns.
+ * does not matter: a resumed session keeps it while it runs again). A deleted session is not listed,
+ * so a released writer never counts. `sessions` is undefined when the lookup failed or timed out;
+ * uncertainty allows the spawn and warns.
  *
  * Known limits of the guard:
  * 1. It coordinates spawns within one OpenCode server instance only. The reservation that orders
@@ -686,7 +690,7 @@ export function decideWriterGuard(facts: {
   if (facts.sessions === undefined) return { kind: "allow", warn: WRITER_LIVENESS_NOTE }
   const live = facts.sessions.find(
     (session) =>
-      session.parentID !== undefined && session.id !== facts.caller && !session.readOnly && !session.released && isRunning(session),
+      session.parentID !== undefined && session.id !== facts.caller && !session.readOnly && isRunning(session),
   )
   if (!live) return { kind: "allow" }
   return { kind: "refuse", reason: writerRefusal(facts.directory, live.id) }

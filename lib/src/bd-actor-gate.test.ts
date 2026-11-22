@@ -16,6 +16,7 @@ import {
 import { parse } from "./beads-shell.ts"
 
 const emptyEnv = {} as NodeJS.ProcessEnv
+const bdActorEnv = { BD_ACTOR: "opencode/r/general/s" } as NodeJS.ProcessEnv
 const actorEnv = { BEADS_ACTOR: "omp/GateBuilder/backlog" } as NodeJS.ProcessEnv
 
 describe("extractCommand", () => {
@@ -271,6 +272,199 @@ describe("firstBdVerb / isMutatingBdCommand", () => {
       expect(decision.kind).toBe("block")
       if (decision.kind === "block") expect(decision.reason).toContain("without BEADS_ACTOR or BD_ACTOR")
     }
+  })
+
+  describe("a shell unset of the actor at the top level", () => {
+    test.each([
+      ["a claim", "unset BD_ACTOR; bd update bead-1 --claim"],
+      ["a create", "unset BEADS_ACTOR BD_ACTOR; bd create --title title"],
+    ])("refuses %s after it, whatever the ambient actor", (_name, command) => {
+      expect(decideActorGate(command, bdActorEnv).kind).toBe("block")
+    })
+
+    test("warns on other mutations after it", () => {
+      expect(decideActorGate("unset BD_ACTOR; bd close bead-1", bdActorEnv)).toEqual({
+        kind: "advisory",
+        text: expect.stringContaining("are unset on this mutating"),
+      })
+    })
+
+    test("an export after it restores the actor", () => {
+      expect(decideActorGate("unset BD_ACTOR; export BD_ACTOR=actor/x; bd update bead-1 --claim", bdActorEnv)).toEqual({
+        kind: "allow",
+      })
+    })
+
+    test("a prefix on the bd command itself restores the actor", () => {
+      expect(decideActorGate("unset BD_ACTOR; BD_ACTOR=me/x bd create y", bdActorEnv)).toEqual({ kind: "allow" })
+    })
+
+    test.each([
+      ["opens an && chain", "unset BD_ACTOR && bd create x"],
+      ["opens a chain that ended", "unset BD_ACTOR && true; bd create x"],
+      ["comes before ||", "unset BD_ACTOR || bd create x"],
+      ["sits inside an && chain", "true && unset BD_ACTOR && bd create x"],
+      ["runs in a brace group", "{ unset BD_ACTOR; }; bd create x"],
+      ["runs in the subshell of the create", "(unset BD_ACTOR; bd create x)"],
+    ])("an unset that %s still clears the actor", (_name, command) => {
+      expect(decideActorGate(command, bdActorEnv).kind).toBe("block")
+    })
+
+    test.each([
+      ["a subshell", "(unset BD_ACTOR); bd create x"],
+      ["a non-final pipeline stage", "unset BD_ACTOR | cat; bd create x"],
+    ])("an unset in %s leaves the ambient actor in force", (_name, command) => {
+      expect(decideActorGate(command, bdActorEnv)).toEqual({ kind: "allow" })
+    })
+
+    test("a background job inside a brace group leaves an export before the group in force", () => {
+      expect(decideActorGate("export BD_ACTOR=me/x && { sleep 1 & } ; bd create x", emptyEnv)).toEqual({ kind: "allow" })
+    })
+
+    test.each([
+      ["command", "command echo export BD_ACTOR; bd create x"],
+      ["builtin", "builtin echo unset BD_ACTOR; bd create x"],
+    ])("a %s wrapper whose command is not a variable builtin changes nothing", (_name, command) => {
+      expect(decideActorGate(command, bdActorEnv)).toEqual({ kind: "allow" })
+    })
+
+    test.each([
+      ["a later && member, after the chain", "true && unset BD_ACTOR; bd create x"],
+      ["a || member, after the chain", "true || unset BD_ACTOR; bd create x"],
+      ["a chain member, after a later ||", "true && unset BD_ACTOR || bd create x"],
+      ["an if body", "if true; then unset BD_ACTOR; fi; bd create x"],
+      ["the final pipeline stage", "cat | unset BD_ACTOR; bd create x"],
+      ["eval", "eval 'unset BD_ACTOR'; bd create x"],
+      ["declare", "declare -x BD_ACTOR=; bd create x"],
+      ["a command -p wrapper", "command -p export BD_ACTOR=me/x; bd create x"],
+      ["a command -- wrapper", "command -- unset BD_ACTOR; bd create x"],
+      ["a builtin wrapper", "builtin unset BD_ACTOR; bd create x"],
+      ["a wrapper around a wrapper", "command builtin unset BD_ACTOR; bd create x"],
+      ["a background job", "unset BD_ACTOR & bd create x"],
+      ["a background brace group", "{ unset BD_ACTOR; } & bd create x"],
+    ])("a change in %s leaves the actor unverified, neither refused nor allowed", (_name, command) => {
+      expect(decideActorGate(command, bdActorEnv)).toEqual({
+        kind: "advisory",
+        text: expect.stringContaining("cannot verify the actor"),
+      })
+    })
+  })
+
+  test("a bare assignment then a name-only export restores the actor", () => {
+    expect(decideActorGate("unset BD_ACTOR; BD_ACTOR=me/x; export BD_ACTOR; bd create x", bdActorEnv)).toEqual({
+      kind: "allow",
+    })
+  })
+
+  describe("a builtin's options decide what it does to the actor", () => {
+    const unverified = { kind: "advisory" as const, text: expect.stringContaining("cannot verify the actor") }
+
+    test("export -p with no names only prints, so an unexported assignment stays unexported", () => {
+      expect(decideActorGate("BD_ACTOR=me/x; export -p; bd create x", emptyEnv).kind).toBe("block")
+    })
+
+    // Measured: bash exports the named variable, zsh only prints it.
+    test("export -p with a name depends on the shell, so the actor is unverified", () => {
+      expect(decideActorGate("unset BD_ACTOR; BD_ACTOR=me/x; export -p BD_ACTOR; bd create x", bdActorEnv)).toEqual(
+        unverified,
+      )
+    })
+
+    test("export -f names a function, so the variable stays unexported", () => {
+      expect(decideActorGate("unset BD_ACTOR; BD_ACTOR=me/x; export -f BD_ACTOR; bd create x", bdActorEnv).kind).toBe(
+        "block",
+      )
+    })
+
+    test("unset -f removes a function, so the ambient actor stays", () => {
+      expect(decideActorGate("unset -f BD_ACTOR; bd create x", bdActorEnv)).toEqual({ kind: "allow" })
+    })
+
+    test("unset -v clears the variable", () => {
+      expect(decideActorGate("unset -v BD_ACTOR; bd create x", bdActorEnv).kind).toBe("block")
+    })
+
+    test("unset -n depends on whether the name is a nameref, so the actor is unverified", () => {
+      expect(decideActorGate("unset -n BD_ACTOR; bd create x", bdActorEnv)).toEqual(unverified)
+    })
+
+    test("declare -p only prints, so an unexported assignment stays unexported", () => {
+      expect(decideActorGate("unset BD_ACTOR; BD_ACTOR=me/x; declare -p BD_ACTOR; bd create x", bdActorEnv).kind).toBe(
+        "block",
+      )
+    })
+
+    test("an option the gate does not know leaves the actor unverified", () => {
+      expect(decideActorGate("export -q BD_ACTOR=me/x; bd create x", emptyEnv)).toEqual(unverified)
+    })
+  })
+
+  test("export -n takes the actor out of the environment", () => {
+    expect(decideActorGate("export -n BD_ACTOR; bd create x", bdActorEnv).kind).toBe("block")
+  })
+
+  test("a bare assignment alone does not export, so an unset actor stays cleared", () => {
+    expect(decideActorGate("unset BD_ACTOR; BD_ACTOR=me/x; bd create x", bdActorEnv).kind).toBe("block")
+  })
+
+  describe("the actor variables follow one shell model", () => {
+    const actors = (command: string) => bdInvocations(command).map((invocation) => invocation.exported.BD_ACTOR)
+
+    test("an export assignment replaces the value a name-only export publishes later", () => {
+      expect(actors("BD_ACTOR=old; export BD_ACTOR=new; export -n BD_ACTOR; export BD_ACTOR; bd create x")).toEqual(["new"])
+    })
+
+    test("an unexport and re-export keeps the actor", () => {
+      expect(decideActorGate("export BD_ACTOR=x; export -n BD_ACTOR; export BD_ACTOR; bd create x", emptyEnv)).toEqual({
+        kind: "allow",
+      })
+    })
+
+    test("a subshell inside a chain neither leaks into nor loses the chain", () => {
+      expect(actors("export BD_ACTOR=a; true && (export BD_ACTOR=b; bd create x); bd create y")).toEqual(["b", "a"])
+    })
+  })
+
+  describe("children the parser finds, with no actor change on the command line", () => {
+    const decide = (command: string, env = emptyEnv) => decideActorParsed(parse(command), env).kind
+
+    test.each([
+      ["eval", "eval 'bd create x'"],
+      ["xargs", "echo y | xargs bd create"],
+      ["a wrapped interpreter", "timeout 5 bash -c 'bd create x'"],
+      ["a descriptor-fed script", "bash 3<<<'bd create y' 0<&3"],
+    ])("a create under %s with no actor is refused", (_name, command) => {
+      expect(decide(command)).toBe("block")
+    })
+  })
+
+  describe("a bd the gate cannot place, on a command line that changes an actor variable", () => {
+    test.each([
+      ["a command substitution", "unset BD_ACTOR; echo $(bd create x)"],
+      ["a backtick substitution", "unset BD_ACTOR; echo `bd create x`"],
+      ["a pipeline stage", "unset BD_ACTOR; bd create x | cat"],
+      ["eval", "unset BD_ACTOR; eval 'bd create x'"],
+      ["sh -c", "unset BD_ACTOR; sh -c 'bd create x'"],
+      ["xargs", "unset BD_ACTOR; echo x | xargs bd create"],
+      ["a here-document fed to bash", "unset BD_ACTOR; bash <<'EOF'\nbd create x\nEOF"],
+      ["a quoted script under an interpreter prefix", "BD_ACTOR= bash -c 'bd create x'"],
+      ["a substitution that clears the actor itself", "echo $(unset BD_ACTOR; bd create x)"],
+      ["a substitution after an export", "export BD_ACTOR=me/x; id=$(bd create x)"],
+      ["a substitution before the unset", "echo $(bd create x); unset BD_ACTOR"],
+      ["a claim in a substitution", "unset BD_ACTOR; echo $(bd update x --claim)"],
+    ])("%s gets the advisory, neither refused nor allowed", (_name, command) => {
+      expect(decideActorParsed(parse(command), bdActorEnv)).toEqual({
+        kind: "advisory",
+        text: expect.stringContaining("cannot verify the actor"),
+      })
+    })
+
+    test.each([
+      ["a prefix", "unset BD_ACTOR; echo $(BD_ACTOR=me/x bd create y)"],
+      ["an --actor flag", "unset BD_ACTOR; echo $(bd --actor me/x create y)"],
+    ])("a nested bd whose own %s names the actor is allowed", (_name, command) => {
+      expect(decideActorParsed(parse(command), bdActorEnv)).toEqual({ kind: "allow" })
+    })
   })
 
   test("env assignments after removal restore actor attribution", () => {

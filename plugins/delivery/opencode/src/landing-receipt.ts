@@ -318,7 +318,7 @@ function checkoutGitDirectory(checkout: string): string | null {
 }
 
 /** The repository key: 16 hex characters of the SHA-256 of a physical git common directory. */
-function keyOf(commonDir: string): string {
+export function repoKeyOf(commonDir: string): string {
   return createHash("sha256").update(commonDir).digest("hex").slice(0, 16)
 }
 
@@ -329,7 +329,7 @@ function keyOf(commonDir: string): string {
  */
 export function markedRepository(cwd: string): { commonDir: string; key: string } | null {
   const commonDir = markedCommonDir(cwd)
-  return commonDir === null ? null : { commonDir, key: keyOf(commonDir) }
+  return commonDir === null ? null : { commonDir, key: repoKeyOf(commonDir) }
 }
 
 /**
@@ -387,7 +387,7 @@ export async function repositoryContext(
 
   const root = physicalDirectory(candidate)
   if (root === null) return null
-  const key = keyOf(paths.commonDir)
+  const key = repoKeyOf(paths.commonDir)
   return {
     key,
     commonDir: paths.commonDir,
@@ -407,7 +407,7 @@ export async function repoKey(
   const common = printed.endsWith("\n") ? printed.slice(0, -1) : printed
   if (common === "" || common.includes("\n") || common.includes("\r") || common.includes("\0")) return null
   const real = physicalDirectory(isAbsolute(common) ? common : resolve(cwd, common))
-  return real === null ? null : keyOf(real)
+  return real === null ? null : repoKeyOf(real)
 }
 
 /**

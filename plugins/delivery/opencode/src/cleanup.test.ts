@@ -10,7 +10,8 @@ import {
   writeLanding,
 } from "@srobroek/opencode-lib/worktree-claims"
 import { holdsState, lockedWrite, lockFile, readHolds, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
-import { authorizeExplicit, createPendingCleanup } from "./pending-cleanup.ts"
+import { addClone, MAX_CLONES, readClones, registryFile } from "./clone-registry.ts"
+import { authorizeExplicit, CleanupDeferred, createPendingCleanup } from "./pending-cleanup.ts"
 
 // Fixture setup creates several real Git repositories and measured about 20s under full-suite load;
 // keep three times that headroom instead of letting Bun's 5s default kill a child process mid-fixture.
@@ -4248,6 +4249,341 @@ describe("pending cleanup: one remover per worktree", () => {
     expect(removed(h)).toBe(true)
     expect(readLanding(h.common, gone.receiptId)).toEqual({ kind: "missing" })
     expect(existsSync(landingFile(h.common, gone.receiptId))).toBe(false)
+    await h.finish()
+  })
+})
+
+describe("cleanup of another repository's landing runs against that repository", () => {
+  // The session works in `s`, whose remote names other/session; the landing is `f`'s (owner/repo).
+  const SESSION_URL = "https://github.com/other/session.git\n"
+  async function foreignHarness(
+    name: string,
+    over: {
+      sessions?: (f: Fixture) => Array<Record<string, unknown> & { id: string }>
+      hostListsTarget?: boolean
+      beadStatus?: string
+      observe?: GitRunner
+      lock?: Record<string, unknown>
+    } = {},
+  ) {
+    const f = await fixture(name)
+    const s = await fixture(`${name}-session`)
+    const options: RunnerOptions = { beadStatus: over.beadStatus ?? "closed" }
+    const scripted = runner(f, options)
+    const run: CliRunner = (argv, commandOptions) =>
+      argv[0] === "git" && argv.slice(-3, -1).join(" ") === "remote get-url" && commandOptions.cwd === s.main
+        ? Promise.resolve(success(SESSION_URL))
+        : scripted.run(argv, commandOptions)
+    const fake = createFakeContext({ directory: s.main, projectID: "prj_session", sessions: over.sessions?.(f) ?? [] })
+    const hostRemoved: Array<{ projectID: string; directory: string }> = []
+    const make = () => createPendingCleanup({
+      ctx: fake.context,
+      cwd: s.main,
+      env: f.env,
+      host: () => undefined,
+      ...(over.hostListsTarget === undefined
+        ? {}
+        : {
+            hostFor: () => (projectID: string) => ({
+              list: async () => (over.hostListsTarget ? [{ directory: f.linked }] : []),
+              remove: async (directory: string) => {
+                hostRemoved.push({ projectID, directory })
+                git(f.main, ["worktree", "remove", directory])
+              },
+            }),
+          }),
+      debounceMs: 1,
+      cleanup: { run: stripped(run), now: () => NOW + 10, bounds: HEAVY_FIXTURE_BOUNDS },
+      now: () => NOW + 10,
+      ...(over.observe === undefined ? {} : { observe: over.observe }),
+      ...(over.lock === undefined ? {} : { lock: over.lock }),
+    })
+    const pending = make()
+    await pending.prime()
+    const targetCommon = (await repositoryContext(f.main))?.commonDir as string
+    const sessionCommon = (await repositoryContext(s.main))?.commonDir as string
+    const sessionKey = (await repositoryContext(s.main))?.key as string
+    const explicit = (ask: () => Promise<void> = async () => {}) =>
+      cleanupDelivery({ receipt: f.receiptPath, repo: "owner/repo", repoPath: f.main }, s.main, {
+        run,
+        now: () => NOW + 10,
+        env: f.env,
+        bounds: HEAVY_FIXTURE_BOUNDS,
+        ...pending.explicit(ask, "ses_lead"),
+      })
+    const idle = async () => {
+      fake.emit({ type: "session.idle", data: { sessionID: "ses_lead" } })
+      await pending.settle()
+    }
+    const finish = async () => {
+      await pending.dispose()
+      rmSync(f.root, { recursive: true, force: true })
+      rmSync(s.root, { recursive: true, force: true })
+    }
+    return { f, s, scripted, fake, pending, another: make, targetCommon, sessionCommon, sessionKey, explicit, idle, hostRemoved, finish }
+  }
+  const idleSession = (id: string, projectID: string, directory: string) => ({ id, projectID, location: { directory }, time: { updated: 1 } })
+
+  test("an explicit cleanup removes the worktree and writes the continuation receipt under the target's key", async () => {
+    const h = await foreignHarness("foreign-explicit")
+    const result = await h.explicit()
+    expect(result.ok).toBe(true)
+    expect(existsSync(h.f.linked)).toBe(false)
+    expect(existsSync(h.s.linked)).toBe(true)
+    const cleaned = listReceipts(receiptDirectory(h.f.env, h.f.receipt.repo.key)).filter((receipt) => receipt.outcome === "cleaned")
+    expect(cleaned.map((receipt) => receipt.supersedes)).toEqual([h.f.receipt.receiptId])
+    await h.finish()
+  })
+
+  test("a lane claim in the target repository defers the cleanup to its owner", async () => {
+    const h = await foreignHarness("foreign-claimed")
+    writeClaim(h.targetCommon, { directory: h.f.linked, branch: h.f.branch, sessionID: "ses_child", parentID: "ses_other", createdAt: 1 })
+    await expect(h.explicit()).rejects.toBeInstanceOf(CleanupDeferred)
+    expect(existsSync(h.f.linked)).toBe(true)
+    expect(mutationCalls(h.scripted.calls)).toEqual([])
+    await h.finish()
+  })
+
+  test("a running session of another project in the target worktree keeps it", async () => {
+    const h = await foreignHarness("foreign-live", {
+      sessions: (f) => [{ id: "ses_target", projectID: "prj_target", location: { directory: f.linked }, time: { updated: 1, busy: 5, idle: 1 } }],
+    })
+    const result = await h.explicit()
+    expect(refusal(result)).toContain(`a session is running in ${h.f.linked}`)
+    expect(existsSync(h.f.linked)).toBe(true)
+    expect(mutationCalls(h.scripted.calls)).toEqual([])
+    await h.finish()
+  })
+
+  test("an OpenCode project the target's sessions do not name exactly once refuses the removal", async () => {
+    const h = await foreignHarness("foreign-ambiguous", {
+      hostListsTarget: true,
+      sessions: (f) => [idleSession("ses_root", "prj_a", f.main), idleSession("ses_lane", "prj_b", f.linked)],
+    })
+    const reason = refusal(await h.explicit())
+    expect(reason).toContain("host worktree.list failed")
+    expect(reason).toContain("prj_a")
+    expect(reason).toContain("prj_b")
+    expect(h.hostRemoved).toEqual([])
+    expect(existsSync(h.f.linked)).toBe(true)
+    expect(mutationCalls(h.scripted.calls)).toEqual([])
+    await h.finish()
+  })
+
+  test("the target's one project id is the one its worktree is removed through", async () => {
+    const h = await foreignHarness("foreign-project", {
+      hostListsTarget: true,
+      sessions: (f) => [idleSession("ses_root", "prj_target", f.main), idleSession("ses_lane", "prj_target", f.linked)],
+    })
+    const result = await h.explicit()
+    expect(result.ok).toBe(true)
+    expect(h.hostRemoved).toEqual([{ projectID: "prj_target", directory: h.f.linked }])
+    await h.finish()
+  })
+
+  test("a refused prompt is recorded as a denial in the target's common directory", async () => {
+    const h = await foreignHarness("foreign-refused")
+    await expect(h.explicit(async () => Promise.reject(new Error("denied by the user")))).rejects.toThrow("denied by the user")
+    expect(readLanding(h.targetCommon, h.f.receipt.receiptId)).toMatchObject({ kind: "present", value: { denied: { sessionID: "ses_lead" } } })
+    expect(readLanding(h.sessionCommon, h.f.receipt.receiptId).kind).toBe("missing")
+    expect(existsSync(h.f.linked)).toBe(true)
+    await h.finish()
+  })
+
+  test("a clone that resolves to another common directory than it was identified by is refused", async () => {
+    const h = await foreignHarness("foreign-moved")
+    const coordinated = await h.pending.coordinate("ses_lead")({ common: h.sessionCommon, root: h.f.main })
+    expect(coordinated).toMatchObject({ ok: false, reason: expect.stringContaining("repo.common") })
+    await h.finish()
+  })
+
+  test("the beads reminder for another repository's landing runs its commands in that clone", async () => {
+    const h = await foreignHarness("foreign-nudge", { beadStatus: "open" })
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    await h.idle()
+    const texts = h.fake.calls.filter((call) => call.method === "session.synthetic").map((call) => JSON.stringify(call.input))
+    expect(texts).toHaveLength(1)
+    expect(texts[0]).toContain(`cd '${h.f.main}' && env -u BEADS_DIR bd close delivery-17`)
+    expect(existsSync(h.f.linked)).toBe(true)
+    await h.finish()
+  })
+
+  test("a receipt id the session's repository also has does not keep the target's worktree from its retry", async () => {
+    const h = await foreignHarness("foreign-same-id")
+    // Both fixtures come from one template, so their receipts share the id.
+    expect(h.s.receipt.receiptId).toBe(h.f.receipt.receiptId)
+    writeReceipt(h.s.receipt, receiptDirectory(h.f.env, h.s.receipt.repo.key))
+    git(h.s.main, ["worktree", "remove", h.s.linked])
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    await h.idle()
+    expect(existsSync(h.f.linked)).toBe(false)
+    await h.finish()
+  })
+
+  test("a landing record for the target's worktree is written in the target's common directory", async () => {
+    const h = await foreignHarness("foreign-record")
+    await h.pending.record(h.f.receipt, "ses_lead")
+    expect(readLanding(h.targetCommon, h.f.receipt.receiptId).kind).toBe("present")
+    expect(readLanding(h.sessionCommon, h.f.receipt.receiptId).kind).toBe("missing")
+    await h.finish()
+  })
+
+  test("a deferred cleanup is retried at a turn end against the receipt's repository", async () => {
+    const h = await foreignHarness("foreign-retry")
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    await h.idle()
+    expect(existsSync(h.f.linked)).toBe(false)
+    expect(readLanding(h.targetCommon, h.f.receipt.receiptId)).toEqual({ kind: "missing" })
+    await h.finish()
+  })
+
+  test("an instance started later retries the clone an earlier one registered", async () => {
+    const h = await foreignHarness("foreign-fresh")
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.dispose()
+    const fresh = h.another()
+    await fresh.prime()
+    await fresh.start()
+    h.fake.emit({ type: "session.idle", data: { sessionID: "ses_lead" } })
+    await fresh.settle()
+    expect(existsSync(h.f.linked)).toBe(false)
+    await fresh.dispose()
+    await h.finish()
+  })
+
+  /** A receipt-named file in `key`'s receipt directory that does not parse. */
+  const unparseableReceipt = (env: NodeJS.ProcessEnv, key: string) => {
+    mkdirSync(receiptDirectory(env, key), { recursive: true })
+    writeFileSync(join(receiptDirectory(env, key), "1800000000000-aaaaaaaaaaaa.json"), "{not json")
+  }
+
+  test("a clone whose observation stalls does not hold back another clone's running-work hold", async () => {
+    let release: () => void = () => {}
+    const stalled = new Promise<void>((done) => {
+      release = done
+    })
+    const staleRoot = scratch("foreign-stale-root")
+    const h = await foreignHarness("foreign-stale", {
+      observe: async (argv, at, timeoutMs, signal) => {
+        if (at === staleRoot) {
+          await stalled
+          return null
+        }
+        return spawnGit(argv, at, timeoutMs, signal)
+      },
+    })
+    const STALE = "d".repeat(16)
+    unparseableReceipt(h.f.env, STALE)
+    await addClone(h.f.env, h.sessionKey, { key: STALE, root: staleRoot }, () => true)
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    const fired = h.fake.fire.session("experimental.idle", {
+      sessionID: "ses_lead",
+      background: [{ kind: "shell", shellID: "sh_1", command: `ls '${h.f.linked}'` }],
+    })
+    let held = false
+    for (let tries = 0; tries < 200 && !held; tries++) {
+      held = readHolds(h.targetCommon, h.f.linked).holds.some((hold) => hold.jobs.length > 0)
+      if (!held) await new Promise((done) => setTimeout(done, 10))
+    }
+    release()
+    await fired
+    expect(held).toBe(true)
+    expect(existsSync(h.f.linked)).toBe(true)
+    await h.finish()
+  })
+
+  test("a clone whose receipts cannot be read is kept when the registry is full", async () => {
+    const h = await foreignHarness("foreign-prune")
+    const kept = { key: "e".repeat(16), root: "/repos/unreadable" }
+    unparseableReceipt(h.f.env, kept.key)
+    await addClone(h.f.env, h.sessionKey, kept, () => true)
+    for (let index = 0; index < MAX_CLONES - 1; index++) {
+      await addClone(h.f.env, h.sessionKey, { key: index.toString(16).padStart(16, "0"), root: `/repos/${index}` }, () => true)
+    }
+    await h.pending.record(h.f.receipt, "ses_lead")
+    const entries = readClones(h.f.env, h.sessionKey)
+    expect(entries).toHaveLength(MAX_CLONES)
+    expect(entries).toContainEqual(kept)
+    await h.finish()
+  })
+
+  test("a denial kept only in memory survives another repository's re-arm of the same receipt id", async () => {
+    const h = await foreignHarness("foreign-collide", { lock: { waitMs: 50 } })
+    expect(h.s.receipt.receiptId).toBe(h.f.receipt.receiptId)
+    // Another holder has the session repository's lock, so this denial cannot reach disk.
+    const busy = lockFile(h.sessionCommon, h.s.linked)
+    mkdirSync(dirname(busy), { recursive: true })
+    writeFileSync(busy, JSON.stringify({ host: hostname(), pid: process.pid, owner: "elsewhere", token: "t", taken: NOW, expires: NOW + 600_000 }))
+    await expect(h.pending.record(h.s.receipt, "ses_lead", { denied: true })).rejects.toThrow()
+    rmSync(busy)
+    await h.pending.record(h.f.receipt, "ses_lead", { denied: true })
+    await h.pending.repositoryCoordination({ common: h.targetCommon, root: h.f.receipt.repo.canonicalRoot }).arm(h.f.linked)
+    expect(await h.pending.removalFor("ses_lead").finalCheck(h.s.linked)).toContain("cleanup was denied")
+    await h.finish()
+  })
+
+  test("this instance's registration wins over a stale root in the registry file", async () => {
+    const h = await foreignHarness("foreign-stale-disk")
+    await h.pending.record(h.f.receipt, "ses_lead")
+    writeFileSync(registryFile(h.f.env, h.sessionKey), JSON.stringify([{ key: h.f.receipt.repo.key, root: join(h.f.root, "moved-away") }]))
+    await h.pending.start()
+    await h.idle()
+    expect(existsSync(h.f.linked)).toBe(false)
+    await h.finish()
+  })
+
+  test.each([
+    ["the worktree's", "worktree.marker", "git", false],
+    ["the worktree's", "worktree.marker", "the host registry", true],
+    ["the execution checkout's", "worktree.executionCwd", "git", false],
+    ["the execution checkout's", "worktree.executionCwd", "the host registry", true],
+  ] as const)("%s .git swapped while the final session listing waits refuses the removal (%s) through %s", async (which, field, _route, host) => {
+    const execution = which === "the execution checkout's"
+    const h = await foreignHarness(`foreign-swap-${execution ? "exec" : "target"}-${host ? "host" : "git"}`, {
+      hostListsTarget: host,
+      sessions: (f) => [idleSession("ses_root", "prj_target", f.main)],
+    })
+    // The removal runs from the linked checkout of the base branch when there is one; give it one,
+    // distinct from the main checkout, so its marker is the one that can be swapped.
+    const executionCheckout = join(h.f.root, "execution checkout")
+    if (execution) {
+      git(h.f.main, ["checkout", "-q", "--detach"])
+      git(h.f.main, ["worktree", "add", "-q", executionCheckout, h.f.receipt.pr.baseRefName])
+    }
+    const swappedMarker = join(execution ? executionCheckout : h.f.linked, ".git")
+    const session = h.fake.context.session as unknown as { list: (query: Record<string, unknown>) => Promise<unknown> }
+    const list = session.list.bind(session)
+    let swapped = false
+    let listings = 0
+    session.list = async (query) => {
+      // The worktree's session listings: the section's recheck under the lock, then the final check
+      // just before the removal. The second is suspended here, after every identity proof.
+      if (query.archived === false && query.directory === h.f.linked && ++listings === 2) {
+        swapped = true
+        writeFileSync(swappedMarker, readFileSync(join(h.s.linked, ".git")))
+      }
+      return list(query)
+    }
+    const reason = refusal(await h.explicit())
+    expect(swapped).toBe(true)
+    expect(reason).toContain(`${field}:`)
+    expect(commandCalls(h.scripted.calls, "git").filter((argv) => argv[1] === "worktree" && argv[2] === "remove")).toEqual([])
+    expect(h.hostRemoved).toEqual([])
+    expect(existsSync(h.f.linked)).toBe(true)
+    await h.finish()
+  })
+
+  test("a denied landing in the target repository is not retried", async () => {
+    const h = await foreignHarness("foreign-denied")
+    await h.pending.record(h.f.receipt, "ses_lead", { denied: true })
+    await h.pending.start()
+    await h.idle()
+    expect(existsSync(h.f.linked)).toBe(true)
+    expect(mutationCalls(h.scripted.calls)).toEqual([])
     await h.finish()
   })
 })

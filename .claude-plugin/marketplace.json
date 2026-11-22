@@ -48,7 +48,7 @@
       "name": "beads",
       "description": "Beads issue tracking: bd prime session context, shell gates on bd, git and gh commands, store pinning and the Beads skills.",
       "source": "./plugins/beads/claude",
-      "version": "0.8.5",
+      "version": "0.8.10",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/beads",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -165,7 +165,7 @@
       "name": "speckit",
       "description": "SpecKit on beads: a tasks.md guard, setup and bugfix skills, formulas, and the speckit-sync and speckit-verify subagents.",
       "source": "./plugins/speckit/claude",
-      "version": "0.10.2",
+      "version": "0.10.3",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/speckit",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -192,7 +192,7 @@
       "name": "worktrunk",
       "description": "Worktrunk (wt) skills: work in linked worktrees and run deterministic preflight checks before an agent run or merge.",
       "source": "./plugins/worktrunk/claude",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/worktrunk",
       "repository": "https://github.com/srobroek/harness-plugins"

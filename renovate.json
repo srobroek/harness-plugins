@@ -3,11 +3,6 @@
   "extends": [
     "github>srobroek/harness-kit"
   ],
-  "ignoreDeps": [
-    "@opentui/core",
-    "@opentui/solid",
-    "solid-js"
-  ],
   "gitIgnoredAuthors": [
     "41898282+github-actions[bot]@users.noreply.github.com"
   ],

@@ -1262,6 +1262,80 @@ function shellCall(tool, input) {
     call.background = value.background;
   return call;
 }
+// lib/src/safe-git.ts
+import { devNull } from "os";
+var SAFE_GIT_CONFIG = [
+  ["core.fsmonitor", "false"],
+  ["core.hooksPath", devNull]
+];
+var SAFE_GIT_ARGS = [...SAFE_GIT_CONFIG.flatMap(([key, value]) => ["-c", `${key}=${value}`]), "--no-optional-locks"];
+var HARDENED_GIT_CONFIG = [
+  ...SAFE_GIT_CONFIG,
+  ["core.attributesFile", devNull],
+  ["log.showSignature", "false"],
+  ["gpg.program", devNull],
+  ["gpg.ssh.program", devNull],
+  ["gpg.x509.program", devNull],
+  ["commit.gpgSign", "false"],
+  ["tag.gpgSign", "false"],
+  ["gpg.ssh.defaultKeyCommand", ""],
+  ["core.sshCommand", ""],
+  ["credential.helper", ""],
+  ["diff.external", ""]
+];
+var EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+var INHERITED_GIT_VARIABLES = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_PREFIX",
+  "GIT_NAMESPACE",
+  "GIT_REPLACE_REF_BASE",
+  "GIT_GRAFT_FILE",
+  "GIT_SHALLOW_FILE",
+  "GIT_CONFIG",
+  "GIT_EXEC_PATH",
+  "GIT_EXTERNAL_DIFF",
+  "GIT_PAGER",
+  "GIT_EDITOR",
+  "GIT_SEQUENCE_EDITOR",
+  "GIT_SSH",
+  "GIT_SSH_COMMAND",
+  "GIT_ASKPASS",
+  "GIT_PROXY_COMMAND",
+  "GIT_LITERAL_PATHSPECS",
+  "GIT_GLOB_PATHSPECS",
+  "GIT_NOGLOB_PATHSPECS",
+  "GIT_ICASE_PATHSPECS"
+];
+var PROGRAM_VARIABLES = ["PAGER", "EDITOR", "VISUAL", "SSH_ASKPASS"];
+function hardenedGitEnv(base) {
+  const env = {};
+  const dropped = new Set([...INHERITED_GIT_VARIABLES, ...PROGRAM_VARIABLES]);
+  for (const [key, value] of Object.entries(base)) {
+    if (value === undefined || dropped.has(key) || key.startsWith("GIT_TRACE"))
+      continue;
+    if (key === "GIT_CONFIG_PARAMETERS" || key === "GIT_CONFIG_COUNT" || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key))
+      continue;
+    env[key] = value;
+  }
+  let count = 0;
+  for (const [key, value] of HARDENED_GIT_CONFIG) {
+    env[`GIT_CONFIG_KEY_${count}`] = key;
+    env[`GIT_CONFIG_VALUE_${count}`] = value;
+    count += 1;
+  }
+  env.GIT_CONFIG_COUNT = String(count);
+  env.GIT_ATTR_SOURCE = EMPTY_TREE;
+  env.GIT_OPTIONAL_LOCKS = "0";
+  env.GIT_NO_LAZY_FETCH = "1";
+  env.GIT_ALLOW_PROTOCOL = "";
+  return env;
+}
+
 // plugins/worktrunk/opencode/src/merge-gate.ts
 var MERGE_RETRY = "wt merge <target> --no-squash --no-ff";
 var SOURCE_WORKTREE_RETRY = `${MERGE_RETRY} from the source worktree`;
@@ -1388,7 +1462,14 @@ var PROBE_BOUNDS = { timeoutMs: 8000, budgetMs: 25000 };
 async function spawnProbe(binary, args, cwd, signal) {
   let child;
   try {
-    child = Bun.spawn([binary, ...args], { cwd, stdin: "ignore", stdout: "pipe", stderr: "ignore", signal });
+    child = Bun.spawn([binary, ...args], {
+      cwd,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+      signal,
+      env: hardenedGitEnv(Bun.env)
+    });
   } catch {
     return null;
   }
@@ -1535,7 +1616,7 @@ import { stat } from "fs/promises";
 import { basename } from "path";
 var STRATEGY_ID = "worktrunk";
 var spawnRunner = async (argv, signal) => {
-  const child = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe", signal });
+  const child = Bun.spawn(argv, { stdin: "ignore", stdout: "pipe", stderr: "pipe", signal, env: hardenedGitEnv(Bun.env) });
   const run = await supervise(child, { signal });
   signal.throwIfAborted();
   if (run.kind !== "exited")
@@ -1549,6 +1630,7 @@ function createArgs(input) {
     input.sourceDirectory,
     "switch",
     "-y",
+    "--no-hooks",
     "--create",
     "--no-cd",
     "--base",
@@ -1565,7 +1647,7 @@ function branchName(directory) {
   return name;
 }
 function removeArgs(input) {
-  return ["-C", input.directory, "remove", "-y", ...input.force ? ["--force"] : [], "--foreground"];
+  return ["-C", input.directory, "remove", "-y", "--no-hooks", ...input.force ? ["--force"] : [], "--foreground"];
 }
 function listArgs(sourceDirectory) {
   return ["-C", sourceDirectory, "list", "--format", "json"];

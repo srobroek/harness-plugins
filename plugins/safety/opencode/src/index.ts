@@ -5,6 +5,7 @@ import { Plugin } from "@opencode/plugin"
 import { Tool } from "@opencode/plugin/effect"
 import { appendResultText, isShellTool, leadingCdCwd, shellCall, WRITE_TOOLS } from "@srobroek/opencode-lib"
 import { hostWarn, type Warn } from "@srobroek/opencode-lib/host-log"
+import { type AskedWatchDeps, watchAsked } from "./asked-watch.ts"
 import { rewriteCloseKeywords } from "./close-keywords.ts"
 import { externalDirectories, sessionRoots, shellFlagDirectories } from "./flag-directories.ts"
 import { readConfigSnapshot, readProviderTypes } from "./fnox-config.ts"
@@ -12,6 +13,7 @@ import { GUARD_IDS, type GuardID, type GuardOptions, hardGate } from "./guards.t
 import { decideToolCall, type MigrationOptions, migrationOverride } from "./migrations.ts"
 import { createPackageAdvisor } from "./package-investigate.ts"
 import { type Decision, type DecisionID, type ReviewOptions, reviewPermission } from "./permission.ts"
+import { type PushViaConfig, readPushVia } from "./push-via.ts"
 import { createRedactor, type RedactOptions, readRedactOptions } from "./redact.ts"
 import { allowWorktreeReads, createWorktreeLister, type GitRun } from "./repo-worktrees.ts"
 import { allowScratch, realRoots, scratchRoots } from "./scratch-dirs.ts"
@@ -27,7 +29,7 @@ import {
 import { allowSkillReads, listedSkills, READ_ONLY_TOOLS, skillDirectories } from "./skill-references.ts"
 import { allowSteeringReads, readSteeringDirs, steeringRoots } from "./steering-dirs.ts"
 import { denyUnanswerable, type SessionInfo, unanswerableDenial } from "./subagent-prompts.ts"
-import { allowSubagentReads } from "./subagent-reads.ts"
+import { allowRootReads, allowSubagentReads } from "./subagent-reads.ts"
 
 export { normalize as normalizeCloseKeywords, rewriteCloseKeywords } from "./close-keywords.ts"
 export { externalDirectories, flagDirectories, shellFlagDirectories } from "./flag-directories.ts"
@@ -46,7 +48,7 @@ export {
 } from "./redact.ts"
 export { allowSkillReads, skillDirectories } from "./skill-references.ts"
 export { denyUnanswerable, unanswerableMessage } from "./subagent-prompts.ts"
-export { allowSubagentReads, isSecretResource, SECRET_LOCATIONS } from "./subagent-reads.ts"
+export { allowRootReads, allowSubagentReads, isSecretResource, SECRET_LOCATIONS } from "./subagent-reads.ts"
 
 export type FeatureID =
   | GuardID
@@ -60,6 +62,7 @@ export type FeatureID =
   | "scratch-shell"
   | "repo-worktrees"
   | "subagent-external-reads"
+  | "root-external-reads"
   | "subagent-prompts"
 
 export const FEATURE_IDS: readonly FeatureID[] = [
@@ -76,6 +79,7 @@ export const FEATURE_IDS: readonly FeatureID[] = [
   "scratch-shell",
   "repo-worktrees",
   "subagent-external-reads",
+  "root-external-reads",
   "subagent-prompts",
 ]
 
@@ -87,6 +91,8 @@ export type SafetyOptions = {
   steeringDirs: string[]
   /** Extra secret locations the `subagent-external-reads` check never allows. */
   secretPaths: string[]
+  /** Host whose plain `git push` is refused in favour of a wrapper command; off when absent. */
+  pushVia: PushViaConfig | undefined
 }
 
 /**
@@ -99,8 +105,10 @@ export type SafetyOptions = {
  * `disable: ["repo-worktrees"]` stops allowing reads in the session repository's other worktrees.
  * `disable: ["skill-references"]` stops allowing reads in installed skills' directories.
  * `disable: ["subagent-external-reads"]` stops allowing a subagent's read-only and shell `external_directory` asks;
- * `subagentSecretPaths` adds locations (`~/…` or absolute) to `SECRET_LOCATIONS` that stay denied.
+ * `disable: ["root-external-reads"]` stops allowing a root session's `read` of one non-secret file outside the directory;
+ * `subagentSecretPaths` adds locations (`~/…` or absolute) to `SECRET_LOCATIONS` that stay asks in both.
  * `disable: ["subagent-prompts"]` lets a subagent session's asks prompt instead of failing at once.
+ * `pushVia: { host, command }` refuses a plain `git push` whose remote resolves to `host` and names `command -C <dir> push`; off by default.
  * `redactSecrets`, `redactNames` and `redactExclude` configure secret redaction.
  */
 export function readOptions(options: Readonly<Record<string, unknown>> | undefined): SafetyOptions {
@@ -117,6 +125,7 @@ export function readOptions(options: Readonly<Record<string, unknown>> | undefin
     scratchDirs: options?.scratchDirs !== false,
     steeringDirs: readSteeringDirs(options?.steeringDirs),
     secretPaths,
+    pushVia: readPushVia(options),
   }
 }
 
@@ -157,15 +166,25 @@ function safely<T>(run: () => T): T | undefined {
   }
 }
 
-/** A permission review that fails internally asks the owner instead of guessing. */
-export async function review(command: string, cwd: string, options: ReviewOptions): Promise<Decision | undefined> {
+/**
+ * A permission review that fails internally (an unexpected exception such as a parser bug; handled probe timeouts still ask) makes no
+ * decision and logs the error. `undefined` means "defer to the host's permission rules", never "allow": the
+ * caller leaves the evaluation's effect as the host set it, so a configured deny or ask still applies.
+ */
+export async function review(
+  command: string,
+  cwd: string,
+  options: ReviewOptions,
+  warn: Warn = () => {},
+): Promise<Decision | undefined> {
   try {
     return await reviewPermission(command, cwd, options)
   } catch (error) {
-    return {
-      effect: "ask",
-      message: `safety could not check this command (${error instanceof Error ? error.message : String(error)}); confirm it is safe to run.`,
-    }
+    warn("permission review failed; safety's extra review is skipped for this command", {
+      error: error instanceof Error ? error.name : typeof error,
+      message: error instanceof Error ? error.message : String(error),
+    })
+    return undefined
   }
 }
 
@@ -196,6 +215,8 @@ export type Overrides = {
   worktrees?: { run?: GitRun; ttlMs?: number }
   secretStore?: Partial<Pick<StoreDeps, "run" | "which" | "env" | "home">>
   warn?: Warn
+  /** Backoff clock of the prompt watch. */
+  watch?: Pick<AskedWatchDeps, "delaysMs" | "sleep">
 }
 
 /** The model-facing schema of `safety_secret_store`; `parseRequest` checks every field again. */
@@ -282,13 +303,14 @@ export function createPlugin(overrides: Overrides = {}) {
     async setup(ctx) {
       // Bound before the first await, while the fiber still carries the host's logger.
       const warn = overrides.warn ?? hostWarn("srobroek.safety")
-      const { disabled, redact, opAllow, scratchDirs, steeringDirs, secretPaths } = readOptions(ctx.options)
+      const { disabled, redact, opAllow, scratchDirs, steeringDirs, secretPaths, pushVia } = readOptions(ctx.options)
       const on = (id: FeatureID) => !disabled.has(id)
       const guardOptions = {
         env: overrides.env ?? process.env,
         ...overrides.guard,
         disabled: disabled as ReadonlySet<GuardID>,
         opAllow,
+        pushVia,
       }
       const reviewOptions: ReviewOptions = { ...overrides.review, disabled: disabled as ReadonlySet<DecisionID> }
       const pending = new Map<string, Pending>()
@@ -314,7 +336,7 @@ export function createPlugin(overrides: Overrides = {}) {
           })
 
       // The tool behind each running call, so a permission request can be traced to it.
-      const running = new Map<string, { tool: string; at: number }>()
+      const running = new Map<string, { tool: string; input: unknown; at: number }>()
 
       const prune = () => {
         const cutoff = Date.now() - PENDING_TTL_MS
@@ -323,7 +345,7 @@ export function createPlugin(overrides: Overrides = {}) {
       }
 
       const before = await ctx.tool.hook("execute.before", async (event) => {
-        running.set(event.id, { tool: event.tool, at: Date.now() })
+        running.set(event.id, { tool: event.tool, input: event.input, at: Date.now() })
         const call = shellCall(event.tool, event.input)
         if (call === undefined || call.command.trim() === "") return
         let command = call.command
@@ -364,7 +386,7 @@ export function createPlugin(overrides: Overrides = {}) {
             } as never)
         }
         prune()
-        const decision = await review(command, cwd, reviewOptions)
+        const decision = await review(command, cwd, reviewOptions, warn)
         pending.set(event.id, { sessionID: event.sessionID, at: Date.now(), decision })
       })
 
@@ -390,6 +412,7 @@ export function createPlugin(overrides: Overrides = {}) {
                 evaluation.resources.join("\n"),
                 await sessionDirectory(evaluation.sessionID),
                 reviewOptions,
+                warn,
               )
         applyDecision(evaluation as Evaluation, decision)
       })
@@ -558,15 +581,24 @@ export function createPlugin(overrides: Overrides = {}) {
             return undefined
           })
       // Before `subagent-prompts`, so the asks it allows never reach the deny.
-      const subagentReads = on("subagent-external-reads")
+      const subagentReadsOn = on("subagent-external-reads")
+      const rootReadsOn = on("root-external-reads")
+      const subagentReads = subagentReadsOn || rootReadsOn
         ? await ctx.permission.hook("evaluate", async (evaluation) => {
             if (evaluation.action !== "external_directory" || evaluation.effect !== "ask") return
             const source = evaluation.source
-            const tool = source?.type === "tool" ? running.get(source.id)?.tool : undefined
+            const call = source?.type === "tool" ? running.get(source.id) : undefined
+            const tool = call?.tool
             if (tool === undefined) return
             // A failed lookup stays an ask; `subagent-prompts` logs it, so this hook stays quiet.
             const info = (await ctx.session.get({ sessionID: evaluation.sessionID } as never).catch(() => undefined)) as SessionInfo | undefined
-            allowSubagentReads(evaluation, tool, typeof info?.parentID === "string" && info.parentID !== "", secretPaths)
+            if (info === undefined) return
+            const isSubagent = typeof info.parentID === "string" && info.parentID !== ""
+            if (subagentReadsOn) allowSubagentReads(evaluation, tool, isSubagent, secretPaths)
+            // The read tool's own argument: `path` on current hosts, `filePath` on older ones.
+            const input = call?.input as { path?: unknown; filePath?: unknown } | undefined
+            const filePath = input?.path ?? input?.filePath
+            if (rootReadsOn) allowRootReads(evaluation, tool, filePath, isSubagent, secretPaths)
           })
         : undefined
       const unanswerable = on("subagent-prompts")
@@ -578,52 +610,41 @@ export function createPlugin(overrides: Overrides = {}) {
 
       // A plugin whose evaluate hook runs after this one can still raise a prompt in a subagent session,
       // so every prompt the host raises in this location is checked again and rejected through the reply API.
+      // The evaluate hook above already denies a child's prompt; this watch is the second layer, and it is
+      // reactive: a user's answer can land first. Then the reply below is a no-op or a rejected call that
+      // is warned about, and the user's decision stands, so the race is benign.
       const watching = new AbortController()
       const errorName = (error: unknown) => (error instanceof Error ? error.name : typeof error)
-      // The evaluate hook above already denies a child's prompt; this watch is the second layer. When it
-      // cannot run, say so once: an abort is the teardown, anything else is a host failure.
-      const watchFailed = (error: string) => {
-        if (watching.signal.aborted) return
-        warn("permission prompt watch stopped; prompts a later plugin raises in subagent sessions are no longer rejected", { error })
-      }
-      let asked: AsyncIterator<unknown> | undefined
-      if (on("subagent-prompts")) {
-        try {
-          asked = ctx.event.subscribe({ types: ["permission.asked"], signal: watching.signal } as never)[Symbol.asyncIterator]()
-        } catch (error) {
-          watchFailed(errorName(error))
-        }
-      }
-      if (asked) {
-        const events = asked
-        void (async () => {
-          for (;;) {
-            let next: IteratorResult<unknown>
-            try {
-              next = await events.next()
-            } catch (error) {
-              return watchFailed(errorName(error))
-            }
-            if (next.done) return watchFailed("stream ended")
-            if (watching.signal.aborted) return
-            const event = next.value as { type?: string; data?: AskedRequest }
-            if (event.type !== "permission.asked" || event.data === undefined) continue
-            await rejectUnanswerable(event.data).catch((error: unknown) =>
-              warn("could not reject a subagent's permission prompt", {
-                sessionID: event.data?.sessionID,
-                error: errorName(error),
-              }),
-            )
-          }
-        })()
-      }
+      const watch = on("subagent-prompts")
+        ? watchAsked({
+            subscribe: () => ctx.event.subscribe({ types: ["permission.asked"], signal: watching.signal } as never)[Symbol.asyncIterator](),
+            handle: async (event) => {
+              const { type, data } = event as { type?: string; data?: AskedRequest }
+              if (type !== "permission.asked" || data === undefined) return
+              await rejectUnanswerable(data).catch((error: unknown) =>
+                warn("could not reject a subagent's permission prompt", { sessionID: data.sessionID, error: errorName(error) }),
+              )
+            },
+            // An abort is the teardown and never reaches here; anything else is a host failure.
+            onFailure: ({ error, attempt, willRetry }) =>
+              warn(
+                willRetry
+                  ? `permission prompt watch failed; resubscribing (attempt ${attempt})`
+                  : "permission prompt watch stopped; prompts a later plugin raises in subagent sessions are no longer rejected",
+                { error },
+              ),
+            signal: watching.signal,
+            ...overrides.watch,
+          })
+        : undefined
       async function rejectUnanswerable(request: AskedRequest): Promise<void> {
         if (typeof request.sessionID !== "string" || typeof request.id !== "string") return
         const message = unanswerableDenial(
           { action: request.action ?? "permission", resources: request.resources ?? [], message: request.message },
           await sessionInfo(request.sessionID),
         )
-        if (message === undefined) return
+        // The lookup can outlive the plugin; a reply after teardown would act on a stopped backstop.
+        if (message === undefined || watching.signal.aborted) return
         await ctx.permission.reply({ sessionID: request.sessionID, requestID: request.id, decision: "reject", message } as never)
       }
 
@@ -657,7 +678,7 @@ export function createPlugin(overrides: Overrides = {}) {
         await subagentReads?.dispose()
         watching.abort()
         // Ending the iterator ends the loop above; it is not awaited, since a pending read may never settle.
-        void asked?.return?.()
+        watch?.stop()
         await confirmCommand.dispose()
         await secretTool.dispose()
         await after.dispose()

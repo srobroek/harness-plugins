@@ -187,11 +187,6 @@ export function writeClaim(commonDir: string, claim: Omit<LaneClaim, "generation
   writeAtomic(claimFile(commonDir, claim.directory), { ...claim, generation: claim.generation ?? claim.createdAt })
 }
 
-/** The generation a claim read carries; -1 when there is no readable claim (so a later claim never matches it). Pure. */
-export function claimGeneration(read: Read<LaneClaim>): number {
-  return read.kind === "present" ? read.value.generation : -1
-}
-
 /**
  * Record a resume: generation + 1 and `resumedAt`. The caller holds the directory lock. Returns the
  * new generation, or -1 when the claim is missing or unreadable.

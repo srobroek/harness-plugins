@@ -37,15 +37,22 @@ describe("a claim that carries or inherits any ledger selector is never tracked"
     expect(claim(command).kind).toBe("refused")
   })
 
+  test("an inherited BEADS_DB is the default ledger when BEADS_DIR is unset, so the claim is tracked under its store", () => {
+    const inherited = { BEADS_DB: "/own/.beads/beads.db" }
+    const inspected = inspectClaim("bd update proj-1 --claim", "/repo", inherited, { injected: "a/s1", inherited })
+    expect(inspected.kind === "claim" && inspected.plan.target).toEqual({ key: "/own/.beads", store: "/own/.beads" })
+  })
+
   test.each([
-    "BEADS_DB",
     "BD_DB",
     "BD_SOCKET",
     "BEADS_DOLT_DATA_DIR",
     "BEADS_DOLT_SERVER_PORT",
     "BEADS_PROXIED_SERVER_ROOT_PATH",
-  ])("%s set in the plugin's own environment is its ledger, so the claim is tracked", (name) => {
-    expect(claim("bd update proj-1 --claim", { [name]: "/own/path" }).kind).toBe("claim")
+  ])("%s set in the plugin's own environment names a ledger the plugin cannot key, so the claim is refused", (name) => {
+    const inspected = claim("bd update proj-1 --claim", { [name]: "/own/path" })
+    expect(inspected.kind).toBe("refused")
+    expect(JSON.stringify(inspected)).toContain(name)
   })
 
   test("an inherited BEADS_DIR is the default ledger, so the claim is still tracked", () => {
@@ -94,32 +101,9 @@ describe("an inline ledger assignment against the plugin's own environment", () 
     expect(JSON.stringify(inspected)).toContain("different")
   })
 
-  test.each(["BEADS_DOLT_PORT", "BEADS_DOLT_SERVER_PORT"])(
-    "%s is compared as written: symlink aliases named like the ports do not make 3307 equal 3306",
-    (name) => {
-      const at = join(dir, name)
-      mkdirSync(join(at, "real"), { recursive: true })
-      symlinkSync(join(at, "real"), join(at, "3306"))
-      symlinkSync(join(at, "real"), join(at, "3307"))
-      const inspected = inspectClaim(
-        `${name}=3307 bd update proj-1 --claim`,
-        at,
-        { BEADS_DIR: own },
-        { injected: "B", inherited: { [name]: "3306" } },
-      )
-      expect(inspected.kind).toBe("refused")
-      expect(JSON.stringify(inspected)).toContain("different")
-    },
-  )
-
-  test("a scalar variable with the identical value is tracked", () => {
-    const same = inspectClaim(
-      "BEADS_DOLT_SERVER_PORT=3306 bd update proj-1 --claim",
-      dir,
-      { BEADS_DIR: own },
-      { injected: "B", inherited: { BEADS_DOLT_SERVER_PORT: "3306" } },
-    )
-    expect(same.kind).toBe("claim")
+  test.each(["BEADS_DOLT_PORT", "BEADS_DOLT_SERVER_PORT", "BD_DB", "BD_SOCKET"])("an inline %s is refused even when the plugin's environment repeats it", (name) => {
+    const inspected = inspectClaim(`${name}=3306 bd update proj-1 --claim`, dir, { BEADS_DIR: own }, { injected: "B", inherited: { [name]: "3306" } })
+    expect(inspected.kind).toBe("refused")
   })
 
   test("an inline value for a variable the plugin's environment does not set is refused", () => {

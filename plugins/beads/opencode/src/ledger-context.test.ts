@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { parse } from "@srobroek/opencode-lib/beads-shell"
 import { configIssuePrefix, describeLedger, findLedger, ledgerPrefix, ledgerRepoMismatch } from "./ledger-context.ts"
-import { decideCommand, decidePrCreate } from "./pr-bead-link-gate.ts"
+import { decidePrBeadLink } from "./pr-bead-link-gate.ts"
 
 let root = ""
 beforeAll(() => {
@@ -44,17 +45,20 @@ describe("PR gate refusal names the ledger", () => {
     expect(describeLedger({ from: "/w", store: "/w/.beads", retired: true })).toContain("It is RETIRED.")
   })
 
+  const decide = (command: string, control: Parameters<typeof decidePrBeadLink>[2]["control"], note: () => string) =>
+    decidePrBeadLink(parse(command), root, { control, note })
+
   test("a refusal appends the note; a pass never evaluates it", () => {
-    const decision = decidePrCreate("prose", true, () => "NOTE")
+    const decision = decide("gh pr create --body prose", () => true, () => "NOTE")
     expect(decision?.reason.endsWith(" NOTE")).toBe(true)
     let calls = 0
-    expect(decidePrCreate("Bead: a-1", true, () => String(calls++))).toBeNull()
-    expect(decideCommand("gh pr list", true, () => String(calls++))).toBeNull()
+    expect(decide("gh pr create --body 'Bead: a-1'", () => true, () => String(calls++))).toBeNull()
+    expect(decide("gh pr list", () => true, () => String(calls++))).toBeNull()
     expect(calls).toBe(0)
   })
 
   test("the unknown-control refusal also carries the note", () => {
-    const decision = decidePrCreate("prose", { kind: "unknown", reason: "no gh" }, () => "NOTE")
+    const decision = decide("gh pr create --body prose", () => ({ kind: "unknown", reason: "no gh" }), () => "NOTE")
     expect(decision?.reason).toContain("no gh")
     expect(decision?.reason.endsWith(" NOTE")).toBe(true)
   })
@@ -108,6 +112,21 @@ describe("ledgerRepoMismatch", () => {
     expect(
       ledgerRepoMismatch({ verb: "create", store: "/h/.beads", cwd: "/h/repo", identity: identity({ "/h/.beads": "/h/.beads", "/h/repo": "/h/repo/.git" }) }),
     ).toContain("/h/repo")
+  })
+
+  test("names the repository root, not its parent, as owner of a repo-root store", () => {
+    const warning =
+      ledgerRepoMismatch({ verb: "create", store: "/r", cwd: "/b", identity: identity({ "/r": "/r/.git", "/b": "/b/.git" }) }) ?? ""
+    expect(warning).toContain("belongs to \"/r\"")
+    expect(warning).not.toContain("belongs to \"/\"")
+  })
+
+  test.each([
+    ["a nested store takes the repository root from the git common dir", "/r/data/ledger", { "/r/data/ledger": "/r/.git" }, "/r"],
+    ["a non-.beads store outside git is its own owner", "/x/ledger", { "/x/ledger": "/x/ledger" }, "/x/ledger"],
+  ])("owner clause: %s", (_name, store, ids, owner) => {
+    const warning = ledgerRepoMismatch({ verb: "create", store, cwd: "/b", identity: identity({ ...ids, "/b": "/b/.git" }) }) ?? ""
+    expect(warning).toContain(`belongs to ${JSON.stringify(owner)},`)
   })
 
   test("stays silent for a store that is the repository root itself", () => {

@@ -11,8 +11,7 @@
  * bundle separate copies of this lib) both use it.
  */
 
-import { stat } from "node:fs/promises"
-import { basename, dirname, resolve } from "node:path"
+import { basename, dirname } from "node:path"
 import { insideDirectory } from "./session-lanes.ts"
 import { canonicalDirectory } from "./worktree-claims.ts"
 
@@ -94,18 +93,6 @@ export async function listProjectSessions(api: Pick<SessionApi, "list">, project
   return [...byId.values()]
 }
 
-/** Whether `path` exists. Only ENOENT (or ENOTDIR) means gone; any other error is thrown: unknown is not gone. */
-export async function pathExists(path: string): Promise<boolean> {
-  try {
-    await stat(path)
-    return true
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if (code === "ENOENT" || code === "ENOTDIR") return false
-    throw error
-  }
-}
-
 export type Eviction = { ok: true; moved: string[] } | { ok: false; reason: string }
 
 /**
@@ -115,7 +102,18 @@ export type Eviction = { ok: true; moved: string[] } | { ok: false; reason: stri
  */
 export async function evictSessions(
   api: SessionApi,
-  options: { projectID: string | undefined; directory: string; destination: string; exclude?: ReadonlySet<string> },
+  options: {
+    projectID: string | undefined
+    directory: string
+    destination: string
+    exclude?: ReadonlySet<string>
+    /**
+     * The listing is a snapshot and each move is awaited, so a session that starts after the listing would still be
+     * moved. When given, each move is fenced: `fresh` reads the session again (a reason to refuse, or undefined), then
+     * `started` is read synchronously, with nothing awaited between it and the move call.
+     */
+    guard?: { fresh: (session: SessionLike) => Promise<string | undefined>; started: (session: SessionLike) => string | undefined }
+  },
 ): Promise<Eviction> {
   const sessions = await listProjectSessions(api, options.projectID)
   if (sessions === undefined) return { ok: false, reason: `the sessions of the project could not all be listed, so who is in ${options.directory} is unknown` }
@@ -129,6 +127,10 @@ export async function evictSessions(
   if (running) return { ok: false, reason: `session ${running.id} is running in ${options.directory}` }
   const moved: string[] = []
   for (const session of inside) {
+    if (options.guard) {
+      const why = (await options.guard.fresh(session)) ?? options.guard.started(session)
+      if (why !== undefined) return { ok: false, reason: `${why}; nothing was removed` }
+    }
     try {
       await api.move({ sessionID: session.id, directory: options.destination } as never)
       moved.push(session.id)
@@ -138,65 +140,4 @@ export async function evictSessions(
     }
   }
   return { ok: true, moved }
-}
-
-export type Repair = { moved: Array<{ sessionID: string; from: string; to: string }>; failed: Array<{ sessionID: string; reason: string }> }
-
-/**
- * Move every session whose location directory no longer exists (ENOENT only; any other error means
- * unknown and the session is left alone) to the first of `destinationsFor(session)` that exists. A running
- * session is never moved. Archived ones are repaired like the rest. A session with no existing destination
- * is reported as failed, not moved to a path that is not there. Each move is logged through `log`.
- */
-export async function repairStrandedSessions(
-  api: SessionApi,
-  options: {
-    projectID: string | undefined
-    destinationsFor: (session: SessionLike) => readonly string[]
-    exists?: (path: string) => boolean | Promise<boolean>
-    log?: (line: string) => void
-  },
-): Promise<Repair | { error: string }> {
-  const sessions = await listProjectSessions(api, options.projectID)
-  if (sessions === undefined) return { error: "the sessions of the project could not all be listed" }
-  const exists = options.exists ?? pathExists
-  const result: Repair = { moved: [], failed: [] }
-  for (const session of sessions) {
-    const where = session.location?.directory
-    if (typeof where !== "string" || where === "") continue
-    try {
-      if (await exists(resolve(where))) continue
-    } catch (error) {
-      options.log?.(`session ${session.id}: ${where} could not be checked (${error instanceof Error ? error.message : String(error)}); left alone`)
-      continue
-    }
-    if (sessionRunning(session)) continue
-    let to: string | undefined
-    for (const candidate of options.destinationsFor(session)) {
-      try {
-        if (await exists(resolve(candidate))) {
-          to = candidate
-          break
-        }
-      } catch {
-        // A destination that cannot be checked is not one to move to.
-      }
-    }
-    if (to === undefined) {
-      const reason = "no existing destination to move it to"
-      result.failed.push({ sessionID: session.id, reason })
-      options.log?.(`could not move session ${session.id} out of ${where}: ${reason}`)
-      continue
-    }
-    try {
-      await api.move({ sessionID: session.id, directory: to } as never)
-      result.moved.push({ sessionID: session.id, from: where, to })
-      options.log?.(`moved session ${session.id} out of ${where} (gone) to ${to}`)
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error)
-      result.failed.push({ sessionID: session.id, reason })
-      options.log?.(`could not move session ${session.id} out of ${where}: ${reason}`)
-    }
-  }
-  return result
 }

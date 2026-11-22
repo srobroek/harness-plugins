@@ -3,7 +3,7 @@
 // plugins/safety/opencode/src/index.ts
 import { realpathSync as realpathSync10 } from "fs";
 import { homedir as homedir11 } from "os";
-import { isAbsolute as isAbsolute14, resolve as resolve12 } from "path";
+import { isAbsolute as isAbsolute14, resolve as resolve13 } from "path";
 import { Plugin } from "@opencode/plugin";
 import { Tool } from "@opencode/plugin/effect";
 
@@ -2325,6 +2325,74 @@ function hostWarn(source) {
   };
 }
 
+// plugins/safety/opencode/src/asked-watch.ts
+function abortableSleep(ms, signal, timers = globalThis) {
+  return new Promise((resolve) => {
+    if (signal.aborted)
+      return resolve();
+    const done = () => {
+      timers.clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = timers.setTimeout(done, ms);
+    timer.unref?.();
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+var DEFAULT_RESUBSCRIBE_DELAYS_MS = [1000, 5000, 15000];
+var errorName = (error) => error instanceof Error ? error.name : typeof error;
+function watchAsked(deps) {
+  const { signal } = deps;
+  const sleep = deps.sleep ?? abortableSleep;
+  const delays = deps.delaysMs ?? DEFAULT_RESUBSCRIBE_DELAYS_MS;
+  let current;
+  const consume = async () => {
+    try {
+      current = deps.subscribe();
+    } catch (error) {
+      return errorName(error);
+    }
+    for (;; ) {
+      let next;
+      try {
+        next = await current.next();
+      } catch (error) {
+        return signal.aborted ? undefined : errorName(error);
+      }
+      if (signal.aborted)
+        return;
+      if (next.done)
+        return "stream ended";
+      await deps.handle(next.value);
+    }
+  };
+  const run = async () => {
+    for (let attempt = 1;; attempt++) {
+      const failure = await consume();
+      if (failure === undefined || signal.aborted)
+        return;
+      const delay = delays[attempt - 1];
+      deps.onFailure({ error: failure, attempt, willRetry: delay !== undefined });
+      if (delay === undefined)
+        return;
+      await sleep(delay, signal);
+      if (signal.aborted)
+        return;
+    }
+  };
+  return {
+    done: run(),
+    stop: () => {
+      try {
+        Promise.resolve(current?.return?.()).catch(() => {
+          return;
+        });
+      } catch {}
+    }
+  };
+}
+
 // plugins/safety/opencode/src/close-keywords.ts
 var KEYWORDS = new Set(["close", "closes", "closed", "fix", "fixes", "fixed", "resolve", "resolves", "resolved"]);
 var REF = /^(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)?#[0-9]+|GH-[0-9]+/i;
@@ -3656,7 +3724,7 @@ function readConfigSnapshot(cwd, config, home = homedir4()) {
 
 // plugins/safety/opencode/src/guards.ts
 import { readFileSync as readFileSync2 } from "fs";
-import { isAbsolute as isAbsolute5, resolve as resolve6 } from "path";
+import { isAbsolute as isAbsolute5, resolve as resolve7 } from "path";
 
 // plugins/safety/opencode/src/attribution.ts
 var ATTRIBUTION = /co-authored-by:[^\n]{0,120}(?:claude|codex|gpt|copilot|cursor|devin|anthropic|openai|gemini)|generated (?:with|by) [[(]?(?:claude|codex|copilot|opencode|gemini)|noreply@(?:anthropic|openai)\.com/i;
@@ -4413,6 +4481,252 @@ function historyRewrite(commands, cwd, tempRoots = defaultTempRoots(), env = pro
   return;
 }
 
+// plugins/safety/opencode/src/push-via.ts
+import { spawnSync } from "child_process";
+import { resolve as resolve6 } from "path";
+
+// lib/src/safe-git.ts
+import { devNull } from "os";
+var SAFE_GIT_CONFIG = [
+  ["core.fsmonitor", "false"],
+  ["core.hooksPath", devNull]
+];
+var SAFE_GIT_ARGS = [...SAFE_GIT_CONFIG.flatMap(([key, value]) => ["-c", `${key}=${value}`]), "--no-optional-locks"];
+var HARDENED_GIT_CONFIG = [
+  ...SAFE_GIT_CONFIG,
+  ["core.attributesFile", devNull],
+  ["log.showSignature", "false"],
+  ["gpg.program", devNull],
+  ["gpg.ssh.program", devNull],
+  ["gpg.x509.program", devNull],
+  ["commit.gpgSign", "false"],
+  ["tag.gpgSign", "false"],
+  ["gpg.ssh.defaultKeyCommand", ""],
+  ["core.sshCommand", ""],
+  ["credential.helper", ""],
+  ["diff.external", ""]
+];
+var EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+var INHERITED_GIT_VARIABLES = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_PREFIX",
+  "GIT_NAMESPACE",
+  "GIT_REPLACE_REF_BASE",
+  "GIT_GRAFT_FILE",
+  "GIT_SHALLOW_FILE",
+  "GIT_CONFIG",
+  "GIT_EXEC_PATH",
+  "GIT_EXTERNAL_DIFF",
+  "GIT_PAGER",
+  "GIT_EDITOR",
+  "GIT_SEQUENCE_EDITOR",
+  "GIT_SSH",
+  "GIT_SSH_COMMAND",
+  "GIT_ASKPASS",
+  "GIT_PROXY_COMMAND",
+  "GIT_LITERAL_PATHSPECS",
+  "GIT_GLOB_PATHSPECS",
+  "GIT_NOGLOB_PATHSPECS",
+  "GIT_ICASE_PATHSPECS"
+];
+var PROGRAM_VARIABLES = ["PAGER", "EDITOR", "VISUAL", "SSH_ASKPASS"];
+function hardenedGitEnv(base) {
+  const env = {};
+  const dropped = new Set([...INHERITED_GIT_VARIABLES, ...PROGRAM_VARIABLES]);
+  for (const [key, value] of Object.entries(base)) {
+    if (value === undefined || dropped.has(key) || key.startsWith("GIT_TRACE"))
+      continue;
+    if (key === "GIT_CONFIG_PARAMETERS" || key === "GIT_CONFIG_COUNT" || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key))
+      continue;
+    env[key] = value;
+  }
+  let count = 0;
+  for (const [key, value] of HARDENED_GIT_CONFIG) {
+    env[`GIT_CONFIG_KEY_${count}`] = key;
+    env[`GIT_CONFIG_VALUE_${count}`] = value;
+    count += 1;
+  }
+  env.GIT_CONFIG_COUNT = String(count);
+  env.GIT_ATTR_SOURCE = EMPTY_TREE;
+  env.GIT_OPTIONAL_LOCKS = "0";
+  env.GIT_NO_LAZY_FETCH = "1";
+  env.GIT_ALLOW_PROTOCOL = "";
+  return env;
+}
+
+// plugins/safety/opencode/src/push-via.ts
+var HOST = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
+var COMMAND = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+function readPushVia(options) {
+  const raw = options?.pushVia;
+  if (typeof raw !== "object" || raw === null)
+    return;
+  const { host, command } = raw;
+  if (typeof host !== "string" || typeof command !== "string")
+    return;
+  if (!HOST.test(host) || !COMMAND.test(command))
+    return;
+  return { host: host.toLowerCase(), command };
+}
+function hostOf(url) {
+  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^/]*)/.exec(url);
+  let authority;
+  if (scheme) {
+    if (scheme[1]?.toLowerCase() === "file")
+      return;
+    authority = scheme[2]?.replace(/^.*@/, "").replace(/:\d*$/, "");
+  } else {
+    authority = /^(?:[^@/:]+@)?([^/:@]+):/.exec(url)?.[1];
+  }
+  return authority ? authority.toLowerCase() : undefined;
+}
+function git(cwd, args, env) {
+  const result = spawnSync("git", [...SAFE_GIT_ARGS, "-C", cwd, ...args], { encoding: "utf8", timeout: 5000, env });
+  if (result.status !== 0)
+    return;
+  const lines = result.stdout.split(`
+`).filter((line) => line !== "");
+  return lines.length === 0 ? undefined : lines;
+}
+function gitRemoteResolver(inherited) {
+  const env = hardenedGitEnv(inherited);
+  return (cwd, remote) => {
+    if (remote !== undefined) {
+      const named = git(cwd, ["remote", "get-url", "--push", "--all", "--", remote], env);
+      if (named !== undefined || !/[/:]/.test(remote))
+        return named;
+      if (git(cwd, ["config", "--get-regexp", "^url\\..*\\.pushinsteadof$"], env) !== undefined)
+        return;
+      return git(cwd, ["ls-remote", "--get-url", "--", remote], env);
+    }
+    const branch = git(cwd, ["symbolic-ref", "-q", "--short", "HEAD"], env)?.[0];
+    const configured = (key) => git(cwd, ["config", "--get", key], env)?.[0];
+    const remotes = git(cwd, ["remote"], env);
+    if (remotes === undefined)
+      return;
+    const name = (branch === undefined ? undefined : configured(`branch.${branch}.pushRemote`)) ?? configured("remote.pushDefault") ?? (branch === undefined ? undefined : configured(`branch.${branch}.remote`)) ?? (remotes.length === 1 ? remotes[0] : undefined) ?? "origin";
+    return git(cwd, ["remote", "get-url", "--push", "--all", "--", name], env);
+  };
+}
+var VALUED_LONG = ["repo", "push-option", "receive-pack", "exec", "recurse-submodules"];
+var BOOLEAN_LONG = [
+  "all",
+  "branches",
+  "prune",
+  "mirror",
+  "delete",
+  "tags",
+  "follow-tags",
+  "atomic",
+  "dry-run",
+  "porcelain",
+  "force",
+  "force-if-includes",
+  "thin",
+  "progress",
+  "verbose",
+  "quiet",
+  "set-upstream",
+  "verify",
+  "ipv4",
+  "ipv6",
+  "help"
+];
+var OTHER_LONG = ["force-with-lease", "signed", "no-push-option"];
+var LONG_OPTIONS = [...VALUED_LONG, ...OTHER_LONG, ...BOOLEAN_LONG, ...BOOLEAN_LONG.map((name) => `no-${name}`)];
+function longOption(name) {
+  const matches = LONG_OPTIONS.includes(name) ? [name] : LONG_OPTIONS.filter((long) => name !== "" && long.startsWith(name));
+  const only = matches[0];
+  return matches.length === 1 && only !== undefined ? { name: only, valued: VALUED_LONG.includes(only) } : undefined;
+}
+function pushArgs(args) {
+  let help = false;
+  let unknown = false;
+  let repo;
+  const positional = [];
+  let options = true;
+  for (let i = 0;i < args.length; i++) {
+    const arg = args[i];
+    if (!options || !arg.startsWith("-") || arg === "-") {
+      positional.push(arg);
+      continue;
+    }
+    if (arg === "--") {
+      options = false;
+      continue;
+    }
+    if (arg === "-h" || arg === "--help") {
+      help = true;
+      continue;
+    }
+    if (arg.startsWith("--")) {
+      const [name = "", ...rest] = arg.slice(2).split("=");
+      const option = longOption(name);
+      if (option === undefined) {
+        unknown = true;
+        continue;
+      }
+      if (option.name === "help")
+        help = true;
+      if (!option.valued)
+        continue;
+      const value = rest.length > 0 ? rest.join("=") : args[++i];
+      if (option.name === "repo")
+        repo = value;
+      continue;
+    }
+    if (/^-[A-Za-z0-9]+$/.test(arg) && arg.endsWith("o") && arg.slice(1).indexOf("o") === arg.length - 2)
+      i++;
+  }
+  return { help, unknown, remote: positional[0] ?? repo };
+}
+var SELECTOR = /GIT_(?:CONFIG|DIR|WORK_TREE|COMMON_DIR)/;
+function repositorySelected(env) {
+  return Object.keys(env ?? {}).some((name) => SELECTOR.test(name));
+}
+var literalWords = (command) => command.words !== undefined && command.words.length === command.argv.length && command.words.every((word, i) => !word.quoted && !word.expands && command.source.slice(word.start, word.end) === command.argv[i]);
+function literalPush(command, cwd) {
+  if (command === undefined || command.context !== "top" || command.argv[0] !== "git")
+    return;
+  if (command.wrappers.length > 0 || command.assignments.length > 0 || command.redirects.length > 0)
+    return;
+  const first = command.words?.[0];
+  if (first === undefined || command.source.slice(0, first.start).trim() !== "")
+    return;
+  if (!literalWords(command))
+    return;
+  let dir = cwd;
+  let i = 1;
+  while (command.argv[i] === "-C") {
+    const chdir = command.argv[i + 1];
+    if (chdir === undefined || chdir.split("/").includes(".."))
+      return;
+    dir = resolve6(dir, chdir);
+    i += 2;
+  }
+  return command.argv[i] === "push" ? { dir, args: command.argv.slice(i + 1) } : undefined;
+}
+function pushVia(commands, cwd, config, resolveRemote) {
+  const push = literalPush(commands[0], cwd);
+  if (push === undefined)
+    return;
+  const { help, unknown, remote } = pushArgs(push.args);
+  if (help || unknown)
+    return;
+  let urls;
+  try {
+    urls = resolveRemote(push.dir, remote);
+  } catch {
+    return;
+  }
+  return urls?.some((url) => hostOf(url) === config.host) ? { dir: push.dir } : undefined;
+}
+
 // plugins/safety/opencode/src/guards.ts
 var GUARD_IDS = [
   "indirection",
@@ -4422,8 +4736,12 @@ var GUARD_IDS = [
   "git-defender",
   "op-guard",
   "dns-delegation",
-  "history-rewrite"
+  "history-rewrite",
+  "push-via"
 ];
+function shellPath(path) {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`;
+}
 var MESSAGES2 = {
   indirection: "Blocked by safety (bash-indirection-guard): this destructive command targets an unexpanded variable, command substitution, or backtick expression, so its path cannot be verified. Resolve the target and re-issue a literal command; a quoted variable is accepted only after a bare `--` end-of-options marker.",
   "remote-exec": "Blocked by safety (remote-exec-guard): this command would execute content fetched from the network without review: a download piped into a shell, a shell or `eval` running a fetch's output, or a netcat invocation with an exec flag. Download to a file, inspect it, and run only an explicitly reviewed script.",
@@ -4431,6 +4749,7 @@ var MESSAGES2 = {
   "worktree-tmp": "Blocked by safety (worktree-tmp-guard): do not create a worktree under /tmp or /private/tmp, where a container bind mount cannot see it. Use a path under $HOME, such as ~/tmp/worktrees/<repo>/<branch>.",
   "git-defender": "Blocked by safety (git-defender-user-only): only the user runs the Git Defender CLI. It acts under the user's corporate identity, so every subcommand is refused, read-looking ones included. Name the exact command you would have run and why, hand it to the user to run in their own terminal, and report the outcome you needed as unknown. Do not retry through eval, a wrapper, a script or a subagent.",
   "history-rewrite": "Blocked by safety (history-rewrite-guard): history-rewriting commands (`git filter-repo`, `git filter-branch`, `git replace`, `git update-ref -d` on a branch) must not run in place in a canonical checkout, and `filter-repo --force` must not run at all. Clone the repository into a temp directory and run the command there with the tool's workdir set to the clone.",
+  "push-via": (host, command, dir) => `Blocked by safety (push-via-guard): a plain \`git push\` to ${host} cannot work on this host. Push with \`${command} -C ${shellPath(dir)} push\` instead (same arguments), and push WIP often so commits are not lost.`,
   "op-guard": OP_MESSAGE,
   "dns-delegation": "Blocked by safety (dns-delegation-guard): deleting a Route 53 hosted zone leaves any parent zone delegating to the deleted nameservers, a subdomain-takeover risk. Read ~/.config/opencode/steering/dns-delegation-cleanup.md, find the parent zone, then re-run with `DNS_PARENT_CHECKED=1` in front of the command to confirm you will delete the parent's NS (and DS) record set for the child and verify it. Do not report the zone as torn down until the parent delegation is gone."
 };
@@ -4569,13 +4888,13 @@ var readText = (path) => {
 };
 function writtenInto(commands, before, path, cwd) {
   const out = [];
-  const target = isAbsolute5(path) ? path : resolve6(cwd, path);
+  const target = isAbsolute5(path) ? path : resolve7(cwd, path);
   for (const command of commands) {
     if (command.index >= before.index && command.source === before.source)
       break;
     const writes = command.redirects.some((word) => {
       const value = word.value;
-      return value === path || (!isAbsolute5(value) ? resolve6(cwd, value) : value) === target;
+      return value === path || (!isAbsolute5(value) ? resolve7(cwd, value) : value) === target;
     });
     const tee = base(command.argv[0]) === "tee" && command.argv.slice(1).includes(path);
     if (!writes && !tee)
@@ -4606,8 +4925,8 @@ function attribution(commands, cwd, read = readText) {
             sources.push(stage.argv.join(" "), ...stage.hereDocuments.map((document) => document.body));
           }
       } else {
-        const dir = git.chdirs.reduce((at, chdir) => resolve6(at, chdir), cwd);
-        const content = read(isAbsolute5(file) ? file : resolve6(dir, file));
+        const dir = git.chdirs.reduce((at, chdir) => resolve7(at, chdir), cwd);
+        const content = read(isAbsolute5(file) ? file : resolve7(dir, file));
         if (content !== undefined)
           sources.push(content);
         sources.push(...writtenInto(commands, command, file, dir));
@@ -4625,11 +4944,11 @@ var WORKTREE_ADD_VALUED = new Set(["-b", "-B", "--reason"]);
 function worktreeTmp(command, cwd) {
   const git = gitInvocation(command.argv);
   if (git?.subcommand === "worktree" && git.args[0] === "add") {
-    const dir = git.chdirs.reduce((at, chdir) => resolve6(at, chdir), cwd);
+    const dir = git.chdirs.reduce((at, chdir) => resolve7(at, chdir), cwd);
     const path = positionals(git.args.slice(1), WORKTREE_ADD_VALUED)[0];
     if (path === undefined || path.startsWith("~") || path.startsWith("$"))
       return false;
-    return underTmp(isAbsolute5(path) ? path : resolve6(dir, path));
+    return underTmp(isAbsolute5(path) ? path : resolve7(dir, path));
   }
   const wt = wtInvocation(command.argv);
   if (wt && ["switch", "new", "co", "agent"].includes(wt.subcommand)) {
@@ -4681,6 +5000,12 @@ function hardGate(source, cwd, options = {}) {
       const reason = historyRewrite(commands, cwd, options.tempRoots, options.env);
       if (reason !== undefined)
         refusal = { guard: "history-rewrite", reason };
+    }
+    if (refusal === undefined && on("push-via") && options.pushVia !== undefined && !repositorySelected(options.env)) {
+      const resolveRemote = options.resolveRemote ?? gitRemoteResolver(options.env ?? {});
+      const push = pushVia(commands, cwd, options.pushVia, resolveRemote);
+      if (push !== undefined)
+        refusal = { guard: "push-via", reason: MESSAGES2["push-via"](options.pushVia.host, options.pushVia.command, push.dir) };
     }
   } catch (error) {
     failure = { error };
@@ -4915,16 +5240,16 @@ function createPackageAdvisor() {
 }
 
 // plugins/safety/opencode/src/permission.ts
-import { isAbsolute as isAbsolute8, resolve as resolve9 } from "path";
+import { isAbsolute as isAbsolute8, resolve as resolve10 } from "path";
 
 // plugins/safety/opencode/src/branch-delete.ts
 import { realpathSync as realpathSync5 } from "fs";
 import { homedir as homedir5 } from "os";
-import { basename as basename3, isAbsolute as isAbsolute7, resolve as resolve8 } from "path";
+import { basename as basename3, isAbsolute as isAbsolute7, resolve as resolve9 } from "path";
 
 // plugins/safety/opencode/src/worktree-detached.ts
 import { realpathSync as realpathSync4 } from "fs";
-import { isAbsolute as isAbsolute6, join as join7, resolve as resolve7 } from "path";
+import { isAbsolute as isAbsolute6, join as join7, resolve as resolve8 } from "path";
 var MAX_COMMAND_LENGTH2 = 64000;
 var PREFIX2 = "Worktree removal refused";
 var OPAQUE = new Set(["ssh", "parallel"]);
@@ -5072,7 +5397,7 @@ function defaultProbe(bounds = {}) {
 `).filter((line) => line.trim() !== "");
     },
     resolve: (cwd, target) => {
-      const absolute = resolve7(cwd, target);
+      const absolute = resolve8(cwd, target);
       try {
         return realpathSync4(absolute);
       } catch {
@@ -5467,7 +5792,7 @@ function deleteRequests(command, cwd) {
     }
     let target = here;
     for (const chdir of git?.chdirs ?? removal?.chdirs ?? [])
-      target = resolve8(target, pathOf(chdir));
+      target = resolve9(target, pathOf(chdir));
     if (flags) {
       if (flags.remotes)
         return refuse(`\`${text}\` deletes remote-tracking refs, which this gate does not classify. Prune them with \`git fetch --prune\` instead.`);
@@ -5493,7 +5818,7 @@ function directoryTarget(line, from) {
     return path;
   if (process.env.CDPATH && !/^\.\.?(?:\/|$)/.test(path))
     return null;
-  return from === null ? null : resolve8(from, path);
+  return from === null ? null : resolve9(from, path);
 }
 function gitIn(budget) {
   const run = async (args, dir) => {
@@ -5582,7 +5907,7 @@ async function wtBranchNames(git, request) {
   const existing = await readBranches(git, dir, named);
   const names = new Set;
   for (const target of request.targets) {
-    const path = realpath(resolve8(dir, target));
+    const path = realpath(resolve9(dir, target));
     const matches = worktrees.filter((w) => realpath(w.path) === path || basename3(w.path) === target || w.branch === target);
     for (const match of matches)
       if (!match.detached && match.branch)
@@ -5836,7 +6161,7 @@ function destructions(commands, cwd) {
     if (!git)
       continue;
     const literal = command.context === "top" && command.words !== undefined && !git.overridden;
-    const dir = literal && cwd !== undefined && !command.assignments.some((value) => value.startsWith("GIT_")) ? git.chdirs.reduce((at, chdir) => isAbsolute8(chdir) ? chdir : resolve9(at, chdir), cwd) : undefined;
+    const dir = literal && cwd !== undefined && !command.assignments.some((value) => value.startsWith("GIT_")) ? git.chdirs.reduce((at, chdir) => isAbsolute8(chdir) ? chdir : resolve10(at, chdir), cwd) : undefined;
     const [verb] = git.args;
     if (git.subcommand === "stash" && (verb === "drop" || verb === "clear")) {
       found.push({ kind: verb === "drop" ? "stash-drop" : "stash-clear", command, dir });
@@ -6061,18 +6386,8 @@ function createRedactor(env, options = DEFAULT_REDACT) {
 
 // plugins/safety/opencode/src/repo-worktrees.ts
 import { lstatSync as lstatSync3, readFileSync as readFileSync3, realpathSync as realpathSync7 } from "fs";
-import { dirname as dirname6, isAbsolute as isAbsolute10, join as join9, resolve as resolve10 } from "path";
+import { dirname as dirname6, isAbsolute as isAbsolute10, join as join9, resolve as resolve11 } from "path";
 import { env as hostEnv } from "process";
-
-// lib/src/safe-git.ts
-import { devNull } from "os";
-var SAFE_GIT_ARGS = [
-  "-c",
-  "core.fsmonitor=false",
-  "-c",
-  `core.hooksPath=${devNull}`,
-  "--no-optional-locks"
-];
 
 // plugins/safety/opencode/src/scratch-dirs.ts
 import { existsSync as existsSync4, lstatSync as lstatSync2, readlinkSync, realpathSync as realpathSync6 } from "fs";
@@ -6255,13 +6570,13 @@ function belongs(root, common) {
     const named = linkTarget(readSmall(dotgit), "gitdir: ");
     if (named === undefined)
       return false;
-    const admin = realpathSync7(isAbsolute10(named) ? named : resolve10(root, named));
+    const admin = realpathSync7(isAbsolute10(named) ? named : resolve11(root, named));
     if (dirname6(admin) !== join9(common, "worktrees"))
       return false;
     const back = firstLine(readSmall(join9(admin, "gitdir")));
     if (back === undefined)
       return false;
-    return realpathSync7(isAbsolute10(back) ? back : resolve10(admin, back)) === dotgit;
+    return realpathSync7(isAbsolute10(back) ? back : resolve11(admin, back)) === dotgit;
   } catch {
     return false;
   }
@@ -6338,7 +6653,7 @@ function allowWorktreeReads(evaluation, roots) {
 
 // plugins/safety/opencode/src/secret-store.ts
 import { homedir as homedir7 } from "os";
-import { dirname as dirname7, isAbsolute as isAbsolute11, resolve as resolve11 } from "path";
+import { dirname as dirname7, isAbsolute as isAbsolute11, resolve as resolve12 } from "path";
 var STORE_ACTION = "safety_secret_store";
 var COMMAND_ACTION = "safety_secret_command";
 var STDOUT_CAP = 64 * 1024;
@@ -6720,7 +7035,7 @@ async function obtain(request, deps) {
   const source = request.source;
   if (source.kind === "generate")
     return generateSecret(source.charset, source.length, deps.random);
-  const cwd = source.cwd === undefined ? deps.directory : isAbsolute11(source.cwd) ? source.cwd : resolve11(deps.directory, source.cwd);
+  const cwd = source.cwd === undefined ? deps.directory : isAbsolute11(source.cwd) ? source.cwd : resolve12(deps.directory, source.cwd);
   const program = source.argv[0];
   const resolved = program.includes("/") ? program : onPath(deps, program, cwd);
   await deps.askCommand(source.argv, cwd);
@@ -6747,7 +7062,7 @@ function configEnvironmentRefusal(env, home) {
     if (env[name] !== undefined)
       return `${name} is set`;
   const xdg = env.XDG_CONFIG_HOME;
-  if (xdg !== undefined && xdg !== "" && resolve11(xdg) !== resolve11(home, ".config"))
+  if (xdg !== undefined && xdg !== "" && resolve12(xdg) !== resolve12(home, ".config"))
     return "XDG_CONFIG_HOME is not ~/.config";
   return;
 }
@@ -6759,7 +7074,7 @@ async function storeSecret(input, deps) {
   const overridden = configEnvironmentRefusal(deps.env, deps.home ?? homedir7());
   if (overridden !== undefined)
     fail(`${overridden}, so fnox may read a config this check did not; unset it and retry`);
-  const requested = resolve11(deps.directory, request.config ?? "fnox.toml");
+  const requested = resolve12(deps.directory, request.config ?? "fnox.toml");
   const file = deps.realpath(requested) ?? fail(`fnox config ${requested} does not exist; create it first`);
   const external = externalDirectories([dirname7(file)], deps.roots);
   if (external.length > 0)
@@ -6943,6 +7258,7 @@ function denyUnanswerable(evaluation, session) {
 }
 
 // plugins/safety/opencode/src/subagent-reads.ts
+import { statSync as statSync3 } from "fs";
 import { homedir as homedir10 } from "os";
 import { basename as basename6, isAbsolute as isAbsolute13, join as join12 } from "path";
 var SHELL_TOOLS = new Set(["shell", "bash"]);
@@ -6987,6 +7303,26 @@ function allowSubagentReads(evaluation, tool, isSubagent, extraSecrets = [], hom
     return;
   evaluation.effect = "allow";
 }
+function allowRootReads(evaluation, tool, filePath, isSubagent, extraSecrets = [], home) {
+  if (isSubagent || tool !== "read" || evaluation.action !== "external_directory" || evaluation.effect !== "ask")
+    return;
+  if (typeof filePath !== "string" || !isAbsolute13(filePath) || !isRegularFile(filePath))
+    return;
+  if (isSecretResource(filePath, extraSecrets, home))
+    return;
+  if (evaluation.resources.length === 0)
+    return;
+  if (evaluation.resources.some((resource) => isSecretResource(resource, extraSecrets, home)))
+    return;
+  evaluation.effect = "allow";
+}
+function isRegularFile(path) {
+  try {
+    return statSync3(path).isFile();
+  } catch {
+    return false;
+  }
+}
 
 // plugins/safety/opencode/src/index.ts
 var FEATURE_IDS = [
@@ -7003,6 +7339,7 @@ var FEATURE_IDS = [
   "scratch-shell",
   "repo-worktrees",
   "subagent-external-reads",
+  "root-external-reads",
   "subagent-prompts"
 ];
 function readOptions(options) {
@@ -7018,13 +7355,14 @@ function readOptions(options) {
     opAllow,
     scratchDirs: options?.scratchDirs !== false,
     steeringDirs: readSteeringDirs(options?.steeringDirs),
-    secretPaths
+    secretPaths,
+    pushVia: readPushVia(options)
   };
 }
 function shellCwd(workdir, sessionDirectory) {
   if (workdir === undefined)
     return sessionDirectory;
-  return isAbsolute14(workdir) ? workdir : resolve12(sessionDirectory, workdir);
+  return isAbsolute14(workdir) ? workdir : resolve13(sessionDirectory, workdir);
 }
 function applyDecision(evaluation, decision) {
   if (decision === undefined || evaluation.effect === "deny")
@@ -7046,14 +7384,15 @@ function safely(run) {
     return;
   }
 }
-async function review(command, cwd, options) {
+async function review(command, cwd, options, warn = () => {}) {
   try {
     return await reviewPermission(command, cwd, options);
   } catch (error) {
-    return {
-      effect: "ask",
-      message: `safety could not check this command (${error instanceof Error ? error.message : String(error)}); confirm it is safe to run.`
-    };
+    warn("permission review failed; safety's extra review is skipped for this command", {
+      error: error instanceof Error ? error.name : typeof error,
+      message: error instanceof Error ? error.message : String(error)
+    });
+    return;
   }
 }
 var DIRECT_FILE_TOOLS = new Set(["read", "edit", "write", "patch", "apply_patch", "glob", "grep", "list"]);
@@ -7126,13 +7465,14 @@ function createPlugin(overrides = {}) {
     id: "srobroek.safety",
     async setup(ctx) {
       const warn = overrides.warn ?? hostWarn("srobroek.safety");
-      const { disabled, redact, opAllow, scratchDirs, steeringDirs, secretPaths } = readOptions(ctx.options);
+      const { disabled, redact, opAllow, scratchDirs, steeringDirs, secretPaths, pushVia } = readOptions(ctx.options);
       const on = (id) => !disabled.has(id);
       const guardOptions = {
         env: overrides.env ?? process.env,
         ...overrides.guard,
         disabled,
-        opAllow
+        opAllow,
+        pushVia
       };
       const reviewOptions = { ...overrides.review, disabled };
       const pending = new Map;
@@ -7156,7 +7496,7 @@ function createPlugin(overrides = {}) {
             running.delete(id);
       };
       const before = await ctx.tool.hook("execute.before", async (event) => {
-        running.set(event.id, { tool: event.tool, at: Date.now() });
+        running.set(event.id, { tool: event.tool, input: event.input, at: Date.now() });
         const call = shellCall(event.tool, event.input);
         if (call === undefined || call.command.trim() === "")
           return;
@@ -7192,7 +7532,7 @@ function createPlugin(overrides = {}) {
             });
         }
         prune();
-        const decision = await review(command, cwd, reviewOptions);
+        const decision = await review(command, cwd, reviewOptions, warn);
         pending.set(event.id, { sessionID: event.sessionID, at: Date.now(), decision });
       });
       const migrations = await ctx.tool.hook("execute.before", async (event) => {
@@ -7216,7 +7556,7 @@ function createPlugin(overrides = {}) {
         const id = evaluation.source?.type === "tool" ? evaluation.source.id : undefined;
         const entry = id === undefined ? undefined : pending.get(id);
         const decision = entry !== undefined ? entry.decision : await review(evaluation.resources.join(`
-`), await sessionDirectory(evaluation.sessionID), reviewOptions);
+`), await sessionDirectory(evaluation.sessionID), reviewOptions, warn);
         applyDecision(evaluation, decision);
       });
       const scratch = scratchDirs ? await ctx.permission.hook("evaluate", async (evaluation) => {
@@ -7353,17 +7693,28 @@ function createPlugin(overrides = {}) {
         });
         return;
       });
-      const subagentReads = on("subagent-external-reads") ? await ctx.permission.hook("evaluate", async (evaluation) => {
+      const subagentReadsOn = on("subagent-external-reads");
+      const rootReadsOn = on("root-external-reads");
+      const subagentReads = subagentReadsOn || rootReadsOn ? await ctx.permission.hook("evaluate", async (evaluation) => {
         if (evaluation.action !== "external_directory" || evaluation.effect !== "ask")
           return;
         const source = evaluation.source;
-        const tool = source?.type === "tool" ? running.get(source.id)?.tool : undefined;
+        const call = source?.type === "tool" ? running.get(source.id) : undefined;
+        const tool = call?.tool;
         if (tool === undefined)
           return;
         const info = await ctx.session.get({ sessionID: evaluation.sessionID }).catch(() => {
           return;
         });
-        allowSubagentReads(evaluation, tool, typeof info?.parentID === "string" && info.parentID !== "", secretPaths);
+        if (info === undefined)
+          return;
+        const isSubagent = typeof info.parentID === "string" && info.parentID !== "";
+        if (subagentReadsOn)
+          allowSubagentReads(evaluation, tool, isSubagent, secretPaths);
+        const input = call?.input;
+        const filePath = input?.path ?? input?.filePath;
+        if (rootReadsOn)
+          allowRootReads(evaluation, tool, filePath, isSubagent, secretPaths);
       }) : undefined;
       const unanswerable = on("subagent-prompts") ? await ctx.permission.hook("evaluate", async (evaluation) => {
         if (evaluation.effect !== "ask")
@@ -7372,48 +7723,23 @@ function createPlugin(overrides = {}) {
       }) : undefined;
       const watching = new AbortController;
       const errorName = (error) => error instanceof Error ? error.name : typeof error;
-      const watchFailed = (error) => {
-        if (watching.signal.aborted)
-          return;
-        warn("permission prompt watch stopped; prompts a later plugin raises in subagent sessions are no longer rejected", { error });
-      };
-      let asked;
-      if (on("subagent-prompts")) {
-        try {
-          asked = ctx.event.subscribe({ types: ["permission.asked"], signal: watching.signal })[Symbol.asyncIterator]();
-        } catch (error) {
-          watchFailed(errorName(error));
-        }
-      }
-      if (asked) {
-        const events = asked;
-        (async () => {
-          for (;; ) {
-            let next;
-            try {
-              next = await events.next();
-            } catch (error) {
-              return watchFailed(errorName(error));
-            }
-            if (next.done)
-              return watchFailed("stream ended");
-            if (watching.signal.aborted)
-              return;
-            const event = next.value;
-            if (event.type !== "permission.asked" || event.data === undefined)
-              continue;
-            await rejectUnanswerable(event.data).catch((error) => warn("could not reject a subagent's permission prompt", {
-              sessionID: event.data?.sessionID,
-              error: errorName(error)
-            }));
-          }
-        })();
-      }
+      const watch = on("subagent-prompts") ? watchAsked({
+        subscribe: () => ctx.event.subscribe({ types: ["permission.asked"], signal: watching.signal })[Symbol.asyncIterator](),
+        handle: async (event) => {
+          const { type, data } = event;
+          if (type !== "permission.asked" || data === undefined)
+            return;
+          await rejectUnanswerable(data).catch((error) => warn("could not reject a subagent's permission prompt", { sessionID: data.sessionID, error: errorName(error) }));
+        },
+        onFailure: ({ error, attempt, willRetry }) => warn(willRetry ? `permission prompt watch failed; resubscribing (attempt ${attempt})` : "permission prompt watch stopped; prompts a later plugin raises in subagent sessions are no longer rejected", { error }),
+        signal: watching.signal,
+        ...overrides.watch
+      }) : undefined;
       async function rejectUnanswerable(request) {
         if (typeof request.sessionID !== "string" || typeof request.id !== "string")
           return;
         const message = unanswerableDenial({ action: request.action ?? "permission", resources: request.resources ?? [], message: request.message }, await sessionInfo(request.sessionID));
-        if (message === undefined)
+        if (message === undefined || watching.signal.aborted)
           return;
         await ctx.permission.reply({ sessionID: request.sessionID, requestID: request.id, decision: "reject", message });
       }
@@ -7445,7 +7771,7 @@ function createPlugin(overrides = {}) {
         await unanswerable?.dispose();
         await subagentReads?.dispose();
         watching.abort();
-        asked?.return?.();
+        watch?.stop();
         await confirmCommand.dispose();
         await secretTool.dispose();
         await after.dispose();
@@ -7469,6 +7795,7 @@ export {
   MESSAGES2 as MESSAGES,
   SECRET_LOCATIONS,
   SECRET_STORE_INPUT,
+  allowRootReads,
   allowSkillReads,
   allowSubagentReads,
   applyDecision,

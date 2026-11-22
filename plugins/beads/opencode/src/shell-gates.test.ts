@@ -108,6 +108,29 @@ describe("decideShell", () => {
     if (decision.kind === "allow") expect(decision.advisories.join("\n")).toContain("BEADS_ACTOR")
   })
 
+  test("the repository lookup gets GH_REPO from the session environment when the command names none", async () => {
+    const seen: (string | null)[] = []
+    const repositoryControl = (repo: string | null) => {
+      seen.push(repo)
+      return { kind: "controlled" as const }
+    }
+    const env = { PATH: process.env.PATH, BEADS_DIR: store, GH_REPO: "o/r" }
+    await decideShell("gh pr create --title t --body x", root, deps({ env, repositoryControl }))
+    await decideShell("gh pr create -R a/b --title t --body x", root, deps({ env, repositoryControl }))
+    expect(seen).toEqual(["o/r", "a/b"])
+  })
+
+  test("refuses a PR created through the API when the repository is controlled", async () => {
+    const decision = await decideShell(
+      "gh api repos/o/r/pulls -f title=t -f head=h -f base=main",
+      root,
+      deps({ repositoryControl: () => ({ kind: "controlled" }) }),
+    )
+    expect(decision).toMatchObject({ kind: "block", gate: "pr-bead-link-gate" })
+    const read = await decideShell("gh api repos/o/r/pulls", root, deps({ repositoryControl: () => ({ kind: "controlled" }) }))
+    expect(read.kind).toBe("allow")
+  })
+
   test("refuses a PR without a bead trailer when the repository is controlled", async () => {
     const decision = await decideShell(
       'gh pr create --title t --body "no trailer here"',
@@ -116,7 +139,7 @@ describe("decideShell", () => {
     )
     expect(decision).toMatchObject({ kind: "block", gate: "pr-bead-link-gate" })
     const linked = await decideShell(
-      'gh pr create --title t --body "Bead: proj-1 fixes it"',
+      'gh pr create --title t --body "Fixes it.\nBead: proj-1"',
       root,
       deps({ repositoryControl: () => ({ kind: "controlled" }) }),
     )
@@ -441,7 +464,7 @@ describe("decideShell", () => {
     const held = realpathSync(store)
     // The store as named rides along for the runner's last check, whether or not it is canonical.
     expect(decision.command).toBe(
-      `unset BEADS_ACTOR; export BD_ACTOR='opencode/r/general/s'; BEADS_DOLT_SHARED_SERVER= BEADS_DIR='${held}' '/opt/bun' '/opt/beads/src/bd-embedded-write-runner.ts' --beads-store '${held}' --beads-store-selected '${store}' --beads-wait-ms 30000 -- bd update proj-1 --claim`,
+      `unset BEADS_ACTOR; export BD_ACTOR='opencode/r/general/s'; BEADS_DOLT_SHARED_SERVER= BEADS_DIR='${held}' BEADS_DB= BD_DB= '/opt/bun' '/opt/beads/src/bd-embedded-write-runner.ts' --beads-store '${held}' --beads-store-selected '${store}' --beads-wait-ms 30000 -- bd update proj-1 --claim`,
     )
   })
 

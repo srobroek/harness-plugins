@@ -1,3 +1,12 @@
+## worktrunk [0.5.1](https://github.com/srobroek/harness-plugins/compare/worktrunk--v0.5.0...worktrunk--v0.5.1) (2026-11-22)
+
+### Bug Fixes
+
+* **subagent-worktree:** drop inherited command-scope git config before pinning ([87b5a17](https://github.com/srobroek/harness-plugins/commit/87b5a1797a290420239d374ebcda92aa6685b35d)), closes [#96](https://github.com/srobroek/harness-plugins/issues/96)
+* **subagent-worktree:** drop inherited repository selectors from the hardened git env ([60c5723](https://github.com/srobroek/harness-plugins/commit/60c572351ff7a6f3e6b7c748e71eca45f2820196)), closes [#96](https://github.com/srobroek/harness-plugins/issues/96)
+* **subagent-worktree:** refuse every git transport in the hardened env ([c1c5888](https://github.com/srobroek/harness-plugins/commit/c1c58887cb92012932a9f58c69616f51af5ca983)), closes [#79](https://github.com/srobroek/harness-plugins/issues/79) [#79](https://github.com/srobroek/harness-plugins/issues/79)
+* **worktrunk:** harden the git env and skip project hooks ([5adff10](https://github.com/srobroek/harness-plugins/commit/5adff10b20abf498a702b767ec61448c15f86858))
+
 # Changelog
 
 ## [0.5.0](https://github.com/srobroek/opencode-plugins/compare/worktrunk--v0.4.2...worktrunk--v0.5.0) (2026-11-20)

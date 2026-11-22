@@ -76,6 +76,7 @@ describe("retargetRepository", () => {
     expect(await retargetRepository({ repo: "acme/widgets", repoPath: target }, session, read)).toEqual({
       cwd: target,
       retargeted: true,
+      commonDir: realpathSync(join(target, ".git")),
     })
   })
 
@@ -87,6 +88,7 @@ describe("retargetRepository", () => {
     expect(await retargetRepository({ repo: "acme/widgets", worktree: "nested" }, session, read)).toEqual({
       cwd: target,
       retargeted: true,
+      commonDir: realpathSync(join(target, ".git")),
     })
   })
 

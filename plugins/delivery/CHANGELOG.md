@@ -1,3 +1,17 @@
+## delivery [0.10.6](https://github.com/srobroek/harness-plugins/compare/delivery--v0.10.5...delivery--v0.10.6) (2026-11-22)
+
+## delivery [0.10.5](https://github.com/srobroek/harness-plugins/compare/delivery--v0.10.4...delivery--v0.10.5) (2026-11-22)
+
+### Bug Fixes
+
+* **subagent-worktree:** require git 2.45 and run automatic git hardened ([3b6c86c](https://github.com/srobroek/harness-plugins/commit/3b6c86c81349e8fb65322aca3b6c68ec101d8869))
+
+## delivery [0.10.4](https://github.com/srobroek/harness-plugins/compare/delivery--v0.10.3...delivery--v0.10.4) (2026-11-22)
+
+### Bug Fixes
+
+* **delivery:** clean up another repository's landing under that repository's coordination ([#94](https://github.com/srobroek/harness-plugins/issues/94)) ([56d9ef5](https://github.com/srobroek/harness-plugins/commit/56d9ef5db05edab91f28c59b87f0932512b22828))
+
 ## delivery [0.10.3](https://github.com/srobroek/harness-plugins/compare/delivery--v0.10.2...delivery--v0.10.3) (2026-11-22)
 
 ### Bug Fixes
