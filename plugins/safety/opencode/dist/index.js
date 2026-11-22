@@ -7114,14 +7114,15 @@ function safely(run) {
     return;
   }
 }
-async function review(command, cwd, options) {
+async function review(command, cwd, options, warn = () => {}) {
   try {
     return await reviewPermission(command, cwd, options);
   } catch (error) {
-    return {
-      effect: "ask",
-      message: `safety could not check this command (${error instanceof Error ? error.message : String(error)}); confirm it is safe to run.`
-    };
+    warn("permission review failed; safety's extra review is skipped for this command", {
+      error: error instanceof Error ? error.name : typeof error,
+      message: error instanceof Error ? error.message : String(error)
+    });
+    return;
   }
 }
 var DIRECT_FILE_TOOLS = new Set(["read", "edit", "write", "patch", "apply_patch", "glob", "grep", "list"]);
@@ -7260,7 +7261,7 @@ function createPlugin(overrides = {}) {
             });
         }
         prune();
-        const decision = await review(command, cwd, reviewOptions);
+        const decision = await review(command, cwd, reviewOptions, warn);
         pending.set(event.id, { sessionID: event.sessionID, at: Date.now(), decision });
       });
       const migrations = await ctx.tool.hook("execute.before", async (event) => {
@@ -7284,7 +7285,7 @@ function createPlugin(overrides = {}) {
         const id = evaluation.source?.type === "tool" ? evaluation.source.id : undefined;
         const entry = id === undefined ? undefined : pending.get(id);
         const decision = entry !== undefined ? entry.decision : await review(evaluation.resources.join(`
-`), await sessionDirectory(evaluation.sessionID), reviewOptions);
+`), await sessionDirectory(evaluation.sessionID), reviewOptions, warn);
         applyDecision(evaluation, decision);
       });
       const scratch = scratchDirs ? await ctx.permission.hook("evaluate", async (evaluation) => {

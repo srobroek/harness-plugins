@@ -155,6 +155,11 @@ buffers. Copies inside the runtime's pipe buffers stay out of its reach.
 
 ## Limits
 
+If the permission review itself fails (for example a git probe times out while the machine is busy), safety
+makes no decision for that command, logs the error as a warning and leaves the host's permission rules in
+charge: a configured `deny` or `ask` still applies, and an `allow` stays an allow. It no longer forces a
+prompt, which a subagent cannot answer. Hard gates are separate and unchanged.
+
 The guard catches honest mistakes in the common forms of a command and refuses the forms it cannot
 follow. It is not a sandbox against a command built to evade it. For that reason it refuses every
 value-carrying `op item create|edit` and `fnox set` from the shell. The

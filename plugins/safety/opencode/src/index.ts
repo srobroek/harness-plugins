@@ -158,15 +158,25 @@ function safely<T>(run: () => T): T | undefined {
   }
 }
 
-/** A permission review that fails internally asks the owner instead of guessing. */
-export async function review(command: string, cwd: string, options: ReviewOptions): Promise<Decision | undefined> {
+/**
+ * A permission review that fails internally (a git probe that times out under load, a parser bug) makes no
+ * decision and logs the error. `undefined` means "defer to the host's permission rules", never "allow": the
+ * caller leaves the evaluation's effect as the host set it, so a configured deny or ask still applies.
+ */
+export async function review(
+  command: string,
+  cwd: string,
+  options: ReviewOptions,
+  warn: Warn = () => {},
+): Promise<Decision | undefined> {
   try {
     return await reviewPermission(command, cwd, options)
   } catch (error) {
-    return {
-      effect: "ask",
-      message: `safety could not check this command (${error instanceof Error ? error.message : String(error)}); confirm it is safe to run.`,
-    }
+    warn("permission review failed; safety's extra review is skipped for this command", {
+      error: error instanceof Error ? error.name : typeof error,
+      message: error instanceof Error ? error.message : String(error),
+    })
+    return undefined
   }
 }
 
@@ -367,7 +377,7 @@ export function createPlugin(overrides: Overrides = {}) {
             } as never)
         }
         prune()
-        const decision = await review(command, cwd, reviewOptions)
+        const decision = await review(command, cwd, reviewOptions, warn)
         pending.set(event.id, { sessionID: event.sessionID, at: Date.now(), decision })
       })
 
@@ -393,6 +403,7 @@ export function createPlugin(overrides: Overrides = {}) {
                 evaluation.resources.join("\n"),
                 await sessionDirectory(evaluation.sessionID),
                 reviewOptions,
+                warn,
               )
         applyDecision(evaluation as Evaluation, decision)
       })
