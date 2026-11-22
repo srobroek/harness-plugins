@@ -65,7 +65,7 @@ import {
   scanShell,
   tokenize,
 } from "./beads-shell.ts"
-import { sessionPinFor, storeFromBeadsDb } from "./beads-store.ts"
+import { ambientStore, sessionPinFor } from "./beads-store.ts"
 import { readBounded } from "./bounded-read.ts"
 
 /** The hold itself. */
@@ -497,14 +497,9 @@ function selectedStoreFor(globals: string[], cwd: string, env: NodeJS.ProcessEnv
     return isDirectory(target) ? target : join(target, "..")
   }
   if (directory !== undefined) return sessionPinFor(base)
-  const pinned = env.BEADS_DIR
-  // The sibling lifecycle extension pins this onto every bash call and onto the
-  // process, so it is the usual answer, and it already names a `.beads` directory
-  // rather than a checkout.
-  if (pinned !== undefined && pinned !== "") return absolute(pinned, cwd)
-  // bd reads `BEADS_DB` after `BEADS_DIR` and before walking up from the directory.
-  if (env.BEADS_DB !== undefined && env.BEADS_DB !== "") return storeFromBeadsDb(env.BEADS_DB, cwd)
-  return sessionPinFor(cwd)
+  // The sibling lifecycle extension pins BEADS_DIR onto every bash call and onto the process, so it is
+  // the usual answer. Without it, bd 1.3.1 takes the `.beads` found from the directory, then BEADS_DB.
+  return ambientStore(cwd, env)
 }
 
 function absolute(path: string, cwd: string): string {
@@ -581,8 +576,70 @@ function mentionsBd(source: string): boolean {
 /** A `NAME=` or `NAME+=` assignment, matched on the word's source so the name is unquoted. */
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*\+?=/
 
-/** An assignment to, or a bare name of, `BEADS_DB`: what an `export`, `unset` or assignment may change. */
-const BEADS_DB_WORD = /^BEADS_DB(?:\+?=|$)/
+/** A mention of a variable a store-init-skipping bd command reads before `BEADS_DIR`. */
+const DB_VARIABLE = /BEADS_DB|BD_DB/
+
+/**
+ * bd 1.3.1 verbs that skip store init (cmd/bd/main.go `noDbCommands` and the `bd:skip_store`
+ * annotations on `doctor`, `worktree` and `schema`). Such a command picks its store with
+ * `selectedNoDBBeadsDir`: `--db`, then `BEADS_DB`, then `BD_DB`, and only then `BEADS_DIR`.
+ */
+const SKIPS_STORE_INIT = new Set([
+  "bash",
+  "bootstrap",
+  "codex-hook",
+  "completion",
+  "context",
+  "cursor-hook",
+  "doctor",
+  "dolt",
+  "fish",
+  "formula",
+  "help",
+  "hook",
+  "hooks",
+  "human",
+  "init",
+  "merge",
+  "metrics",
+  "onboard",
+  "powershell",
+  "prime",
+  "quickstart",
+  "schema",
+  "send-metrics",
+  "setup",
+  "version",
+  "where",
+  "worktree",
+  "zsh",
+])
+
+/** Subcommands of those verbs that open the store after all (main.go `needsStoreDoltSubcommands` and peers). */
+const OPENS_STORE: Record<string, ReadonlySet<string>> = {
+  dolt: new Set(["push", "pull", "commit"]),
+  human: new Set(["list", "respond", "dismiss", "stats"]),
+}
+
+/** `bd migrate` subcommands that skip store init (main.go `skipStoreMigrateSubcommands`, `legacy-sqlite`). */
+const MIGRATE_SKIPS_STORE_INIT = new Set([
+  "from-server-to-proxied-server",
+  "from-proxied-server-to-server",
+  "from-shared-server-to-proxied-server",
+  "from-proxied-server-to-shared-server",
+  "legacy-sqlite",
+])
+
+/** Whether bd 1.3.1 runs this invocation without store init, so `BEADS_DB` and `BD_DB` beat `BEADS_DIR`. */
+function skipsStoreInit({ verb, args }: BdInvocation): boolean {
+  const positional = args.filter((arg) => !arg.startsWith("-"))
+  const sub = positional[0]
+  if (verb === "migrate") return sub !== undefined && MIGRATE_SKIPS_STORE_INIT.has(sub)
+  if (!SKIPS_STORE_INIT.has(verb) || sub === undefined) return SKIPS_STORE_INIT.has(verb)
+  // `bd dolt remote add` is a grandchild whose parent is `remote`, so it opens the store; bare `bd dolt remote` does not.
+  if (verb === "dolt" && sub === "remote") return positional.length < 2
+  return OPENS_STORE[verb]?.has(sub) !== true
+}
 
 /** A `BEADS_DIR` assignment's value, matched on the word after quote removal. */
 const BEADS_DIR_ASSIGNMENT = /^BEADS_DIR(\+?)=/
