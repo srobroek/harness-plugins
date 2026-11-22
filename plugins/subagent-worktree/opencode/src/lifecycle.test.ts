@@ -2359,6 +2359,44 @@ describe("sessions of other tools are moved out of a worktree before it is remov
     await cleanup()
   })
 
+  describe("an unrelated session that starts after the eviction listed it is not moved", () => {
+    type Listing = { list: (input: { parentID?: string }) => Promise<unknown> }
+    // The eviction's project listing answers with the snapshot, then `change` runs: everything after is what the snapshot missed.
+    const afterSnapshot = (fake: Fake, change: () => void) => {
+      const session = fake.context.session as unknown as Listing
+      const original = session.list.bind(session)
+      let done = false
+      session.list = async (input) => {
+        const answer = await original(input)
+        if (input?.parentID === undefined && !done) {
+          done = true
+          change()
+        }
+        return answer
+      }
+    }
+
+    test.each([
+      ["its status turns busy", (fake: Fake) => () => addSession(fake, "ses_other", WT, { busy: 9, idle: 2 })],
+      [
+        "an execution.started event arrives for it",
+        (fake: Fake) => () => fake.emit({ type: "session.execution.started", data: { sessionID: "ses_other" } }),
+      ],
+    ])("%s", async (_name, arrange) => {
+      const { fake, worktree, cleanup } = await start(empty)
+      addSession(fake, "ses_other", WT)
+      afterSnapshot(fake, arrange(fake))
+      fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+      await settle(250)
+      expect({ moved: moves(fake).some((move) => move.sessionID === "ses_other"), removes: removes(worktree), state: stored(fake).state }).toEqual({
+        moved: false,
+        removes: 0,
+        state: "active",
+      })
+      await cleanup()
+    })
+  })
+
   test("a sweep removal moves such sessions out as well", async () => {
     const { fake, worktree, cleanup } = await start({ ancestor: 0, age: 3 * 24 * 3_600_000, time: ARCHIVED })
     addSession(fake, "ses_other", WT)

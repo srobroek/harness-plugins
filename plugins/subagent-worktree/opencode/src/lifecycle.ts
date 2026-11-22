@@ -732,6 +732,22 @@ export function createLifecycle(deps: LifecycleDeps) {
             directory: stored.directory,
             destination: canonicalCheckout(common, stored.parentDir),
             exclude: new Set([stored.child, ...descendants.ids]),
+            // The listing is a snapshot: a session that started after it is read again and checked against the start events before it moves.
+            guard: {
+              fresh: async (session) => {
+                const now = await lookupSession(session.id)
+                if (now === "missing") return undefined
+                if (now === "unknown") return `the state of ${session.id} cannot be read`
+                if (toMillis(now.time?.archived) === undefined && isRunning({ busy: toMillis(now.time?.busy), idle: toMillis(now.time?.idle) })) {
+                  return `${session.id} is running in the worktree`
+                }
+                return undefined
+              },
+              started: (session) => {
+                const started = startedSince([session.id], seq)
+                return started === undefined || started.removed ? undefined : started.reason
+              },
+            },
           })
           if (!evicted.ok) {
             await save(stored)
