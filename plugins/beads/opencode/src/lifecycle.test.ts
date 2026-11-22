@@ -462,7 +462,10 @@ describe("subagent claim release", () => {
     expect(released.filter((args) => args[0] === "unclaim")).toHaveLength(1)
     // The guarded check reads the holder before the release; the final ledger state, which only holds when the
     // restore runs after the unclaim, is a parked bead nobody holds.
-    expect(released.findIndex((args) => args[0] === "show")).toBeLessThan(released.findIndex((args) => args[0] === "unclaim"))
+    const shown = released.findIndex((args) => args[0] === "show")
+    const unclaimed = released.findIndex((args) => args[0] === "unclaim")
+    expect(shown).toBeGreaterThanOrEqual(0)
+    expect(shown).toBeLessThan(unclaimed)
     expect(bd.rows["proj-9"]).toEqual({ status: "blocked" })
     const [told] = t.synthetics()
     expect(told).toMatchObject({ sessionID: parent, resume: false, metadata: { source: BEADS_SOURCE } })
