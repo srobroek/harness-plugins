@@ -824,7 +824,7 @@ describe("a merge into a local target is a merged proof later", () => {
     await cleanup()
     return outcome
   }
-  const keptActive = { removes: 0, branchDeleted: false, state: "active", removal: undefined }
+  const keptActive = { removes: 0, branchDeleted: false, state: "active" as const, removal: undefined }
 
   test("a removal a crash left half done is not finished once the target was reset: the record keeps the target it must stay in", async () => {
     let removing: Lane | undefined

@@ -2074,7 +2074,7 @@ function createLifecycle(deps) {
     let landed = false;
     let openPr = false;
     if (status !== undefined && tip !== undefined && status.ahead > 0) {
-      landed = records.heads.includes(tip) || await reachedMain(lane, tip);
+      landed = records.heads.includes(tip) || await reachedMain(lane, tip) || await mergedLocally(lane, tip) !== undefined;
       if (!landed)
         openPr = (await openPrBranches(lane.parentDir)).has(lane.branch);
     }
@@ -2124,11 +2124,16 @@ function createLifecycle(deps) {
     return records.heads.includes(oid) || await reachedMain(lane, oid);
   };
   const localBranchRef = (target) => `refs/heads/${target}`;
-  const mergedLocally = async (lane, oid) => {
+  const recordedRef = (lane, oid) => {
     const merged = lane.mergedInto;
     if (merged === undefined || typeof merged.target !== "string" || merged.target === "" || merged.head !== oid)
       return;
-    const ref = localBranchRef(merged.target);
+    return localBranchRef(merged.target);
+  };
+  const mergedLocally = async (lane, oid) => {
+    const ref = recordedRef(lane, oid);
+    if (ref === undefined)
+      return;
     return await git.isAncestor(lane.directory, oid, ref) ? ref : undefined;
   };
   const updateLane = (lane, change) => withLock(lane.directory, lane.parentDir, async () => {
@@ -2335,8 +2340,13 @@ function createLifecycle(deps) {
     const busy = await busyTreeOf(lane.directory, lane.branch);
     if (busy !== undefined)
       return keptBecause("dirty", busy);
-    if (earlier?.head === oid)
-      return { proof: PROOF_OF[earlier.retireAs], oid };
+    if (earlier?.head === oid) {
+      const within = earlier.retireAs === "merged" ? earlier.within ?? recordedRef(lane, oid) : undefined;
+      if (within === undefined)
+        return { proof: PROOF_OF[earlier.retireAs], oid };
+      if (await git.isAncestor(lane.directory, oid, within))
+        return { proof: "merged", oid, within };
+    }
     if (oid === lane.base)
       return { proof: "empty", oid };
     if (options.target !== undefined && await git.isAncestor(lane.directory, oid, options.target))
@@ -2448,8 +2458,13 @@ function createLifecycle(deps) {
         let deleteAt;
         if (present) {
           const checked = await checkFinalize(stored, options, seq, earlier);
-          if (!("proof" in checked))
+          if (!("proof" in checked)) {
+            if (earlier !== undefined && !checked.removed && checked.kept === "unmerged") {
+              const { removal: _void, ...rest } = stored;
+              await save({ ...rest, state: "active" });
+            }
             return checked;
+          }
           proof = checked.proof;
           head = checked.oid;
           within = checked.within;
@@ -2457,7 +2472,12 @@ function createLifecycle(deps) {
             deleteAt = head;
         }
         const retireAs = options.retireAs ?? (proof === "merged" ? "merged" : proof === "landed" ? "landed" : proof === "empty" ? "removed" : earlier?.retireAs ?? "removed");
-        const removal = { retireAs, ...head === undefined ? {} : { head }, ...earlier?.pending === undefined ? {} : { pending: earlier.pending } };
+        const removal = {
+          retireAs,
+          ...head === undefined ? {} : { head },
+          ...within === undefined ? {} : { within },
+          ...earlier?.pending === undefined ? {} : { pending: earlier.pending }
+        };
         if (await save({ ...stored, state: "removing", removal }) === false)
           return keptBecause("handed-over", HANDED_OVER);
         if (present) {
