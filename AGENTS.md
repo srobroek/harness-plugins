@@ -11,14 +11,16 @@
 
 - Tooling comes from `@srobroek/harness-kit`, pinned exactly in `package.json` and configured by `harness-kit.json`. Do not copy its scripts into this repository. `scripts/` holds what is specific to these plugins: bundling, agent composition and translation, and content checks.
 - The package version and the workflow tags (`srobroek/harness-kit/.github/workflows/*.yml@vX.Y.Z`) are the same version. Bump them together, run `bun run build`, and commit as `chore(deps): bump @srobroek/harness-kit to X.Y.Z`.
-- `bun` must be on `PATH` to run `harness-kit`.
+- `bun` and `just` must be on `PATH`. `mise install` installs both at the versions in `.mise.toml`. Run `harness-kit` through `bunx harness-kit` or the `package.json` scripts.
 - Stack, toolchain versions, layout and CI: [docs/engineering.md](docs/engineering.md).
 
 ## Commands
 
-- `bun install --frozen-lockfile`, then `bun run build` (`scripts/build.ts`, then `harness-kit build`).
+- `just install` (`bun install --frozen-lockfile`), then `just build` (`scripts/build.ts`, then `harness-kit build`).
 - `bun run check` is `harness-kit check`: generated files are current and every Claude Code tree validates. `bun run build:check` is the same for the bundles and composed agents.
-- `just verify` runs every gate CI runs; `justfile` has one recipe per script. Use bun for installs and scripts, never npm.
+- `just verify` runs every gate CI runs. Use bun for installs and scripts, never npm.
+- Recipes that run a `package.json` script: `build`, `check`, `test`, `typecheck`, `lint`, `plugin-table`, `steering`, `pitfalls`, `agent-roles`, `descriptions`, `concerns` and `release` run the script of the same name. `build-check` runs `build:check`, `plugin-table-check` runs `plugin-table:check`, `cad-sync` runs `cad:sync` and `cad-check` runs `cad:check`. `release-dry-run` runs `release` with `--dry-run` and the current branch.
+- Recipes that stand alone: `install` (`bun install --frozen-lockfile`), `release-prepare-check` (`scripts/check-release-prepare.ts`), `test-executables` (`scripts/check-test-executables.ts`), `python-tests` (the shipped scripts' unit tests), `verify` (depends on the gate recipes) and `default` (lists the recipes).
 - `bun test`, `bun run typecheck` and `bun run lint` (Biome).
 - Content checks: `plugin-table:check`, `steering`, `pitfalls`, `agent-roles`, `descriptions` and `concerns`. CI runs them in the `repo-checks` job.
 - A test that does real process or git work sets a measured timeout, usually `setDefaultTimeout(30_000)` with a comment giving the measurement, or uses a cheaper fixture. Signal only PIDs you started, never `pkill -f` or `killall`.

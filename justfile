@@ -59,6 +59,10 @@ cad-check:
 release:
     bun run release
 
+# Previews the releases the commits on this branch would cut. Tags, publishes and pushes nothing.
+release-dry-run:
+    bun run release -- --dry-run --branches "$(git branch --show-current)"
+
 # Make the delivery and cad bundles stale, run each release prepare step, fail if one stays stale.
 release-prepare-check:
     bun scripts/check-release-prepare.ts

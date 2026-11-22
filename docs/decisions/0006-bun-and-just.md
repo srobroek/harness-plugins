@@ -16,7 +16,7 @@ version) must still dedupe to one copy of `effect`.
 - `justfile` is the task runner. It has one recipe per `package.json` script,
   plus recipes for the checks CI runs outside scripts. `just verify` runs
   every CI gate in order.
-- `@srobroek/harness-kit` 1.5.0 and its workflow tags move together. Its
+- `@srobroek/harness-kit` and its workflow tags move together. Its
   reusable check workflow installs with `bun install --frozen-lockfile`.
 - Out of scope: `npx -y pkg@x.y.z` pins in skills and `.mcp.json`. They tell end
   users how to run third-party tools, and Renovate matches their shape.
