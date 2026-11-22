@@ -341,7 +341,7 @@ describe("firstBdVerb / isMutatingBdCommand", () => {
   })
 
   describe("a builtin's options decide what it does to the actor", () => {
-    const unverified = { kind: "advisory", text: expect.stringContaining("cannot verify the actor") }
+    const unverified = { kind: "advisory" as const, text: expect.stringContaining("cannot verify the actor") }
 
     test("export -p with no names only prints, so an unexported assignment stays unexported", () => {
       expect(decideActorGate("BD_ACTOR=me/x; export -p; bd create x", emptyEnv).kind).toBe("block")
