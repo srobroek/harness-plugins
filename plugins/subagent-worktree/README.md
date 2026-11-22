@@ -120,17 +120,20 @@ plugin storage. The record names the worktree, the caller and `HEAD`, with the r
 After a release:
 
 - The plugin refuses every `subagent` call that resumes the released writer.
-- The record names the next writer that a call moves into the worktree, as `to`.
-- When the released writer owned a lane for that worktree, the new writer takes over the lane. The
-  plugin stores the lane under the new child with `handedOver`, and the lane's claim names the new
-  child. The plugin drops any later write of the old lane or its claim. When the takeover fails, the
-  plugin puts back the old lane, its claim and the record.
+- When the released writer owned a lane for that worktree, the next writer that a call moves into
+  the worktree takes over the lane. The plugin rewrites the same lane record in one storage write:
+  the new child, its parent and `handedOver`. The lane's claim names the new child. The plugin
+  drops any later write of the old lane or its claim.
+- The handover writes only while the lane still names the released writer. A second server that
+  tries to hand the same worktree over finds the new writer and refuses, so one writer wins.
+- The record notes the new writer as `to`, for the audit trail only.
 - Before the new writer takes over, the plugin checks again that the worktree is clean, pushed and
   at the `HEAD` the release recorded. If anything changed, the spawn fails, the old lane stays and
   the release is voided, so you can check the worktree and release again.
-- A restart in the middle of a handover is finished at the next start, sweep or removal: the new
-  writer gets the lane and the old lane is dropped. Nothing removes or evicts through the old lane,
-  so the new writer's worktree stays.
+- A restart during a handover needs no repair. Before the write the released lane is unchanged and
+  the next spawn takes it over. After the write the worktree has one lane, the new writer's.
+- A new writer whose call failed after the takeover holds the lane like any writer. Delete its
+  session and release it to hand the worktree on.
 
 ### Writers
 
