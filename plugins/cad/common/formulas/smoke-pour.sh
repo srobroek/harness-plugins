@@ -12,7 +12,8 @@ mkdir -p "$work/.beads/formulas"
 cp "$plugin"/formulas/*.formula.toml "$work/.beads/formulas/"
 cd "$work"
 export BEADS_DIR="$work/.beads"
-export BEADS_ACTOR=cad-formula-smoke
+# Inside OpenCode the beads plugin supplies the actor; this default only serves a run by hand.
+export BEADS_ACTOR="${BEADS_ACTOR:-cad-formula-smoke}"
 export BEADS_DOLT_SHARED_SERVER=
 
 bd init --quiet >/dev/null
