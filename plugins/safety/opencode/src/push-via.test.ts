@@ -1,5 +1,5 @@
-import { spawnSync } from "node:child_process"
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
+import { spawnSync } from "node:child_process"
 import { mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"

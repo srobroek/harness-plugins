@@ -10,8 +10,8 @@ import { isAbsolute, resolve } from "node:path"
 import { shellWriteTargets } from "@srobroek/opencode-lib"
 import { hasAttribution } from "./attribution.ts"
 import { historyRewrite } from "./history-rewrite.ts"
-import { gitRemoteResolver, type PushViaConfig, pushVia, type RemoteResolver } from "./push-via.ts"
 import { CHECK_FAILED_MESSAGE, NESTING_MESSAGE, OP_MESSAGE, opGuard, type ProviderTypes } from "./op-guard.ts"
+import { gitRemoteResolver, type PushViaConfig, pushVia, type RemoteResolver } from "./push-via.ts"
 import {
   base,
   type Command,
