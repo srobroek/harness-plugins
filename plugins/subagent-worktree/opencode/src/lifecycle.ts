@@ -272,8 +272,8 @@ export function createLifecycle(deps: LifecycleDeps) {
     let landed = false
     let openPr = false
     if (status !== undefined && tip !== undefined && status.ahead > 0) {
-      // A head delivery recorded as landed counts only for the commit that is still the tip.
-      landed = records.heads.includes(tip) || (await reachedMain(lane, tip))
+      // A head delivery recorded as landed counts only for the commit that is still the tip; so does a merge into a local branch, while that branch still contains it.
+      landed = records.heads.includes(tip) || (await reachedMain(lane, tip)) || (await mergedLocally(lane, tip)) !== undefined
       if (!landed) openPr = (await openPrBranches(lane.parentDir)).has(lane.branch)
     }
     return {
@@ -349,11 +349,17 @@ export function createLifecycle(deps: LifecycleDeps) {
   /** A stored target is read as a local branch ref, never as an option or another kind of ref. */
   const localBranchRef = (target: string): string => `refs/heads/${target}`
 
-  /** The local branch ref an explicit merge recorded, when `oid` is the head it recorded and that ref still contains it now. */
-  const mergedLocally = async (lane: Lane, oid: string): Promise<string | undefined> => {
+  /** The local branch ref an explicit merge recorded, when `oid` is the head it recorded; nothing is proven yet. */
+  const recordedRef = (lane: Lane, oid: string): string | undefined => {
     const merged = lane.mergedInto
     if (merged === undefined || typeof merged.target !== "string" || merged.target === "" || merged.head !== oid) return undefined
-    const ref = localBranchRef(merged.target)
+    return localBranchRef(merged.target)
+  }
+
+  /** The local branch ref an explicit merge recorded, when `oid` is the head it recorded and that ref still contains it now. */
+  const mergedLocally = async (lane: Lane, oid: string): Promise<string | undefined> => {
+    const ref = recordedRef(lane, oid)
+    if (ref === undefined) return undefined
     return (await git.isAncestor(lane.directory, oid, ref)) ? ref : undefined
   }
 
@@ -582,7 +588,9 @@ export function createLifecycle(deps: LifecycleDeps) {
 
   /**
    * The preconditions, read fresh under the lane's lock: the proof and the commit it covers, or the reason to keep
-   * the worktree. A lane whose removal an earlier call recorded keeps that proof while HEAD is still the commit proven then.
+   * the worktree. A lane whose removal an earlier call recorded keeps that proof while HEAD is still the commit proven
+   * then; a merged one only while its ref (recorded, or rebuilt from the merge record) still contains HEAD. Otherwise
+   * the other proofs are tried as for a fresh removal.
    */
   const checkFinalize = async (
     lane: Lane,
@@ -599,7 +607,11 @@ export function createLifecycle(deps: LifecycleDeps) {
     if ((await git.porcelain(lane.directory)) !== "") return keptBecause("dirty", "the tree has uncommitted changes or cannot be read")
     const busy = await busyTreeOf(lane.directory, lane.branch)
     if (busy !== undefined) return keptBecause("dirty", busy)
-    if (earlier?.head === oid) return { proof: PROOF_OF[earlier.retireAs], oid }
+    if (earlier?.head === oid) {
+      const within = earlier.retireAs === "merged" ? (earlier.within ?? recordedRef(lane, oid)) : undefined
+      if (within === undefined) return { proof: PROOF_OF[earlier.retireAs], oid }
+      if (await git.isAncestor(lane.directory, oid, within)) return { proof: "merged", oid, within }
+    }
     if (oid === lane.base) return { proof: "empty", oid }
     // A merged proof names the ref that contains HEAD: the removal proves it again after its last await.
     if (options.target !== undefined && (await git.isAncestor(lane.directory, oid, options.target))) return { proof: "merged", oid, within: options.target }
@@ -731,7 +743,14 @@ export function createLifecycle(deps: LifecycleDeps) {
         let deleteAt: string | undefined
         if (present) {
           const checked = await checkFinalize(stored, options, seq, earlier)
-          if (!("proof" in checked)) return checked
+          if (!("proof" in checked)) {
+            // A half-done removal whose proof no longer holds (a reset target, a moved HEAD) is unmerged work again: the lane goes back to active.
+            if (earlier !== undefined && !checked.removed && checked.kept === "unmerged") {
+              const { removal: _void, ...rest } = stored
+              await save({ ...rest, state: "active" })
+            }
+            return checked
+          }
           proof = checked.proof
           head = checked.oid
           within = checked.within
@@ -739,7 +758,13 @@ export function createLifecycle(deps: LifecycleDeps) {
           if ((await git.branch(stored.directory)) === stored.branch && (await git.commit(stored.parentDir, `refs/heads/${stored.branch}`)) === head) deleteAt = head
         }
         const retireAs = options.retireAs ?? (proof === "merged" ? "merged" : proof === "landed" ? "landed" : proof === "empty" ? "removed" : (earlier?.retireAs ?? "removed"))
-        const removal: NonNullable<Lane["removal"]> = { retireAs, ...(head === undefined ? {} : { head }), ...(earlier?.pending === undefined ? {} : { pending: earlier.pending }) }
+        const removal: NonNullable<Lane["removal"]> = {
+          retireAs,
+          ...(head === undefined ? {} : { head }),
+          // Stored so a recovery after a crash proves the merge target again instead of trusting `head` alone.
+          ...(within === undefined ? {} : { within }),
+          ...(earlier?.pending === undefined ? {} : { pending: earlier.pending }),
+        }
         // Fail closed: a refused write means the lane is not ours to remove any more.
         if ((await save({ ...stored, state: "removing", removal })) === false) return keptBecause("handed-over", HANDED_OVER)
         if (present) {

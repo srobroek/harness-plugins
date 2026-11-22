@@ -251,7 +251,9 @@ reads everything fresh. The lane is kept unless all of these hold:
 
 Then the lane is recorded as `removing`, and liveness and the tree are read once more. HEAD must
 still be the proven commit and the tree must still be clean. A merged proof is proven again too: the
-merge target must still contain HEAD, before and after the other sessions are evicted. Then the worktree is removed. The local
+merge target must still contain HEAD, before and after the other sessions are evicted. A start that
+finishes a removal a crash left half done proves it again as well; if the target no longer contains
+HEAD, the lane goes back to active. Then the worktree is removed. The local
 branch is deleted only when the worktree was on it and it still points at the proven commit
 (`git update-ref -d refs/heads/<branch> <oid>`), so a ref that moved is left alone. The lane's
 sessions move home, and the lane is retired as `removed`, `merged` or `landed`. A refusal at any

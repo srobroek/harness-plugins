@@ -813,6 +813,56 @@ describe("a merge into a local target is a merged proof later", () => {
     return { ...started, states }
   }
   const branchDeleted = (log: string[][]) => log.some((argv) => argv.includes("update-ref"))
+  const recorded = { target: "main", head: TIP }
+
+  test.each([
+    ["written with the target it must stay in", { retireAs: "merged" as const, head: TIP, within: MAIN }],
+    ["written before the target was stored, rebuilt from the merge record", { retireAs: "merged" as const, head: TIP }],
+  ])("a removal a crash left half done, %s, is not finished once the target was reset", async (_name, removal) => {
+    // The crash came after `removing` was recorded; the target was reset before the next start recovers the lane.
+    const { fake, worktree, log, quiet, cleanup } = await start(
+      { contains: { [MAIN]: [] } },
+      { stored: [lane({ target: "main", mergedInto: recorded, state: "removing", removal })] },
+    )
+    await quiet()
+    const after = stored(fake)
+    expect({ removes: worktree.length, branchDeleted: branchDeleted(log), state: after.state, removal: after.removal }).toEqual({
+      removes: 0,
+      branchDeleted: false,
+      state: "active",
+      removal: undefined,
+    })
+    await cleanup()
+  })
+
+  describe("a clean, finished lane merged into a local branch is removed by its lead", () => {
+    const leadIdle = {
+      "the parent's idle pass": (started: Started) => deliver(started.fake, started.events, { type: "session.idle", data: { sessionID: PARENT } }),
+      "the lead's idle gate": (started: Started) => started.fake.fire.session("experimental.idle", { sessionID: PARENT, background: [] } as never),
+    }
+
+    test.each(Object.keys(leadIdle) as Array<keyof typeof leadIdle>)("when the child's end event was missed, through %s", async (trigger) => {
+      const started = await start({ contains: { [MAIN]: [TIP] } }, { stored: [lane({ target: "main", mergedInto: recorded })] })
+      await started.quiet()
+      await leadIdle[trigger](started)
+      await started.quiet()
+      expect({ removes: started.worktree.filter((entry) => entry.method === "remove").length, state: stored(started.fake).state }).toEqual({ removes: 1, state: "merged" })
+      await started.cleanup()
+    })
+
+    test("when its removal was refused for a dirty tree and the tree is clean later, through the lead's idle gate", async () => {
+      const started = await mergeThenEnd([TIP], ({ state }) => {
+        state.porcelain = " M a.txt\n"
+      })
+      await started.quiet()
+      expect(stored(started.fake).state).toBe("active")
+      started.state.porcelain = ""
+      await leadIdle["the lead's idle gate"](started)
+      await started.quiet()
+      expect({ removes: started.worktree.filter((entry) => entry.method === "remove").length, state: stored(started.fake).state }).toEqual({ removes: 1, state: "merged" })
+      await started.cleanup()
+    })
+  })
 
   test("a lane whose merged head the target still contains is removed as merged", async () => {
     const { fake, worktree, states, cleanup } = await mergeThenEnd([TIP])

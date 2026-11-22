@@ -67,8 +67,11 @@ export type Lane = {
   outcome?: { kind: "failed" | "interrupted"; at: number; reason: string; id: string }
   /** Set when moving the child back into this lane failed: a resume must restore it or be refused. */
   fenced?: { reason: string; at: number }
-  /** Set while `state` is `removing`: how the lane retires, the commit that was proven, and the sessions still to move home. */
-  removal?: { retireAs: "removed" | "merged" | "landed"; head?: string; pending?: string[]; incomplete?: boolean }
+  /**
+   * Set while `state` is `removing`: how the lane retires, the commit that was proven, the ref that had to contain it
+   * for a merged proof (proven again on recovery), and the sessions still to move home.
+   */
+  removal?: { retireAs: "removed" | "merged" | "landed"; head?: string; within?: string; pending?: string[]; incomplete?: boolean }
   /** An explicit merge kept the checkout: `head` was proven in local branch `target` then; a later removal proves it again. */
   mergedInto?: { target: string; head: string }
   /** Since when the child and parent have been idle with the lane still empty. */
