@@ -718,60 +718,99 @@ function lockedWrite(commonDir, directory, options, write) {
   return withDiskLock(commonDir, directory, { waitMs: 1e4, ...options }, async () => write());
 }
 
-// plugins/subagent-worktree/opencode/src/git.ts
-import { env as hostEnv } from "process";
-
 // lib/src/safe-git.ts
 import { devNull } from "os";
-var SAFE_GIT_ARGS = [
-  "-c",
-  "core.fsmonitor=false",
-  "-c",
-  `core.hooksPath=${devNull}`,
-  "--no-optional-locks"
+var SAFE_GIT_CONFIG = [
+  ["core.fsmonitor", "false"],
+  ["core.hooksPath", devNull]
 ];
-function untrustedLocalGitArgs() {
-  return [
-    ...SAFE_GIT_ARGS,
-    "-c",
-    `core.attributesFile=${devNull}`,
-    "-c",
-    "diff.external=",
-    "-c",
-    "core.sshCommand=",
-    "-c",
-    "credential.helper=",
-    "-c",
-    "core.askPass=",
-    "-c",
-    "log.showSignature=false",
-    "-c",
-    "gpg.program=",
-    "-c",
-    "gpg.ssh.program=",
-    "-c",
-    "gpg.x509.program="
-  ];
+var SAFE_GIT_ARGS = [...SAFE_GIT_CONFIG.flatMap(([key, value]) => ["-c", `${key}=${value}`]), "--no-optional-locks"];
+var HARDENED_GIT_CONFIG = [
+  ...SAFE_GIT_CONFIG,
+  ["core.attributesFile", devNull],
+  ["log.showSignature", "false"],
+  ["gpg.program", devNull],
+  ["gpg.ssh.program", devNull],
+  ["gpg.x509.program", devNull],
+  ["commit.gpgSign", "false"],
+  ["tag.gpgSign", "false"],
+  ["gpg.ssh.defaultKeyCommand", ""],
+  ["core.sshCommand", ""],
+  ["credential.helper", ""],
+  ["diff.external", ""]
+];
+var EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+var GIT_MIN_VERSION = [2, 45, 0];
+function parseGitVersion(text) {
+  const match = /git version (\d+)\.(\d+)(?:\.(\d+))?/.exec(text);
+  if (!match)
+    return;
+  return [Number(match[1]), Number(match[2]), Number(match[3] ?? 0)];
 }
-var PROGRAM_VARIABLES = ["PAGER", "EDITOR", "VISUAL", "SSH_ASKPASS"];
-var KEPT_GIT_VARIABLE = "GIT_CONFIG_GLOBAL";
-function untrustedLocalGitEnv(host) {
-  const dropped = new Set(PROGRAM_VARIABLES);
-  const kept = {};
-  for (const [name, value] of Object.entries(host)) {
-    if (value === undefined || dropped.has(name))
-      continue;
-    if (name.startsWith("GIT_") && name !== KEPT_GIT_VARIABLE)
-      continue;
-    kept[name] = value;
+var GIT_VERSION_MESSAGE = "subagent-worktree needs git 2.45+ for safe automatic merges";
+function gitVersionProblem(text) {
+  const version = parseGitVersion(text);
+  if (!version)
+    return GIT_VERSION_MESSAGE;
+  for (const [index, minimum] of GIT_MIN_VERSION.entries()) {
+    const have = version[index] ?? 0;
+    if (have > minimum)
+      return;
+    if (have < minimum)
+      return GIT_VERSION_MESSAGE;
   }
-  return {
-    ...kept,
-    GIT_ALLOW_PROTOCOL: "",
-    GIT_NO_LAZY_FETCH: "1",
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_TERMINAL_PROMPT: "0"
-  };
+  return;
+}
+var INHERITED_GIT_VARIABLES = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_PREFIX",
+  "GIT_NAMESPACE",
+  "GIT_REPLACE_REF_BASE",
+  "GIT_GRAFT_FILE",
+  "GIT_SHALLOW_FILE",
+  "GIT_CONFIG",
+  "GIT_EXEC_PATH",
+  "GIT_EXTERNAL_DIFF",
+  "GIT_PAGER",
+  "GIT_EDITOR",
+  "GIT_SEQUENCE_EDITOR",
+  "GIT_SSH",
+  "GIT_SSH_COMMAND",
+  "GIT_ASKPASS",
+  "GIT_PROXY_COMMAND",
+  "GIT_LITERAL_PATHSPECS",
+  "GIT_GLOB_PATHSPECS",
+  "GIT_NOGLOB_PATHSPECS",
+  "GIT_ICASE_PATHSPECS"
+];
+var PROGRAM_VARIABLES = ["PAGER", "EDITOR", "VISUAL", "SSH_ASKPASS"];
+function hardenedGitEnv(base) {
+  const env = {};
+  const dropped = new Set([...INHERITED_GIT_VARIABLES, ...PROGRAM_VARIABLES]);
+  for (const [key, value] of Object.entries(base)) {
+    if (value === undefined || dropped.has(key) || key.startsWith("GIT_TRACE"))
+      continue;
+    if (key === "GIT_CONFIG_PARAMETERS" || key === "GIT_CONFIG_COUNT" || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key))
+      continue;
+    env[key] = value;
+  }
+  let count = 0;
+  for (const [key, value] of HARDENED_GIT_CONFIG) {
+    env[`GIT_CONFIG_KEY_${count}`] = key;
+    env[`GIT_CONFIG_VALUE_${count}`] = value;
+    count += 1;
+  }
+  env.GIT_CONFIG_COUNT = String(count);
+  env.GIT_ATTR_SOURCE = EMPTY_TREE;
+  env.GIT_OPTIONAL_LOCKS = "0";
+  env.GIT_NO_LAZY_FETCH = "1";
+  env.GIT_ALLOW_PROTOCOL = "";
+  return env;
 }
 var FILTER_DRIVER_LISTING = ["config", "--name-only", "-z", "--list"];
 function filterDriverOverrides(listing) {
@@ -808,6 +847,10 @@ function wildcardMatch(value, pattern) {
 }
 
 // lib/src/session-lanes.ts
+function insideDirectory(path, directory) {
+  const root = directory.replace(/\/+$/, "");
+  return path === root || path.startsWith(`${root}/`);
+}
 var MAX_LANE_DEPTH = 8;
 var LANE_CALL_TIMEOUT_MS = 1e4;
 var MAX_PAGES = 20;
@@ -1058,6 +1101,8 @@ function planStart(facts) {
     return { kind: "default", ...resumeWorktreeNote(input) ? { note: RESUME_WORKTREE_NOTE } : {} };
   if (input.worktree === false)
     return { kind: "default" };
+  if (!isolation.isolate && isolation.refuse)
+    return { kind: "refuse", reason: isolation.reason };
   if (input.worktree === undefined && isolation.isolate && facts.trackedDirty)
     return { kind: "default", note: DIRTY_CHECKOUT_NOTE };
   if (input.worktree === undefined || lookup === undefined)
@@ -1104,6 +1149,8 @@ function decideIsolation(facts) {
     return { isolate: false, reason: "read-only agent (edit denied)" };
   if (facts.callerIsChild)
     return { isolate: false, reason: "caller is a child session" };
+  if (facts.gitUnsupported)
+    return { isolate: false, reason: facts.gitUnsupported, refuse: true };
   if (!facts.isGit)
     return { isolate: false, reason: "not a git checkout" };
   return { isolate: true };
@@ -1224,7 +1271,10 @@ No commits and a clean tree, so the worktree was removed. Continuing this sessio
 `);
 }
 function mergeArgs(directory, target) {
-  return ["wt", "-C", directory, "merge", target, "--no-squash", "--no-ff", "--no-remove", "--yes"];
+  return ["wt", "-C", directory, "merge", target, "--no-squash", "--no-ff", "--no-remove", "--no-hooks"];
+}
+function isSafeBranchName(name) {
+  return name !== "" && !name.startsWith("-") && !name.includes("..") && !/[\s\x00-\x1f\x7f]/.test(name);
 }
 function isConflict(output) {
   return /conflict|could not apply|resolve all conflicts|needs merge/i.test(output);
@@ -1349,18 +1399,37 @@ var FENCED_REASON = "another writer spawn took over this worktree while it waite
 
 // plugins/subagent-worktree/opencode/src/git.ts
 var GIT_TIMEOUT_MS = 60000;
+var GIT_RUNNING_PROGRAMS = new Set(["git", "wt", "gh"]);
+var versionProblem;
+function installedGitProblem() {
+  versionProblem ??= (async () => {
+    try {
+      const child = Bun.spawn(["git", "--version"], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      const run = await supervise(child, { timeoutMs: GIT_TIMEOUT_MS });
+      return gitVersionProblem(run.kind === "exited" ? run.stdout : "");
+    } catch {
+      return gitVersionProblem("");
+    }
+  })();
+  return versionProblem;
+}
 var spawnRunner = async (argv, options) => {
-  const git = argv[0] === "git";
-  const command = git ? ["git", ...untrustedLocalGitArgs(), ...argv.slice(1)] : argv;
   try {
-    const child = Bun.spawn(command, {
+    let env;
+    if (GIT_RUNNING_PROGRAMS.has(argv[0] ?? "")) {
+      const problem = argv.includes("--version") ? undefined : await installedGitProblem();
+      if (problem)
+        return { code: 126, stdout: "", stderr: problem };
+      env = hardenedGitEnv(Bun.env);
+    }
+    const child = Bun.spawn(argv, {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
-      ...git ? { env: untrustedLocalGitEnv(hostEnv) } : {},
-      ...options?.cwd ? { cwd: options.cwd } : {}
+      ...options?.cwd ? { cwd: options.cwd } : {},
+      ...env ? { env } : {}
     });
-    const run = await supervise(child, git ? { timeoutMs: GIT_TIMEOUT_MS } : {});
+    const run = await supervise(child, argv[0] === "git" ? { timeoutMs: GIT_TIMEOUT_MS } : {});
     if (run.kind === "exited")
       return { code: run.exitCode, stdout: run.stdout, stderr: run.stderr };
     const why = run.kind === "timeout" ? `timed out after ${GIT_TIMEOUT_MS / 1000}s` : "ended without an exit status";
@@ -1395,6 +1464,11 @@ function createGit(run) {
   const files = (output) => output?.split("\x00").filter((file) => file !== "");
   return {
     run,
+    unsupported: async () => {
+      const result = await run(["git", "--version"]);
+      return gitVersionProblem(result.code === 0 ? result.stdout : "");
+    },
+    isBranchName: async (directory, name) => isSafeBranchName(name) && await git(directory, "check-ref-format", "--branch", name) !== undefined,
     isWorkTree: async (directory) => await git(directory, "rev-parse", "--is-inside-work-tree") === "true",
     commit: (directory, ref) => git(directory, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`),
     isUnborn: async (directory) => isUnbornHead(await readHeadFacts(run, directory)),
@@ -1409,7 +1483,7 @@ function createGit(run) {
         return;
       return { ahead: Number.parseInt(ahead, 10) || 0, dirty: porcelain !== "" };
     },
-    changedFiles: async (directory, target) => files(await git(directory, "diff", "--name-only", "-z", `${target}...HEAD`)),
+    changedFiles: async (directory, target) => isSafeBranchName(target) ? files(await git(directory, "diff", "--no-ext-diff", "--name-only", "-z", `${target}...HEAD`)) : undefined,
     trackedDirty: async (directory) => {
       const changed = await unfiltered(directory, "status", "--porcelain", "--untracked-files=no", "--", ...TRACKED_DIRTY_PATHSPEC);
       if (changed === undefined)
@@ -1425,7 +1499,7 @@ function createGit(run) {
     head: (directory) => git(directory, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"),
     porcelain: (directory) => unfiltered(directory, "status", "--porcelain"),
     isAncestor: async (directory, tip, ref) => (await run(["git", "-C", directory, "merge-base", "--is-ancestor", tip, ref])).code === 0,
-    stashSubjects: (directory) => git(directory, "stash", "list", "--no-show-signature", "--format=%gs"),
+    stashSubjects: (directory) => git(directory, "stash", "list", "--format=%gs"),
     gitDir: (directory) => git(directory, "rev-parse", "--absolute-git-dir"),
     deleteBranchAt: async (directory, name, oid) => (await run(["git", "-C", directory, "update-ref", "-d", `refs/heads/${name}`, oid])).code === 0,
     pruneWorktrees: async (directory) => await git(directory, "worktree", "prune") !== undefined,
@@ -1439,10 +1513,96 @@ import { join as join3, resolve as resolve3 } from "path";
 
 // lib/src/session-eviction.ts
 import { basename, dirname, resolve as resolve2 } from "path";
+var MAX_PAGES2 = 100;
+var toMillis = (value) => {
+  if (typeof value === "number")
+    return value;
+  if (value instanceof Date)
+    return value.getTime();
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  }
+  return;
+};
+function sessionRunning(session) {
+  if (session.time?.archived !== undefined && session.time.archived !== null)
+    return false;
+  const busy = toMillis(session.time?.busy);
+  const idle = toMillis(session.time?.idle);
+  return busy !== undefined && (idle === undefined || busy > idle);
+}
 function canonicalCheckout(commonDir, fallback) {
   if (commonDir !== undefined && basename(commonDir) === ".git")
     return dirname(commonDir);
   return fallback;
+}
+async function listPass(api, projectID, archived) {
+  const found = [];
+  let query = { ...projectID === undefined ? {} : { project: projectID }, archived, limit: 100 };
+  try {
+    for (let pages = 0;pages < MAX_PAGES2; pages++) {
+      const page = await api.list(query);
+      if (!page || !Array.isArray(page.data))
+        return;
+      for (const raw of page.data) {
+        const session = raw;
+        if (typeof session?.id === "string")
+          found.push(session);
+      }
+      const next = page.cursor?.next;
+      if (!next)
+        return found;
+      query = { cursor: next };
+    }
+  } catch {
+    return;
+  }
+  return;
+}
+async function listProjectSessions(api, projectID) {
+  const live = await listPass(api, projectID, false);
+  const shelved = live === undefined ? undefined : await listPass(api, projectID, true);
+  if (live === undefined || shelved === undefined)
+    return;
+  const byId = new Map;
+  for (const session of [...live, ...shelved]) {
+    if (projectID !== undefined && session.projectID !== undefined && session.projectID !== projectID)
+      continue;
+    byId.set(session.id, session);
+  }
+  return [...byId.values()];
+}
+async function evictSessions(api, options) {
+  const sessions = await listProjectSessions(api, options.projectID);
+  if (sessions === undefined)
+    return { ok: false, reason: `the sessions of the project could not all be listed, so who is in ${options.directory} is unknown` };
+  const target = canonicalDirectory(options.directory);
+  const inside = sessions.filter((session) => {
+    if (options.exclude?.has(session.id))
+      return false;
+    const where = session.location?.directory;
+    return typeof where === "string" && insideDirectory(canonicalDirectory(where), target);
+  });
+  const running = inside.find(sessionRunning);
+  if (running)
+    return { ok: false, reason: `session ${running.id} is running in ${options.directory}` };
+  const moved = [];
+  for (const session of inside) {
+    if (options.guard) {
+      const why = await options.guard.fresh(session) ?? options.guard.started(session);
+      if (why !== undefined)
+        return { ok: false, reason: `${why}; nothing was removed` };
+    }
+    try {
+      await api.move({ sessionID: session.id, directory: options.destination });
+      moved.push(session.id);
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      return { ok: false, reason: `session ${session.id} could not be moved out of ${options.directory} (${why}); nothing was removed` };
+    }
+  }
+  return { ok: true, moved };
 }
 
 // lib/src/worktree-state.ts
@@ -1754,7 +1914,7 @@ function formatSweep(entries, mode) {
 }
 
 // plugins/subagent-worktree/opencode/src/lifecycle.ts
-function toMillis(value) {
+function toMillis2(value) {
   if (typeof value === "number")
     return value;
   if (value instanceof Date)
@@ -1826,7 +1986,7 @@ function createLifecycle(deps) {
     const session = await withinLookup(deps.getSession(sessionID));
     if (!session)
       return "unknown";
-    return isRunning({ busy: toMillis(session.time?.busy), idle: toMillis(session.time?.idle) }) ? "running" : "finished";
+    return isRunning({ busy: toMillis2(session.time?.busy), idle: toMillis2(session.time?.idle) }) ? "running" : "finished";
   };
   const openPrCache = new Map;
   const openPrBranches = async (parentDir) => {
@@ -2088,9 +2248,9 @@ function createLifecycle(deps) {
       if (!within3(canonical(directory), worktree))
         continue;
       ids.push(id);
-      if (toMillis(session.time?.archived) !== undefined)
+      if (toMillis2(session.time?.archived) !== undefined)
         continue;
-      if (isRunning({ busy: toMillis(session.time?.busy), idle: toMillis(session.time?.idle) }))
+      if (isRunning({ busy: toMillis2(session.time?.busy), idle: toMillis2(session.time?.idle) }))
         return keptBecause("running", `${id} is running in the worktree`);
     }
     return { ids };
@@ -2166,7 +2326,7 @@ function createLifecycle(deps) {
       console.error(`subagent-worktree: ${refusal.removed ? id : refusal.reason}; ${id} is not moved yet`);
       return "pending";
     }
-    if (toMillis(session.time?.archived) === undefined && isRunning({ busy: toMillis(session.time?.busy), idle: toMillis(session.time?.idle) })) {
+    if (toMillis2(session.time?.archived) === undefined && isRunning({ busy: toMillis2(session.time?.busy), idle: toMillis2(session.time?.idle) })) {
       console.error(`subagent-worktree: ${id} is running; it is not moved yet`);
       return "pending";
     }
@@ -2195,11 +2355,11 @@ function createLifecycle(deps) {
         return stamp;
       if (stamp.at === undefined)
         return;
-      const archived = toMillis(session.time?.archived);
+      const archived = toMillis2(session.time?.archived);
       if (archived !== undefined && archived > stamp.at)
         return;
-      const busy = toMillis(session.time?.busy);
-      const idle = toMillis(session.time?.idle);
+      const busy = toMillis2(session.time?.busy);
+      const idle = toMillis2(session.time?.idle);
       if (busy !== undefined && idle !== undefined && busy > stamp.at && idle > busy)
         return;
       return keptBecause("running", "a resume of the child was admitted and has not finished");
@@ -2277,6 +2437,43 @@ function createLifecycle(deps) {
           if (late !== undefined) {
             await save(stored);
             return late;
+          }
+          const evicted = await evictSessions(ctx.session, {
+            projectID: stored.projectID,
+            directory: stored.directory,
+            destination: canonicalCheckout(common, stored.parentDir),
+            exclude: new Set([stored.child, ...descendants.ids]),
+            guard: {
+              fresh: async (session) => {
+                const now = await lookupSession(session.id);
+                if (now === "missing")
+                  return;
+                if (now === "unknown")
+                  return `the state of ${session.id} cannot be read`;
+                if (toMillis2(now.time?.archived) === undefined && isRunning({ busy: toMillis2(now.time?.busy), idle: toMillis2(now.time?.idle) })) {
+                  return `${session.id} is running in the worktree`;
+                }
+                return;
+              },
+              started: (session) => {
+                const started = startedSince([session.id], seq);
+                return started === undefined || started.removed ? undefined : started.reason;
+              }
+            }
+          });
+          if (!evicted.ok) {
+            await save(stored);
+            return keptBecause("running", evicted.reason);
+          }
+          const driftAfter = await treeDrift(stored, head);
+          if (driftAfter !== undefined) {
+            await save(stored);
+            return driftAfter;
+          }
+          const afterEviction = await liveRefusal(stored, options, seq) ?? startedSince([stored.child, ...descendants.ids], seq);
+          if (afterEviction !== undefined) {
+            await save(stored);
+            return afterEviction;
           }
           try {
             await deps.removeWorktree(stored.projectID, stored.directory, false);
@@ -2715,7 +2912,7 @@ function createLifecycle(deps) {
 
 // plugins/subagent-worktree/opencode/src/index.ts
 var MERGE_DESCRIPTION = `Merge a subagent's worktree branch back, report one lane, or list every active lane.
-` + "The subagent tool result names the lane (branch, base, sessionID). " + 'method "wt-merge" runs `wt merge <target> --no-squash --no-ff --yes` from the subagent worktree, keeping its commits, ' + "and removes the worktree on success; a conflict keeps the worktree and reports the output. " + "The worktree must be committed and clean, and the target checkout must have no uncommitted or untracked changes to files the lane changes. " + 'method "keep" (with reason) records that an unmerged lane is kept on purpose, so the idle gate stops nudging about it. method "none" only reports the lane status. method "list" (no sessionID) reports every active lane in the project ' + "with commits ahead, uncommitted changes, and orphaned lanes; missing worktrees move their child sessions back.";
+` + "The subagent tool result names the lane (branch, base, sessionID). " + 'method "wt-merge" runs `wt merge <target> --no-squash --no-ff --no-hooks` from the subagent worktree, keeping its commits, ' + "and removes the worktree on success; a conflict keeps the worktree and reports the output. " + "The worktree must be committed and clean, and the target checkout must have no uncommitted or untracked changes to files the lane changes. " + 'method "keep" (with reason) records that an unmerged lane is kept on purpose, so the idle gate stops nudging about it. method "none" only reports the lane status. method "list" (no sessionID) reports every active lane in the project ' + "with commits ahead, uncommitted changes, and orphaned lanes; missing worktrees move their child sessions back.";
 var SWEEP_TOOL = "subagent_worktree_sweep";
 var SWEEP_DESCRIPTION = `Report, or on request remove, finished agent lanes. Runs only when called.
 ` + "Each active lane whose subagent session is deleted or archived is checked as `finalize` checks it: not running, clean, no stash or operation, " + 'and its tip is the lane base, or an ancestor of origin/main, or a delivery landing record. Mode "report" (default) lists what would be removed and what is kept, and why. ' + 'Mode "prune" removes the removable ones through `finalize`, never forced, and touches no remote branch.';
@@ -2890,8 +3087,8 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
         if (typeof raw.id !== "string")
           continue;
         const time = raw.time ?? {};
-        const busy = toMillis(time.busy);
-        const idle = toMillis(time.idle);
+        const busy = toMillis2(time.busy);
+        const idle = toMillis2(time.idle);
         const session = {
           id: raw.id,
           ...typeof raw.parentID === "string" ? { parentID: raw.parentID } : {},
@@ -2974,6 +3171,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
       callerPermissions: parent.permissions,
       callerIsChild: Boolean(parent.parentID),
       isGit: start ? start.lookup.ok : await git2.isWorkTree(parentDir),
+      gitUnsupported: await git2.unsupported(),
       projectDir: parentDir,
       homeDir: homedir()
     });
@@ -3377,6 +3575,10 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
       return { content: annotation(lane2, status, false), metadata: { ok: true, lane: lane2 } };
     }
     const target = input.target ?? lane2?.target;
+    if (target !== undefined && lane2 && !await git2.isBranchName(lane2.directory, target)) {
+      const reason = `${JSON.stringify(target)} is not a valid branch name`;
+      return { content: `${MERGE_TOOL}: not merged: ${reason}`, metadata: { ok: false, reason } };
+    }
     const ready = lane2?.state === "active" && lane2.parent === tool.sessionID && target && status && status.ahead > 0;
     const files = ready && lane2 && !status.dirty ? { laneFiles: await git2.changedFiles(lane2.directory, target), localFiles: await targetChanges(lane2, target) } : {};
     const decision = decideMerge({
@@ -3555,6 +3757,7 @@ export {
   formatLaneList,
   isConflict,
   isRunning,
+  isSafeBranchName,
   isSessionNotFound,
   isUnbornHead,
   isUncommittedOnly,

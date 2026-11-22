@@ -13,7 +13,7 @@
 import { existsSync, realpathSync } from "node:fs"
 import { join, resolve } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
-import { canonicalCheckout, } from "@srobroek/opencode-lib/session-eviction"
+import { canonicalCheckout, evictSessions, type SessionApi } from "@srobroek/opencode-lib/session-eviction"
 import { isSessionNotFound, type LaneSessionClient, laneSessions, MAX_LANE_DEPTH, moveSessionsHome } from "@srobroek/opencode-lib/session-lanes"
 import { bumpClaim, forgetNotice, landingsFor, listLandings, readClaim, readNotices, recordNotice } from "@srobroek/opencode-lib/worktree-claims"
 import { holdsState, type LockOptions, lockedWrite, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
@@ -724,6 +724,46 @@ export function createLifecycle(deps: LifecycleDeps) {
           if (late !== undefined) {
             await save(stored)
             return late
+          }
+          // Every other session in the checkout, whoever started it: a running one keeps the worktree, an idle one goes
+          // to the canonical checkout first. The lane's own sessions move home after the removal, below, where a failed move is retried.
+          const evicted = await evictSessions(ctx.session as unknown as SessionApi, {
+            projectID: stored.projectID,
+            directory: stored.directory,
+            destination: canonicalCheckout(common, stored.parentDir),
+            exclude: new Set([stored.child, ...descendants.ids]),
+            // The listing is a snapshot: a session that started after it is read again and checked against the start events before it moves.
+            guard: {
+              fresh: async (session) => {
+                const now = await lookupSession(session.id)
+                if (now === "missing") return undefined
+                if (now === "unknown") return `the state of ${session.id} cannot be read`
+                if (toMillis(now.time?.archived) === undefined && isRunning({ busy: toMillis(now.time?.busy), idle: toMillis(now.time?.idle) })) {
+                  return `${session.id} is running in the worktree`
+                }
+                return undefined
+              },
+              started: (session) => {
+                const started = startedSince([session.id], seq)
+                return started === undefined || started.removed ? undefined : started.reason
+              },
+            },
+          })
+          if (!evicted.ok) {
+            await save(stored)
+            return keptBecause("running", evicted.reason)
+          }
+          // The eviction awaited listings and moves: a commit or a change, a resume or a hold that landed meanwhile keeps the worktree.
+          const driftAfter = await treeDrift(stored, head)
+          if (driftAfter !== undefined) {
+            await save(stored)
+            return driftAfter
+          }
+          // The last look, synchronous and immediately before the host call: a start delivered during the awaits above is seen here.
+          const afterEviction = (await liveRefusal(stored, options, seq)) ?? startedSince([stored.child, ...descendants.ids], seq)
+          if (afterEviction !== undefined) {
+            await save(stored)
+            return afterEviction
           }
           try {
             await deps.removeWorktree(stored.projectID, stored.directory, false)

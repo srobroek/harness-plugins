@@ -119,6 +119,31 @@ describe("evictSessions", () => {
     expect(result.ok === false && result.reason).toContain("nothing was removed")
   })
 
+  describe("the guard fences each move after the listing", () => {
+    test("a session the guard refuses is not moved, and nothing after it is", async () => {
+      const fake = api([[session("first", "/wt/a"), session("second", "/wt/a")]])
+      const result = await evictSessions(fake, {
+        ...options,
+        guard: { fresh: async (entry) => (entry.id === "second" ? "second is running in /wt/a" : undefined), started: () => undefined },
+      })
+      expect(result.ok === false && result.reason).toContain("second is running")
+      expect(fake.moves.map((move) => move.sessionID)).toEqual(["first"])
+    })
+
+    test("a start seen synchronously after the fresh read refuses the move", async () => {
+      const fake = api([[session("in", "/wt/a")]])
+      const result = await evictSessions(fake, { ...options, guard: { fresh: async () => undefined, started: () => "in started a new execution" } })
+      expect(result.ok === false && result.reason).toContain("in started a new execution")
+      expect(fake.moves).toEqual([])
+    })
+
+    test("a guard that agrees moves the session as before", async () => {
+      const fake = api([[session("in", "/wt/a")]])
+      const result = await evictSessions(fake, { ...options, guard: { fresh: async () => undefined, started: () => undefined } })
+      expect(result).toEqual({ ok: true, moved: ["in"] })
+    })
+  })
+
   test("an incomplete listing blocks: who is inside is unknown", async () => {
     const result = await evictSessions(api([], { list: async () => Promise.reject(new Error("down")) }), options)
     expect(result.ok === false && result.reason).toContain("could not all be listed")
