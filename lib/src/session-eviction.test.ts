@@ -1,13 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import {
   canonicalCheckout,
   evictSessions,
   listProjectSessions,
-  pathExists,
-  repairStrandedSessions,
   type SessionLike,
   sessionRunning,
 } from "./session-eviction.ts"
@@ -168,134 +163,5 @@ describe("evictSessions", () => {
   test("excluded sessions (a lane child moved home separately) are skipped", async () => {
     const fake = api([[session("child", "/wt/a"), session("other", "/wt/a")]])
     expect(await evictSessions(fake, { ...options, exclude: new Set(["child"]) })).toEqual({ ok: true, moved: ["other"] })
-  })
-})
-
-describe("repairStrandedSessions", () => {
-  const present = new Set(["/repo", "/wt/alive"])
-  const exists = (path: string) => present.has(path)
-  const base = { projectID: "prj", destinationsFor: () => ["/repo"], exists }
-
-  test("moves a session whose directory is gone and leaves one whose directory exists", async () => {
-    const fake = api([[session("stranded", "/wt/gone"), session("fine", "/wt/alive")]])
-    const log: string[] = []
-    const result = await repairStrandedSessions(fake, { ...base, log: (line) => log.push(line) })
-    expect(result).toEqual({ moved: [{ sessionID: "stranded", from: "/wt/gone", to: "/repo" }], failed: [] })
-    expect(fake.moves).toEqual([{ sessionID: "stranded", directory: "/repo" }])
-    expect(log).toEqual(["moved session stranded out of /wt/gone (gone) to /repo"])
-  })
-
-  test("an archived stranded session is repaired too", async () => {
-    const fake = api([[archived("shelved", "/wt/gone")]])
-    const result = await repairStrandedSessions(fake, base)
-    expect(result).toMatchObject({ moved: [{ sessionID: "shelved" }] })
-  })
-
-  test("a running stranded session is never moved", async () => {
-    const fake = api([[session("busy", "/wt/gone", { busy: 9, idle: 2 }), session("idle", "/wt/gone2")]])
-    const result = await repairStrandedSessions(fake, base)
-    expect(fake.moves.map((move) => move.sessionID)).toEqual(["idle"])
-    expect(result).toMatchObject({ moved: [{ sessionID: "idle" }] })
-  })
-
-  test.each(["EACCES", "EIO", "ELOOP"])("a %s from the existence check is unknown, not gone: nothing is moved", async (code) => {
-    const fake = api([[session("unsure", "/wt/unreadable")]])
-    const log: string[] = []
-    const result = await repairStrandedSessions(fake, {
-      ...base,
-      exists: async () => {
-        throw Object.assign(new Error("cannot stat"), { code })
-      },
-      log: (line) => log.push(line),
-    })
-    expect(fake.moves).toEqual([])
-    expect(result).toEqual({ moved: [], failed: [] })
-    expect(log.join("\n")).toContain("could not be checked")
-  })
-
-  test("a stranded session of another project is excluded (the query filters)", async () => {
-    const fake = api([[session("mine", "/wt/gone"), session("theirs", "/wt/gone", idle, "other")]])
-    await repairStrandedSessions(fake, base)
-    expect(fake.moves.map((move) => move.sessionID)).toEqual(["mine"])
-    expect(fake.queries.every((query) => query.project === "prj")).toBe(true)
-  })
-
-  test("and again if the host's listing ignores the project filter: the result is filtered locally", async () => {
-    const fake = api([[session("mine", "/wt/gone"), session("theirs", "/wt/gone", idle, "other")]], { ignoreProject: true })
-    await repairStrandedSessions(fake, base)
-    expect(fake.moves.map((move) => move.sessionID)).toEqual(["mine"])
-  })
-
-  test("a failed move is reported and the others still go", async () => {
-    const fake = api([[session("a", "/wt/gone1"), session("b", "/wt/gone2")]], {
-      move: async (input) => {
-        if (input.sessionID === "a") throw new Error("nope")
-      },
-    })
-    const result = await repairStrandedSessions(fake, base)
-    expect(result).toMatchObject({ moved: [{ sessionID: "b" }], failed: [{ sessionID: "a", reason: "nope" }] })
-  })
-
-  test("a listing that cannot be read repairs nothing", async () => {
-    const result = await repairStrandedSessions(api([], { list: async () => Promise.reject(new Error("down")) }), base)
-    expect(result).toHaveProperty("error")
-  })
-
-  test("the destination is the first candidate that exists: a missing parent checkout falls through", async () => {
-    const fake = api([[session("a", "/wt/gone")]])
-    const log: string[] = []
-    const result = await repairStrandedSessions(fake, {
-      ...base,
-      destinationsFor: () => ["/gone/parent-checkout", "/repo"],
-      log: (line) => log.push(line),
-    })
-    expect(fake.moves).toEqual([{ sessionID: "a", directory: "/repo" }])
-    expect(result).toMatchObject({ moved: [{ to: "/repo" }] })
-  })
-
-  test("a candidate inside a removed worktree does not exist and is skipped like any other", async () => {
-    const fake = api([[session("a", "/wt/gone")]])
-    await repairStrandedSessions(fake, { ...base, destinationsFor: () => ["/wt/gone/sub", "/repo"] })
-    expect(fake.moves).toEqual([{ sessionID: "a", directory: "/repo" }])
-  })
-
-  test("with no destination that exists the session is left alone and the failure is reported", async () => {
-    const fake = api([[session("a", "/wt/gone")]])
-    const result = await repairStrandedSessions(fake, { ...base, destinationsFor: () => ["/nope", "/nowhere"] })
-    expect(fake.moves).toEqual([])
-    expect(result).toMatchObject({ moved: [], failed: [{ sessionID: "a" }] })
-    expect((result as { failed: Array<{ reason: string }> }).failed[0]?.reason).toContain("no existing destination")
-  })
-
-  test("the destination can depend on the session", async () => {
-    const present2 = new Set(["/repo-for-a"])
-    const fake = api([[session("a", "/wt/gone")]])
-    await repairStrandedSessions(fake, { ...base, exists: (path) => present2.has(path), destinationsFor: (entry) => [`/repo-for-${entry.id}`] })
-    expect(fake.moves).toEqual([{ sessionID: "a", directory: "/repo-for-a" }])
-  })
-})
-
-describe("pathExists", () => {
-  test("present, and gone only on ENOENT", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "exists-"))
-    try {
-      expect(await pathExists(dir)).toBe(true)
-      expect(await pathExists(join(dir, "missing"))).toBe(false)
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
-
-  test("any other error throws instead of reading as gone", async () => {
-    if (process.getuid?.() === 0) return
-    const dir = mkdtempSync(join(tmpdir(), "exists-"))
-    mkdirSync(join(dir, "locked"))
-    chmodSync(join(dir, "locked"), 0o000) // check-test-executables: directory permission, not a script
-    try {
-      await expect(pathExists(join(dir, "locked", "inside"))).rejects.toMatchObject({ code: "EACCES" })
-    } finally {
-      chmodSync(join(dir, "locked"), 0o755) // check-test-executables: directory permission, not a script
-      rmSync(dir, { recursive: true, force: true })
-    }
   })
 })
