@@ -1,3 +1,5 @@
+## cad [0.8.2](https://github.com/srobroek/harness-plugins/compare/cad--v0.8.1...cad--v0.8.2) (2026-11-22)
+
 ## cad [0.8.1](https://github.com/srobroek/harness-plugins/compare/cad--v0.8.0...cad--v0.8.1) (2026-11-21)
 
 ### Bug Fixes
