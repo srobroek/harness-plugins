@@ -376,8 +376,45 @@ describe("firstBdVerb / isMutatingBdCommand", () => {
       expect(actors("export BD_ACTOR=a; true && (export BD_ACTOR=b; bd create x); bd create y")).toEqual(["b", "a"])
     })
 
-    test("a non-final pipeline stage runs on a copy", () => {
-      expect(decideActorGate("unset BD_ACTOR | cat; bd create x", bdActorEnv)).toEqual({ kind: "allow" })
+    test.each([
+      ["a non-final stage", "unset BD_ACTOR | cat; bd create x"],
+      ["the final stage", "cat | unset BD_ACTOR; bd create x"],
+    ])("%s of a pipeline runs on a copy", (_name, command) => {
+      expect(decideActorGate(command, bdActorEnv)).toEqual({ kind: "allow" })
+    })
+
+    test("a command substitution sees the shell's unexported value", () => {
+      expect(decideActorGate("unset BD_ACTOR; BD_ACTOR=x; echo $(export BD_ACTOR; bd create y)", bdActorEnv)).toEqual({
+        kind: "allow",
+      })
+    })
+  })
+
+  describe("a child is read at its own command, under that command's environment", () => {
+    const decide = (command: string, env = emptyEnv) => decideActorParsed(parse(command), env).kind
+
+    test("two identical eval bodies on either side of an unset are judged separately", () => {
+      expect(decide("eval 'bd create x'; unset BD_ACTOR; eval 'bd create x'", bdActorEnv)).toBe("block")
+    })
+
+    test("quoted data that repeats a child's text does not move the child", () => {
+      expect(decide(`echo "bd create x"; export BD_ACTOR=a; eval 'bd create x'`)).toBe("allow")
+    })
+
+    test("a descriptor-fed script built from fragments is read under the exports before it", () => {
+      expect(decide(`export BD_ACTOR=a; bash 3<<<'bd cre'"ate x" 0<&3`)).toBe("allow")
+      expect(decide(`bash 3<<<'bd cre'"ate x" 0<&3`)).toBe("block")
+    })
+
+    test.each([
+      ["a command-local assignment", "unset BD_ACTOR; BD_ACTOR=x bash -c 'bd create y'"],
+      ["an env wrapper assignment", "unset BD_ACTOR; env BD_ACTOR=x bash -c 'bd create y'"],
+    ])("an interpreter's actor from %s reaches its script", (_name, command) => {
+      expect(decide(command, bdActorEnv)).toBe("allow")
+    })
+
+    test("an interpreter does not inherit a variable the shell never exported", () => {
+      expect(decide("unset BD_ACTOR; BD_ACTOR=x; bash -c 'bd create y'", bdActorEnv)).toBe("block")
     })
   })
 

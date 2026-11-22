@@ -773,13 +773,52 @@ export function interpreterCommandString(values: string[]): string | undefined {
   return undefined
 }
 
+/**
+ * The scripts a simple command hands to a shell reading its standard input: a here-document or
+ * here-string fed to an interpreter. `0<&3` or `0<&0` may point stdin at a document on another
+ * descriptor; rather than model descriptor tables, every document on the command counts as a script.
+ */
+export function stdinScriptSources(item: SimpleCommand, values: string[]): string[] {
+  if (!readsScriptFromStdin(values)) return []
+  const script = stdinSource(item)
+  if (script !== undefined) return [script]
+  return duplicatesStdin(item) ? documentSources(item) : []
+}
+
+/**
+ * Scripts that text runs through `bash -c`, `eval` and `xargs`, found by pattern rather than by structure.
+ * `sameShell` marks `eval`, which runs in the calling shell and so sees its unexported variables.
+ */
+export function commandTextSources(text: string): {
+  found: Array<{ source: string; sameShell: boolean }>
+  unknown: boolean
+} {
+  const found: Array<{ source: string; sameShell: boolean }> = []
+  let unknown = false
+  for (const match of text.matchAll(/\b(?:bash|sh|zsh|dash|ksh)\s+-c\s+((?:'[^']*')|(?:"[^"]*")|[^\s;&|]+)/g)) {
+    const value = match[1]
+    if (!value || value.startsWith('"$') || value.startsWith("'$")) unknown = true
+    else found.push({ source: value.replace(/^['"]|['"]$/g, ""), sameShell: false })
+  }
+  for (const match of text.matchAll(/\beval\s+((?:'[^']*')|(?:"[^"]*")|[^\s;&|]+)/g)) {
+    const value = match[1]
+    if (value?.startsWith("$")) unknown = true
+    else if (value) found.push({ source: value.replace(/^['"]|['"]$/g, ""), sameShell: true })
+  }
+  for (const match of text.matchAll(/\bxargs(?:\s+-[^\s;&|]+)*\s+([^;&|]+?)(?=\s*(?:[;&|]|$))/g)) {
+    const value = match[1]?.trim()
+    if (value?.startsWith("$")) unknown = true
+    else if (value) found.push({ source: value.replace(/^['"]|['"]$/g, ""), sameShell: false })
+  }
+  return { found, unknown }
+}
+
 function nestedSources(source: string): { sources: string[]; unknown: boolean } {
   // A balanced, quote-aware scan: `"$(bd create "a (b)")"` is one substitution, which a
   // regex over the quoted body cannot see. Backticks, `<( )` and substitutions nested
   // inside parameter or arithmetic expansions come from the same scan.
   const scan = scanShell(source, { executableSubstitutionsOnly: true })
   const sources: string[] = [...scan.substitutions]
-  let unknown = !scan.complete
   // A shell interpreter reading a here-document or here-string runs its body as a script.
   for (const item of scan.items) {
     if (item.kind !== "command") continue
@@ -789,30 +828,11 @@ function nestedSources(source: string): { sources: string[]; unknown: boolean } 
       /^[A-Za-z_]\w*=/.test(source.slice(item.words[first]?.start, item.words[first]?.end))
     )
       first++
-    const values = item.words.slice(first).map((word) => word.value)
-    if (!readsScriptFromStdin(values)) continue
-    const script = stdinSource(item)
-    if (script !== undefined) sources.push(script)
-    // `0<&3` or `0<&0` may point stdin at a here-document on another descriptor. Rather than
-    // model descriptor tables, read every here-document and here-string on the command as a script.
-    else if (duplicatesStdin(item)) sources.push(...documentSources(item))
+    sources.push(...stdinScriptSources(item, item.words.slice(first).map((word) => word.value)))
   }
-  for (const match of source.matchAll(/\b(?:bash|sh|zsh|dash|ksh)\s+-c\s+((?:'[^']*')|(?:"[^"]*")|[^\s;&|]+)/g)) {
-    const value = match[1]
-    if (!value || value.startsWith('"$') || value.startsWith("'$")) unknown = true
-    else sources.push(value.replace(/^['"]|['"]$/g, ""))
-  }
-  for (const match of source.matchAll(/\beval\s+((?:'[^']*')|(?:"[^"]*")|[^\s;&|]+)/g)) {
-    const value = match[1]
-    if (value?.startsWith("$")) unknown = true
-    else if (value) sources.push(value.replace(/^['"]|['"]$/g, ""))
-  }
-  for (const match of source.matchAll(/\bxargs(?:\s+-[^\s;&|]+)*\s+([^;&|]+?)(?=\s*(?:[;&|]|$))/g)) {
-    const value = match[1]?.trim()
-    if (value?.startsWith("$")) unknown = true
-    else if (value) sources.push(value.replace(/^['"]|['"]$/g, ""))
-  }
-  return { sources, unknown }
+  const text = commandTextSources(source)
+  sources.push(...text.found.map((entry) => entry.source))
+  return { sources, unknown: !scan.complete || text.unknown }
 }
 
 function staticParse(command: string): ParsedCommand | ParseFailure {

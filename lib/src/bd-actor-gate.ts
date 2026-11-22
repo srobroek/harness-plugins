@@ -1,4 +1,4 @@
-import { interpreterCommandString, readsScriptFromStdin, scanShell, stdinSource } from "./beads-shell.ts"
+import { commandTextSources, interpreterCommandString, scanShell, stdinScriptSources } from "./shell-command.ts"
 
 const ACTOR_VARS = ["BEADS_ACTOR", "BD_ACTOR"] as const
 type ActorVar = (typeof ACTOR_VARS)[number]
@@ -157,27 +157,43 @@ function applyActorAssignments(vars: ShellVars, assignments: string[]): void {
  * a bare `BEADS_ACTOR=x; bd close y` never does, since without `export` it does not reach `bd`.
  */
 export function bdInvocations(command: string, inherited: ActorState = {}): BdInvocation[] {
-  return readCommand(command, inherited).invocations
+  return readShell(command, shellVarsOf(inherited))
+}
+
+/** The shell's variables as an external process sees them, with a wrapper's own `NAME=value` and `env -u` applied. */
+function externalVars(
+  vars: ShellVars,
+  wrapped: { prefix: string[]; unset: Partial<Record<ActorVar, true>> },
+): ShellVars {
+  const child = shellVarsOf(exportedState(vars))
+  for (const assignment of wrapped.prefix) {
+    const variable = actorVarOf(assignment)
+    if (variable !== undefined) child[variable] = { value: assignment.slice(variable.length + 1), exported: true }
+  }
+  for (const variable of ACTOR_VARS)
+    if (wrapped.unset[variable] === true) child[variable] = { value: null, exported: false }
+  return child
+}
+
+/** `eval` runs in the calling shell, so it sees every variable, plus any assignment prefixed to it. */
+function sameShellVars(vars: ShellVars, assigned: string[]): ShellVars {
+  const child = { ...vars }
+  for (const assignment of assigned) {
+    const variable = actorVarOf(assignment)
+    if (variable !== undefined)
+      child[variable] = { value: assignment.slice(variable.length + 1), exported: vars[variable]?.exported }
+  }
+  return child
 }
 
 /**
- * The actor state in force where the command word at `offset` runs. A child the parser found by other
- * means (`eval`, `xargs`, a wrapped interpreter, a descriptor-fed script) is checked under this state,
- * never under the state at the end of the line.
+ * Read `command` as the shell would, with `startVars` as its starting variables. A child that forks the
+ * shell (a substitution, a subshell, `eval`) gets all of them; an external process gets only what is exported.
  */
-export function actorStateAt(command: string, inherited: ActorState = {}): (offset: number) => ActorState {
-  const { marks } = readCommand(command, inherited)
-  return (offset) => marks.findLast((mark) => mark.start <= offset)?.state ?? inherited
-}
-
-function readCommand(
-  command: string,
-  inherited: ActorState,
-): { invocations: BdInvocation[]; marks: Array<{ start: number; state: ActorState }> } {
+function readShell(command: string, startVars: ShellVars): BdInvocation[] {
   const out: BdInvocation[] = []
-  const marks: Array<{ start: number; state: ActorState }> = []
   const scan = scanShell(command, { executableSubstitutionsOnly: true })
-  let vars: ShellVars = shellVarsOf(inherited)
+  let vars: ShellVars = { ...startVars }
   // A subshell `( … )` runs on a copy; whatever it does ends with it.
   const scopes: Array<{ vars: ShellVars; chain: ShellVars | null }> = []
   // Compound-command depth: a body may not run, so what it does changes nothing we rely on.
@@ -187,6 +203,8 @@ function readCommand(
   let chain: ShellVars | null = null
   // Substitutions not claimed by a command's own words (here-document bodies) run with the final state.
   const unclaimed = [...scan.substitutions]
+  const isPipe = (other: (typeof scan.items)[number] | undefined): boolean =>
+    other?.kind === "operator" && (other.operator === "|" || other.operator === "|&")
 
   for (const [index, item] of scan.items.entries()) {
     if (item.kind === "operator") {
@@ -194,7 +212,8 @@ function readCommand(
         scopes.push({ vars, chain })
         vars = { ...vars }
         chain = null
-      } else if (item.operator === ")" && scopes.length > 0) ({ vars, chain } = scopes.pop() as (typeof scopes)[number])
+      } else if (item.operator === ")" && scopes.length > 0)
+        ({ vars, chain } = scopes.pop() as (typeof scopes)[number])
       else if ((item.operator === "&&" || item.operator === "||") && chain === null) chain = { ...vars }
       else if (item.operator === ";" || item.operator === "\n" || item.operator === "&") {
         if (chain !== null) vars = chain
@@ -203,15 +222,14 @@ function readCommand(
       continue
     }
 
-    // A non-final pipeline stage runs in a subshell: it sees the variables but changes none.
-    const following = scan.items[index + 1]
-    const inPipe = following?.kind === "operator" && (following.operator === "|" || following.operator === "|&")
-    const here = inPipe ? { ...vars } : vars
-    const before = exportedState(here)
+    // With lastpipe off, as in bash by default, every pipeline stage runs in a subshell: it sees the
+    // variables but changes none.
+    const inPipeline = isPipe(scan.items[index + 1]) || isPipe(scan.items[index - 1])
+    const here = inPipeline ? { ...vars } : vars
+    const before = { ...here }
     const spans = [...item.words, ...item.redirects]
-    if (spans.length > 0) marks.push({ start: Math.min(...spans.map((w) => w.start)), state: before })
 
-    // A substitution runs where its command does, with the exports in force at that point.
+    // A substitution runs where its command does, with the shell's variables at that point.
     // An unquoted here-document body expands in the shell that owns the command.
     const texts: string[] = []
     if (spans.length > 0) {
@@ -224,7 +242,7 @@ function readCommand(
       for (const source of scanShell(text, { executableSubstitutionsOnly: true }).substitutions) {
         const at = unclaimed.indexOf(source)
         if (at >= 0) unclaimed.splice(at, 1)
-        out.push(...bdInvocations(source, before))
+        out.push(...readShell(source, before))
       }
     }
 
@@ -239,8 +257,7 @@ function readCommand(
       } else if (CLOSERS.has(value)) {
         compounds = Math.max(0, compounds - 1)
         skip = true
-      }
-      else if (!BRANCHES.has(value) && value !== "!" && value !== "then" && value !== "do") break
+      } else if (!BRANCHES.has(value) && value !== "!" && value !== "then" && value !== "do") break
       k++
       if (skip) break
     }
@@ -255,7 +272,6 @@ function readCommand(
       else applyActorBuiltin(here, values)
     }
     if (values.length === 0) continue
-    const state = exportedState(here)
     const found = resolveBd(values, assigned)
     if (found !== undefined) {
       const scanned = scanGlobals(values, found.next)
@@ -266,31 +282,32 @@ function readCommand(
           args: values.slice(scanned.next + 1),
           globals: scanned.globals,
           prefix: found.prefix,
-          exported: { ...state },
+          exported: exportedState(here),
           unset: found.unset,
         })
       }
     }
-    // The interpreter's own `BD_ACTOR=A bash -c '…'` prefix is exported to the script it runs.
-    const scriptState: ActorState = { ...state }
-    for (const assignment of assigned) {
-      const variable = ACTOR_VARS.find((candidate) => assignment.startsWith(`${candidate}=`))
-      if (variable !== undefined) scriptState[variable] = assignment.slice(variable.length + 1)
-    }
+    // Every script this command runs, read under the variables it would see: a wrapper's own assignments
+    // (`BD_ACTOR=x bash -c …`, `env BD_ACTOR=x bash -c …`) reach the script, a parent's unexported ones do not.
+    const wrapped = skipWrappers(values, assigned) ?? { next: 0, prefix: assigned, unset: {} }
+    const external = externalVars(here, wrapped)
+    const children = new Map<string, ShellVars>()
     const inline = interpreterCommandString(values)
-    if (inline !== undefined) out.push(...bdInvocations(inline, scriptState))
-    if (readsScriptFromStdin(values)) {
-      const script = stdinSource(item)
-      if (script !== undefined) out.push(...bdInvocations(script, scriptState))
+    if (inline !== undefined) children.set(inline, external)
+    for (const script of stdinScriptSources(item, values)) children.set(script, external)
+    if (texts[0] !== undefined) {
+      for (const { source, sameShell } of commandTextSources(texts[0]).found) {
+        if (!children.has(source)) children.set(source, sameShell ? sameShellVars(here, wrapped.prefix) : external)
+      }
     }
+    for (const [source, childVars] of children) out.push(...readShell(source, childVars))
   }
-  const final = exportedState(vars)
-  for (const source of unclaimed) out.push(...bdInvocations(source, final))
-  return { invocations: out, marks }
+  for (const source of unclaimed) out.push(...readShell(source, { ...vars }))
+  return out
 }
 
-/** The `bd` word after shell assignments and transparent wrappers, with what those wrappers set. */
-function resolveBd(
+/** The word after shell assignments and transparent wrappers, with what those wrappers set. */
+function skipWrappers(
   values: string[],
   assigned: string[],
 ): { next: number; prefix: string[]; unset: Partial<Record<ActorVar, true>> } | undefined {
@@ -355,9 +372,18 @@ function resolveBd(
       if (WRAPPER_VALUE_FLAGS[flag] === true) i++
     }
   }
-  const word = values[i]
-  if (word === undefined || basename(word) !== "bd") return undefined
-  return { next: i + 1, prefix, unset }
+  return { next: i, prefix, unset }
+}
+
+/** The `bd` word after shell assignments and transparent wrappers, with what those wrappers set. */
+function resolveBd(
+  values: string[],
+  assigned: string[],
+): { next: number; prefix: string[]; unset: Partial<Record<ActorVar, true>> } | undefined {
+  const wrapped = skipWrappers(values, assigned)
+  const word = wrapped === undefined ? undefined : values[wrapped.next]
+  if (wrapped === undefined || word === undefined || basename(word) !== "bd") return undefined
+  return { ...wrapped, next: wrapped.next + 1 }
 }
 
 /**
@@ -635,23 +661,9 @@ export function decideActorParsed(
   }
   // Decide on the original command text. Re-joining argv with spaces drops quoting, so a
   // quoted "; bd create" would become a command and prefix assignments would vanish.
-  // Substitutions, `bash -c` bodies and here-documents are read in order by `decideActorGate`. The children the
-  // parser found by other means (`eval`, `xargs`, wrapped interpreters, descriptor-fed scripts) are checked under
-  // the state where they run, found by locating the child's text in the command; when it cannot be
-  // located, under the state the whole command started with.
-  let advisory = false
-  const own = decideActorGate(candidate.command, env, inherited)
-  if (own.kind === "block") return own
-  if (own.kind === "advisory") advisory = true
-  const stateAt = actorStateAt(candidate.command, inherited)
-  for (const child of candidate.nested) {
-    const text = (child as { command?: unknown } | null)?.command
-    const at = typeof text === "string" ? candidate.command.indexOf(text) : -1
-    const decision = decideActorParsed(child, env, at < 0 ? inherited : stateAt(at))
-    if (decision.kind === "block") return decision
-    if (decision.kind === "advisory") advisory = true
-  }
-  return advisory ? { kind: "advisory", text: ADVISORY_TEXT } : { kind: "allow" }
+  // Every child this command runs is read in order by `decideActorGate`, each under the variables of the
+  // command that runs it, so the parsed `nested` list is not walked.
+  return decideActorGate(candidate.command, env, inherited)
 }
 
 /**
