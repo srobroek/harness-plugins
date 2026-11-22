@@ -801,7 +801,7 @@ describe("a merge into a local target is a merged proof later", () => {
     afterMerge(started.state)
     const child = started.fake.sessions.get(CHILD)
     if (child) child.time = { busy: 5, idle: 6, archived: 7 }
-    started.fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await deliver(started.fake, started.events, { type: "session.execution.succeeded", data: { sessionID: CHILD } })
     return { ...started, states }
   }
 
