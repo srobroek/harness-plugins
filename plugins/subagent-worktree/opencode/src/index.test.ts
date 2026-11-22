@@ -24,6 +24,9 @@ type Repo = {
   branch: Record<string, string | undefined>
   ahead: number
   dirty: boolean
+  /** Commits on HEAD that its upstream lacks; with `upstream: false` the branch has none. */
+  unpushed?: number
+  upstream?: boolean
   merge: RunResult
   /** Files the lane changes against its target. */
   laneFiles: string[]
@@ -69,6 +72,7 @@ function fakeRun(repo: Repo, log: string[][]) {
       repo.branch[dir] = args[3]
       return ok()
     }
+    if (cmd === "rev-list --count @{upstream}..HEAD") return repo.upstream === false ? fail : ok(`${repo.unpushed ?? 0}\n`)
     if (cmd.startsWith("rev-list --count")) return ok(`${repo.ahead}\n`)
     if (cmd === "status --porcelain") return ok(repo.dirty ? " M a.txt\n" : "")
     if (cmd === "status --porcelain --untracked-files=no -- :(top) :(top,exclude).beads") return ok(repo.local[dir]?.changed.length ? " M a.txt\n" : "")
@@ -653,6 +657,103 @@ describe("worktree argument", () => {
     })
   })
 
+  describe("release of a dead writer", () => {
+    const MINUTE = 60_000
+    const NOW = 1_000_000_000
+    const sessionID = (event: { input: unknown }) => (event.input as { sessionID?: string }).sessionID
+    /** A writer child in the named worktree whose last run started `ago` ms before NOW and never ended. */
+    const writerIn = (setup: Setup, id: string, ago: number) =>
+      setup.fake.sessions.set(id, { id, parentID: PARENT, projectID: "prj", location: { directory: OTHER }, time: { busy: NOW - ago } })
+    const release = async (setup: Setup, child: string) => {
+      const tool = setup.fake.tools.get(MERGE_TOOL) as unknown as { execute: (i: unknown, c: unknown) => Promise<{ content: string; metadata: { ok: boolean } }> }
+      return tool.execute({ sessionID: child, method: "release", reason: "its server died" }, { sessionID: PARENT, agent: "build", messageID: "m", id: "c" })
+    }
+    const interrupts = (setup: Setup) => setup.fake.calls.filter((entry) => entry.method === "session.interrupt").map((entry) => entry.input)
+    const dead = async (repo: Partial<Repo> = {}) => {
+      const setup = await start({ now: () => NOW, repo })
+      writerIn(setup, "ses_dead", 11 * MINUTE)
+      return setup
+    }
+
+    test("a dead writer is released, and a new writer can spawn into its worktree", async () => {
+      const setup = await dead()
+      expect((await release(setup, "ses_dead")).metadata.ok).toBe(true)
+      expect(sessionID(await spawn(setup, { agent: "pinned", worktree: "feat" }))).toBe("ses_fake1")
+    })
+
+    test("the release stops the old run and is recorded with the writer it was handed to", async () => {
+      const setup = await dead()
+      await release(setup, "ses_dead")
+      await spawn(setup, { agent: "pinned", worktree: "feat" })
+      expect(interrupts(setup)).toEqual([{ sessionID: "ses_dead" }])
+      expect(setup.fake.storage.get("release/ses_dead")).toEqual({
+        child: "ses_dead",
+        directory: OTHER,
+        by: PARENT,
+        at: NOW,
+        head: OTHER_HEAD,
+        reason: "its server died",
+        interrupted: true,
+        to: "ses_fake1",
+      })
+    })
+
+    test("a released lane is bound to the new writer, and its claim follows", async () => {
+      const setup = await dead()
+      const owned: Lane = { child: "ses_dead", parent: PARENT, projectID: "prj", directory: OTHER, branch: "feat", base: BASE, parentDir: REPO, state: "active" }
+      setup.fake.storage.set(laneKey("ses_dead"), owned)
+      await release(setup, "ses_dead")
+      await spawn(setup, { agent: "pinned", worktree: "feat" })
+      expect(lane(setup.fake, "ses_dead")).toBeUndefined()
+      expect(lane(setup.fake, "ses_fake1")).toEqual({ ...owned, child: "ses_fake1", handedOver: { from: "ses_dead", at: NOW } })
+      const claim = readClaim(setup.common, OTHER)
+      expect(claim.kind === "present" && claim.value.sessionID).toBe("ses_fake1")
+    })
+
+    test("a live writer is never released", async () => {
+      const setup = await start({ now: () => NOW })
+      writerIn(setup, "ses_live", MINUTE)
+      const result = await release(setup, "ses_live")
+      expect(result.metadata.ok).toBe(false)
+      expect(result.content).toMatch(/still running/)
+      expect(interrupts(setup)).toEqual([])
+      await expect(spawn(setup, { agent: "pinned", worktree: "feat" })).rejects.toThrow(/live writer session ses_live/)
+    })
+
+    test.each([
+      ["uncommitted changes", { dirty: true }, /uncommitted changes/],
+      ["commits missing from its upstream", { unpushed: 1 }, /1 commit not pushed/],
+      ["a branch with no upstream", { upstream: false }, /no upstream/],
+    ] as const)("a worktree with %s is not released", async (_name, repo, reason) => {
+      const setup = await dead(repo)
+      const result = await release(setup, "ses_dead")
+      expect(result.metadata.ok).toBe(false)
+      expect(result.content).toMatch(reason)
+      expect(interrupts(setup)).toEqual([])
+      await expect(spawn(setup, { agent: "pinned", worktree: "feat" })).rejects.toThrow(/live writer session ses_dead/)
+    })
+
+    test("a run that starts while the writer is being released undoes the release", async () => {
+      const setup = await dead()
+      Object.assign(setup.fake.context.session, {
+        interrupt: async () => {
+          Object.assign(setup.fake.sessions.get("ses_dead") ?? {}, { time: { busy: NOW } })
+          return { interrupted: false }
+        },
+      })
+      const result = await release(setup, "ses_dead")
+      expect(result.content).toMatch(/started a new run/)
+      expect(setup.fake.storage.get("release/ses_dead")).toBeUndefined()
+      await expect(spawn(setup, { agent: "pinned", worktree: "feat" })).rejects.toThrow(/live writer session ses_dead/)
+    })
+
+    test("a released writer cannot be resumed", async () => {
+      const setup = await dead()
+      await release(setup, "ses_dead")
+      await expect(spawn(setup, { agent: "pinned", sessionID: "ses_dead", prompt: "go on" })).rejects.toThrow(/ses_dead was released/)
+    })
+  })
+
   describe("reservation of a worktree by an in-flight writer spawn", () => {
     const sessionID = (event: { input: unknown }) => (event.input as { sessionID?: string }).sessionID
     const second = (setup: Setup) => setup.fake.fire.tool("execute.before", { ...call({ agent: "pinned", worktree: "feat" }), id: "call_2" })
@@ -833,10 +934,11 @@ describe("worktree argument", () => {
     test("a tool error on the first spawn releases the worktree for the next writer", async () => {
       const setup = await start()
       await first(setup)
+      // A background spawn that fails still reports `status: "running"`; only a completed call may keep the hold.
       await setup.fake.fire.tool("execute.after", {
         ...completed("ses_fake1"),
         status: "error" as const,
-        error: new ToolError({ message: "boom" }),
+        error: new ToolError({ message: "boom", metadata: { sessionID: "ses_fake1", status: "running" } }),
       } as never)
       expect(sessionID(await second(setup))).toBe("ses_fake2")
     })

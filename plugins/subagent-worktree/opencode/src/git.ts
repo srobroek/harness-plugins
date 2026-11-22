@@ -95,6 +95,11 @@ export function createGit(run: Runner) {
       if (ahead === undefined || porcelain === undefined) return undefined
       return { ahead: Number.parseInt(ahead, 10) || 0, dirty: porcelain !== "" }
     },
+    /** Commits on HEAD that its upstream lacks; undefined when HEAD has no upstream or git fails. */
+    unpushed: async (directory: string) => {
+      const count = await git(directory, "rev-list", "--count", "@{upstream}..HEAD")
+      return count !== undefined && /^\d+$/.test(count) ? Number(count) : undefined
+    },
     /** Files HEAD changes since its merge base with `target`. */
     changedFiles: async (directory: string, target: string) =>
       files(await git(directory, "diff", "--name-only", "-z", `${target}...HEAD`)),

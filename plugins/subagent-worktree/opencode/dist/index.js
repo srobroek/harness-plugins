@@ -1358,7 +1358,7 @@ function decideWriterGuard(facts) {
     return { kind: "allow" };
   if (facts.sessions === undefined)
     return { kind: "allow", warn: WRITER_LIVENESS_NOTE };
-  const live = facts.sessions.find((session) => session.parentID !== undefined && session.id !== facts.caller && !session.readOnly && isRunning(session));
+  const live = facts.sessions.find((session) => session.parentID !== undefined && session.id !== facts.caller && !session.readOnly && !session.released && isRunning(session));
   if (!live)
     return { kind: "allow" };
   return { kind: "refuse", reason: writerRefusal(facts.directory, live.id) };
@@ -1438,6 +1438,10 @@ function createGit(run) {
       if (ahead === undefined || porcelain === undefined)
         return;
       return { ahead: Number.parseInt(ahead, 10) || 0, dirty: porcelain !== "" };
+    },
+    unpushed: async (directory) => {
+      const count = await git(directory, "rev-list", "--count", "@{upstream}..HEAD");
+      return count !== undefined && /^\d+$/.test(count) ? Number(count) : undefined;
     },
     changedFiles: async (directory, target) => files(await git(directory, "diff", "--name-only", "-z", `${target}...HEAD`)),
     trackedDirty: async (directory) => {
@@ -3364,9 +3368,76 @@ function createLifecycle(deps) {
   return { start, dispose, handleEvent, onIdle, onLanding, keep, removeForeground, removeAfterMerge, resumeRemovals, noteResume, spawnInto, sweep: runSweep, settle };
 }
 
+// plugins/subagent-worktree/opencode/src/release.ts
+var RELEASE_PREFIX = "release/";
+function releaseKey(child) {
+  return `${RELEASE_PREFIX}${child}`;
+}
+var RELEASE_QUIET_MS = 10 * 60000;
+function parseRelease(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    return;
+  const record = value;
+  for (const key of ["child", "directory", "by", "head"]) {
+    if (typeof record[key] !== "string" || record[key] === "")
+      return;
+  }
+  if (typeof record.at !== "number" || typeof record.reason !== "string" || typeof record.interrupted !== "boolean")
+    return;
+  if (record.to !== undefined && typeof record.to !== "string")
+    return;
+  return value;
+}
+function hasOpenToolCall(messages) {
+  if (!Array.isArray(messages))
+    return;
+  return messages.some((message) => {
+    if (message?.type !== "assistant" || !Array.isArray(message.content))
+      return false;
+    return message.content.some((part) => {
+      const status = part?.type === "tool" ? part.state?.status : undefined;
+      return status === "streaming" || status === "running";
+    });
+  });
+}
+function decideRelease(facts) {
+  const { child } = facts;
+  if (child.state === "unknown")
+    return { release: false, reason: "cannot read session state; try again" };
+  if (child.owner !== facts.caller)
+    return { release: false, reason: "only the session that spawned the writer can release it" };
+  let interrupt = false;
+  if (child.state !== "deleted" && child.state !== "archived") {
+    if (facts.openTool === undefined)
+      return { release: false, reason: "cannot read the tool calls of the writer; try again" };
+    if (child.state === "running" || facts.openTool) {
+      const last = Math.max(child.busy ?? 0, child.idle ?? 0, child.updated ?? 0);
+      const quiet = facts.now - last;
+      if (quiet < facts.quietMs) {
+        return {
+          release: false,
+          reason: `the writer may be still running (last activity ${Math.round(quiet / 1000)}s ago; a release needs ${Math.round(facts.quietMs / 60000)} quiet minutes). Send it a follow-up or wait`
+        };
+      }
+      interrupt = true;
+    }
+  }
+  const { tree } = facts;
+  if (tree === undefined)
+    return { release: false, reason: "cannot read the worktree" };
+  if (tree.dirty)
+    return { release: false, reason: "the worktree has uncommitted changes; commit and push them, or discard them, first" };
+  if (tree.unpushed === undefined)
+    return { release: false, reason: "the worktree's branch has no upstream; push it (git push -u) first" };
+  if (tree.unpushed > 0) {
+    return { release: false, reason: `the worktree has ${tree.unpushed} commit${tree.unpushed === 1 ? "" : "s"} not pushed to its upstream; push first` };
+  }
+  return { release: true, interrupt };
+}
+
 // plugins/subagent-worktree/opencode/src/index.ts
 var MERGE_DESCRIPTION = `Merge a subagent's worktree branch back, report one lane, or list every active lane.
-` + "The subagent tool result names the lane (branch, base, sessionID). " + 'method "wt-merge" runs `wt merge <target> --no-squash --no-ff --yes` from the subagent worktree, keeping its commits, ' + "and removes the worktree on success; a conflict keeps the worktree and reports the output. " + "The worktree must be committed and clean, and the target checkout must have no uncommitted or untracked changes to files the lane changes. " + 'method "keep" (with reason) records that an unmerged lane is kept on purpose, so the idle gate stops nudging about it. method "none" only reports the lane status. method "list" (no sessionID) reports every active lane in the project ' + "with commits ahead, uncommitted changes, and orphaned lanes; missing worktrees move their child sessions back.";
+` + "The subagent tool result names the lane (branch, base, sessionID). " + 'method "wt-merge" runs `wt merge <target> --no-squash --no-ff --yes` from the subagent worktree, keeping its commits, ' + "and removes the worktree on success; a conflict keeps the worktree and reports the output. " + "The worktree must be committed and clean, and the target checkout must have no uncommitted or untracked changes to files the lane changes. " + 'method "keep" (with reason) records that an unmerged lane is kept on purpose, so the idle gate stops nudging about it. method "none" only reports the lane status. method "list" (no sessionID) reports every active lane in the project ' + "with commits ahead, uncommitted changes, and orphaned lanes; missing worktrees move their child sessions back. " + 'method "release" (with reason) frees the worktree of a dead writer you spawned, so a new writer can be spawned into it: the writer must be idle or gone, ' + "or quiet for 10 minutes (its stale run is then interrupted), and the worktree clean and pushed. A released writer cannot be resumed.";
 var SWEEP_TOOL = "subagent_worktree_sweep";
 var SWEEP_DESCRIPTION = `Plan or prune landed, clean, abandoned agent worktrees; dirty or unlanded ones are only reported.
 ` + "Each worktree under OpenCode's worktree directory (and lane records) gets keep, prune, prune-registry or quarantine with a reason. " + "A worktree is pruned only when it landed (ancestor of origin/main, a merged PR at its tip, or wt integrated), is clean, has no live session, " + 'and is older than minAgeHours. Removal is never forced and no remote branch is touched. Mode "report" (default) changes nothing.';
@@ -3384,9 +3455,9 @@ var MERGE_INPUT = {
       type: "string",
       description: 'From the subagent tool result; required unless method is "list"'
     },
-    method: { type: "string", enum: ["wt-merge", "none", "list", "keep"] },
+    method: { type: "string", enum: ["wt-merge", "none", "list", "keep", "release"] },
     target: { type: "string", description: "Defaults to the lane's base branch" },
-    reason: { type: "string", description: 'Why the lane is kept; used by method "keep"' }
+    reason: { type: "string", description: 'Why the lane is kept (method "keep") or the writer released (method "release")' }
   }
 };
 var directoryExists = async (path) => {
@@ -3563,6 +3634,37 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     }
   };
   const notes = new Map;
+  const releasesIn = async (directory) => {
+    const found = [];
+    let after;
+    do {
+      const page = await ctx.storage.scan({ prefix: RELEASE_PREFIX, ...after === undefined ? {} : { after } });
+      for (const entry of page.entries) {
+        const release2 = parseRelease(entry.value);
+        if (release2?.directory === directory)
+          found.push(release2);
+      }
+      after = page.next;
+    } while (after !== undefined);
+    return found;
+  };
+  const writersIn = async (projectID, directory) => {
+    const sessions = await sessionsIn(projectID, directory);
+    if (sessions === undefined)
+      return;
+    const released = new Set((await releasesIn(directory)).map((release2) => release2.child));
+    return sessions.map((session) => released.has(session.id) ? { ...session, released: true } : session);
+  };
+  const handOver = async (directory, child) => {
+    for (const release2 of (await releasesIn(directory)).filter((candidate) => candidate.to === undefined)) {
+      const owned = await load(release2.child);
+      if (owned?.state === "active" && await normalize(owned.directory) === directory) {
+        await save({ ...owned, child, handedOver: { from: release2.child, at: now() } });
+        await ctx.storage.remove(laneKey(release2.child));
+      }
+      await ctx.storage.set(releaseKey(release2.child), { ...release2, to: child });
+    }
+  };
   const reservations = new Map;
   let sequence = 0;
   const hasStarted = async (child) => {
@@ -3592,7 +3694,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
         reservations.delete(directory);
     }
   };
-  const release = (callId) => {
+  const release2 = (callId) => {
     for (const [directory, reservation] of reservations)
       if (reservation.callId === callId)
         reservations.delete(directory);
@@ -3605,6 +3707,10 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
       return;
     event.input = withoutWorktree(event.input);
     if (input.sessionID !== undefined) {
+      const released = parseRelease(await ctx.storage.get(releaseKey(input.sessionID)));
+      if (released) {
+        throw new Error(`subagent-worktree: not resuming ${input.sessionID}: ${input.sessionID} was released from ${released.directory}${released.to ? ` and the worktree handed to ${released.to}` : ""}, so it may not write again. Start a new subagent instead.`);
+      }
       await markResumed(input.sessionID);
       const note = resumeWorktreeNote(input);
       if (note)
@@ -3649,7 +3755,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
         writer,
         directory,
         caller: event.sessionID,
-        sessions: await sessionsIn(parent.projectID, directory)
+        sessions: await writersIn(parent.projectID, directory)
       });
       if (guard.kind === "refuse")
         throw new Error(`subagent-worktree: ${guard.reason}`);
@@ -3669,7 +3775,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
         writer: hold.writer,
         directory: hold.directory,
         caller: event.sessionID,
-        sessions: await sessionsIn(parent.projectID, hold.directory)
+        sessions: await writersIn(parent.projectID, hold.directory)
       });
       if (fresh.kind === "refuse")
         throw new Error(`subagent-worktree: ${fresh.reason}`);
@@ -3698,6 +3804,8 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
           if (reserved && hold && reserved.token === hold.token)
             reserved.child = child;
           await ctx.session.move({ sessionID: child, directory: plan.worktree.directory });
+          if (hold?.writer)
+            await handOver(hold.directory, child);
         });
         event.input = { ...event.input, sessionID: child, prompt: startPrompt(input.prompt, plan.worktree) };
       } catch (error) {
@@ -3739,7 +3847,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     try {
       await begin(event);
     } catch (error) {
-      release(event.id);
+      release2(event.id);
       throw error;
     }
   };
@@ -3856,7 +3964,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
               reservation.child = started;
         }
       } else
-        release(event.id);
+        release2(event.id);
     }
     const skipped = event.id === undefined ? undefined : notes.get(event.id);
     if (event.id !== undefined)
@@ -3974,6 +4082,100 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
     const directory = worktreeForBranch(entries, target);
     return directory === undefined ? [] : git2.localFiles(directory);
   };
+  const settled = async (work) => {
+    let timer;
+    const timeout = new Promise((done) => {
+      timer = setTimeout(() => done(undefined), lookupMs);
+    });
+    try {
+      return await Promise.race([work.catch(() => {
+        return;
+      }), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const writerFacts = async (child) => {
+    const lookup = Promise.resolve(ctx.session.get({ sessionID: child }));
+    const state = await childState(lookup, lookupMs, child);
+    const raw = state === "unknown" ? undefined : await lookup.catch(() => {
+      return;
+    });
+    const time = raw?.time ?? {};
+    const busy = toMillis2(time.busy);
+    const idle = toMillis2(time.idle);
+    const updated = toMillis2(time.updated);
+    return {
+      state,
+      ...typeof raw?.parentID === "string" ? { parentID: raw.parentID } : {},
+      ...typeof raw?.location?.directory === "string" ? { directory: raw.location.directory } : {},
+      ...busy === undefined ? {} : { busy },
+      ...idle === undefined ? {} : { idle },
+      ...updated === undefined ? {} : { updated }
+    };
+  };
+  const releaseWriter = async (child, reason, tool) => {
+    const refuse = (why) => ({ content: `${MERGE_TOOL}: not released: ${why}`, metadata: { ok: false, reason: why } });
+    const lane2 = await load(child);
+    await ctx.permission.assert({
+      sessionID: tool.sessionID,
+      agent: tool.agent,
+      action: MERGE_TOOL,
+      resources: [lane2?.branch ?? child],
+      source: { type: "tool", messageID: tool.messageID, id: tool.id }
+    });
+    if (parseRelease(await ctx.storage.get(releaseKey(child))))
+      return refuse(`${child} is already released`);
+    const caller = await getSession(tool.sessionID);
+    if (!caller)
+      return refuse("cannot read the calling session");
+    const before = await writerFacts(child);
+    const where = lane2?.state === "active" ? lane2.directory : before.directory;
+    if (where === undefined)
+      return refuse(`cannot find the worktree of ${child}`);
+    const found = await locate(caller.location.directory, where);
+    if (!found.lookup.ok)
+      return refuse(found.lookup.reason);
+    const directory = found.lookup.worktree.directory;
+    return lifecycle.spawnInto(directory, caller.location.directory, async () => {
+      const gone = before.state === "deleted" || before.state === "archived";
+      const openTool = gone ? undefined : hasOpenToolCall(await settled(Promise.resolve(ctx.session.context({ sessionID: child }))));
+      const porcelain = await git2.porcelain(directory);
+      const owner = before.parentID ?? lane2?.parent;
+      const decision = decideRelease({
+        caller: tool.sessionID,
+        child: { ...before, ...owner === undefined ? {} : { owner } },
+        openTool,
+        tree: porcelain === undefined ? undefined : { dirty: porcelain !== "", unpushed: await git2.unpushed(directory) },
+        now: now(),
+        quietMs: RELEASE_QUIET_MS
+      });
+      if (!decision.release)
+        return refuse(decision.reason);
+      const head = await git2.head(directory);
+      if (head === undefined)
+        return refuse(`cannot read HEAD in ${directory}`);
+      const record = { child, directory, by: tool.sessionID, at: now(), head, reason, interrupted: decision.interrupt };
+      await ctx.storage.set(releaseKey(child), record);
+      try {
+        if (decision.interrupt)
+          await ctx.session.interrupt({ sessionID: child });
+        const after = await writerFacts(child);
+        if (after.state === "unknown")
+          throw new Error(`cannot read ${child} after the release`);
+        if (after.state === "running" && (after.busy ?? 0) > (before.busy ?? 0))
+          throw new Error(`${child} started a new run while it was being released`);
+      } catch (error) {
+        await ctx.storage.remove(releaseKey(child));
+        return refuse(errorMessage(error));
+      }
+      const how = decision.interrupt ? "its stale run was interrupted" : gone ? "its session is gone" : "it was idle";
+      return {
+        content: `${MERGE_TOOL}: released ${child} from ${directory} at ${head.slice(0, 12)} (${how}); it cannot be resumed. Spawn the next writer with worktree "${directory}"${lane2?.state === "active" ? `; it takes over the lane on ${lane2.branch}` : ""}.`,
+        metadata: { ok: true, release: record }
+      };
+    });
+  };
   const merge = async (input, tool) => {
     const stopped = () => tool.signal?.aborted === true;
     if (stopped()) {
@@ -3993,6 +4195,8 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
     if (!input.sessionID) {
       return { content: `${MERGE_TOOL}: sessionID is required for method "${input.method}"`, metadata: { ok: false } };
     }
+    if (input.method === "release")
+      return releaseWriter(input.sessionID, input.reason?.trim() || "released by its parent", tool);
     let lane2 = await load(input.sessionID);
     if (input.method === "keep") {
       await ctx.permission.assert({
@@ -4178,6 +4382,8 @@ export {
   MERGE_DESCRIPTION,
   MERGE_INPUT,
   MERGE_TOOL,
+  RELEASE_PREFIX,
+  RELEASE_QUIET_MS,
   RESERVATION_MS,
   RESUME_WORKTREE_NOTE,
   SESSION_LOOKUP_MS,
@@ -4201,11 +4407,13 @@ export {
   createPlugin,
   decideIsolation,
   decideMerge,
+  decideRelease,
   decideWriterGuard,
   src_default as default,
   diffCommand,
   findWorktree,
   formatLaneList,
+  hasOpenToolCall,
   isConflict,
   isRunning,
   isSessionNotFound,
@@ -4219,10 +4427,12 @@ export {
   overlap,
   parseLane,
   parseModel,
+  parseRelease,
   parseWorktrees,
   planStart,
   readOptions,
   readSubagentInput,
+  releaseKey,
   reservationStatus,
   resumeWorktreeNote,
   rewritePrompt,

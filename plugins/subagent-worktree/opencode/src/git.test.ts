@@ -57,6 +57,20 @@ describe("createGit().isUnborn on real repositories", () => {
     expect(await git.trackedDirty(repo)).toBe(false)
   })
 
+  test("unpushed counts commits the upstream lacks, and is undefined without an upstream", async () => {
+    const remote = join(root, "remote.git")
+    const repo = join(root, "pushed")
+    await sh(root, "init", "--quiet", "--bare", remote)
+    await sh(root, "init", "--quiet", "-b", "main", repo)
+    await sh(repo, "commit", "--quiet", "--allow-empty", "-m", "init")
+    expect(await git.unpushed(repo)).toBeUndefined()
+    await sh(repo, "remote", "add", "origin", remote)
+    await sh(repo, "push", "--quiet", "-u", "origin", "main")
+    expect(await git.unpushed(repo)).toBe(0)
+    await sh(repo, "commit", "--quiet", "--allow-empty", "-m", "local")
+    expect(await git.unpushed(repo)).toBe(1)
+  })
+
   test("trackedDirty ignores the tracked Beads export, from any subdirectory", async () => {
     const repo = await mkdtemp(join(root, "beads-"))
     await sh(repo, "init", "--quiet")
