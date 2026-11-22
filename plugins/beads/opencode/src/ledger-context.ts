@@ -11,7 +11,7 @@
  */
 
 import { existsSync, lstatSync, realpathSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import { readSmallRegularFile } from "@srobroek/opencode-lib/bounded-read"
 
 export type LedgerContext = {
