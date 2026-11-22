@@ -1210,7 +1210,7 @@ function applyActorBuiltin(state, values, conditional) {
     if (conditional)
       continue;
     if (name === "unset")
-      delete state[variable];
+      state[variable] = null;
     else if (arg.includes("="))
       state[variable] = arg.slice(variable.length + 1);
   }
@@ -1304,7 +1304,7 @@ ${document.body}__HEREDOC_END__
     if (andChained)
       for (const variable of ACTOR_VARS) {
         const value = state[variable];
-        if (value !== undefined && value !== before[variable])
+        if (typeof value === "string" && value !== before[variable])
           chainExports.push({ variable, value });
       }
     const found = resolveBd(values, assigned);
@@ -1521,8 +1521,12 @@ function invocationActor(invocation, env) {
     if (invocation.unset[variable] === true)
       return null;
     const assignment = invocation.prefix.findLast((token) => token.startsWith(`${variable}=`));
-    const value = assignment !== undefined ? assignment.slice(variable.length + 1) : invocation.exported[variable] ?? env[variable];
-    return literal(value);
+    if (assignment !== undefined)
+      return literal(assignment.slice(variable.length + 1));
+    const exported = invocation.exported[variable];
+    if (exported === null)
+      return null;
+    return literal(exported ?? env[variable]);
   };
   return resolve("BEADS_ACTOR") ?? resolve("BD_ACTOR");
 }
