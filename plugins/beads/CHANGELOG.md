@@ -1,3 +1,9 @@
+## beads [0.8.9](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.8...beads--v0.8.9) (2026-11-22)
+
+### Bug Fixes
+
+* **beads:** a shell unset of the actor variable no longer escapes the actor gate ([#87](https://github.com/srobroek/harness-plugins/issues/87)) ([63068ec](https://github.com/srobroek/harness-plugins/commit/63068ec94d0d66daad129e8036e430fa6d7f8a30))
+
 ## beads [0.8.8](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.7...beads--v0.8.8) (2026-11-22)
 
 ### Bug Fixes
