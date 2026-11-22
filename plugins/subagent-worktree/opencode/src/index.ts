@@ -420,12 +420,64 @@ export function createLanes(
   const background = new Map<string, { jobs: string | undefined; at: number }>()
   /** Whether this plugin sees idle gates at all; without them background work cannot be ruled out. */
   let idleObserved = false
+  /** The host event stream behind `noteActivity` ended: idle gates cannot be trusted any more. */
+  let activityEnded = false
   /** When this plugin instance started: a run that began earlier belonged to another server instance. */
   const startedAt = now()
   const noteIdle = (input: { sessionID?: unknown; background?: ReadonlyArray<{ kind?: unknown; shellID?: unknown; jobID?: unknown; childSessionID?: unknown }> }) => {
     if (typeof input.sessionID !== "string") return
     const jobs = (input.background ?? []).map((job) => `${String(job.kind)} ${String(job.shellID ?? job.jobID ?? job.childSessionID ?? "")}`.trim())
     background.set(input.sessionID, { jobs: jobs.length === 0 ? undefined : jobs.join(", "), at: now() })
+  }
+  /**
+   * Session events that say a run ended normally, or change nothing about what it runs. Every other
+   * `session.*` event about a child after its empty idle gate is run activity: the gate let the run go
+   * on, and what it started then was never listed, so that gate no longer counts (`noteActivity`).
+   */
+  const QUIET_EVENTS: ReadonlySet<string> = new Set([
+    "session.execution.succeeded",
+    "session.idle",
+    "session.usage.updated",
+    "session.viewed",
+    "session.renamed",
+    "session.metadata.updated",
+    "session.moved",
+    "session.permissions",
+    "session.archived",
+    "session.unarchived",
+    "session.deleted",
+  ])
+  const noteActivity = (raw: unknown) => {
+    const event = raw as { type?: unknown; created?: unknown; data?: { sessionID?: unknown } } | null
+    if (typeof event?.type !== "string" || !event.type.startsWith("session.") || QUIET_EVENTS.has(event.type)) return
+    const sessionID = event.data?.sessionID
+    if (typeof sessionID !== "string") return
+    const seen = background.get(sessionID)
+    if (seen === undefined || seen.jobs !== undefined) return
+    // An event from before the gate, delivered late, says nothing about after it. No time: assume after.
+    if (typeof event.created === "number" && event.created < seen.at) return
+    background.delete(sessionID)
+  }
+  /**
+   * Follow host events for `noteActivity` until the returned stop is called. If the stream ends or fails
+   * on its own, an empty gate can no longer be invalidated, so idle gates stop counting (fail closed).
+   */
+  const watchActivity = () => {
+    const abort = new AbortController()
+    const iterator = (ctx.event.subscribe({ signal: abort.signal } as never) as AsyncIterable<unknown>)[Symbol.asyncIterator]()
+    void (async () => {
+      for (;;) {
+        const next = await iterator.next().catch(() => ({ done: true as const, value: undefined }))
+        if (next.done) break
+        noteActivity(next.value)
+      }
+      activityEnded = true
+      idleObserved = false
+    })()
+    return async () => {
+      abort.abort()
+      await iterator.return?.()
+    }
   }
   /**
    * What is known about `child`'s background work. A run that started before this plugin instance did
@@ -1228,8 +1280,9 @@ export function createLanes(
     load,
     lifecycle,
     noteIdle,
+    watchActivity,
     observingIdle: (on: boolean) => {
-      idleObserved = on
+      idleObserved = on && !activityEnded
     },
   }
 }
@@ -1251,9 +1304,11 @@ export function createPlugin(overrides: Overrides = {}) {
         registrations.push(await ctx.tool.hook("execute.after", lanes.after as never))
         registrations.push(await ctx.tool.hook("execute.after", lanes.lifecycle.onLanding as never))
         // Observes only: a release refuses a writer whose last idle gate listed background work. With gates off,
-        // or on a host without the hook, background work cannot be seen, and every release is refused.
+        // or on a host without the hook, background work cannot be seen, and every release is refused. Host
+        // events are followed first, so any run activity after an empty gate voids that gate.
         if (options.gates) {
           try {
+            registrations.push({ dispose: lanes.watchActivity() })
             registrations.push(await ctx.session.hook("experimental.idle" as never, lanes.noteIdle as never))
             lanes.observingIdle(true)
           } catch {}

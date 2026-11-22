@@ -3688,12 +3688,58 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
   };
   const background = new Map;
   let idleObserved = false;
+  let activityEnded = false;
   const startedAt = now();
   const noteIdle = (input) => {
     if (typeof input.sessionID !== "string")
       return;
     const jobs = (input.background ?? []).map((job) => `${String(job.kind)} ${String(job.shellID ?? job.jobID ?? job.childSessionID ?? "")}`.trim());
     background.set(input.sessionID, { jobs: jobs.length === 0 ? undefined : jobs.join(", "), at: now() });
+  };
+  const QUIET_EVENTS = new Set([
+    "session.execution.succeeded",
+    "session.idle",
+    "session.usage.updated",
+    "session.viewed",
+    "session.renamed",
+    "session.metadata.updated",
+    "session.moved",
+    "session.permissions",
+    "session.archived",
+    "session.unarchived",
+    "session.deleted"
+  ]);
+  const noteActivity = (raw) => {
+    const event = raw;
+    if (typeof event?.type !== "string" || !event.type.startsWith("session.") || QUIET_EVENTS.has(event.type))
+      return;
+    const sessionID = event.data?.sessionID;
+    if (typeof sessionID !== "string")
+      return;
+    const seen = background.get(sessionID);
+    if (seen === undefined || seen.jobs !== undefined)
+      return;
+    if (typeof event.created === "number" && event.created < seen.at)
+      return;
+    background.delete(sessionID);
+  };
+  const watchActivity = () => {
+    const abort = new AbortController;
+    const iterator = ctx.event.subscribe({ signal: abort.signal })[Symbol.asyncIterator]();
+    (async () => {
+      for (;; ) {
+        const next = await iterator.next().catch(() => ({ done: true, value: undefined }));
+        if (next.done)
+          break;
+        noteActivity(next.value);
+      }
+      activityEnded = true;
+      idleObserved = false;
+    })();
+    return async () => {
+      abort.abort();
+      await iterator.return?.();
+    };
   };
   const backgroundOf = (child, busy, idle) => {
     const seen = background.get(child);
@@ -4438,8 +4484,9 @@ The merge is done, but the worktree stays at ${lane2.directory} (branch ${lane2.
     load,
     lifecycle,
     noteIdle,
+    watchActivity,
     observingIdle: (on) => {
-      idleObserved = on;
+      idleObserved = on && !activityEnded;
     }
   };
 }
@@ -4462,6 +4509,7 @@ function createPlugin(overrides = {}) {
         registrations.push(await ctx.tool.hook("execute.after", lanes.lifecycle.onLanding));
         if (options.gates) {
           try {
+            registrations.push({ dispose: lanes.watchActivity() });
             registrations.push(await ctx.session.hook("experimental.idle", lanes.noteIdle));
             lanes.observingIdle(true);
           } catch {}

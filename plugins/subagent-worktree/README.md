@@ -89,7 +89,9 @@ Pass the writer's `sessionID` and a `reason`. The release needs all of these:
   background subagent, and no hold is recorded on the worktree. A writer whose latest run started
   in this server counts as known only when that run ended at or after an empty idle gate that came
   after its start. An idle gate can let the same run go on, and what the run starts then is not
-  recorded. Otherwise the plugin refuses. To release such a writer, stop its run first. With `gates: false`, or on a host
+  recorded. So any run activity of the writer after the gate (a step, a tool call, a shell, a failure
+  or an interrupt) voids the gate. Only a normal end, and events that change nothing about the run,
+  leave it standing. If the plugin stops receiving host events, no gate counts. Otherwise the plugin refuses. To release such a writer, stop its run first. With `gates: false`, or on a host
   without the idle gate, the plugin cannot see background work, so it refuses every release.
 - No `subagent` call that resumes the writer is in flight. A background resume counts as in flight
   until the writer's next run has started, since its run may not show when the call returns.

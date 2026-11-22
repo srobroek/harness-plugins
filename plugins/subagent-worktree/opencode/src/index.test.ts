@@ -673,6 +673,13 @@ describe("worktree argument", () => {
       return tool.execute({ sessionID: child, method: "release", reason: "its server died" }, { sessionID: PARENT, agent: "build", messageID: "m", id: "c" })
     }
     const interrupts = (setup: Setup) => setup.fake.calls.filter((entry) => entry.method === "session.interrupt").map((entry) => entry.input)
+    /** A host event about the writer `ses_dead`, created at `created`. */
+    const hostEvent = (type: string, created: number) => ({ id: `evt_${type}_${created}`, type, created, data: { sessionID: "ses_dead" } })
+    const emitAll = (setup: Setup, events: readonly unknown[]) => {
+      for (const event of events) setup.fake.emit(event)
+    }
+    /** Let every subscriber take the events already emitted: they are delivered on later ticks. */
+    const flushEvents = () => new Promise<void>((done) => setImmediate(done))
     const dead = async (repo: Partial<Repo> = {}) => {
       const setup = await start({ now: () => NOW, repo })
       writerIn(setup, "ses_dead", 11 * MINUTE)
@@ -839,8 +846,30 @@ describe("worktree argument", () => {
       writerIn(setup, "ses_dead", 11 * MINUTE)
       clock = NOW
       await setup.fake.fire.session("experimental.idle", { sessionID: "ses_dead", background: [] })
-      Object.assign(setup.fake.sessions.get("ses_dead") ?? {}, { time: { busy: NOW - 11 * MINUTE, idle: NOW } })
+      // The host ends the run after the gate: these say the run is over, not that it went on.
+      emitAll(setup, [hostEvent("session.execution.succeeded", NOW + 1), hostEvent("session.idle", NOW + 2)])
+      await flushEvents()
+      Object.assign(setup.fake.sessions.get("ses_dead") ?? {}, { time: { busy: NOW - 11 * MINUTE, idle: NOW + 2 } })
       expect((await release(setup, "ses_dead")).metadata.ok).toBe(true)
+    })
+
+    test.each([
+      ["fails", "session.execution.failed"],
+      ["is interrupted", "session.execution.interrupted"],
+    ])("a writer whose run went on after an empty idle gate, started a shell and %s is not released", async (_name, end) => {
+      let clock = NOW - 20 * MINUTE
+      const setup = await start({ now: () => clock })
+      writerIn(setup, "ses_dead", 11 * MINUTE)
+      clock = NOW
+      await setup.fake.fire.session("experimental.idle", { sessionID: "ses_dead", background: [] })
+      // Another hook let the same run go on: it started a shell, then ended with no idle gate.
+      emitAll(setup, [hostEvent("session.step.started", NOW + 1), hostEvent("session.shell.started", NOW + 2), hostEvent(end, NOW + 3)])
+      await flushEvents()
+      Object.assign(setup.fake.sessions.get("ses_dead") ?? {}, { time: { busy: NOW - 11 * MINUTE, idle: NOW + 3 } })
+      clock = NOW + 11 * MINUTE
+      const result = await release(setup, "ses_dead")
+      expect(result.content).toMatch(/background work since its last run cannot be ruled out/)
+      expect(setup.fake.storage.get("release/ses_dead")).toBeUndefined()
     })
 
     test("a second release queued behind the first is refused under the lock", async () => {
