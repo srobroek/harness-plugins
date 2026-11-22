@@ -329,8 +329,10 @@ function readShell(command: string, context: { nested: boolean; touched: boolean
         chain = null
       } else if (operator === ")" && scopes.length > 0) ({ vars, list, chain } = scopes.pop() as (typeof scopes)[number])
       else if (operator === "{") {
-        // A brace group runs in this shell, so its changes stand; only its separators are its own.
+        // A brace group runs in this shell, so its changes stand; only its separators are its own. Its
+        // lists start from the variables at its entry, and the enclosing list's start comes back at `}`.
         groups.push({ list, chain })
+        list = { ...vars }
         chain = null
       } else if (operator === "}" && groups.length > 0) {
         endChain()
