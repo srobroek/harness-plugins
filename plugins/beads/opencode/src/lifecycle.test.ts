@@ -383,10 +383,11 @@ describe("subagent claim release", () => {
     const bd = ledger({ "proj-6": { status: "in_progress", assignee: `opencode/${parent}/general/${child}` } })
     const showEntered = Promise.withResolvers<void>()
     const allowShow = Promise.withResolvers<void>()
-    let shows = 0
+    let armed = false
     const run: BdRun = async (cwd, args, deadline, env) => {
-      // The release's own check is the only `show`: a claim is confirmed from its output, not looked up.
-      if (args[0] === "show" && ++shows === 1) {
+      // Only the release's own check parks; the latch is armed after the claim is set up, so no earlier read can trip it.
+      if (armed && args[0] === "show") {
+        armed = false
         showEntered.resolve()
         await allowShow.promise
       }
@@ -396,6 +397,7 @@ describe("subagent claim release", () => {
     const call = { tool: "subagent", sessionID: parent, agent: "build", messageID: "m", id: "call_race", input: { prompt: "x" } }
     await t.fake.fire.tool("execute.before", call)
     await t.shell(child, "bd update proj-6 --claim", claimJson({ "proj-6": `opencode/${parent}/general/${child}` }))
+    armed = true
     const after = t.fake.fire.tool("execute.after", {
       ...call,
       status: "completed" as const,
@@ -447,7 +449,11 @@ describe("subagent claim release", () => {
     })
     await t.shell(child, "bd update proj-9 --claim", claimJson({ "proj-9": `opencode/${parent}/general/${child}` }))
     await t.emit("session.execution.succeeded", child)
-    expect(bd.calls.map((args) => args[0]).filter((verb) => verb !== "gate")).toEqual(["show", "unclaim", "update"])
+    const released = bd.calls.filter((args) => args[0] !== "gate")
+    expect(released.filter((args) => args[0] === "unclaim")).toHaveLength(1)
+    // The guarded check reads the holder before the release, and the release restores the blocked status.
+    expect(released.findIndex((args) => args[0] === "show")).toBeLessThan(released.findIndex((args) => args[0] === "unclaim"))
+    expect(released.find((args) => args[0] === "update")?.slice(0, 4)).toEqual(["update", "proj-9", "--status", "blocked"])
     const [told] = t.synthetics()
     expect(told).toMatchObject({ sessionID: parent, resume: false, metadata: { source: BEADS_SOURCE } })
     expect(told?.text).toContain(`finished background subagent session ${child} were released`)
