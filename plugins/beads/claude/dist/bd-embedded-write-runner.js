@@ -1697,6 +1697,16 @@ function storeFromBeadsDb(value, cwd) {
   const path = resolve(cwd, value);
   return basename2(path) === ".beads" ? path : dirname(path);
 }
+function ambientStore(cwd, env, walkUp = sessionPinFor) {
+  const dir = env.BEADS_DIR;
+  if (dir !== undefined && dir !== "")
+    return resolve(cwd, dir);
+  const found = walkUp(cwd);
+  if (found !== undefined)
+    return found;
+  const db = env.BEADS_DB;
+  return db !== undefined && db !== "" ? storeFromBeadsDb(db, cwd) : undefined;
+}
 function isDir(path) {
   try {
     return statSync(path).isDirectory();
@@ -1955,12 +1965,7 @@ function selectedStoreFor(globals, cwd, env) {
   }
   if (directory !== undefined)
     return sessionPinFor(base);
-  const pinned = env.BEADS_DIR;
-  if (pinned !== undefined && pinned !== "")
-    return absolute(pinned, cwd);
-  if (env.BEADS_DB !== undefined && env.BEADS_DB !== "")
-    return storeFromBeadsDb(env.BEADS_DB, cwd);
-  return sessionPinFor(cwd);
+  return ambientStore(cwd, env);
 }
 function absolute(path, cwd) {
   return isAbsolute2(path) ? path : resolve2(cwd, path);
@@ -2001,7 +2006,59 @@ function mentionsBd(source) {
   return BD_WORD.test(source) || BD_WORD.test(source.replace(/["'\\]/g, ""));
 }
 var ASSIGNMENT3 = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
-var BEADS_DB_WORD = /^BEADS_DB(?:\+?=|$)/;
+var DB_VARIABLE = /BEADS_DB|BD_DB/;
+var SKIPS_STORE_INIT = new Set([
+  "bash",
+  "bootstrap",
+  "codex-hook",
+  "completion",
+  "context",
+  "cursor-hook",
+  "doctor",
+  "dolt",
+  "fish",
+  "formula",
+  "help",
+  "hook",
+  "hooks",
+  "human",
+  "init",
+  "merge",
+  "metrics",
+  "onboard",
+  "powershell",
+  "prime",
+  "quickstart",
+  "schema",
+  "send-metrics",
+  "setup",
+  "version",
+  "where",
+  "worktree",
+  "zsh"
+]);
+var OPENS_STORE = {
+  dolt: new Set(["push", "pull", "commit"]),
+  human: new Set(["list", "respond", "dismiss", "stats"])
+};
+var MIGRATE_SKIPS_STORE_INIT = new Set([
+  "from-server-to-proxied-server",
+  "from-proxied-server-to-server",
+  "from-shared-server-to-proxied-server",
+  "from-proxied-server-to-shared-server",
+  "legacy-sqlite"
+]);
+function skipsStoreInit({ verb, args }) {
+  const positional = args.filter((arg) => !arg.startsWith("-"));
+  const sub = positional[0];
+  if (verb === "migrate")
+    return sub !== undefined && MIGRATE_SKIPS_STORE_INIT.has(sub);
+  if (!SKIPS_STORE_INIT.has(verb) || sub === undefined)
+    return SKIPS_STORE_INIT.has(verb);
+  if (verb === "dolt" && sub === "remote")
+    return positional.length < 2;
+  return OPENS_STORE[verb]?.has(sub) !== true;
+}
 var BEADS_DIR_ASSIGNMENT = /^BEADS_DIR(\+?)=/;
 var LIST_PREFIXES = new Set(["then", "else", "do"]);
 var COMPOUND_OPENERS = { if: true, case: true, for: true, select: true, while: true, until: true };
@@ -2123,7 +2180,6 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
   const definesFunction = hasFunctionDefinition(items);
   if (definesFunction)
     unplaced?.("the command defines a shell function, whose body the gate does not follow");
-  const plainCommand = scan.complete && scan.substitutions.length === 0 && items.length === 1 && items[0]?.kind === "command" && !definesFunction;
   let compound = 0;
   let unresolvedWrite = false;
   for (const [index, item] of items.entries()) {
@@ -2175,7 +2231,7 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
       const child = invocationFromArgv(argv.map((word) => word.value));
       if (child === undefined || !isWrite(child, argv))
         continue;
-      const resolved = resolveWrite(child, shape.assignments, state, env, command, plainCommand);
+      const resolved = resolveWrite(child, shape.assignments, state, env, command);
       if ("problem" in resolved) {
         unresolvedWrite = true;
         unresolved?.(child);
@@ -2192,7 +2248,7 @@ function planEmbeddedWrites(command, cwd, env, options = {}) {
     const invocation = invocationFromArgv(shape.args.map((word) => word.value));
     if (invocation === undefined || !isWrite(invocation, shape.args))
       continue;
-    const resolved = resolveWrite(invocation, shape.assignments, state, env, command, plainCommand);
+    const resolved = resolveWrite(invocation, shape.assignments, state, env, command);
     if ("problem" in resolved) {
       unresolvedWrite = true;
       unresolved?.(invocation);
@@ -2483,7 +2539,7 @@ function hasFunctionDefinition(items) {
 function obfuscatedName(source) {
   return /["'\\]/.test(source) && !/^(["'])[^"'\\]*\1$/.test(source);
 }
-function resolveWrite(invocation, assignments, state, env, source, plain) {
+function resolveWrite(invocation, assignments, state, env, source) {
   const write = `\`bd ${invocation.verb}\``;
   for (const flag of STORE_FLAGS) {
     const value = globalValue(invocation.globals, [flag]);
@@ -2506,19 +2562,13 @@ function resolveWrite(invocation, assignments, state, env, source, plain) {
   }
   const directory = globalValue(invocation.globals, ["-C", "--directory"]);
   const db = globalValue(invocation.globals, ["--db"]);
-  const inheritedDb = env.BEADS_DB ?? "";
-  const dbEffective = directory === undefined && db === undefined && (beadsDir.kind === "known" ? (beadsDir.value ?? "") === "" : false) && (inheritedDb !== "" || assignments.some((word) => BEADS_DB_WORD.test(word.value)));
-  const dbCwd = state.cwd.kind === "known" ? state.cwd.cwd : undefined;
-  const unchangedInline = (word) => {
-    const value = word.value.slice("BEADS_DB=".length);
-    return word.value.startsWith("BEADS_DB=") && !word.expands && !DEFERRED_VALUE.test(value) && value !== "" && inheritedDb !== "" && dbCwd !== undefined && canonicalStore(storeFromBeadsDb(value, dbCwd)) === canonicalStore(storeFromBeadsDb(inheritedDb, dbCwd));
-  };
-  const ownDbChange = assignments.find((word) => BEADS_DB_WORD.test(word.value) && !unchangedInline(word));
-  if (dbEffective && (!plain || ownDbChange !== undefined)) {
+  const dbSource = (env.BEADS_DB ?? "") !== "" ? "the environment sets `BEADS_DB`" : (env.BD_DB ?? "") !== "" ? "the environment sets `BD_DB`" : DB_VARIABLE.test(source) ? "the command mentions `BEADS_DB` or `BD_DB`" : undefined;
+  const namesStore = db !== undefined || beadsDir.kind === "known" && beadsDir.assigned && (beadsDir.value ?? "") !== "";
+  if (dbSource !== undefined && skipsStoreInit(invocation) && !namesStore) {
     return {
       problem: {
-        part: `${write} runs where \`BEADS_DB\` selects the store, and the command is ${plain ? `\`${source.slice(ownDbChange?.start, ownDbChange?.end)}\`, which changes it` : "not one plain `bd` command (it chains, pipes, nests, substitutes or defines functions), so the shell may have changed `BEADS_DB` first"}`,
-        fix: "Run the write as one plain `bd` command, or set `BEADS_DIR=/path` to a literal path (`BEADS_DIR=/path bd ...`), which `BEADS_DB` cannot override."
+        part: `${write} skips bd's store init, so bd 1.3.1 picks its store from \`BEADS_DB\` or \`BD_DB\` before \`BEADS_DIR\`, and ${dbSource}`,
+        fix: "Name the store on the write: `bd --db /path/.beads ...`, or `BEADS_DIR=/path/.beads bd ...` (the lock then clears `BEADS_DB` and `BD_DB` for that write)."
       }
     };
   }
@@ -2534,10 +2584,9 @@ function resolveWrite(invocation, assignments, state, env, source, plain) {
     return { problem: state.cwd.problem };
   const relative = db !== undefined ? !isAbsolute2(db) && (directory === undefined || !isAbsolute2(directory)) : directory !== undefined && !isAbsolute2(directory);
   if (relative && !state.cwd.certain) {
-    const flag = db === undefined ? "-C" : "--db";
     return {
       problem: {
-        part: `${write} resolves a relative \`${flag}\` path after a \`cd\` the lock cannot confirm ran`,
+        part: `${write} resolves a relative \`${db === undefined ? "-C" : "--db"}\` path after a \`cd\` the lock cannot confirm ran`,
         fix: "Give it an absolute path, or start the command with `cd DIR &&` joined to the write by `&&` alone."
       }
     };
@@ -3005,7 +3054,7 @@ function withRunner(command, writes, runner, waitMs) {
   for (const write of [...writes].sort((left, right) => left.offset - right.offset)) {
     const store = quote(write.store);
     const selected = ` ${RUNNER_SELECTED_FLAG} ${quote(write.selected)}`;
-    out += `${command.slice(cursor, write.offset)}BEADS_DOLT_SHARED_SERVER= BEADS_DIR=${store} ${quote(runner.interpreter)} ${quote(runner.script)} ${RUNNER_STORE_FLAG} ${store}${selected} ${RUNNER_WAIT_FLAG} ${Math.round(waitMs)} -- `;
+    out += `${command.slice(cursor, write.offset)}BEADS_DOLT_SHARED_SERVER= BEADS_DIR=${store} BEADS_DB= BD_DB= ${quote(runner.interpreter)} ${quote(runner.script)} ${RUNNER_STORE_FLAG} ${store}${selected} ${RUNNER_WAIT_FLAG} ${Math.round(waitMs)} -- `;
     cursor = write.offset;
   }
   return out + command.slice(cursor);

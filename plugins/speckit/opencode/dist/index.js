@@ -2457,6 +2457,16 @@ function storeFromBeadsDb(value, cwd) {
   const path = resolve5(cwd, value);
   return basename5(path) === ".beads" ? path : dirname4(path);
 }
+function ambientStore(cwd, env, walkUp = sessionPinFor) {
+  const dir = env.BEADS_DIR;
+  if (dir !== undefined && dir !== "")
+    return resolve5(cwd, dir);
+  const found = walkUp(cwd);
+  if (found !== undefined)
+    return found;
+  const db = env.BEADS_DB;
+  return db !== undefined && db !== "" ? storeFromBeadsDb(db, cwd) : undefined;
+}
 function isDir(path) {
   try {
     return statSync2(path).isDirectory();
@@ -2606,12 +2616,7 @@ function selectedStoreFor(globals, cwd, env) {
   }
   if (directory !== undefined)
     return sessionPinFor(base);
-  const pinned = env.BEADS_DIR;
-  if (pinned !== undefined && pinned !== "")
-    return absolute(pinned, cwd);
-  if (env.BEADS_DB !== undefined && env.BEADS_DB !== "")
-    return storeFromBeadsDb(env.BEADS_DB, cwd);
-  return sessionPinFor(cwd);
+  return ambientStore(cwd, env);
 }
 function absolute(path, cwd) {
   return isAbsolute6(path) ? path : resolve6(cwd, path);
@@ -2645,6 +2650,47 @@ function embeddedStoreFor(cwd, env = process.env) {
   const store = storeFor([], cwd, env);
   return store !== undefined && embedded(store) ? store : undefined;
 }
+var SKIPS_STORE_INIT = new Set([
+  "bash",
+  "bootstrap",
+  "codex-hook",
+  "completion",
+  "context",
+  "cursor-hook",
+  "doctor",
+  "dolt",
+  "fish",
+  "formula",
+  "help",
+  "hook",
+  "hooks",
+  "human",
+  "init",
+  "merge",
+  "metrics",
+  "onboard",
+  "powershell",
+  "prime",
+  "quickstart",
+  "schema",
+  "send-metrics",
+  "setup",
+  "version",
+  "where",
+  "worktree",
+  "zsh"
+]);
+var OPENS_STORE = {
+  dolt: new Set(["push", "pull", "commit"]),
+  human: new Set(["list", "respond", "dismiss", "stats"])
+};
+var MIGRATE_SKIPS_STORE_INIT = new Set([
+  "from-server-to-proxied-server",
+  "from-proxied-server-to-server",
+  "from-shared-server-to-proxied-server",
+  "from-proxied-server-to-shared-server",
+  "legacy-sqlite"
+]);
 var LIST_PREFIXES = new Set(["then", "else", "do"]);
 function ageOf(path) {
   try {
