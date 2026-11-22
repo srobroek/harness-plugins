@@ -1,7 +1,7 @@
 {
   "name": "debate",
   "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "author": {
     "name": "Sjors Robroek",
     "url": "https://github.com/srobroek"
