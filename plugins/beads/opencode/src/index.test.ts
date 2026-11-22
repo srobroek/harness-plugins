@@ -342,8 +342,6 @@ describe("shell create.before", () => {
   test("shellPin and pinnedEnvironment agree", () => {
     expect(shellPin("/x", {}, () => "/p")).toBe("/p")
     expect(shellPin("/x", { BEADS_DIR: "/q" }, () => "/p")).toBeUndefined()
-    // bd reads an inherited BEADS_DB when BEADS_DIR is unset, so a pin would take the ledger away from it.
-    expect(shellPin("/x", { BEADS_DB: "/q/.beads/beads.db" }, () => "/p")).toBeUndefined()
     expect(shellPin("/x", { BD_DB: "/q/.beads" }, () => "/p")).toBe("/p")
     expect(pinnedEnvironment("/x", {}, () => "/p")).toEqual({
       BEADS_DIR: "/p",
@@ -351,6 +349,20 @@ describe("shell create.before", () => {
       SROBROEK_BEADS_PIN: "/p",
     })
     expect(pinnedEnvironment("/x", {}, () => undefined)).toEqual({})
+  })
+
+  // bd 1.3.1 store commands read BEADS_DB only when no `.beads` is found from the working directory.
+  test("an inherited BEADS_DB yields to the checkout's store: the shell is pinned to that store", () => {
+    expect(shellPin("/x", { BEADS_DB: "/q/.beads/beads.db" }, () => "/p")).toBe("/p")
+  })
+
+  test("with no store for the directory, the shell is pinned to the store an inherited BEADS_DB names", () => {
+    expect(pinnedEnvironment("/x", { BEADS_DB: "/q/.beads/beads.db" }, () => undefined)).toEqual({
+      BEADS_DB: "/q/.beads/beads.db",
+      BEADS_DIR: "/q/.beads",
+      BEADS_DOLT_SHARED_SERVER: "",
+      SROBROEK_BEADS_PIN: "/q/.beads",
+    })
   })
 })
 
@@ -466,9 +478,11 @@ describe("execute.after on shell", () => {
    * A stand-in `bd` on PATH that prints what bd 1.3.1 prints for a claim: `✓ Updated issue: X — title`
    * as text, a JSON array of the leased issue with `--json`, and on a lost claim `issue already claimed
    * by <actor>` (JSON: an `error`/`failed` object) with exit 1. It logs `BEADS_DIR` and argv per call.
+   * Its ledger follows bd 1.3.1's store-command order: `BEADS_DIR`, then `./.beads`, then `BEADS_DB`.
    */
   const FAKE_BD = `#!/bin/sh
 ledger=\${BEADS_DIR:-}
+[ -z "$ledger" ] && [ -d .beads ] && ledger=$PWD/.beads
 if [ -z "$ledger" ] && [ -n "\${BEADS_DB:-}" ]; then
   case $BEADS_DB in */.beads) ledger=$BEADS_DB ;; *) ledger=\${BEADS_DB%/*} ;; esac
 fi
@@ -515,7 +529,15 @@ fi
   })
   afterAll(() => rmSync(fixtureBin, { recursive: true, force: true }))
 
-  type ClaimOptions = { lost?: string; ignoresJson?: boolean; env?: Record<string, string>; inherited?: Record<string, string>; childBeadsDir?: string }
+  type ClaimOptions = {
+    lost?: string
+    ignoresJson?: boolean
+    env?: Record<string, string>
+    inherited?: Record<string, string>
+    childBeadsDir?: string
+    /** The session has no store of its own: no `.beads` in the directory and no pin for it. */
+    noStore?: boolean
+  }
 
   /**
    * Run `commands` in order as one session would: the plugin rewrites each in `execute.before`, the
@@ -527,7 +549,7 @@ fi
     options: ClaimOptions = {},
     session = "ses_child",
   ) {
-    const root = scratch(true)
+    const root = scratch(options.noStore !== true)
     const store = join(root, ".beads")
     const commands = typeof input === "function" ? input({ root, store }) : input
     const log = join(root, "bd.log")
@@ -536,7 +558,7 @@ fi
     const { fake, cleanup } = await start(root, {
       // The plugin pins the session's ledger itself; the process environment sets no ledger.
       env: { ...quietEnv, PATH: `${fixtureBin}:${process.env.PATH}`, ...options.inherited },
-      pinFor: () => store,
+      pinFor: () => (options.noStore === true ? undefined : store),
       run: async () => ({ output: "null" }),
     })
     let rewritten = ""
@@ -723,9 +745,23 @@ fi
   test.each([
     ["a database file", (ledger: string) => join(ledger, "beads.db")],
     ["the .beads directory", (ledger: string) => ledger],
-  ])("an inherited BEADS_DB naming %s is the ledger bd writes: tracked under that store, not the pin", async (_name, value) => {
+  ])("an inherited BEADS_DB naming %s yields to the session's store, as bd does: tracked under the store bd writes", async (_name, value) => {
     const other = join(scratch(true), ".beads")
     const run = await claimThrough(["bd update proj-1 --claim"], { inherited: { BEADS_DB: value(other) }, childBeadsDir: "", env: { BEADS_DB: value(other) } })
+    expect(run.log).toContain(`LEDGER=${run.store} proj-1`)
+    expect(run.claims).toEqual([{ id: "proj-1", actor: GENERATED, store: run.store }])
+    expect(run.leases).toHaveLength(1)
+    await run.cleanup()
+  })
+
+  test("with no store for the session, an inherited BEADS_DB is the ledger bd writes: tracked under its store", async () => {
+    const other = join(scratch(true), ".beads")
+    const run = await claimThrough(["bd update proj-1 --claim"], {
+      noStore: true,
+      inherited: { BEADS_DB: join(other, "beads.db") },
+      childBeadsDir: "",
+      env: { BEADS_DB: join(other, "beads.db") },
+    })
     expect(run.log).toContain(`LEDGER=${other} proj-1`)
     expect(run.claims).toEqual([{ id: "proj-1", actor: GENERATED, store: other }])
     expect(run.leases).toHaveLength(1)

@@ -99,13 +99,30 @@ export function sessionPinFor(cwd: string): string | undefined {
 }
 
 /**
- * The `.beads` directory bd 1.3.1 opens for an inherited `BEADS_DB`, which it reads only when
- * `--db` and `BEADS_DIR` are absent. A `.beads` directory is the store itself; any other value
- * (a database file, `.beads/dolt`, `.beads/embeddeddolt`) selects the directory that holds it.
+ * The `.beads` directory a `BEADS_DB` value names: a `.beads` directory is the store itself; any
+ * other value (a database file, `.beads/dolt`, `.beads/embeddeddolt`) selects the directory that holds it.
  */
 export function storeFromBeadsDb(value: string, cwd: string): string {
   const path = resolve(cwd, value)
   return basename(path) === ".beads" ? path : dirname(path)
+}
+
+/**
+ * The store a bd 1.3.1 store command (`bd create`, `bd update`, `bd list`) opens from `cwd` when it
+ * names none with `--db` or `-C`: `BEADS_DIR`, then the `.beads` found from `cwd` (`walkUp`), then
+ * `BEADS_DB` only when none is found (cmd/bd/main.go `FindBeadsDir`, then `FindDatabasePath`).
+ */
+export function ambientStore(
+  cwd: string,
+  env: Readonly<Record<string, string | undefined>>,
+  walkUp: (cwd: string) => string | undefined = sessionPinFor,
+): string | undefined {
+  const dir = env.BEADS_DIR
+  if (dir !== undefined && dir !== "") return resolve(cwd, dir)
+  const found = walkUp(cwd)
+  if (found !== undefined) return found
+  const db = env.BEADS_DB
+  return db !== undefined && db !== "" ? storeFromBeadsDb(db, cwd) : undefined
 }
 
 function isDir(path: string): boolean {

@@ -242,26 +242,36 @@ describe("startup gate reads with an inherited BEADS_DB", () => {
     return { root, own: join(root, ".beads"), other: join(root, "other", ".beads") }
   }
 
-  test("a read keeps the BEADS_DB ledger instead of installing the session pin", () => {
+  test("a read pins the checkout's own store: bd 1.3.1 ignores BEADS_DB when a .beads is found", () => {
     const { root, own, other } = fixture()
     try {
-      expect(lifecycleBdEnvironment(root, {}).BEADS_DIR).toBe(own)
-      const env = lifecycleBdEnvironment(root, { BEADS_DB: join(other, "beads.db") })
-      expect(env.BEADS_DIR).toBeUndefined()
-      expect(env.BEADS_DB).toBe(join(other, "beads.db"))
+      expect(lifecycleBdEnvironment(root, { BEADS_DB: join(other, "beads.db") }).BEADS_DIR).toBe(own)
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
   })
 
-  test("the store a read opens is the BEADS_DB ledger, not the checkout's own", () => {
-    const { root, own, other } = fixture()
+  test("with no store for the directory, a read pins the store BEADS_DB names", () => {
+    const { root, other } = fixture()
+    const bare = realpathSync(mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "beads-startup-bare-")))
     try {
-      expect(bdStoreDir(root, {})).toBe(own)
-      expect(bdStoreDir(root, { BEADS_DB: join(other, "beads.db") })).toBe(other)
-      expect(bdStoreDir(root, { BEADS_DIR: own, BEADS_DB: join(other, "beads.db") })).toBe(own)
+      expect(lifecycleBdEnvironment(bare, { BEADS_DB: join(other, "beads.db") }).BEADS_DIR).toBe(other)
     } finally {
       rmSync(root, { recursive: true, force: true })
+      rmSync(bare, { recursive: true, force: true })
+    }
+  })
+
+  test("the store a read opens follows BEADS_DIR, then the directory's .beads, then BEADS_DB", () => {
+    const { root, own, other } = fixture()
+    const bare = realpathSync(mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "beads-startup-bare-")))
+    try {
+      expect(bdStoreDir(root, { BEADS_DB: join(other, "beads.db") })).toBe(own)
+      expect(bdStoreDir(bare, { BEADS_DB: join(other, "beads.db") })).toBe(other)
+      expect(bdStoreDir(bare, { BEADS_DIR: own, BEADS_DB: join(other, "beads.db") })).toBe(own)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+      rmSync(bare, { recursive: true, force: true })
     }
   })
 })
