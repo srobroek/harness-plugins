@@ -68,13 +68,14 @@ export interface BdInvocation {
   globals: string[]
   /** `NAME=value` assignments prefixed to this very `bd` word. */
   prefix: string[]
-  /** Actor values an earlier `export NAME=value` set, read in order (an `unset` drops it). */
-  exported: Partial<Record<ActorVar, string>>
+  /** Actor values an earlier `export NAME=value` set, read in order; `null` marks one an `unset` cleared. */
+  exported: ActorState
   /** Actor variables removed by an `env -u`/`env -i` wrapper. */
   unset: Partial<Record<ActorVar, true>>
 }
 
-type ActorState = Partial<Record<ActorVar, string>>
+/** A string is an exported value, `null` a variable a shell `unset` cleared, absent one never touched here. */
+type ActorState = Partial<Record<ActorVar, string | null>>
 
 const OPENERS = new Set(["if", "while", "until", "for", "select", "case"])
 const HEADER_ONLY = new Set(["for", "select", "case"])
@@ -93,7 +94,7 @@ function applyActorBuiltin(state: ActorState, values: string[], conditional: boo
     if (variable === undefined) continue
     // Where the command may not run, an export is only a possibility and changes nothing we rely on.
     if (conditional) continue
-    if (name === "unset") delete state[variable]
+    if (name === "unset") state[variable] = null
     else if (arg.includes("=")) state[variable] = arg.slice(variable.length + 1)
   }
 }
@@ -196,7 +197,7 @@ function readCommand(command: string, inherited: ActorState): { invocations: BdI
     if (andChained)
       for (const variable of ACTOR_VARS) {
         const value = state[variable]
-        if (value !== undefined && value !== before[variable]) chainExports.push({ variable, value })
+        if (typeof value === "string" && value !== before[variable]) chainExports.push({ variable, value })
       }
     const found = resolveBd(values, assigned)
     if (found !== undefined) {
@@ -455,11 +456,11 @@ export function invocationActor(invocation: BdInvocation, env: NodeJS.ProcessEnv
   const resolve = (variable: ActorVar): string | null => {
     if (invocation.unset[variable] === true) return null
     const assignment = invocation.prefix.findLast((token) => token.startsWith(`${variable}=`))
-    const value =
-      assignment !== undefined
-        ? assignment.slice(variable.length + 1)
-        : (invocation.exported[variable] ?? env[variable])
-    return literal(value)
+    if (assignment !== undefined) return literal(assignment.slice(variable.length + 1))
+    // A cleared variable stays cleared: the ambient value must not come back.
+    const exported = invocation.exported[variable]
+    if (exported === null) return null
+    return literal(exported ?? env[variable])
   }
   return resolve("BEADS_ACTOR") ?? resolve("BD_ACTOR")
 }

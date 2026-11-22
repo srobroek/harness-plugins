@@ -16,6 +16,7 @@ import {
 import { parse } from "./beads-shell.ts"
 
 const emptyEnv = {} as NodeJS.ProcessEnv
+const bdActorEnv = { BD_ACTOR: "opencode/r/general/s" } as NodeJS.ProcessEnv
 const actorEnv = { BEADS_ACTOR: "omp/GateBuilder/backlog" } as NodeJS.ProcessEnv
 
 describe("extractCommand", () => {
@@ -271,6 +272,25 @@ describe("firstBdVerb / isMutatingBdCommand", () => {
       expect(decision.kind).toBe("block")
       if (decision.kind === "block") expect(decision.reason).toContain("without BEADS_ACTOR or BD_ACTOR")
     }
+  })
+
+  test("a shell unset of an ambient actor variable removes it for the claim", () => {
+    for (const command of [
+      "unset BD_ACTOR; bd update bead-1 --claim",
+      "unset BEADS_ACTOR BD_ACTOR; bd create --title title",
+    ]) {
+      expect(decideActorGate(command, bdActorEnv).kind).toBe("block")
+    }
+  })
+
+  test("a shell unset of an ambient actor variable warns on other mutations", () => {
+    expect(decideActorGate("unset BD_ACTOR; bd close bead-1", bdActorEnv).kind).toBe("advisory")
+  })
+
+  test("an export after a shell unset restores actor attribution", () => {
+    expect(decideActorGate("unset BD_ACTOR; export BD_ACTOR=actor/x; bd update bead-1 --claim", bdActorEnv)).toEqual({
+      kind: "allow",
+    })
   })
 
   test("env assignments after removal restore actor attribution", () => {
