@@ -14,7 +14,7 @@ A finding is one root cause. When the same cause recurs, report it once: `locati
 | Field | Meaning |
 |---|---|
 | `id` | `F1`, `F2`, ... stable for the run |
-| `lens` | one of the 12 lenses; see [lens-simplification.md](lens-simplification.md) and its siblings |
+| `lens` | one of the 13 lenses; see [lens-simplification.md](lens-simplification.md) and its siblings |
 | `location` | `path` and `line` of the code challenged |
 | `also_at` | the other `path` and `line` sites of a recurring cause; absent when `recurs` is 1 |
 | `evidence.tier` | `proven`, `measured` or `hypothesis`; see [evidence.md](evidence.md) |

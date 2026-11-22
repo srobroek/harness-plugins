@@ -58,7 +58,7 @@ type = "task"
 needs = ["scan"]
 labels = ["code-challenge", "phase:challenge"]
 description = """
-Run the code-challenge skill, phase CHALLENGE: you (the lead) bond mol-challenge-lens once per selected lens, in parallel. When the host caps parallel subagents, group related lenses (simplification, over-engineering and dead-code; optimisation, performance and efficiency; the rest by pairs), bond once per group with a comma-separated lens var, and run the groups one after another. Then merge the replies into findings.json with a tier, a locator and test protection on every finding. The scouts only analyse; you spawn them and write the file.
+Run the code-challenge skill, phase CHALLENGE: you (the lead) bond mol-challenge-lens once per selected lens, in parallel. When the host caps parallel subagents, group related lenses (simplification, over-engineering and dead-code; scope alone; optimisation, performance and efficiency; the rest by pairs), bond once per group with a comma-separated lens var, and run the groups one after another. Then merge the replies into findings.json with a tier, a locator and test protection on every finding. The scouts only analyse; you spawn them and write the file.
 """
 
 [[steps]]
@@ -88,7 +88,7 @@ type = "task"
 needs = ["refute"]
 labels = ["code-challenge", "phase:decide"]
 description = """
-Run the code-challenge skill, phase DECIDE in {{mode}} mode: parley_ask batches of up to 12 when interactive; the autonomous rule (kept, proven or measured, low blast radius, contract kept) otherwise. Every choice goes to decisions.jsonl.
+Run the code-challenge skill, phase DECIDE in {{mode}} mode: parley_ask batches of up to 12 when interactive; the autonomous rule (kept, proven or measured, low blast radius, contract kept, not a scope finding) otherwise. Every choice goes to decisions.jsonl.
 """
 
 [[steps]]

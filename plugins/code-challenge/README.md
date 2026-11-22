@@ -18,7 +18,7 @@ A run stores its files in `<git-dir>/code-challenge/<run-id>/`: `intake.json`, `
 
 ## Lenses
 
-Twelve lenses, one reference each: simplification, over-engineering, optimisation, performance, efficiency, stability, hand-rolled code (standard library or framework), hand-rolled code (third-party library), dead code, observability, structure and tests. Each reference lists what to look for, the evidence it needs and the steering skills to load (`quality-profiling`, `lang-*-profiling`, `lang-*-libraries`, `lang-*-quality`, `toolchain-quality-observability`, `quality-code-policy`, `quality-test-audit`).
+Thirteen lenses, one reference each: scope (the code against its design and docs: missing requirements, drift, unrequested features and features built beyond the design), simplification, over-engineering, optimisation, performance, efficiency, stability, hand-rolled code (standard library or framework), hand-rolled code (third-party library), dead code, observability, structure and tests. Each reference lists what to look for, the evidence it needs and the steering skills to load (`quality-profiling`, `lang-*-profiling`, `lang-*-libraries`, `lang-*-quality`, `toolchain-quality-observability`, `quality-code-policy`, `quality-test-audit`).
 
 ## Agents
 
