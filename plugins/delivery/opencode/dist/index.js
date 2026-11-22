@@ -6593,6 +6593,7 @@ function createPendingCleanup(deps) {
       }
       let pendingLeft;
       try {
+        readdirSync4(directory);
         pendingLeft = pendingReceipts(listReceipts(directory)).some((receipt) => !settled.has(receipt.receiptId));
       } catch {
         pendingLeft = true;

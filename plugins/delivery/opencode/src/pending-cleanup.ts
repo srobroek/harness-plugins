@@ -895,8 +895,10 @@ export function createPendingCleanup(deps: PendingDeps) {
       }
       // Another receipt of that repository (one this session never registered) may still need the
       // clone to be found: keep the registration while any receipt is pending, or cannot be listed.
+      // `listReceipts` reads a directory it cannot open as an empty one, so the directory is read first.
       let pendingLeft: boolean
       try {
+        readdirSync(directory)
         pendingLeft = pendingReceipts(listReceipts(directory)).some((receipt) => !settled.has(receipt.receiptId))
       } catch {
         pendingLeft = true

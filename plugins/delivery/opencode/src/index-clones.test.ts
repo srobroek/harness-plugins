@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, mock, setDefaultTimeout, setSystemTime, spyOn, test } from "bun:test"
 import { execFileSync } from "node:child_process"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
@@ -33,6 +33,8 @@ let sequence = 0
 /** Bead ids the mocked landing records; non-empty makes the target's ledger active. */
 let beadIds: string[] = []
 let cleanupResult: CleanupResult
+/** Called for each mocked cleanup; a result it returns replaces `cleanupResult` for that call. */
+let onCleanup: ((params: Record<string, unknown>) => CleanupResult | undefined) | undefined
 let cleanupCalls: Array<{ params: Record<string, unknown>; deps: CleanupDeps }> = []
 const env = (): NodeJS.ProcessEnv => ({ HOME: process.env.HOME ?? "", DELIVERY_RECEIPTS_DIR: receiptsRoot })
 const disposers: Array<() => Promise<void>> = []
@@ -80,7 +82,7 @@ beforeAll(async () => {
     ...originalCleanup,
     cleanupDelivery: async (params: Record<string, unknown>, _cwd: string, deps: CleanupDeps) => {
       cleanupCalls.push({ params, deps })
-      return cleanupResult
+      return onCleanup?.(params) ?? cleanupResult
     },
   }))
   mock.module("./land.ts", () => ({
@@ -103,6 +105,7 @@ beforeEach(() => {
   worktree = mkdtempSync(join(tmpdir(), "clones-worktree-"))
   cleanupCalls = []
   cleanupResult = FAILED
+  onCleanup = undefined
   beadIds = []
 })
 afterEach(async () => {
@@ -276,6 +279,58 @@ test("a clone stays registered while another receipt of its repository is still 
       setSystemTime()
     }
     expect(cleanupCalls.map((call) => call.params.receipt)).toContain(join(directory, `${second.receiptId}.json`))
+  } finally {
+    rmSync(other, { recursive: true, force: true })
+  }
+})
+
+// bun lists lazily, so chmod 000 fails at the first read; a directory that is gone fails when it is opened, as
+// an unreadable one does under Node. Both must keep the registration: only a listing can say nothing is pending.
+test.each([
+  ["unreadable (chmod 000)", "chmod"],
+  ["missing", "rename"],
+] as const)("a receipt directory that is %s keeps the clone registered while another receipt is pending", async (_name, how) => {
+  if (how === "chmod" && process.getuid?.() === 0) return // root reads any directory
+  const s = await session()
+  await s.land()
+  const registry = await registryOf()
+  const [receiptId] = (registry?.clones[0]?.receiptIds as string[] | undefined) ?? []
+  const directory = receiptDirectory(env(), registry?.clones[0]?.key as string)
+  const receiptPath = join(directory, `${receiptId}.json`)
+  const away = `${directory}.away`
+  const other = mkdtempSync(join(tmpdir(), "clones-worktree2-"))
+  try {
+    // R2: another landing in the same repository, for another worktree, that this session never registered.
+    const second = await receiptIn(repoB, Date.now() + 100, {
+      pr: {
+        number: 8,
+        url: "https://github.com/o/b/pull/8",
+        state: "MERGED",
+        baseRefName: "main",
+        headRefName: "feat-two",
+        headRefOid: "c".repeat(40),
+        mergeCommitOid: "d".repeat(40),
+        mergedAt: "2027-01-15T08:00:00.000Z",
+      },
+      branch: { name: "feat-two", deletedRemote: true, remoteAbsenceVerifiedAt: "2027-01-15T08:00:01.000Z", autoDeleteSetting: "on" },
+      worktree: { path: other, removed: false, localRefDeleted: false, absenceVerifiedAt: null },
+    })
+    writeReceipt(second, directory)
+    // R1's cleanup succeeds, and the directory becomes unreadable right after it, before the settlement;
+    // R2's cleanup does not finish.
+    onCleanup = (params) => {
+      if (params.receipt !== receiptPath) return FAILED
+      if (how === "chmod") chmodSync(directory, 0o000) // check-test-executables: directory permission, not a script
+      else renameSync(directory, away)
+      return REMOVED
+    }
+    try {
+      await s.idle()
+    } finally {
+      if (existsSync(away)) renameSync(away, directory)
+      chmodSync(directory, 0o700) // check-test-executables: directory permission, not a script
+    }
+    expect((await registryOf())?.clones).toHaveLength(1)
   } finally {
     rmSync(other, { recursive: true, force: true })
   }
