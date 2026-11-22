@@ -116,6 +116,19 @@ describe("addClone", () => {
     expect(readFileSync(file, "utf8")).toBe("{not json")
   })
 
+  test("keeps the parse error as the cause of an unparseable registry's refusal", async () => {
+    const receipts = store()
+    const file = registryFile(receipts, SESSION)
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, "{not json")
+    const failure = await addClone(receipts, SESSION, B, () => false).then(
+      () => undefined,
+      (error: unknown) => error,
+    )
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).cause).toBeInstanceOf(SyntaxError)
+  })
+
   test("refuses to replace a registry file it cannot read, naming the cause", async () => {
     const receipts = store()
     await addClone(receipts, SESSION, A, () => false)
