@@ -815,24 +815,37 @@ describe("a merge into a local target is a merged proof later", () => {
   const branchDeleted = (log: string[][]) => log.some((argv) => argv.includes("update-ref"))
   const recorded = { target: "main", head: TIP }
 
-  test.each([
-    ["written with the target it must stay in", { retireAs: "merged" as const, head: TIP, within: MAIN }],
-    ["written before the target was stored, rebuilt from the merge record", { retireAs: "merged" as const, head: TIP }],
-  ])("a removal a crash left half done, %s, is not finished once the target was reset", async (_name, removal) => {
-    // The crash came after `removing` was recorded; the target was reset before the next start recovers the lane.
-    const { fake, worktree, log, quiet, cleanup } = await start(
-      { contains: { [MAIN]: [] } },
-      { stored: [lane({ target: "main", mergedInto: recorded, state: "removing", removal })] },
-    )
+  /** Start again from `record`, as a restart after a crash right after `removing` was written, with the target reset. */
+  const recoverReset = async (record: Lane) => {
+    const { fake, worktree, log, quiet, cleanup } = await start({ contains: { [MAIN]: [] } }, { stored: [record] })
     await quiet()
     const after = stored(fake)
-    expect({ removes: worktree.length, branchDeleted: branchDeleted(log), state: after.state, removal: after.removal }).toEqual({
-      removes: 0,
-      branchDeleted: false,
-      state: "active",
-      removal: undefined,
-    })
+    const outcome = { removes: worktree.length, branchDeleted: branchDeleted(log), state: after.state, removal: after.removal }
     await cleanup()
+    return outcome
+  }
+  const keptActive = { removes: 0, branchDeleted: false, state: "active", removal: undefined }
+
+  test("a removal a crash left half done is not finished once the target was reset: the record keeps the target it must stay in", async () => {
+    let removing: Lane | undefined
+    const { states, cleanup } = await mergeThenEnd([TIP], ({ fake }) => {
+      const storage = fake.context.storage as unknown as { set: (key: string, value: unknown) => Promise<void> }
+      const original = storage.set.bind(storage)
+      storage.set = (key, value) => {
+        if (key === laneKey(CHILD) && removing === undefined && (value as Lane).state === "removing") removing = structuredClone(value as Lane)
+        return original(key, value)
+      }
+    })
+    await decision(states)
+    await cleanup()
+    if (removing === undefined) throw new Error("no removing record was written")
+    // Without the merge record, only the ref stored in the removal record can tell recovery what to prove.
+    expect(await recoverReset({ ...removing, mergedInto: undefined })).toEqual(keptActive)
+  })
+
+  test("a removal a crash left half done, written before the target was stored, is not finished once the target was reset", async () => {
+    // The ref is rebuilt from the merge record.
+    expect(await recoverReset(lane({ target: "main", mergedInto: recorded, state: "removing", removal: { retireAs: "merged", head: TIP } }))).toEqual(keptActive)
   })
 
   describe("a clean, finished lane merged into a local branch is removed by its lead", () => {
