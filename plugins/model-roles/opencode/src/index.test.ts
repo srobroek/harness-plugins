@@ -1,4 +1,4 @@
-import { describe, expect, jest, setSystemTime, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, jest, setSystemTime, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -303,6 +303,71 @@ function createHost(input: {
   }
 }
 
+/**
+ * Run `start` on a fake clock and advance it until its promise settles, then fail if it has not settled once
+ * `boundMs` plus a small margin of fake time has passed. The budget comes from the configured bound, not from the
+ * stall, so a bound that regressed to a longer one fails here. Fake timers are on only while `start` runs.
+ */
+const pastBound = async <T,>(start: () => Promise<T>, boundMs: number): Promise<T> => {
+  jest.useFakeTimers()
+  try {
+    const work = start()
+    let done = false
+    void work.then(
+      () => (done = true),
+      () => (done = true),
+    )
+    const flush = async () => {
+      for (let i = 0; i < 200; i++) await Promise.resolve()
+    }
+    const budget = boundMs + Math.max(5, Math.ceil(boundMs / 10))
+    const step = Math.max(1, Math.floor(boundMs / 20))
+    await flush()
+    for (let elapsed = 0; !done && elapsed < budget; elapsed += step) {
+      jest.advanceTimersByTime(step)
+      await flush()
+    }
+    if (!done) throw new Error(`did not settle within ${budget} fake ms (configured bound ${boundMs} ms)`)
+    return await work
+  } finally {
+    jest.useRealTimers()
+  }
+}
+/** The default guard lookup bound the spec promises, owned by the tests so a changed constant fails them. */
+const DEFAULT_LOOKUP_BOUND_MS = 5000
+/** `lookups` is how many bounded lookups stall one after the other: the caller-vendor session is read twice. */
+const spawnPastBound = (host: ReturnType<typeof createHost>, input: Record<string, unknown>, lookups = 1) =>
+  pastBound(() => host.spawn("subagent", input), lookups * DEFAULT_LOOKUP_BOUND_MS)
+
+/**
+ * A lookup that stalls until the test releases it. The test asserts the call under test finished while
+ * `released` was still false, so no wall-clock bound is involved; `afterEach` releases whatever is left.
+ */
+const stallGate = () => {
+  let open!: () => void
+  const wait = new Promise<void>((resolve) => (open = resolve))
+  const gate = {
+    released: false,
+    wait,
+    release: () => {
+      gate.released = true
+      open()
+    },
+  }
+  return gate
+}
+let gate = stallGate()
+/** Release functions of gates a test made for itself; `afterEach` runs them so no lookup stays pending. */
+const releasers: Array<() => void> = []
+beforeEach(() => {
+  gate = stallGate()
+})
+afterEach(() => {
+  jest.useRealTimers()
+  gate.release()
+  for (const release of releasers.splice(0)) release()
+})
+
 const settle = async () => {
   for (let i = 0; i < 50; i++) await new Promise((r) => setTimeout(r, 0))
 }
@@ -550,7 +615,7 @@ describe("subagent model guard", () => {
             const original = host.context.agent.list
             let calls = 0
             host.context.agent.list = async () => {
-              if (++calls === 1) await new Promise((resolve) => setTimeout(resolve, 6000))
+              if (++calls === 1) await gate.wait
               return original()
             }
           },
@@ -560,7 +625,7 @@ describe("subagent model guard", () => {
         [
           "caller-vendor",
           "the caller-vendor lookup",
-          (host) => host.setSessionGet(() => new Promise((resolve) => setTimeout(() => resolve({ id: "s1" }), 6000))),
+          (host) => host.setSessionGet(() => gate.wait.then(() => ({ id: "s1" }))),
           {},
           { agent: "plain", prompt: "x", role: "reviewer" },
         ],
@@ -571,7 +636,7 @@ describe("subagent model guard", () => {
             const original = host.context.agent.list
             let calls = 0
             host.context.agent.list = async () => {
-              if (++calls === 2) await new Promise((resolve) => setTimeout(resolve, 6000))
+              if (++calls === 2) await gate.wait
               return original()
             }
           },
@@ -590,7 +655,7 @@ describe("subagent model guard", () => {
             const host = createHost({ agents, models: priced, options: { ...options, roles: { ...options.roles, tiny: "anthropic/claude-haiku" }, ...extra }, sessionModel: opus })
             const cleanup = await Effect.runPromise(Effect.promise(() => setup(host)).pipe(Effect.provide(Logger.layer([capture]))))
             fault(host)
-            await host.spawn("subagent", input)
+            await spawnPastBound(host, input, site === "caller-vendor" ? 2 : 1)
             expect(lines.join("\n")).toContain(`${text} did not answer within 5000 ms; the spawn goes on without it`)
             host.close()
             await cleanup()
@@ -604,7 +669,7 @@ describe("subagent model guard", () => {
     const strict = (extra: object = {}) => ({ ...options, guard: { requireExplicit: true, ...extra } })
     const cheap = { providerID: "anthropic", id: "claude-haiku" }
     // Settles long after the injected 20 ms bound. A lookup that never settles would spin bun when the bound is missing, so this one ends on its own.
-    const slowLookup = () => new Promise<unknown>((resolve) => setTimeout(() => resolve({ id: "s1" }), 500))
+    const slowLookup = () => gate.wait.then(() => ({ id: "s1" }))
 
     test("a spawn that would inherit is refused under a cheap session model, naming the tiers", async () => {
       const host = createHost({ agents, models: priced, options: strict(), sessionModel: cheap })
@@ -733,12 +798,11 @@ describe("subagent model guard", () => {
       const original = host.context.agent.list
       let stalls = true
       host.context.agent.list = async () => {
-        if (stalls) await new Promise((resolve) => setTimeout(resolve, 500))
+        if (stalls) await gate.wait
         return original()
       }
-      const started = Date.now()
-      await expect(host.spawn("subagent", { agent: "plain", prompt: "x" })).rejects.toThrow(/could not verify which model[\s\S]*Re-issue the spawn with tier or model/)
-      expect(Date.now() - started).toBeLessThan(400)
+      await expect(pastBound(() => host.spawn("subagent", { agent: "plain", prompt: "x" }), 20)).rejects.toThrow(/could not verify which model[\s\S]*Re-issue the spawn with tier or model/)
+      expect(gate.released).toBe(false)
       stalls = false
       host.close()
       await cleanup()
@@ -750,12 +814,11 @@ describe("subagent model guard", () => {
       const original = host.context.agent.list
       let stalls = true
       host.context.agent.list = async () => {
-        if (stalls) await new Promise((resolve) => setTimeout(resolve, 500))
+        if (stalls) await gate.wait
         return original()
       }
-      const started = Date.now()
-      await host.spawn("subagent", { agent: "plain", prompt: "x", role: "cheap" })
-      expect(Date.now() - started).toBeLessThan(400)
+      await pastBound(() => host.spawn("subagent", { agent: "plain", prompt: "x", role: "cheap" }), 20)
+      expect(gate.released).toBe(false)
       stalls = false
       host.close()
       await cleanup()
@@ -816,7 +879,7 @@ describe("subagent model guard", () => {
             const original = host.context.agent.list
             let calls = 0
             host.context.agent.list = async () => {
-              if (++calls === 1) await new Promise((resolve) => setTimeout(resolve, 500))
+              if (++calls === 1) await gate.wait
               return original()
             }
           },
@@ -829,9 +892,8 @@ describe("subagent model guard", () => {
           const host = createHost({ agents, models: priced, options: strict({ lookupTimeoutMs: 20 }), sessionModel: cheap })
           const cleanup = await setup(host)
           stall(host)
-          const started = Date.now()
-          await expect(host.spawn("subagent", input)).rejects.toThrow(verification)
-          expect(Date.now() - started).toBeLessThan(400)
+          await expect(pastBound(() => host.spawn("subagent", input), 20)).rejects.toThrow(verification)
+          expect(gate.released).toBe(false)
           host.close()
           await cleanup()
         }, 15_000)
@@ -840,9 +902,9 @@ describe("subagent model guard", () => {
           const host = createHost({ agents, models: priced, options: { ...options, guard: { lookupTimeoutMs: 20 } }, sessionModel: cheap })
           const cleanup = await setup(host)
           stall(host)
-          const started = Date.now()
-          await host.spawn("subagent", input)
-          expect(Date.now() - started).toBeLessThan(400)
+          // The caller-vendor session is read by the guard and again for the tier, so two 20 ms bounds run in turn.
+          await pastBound(() => host.spawn("subagent", input), site === "caller-vendor session" ? 40 : 20)
+          expect(gate.released).toBe(false)
           host.close()
           await cleanup()
         }, 15_000)
@@ -851,7 +913,7 @@ describe("subagent model guard", () => {
 
     describe("lookups that stall mid-decision", () => {
       const verification = /could not verify which model[\s\S]*Re-issue the spawn with tier or model/
-      const slow = () => new Promise<never>((_, reject) => setTimeout(() => reject(new Error("late")), 500))
+      const slow = () => gate.wait.then((): never => { throw new Error("late") })
       const cases: Array<[string, (host: ReturnType<typeof createHost>) => void, () => [string, unknown, string, string]]> = [
         [
           "the second agent lookup, behind an explicit expensive model",
@@ -859,7 +921,7 @@ describe("subagent model guard", () => {
             const original = host.context.agent.list
             let calls = 0
             host.context.agent.list = async () => {
-              if (++calls === 2) await new Promise((resolve) => setTimeout(resolve, 500))
+              if (++calls === 2) await gate.wait
               return original()
             }
           },
@@ -889,9 +951,8 @@ describe("subagent model guard", () => {
           const cleanup = await setup(host)
           fault(host)
           const [tool, payload, caller, session] = call()
-          const started = Date.now()
-          await expect(host.spawn(tool, payload, caller, session)).rejects.toThrow(verification)
-          expect(Date.now() - started).toBeLessThan(400)
+          await expect(pastBound(() => host.spawn(tool, payload, caller, session), 20)).rejects.toThrow(verification)
+          expect(gate.released).toBe(false)
           host.close()
           await cleanup()
         }, 15_000)
@@ -901,9 +962,8 @@ describe("subagent model guard", () => {
           const cleanup = await setup(host)
           fault(host)
           const [tool, payload, caller, session] = call()
-          const started = Date.now()
-          await host.spawn(tool, payload, caller, session)
-          expect(Date.now() - started).toBeLessThan(400)
+          await pastBound(() => host.spawn(tool, payload, caller, session), 20)
+          expect(gate.released).toBe(false)
           host.close()
           await cleanup()
         }, 15_000)
@@ -1135,6 +1195,7 @@ describe("runtime fallback", () => {
         if (++calls === 1) await gate
         return original(...args)
       }) as typeof original
+      releasers.push(release)
       return release
     }
 
@@ -1142,7 +1203,7 @@ describe("runtime fallback", () => {
       const host = createHost({ agents: [{ id: "build" }], models, options: stallOptions })
       const cleanup = await setup(host)
       const release = stallFirstLookup(host)
-      expect(await host.fireRetry({ sessionID: "h1", agent: "build", model: sonnet, error, attempt: 4 })).toEqual({ retry: true, delay: 1_500 })
+      expect(await pastBound(() => host.fireRetry({ sessionID: "h1", agent: "build", model: sonnet, error, attempt: 4 }), 40)).toEqual({ retry: true, delay: 1_500 })
       // The first lookup is still pending; the second retry is not queued behind it.
       expect(await host.fireRetry({ sessionID: "h2", agent: "build", model: sonnet, error, attempt: 4 })).toEqual({ retry: true, delay: 0 })
       expect(methods(host, "switchModel").map((c) => c.input)).toEqual([{ sessionID: "h2", model: haiku }])
@@ -1155,7 +1216,7 @@ describe("runtime fallback", () => {
       const host = createHost({ agents: [{ id: "build" }], models, options: stallOptions })
       const cleanup = await setup(host)
       stallFirstLookup(host)
-      expect(await host.fireRetry({ sessionID: "h1", agent: "build", model: sonnet, error, attempt: 4 }, { retry: false })).toEqual({ retry: true, delay: 8_000 })
+      expect(await pastBound(() => host.fireRetry({ sessionID: "h1", agent: "build", model: sonnet, error, attempt: 4 }, { retry: false }), 40)).toEqual({ retry: true, delay: 8_000 })
       expect(methods(host, "switchModel")).toHaveLength(0)
       host.close()
       await cleanup()
@@ -1178,7 +1239,7 @@ describe("runtime fallback", () => {
       const host = createHost({ agents: [{ id: "build" }], models, options: stallOptions })
       const cleanup = await setup(host)
       const release = stallFirstLookup(host)
-      expect(await host.fireRetry({ sessionID: "h1", agent: "build", model: sonnet, error, attempt: 4 })).toEqual({ retry: true, delay: 1_500 })
+      expect(await pastBound(() => host.fireRetry({ sessionID: "h1", agent: "build", model: sonnet, error, attempt: 4 }), 40)).toEqual({ retry: true, delay: 1_500 })
       release()
       await flush()
       expect(methods(host, "switchModel")).toHaveLength(0)
@@ -1212,10 +1273,10 @@ describe("runtime fallback", () => {
       return new Promise(() => {})
     }
     const error = { type: "provider.internal", message: "Service Unavailable", status: 503 }
-    const first = await host.fireRetry({ sessionID: "h1", agent: "build", model: sonnet, error, attempt: 4 })
+    const first = await pastBound(() => host.fireRetry({ sessionID: "h1", agent: "build", model: sonnet, error, attempt: 4 }), 40)
     expect(first).toEqual({ retry: true, delay: 1_500 })
     // A second session retries while the first lookup is still pending: it does not wait for it.
-    const second = await host.fireRetry({ sessionID: "h2", agent: "build", model: sonnet, error, attempt: 4 })
+    const second = await pastBound(() => host.fireRetry({ sessionID: "h2", agent: "build", model: sonnet, error, attempt: 4 }), 40)
     expect(second).toEqual({ retry: true, delay: 1_500 })
     expect(lookups).toBeGreaterThanOrEqual(1)
     expect(methods(host, "switchModel")).toHaveLength(0)
@@ -1546,7 +1607,7 @@ describe("runtime fallback", () => {
     }
     const cleanup = await setup(host)
     const base = { sessionID: "r", agent: "build", model: sonnet, error: chain }
-    expect(await host.fireRetry({ ...base, attempt: 4 }, declined)).toEqual({ retry: true, delay: 8_000 })
+    expect(await pastBound(() => host.fireRetry({ ...base, attempt: 4 }, declined), 20)).toEqual({ retry: true, delay: 8_000 })
     expect(await host.fireRetry({ ...base, attempt: 5 }, declined)).toEqual({ retry: true, delay: 16_000 })
     expect(methods(host, "switchModel")).toHaveLength(1)
     host.close()
@@ -1577,7 +1638,7 @@ describe("runtime fallback", () => {
     const cleanup = await setup(host)
     const auth = { type: "provider.auth", message: "Unauthorized", status: 401 }
     const base = { sessionID: "r", agent: "build", model: sonnet, error: auth }
-    expect(await host.fireRetry({ ...base, attempt: 2 })).toEqual({ retry: true, delay: 1_500 })
+    expect(await pastBound(() => host.fireRetry({ ...base, attempt: 2 }), 20)).toEqual({ retry: true, delay: 1_500 })
     expect(await host.fireRetry({ ...base, attempt: 3 })).toEqual({ retry: true, delay: 1_500 })
     expect(methods(host, "switchModel")).toHaveLength(1)
     land?.()
@@ -2589,12 +2650,11 @@ describe("auto routing", () => {
     let calls = 0
     // Calls 1 and 2 are the pre-spawn lookup and the guard's; the third is the routing lookup.
     host.context.agent.list = async () => {
-      if (++calls >= 3) await new Promise((resolve) => setTimeout(resolve, 500))
+      if (++calls >= 3) await gate.wait
       return original()
     }
-    const started = Date.now()
-    await expect(host.spawn("subagent", { agent: "plain", description: "d", prompt: "x" })).rejects.toThrow(/inherit/)
-    expect(Date.now() - started).toBeLessThan(400)
+    await expect(pastBound(() => host.spawn("subagent", { agent: "plain", description: "d", prompt: "x" }), 20)).rejects.toThrow(/inherit/)
+    expect(gate.released).toBe(false)
     host.close()
     await cleanup()
   }, 15_000)
@@ -2606,8 +2666,8 @@ describe("auto routing", () => {
     })
     const host = createHost({ agents, models: priced, options: autoOptions({ decider: "@tiny" }), sessionModel: opus })
     const cleanup = await Effect.runPromise(Effect.promise(() => setup(host)).pipe(Effect.provide(Logger.layer([capture]))))
-    host.setSessionGet(() => new Promise((resolve) => setTimeout(() => resolve({ id: "s1" }), 6000)))
-    const input = await host.spawn("subagent", { agent: "general", description: "find parser", prompt: "x" })
+    host.setSessionGet(() => gate.wait.then(() => ({ id: "s1" })))
+    const input = await spawnPastBound(host, { agent: "general", description: "find parser", prompt: "x" })
     expect(input.model).toBe("anthropic/claude-haiku")
     expect(lines.join("\n")).toContain("the parent-session cap lookup did not answer within 5000 ms; the spawn goes on without it")
     host.close()
@@ -2938,6 +2998,8 @@ describe("tiers rpc", () => {
       try {
         await body(host, file)
       } finally {
+        // A failing body must not leave plugin cleanup waiting on a stalled lookup or disposal.
+        gate.release()
         host.close()
         await cleanup()
       }
@@ -3667,7 +3729,7 @@ describe("tiers rpc", () => {
       host.context.agent.list = async () => {
         if (armed()) {
           disarm()
-          await new Promise((resolve) => setTimeout(resolve, 500))
+          await gate.wait
         }
         return original()
       }
@@ -3679,12 +3741,13 @@ describe("tiers rpc", () => {
         async (host) => {
           let stalls = 2
           lateAgents(host, () => stalls > 0, () => stalls--)
-          const started = Date.now()
-          await expect(host.rpc("set", { tier: "cheap", value: { model: [sonnet55] } })).rejects.toThrow(/not applied/)
-          expect(Date.now() - started).toBeLessThan(400)
+          // Two lookups stall one after the other, each ended by its own 20 ms bound.
+          await expect(pastBound(async () => host.rpc("set", { tier: "cheap", value: { model: [sonnet55] } }), 40)).rejects.toThrow(/not applied/)
+          expect(gate.released).toBe(false)
           expect((await host.spawn("subagent", { agent: "plain", prompt: "x", tier: "cheap" })).model).toBe("amazon-bedrock/global.anthropic.claude-haiku-5-5#low")
           // The stalled lookups answer after their deadline; the answer applies nothing.
-          await new Promise((resolve) => setTimeout(resolve, 700))
+          gate.release()
+          await settle()
           expect((await host.spawn("subagent", { agent: "plain", prompt: "x", tier: "cheap" }, "build", "s1", "c2")).model).toBe("amazon-bedrock/global.anthropic.claude-haiku-5-5#low")
           expect(host.agents().get("worker")?.model).toEqual(oldModel)
         },
@@ -3706,18 +3769,18 @@ describe("tiers rpc", () => {
             ;(target as { transform: unknown }).transform = async (callback: unknown) => {
               if (stalls) {
                 stalls = false
-                await new Promise((resolve) => setTimeout(resolve, 500))
+                await gate.wait
               }
               return original(callback)
             }
             const live = () => (lifecycle === "agent" ? host.activeTransforms() : host.liveToolTransforms())
             const active = live()
-            const started = Date.now()
-            await expect(host.rpc("set", { tier: "cheap", value: { model: [sonnet55] } })).rejects.toThrow(/not applied/)
-            expect(Date.now() - started).toBeLessThan(400)
+            await expect(pastBound(async () => host.rpc("set", { tier: "cheap", value: { model: [sonnet55] } }), 20)).rejects.toThrow(/not applied/)
+            expect(gate.released).toBe(false)
             expect((await host.spawn("subagent", { agent: "plain", prompt: "x", tier: "cheap" })).model).toBe("amazon-bedrock/global.anthropic.claude-haiku-5-5#low")
             // The stalled registration answers after its deadline; it is disposed, so no extra one stays active.
-            await new Promise((resolve) => setTimeout(resolve, 700))
+            gate.release()
+          await settle()
             expect(live()).toBe(active)
           },
           [{ id: "worker", request: header("cheap") }],
@@ -3735,13 +3798,16 @@ describe("tiers rpc", () => {
             // Every registration made from here on has a disposal that takes far longer than the bound.
             ;(target as { transform: unknown }).transform = async (callback: unknown) => {
               const registration = await original(callback)
-              return { dispose: () => new Promise<void>((resolve) => setTimeout(() => registration.dispose().then(resolve), 500)) }
+              return { dispose: () => gate.wait.then(() => registration.dispose()) }
             }
             // A first reload makes the stalling registration the current one; the second disposes it.
-            await host.rpc("set", { tier: "cheap", value: { model: [sonnet55] } })?.catch(() => {})
-            const started = Date.now()
-            await host.rpc("set", { tier: "cheap", value: { model: ["amazon-bedrock/global.anthropic.claude-haiku-5-5"] } })?.catch(() => {})
-            expect(Date.now() - started).toBeLessThan(400)
+            try {
+              await host.rpc("set", { tier: "cheap", value: { model: [sonnet55] } })?.catch(() => {})
+              await pastBound(async () => host.rpc("set", { tier: "cheap", value: { model: ["amazon-bedrock/global.anthropic.claude-haiku-5-5"] } })?.catch(() => {}), 20)
+              expect(gate.released).toBe(false)
+            } finally {
+              gate.release()
+            }
             await host.spawn("subagent", { agent: "plain", prompt: "x", tier: "cheap" })
           },
           [{ id: "worker", request: header("cheap") }],
@@ -3759,7 +3825,7 @@ describe("tiers rpc", () => {
           lateAgents(host, () => stall, () => {})
           host.context.agent.transform = async (callback) => {
             // The first call is the reload's forward registration; every later one (the rollback's) stalls.
-            if (++agentCalls > 1) await new Promise((resolve) => setTimeout(resolve, 500))
+            if (++agentCalls > 1) await gate.wait
             return agentTransform(callback)
           }
           host.context.tool.transform = async () => {
@@ -3818,11 +3884,11 @@ describe("tiers rpc", () => {
             }
             return original(callback)
           }
-          const started = Date.now()
-          await expect(host.rpc("set", { tier: "cheap", value: { model: [sonnet55] } })).rejects.toThrow(/not applied: tool refresh refused/)
-          expect(Date.now() - started).toBeLessThan(400)
+          await expect(pastBound(async () => host.rpc("set", { tier: "cheap", value: { model: [sonnet55] } }), 20)).rejects.toThrow(/not applied: tool refresh refused/)
+          expect(gate.released).toBe(false)
           expect((await host.spawn("subagent", { agent: "plain", prompt: "x", tier: "cheap" })).model).toBe("amazon-bedrock/global.anthropic.claude-haiku-5-5#low")
-          await new Promise((resolve) => setTimeout(resolve, 700))
+          gate.release()
+          await settle()
           expect((await host.spawn("subagent", { agent: "plain", prompt: "x", tier: "cheap" }, "build", "s1", "c2")).model).toBe("amazon-bedrock/global.anthropic.claude-haiku-5-5#low")
         },
         [{ id: "worker", request: header("cheap") }],
@@ -3839,19 +3905,23 @@ describe("tiers rpc", () => {
           let calls = 0
           if (site === "pre-spawn agent")
             host.context.agent.list = async () => {
-              if (++calls === 1) await new Promise((resolve) => setTimeout(resolve, 500))
+              if (++calls === 1) await gate.wait
               return original()
             }
-          else host.setSessionGet(() => new Promise((resolve) => setTimeout(() => resolve({ id: "s1" }), 500)))
-          const started = Date.now()
-          const spawning = host.spawn("subagent", { agent: "plain", prompt: "x", ...(site === "pre-spawn agent" ? {} : { tier: "reviewer" }) }).catch(() => {})
-          await settle()
-          writeFileSync(file, `{ "plugins": [{ "package": "/x/plugins/model-roles", "options": { "guard": { "lookupTimeoutMs": 20 }, "tiers": { "cheap": { "model": ["${sonnet55}"], "effort": "high" } } } }] }\n`)
-          host.emit({ type: "config.updated", data: {} })
-          await spawning
-          await settle()
-          expect((await host.spawn("subagent", { agent: "plain", prompt: "x", tier: "cheap" }, "build", "s1", "c2")).model).toBe(`${sonnet55}#high`)
-          expect(Date.now() - started).toBeLessThan(400)
+          else host.setSessionGet(() => gate.wait.then(() => ({ id: "s1" })))
+          // The spawn's lookup stalls; the reload and the spawn that waits on it must finish within the bounds, on the fake clock.
+          const model = await pastBound(async () => {
+            const stalled = host.spawn("subagent", { agent: "plain", prompt: "x", ...(site === "pre-spawn agent" ? {} : { tier: "reviewer" }) }).catch(() => {})
+            for (let i = 0; i < 50; i++) await Promise.resolve()
+            writeFileSync(file, `{ "plugins": [{ "package": "/x/plugins/model-roles", "options": { "guard": { "lookupTimeoutMs": 20 }, "tiers": { "cheap": { "model": ["${sonnet55}"], "effort": "high" } } } }] }\n`)
+            host.emit({ type: "config.updated", data: {} })
+            for (let i = 0; i < 50; i++) await Promise.resolve()
+            await stalled
+            // The reload is seen done only through the next spawn, which waits for it.
+            return (await host.spawn("subagent", { agent: "plain", prompt: "x", tier: "cheap" }, "build", "s1", "c2")).model
+          }, site === "pre-spawn agent" ? 20 : 60)
+          expect(model).toBe(`${sonnet55}#high`)
+          expect(gate.released).toBe(false)
         },
         [],
         { options: { guard: { lookupTimeoutMs: 20 } } },
