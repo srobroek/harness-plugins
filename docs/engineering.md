@@ -109,6 +109,16 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 - Roots are compared as canonical paths (`insideCanonical`), never re-resolved after the check.
 - `subagent-external-reads` (below) already allows any non-secret read or shell ask in a subagent session. The relaxations above stay narrower and also apply to root sessions; with `subagent-external-reads` disabled they are what lets a subagent read these places.
 
+### safety permission.asked backstop
+
+`plugins/safety/opencode/src/asked-watch.ts` owns the second layer of the `subagent-prompts` feature: a plugin whose evaluate hook runs after safety's can still raise a prompt in a subagent session, so `index.ts` subscribes to `permission.asked` and rejects such prompts through `permission.reply`. `index.ts` is a thin adapter: it supplies `subscribe`, the handler (`rejectUnanswerable`) and the warning text; `watchAsked` owns the loop. With `subagent-prompts` disabled nothing subscribes.
+
+- Retry bound: a stream error, a stream that ends, or a `subscribe()` that throws is one failure. After a failure the watch waits and resubscribes, at most 3 times (4 subscriptions in all). Each failure warns with the error name only (`permission prompt watch failed; resubscribing (attempt N)`); the last one warns `permission prompt watch stopped; …` and the watch ends. The evaluate hook keeps denying.
+- Backoff: 1 s, 5 s, 15 s (`DEFAULT_RESUBSCRIBE_DELAYS_MS`; the array length is the bound). `abortableSleep` waits on an unref'd timer and returns at once on abort. A subscription that works resets nothing: the bound counts failures over the plugin's life.
+- Teardown: the cleanup function aborts `watching.signal`, then calls `stop()`. Abort ends a backoff sleep, suppresses every warning and ends the loop. `stop()` calls the live iterator's `return()` without awaiting it, because a pending read may never settle, and swallows a rejection from it. A lookup in flight at teardown checks the signal before `permission.reply`, so no reply goes out after teardown.
+- Race: the watch is reactive, so a user's answer can land before the reply. Then the reply fails or is a no-op, a failure is warned about, and the user's decision stands.
+- Tests: `asked-watch.test.ts` drives the real sleeper with controlled timers; `index.test.ts` injects `sleep` and `delaysMs` through `Overrides.watch`. Neither waits on the wall clock.
+
 ## Standards
 
 [AGENTS.md](../AGENTS.md) Conventions covers bundles, generated files, vendored `plugins/cad` files, agents, skills, pitfalls and descriptions. Checks enforce most of it. This page adds:
