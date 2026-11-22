@@ -4264,9 +4264,10 @@ describe("cleanup of another repository's landing runs against that repository",
       beadStatus?: string
       observe?: GitRunner
       lock?: Record<string, unknown>
+      layout?: FixtureLayout
     } = {},
   ) {
-    const f = await fixture(name)
+    const f = await fixture(name, `feat/${name}`, "active", over.layout)
     const s = await fixture(`${name}-session`)
     const options: RunnerOptions = { beadStatus: over.beadStatus ?? "closed" }
     const scripted = runner(f, options)
@@ -4320,7 +4321,7 @@ describe("cleanup of another repository's landing runs against that repository",
       rmSync(f.root, { recursive: true, force: true })
       rmSync(s.root, { recursive: true, force: true })
     }
-    return { f, s, scripted, fake, pending, another: make, targetCommon, sessionCommon, sessionKey, explicit, idle, hostRemoved, finish }
+    return { f, s, run, scripted, fake, pending, another: make, targetCommon, sessionCommon, sessionKey, explicit, idle, hostRemoved, finish }
   }
   const idleSession = (id: string, projectID: string, directory: string) => ({ id, projectID, location: { directory }, time: { updated: 1 } })
 
@@ -4332,6 +4333,36 @@ describe("cleanup of another repository's landing runs against that repository",
     expect(existsSync(h.s.linked)).toBe(true)
     const cleaned = listReceipts(receiptDirectory(h.f.env, h.f.receipt.repo.key)).filter((receipt) => receipt.outcome === "cleaned")
     expect(cleaned.map((receipt) => receipt.supersedes)).toEqual([h.f.receipt.receiptId])
+    await h.finish()
+  })
+
+  test("a clone whose .git switches to another repository's store during authorization is refused and nothing is removed", async () => {
+    const h = await foreignHarness("foreign-switch", { layout: "separate-git-dir" })
+    const store = join(h.f.root, "store.git")
+    const copy = join(h.f.root, "store-copy.git")
+    let switched = false
+    const result = await cleanupDelivery({ receipt: h.f.receiptPath, repo: "owner/repo", repoPath: h.f.main }, h.s.main, {
+      run: h.run,
+      now: () => NOW + 10,
+      env: h.f.env,
+      bounds: HEAVY_FIXTURE_BOUNDS,
+      coordinate: async () => ({
+        // The prompt waits on a person: meanwhile the clone's marker and the worktree's both move to a
+        // copy of the store, a complete repository of its own, so every later proof is consistent with it.
+        authorize: async () => {
+          cpSync(store, copy, { recursive: true })
+          writeFileSync(join(h.f.main, ".git"), `gitdir: ${copy}\n`)
+          const marker = join(h.f.linked, ".git")
+          writeFileSync(marker, readFileSync(marker, "utf8").replaceAll(store, copy))
+          switched = true
+        },
+      }),
+    })
+    expect(switched).toBe(true)
+    // The marker proofs (#94) refuse it; the coordination's own `repo.common` refusal has its test below.
+    expect(refusal(result)).toContain("worktree.executionCwd")
+    expect(mutationCalls(h.scripted.calls)).toEqual([])
+    expect(existsSync(h.f.linked)).toBe(true)
     await h.finish()
   })
 

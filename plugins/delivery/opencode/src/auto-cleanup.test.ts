@@ -86,7 +86,7 @@ test("the text swaps the cleanup instruction for the outcome", () => {
   expect(textAfterCleanup(text, { ok: false, skipped: true, reason: "x" })).toBe(text)
 })
 
-const FOREIGN_STEP = 'delivery_cleanup with repo "acme/widgets" and repoPath "/clones/widgets"'
+const FOREIGN_STEP = "delivery_cleanup repo=acme/widgets repoPath=/clones/widgets"
 
 test("a finished cleanup of another repository drops its parameterised step from next", () => {
   const next = ["cd '/clones/widgets' && env -u BEADS_DIR bd close x", FOREIGN_STEP]

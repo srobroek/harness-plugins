@@ -1055,7 +1055,7 @@ function nativeCloseoutSteps(receipt: LandingReceipt, receiptPath: string, merge
 
 /** The cleanup step for a landing of another repository: the same tool, told which clone it runs in. */
 export function foreignCleanupStep(repo: string, root: string): string {
-  return `delivery_cleanup with repo ${JSON.stringify(repo)} and repoPath ${JSON.stringify(root)}`
+  return `delivery_cleanup repo=${repo} repoPath=${/\s/.test(root) ? JSON.stringify(root) : root}`
 }
 
 /**
