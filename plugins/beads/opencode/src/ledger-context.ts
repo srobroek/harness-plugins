@@ -11,7 +11,7 @@
  */
 
 import { existsSync, lstatSync, realpathSync } from "node:fs"
-import { dirname, join, resolve } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import { readSmallRegularFile } from "@srobroek/opencode-lib/bounded-read"
 
 export type LedgerContext = {
@@ -113,6 +113,16 @@ export function sameStore(a: string, b: string, cwd: string): boolean {
   return canonical(resolve(cwd, a)) === canonical(resolve(cwd, b))
 }
 
+/**
+ * The directory that owns `store`: its parent for a `.beads` directory, the parent of the git
+ * common dir when identity names one, else the store itself (a repository-root store).
+ */
+function ownerRoot(store: string, identity: string): string {
+  if (basename(store) === ".beads") return dirname(store)
+  if (basename(identity) === ".git") return dirname(identity)
+  return store
+}
+
 type Foreign = { store: string; ledgerRoot: string }
 
 /**
@@ -134,7 +144,7 @@ function foreignLedger(input: {
   // `repoIdentity` answers the directory itself outside any repository.
   if (here === input.cwd) return undefined
   if (here === there) return undefined
-  return { store, ledgerRoot: dirname(store) }
+  return { store, ledgerRoot: ownerRoot(store, there) }
 }
 
 const WRONG_PROJECT =
