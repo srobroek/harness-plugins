@@ -21,8 +21,6 @@ export type Options = {
   base: string
   /** Register the `experimental.idle` gates. */
   gates: boolean
-  /** A landed lane is kept this long after its child was last resumed. */
-  resumeGraceMs: number
   /** An empty lane is removed only after its child and parent stayed idle this long. */
   emptyGraceMs: number
   /** The sweep mode; it only sets the `freeBuildDirs` default, since the sweep runs on demand. */
@@ -52,7 +50,6 @@ export function readOptions(options: Readonly<Record<string, unknown>> | undefin
     agents,
     base,
     gates: options?.gates !== false,
-    resumeGraceMs: positive(options?.resumeGraceMinutes, 10) * MINUTE,
     emptyGraceMs: positive(options?.emptyGraceMinutes, 30) * MINUTE,
     sweep,
     minAgeHours: positive(options?.minAgeHours, 24),

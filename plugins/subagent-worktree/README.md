@@ -20,7 +20,6 @@ the `wt` strategy when the [worktrunk](../worktrunk) plugin is loaded, OpenCode'
 | `base` | `"HEAD"` | Ref the worktree starts from, resolved in the caller's checkout. |
 
 | `gates` | `true` | Register the `experimental.idle` gates (see Cleanup layers). The hook is experimental; if the host lacks it the plugin runs without gates. |
-| `resumeGraceMinutes` | `10` | A removal with no end event behind it (the idle pass, the gate, a merge) keeps a lane this long after a `subagent` call last targeted its child. |
 | `emptyGraceMinutes` | `30` | The idle pass and the gate remove an empty lane only after its child and parent stayed idle this long. An end of the child's execution removes it at once. |
 | `sweep` | `"report"` | `"off"`, `"report"` or `"prune"`. It only sets the `freeBuildDirs` default: the sweep runs when `subagent_worktree_sweep` is called, with that call's mode. |
 | `minAgeHours` | `24` | The sweep never prunes a worktree younger than this. |
@@ -155,10 +154,9 @@ The removal runs under the worktree's on-disk lock, which delivery and every res
 reads everything fresh. The lane is kept unless all of these hold:
 
 1. **Not running.** No shutdown resume is pending. No execution of the child started after the end
-   event. No `subagent` call resumed the child after the end event (without an end event: within
-   `resumeGraceMinutes`). No background job is recorded for the lane. The child's own status is not
-   running or unknown. Only a trigger that is the end of the child's execution or session skips
-   that read.
+   event. No `subagent` call resumed the child after the end event or since the removal was
+   planned. No background job is recorded for the lane. The child's own status is not running or
+   unknown; every trigger reads it again under the lock.
 2. **Not denied.** Delivery's landing records for the worktree do not block it.
 3. **Clean.** No uncommitted or untracked change (ignored files are fine), no merge, rebase,
    cherry-pick, revert or bisect in progress, no stash on its branch. `delivery_cleanup` applies
@@ -203,8 +201,7 @@ unknown status, or an ownership lookup that fails or spans unread pages, keeps t
 parent's idle pass and the idle gate remove a landed lane when all of these hold:
 
 - the child is not running;
-- the parent is idle;
-- no `subagent` call targeted the child within `resumeGraceMinutes`.
+- the parent is idle.
 
 They remove an empty lane (no commits, clean) after the child and parent stay idle for
 `emptyGraceMinutes`.
@@ -266,10 +263,11 @@ lives under `<git-common-dir>/opencode/`, shared by every instance of the reposi
   it is re-entrant inside a removal's own critical section. `delivery` takes this same lock.
 - the lane's claim carries the resume `generation` and `resumedAt`. A resume takes the lock, bumps
   the generation and stamps the time. A lane removal reads `resumedAt` from disk under the lock and
-  keeps the lane when the child was resumed after the end event that started the removal (with no
-  end event: inside the resume window). The sweep captures the generation before collecting facts
-  and, under the lock right before removing, aborts if it changed or the child was resumed inside the
-  resume window.
+  keeps the lane when the child was resumed at or after the moment the removal was decided: the
+  accepted end event for an end-event removal, or the start of planning for the parent's idle pass,
+  the idle gate, a foreground return and a merge. A resume before that moment does not keep it; the
+  child's status is read again instead. The sweep captures the generation before collecting facts
+  and, under the lock right before removing, aborts if it changed.
 - `holds/<sha1 of the directory>/<sha1 of the session>.json`: the background jobs a session has
   running for the lane (its own, a descendant's, or a shell naming the lane directory). Every idle
   gate, child or parent, writes its own entry and clears it when it sees none; every remover reads

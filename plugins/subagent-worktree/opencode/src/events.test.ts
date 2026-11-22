@@ -17,7 +17,7 @@ import type { Lane } from "./lane.ts"
 
 const MIN = 60_000
 const NOW = 10_000_000
-const policy: LanePolicy = { resumeGraceMs: 10 * MIN, emptyGraceMs: 30 * MIN }
+const policy: LanePolicy = { emptyGraceMs: 30 * MIN }
 
 const lane = (over: Partial<Lane> = {}): Lane => ({
   child: "ses_c",
@@ -61,11 +61,10 @@ describe("laneEventAction", () => {
     ["empty past the grace period", lane({ quietSince: NOW - 31 * MIN }), facts({ ahead: 0 }), parent, "remove", ""],
     ["empty inside the grace period", lane({ quietSince: NOW - 5 * MIN }), facts({ ahead: 0 }), parent, "defer", "idle 5 of 30"],
     ["succeeded, commits, not landed", lane(), facts(), child("succeeded"), "defer", "not landed"],
-    ["landed, clean, resumed 2 min ago", lane({ resumedAt: NOW - 2 * MIN }), facts({ landed: true }), parent, "defer", "resumed 2 min ago"],
     ["landed, clean, parent mid-turn", lane(), facts({ landed: true, parent: "busy" }), parent, "defer", "mid-turn"],
     ["landed, clean, child status unknown", lane(), facts({ landed: true, child: "unknown" }), parent, "defer", "unknown"],
     ["landed, clean, stash on the branch", lane(), facts({ landed: true, busyTree: "a stash exists on a" }), parent, "defer", "stash"],
-    ["landed, clean, all finished", lane({ resumedAt: NOW - 11 * MIN }), facts({ landed: true }), parent, "remove", ""],
+    ["landed, clean, all finished", lane(), facts({ landed: true }), parent, "remove", ""],
     ["landed, clean, but delivery cleanup was denied", lane(), facts({ landed: true, denied: "delivery cleanup was denied" }), parent, "defer", "denied"],
     ["landed, clean, delivery records unreadable", lane(), facts({ landed: true, denied: "delivery's landing records cannot be read" }), parent, "defer", "cannot be read"],
     ["landed, dirty", lane(), facts({ landed: true, dirty: true, dirtyToken: "d1" }), parent, "notifyParent", ""],
@@ -159,11 +158,6 @@ describe("idleGateAction", () => {
     expect(gate.remove.map((entry) => entry.lane.child)).toEqual(["ses_c"])
     expect(gate.remove[0]?.basis).toBe("landed")
     expect(gate.message).toBeUndefined()
-  })
-
-  test("a lane resumed a minute ago is not removed even when landed", () => {
-    const gate = idleGateAction(session(), [led({ resumedAt: NOW - MIN }, { landed: true })], policy)
-    expect(gate.remove).toEqual([])
   })
 
   test("a landed-dirty notice is a new notice for a new landed head or dirty state", () => {

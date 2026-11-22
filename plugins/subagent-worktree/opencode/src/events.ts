@@ -45,7 +45,7 @@ export type LaneFacts = {
   denied?: string | undefined
 }
 
-export type LanePolicy = { resumeGraceMs: number; emptyGraceMs: number }
+export type LanePolicy = { emptyGraceMs: number }
 
 export type LaneAction =
   | { action: "remove"; reason: string; basis: "landed" | "empty" }
@@ -76,17 +76,12 @@ function sent(lane: Pick<Lane, "notices">, key: string): boolean {
 
 /** The first of conditions 3 and 4, and the tree's busy state, that is not met; undefined when all hold. */
 export function unmetFinished(
-  lane: Pick<Lane, "resumedAt">,
-  facts: Pick<LaneFacts, "child" | "parent" | "now" | "busyTree">,
-  policy: Pick<LanePolicy, "resumeGraceMs">,
+  facts: Pick<LaneFacts, "child" | "parent" | "busyTree">,
 ): string | undefined {
   if (facts.child === "unknown") return "the child's status is unknown"
   if (facts.child === "running") return "the child is still running"
   if (facts.parent === "unknown") return "the parent's status is unknown"
   if (facts.parent === "busy") return "the parent is mid-turn"
-  if (lane.resumedAt !== undefined && facts.now - lane.resumedAt < policy.resumeGraceMs) {
-    return `the child was resumed ${Math.max(0, Math.round((facts.now - lane.resumedAt) / MINUTE))} min ago`
-  }
   if (facts.busyTree !== undefined) return facts.busyTree
   return undefined
 }
@@ -147,7 +142,7 @@ export function laneEventAction(
 
   if (facts.ahead > 0) {
     if (landed) {
-      const unmet = unmetFinished(lane, facts, policy)
+      const unmet = unmetFinished(facts)
       return unmet === undefined
         ? { action: "remove", reason: "landed, clean, child finished and parent done", basis: "landed" }
         : { action: "defer", reason: `landed, but ${unmet}` }
@@ -162,7 +157,7 @@ export function laneEventAction(
   }
 
   // No commits, clean: removed only after both sessions stay idle for the grace period.
-  const unmet = unmetFinished(lane, facts, policy)
+  const unmet = unmetFinished(facts)
   if (unmet !== undefined) return { action: "defer", reason: `empty lane, but ${unmet}`, quiet: "reset" }
   if (lane.quietSince === undefined) {
     return { action: "defer", reason: "empty lane: the grace period starts now", quiet: "start" }
