@@ -473,3 +473,58 @@ describe("programs a repository's own config or hooks name do not run during aut
     expect(await bothWays(["git", "-C", repo, "log", "-1"], marker)).toEqual({ unhardened: true, hardened: false })
   })
 })
+
+describe("spawnRunner refuses to run hardened-git programs under a git it cannot trust", () => {
+  let root: string
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), "subagent-worktree-version-"))
+  })
+  afterAll(() => rm(root, { recursive: true, force: true }))
+
+  /**
+   * The version check is cached for the life of the process, so each case runs `spawnRunner` in its own `bun`
+   * process, with a directory of fake `git`, `wt` and `gh` first on PATH. Each fake answers `--version` with
+   * `versionOutput` and, for any other call, writes `marker` and exits 0.
+   */
+  const run = async (name: string, versionOutput: string, program: string) => {
+    const bin = join(root, `${name}-bin`)
+    const marker = join(root, `${name}.ran`)
+    await mkdir(bin)
+    for (const tool of ["git", "wt", "gh"]) {
+      writeExecutable(
+        join(bin, tool),
+        `#!/bin/sh\nif [ "$1" = "--version" ]; then printf '%s' '${versionOutput}'; exit 0; fi\ntouch ${marker}\nexit 0\n`,
+      )
+    }
+    const script = join(root, `${name}.ts`)
+    await writeFile(
+      script,
+      `import { spawnRunner } from ${JSON.stringify(join(import.meta.dir, "git.ts"))}\n` +
+        `console.log(JSON.stringify(await spawnRunner([${JSON.stringify(program)}, "status"])))\n`,
+    )
+    const child = Bun.spawn([process.execPath, script], {
+      env: { ...Bun.env, PATH: `${bin}:${Bun.env.PATH ?? ""}` },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const out = await new Response(child.stdout).text()
+    expect(await child.exited).toBe(0)
+    return { result: JSON.parse(out) as { code: number; stderr: string }, ran: await Bun.file(marker).exists() }
+  }
+
+  test.each(["git", "wt", "gh"])("%s: git 2.44 is refused with exit 126 and the command never runs", async (program) => {
+    const { result, ran } = await run(`old-${program}`, "git version 2.44.0", program)
+    expect({ code: result.code, stderr: result.stderr, ran }).toEqual({ code: 126, stderr: "subagent-worktree needs git 2.45+ for safe automatic merges", ran: false })
+  })
+
+  test.each(["git", "wt", "gh"])("%s: unreadable version output is refused with exit 126 and the command never runs", async (program) => {
+    const { result, ran } = await run(`garbled-${program}`, "zsh: command not found: git", program)
+    expect({ code: result.code, stderr: result.stderr, ran }).toEqual({ code: 126, stderr: "subagent-worktree needs git 2.45+ for safe automatic merges", ran: false })
+  })
+
+  test("the control: git 2.45 runs the command", async () => {
+    const { result, ran } = await run("current", "git version 2.45.0", "git")
+    expect({ code: result.code, ran }).toEqual({ code: 0, ran: true })
+  })
+})
