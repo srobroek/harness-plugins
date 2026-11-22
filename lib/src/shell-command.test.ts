@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import {
   commandFromInput,
   commandSegments,
@@ -147,47 +147,81 @@ test("finds a substitution whose quoted argument holds parentheses or a nested q
   expect(parse('echo "$(bd create "a (b)"').unknown).toBe(true)
 })
 
-test("reads executable substitutions inside parameter expansions and shell-fed here-documents", () => {
-  const sources = (command: string) => parse(command).nested.map((child) => child.command)
-  expect(sources(`echo "\${X:-'$(bd create y)'}"`)).toEqual(["bd create y"])
-  expect(sources("echo \"${X:-`bd create y`}\"")).toEqual(["bd create y"])
-  expect(sources("bash <<'EOF'\nbd create y\nEOF")).toEqual(["bd create y\n"])
-  expect(sources("bash -s <<'EOF'\nbd create y\nEOF")).toEqual(["bd create y\n"])
-  expect(sources("sh <<< 'bd create y'")).toEqual(["bd create y"])
-  expect(sources("cat <<'EOF'\nbd create y\nEOF")).toEqual([])
-  expect(sources("bash -c 'true' <<'EOF'\nbd create y\nEOF").includes("bd create y\n")).toBe(false)
-  expect(sources("cat ${X:-<(sleep 30)}")).toEqual(["sleep 30"])
-  expect(sources("cat ${X:->(sleep 30)}")).toEqual(["sleep 30"])
-  expect(sources('cat "${X:-<(sleep 30)}"')).toEqual([])
-  expect(sources("cat ${X:-'$(sleep 5)'}")).toEqual([])
-  expect(sources("cat ${X:-$(sleep 5)}")).toEqual(["sleep 5"])
-  expect(sources("cat ${X:-'<('$(sleep 5)')'}")).toEqual(["sleep 5"])
-  expect(sources("echo ${X:- #$(sleep 5)}")).toEqual(["sleep 5"])
-  expect(sources('echo ${X:-"$(sleep 5)" ${Y:-`sleep 6`}}')).toEqual(["sleep 5", "sleep 6"])
-  expect(sources("echo ${X:-'#$(sleep 5)'}")).toEqual([])
-  expect(parse(`echo "\${X:-can't}"`).unknown).toBe(false)
-  expect(sources(`echo "\${X:-can't $(sleep 5)}"`)).toEqual(["sleep 5"])
-  expect(sources("bash 0<<<'bd create y'")).toEqual(["bd create y"])
-  expect(sources("bash <<<'bd create y' 3</dev/null")).toEqual(["bd create y"])
-  expect(sources("bash 3<<<'bd create y' </dev/null")).toEqual([])
-  expect(sources("bash <<<'bd create y' </dev/null")).toEqual([])
-  expect(sources("bash <<<'bd create y' >out")).toEqual(["bd create y"])
-  expect(sources("bash 3<<'EOF'\nbd create y\nEOF")).toEqual([])
-  expect(parse('echo "${X:-{}"').unknown).toBe(false)
-  expect(parse(`echo "\${X:-$(printf '{"a":1}')}"`).unknown).toBe(false)
-  expect(sources(`echo "\${X:-$(printf '{"a":1}' && sleep 5)}"`)).toEqual([`printf '{"a":1}' && sleep 5`])
-  expect(parse(`echo \${X:-$(printf '{"a":1}')}`).unknown).toBe(false)
-  expect(parse('echo "${X:-{} ${Y:-${Z}}"').unknown).toBe(false)
-  expect(sources(`echo "\${X:-{ $(sleep 5) }"`)).toEqual(["sleep 5"])
-  expect(sources("bash 3<<<'bd create y'>out")).toEqual([])
-  expect(sources("bash <<<'bd create y'>out")).toEqual(["bd create y"])
-  expect(sources("bash 3<<<'x' 0<<<'bd create y'")).toEqual(["bd create y"])
-  expect(sources("bash 3<<<'bd create y' 0<&3")).toEqual(["bd create y"])
-  expect(sources("bash <<<'bd create y' 0<&0")).toEqual(["bd create y"])
-  expect(sources("bash 3<<'EOF' <&3\nbd create y\nEOF")).toEqual(["bd create y\n"])
-  expect(sources("sleep 3 3<<<'x' <&3")).toEqual([])
-  expect(sources(`echo \${A:-"\${B:-'$(sleep 5)'}"}`)).toEqual(["sleep 5"])
-  expect(sources(`echo \${A:-'\${B:-$(sleep 5)}'}`)).toEqual([])
+const sourcesOf = (command: string) => parse(command).nested.map((child) => child.command)
+
+describe("executable substitutions in parameter expansions", () => {
+  test.each([
+    [`echo "\${X:-'$(bd create y)'}"`, ["bd create y"]],
+    ["echo \"${X:-`bd create y`}\"", ["bd create y"]],
+    ["cat ${X:-'$(sleep 5)'}", []],
+    ["cat ${X:-$(sleep 5)}", ["sleep 5"]],
+    ["cat ${X:-'<('$(sleep 5)')'}", ["sleep 5"]],
+    ["echo ${X:- #$(sleep 5)}", ["sleep 5"]],
+    ['echo ${X:-"$(sleep 5)" ${Y:-`sleep 6`}}', ["sleep 5", "sleep 6"]],
+    ["echo ${X:-'#$(sleep 5)'}", []],
+    [`echo "\${X:-can't $(sleep 5)}"`, ["sleep 5"]],
+    [`echo "\${X:-{ $(sleep 5) }"`, ["sleep 5"]],
+    [`echo \${A:-"\${B:-'$(sleep 5)'}"}`, ["sleep 5"]],
+    [`echo \${A:-'\${B:-$(sleep 5)}'}`, []],
+  ])("reads substitutions in %s", (command, expected) => {
+    expect(sourcesOf(command)).toEqual(expected)
+  })
+
+  test.each([`echo "\${X:-can't}"`, `echo "\${X:-{}"`, `echo "\${X:-$(printf '{"a":1}')}"`, `echo \${X:-$(printf '{"a":1}')}`, 'echo "${X:-{} ${Y:-${Z}}"'])(
+    "parses %s without an unknown construct",
+    (command) => {
+      expect(parse(command).unknown).toBe(false)
+    },
+  )
+
+  test(`reads a substitution after a braced word inside a double-quoted expansion`, () => {
+    expect(sourcesOf(`echo "\${X:-$(printf '{"a":1}' && sleep 5)}"`)).toEqual([`printf '{"a":1}' && sleep 5`])
+  })
+})
+
+describe("executable substitutions in shell-fed here-documents and here-strings", () => {
+  test.each([
+    ["bash <<'EOF'\nbd create y\nEOF", ["bd create y\n"]],
+    ["bash -s <<'EOF'\nbd create y\nEOF", ["bd create y\n"]],
+    ["sh <<< 'bd create y'", ["bd create y"]],
+    ["cat <<'EOF'\nbd create y\nEOF", []],
+    ["bash <<<'bd create y' </dev/null", []],
+    ["bash <<<'bd create y' >out", ["bd create y"]],
+    ["bash <<<'bd create y'>out", ["bd create y"]],
+    ["bash <<<'bd create y' 0<&0", ["bd create y"]],
+  ])("reads %s", (command, expected) => {
+    expect(sourcesOf(command)).toEqual(expected)
+  })
+
+  test("ignores a here-document fed to a command that is not a shell", () => {
+    expect(sourcesOf("bash -c 'true' <<'EOF'\nbd create y\nEOF").includes("bd create y\n")).toBe(false)
+  })
+})
+
+describe("executable process substitutions", () => {
+  test.each([
+    ["cat ${X:-<(sleep 30)}", ["sleep 30"]],
+    ["cat ${X:->(sleep 30)}", ["sleep 30"]],
+    ['cat "${X:-<(sleep 30)}"', []],
+  ])("reads %s", (command, expected) => {
+    expect(sourcesOf(command)).toEqual(expected)
+  })
+})
+
+describe("executable substitutions behind fd-prefixed redirects", () => {
+  test.each([
+    ["bash 0<<<'bd create y'", ["bd create y"]],
+    ["bash <<<'bd create y' 3</dev/null", ["bd create y"]],
+    ["bash 3<<<'bd create y' </dev/null", []],
+    ["bash 3<<'EOF'\nbd create y\nEOF", []],
+    ["bash 3<<<'bd create y'>out", []],
+    ["bash 3<<<'x' 0<<<'bd create y'", ["bd create y"]],
+    ["bash 3<<<'bd create y' 0<&3", ["bd create y"]],
+    ["bash 3<<'EOF' <&3\nbd create y\nEOF", ["bd create y\n"]],
+    ["sleep 3 3<<<'x' <&3", []],
+  ])("reads %s", (command, expected) => {
+    expect(sourcesOf(command)).toEqual(expected)
+  })
 })
 
 test("lists invocations of one executable with their globals and verb", () => {
