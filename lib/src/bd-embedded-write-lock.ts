@@ -1367,18 +1367,18 @@ function resolveWrite(
   const db = globalValue(invocation.globals, ["--db"])
   // A store command opens BEADS_DIR before BEADS_DB, and the runner pins BEADS_DIR for the store
   // planned here, so no shell change to BEADS_DB can move it. A command that skips store init reads
-  // BEADS_DB and BD_DB first, so where either may be set it is refused unless the write names its store.
+  // BEADS_DB and BD_DB first, so where either may be set it is refused unless `--db` names the store:
+  // only `--db` beats them there, and a BEADS_DIR does not.
   const dbSource =
     (env.BEADS_DB ?? "") !== "" ? "the environment sets `BEADS_DB`"
     : (env.BD_DB ?? "") !== "" ? "the environment sets `BD_DB`"
     : DB_VARIABLE.test(source) ? "the command mentions `BEADS_DB` or `BD_DB`"
     : undefined
-  const namesStore = db !== undefined || (beadsDir.kind === "known" && beadsDir.assigned && (beadsDir.value ?? "") !== "")
-  if (dbSource !== undefined && skipsStoreInit(invocation) && !namesStore) {
+  if (dbSource !== undefined && skipsStoreInit(invocation) && db === undefined) {
     return {
       problem: {
         part: `${write} skips bd's store init, so bd 1.3.1 picks its store from \`BEADS_DB\` or \`BD_DB\` before \`BEADS_DIR\`, and ${dbSource}`,
-        fix: "Name the store on the write: `bd --db /path/.beads ...`, or `BEADS_DIR=/path/.beads bd ...` (the lock then clears `BEADS_DB` and `BD_DB` for that write).",
+        fix: "Name the store on the write with `bd --db /path/.beads ...`; `BEADS_DIR` does not override `BEADS_DB` for this command.",
       },
     }
   }
