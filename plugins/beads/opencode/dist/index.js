@@ -1361,14 +1361,16 @@ function applyActorAssignments(vars, assignments) {
 }
 function afterCommand(vars, values, assigned) {
   const after = { ...vars };
-  const command = values[0] === "builtin" || values[0] === "command" ? values.slice(1) : values;
-  const name = command[0];
+  const name = values[0];
+  const builtinName = (word) => BUILTIN_OPTIONS[word] !== undefined || VARIABLE_BUILTINS[word] === true;
   if (values.length === 0)
     applyActorAssignments(after, assigned);
+  else if ((name === "command" || name === "builtin") && values.slice(1).some(builtinName))
+    markUnverified(after, mentioned(values.slice(1)));
   else if (name !== undefined && BUILTIN_OPTIONS[name] !== undefined)
-    applyVariableBuiltin(after, name, command.slice(1));
+    applyVariableBuiltin(after, name, values.slice(1));
   else if (name !== undefined && VARIABLE_BUILTINS[name] === true)
-    markUnverified(after, mentioned(command.slice(1)));
+    markUnverified(after, mentioned(values.slice(1)));
   return after;
 }
 var changedVars = (before, after) => ACTOR_VARS.filter((variable) => before[variable] !== after[variable]);
@@ -1410,6 +1412,7 @@ function readShell(command, context) {
   let list = {};
   let chain = null;
   const scopes = [];
+  const groups = [];
   let compounds = 0;
   const isPipe = (other) => other?.kind === "operator" && (other.operator === "|" || other.operator === "|&");
   const endChain = () => {
@@ -1427,7 +1430,13 @@ function readShell(command, context) {
         chain = null;
       } else if (operator === ")" && scopes.length > 0)
         ({ vars, list, chain } = scopes.pop());
-      else if (operator === "&&" || operator === "||") {
+      else if (operator === "{") {
+        groups.push({ list, chain });
+        chain = null;
+      } else if (operator === "}" && groups.length > 0) {
+        endChain();
+        ({ list, chain } = groups.pop());
+      } else if (operator === "&&" || operator === "||") {
         chain ??= { base: { ...vars }, or: false };
         if (operator === "||") {
           markUnverified(vars, changedVars(chain.base, vars));
@@ -1439,7 +1448,9 @@ function readShell(command, context) {
         list = { ...vars };
       } else if (operator === "&") {
         endChain();
-        vars = list;
+        const changed = changedVars(list, vars);
+        vars = { ...list };
+        markUnverified(vars, changed);
         list = { ...vars };
       }
       continue;
