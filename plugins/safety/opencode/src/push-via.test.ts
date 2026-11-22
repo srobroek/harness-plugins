@@ -237,7 +237,7 @@ describe("hardGate integration", () => {
   })
 
   test("quotes a directory with a space in the hint", () => {
-    expect(hardGate("git -C '/work/my repo' push", "/work/repo", options)?.reason).toContain(
+    expect(hardGate("git push", "/work/my repo", options)?.reason).toContain(
       "`dgit -C '/work/my repo' push`",
     )
   })

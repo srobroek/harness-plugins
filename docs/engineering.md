@@ -100,7 +100,7 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 
 ## safety push-via guard
 
-`plugins/safety/opencode/src/push-via.ts` holds the optional `push-via` hard gate (`pushVia: { host, command }` option, off by default). Pure `pushVia(commands, cwd, config, resolveRemote)` decides; `gitRemoteResolver` reads local config with `SAFE_GIT_ARGS` and `untrustedLocalGitEnv` and never contacts a remote. It fails open when the host cannot be resolved. `guards.ts` wires it into `hardGate`.
+`plugins/safety/opencode/src/push-via.ts` holds the optional `push-via` hard gate (`pushVia: { host, command }` option, off by default). By the owner's decision it judges only a call whose first command is a literal `git push` (or `git -C <literal dir> push`): no wrapper, inline assignment, expansion, substitution, quoting, redirect or config/repository option. Everything else fails open, because matching git's config and environment through those shapes never converged. Pure `pushVia(commands, cwd, config, resolveRemote)` decides; `gitRemoteResolver` reads local config with `SAFE_GIT_ARGS` and `untrustedLocalGitEnv` (system config stays off) and never contacts a remote. It fails open when the host cannot be resolved. `guards.ts` wires it into `hardGate` and skips it when the session's environment holds `GIT_CONFIG*`, `GIT_DIR`, `GIT_WORK_TREE` or `GIT_COMMON_DIR`.
 
 ## safety permission relaxations
 

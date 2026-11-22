@@ -4473,10 +4473,6 @@ function hostOf(url) {
   }
   return authority ? authority.toLowerCase() : undefined;
 }
-function childEnv(inherited, overrides) {
-  const { GIT_CONFIG_NOSYSTEM: _off, ...hardened } = untrustedLocalGitEnv(inherited);
-  return { ...hardened, ...overrides };
-}
 function git(cwd, args, env) {
   const result = spawnSync("git", [...SAFE_GIT_ARGS, "-C", cwd, ...args], { encoding: "utf8", timeout: 5000, env });
   if (result.status !== 0)
@@ -4485,8 +4481,8 @@ function git(cwd, args, env) {
 `).filter((line) => line !== "");
   return lines.length === 0 ? undefined : lines;
 }
-function gitRemoteResolver(inherited, overrides = {}) {
-  const env = childEnv(inherited, overrides);
+function gitRemoteResolver(inherited) {
+  const env = untrustedLocalGitEnv(inherited);
   return (cwd, remote) => {
     if (remote !== undefined) {
       const named = git(cwd, ["remote", "get-url", "--push", "--all", "--", remote], env);
@@ -4547,73 +4543,50 @@ function pushArgs(args) {
   }
   return { help, remote: positional[0] ?? repo };
 }
-var CONFIG_KEY = /^(?:remote|url|branch|include|includeif)\./i;
-var UNMOVED = "\x00unmoved";
-function isLeadingCd(command) {
-  return command.index === 0 && command.context === "top" && command.argv.length === 2 && base(command.argv[0]) === "cd" && leadingCdCwd(command.source, UNMOVED) !== UNMOVED;
-}
-function configOverride(argv, end) {
-  for (let i = 1;i < end; i++) {
-    const word = argv[i];
-    let entry;
-    if (word === "-c" || word === "--config-env")
-      entry = argv[++i];
-    else if (word.startsWith("--config-env="))
-      entry = word.slice("--config-env=".length);
-    else if (word.startsWith("-c") && word.length > 2)
-      entry = word.slice(2);
-    if (entry !== undefined && CONFIG_KEY.test(entry))
-      return true;
-  }
-  return false;
-}
 var SELECTOR = /GIT_(?:CONFIG|DIR|WORK_TREE|COMMON_DIR)/;
-var CONFIG_HOME = /(?:^|[\s;&|(])(?:HOME|XDG_CONFIG_HOME)=/;
-var ENV_UNSETS = /(?:^|\s)(?:--unset\b|--ignore-environment\b|-[A-Za-z]*[iu])/;
-function envUnsets(command) {
-  if (!command.wrappers.includes("env"))
-    return false;
-  const start = command.words?.[0]?.start;
-  return start === undefined || ENV_UNSETS.test(command.source.slice(0, start));
-}
-var hasDotDot = (path) => path.split("/").includes("..");
 function repositorySelected(env) {
   return Object.keys(env ?? {}).some((name) => SELECTOR.test(name));
 }
-function judgedCommand(commands) {
-  const [first, second] = commands;
-  if (first === undefined)
+var LITERAL = /^[A-Za-z0-9_./@:+=,%-]+$/;
+var literalWords = (command) => command.words !== undefined && command.words.length === command.argv.length && command.argv.every((word, i) => {
+  const at = command.words?.[i];
+  return at !== undefined && command.source.slice(at.start, at.end) === word && LITERAL.test(word);
+});
+function literalPush(command, cwd) {
+  if (command === undefined || command.context !== "top" || command.argv[0] !== "git")
     return;
-  const push = isLeadingCd(first) ? second : first;
-  return push?.context === "top" ? push : undefined;
+  if (command.wrappers.length > 0 || command.assignments.length > 0 || command.redirects.length > 0)
+    return;
+  const first = command.words?.[0];
+  if (first === undefined || command.source.slice(0, first.start).trim() !== "")
+    return;
+  if (!literalWords(command))
+    return;
+  let dir = cwd;
+  let i = 1;
+  while (command.argv[i] === "-C") {
+    const chdir = command.argv[i + 1];
+    if (chdir === undefined || chdir.split("/").includes(".."))
+      return;
+    dir = resolve6(dir, chdir);
+    i += 2;
+  }
+  return command.argv[i] === "push" ? { dir, args: command.argv.slice(i + 1) } : undefined;
 }
 function pushVia(commands, cwd, config, resolveRemote) {
-  if (commands.some((command) => SELECTOR.test(command.source) || CONFIG_HOME.test(command.source)))
+  const push = literalPush(commands[0], cwd);
+  if (push === undefined)
     return;
-  if (commands.some((command) => command.context === "substitution"))
-    return;
-  const command = judgedCommand(commands);
-  if (command === undefined || base(command.argv[0]) !== "git" || command.redirects.length > 0)
-    return;
-  const invocation = gitInvocation(command.argv);
-  if (invocation?.subcommand !== "push" || invocation.overridden)
-    return;
-  if (configOverride(command.argv, invocation.offset - 1) || envUnsets(command))
-    return;
-  const directories = [...command.directories, ...invocation.chdirs];
-  if (directories.some(hasDotDot))
-    return;
-  const { help, remote } = pushArgs(invocation.args);
+  const { help, remote } = pushArgs(push.args);
   if (help)
     return;
-  const dir = directories.reduce((at, chdir) => resolve6(at, chdir), cwd);
   let urls;
   try {
-    urls = resolveRemote(dir, remote);
+    urls = resolveRemote(push.dir, remote);
   } catch {
     return;
   }
-  return urls?.some((url) => hostOf(url) === config.host) ? { dir } : undefined;
+  return urls?.some((url) => hostOf(url) === config.host) ? { dir: push.dir } : undefined;
 }
 
 // plugins/safety/opencode/src/guards.ts
