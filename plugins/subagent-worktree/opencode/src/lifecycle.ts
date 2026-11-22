@@ -100,7 +100,7 @@ export type LifecycleDeps = {
   lookupMs: number
   load: (child: string) => Promise<Lane | undefined>
   /** Store a lane; resolves false when the write was refused (the lane's writer was handed over). */
-  save: (lane: Lane) => Promise<boolean | void>
+  save: (lane: Lane) => Promise<boolean>
   scan: () => Promise<Lane[]>
   /**
    * Called with the worktree's lock held: whether `lane`'s writer was handed over to another writer. If so, it

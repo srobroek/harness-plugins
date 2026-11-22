@@ -785,13 +785,13 @@ describe("worktree argument", () => {
     })
 
     test.each([
-      ["HEAD moved", (repo: Repo) => void (repo.heads[OTHER] = "1111111111111111111111111111111111111111"), /HEAD moved from fedcba987654 to 111111111111/],
-      ["the tree has uncommitted changes", (repo: Repo) => void (repo.dirty = true), /uncommitted changes/],
-      ["a commit is not pushed", (repo: Repo) => void (repo.unpushed = 1), /not pushed/],
-    ])("when %s after the release, the next writer does not take over the lane, and the release is voided", async (_name, change, reason) => {
+      ["HEAD moved", { heads: { [OTHER]: "1111111111111111111111111111111111111111" } }, /HEAD moved from fedcba987654 to 111111111111/],
+      ["the tree has uncommitted changes", { dirty: true }, /uncommitted changes/],
+      ["a commit is not pushed", { unpushed: 1 }, /not pushed/],
+    ] as const)("when %s after the release, the next writer does not take over the lane, and the release is voided", async (_name, change, reason) => {
       const setup = await dead()
       await release(setup, "ses_dead")
-      change(setup.repo)
+      Object.assign(setup.repo, "heads" in change ? { heads: { ...setup.repo.heads, ...change.heads } } : change)
       await expect(spawn(setup, { agent: "pinned", worktree: "feat" })).rejects.toThrow(reason)
       expect(lane(setup.fake, "ses_dead")).toEqual(owned)
       expect(lane(setup.fake, "ses_fake1")).toBeUndefined()
