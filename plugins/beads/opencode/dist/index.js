@@ -1246,56 +1246,65 @@ var CLOSERS = new Set(["fi", "done", "esac"]);
 var BRANCHES = new Set(["else", "elif"]);
 var ASSIGNMENT2 = /^[A-Za-z_]\w*=/;
 var basename = (word) => word.split("/").pop() ?? word;
-function applyActorBuiltin(state, values, conditional) {
+function applyActorBuiltin(state, shellVars, values, conditional) {
   const name = values[0];
   if (name !== "export" && name !== "unset")
     return;
+  const unexport = name === "export" && values.slice(1).some((arg) => /^-[a-zA-Z]*n/.test(arg));
   for (const arg of values.slice(1)) {
     const variable = ACTOR_VARS.find((candidate) => arg === candidate || arg.startsWith(`${candidate}=`));
     if (variable === undefined)
       continue;
     if (conditional)
       continue;
-    if (name === "unset")
+    if (name === "unset") {
+      state[variable] = null;
+      delete shellVars[variable];
+    } else if (unexport)
       state[variable] = null;
     else if (arg.includes("="))
       state[variable] = arg.slice(variable.length + 1);
+    else if (shellVars[variable] !== undefined)
+      state[variable] = shellVars[variable];
   }
 }
 function bdInvocations(command, inherited = {}) {
   return readCommand(command, inherited).invocations;
-}
-function actorStateAfter(command, inherited = {}) {
-  return readCommand(command, inherited).state;
 }
 function readCommand(command, inherited) {
   const out = [];
   const scan = scanShell(command, { executableSubstitutionsOnly: true });
   let state = { ...inherited };
   const scopes = [];
+  let shellVars = {};
   let compounds = 0;
   let andChained = false;
   let orChained = false;
-  let chainExports = [];
+  let chainChanges = [];
   const unclaimed = [...scan.substitutions];
   for (const item of scan.items) {
     if (item.kind === "operator") {
       if (item.operator === "(") {
-        scopes.push(state);
+        scopes.push({ state, shellVars });
         state = { ...state };
+        shellVars = { ...shellVars };
       } else if (item.operator === ")" && scopes.length > 0)
-        state = scopes.pop();
+        ({ state, shellVars } = scopes.pop());
       else if (item.operator === "&&")
         andChained = true;
       else if (item.operator === "||")
         orChained = true;
       else if (item.operator === ";" || item.operator === `
 ` || item.operator === "&") {
-        for (const { variable, value } of chainExports) {
-          if (state[variable] === value)
+        for (const { variable, previous, value } of chainChanges) {
+          if (state[variable] !== value)
+            continue;
+          if (previous === undefined)
             delete state[variable];
+          else
+            state[variable] = previous;
         }
-        chainExports = [];
+        chainChanges = [];
         andChained = false;
         orChained = false;
       }
@@ -1344,15 +1353,22 @@ ${document.body}__HEREDOC_END__
       a++;
     const assigned = words.slice(k, a).map((word) => word.value);
     const values = words.slice(a).map((word) => word.value);
-    if (values.length === 0)
+    if (values.length === 0) {
+      if (compounds === 0 && !orChained)
+        for (const word of assigned) {
+          const variable = ACTOR_VARS.find((candidate) => word.startsWith(`${candidate}=`));
+          if (variable !== undefined)
+            shellVars[variable] = word.slice(variable.length + 1);
+        }
       continue;
+    }
     const before = { ...state };
-    applyActorBuiltin(state, values, compounds > 0 || orChained);
+    applyActorBuiltin(state, shellVars, values, compounds > 0 || orChained);
     if (andChained)
       for (const variable of ACTOR_VARS) {
         const value = state[variable];
-        if (typeof value === "string" && value !== before[variable])
-          chainExports.push({ variable, value });
+        if (value !== undefined && value !== before[variable])
+          chainChanges.push({ variable, previous: before[variable], value });
       }
     const found = resolveBd(values, assigned);
     if (found !== undefined) {
@@ -1634,21 +1650,7 @@ function decideActorParsed(parsed, env = process.env, inherited = {}) {
   if (typeof candidate.command !== "string" || !Array.isArray(candidate.nested)) {
     return { kind: "block", reason: "command could not be parsed" };
   }
-  let advisory = false;
-  const own = decideActorGate(candidate.command, env, inherited);
-  if (own.kind === "block")
-    return own;
-  if (own.kind === "advisory")
-    advisory = true;
-  const after = actorStateAfter(candidate.command, inherited);
-  for (const child of candidate.nested) {
-    const decision = decideActorParsed(child, env, after);
-    if (decision.kind === "block")
-      return decision;
-    if (decision.kind === "advisory")
-      advisory = true;
-  }
-  return advisory ? { kind: "advisory", text: ADVISORY_TEXT } : { kind: "allow" };
+  return decideActorGate(candidate.command, env, inherited);
 }
 function decideActorGate(command, env = process.env, inherited = {}) {
   let advisory = false;
