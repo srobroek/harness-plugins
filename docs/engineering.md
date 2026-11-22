@@ -100,7 +100,7 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 
 ## safety permission relaxations
 
-`review()` in `plugins/safety/opencode/src/index.ts` wraps `reviewPermission`. When it throws (a git probe timing out under load), it returns `undefined` and logs a warning through the plugin's `warn` (`hostWarn`) each time. `applyDecision` treats `undefined` as no change, so the host's own effect (allow, ask or deny) decides; `undefined` never means allow. Both callers (the `execute.before` shell hook and the `evaluate` gate) pass `warn`.
+`review()` in `plugins/safety/opencode/src/index.ts` wraps `reviewPermission`. When it throws an unexpected exception (handled probe timeouts become `ProbeTimeout`, which the destruction review turns into an ask, so they never reach this path), it returns `undefined` and logs a warning through the plugin's `warn` (`hostWarn`) each time. `applyDecision` treats `undefined` as no change, so the host's own effect (allow, ask or deny) decides; `undefined` never means allow. Both callers (the `execute.before` shell hook and the `evaluate` gate) pass `warn`.
 
 `plugins/safety` turns some `external_directory` asks into allows in `permission.hook("evaluate")` hooks that run before `denyUnanswerable`, because a subagent cannot answer a prompt. Each hook acts only on an `ask`, never overrides a deny, and has a pure decision function tested directly (`scratch-dirs.ts`, `skill-references.ts`, `steering-dirs.ts`, `repo-worktrees.ts`). A hook can be switched off through the plugin's `disable` list:
 

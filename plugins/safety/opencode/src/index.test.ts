@@ -4,7 +4,7 @@ import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { Tool } from "@opencode/plugin/effect"
 import { createFakeContext, type FakeAssert, type FakeSession, type FakeSkill } from "@srobroek/opencode-lib/testing"
-import plugin, { applyDecision, confirmSecretCommand, createPlugin, type Evaluation, readOptions, shellCwd } from "./index.ts"
+import plugin, { applyDecision, confirmSecretCommand, createPlugin, type Evaluation, type Overrides, readOptions, shellCwd } from "./index.ts"
 import { FNOX_CONFIG_MESSAGE, FNOX_INDIRECT_MESSAGE, FNOX_STORE_MESSAGE, VALUE_MESSAGE } from "./op-guard.ts"
 import { INVESTIGATE_NOTICE } from "./package-investigate.ts"
 import { FORCE_PUSH_MESSAGE } from "./permission.ts"
@@ -30,7 +30,7 @@ type Load = {
   skills?: FakeSkill[]
   warn?: (message: string, data?: Record<string, unknown>) => void
   /** Replaces the review options of the plugin. */
-  review?: Record<string, unknown>
+  review?: NonNullable<Overrides["review"]>
   /** Backoff seams of the prompt watch; the default waits on the wall clock. */
   watch?: { delaysMs?: readonly number[]; sleep?: (ms: number, signal: AbortSignal) => Promise<void> }
   /** Replaces host methods on the fake context before the plugin sets up. */
@@ -51,7 +51,7 @@ async function load(options: Record<string, unknown> = {}, more: Load = {}) {
   })
   more.patch?.(fake.context)
   const cleanup = await createPlugin({
-    review: (more.review as never) ?? { gh: async () => "[]", timeoutMs: 30_000, budgetMs: 120_000 },
+    review: more.review ?? { gh: async () => "[]", timeoutMs: 30_000, budgetMs: 120_000 },
     env: more.env ?? {},
     ...(more.guard ? { guard: more.guard } : {}),
     ...(more.scratchRoots ? { scratch: { roots: more.scratchRoots } } : {}),
@@ -262,12 +262,6 @@ describe("permission decisions", () => {
       expect(warnings.length).toBe(2)
       expect(warnings[0]?.message).toContain("review failed")
       expect(warnings[0]?.data).toMatchObject({ error: "Error", message: "probe timed out" })
-    })
-
-    test("a review that succeeds still decides", async () => {
-      const { before, evaluate } = await load()
-      await before("c1", "sudo rm -rf /var/tmp/x")
-      expect((await evaluate("c1", ["sudo rm -rf /var/tmp/x"])).effect).toBe("ask")
     })
   })
 

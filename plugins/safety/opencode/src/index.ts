@@ -159,7 +159,7 @@ function safely<T>(run: () => T): T | undefined {
 }
 
 /**
- * A permission review that fails internally (a git probe that times out under load, a parser bug) makes no
+ * A permission review that fails internally (an unexpected exception such as a parser bug; handled probe timeouts still ask) makes no
  * decision and logs the error. `undefined` means "defer to the host's permission rules", never "allow": the
  * caller leaves the evaluation's effect as the host set it, so a configured deny or ask still applies.
  */
