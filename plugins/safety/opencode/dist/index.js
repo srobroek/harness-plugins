@@ -6816,7 +6816,7 @@ async function storeSecret(input, deps) {
 }
 
 // plugins/safety/opencode/src/skill-references.ts
-import { existsSync as existsSync5, realpathSync as realpathSync8 } from "fs";
+import { lstatSync as lstatSync4, realpathSync as realpathSync8 } from "fs";
 import { homedir as homedir8 } from "os";
 import { basename as basename5, dirname as dirname8, join as join10, relative as relative4 } from "path";
 var READ_ONLY_TOOLS = new Set(["read", "glob", "grep", "list"]);
@@ -6828,8 +6828,16 @@ function real(path) {
   }
 }
 var SKILL_SUBDIRECTORIES = ["references", "scripts", "assets", "templates"];
+function absent(path) {
+  try {
+    lstatSync4(path);
+    return false;
+  } catch (error) {
+    return error.code === "ENOENT";
+  }
+}
 function dedicated(dir) {
-  return basename5(dirname8(dir)) === "skills" && !existsSync5(join10(dir, ".git"));
+  return basename5(dirname8(dir)) === "skills" && absent(join10(dir, ".git"));
 }
 function trustedRoots(dir) {
   if (dedicated(dir))

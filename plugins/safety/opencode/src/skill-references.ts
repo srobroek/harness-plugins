@@ -5,7 +5,7 @@
  * never the cache as a whole.
  */
 
-import { existsSync, realpathSync } from "node:fs"
+import { lstatSync, realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join, relative } from "node:path"
 import { insideCanonical } from "./scratch-dirs.ts"
@@ -28,11 +28,25 @@ function real(path: string): string | undefined {
 const SKILL_SUBDIRECTORIES = ["references", "scripts", "assets", "templates"] as const
 
 /**
+ * Whether `path` is known to be absent. The entry itself is inspected (`lstat`, no symlink followed), so a
+ * dangling or looping link counts as present; any error other than ENOENT is unknown and counts as present.
+ */
+function absent(path: string): boolean {
+  try {
+    lstatSync(path)
+    return false
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT"
+  }
+}
+
+/**
  * Whether a skill's real directory is a dedicated skill folder: `.../skills/<dir>` and not a repository
- * root (no `.git` file or directory, which covers worktrees and submodules).
+ * root (no `.git` file or directory, which covers worktrees and submodules). Fails closed: a `.git` that
+ * cannot be inspected makes the directory a repository root.
  */
 function dedicated(dir: string): boolean {
-  return basename(dirname(dir)) === "skills" && !existsSync(join(dir, ".git"))
+  return basename(dirname(dir)) === "skills" && absent(join(dir, ".git"))
 }
 
 /**

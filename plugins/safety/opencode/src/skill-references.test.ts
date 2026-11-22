@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { allowSkillReads, listedSkills, skillDirectories } from "./skill-references.ts"
@@ -147,6 +147,42 @@ describe("skill directories that are not dedicated skill folders", () => {
 
   test("a requested path that climbs out of an allowed subdirectory is refused", () => {
     expect(allowed(at("repo/SKILL.md"), at("repo/references/../src/*"))).toBe(false)
+  })
+})
+
+describe("a .git probe that cannot say the entry is absent", () => {
+  let fixture: string
+  let home: string
+  const at = (...parts: string[]) => join(fixture, ...parts)
+  const skill = (name: string) => [{ path: at("skills", name, "SKILL.md") }]
+  beforeAll(() => {
+    fixture = mkdtempSync(join(realpathSync(tmpdir()), "safety-skill-git-"))
+    home = at("home")
+    mkdirSync(home)
+    for (const name of ["dangling", "looping", "unreadable", "clean"]) mkdirSync(at("skills", name, "references"), { recursive: true })
+    symlinkSync(at("nowhere"), at("skills/dangling/.git"))
+    symlinkSync(at("skills/looping/.git"), at("skills/looping/.git"))
+    chmodSync(at("skills/unreadable"), 0o600)
+  })
+  afterAll(() => {
+    chmodSync(at("skills/unreadable"), 0o700)
+    rmSync(fixture, { recursive: true, force: true })
+  })
+
+  test("a dangling .git symlink makes the directory a repository root", () => {
+    expect(skillDirectories(skill("dangling"), home)).toEqual([at("skills/dangling/references")])
+  })
+
+  test("a looping .git symlink makes the directory a repository root", () => {
+    expect(skillDirectories(skill("looping"), home)).toEqual([at("skills/looping/references")])
+  })
+
+  test.skipIf(process.getuid?.() === 0)("a directory whose .git cannot be inspected is not trusted whole", () => {
+    expect(skillDirectories(skill("unreadable"), home)).not.toContain(at("skills/unreadable"))
+  })
+
+  test("a skills/<dir> folder without .git is still trusted whole", () => {
+    expect(skillDirectories(skill("clean"), home)).toEqual([at("skills/clean")])
   })
 })
 
