@@ -813,10 +813,15 @@ describe("worktree argument", () => {
 
     describe("a released writer's lane", () => {
       describe("a restart in the middle of a handover", () => {
-        const successor: Lane = { ...owned, child: "ses_next", parent: PARENT, handedOver: { from: "ses_dead", at: NOW } }
+        // An empty lane (HEAD at its base): a removal through the old lane would pass every tree proof.
+        const empty: Lane = { ...owned, base: OTHER_HEAD }
+        const successor: Lane = { ...empty, child: "ses_next", parent: PARENT, handedOver: { from: "ses_dead", at: NOW } }
         const record = { child: "ses_dead", directory: OTHER, by: PARENT, at: NOW, head: OTHER_HEAD, reason: "its server died", to: "ses_next", toParent: PARENT }
         const claimFor = (common: string, sessionID: string) =>
           writeClaim(common, { directory: OTHER, branch: "feat", sessionID, parentID: PARENT, createdAt: NOW })
+        /** The sweep only looks at lanes of the host's project. */
+        const inProject = (fake: FakeContext) =>
+          Object.assign(fake.context, { location: { ...(fake.context.location as object), directory: REPO, project: { id: "prj" } } })
         const sweep = (setup: Setup) => {
           const tool = setup.fake.tools.get(SWEEP_TOOL) as unknown as { execute: (i: unknown, c: unknown) => Promise<{ content: string }> }
           return tool.execute({ mode: "prune" }, { sessionID: PARENT, agent: "build", messageID: "m", id: "c" })
@@ -832,7 +837,8 @@ describe("worktree argument", () => {
             now: () => NOW,
             onLifecycle: (value) => (lifecycle = value),
             seed: (fake, common) => {
-              fake.storage.set(laneKey("ses_dead"), owned)
+              inProject(fake)
+              fake.storage.set(laneKey("ses_dead"), empty)
               fake.storage.set("release/ses_dead", record)
               if (state.successorLane) fake.storage.set(laneKey("ses_next"), successor)
               claimFor(common, state.successorClaim ? "ses_next" : "ses_dead")
@@ -858,7 +864,8 @@ describe("worktree argument", () => {
             repo: { ahead: 0 },
             onLifecycle: (value) => (lifecycle = value),
             seed: (fake, common) => {
-              fake.storage.set(laneKey("ses_dead"), owned)
+              inProject(fake)
+              fake.storage.set(laneKey("ses_dead"), empty)
               fake.storage.set("release/ses_dead", record)
               fake.storage.set(laneKey("ses_next"), successor)
               claimFor(common, "ses_next")
