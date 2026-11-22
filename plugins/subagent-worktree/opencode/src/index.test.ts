@@ -950,7 +950,7 @@ describe("worktree argument", () => {
           const refused = results.flatMap((result) => (result.status === "rejected" ? [String(result.reason)] : []))
           expect(won).toHaveLength(1)
           expect(refused).toEqual([expect.stringMatching(/was handed to ses_(fake|b)1, whose lane it is|no longer belongs to the released ses_dead/)])
-          const winner = won[0]
+          const [winner = "none"] = won
           expect(lanes(a.fake)).toEqual([{ ...owned, id: "ses_dead", child: winner, parent: PARENT, handedOver: { from: "ses_dead", at: NOW } }])
           expect(claimant(a)).toBe(winner)
           expect((a.fake.storage.get("release/ses_dead") as { to?: string }).to).toBe(winner)
