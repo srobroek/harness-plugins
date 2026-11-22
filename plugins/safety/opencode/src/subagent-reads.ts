@@ -5,6 +5,7 @@
  * anyway. Writers (`edit`, `write`, `patch`) keep the ask, and so does any secret location.
  */
 
+import { statSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, isAbsolute, join } from "node:path"
 import { inside, resolved } from "./scratch-dirs.ts"
@@ -71,4 +72,34 @@ export function allowSubagentReads(
   if (evaluation.resources.length === 0) return
   if (evaluation.resources.some((resource) => isSecretResource(resource, extraSecrets, home))) return
   evaluation.effect = "allow"
+}
+
+/**
+ * In a root session, turn an `external_directory` ask into an allow for `read` of one regular file that is
+ * not a secret. `filePath` is the path the tool was given; it must be absolute and resolve to a file. A
+ * directory-wide tool (`glob`, `grep`, `list`), the shell and the writers keep the ask: a folder can hold an
+ * `.env` or a link to a secret that no check on the folder's name can see.
+ */
+export function allowRootReads(
+  evaluation: Evaluation,
+  tool: string | undefined,
+  filePath: unknown,
+  isSubagent: boolean,
+  extraSecrets: readonly string[] = [],
+  home?: string,
+): void {
+  if (isSubagent || tool !== "read" || evaluation.action !== "external_directory" || evaluation.effect !== "ask") return
+  if (typeof filePath !== "string" || !isAbsolute(filePath) || !isRegularFile(filePath)) return
+  if (isSecretResource(filePath, extraSecrets, home)) return
+  if (evaluation.resources.length === 0) return
+  if (evaluation.resources.some((resource) => isSecretResource(resource, extraSecrets, home))) return
+  evaluation.effect = "allow"
+}
+
+function isRegularFile(path: string): boolean {
+  try {
+    return statSync(path).isFile()
+  } catch {
+    return false
+  }
 }

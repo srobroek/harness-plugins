@@ -29,7 +29,7 @@ import {
 import { allowSkillReads, listedSkills, READ_ONLY_TOOLS, skillDirectories } from "./skill-references.ts"
 import { allowSteeringReads, readSteeringDirs, steeringRoots } from "./steering-dirs.ts"
 import { denyUnanswerable, type SessionInfo, unanswerableDenial } from "./subagent-prompts.ts"
-import { allowSubagentReads } from "./subagent-reads.ts"
+import { allowRootReads, allowSubagentReads } from "./subagent-reads.ts"
 
 export { normalize as normalizeCloseKeywords, rewriteCloseKeywords } from "./close-keywords.ts"
 export { externalDirectories, flagDirectories, shellFlagDirectories } from "./flag-directories.ts"
@@ -48,7 +48,7 @@ export {
 } from "./redact.ts"
 export { allowSkillReads, skillDirectories } from "./skill-references.ts"
 export { denyUnanswerable, unanswerableMessage } from "./subagent-prompts.ts"
-export { allowSubagentReads, isSecretResource, SECRET_LOCATIONS } from "./subagent-reads.ts"
+export { allowRootReads, allowSubagentReads, isSecretResource, SECRET_LOCATIONS } from "./subagent-reads.ts"
 
 export type FeatureID =
   | GuardID
@@ -62,6 +62,7 @@ export type FeatureID =
   | "scratch-shell"
   | "repo-worktrees"
   | "subagent-external-reads"
+  | "root-external-reads"
   | "subagent-prompts"
 
 export const FEATURE_IDS: readonly FeatureID[] = [
@@ -78,6 +79,7 @@ export const FEATURE_IDS: readonly FeatureID[] = [
   "scratch-shell",
   "repo-worktrees",
   "subagent-external-reads",
+  "root-external-reads",
   "subagent-prompts",
 ]
 
@@ -103,7 +105,8 @@ export type SafetyOptions = {
  * `disable: ["repo-worktrees"]` stops allowing reads in the session repository's other worktrees.
  * `disable: ["skill-references"]` stops allowing reads in installed skills' directories.
  * `disable: ["subagent-external-reads"]` stops allowing a subagent's read-only and shell `external_directory` asks;
- * `subagentSecretPaths` adds locations (`~/…` or absolute) to `SECRET_LOCATIONS` that stay denied.
+ * `disable: ["root-external-reads"]` stops allowing a root session's `read` of one non-secret file outside the directory;
+ * `subagentSecretPaths` adds locations (`~/…` or absolute) to `SECRET_LOCATIONS` that stay asks in both.
  * `disable: ["subagent-prompts"]` lets a subagent session's asks prompt instead of failing at once.
  * `pushVia: { host, command }` refuses a plain `git push` whose remote resolves to `host` and names `command -C <dir> push`; off by default.
  * `redactSecrets`, `redactNames` and `redactExclude` configure secret redaction.
@@ -333,7 +336,7 @@ export function createPlugin(overrides: Overrides = {}) {
           })
 
       // The tool behind each running call, so a permission request can be traced to it.
-      const running = new Map<string, { tool: string; at: number }>()
+      const running = new Map<string, { tool: string; input: unknown; at: number }>()
 
       const prune = () => {
         const cutoff = Date.now() - PENDING_TTL_MS
@@ -342,7 +345,7 @@ export function createPlugin(overrides: Overrides = {}) {
       }
 
       const before = await ctx.tool.hook("execute.before", async (event) => {
-        running.set(event.id, { tool: event.tool, at: Date.now() })
+        running.set(event.id, { tool: event.tool, input: event.input, at: Date.now() })
         const call = shellCall(event.tool, event.input)
         if (call === undefined || call.command.trim() === "") return
         let command = call.command
@@ -578,15 +581,24 @@ export function createPlugin(overrides: Overrides = {}) {
             return undefined
           })
       // Before `subagent-prompts`, so the asks it allows never reach the deny.
-      const subagentReads = on("subagent-external-reads")
+      const subagentReadsOn = on("subagent-external-reads")
+      const rootReadsOn = on("root-external-reads")
+      const subagentReads = subagentReadsOn || rootReadsOn
         ? await ctx.permission.hook("evaluate", async (evaluation) => {
             if (evaluation.action !== "external_directory" || evaluation.effect !== "ask") return
             const source = evaluation.source
-            const tool = source?.type === "tool" ? running.get(source.id)?.tool : undefined
+            const call = source?.type === "tool" ? running.get(source.id) : undefined
+            const tool = call?.tool
             if (tool === undefined) return
             // A failed lookup stays an ask; `subagent-prompts` logs it, so this hook stays quiet.
             const info = (await ctx.session.get({ sessionID: evaluation.sessionID } as never).catch(() => undefined)) as SessionInfo | undefined
-            allowSubagentReads(evaluation, tool, typeof info?.parentID === "string" && info.parentID !== "", secretPaths)
+            if (info === undefined) return
+            const isSubagent = typeof info.parentID === "string" && info.parentID !== ""
+            if (subagentReadsOn) allowSubagentReads(evaluation, tool, isSubagent, secretPaths)
+            // The read tool's own argument: `path` on current hosts, `filePath` on older ones.
+            const input = call?.input as { path?: unknown; filePath?: unknown } | undefined
+            const filePath = input?.path ?? input?.filePath
+            if (rootReadsOn) allowRootReads(evaluation, tool, filePath, isSubagent, secretPaths)
           })
         : undefined
       const unanswerable = on("subagent-prompts")
