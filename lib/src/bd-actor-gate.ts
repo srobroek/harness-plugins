@@ -228,12 +228,17 @@ function applyActorAssignments(vars: ShellVars, assignments: string[]): void {
 function afterCommand(vars: ShellVars, values: string[], assigned: string[]): ShellVars {
   const after = { ...vars }
   const name = values[0]
-  const builtinName = (word: string): boolean => BUILTIN_OPTIONS[word] !== undefined || VARIABLE_BUILTINS[word] === true
   if (values.length === 0) applyActorAssignments(after, assigned)
-  // A `command` or `builtin` wrapper has options of its own; the gate does not emulate them.
-  else if ((name === "command" || name === "builtin") && values.slice(1).some(builtinName))
-    markUnverified(after, mentioned(values.slice(1)))
-  else if (name !== undefined && BUILTIN_OPTIONS[name] !== undefined) applyVariableBuiltin(after, name, values.slice(1))
+  // A `command` or `builtin` wrapper around a variable builtin has options of its own; the gate does not
+  // emulate them. Only the word in command position after the wrapper and its options counts.
+  else if (name === "command" || name === "builtin") {
+    let i = 1
+    while (name === "command" && values[i]?.startsWith("-") === true && values[i] !== "--") i++
+    if (values[i] === "--") i++
+    const wrapped = values[i]
+    if (wrapped !== undefined && (BUILTIN_OPTIONS[wrapped] !== undefined || VARIABLE_BUILTINS[wrapped] === true))
+      markUnverified(after, mentioned(values.slice(i + 1)))
+  } else if (name !== undefined && BUILTIN_OPTIONS[name] !== undefined) applyVariableBuiltin(after, name, values.slice(1))
   else if (name !== undefined && VARIABLE_BUILTINS[name] === true) markUnverified(after, mentioned(values.slice(1)))
   return after
 }
