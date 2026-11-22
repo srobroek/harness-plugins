@@ -6,7 +6,7 @@ import { Error as ToolError } from "@opencode/plugin/promise/tool"
 import { outsideLocks } from "@srobroek/opencode-lib/lease-lock"
 import { createFakeContext, type FakeContext } from "@srobroek/opencode-lib/testing"
 import { readClaim, writeLanding } from "@srobroek/opencode-lib/worktree-claims"
-import { withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
+import { setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
 import type { RunResult } from "./git.ts"
 import { createPlugin, SWEEP_TOOL } from "./index.ts"
 import { LANE_PREFIX, type Lane, laneKey, MERGE_TOOL, SUBAGENT_PREAMBLE, UNBORN_NOTE } from "./lane.ts"
@@ -662,72 +662,30 @@ describe("worktree argument", () => {
   })
 
   describe("release of a dead writer", () => {
-    const MINUTE = 60_000
     const NOW = 1_000_000_000
+    const MINUTE = 60_000
+    const owned: Lane = { child: "ses_dead", parent: PARENT, projectID: "prj", directory: OTHER, branch: "feat", base: BASE, parentDir: REPO, state: "active" }
     const sessionID = (event: { input: unknown }) => (event.input as { sessionID?: string }).sessionID
-    /** A writer child in the named worktree whose last run started `ago` ms before NOW and never ended. */
-    const writerIn = (setup: Setup, id: string, ago: number) =>
-      setup.fake.sessions.set(id, { id, parentID: PARENT, projectID: "prj", location: { directory: OTHER }, time: { busy: NOW - ago } })
     const release = async (setup: Setup, child: string) => {
       const tool = setup.fake.tools.get(MERGE_TOOL) as unknown as { execute: (i: unknown, c: unknown) => Promise<{ content: string; metadata: { ok: boolean } }> }
       return tool.execute({ sessionID: child, method: "release", reason: "its server died" }, { sessionID: PARENT, agent: "build", messageID: "m", id: "c" })
     }
     const interrupts = (setup: Setup) => setup.fake.calls.filter((entry) => entry.method === "session.interrupt").map((entry) => entry.input)
-    /** A host event about the writer `ses_dead`, created at `created`. */
-    const hostEvent = (type: string, created: number) => ({ id: `evt_${type}_${created}`, type, created, data: { sessionID: "ses_dead" } })
-    const emitAll = (setup: Setup, events: readonly unknown[]) => {
-      for (const event of events) setup.fake.emit(event)
+    const claimant = (setup: Setup) => {
+      const claim = readClaim(setup.common, OTHER)
+      return claim.kind === "present" ? claim.value.sessionID : undefined
     }
-    /** Let every subscriber take the events already emitted: they are delivered on later ticks. */
-    const flushEvents = () => new Promise<void>((done) => setImmediate(done))
-    const dead = async (repo: Partial<Repo> = {}) => {
-      const setup = await start({ now: () => NOW, repo })
-      writerIn(setup, "ses_dead", 11 * MINUTE)
+    /** A writer `ses_dead` that the user deleted, whose active lane on `feat` in OTHER names PARENT. */
+    const dead = async (options: Parameters<typeof start>[0] = {}) => {
+      const setup = await start({ now: () => NOW, ...options })
+      setup.fake.storage.set(laneKey("ses_dead"), owned)
       return setup
     }
-    /** Hold the release at a step: its first `git status` (before the record is written) or its interrupt (after). */
-    const holdAt = (setup: Setup, step: "status" | "interrupt") => {
-      let open: () => void = () => {}
-      const gate = new Promise<void>((done) => (open = done))
-      let arrive: () => void = () => {}
-      const reached = new Promise<void>((done) => (arrive = done))
-      if (step === "interrupt") {
-        Object.assign(setup.fake.context.session, {
-          interrupt: async () => {
-            arrive()
-            await gate
-            return { interrupted: false }
-          },
-        })
-      } else {
-        let held = false
-        setup.repo.onCommand = async (cmd) => {
-          if (held || cmd !== "status --porcelain") return
-          held = true
-          arrive()
-          await gate
-        }
-      }
-      return { reached, open: () => open() }
-    }
-    /** How a spawn settles within `ms`: its error message, its child, or "pending" while it still waits (on the release's lock). */
-    const settleWithin = (spawned: Promise<{ input: unknown }>, ms: number) =>
-      Promise.race([
-        spawned.then((event) => sessionID(event) ?? "no child", (error: Error) => error.message),
-        new Promise<string>((done) => setTimeout(() => done("pending"), ms)),
-      ])
 
-    test("a dead writer is released, and a new writer can spawn into its worktree", async () => {
+    test("a deleted writer is released and recorded with the writer the worktree was handed to", async () => {
       const setup = await dead()
       expect((await release(setup, "ses_dead")).metadata.ok).toBe(true)
       expect(sessionID(await spawn(setup, { agent: "pinned", worktree: "feat" }))).toBe("ses_fake1")
-    })
-
-    test("the release stops the old run and is recorded with the writer it was handed to", async () => {
-      const setup = await dead()
-      await release(setup, "ses_dead")
-      await spawn(setup, { agent: "pinned", worktree: "feat" })
-      expect(interrupts(setup)).toEqual([{ sessionID: "ses_dead" }])
       expect(setup.fake.storage.get("release/ses_dead")).toEqual({
         child: "ses_dead",
         directory: OTHER,
@@ -735,31 +693,32 @@ describe("worktree argument", () => {
         at: NOW,
         head: OTHER_HEAD,
         reason: "its server died",
-        interrupted: true,
         to: "ses_fake1",
       })
+      expect(interrupts(setup)).toEqual([])
     })
 
-    test("a released lane is bound to the new writer, and its claim follows", async () => {
+    test("the next writer takes over the released writer's lane and its claim", async () => {
       const setup = await dead()
-      const owned: Lane = { child: "ses_dead", parent: PARENT, projectID: "prj", directory: OTHER, branch: "feat", base: BASE, parentDir: REPO, state: "active" }
-      setup.fake.storage.set(laneKey("ses_dead"), owned)
       await release(setup, "ses_dead")
       await spawn(setup, { agent: "pinned", worktree: "feat" })
       expect(lane(setup.fake, "ses_dead")).toBeUndefined()
       expect(lane(setup.fake, "ses_fake1")).toEqual({ ...owned, child: "ses_fake1", handedOver: { from: "ses_dead", at: NOW } })
-      const claim = readClaim(setup.common, OTHER)
-      expect(claim.kind === "present" && claim.value.sessionID).toBe("ses_fake1")
+      expect(claimant(setup)).toBe("ses_fake1")
     })
 
-    test("a live writer is never released", async () => {
-      const setup = await start({ now: () => NOW })
-      writerIn(setup, "ses_live", MINUTE)
-      const result = await release(setup, "ses_live")
+    test.each([
+      ["whose last run never ended (its server died)", { busy: NOW - 11 * MINUTE }],
+      ["that is idle", { busy: NOW - 11 * MINUTE, idle: NOW - 10 * MINUTE }],
+      ["that is archived", { busy: NOW - 11 * MINUTE, idle: NOW - 10 * MINUTE, archived: NOW - MINUTE }],
+    ])("a writer %s is not released while its session exists", async (_name, time) => {
+      const setup = await dead()
+      setup.fake.sessions.set("ses_dead", { id: "ses_dead", parentID: PARENT, projectID: "prj", location: { directory: OTHER }, time })
+      const result = await release(setup, "ses_dead")
       expect(result.metadata.ok).toBe(false)
-      expect(result.content).toMatch(/still running/)
+      expect(result.content).toMatch(/session still exists.*stop it and delete its session, then release again/)
+      expect(setup.fake.storage.get("release/ses_dead")).toBeUndefined()
       expect(interrupts(setup)).toEqual([])
-      await expect(spawn(setup, { agent: "pinned", worktree: "feat" })).rejects.toThrow(/live writer session ses_live/)
     })
 
     test.each([
@@ -767,26 +726,19 @@ describe("worktree argument", () => {
       ["commits missing from its upstream", { unpushed: 1 }, /1 commit not pushed/],
       ["a branch with no upstream", { upstream: false }, /no upstream/],
     ] as const)("a worktree with %s is not released", async (_name, repo, reason) => {
-      const setup = await dead(repo)
+      const setup = await dead({ repo })
       const result = await release(setup, "ses_dead")
       expect(result.metadata.ok).toBe(false)
       expect(result.content).toMatch(reason)
-      expect(interrupts(setup)).toEqual([])
-      await expect(spawn(setup, { agent: "pinned", worktree: "feat" })).rejects.toThrow(/live writer session ses_dead/)
+      expect(setup.fake.storage.get("release/ses_dead")).toBeUndefined()
     })
 
-    test("a run that starts while the writer is being released undoes the release", async () => {
+    test("a worktree that another session holds for its running work is not released", async () => {
       const setup = await dead()
-      Object.assign(setup.fake.context.session, {
-        interrupt: async () => {
-          Object.assign(setup.fake.sessions.get("ses_dead") ?? {}, { time: { busy: NOW } })
-          return { interrupted: false }
-        },
-      })
+      setHold(setup.common, OTHER, "ses_other", [{ kind: "shell", id: "sh_1" }], NOW)
       const result = await release(setup, "ses_dead")
-      expect(result.content).toMatch(/started a new run/)
+      expect(result.content).toMatch(/work is still running on the worktree/)
       expect(setup.fake.storage.get("release/ses_dead")).toBeUndefined()
-      await expect(spawn(setup, { agent: "pinned", worktree: "feat" })).rejects.toThrow(/live writer session ses_dead/)
     })
 
     test("a released writer cannot be resumed", async () => {
@@ -795,145 +747,32 @@ describe("worktree argument", () => {
       await expect(spawn(setup, { agent: "pinned", sessionID: "ses_dead", prompt: "go on" })).rejects.toThrow(/ses_dead was released/)
     })
 
-    test("a writer whose last idle gate listed background work is not released", async () => {
-      const setup = await dead()
-      await setup.fake.fire.session("experimental.idle", { sessionID: "ses_dead", background: [{ kind: "shell", sessionID: "ses_dead", shellID: "sh_1", command: "sleep 600" }] })
-      const result = await release(setup, "ses_dead")
-      expect(result.content).toMatch(/background work is still running: shell sh_1/)
-      expect(interrupts(setup)).toEqual([])
-    })
-
-    test("a resume of the writer that is still in flight blocks its release", async () => {
-      const setup = await dead()
-      await spawn(setup, { agent: "pinned", sessionID: "ses_dead", prompt: "go on" })
-      const result = await release(setup, "ses_dead")
-      expect(result.content).toMatch(/a resume of ses_dead is in flight/)
-      expect(setup.fake.storage.get("release/ses_dead")).toBeUndefined()
-    })
-
-    test("a background resume keeps the release away until its run has started, however long that takes", async () => {
-      let clock = NOW
-      const setup = await start({ now: () => clock })
-      writerIn(setup, "ses_dead", 11 * MINUTE)
-      await spawn(setup, { agent: "pinned", sessionID: "ses_dead", prompt: "go on" })
-      await setup.fake.fire.tool("execute.after", { ...completed("ses_dead"), result: { content: "started", metadata: { sessionID: "ses_dead", status: "running" } } })
-      clock += 10 * MINUTE
-      expect((await release(setup, "ses_dead")).content).toMatch(/a resume of ses_dead is in flight/)
-      // The resumed run starts and ends, at an idle gate with nothing in the background.
-      Object.assign(setup.fake.sessions.get("ses_dead") ?? {}, { time: { busy: clock } })
-      await setup.fake.fire.session("experimental.idle", { sessionID: "ses_dead", background: [] })
-      Object.assign(setup.fake.sessions.get("ses_dead") ?? {}, { time: { busy: clock, idle: clock } })
-      clock += 11 * MINUTE
-      expect((await release(setup, "ses_dead")).metadata.ok).toBe(true)
-    })
-
-    test.each([
-      ["never reached an idle gate here", false, false],
-      ["reached an idle gate but its run went on after it", true, false],
-    ])("a writer whose run started in this server and %s is not released", async (_name, gate, ended) => {
-      let clock = NOW - 20 * MINUTE
-      const setup = await start({ now: () => clock })
-      writerIn(setup, "ses_dead", 11 * MINUTE)
-      clock = NOW
-      if (gate) await setup.fake.fire.session("experimental.idle", { sessionID: "ses_dead", background: [] })
-      if (ended) Object.assign(setup.fake.sessions.get("ses_dead") ?? {}, { time: { busy: NOW - 11 * MINUTE, idle: NOW } })
-      expect((await release(setup, "ses_dead")).content).toMatch(/background work since its last run cannot be ruled out/)
-    })
-
-    test("a writer whose run started in this server is released once that run ended at an empty idle gate", async () => {
-      let clock = NOW - 20 * MINUTE
-      const setup = await start({ now: () => clock })
-      writerIn(setup, "ses_dead", 11 * MINUTE)
-      clock = NOW
-      await setup.fake.fire.session("experimental.idle", { sessionID: "ses_dead", background: [] })
-      // The host ends the run after the gate: these say the run is over, not that it went on.
-      emitAll(setup, [hostEvent("session.execution.succeeded", NOW + 1), hostEvent("session.idle", NOW + 2)])
-      await flushEvents()
-      Object.assign(setup.fake.sessions.get("ses_dead") ?? {}, { time: { busy: NOW - 11 * MINUTE, idle: NOW + 2 } })
-      expect((await release(setup, "ses_dead")).metadata.ok).toBe(true)
-    })
-
-    test.each([
-      ["fails", "session.execution.failed"],
-      ["is interrupted", "session.execution.interrupted"],
-    ])("a writer whose run went on after an empty idle gate, started a shell and %s is not released", async (_name, end) => {
-      let clock = NOW - 20 * MINUTE
-      const setup = await start({ now: () => clock })
-      writerIn(setup, "ses_dead", 11 * MINUTE)
-      clock = NOW
-      await setup.fake.fire.session("experimental.idle", { sessionID: "ses_dead", background: [] })
-      // Another hook let the same run go on: it started a shell, then ended with no idle gate.
-      emitAll(setup, [hostEvent("session.step.started", NOW + 1), hostEvent("session.shell.started", NOW + 2), hostEvent(end, NOW + 3)])
-      await flushEvents()
-      Object.assign(setup.fake.sessions.get("ses_dead") ?? {}, { time: { busy: NOW - 11 * MINUTE, idle: NOW + 3 } })
-      clock = NOW + 11 * MINUTE
-      const result = await release(setup, "ses_dead")
-      expect(result.content).toMatch(/background work since its last run cannot be ruled out/)
-      expect(setup.fake.storage.get("release/ses_dead")).toBeUndefined()
-    })
-
     test("a second release queued behind the first is refused under the lock", async () => {
       const setup = await dead()
-      const held = holdAt(setup, "status")
+      let open: () => void = () => {}
+      const gate = new Promise<void>((done) => (open = done))
+      let arrive: () => void = () => {}
+      const reached = new Promise<void>((done) => (arrive = done))
+      let held = false
+      setup.repo.onCommand = async (cmd) => {
+        if (held || cmd !== "status --porcelain") return
+        held = true
+        arrive()
+        await gate
+      }
       const first = release(setup, "ses_dead")
-      await held.reached
+      await reached
       // It passed the check before the lock: the first had not written its record yet.
       const second = release(setup, "ses_dead")
-      held.open()
-      const record = (await first).metadata as { ok: boolean; release?: unknown }
-      expect(record.ok).toBe(true)
+      open()
+      expect((await first).metadata.ok).toBe(true)
       expect((await second).content).toMatch(/already released/)
-      expect(interrupts(setup)).toEqual([{ sessionID: "ses_dead" }])
-    })
-
-    test("a writer spawned while the release is under way is still refused", async () => {
-      const setup = await dead()
-      const held = holdAt(setup, "interrupt")
-      const releasing = release(setup, "ses_dead")
-      await held.reached
-      const spawned = spawn(setup, { agent: "pinned", worktree: "feat" })
-      spawned.catch(() => {})
-      // The guard refuses at once; a spawn that got past it would wait for the release's lock.
-      expect(await settleWithin(spawned, 500)).toMatch(/live writer session ses_dead/)
-      held.open()
-      expect((await releasing).metadata.ok).toBe(true)
-    })
-
-    test("a resume that arrives before the release has written its record is refused", async () => {
-      const setup = await dead()
-      const held = holdAt(setup, "status")
-      const releasing = release(setup, "ses_dead")
-      await held.reached
-      await expect(spawn(setup, { agent: "pinned", sessionID: "ses_dead", prompt: "go on" })).rejects.toThrow(/ses_dead is being released/)
-      held.open()
-      await releasing
-    })
-
-    test("a change to the worktree while the old run is interrupted undoes the release", async () => {
-      const setup = await dead()
-      Object.assign(setup.fake.context.session, {
-        interrupt: async () => {
-          setup.repo.dirty = true
-          return { interrupted: true }
-        },
-      })
-      const result = await release(setup, "ses_dead")
-      expect(result.content).toMatch(/the worktree changed while ses_dead was being released/)
-      expect(setup.fake.storage.get("release/ses_dead")).toBeUndefined()
     })
 
     describe("a released writer's lane", () => {
-      const owned: Lane = { child: "ses_dead", parent: PARENT, projectID: "prj", directory: OTHER, branch: "feat", base: BASE, parentDir: REPO, state: "active" }
-      const claimant = (setup: Setup) => {
-        const claim = readClaim(setup.common, OTHER)
-        return claim.kind === "present" ? claim.value.sessionID : undefined
-      }
-
       test("a stale copy of the old lane, saved after the handover, does not come back or take the claim", async () => {
         let lifecycle!: Lifecycle
-        const setup = await start({ now: () => NOW, debounceMs: 1, onLifecycle: (value) => (lifecycle = value) })
-        writerIn(setup, "ses_dead", 11 * MINUTE)
-        setup.fake.storage.set(laneKey("ses_dead"), owned)
+        const setup = await dead({ debounceMs: 1, onLifecycle: (value) => (lifecycle = value) })
         await release(setup, "ses_dead")
         await spawn(setup, { agent: "pinned", worktree: "feat" })
         // The lifecycle read the lanes before the handover: its scan still returns the old lane.
@@ -959,9 +798,7 @@ describe("worktree argument", () => {
           waiting()
           return new Promise<void>((done) => setTimeout(done, ms))
         }
-        const setup = await start({ now: () => NOW, debounceMs: 1, onLifecycle: (value) => (lifecycle = value), lock: { sleep } })
-        writerIn(setup, "ses_dead", 11 * MINUTE)
-        setup.fake.storage.set(laneKey("ses_dead"), owned)
+        const setup = await dead({ debounceMs: 1, onLifecycle: (value) => (lifecycle = value), lock: { sleep } })
         await release(setup, "ses_dead")
         let open: () => void = () => {}
         const gate = new Promise<void>((done) => (open = done))
@@ -993,7 +830,6 @@ describe("worktree argument", () => {
         ["writing the new lane fails after its claim was written", "set", laneKey("ses_fake1")],
       ] as const)("a handover in which %s puts the old lane, its claim and the record back", async (_name, method, failing) => {
         const setup = await dead()
-        setup.fake.storage.set(laneKey("ses_dead"), owned)
         await release(setup, "ses_dead")
         const storage = setup.fake.context.storage as unknown as Record<string, (key: string, value?: unknown) => Promise<unknown>>
         const original = storage[method]?.bind(storage)
