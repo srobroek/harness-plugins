@@ -14,6 +14,8 @@ export type SweepEntry = {
   reason: string
   /** Kept with work that only a person can resolve (uncommitted, unmerged or denied). */
   needsPerson?: true
+  /** When the child went idle (ms), for a child that is idle. */
+  idleSince?: number
 }
 
 /** One entry per directory, sorted, so a second run over the same lanes gives the same plan. */

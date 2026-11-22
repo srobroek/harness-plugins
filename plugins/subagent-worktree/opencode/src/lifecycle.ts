@@ -85,6 +85,9 @@ export type FinalizeOptions = {
   /** The caller acts on the worktree being gone: one that exists under the lock is kept, unchecked and unremoved. */
   ifGone?: boolean
 }
+/** A clean, removable lane whose child has been idle longer than this is reported for a person (sweep). */
+export const IDLE_REPORT_MS = 7 * 24 * 60 * 60 * 1000
+
 export type Finalized =
   | { removed: true }
   | { removed: false; kept: "retired" | "running" | "dirty" | "unmerged" | "denied" | "pending" | "present" | "error" | "handed-over"; reason: string }
@@ -1205,8 +1208,11 @@ export function createLifecycle(deps: LifecycleDeps) {
 
   const PROOF_TEXT = { empty: "empty: no commits of its own", merged: "merged", landed: "landed" } as const
 
+  const fencedReason = (lane: Lane): string => `fenced: ${lane.fenced?.reason ?? "unknown"}; check the lane, then unfence it with subagent_worktree_merge method "unfence"`
+
   /** What `finalize` would do with an active lane, from its checks alone: nothing is written or removed. */
   const previewFinalize = async (lane: Lane, fence: Fence): Promise<{ removable: true; reason: string } | { removable: false; reason: string; needsPerson: boolean }> => {
+    if (lane.fenced) return { removable: false, reason: fencedReason(lane), needsPerson: true }
     const checked = await checkFinalize(lane, fence, fence.seq, undefined)
     if ("proof" in checked) {
       const descendants = await descendantRefusal(lane)
@@ -1228,10 +1234,24 @@ export function createLifecycle(deps: LifecycleDeps) {
     // A lane still active whose directory is gone was removed outside the plugin (a removal of ours leaves the lane `removing`, which `resumeRemovals` finishes): the host cannot even
     // look up its child, so it is reported for a person and left alone.
     if (!(await deps.exists(lane.directory))) return { ...entry, verdict: "keep", reason: "its worktree directory is gone and the lane was not retired (removed outside the plugin)", needsPerson: true }
+    // A fenced lane (moving its child back failed) is never removed automatically: only a person clears it (`unfence`).
+    if (lane.fenced) return { ...entry, verdict: "keep", reason: fencedReason(lane), needsPerson: true }
     // Only a deleted or archived subagent session releases its lane; a live one, or one that cannot be read, keeps it.
-    const child = await childState(ctx.session.get({ sessionID: lane.child } as never), deps.lookupMs, lane.child)
-    if (!childReleasesLane(child)) return { ...entry, verdict: "keep", reason: `its subagent session is ${child}` }
+    let idle: number | undefined
+    const lookup = ctx.session.get({ sessionID: lane.child } as never).then((session) => {
+      const at = (session as { time?: { idle?: unknown } } | undefined)?.time?.idle
+      if (typeof at === "number") idle = at
+      return session
+    })
+    const child = await childState(lookup, deps.lookupMs, lane.child)
+    const idleSince = child === "idle" && idle !== undefined ? { idleSince: idle } : {}
     const preview = await previewFinalize(lane, fence)
+    if (!childReleasesLane(child)) {
+      if (child === "idle" && idle !== undefined && fence.since - idle > IDLE_REPORT_MS && preview.removable) {
+        return { ...entry, verdict: "keep", reason: `its subagent session has been idle since ${new Date(idle).toISOString()}; archive or delete the child to release`, needsPerson: true, ...idleSince }
+      }
+      return { ...entry, verdict: "keep", reason: `its subagent session is ${child}`, ...idleSince }
+    }
     if (!preview.removable) return { ...entry, verdict: "keep", reason: preview.reason, ...(preview.needsPerson ? { needsPerson: true as const } : {}) }
     if (mode === "report") return { ...entry, verdict: "remove", reason: preview.reason }
     const done = await finalize(lane, fence)
@@ -1275,6 +1295,29 @@ export function createLifecycle(deps: LifecycleDeps) {
     const facts = await laneFacts(lane, { child: "unknown", parent: "unknown" })
     const token = stateToken(facts)
     return updateLane(lane, (stored) => (stored.state === "active" ? { ...stored, kept: { reason, token } } : undefined))
+  }
+
+  /**
+   * User-invoked: clear the fence of `child`'s lane under the lane's lock. Refused while the child runs, when no
+   * lane names `child` (a handover moved it to another writer) or when the lane is not fenced.
+   */
+  const unfence = async (child: string): Promise<{ ok: true; lane: Lane } | { ok: false; reason: string }> => {
+    const lane = await load(child)
+    if (lane === undefined || lane.state !== "active") return { ok: false, reason: `no active lane names ${child}` }
+    if (!lane.fenced) return { ok: false, reason: `the lane of ${child} is not fenced` }
+    const state = await childState(ctx.session.get({ sessionID: child } as never), deps.lookupMs, child)
+    if (state === "running") return { ok: false, reason: `${child} is running` }
+    if (state === "unknown") return { ok: false, reason: `${child}'s session cannot be read` }
+    let refusal: string | undefined
+    const next = await updateLane(lane, (stored) => {
+      if (stored.state !== "active" || !stored.fenced) {
+        refusal = `the lane of ${child} is no longer fenced`
+        return undefined
+      }
+      const { fenced: _cleared, ...rest } = stored
+      return rest
+    })
+    return next ? { ok: true, lane: next } : { ok: false, reason: refusal ?? "the lane changed meanwhile" }
   }
 
   // --- registration -------------------------------------------------------------------------
@@ -1341,7 +1384,7 @@ export function createLifecycle(deps: LifecycleDeps) {
     }
   }
 
-  return { start, dispose, handleEvent, onIdle, onLanding, keep, removeForeground, removeAfterMerge, resumeRemovals, noteResume, spawnInto, sweep: runSweep, settle }
+  return { start, dispose, handleEvent, onIdle, onLanding, keep, unfence, removeForeground, removeAfterMerge, resumeRemovals, noteResume, spawnInto, sweep: runSweep, settle }
 }
 
 export type Lifecycle = ReturnType<typeof createLifecycle>

@@ -3145,3 +3145,87 @@ describe("recovery proves a merge target by its exact branch ref, in a real repo
     REAL_GIT_MS,
   )
 })
+
+describe("sweep reporting of lanes that keep forever", () => {
+  type Entry = { verdict: string; reason: string; needsPerson?: true; idleSince?: number }
+  const DAY = 24 * 60 * 60 * 1000
+  const sweep = async (fake: Fake, mode: string) => {
+    const execute = fake.tools.get("subagent_worktree_sweep")?.execute as (i: unknown, c: unknown) => Promise<{ metadata: { plan: Entry[] } }>
+    return (await execute({ mode }, tool)).metadata.plan
+  }
+  const LATE = 60 * DAY
+  const idleFor = (days: number) => ({ [CHILD]: { busy: 1, idle: LATE - days * DAY } })
+
+  test("a clean landed lane whose child has been idle over 7 days is reported for a person, with the idle time", async () => {
+    const { fake, worktree, cleanup } = await start({ ancestor: 0, time: idleFor(8), now: LATE })
+    const plan = await sweep(fake, "prune")
+    expect(plan[0]).toMatchObject({ verdict: "keep", needsPerson: true, idleSince: LATE - 8 * DAY })
+    expect(plan[0]?.reason).toContain("archive or delete the child to release")
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+
+  test("a child idle for 6 days is a plain keep that needs no person", async () => {
+    const { fake, cleanup } = await start({ ancestor: 0, time: idleFor(6), now: LATE })
+    const plan = await sweep(fake, "report")
+    expect(plan[0]).toEqual({ child: CHILD, directory: WT, branch: "lane-a", verdict: "keep", reason: "its subagent session is idle", idleSince: LATE - 6 * DAY })
+    await cleanup()
+  })
+
+  test("a long-idle child with unmerged work is reported as unmerged, not as the idle advice", async () => {
+    const { fake, cleanup } = await start({ ancestor: 1, time: idleFor(30), now: LATE })
+    const plan = await sweep(fake, "report")
+    expect(plan[0]?.reason).not.toContain("archive or delete")
+    await cleanup()
+  })
+
+  test("a fenced lane is kept for a person with the fence reason, even with a deleted child", async () => {
+    const fenced = lane({ fenced: { reason: "moving it back failed: boom", at: 1 } })
+    const { fake, worktree, cleanup } = await start({ ancestor: 0 }, { stored: [fenced] })
+    fake.sessions.delete(CHILD)
+    const plan = await sweep(fake, "prune")
+    expect(plan[0]).toMatchObject({ verdict: "keep", needsPerson: true })
+    expect(plan[0]?.reason).toContain("moving it back failed: boom")
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+})
+
+describe("unfence", () => {
+  const fenced = { reason: "moving it back failed", at: 1 }
+  const unfence = async (fake: Fake, caller = tool) => {
+    const execute = fake.tools.get("subagent_worktree_merge")?.execute as (i: unknown, c: unknown) => Promise<{ content: string; metadata: { ok: boolean } }>
+    return execute({ method: "unfence", sessionID: CHILD }, caller)
+  }
+
+  test("clears the fence of an idle child's lane", async () => {
+    const { fake, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced })] })
+    const result = await unfence(fake)
+    expect(result.metadata.ok).toBe(true)
+    expect(stored(fake).fenced).toBeUndefined()
+    await cleanup()
+  })
+
+  test("refuses while the child is running", async () => {
+    const { fake, cleanup } = await start({ time: { [CHILD]: { busy: 5, idle: 2 } } }, { stored: [lane({ fenced })] })
+    const result = await unfence(fake)
+    expect(result.metadata.ok).toBe(false)
+    expect(stored(fake).fenced).toEqual(fenced)
+    await cleanup()
+  })
+
+  test("refuses a lane handed to another writer", async () => {
+    const { fake, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced, child: "ses_new", handedOver: { from: CHILD, at: 1 } } as Partial<Lane>)] })
+    const execute = fake.tools.get("subagent_worktree_merge")?.execute as (i: unknown, c: unknown) => Promise<{ metadata: { ok: boolean } }>
+    expect((await execute({ method: "unfence", sessionID: CHILD }, tool)).metadata.ok).toBe(false)
+    await cleanup()
+  })
+
+  test("refuses a lane that is not fenced", async () => {
+    const { fake, cleanup } = await start({ time: IDLE })
+    expect((await unfence(fake)).metadata.ok).toBe(false)
+    await cleanup()
+  })
+})
