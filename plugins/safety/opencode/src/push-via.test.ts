@@ -173,6 +173,8 @@ describe("pushVia reads option abbreviations as git does", () => {
     ["git push --ex /x origin", "origin"],
     ["git push --rece /x origin", "origin"],
     ["git push --recu=check origin", "origin"],
+    ["git push --recurse-submodules check lab", "lab"],
+    ["git push --recu on-demand lab", "lab"],
     ["git push --rep https://a.example/b", "https://a.example/b"],
     ["git push --force-with origin", "origin"],
   ])("%s asks about %s", (source, remote) => {

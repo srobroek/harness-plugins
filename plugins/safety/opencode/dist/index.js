@@ -4613,7 +4613,7 @@ function gitRemoteResolver(inherited) {
     return git(cwd, ["remote", "get-url", "--push", "--all", "--", name], env);
   };
 }
-var VALUED_LONG = ["repo", "push-option", "receive-pack", "exec"];
+var VALUED_LONG = ["repo", "push-option", "receive-pack", "exec", "recurse-submodules"];
 var BOOLEAN_LONG = [
   "all",
   "branches",
@@ -4637,7 +4637,7 @@ var BOOLEAN_LONG = [
   "ipv6",
   "help"
 ];
-var OTHER_LONG = ["force-with-lease", "signed", "recurse-submodules", "no-push-option"];
+var OTHER_LONG = ["force-with-lease", "signed", "no-push-option"];
 var LONG_OPTIONS = [...VALUED_LONG, ...OTHER_LONG, ...BOOLEAN_LONG, ...BOOLEAN_LONG.map((name) => `no-${name}`)];
 function longOption(name) {
   const matches = LONG_OPTIONS.includes(name) ? [name] : LONG_OPTIONS.filter((long) => name !== "" && long.startsWith(name));

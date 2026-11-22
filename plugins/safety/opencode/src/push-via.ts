@@ -88,12 +88,12 @@ export function gitRemoteResolver(inherited: Environment): RemoteResolver {
 }
 
 // Every long option of `git push` (git-push(1)); git accepts any unique prefix, and `--no-` forms of the boolean ones.
-const VALUED_LONG = ["repo", "push-option", "receive-pack", "exec"]
+const VALUED_LONG = ["repo", "push-option", "receive-pack", "exec", "recurse-submodules"]
 const BOOLEAN_LONG = [
   "all", "branches", "prune", "mirror", "delete", "tags", "follow-tags", "atomic", "dry-run", "porcelain", "force",
   "force-if-includes", "thin", "progress", "verbose", "quiet", "set-upstream", "verify", "ipv4", "ipv6", "help",
 ]
-const OTHER_LONG = ["force-with-lease", "signed", "recurse-submodules", "no-push-option"]
+const OTHER_LONG = ["force-with-lease", "signed", "no-push-option"]
 const LONG_OPTIONS = [...VALUED_LONG, ...OTHER_LONG, ...BOOLEAN_LONG, ...BOOLEAN_LONG.map((name) => `no-${name}`)]
 
 type LongOption = { name: string; valued: boolean }
