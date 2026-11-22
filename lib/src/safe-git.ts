@@ -115,18 +115,20 @@ const PROGRAM_VARIABLES = ["PAGER", "EDITOR", "VISUAL", "SSH_ASKPASS"] as const
 
 /**
  * The environment for a child that runs git, directly or through `wt` or `gh`. It carries the hardening as
- * `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` (command scope, like `-c`), so a child's own git calls inherit it.
+ * `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` (command scope, like `-c`), so a child's own git calls inherit it. Any inherited command-scope config is dropped first.
  * `GIT_ATTR_SOURCE` (the empty tree) keeps worktree `.gitattributes` from selecting a driver.
  */
 export function hardenedGitEnv(base: Readonly<Record<string, string | undefined>>): Record<string, string> {
   const env: Record<string, string> = {}
   const dropped = new Set<string>([...INHERITED_GIT_VARIABLES, ...PROGRAM_VARIABLES])
   for (const [key, value] of Object.entries(base)) {
+    // Inherited command-scope config goes too: a `core.worktree` there redirects every read, and GIT_CONFIG_PARAMETERS
+    // can set the settings this function pins. Only the overrides below are installed.
     if (value === undefined || dropped.has(key) || key.startsWith("GIT_TRACE")) continue
+    if (key === "GIT_CONFIG_PARAMETERS" || key === "GIT_CONFIG_COUNT" || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key)) continue
     env[key] = value
   }
-  const existing = Number.parseInt(env.GIT_CONFIG_COUNT ?? "", 10)
-  let count = Number.isInteger(existing) && existing > 0 ? existing : 0
+  let count = 0
   for (const [key, value] of HARDENED_GIT_CONFIG) {
     env[`GIT_CONFIG_KEY_${count}`] = key
     env[`GIT_CONFIG_VALUE_${count}`] = value

@@ -1318,10 +1318,11 @@ function hardenedGitEnv(base) {
   for (const [key, value] of Object.entries(base)) {
     if (value === undefined || dropped.has(key) || key.startsWith("GIT_TRACE"))
       continue;
+    if (key === "GIT_CONFIG_PARAMETERS" || key === "GIT_CONFIG_COUNT" || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key))
+      continue;
     env[key] = value;
   }
-  const existing = Number.parseInt(env.GIT_CONFIG_COUNT ?? "", 10);
-  let count = Number.isInteger(existing) && existing > 0 ? existing : 0;
+  let count = 0;
   for (const [key, value] of HARDENED_GIT_CONFIG) {
     env[`GIT_CONFIG_KEY_${count}`] = key;
     env[`GIT_CONFIG_VALUE_${count}`] = value;

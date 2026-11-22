@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { writeExecutable } from "./executable-fixture.ts"
@@ -28,11 +28,24 @@ describe("gitVersionProblem", () => {
 })
 
 describe("hardenedGitEnv", () => {
-  test("appends to an existing GIT_CONFIG_COUNT and drops GIT_EXTERNAL_DIFF", () => {
-    const env = hardenedGitEnv({ GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "a.b", GIT_CONFIG_VALUE_0: "c", GIT_EXTERNAL_DIFF: "evil", HOME: "/h" })
-    expect(env.GIT_CONFIG_KEY_0).toBe("a.b")
-    expect(env.GIT_CONFIG_KEY_1).toBe("core.fsmonitor")
-    expect(env.GIT_CONFIG_VALUE_1).toBe("false")
+  test("replaces an inherited command-scope config instead of appending to it", () => {
+    const env = hardenedGitEnv({
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "core.worktree",
+      GIT_CONFIG_VALUE_0: "/elsewhere",
+      GIT_CONFIG_KEY_99: "a.b",
+      GIT_CONFIG_VALUE_99: "c",
+      GIT_CONFIG_PARAMETERS: "'core.fsmonitor=evil'",
+      GIT_EXTERNAL_DIFF: "evil",
+      HOME: "/h",
+    })
+    expect(env.GIT_CONFIG_KEY_0).toBe("core.fsmonitor")
+    expect(env.GIT_CONFIG_VALUE_0).toBe("false")
+    expect(env.GIT_CONFIG_PARAMETERS).toBeUndefined()
+    expect(env.GIT_CONFIG_KEY_99).toBeUndefined()
+    expect(env.GIT_CONFIG_VALUE_99).toBeUndefined()
+    expect(Object.values(env)).not.toContain("/elsewhere")
+    expect(Number(env.GIT_CONFIG_COUNT)).toBe(Object.keys(env).filter((key) => key.startsWith("GIT_CONFIG_KEY_")).length)
     expect(env.GIT_EXTERNAL_DIFF).toBeUndefined()
     expect(env.HOME).toBe("/h")
   })
@@ -158,6 +171,58 @@ describe("hardenedGitEnv ignores a host repository selector", () => {
       // The control: the unhardened environment follows the selectors to the other repository.
       expect(await toplevel(host as Record<string, string>)).not.toBe(await realpath(lane))
       expect(await toplevel(hardenedGitEnv(host))).toBe(await realpath(lane))
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  // git (2.45) does not let a command-scope core.worktree move `-C <lane>` discovery, so the observable effect is that git
+  // sees the setting at all: a later command or a child that reads core.worktree through config would follow it.
+  test("an inherited core.worktree in GIT_CONFIG_COUNT is not part of the config git reads", async () => {
+    const root = await mkdtemp(join(tmpdir(), "safe-git-worktree-"))
+    try {
+      const lane = join(root, "lane")
+      await Bun.spawn(["git", "init", "--quiet", lane], { stdout: "ignore", stderr: "ignore" }).exited
+      const configured = async (env: Record<string, string>) => {
+        const child = Bun.spawn(["git", "-C", lane, "config", "--get", "core.worktree"], { env, stdin: "ignore", stdout: "pipe", stderr: "ignore" })
+        const out = (await new Response(child.stdout).text()).trim()
+        return { code: await child.exited, out }
+      }
+      const host = { ...Bun.env, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "core.worktree", GIT_CONFIG_VALUE_0: join(root, "other") }
+      // The control: the unhardened environment carries the inherited setting into git's config.
+      expect(await configured(host as Record<string, string>)).toEqual({ code: 0, out: join(root, "other") })
+      expect(await configured(hardenedGitEnv(host))).toEqual({ code: 1, out: "" })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  test.each([
+    ["core.fsmonitor", (script: string) => `'core.fsmonitor=${script}'`, ["status", "--porcelain"]],
+    ["core.hooksPath", (hooks: string) => `'core.hooksPath=${hooks}'`, ["switch", "--quiet", "main"]],
+  ])("an inherited GIT_CONFIG_PARAMETERS cannot turn %s back on", async (_key, parameters, argv) => {
+    const root = await mkdtemp(join(tmpdir(), "safe-git-params-"))
+    try {
+      const lane = join(root, "lane")
+      const marker = join(root, "fired")
+      const script = join(root, "program.sh")
+      const hooks = join(root, "hooks")
+      await Bun.spawn(["git", "init", "--quiet", "--initial-branch=main", lane], { stdout: "ignore", stderr: "ignore" }).exited
+      const git = (...args: string[]) =>
+        Bun.spawn(["git", "-C", lane, "-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { stdout: "ignore", stderr: "ignore" }).exited
+      await git("commit", "--quiet", "--allow-empty", "-m", "init")
+      writeExecutable(script, `#!/bin/sh\ntouch ${marker}\nexit 1\n`)
+      await mkdir(hooks)
+      writeExecutable(join(hooks, "post-checkout"), `#!/bin/sh\nexec ${script}\n`)
+      const value = parameters(_key === "core.hooksPath" ? hooks : script)
+      const run = async (env: Record<string, string>) => {
+        await rm(marker, { force: true })
+        await Bun.spawn(["git", "-C", lane, ...argv], { env, stdin: "ignore", stdout: "ignore", stderr: "ignore" }).exited
+        return Bun.file(marker).exists()
+      }
+      const host = { ...Bun.env, GIT_CONFIG_PARAMETERS: value } as Record<string, string>
+      // The control: the unhardened environment honours the inherited parameters.
+      expect({ unhardened: await run(host), hardened: await run(hardenedGitEnv(host)) }).toEqual({ unhardened: true, hardened: false })
     } finally {
       await rm(root, { recursive: true, force: true })
     }
