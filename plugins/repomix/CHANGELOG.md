@@ -1,3 +1,9 @@
+## repomix [0.5.0](https://github.com/srobroek/harness-plugins/compare/repomix--v0.4.1...repomix--v0.5.0) (2026-11-22)
+
+### Features
+
+* **delivery:** ship the orchestrator agent ([#121](https://github.com/srobroek/harness-plugins/issues/121)) ([53f33c0](https://github.com/srobroek/harness-plugins/commit/53f33c016315732220a7c87066267931ee87f514))
+
 ## repomix [0.4.1](https://github.com/srobroek/harness-plugins/compare/repomix--v0.4.0...repomix--v0.4.1) (2026-11-21)
 
 ### Bug Fixes
