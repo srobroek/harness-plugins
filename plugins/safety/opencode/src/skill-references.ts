@@ -5,10 +5,10 @@
  * never the cache as a whole.
  */
 
-import { realpathSync } from "node:fs"
+import { lstatSync, realpathSync } from "node:fs"
 import { homedir } from "node:os"
-import { basename, dirname, relative } from "node:path"
-import { inside } from "./scratch-dirs.ts"
+import { basename, dirname, join, relative } from "node:path"
+import { insideCanonical } from "./scratch-dirs.ts"
 
 type Evaluation = { readonly action: string; readonly resources: ReadonlyArray<string>; effect: string }
 
@@ -24,8 +24,47 @@ function real(path: string): string | undefined {
   }
 }
 
+/** The subdirectories of a skill that hold what its `SKILL.md` points at. */
+const SKILL_SUBDIRECTORIES = ["references", "scripts", "assets", "templates"] as const
+
 /**
- * The real directory of each skill's `SKILL.md`. It skips a directory that is the filesystem root, the
+ * Whether `path` is known to be absent. The entry itself is inspected (`lstat`, no symlink followed), so a
+ * dangling or looping link counts as present; any error other than ENOENT is unknown and counts as present.
+ */
+function absent(path: string): boolean {
+  try {
+    lstatSync(path)
+    return false
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT"
+  }
+}
+
+/**
+ * Whether a skill's real directory is a dedicated skill folder: `.../skills/<dir>` and not a repository
+ * root (no `.git` file or directory, which covers worktrees and submodules). Fails closed: a `.git` that
+ * cannot be inspected makes the directory a repository root.
+ */
+function dedicated(dir: string): boolean {
+  return basename(dirname(dir)) === "skills" && absent(join(dir, ".git"))
+}
+
+/**
+ * What to trust for one skill directory: all of it when it is dedicated, otherwise only the conventional
+ * subdirectories. A subdirectory that is a symlink leaving the skill directory is dropped.
+ */
+function trustedRoots(dir: string): string[] {
+  if (dedicated(dir)) return [dir]
+  const roots: string[] = []
+  for (const name of SKILL_SUBDIRECTORIES) {
+    const sub = real(join(dir, name))
+    if (sub !== undefined && sub !== dir && !relative(dir, sub).startsWith("..")) roots.push(sub)
+  }
+  return roots
+}
+
+/**
+ * The real directories to trust for each skill's `SKILL.md` (see `trustedRoots`). It skips a directory that is the filesystem root, the
  * home folder or one of its parents, because a stray `SKILL.md` there would open the whole tree. It
  * compares real paths, because `inside` resolves symlinks too. It skips any skill when its directory or
  * the home folder does not resolve.
@@ -40,7 +79,7 @@ export function skillDirectories(skills: ReadonlyArray<{ readonly path?: unknown
     if (dir === undefined) continue
     const toHome = relative(dir, realHome)
     if (dir === "/" || !(toHome === ".." || toHome.startsWith("../"))) continue
-    dirs.add(dir)
+    for (const root of trustedRoots(dir)) dirs.add(root)
   }
   return [...dirs]
 }
@@ -56,5 +95,5 @@ export function listedSkills(listed: unknown): ReadonlyArray<{ readonly path?: u
 export function allowSkillReads(evaluation: Evaluation, dirs: readonly string[]): void {
   if (evaluation.action !== "external_directory" || evaluation.effect !== "ask") return
   if (evaluation.resources.length === 0 || dirs.length === 0) return
-  if (evaluation.resources.every((resource) => inside(resource, dirs))) evaluation.effect = "allow"
+  if (evaluation.resources.every((resource) => insideCanonical(resource, dirs))) evaluation.effect = "allow"
 }

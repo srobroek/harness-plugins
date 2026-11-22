@@ -6816,9 +6816,9 @@ async function storeSecret(input, deps) {
 }
 
 // plugins/safety/opencode/src/skill-references.ts
-import { realpathSync as realpathSync8 } from "fs";
+import { lstatSync as lstatSync4, realpathSync as realpathSync8 } from "fs";
 import { homedir as homedir8 } from "os";
-import { basename as basename5, dirname as dirname8, relative as relative4 } from "path";
+import { basename as basename5, dirname as dirname8, join as join10, relative as relative4 } from "path";
 var READ_ONLY_TOOLS = new Set(["read", "glob", "grep", "list"]);
 function real(path) {
   try {
@@ -6826,6 +6826,29 @@ function real(path) {
   } catch {
     return;
   }
+}
+var SKILL_SUBDIRECTORIES = ["references", "scripts", "assets", "templates"];
+function absent(path) {
+  try {
+    lstatSync4(path);
+    return false;
+  } catch (error) {
+    return error.code === "ENOENT";
+  }
+}
+function dedicated(dir) {
+  return basename5(dirname8(dir)) === "skills" && absent(join10(dir, ".git"));
+}
+function trustedRoots(dir) {
+  if (dedicated(dir))
+    return [dir];
+  const roots = [];
+  for (const name of SKILL_SUBDIRECTORIES) {
+    const sub = real(join10(dir, name));
+    if (sub !== undefined && sub !== dir && !relative4(dir, sub).startsWith(".."))
+      roots.push(sub);
+  }
+  return roots;
 }
 function skillDirectories(skills, home = homedir8()) {
   const realHome = real(home);
@@ -6841,7 +6864,8 @@ function skillDirectories(skills, home = homedir8()) {
     const toHome = relative4(dir, realHome);
     if (dir === "/" || !(toHome === ".." || toHome.startsWith("../")))
       continue;
-    dirs.add(dir);
+    for (const root of trustedRoots(dir))
+      dirs.add(root);
   }
   return [...dirs];
 }
@@ -6856,14 +6880,14 @@ function allowSkillReads(evaluation, dirs) {
     return;
   if (evaluation.resources.length === 0 || dirs.length === 0)
     return;
-  if (evaluation.resources.every((resource) => inside(resource, dirs)))
+  if (evaluation.resources.every((resource) => insideCanonical(resource, dirs)))
     evaluation.effect = "allow";
 }
 
 // plugins/safety/opencode/src/steering-dirs.ts
 import { realpathSync as realpathSync9 } from "fs";
 import { homedir as homedir9 } from "os";
-import { isAbsolute as isAbsolute12, join as join10 } from "path";
+import { isAbsolute as isAbsolute12, join as join11 } from "path";
 var DEFAULT_STEERING_DIRS = ["~/.config/opencode/steering"];
 function readSteeringDirs(raw) {
   if (!Array.isArray(raw))
@@ -6873,7 +6897,7 @@ function readSteeringDirs(raw) {
 function steeringRoots(dirs, home = homedir9(), uid) {
   const roots = [];
   for (const dir of dirs) {
-    const expanded = dir === "~" || dir.startsWith("~/") ? join10(home, dir.slice(1)) : dir;
+    const expanded = dir === "~" || dir.startsWith("~/") ? join11(home, dir.slice(1)) : dir;
     if (!isAbsolute12(expanded))
       continue;
     try {
@@ -6920,7 +6944,7 @@ function denyUnanswerable(evaluation, session) {
 
 // plugins/safety/opencode/src/subagent-reads.ts
 import { homedir as homedir10 } from "os";
-import { basename as basename6, isAbsolute as isAbsolute13, join as join11 } from "path";
+import { basename as basename6, isAbsolute as isAbsolute13, join as join12 } from "path";
 var SHELL_TOOLS = new Set(["shell", "bash"]);
 var SECRET_LOCATIONS = [
   "~/.ssh",
@@ -6935,7 +6959,7 @@ var SECRET_LOCATIONS = [
 ];
 var ENV_FILE = /\.env(\.|$)/;
 function expand(location, home) {
-  return location === "~" || location.startsWith("~/") ? join11(home, location.slice(1)) : location;
+  return location === "~" || location.startsWith("~/") ? join12(home, location.slice(1)) : location;
 }
 function isSecretResource(resource, extra = [], home = homedir10()) {
   const expanded = expand(resource, home);
