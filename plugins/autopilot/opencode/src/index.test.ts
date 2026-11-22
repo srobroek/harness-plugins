@@ -187,7 +187,8 @@ const journal = () =>
     .map((line) => JSON.parse(line) as { type: string; summary: string })
 
 beforeEach(async () => {
-  root = mkdtempSync(join(tmpdir(), "autopilot-test-"))
+  // macOS tmpdir() is under the /var -> /private/var symlink; git and realpath return the real path, so build expectations from it.
+  root = realpathSync(mkdtempSync(join(tmpdir(), "autopilot-test-")))
   calls = []
   ghReplies = {}
   onGh = undefined
