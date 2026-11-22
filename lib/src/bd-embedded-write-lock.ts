@@ -923,10 +923,6 @@ export function planEmbeddedWrites(
   // command is reported as unplaced and no `BEADS_DIR` assignment in it counts as a choice.
   const definesFunction = hasFunctionDefinition(items)
   if (definesFunction) unplaced?.("the command defines a shell function, whose body the gate does not follow")
-  // The one shape in which an inherited `BEADS_DB` cannot have been changed first: a single simple
-  // command. Any other shell construct could assign it under a name built at run time.
-  const plainCommand =
-    scan.complete && scan.substitutions.length === 0 && items.length === 1 && items[0]?.kind === "command" && !definesFunction
   // Inside `if`/`case`/a loop, or behind `&&`/`||`, a command may not run at all.
   let compound = 0
   let unresolvedWrite = false
@@ -974,7 +970,7 @@ export function planEmbeddedWrites(
       const argv = shape.child.slice(1)
       const child = invocationFromArgv(argv.map((word) => word.value))
       if (child === undefined || !isWrite(child, argv)) continue
-      const resolved = resolveWrite(child, shape.assignments, state, env, command, plainCommand)
+      const resolved = resolveWrite(child, shape.assignments, state, env, command)
       if ("problem" in resolved) {
         unresolvedWrite = true
         unresolved?.(child)
@@ -994,7 +990,7 @@ export function planEmbeddedWrites(
     const invocation = invocationFromArgv(shape.args.map((word) => word.value))
     // `bd`, `bd --version` and `bd --help` carry no verb: recognised, and no write.
     if (invocation === undefined || !isWrite(invocation, shape.args)) continue
-    const resolved = resolveWrite(invocation, shape.assignments, state, env, command, plainCommand)
+    const resolved = resolveWrite(invocation, shape.assignments, state, env, command)
     if ("problem" in resolved) {
       unresolvedWrite = true
       unresolved?.(invocation)
@@ -1344,8 +1340,6 @@ function resolveWrite(
   state: ShellState,
   env: NodeJS.ProcessEnv,
   source: string,
-  /** Whether the whole command is this one simple command, so nothing before it can have changed `BEADS_DB`. */
-  plain: boolean,
 ): ResolvedWriteTarget | { problem: Problem } {
   const write = `\`bd ${invocation.verb}\``
   for (const flag of STORE_FLAGS) {
@@ -1371,35 +1365,20 @@ function resolveWrite(
   }
   const directory = globalValue(invocation.globals, ["-C", "--directory"])
   const db = globalValue(invocation.globals, ["--db"])
-  // bd reads `BEADS_DB` only when `--db`, `-C` and `BEADS_DIR` leave the store open. The runner then
-  // injects `BEADS_DIR` for the store planned here, so a `BEADS_DB` the shell changed would
-  // send the write to a different store than the one locked: refuse rather than guess.
-  const inheritedDb = env.BEADS_DB ?? ""
-  const dbEffective =
-    directory === undefined &&
-    db === undefined &&
-    (beadsDir.kind === "known" ? (beadsDir.value ?? "") === "" : false) &&
-    (inheritedDb !== "" || assignments.some((word) => BEADS_DB_WORD.test(word.value)))
-  // An inline literal that names the inherited store again changes nothing.
-  const dbCwd = state.cwd.kind === "known" ? state.cwd.cwd : undefined
-  const unchangedInline = (word: ShellWord): boolean => {
-    const value = word.value.slice("BEADS_DB=".length)
-    return (
-      word.value.startsWith("BEADS_DB=") &&
-      !word.expands &&
-      !DEFERRED_VALUE.test(value) &&
-      value !== "" &&
-      inheritedDb !== "" &&
-      dbCwd !== undefined &&
-      canonicalStore(storeFromBeadsDb(value, dbCwd)) === canonicalStore(storeFromBeadsDb(inheritedDb, dbCwd))
-    )
-  }
-  const ownDbChange = assignments.find((word) => BEADS_DB_WORD.test(word.value) && !unchangedInline(word))
-  if (dbEffective && (!plain || ownDbChange !== undefined)) {
+  // A store command opens BEADS_DIR before BEADS_DB, and the runner pins BEADS_DIR for the store
+  // planned here, so no shell change to BEADS_DB can move it. A command that skips store init reads
+  // BEADS_DB and BD_DB first, so where either may be set it is refused unless the write names its store.
+  const dbSource =
+    (env.BEADS_DB ?? "") !== "" ? "the environment sets `BEADS_DB`"
+    : (env.BD_DB ?? "") !== "" ? "the environment sets `BD_DB`"
+    : DB_VARIABLE.test(source) ? "the command mentions `BEADS_DB` or `BD_DB`"
+    : undefined
+  const namesStore = db !== undefined || (beadsDir.kind === "known" && beadsDir.assigned && (beadsDir.value ?? "") !== "")
+  if (dbSource !== undefined && skipsStoreInit(invocation) && !namesStore) {
     return {
       problem: {
-        part: `${write} runs where \`BEADS_DB\` selects the store, and the command is ${plain ? `\`${source.slice(ownDbChange?.start, ownDbChange?.end)}\`, which changes it` : "not one plain `bd` command (it chains, pipes, nests, substitutes or defines functions), so the shell may have changed `BEADS_DB` first"}`,
-        fix: "Run the write as one plain `bd` command, or set `BEADS_DIR=/path` to a literal path (`BEADS_DIR=/path bd ...`), which `BEADS_DB` cannot override.",
+        part: `${write} skips bd's store init, so bd 1.3.1 picks its store from \`BEADS_DB\` or \`BD_DB\` before \`BEADS_DIR\`, and ${dbSource}`,
+        fix: "Name the store on the write: `bd --db /path/.beads ...`, or `BEADS_DIR=/path/.beads bd ...` (the lock then clears `BEADS_DB` and `BD_DB` for that write).",
       },
     }
   }
@@ -1417,10 +1396,9 @@ function resolveWrite(
       ? !isAbsolute(db) && (directory === undefined || !isAbsolute(directory))
       : directory !== undefined && !isAbsolute(directory)
   if (relative && !state.cwd.certain) {
-    const flag = db === undefined ? "-C" : "--db"
     return {
       problem: {
-        part: `${write} resolves a relative \`${flag}\` path after a \`cd\` the lock cannot confirm ran`,
+        part: `${write} resolves a relative \`${db === undefined ? "-C" : "--db"}\` path after a \`cd\` the lock cannot confirm ran`,
         fix: "Give it an absolute path, or start the command with `cd DIR &&` joined to the write by `&&` alone.",
       },
     }
@@ -2116,7 +2094,9 @@ function quote(word: string): string {
  * -- `bd close $ID` reaches the runner as the id, not as `$ID` -- and every pipe,
  * redirection, separator and quote around it stays exactly as written. The runner's
  * command-local `BEADS_DIR` comes after the caller's, so the write lands in the very
- * store the runner holds.
+ * store the runner holds. `BEADS_DB` and `BD_DB` are cleared beside it: a command that
+ * skips bd's store init reads them before `BEADS_DIR`, and a startup file such as
+ * `BASH_ENV` could have set them.
  */
 function withRunner(command: string, writes: EmbeddedWrite[], runner: EmbeddedWriteRunner, waitMs: number): string {
   let out = ""
@@ -2125,7 +2105,7 @@ function withRunner(command: string, writes: EmbeddedWrite[], runner: EmbeddedWr
     const store = quote(write.store)
     // Always passed, so the runner rechecks every write, canonical path or not.
     const selected = ` ${RUNNER_SELECTED_FLAG} ${quote(write.selected)}`
-    out += `${command.slice(cursor, write.offset)}BEADS_DOLT_SHARED_SERVER= BEADS_DIR=${store} ${quote(runner.interpreter)} ${quote(runner.script)} ${RUNNER_STORE_FLAG} ${store}${selected} ${RUNNER_WAIT_FLAG} ${Math.round(waitMs)} -- `
+    out += `${command.slice(cursor, write.offset)}BEADS_DOLT_SHARED_SERVER= BEADS_DIR=${store} BEADS_DB= BD_DB= ${quote(runner.interpreter)} ${quote(runner.script)} ${RUNNER_STORE_FLAG} ${store}${selected} ${RUNNER_WAIT_FLAG} ${Math.round(waitMs)} -- `
     cursor = write.offset
   }
   return out + command.slice(cursor)
