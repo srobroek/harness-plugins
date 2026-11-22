@@ -385,13 +385,13 @@ export function createLanes(
   const handedOff = async (child: string) => parseRelease(await ctx.storage.get(releaseKey(child)))?.to !== undefined
 
   /**
-   * Bind the worktree to `child`, the writer just moved into it. Every release from it that names no
+   * Bind the worktree to `child`, the writer `parent` just moved into it. Every release from it that names no
    * writer yet, or whose released child still owns its lane there (an earlier handover failed), now
-   * names `child`, and the released child's active lane becomes `child`'s, so its claim and removal
+   * names `child`, and the released child's active lane becomes `child`'s, with `parent` as its parent, so its claim and removal
    * follow the writer that is there now. The record names `child` first, which fences any stale write
    * of the old lane or claim. A failure puts back what this handover changed and throws.
    */
-  const handOver = async (directory: string, child: string) => {
+  const handOver = async (directory: string, child: string, parent: string) => {
     const undo: Array<() => Promise<void>> = []
     try {
       for (const release of await releasesIn(directory)) {
@@ -409,7 +409,7 @@ export function createLanes(
         if (owned && ownsHere) {
           // Marked before each write: a write that fails part way (the claim written, the lane not) is undone too.
           step.saved = true
-          await save({ ...owned, child, handedOver: { from: release.child, at: now() } })
+          await save({ ...owned, child, parent, handedOver: { from: release.child, at: now() } })
           step.removed = true
           await ctx.storage.remove(laneKey(release.child))
         }
@@ -573,7 +573,7 @@ export function createLanes(
           const reserved = hold && reservations.get(hold.directory)
           if (reserved && hold && reserved.token === hold.token) reserved.child = child
           await ctx.session.move({ sessionID: child, directory: plan.worktree.directory } as never)
-          if (hold?.writer) await handOver(hold.directory, child)
+          if (hold?.writer) await handOver(hold.directory, child, event.sessionID)
         })
         event.input = { ...(event.input as object), sessionID: child, prompt: startPrompt(input.prompt, plan.worktree) }
       } catch (error) {

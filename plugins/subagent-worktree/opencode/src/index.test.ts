@@ -707,6 +707,14 @@ describe("worktree argument", () => {
       expect(claimant(setup)).toBe("ses_fake1")
     })
 
+    test("a writer that another session spawns into the worktree takes over the lane as that session's", async () => {
+      const setup = await dead()
+      setup.fake.sessions.set("ses_lead2", { id: "ses_lead2", projectID: "prj", location: { directory: REPO }, model: { id: "m", providerID: "p" } })
+      await release(setup, "ses_dead")
+      await spawn(setup, { agent: "pinned", worktree: "feat" }, "ses_lead2")
+      expect(lane(setup.fake, "ses_fake1")?.parent).toBe("ses_lead2")
+    })
+
     test.each([
       ["whose last run never ended (its server died)", { busy: NOW - 11 * MINUTE }],
       ["that is idle", { busy: NOW - 11 * MINUTE, idle: NOW - 10 * MINUTE }],
