@@ -1379,10 +1379,16 @@ describe("bd 1.3.1's store order for a write, with BEADS_DB inherited", () => {
     ["BD_DB is inherited", "bd dolt set port 1", { BD_DB: "/x/.beads" }],
     ["BEADS_DB is mentioned in the command", "echo $BEADS_DB; bd dolt set port 1", {}],
     ["BD_DB is mentioned in the command", "BD_DB=/x/.beads bd dolt set port 1", {}],
+    // BEADS_DB beats BEADS_DIR for a command that skips store init, so a literal BEADS_DIR names nothing.
+    ["BEADS_DB is inherited and the write sets a literal BEADS_DIR", "BEADS_DIR=/x/.beads bd dolt set port 1", { BEADS_DB: "/y/.beads" }],
   ])("refuses `bd dolt set` when %s", (_name, command, env) => {
     const result = embeddedWriteTargets(command, checkout, scrubbedBeadsEnv(env))
     expect(result.kind).toBe("refused")
     expect(JSON.stringify(result)).toContain("--db")
+  })
+
+  test("a no-DB write that names its store with --db is locked on that store, since --db beats BEADS_DB", () => {
+    expect(embeddedWriteTargets(`bd --db ${moved} dolt set port 1`, checkout, inherited())).toEqual({ kind: "stores", stores: [moved] })
   })
 
   test.each(["bd dolt push", "bd dolt commit", "bd dolt remote add origin u", "bd close bd-1"])(
