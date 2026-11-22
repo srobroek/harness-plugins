@@ -73,13 +73,58 @@ export function gitVersionProblem(text: string): string | undefined {
 }
 
 /**
+ * Inherited variables that select the repository, work tree or index, name a program git runs, write a trace
+ * file or change what a read sees. They are dropped before the hardening is applied: a `GIT_DIR` or
+ * `GIT_INDEX_FILE` in the host environment would point `git -C <lane>` at another repository, and the
+ * program variables would run what the `-c` overrides below blank.
+ */
+const INHERITED_GIT_VARIABLES = [
+  // Another repository, work tree, index or object store than the one `-C` names.
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_PREFIX",
+  "GIT_NAMESPACE",
+  "GIT_REPLACE_REF_BASE",
+  "GIT_GRAFT_FILE",
+  "GIT_SHALLOW_FILE",
+  // A config file only `git config` reads, so a preflight and the command would see different config.
+  "GIT_CONFIG",
+  // Programs git runs.
+  "GIT_EXEC_PATH",
+  "GIT_EXTERNAL_DIFF",
+  "GIT_PAGER",
+  "GIT_EDITOR",
+  "GIT_SEQUENCE_EDITOR",
+  "GIT_SSH",
+  "GIT_SSH_COMMAND",
+  "GIT_ASKPASS",
+  "GIT_PROXY_COMMAND",
+  // Pathspec switches change what a read sees.
+  "GIT_LITERAL_PATHSPECS",
+  "GIT_GLOB_PATHSPECS",
+  "GIT_NOGLOB_PATHSPECS",
+  "GIT_ICASE_PATHSPECS",
+] as const
+
+/** Non-`GIT_` variables that git reads to pick a program. */
+const PROGRAM_VARIABLES = ["PAGER", "EDITOR", "VISUAL", "SSH_ASKPASS"] as const
+
+/**
  * The environment for a child that runs git, directly or through `wt` or `gh`. It carries the hardening as
  * `GIT_CONFIG_COUNT`/`KEY_n`/`VALUE_n` (command scope, like `-c`), so a child's own git calls inherit it.
  * `GIT_ATTR_SOURCE` (the empty tree) keeps worktree `.gitattributes` from selecting a driver.
  */
 export function hardenedGitEnv(base: Readonly<Record<string, string | undefined>>): Record<string, string> {
   const env: Record<string, string> = {}
-  for (const [key, value] of Object.entries(base)) if (value !== undefined) env[key] = value
+  const dropped = new Set<string>([...INHERITED_GIT_VARIABLES, ...PROGRAM_VARIABLES])
+  for (const [key, value] of Object.entries(base)) {
+    if (value === undefined || dropped.has(key) || key.startsWith("GIT_TRACE")) continue
+    env[key] = value
+  }
   const existing = Number.parseInt(env.GIT_CONFIG_COUNT ?? "", 10)
   let count = Number.isInteger(existing) && existing > 0 ? existing : 0
   for (const [key, value] of HARDENED_GIT_CONFIG) {
@@ -91,6 +136,5 @@ export function hardenedGitEnv(base: Readonly<Record<string, string | undefined>
   env.GIT_ATTR_SOURCE = EMPTY_TREE
   env.GIT_OPTIONAL_LOCKS = "0"
   env.GIT_NO_LAZY_FETCH = "1"
-  delete env.GIT_EXTERNAL_DIFF
   return env
 }

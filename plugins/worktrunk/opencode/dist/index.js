@@ -1284,11 +1284,42 @@ var HARDENED_GIT_CONFIG = [
   ["diff.external", ""]
 ];
 var EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+var INHERITED_GIT_VARIABLES = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_PREFIX",
+  "GIT_NAMESPACE",
+  "GIT_REPLACE_REF_BASE",
+  "GIT_GRAFT_FILE",
+  "GIT_SHALLOW_FILE",
+  "GIT_CONFIG",
+  "GIT_EXEC_PATH",
+  "GIT_EXTERNAL_DIFF",
+  "GIT_PAGER",
+  "GIT_EDITOR",
+  "GIT_SEQUENCE_EDITOR",
+  "GIT_SSH",
+  "GIT_SSH_COMMAND",
+  "GIT_ASKPASS",
+  "GIT_PROXY_COMMAND",
+  "GIT_LITERAL_PATHSPECS",
+  "GIT_GLOB_PATHSPECS",
+  "GIT_NOGLOB_PATHSPECS",
+  "GIT_ICASE_PATHSPECS"
+];
+var PROGRAM_VARIABLES = ["PAGER", "EDITOR", "VISUAL", "SSH_ASKPASS"];
 function hardenedGitEnv(base) {
   const env = {};
-  for (const [key, value] of Object.entries(base))
-    if (value !== undefined)
-      env[key] = value;
+  const dropped = new Set([...INHERITED_GIT_VARIABLES, ...PROGRAM_VARIABLES]);
+  for (const [key, value] of Object.entries(base)) {
+    if (value === undefined || dropped.has(key) || key.startsWith("GIT_TRACE"))
+      continue;
+    env[key] = value;
+  }
   const existing = Number.parseInt(env.GIT_CONFIG_COUNT ?? "", 10);
   let count = Number.isInteger(existing) && existing > 0 ? existing : 0;
   for (const [key, value] of HARDENED_GIT_CONFIG) {
@@ -1300,7 +1331,6 @@ function hardenedGitEnv(base) {
   env.GIT_ATTR_SOURCE = EMPTY_TREE;
   env.GIT_OPTIONAL_LOCKS = "0";
   env.GIT_NO_LAZY_FETCH = "1";
-  delete env.GIT_EXTERNAL_DIFF;
   return env;
 }
 

@@ -113,6 +113,7 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
     - Holds are recorded for active and removing lanes before crash recovery runs.
     - `ifGone`, `spawnInto` (a spawn runs under the worktree's removal lock) and `isSessionNotFound` handling stay; there is no `session.created` repair of stranded sessions and no periodic sweep timer.
     - `git worktree list --porcelain -z` is read NUL-separated and malformed output is refused, so a path with a newline parses (`parseWorktrees` in `lane.ts`).
+    - `hardenedGitEnv` drops the inherited repository selectors (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR` and the object-store variables), the program variables, `GIT_TRACE*` and the pathspec switches before it applies the hardening. Upstream keeps them.
 
 ## Read-only shell rules and subagent reads
 

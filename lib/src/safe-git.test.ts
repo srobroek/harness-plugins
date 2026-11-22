@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { writeExecutable } from "./executable-fixture.ts"
@@ -35,6 +35,31 @@ describe("hardenedGitEnv", () => {
     expect(env.GIT_CONFIG_VALUE_1).toBe("false")
     expect(env.GIT_EXTERNAL_DIFF).toBeUndefined()
     expect(env.HOME).toBe("/h")
+  })
+  test.each([
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+    "GIT_CONFIG",
+    "GIT_EXEC_PATH",
+    "GIT_SSH_COMMAND",
+    "GIT_ASKPASS",
+    "GIT_PAGER",
+    "GIT_TRACE",
+    "GIT_TRACE_PACKET",
+    "GIT_LITERAL_PATHSPECS",
+    "PAGER",
+    "SSH_ASKPASS",
+  ])("drops the inherited %s", (name) => {
+    expect(hardenedGitEnv({ [name]: "x", HOME: "/h" })[name]).toBeUndefined()
+  })
+  test("keeps the variables that only locate config and tools", () => {
+    const env = hardenedGitEnv({ HOME: "/h", XDG_CONFIG_HOME: "/x", GIT_CONFIG_GLOBAL: "/g", PATH: "/bin" })
+    expect({ home: env.HOME, xdg: env.XDG_CONFIG_HOME, global: env.GIT_CONFIG_GLOBAL, path: env.PATH }).toEqual({ home: "/h", xdg: "/x", global: "/g", path: "/bin" })
   })
   test("sets the attribute source, optional locks and lazy fetch", () => {
     const env = hardenedGitEnv({})
@@ -110,6 +135,31 @@ describe("hardenedGitEnv against a hostile repository's lazy fetch", () => {
       expect({ hardened, unhardened: await fired("credential-helper-ran") }).toEqual({ hardened: false, unhardened: true })
     } finally {
       await server.stop(true)
+    }
+  })
+})
+
+describe("hardenedGitEnv ignores a host repository selector", () => {
+  test("`git -C lane` reads the lane even when the host sets GIT_DIR and GIT_WORK_TREE elsewhere", async () => {
+    const root = await mkdtemp(join(tmpdir(), "safe-git-selector-"))
+    try {
+      const init = async (name: string) => {
+        const dir = join(root, name)
+        await Bun.spawn(["git", "init", "--quiet", dir], { stdout: "ignore", stderr: "ignore" }).exited
+        return dir
+      }
+      const lane = await init("lane")
+      const other = await init("other")
+      const toplevel = async (env: Record<string, string>) => {
+        const child = Bun.spawn(["git", "-C", lane, "rev-parse", "--show-toplevel"], { env, stdin: "ignore", stdout: "pipe", stderr: "ignore" })
+        return (await new Response(child.stdout).text()).trim()
+      }
+      const host = { ...Bun.env, GIT_DIR: join(other, ".git"), GIT_WORK_TREE: other }
+      // The control: the unhardened environment follows the selectors to the other repository.
+      expect(await toplevel(host as Record<string, string>)).not.toBe(await realpath(lane))
+      expect(await toplevel(hardenedGitEnv(host))).toBe(await realpath(lane))
+    } finally {
+      await rm(root, { recursive: true, force: true })
     }
   })
 })
