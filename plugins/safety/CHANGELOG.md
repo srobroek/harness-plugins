@@ -1,3 +1,9 @@
+## safety [0.11.2](https://github.com/srobroek/harness-plugins/compare/safety--v0.11.1...safety--v0.11.2) (2026-11-22)
+
+### Bug Fixes
+
+* **safety:** trust a skill directory whole only when it is a dedicated skills/<dir> ([#85](https://github.com/srobroek/harness-plugins/issues/85)) ([57b4b53](https://github.com/srobroek/harness-plugins/commit/57b4b53e483eafc1f891ee3bb979b7aead997a9d))
+
 ## safety [0.11.1](https://github.com/srobroek/harness-plugins/compare/safety--v0.11.0...safety--v0.11.1) (2026-11-22)
 
 ### Bug Fixes
