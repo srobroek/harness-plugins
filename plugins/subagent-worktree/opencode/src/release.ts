@@ -98,7 +98,8 @@ export function decideRelease(facts: ReleaseFacts): ReleaseDecision {
       release: false,
       reason:
         "the writer's session still exists, so a run, shell or background job of it may still write to the worktree. " +
-        "In OpenCode, stop it and delete its session, then release again",
+        "Close any terminal it opened, stop it and delete its session, then release again. " +
+        "Deleting a session stops its run, shell commands, background jobs and subagents in the OpenCode server that runs them",
     }
   }
   if (child.owner !== facts.caller) return { release: false, reason: "only the session that spawned the writer can release it" }

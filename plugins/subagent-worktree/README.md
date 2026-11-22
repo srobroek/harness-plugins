@@ -95,8 +95,11 @@ has three limits:
 A writer whose server died during a run still looks running until it runs again. It blocks its
 worktree and keeps its lane. To free the worktree:
 
-1. Stop the old writer in OpenCode.
-2. Delete its session. The guard then lets a new writer into the worktree.
+1. Close any terminal the old writer opened, and stop the writer in OpenCode.
+2. Delete its session. Deleting a session stops its run, its shell commands (SIGTERM, then SIGKILL),
+   its background jobs and its subagents in the OpenCode server that runs them. It does not close a
+   terminal, a process that detached, or a run in another OpenCode server, so step 1 comes first.
+   The guard then lets a new writer into the worktree.
 3. To hand the old writer's lane to the new writer, call `subagent_worktree_merge` with
    `method: "release"`, the old writer's `sessionID` and a `reason`.
 
