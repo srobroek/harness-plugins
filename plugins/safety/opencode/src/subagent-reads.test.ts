@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { allowSubagentReads, isSecretResource } from "./subagent-reads.ts"
+import { allowRootReads, allowSubagentReads, isSecretResource } from "./subagent-reads.ts"
 
 let home: string
 beforeAll(() => {
@@ -12,6 +12,8 @@ beforeAll(() => {
   mkdirSync(join(home, "work"), { recursive: true })
   writeFileSync(join(home, ".config/gh/hosts.yml"), "x")
   writeFileSync(join(home, "work/app.env"), "A=1")
+  writeFileSync(join(home, "work/plain.txt"), "notes")
+  writeFileSync(join(home, ".ssh/config"), "Host x")
   symlinkSync(join(home, "work/app.env"), join(home, "work/readme.txt"))
   symlinkSync(join(home, ".ssh"), join(home, "work/docs"))
   symlinkSync(join(home, ".aws"), join(home, "work/notes"))
@@ -63,5 +65,49 @@ describe("allowSubagentReads", () => {
     const e = ev([`${home}/work/*`, `${home}/.ssh/*`])
     allowSubagentReads(e, "read", true, [], home)
     expect(e.effect).toBe("ask")
+  })
+})
+
+describe("allowRootReads", () => {
+  const ev = (resources: string[]) => ({ action: "external_directory", resources, effect: "ask" })
+  const plain = () => `${home}/work/plain.txt`
+  const decide = (tool: string, filePath: unknown, { subagent = false, extra = [] as string[], resources = [`${home}/work/*`] } = {}) => {
+    const e = ev(resources)
+    allowRootReads(e, tool, filePath, subagent, extra, home)
+    return e.effect
+  }
+
+  test("allows a root session's read of one plain file", () => expect(decide("read", plain())).toBe("allow"))
+
+  test("does nothing in a subagent", () => expect(decide("read", plain(), { subagent: true })).toBe("ask"))
+
+  test.each(["glob", "grep", "list", "shell", "bash", "edit", "write", "patch"])("keeps the ask for %s", (tool) =>
+    expect(decide(tool, plain())).toBe("ask"),
+  )
+
+  test.each([
+    ["a folder", () => `${home}/work`],
+    ["a relative path", () => "work/plain.txt"],
+    ["a missing file", () => `${home}/work/missing.txt`],
+    ["no path", () => undefined],
+    ["an .env file", () => `${home}/work/app.env`],
+    ["a plain name linking to an .env file", () => `${home}/work/readme.txt`],
+    ["a file inside ~/.ssh", () => `${home}/.ssh/config`],
+    ["a file reached through a link to ~/.ssh", () => `${home}/work/docs/config`],
+  ])("keeps the ask for %s", (_, path) => expect(decide("read", path())).toBe("ask"))
+
+  test("keeps the ask for an extra secret location, a secret resource and an empty resource list", () => {
+    expect(decide("read", plain(), { extra: [`${home}/work`] })).toBe("ask")
+    expect(decide("read", plain(), { resources: [`${home}/work/*`, `${home}/.ssh/*`] })).toBe("ask")
+    expect(decide("read", plain(), { resources: [] })).toBe("ask")
+  })
+
+  test("leaves a deny and other actions alone", () => {
+    const deny = { action: "external_directory", resources: [`${home}/work/*`], effect: "deny" }
+    allowRootReads(deny, "read", plain(), false, [], home)
+    expect(deny.effect).toBe("deny")
+    const other = { action: "edit", resources: [`${home}/work/*`], effect: "ask" }
+    allowRootReads(other, "read", plain(), false, [], home)
+    expect(other.effect).toBe("ask")
   })
 })

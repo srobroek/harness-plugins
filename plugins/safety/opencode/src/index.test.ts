@@ -1416,6 +1416,75 @@ describe("prompts a subagent cannot answer", () => {
     })
   })
 
+  describe("root-external-reads", () => {
+    const home = homedir()
+    let plain: string
+    let envFile: string
+    let envLink: string
+    beforeAll(() => {
+      plain = join(outside, "root-plain.txt")
+      writeFileSync(plain, "notes\n")
+      envFile = join(outside, "root.env")
+      writeFileSync(envFile, "KEY=1\n")
+      envLink = join(outside, "root-notes.txt")
+      symlinkSync(envFile, envLink)
+    })
+    const fire = async (fake: Awaited<ReturnType<typeof load>>["fake"], sessionID: string, tool: string, input: Record<string, unknown>) => {
+      const id = `${sessionID}-${tool}-${JSON.stringify(input)}-root`
+      await fake.fire.tool("execute.before", { ...call, sessionID, id, tool, input } as never)
+      return fake.fire.permission("evaluate", {
+        sessionID,
+        action: "external_directory",
+        resources: [`${outside}/*`],
+        effect: "ask",
+        source: { type: "tool", messageID: "msg_1", id },
+      } as Evaluation)
+    }
+    const read = (fake: Awaited<ReturnType<typeof load>>["fake"], sessionID: string, tool: string, path: string | undefined) =>
+      fire(fake, sessionID, tool, path === undefined ? {} : { path })
+
+    test("a root session's read of one plain file outside its directory is allowed", async () => {
+      const { fake } = await setup()
+      expect((await read(fake, "ses_1", "read", plain)).effect).toBe("allow")
+    })
+
+    test("an older host's filePath argument counts the same", async () => {
+      const { fake } = await setup()
+      expect((await fire(fake, "ses_1", "read", { filePath: plain })).effect).toBe("allow")
+    })
+
+    test.each(["glob", "grep", "list", "shell", "edit", "write"])("a root session's %s over a folder that holds an .env still asks", async (tool) => {
+      const { fake } = await setup()
+      expect((await read(fake, "ses_1", tool, plain)).effect).toBe("ask")
+    })
+
+    test.each([
+      ["the folder itself", () => outside],
+      ["an .env file", () => envFile],
+      ["a plain name linking to an .env file", () => envLink],
+      ["a file in ~/.ssh", () => join(home, ".ssh", "config")],
+      ["no path", () => undefined],
+    ])("a root session's read of %s still asks", async (_, path) => {
+      const { fake } = await setup()
+      expect((await read(fake, "ses_1", "read", path())).effect).toBe("ask")
+    })
+
+    test("subagentSecretPaths keeps a root read of a file below it asking", async () => {
+      const { fake } = await setup({ subagentSecretPaths: [outside] })
+      expect((await read(fake, "ses_1", "read", plain)).effect).toBe("ask")
+    })
+
+    test("an unknown session's read of a plain file still asks", async () => {
+      const { fake } = await setup()
+      expect((await read(fake, "ses_missing", "read", plain)).effect).toBe("ask")
+    })
+
+    test('disable: ["root-external-reads"] leaves the root read asking', async () => {
+      const { fake } = await setup({ disable: ["root-external-reads"] })
+      expect((await read(fake, "ses_1", "read", plain)).effect).toBe("ask")
+    })
+  })
+
   test('disable: ["skill-references"] leaves a skill read asking', async () => {
     const { fake } = await setup({ disable: ["skill-references"] })
     expect((await ask(fake, "ses_1", "read", [`${skillDir}/references/*`])).effect).toBe("ask")
