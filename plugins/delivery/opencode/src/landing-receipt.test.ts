@@ -801,7 +801,7 @@ describe("receiptDirectory", () => {
 })
 
 describe("repoKey", () => {
-  test("16 lowercase hex characters from the realpath of the common git directory", () => {
+  test("16 lowercase hex characters from the realpath of the common git directory", async () => {
     const common = scratch("key-common")
     const seen: { argv: readonly string[]; cwd: string; timeoutMs: number }[] = []
     const run: GitRunner = (argv, cwd, timeoutMs) => {
@@ -809,17 +809,17 @@ describe("repoKey", () => {
       return `${common}\n`
     }
 
-    const key = repoKey("/anywhere", run)
+    const key = await repoKey("/anywhere", run)
     expect(key).toMatch(/^[0-9a-f]{16}$/)
     expect(seen).toEqual([{ argv: ["rev-parse", "--git-common-dir"], cwd: "/anywhere", timeoutMs: GIT_TIMEOUT_MS }])
     expect(GIT_TIMEOUT_MS).toBe(5_000)
-    expect(repoKey("/elsewhere", () => common)).toBe(key)
-    repoKey("/anywhere", run, 60_000)
+    expect(await repoKey("/elsewhere", () => common)).toBe(key)
+    await repoKey("/anywhere", run, 60_000)
     expect(seen[1]?.timeoutMs).toBe(60_000)
   })
 
-  test("the default Git runner starts the git on the current PATH, in the current environment", () => {
-    // Bun.spawnSync without `env` uses the environment the process started with, so a
+  test("the default Git runner starts the git on the current PATH, in the current environment", async () => {
+    // Bun.spawn without `env` uses the environment the process started with, so a
     // PATH or GIT_* change made since would not reach it.
     const bin = scratch("default-runner-bin")
     const log = join(bin, "spawns.log")
@@ -830,7 +830,7 @@ describe("repoKey", () => {
     process.env.PATH = `${bin}:${before.path ?? ""}`
     process.env.DELIVERY_PROBE = "live"
     try {
-      repoKey(directory)
+      await repoKey(directory)
     } finally {
       process.env.PATH = before.path
       if (before.probe === undefined) delete process.env.DELIVERY_PROBE
@@ -839,22 +839,41 @@ describe("repoKey", () => {
     expect(existsSync(log) ? readFileSync(log, "utf8") : "").toBe(`${directory}|live\n`)
   })
 
-  test("what repoKey mints is always accepted as a directory name", () => {
-    const key = repoKey("/anywhere", () => scratch("key-accepted"))
+  test("the default Git runner leaves the event loop free while git runs", async () => {
+    // This git answers only once a timer callback of this process has written the release
+    // file. A runner that holds the event loop never lets that callback run, so its read
+    // ends at the bound and the key is null.
+    const bin = scratch("event-loop-bin")
+    const release = join(bin, "release")
+    const common = realpathSync(scratch("event-loop-common"))
+    writeExecutable(join(bin, "git"), `#!/bin/sh\nwhile [ ! -e "${release}" ]; do sleep 0.01; done\nprintf '%s\\n' "${common}"\n`)
+    const before = process.env.PATH
+    process.env.PATH = `${bin}:${before ?? ""}`
+    try {
+      const key = repoKey(realpathSync(scratch("event-loop-cwd")))
+      setTimeout(() => writeFileSync(release, ""), 0)
+      expect(await key).toBe(await repoKey("/anywhere", () => `${common}\n`))
+    } finally {
+      process.env.PATH = before
+    }
+  })
+
+  test("what repoKey mints is always accepted as a directory name", async () => {
+    const key = await repoKey("/anywhere", () => scratch("key-accepted"))
     expect(key).not.toBeNull()
     expect(receiptDirectory({ DELIVERY_RECEIPTS_DIR: "/var/agent/receipts" }, key ?? "")).toBe(
       `/var/agent/receipts/${key}`,
     )
   })
 
-  test("null when git reports no repository", () => {
-    expect(repoKey("/anywhere", () => null)).toBeNull()
-    expect(repoKey("/anywhere", () => "")).toBeNull()
-    expect(repoKey("/anywhere", () => join(ROOT, "key-absent", ".git"))).toBeNull()
-    expect(repoKey(scratch("key-not-a-repo"))).toBeNull()
+  test("null when git reports no repository", async () => {
+    expect(await repoKey("/anywhere", () => null)).toBeNull()
+    expect(await repoKey("/anywhere", () => "")).toBeNull()
+    expect(await repoKey("/anywhere", () => join(ROOT, "key-absent", ".git"))).toBeNull()
+    expect(await repoKey(scratch("key-not-a-repo"))).toBeNull()
   })
 
-  test("a canonical checkout and a linked worktree share one key", () => {
+  test("a canonical checkout and a linked worktree share one key", async () => {
     const repository = scratch("key-repo")
     const linked = join(ROOT, "key-linked")
     git(repository, "init", "-b", "main")
@@ -863,10 +882,10 @@ describe("repoKey", () => {
     git(repository, "commit", "-m", "one")
     git(repository, "worktree", "add", linked, "-b", "side")
 
-    const canonicalKey = repoKey(repository)
+    const canonicalKey = await repoKey(repository)
     expect(canonicalKey).toMatch(/^[0-9a-f]{16}$/)
-    expect(repoKey(linked)).toBe(canonicalKey)
-    expect(repoKey(join(repository, ".git"))).toBe(canonicalKey)
+    expect(await repoKey(linked)).toBe(canonicalKey)
+    expect(await repoKey(join(repository, ".git"))).toBe(canonicalKey)
   })
 })
 
@@ -875,7 +894,7 @@ describe("repoKey", () => {
  * verdict here is a worktree deleted and a branch removed with no reconciliation.
  */
 describe("canonicalLedger", () => {
-  test("uses one combined absolute common-dir and top-level Git observation", () => {
+  test("uses one combined absolute common-dir and top-level Git observation", async () => {
     const repository = scratch("ledger-combined-observation")
     const common = join(repository, ".git")
     mkdirSync(common)
@@ -886,12 +905,12 @@ describe("canonicalLedger", () => {
       return `${common}\n${repository}\n`
     }
 
-    expect(canonicalLedger("/anywhere", run)).toEqual({ root: realpathSync(repository), active: true })
+    expect(await canonicalLedger("/anywhere", run)).toEqual({ root: realpathSync(repository), active: true })
     expect(seen).toEqual([{ argv: REPOSITORY_OBSERVATION_ARGS, cwd: "/anywhere", timeoutMs: GIT_TIMEOUT_MS }])
-    canonicalLedger("/anywhere", run, 60_000)
+    await canonicalLedger("/anywhere", run, 60_000)
     expect(seen[1]?.timeoutMs).toBe(60_000)
   })
-  test("classifies at the canonical root, so a nested marker below the cwd does not vote", () => {
+  test("classifies at the canonical root, so a nested marker below the cwd does not vote", async () => {
     const repository = scratch("ledger-canonical")
     const nested = join(repository, "deep", "deeper")
     mkdirSync(join(repository, ".beads"), { recursive: true })
@@ -899,11 +918,11 @@ describe("canonicalLedger", () => {
     writeFileSync(join(nested, ".beads", "RETIRED"), "retired\n")
     git(repository, "init", "-b", "main")
 
-    expect(canonicalLedger(repository)).toEqual({ root: realpathSync(repository), active: true })
-    expect(canonicalLedger(nested)).toEqual({ root: realpathSync(repository), active: true })
+    expect(await canonicalLedger(repository)).toEqual({ root: realpathSync(repository), active: true })
+    expect(await canonicalLedger(nested)).toEqual({ root: realpathSync(repository), active: true })
   })
 
-  test("a retired canonical root stays retired however active a nested ledger is", () => {
+  test("a retired canonical root stays retired however active a nested ledger is", async () => {
     const repository = scratch("ledger-canonical-retired")
     const nested = join(repository, "nested")
     mkdirSync(join(repository, ".beads"), { recursive: true })
@@ -911,23 +930,23 @@ describe("canonicalLedger", () => {
     mkdirSync(join(nested, ".beads"), { recursive: true })
     git(repository, "init", "-b", "main")
 
-    expect(canonicalLedger(nested)).toEqual({ root: realpathSync(repository), active: false })
+    expect(await canonicalLedger(nested)).toEqual({ root: realpathSync(repository), active: false })
   })
 
-  test("a .beads above the checkout root does not vote: the repository is ledger-free until it has its own", () => {
+  test("a .beads above the checkout root does not vote: the repository is ledger-free until it has its own", async () => {
     const parent = scratch("ledger-ancestor")
     const repository = join(parent, "repository")
     mkdirSync(join(parent, ".beads"))
     mkdirSync(repository)
     git(repository, "init", "-b", "main")
 
-    expect(canonicalLedger(repository)).toEqual({ root: realpathSync(repository), active: false })
+    expect(await canonicalLedger(repository)).toEqual({ root: realpathSync(repository), active: false })
 
     mkdirSync(join(repository, ".beads"))
-    expect(canonicalLedger(repository)).toEqual({ root: realpathSync(repository), active: true })
+    expect(await canonicalLedger(repository)).toEqual({ root: realpathSync(repository), active: true })
   })
 
-  test("a linked worktree resolves to its checkout's ledger, not to a .beads above either tree", () => {
+  test("a linked worktree resolves to its checkout's ledger, not to a .beads above either tree", async () => {
     const parent = scratch("ledger-linked-ancestor")
     const repository = join(parent, "repository")
     const linkedParent = scratch("ledger-linked-ancestor-worktrees")
@@ -941,13 +960,13 @@ describe("canonicalLedger", () => {
     git(repository, "commit", "-m", "one")
     git(repository, "worktree", "add", linked, "-b", "side")
 
-    expect(canonicalLedger(linked)).toEqual({ root: realpathSync(repository), active: false })
+    expect(await canonicalLedger(linked)).toEqual({ root: realpathSync(repository), active: false })
 
     mkdirSync(join(repository, ".beads"))
-    expect(canonicalLedger(linked)).toEqual({ root: realpathSync(repository), active: true })
+    expect(await canonicalLedger(linked)).toEqual({ root: realpathSync(repository), active: true })
   })
 
-  test("a linked worktree classifies from the same root as its canonical checkout", () => {
+  test("a linked worktree classifies from the same root as its canonical checkout", async () => {
     const repository = scratch("ledger-linked")
     const linked = join(ROOT, "ledger-linked-worktree")
     mkdirSync(join(repository, ".beads"), { recursive: true })
@@ -957,10 +976,10 @@ describe("canonicalLedger", () => {
     git(repository, "commit", "-m", "one")
     git(repository, "worktree", "add", linked, "-b", "side")
 
-    expect(canonicalLedger(linked)).toEqual({ root: realpathSync(repository), active: true })
+    expect(await canonicalLedger(linked)).toEqual({ root: realpathSync(repository), active: true })
   })
 
-  test("a linked worktree of a separate-git-dir repository fails closed", () => {
+  test("a linked worktree of a separate-git-dir repository fails closed", async () => {
     const parent = scratch("ledger-linked-separate-git-dir")
     const checkout = join(parent, "checkout")
     const common = join(parent, "store.git")
@@ -972,10 +991,10 @@ describe("canonicalLedger", () => {
     git(checkout, "commit", "-m", "one")
     git(checkout, "worktree", "add", linked, "-b", "side")
 
-    expect(canonicalLedger(linked)).toBeNull()
+    expect(await canonicalLedger(linked)).toBeNull()
   })
 
-  test("a linked worktree of a bare repository fails closed", () => {
+  test("a linked worktree of a bare repository fails closed", async () => {
     const parent = scratch("ledger-linked-bare")
     const source = join(parent, "source")
     const bare = join(parent, "bare.git")
@@ -988,10 +1007,10 @@ describe("canonicalLedger", () => {
     git(parent, "clone", "--bare", source, bare)
     git(bare, "worktree", "add", linked, "-b", "side")
 
-    expect(canonicalLedger(linked)).toBeNull()
+    expect(await canonicalLedger(linked)).toBeNull()
   })
 
-  test("a separate git directory still classifies from its checkout root", () => {
+  test("a separate git directory still classifies from its checkout root", async () => {
     const parent = scratch("ledger-separate-git-dir")
     const checkout = join(parent, "checkout")
     const common = join(parent, "store.git")
@@ -1001,10 +1020,10 @@ describe("canonicalLedger", () => {
     mkdirSync(join(parent, ".beads"))
     writeFileSync(join(parent, ".beads", "RETIRED"), "retired\n")
 
-    expect(canonicalLedger(checkout)).toEqual({ root: realpathSync(checkout), active: true })
+    expect(await canonicalLedger(checkout)).toEqual({ root: realpathSync(checkout), active: true })
   })
 
-  test("a separate git directory ending in .git still classifies from its checkout root", () => {
+  test("a separate git directory ending in .git still classifies from its checkout root", async () => {
     const parent = scratch("ledger-separate-dot-git-dir")
     const checkout = join(parent, "checkout")
     const common = join(parent, "store", ".git")
@@ -1015,10 +1034,10 @@ describe("canonicalLedger", () => {
     mkdirSync(join(dirname(common), ".beads"))
     writeFileSync(join(dirname(common), ".beads", "RETIRED"), "retired\n")
 
-    expect(canonicalLedger(checkout)).toEqual({ root: realpathSync(checkout), active: true })
+    expect(await canonicalLedger(checkout)).toEqual({ root: realpathSync(checkout), active: true })
   })
 
-  test("a submodule classifies from the submodule checkout, not its common-dir metadata", () => {
+  test("a submodule classifies from the submodule checkout, not its common-dir metadata", async () => {
     const parent = scratch("ledger-submodule")
     const source = join(parent, "source")
     const superproject = join(parent, "superproject")
@@ -1035,18 +1054,18 @@ describe("canonicalLedger", () => {
     mkdirSync(join(superproject, ".beads"))
     writeFileSync(join(superproject, ".beads", "RETIRED"), "retired\n")
 
-    expect(canonicalLedger(submodule)).toEqual({ root: realpathSync(submodule), active: true })
+    expect(await canonicalLedger(submodule)).toEqual({ root: realpathSync(submodule), active: true })
   })
 
-  test("null, never a verdict, when Git output is absent, malformed, ambiguous, or unresolvable", () => {
+  test("null, never a verdict, when Git output is absent, malformed, ambiguous, or unresolvable", async () => {
     const common = scratch("ledger-observation-common")
     const topLevel = scratch("ledger-observation-top")
-    expect(canonicalLedger("/anywhere", () => null)).toBeNull()
-    expect(canonicalLedger("/anywhere", () => "")).toBeNull()
-    expect(canonicalLedger("/anywhere", () => common)).toBeNull()
-    expect(canonicalLedger("/anywhere", () => `${common}\nrelative`)).toBeNull()
-    expect(canonicalLedger("/anywhere", () => `${common}\n${topLevel}\n${topLevel}`)).toBeNull()
-    expect(canonicalLedger("/anywhere", () => `${common}\n${join(ROOT, "ledger-absent")}`)).toBeNull()
+    expect(await canonicalLedger("/anywhere", () => null)).toBeNull()
+    expect(await canonicalLedger("/anywhere", () => "")).toBeNull()
+    expect(await canonicalLedger("/anywhere", () => common)).toBeNull()
+    expect(await canonicalLedger("/anywhere", () => `${common}\nrelative`)).toBeNull()
+    expect(await canonicalLedger("/anywhere", () => `${common}\n${topLevel}\n${topLevel}`)).toBeNull()
+    expect(await canonicalLedger("/anywhere", () => `${common}\n${join(ROOT, "ledger-absent")}`)).toBeNull()
   })
 })
 

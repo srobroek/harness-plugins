@@ -309,7 +309,7 @@
     },
     {
       "name": "beads",
-      "version": "0.8.5",
+      "version": "0.8.6",
       "description": "Beads issue tracking: bd prime session context, shell gates on bd, git and gh commands, store pinning and the Beads skills.",
       "category": "development",
       "harnesses": {
@@ -545,7 +545,7 @@
     },
     {
       "name": "delivery",
-      "version": "0.10.2",
+      "version": "0.10.4",
       "description": "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
       "category": "development",
       "harnesses": {
@@ -1238,7 +1238,7 @@
     },
     {
       "name": "safety",
-      "version": "0.11.2",
+      "version": "0.11.3",
       "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help, redaction of secret environment values from tool output, and a tool that stores a secret without a shell.",
       "category": "development",
       "harnesses": {
@@ -1349,7 +1349,7 @@
     },
     {
       "name": "subagent-worktree",
-      "version": "0.6.4",
+      "version": "0.6.5",
       "description": "Runs opted-in subagents in their own git worktree and merges their branch back with wt merge.",
       "category": "development",
       "harnesses": {

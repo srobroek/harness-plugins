@@ -1,3 +1,9 @@
+## safety [0.11.3](https://github.com/srobroek/harness-plugins/compare/safety--v0.11.2...safety--v0.11.3) (2026-11-22)
+
+### Bug Fixes
+
+* **safety:** resubscribe and tear down the permission prompt watch safely ([#93](https://github.com/srobroek/harness-plugins/issues/93)) ([15b636e](https://github.com/srobroek/harness-plugins/commit/15b636e2fa61cbd5bf2be3be7f282751d07859af))
+
 ## safety [0.11.2](https://github.com/srobroek/harness-plugins/compare/safety--v0.11.1...safety--v0.11.2) (2026-11-22)
 
 ### Bug Fixes

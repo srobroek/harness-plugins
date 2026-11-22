@@ -576,8 +576,9 @@ fi
     const run = await claimThrough(["bd update proj-1 --claim"])
     expect(run.rewritten).toBe(`unset BEADS_ACTOR; export BD_ACTOR='${GENERATED}'; bd update --json proj-1 --claim`)
     expect(run.recorded).toEqual({ "proj-1": GENERATED })
-    expect(run.claims[0]?.store).toBe(run.store)
+    expect(run.claims).toEqual([{ id: "proj-1", actor: GENERATED, store: run.store }])
     expect(run.log).toContain(`BEADS_DIR=${run.store} update --json proj-1 --claim`)
+    expect(run.log).toContain(`LEDGER=${run.store} proj-1`)
     expect(run.result).toContain('"status":"in_progress"')
     expect(run.result).toContain("added --json to this claim")
     await run.cleanup()
@@ -742,13 +743,6 @@ fi
     const run = await claimThrough(["bd update proj-1 --claim"], { inherited: { BEADS_DIR: store }, childBeadsDir: store })
     expect(run.log).toContain(`LEDGER=${store} proj-1`)
     expect(run.claims).toEqual([{ id: "proj-1", actor: GENERATED, store }])
-    await run.cleanup()
-  })
-
-  test("a session whose ledger the plugin pinned still tracks a plain claim", async () => {
-    const run = await claimThrough(["bd update proj-1 --claim"])
-    expect(run.log).toContain(`LEDGER=${run.store} proj-1`)
-    expect(run.claims).toEqual([{ id: "proj-1", actor: GENERATED, store: run.store }])
     await run.cleanup()
   })
 

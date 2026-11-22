@@ -1,8 +1,13 @@
-import { afterAll, describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
+import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { commondirValue, gitFileValue, physical, verifyCheckout } from "./checkout-marker.ts"
+import { commondirValue, gitFileValue, markedCommonDir, physical, verifyCheckout } from "./checkout-marker.ts"
+
+// The markedCommonDir cases build a repository with a commit and a linked worktree: four git
+// children each. The five cases took 947 ms together here; heavy load stretches that to seconds.
+setDefaultTimeout(30_000)
 
 const roots: string[] = []
 afterAll(() => {
@@ -99,6 +104,56 @@ describe("verifyCheckout", () => {
     writeFileSync(join(admin, "commondir"), " ../..\n")
     writeFileSync(join(checkout, ".git"), `gitdir: ${admin}\n`)
     expect(verifyCheckout(checkout, common).state).toBe("unsafe")
+  })
+})
+
+describe("markedCommonDir", () => {
+  /** A real repository with one commit and a linked worktree, and Git's own answer for its common directory. */
+  function repository() {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "marked-common-")))
+    roots.push(root)
+    const main = join(root, "main")
+    const git = (cwd: string, ...args: string[]) =>
+      execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" })
+    mkdirSync(join(main, "sub", "deeper"), { recursive: true })
+    git(main, "init", "-q", "-b", "main")
+    git(main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "one")
+    const linked = join(root, "linked")
+    git(main, "worktree", "add", "-q", linked, "-b", "side")
+    const answer = (cwd: string) => realpathSync(git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir").trim())
+    return { root, main, linked, answer }
+  }
+
+  test.each([
+    ["the checkout root", (r: ReturnType<typeof repository>) => r.main],
+    ["a subdirectory of the checkout", (r: ReturnType<typeof repository>) => join(r.main, "sub", "deeper")],
+    ["a linked worktree", (r: ReturnType<typeof repository>) => r.linked],
+  ])("from %s it is the common directory Git reports", (_name, at) => {
+    const r = repository()
+    expect(markedCommonDir(at(r))).toBe(r.answer(at(r)))
+  })
+
+  test("a relative commondir that climbs out of a symlink is resolved through the link, as Git does", () => {
+    const { root, common } = layout()
+    // `admin/up` links into `common/worktrees`, so `up/..` is `common`, not `admin`.
+    const admin = join(root, "admin")
+    mkdirSync(admin)
+    symlinkSync(join(common, "worktrees"), join(admin, "up"))
+    writeFileSync(join(admin, "commondir"), "up/..\n")
+    const checkout = join(root, "checkout")
+    writeFileSync(join(checkout, ".git"), `gitdir: ${admin}\n`)
+    expect(markedCommonDir(checkout)).toBe(common)
+  })
+
+  test("a symlinked .git entry, a malformed marker and no marker at all give null", () => {
+    const { root, common, checkout } = layout()
+    symlinkSync(common, join(checkout, ".git"))
+    expect(markedCommonDir(checkout)).toBeNull()
+    const malformed = join(root, "malformed")
+    mkdirSync(malformed)
+    writeFileSync(join(malformed, ".git"), "not a gitdir line\n")
+    expect(markedCommonDir(malformed)).toBeNull()
+    expect(markedCommonDir(tmpdir())).toBeNull()
   })
 })
 

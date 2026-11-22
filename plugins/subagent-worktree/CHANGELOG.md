@@ -1,3 +1,9 @@
+## subagent-worktree [0.6.5](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.6.4...subagent-worktree--v0.6.5) (2026-11-22)
+
+### Bug Fixes
+
+* **subagent-worktree:** finish removing lanes at startup; move lane sessions home on Location not found ([#81](https://github.com/srobroek/harness-plugins/issues/81)) ([cd68894](https://github.com/srobroek/harness-plugins/commit/cd688944209246711a6717d4e7f7c059c900c8f8))
+
 ## subagent-worktree [0.6.4](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.6.3...subagent-worktree--v0.6.4) (2026-11-21)
 
 ### Bug Fixes

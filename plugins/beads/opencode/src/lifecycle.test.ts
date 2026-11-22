@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { BACKGROUND_HOLD_MS, type HoldTimer } from "@srobroek/opencode-lib/idle-background"
@@ -14,6 +14,7 @@ import {
   goalEnded,
   isPluginPrompt,
   readExecutionEvent,
+  resetLifecycleState,
   rootStopAction,
   subagentChild,
 } from "./lifecycle.ts"
@@ -116,7 +117,10 @@ class FakeHoldTimer implements HoldTimer {
 }
 
 const roots: string[] = []
+// The lifecycle state is process-wide; every case starts from and leaves an empty one.
+beforeEach(resetLifecycleState)
 afterEach(() => {
+  resetLifecycleState()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
@@ -147,6 +151,15 @@ function ledger(rows: Record<string, Row> = {}, fallbackHolder?: string) {
       const status = args[args.indexOf("--status") + 1]
       const held = Object.entries(rows).filter(([, row]) => row.assignee === assignee && row.status === status && (row.store === undefined || row.store === env.BEADS_DIR))
       return { output: JSON.stringify({ data: held.map(([rowId, row]) => ({ id: rowId, issue_type: "task", ...row })), schema_version: 1 }) }
+    }
+    if (verb === "update" && args.includes("--status")) {
+      // A guarded status change applies only while the row still matches its --if-* conditions, as bd's does.
+      const flag = (name: string) => args[args.indexOf(name) + 1]
+      const row = rows[id]
+      if (row === undefined || (args.includes("--if-status") && row.status !== flag("--if-status")) || (args.includes("--if-assignee") && (row.assignee ?? "") !== flag("--if-assignee")))
+        return { failure: "bd exited with code 1: guard mismatch" }
+      rows[id] = { ...row, status: flag("--status") as string }
+      return { output: "null" }
     }
     if (verb === "heartbeat") return { output: JSON.stringify({ data: { id }, schema_version: 1 }) }
     return { output: "null" }
@@ -379,10 +392,11 @@ describe("subagent claim release", () => {
     const bd = ledger({ "proj-6": { status: "in_progress", assignee: `opencode/${parent}/general/${child}` } })
     const showEntered = Promise.withResolvers<void>()
     const allowShow = Promise.withResolvers<void>()
-    let shows = 0
+    let armed = false
     const run: BdRun = async (cwd, args, deadline, env) => {
-      // The release's own check is the only `show`: a claim is confirmed from its output, not looked up.
-      if (args[0] === "show" && ++shows === 1) {
+      // Only the release's own check parks; the latch is armed after the claim is set up, so no earlier read can trip it.
+      if (armed && args[0] === "show") {
+        armed = false
         showEntered.resolve()
         await allowShow.promise
       }
@@ -392,6 +406,7 @@ describe("subagent claim release", () => {
     const call = { tool: "subagent", sessionID: parent, agent: "build", messageID: "m", id: "call_race", input: { prompt: "x" } }
     await t.fake.fire.tool("execute.before", call)
     await t.shell(child, "bd update proj-6 --claim", claimJson({ "proj-6": `opencode/${parent}/general/${child}` }))
+    armed = true
     const after = t.fake.fire.tool("execute.after", {
       ...call,
       status: "completed" as const,
@@ -443,7 +458,15 @@ describe("subagent claim release", () => {
     })
     await t.shell(child, "bd update proj-9 --claim", claimJson({ "proj-9": `opencode/${parent}/general/${child}` }))
     await t.emit("session.execution.succeeded", child)
-    expect(bd.calls.map((args) => args[0]).filter((verb) => verb !== "gate")).toEqual(["show", "unclaim", "update"])
+    const released = bd.calls.filter((args) => args[0] !== "gate")
+    expect(released.filter((args) => args[0] === "unclaim")).toHaveLength(1)
+    // The guarded check reads the holder before the release; the final ledger state, which only holds when the
+    // restore runs after the unclaim, is a parked bead nobody holds.
+    const shown = released.findIndex((args) => args[0] === "show")
+    const unclaimed = released.findIndex((args) => args[0] === "unclaim")
+    expect(shown).toBeGreaterThanOrEqual(0)
+    expect(shown).toBeLessThan(unclaimed)
+    expect(bd.rows["proj-9"]).toEqual({ status: "blocked" })
     const [told] = t.synthetics()
     expect(told).toMatchObject({ sessionID: parent, resume: false, metadata: { source: BEADS_SOURCE } })
     expect(told?.text).toContain(`finished background subagent session ${child} were released`)
@@ -773,9 +796,7 @@ describe("skills", () => {
 describe("shared state from an older instance", () => {
   const KEY = Symbol.for("srobroek.beads.lifecycle")
   const holder = globalThis as Record<symbol, unknown>
-  afterEach(() => {
-    delete holder[KEY]
-  })
+  afterEach(resetLifecycleState)
 
   test("an object without idle and held is backfilled and the idle hook does not throw", async () => {
     const old = { events: new Set(), deferred: new Set(), foreground: new Map(), releases: new Map(), reported: new WeakSet() }
@@ -933,7 +954,8 @@ describe("reconciliation follows the run it belongs to", () => {
       }
       return bd.run(cwd, args, deadline, env)
     }
-    const t = await start([{ id: parent }, { id: child, parentID: parent }], { run })
+    const sibling = sid("sibling")
+    const t = await start([{ id: parent }, { id: child, parentID: parent }, { id: sibling, parentID: parent }], { run })
     mkdirSync(join(t.directory, ".beads"))
     await t.shell(child, hidden, "claimed")
     await t.emit("session.execution.started", child)
@@ -949,7 +971,12 @@ describe("reconciliation follows the run it belongs to", () => {
       claimed = true
     })
     try {
-      await new Promise<void>((resolve) => setImmediate(resolve))
+      // A sibling with no release in flight runs the same hook path, started after the claim above.
+      // Once its call returns, an unfenced claim would have passed its mutation boundary too.
+      await t.fake.fire.tool("execute.before", {
+        tool: "shell", sessionID: sibling, agent: "general", messageID: "msg_3", id: "sibling_claim",
+        input: { command: "bd update proj-4 --claim" },
+      })
       expect(claimed).toBe(false)
     } finally {
       open.resolve()
@@ -1044,7 +1071,6 @@ describe("reconciliation follows the run it belongs to", () => {
     const other = sid("other")
     const mine = `opencode/${parent}/general/${child}`
     const bd = ledger({ "proj-3": { status: "in_progress", assignee: mine } })
-    ;(globalThis as { [key: symbol]: { runs?: Map<string, number> } })[Symbol.for("srobroek.beads.lifecycle")]?.runs?.clear()
     const t = await start([{ id: parent }, { id: child, parentID: parent }, { id: other }], { run: bd.run, maxRuns: 1 })
     mkdirSync(join(t.directory, ".beads"))
     await t.shell(child, hidden, "claimed")
@@ -1068,7 +1094,6 @@ describe("reconciliation follows the run it belongs to", () => {
     const other = sid("other")
     const mine = `opencode/${parent}/general/${child}`
     const bd = ledger({ "proj-3": { status: "in_progress", assignee: mine } })
-    ;(globalThis as { [key: symbol]: { runs?: Map<string, number> } })[Symbol.for("srobroek.beads.lifecycle")]?.runs?.clear()
     const t = await start([{ id: parent }, { id: child, parentID: parent }, { id: other }], { run: bd.run, maxRuns: 1 })
     mkdirSync(join(t.directory, ".beads"))
     await t.shell(child, hidden, "claimed")
@@ -1092,8 +1117,6 @@ describe("reconciliation follows the run it belongs to", () => {
     const other = sid("other")
     const mine = `opencode/${parent}/general/${child}`
     const bd = ledger({ "proj-3": { status: "in_progress", assignee: mine } })
-    // Earlier cases leave run entries in the process-wide state; start from an empty counter table.
-    ;(globalThis as { [key: symbol]: { runs?: Map<string, number> } })[Symbol.for("srobroek.beads.lifecycle")]?.runs?.clear()
     const t = await start([{ id: parent }, { id: child, parentID: parent }, { id: other }], { run: bd.run, maxRuns: 1 })
     mkdirSync(join(t.directory, ".beads"))
     await t.shell(child, hidden, "claimed")
