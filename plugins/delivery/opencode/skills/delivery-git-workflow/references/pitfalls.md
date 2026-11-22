@@ -40,13 +40,13 @@
 
 - **Symptom:** `worktree.owner: observed "a receipt or worktree of a repository other than this session's"` or `worktree.marker: observed`
 - **Cause:** The receipt or worktree belongs to a different repository, or the registered worktree's `.git` is now a symlink, FIFO or a file naming another repository. No Git ran in it.
-- **Fix:** Run `delivery_cleanup` from a session in the receipt's repository. For `worktree.marker`, inspect the worktree's `.git` by hand and do not run Git in it until it names this repository's `worktrees/` directory.
+- **Fix:** Pass `repo` and `repoPath` (the receipt's `repo.canonicalRoot`) so cleanup runs in that clone, or run `delivery_cleanup` from a session there. For `worktree.marker`, inspect the worktree's `.git` by hand and do not run Git in it until it names this repository's `worktrees/` directory.
 
-## `delivery_cleanup` refuses a `repo` of another repository
+## `delivery_cleanup` in another repository refuses on its project
 
-- **Symptom:** `a repository other than this session's; its lane claims, holds and bead ledger are not visible from here`
-- **Cause:** Cleanup must respect that repository's lane claims, holds and bead ledger, and this session reads only its own.
-- **Fix:** Run `delivery_cleanup` from a session in the root that the refusal names. `delivery_land` already ends its `next` with that step.
+- **Symptom:** `host worktree.list failed (the sessions name ..., expected exactly one OpenCode project for <root>`
+- **Cause:** OpenCode tracks a worktree per project. For another repository, delivery reads the project from the sessions in that clone and in the worktree. It removes nothing unless they name exactly one project, because a git removal could strand the host's entry.
+- **Fix:** With no session there, open one in the clone. With two projects, move or delete the sessions of the wrong one. Then call `delivery_cleanup` again with the same `repo` and `repoPath`.
 
 ## `gh pr checks --watch` finds no checks right after a push
 

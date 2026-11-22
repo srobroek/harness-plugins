@@ -205,6 +205,22 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 - Lifecycle: a session stays reserved from its notice until its attempt ends, and is nudged at most once per plugin process. State is in memory only. The cleanup returned by `setup` aborts the subscription and disposes the nudger; a disposed nudger ignores later notices and an in-flight lookup posts nothing. A failed subscription is logged with its cause through `console.warn`; an abort is silent.
 - Decision logic (`needsNudge`, `isRestartNotice`, `createRestartNudger` with injected `schedule`) is pure and tested directly; `setupRestartNudge` is the adapter.
 
+## delivery: cleanup in another repository
+
+`delivery_land` with `repo` and a clone (`repoPath` or a `worktree`) keys the receipt by the target repository. Every later cleanup of that receipt runs in the clone. This covers the inline cleanup, an explicit `delivery_cleanup` and the turn-end retry. `repositoryCoordination` in `plugins/delivery/opencode/src/pending-cleanup.ts` binds the cleanup to the target. `cleanupDelivery` takes it as `CleanupDeps.coordinate`.
+
+- Delivery reads and writes the coordination files under the target's git common directory: claims and landing records, holds and denials, and the removal lock.
+- If the clone now resolves to another common directory, delivery removes nothing.
+- The final checks wait on listings, so right before the removal call delivery proves both `.git` markers again, synchronously. It checks the worktree's and the directory the removal runs from, and refuses if either changed.
+- Delivery keys its in-memory vetoes by canonical worktree path and shares them across repositories. Before any wait, it publishes each veto.
+- The last check lists the sessions in the worktree across all projects.
+- If the sessions in the clone and the worktree name exactly one project id, delivery removes the worktree through OpenCode's registry. With any other answer it refuses the removal.
+- `cleanupDelivery` without `coordinate` still refuses another repository.
+
+The clone registry is `<receipts root>/.clones/<session repo key>.json` (`clone-registry.ts`). It lists the key and canonical root of each repository that the session's repository landed into, newest first. The turn-end retry, the idle-hook holds and gc read it, and check each root's key again first. Each update takes a lease lock (`lib/src/lease-lock.ts`) beside the file and replaces the file by rename. Past 32 entries, the oldest entries with no pending receipts go. An entry with pending receipts stays.
+
+Each plugin instance also keeps the clones it registered in memory, and those win over the file. A failed write leaves its own holds and retry intact. A landing record reaches the target before the registry write starts, and each clone's holds are written without waiting on any other clone.
+
 ## Commands
 
 AGENTS.md Commands lists every script. The `justfile` has one recipe per script, and `just verify` runs every gate CI runs ([decision 0006](decisions/0006-bun-and-just.md)): installs use `bun install --frozen-lockfile` and the lockfile is `bun.lock`, never npm. `bun run check` is `harness-kit check`: `build --check` for the generated files, then validation of each Claude Code tree. It does not run typecheck, lint, tests or the content checks. The `cad:*` scripts need network.
