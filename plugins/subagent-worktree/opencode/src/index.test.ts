@@ -937,6 +937,24 @@ describe("worktree argument", () => {
           expect(lanes(setup.fake)).toEqual([{ ...owned, id: "ses_dead", child: "ses_fake2", parent: PARENT, handedOver: { from: "ses_fake1", at: NOW } }])
           expect(claimant(setup)).toBe("ses_fake2")
         })
+
+        test("two plugin instances that hand the same release over race: one write wins, the other is refused and writes nothing", async () => {
+          const a = await dead()
+          await release(a, "ses_dead")
+          // A second server of the same repository: the same plugin storage and the same git common directory.
+          const b = await start({ now: () => NOW, commonDir: async () => a.common, seed: (fake) => Object.assign(fake.context.storage, a.fake.context.storage) })
+          const create = b.fake.context.session.create.bind(b.fake.context.session)
+          Object.assign(b.fake.context.session, { create: (input: Record<string, unknown>) => create({ ...input, id: "ses_b1" } as never) })
+          const results = await Promise.allSettled([spawn(a, { agent: "pinned", worktree: "feat" }), spawn(b, { agent: "pinned", worktree: "feat" })])
+          const won = results.flatMap((result, index) => (result.status === "fulfilled" ? [index === 0 ? "ses_fake1" : "ses_b1"] : []))
+          const refused = results.flatMap((result) => (result.status === "rejected" ? [String(result.reason)] : []))
+          expect(won).toHaveLength(1)
+          expect(refused).toEqual([expect.stringMatching(/was handed to ses_(fake|b)1, whose lane it is|no longer belongs to the released ses_dead/)])
+          const winner = won[0]
+          expect(lanes(a.fake)).toEqual([{ ...owned, id: "ses_dead", child: winner, parent: PARENT, handedOver: { from: "ses_dead", at: NOW } }])
+          expect(claimant(a)).toBe(winner)
+          expect((a.fake.storage.get("release/ses_dead") as { to?: string }).to).toBe(winner)
+        })
       })
       test("a stale copy of the old lane, saved after the handover, does not come back or take the claim", async () => {
         let lifecycle!: Lifecycle
