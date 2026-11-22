@@ -3232,7 +3232,12 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
         throw new Error(`the lane of ${directory} no longer belongs to the released ${from.child}${stored ? ` (it names ${stored.child})` : ""}`);
       }
       writeClaim(common, { directory, branch: next.branch, sessionID: child, parentID: parent, createdAt: now() });
-      await ctx.storage.set(laneStoreKey(from), next);
+      try {
+        await ctx.storage.set(laneStoreKey(from), next);
+      } catch (error) {
+        await syncClaim(from).catch((sync) => console.error(`subagent-worktree: could not put back the claim of ${from.child}:`, errorMessage(sync)));
+        throw error;
+      }
     });
     await ctx.storage.set(releaseKey(release2.child), { ...release2, to: child }).catch((error) => {
       console.error(`subagent-worktree: could not record the handover of ${release2.child} to ${child}:`, errorMessage(error));

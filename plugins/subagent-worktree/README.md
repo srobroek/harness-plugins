@@ -131,7 +131,8 @@ After a release:
   at the `HEAD` the release recorded. If anything changed, the spawn fails, the old lane stays and
   the release is voided, so you can check the worktree and release again.
 - A restart during a handover needs no repair. Before the write the released lane is unchanged and
-  the next spawn takes it over. After the write the worktree has one lane, the new writer's.
+  the next spawn takes it over. After the write the worktree has one lane, the new writer's. When the
+  write fails, the spawn fails, the released lane gets its claim back, and the next spawn tries again.
 - A new writer whose call failed after the takeover holds the lane like any writer. Delete its
   session and release it to hand the worktree on.
 

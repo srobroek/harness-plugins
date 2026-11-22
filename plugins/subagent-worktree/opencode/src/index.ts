@@ -426,10 +426,17 @@ export function createLanes(
       if (stored?.state !== "active" || stored.child !== from.child) {
         throw new Error(`the lane of ${directory} no longer belongs to the released ${from.child}${stored ? ` (it names ${stored.child})` : ""}`)
       }
-      // The claim names the new writer first. A restart before the record's write leaves the old lane, whose next claim sync puts it back.
+      // The claim names the new writer first: no lane record without its claim.
       writeClaim(common, { directory, branch: next.branch, sessionID: child, parentID: parent, createdAt: now() })
-      // The one write that hands the lane over.
-      await ctx.storage.set(laneStoreKey(from), next)
+      try {
+        // The one write that hands the lane over.
+        await ctx.storage.set(laneStoreKey(from), next)
+      } catch (error) {
+        // The record still names the released writer: its claim goes back through the normal sync, under the lock this
+        // write holds. A restart here leaves the same state, and the old lane's next claim sync does the same.
+        await syncClaim(from).catch((sync) => console.error(`subagent-worktree: could not put back the claim of ${from.child}:`, errorMessage(sync)))
+        throw error
+      }
     })
     // Audit only: nothing reads `to` to decide anything.
     await ctx.storage.set(releaseKey(release.child), { ...release, to: child }).catch((error) => {
