@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test"
-
 import { decideRelease, parseRelease, type ReleaseFacts } from "./release.ts"
 
 /** A deleted child whose lane names the caller, in a clean, pushed worktree with no holds. */

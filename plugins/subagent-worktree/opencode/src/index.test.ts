@@ -712,17 +712,15 @@ describe("worktree argument", () => {
         head: OTHER_HEAD,
         reason: "its server died",
         to: "ses_fake1",
-        toParent: PARENT,
       })
       expect(interrupts(setup)).toEqual([])
     })
 
-    test("the next writer takes over the released writer's lane and its claim", async () => {
+    test("the next writer takes over the released writer's lane and its claim, in the same record", async () => {
       const setup = await dead()
       await release(setup, "ses_dead")
       await spawn(setup, { agent: "pinned", worktree: "feat" })
-      expect(lane(setup.fake, "ses_dead")).toBeUndefined()
-      expect(lane(setup.fake, "ses_fake1")).toEqual({ ...owned, child: "ses_fake1", handedOver: { from: "ses_dead", at: NOW } })
+      expect(lanes(setup.fake)).toEqual([{ ...owned, id: "ses_dead", child: "ses_fake1", handedOver: { from: "ses_dead", at: NOW } }])
       expect(claimant(setup)).toBe("ses_fake1")
     })
 
@@ -927,7 +925,12 @@ describe("worktree argument", () => {
           const setup = await dead()
           await release(setup, "ses_dead")
           await spawn(setup, { agent: "pinned", worktree: "feat" })
-          // The subagent call failed after the handover and its session was deleted.
+          // The subagent call failed after the handover, and its session was deleted.
+          await setup.fake.fire.tool("execute.after", {
+            ...completed("ses_fake1"),
+            status: "error",
+            error: new ToolError({ message: "provider failed", metadata: { sessionID: "ses_fake1" } }),
+          })
           setup.fake.sessions.delete("ses_fake1")
           expect((await release(setup, "ses_fake1")).metadata.ok).toBe(true)
           await spawn(setup, { agent: "pinned", worktree: "feat" })
@@ -972,12 +975,21 @@ describe("worktree argument", () => {
         const handingOver = new Promise<void>((done) => (arrive = done))
         const set = setup.fake.context.storage.set.bind(setup.fake.context.storage)
         Object.assign(setup.fake.context.storage, {
-          set: async (key: string, value: { to?: string }) => {
-            if (key === "release/ses_dead" && value.to !== undefined) {
+          // The handover's one write, made under the worktree's lock: held open while the lifecycle queues on that lock.
+          set: async (key: string, value: { child?: string }) => {
+            if (key === laneKey("ses_dead") && value.child === "ses_fake1") {
               arrive()
               await gate
             }
             return set(key, value as never)
+          },
+        })
+        // The lifecycle read the lanes before the handover: its scan still returns the old lane.
+        const scan = setup.fake.context.storage.scan.bind(setup.fake.context.storage)
+        Object.assign(setup.fake.context.storage, {
+          scan: async (input: { prefix: string }) => {
+            const page = await scan(input as never)
+            return input.prefix === LANE_PREFIX ? { ...page, entries: [...page.entries, { key: laneKey("ses_dead"), value: owned }] } : page
           },
         })
         const spawned = spawn(setup, { agent: "pinned", worktree: "feat" })
