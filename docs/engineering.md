@@ -123,7 +123,6 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
     - `hardenedGitEnv` drops the inherited repository selectors (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR` and the object-store variables), the program variables, `GIT_TRACE*` and the pathspec switches before it applies the hardening. Upstream keeps them.
   - Known limitations of `subagent-worktree`, older than the port and left as they are:
     - The `wt` and `gh` children rely on `GIT_ATTR_SOURCE` alone, so a filter driver selected in `.git/info/attributes` still runs in them. Only the plugin's own reads disable drivers by name.
-    - The transport refusal of #79 (`GIT_ALLOW_PROTOCOL` set empty) is not part of upstream's hardening and was not restored; the plugin's own git calls stay local.
 
 ## Read-only shell rules and subagent reads
 
