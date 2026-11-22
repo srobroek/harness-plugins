@@ -240,7 +240,10 @@ const call = (input: Record<string, unknown>, sessionID = PARENT) => ({
   input: { agent: "general", description: "Write hello", prompt: "Write hello.txt", ...input },
 })
 
-const lane = (fake: FakeContext, child = "ses_fake1") => fake.storage.get(laneKey(child)) as Lane | undefined
+/** Every lane record in storage. */
+const lanes = (fake: FakeContext) => [...fake.storage.entries()].filter(([key]) => key.startsWith(LANE_PREFIX)).map(([, value]) => value as Lane)
+/** The lane record `child` writes in, whatever its key. */
+const lane = (fake: FakeContext, child = "ses_fake1") => lanes(fake).find((record) => record.child === child)
 
 async function spawn(setup: Setup, input: Record<string, unknown> = {}, sessionID = PARENT) {
   return setup.fake.fire.tool("execute.before", call(input, sessionID))
@@ -827,79 +830,109 @@ describe("worktree argument", () => {
     })
 
     describe("a released writer's lane", () => {
-      describe("a restart in the middle of a handover", () => {
-        // An empty lane (HEAD at its base): a removal through the old lane would pass every tree proof.
+      describe("the handover is one write of the same record", () => {
+        // An empty lane (HEAD at its base): a removal through it would pass every tree proof.
         const empty: Lane = { ...owned, base: OTHER_HEAD }
-        const successor: Lane = { ...empty, child: "ses_next", parent: PARENT, handedOver: { from: "ses_dead", at: NOW } }
-        const record = { child: "ses_dead", directory: OTHER, by: PARENT, at: NOW, head: OTHER_HEAD, reason: "its server died", to: "ses_next", toParent: PARENT }
-        const claimFor = (common: string, sessionID: string) =>
-          writeClaim(common, { directory: OTHER, branch: "feat", sessionID, parentID: PARENT, createdAt: NOW })
+        const record = { child: "ses_dead", directory: OTHER, by: PARENT, at: NOW, head: OTHER_HEAD, reason: "its server died" }
         /** The sweep only looks at lanes of the host's project. */
         const inProject = (fake: FakeContext) =>
           Object.assign(fake.context, { location: { ...(fake.context.location as object), directory: REPO, project: { id: "prj" } } })
-        const sweep = (setup: Setup) => {
+        const prune = async (setup: Setup, lifecycle: Lifecycle) => {
           const tool = setup.fake.tools.get(SWEEP_TOOL) as unknown as { execute: (i: unknown, c: unknown) => Promise<{ content: string }> }
-          return tool.execute({ mode: "prune" }, { sessionID: PARENT, agent: "build", messageID: "m", id: "c" })
+          await tool.execute({ mode: "prune" }, { sessionID: PARENT, agent: "build", messageID: "m", id: "c" })
+          await lifecycle.settle()
         }
+        const removals = (setup: Setup) => setup.worktree.calls.filter((call) => call.method === "remove")
+        /** A writer that went idle in the worktree: live, so its lane keeps the worktree. */
+        const idleIn = (fake: FakeContext, id: string) =>
+          fake.sessions.set(id, { id, parentID: PARENT, projectID: "prj", location: { directory: OTHER }, time: { busy: NOW - 2, idle: NOW - 1 } })
+        const claimFor = (common: string, sessionID: string) =>
+          writeClaim(common, { directory: OTHER, branch: "feat", sessionID, parentID: PARENT, createdAt: NOW })
+        const taken = (child: string, from = "ses_dead") => ({ ...empty, id: "ses_dead", child, parent: PARENT, handedOver: { from, at: NOW } })
 
-        test.each([
-          ["after the record names the successor, before its lane is saved", { successorClaim: false, successorLane: false }],
-          ["after the successor's claim is written, before its lane is saved", { successorClaim: true, successorLane: false }],
-          ["after the successor's lane is saved, before the old lane is removed", { successorClaim: true, successorLane: true }],
-        ])("a restart %s finishes the handover and keeps the successor's worktree", async (_name, state) => {
+        test("a restart before the write leaves the released lane as it was, and the next writer takes it over", async () => {
+          let lifecycle!: Lifecycle
+          const setup = await start({
+            now: () => NOW,
+            onLifecycle: (value) => (lifecycle = value),
+            seed: (fake, common) => {
+              fake.storage.set(laneKey("ses_dead"), empty)
+              fake.storage.set("release/ses_dead", record)
+              // The spawn that crashed had moved its child in and written the claim for it.
+              idleIn(fake, "ses_next")
+              claimFor(common, "ses_next")
+            },
+          })
+          await lifecycle.settle()
+          expect(lanes(setup.fake)).toEqual([empty])
+          await spawn(setup, { agent: "pinned", worktree: "feat" })
+          expect(lanes(setup.fake)).toEqual([taken("ses_fake1")])
+          expect(claimant(setup)).toBe("ses_fake1")
+        })
+
+        test("a restart after the write leaves one lane, the successor's, and a prune keeps its worktree", async () => {
           let lifecycle!: Lifecycle
           const setup = await start({
             now: () => NOW,
             onLifecycle: (value) => (lifecycle = value),
             seed: (fake, common) => {
               inProject(fake)
-              fake.storage.set(laneKey("ses_dead"), empty)
+              // The audit write of `to` after the handover was lost: nothing depends on it.
+              fake.storage.set(laneKey("ses_dead"), taken("ses_next"))
               fake.storage.set("release/ses_dead", record)
-              if (state.successorLane) fake.storage.set(laneKey("ses_next"), successor)
-              claimFor(common, state.successorClaim ? "ses_next" : "ses_dead")
-              // The successor was moved in and went idle; the old writer's session is deleted.
-              fake.sessions.set("ses_next", { id: "ses_next", parentID: PARENT, projectID: "prj", location: { directory: OTHER }, time: { busy: NOW - 2, idle: NOW - 1 } })
+              idleIn(fake, "ses_next")
+              claimFor(common, "ses_next")
             },
           })
           await lifecycle.settle()
-          expect(lane(setup.fake, "ses_dead")).toBeUndefined()
-          expect(lane(setup.fake, "ses_next")).toEqual(successor)
-          await sweep(setup)
-          await lifecycle.settle()
-          expect(setup.worktree.calls.filter((call) => call.method === "remove")).toEqual([])
+          await prune(setup, lifecycle)
+          expect(removals(setup)).toEqual([])
           expect(setup.fake.sessions.get("ses_next")?.location).toEqual({ directory: OTHER })
-          expect(lane(setup.fake, "ses_next")?.state).toBe("active")
+          expect(lanes(setup.fake)).toEqual([taken("ses_next")])
           expect(claimant(setup)).toBe("ses_next")
         })
 
-        test("a sweep never removes or evicts through a handed-off lane, even when the old lane cannot be dropped", async () => {
+        test("a storage failure in the handover never leaves a second lane, so a prune keeps the successor's worktree", async () => {
           let lifecycle!: Lifecycle
-          const setup = await start({
-            now: () => NOW,
-            repo: { ahead: 0 },
-            onLifecycle: (value) => (lifecycle = value),
-            seed: (fake, common) => {
-              inProject(fake)
-              fake.storage.set(laneKey("ses_dead"), empty)
-              fake.storage.set("release/ses_dead", record)
-              fake.storage.set(laneKey("ses_next"), successor)
-              claimFor(common, "ses_next")
-              fake.sessions.set("ses_next", { id: "ses_next", parentID: PARENT, projectID: "prj", location: { directory: OTHER }, time: { busy: NOW - 2, idle: NOW - 1 } })
-              const remove = fake.context.storage.remove.bind(fake.context.storage)
-              Object.assign(fake.context.storage, {
-                remove: async (key: string) => {
-                  if (key === laneKey("ses_dead")) throw new Error("storage unavailable")
-                  return remove(key as never)
-                },
-              })
+          const setup = await start({ now: () => NOW, onLifecycle: (value) => (lifecycle = value), seed: (fake) => inProject(fake) })
+          setup.fake.storage.set(laneKey("ses_dead"), empty)
+          await release(setup, "ses_dead")
+          // Deleting a lane record fails: a handover that deletes one, or undoes one, leaves two lanes behind.
+          const remove = setup.fake.context.storage.remove.bind(setup.fake.context.storage)
+          Object.assign(setup.fake.context.storage, {
+            remove: async (key: string) => {
+              if (key.startsWith(LANE_PREFIX)) throw new Error("storage unavailable")
+              return remove(key as never)
             },
           })
-          await lifecycle.settle()
-          const result = await sweep(setup)
-          await lifecycle.settle()
-          expect(setup.worktree.calls.filter((call) => call.method === "remove")).toEqual([])
-          expect(setup.fake.sessions.get("ses_next")?.location).toEqual({ directory: OTHER })
-          expect(result.content).toMatch(/handed/)
+          await spawn(setup, { agent: "pinned", worktree: "feat" }).catch(() => {})
+          idleIn(setup.fake, "ses_fake1")
+          await prune(setup, lifecycle)
+          expect(removals(setup)).toEqual([])
+          expect(setup.fake.sessions.get("ses_fake1")?.location).toEqual({ directory: OTHER })
+          expect(lanes(setup.fake).filter((stored) => stored.state === "active")).toHaveLength(1)
+        })
+
+        test("a second writer cannot take a handed-over lane without a release of its current writer", async () => {
+          const setup = await dead({ repo: {} })
+          await release(setup, "ses_dead")
+          await spawn(setup, { agent: "pinned", worktree: "feat" })
+          idleIn(setup.fake, "ses_fake1")
+          await expect(spawn(setup, { agent: "pinned", worktree: "feat" })).rejects.toThrow(/was handed to ses_fake1, whose lane it is/)
+          expect(lanes(setup.fake)).toEqual([{ ...owned, id: "ses_dead", child: "ses_fake1", parent: PARENT, handedOver: { from: "ses_dead", at: NOW } }])
+          expect(claimant(setup)).toBe("ses_fake1")
+        })
+
+        test("a successor whose spawn failed after the write is released by the normal rule, and the next writer takes the lane", async () => {
+          const setup = await dead()
+          await release(setup, "ses_dead")
+          await spawn(setup, { agent: "pinned", worktree: "feat" })
+          // The subagent call failed after the handover and its session was deleted.
+          setup.fake.sessions.delete("ses_fake1")
+          expect((await release(setup, "ses_fake1")).metadata.ok).toBe(true)
+          await spawn(setup, { agent: "pinned", worktree: "feat" })
+          expect(lanes(setup.fake)).toEqual([{ ...owned, id: "ses_dead", child: "ses_fake2", parent: PARENT, handedOver: { from: "ses_fake1", at: NOW } }])
+          expect(claimant(setup)).toBe("ses_fake2")
         })
       })
       test("a stale copy of the old lane, saved after the handover, does not come back or take the claim", async () => {
@@ -956,27 +989,6 @@ describe("worktree argument", () => {
         await lifecycle.settle()
         expect(lane(setup.fake, "ses_dead")).toBeUndefined()
         expect(claimant(setup)).toBe("ses_fake1")
-      })
-
-      test.each([
-        ["removing the old lane fails", "remove", laneKey("ses_dead")],
-        ["writing the new lane fails after its claim was written", "set", laneKey("ses_fake1")],
-      ] as const)("a handover in which %s puts the old lane, its claim and the record back", async (_name, method, failing) => {
-        const setup = await dead()
-        await release(setup, "ses_dead")
-        const storage = setup.fake.context.storage as unknown as Record<string, (key: string, value?: unknown) => Promise<unknown>>
-        const original = storage[method]?.bind(storage)
-        Object.assign(setup.fake.context.storage, {
-          [method]: async (key: string, value?: unknown) => {
-            if (key === failing) throw new Error("storage unavailable")
-            return original?.(key, value)
-          },
-        })
-        await expect(spawn(setup, { agent: "pinned", worktree: "feat" })).rejects.toThrow(/storage unavailable/)
-        expect(lane(setup.fake, "ses_dead")).toEqual(owned)
-        expect(lane(setup.fake, "ses_fake1")).toBeUndefined()
-        expect(claimant(setup)).toBe("ses_dead")
-        expect((setup.fake.storage.get("release/ses_dead") as { to?: string }).to).toBeUndefined()
       })
     })
   })
