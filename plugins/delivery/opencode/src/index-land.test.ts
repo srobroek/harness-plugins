@@ -15,7 +15,6 @@ import { repositoryContext } from "./landing-receipt.ts"
 const originalCleanup = { ...realCleanup }
 const originalLand = { ...realLand }
 let ledgerActive = false
-let foreign = false
 let cleanupResult: CleanupResult
 let cleanupCalls: Array<{ params: unknown; deps: CleanupDeps }> = []
 let repo = ""
@@ -43,7 +42,6 @@ beforeAll(async () => {
       receipt: { receiptId: "r7", pr: { number: 7, mergeCommitOid: "abc", headRefOid: "h".repeat(40) }, worktree: { path: "/w/a" }, repo: { nameWithOwner: "o/r", canonicalRoot: "/clone" }, beads: { ledgerActive } },
       text: "landed\nnext: run delivery_cleanup to remove the worktree and the local branch.",
       next: ["delivery_cleanup"],
-      ...(foreign ? { foreign: true } : {}),
     }),
   }))
 })
@@ -55,7 +53,6 @@ afterAll(() => {
 beforeEach(() => {
   removeLanding(common, "r7")
   ledgerActive = false
-  foreign = false
   cleanupCalls = []
   cleanupResult = { ok: true, receipt: { worktree: { path: "/w/a", localRefDeleted: true }, branch: { name: "b" } }, path: "/r", remoteBranchAbsence: "absent", alreadyCleaned: false, localRefDeleted: true, report: { removed: ["worktree /w/a"], skipped: [] } } as never
 })
@@ -126,13 +123,11 @@ test("an active ledger skips inline cleanup so the closeout commands run first",
   expect(result.output.next).toEqual(["delivery_cleanup"])
 })
 
-test("a landing in another repository runs no inline cleanup, records no pending landing here and says where to clean up", async () => {
-  foreign = true
+test("a landing in another repository cleans up inline in that clone, coordinated there", async () => {
   const { result } = await land({}, { repo: "o/r", repoPath: "/clone" })
-  expect(cleanupCalls).toEqual([])
-  expect(result.output.cleanup).toMatchObject({ ok: false, skipped: true })
-  expect(JSON.stringify(result.output.cleanup)).toContain("from a session in /clone")
-  expect(readLanding(common, "r7").kind).toBe("missing")
+  expect(cleanupCalls.map((c) => c.params)).toEqual([{ receipt: "/r/receipt.json", repo: "o/r", repoPath: "/clone" }])
+  expect(typeof cleanupCalls[0]?.deps.coordinate).toBe("function")
+  expect(result.output.cleanup).toMatchObject({ ok: true })
 })
 
 const claimLane = () =>

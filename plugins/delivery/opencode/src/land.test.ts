@@ -4095,16 +4095,15 @@ describe("delivery_land on a pull request of a repository other than the session
     expect(calls.some((call) => call.argv.includes("github.com/acme/widgets"))).toBe(true)
   })
 
-  test("marks the landing foreign, scopes the bead close-out to the target clone and sends cleanup to a session there", async () => {
+  test("scopes the bead close-out to the target clone and names that clone in the cleanup step", async () => {
     const { outcome, target } = await landForeign((t) => ({ repoPath: t.canonical }))
     if (!outcome.ok) throw new Error(outcome.reason)
     const root = realpathSync(target.canonical)
-    expect(outcome.foreign).toBe(true)
     const closeout = outcome.next.slice(0, -1)
     expect(closeout.length).toBeGreaterThan(0)
     for (const step of closeout) expect(step.startsWith(`cd '${root}' && env -u BEADS_DIR bd `)).toBe(true)
-    expect(outcome.next.at(-1)).toBe(`delivery_cleanup from a session in ${root}`)
-    expect(outcome.text).toContain(`delivery_cleanup from a session in ${root}`)
+    expect(outcome.next.at(-1)).toBe(`delivery_cleanup with repo "acme/widgets" and repoPath "${root}"`)
+    expect(outcome.text).toContain(`delivery_cleanup with repo "acme/widgets" and repoPath "${root}"`)
   })
 
   test("lands through a worktree of the target repository and records it", async () => {

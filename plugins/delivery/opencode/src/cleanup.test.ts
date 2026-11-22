@@ -10,7 +10,7 @@ import {
   writeLanding,
 } from "@srobroek/opencode-lib/worktree-claims"
 import { holdsState, lockedWrite, lockFile, readHolds, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
-import { authorizeExplicit, createPendingCleanup } from "./pending-cleanup.ts"
+import { authorizeExplicit, CleanupDeferred, createPendingCleanup } from "./pending-cleanup.ts"
 
 // Fixture setup creates several real Git repositories and measured about 20s under full-suite load;
 // keep three times that headroom instead of letting Bun's 5s default kill a child process mid-fixture.
@@ -4248,6 +4248,153 @@ describe("pending cleanup: one remover per worktree", () => {
     expect(removed(h)).toBe(true)
     expect(readLanding(h.common, gone.receiptId)).toEqual({ kind: "missing" })
     expect(existsSync(landingFile(h.common, gone.receiptId))).toBe(false)
+    await h.finish()
+  })
+})
+
+describe("cleanup of another repository's landing runs against that repository", () => {
+  // The session works in `s`, whose remote names other/session; the landing is `f`'s (owner/repo).
+  const SESSION_URL = "https://github.com/other/session.git\n"
+  async function foreignHarness(
+    name: string,
+    over: { sessions?: (f: Fixture) => Array<Record<string, unknown> & { id: string }>; hostListsTarget?: boolean } = {},
+  ) {
+    const f = await fixture(name)
+    const s = await fixture(`${name}-session`)
+    const options: RunnerOptions = { beadStatus: "closed" }
+    const scripted = runner(f, options)
+    const run: CliRunner = (argv, commandOptions) =>
+      argv[0] === "git" && argv.slice(-3, -1).join(" ") === "remote get-url" && commandOptions.cwd === s.main
+        ? Promise.resolve(success(SESSION_URL))
+        : scripted.run(argv, commandOptions)
+    const fake = createFakeContext({ directory: s.main, projectID: "prj_session", sessions: over.sessions?.(f) ?? [] })
+    const hostRemoved: Array<{ projectID: string; directory: string }> = []
+    const pending = createPendingCleanup({
+      ctx: fake.context,
+      cwd: s.main,
+      env: f.env,
+      host: () => undefined,
+      ...(over.hostListsTarget === undefined
+        ? {}
+        : {
+            hostFor: () => (projectID: string) => ({
+              list: async () => (over.hostListsTarget ? [{ directory: f.linked }] : []),
+              remove: async (directory: string) => {
+                hostRemoved.push({ projectID, directory })
+                git(f.main, ["worktree", "remove", directory])
+              },
+            }),
+          }),
+      debounceMs: 1,
+      cleanup: { run: stripped(run), now: () => NOW + 10, bounds: HEAVY_FIXTURE_BOUNDS },
+      now: () => NOW + 10,
+    })
+    await pending.prime()
+    const targetCommon = (await repositoryContext(f.main))?.commonDir as string
+    const sessionCommon = (await repositoryContext(s.main))?.commonDir as string
+    const explicit = () =>
+      cleanupDelivery({ receipt: f.receiptPath, repo: "owner/repo", repoPath: f.main }, s.main, {
+        run,
+        now: () => NOW + 10,
+        env: f.env,
+        bounds: HEAVY_FIXTURE_BOUNDS,
+        ...pending.explicit(async () => {}, "ses_lead"),
+      })
+    const idle = async () => {
+      fake.emit({ type: "session.idle", data: { sessionID: "ses_lead" } })
+      await pending.settle()
+    }
+    const finish = async () => {
+      await pending.dispose()
+      rmSync(f.root, { recursive: true, force: true })
+      rmSync(s.root, { recursive: true, force: true })
+    }
+    return { f, s, scripted, pending, targetCommon, sessionCommon, explicit, idle, hostRemoved, finish }
+  }
+  const idleSession = (id: string, projectID: string, directory: string) => ({ id, projectID, location: { directory }, time: { updated: 1 } })
+
+  test("an explicit cleanup removes the worktree and writes the continuation receipt under the target's key", async () => {
+    const h = await foreignHarness("foreign-explicit")
+    const result = await h.explicit()
+    expect(result.ok).toBe(true)
+    expect(existsSync(h.f.linked)).toBe(false)
+    expect(existsSync(h.s.linked)).toBe(true)
+    const cleaned = listReceipts(receiptDirectory(h.f.env, h.f.receipt.repo.key)).filter((receipt) => receipt.outcome === "cleaned")
+    expect(cleaned.map((receipt) => receipt.continues)).toEqual([h.f.receipt.receiptId])
+    await h.finish()
+  })
+
+  test("a lane claim in the target repository defers the cleanup to its owner", async () => {
+    const h = await foreignHarness("foreign-claimed")
+    writeClaim(h.targetCommon, { directory: h.f.linked, branch: h.f.branch, sessionID: "ses_child", parentID: "ses_other", createdAt: 1 })
+    await expect(h.explicit()).rejects.toBeInstanceOf(CleanupDeferred)
+    expect(existsSync(h.f.linked)).toBe(true)
+    expect(mutationCalls(h.scripted.calls)).toEqual([])
+    await h.finish()
+  })
+
+  test("a running session of another project in the target worktree keeps it", async () => {
+    const h = await foreignHarness("foreign-live", {
+      sessions: (f) => [{ id: "ses_target", projectID: "prj_target", location: { directory: f.linked }, time: { updated: 1, busy: 5, idle: 1 } }],
+    })
+    const result = await h.explicit()
+    expect(refusal(result)).toContain(`a session is running in ${h.f.linked}`)
+    expect(existsSync(h.f.linked)).toBe(true)
+    expect(mutationCalls(h.scripted.calls)).toEqual([])
+    await h.finish()
+  })
+
+  test("an OpenCode project the target's sessions do not name exactly once refuses the removal", async () => {
+    const h = await foreignHarness("foreign-ambiguous", {
+      hostListsTarget: true,
+      sessions: (f) => [idleSession("ses_root", "prj_a", f.main), idleSession("ses_lane", "prj_b", f.linked)],
+    })
+    const reason = refusal(await h.explicit())
+    expect(reason).toContain("host worktree.list failed")
+    expect(reason).toContain("prj_a")
+    expect(reason).toContain("prj_b")
+    expect(h.hostRemoved).toEqual([])
+    expect(existsSync(h.f.linked)).toBe(true)
+    expect(mutationCalls(h.scripted.calls)).toEqual([])
+    await h.finish()
+  })
+
+  test("the target's one project id is the one its worktree is removed through", async () => {
+    const h = await foreignHarness("foreign-project", {
+      hostListsTarget: true,
+      sessions: (f) => [idleSession("ses_root", "prj_target", f.main), idleSession("ses_lane", "prj_target", f.linked)],
+    })
+    const result = await h.explicit()
+    expect(result.ok).toBe(true)
+    expect(h.hostRemoved).toEqual([{ projectID: "prj_target", directory: realpathSync(h.f.linked) }])
+    await h.finish()
+  })
+
+  test("a landing record for the target's worktree is written in the target's common directory", async () => {
+    const h = await foreignHarness("foreign-record")
+    await h.pending.record(h.f.receipt, "ses_lead")
+    expect(readLanding(h.targetCommon, h.f.receipt.receiptId).kind).toBe("present")
+    expect(readLanding(h.sessionCommon, h.f.receipt.receiptId).kind).toBe("missing")
+    await h.finish()
+  })
+
+  test("a deferred cleanup is retried at a turn end against the receipt's repository", async () => {
+    const h = await foreignHarness("foreign-retry")
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    await h.idle()
+    expect(existsSync(h.f.linked)).toBe(false)
+    expect(readLanding(h.targetCommon, h.f.receipt.receiptId)).toEqual({ kind: "missing" })
+    await h.finish()
+  })
+
+  test("a denied landing in the target repository is not retried", async () => {
+    const h = await foreignHarness("foreign-denied")
+    await h.pending.record(h.f.receipt, "ses_lead", { denied: true })
+    await h.pending.start()
+    await h.idle()
+    expect(existsSync(h.f.linked)).toBe(true)
+    expect(mutationCalls(h.scripted.calls)).toEqual([])
     await h.finish()
   })
 })
