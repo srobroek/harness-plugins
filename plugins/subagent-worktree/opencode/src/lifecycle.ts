@@ -345,6 +345,16 @@ export function createLifecycle(deps: LifecycleDeps) {
     return records.heads.includes(oid) || (await reachedMain(lane, oid))
   }
 
+  /** A stored target is read as a local branch ref, never as an option or another kind of ref. */
+  const localBranchRef = (target: string): string => `refs/heads/${target}`
+
+  /** `oid` is the head an explicit merge recorded, and that merge's local target still contains it now. */
+  const mergedLocally = async (lane: Lane, oid: string): Promise<boolean> => {
+    const merged = lane.mergedInto
+    if (merged === undefined || typeof merged.target !== "string" || merged.target === "" || merged.head !== oid) return false
+    return git.isAncestor(lane.directory, oid, localBranchRef(merged.target))
+  }
+
   // --- actions ------------------------------------------------------------------------------
 
   const mark = async (child: string, key: string) => {
@@ -568,6 +578,7 @@ export function createLifecycle(deps: LifecycleDeps) {
     if (earlier?.head === oid) return { proof: PROOF_OF[earlier.retireAs], oid }
     if (oid === lane.base) return { proof: "empty", oid }
     if (options.target !== undefined && (await git.isAncestor(lane.directory, oid, options.target))) return { proof: "merged", oid }
+    if (await mergedLocally(lane, oid)) return { proof: "merged", oid }
     if (await isLanded(lane, oid)) return { proof: "landed", oid }
     return keptBecause("unmerged", "HEAD is neither merged nor landed")
   }
@@ -852,8 +863,25 @@ export function createLifecycle(deps: LifecycleDeps) {
   /** A successful foreground `subagent` call just returned: its empty lane goes. */
   const removeForeground = async (lane: Lane, since: number): Promise<boolean> => (await finalize(lane, { since })).removed
 
-  /** `wt merge` just merged the lane's branch into `target` and kept the checkout (`--no-remove`). */
-  const removeAfterMerge = (lane: Lane, target: string, since: number): Promise<Finalized> => finalize(lane, { target, retireAs: "merged", since })
+  /**
+   * `wt merge` just merged the lane's branch into `target` and kept the checkout (`--no-remove`). The merge is recorded on
+   * the lane first, under its lock and only for a head the target contains, so a later removal can prove it again once
+   * the child has ended; then the removal path decides now.
+   */
+  const removeAfterMerge = async (lane: Lane, target: string, since: number): Promise<Finalized> => {
+    try {
+      await withLock(lane.directory, lane.parentDir, async () => {
+        const stored = await load(lane.child)
+        if (stored?.state !== "active" || canonical(stored.directory) !== canonical(lane.directory)) return
+        const head = await git.head(stored.directory)
+        if (head === undefined || !(await git.isAncestor(stored.directory, head, localBranchRef(target)))) return
+        await save({ ...stored, mergedInto: { target, head } })
+      })
+    } catch (error) {
+      console.error(`subagent-worktree: the merge of ${lane.directory} into ${target} was not recorded:`, error instanceof Error ? error.message : error)
+    }
+    return finalize(lane, { target, retireAs: "merged", since })
+  }
 
   /** What a removal decided from earlier facts must not overrun: the accepted end event, or the moment its planning began. */
   type Fence = { seq: number; since: number }

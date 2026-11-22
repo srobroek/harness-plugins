@@ -34,6 +34,8 @@ type World = {
   porcelain: string
   /** `merge-base --is-ancestor` exit code. */
   ancestor: number
+  /** Refs whose answer overrides `ancestor`: whether the ref contains the tip. */
+  contains?: Record<string, boolean>
   /** The tip is already reachable from the main commit the lane was created at: no work of its own. */
   inMainAtCreation?: boolean
   openBranches: string[]
@@ -98,6 +100,8 @@ function runner(world: World, log: string[][]) {
       // Only the commit the proof was about is an ancestor; a different tip is not.
       const [, , oid, ref] = cmd.split(" ")
       if (ref === MAIN0) return { code: world.inMainAtCreation && oid === TIP ? 0 : 1, stdout: "", stderr: "" }
+      const contained = ref === undefined ? undefined : world.contains?.[ref]
+      if (contained !== undefined) return { code: contained && oid === TIP ? 0 : 1, stdout: "", stderr: "" }
       return { code: world.ancestor === 0 && oid === TIP ? 0 : 1, stdout: "", stderr: "" }
     }
     if (cmd === "rev-parse --absolute-git-dir") return ok("/nonexistent/gitdir\n")
@@ -782,6 +786,40 @@ describe("the idle gate reads every kind of background job", () => {
     fake.sessions.set("ses_unrelated", { id: "ses_unrelated", projectID: "prj", location: { directory: REPO } })
     await idle(fake, [{ kind: "shell", sessionID: "ses_unrelated", shellID: "sh", command: "ls" }])
     expect(worktree[0]?.method).toBe("remove")
+    await cleanup()
+  })
+})
+
+describe("a merge into a local target is a merged proof later", () => {
+  const running = { [CHILD]: { busy: 5, idle: 2 } }
+  /** Merge while the child runs (the checkout stays), then let the child end and the event pass finalize without a target. */
+  const mergeThenEnd = async (afterMerge: (state: World) => void) => {
+    const started = await start({ time: running, contains: { "refs/heads/main": true } }, { stored: [lane({ target: "main" })] })
+    const states = laneWrites(started.fake)
+    const kept = await started.lifecycle().removeAfterMerge(stored(started.fake), "main", NOW)
+    expect(kept).toMatchObject({ removed: false, kept: "running" })
+    afterMerge(started.state)
+    const child = started.fake.sessions.get(CHILD)
+    if (child) child.time = { busy: 5, idle: 6, archived: 7 }
+    started.fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    return { ...started, states }
+  }
+
+  test("a lane whose merged head the target still contains is removed as merged", async () => {
+    const { fake, worktree, states, cleanup } = await mergeThenEnd(() => {})
+    expect(await decision(states)).toEqual(["removing", "merged"])
+    expect(worktree.map((entry) => entry.method)).toEqual(["remove", "refresh"])
+    expect(stored(fake).state).toBe("merged")
+    await cleanup()
+  })
+
+  test("a lane whose target was reset so it no longer contains the head is kept", async () => {
+    const { fake, worktree, quiet, cleanup } = await mergeThenEnd((state) => {
+      state.contains = { "refs/heads/main": false }
+    })
+    await quiet()
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
     await cleanup()
   })
 })

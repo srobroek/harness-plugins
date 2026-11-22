@@ -69,6 +69,8 @@ export type Lane = {
   fenced?: { reason: string; at: number }
   /** Set while `state` is `removing`: how the lane retires, the commit that was proven, and the sessions still to move home. */
   removal?: { retireAs: "removed" | "merged" | "landed"; head?: string; pending?: string[]; incomplete?: boolean }
+  /** An explicit merge kept the checkout: `head` was proven in local branch `target` then; a later removal proves it again. */
+  mergedInto?: { target: string; head: string }
   /** Since when the child and parent have been idle with the lane still empty. */
   quietSince?: number
   /** Keys of the notices already sent about this lane, so none repeats. */
