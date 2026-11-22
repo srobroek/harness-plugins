@@ -258,50 +258,115 @@ function opaque(word: ShellWord, text: string): boolean {
   return word.expands || /\$['"]/.test(text.slice(word.start, word.end))
 }
 
-/** `gh api` flags that take a value. Letters are the short forms. */
-const API_VALUE_LONG = new Set([
-  "--method", "--field", "--raw-field", "--input", "--header", "--jq", "--template", "--preview", "--cache", "--hostname",
-])
+/** Short `gh api` flags that take a value; the other short flags (`-i`, `-h`) are boolean. */
 const API_VALUE_SHORT = new Set(["X", "f", "F", "H", "q", "t", "p"])
+/** Long `gh api` flags that take a value, as `--flag V` or `--flag=V`. */
+const API_VALUE_LONG = new Set([
+  "--method",
+  "--field",
+  "--raw-field",
+  "--input",
+  "--header",
+  "--jq",
+  "--template",
+  "--preview",
+  "--cache",
+  "--hostname",
+])
+/** The flags that put a body on the request, which makes gh send POST unless `-X` says otherwise. */
 const API_BODY_LONG = new Set(["--field", "--raw-field", "--input"])
 const API_BODY_SHORT = new Set(["f", "F"])
-/** The pull request collection: `repos/OWNER/REPO/pulls`, with an optional host, leading or trailing slash and query. */
-const PULLS_ENDPOINT = /^(?:https?:\/\/[^/]+)?\/?repos\/[^/]+\/[^/]+\/pulls\/?(?:[?#].*)?$/i
+const DEFAULT_HOST = "github.com"
+const HOSTNAME = /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/
+const URL_ENDPOINT = /^https?:\/\/([^/]+)(\/.*)?$/i
+const PULLS_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/pulls\/?$/i
+const PULLS_URL_PATH = /\/repos\/([^/]+)\/([^/]+)\/pulls\/?$/i
 
 /**
- * Whether the words after `gh api` may create a PR: a POST to the pull collection. gh sends POST for
- * `-X POST` and for any `-f`, `-F`, `--field`, `--raw-field` or `--input` unless `-X` says otherwise.
- * A word the gate cannot read as method or endpoint counts as a match, so an unclear call is refused.
+ * Where a `gh api` call that may create a PR sends it, as the name `gh repo view` takes
+ * (`OWNER/REPO` or `HOST/OWNER/REPO`). `null` means the repository gh fills a `{owner}/{repo}`
+ * placeholder from: `GH_REPO`, else the checkout. A destination the gate cannot read is `UNRESOLVED`,
+ * which is no repository name, so the lookup fails closed on it.
  */
-function apiMayCreate(values: string[], opaques: boolean[]): boolean {
-  let method: { value: string; opaque: boolean } | undefined
+export type ApiTarget = { repo: string | null }
+export const UNRESOLVED = "<unresolved>"
+
+type Word = { value: string; opaque: boolean }
+
+/** The host a `gh api` URL names: `api.github.com` is `github.com`, `api.TENANT.ghe.com` is `TENANT.ghe.com`. */
+function urlHost(authority: string): string {
+  const host = authority.toLowerCase()
+  if (host === "api.github.com") return DEFAULT_HOST
+  return /^api\..+\.ghe\.com$/.test(host) ? host.slice(4) : host
+}
+
+/** The repository of one endpoint that names the pull collection, or undefined when it does not. */
+function apiTarget(endpoint: Word, hostFlag: Word | undefined, envHost: string | undefined): ApiTarget | undefined {
+  if (endpoint.opaque) return { repo: UNRESOLVED }
+  const text = endpoint.value.replace(/[?#].*$/s, "")
+  const url = URL_ENDPOINT.exec(text)
+  let host: string | undefined
+  let match: RegExpExecArray | null
+  if (url !== null) {
+    match = PULLS_URL_PATH.exec(url[2] ?? "")
+    host = urlHost(url[1] as string)
+  } else {
+    match = PULLS_PATH.exec(text)
+    if (hostFlag?.opaque === true) host = UNRESOLVED
+    else host = hostFlag?.value ?? envHost
+  }
+  if (match === null) return undefined
+  if (host !== undefined && host !== DEFAULT_HOST && !HOSTNAME.test(host)) return { repo: UNRESOLVED }
+  const prefix = host === undefined || host === DEFAULT_HOST ? "" : `${host}/`
+  const [owner, name] = [match[1] as string, match[2] as string]
+  const placeholders = [owner, name].filter((part) => /^\{.*\}$/.test(part)).length
+  // gh fills `{owner}` and `{repo}` from the current repository, on github.com or the host of its remote.
+  if (placeholders === 2) return { repo: prefix === "" ? null : UNRESOLVED }
+  if (placeholders === 1) return { repo: UNRESOLVED }
+  return { repo: `${prefix}${owner}/${name}` }
+}
+
+/**
+ * The targets of a `gh api` call whose words are `values`: a POST to the pull collection. gh sends
+ * POST for `-X POST` and for a body flag unless `-X` says otherwise. Flags parse as pflag does: a
+ * short flag takes `=V`, then the rest of the word, then the next word; a boolean one takes only `=V`.
+ * A method or endpoint the gate cannot read counts as a match, so an unclear call is refused.
+ */
+function apiTargets(values: string[], opaques: boolean[], env: NodeJS.ProcessEnv): ApiTarget[] {
+  let method: Word | undefined
+  let hostFlag: Word | undefined
   let hasBody = false
-  const endpoints: { value: string; opaque: boolean }[] = []
-  const take = (i: number, inline: string | undefined): { value: string; opaque: boolean } =>
+  const endpoints: Word[] = []
+  const word = (i: number, inline?: string): Word =>
     inline === undefined ? { value: values[i + 1] ?? "", opaque: opaques[i + 1] === true } : { value: inline, opaque: opaques[i] === true }
   for (let i = 0; i < values.length; i++) {
-    const word = values[i] as string
-    if (word === "--") continue
-    if (!word.startsWith("-") || word === "-") {
-      endpoints.push({ value: word, opaque: opaques[i] === true })
+    const text = values[i] as string
+    if (text === "--") continue
+    if (!text.startsWith("-") || text === "-") {
+      endpoints.push({ value: text, opaque: opaques[i] === true })
       continue
     }
-    if (word.startsWith("--")) {
-      const eq = word.indexOf("=")
-      const name = eq < 0 ? word : word.slice(0, eq)
+    if (text.startsWith("--")) {
+      const eq = text.indexOf("=")
+      const name = eq < 0 ? text : text.slice(0, eq)
       if (!API_VALUE_LONG.has(name)) continue
-      const value = take(i, eq < 0 ? undefined : word.slice(eq + 1))
+      const value = word(i, eq < 0 ? undefined : text.slice(eq + 1))
       if (eq < 0) i++
       if (name === "--method") method = value
+      else if (name === "--hostname") hostFlag = value
       else if (API_BODY_LONG.has(name)) hasBody = true
       continue
     }
-    // A short flag or cluster: the first value-taking letter takes the rest of the word, else the next word.
-    for (let c = 1; c < word.length; c++) {
-      const letter = word[c] as string
-      if (!API_VALUE_SHORT.has(letter)) continue
-      const rest = word.slice(c + 1)
-      const value = take(i, rest === "" ? undefined : rest)
+    for (let shorts = text.slice(1); shorts !== ""; ) {
+      const letter = shorts[0] as string
+      const assigned = shorts.length > 2 && shorts[1] === "="
+      if (!API_VALUE_SHORT.has(letter)) {
+        // A boolean: `-i=false` ends the word, `-i` goes on to the next letter.
+        shorts = assigned ? "" : shorts.slice(1)
+        continue
+      }
+      const rest = assigned ? shorts.slice(2) : shorts.slice(1)
+      const value = word(i, rest === "" ? undefined : rest)
       if (rest === "") i++
       if (letter === "X") method = value
       else if (API_BODY_SHORT.has(letter)) hasBody = true
@@ -309,7 +374,32 @@ function apiMayCreate(values: string[], opaques: boolean[]): boolean {
     }
   }
   const post = method === undefined ? hasBody : method.opaque || method.value.toUpperCase() === "POST"
-  return post && endpoints.some((endpoint) => endpoint.opaque || PULLS_ENDPOINT.test(endpoint.value))
+  if (!post) return []
+  const envHost = env.GH_HOST === undefined || env.GH_HOST === "" ? undefined : env.GH_HOST.toLowerCase()
+  return endpoints.flatMap((endpoint) => apiTarget(endpoint, hostFlag, envHost) ?? [])
+}
+
+/** What one scan of a command found: whether it may create a PR, where its `gh api` calls would, and whether anything else may. */
+export type CreateScan = { may: boolean; api: ApiTarget[]; other: boolean }
+
+type ScanState = { env: NodeJS.ProcessEnv; api: ApiTarget[]; other: boolean }
+
+/** Records a reason other than a `gh api` call and answers `true`. */
+function otherReason(state: ScanState): true {
+  state.other = true
+  return true
+}
+
+/** The `gh api` calls among `values`, recorded in `state`; whether there was one that may create a PR. */
+function apiIn(values: string[], opaques: boolean[], state: ScanState): boolean {
+  let found = false
+  for (const [i, value] of values.entries()) {
+    if (opaques[i] === true || basename(value) !== "gh" || values[i + 1] !== "api" || opaques[i + 1] === true) continue
+    const targets = apiTargets(values.slice(i + 2), opaques.slice(i + 2), state.env)
+    state.api.push(...targets)
+    found ||= targets.length > 0
+  }
+  return found
 }
 
 function wordsMayCreate(values: string[], opaques: boolean[]): boolean {
@@ -321,9 +411,10 @@ function wordsMayCreate(values: string[], opaques: boolean[]): boolean {
     if (basename(value) === "gh") {
       const operand = values[i + 1]
       if (operand !== undefined && !GH_BUILTINS.has(operand)) return true
-      if (operand === "api" && opaques[i + 1] !== true && apiMayCreate(values.slice(i + 2), opaques.slice(i + 2))) return true
     }
-    if (anyOpaque && WATCHED.has(basename(value))) return true
+    // `gh api` is judged word by word in `apiIn`, so an expanding value in it names nothing else.
+    const api = basename(value) === "gh" && values[i + 1] === "api" && opaques[i + 1] !== true
+    if (anyOpaque && !api && WATCHED.has(basename(value))) return true
   }
   const commandIndex = values.findIndex((value) => !ASSIGNMENT.test(value))
   // A variable or substitution in command position can name any program, `gh` included.
@@ -359,11 +450,17 @@ function textNamesGh(text: string): boolean {
  * counts when it may create a PR as shell, names `gh` in any spelling, has `pr` before `create` or
  * `new`, holds a command word the gate cannot read, or is an expanding here-string.
  */
-function stdinMayCreate(item: SimpleCommand, text: string, depth: number): boolean {
+function stdinMayCreate(item: SimpleCommand, text: string, depth: number, state: ScanState): boolean {
   const documents = stdinTexts(item, text)
   if (documents.length === 0) return false
-  if (depth >= MAX_RESCAN_DEPTH) return true
-  return documents.some((document) => document.opaque || textMayCreate(document.text, depth + 1) || textNamesGh(document.text))
+  if (depth >= MAX_RESCAN_DEPTH) return otherReason(state)
+  let may = false
+  // Every document is read, so each `gh api` target in them is recorded.
+  for (const document of documents) {
+    if (textMayCreate(document.text, depth + 1, state)) may = true
+    if (document.opaque || textNamesGh(document.text)) may = otherReason(state)
+  }
+  return may
 }
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash"])
@@ -395,25 +492,44 @@ function shellTextIn(values: string[], opaques: boolean[]): string[] {
   return found
 }
 
-function textMayCreate(text: string, depth: number): boolean {
+function textMayCreate(text: string, depth: number, state: ScanState): boolean {
+  let may = false
+  const judge = (values: string[], opaques: boolean[]): void => {
+    if (apiIn(values, opaques, state)) may = true
+    if (wordsMayCreate(values, opaques)) may = otherReason(state)
+  }
   const scan = scanShell(text)
-  if (!scan.complete) return wordsMayCreate(text.split(/[\s'"]+/), [])
+  if (!scan.complete) {
+    judge(text.split(/[\s'"]+/), [])
+    return may
+  }
   for (const item of scan.items) {
     if (item.kind !== "command") continue
     const values = item.words.map((word) => word.value)
     const opaques = item.words.map((word) => opaque(word, text))
-    if (wordsMayCreate(values, opaques)) return true
-    if (stdinMayCreate(item, text, depth)) return true
+    judge(values, opaques)
+    if (stdinMayCreate(item, text, depth, state)) may = true
     const scripts = shellTextIn(values, opaques)
     if (scripts.length === 0) continue
-    if (depth >= MAX_RESCAN_DEPTH) return true
-    if (scripts.some((script) => textMayCreate(script, depth + 1))) return true
+    if (depth >= MAX_RESCAN_DEPTH) {
+      may = otherReason(state)
+      continue
+    }
+    for (const script of scripts) if (textMayCreate(script, depth + 1, state)) may = true
   }
-  return false
+  return may
 }
 
 function levels(parsed: ParsedCommand): ParsedCommand[] {
   return [parsed, ...parsed.nested.flatMap(levels)]
+}
+
+/** `mayCreatePr`, plus where each `gh api` call that may create a PR sends it, and whether any other rule fired. `env` supplies `GH_HOST`. */
+export function scanCreate(parsed: ParsedCommand, env: NodeJS.ProcessEnv = {}): CreateScan {
+  const state: ScanState = { env, api: [], other: false }
+  let may = false
+  for (const level of levels(parsed)) if (textMayCreate(level.command, 0, state)) may = true
+  return { may, api: state.api, other: state.other }
 }
 
 /**
@@ -421,8 +537,9 @@ function levels(parsed: ParsedCommand): ParsedCommand[] {
  * later `create` or `new` behind any wrapper, a `gh` operand that could be an alias or extension,
  * a word the gate cannot read next to a literal `gh`, `pr`, `create` or `new`, a command word the
  * gate cannot read, a string that `env`, `sh -c`, `eval` or `source` runs again as text, or a heredoc or
- * here-string whose text trips any of those rules, whichever command receives it.
+ * here-string whose text trips any of those rules, whichever command receives it. A `gh api` that
+ * POSTs to the pull collection counts too.
  */
 export function mayCreatePr(parsed: ParsedCommand): boolean {
-  return levels(parsed).some((level) => textMayCreate(level.command, 0))
+  return scanCreate(parsed).may
 }

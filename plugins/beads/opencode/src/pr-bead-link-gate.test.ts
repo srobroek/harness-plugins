@@ -319,6 +319,56 @@ describe("decidePrBeadLink", () => {
     })
   })
 
+  describe("a gh api call is judged by the repository it targets", () => {
+    const api = "gh api repos/o/r/pulls -f title=t"
+    /** Write access to the repositories named; everything else is read-only. */
+    const writeTo = (...names: string[]): PrBeadLinkDeps["control"] => (repo) =>
+      repo !== null && names.includes(repo) ? { kind: "controlled" } : { kind: "uncontrolled" }
+    const gate = (command: string, control: PrBeadLinkDeps["control"], env: NodeJS.ProcessEnv = {}) =>
+      decide(command, { control, env })
+
+    test("the endpoint's repository decides, not GH_REPO", () => {
+      expect(gate(api, writeTo("o/r"), { GH_REPO: "x/y" })).not.toBeNull()
+      expect(gate(api, writeTo("x/y"), { GH_REPO: "x/y" })).toBeNull()
+    })
+
+    test("placeholders resolve through GH_REPO, as gh does", () => {
+      const placeholders = "gh api 'repos/{owner}/{repo}/pulls' -f title=t"
+      expect(gate(placeholders, writeTo("x/y"), { GH_REPO: "x/y" })).not.toBeNull()
+      expect(gate(placeholders, writeTo("o/r"), { GH_REPO: "x/y" })).toBeNull()
+    })
+
+    test("placeholders without GH_REPO resolve through the checkout (null)", () => {
+      const seen: (string | null)[] = []
+      decide("gh api 'repos/{owner}/{repo}/pulls' -f title=t", { control: (repo) => (seen.push(repo), false) })
+      expect(seen).toEqual([null])
+    })
+
+    test.each([
+      ["--hostname", "gh api --hostname ghe.example repos/o/r/pulls -f t=1", {}],
+      ["GH_HOST", api, { GH_HOST: "ghe.example" }],
+      ["a GHES URL", "gh api -f t=1 https://ghe.example/api/v3/repos/o/r/pulls", {}],
+    ])("the host comes from %s", (_name, command, env) => {
+      expect(gate(command, writeTo("ghe.example/o/r"), env)).not.toBeNull()
+      expect(gate(command, writeTo("o/r"), env)).toBeNull()
+    })
+
+    test("an unresolved destination is looked up under a name that fails closed", () => {
+      const seen: (string | null)[] = []
+      decide("gh api $EP -f t=1", { control: (repo) => (seen.push(repo), false) })
+      expect(seen).toHaveLength(1)
+      expect(seen[0]).not.toBeNull()
+      expect(repositoryControlled(seen[0] as string).kind).toBe("unknown")
+    })
+
+    test("a pr create beside the api call is judged against its own repository too", () => {
+      const command = `${api} && gh pr create --body x`
+      expect(gate(command, writeTo("x/y"), { GH_REPO: "x/y" })).not.toBeNull()
+      expect(gate(command, writeTo("o/r"), { GH_REPO: "x/y" })).not.toBeNull()
+      expect(gate(command, writeTo("z/z"), { GH_REPO: "x/y" })).toBeNull()
+    })
+  })
+
   test("an api call that creates a PR is refused as a form the gate cannot read", () => {
     const decision = decide("gh api repos/o/r/pulls -f title=t")
     expect(decision?.reason).toContain("the command is not `gh pr create` or `gh pr new`")

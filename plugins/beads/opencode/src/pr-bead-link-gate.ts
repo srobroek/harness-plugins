@@ -6,9 +6,9 @@ import {
   ACCEPTED_FORMS,
   beadIn,
   MAX_BODY_BYTES,
-  mayCreatePr,
   type ReadFile,
   readPrCreate,
+  scanCreate,
   TRAILER_RULE,
   validRepository,
 } from "./pr-create-form.ts"
@@ -185,14 +185,27 @@ export type PrBeadLinkDecision = { block: true; reason: string; resolution: stri
  * bead. Where the repository has no ledger, or the viewer cannot write to it, nothing is refused.
  */
 export function decidePrBeadLink(parsed: ParsedCommand, cwd: string, deps: PrBeadLinkDeps): PrBeadLinkDecision | null {
-  if (!mayCreatePr(parsed)) return null
+  const env = deps.env ?? {}
+  const found = scanCreate(parsed, env)
+  if (!found.may) return null
   const read = readPrCreate(parsed.command, readBodyFile(cwd))
   if (read.kind === "form" && beadIn(read.body.text) !== undefined) return null
   // gh's own order: the command's --repo, else GH_REPO, else the checkout (null). An empty GH_REPO is unset.
-  const inherited = deps.env?.GH_REPO
-  const repo = (read.kind === "form" ? read.repo : null) ?? (inherited === undefined || inherited === "" ? null : inherited)
-  const control = deps.control(repo, cwd)
-  if (control === false || (control !== true && control.kind === "uncontrolled")) return null
+  const inherited = env.GH_REPO === undefined || env.GH_REPO === "" ? null : env.GH_REPO
+  // A `gh api` call goes to the repository its endpoint names, its placeholders to the one above. Any
+  // other reason it may create a PR is judged against the repository above as well.
+  const repos =
+    read.kind === "form"
+      ? [read.repo ?? inherited]
+      : [...found.api.map((target) => target.repo ?? inherited), ...(found.other || found.api.length === 0 ? [inherited] : [])]
+  let control: boolean | RepositoryControl = false
+  for (const repo of new Set(repos)) {
+    const result = deps.control(repo, cwd)
+    if (result === false || (result !== true && result.kind === "uncontrolled")) continue
+    control = result
+    break
+  }
+  if (control === false) return null
   const subject =
     read.kind === "form"
       ? `${REASON} Looked at ${read.body.source}, not the branch or the title.`
