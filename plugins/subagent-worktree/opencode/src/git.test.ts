@@ -418,6 +418,12 @@ describe("programs a repository's own config or hooks name do not run during aut
     writeExecutable(script, `#!/bin/sh\ntouch ${marker}\nexit 1\n`)
     return { repo, marker, script }
   }
+  /** A second repository to serve as a local remote. */
+  const remoteRepo = async () => {
+    const dir = await mkdtemp(join(root, "remote-"))
+    await raw(dir, "init", "--quiet", "--initial-branch=main")
+    return dir
+  }
   /** Runs `argv` once without the hardening (the control, which must reach the program) and once through `spawnRunner`. */
   const bothWays = async (argv: string[], marker: string) => {
     const control = Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore" })
@@ -463,6 +469,30 @@ describe("programs a repository's own config or hooks name do not run during aut
       await control.exited
       expect({ code: hardened.code, moved, hardened: hardenedRan, unhardened: await fired(marker) }).toEqual({ code: 0, moved: true, hardened: false, unhardened: true })
     })
+  })
+
+  // Restored from #79: the repository can allow a transport (`protocol.<name>.allow=always`) and name the program it
+  // runs. An empty GIT_ALLOW_PROTOCOL refuses every transport, whatever the repository says.
+  test.each([
+    [
+      "the upload-pack of a local remote",
+      "file",
+      async (marker: string) => ({ url: await remoteRepo(), config: [["remote.origin.uploadpack", `touch '${marker}'; git-upload-pack`]] as const }),
+    ],
+    ["an ext:: remote helper", "ext", async (marker: string) => ({ url: `ext::sh -c touch% ${marker}`, config: [] as const })],
+  ])("git never reaches %s, whatever the repository allows", async (name, protocol, remote) => {
+    const { repo, marker } = await repoWith(`transport-${protocol}`)
+    const { url, config } = await remote(marker)
+    await raw(repo, "config", `protocol.${protocol}.allow`, "always")
+    await raw(repo, "remote", "add", "origin", url)
+    for (const [key, value] of config) await raw(repo, "config", key, value)
+    const argv = ["git", "-C", repo, "ls-remote", "origin"]
+    const hardened = await spawnRunner(argv)
+    const hardenedRan = await fired(marker)
+    await rm(marker, { force: true })
+    // The control: the same call through plain git reaches the program the repository named.
+    await Bun.spawn(argv, { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).exited
+    expect({ name, refused: hardened.code !== 0, hardened: hardenedRan, unhardened: await fired(marker) }).toEqual({ name, refused: true, hardened: false, unhardened: true })
   })
 
   test("core.fsmonitor in the repository's config is not run by git status", async () => {

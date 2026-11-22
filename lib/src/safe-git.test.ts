@@ -82,6 +82,10 @@ describe("hardenedGitEnv", () => {
       lazy: "1",
     })
   })
+  test("sets an empty GIT_ALLOW_PROTOCOL, replacing an inherited one", () => {
+    expect(hardenedGitEnv({}).GIT_ALLOW_PROTOCOL).toBe("")
+    expect(hardenedGitEnv({ GIT_ALLOW_PROTOCOL: "file:ext" }).GIT_ALLOW_PROTOCOL).toBe("")
+  })
 })
 
 // Real git: a partial clone whose blob is missing, so reading it needs a lazy fetch.

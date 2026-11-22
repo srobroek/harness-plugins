@@ -138,6 +138,9 @@ export function hardenedGitEnv(base: Readonly<Record<string, string | undefined>
   env.GIT_ATTR_SOURCE = EMPTY_TREE
   env.GIT_OPTIONAL_LOCKS = "0"
   env.GIT_NO_LAZY_FETCH = "1"
+  // An empty list refuses every transport, built-in or remote helper, whatever a repository's `protocol.<name>.allow` says,
+  // so a command that reaches for a remote cannot run the program the repository names (upload-pack, `ext::`, ssh).
+  env.GIT_ALLOW_PROTOCOL = ""
   return env
 }
 

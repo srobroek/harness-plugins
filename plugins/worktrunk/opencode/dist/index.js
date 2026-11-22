@@ -1332,6 +1332,7 @@ function hardenedGitEnv(base) {
   env.GIT_ATTR_SOURCE = EMPTY_TREE;
   env.GIT_OPTIONAL_LOCKS = "0";
   env.GIT_NO_LAZY_FETCH = "1";
+  env.GIT_ALLOW_PROTOCOL = "";
   return env;
 }
 
