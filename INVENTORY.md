@@ -44,7 +44,7 @@
 | speckit | 0.11.0 | development | project | opencode, claude |
 | statusline | 0.4.0 | development | global | opencode |
 | subagent-worktree | 0.8.3 | development | global | opencode |
-| toolchain | 0.7.2 | development | global | opencode, claude |
+| toolchain | 0.8.0 | development | global | opencode, claude |
 | trunk-dev | 0.9.0 | development | global | opencode, claude |
 | whats-new | 0.4.0 | development | global | opencode |
 | worktrunk | 0.5.1 | development | project | opencode, claude |
