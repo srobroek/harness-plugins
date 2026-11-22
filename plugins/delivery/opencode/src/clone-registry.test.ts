@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { hostname, tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import { addClone, MAX_CLONES, parseClones, readClones, registryFile, withClone } from "./clone-registry.ts"
+import { addClone, MAX_CLONES, parseClones, readClones, registryFile, removeClone, withClone } from "./clone-registry.ts"
 
 const A = { key: "a".repeat(16), root: "/repos/a" }
 const B = { key: "b".repeat(16), root: "/repos/b" }
@@ -104,5 +104,90 @@ describe("addClone", () => {
       chmodSync(file, 0o600)
     }
     expect(readFileSync(file, "utf8")).toBe(before)
+  })
+})
+
+describe("readClones", () => {
+  const roots: string[] = []
+  afterAll(() => {
+    for (const root of roots) rmSync(root, { recursive: true, force: true })
+  })
+  const store = (): NodeJS.ProcessEnv => {
+    const root = mkdtempSync(join(tmpdir(), "delivery-clones-read-"))
+    roots.push(root)
+    return { DELIVERY_RECEIPTS_DIR: join(root, "receipts") }
+  }
+  const SESSION = "c".repeat(16)
+
+  test("a registry that does not exist is empty", () => {
+    expect(readClones(store(), SESSION)).toEqual([])
+  })
+
+  test("a registry that cannot be read is an error naming the cause, never an empty list", async () => {
+    const receipts = store()
+    await addClone(receipts, SESSION, A, () => false)
+    const file = registryFile(receipts, SESSION)
+    chmodSync(file, 0o000) // check-test-executables: registry file permission, not a script
+    try {
+      let failure: unknown
+      try {
+        readClones(receipts, SESSION)
+      } catch (error) {
+        failure = error
+      }
+      expect(failure).toBeInstanceOf(Error)
+      expect(((failure as Error).cause as NodeJS.ErrnoException | undefined)?.code).toBe("EACCES")
+    } finally {
+      chmodSync(file, 0o600) // check-test-executables: registry file permission, not a script
+    }
+  })
+
+  test("a registry that is not a JSON list is an error, never an empty list", () => {
+    const receipts = store()
+    const file = registryFile(receipts, SESSION)
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, "{not json")
+    expect(() => readClones(receipts, SESSION)).toThrow(/cannot be parsed/)
+  })
+})
+
+describe("addClone lock failure", () => {
+  test("keeps the original failure as the cause", async () => {
+    const root = mkdtempSync(join(tmpdir(), "delivery-clones-lock-"))
+    const receipts = { DELIVERY_RECEIPTS_DIR: join(root, "receipts") }
+    const session = "c".repeat(16)
+    const directory = dirname(registryFile(receipts, session))
+    mkdirSync(directory, { recursive: true })
+    chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+    try {
+      const failure = await addClone(receipts, session, A, () => false).then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+      expect(failure).toBeInstanceOf(Error)
+      expect((failure as Error).message).toContain("could not be updated")
+      expect(((failure as Error).cause as NodeJS.ErrnoException | undefined)?.code).toBe("EACCES")
+    } finally {
+      chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("removeClone", () => {
+  test("drops one repository and deletes the file when none is left", async () => {
+    const root = mkdtempSync(join(tmpdir(), "delivery-clones-remove-"))
+    const receipts = { DELIVERY_RECEIPTS_DIR: join(root, "receipts") }
+    const session = "c".repeat(16)
+    try {
+      await addClone(receipts, session, A, () => false)
+      await addClone(receipts, session, B, () => false)
+      await removeClone(receipts, session, A.key)
+      expect(readClones(receipts, session)).toEqual([B])
+      await removeClone(receipts, session, B.key)
+      expect(readClones(receipts, session)).toEqual([])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
