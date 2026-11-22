@@ -3061,9 +3061,11 @@ describe("recovery proves a merge target by its exact branch ref, in a real repo
 
   /**
    * A lane branch merged into `main`, a tag also named `main` at that merge (so it contains the lane's head), then
-   * `move` changes the branch. The lane is left `removing` with the short target name a foreground merge recorded.
+   * `move` changes the branch. The lane is left `removing`: with the short target name a foreground merge recorded
+   * (`current`), or as a released build wrote it, with neither `removal.within` nor `mergedInto` (`legacy`), so only
+   * `lane.target` names the branch.
    */
-  const repository = (move: (repo: string, base: string) => void) => {
+  const repository = (move: (repo: string, base: string) => void, form: "current" | "legacy" = "current") => {
     const root = mkdtempSync(join(tmpdir(), "subagent-worktree-tag-"))
     COMMONS.push(root)
     const repo = join(root, "repo")
@@ -3088,35 +3090,58 @@ describe("recovery proves a merge target by its exact branch ref, in a real repo
       mainAtCreation: base,
       target: "main",
       state: "removing",
-      removal: { retireAs: "merged", head, within: "main" },
-      mergedInto: { target: "main", head },
+      ...(form === "current"
+        ? { removal: { retireAs: "merged" as const, head, within: "main" }, mergedInto: { target: "main", head } }
+        : { removal: { retireAs: "merged" as const, head } }),
     })
     return { repo, record }
   }
-
-  test.each([
-    ["the branch was reset behind the lane's head", (repo: string, base: string) => raw(repo, "update-ref", "refs/heads/main", base)],
+  const moves: Array<[string, (repo: string, base: string) => void]> = [
+    ["the branch was reset behind the lane's head", (repo, base) => raw(repo, "update-ref", "refs/heads/main", base)],
     [
       "the branch was deleted",
-      (repo: string) => {
+      (repo) => {
         raw(repo, "checkout", "--quiet", "--detach")
         raw(repo, "update-ref", "-d", "refs/heads/main")
       },
     ],
-  ])(
+  ]
+  /** Recover `record` through the hardened runner: what the host removed, whether the lane branch is left, and the lane's state. */
+  const recover = async (repo: string, record: Lane) => {
+    const { fake, worktree, quiet, cleanup } = await start({}, { stored: [record], run: spawnRunner })
+    await quiet()
+    const outcome = { removes: worktree.filter((entry) => entry.method === "remove").length, branch: branchExists(repo, "refs/heads/lane-a"), state: stored(fake).state }
+    await cleanup()
+    return outcome
+  }
+  // Real git: about 1 s per case measured on a loaded machine; 30 s leaves room.
+  const REAL_GIT_MS = 30_000
+
+  test.each(moves)(
     "a tag named like the target that contains HEAD proves nothing when %s",
     async (_name, move) => {
       const { repo, record } = repository(move)
-      const { fake, worktree, quiet, cleanup } = await start({}, { stored: [record], run: spawnRunner })
-      await quiet()
-      expect({ removes: worktree.filter((entry) => entry.method === "remove").length, branch: branchExists(repo, "refs/heads/lane-a"), state: stored(fake).state }).toEqual({
-        removes: 0,
-        branch: true,
-        state: "active",
-      })
-      await cleanup()
+      expect(await recover(repo, record)).toEqual({ removes: 0, branch: true, state: "active" })
     },
-    // Real git: about 1 s per case measured on a loaded machine; 30 s leaves room.
-    30_000,
+    REAL_GIT_MS,
+  )
+
+  test(
+    "a record with neither the target ref nor a merge record finishes as merged while lane.target's branch contains HEAD",
+    async () => {
+      const { repo, record } = repository(() => {}, "legacy")
+      // The lane branch is deleted at the proven commit, as every merged removal does.
+      expect(await recover(repo, record)).toEqual({ removes: 1, branch: false, state: "merged" })
+    },
+    REAL_GIT_MS,
+  )
+
+  test.each(moves)(
+    "a record with neither the target ref nor a merge record keeps the lane when %s, though a tag of that name contains HEAD",
+    async (_name, move) => {
+      const { repo, record } = repository(move, "legacy")
+      expect(await recover(repo, record)).toEqual({ removes: 0, branch: true, state: "active" })
+    },
+    REAL_GIT_MS,
   )
 })
