@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { Error as ToolError } from "@opencode/plugin/promise/tool"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import { landingFile, readClaim, removeClaim, writeClaim, writeLanding } from "@srobroek/opencode-lib/worktree-claims"
 import { lockFile, readHolds, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
@@ -982,6 +983,33 @@ describe("liveness is read when the removal is applied", () => {
 })
 
 describe("two plugin instances, one repository: coordination lives on disk", () => {
+  const resumeCall = {
+    tool: "subagent",
+    sessionID: PARENT,
+    agent: "build",
+    messageID: "m",
+    id: "call",
+    input: { agent: "general", prompt: "one more thing", sessionID: CHILD },
+  }
+
+  test("instance B resuming the lane while instance A collects its facts cancels A's removal", async () => {
+    const a = await start({ ancestor: 0 })
+    const b = await start({}, { common: a.common, world: a.state })
+    a.state.onGit = async (cmd) => {
+      if (cmd === "status --porcelain" && !a.state.resumedByB) {
+        a.state.resumedByB = true
+        await b.fake.fire.tool("execute.before", resumeCall as never)
+      }
+    }
+    a.fake.emit({ type: "session.idle", data: { sessionID: PARENT } })
+    await settle()
+    expect(a.state.resumedByB).toBe(true)
+    expect(a.worktree).toEqual([])
+    expect(stored(a.fake).state).toBe("active")
+    await a.cleanup()
+    await b.cleanup()
+  })
+
   test("a live lock held by another instance keeps the removal from running", async () => {
     const lockOptions = { waitMs: 40, ttlMs: 60_000, alive: () => true, host: "this-host", now: () => NOW }
     const { fake, state, common, worktree, cleanup } = await start({ ancestor: 1 }, { lock: lockOptions })
@@ -2005,6 +2033,32 @@ describe("finalize: a resume and late changes fence the removal", () => {
     await resume(fake)
     hold.release()
     await drain(fake)
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+
+  test("a success that waited in the debounce queue while the child was resumed and failed removes nothing", async () => {
+    const { fake, worktree, state, cleanup } = await start({ ancestor: 0, time: IDLE }, { debounceMs: 800 })
+    fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await settle(200)
+    state.now += 1000
+    await resume(fake)
+    state.now += 1000
+    await fake.fire.tool(
+      "execute.after",
+      {
+        tool: "subagent",
+        sessionID: PARENT,
+        agent: "build",
+        messageID: "m",
+        id: "call",
+        input: { agent: "general", prompt: "again", sessionID: CHILD },
+        status: "error",
+        error: new ToolError({ message: "service replaced", metadata: { sessionID: CHILD } }),
+      } as never,
+    )
+    await settle(1200)
     expect(worktree).toEqual([])
     expect(stored(fake).state).toBe("active")
     await cleanup()
