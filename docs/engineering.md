@@ -99,7 +99,7 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 - `steering-dirs.ts` (`steering-dirs`): read-only tools inside the `steeringDirs` option, default `~/.config/opencode/steering`, realpath-resolved, user-owned.
 - `repo-worktrees.ts` (`repo-worktrees`): read-only tools inside the worktrees of the session's repository. `git worktree list --porcelain -z` runs through `lib/src/safe-git.ts` flags and `lib/src/subprocess.ts` supervision with repository-selecting `GIT_*` variables cleared. Each path must link back reciprocally on disk (`.git` file and `<common-dir>/worktrees/<name>/gitdir`) and be user-owned. Roots are cached 30 s per directory with device and inode and re-checked on every use.
 - Roots are compared as canonical paths (`insideCanonical`), never re-resolved after the check.
-- `subagent-external-reads` (below) already allows any non-secret read or shell ask in a subagent session. The relaxations above stay narrower and also apply to root sessions; with `subagent-external-reads` disabled they are what lets a subagent read these places.
+- `subagent-external-reads` (below) already allows any non-secret read or shell ask in a subagent session, and `root-external-reads` a root session's `read` of one non-secret file. The relaxations above also cover folders and the shell in root sessions; with those two disabled they are what lets a session read these places.
 
 ### safety permission.asked backstop
 
@@ -134,6 +134,31 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
     - `git.test.ts` also restores the edge cases of the #79 filter suite against the new fixture (the filter comes from `.git/info/attributes`, since `GIT_ATTR_SOURCE` already covers `.gitattributes`): empty, non-UTF-8, dotted and unrepresentable driver names, process filters, conditional-include and global-config drivers, a truncated or failed driver listing, an inherited `GIT_CONFIG`, repository selectors, `GIT_LITERAL_PATHSPECS`, `GIT_TRACE` and a hook on `deleteBranchAt`. Removing the driver suppression fails 16 of them; making the refusals non-fatal fails the other 7.
     - Reads that hash work-tree files (`status`, the work-tree `diff`) run with every configured filter driver disabled (`filterDriverOverrides` in `lib/src/safe-git.ts`), because `GIT_ATTR_SOURCE` leaves `.git/info/attributes` in force. A listing that fails or names a driver `-c` cannot override refuses the read. Upstream relies on the empty attribute source alone. The `wt` and `gh` children still rely on it alone.
     - `hardenedGitEnv` drops the inherited repository selectors (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR` and the object-store variables), the program variables, `GIT_TRACE*` and the pathspec switches before it applies the hardening. Upstream keeps them.
+  - `delivery` takes only the features of opencode-plugins `6aadfa0`, and builds them on the #94 design that was already here. That design keeps these protections:
+    - `cleanupDelivery` refuses without `coordinate`
+    - `markersStillBound`
+    - the `repo.common` re-check
+    - the per-repository coordination
+    - the refusal of an unreadable registry
+
+    The port adds:
+    - receipt ids in the clone registry, and gc of settled registrations
+    - the plain `delivery_cleanup repo=<owner/name> repoPath=<root>` step in `next`
+    - `bd -C '<clone>'` in `inClone`
+
+    The structure of upstream is not taken, because its rewrite dropped #94 protections (the review rounds of PR #112 found them one by one). Where the two differ:
+    - Registry format: the shipped 0.10.5 bare JSON list of `{key, root}` stays the format. The new fields (`commonDir`, `repo`, `receiptIds`, `addedAt`) are optional. A 0.10.5 file reads unchanged, and only the count rule keeps its entries (they have no `receiptIds`). The `{version, clones}` object of upstream would make an older reader refuse the file. The registry stays at `<receipts root>/.clones/<session repo key>.json`.
+    - The registry update refuses a file it cannot parse or read, and leaves the file as it was. It keeps the original error as `cause`. `clone-registry.test.ts` has a test for each. Each test fails when its refusal goes.
+    - Holds go to every known clone: every registry entry and the memory of this instance. Delivery writes them side by side, without a git wait. When it cannot write the registry, the registration stays in memory and wins over the file.
+    - Delivery keys `doneIds`, `retriedAt` and `attemptedAt` per repository and receipt id.
+    - gc drops a registration only on positive evidence. Its receipt is cleaned, or a later receipt supersedes it. Then gc collects the landing records of the target. These keep the registration:
+      - an unreadable record
+      - any receipt of that repository that is still pending, registered or not
+      - a receipt directory that gc cannot list
+    - `inClone` (`land.ts`) emits `bd -C '<clone>' …`, not `cd '<clone>' && env -u BEADS_DIR bd …`. The `env` launcher hides `bd` from the beads embedded write lock, and the lock refuses it. `in-clone-gate.test.ts` runs the generated commands through the beads `decideShell`. It also shows the `env` form refused. It imports `beads/opencode/src` from a delivery test, a test-only dependency. `inClone` throws for a command that does not start with `bd `.
+    - The port keeps the `selectReceipt` dedup (#24, #37).
+    - The port keeps async repository observation (#82).
+    - The port keeps the lane move after removal (`lane-move.ts`, #59).
   - Known limitations of `subagent-worktree`, older than the port and left as they are:
     - The `wt` and `gh` children rely on `GIT_ATTR_SOURCE` alone, so a filter driver selected in `.git/info/attributes` still runs in them. Only the plugin's own reads disable drivers by name.
 
@@ -141,7 +166,7 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 
 - `lib/src/read-only-shell.ts` owns `READ_ONLY_SHELL_RULES`, the one shell permission list of every read-only agent: `shell "*"` allowed, then a deny list for repository, remote, ledger and file mutations, `git -c`/`--config-env`, and visible redirection (`*>*`, `| tee`). Agent sources put `# {{rules read-only-shell}}` inside `permissions:`; `composeAgent` (`lib/src/fragments.ts`) expands it. `plugins/cad` gets it through the `readOnlyShell` overlay in `scripts/sync-cad.ts`, and `explore` (`plugins/agent-efficiency`) spreads the list. `tests/read-only-shell.test.ts` keeps every shipped read-only agent in step with it. `pr-reviewer` is not on this list: it reads untrusted PR content and stays on a two-command `gh pr` allowlist.
 - Enforcement limit: this is best-effort, the owner's chosen trade-off, not a sandbox. It stops accidental writes by a read-only agent, not a determined one. Prefix and pattern matching can be bypassed by interpreters (`python -c`, `node -e`), nested shells (`bash -c`), `git -C x push` and forms the matcher does not see. Those stay out of scope; do not grow the list into a parser.
-- `plugins/safety/opencode/src/subagent-reads.ts` owns the `subagent-external-reads` hook (feature id of the same name, registered before `subagent-prompts`). In a subagent session it turns an `external_directory` ask into an allow for `read`, `glob`, `grep`, `list` and the shell. Edit, write and patch keep the ask. Secrets keep it too: `SECRET_LOCATIONS` (exported), `*.env` and `*.env.*`, plus the `subagentSecretPaths` option. Limits: paths resolve through `realpath` before any check; a resource that is inside or an ancestor of a protected location (`~/*`, `/*`) is refused; a relative path, a mid-path wildcard or `..` keeps the ask. A root session is unchanged. `disable: ["subagent-external-reads"]` turns it off.
+- `plugins/safety/opencode/src/subagent-reads.ts` owns the `subagent-external-reads` hook (feature id of the same name, registered before `subagent-prompts`). In a subagent session it turns an `external_directory` ask into an allow for `read`, `glob`, `grep`, `list` and the shell. Edit, write and patch keep the ask. Secrets keep it too: `SECRET_LOCATIONS` (exported), `*.env` and `*.env.*`, plus the `subagentSecretPaths` option. Limits: paths resolve through `realpath` before any check; a resource that is inside or an ancestor of a protected location (`~/*`, `/*`) is refused; a relative path, a mid-path wildcard or `..` keeps the ask. A root session gets a narrower grant through `root-external-reads` (same file, feature id of the same name): `read` of one file whose given path (`path`, or `filePath` on older hosts) is absolute, is a regular file and is no secret by the same rules. `glob`, `grep`, `list`, the shell and the writers keep the ask, since a folder's name says nothing about the `.env` files or secret links inside it; a failed session lookup keeps it too. `disable: ["root-external-reads"]` turns it off; `disable: ["subagent-external-reads"]` turns the subagent half off.
 - `scratch-dirs.ts` also allows the session directory spelled through a symlink alias, `<data>/opencode/shell/<project id>` and `<data>/opencode/tool-output`.
 
 ## code-challenge
@@ -225,7 +250,11 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 - If the sessions in the clone and the worktree name exactly one project id, delivery removes the worktree through OpenCode's registry. With any other answer it refuses the removal.
 - `cleanupDelivery` without `coordinate` still refuses another repository.
 
-The clone registry is `<receipts root>/.clones/<session repo key>.json` (`clone-registry.ts`). It lists the key and canonical root of each repository that the session's repository landed into, newest first. The turn-end retry, the idle-hook holds and gc read it, and check each root's key again first. Each update takes a lease lock (`lib/src/lease-lock.ts`) beside the file and replaces the file by rename. Past 32 entries, the oldest entries with no pending receipts go. An entry with pending receipts stays.
+The clone registry is `<receipts root>/.clones/<session repo key>.json` (`clone-registry.ts`), a JSON list as 0.10.5 wrote it. It lists, newest first, each repository that the session's repository landed into. An entry has the key and canonical root of that repository. It can also have its common directory and its `owner/name`. It can also list the receipt ids landed there, with the time.
+
+The turn-end pass and an explicit cleanup drop the settled ids. An entry with no id left goes once gc collects the landing records of the target. The turn-end retry reads the registry. So do the idle-hook holds, and so does gc. Each one checks the key of a root again first. Each update takes a lease lock (`lib/src/lease-lock.ts`) beside the file and replaces the file by rename.
+
+Past 32 entries, the oldest entries with no pending receipts go. An entry with pending receipts stays.
 
 Each plugin instance also keeps the clones it registered in memory, and those win over the file. A failed write leaves its own holds and retry intact. A landing record reaches the target before the registry write starts, and each clone's holds are written without waiting on any other clone.
 

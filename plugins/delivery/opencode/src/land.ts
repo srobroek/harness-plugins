@@ -1055,15 +1055,17 @@ function nativeCloseoutSteps(receipt: LandingReceipt, receiptPath: string, merge
 
 /** The cleanup step for a landing of another repository: the same tool, told which clone it runs in. */
 export function foreignCleanupStep(repo: string, root: string): string {
-  return `delivery_cleanup with repo ${JSON.stringify(repo)} and repoPath ${JSON.stringify(root)}`
+  return `delivery_cleanup repo=${repo} repoPath=${/\s/.test(root) ? JSON.stringify(root) : root}`
 }
 
 /**
- * A close-out command for another repository's ledger: run in that clone, with any
- * session-pinned `BEADS_DIR` dropped so `bd` finds the clone's own ledger.
+ * A close-out command for another repository's ledger: `bd -C '<clone>'` runs in that clone and
+ * overrides a session-pinned `BEADS_DIR` (bd 1.3.1). A launcher such as `env` would hide `bd` from
+ * the beads embedded write lock, which refuses it. Throws for a command that does not start with `bd `.
  */
 export function inClone(root: string, command: string): string {
-  return `cd '${root.replaceAll("'", `'\\''`)}' && env -u BEADS_DIR ${command}`
+  if (!command.startsWith("bd ")) throw new Error(`inClone takes a bd command, got ${JSON.stringify(command)}`)
+  return `bd -C '${root.replaceAll("'", `'\\''`)}' ${command.slice("bd ".length)}`
 }
 
 /**
