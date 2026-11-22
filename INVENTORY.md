@@ -3,7 +3,7 @@
 
 | Plugin | Version | Category | Scope | Harnesses |
 | --- | --- | --- | --- | --- |
-| agent-coder | 0.10.1 | development | global | opencode |
+| agent-coder | 0.11.0 | development | global | opencode |
 | agent-efficiency | 0.13.0 | development | global | opencode |
 | agent-mechanic | 0.6.1 | development | global | opencode |
 | agent-researcher | 0.7.1 | development | global | opencode |
