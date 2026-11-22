@@ -33,6 +33,11 @@ const PROFILES: Readonly<Record<string, Profile>> = {
   "implementer-high": { hidden: true, codeMode: [], web: false },
   operator: { hidden: true, codeMode: [], web: false },
   shepherd: { hidden: true, codeMode: ["delivery_land", "delivery_cleanup"], web: false },
+  orchestrator: {
+    hidden: false,
+    codeMode: ["delivery_land", "delivery_cleanup", "seance_read", "subagent_worktree_merge"],
+    web: true,
+  },
   "a11y-auditor": { hidden: false, codeMode: ["browser", "design_impeccable_scan"], web: true },
   "design-critic": { hidden: false, codeMode: ["browser", "design_impeccable_scan"], web: true },
   "ui-implementer": { hidden: false, codeMode: ["browser", "design_impeccable_scan"], web: false },

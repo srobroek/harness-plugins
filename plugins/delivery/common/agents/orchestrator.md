@@ -70,6 +70,9 @@ permissions:
   - action: webfetch
     resource: "*"
     effect: allow
+  - action: execute
+    resource: "*"
+    effect: allow
   - action: subagent
     resource: "*"
     effect: allow
