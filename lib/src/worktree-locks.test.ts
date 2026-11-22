@@ -4,7 +4,6 @@ import { hostname, tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   bumpClaim,
-  claimGeneration,
   readClaim,
   writeClaim,
 } from "./worktree-claims.ts"
@@ -72,16 +71,16 @@ describe("the resume generation lives in the claim", () => {
   test("a bump increments the generation and records when", () => {
     const dir = common()
     writeClaim(dir, claim)
-    const before = claimGeneration(readClaim(dir, "/wt/a"))
-    expect(bumpClaim(dir, "/wt/a", 1234)).toBe(before + 1)
+    const before = readClaim(dir, "/wt/a")
+    const generation = before.kind === "present" ? before.value.generation : -1
+    expect(bumpClaim(dir, "/wt/a", 1234)).toBe(generation + 1)
     const after = readClaim(dir, "/wt/a")
     expect(after.kind === "present" && after.value.resumedAt).toBe(1234)
-    expect(claimGeneration(after)).toBe(before + 1)
+    expect(after.kind === "present" && after.value.generation).toBe(generation + 1)
   })
 
-  test("no claim has generation -1 and cannot be bumped", () => {
+  test("a missing claim cannot be bumped", () => {
     const dir = common()
-    expect(claimGeneration(readClaim(dir, "/wt/a"))).toBe(-1)
     expect(bumpClaim(dir, "/wt/a", 1)).toBe(-1)
   })
 })

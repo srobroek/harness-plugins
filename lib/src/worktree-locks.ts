@@ -14,7 +14,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto"
-import { accessSync, constants, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { type LeaseOptions, withLease } from "./lease-lock.ts"
 import { canonicalDirectory, type Read } from "./worktree-claims.ts"
@@ -147,21 +147,6 @@ export function holdBlock(read: { holds: readonly SessionHold[]; unreadable: boo
 }
 
 export type { Read }
-
-/** Whether the coordination root can be written (holds, locks, claims). Creates it when missing. */
-export function coordinationWritable(commonDir: string): boolean {
-  const root = join(commonDir, "opencode")
-  try {
-    mkdirSync(root, { recursive: true })
-    accessSync(root, constants.W_OK)
-    const probe = join(root, `.probe.${randomUUID()}`)
-    writeFileSync(probe, "")
-    rmSync(probe, { force: true })
-    return true
-  } catch {
-    return false
-  }
-}
 
 /** Whether a session's hold for `directory` can be written right now (a real probe write, in the holds directory when it exists). */
 export function holdsWritable(commonDir: string, directory: string): boolean {

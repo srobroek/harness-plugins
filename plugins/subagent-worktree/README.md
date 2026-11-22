@@ -346,7 +346,7 @@ session lookups and the read-only agent check are adapted from
 ## Caveats
 
 - A lane whose worktree directory was deleted outside the plugin (`rm -rf`) stays `active`. The sweep reports it as needing a person and neither retires it nor moves its sessions; the host cannot look up its child either. A removal the plugin started and did not finish is different: the lane is `removing`, and `sweep` in `prune` mode (or any trigger for the lane) finishes it.
-- Only the lane's child and its descendants are protected. Any other session that ends up in a lane's worktree (for example a sibling that `subagent(worktree: ...)` places there, or one opened there by hand) is not checked before the removal and may be moved out or stranded; the background repair moves stranded sessions to a checkout that exists.
+- Only the lane's child and its descendants are protected. Any other session that ends up in a lane's worktree (for example a sibling that `subagent(worktree: ...)` places there, or one opened there by hand) is not checked before the removal and may be moved out or stranded.
 - The plugin asserts the `subagent` permission before it creates the worktree, and the built-in
   tool asserts it again. A rule that asks every time prompts twice; "always" approves both.
 - A failure after the worktree exists removes the worktree and the child session.
