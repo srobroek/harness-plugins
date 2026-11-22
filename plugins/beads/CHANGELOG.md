@@ -1,3 +1,9 @@
+## beads [0.8.7](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.6...beads--v0.8.7) (2026-11-22)
+
+### Bug Fixes
+
+* **beads:** follow bd 1.3.1 ledger precedence for claim tracking ([#89](https://github.com/srobroek/harness-plugins/issues/89)) ([cbe4a76](https://github.com/srobroek/harness-plugins/commit/cbe4a76182c36d3b165e27ecbe311071a3068682))
+
 ## beads [0.8.6](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.5...beads--v0.8.6) (2026-11-22)
 
 ### Bug Fixes
