@@ -125,6 +125,12 @@ After a release:
   plugin stores the lane under the new child with `handedOver`, and the lane's claim names the new
   child. The plugin drops any later write of the old lane or its claim. When the takeover fails, the
   plugin puts back the old lane, its claim and the record.
+- Before the new writer takes over, the plugin checks again that the worktree is clean, pushed and
+  at the `HEAD` the release recorded. If anything changed, the spawn fails, the old lane stays and
+  the release is voided, so you can check the worktree and release again.
+- A restart in the middle of a handover is finished at the next start, sweep or removal: the new
+  writer gets the lane and the old lane is dropped. Nothing removes or evicts through the old lane,
+  so the new writer's worktree stays.
 
 ### Writers
 
