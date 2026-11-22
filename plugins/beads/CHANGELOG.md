@@ -1,3 +1,9 @@
+## beads [0.8.8](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.7...beads--v0.8.8) (2026-11-22)
+
+### Bug Fixes
+
+* **beads:** refuse gh pr create forms the bead gate cannot read exactly ([600ee87](https://github.com/srobroek/harness-plugins/commit/600ee87fc0b3622d3e36c1aaa4ad18c8f99871e5)), closes [#66](https://github.com/srobroek/harness-plugins/issues/66)
+
 ## beads [0.8.7](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.6...beads--v0.8.7) (2026-11-22)
 
 ### Bug Fixes
