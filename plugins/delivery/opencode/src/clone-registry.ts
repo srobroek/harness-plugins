@@ -86,7 +86,9 @@ function loadForUpdate(file: string): CloneEntry[] {
     text = readFileSync(file, "utf8")
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
-    throw new Error(`the clone registry ${file} cannot be read (${error instanceof Error ? error.message : String(error)}); it was left unchanged`)
+    throw new Error(`the clone registry ${file} cannot be read (${error instanceof Error ? error.message : String(error)}); it was left unchanged`, {
+      cause: error,
+    })
   }
   const entries = entriesOf(text)
   if (entries === null) throw new Error(`the clone registry ${file} cannot be parsed as a JSON list; it was left unchanged`)

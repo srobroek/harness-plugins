@@ -5915,7 +5915,9 @@ function loadForUpdate(file) {
   } catch (error) {
     if (error.code === "ENOENT")
       return [];
-    throw new Error(`the clone registry ${file} cannot be read (${error instanceof Error ? error.message : String(error)}); it was left unchanged`);
+    throw new Error(`the clone registry ${file} cannot be read (${error instanceof Error ? error.message : String(error)}); it was left unchanged`, {
+      cause: error
+    });
   }
   const entries = entriesOf(text);
   if (entries === null)

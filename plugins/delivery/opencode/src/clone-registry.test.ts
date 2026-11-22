@@ -93,7 +93,13 @@ describe("addClone", () => {
     const before = readFileSync(file, "utf8")
     chmodSync(file, 0o000)
     try {
-      await expect(addClone(receipts, SESSION, B, () => false)).rejects.toThrow(/EACCES/)
+      const failure = await addClone(receipts, SESSION, B, () => false).then(
+        () => undefined,
+        (error: unknown) => error,
+      )
+      expect(failure).toBeInstanceOf(Error)
+      expect((failure as Error).message).toMatch(/EACCES/)
+      expect(((failure as Error).cause as NodeJS.ErrnoException | undefined)?.code).toBe("EACCES")
     } finally {
       chmodSync(file, 0o600)
     }

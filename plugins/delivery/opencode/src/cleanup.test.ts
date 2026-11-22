@@ -4537,13 +4537,24 @@ describe("cleanup of another repository's landing runs against that repository",
   })
 
   test.each([
-    ["git", false],
-    ["the host registry", true],
-  ] as const)("a .git marker swapped while the final session listing waits refuses the removal through %s", async (_route, host) => {
-    const h = await foreignHarness(`foreign-swap-${host ? "host" : "git"}`, {
+    ["the worktree's", "worktree.marker", "git", false],
+    ["the worktree's", "worktree.marker", "the host registry", true],
+    ["the execution checkout's", "worktree.executionCwd", "git", false],
+    ["the execution checkout's", "worktree.executionCwd", "the host registry", true],
+  ] as const)("%s .git swapped while the final session listing waits refuses the removal (%s) through %s", async (which, field, _route, host) => {
+    const execution = which === "the execution checkout's"
+    const h = await foreignHarness(`foreign-swap-${execution ? "exec" : "target"}-${host ? "host" : "git"}`, {
       hostListsTarget: host,
       sessions: (f) => [idleSession("ses_root", "prj_target", f.main)],
     })
+    // The removal runs from the linked checkout of the base branch when there is one; give it one,
+    // distinct from the main checkout, so its marker is the one that can be swapped.
+    const executionCheckout = join(h.f.root, "execution checkout")
+    if (execution) {
+      git(h.f.main, ["checkout", "-q", "--detach"])
+      git(h.f.main, ["worktree", "add", "-q", executionCheckout, h.f.receipt.pr.baseRefName])
+    }
+    const swappedMarker = join(execution ? executionCheckout : h.f.linked, ".git")
     const session = h.fake.context.session as unknown as { list: (query: Record<string, unknown>) => Promise<unknown> }
     const list = session.list.bind(session)
     let swapped = false
@@ -4553,13 +4564,13 @@ describe("cleanup of another repository's landing runs against that repository",
       // just before the removal. The second is suspended here, after every identity proof.
       if (query.archived === false && query.directory === h.f.linked && ++listings === 2) {
         swapped = true
-        writeFileSync(join(h.f.linked, ".git"), readFileSync(join(h.s.linked, ".git")))
+        writeFileSync(swappedMarker, readFileSync(join(h.s.linked, ".git")))
       }
       return list(query)
     }
     const reason = refusal(await h.explicit())
     expect(swapped).toBe(true)
-    expect(reason).toContain("worktree.marker")
+    expect(reason).toContain(`${field}:`)
     expect(commandCalls(h.scripted.calls, "git").filter((argv) => argv[1] === "worktree" && argv[2] === "remove")).toEqual([])
     expect(h.hostRemoved).toEqual([])
     expect(existsSync(h.f.linked)).toBe(true)
