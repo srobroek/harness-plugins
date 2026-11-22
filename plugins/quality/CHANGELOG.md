@@ -1,3 +1,9 @@
+## quality [0.14.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.13.1...quality--v0.14.0) (2026-11-22)
+
+### Features
+
+* **delivery:** ship the orchestrator agent ([#121](https://github.com/srobroek/harness-plugins/issues/121)) ([53f33c0](https://github.com/srobroek/harness-plugins/commit/53f33c016315732220a7c87066267931ee87f514))
+
 ## quality [0.13.1](https://github.com/srobroek/harness-plugins/compare/quality--v0.13.0...quality--v0.13.1) (2026-11-21)
 
 ### Bug Fixes
