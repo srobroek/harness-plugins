@@ -334,11 +334,53 @@ describe("firstBdVerb / isMutatingBdCommand", () => {
     })
   })
 
-  test.each([
-    ["a bare assignment then a name-only export", "unset BD_ACTOR; BD_ACTOR=me/x; export BD_ACTOR; bd create x"],
-    ["a bare assignment then a flagged export", "unset BD_ACTOR; BD_ACTOR=me/x; export -p BD_ACTOR; bd create x"],
-  ])("a split re-export restores the actor: %s", (_name, command) => {
-    expect(decideActorGate(command, bdActorEnv)).toEqual({ kind: "allow" })
+  test("a bare assignment then a name-only export restores the actor", () => {
+    expect(decideActorGate("unset BD_ACTOR; BD_ACTOR=me/x; export BD_ACTOR; bd create x", bdActorEnv)).toEqual({
+      kind: "allow",
+    })
+  })
+
+  describe("a builtin's options decide what it does to the actor", () => {
+    const unverified = { kind: "advisory", text: expect.stringContaining("cannot verify the actor") }
+
+    test("export -p with no names only prints, so an unexported assignment stays unexported", () => {
+      expect(decideActorGate("BD_ACTOR=me/x; export -p; bd create x", emptyEnv).kind).toBe("block")
+    })
+
+    // Measured: bash exports the named variable, zsh only prints it.
+    test("export -p with a name depends on the shell, so the actor is unverified", () => {
+      expect(decideActorGate("unset BD_ACTOR; BD_ACTOR=me/x; export -p BD_ACTOR; bd create x", bdActorEnv)).toEqual(
+        unverified,
+      )
+    })
+
+    test("export -f names a function, so the variable stays unexported", () => {
+      expect(decideActorGate("unset BD_ACTOR; BD_ACTOR=me/x; export -f BD_ACTOR; bd create x", bdActorEnv).kind).toBe(
+        "block",
+      )
+    })
+
+    test("unset -f removes a function, so the ambient actor stays", () => {
+      expect(decideActorGate("unset -f BD_ACTOR; bd create x", bdActorEnv)).toEqual({ kind: "allow" })
+    })
+
+    test("unset -v clears the variable", () => {
+      expect(decideActorGate("unset -v BD_ACTOR; bd create x", bdActorEnv).kind).toBe("block")
+    })
+
+    test("unset -n depends on whether the name is a nameref, so the actor is unverified", () => {
+      expect(decideActorGate("unset -n BD_ACTOR; bd create x", bdActorEnv)).toEqual(unverified)
+    })
+
+    test("declare -p only prints, so an unexported assignment stays unexported", () => {
+      expect(decideActorGate("unset BD_ACTOR; BD_ACTOR=me/x; declare -p BD_ACTOR; bd create x", bdActorEnv).kind).toBe(
+        "block",
+      )
+    })
+
+    test("an option the gate does not know leaves the actor unverified", () => {
+      expect(decideActorGate("export -q BD_ACTOR=me/x; bd create x", emptyEnv)).toEqual(unverified)
+    })
   })
 
   test("export -n takes the actor out of the environment", () => {
