@@ -10,7 +10,7 @@
  * writer spawned into the worktree, and the child is never resumed.
  */
 
-import type { ChildState, Lane } from "./lane.ts"
+import type { ChildState } from "./lane.ts"
 
 export const RELEASE_PREFIX = "release/"
 
@@ -29,10 +29,8 @@ export type Release = {
   /** The worktree's HEAD when it was released. */
   head: string
   reason: string
-  /** The writer the worktree was handed to, once one was spawned into it. */
+  /** Audit only: the writer the worktree was handed to. Nothing reads it to decide anything. */
   to?: string
-  /** The session that spawned `to`: the parent of the lane `to` takes over. Written with `to`, so a restart can finish the handover. */
-  toParent?: string
 }
 
 export function parseRelease(value: unknown): Release | undefined {
@@ -43,28 +41,7 @@ export function parseRelease(value: unknown): Release | undefined {
   }
   if (typeof record.at !== "number" || typeof record.reason !== "string") return undefined
   if (record.to !== undefined && typeof record.to !== "string") return undefined
-  if (record.toParent !== undefined && typeof record.toParent !== "string") return undefined
   return value as Release
-}
-
-/**
- * What to do with `old`, a lane whose writer was released, given its release record and the lane of the
- * writer the record names (`successor`, undefined when none is stored). A handover writes the record's `to`
- * first, then the successor's claim and lane, then deletes the old lane, so a restart can stop between any
- * two of these writes:
- * - `none`: the record names no successor; the lane is the old writer's still.
- * - `complete`: the successor has no lane yet; store `lane` for it, then delete the old lane.
- * - `drop-old`: the successor has its lane; delete the old one.
- * - `hold`: the old lane was being removed, and finishing that would remove the successor's worktree; leave it to a person.
- * Every outcome but `none` fences the old lane: nothing may remove or evict through it.
- */
-export type HandoverRepair = { kind: "none" } | { kind: "complete"; lane: Lane } | { kind: "drop-old" } | { kind: "hold" }
-
-export function repairHandover(old: Lane, record: Release | undefined, successor: Lane | undefined, now: number): HandoverRepair {
-  if (record?.to === undefined || record.child !== old.child) return { kind: "none" }
-  if (successor !== undefined) return { kind: "drop-old" }
-  if (old.state !== "active") return { kind: "hold" }
-  return { kind: "complete", lane: { ...old, child: record.to, parent: record.toParent ?? old.parent, handedOver: { from: old.child, at: now } } }
 }
 
 export type ReleaseFacts = {

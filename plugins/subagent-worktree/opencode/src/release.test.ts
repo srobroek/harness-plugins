@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import type { Lane } from "./lane.ts"
-import { decideRelease, type HandoverRepair, parseRelease, type Release, type ReleaseFacts, repairHandover } from "./release.ts"
+
+import { decideRelease, parseRelease, type ReleaseFacts } from "./release.ts"
 
 /** A deleted child whose lane names the caller, in a clean, pushed worktree with no holds. */
 const base: ReleaseFacts = {
@@ -37,36 +37,6 @@ describe("decideRelease", () => {
     const decision = decideRelease({ ...base, ...override } as ReleaseFacts)
     expect(decision.release).toBe(false)
     expect(decision.release === false && decision.reason).toMatch(reason)
-  })
-})
-
-describe("repairHandover", () => {
-  const old: Lane = { child: "ses_old", parent: "ses_parent", projectID: "prj", directory: "/wt/a", branch: "feat", base: "abc", parentDir: "/repo", state: "active" }
-  const record: Release = { child: "ses_old", directory: "/wt/a", by: "ses_parent", at: 1, head: "abc", reason: "dead", to: "ses_new", toParent: "ses_lead" }
-
-  test.each([
-    ["no release record", undefined, undefined, old, { kind: "none" }],
-    ["a record that names no successor", { ...record, to: undefined }, undefined, old, { kind: "none" }],
-    ["a record of another writer", { ...record, child: "ses_other" }, undefined, old, { kind: "none" }],
-    ["a successor whose lane is stored", record, { ...old, child: "ses_new" }, old, { kind: "drop-old" }],
-    ["a successor whose lane is already retired", record, { ...old, child: "ses_new", state: "merged" as const }, old, { kind: "drop-old" }],
-    ["an old lane that was being removed", record, undefined, { ...old, state: "removing" as const }, { kind: "hold" }],
-    [
-      "a successor with no lane yet",
-      record,
-      undefined,
-      old,
-      { kind: "complete", lane: { ...old, child: "ses_new", parent: "ses_lead", handedOver: { from: "ses_old", at: 9 } } },
-    ],
-    [
-      "a record from before the successor's parent was recorded",
-      { ...record, toParent: undefined },
-      undefined,
-      old,
-      { kind: "complete", lane: { ...old, child: "ses_new", handedOver: { from: "ses_old", at: 9 } } },
-    ],
-  ] as const)("%s", (_name, given, successor, lane, expected) => {
-    expect(repairHandover(lane as Lane, given as Release | undefined, successor as Lane | undefined, 9)).toEqual(expected as HandoverRepair)
   })
 })
 

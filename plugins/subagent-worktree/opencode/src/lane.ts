@@ -77,10 +77,20 @@ export type Lane = {
   kept?: { reason: string; token: string }
   /** The lane was taken over from a released writer (`release/<from>` records why). */
   handedOver?: { from: string; at: number }
+  /**
+   * The lane's storage key: the child it was created for. A handover changes `child` and `parent` in one write
+   * of the same record and keeps `id`, so a worktree's lane is never two records. Undefined means `child`.
+   */
+  id?: string
 }
 
 export function laneKey(child: string): string {
   return `${LANE_PREFIX}${child}`
+}
+
+/** Where `lane` is stored: under its `id`, which a handover keeps. */
+export function laneStoreKey(lane: Pick<Lane, "id" | "child">): string {
+  return laneKey(lane.id ?? lane.child)
 }
 
 export function parseLane(value: unknown): Lane | undefined {
@@ -92,6 +102,7 @@ export function parseLane(value: unknown): Lane | undefined {
   if (!["active", "removing", "removed", "merged", "landed"].includes(lane.state as string)) return undefined
   if (lane.target !== undefined && typeof lane.target !== "string") return undefined
   if (lane.title !== undefined && typeof lane.title !== "string") return undefined
+  if (lane.id !== undefined && (typeof lane.id !== "string" || lane.id === "")) return undefined
   return value as Lane
 }
 
