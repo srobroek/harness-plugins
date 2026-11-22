@@ -709,6 +709,7 @@ describe("worktree argument", () => {
         head: OTHER_HEAD,
         reason: "its server died",
         to: "ses_fake1",
+        toParent: PARENT,
       })
       expect(interrupts(setup)).toEqual([])
     })
@@ -780,6 +781,20 @@ describe("worktree argument", () => {
     test("a release fails, and records nothing, when the worktree cannot be locked", async () => {
       const setup = await dead({ commonDir: async () => undefined })
       await expect(release(setup, "ses_dead")).rejects.toThrow(/no git common directory to lock/)
+      expect(setup.fake.storage.get("release/ses_dead")).toBeUndefined()
+    })
+
+    test.each([
+      ["HEAD moved", (repo: Repo) => void (repo.heads[OTHER] = "1111111111111111111111111111111111111111"), /HEAD moved from fedcba987654 to 111111111111/],
+      ["the tree has uncommitted changes", (repo: Repo) => void (repo.dirty = true), /uncommitted changes/],
+      ["a commit is not pushed", (repo: Repo) => void (repo.unpushed = 1), /not pushed/],
+    ])("when %s after the release, the next writer does not take over the lane, and the release is voided", async (_name, change, reason) => {
+      const setup = await dead()
+      await release(setup, "ses_dead")
+      change(setup.repo)
+      await expect(spawn(setup, { agent: "pinned", worktree: "feat" })).rejects.toThrow(reason)
+      expect(lane(setup.fake, "ses_dead")).toEqual(owned)
+      expect(lane(setup.fake, "ses_fake1")).toBeUndefined()
       expect(setup.fake.storage.get("release/ses_dead")).toBeUndefined()
     })
 
