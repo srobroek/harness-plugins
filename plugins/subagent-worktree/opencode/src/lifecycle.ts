@@ -753,7 +753,13 @@ export function createLifecycle(deps: LifecycleDeps) {
             await save(stored)
             return keptBecause("running", evicted.reason)
           }
-          // The eviction awaited listings and moves: a start, a resume or a hold that landed meanwhile still keeps the worktree.
+          // The eviction awaited listings and moves: a commit or a change, a resume or a hold that landed meanwhile keeps the worktree.
+          const driftAfter = await treeDrift(stored, head)
+          if (driftAfter !== undefined) {
+            await save(stored)
+            return driftAfter
+          }
+          // The last look, synchronous and immediately before the host call: a start delivered during the awaits above is seen here.
           const afterEviction = (await liveRefusal(stored, options, seq)) ?? startedSince([stored.child, ...descendants.ids], seq)
           if (afterEviction !== undefined) {
             await save(stored)

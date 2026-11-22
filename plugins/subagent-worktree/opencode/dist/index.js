@@ -2356,6 +2356,11 @@ function createLifecycle(deps) {
             await save(stored);
             return keptBecause("running", evicted.reason);
           }
+          const driftAfter = await treeDrift(stored, head);
+          if (driftAfter !== undefined) {
+            await save(stored);
+            return driftAfter;
+          }
           const afterEviction = await liveRefusal(stored, options, seq) ?? startedSince([stored.child, ...descendants.ids], seq);
           if (afterEviction !== undefined) {
             await save(stored);

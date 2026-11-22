@@ -2397,6 +2397,35 @@ describe("sessions of other tools are moved out of a worktree before it is remov
     })
   })
 
+  test.each([
+    ["a commit", (state: World) => {
+      state.head = TIP2
+      state.branchOid = TIP2
+    }],
+    ["an uncommitted change", (state: World) => {
+      state.porcelain = " M a.txt\n"
+    }],
+  ])("%s made while the other sessions are evicted keeps the worktree", async (_name, change) => {
+    const { fake, state, worktree, cleanup } = await start(empty)
+    const session = fake.context.session as unknown as { list: (input: { parentID?: string }) => Promise<unknown> }
+    const original = session.list.bind(session)
+    let listed = false
+    session.list = async (input) => {
+      const answer = await original(input)
+      // The eviction's project listing: the tree changes while the eviction runs, after the checks that proved it.
+      if (input?.parentID === undefined && !listed) {
+        listed = true
+        change(state)
+      }
+      return answer
+    }
+    fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await until(() => listed)
+    await settle(250)
+    expect({ removes: removes(worktree), state: stored(fake).state }).toEqual({ removes: 0, state: "active" })
+    await cleanup()
+  })
+
   test("a sweep removal moves such sessions out as well", async () => {
     const { fake, worktree, cleanup } = await start({ ancestor: 0, age: 3 * 24 * 3_600_000, time: ARCHIVED })
     addSession(fake, "ses_other", WT)
