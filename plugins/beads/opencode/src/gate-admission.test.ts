@@ -273,6 +273,13 @@ describe("dynamic directory detection reads parsed commands", () => {
     expect(changesDirectoryDynamically(command)).toBe(false)
   })
 
+  test("a command whose quoted argument only mentions eval, bash -c or xargs bd is not a write", async () => {
+    const admitter = {} as GateAdmitter
+    const deadline = Date.now() + 1000
+    for (const command of [`rg "eval 'bd create x'" .`, `rg "bash -c 'bd create x'" .`, `rg "xargs bd create" .`])
+      expect(await admitBdMutation(command, "/", {}, admitter, deadline)).toBeUndefined()
+  })
+
   test("a read-only bd command whose quoted prose mentions a dynamic cd is admitted", async () => {
     const admitter = {} as GateAdmitter
     const deadline = Date.now() + 1000
