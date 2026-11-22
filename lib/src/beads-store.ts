@@ -10,7 +10,7 @@
 
 import { spawnSync } from "node:child_process"
 import { lstatSync, realpathSync, statSync } from "node:fs"
-import { dirname, isAbsolute, resolve } from "node:path"
+import { basename, dirname, isAbsolute, resolve } from "node:path"
 
 export function configuredStore(options: Readonly<Record<string, unknown>>, projectRoot: string): string | undefined {
   if (!("store" in options)) return undefined
@@ -96,6 +96,16 @@ export function sessionPinFor(cwd: string): string | undefined {
   }
   if (isDir(local)) return local
   return undefined
+}
+
+/**
+ * The `.beads` directory bd 1.3.1 opens for an inherited `BEADS_DB`, which it reads only when
+ * `--db` and `BEADS_DIR` are absent. A `.beads` directory is the store itself; any other value
+ * (a database file, `.beads/dolt`, `.beads/embeddeddolt`) selects the directory that holds it.
+ */
+export function storeFromBeadsDb(value: string, cwd: string): string {
+  const path = resolve(cwd, value)
+  return basename(path) === ".beads" ? path : dirname(path)
 }
 
 function isDir(path: string): boolean {

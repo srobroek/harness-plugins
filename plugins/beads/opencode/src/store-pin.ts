@@ -41,6 +41,8 @@ export function withoutInheritedPin<T extends Record<string, string | undefined>
 export function shellPin(cwd: string, env: Record<string, string | undefined>, pinFor = sessionPinFor): string | undefined {
   const explicit = withoutInheritedPin(env).BEADS_DIR
   if (explicit !== undefined && explicit !== "") return undefined
+  // bd opens an inherited BEADS_DB when BEADS_DIR is unset (bd 1.3.1: --db, BEADS_DIR, BEADS_DB, walk-up).
+  if (env.BEADS_DB !== undefined && env.BEADS_DB !== "") return undefined
   return pinFor(cwd)
 }
 

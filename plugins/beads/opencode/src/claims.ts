@@ -288,29 +288,31 @@ export type ClaimInspection = { kind: "none" } | { kind: "refused"; reason: stri
 const LEDGER_SELECTOR = /^(?:-C|--db|--database|--directory|--global|--dolt-)/u
 
 /**
- * Environment variables that choose which ledger or server bd opens. When the plugin's own
- * process environment sets one, that is the ledger every command of the session means, so it is
- * certain; only a command that sets one to a different value is refused.
- *
- * `path`: the value names a file or directory, so two spellings of one place (a trailing slash, a
- * symlink) are the same ledger and are compared after `realpath`. `scalar`: the value is a port,
- * host or mode, not a place; it is compared as written, because resolving it as a path could make
- * `3307` equal `3306` when the working directory holds symlinks with those names.
+ * The ledger variables the plugin keys a claim on. bd 1.3.1 opens `--db`, then `BEADS_DIR`, then
+ * `BEADS_DB`, then the directory's own `.beads`. When the plugin's own process environment sets
+ * one, that is the ledger every command of the session means; only a command that sets one to a
+ * different value is refused. Both values are paths, so two spellings of one place (a trailing
+ * slash, a symlink) are the same ledger and are compared after `realpath`.
  */
-const LEDGER_ENV: Record<string, "path" | "scalar"> = {
-  BEADS_DIR: "path",
-  BEADS_DB: "path",
-  BD_DB: "path",
-  BD_SOCKET: "path",
-  BEADS_DOLT_DATA_DIR: "path",
-  BEADS_DOLT_SERVER_SOCKET: "path",
-  BEADS_PROXIED_SERVER_ROOT_PATH: "path",
-  BEADS_PROXIED_SERVER_CONFIG: "path",
-  BEADS_DOLT_PORT: "scalar",
-  BEADS_DOLT_SERVER_HOST: "scalar",
-  BEADS_DOLT_SERVER_PORT: "scalar",
-  BEADS_DOLT_SERVER_MODE: "scalar",
-}
+const KEYED_LEDGER_ENV: ReadonlySet<string> = new Set(["BEADS_DIR", "BEADS_DB"])
+
+/**
+ * Ledger variables the plugin cannot key a claim on: `BD_DB` is not read by bd as a store path,
+ * and the socket, Dolt and proxied-server variables name a server, not a store. An inherited one
+ * leaves the store unknowable, so it refuses the claim.
+ */
+const UNKEYED_LEDGER_ENV: readonly string[] = [
+  "BD_DB",
+  "BD_SOCKET",
+  "BEADS_DOLT_DATA_DIR",
+  "BEADS_DOLT_SERVER_SOCKET",
+  "BEADS_PROXIED_SERVER_ROOT_PATH",
+  "BEADS_PROXIED_SERVER_CONFIG",
+  "BEADS_DOLT_PORT",
+  "BEADS_DOLT_SERVER_HOST",
+  "BEADS_DOLT_SERVER_PORT",
+  "BEADS_DOLT_SERVER_MODE",
+]
 
 const isAssignment = (value: string): boolean => /^[A-Za-z_][A-Za-z0-9_]*=/u.test(value)
 
@@ -399,6 +401,9 @@ export function inspectClaim(
   // ledger, anywhere in the command, leaves the claim untracked.
   if (item.words.slice(bdIndex + 1).some((word) => LEDGER_SELECTOR.test(word.value)))
     return refuse("it carries a ledger selector flag (-C, --db, --database, --directory, --global, --dolt-*)")
+  const unkeyed = UNKEYED_LEDGER_ENV.find((name) => (inherited[name] ?? "") !== "")
+  if (unkeyed !== undefined)
+    return refuse(`the plugin's environment sets ${unkeyed}, which names a ledger or server the plugin cannot key a claim on`)
   // The plugin's own environment names its ledger, so that is certain. A command may repeat a
   // ledger variable only with the same value (same path once canonical); anything else could pick
   // another ledger, and so could a BEADS_* or BD_* variable the plugin does not know.
@@ -406,11 +411,9 @@ export function inspectClaim(
     const at = word.value.indexOf("=")
     const name = word.value.slice(0, at)
     const own = inherited[name] ?? ""
-    const kind = LEDGER_ENV[name]
-    if (kind === undefined)
-      return refuse("it assigns a BEADS_* or BD_* variable other than the actor or a known ledger variable")
-    const inline = word.value.slice(at + 1)
-    if (own === "" || !(kind === "path" ? samePath(inline, own, cwd) : inline === own))
+    if (!KEYED_LEDGER_ENV.has(name))
+      return refuse("it assigns a BEADS_* or BD_* variable other than the actor, BEADS_DIR or BEADS_DB")
+    if (own === "" || !samePath(word.value.slice(at + 1), own, cwd))
       return refuse(`it assigns ${name} to a different ledger than the plugin's own environment names`)
   }
   if (invocation.args.includes("--")) return refuse("it uses `--`, so its arguments are not certain")

@@ -65,7 +65,7 @@ import {
   scanShell,
   tokenize,
 } from "./beads-shell.ts"
-import { sessionPinFor } from "./beads-store.ts"
+import { sessionPinFor, storeFromBeadsDb } from "./beads-store.ts"
 import { readBounded } from "./bounded-read.ts"
 
 /** The hold itself. */
@@ -502,6 +502,8 @@ function selectedStoreFor(globals: string[], cwd: string, env: NodeJS.ProcessEnv
   // process, so it is the usual answer, and it already names a `.beads` directory
   // rather than a checkout.
   if (pinned !== undefined && pinned !== "") return absolute(pinned, cwd)
+  // bd reads `BEADS_DB` after `BEADS_DIR` and before walking up from the directory.
+  if (env.BEADS_DB !== undefined && env.BEADS_DB !== "") return storeFromBeadsDb(env.BEADS_DB, cwd)
   return sessionPinFor(cwd)
 }
 

@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { configuredStore } from "./beads-store.ts"
+import { configuredStore, storeFromBeadsDb } from "./beads-store.ts"
 
 const roots: string[] = []
 afterEach(() => {
@@ -30,4 +30,15 @@ test.each(["missing", "ledger", "", 42, null])("refuses an invalid configured st
 
 test("an absent option leaves existing store discovery unchanged", () => {
   expect(configuredStore({}, fixture())).toBeUndefined()
+})
+
+// bd 1.3.1, measured with `BEADS_DB=<v> bd list` from an unrelated directory: a `.beads` directory is the
+// store itself; any other value (a database file, `.beads/dolt`, `.beads/embeddeddolt`) selects its parent.
+test.each([
+  ["a .beads directory", "/r/.beads", "/r/.beads"],
+  ["a database file inside it", "/r/.beads/beads.db", "/r/.beads"],
+  ["its embeddeddolt directory", "/r/.beads/embeddeddolt", "/r/.beads"],
+  ["a relative database file", ".beads/beads.db", "/cwd/.beads"],
+])("BEADS_DB naming %s selects the store bd opens", (_name, value, store) => {
+  expect(storeFromBeadsDb(value, "/cwd")).toBe(store)
 })

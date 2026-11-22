@@ -19,7 +19,7 @@ import {
   writesStore,
 } from "@srobroek/opencode-lib/bd-embedded-write-lock"
 import { scanShell } from "@srobroek/opencode-lib/beads-shell"
-import { sessionPinFor } from "@srobroek/opencode-lib/beads-store"
+import { sessionPinFor, storeFromBeadsDb } from "@srobroek/opencode-lib/beads-store"
 import { supervise } from "@srobroek/opencode-lib/subprocess"
 
 /** The longest a mutating command waits for its store's gate verification. */
@@ -40,7 +40,8 @@ export const EMBEDDED_PIN_ENV: Readonly<Record<string, string>> = { BEADS_DOLT_S
 /** The environment for a plugin-internal `bd` read from `cwd`. */
 export function lifecycleBdEnvironment(cwd: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...base }
-  if (env.BEADS_DIR === undefined || env.BEADS_DIR === "") {
+  // bd opens an inherited BEADS_DB when BEADS_DIR is unset; a pin would take the ledger away from it.
+  if ((env.BEADS_DIR === undefined || env.BEADS_DIR === "") && (env.BEADS_DB === undefined || env.BEADS_DB === "")) {
     delete env.BEADS_DIR
     const resolved = sessionPinFor(cwd)
     if (resolved !== undefined) env.BEADS_DIR = resolved
@@ -62,7 +63,13 @@ function boundedBdEnvironment(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 /** The store directory bd would open from `cwd` under `env`. */
 export function bdStoreDir(cwd: string, env: NodeJS.ProcessEnv): string | undefined {
   const selected = env.BEADS_DIR
-  const dir = selected ? (isAbsolute(selected) ? selected : resolve(cwd, selected)) : join(cwd, ".beads")
+  const dir = selected
+    ? isAbsolute(selected)
+      ? selected
+      : resolve(cwd, selected)
+    : env.BEADS_DB
+      ? storeFromBeadsDb(env.BEADS_DB, cwd)
+      : join(cwd, ".beads")
   try {
     return statSync(dir).isDirectory() ? resolve(dir) : undefined
   } catch {
@@ -450,7 +457,9 @@ export function bdStoreForInvocation(
   const pinned = local ?? env.BEADS_DIR
   return canonicalStore(
     pinned === undefined || pinned === ""
-      ? (sessionPinFor(cwd) ?? join(cwd, ".beads"))
+      ? env.BEADS_DB !== undefined && env.BEADS_DB !== ""
+        ? storeFromBeadsDb(env.BEADS_DB, cwd)
+        : (sessionPinFor(cwd) ?? join(cwd, ".beads"))
       : isAbsolute(pinned)
         ? pinned
         : resolve(cwd, pinned),
