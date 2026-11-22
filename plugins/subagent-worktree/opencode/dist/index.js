@@ -3673,7 +3673,19 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
   };
   const releasing = new Set;
   const resuming = new Map;
-  const resumeInFlight = (child) => [...resuming.values()].some((entry) => entry.child === child && (entry.until === undefined || entry.until > now()));
+  const resumeInCall = (child) => [...resuming.values()].some((entry) => entry.child === child && entry.since === undefined);
+  const resumeQueued = (child, busy) => {
+    let queued = false;
+    for (const [id, entry] of resuming) {
+      if (entry.child !== child || entry.since === undefined)
+        continue;
+      if (busy !== undefined && busy >= entry.since)
+        resuming.delete(id);
+      else
+        queued = true;
+    }
+    return queued;
+  };
   const background = new Map;
   let idleObserved = false;
   const startedAt = now();
@@ -3683,14 +3695,15 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     const jobs = (input.background ?? []).map((job) => `${String(job.kind)} ${String(job.shellID ?? job.jobID ?? job.childSessionID ?? "")}`.trim());
     background.set(input.sessionID, { jobs: jobs.length === 0 ? undefined : jobs.join(", "), at: now() });
   };
-  const backgroundOf = (child, busy) => {
+  const backgroundOf = (child, busy, idle) => {
     const seen = background.get(child);
     if (seen?.jobs !== undefined)
       return seen.jobs;
-    const ranHere = busy !== undefined && busy >= startedAt;
-    if (ranHere && (seen === undefined || seen.at < busy))
-      return `${child} ran in this server since its last idle gate, so background work since its last run cannot be ruled out`;
-    return;
+    if (busy === undefined || busy < startedAt)
+      return;
+    if (seen !== undefined && seen.at >= busy && idle !== undefined && idle >= seen.at)
+      return;
+    return `${child} ran in this server without ending at an empty idle gate, so background work since its last run cannot be ruled out`;
   };
   const handedOff = async (child) => parseRelease(await ctx.storage.get(releaseKey(child)))?.to !== undefined;
   const handOver = async (directory, child) => {
@@ -4025,7 +4038,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     if (event.id !== undefined) {
       const entry = resuming.get(event.id);
       if (entry && event.status === "completed" && reported?.status === "running")
-        entry.until = now() + reserveMs;
+        entry.since = now();
       else
         resuming.delete(event.id);
     }
@@ -4216,14 +4229,18 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
       const tree = porcelain === undefined ? undefined : { dirty: porcelain !== "", unpushed: await git2.unpushed(directory) };
       return { tree, head: await git2.head(directory) };
     };
-    const running = async (busy) => {
+    const running = async (facts) => {
       const common = await commonDirOf(checkout);
       const held = common === undefined ? "the git common directory cannot be found, so running work cannot be ruled out" : holdsState(common, directory, now());
       const unseen = idleObserved ? undefined : "idle gates are off or unsupported, so background work cannot be ruled out";
-      return [backgroundOf(child, busy), held, unseen].filter((why) => why !== undefined).join("; ") || undefined;
+      return [backgroundOf(child, facts.busy, facts.idle), held, unseen].filter((why) => why !== undefined).join("; ") || undefined;
     };
     const locked = async () => {
+      if (parseRelease(await ctx.storage.get(releaseKey(child))))
+        return refuse(`${child} is already released`);
       const before = await writerFacts(child);
+      if (resumeQueued(child, before.busy))
+        return refuse(`a resume of ${child} is in flight: its background run has not started yet; wait for it`);
       const gone = before.state === "deleted" || before.state === "archived";
       const openTool = gone ? undefined : hasOpenToolCall(await settled(Promise.resolve(ctx.session.context({ sessionID: child }))));
       const owner = before.parentID ?? lane2?.parent;
@@ -4232,7 +4249,7 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
         caller: tool.sessionID,
         child: { ...before, ...owner === undefined ? {} : { owner } },
         openTool,
-        background: await running(before.busy),
+        background: await running(before),
         tree: proof.tree,
         now: now(),
         quietMs: RELEASE_QUIET_MS
@@ -4256,7 +4273,7 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
         if (again.tree === undefined || again.tree.dirty || again.tree.unpushed !== 0 || again.head !== head) {
           throw new Error(`the worktree changed while ${child} was being released; check ${directory} and release again`);
         }
-        const still = await running(after.busy);
+        const still = await running(after);
         if (still !== undefined)
           throw new Error(`background work is still running: ${still}`);
       } catch (error) {
@@ -4270,7 +4287,7 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
       };
     };
     return lifecycle.spawnInto(directory, checkout, async () => {
-      if (resumeInFlight(child))
+      if (resumeInCall(child))
         return refuse(`a resume of ${child} is in flight; wait for that subagent call to return`);
       if (releasing.has(child))
         return refuse(`a release of ${child} is already under way`);

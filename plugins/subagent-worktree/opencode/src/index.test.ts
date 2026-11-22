@@ -804,25 +804,57 @@ describe("worktree argument", () => {
       expect(setup.fake.storage.get("release/ses_dead")).toBeUndefined()
     })
 
-    test("a background resume keeps the release away until its hold expires, even before its run shows", async () => {
+    test("a background resume keeps the release away until its run has started, however long that takes", async () => {
       let clock = NOW
       const setup = await start({ now: () => clock })
       writerIn(setup, "ses_dead", 11 * MINUTE)
       await spawn(setup, { agent: "pinned", sessionID: "ses_dead", prompt: "go on" })
       await setup.fake.fire.tool("execute.after", { ...completed("ses_dead"), result: { content: "started", metadata: { sessionID: "ses_dead", status: "running" } } })
+      clock += 10 * MINUTE
       expect((await release(setup, "ses_dead")).content).toMatch(/a resume of ses_dead is in flight/)
-      clock += 61_000
+      // The resumed run starts and ends, at an idle gate with nothing in the background.
+      Object.assign(setup.fake.sessions.get("ses_dead") ?? {}, { time: { busy: clock } })
+      await setup.fake.fire.session("experimental.idle", { sessionID: "ses_dead", background: [] })
+      Object.assign(setup.fake.sessions.get("ses_dead") ?? {}, { time: { busy: clock, idle: clock } })
+      clock += 11 * MINUTE
       expect((await release(setup, "ses_dead")).metadata.ok).toBe(true)
     })
 
-    test("a writer that ran in this server and has not reached an idle gate since is not released", async () => {
+    test.each([
+      ["never reached an idle gate here", false, false],
+      ["reached an idle gate but its run went on after it", true, false],
+    ])("a writer whose run started in this server and %s is not released", async (_name, gate, ended) => {
       let clock = NOW - 20 * MINUTE
       const setup = await start({ now: () => clock })
       writerIn(setup, "ses_dead", 11 * MINUTE)
       clock = NOW
+      if (gate) await setup.fake.fire.session("experimental.idle", { sessionID: "ses_dead", background: [] })
+      if (ended) Object.assign(setup.fake.sessions.get("ses_dead") ?? {}, { time: { busy: NOW - 11 * MINUTE, idle: NOW } })
       expect((await release(setup, "ses_dead")).content).toMatch(/background work since its last run cannot be ruled out/)
+    })
+
+    test("a writer whose run started in this server is released once that run ended at an empty idle gate", async () => {
+      let clock = NOW - 20 * MINUTE
+      const setup = await start({ now: () => clock })
+      writerIn(setup, "ses_dead", 11 * MINUTE)
+      clock = NOW
       await setup.fake.fire.session("experimental.idle", { sessionID: "ses_dead", background: [] })
+      Object.assign(setup.fake.sessions.get("ses_dead") ?? {}, { time: { busy: NOW - 11 * MINUTE, idle: NOW } })
       expect((await release(setup, "ses_dead")).metadata.ok).toBe(true)
+    })
+
+    test("a second release queued behind the first is refused under the lock", async () => {
+      const setup = await dead()
+      const held = holdAt(setup, "status")
+      const first = release(setup, "ses_dead")
+      await held.reached
+      // It passed the check before the lock: the first had not written its record yet.
+      const second = release(setup, "ses_dead")
+      held.open()
+      const record = (await first).metadata as { ok: boolean; release?: unknown }
+      expect(record.ok).toBe(true)
+      expect((await second).content).toMatch(/already released/)
+      expect(interrupts(setup)).toEqual([{ sessionID: "ses_dead" }])
     })
 
     test("a writer spawned while the release is under way is still refused", async () => {

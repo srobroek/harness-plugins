@@ -393,13 +393,24 @@ export function createLanes(
    * Admission between a release and a resume of the same child, in this plugin instance. Each side checks
    * the other's set and adds itself with no await in between, so at most one of them goes ahead.
    * `releasing`: children whose release is under way. `resuming`: resumed child by `subagent` call id,
-   * until that call's `after` (or its failure in `before`). A background resume keeps its entry until
-   * `until`, the same hold a background spawn's reservation gets, since its run may not show yet.
+   * until that call's `after` (or its failure in `before`). A background resume has returned before its
+   * run may show, so its entry keeps `since` (when it returned) and holds until the child's latest run
+   * started at or after it. A queued run that never starts keeps the release away in this instance.
    */
   const releasing = new Set<string>()
-  const resuming = new Map<string, { child: string; until?: number }>()
-  const resumeInFlight = (child: string) =>
-    [...resuming.values()].some((entry) => entry.child === child && (entry.until === undefined || entry.until > now()))
+  const resuming = new Map<string, { child: string; since?: number }>()
+  /** A resume of `child` whose call has not returned. */
+  const resumeInCall = (child: string) => [...resuming.values()].some((entry) => entry.child === child && entry.since === undefined)
+  /** A background resume of `child` whose run has not shown yet, given the start of the child's latest run; settled ones are dropped. */
+  const resumeQueued = (child: string, busy: number | undefined) => {
+    let queued = false
+    for (const [id, entry] of resuming) {
+      if (entry.child !== child || entry.since === undefined) continue
+      if (busy !== undefined && busy >= entry.since) resuming.delete(id)
+      else queued = true
+    }
+    return queued
+  }
 
   /**
    * The background work each session reported at its last idle gate (shells, code mode jobs, background
@@ -416,13 +427,18 @@ export function createLanes(
     const jobs = (input.background ?? []).map((job) => `${String(job.kind)} ${String(job.shellID ?? job.jobID ?? job.childSessionID ?? "")}`.trim())
     background.set(input.sessionID, { jobs: jobs.length === 0 ? undefined : jobs.join(", "), at: now() })
   }
-  /** What is known about `child`'s background work, given the start of its latest run. */
-  const backgroundOf = (child: string, busy: number | undefined): string | undefined => {
+  /**
+   * What is known about `child`'s background work. A run that started before this plugin instance did
+   * belonged to a server that is gone, and so did its jobs. A run that started here counts as known only
+   * when it ended (`idle`) at or after an idle gate that came after its start and listed nothing: an idle
+   * gate can let the same run go on, and what it starts then is not recorded.
+   */
+  const backgroundOf = (child: string, busy: number | undefined, idle: number | undefined): string | undefined => {
     const seen = background.get(child)
     if (seen?.jobs !== undefined) return seen.jobs
-    const ranHere = busy !== undefined && busy >= startedAt
-    if (ranHere && (seen === undefined || seen.at < busy)) return `${child} ran in this server since its last idle gate, so background work since its last run cannot be ruled out`
-    return undefined
+    if (busy === undefined || busy < startedAt) return undefined
+    if (seen !== undefined && seen.at >= busy && idle !== undefined && idle >= seen.at) return undefined
+    return `${child} ran in this server without ending at an empty idle gate, so background work since its last run cannot be ruled out`
   }
 
   /** Whether `child` was released and its worktree handed to another writer: no lane or claim of it may be written again. */
@@ -801,7 +817,7 @@ export function createLanes(
       // A foreground resume has returned: from here the child's own state keeps a release away. A background
       // resume's run may not show yet, so its entry holds until the same expiry as a background reservation.
       const entry = resuming.get(event.id)
-      if (entry && event.status === "completed" && reported?.status === "running") entry.until = now() + reserveMs
+      if (entry && event.status === "completed" && reported?.status === "running") entry.since = now()
       else resuming.delete(event.id)
     }
     if (event.id !== undefined) {
@@ -1001,14 +1017,17 @@ export function createLanes(
       return { tree, head: await git.head(directory) }
     }
     /** Background work of the child (from its idle gates, given the start of its latest run) and holds recorded on the worktree. */
-    const running = async (busy: number | undefined) => {
+    const running = async (facts: { busy?: number; idle?: number }) => {
       const common = await commonDirOf(checkout)
       const held = common === undefined ? "the git common directory cannot be found, so running work cannot be ruled out" : holdsState(common, directory, now())
       const unseen = idleObserved ? undefined : "idle gates are off or unsupported, so background work cannot be ruled out"
-      return [backgroundOf(child, busy), held, unseen].filter((why) => why !== undefined).join("; ") || undefined
+      return [backgroundOf(child, facts.busy, facts.idle), held, unseen].filter((why) => why !== undefined).join("; ") || undefined
     }
     const locked = async (): Promise<Result> => {
+      // Read again under the lock: a release queued behind another must not overwrite its record.
+      if (parseRelease(await ctx.storage.get(releaseKey(child)))) return refuse(`${child} is already released`)
       const before = await writerFacts(child)
+      if (resumeQueued(child, before.busy)) return refuse(`a resume of ${child} is in flight: its background run has not started yet; wait for it`)
       const gone = before.state === "deleted" || before.state === "archived"
       const openTool = gone ? undefined : hasOpenToolCall(await settled(Promise.resolve(ctx.session.context({ sessionID: child } as never)) as Promise<unknown>))
       const owner = before.parentID ?? lane?.parent
@@ -1017,7 +1036,7 @@ export function createLanes(
         caller: tool.sessionID,
         child: { ...before, ...(owner === undefined ? {} : { owner }) },
         openTool,
-        background: await running(before.busy),
+        background: await running(before),
         tree: proof.tree,
         now: now(),
         quietMs: RELEASE_QUIET_MS,
@@ -1037,7 +1056,7 @@ export function createLanes(
         if (again.tree === undefined || again.tree.dirty || again.tree.unpushed !== 0 || again.head !== head) {
           throw new Error(`the worktree changed while ${child} was being released; check ${directory} and release again`)
         }
-        const still = await running(after.busy)
+        const still = await running(after)
         if (still !== undefined) throw new Error(`background work is still running: ${still}`)
       } catch (error) {
         await ctx.storage.remove(releaseKey(child))
@@ -1051,7 +1070,7 @@ export function createLanes(
     }
     return lifecycle.spawnInto(directory, checkout, async () => {
       // No await between these checks and the mark: a resume that registers later sees `releasing` and refuses.
-      if (resumeInFlight(child)) return refuse(`a resume of ${child} is in flight; wait for that subagent call to return`)
+      if (resumeInCall(child)) return refuse(`a resume of ${child} is in flight; wait for that subagent call to return`)
       if (releasing.has(child)) return refuse(`a release of ${child} is already under way`)
       releasing.add(child)
       try {
