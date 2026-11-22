@@ -1,8 +1,12 @@
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { ambientStore, configuredStore } from "./beads-store.ts"
+
+// Real `git init` and `git rev-parse` per store lookup: the whole file took 8.8 s at load average 64,
+// past bun's 5 s per-test default for one lookup; 30 s leaves headroom (AGENTS.md, Testing).
+setDefaultTimeout(30_000)
 
 const roots: string[] = []
 afterEach(() => {
