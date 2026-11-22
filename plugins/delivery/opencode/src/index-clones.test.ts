@@ -356,8 +356,8 @@ test("the reminder for a registered landing in another repository runs its close
     expect(reminders).toHaveLength(1)
     const root = (await repositoryContext(repoB))?.ledger.root as string
     const text = String((JSON.parse(reminders[0] as string) as { text: string }).text)
-    expect(text).toContain(`cd '${root}' && env -u BEADS_DIR bd update omp-1`)
-    expect(text).toContain(`cd '${root}' && env -u BEADS_DIR bd close omp-1`)
+    expect(text).toContain(`bd -C '${root}' update omp-1`)
+    expect(text).toContain(`bd -C '${root}' close omp-1`)
     expect(text).not.toMatch(/(^|; |\()bd (update|close)/)
   } finally {
     rmSync(join(repoB, ".beads"), { recursive: true, force: true })

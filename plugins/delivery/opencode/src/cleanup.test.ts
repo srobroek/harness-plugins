@@ -4435,7 +4435,7 @@ describe("cleanup of another repository's landing runs against that repository",
     await h.idle()
     const texts = h.fake.calls.filter((call) => call.method === "session.synthetic").map((call) => JSON.stringify(call.input))
     expect(texts).toHaveLength(1)
-    expect(texts[0]).toContain(`cd '${h.f.main}' && env -u BEADS_DIR bd close delivery-17`)
+    expect(texts[0]).toContain(`bd -C '${h.f.main}' close delivery-17`)
     expect(existsSync(h.f.linked)).toBe(true)
     await h.finish()
   })

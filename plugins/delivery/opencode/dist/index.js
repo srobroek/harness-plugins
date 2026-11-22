@@ -4540,7 +4540,9 @@ function foreignCleanupStep(repo, root) {
   return `delivery_cleanup repo=${repo} repoPath=${/\s/.test(root) ? JSON.stringify(root) : root}`;
 }
 function inClone(root, command) {
-  return `cd '${root.replaceAll("'", `'\\''`)}' && env -u BEADS_DIR ${command}`;
+  if (!command.startsWith("bd "))
+    throw new Error(`inClone takes a bd command, got ${JSON.stringify(command)}`);
+  return `bd -C '${root.replaceAll("'", `'\\''`)}' ${command.slice("bd ".length)}`;
 }
 function missingBeadIdentity(ids, branch, ledger) {
   if (!ledger.active || ids.length > 0)
