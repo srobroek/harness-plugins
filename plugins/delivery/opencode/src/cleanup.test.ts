@@ -4320,7 +4320,7 @@ describe("cleanup of another repository's landing runs against that repository",
     expect(existsSync(h.f.linked)).toBe(false)
     expect(existsSync(h.s.linked)).toBe(true)
     const cleaned = listReceipts(receiptDirectory(h.f.env, h.f.receipt.repo.key)).filter((receipt) => receipt.outcome === "cleaned")
-    expect(cleaned.map((receipt) => receipt.continues)).toEqual([h.f.receipt.receiptId])
+    expect(cleaned.map((receipt) => receipt.supersedes)).toEqual([h.f.receipt.receiptId])
     await h.finish()
   })
 
@@ -4366,7 +4366,7 @@ describe("cleanup of another repository's landing runs against that repository",
     })
     const result = await h.explicit()
     expect(result.ok).toBe(true)
-    expect(h.hostRemoved).toEqual([{ projectID: "prj_target", directory: realpathSync(h.f.linked) }])
+    expect(h.hostRemoved).toEqual([{ projectID: "prj_target", directory: h.f.linked }])
     await h.finish()
   })
 

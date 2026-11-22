@@ -156,7 +156,20 @@ export type CleanupDeps = {
    * `bounds.refReadMs` and ends on `signal`. Tests observe it.
    */
   git?: GitRunner
+  /**
+   * The coordination of another repository, for a `repo` and clone that are not the session's:
+   * its removal section, last check, lane move and host registry, bound to that repository's
+   * common directory. Every one of those fields is taken from here, never from the session's;
+   * `authorize` is replaced when it returns one. Absent, such a cleanup is refused.
+   */
+  coordinate?: (identity: RepositoryIdentity) => Promise<Coordination | CleanupFailure>
 }
+
+/** A repository's coordination store (its git common directory) and its canonical checkout. */
+export type RepositoryIdentity = { common: string; root: string }
+
+/** What {@link CleanupDeps.coordinate} binds to one repository. */
+export type Coordination = Pick<CleanupDeps, "removalSection" | "finalCheck" | "afterRemoval" | "host" | "authorize">
 
 /** What the removal section proved and did, for the continuation receipt. */
 export type RemovalFacts = {
@@ -170,7 +183,8 @@ export type RemovalFacts = {
 }
 
 export type HostWorktrees = {
-  list: () => Promise<readonly { directory: string }[]>
+  /** The registry; `target` is the worktree about to be removed, for a registry that must first find its project. */
+  list: (target?: string) => Promise<readonly { directory: string }[]>
   /** Non-force removal; rejects with the host's reason when it refuses. */
   remove: (directory: string) => Promise<void>
 }
@@ -1379,8 +1393,8 @@ export function branchDeleteArgs(branch: string): string[] {
 /**
  * Remove a landed pull request's worktree and local branch. A `repo` that names the
  * session's repository changes nothing. A `repo` of another repository is verified
- * (its clone, named by `repoPath` or `worktree`, must have a remote naming it) and then
- * refused with {@link foreignCleanupReason}: that cleanup runs from a session there.
+ * (its clone, named by `repoPath` or `worktree`, must have a remote naming it) and the
+ * cleanup then runs in that clone, under the coordination `deps.coordinate` binds to it.
  */
 export async function cleanupDelivery(
   params: DeliveryCleanupParams,
@@ -1401,18 +1415,26 @@ export async function cleanupDelivery(
   }
   const target = await retargetRepository({ repo, repoPath, worktree: rest.worktree }, sessionCwd, read)
   if ("reason" in target) return { ok: false, reason: target.reason }
-  if (target.retargeted) return { ok: false, reason: foreignCleanupReason(repo ?? "", target.cwd) }
-  return cleanupInRepository({ ...rest, repo }, target.cwd, deps)
+  if (!target.retargeted) return cleanupInRepository({ ...rest, repo }, target.cwd, deps)
+  // Lane claims, holds, denials and the removal lock belong to that repository. Without a
+  // coordination bound to it, removing from here could take a worktree its owner still holds.
+  if (deps.coordinate === undefined) return { ok: false, reason: uncoordinatedReason(repo ?? "", target.cwd) }
+  const coordination = await deps.coordinate({ common: target.commonDir, root: target.cwd })
+  if (isFailure(coordination)) return coordination
+  const { coordinate: _session, ...shared } = deps
+  return cleanupInRepository({ ...rest, repo }, target.cwd, {
+    ...shared,
+    removalSection: coordination.removalSection,
+    finalCheck: coordination.finalCheck,
+    afterRemoval: coordination.afterRemoval,
+    host: coordination.host,
+    authorize: coordination.authorize ?? deps.authorize,
+  })
 }
 
-/**
- * Why cleanup of another repository's landing is refused from this session. Lane claims,
- * holds, denials, the removal lock and the bead ledger it must respect all belong to
- * that repository, and this session reads only its own; removing from here could take
- * a worktree another agent in that repository still owns.
- */
-export function foreignCleanupReason(repo: string, root: string): string {
-  return `repo: observed ${JSON.stringify(repo.trim())}, a repository other than this session's; its lane claims, holds and bead ledger are not visible from here, so run delivery_cleanup from a session in ${root}; nothing was removed`
+/** Why another repository's cleanup is refused when no coordination for it was given. */
+function uncoordinatedReason(repo: string, root: string): string {
+  return `repo: observed ${JSON.stringify(repo.trim())}, a repository other than this session's, with no coordination given for its lane claims, holds and denials; run delivery_cleanup from a session in ${root}, or through the delivery tool, which coordinates there; nothing was removed`
 }
 
 async function cleanupInRepository(
@@ -1578,7 +1600,7 @@ async function cleanupInRepository(
     let route: "host" | "git" = "git"
     if (deps.host !== undefined) {
       try {
-        route = removalRoute(await deps.host.list(), targetPath)
+        route = removalRoute(await deps.host.list(targetPath), targetPath)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         return refuse(
