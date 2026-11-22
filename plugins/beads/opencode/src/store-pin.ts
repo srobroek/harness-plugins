@@ -62,9 +62,12 @@ export function pinShell(
 /**
  * Drop an inherited pin from a child environment without pinning a new store: what the
  * child gets when automatic pinning is off, so it opens the ledger the gates assume.
+ * Resolves no store, so an inherited `BEADS_DB` cannot stand in as a replacement and keep the old pin.
  */
 export function dropInheritedPin(env: Record<string, string | undefined>): void {
-  for (const name of selectStore("", env, () => undefined).unset) delete env[name]
+  if (env[PIN_MARKER_ENV] === undefined) return
+  if (inheritsPin(env)) delete env.BEADS_DIR
+  delete env[PIN_MARKER_ENV]
 }
 
 /** The store a session starting in `cwd` uses, and the changes that give a shell it. */
