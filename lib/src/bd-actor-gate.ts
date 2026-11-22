@@ -301,12 +301,14 @@ function readShell(command: string, context: { nested: boolean; touched: boolean
   const scan = scanShell(command, { executableSubstitutionsOnly: true })
   const child = { nested: true, touched: context.touched }
   let vars: ShellVars = {}
-  // The variables as the current list began; a list run in the background changes nothing after it.
+  // The variables as the current list began; what a background list changes is unverified after it.
   let list: ShellVars = {}
   // Set after the first command of an `&&` / `||` chain: the variables then, and whether a `||` has come.
   let chain: Chain | null = null
   // A subshell `( … )` runs on a copy; whatever it does ends with it.
   const scopes: Array<{ vars: ShellVars; list: ShellVars; chain: Chain | null }> = []
+  // An open brace group: the enclosing list's start and chain, restored at its `}`.
+  const groups: Array<{ list: ShellVars; chain: Chain | null }> = []
   // Compound-command depth: a body may not run, so what it changes is unverified.
   let compounds = 0
   const isPipe = (other: (typeof scan.items)[number] | undefined): boolean =>
@@ -326,7 +328,14 @@ function readShell(command: string, context: { nested: boolean; touched: boolean
         list = { ...vars }
         chain = null
       } else if (operator === ")" && scopes.length > 0) ({ vars, list, chain } = scopes.pop() as (typeof scopes)[number])
-      else if (operator === "&&" || operator === "||") {
+      else if (operator === "{") {
+        // A brace group runs in this shell, so its changes stand; only its separators are its own.
+        groups.push({ list, chain })
+        chain = null
+      } else if (operator === "}" && groups.length > 0) {
+        endChain()
+        ;({ list, chain } = groups.pop() as (typeof groups)[number])
+      } else if (operator === "&&" || operator === "||") {
         chain ??= { base: { ...vars }, or: false }
         // What runs after `||` may follow a failure of the commands before it.
         if (operator === "||") {
@@ -337,8 +346,11 @@ function readShell(command: string, context: { nested: boolean; touched: boolean
         endChain()
         list = { ...vars }
       } else if (operator === "&") {
+        // A background list runs asynchronously, so what it changed is unverified for what follows.
         endChain()
-        vars = list
+        const changed = changedVars(list, vars)
+        vars = { ...list }
+        markUnverified(vars, changed)
         list = { ...vars }
       }
       continue
