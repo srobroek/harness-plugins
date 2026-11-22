@@ -1868,10 +1868,16 @@ describe("finalize: round two", () => {
   const empty = { head: BASE, ahead: 0 }
 
   test("a start that arrives after the end was accepted but before the lock keeps the worktree", async () => {
-    const { fake, worktree, common, cleanup } = await start(empty, { debounceMs: 20 })
-    // A first pass writes the lane's claim, so the next one reaches the lane lock only when it removes.
-    fake.emit({ type: "session.idle", data: { sessionID: PARENT } })
-    await settle(80)
+    // The plugin's lock waits through this sleep, so its first call is the barrier: the accepted end is waiting for the lane lock.
+    let waiting!: () => void
+    const blocked = new Promise<void>((done) => (waiting = done))
+    const sleep = (ms: number) => {
+      waiting()
+      return new Promise<void>((done) => setTimeout(done, ms))
+    }
+    const { fake, worktree, common, cleanup } = await start(empty, { debounceMs: 20, lock: { sleep } })
+    // The lane's claim is already on disk, so the pass takes the lane lock only to remove.
+    writeClaim(common, { directory: WT, branch: "lane-a", sessionID: CHILD, parentID: PARENT, createdAt: NOW })
     // Another holder has the lane lock, so the accepted end waits for it.
     let free!: () => void
     let taken!: () => void
@@ -1882,7 +1888,7 @@ describe("finalize: round two", () => {
     })
     await acquired
     fake.emit({ type: "session.execution.succeeded", data: { sessionID: CHILD } })
-    await settle(80)
+    await blocked
     fake.emit({ type: "session.execution.started", data: { sessionID: CHILD } })
     free()
     await held
