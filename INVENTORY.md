@@ -47,6 +47,6 @@
 | toolchain | 0.8.0 | development | global | opencode, claude |
 | trunk-dev | 0.10.0 | development | global | opencode, claude |
 | whats-new | 0.4.0 | development | global | opencode |
-| worktrunk | 0.5.1 | development | project | opencode, claude |
+| worktrunk | 0.6.0 | development | project | opencode, claude |
 
 Each plugin's own `INVENTORY.md` lists what it ships per harness.
