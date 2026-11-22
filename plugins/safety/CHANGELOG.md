@@ -1,3 +1,9 @@
+## safety [0.11.1](https://github.com/srobroek/harness-plugins/compare/safety--v0.11.0...safety--v0.11.1) (2026-11-22)
+
+### Bug Fixes
+
+* **safety:** treat glob and include/exclude option values as data in the rewrite fallback ([#83](https://github.com/srobroek/harness-plugins/issues/83)) ([45ee5fe](https://github.com/srobroek/harness-plugins/commit/45ee5fe60bce90d47a18d97e40db31fa15342a53))
+
 ## safety [0.11.0](https://github.com/srobroek/harness-plugins/compare/safety--v0.10.0...safety--v0.11.0) (2026-11-21)
 
 ### Features
