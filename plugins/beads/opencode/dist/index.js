@@ -6202,6 +6202,141 @@ var basename5 = (value) => value.slice(value.lastIndexOf("/") + 1);
 function opaque(word, text) {
   return word.expands || /\$['"]/.test(text.slice(word.start, word.end));
 }
+var API_VALUE_SHORT = new Set(["X", "f", "F", "H", "q", "t", "p"]);
+var API_VALUE_LONG = new Set([
+  "--method",
+  "--field",
+  "--raw-field",
+  "--input",
+  "--header",
+  "--jq",
+  "--template",
+  "--preview",
+  "--cache",
+  "--hostname"
+]);
+var API_BODY_LONG = new Set(["--field", "--raw-field", "--input"]);
+var API_BODY_SHORT = new Set(["f", "F"]);
+var DEFAULT_HOST = "github.com";
+var HOSTNAME = /^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/;
+var URL_ENDPOINT = /^https?:\/\/([^/]+)(\/.*)?$/i;
+var PULLS_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/pulls\/?$/i;
+var PULLS_URL_PATH = /\/repos\/([^/]+)\/([^/]+)\/pulls\/?$/i;
+var UNRESOLVED = "<unresolved>";
+function urlHost(authority) {
+  const host = authority.toLowerCase();
+  if (host === "api.github.com")
+    return DEFAULT_HOST;
+  return /^api\..+\.ghe\.com$/.test(host) ? host.slice(4) : host;
+}
+function apiTarget(endpoint, hostFlag, env) {
+  const unresolved = { repo: UNRESOLVED };
+  if (endpoint.opaque)
+    return unresolved;
+  const text = endpoint.value.replace(/[?#].*$/s, "");
+  const url = URL_ENDPOINT.exec(text);
+  let host;
+  let match;
+  if (url !== null) {
+    match = PULLS_URL_PATH.exec(url[2] ?? "");
+    host = urlHost(url[1]);
+  } else {
+    match = PULLS_PATH.exec(text);
+    if (hostFlag?.opaque === true)
+      return match === null ? undefined : unresolved;
+    host = (hostFlag?.value ?? env.GH_HOST ?? "").toLowerCase();
+    if (host === "")
+      host = DEFAULT_HOST;
+  }
+  if (match === null)
+    return;
+  if (!HOSTNAME.test(host))
+    return unresolved;
+  const [owner, name] = [match[1], match[2]];
+  const placeholders = [owner, name].filter((part) => /^\{.*\}$/.test(part)).length;
+  if (placeholders === 1)
+    return unresolved;
+  if (placeholders === 0)
+    return { repo: `${host}/${owner}/${name}` };
+  const inherited = env.GH_REPO === undefined || env.GH_REPO === "" ? undefined : env.GH_REPO;
+  if (inherited === undefined)
+    return { repo: host === DEFAULT_HOST && !env.GH_HOST ? null : UNRESOLVED };
+  if (!validRepository(inherited))
+    return unresolved;
+  const parts = inherited.split("/");
+  const own = parts.length === 3 ? parts.shift().toLowerCase() : undefined;
+  if (own !== undefined && own !== host)
+    return unresolved;
+  return { repo: `${host}/${parts.join("/")}` };
+}
+function apiTargets(values, opaques, env) {
+  let method;
+  let hostFlag;
+  let hasBody = false;
+  const endpoints = [];
+  const word = (i, inline) => inline === undefined ? { value: values[i + 1] ?? "", opaque: opaques[i + 1] === true } : { value: inline, opaque: opaques[i] === true };
+  for (let i = 0;i < values.length; i++) {
+    const text = values[i];
+    if (text === "--")
+      continue;
+    if (!text.startsWith("-") || text === "-") {
+      endpoints.push({ value: text, opaque: opaques[i] === true });
+      continue;
+    }
+    if (text.startsWith("--")) {
+      const eq = text.indexOf("=");
+      const name = eq < 0 ? text : text.slice(0, eq);
+      if (!API_VALUE_LONG.has(name))
+        continue;
+      const value = word(i, eq < 0 ? undefined : text.slice(eq + 1));
+      if (eq < 0)
+        i++;
+      if (name === "--method")
+        method = value;
+      else if (name === "--hostname")
+        hostFlag = value;
+      else if (API_BODY_LONG.has(name))
+        hasBody = true;
+      continue;
+    }
+    for (let shorts = text.slice(1);shorts !== ""; ) {
+      const letter = shorts[0];
+      const assigned = shorts.length > 2 && shorts[1] === "=";
+      if (!API_VALUE_SHORT.has(letter)) {
+        shorts = assigned ? "" : shorts.slice(1);
+        continue;
+      }
+      const rest = assigned ? shorts.slice(2) : shorts.slice(1);
+      const value = word(i, rest === "" ? undefined : rest);
+      if (rest === "")
+        i++;
+      if (letter === "X")
+        method = value;
+      else if (API_BODY_SHORT.has(letter))
+        hasBody = true;
+      break;
+    }
+  }
+  const post = method === undefined ? hasBody : method.opaque || method.value.toUpperCase() === "POST";
+  if (!post)
+    return [];
+  return endpoints.flatMap((endpoint) => apiTarget(endpoint, hostFlag, env) ?? []);
+}
+function otherReason(state) {
+  state.other = true;
+  return true;
+}
+function apiIn(values, opaques, state) {
+  let found = false;
+  for (const [i, value] of values.entries()) {
+    if (opaques[i] === true || basename5(value) !== "gh" || values[i + 1] !== "api" || opaques[i + 1] === true)
+      continue;
+    const targets = apiTargets(values.slice(i + 2), opaques.slice(i + 2), state.env);
+    state.api.push(...targets);
+    found ||= targets.length > 0;
+  }
+  return found;
+}
 function wordsMayCreate(values, opaques) {
   const first = values.indexOf("pr");
   if (first >= 0 && values.slice(first + 1).some((value) => value === "create" || value === "new"))
@@ -6215,7 +6350,8 @@ function wordsMayCreate(values, opaques) {
       if (operand !== undefined && !GH_BUILTINS.has(operand))
         return true;
     }
-    if (anyOpaque && WATCHED.has(basename5(value)))
+    const api = basename5(value) === "gh" && values[i + 1] === "api" && opaques[i + 1] !== true;
+    if (anyOpaque && !api && WATCHED.has(basename5(value)))
       return true;
   }
   const commandIndex = values.findIndex((value) => !ASSIGNMENT4.test(value));
@@ -6243,13 +6379,20 @@ function textNamesGh(text) {
     return item.words.some((word, i) => opaques[i] !== true && basename5(word.value) === "gh" || i === first && opaques[i] === true);
   });
 }
-function stdinMayCreate(item, text, depth) {
+function stdinMayCreate(item, text, depth, state) {
   const documents = stdinTexts(item, text);
   if (documents.length === 0)
     return false;
   if (depth >= MAX_RESCAN_DEPTH)
-    return true;
-  return documents.some((document) => document.opaque || textMayCreate(document.text, depth + 1) || textNamesGh(document.text));
+    return otherReason(state);
+  let may = false;
+  for (const document of documents) {
+    if (textMayCreate(document.text, depth + 1, state))
+      may = true;
+    if (document.opaque || textNamesGh(document.text))
+      may = otherReason(state);
+  }
+  return may;
 }
 var SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash"]);
 var COMMAND_FLAG = /^-[A-Za-z]*c[A-Za-z]*$/;
@@ -6275,34 +6418,50 @@ function shellTextIn(values, opaques) {
   }
   return found;
 }
-function textMayCreate(text, depth) {
+function textMayCreate(text, depth, state) {
+  let may = false;
+  const judge = (values, opaques) => {
+    if (apiIn(values, opaques, state))
+      may = true;
+    if (wordsMayCreate(values, opaques))
+      may = otherReason(state);
+  };
   const scan = scanShell(text);
-  if (!scan.complete)
-    return wordsMayCreate(text.split(/[\s'"]+/), []);
+  if (!scan.complete) {
+    judge(text.split(/[\s'"]+/), []);
+    return may;
+  }
   for (const item of scan.items) {
     if (item.kind !== "command")
       continue;
     const values = item.words.map((word) => word.value);
     const opaques = item.words.map((word) => opaque(word, text));
-    if (wordsMayCreate(values, opaques))
-      return true;
-    if (stdinMayCreate(item, text, depth))
-      return true;
+    judge(values, opaques);
+    if (stdinMayCreate(item, text, depth, state))
+      may = true;
     const scripts = shellTextIn(values, opaques);
     if (scripts.length === 0)
       continue;
-    if (depth >= MAX_RESCAN_DEPTH)
-      return true;
-    if (scripts.some((script) => textMayCreate(script, depth + 1)))
-      return true;
+    if (depth >= MAX_RESCAN_DEPTH) {
+      may = otherReason(state);
+      continue;
+    }
+    for (const script of scripts)
+      if (textMayCreate(script, depth + 1, state))
+        may = true;
   }
-  return false;
+  return may;
 }
 function levels(parsed) {
   return [parsed, ...parsed.nested.flatMap(levels)];
 }
-function mayCreatePr(parsed) {
-  return levels(parsed).some((level) => textMayCreate(level.command, 0));
+function scanCreate(parsed, env = {}) {
+  const state = { env, api: [], other: false };
+  let may = false;
+  for (const level of levels(parsed))
+    if (textMayCreate(level.command, 0, state))
+      may = true;
+  return { may, api: state.api, other: state.other };
 }
 
 // plugins/beads/opencode/src/pr-bead-link-gate.ts
@@ -6357,6 +6516,8 @@ function repositoryControlled(repo) {
       kind: "unknown",
       reason: "Repository permission could not be determined because the repository could not be identified"
     };
+  if (!validRepository(repo))
+    return { kind: "unknown", reason: "Repository permission could not be determined because the repository name is not OWNER/REPO or HOST/OWNER/REPO" };
   try {
     const permission = execFileSync("gh", ["repo", "view", repo, "--json", "viewerPermission", "--jq", ".viewerPermission"], {
       encoding: "utf8",
@@ -6415,13 +6576,24 @@ function readBodyFile(cwd) {
   };
 }
 function decidePrBeadLink(parsed, cwd, deps) {
-  if (!mayCreatePr(parsed))
+  const env = deps.env ?? {};
+  const found = scanCreate(parsed, env);
+  if (!found.may)
     return null;
   const read = readPrCreate(parsed.command, readBodyFile(cwd));
   if (read.kind === "form" && beadIn(read.body.text) !== undefined)
     return null;
-  const control = deps.control(read.kind === "form" ? read.repo : null, cwd);
-  if (control === false || control !== true && control.kind === "uncontrolled")
+  const inherited = env.GH_REPO === undefined || env.GH_REPO === "" ? null : env.GH_REPO;
+  const repos = read.kind === "form" ? [read.repo ?? inherited] : [...found.api.map((target) => target.repo), ...found.other || found.api.length === 0 ? [inherited] : []];
+  let control = false;
+  for (const repo of new Set(repos)) {
+    const result = deps.control(repo, cwd);
+    if (result === false || result !== true && result.kind === "uncontrolled")
+      continue;
+    control = result;
+    break;
+  }
+  if (control === false)
     return null;
   const subject = read.kind === "form" ? `${REASON} Looked at ${read.body.source}, not the branch or the title.` : `This command may create a PR in a form the bead gate cannot read exactly: ${read.rule}. ${OPT_OUT}`;
   const unknown = control !== true && control.kind === "unknown" ? `${control.reason}. A PR must name a bead, in an exact form, while repository control is unknown. ` : "";
@@ -6554,6 +6726,7 @@ async function decide(original, cwd, deps) {
   if (on("pr-bead-link-gate")) {
     const decision = decidePrBeadLink(parsed, cwd, {
       control: deps.repositoryControl ?? repositoryControlFor,
+      env: deps.env,
       note: () => {
         const ledger = findLedger(cwd);
         return ledger === undefined ? undefined : describeLedger(ledger);
