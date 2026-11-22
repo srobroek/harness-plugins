@@ -2211,6 +2211,11 @@ function createLifecycle(deps) {
     move: (input) => ctx.session.move(input)
   };
   const keptBecause = (kept, reason) => ({ removed: false, kept, reason });
+  const HANDED_OVER = "its worktree was handed to another writer, whose lane keeps it";
+  const settleHandover = (lane) => withLock(lane.directory, lane.parentDir, () => deps.handedOff(lane)).catch((error) => {
+    console.error(`subagent-worktree: could not check the handover of ${lane.child}:`, error instanceof Error ? error.message : error);
+    return true;
+  });
   const startedSince = (sessionIDs, seq) => {
     for (const id of sessionIDs) {
       if (shutdownPending.has(id))
@@ -2400,6 +2405,8 @@ function createLifecycle(deps) {
         if (stored === undefined || canonical(stored.directory) !== canonical(lane.directory) || stored.state !== "active" && stored.state !== "removing") {
           return keptBecause("retired", "the lane is already retired");
         }
+        if (await deps.handedOff(stored))
+          return keptBecause("handed-over", HANDED_OVER);
         const earlier = stored.state === "removing" ? stored.removal : undefined;
         const looks = options.ifGone === true || options.gone !== true && earlier?.pending === undefined;
         const onDisk = looks && await deps.exists(stored.directory);
@@ -2420,7 +2427,8 @@ function createLifecycle(deps) {
         }
         const retireAs = options.retireAs ?? (proof === "merged" ? "merged" : proof === "landed" ? "landed" : proof === "empty" ? "removed" : earlier?.retireAs ?? "removed");
         const removal = { retireAs, ...head === undefined ? {} : { head }, ...earlier?.pending === undefined ? {} : { pending: earlier.pending } };
-        await save({ ...stored, state: "removing", removal });
+        if (await save({ ...stored, state: "removing", removal }) === false)
+          return keptBecause("handed-over", HANDED_OVER);
         if (present) {
           const live = await liveRefusal(stored, options, seq);
           if (live !== undefined) {
@@ -2809,6 +2817,8 @@ function createLifecycle(deps) {
     const fence = { seq: eventSeq, since: now() };
     if (!await deps.exists(lane.directory))
       return { ...entry, verdict: "keep", reason: "its worktree directory is gone and the lane was not retired (removed outside the plugin)", needsPerson: true };
+    if (await settleHandover(lane))
+      return { ...entry, verdict: "keep", reason: HANDED_OVER };
     const child = await childState(ctx.session.get({ sessionID: lane.child }), deps.lookupMs, lane.child);
     if (!childReleasesLane(child))
       return { ...entry, verdict: "keep", reason: `its subagent session is ${child}` };
@@ -2884,7 +2894,11 @@ function createLifecycle(deps) {
         gatesActive = false;
       }
     }
-    serial(() => resumeRemovals(() => true, { seq: 0 }));
+    serial(async () => {
+      for (const lane of (await deps.scan()).filter((candidate) => candidate.state === "active" || candidate.state === "removing"))
+        await settleHandover(lane);
+      await resumeRemovals(() => true, { seq: 0 });
+    });
   };
   const dispose = async () => {
     disposed = true;
@@ -2931,7 +2945,18 @@ function parseRelease(value) {
     return;
   if (record.to !== undefined && typeof record.to !== "string")
     return;
+  if (record.toParent !== undefined && typeof record.toParent !== "string")
+    return;
   return value;
+}
+function repairHandover(old, record, successor, now) {
+  if (record?.to === undefined || record.child !== old.child)
+    return { kind: "none" };
+  if (successor !== undefined)
+    return { kind: "drop-old" };
+  if (old.state !== "active")
+    return { kind: "hold" };
+  return { kind: "complete", lane: { ...old, child: record.to, parent: record.toParent ?? old.parent, handedOver: { from: old.child, at: now } } };
 }
 function decideRelease(facts) {
   const { child } = facts;
@@ -2940,7 +2965,7 @@ function decideRelease(facts) {
   if (child.state !== "deleted") {
     return {
       release: false,
-      reason: "the writer's session still exists, so a run, shell or background job of it may still write to the worktree. " + "In OpenCode, stop it and delete its session, then release again"
+      reason: "the writer's session still exists, so a run, shell or background job of it may still write to the worktree. " + "Close any terminal it opened, stop it and delete its session, then release again. " + "Deleting a session stops its run, shell commands, background jobs and subagents in the OpenCode server that runs them"
     };
   }
   if (child.owner !== facts.caller)
@@ -3053,13 +3078,14 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     const write = async () => {
       if (await handedOff(lane2.child)) {
         console.error(`subagent-worktree: not saving the lane of ${lane2.child}: its worktree was handed to another writer`);
-        return;
+        return false;
       }
       if (claims(lane2))
         await syncClaim(lane2);
       await ctx.storage.set(laneKey(lane2.child), lane2);
       if (!claims(lane2))
         await syncClaim(lane2);
+      return true;
     };
     const common = await commonDirOf(lane2.parentDir);
     return common === undefined ? write() : lockedWrite(common, lane2.directory, { sessionID: lane2.child, now, ...lock ?? {} }, write);
@@ -3188,6 +3214,33 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
     return found;
   };
   const handedOff = async (child) => parseRelease(await ctx.storage.get(releaseKey(child)))?.to !== undefined;
+  const settleHandover = async (lane2) => {
+    const record = parseRelease(await ctx.storage.get(releaseKey(lane2.child)));
+    if (record?.to === undefined)
+      return false;
+    try {
+      const repair = repairHandover(lane2, record, await load(record.to), now());
+      if (repair.kind === "complete" && !await save(repair.lane))
+        return true;
+      if (repair.kind === "complete" || repair.kind === "drop-old")
+        await ctx.storage.remove(laneKey(lane2.child));
+    } catch (error) {
+      console.error(`subagent-worktree: could not finish the handover of ${lane2.child} to ${record.to}:`, errorMessage(error));
+    }
+    return true;
+  };
+  const treeSince = async (directory, head) => {
+    const porcelain = await git2.porcelain(directory);
+    if (porcelain === undefined)
+      return "the worktree cannot be read";
+    if (porcelain !== "")
+      return "the worktree has uncommitted changes";
+    const unpushed = await git2.unpushed(directory);
+    if (unpushed !== 0)
+      return unpushed === undefined ? "the worktree's branch has no upstream" : "the worktree has commits not pushed to its upstream";
+    const now = await git2.head(directory);
+    return now === head ? undefined : `HEAD moved from ${head.slice(0, 12)} to ${now === undefined ? "an unreadable commit" : now.slice(0, 12)}`;
+  };
   const handOver = async (directory, child, parent) => {
     const undo = [];
     try {
@@ -3196,7 +3249,13 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
         const ownsHere = owned?.state === "active" && await normalize(owned.directory) === directory;
         if (release2.to !== undefined && !ownsHere)
           continue;
-        await ctx.storage.set(releaseKey(release2.child), { ...release2, to: child });
+        const drift = await treeSince(directory, release2.head);
+        if (drift !== undefined) {
+          if (release2.to === undefined)
+            await ctx.storage.remove(releaseKey(release2.child));
+          throw new Error(`${drift} since ${release2.child} was released, so its lane was not handed over. Check ${directory}, then release ${release2.child} again`);
+        }
+        await ctx.storage.set(releaseKey(release2.child), { ...release2, to: child, toParent: parent });
         const step = { saved: false, removed: false };
         undo.push(async () => {
           await ctx.storage.set(releaseKey(release2.child), release2);
@@ -3823,6 +3882,7 @@ The merge is done, but the worktree stays at ${lane2.directory} (branch ${lane2.
     load,
     save,
     scan,
+    handedOff: settleHandover,
     getSession,
     moveHome,
     removeWorktree,
@@ -3961,6 +4021,7 @@ export {
   readOptions,
   readSubagentInput,
   releaseKey,
+  repairHandover,
   reservationStatus,
   resumeWorktreeNote,
   rewritePrompt,
