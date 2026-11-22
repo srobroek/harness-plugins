@@ -21,11 +21,6 @@ the `wt` strategy when the [worktrunk](../worktrunk) plugin is loaded, OpenCode'
 
 | `gates` | `true` | Register the `experimental.idle` gates (see Cleanup layers). The hook is experimental; if the host lacks it the plugin runs without gates. |
 | `emptyGraceMinutes` | `30` | The idle pass and the gate remove an empty lane only after its child and parent stayed idle this long. An end of the child's execution removes it at once. |
-| `sweep` | `"report"` | `"off"`, `"report"` or `"prune"`. It only sets the `freeBuildDirs` default: the sweep runs when `subagent_worktree_sweep` is called, with that call's mode. |
-| `minAgeHours` | `24` | The sweep never prunes a worktree younger than this. |
-| `include` | `[]` | Extra roots, beyond OpenCode's worktree directory, the sweep may look in. |
-| `freeBuildDirs` | `true` when `sweep` is `"prune"`, else `false` | A pruning sweep frees ignored build directories of kept worktrees whose owner is gone (see Build directories). When `false`, the sweep report only names the worktrees where it could. |
-| `lowDiskBytes` | `0` (off) | When free space on a worktree's disk falls below this many bytes, build directories are freed without waiting for the 30-minute grace period. |
 
 ```jsonc
 { "plugins": [{ "package": "...", "options": { "agents": ["implementer"], "base": "HEAD" } }] }
@@ -133,8 +128,8 @@ marking the lanes removed, and reports these repairs. It does not delete any wor
 ## Cleanup layers
 
 Agent worktrees pile up when work lands or an agent dies. Five layers keep them in step, each
-covering what the others cannot see. Every lane removal goes through one path (see Lane removal);
-the sweep keeps its own verified removal for worktrees no trigger reached. Every removal is a
+covering what the others cannot see. Every lane removal, the sweep's included, goes through one
+path (see Lane removal). Every removal is a
 non-force `worktree.remove` followed by a refresh, and the plugin never deletes a remote branch.
 
 ### Lane removal
@@ -164,11 +159,11 @@ reads everything fresh. The lane is kept unless all of these hold:
 4. **Proven.** HEAD is one of these commits. Proofs are keyed by commit, never by branch name.
    - the commit the lane started from (an empty lane);
    - an ancestor of the merge target;
-   - an ancestor of `origin/main`;
-   - the `headRefOid` of a merged PR (one batched `gh pr list` per repository, cached for five
-     minutes);
-   - the head of a branch that `wt list` reports integrated;
+   - an ancestor of `origin/main` that was not already in `main` when the lane was created;
    - a PR head that `delivery_land` recorded for the worktree.
+
+   A pull request that is merged on the forge, or a branch `wt list` calls integrated, proves
+   nothing: a squash-merged lane whose tip `origin/main` does not contain is kept.
 
 Then the lane is recorded as `removing`, and liveness and the tree are read once more. HEAD must
 still be the proven commit and the tree must still be clean. Then the worktree is removed. The local
@@ -214,39 +209,10 @@ They remove an empty lane (no commits, clean) after the child and parent stay id
 | 2. Lane sync on a landing | An `execute.after` hook on `delivery_land` and `delivery_cleanup`: when the result shows the worktree removed (or its path gone), the lane is retired as `landed` and the worktree list is refreshed. `list` stops showing it. Results are read defensively (object, JSON or prose), and nothing happens when `delivery` is not installed. | Lanes whose worktree is still there. |
 | 3. Execution events | `session.execution.failed`, `.interrupted`, `.succeeded`, `session.idle`, `session.archived` and `session.deleted` for a lane child or the parent of lanes. One debounced pass (about 2 s) per session; `succeeded` and `idle` for one execution are one pass. It records how a child ended, tells the parent once when a failed or interrupted child left work, and starts the removal when the child's execution or session ended. | A hard crash or a restart: the server emits nothing. The next plugin start finishes every removal left in `removing`. |
 | 4. Idle gates | `experimental.idle`. A child idle with uncommitted changes gets one nudge per dirty state. A lead with finished lanes gets one message: landed and clean lanes are removed, an unresolved lane (commits, not landed, no open PR) is named once, a landed-but-dirty lane is reported once. Nothing is sent while one of its children runs, and at most one message per session every 15 s, because a message admitted in the hook fires the hook again. `subagent_worktree_merge` method `keep` (with `reason`) silences a lane until its state changes. | An interrupt or a failure: the hook does not fire for them. |
-| 5. Sweep | Worktrees that no event or gate reaches: a crash, a restart, a PR merged on the forge after the lead went idle, worktrees from before lanes existed. Runs only when `subagent_worktree_sweep` is called. Only paths under OpenCode's worktree directory (plus `include` roots and lane records). Prunes only landed, clean worktrees that no live session owns and that are older than `minAgeHours`; dirty or unpushed ones are **quarantined**, reported and kept. An unknown owner keeps the worktree. `git worktree prune` runs only for entries whose directory is already gone. | Anything it cannot prove: it keeps it. |
+| 5. Sweep | Lanes no event or gate reached: a crash, a restart, a lane whose lead never went idle. `subagent_worktree_sweep` checks each active lane whose subagent session is deleted or archived the way `finalize` does, and in `prune` mode removes the removable ones through `finalize`. Landed means an ancestor of `origin/main` (for the lane's own work) or a head delivery recorded; a pull request, merged or not, proves nothing. A lane with uncommitted, unmerged or denied work is reported as needing a person. | A squash-merged lane the forge merged but `origin/main` does not contain, and worktrees that are not lanes: delete them yourself. |
 
-The tool's mode defaults to `report`: the plan is stored under `sweep/last` and nothing is removed
-unless the tool is called with `mode: "prune"`.
-
-A worktree whose pull request was **closed without merging** (the tip commit heads a closed pull
-request, and no pull request from the branch is open) is pruned like a landed one when it is clean,
-unowned and older than `minAgeHours`, but its **branch is kept**: the ref is never deleted. It goes
-through the same verified removal, session move and locks as every other removal. "No open pull
-request" must be proven: the batched open list must succeed and be shorter than its 200-entry limit,
-and under the lock a fresh `gh pr list --head <branch>` must succeed and find none. Any failure keeps
-the worktree.
-
-### Build directories
-
-A worktree the sweep keeps can still hold gigabytes of build output. When its owner is gone, its
-tree is clean or dirty only in ignored files, and no hold or git operation blocks it, a pruning
-sweep with `freeBuildDirs` on deletes these directories inside it: `target`, `node_modules/.cache`,
-`.turbo`, `.next/cache`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `dist`, `build`. "Gone"
-means no session ran in the worktree for 30 minutes, or none runs now when free space is under
-`lowDiskBytes`. Each directory must be a real directory (not a link), ignored per
-`git check-ignore`, with no tracked file in it. Tracked files and untracked files that git does not
-ignore are never touched. Under the worktree's lease lock, after the same fresh checks as a
-removal, each directory is moved into the worktree's own git directory
-(`.git/worktrees/<name>/opencode-trash/`) and compared by inode, without following a link on its
-path; nothing moves when any check or the lock fails. git status and `git add -A` cannot see it
-there. A main checkout (its git directory is shared by every worktree), a git directory that does
-not point back at the worktree, and one on another device are skipped. The slow recursive delete
-runs after the lock is released, so a resume or a hold write never waits for it, and it checks the
-inode again first. What a failed or interrupted delete leaves is deleted by the next pass, and
-`git worktree remove` or `prune` deletes it with the rest of that directory. The default
-follows `sweep`: on only for `"prune"`. In report mode the plan names the worktrees where build
-directories could be freed.
+The sweep tool is on demand: it reports by default (`mode: "report"`), and removes only when called
+with `mode: "prune"`. The last plan is stored under `sweep/last`.
 
 ### Coordination on disk
 
@@ -268,8 +234,7 @@ lives under `<git-common-dir>/opencode/`, shared by every instance of the reposi
   keeps the lane when the child was resumed at or after the moment the removal was decided: the
   accepted end event for an end-event removal, or the start of planning for the parent's idle pass,
   the idle gate, a foreground return and a merge. A resume before that moment does not keep it; the
-  child's status is read again instead. The sweep captures the generation before collecting facts
-  and, under the lock right before removing, aborts if it changed.
+  child's status is read again instead.
 - `holds/<sha1 of the directory>/<sha1 of the session>.json`: the background jobs a session has
   running for the lane (its own, a descendant's, or a shell naming the lane directory). Every idle
   gate, child or parent, writes its own entry and clears it when it sees none; every remover reads
@@ -283,11 +248,16 @@ lives under `<git-common-dir>/opencode/`, shared by every instance of the reposi
 OpenCode resolves a session's location for every request that touches the session, so a session
 left pointing at a removed directory fails with `Location not found` (in the TUI, on a wake or
 drain, on `session.get`). A lane removal moves the lane's own sessions home after the worktree is
-gone (see Lane removal). The sweep, under the lock and right before its host removal, lists the
-project's sessions (every page; an incomplete listing refuses) and:
+gone (see Lane removal). `finalize` lists the lane child's descendants by parent ID, under the lock and
+before its host removal, and:
 
-- refuses if a session in the worktree, or below it, is running;
-- moves each idle one to the repository's canonical checkout, and refuses if a move fails.
+- refuses if one of them that sits in the worktree is running, cannot be read, or the listing may be
+  incomplete;
+- after the removal, moves the child and those descendants to the parent's checkout (else the
+  repository's canonical one); a move that fails leaves the lane in `removing`, and a later pass
+  retries just the moves.
+
+It does not list every session of the project and moves no other session before the removal.
 
 `delivery` also moves the sessions of a lane it removes, after the removal.
 
@@ -328,9 +298,10 @@ child's and the parent's status, and honours any hold the idle gate set for a jo
 
 ### `subagent_worktree_sweep`
 
-`{ mode?: "report" | "prune" }` runs the same sweep on demand and returns the plan, one line per
-worktree: `keep`, `prune`, `prune-registry` or `quarantine`, with the reason. `report` (the default)
-changes nothing.
+`{ mode?: "report" | "prune" }` runs only when called. It returns one line per active lane of the
+project: `would remove` (report) or `removed` (prune), or `keep`, with the reason. `report` (the
+default) changes nothing. `prune` removes through `finalize`, never forced, and finishes removals a
+crash left half done.
 
 ### Messages to sessions
 
@@ -347,7 +318,7 @@ repeated event or idle sends nothing twice.
 To have the sweep reported without anyone asking, create a schedule with
 `POST /api/experimental/schedule`. Give it a Code Mode `if` check that calls
 `subagent_worktree_sweep({ mode: "report" })` and wakes the session only when the plan contains
-quarantined worktrees. No plugin code is involved.
+lanes that need a person. No plugin code is involved.
 
 ## Credits
 
@@ -357,6 +328,8 @@ session lookups and the read-only agent check are adapted from
 
 ## Caveats
 
+- A lane whose worktree directory was deleted outside the plugin (`rm -rf`) stays `active`. The sweep reports it as needing a person and neither retires it nor moves its sessions; the host cannot look up its child either. A removal the plugin started and did not finish is different: the lane is `removing`, and `sweep` in `prune` mode (or any trigger for the lane) finishes it.
+- Only the lane's child and its descendants are protected. Any other session that ends up in a lane's worktree (for example a sibling that `subagent(worktree: ...)` places there, or one opened there by hand) is not checked before the removal and may be moved out or stranded; the background repair moves stranded sessions to a checkout that exists.
 - The plugin asserts the `subagent` permission before it creates the worktree, and the built-in
   tool asserts it again. A rule that asks every time prompts twice; "always" approves both.
 - A failure after the worktree exists removes the worktree and the child session.

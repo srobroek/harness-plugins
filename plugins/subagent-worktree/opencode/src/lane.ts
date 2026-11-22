@@ -12,8 +12,6 @@ export { WORKTREE_PARAM, WORKTREE_PARAM_DESCRIPTION } from "@srobroek/opencode-l
 
 export const DEFAULT_AGENTS: readonly string[] = ["coder", "implementer", "implementer-high", "ui-implementer", "general"]
 
-export type SweepMode = "off" | "report" | "prune"
-
 export type Options = {
   /** Agents (id or name) whose subagent calls get a worktree. */
   agents: readonly string[]
@@ -23,15 +21,6 @@ export type Options = {
   gates: boolean
   /** An empty lane is removed only after its child and parent stayed idle this long. */
   emptyGraceMs: number
-  /** The sweep mode; it only sets the `freeBuildDirs` default, since the sweep runs on demand. */
-  sweep: SweepMode
-  minAgeHours: number
-  /** Extra roots, beyond OpenCode's worktree directory, the sweep may look in. */
-  include: readonly string[]
-  /** A pruning sweep also frees ignored build directories of kept lanes whose owner is gone. Follows `sweep`: on only for "prune". */
-  freeBuildDirs: boolean
-  /** Free space, in bytes, below which build directories are freed without the grace period; 0 turns that off. */
-  lowDiskBytes: number
 }
 
 const MINUTE = 60_000
@@ -45,19 +34,11 @@ export function readOptions(options: Readonly<Record<string, unknown>> | undefin
     ? options.agents.filter((agent): agent is string => typeof agent === "string" && agent !== "")
     : DEFAULT_AGENTS
   const base = typeof options?.base === "string" && options.base.trim() !== "" ? options.base.trim() : "HEAD"
-  const sweep = options?.sweep === "off" || options?.sweep === "prune" ? options.sweep : "report"
   return {
     agents,
     base,
     gates: options?.gates !== false,
     emptyGraceMs: positive(options?.emptyGraceMinutes, 30) * MINUTE,
-    sweep,
-    minAgeHours: positive(options?.minAgeHours, 24),
-    freeBuildDirs: typeof options?.freeBuildDirs === "boolean" ? options.freeBuildDirs : sweep === "prune",
-    lowDiskBytes: positive(options?.lowDiskBytes, 0),
-    include: Array.isArray(options?.include)
-      ? options.include.filter((root): root is string => typeof root === "string" && root !== "")
-      : [],
   }
 }
 
@@ -624,7 +605,7 @@ export function formatLaneList(reports: readonly LaneReport[], caller: string): 
   }
   if (reports.some((report) => orphanReasons(report).length > 0)) {
     lines.push(
-      "Orphaned lanes are reported only; nothing was removed. Review them and remove a worktree yourself (wt remove) once its work is merged or no longer needed.",
+      "Orphaned lanes are reported only; nothing was removed. Review them, then call subagent_worktree_sweep with mode 'prune' once their work is merged, or resolve them yourself.",
     )
   }
   lines.push("</subagent-worktree-lanes>")
