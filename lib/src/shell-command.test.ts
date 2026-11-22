@@ -193,7 +193,7 @@ describe("executable substitutions in shell-fed here-documents and here-strings"
     expect(sourcesOf(command)).toEqual(expected)
   })
 
-  test("ignores a here-document fed to a command that is not a shell", () => {
+  test("ignores a here-document fed to a shell whose script comes from an argument", () => {
     expect(sourcesOf("bash -c 'true' <<'EOF'\nbd create y\nEOF").includes("bd create y\n")).toBe(false)
   })
 })
