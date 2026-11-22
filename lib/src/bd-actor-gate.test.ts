@@ -293,6 +293,39 @@ describe("firstBdVerb / isMutatingBdCommand", () => {
     })
   })
 
+  test.each([
+    ["an && chain that may not run", "false && unset BD_ACTOR; bd create x"],
+    ["an || chain", "true || unset BD_ACTOR; bd create x"],
+    ["an if body", "if false; then unset BD_ACTOR; fi; bd create x"],
+  ])("an unset in %s leaves the ambient actor in force", (_name, command) => {
+    expect(decideActorGate(command, bdActorEnv)).toEqual({ kind: "allow" })
+  })
+
+  test("an unset that opens an && chain still clears for the commands after it", () => {
+    expect(decideActorGate("unset BD_ACTOR && bd create x", bdActorEnv).kind).toBe("block")
+  })
+
+  test.each([
+    ["a bare assignment then a name-only export", "unset BD_ACTOR; BD_ACTOR=me/x; export BD_ACTOR; bd create x"],
+    ["a bare assignment then a flagged export", "unset BD_ACTOR; BD_ACTOR=me/x; export -p BD_ACTOR; bd create x"],
+  ])("a split re-export restores the actor: %s", (_name, command) => {
+    expect(decideActorGate(command, bdActorEnv)).toEqual({ kind: "allow" })
+  })
+
+  test("export -n takes the actor out of the environment", () => {
+    expect(decideActorGate("export -n BD_ACTOR; bd create x", bdActorEnv).kind).toBe("block")
+  })
+
+  test("a bare assignment alone does not export, so an unset actor stays cleared", () => {
+    expect(decideActorGate("unset BD_ACTOR; BD_ACTOR=me/x; bd create x", bdActorEnv).kind).toBe("block")
+  })
+
+  test("an unset after a nested command does not apply to it", () => {
+    for (const command of ["echo $(bd create x); unset BD_ACTOR", 'bash -c "bd create x"; unset BD_ACTOR']) {
+      expect(decideActorParsed(parse(command), bdActorEnv)).toEqual({ kind: "allow" })
+    }
+  })
+
   test("env assignments after removal restore actor attribution", () => {
     for (const command of [
       "env -i BD_ACTOR=actor/x bd update bead-1 --claim",

@@ -75,6 +75,8 @@ export interface BdInvocation {
 }
 
 /** A string is an exported value, `null` a variable a shell `unset` cleared, absent one never touched here. */
+type ActorValues = Partial<Record<ActorVar, string>>
+
 type ActorState = Partial<Record<ActorVar, string | null>>
 
 const OPENERS = new Set(["if", "while", "until", "for", "select", "case"])
@@ -85,17 +87,26 @@ const ASSIGNMENT = /^[A-Za-z_]\w*=/
 
 const basename = (word: string): string => word.split("/").pop() ?? word
 
-/** Apply a command-position `export NAME=value` or `unset NAME` to the running actor state. */
-function applyActorBuiltin(state: ActorState, values: string[], conditional: boolean): void {
+/**
+ * Apply a command-position `export NAME=value`, `export NAME` or `unset NAME` to the running actor state.
+ * `shellVars` holds the values bare `NAME=value` assignments gave shell variables: a name-only export
+ * publishes that value, and `export -n` takes the variable out of the environment again.
+ */
+function applyActorBuiltin(state: ActorState, shellVars: ActorValues, values: string[], conditional: boolean): void {
   const name = values[0]
   if (name !== "export" && name !== "unset") return
+  const unexport = name === "export" && values.slice(1).some((arg) => /^-[a-zA-Z]*n/.test(arg))
   for (const arg of values.slice(1)) {
     const variable = ACTOR_VARS.find((candidate) => arg === candidate || arg.startsWith(`${candidate}=`))
     if (variable === undefined) continue
     // Where the command may not run, an export is only a possibility and changes nothing we rely on.
     if (conditional) continue
-    if (name === "unset") state[variable] = null
+    if (name === "unset") {
+      state[variable] = null
+      delete shellVars[variable]
+    } else if (unexport) state[variable] = null
     else if (arg.includes("=")) state[variable] = arg.slice(variable.length + 1)
+    else if (shellVars[variable] !== undefined) state[variable] = shellVars[variable]
   }
 }
 
@@ -112,39 +123,39 @@ export function bdInvocations(command: string, inherited: ActorState = {}): BdIn
   return readCommand(command, inherited).invocations
 }
 
-/** The actor exports in force once `command` has run, for the commands nested inside it. */
-export function actorStateAfter(command: string, inherited: ActorState = {}): ActorState {
-  return readCommand(command, inherited).state
-}
-
 function readCommand(command: string, inherited: ActorState): { invocations: BdInvocation[]; state: ActorState } {
   const out: BdInvocation[] = []
   const scan = scanShell(command, { executableSubstitutionsOnly: true })
   let state: ActorState = { ...inherited }
   // A subshell `( … )` gets a copy of the actor state; its exports end with it.
-  const scopes: ActorState[] = []
+  const scopes: Array<{ state: ActorState; shellVars: ActorValues }> = []
+  // Shell variables a bare `NAME=value` set: not in the environment until an `export NAME`.
+  let shellVars: ActorValues = {}
   // Compound-command depth and whether this list continued after `&&` / `||`: exports there are conditional.
   let compounds = 0
   let andChained = false
   let orChained = false
-  // Exports made inside an `&&` chain hold for the rest of that chain only.
-  let chainExports: Array<{ variable: ActorVar; value: string }> = []
+  // Exports and unsets made inside an `&&` chain hold for the rest of that chain only: the left side may fail.
+  let chainChanges: Array<{ variable: ActorVar; previous: string | null | undefined; value: string | null }> = []
   // Substitutions not claimed by a command's own words (here-document bodies) run with the final state.
   const unclaimed = [...scan.substitutions]
 
   for (const item of scan.items) {
     if (item.kind === "operator") {
       if (item.operator === "(") {
-        scopes.push(state)
+        scopes.push({ state, shellVars })
         state = { ...state }
-      } else if (item.operator === ")" && scopes.length > 0) state = scopes.pop() as ActorState
+        shellVars = { ...shellVars }
+      } else if (item.operator === ")" && scopes.length > 0) ({ state, shellVars } = scopes.pop() as (typeof scopes)[number])
       else if (item.operator === "&&") andChained = true
       else if (item.operator === "||") orChained = true
       else if (item.operator === ";" || item.operator === "\n" || item.operator === "&") {
-        for (const { variable, value } of chainExports) {
-          if (state[variable] === value) delete state[variable]
+        for (const { variable, previous, value } of chainChanges) {
+          if (state[variable] !== value) continue
+          if (previous === undefined) delete state[variable]
+          else state[variable] = previous
         }
-        chainExports = []
+        chainChanges = []
         andChained = false
         orChained = false
       }
@@ -191,13 +202,21 @@ function readCommand(command: string, inherited: ActorState): { invocations: BdI
     while (a < words.length && ASSIGNMENT.test(command.slice(words[a]?.start, words[a]?.end))) a++
     const assigned = words.slice(k, a).map((word) => word.value)
     const values = words.slice(a).map((word) => word.value)
-    if (values.length === 0) continue
+    if (values.length === 0) {
+      if (compounds === 0 && !orChained)
+        for (const word of assigned) {
+          const variable = ACTOR_VARS.find((candidate) => word.startsWith(`${candidate}=`))
+          if (variable !== undefined) shellVars[variable] = word.slice(variable.length + 1)
+        }
+      continue
+    }
     const before = { ...state }
-    applyActorBuiltin(state, values, compounds > 0 || orChained)
+    applyActorBuiltin(state, shellVars, values, compounds > 0 || orChained)
     if (andChained)
       for (const variable of ACTOR_VARS) {
         const value = state[variable]
-        if (typeof value === "string" && value !== before[variable]) chainExports.push({ variable, value })
+        if (value !== undefined && value !== before[variable])
+          chainChanges.push({ variable, previous: before[variable], value })
       }
     const found = resolveBd(values, assigned)
     if (found !== undefined) {
@@ -577,17 +596,9 @@ export function decideActorParsed(
   }
   // Decide on the original command text. Re-joining argv with spaces drops quoting, so a
   // quoted "; bd create" would become a command and prefix assignments would vanish.
-  let advisory = false
-  const own = decideActorGate(candidate.command, env, inherited)
-  if (own.kind === "block") return own
-  if (own.kind === "advisory") advisory = true
-  const after = actorStateAfter(candidate.command, inherited)
-  for (const child of candidate.nested) {
-    const decision = decideActorParsed(child, env, after)
-    if (decision.kind === "block") return decision
-    if (decision.kind === "advisory") advisory = true
-  }
-  return advisory ? { kind: "advisory", text: ADVISORY_TEXT } : { kind: "allow" }
+  // Substitutions, `bash -c` bodies and here-documents are read in order by `bdInvocations`, each with
+  // the state at its own position; rechecking `nested` with the final state would apply a later unset to them.
+  return decideActorGate(candidate.command, env, inherited)
 }
 
 /**
