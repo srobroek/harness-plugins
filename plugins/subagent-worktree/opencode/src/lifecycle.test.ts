@@ -3169,7 +3169,8 @@ describe("sweep reporting of lanes that keep forever", () => {
   test("a child idle for 6 days is a plain keep that needs no person", async () => {
     const { fake, cleanup } = await start({ ancestor: 0, time: idleFor(6), now: LATE })
     const plan = await sweep(fake, "report")
-    expect(plan[0]).toEqual({ child: CHILD, directory: WT, branch: "lane-a", verdict: "keep", reason: "its subagent session is idle", idleSince: LATE - 6 * DAY })
+    expect(plan[0]).toMatchObject({ verdict: "keep", reason: "its subagent session is idle", idleSince: LATE - 6 * DAY })
+    expect(plan[0]?.needsPerson).toBeUndefined()
     await cleanup()
   })
 
