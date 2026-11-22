@@ -2114,6 +2114,13 @@ function createLifecycle(deps) {
     const records = await deliveryRecords(lane.directory, lane.parentDir);
     return records.heads.includes(oid) || await reachedMain(lane, oid);
   };
+  const localBranchRef = (target) => `refs/heads/${target}`;
+  const mergedLocally = async (lane, oid) => {
+    const merged = lane.mergedInto;
+    if (merged === undefined || typeof merged.target !== "string" || merged.target === "" || merged.head !== oid)
+      return false;
+    return git.isAncestor(lane.directory, oid, localBranchRef(merged.target));
+  };
   const mark = async (child, key) => {
     const lane = await load(child);
     if (!lane)
@@ -2307,6 +2314,8 @@ function createLifecycle(deps) {
     if (oid === lane.base)
       return { proof: "empty", oid };
     if (options.target !== undefined && await git.isAncestor(lane.directory, oid, options.target))
+      return { proof: "merged", oid };
+    if (await mergedLocally(lane, oid))
       return { proof: "merged", oid };
     if (await isLanded(lane, oid))
       return { proof: "landed", oid };
@@ -2553,7 +2562,22 @@ function createLifecycle(deps) {
     }
   };
   const removeForeground = async (lane, since) => (await finalize(lane, { since })).removed;
-  const removeAfterMerge = (lane, target, since) => finalize(lane, { target, retireAs: "merged", since });
+  const removeAfterMerge = async (lane, target, since) => {
+    try {
+      await withLock(lane.directory, lane.parentDir, async () => {
+        const stored = await load(lane.child);
+        if (stored?.state !== "active" || canonical(stored.directory) !== canonical(lane.directory))
+          return;
+        const head = await git.head(stored.directory);
+        if (head === undefined || !await git.isAncestor(stored.directory, head, localBranchRef(target)))
+          return;
+        await save({ ...stored, mergedInto: { target, head } });
+      });
+    } catch (error) {
+      console.error(`subagent-worktree: the merge of ${lane.directory} into ${target} was not recorded:`, error instanceof Error ? error.message : error);
+    }
+    return finalize(lane, { target, retireAs: "merged", since });
+  };
   const act = async (lane, action, facts, event, fence) => {
     if (action.action === "remove")
       return finalize(lane, fence);
@@ -2892,7 +2916,13 @@ function createLifecycle(deps) {
     pending.clear();
     for (const registration of registrations.reverse())
       await registration.dispose();
-    await Promise.allSettled([chain, sweepChain]);
+    for (;; ) {
+      const current = chain;
+      const sweeping = sweepChain;
+      await Promise.allSettled([current, sweeping]);
+      if (current === chain && sweeping === sweepChain)
+        break;
+    }
     for (const { lane } of [...unreleased.values()])
       await flushReleases(lane);
   };
