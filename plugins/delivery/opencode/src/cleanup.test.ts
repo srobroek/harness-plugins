@@ -9,7 +9,7 @@ import {
   writeClaim,
   writeLanding,
 } from "@srobroek/opencode-lib/worktree-claims"
-import { lockedWrite, lockFile, readHolds, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
+import { holdsState, lockedWrite, lockFile, readHolds, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
 import { authorizeExplicit, createPendingCleanup } from "./pending-cleanup.ts"
 
 // Fixture setup creates several real Git repositories and measured about 20s under full-suite load;
@@ -60,10 +60,12 @@ import {
   type GitRunner,
   type LandingReceipt,
   listReceipts,
+  REPOSITORY_OBSERVATION_ARGS,
   readReceipt,
   receiptDirectory,
   repoKey,
   repositoryContext,
+  spawnGit,
   validateReceipt,
   writeReceipt,
 } from "./landing-receipt.ts"
@@ -384,12 +386,12 @@ function gitExit(cwd: string, args: string[]): number | null {
  * is the live fail-open shape: using the common metadata directory as the checkout
  * root sees the parent verdict, while Git's top level names the active ledger.
  */
-function fixture(
+async function fixture(
   name: string,
   branch = `feat/${name}`,
   ledger: "active" | "retired" = "active",
   layout: FixtureLayout = "normal",
-): Fixture {
+): Promise<Fixture> {
   const root = scratch(name)
   const bare = join(root, "remote.git")
   let main: string
@@ -474,7 +476,7 @@ function fixture(
   }
 
   const env = { ...process.env, DELIVERY_RECEIPTS_DIR: join(root, "agent", "receipts") }
-  const key = repoKey(main)
+  const key = await repoKey(main)
   if (key === null) throw new Error("fixture repo has no key")
   const receipt = buildReceipt({
     now: NOW,
@@ -707,7 +709,7 @@ function mutationCalls(calls: string[][]): string[][] {
 
 describe("delivery_cleanup irreversible boundary", () => {
   test("removes one listed worktree then its local branch and records four independent absence verdicts", async () => {
-    const f = fixture("happy")
+    const f = await fixture("happy")
     const listedPath = realpathSync(f.linked)
     const { result, calls } = await invoke(f, {
       receipt: f.receiptPath,
@@ -767,8 +769,8 @@ describe("delivery_cleanup irreversible boundary", () => {
   }, 60_000)
 
   test("from another repository, a pr without a worktree or receipt still finds no receipt", async () => {
-    const f = fixture("cross-bare-pr")
-    const session = fixture("cross-bare-pr-session")
+    const f = await fixture("cross-bare-pr")
+    const session = await fixture("cross-bare-pr-session")
     const scripted = runner(f, {})
     const result = await cleanupDelivery({ pr: 17 }, session.main, {
       run: scripted.run,
@@ -781,7 +783,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   }, 60_000)
 
   test("a retired ledger, agreed by the receipt and the canonical root, cleans up with no bd command", async () => {
-    const f = fixture("inactive-ledger", "feat/inactive-ledger", "retired")
+    const f = await fixture("inactive-ledger", "feat/inactive-ledger", "retired")
 
     const { result, calls } = await invoke(f)
 
@@ -793,7 +795,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("a ledger-free receipt for another repository is denied before local mutation", async () => {
-    const f = fixture("cross-repo-receipt", "feat/cross-repo-receipt", "retired")
+    const f = await fixture("cross-repo-receipt", "feat/cross-repo-receipt", "retired")
     const receipt = buildReceipt({
       ...f.receipt,
       now: NOW + 1,
@@ -817,7 +819,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   }, 60_000)
 
   test("a receipt remote that cannot name one verified repository fails closed", async () => {
-    const f = fixture("remote-identity", "feat/remote-identity", "retired")
+    const f = await fixture("remote-identity", "feat/remote-identity", "retired")
     // A leading dash is an option to `git remote get-url`; whitespace padding is a
     // receipt that does not say which remote. Neither is trimmed into something
     // usable, and neither reaches a command that names a remote: the one call made
@@ -880,7 +882,7 @@ describe("delivery_cleanup irreversible boundary", () => {
    * neither those tokens nor the URL that framed them.
    */
   test("git remote get-url output that is not exactly one record refuses before the forge read", async () => {
-    const f = fixture("remote-record", "feat/remote-record", "retired")
+    const f = await fixture("remote-record", "feat/remote-record", "retired")
     for (const remoteStdout of [
       "https://git\thub.com/owner/repo.git\n",
       "https://github.com/owner/repo.git\n@evil.example/x\n",
@@ -912,7 +914,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   }, 60_000)
 
   test("GitLab queries the receipt's project on the canonical host", async () => {
-    const f = fixture("gitlab-local-repo", "feat/gitlab-local-repo", "retired")
+    const f = await fixture("gitlab-local-repo", "feat/gitlab-local-repo", "retired")
     const receipt = buildReceipt({
       ...f.receipt,
       now: NOW + 1,
@@ -953,7 +955,7 @@ describe("delivery_cleanup irreversible boundary", () => {
    */
   for (const forge of ["github", "gitlab"] as const) {
     test(`${forge}: the observation follows the receipt's remote while origin is a fork`, async () => {
-      const f = fixture(`fork-origin-${forge}`, `feat/fork-origin-${forge}`, "retired")
+      const f = await fixture(`fork-origin-${forge}`, `feat/fork-origin-${forge}`, "retired")
       git(f.main, ["remote", "add", "upstream", f.bare])
       const nameWithOwner = forge === "github" ? "owner/repo" : "group/project"
       const host = forge === "github" ? "github.com" : "gitlab.com"
@@ -1042,7 +1044,7 @@ describe("delivery_cleanup irreversible boundary", () => {
    * to clean.
    */
   test("the remote URL is resolved in the landed worktree, where a worktree-scoped rewrite applies", async () => {
-    const f = fixture("worktree-config", "feat/worktree-config", "retired")
+    const f = await fixture("worktree-config", "feat/worktree-config", "retired")
     const fork = "https://github.com/contributor/fork.git"
     const upstream = "https://github.com/owner/repo.git"
     git(f.main, ["config", "extensions.worktreeConfig", "true"])
@@ -1094,7 +1096,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   }, 60_000)
 
   test("cleanup strips every ambient forge and Git selector from the identity and pull-request reads", async () => {
-    const f = fixture("ambient-redirectors", "feat/ambient-redirectors", "retired")
+    const f = await fixture("ambient-redirectors", "feat/ambient-redirectors", "retired")
     Object.assign(f.env, {
       GH_REPO: "attacker/elsewhere",
       GH_HOST: "evil.example",
@@ -1141,7 +1143,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   }, 60_000)
 
   test("a valid receipt extension named ok cannot collide with cleanup's private resolution tag", async () => {
-    const f = fixture("receipt-ok-extension")
+    const f = await fixture("receipt-ok-extension")
     rmSync(f.receiptPath)
     f.receipt.ok = false
     const path = writeReceipt(f.receipt, receiptDirectory(f.env, f.receipt.repo.key))
@@ -1155,7 +1157,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("a second call selects the cleaned continuation, reports it already cleaned, and mutates nothing", async () => {
-    const f = fixture("second")
+    const f = await fixture("second")
     const first = await invoke(f)
     expect(first.result.ok).toBe(true)
     const second = await invoke(f, {})
@@ -1166,7 +1168,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("an unknown remote observation never becomes verified absence, while local cleanup stays truthful", async () => {
-    const f = fixture("remote-unknown")
+    const f = await fixture("remote-unknown")
     const { result } = await invoke(f, { receipt: f.receiptPath }, { remote: "unknown" })
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -1178,7 +1180,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("an explicit receipt outside the canonical repository receipt directory is refused before observation", async () => {
-    const f = fixture("outside-receipt")
+    const f = await fixture("outside-receipt")
     const outside = join(scratch("explicit-tmp"), basename(f.receiptPath))
     copyFileSync(f.receiptPath, outside)
     const { result, calls } = await invoke(f, { receipt: outside })
@@ -1188,7 +1190,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("explicit and implicit receipt selection refuse a symlinked receipt parent", async () => {
-    const f = fixture("receipt-parent-symlink")
+    const f = await fixture("receipt-parent-symlink")
     const directory = receiptDirectory(f.env, f.receipt.repo.key)
     const realDirectory = `${directory}-real`
     renameSync(directory, realDirectory)
@@ -1224,7 +1226,7 @@ describe("delivery_cleanup irreversible boundary", () => {
       ["pr", (f) => ({ pr: f.receipt.pr.number })],
     ]
     for (const [name, select] of selections) {
-      const f = throughSymlinkedHome(fixture(`receipt-home-${name}`))
+      const f = throughSymlinkedHome(await fixture(`receipt-home-${name}`))
       const { result } = await invoke(f, select(f))
       if (!result.ok) throw new Error(`${name} selection refused: ${result.reason}`)
       // The continuation is written beside the canonical receipt, not through the alias.
@@ -1235,7 +1237,7 @@ describe("delivery_cleanup irreversible boundary", () => {
 
   test("below a symlinked home, a symlinked receipts directory or keyed directory is still refused", async () => {
     for (const level of ["receipts", "keyed"] as const) {
-      const f = throughSymlinkedHome(fixture(`receipt-home-${level}-symlink`))
+      const f = throughSymlinkedHome(await fixture(`receipt-home-${level}-symlink`))
       const keyed = dirname(f.receiptPath)
       const planted = level === "receipts" ? dirname(keyed) : keyed
       renameSync(planted, `${planted}-real`)
@@ -1250,7 +1252,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("receipt, argument, and each merged-PR mismatch precede every local-state observation", async () => {
-    const f = fixture("proof-order")
+    const f = await fixture("proof-order")
     const missing = await invoke(f, { pr: 999 })
     expect(refusal(missing.result)).toContain(
       "receipt: observed null, expected the newest validated receipt for pr 999",
@@ -1290,7 +1292,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("a schema-valid receipt without a merge commit refuses before any observation or mutation", async () => {
-    const f = fixture("missing-merge-authorization", "feat/missing-merge-authorization", "retired")
+    const f = await fixture("missing-merge-authorization", "feat/missing-merge-authorization", "retired")
     const receipt = buildReceipt({
       ...f.receipt,
       now: NOW + 1,
@@ -1310,7 +1312,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("commits after the PR head refuse before anything is removed", async () => {
-    const f = fixture("moved-on")
+    const f = await fixture("moved-on")
     writeFileSync(join(f.linked, "followup.txt"), "more work\n")
     git(f.linked, ["add", "followup.txt"])
     git(f.linked, ["commit", "-q", "-m", "follow-up work"])
@@ -1334,7 +1336,7 @@ describe("delivery_cleanup irreversible boundary", () => {
     }],
   ])("the clean check refuses %s", (_name, gate, dirty) => {
     test("and removes nothing", async () => {
-      const f = fixture("dirty-kind")
+      const f = await fixture("dirty-kind")
       dirty(f)
       const { result, calls } = await invoke(f)
       expect(refusal(result)).toContain(`${gate}: observed`)
@@ -1345,7 +1347,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("an ignored file does not make the worktree dirty", async () => {
-    const f = fixture("ignored-ok")
+    const f = await fixture("ignored-ok")
     const commonExclude = join(resolve(f.linked, git(f.linked, ["rev-parse", "--git-common-dir"])), "info", "exclude")
     mkdirSync(dirname(commonExclude), { recursive: true })
     writeFileSync(commonExclude, "ignored.log\n")
@@ -1356,7 +1358,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("a moved head, a dirty tree, an unpushed commit, and an open bead each refuse at their own gate", async () => {
-    const f = fixture("refusal-order")
+    const f = await fixture("refusal-order")
     writeFileSync(join(f.linked, "dirty.txt"), "dirty\n")
     const dirty = await invoke(f, { receipt: f.receiptPath }, { beadStatus: "open" })
     expect(refusal(dirty.result)).toContain("worktree.status")
@@ -1394,7 +1396,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   }, 60_000)
 
   test("a branch with no upstream is proved pushed by the merged pull request head", async () => {
-    const f = fixture("no-upstream")
+    const f = await fixture("no-upstream")
     git(f.linked, ["config", "--unset", `branch.${f.branch}.remote`])
     git(f.linked, ["config", "--unset", `branch.${f.branch}.merge`])
     const { result } = await invoke(f)
@@ -1404,7 +1406,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   }, 60_000)
 
   test("an upstream read that does not complete still refuses before the ledger read", async () => {
-    const f = fixture("upstream-hung")
+    const f = await fixture("upstream-hung")
     const scripted = runner(f)
     const run: CliRunner = (argv, options) =>
       argv.includes("@{upstream}") && argv[1] === "rev-parse"
@@ -1422,7 +1424,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   }, 60_000)
 
   test("reconciliation requires every bead merge_sha to equal the receipt exactly", async () => {
-    const f = fixture("ledger-sha")
+    const f = await fixture("ledger-sha")
     const observed = "b".repeat(40)
     const { result, calls } = await invoke(f, { receipt: f.receiptPath }, { beadMergeSha: observed })
     const reason = refusal(result)
@@ -1437,7 +1439,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("reconciliation refuses a closed bead without merge_sha and names native update", async () => {
-    const f = fixture("ledger-missing-merge-sha")
+    const f = await fixture("ledger-missing-merge-sha")
     const { result, calls } = await invoke(
       f,
       { receipt: f.receiptPath },
@@ -1461,7 +1463,7 @@ describe("delivery_cleanup irreversible boundary", () => {
     ["closed then open", ["closed", "open"]],
   ] as const) {
     test(`conflicting duplicate bead statuses refuse in ${order} order without mutation`, async () => {
-      const f = fixture(`duplicate-status-${statuses.join("-")}`)
+      const f = await fixture(`duplicate-status-${statuses.join("-")}`)
       const beadRows = statuses.map((status) => ({
         id: "delivery-17",
         status,
@@ -1486,7 +1488,7 @@ describe("delivery_cleanup irreversible boundary", () => {
     ["second then first", ["issue-two", "issue-one"]],
   ] as const) {
     test(`conflicting duplicate bead identities refuse in ${order} order without mutation`, async () => {
-      const f = fixture(`duplicate-identity-${identities.join("-")}`)
+      const f = await fixture(`duplicate-identity-${identities.join("-")}`)
       const beadRows = identities.map((identity) => ({
         id: "delivery-17",
         identity,
@@ -1508,7 +1510,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   }
 
   test("identical duplicate bead rows coalesce without weakening cleanup authorization", async () => {
-    const f = fixture("duplicate-identical")
+    const f = await fixture("duplicate-identical")
     const issue = { id: "delivery-17", status: "closed", metadata: { merge_sha: f.merge } }
     const linked = realpathSync(f.linked)
 
@@ -1523,7 +1525,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("refuses the repository's main worktree", async () => {
-    const mainTarget = fixture("main-target")
+    const mainTarget = await fixture("main-target")
     const mainReceipt = buildReceipt({
       ...mainTarget.receipt,
       now: NOW + 1,
@@ -1547,8 +1549,8 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("refuses a worktree from a foreign repository", async () => {
-    const current = fixture("current-repo")
-    const foreign = fixture("foreign-repo")
+    const current = await fixture("current-repo")
+    const foreign = await fixture("foreign-repo")
     const foreignReceipt = buildReceipt({
       ...current.receipt,
       now: NOW + 2,
@@ -1568,7 +1570,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("refuses an unlisted path inside the same linked worktree", async () => {
-    const unlisted = fixture("unlisted")
+    const unlisted = await fixture("unlisted")
     const nested = join(unlisted.linked, "nested")
     mkdirSync(nested)
     const unlistedReceipt = buildReceipt({
@@ -1590,7 +1592,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("a symlink alias cannot turn an untrusted receipt path into a listed target", async () => {
-    const f = fixture("symlink")
+    const f = await fixture("symlink")
     const alias = join(f.root, "linked-alias")
     symlinkSync(f.linked, alias, "dir")
     const receipt = buildReceipt({
@@ -1613,7 +1615,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("a dirtying race at the irreversible boundary is observed before removal", async () => {
-    const f = fixture("dirty-race")
+    const f = await fixture("dirty-race")
     let statuses = 0
     const { result, calls } = await invoke(
       f,
@@ -1633,7 +1635,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("a ref that moves after worktree removal is not force-deleted and emits no receipt", async () => {
-    const f = fixture("ref-race")
+    const f = await fixture("ref-race")
     const beforeReceipts = readFileSync(f.receiptPath, "utf8")
     const raced = git(f.main, ["commit-tree", `${f.merge}^{tree}`, "-p", f.merge, "-m", "raced ref"])
     const { result, calls } = await invoke(
@@ -1654,7 +1656,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("work after the removal still runs when a ref race refuses the cleanup later, and its notes join the refusal", async () => {
-    const f = fixture("ref-race-after")
+    const f = await fixture("ref-race-after")
     const raced = git(f.main, ["commit-tree", `${f.merge}^{tree}`, "-p", f.merge, "-m", "raced ref"])
     const seen: string[] = []
     const { result } = await invoke(
@@ -1681,7 +1683,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("work after the removal does not run when the removal's absence was not proven", async () => {
-    const f = fixture("registration-race-after")
+    const f = await fixture("registration-race-after")
     let ran = false
     const { result } = await invoke(
       f,
@@ -1699,7 +1701,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("work after the removal that throws is reported and does not fail the cleanup", async () => {
-    const f = fixture("after-throws")
+    const f = await fixture("after-throws")
     const { result } = await invoke(
       f,
       { receipt: f.receiptPath },
@@ -1716,7 +1718,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("notes from the work after the removal join the refusal when the continuation receipt cannot be written", async () => {
-    const f = fixture("after-notes-write-fails")
+    const f = await fixture("after-notes-write-fails")
     const dir = dirname(f.receiptPath)
     const { result } = await invoke(
       f,
@@ -1736,7 +1738,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("re-registration after removal is detected independently and stops branch deletion", async () => {
-    const f = fixture("registration-race")
+    const f = await fixture("registration-race")
     const { result, calls } = await invoke(
       f,
       { receipt: f.receiptPath },
@@ -1754,7 +1756,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("a stored registration path remains present proof after its filesystem target vanishes", async () => {
-    const f = fixture("stored-registration")
+    const f = await fixture("stored-registration")
     const { result, calls } = await invoke(f, { receipt: f.receiptPath }, { registeredTargetAfterRemove: true })
     expect(refusal(result)).toContain('worktree.registrationAbsence: observed "present", expected "absent"')
     expect(existsSync(f.linked)).toBe(false)
@@ -1762,14 +1764,14 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("a pathless porcelain record makes post-remove registration proof unknown", async () => {
-    const f = fixture("pathless-record")
+    const f = await fixture("pathless-record")
     const { result, calls } = await invoke(f, { receipt: f.receiptPath }, { pathlessAfterRemove: true })
     expect(refusal(result)).toContain('worktree.registrationAbsence: observed "unknown", expected "absent"')
     expect(calls.some((argv) => argv[0] === "git" && argv[1] === "branch")).toBe(false)
   })
 
   test("filesystem-path recreation after removal is independent of registration absence", async () => {
-    const f = fixture("path-race")
+    const f = await fixture("path-race")
     const { result, calls } = await invoke(
       f,
       { receipt: f.receiptPath },
@@ -1786,7 +1788,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   })
 
   test("local-ref recreation after branch -d is independently reported and emits no receipt", async () => {
-    const f = fixture("local-ref-race")
+    const f = await fixture("local-ref-race")
     const { result } = await invoke(
       f,
       { receipt: f.receiptPath },
@@ -1806,7 +1808,7 @@ describe("delivery_cleanup irreversible boundary", () => {
     const marker = join(tmpdir(), "delivery-cleanup-must-not-exist")
     rmSync(marker, { force: true })
     const branch = `feat/cleanup;touch-${marker.replaceAll("/", "-")}`
-    const f = fixture("argv", branch)
+    const f = await fixture("argv", branch)
     const { result, calls } = await invoke(f)
     expect(result.ok).toBe(true)
     expect(calls).toContainEqual(["git", "branch", "-d", "--", branch])
@@ -1862,7 +1864,7 @@ describe("the ledger is classified at the canonical root, never at a caller's di
    * the branch while the bead stayed open.
    */
   test("a landing from a shadowed directory records the canonical verdict, and cleanup then requires reconciliation", async () => {
-    const f = fixture("bypass", "omp/agent/delivery-17")
+    const f = await fixture("bypass", "omp/agent/delivery-17")
     const shadowed = join(f.main, "nested")
     mkdirSync(join(shadowed, ".beads"), { recursive: true })
     writeFileSync(join(shadowed, ".beads", "RETIRED"), "retired\n")
@@ -1898,7 +1900,7 @@ describe("the ledger is classified at the canonical root, never at a caller's di
   })
 
   test("an unreconciled bead still refuses that same landing, so the gate is the ledger's and not the receipt's", async () => {
-    const f = fixture("bypass-open-bead", "omp/agent/delivery-17")
+    const f = await fixture("bypass-open-bead", "omp/agent/delivery-17")
     const shadowed = join(f.main, "nested")
     mkdirSync(join(shadowed, ".beads"), { recursive: true })
     writeFileSync(join(shadowed, ".beads", "RETIRED"), "retired\n")
@@ -1927,7 +1929,7 @@ describe("the ledger is classified at the canonical root, never at a caller's di
 
   for (const layout of ["separate-git-dir", "separate-dot-git-dir", "submodule"] as const) {
     test(`${layout}: an active checkout ledger requires reconciliation and preserves an open bead's worktree and branch`, async () => {
-      const f = fixture(`live-${layout}`, "omp/agent/delivery-17", "active", layout)
+      const f = await fixture(`live-${layout}`, "omp/agent/delivery-17", "active", layout)
       const landed = await landPullRequest(
         { pr: f.receipt.pr.number, worktree: f.linked },
         { run: landRunner(f).run, cwd: f.main, now: () => NOW + 5, env: f.env },
@@ -1966,7 +1968,7 @@ describe("the ledger is classified at the canonical root, never at a caller's di
    * ledger is active. The stored boolean alone never opens the success path.
    */
   test("a stale or tampered false claim is refused against the recomputed verdict, and nothing is removed", async () => {
-    const f = fixture("stale-false-claim")
+    const f = await fixture("stale-false-claim")
     const stale = buildReceipt({
       ...f.receipt,
       now: NOW + 1,
@@ -1995,7 +1997,7 @@ describe("the ledger is classified at the canonical root, never at a caller's di
   })
 
   test("a true claim over a retired canonical root is refused just as loudly", async () => {
-    const f = fixture("stale-true-claim", "feat/stale-true-claim", "retired")
+    const f = await fixture("stale-true-claim", "feat/stale-true-claim", "retired")
     const claimed = buildReceipt({
       ...f.receipt,
       now: NOW + 1,
@@ -2028,7 +2030,7 @@ describe("the ledger is classified at the canonical root, never at a caller's di
    * validator, so a tampered file carrying that pair never reaches the ledger gate.
    */
   test("a tampered receipt claiming an active ledger with no bead ids is refused when it is read", async () => {
-    const f = fixture("tampered-empty-ids")
+    const f = await fixture("tampered-empty-ids")
     const directory = receiptDirectory(f.env, f.receipt.repo.key)
     const tampered = { ...f.receipt, beads: { ids: [], ledgerActive: true } }
     rmSync(f.receiptPath)
@@ -2052,7 +2054,7 @@ describe("the ledger is classified at the canonical root, never at a caller's di
 
 describe("delivery_cleanup never removes the worktree it was called from", () => {
   test("a call from inside its own target refuses, naming the invocation and the resolved target", async () => {
-    const f = fixture("invocation-target")
+    const f = await fixture("invocation-target")
     const { run, calls } = runner(f)
     const result = await cleanupDelivery({ receipt: f.receiptPath }, f.linked, {
       run,
@@ -2070,7 +2072,7 @@ describe("delivery_cleanup never removes the worktree it was called from", () =>
   })
 
   test("a subdirectory of the target is inside the target", async () => {
-    const f = fixture("invocation-nested")
+    const f = await fixture("invocation-nested")
     const nested = join(f.linked, "deep", "deeper")
     mkdirSync(nested, { recursive: true })
     const { run, calls } = runner(f)
@@ -2087,7 +2089,7 @@ describe("delivery_cleanup never removes the worktree it was called from", () =>
   })
 
   test("a symlinked alias of the target is still the target", async () => {
-    const f = fixture("invocation-alias")
+    const f = await fixture("invocation-alias")
     const alias = join(f.root, "alias")
     symlinkSync(f.linked, alias, "dir")
     const { run, calls } = runner(f)
@@ -2113,7 +2115,7 @@ describe("delivery_cleanup never removes the worktree it was called from", () =>
    * directory; the URL-mode Git probe's directory is shown in forge-adapter.test.ts.
    */
   test("the remote-absence probe is asked outside every checkout", async () => {
-    const f = fixture("probe-cwd")
+    const f = await fixture("probe-cwd")
     const scripted = runner(f)
     const probes: { argv: string[]; cwd: string | undefined }[] = []
     const run: CliRunner = (argv, options) => {
@@ -2147,7 +2149,7 @@ describe("delivery_cleanup command bounds and interrupts", () => {
   const hang = (options: Parameters<CliRunner>[1]) => runCli(["sleep", "30"], options)
 
   test("each command is bounded by its work, and no mutation or bd read runs under the 5 s ref-read bound", async () => {
-    const f = fixture("bounds")
+    const f = await fixture("bounds")
     // The bound each command was given is recorded; it then runs under a generous one,
     // so a loaded machine cannot trip the production bound this test reads back.
     const scripted = runner(f)
@@ -2176,7 +2178,7 @@ describe("delivery_cleanup command bounds and interrupts", () => {
   })
 
   test("bounds.refReadMs replaces the ref-read bound on every ref read", async () => {
-    const f = fixture("configured-ref-read")
+    const f = await fixture("configured-ref-read")
     const scripted = runner(f)
     const refReads: number[] = []
     const run: CliRunner = (argv, options) => {
@@ -2196,7 +2198,7 @@ describe("delivery_cleanup command bounds and interrupts", () => {
   })
 
   test("bounds.refReadMs also bounds the repository identity reads", async () => {
-    const f = fixture("configured-repository-read")
+    const f = await fixture("configured-repository-read")
     const reads: { argv: readonly string[]; timeoutMs: number }[] = []
     const git: GitRunner = (argv, cwd, timeoutMs) => {
       reads.push({ argv, timeoutMs })
@@ -2223,7 +2225,7 @@ describe("delivery_cleanup command bounds and interrupts", () => {
   })
 
   test("a bd show that hangs past its bound reports the ledger step not done, and nothing is removed", async () => {
-    const f = fixture("hung-bd")
+    const f = await fixture("hung-bd")
     const scripted = runner(f)
     const run: CliRunner = (argv, options) => (argv[0] === "bd" ? hang(options) : scripted.run(argv, options))
     const started = Date.now()
@@ -2243,7 +2245,7 @@ describe("delivery_cleanup command bounds and interrupts", () => {
   })
 
   test("an interrupt ends a hung read at once, long before its bound, and nothing is removed", async () => {
-    const f = fixture("interrupted-read")
+    const f = await fixture("interrupted-read")
     const scripted = runner(f)
     const controller = new AbortController()
     const run: CliRunner = (argv, options) => {
@@ -2265,8 +2267,38 @@ describe("delivery_cleanup command bounds and interrupts", () => {
     expect(existsSync(f.linked)).toBe(true)
   })
 
+  test("an interrupt ends a hung repository key read, and nothing is removed", async () => {
+    const f = await fixture("interrupted-key-read")
+    // The git on PATH starts, then answers only once released, which this test does last.
+    const bin = scratch("interrupted-key-read-bin")
+    const started = join(bin, "started")
+    const release = join(bin, "release")
+    writeExecutable(join(bin, "git"), `#!/bin/sh\ntouch "${started}"\nwhile [ ! -e "${release}" ]; do sleep 0.01; done\n`)
+    const controller = new AbortController()
+    const abortOnceRunning = setInterval(() => {
+      if (existsSync(started)) controller.abort()
+    }, 5)
+    const before = process.env.PATH
+    process.env.PATH = `${bin}:${before ?? ""}`
+    try {
+      const result = await cleanupDelivery({ receipt: f.receiptPath }, f.main, {
+        run: runner(f).run,
+        now: () => NOW + 10,
+        env: f.env,
+        signal: controller.signal,
+        bounds: { ...HEAVY_FIXTURE_BOUNDS, refReadMs: 600_000 },
+      })
+      expect(refusal(result).startsWith("repo.key: observed null")).toBe(true)
+      expect(existsSync(f.linked)).toBe(true)
+    } finally {
+      clearInterval(abortOnceRunning)
+      process.env.PATH = before
+      writeFileSync(release, "")
+    }
+  })
+
   test("an interrupt observed after the last read refuses before the removal starts", async () => {
-    const f = fixture("interrupted-boundary")
+    const f = await fixture("interrupted-boundary")
     const scripted = runner(f)
     const controller = new AbortController()
     // The second `rev-list --count` is the last read before the removal, so the
@@ -2290,7 +2322,7 @@ describe("delivery_cleanup command bounds and interrupts", () => {
   })
 
   test("an interrupt that arrives once the removal has started neither reaches it nor stops the steps after it", async () => {
-    const f = fixture("interrupted-removal")
+    const f = await fixture("interrupted-removal")
     const scripted = runner(f)
     const controller = new AbortController()
     const signalled: { argv: string[]; signal: boolean }[] = []
@@ -2357,7 +2389,7 @@ describe("delivery_cleanup host worktree registry", () => {
   }
 
   test("a host-registered worktree is removed through the host, never by git, and leaves the registry", async () => {
-    const f = fixture("host-registered")
+    const f = await fixture("host-registered")
     const listedPath = realpathSync(f.linked)
     const fake = fakeHost(f, [listedPath])
     const { result, calls } = await invoke(f, { receipt: f.receiptPath }, {}, { host: fake.host })
@@ -2373,7 +2405,7 @@ describe("delivery_cleanup host worktree registry", () => {
   }, 60_000)
 
   test("a host whose listing fails leaves ownership unknown: refuse, remove nothing, no git fallback", async () => {
-    const f = fixture("host-list-fails")
+    const f = await fixture("host-list-fails")
     const host = {
       list: async () => {
         throw new Error("registry offline")
@@ -2392,7 +2424,7 @@ describe("delivery_cleanup host worktree registry", () => {
   }, 60_000)
 
   test("an abort during the host listing stops the call before any removal", async () => {
-    const f = fixture("host-list-abort")
+    const f = await fixture("host-list-abort")
     const controller = new AbortController()
     const removes: string[] = []
     const host = {
@@ -2412,7 +2444,7 @@ describe("delivery_cleanup host worktree registry", () => {
   }, 60_000)
 
   test("a worktree the host does not list is removed by git as before", async () => {
-    const f = fixture("host-unlisted")
+    const f = await fixture("host-unlisted")
     const listedPath = realpathSync(f.linked)
     const fake = fakeHost(f, [f.main])
     const { result, calls } = await invoke(f, { receipt: f.receiptPath }, {}, { host: fake.host })
@@ -2422,7 +2454,7 @@ describe("delivery_cleanup host worktree registry", () => {
   }, 60_000)
 
   test("a host refusal is reported and neither forced nor retried with git", async () => {
-    const f = fixture("host-refuses")
+    const f = await fixture("host-refuses")
     const fake = fakeHost(f, [realpathSync(f.linked)], "worktree contains modified files")
     const { result, calls } = await invoke(f, { receipt: f.receiptPath }, {}, { host: fake.host })
     const reason = refusal(result)
@@ -2448,8 +2480,8 @@ describe("the Git start check", () => {
     argv,
   })
 
-  test("a start that selects only the allowed checkout is inside it", () => {
-    const { main } = session()
+  test("a start that selects only the allowed checkout is inside it", async () => {
+    const { main } = await session()
     const pinned = start(main, [...SAFE_GIT_ARGS, "-C", ".", "--git-dir=.git", "status"], { gitDir: ".git", workTree: main })
     expect(outside([pinned], main)).toEqual([])
   })
@@ -2460,21 +2492,21 @@ describe("the Git start check", () => {
     ["--git-dir=", (target: string) => [`--git-dir=${join(target, ".git")}`, "rev-parse"], {}],
     ["--work-tree=", (target: string) => [`--work-tree=${target}`, "status"], {}],
     ["-C after -c", (target: string) => [...SAFE_GIT_ARGS, "-C", target, "status"], {}],
-  ] as const)("a start from the allowed directory that selects the target through %s is outside", (_name, argv) => {
-    const { main, linked } = session()
+  ] as const)("a start from the allowed directory that selects the target through %s is outside", async (_name, argv) => {
+    const { main, linked } = await session()
     expect(outside([start(main, argv(linked))], main)).toHaveLength(1)
   })
 
-  test("an environment path that only spells the allowed root before a .. is outside", () => {
-    const { main, linked } = session()
+  test("an environment path that only spells the allowed root before a .. is outside", async () => {
+    const { main, linked } = await session()
     const lexical = `${main}/../${basename(linked)}`
     expect(lexical.startsWith(`${main}/`)).toBe(true)
     for (const env of [{ gitDir: `${lexical}/.git` }, { workTree: lexical }, { commonDir: `${main}/../${basename(main)}x` }])
       expect(outside([start(main, ["status"], env)], main)).toHaveLength(1)
   })
 
-  test("a symlink inside the allowed checkout followed by .. into a foreign repository is outside", () => {
-    const { main, linked } = session()
+  test("a symlink inside the allowed checkout followed by .. into a foreign repository is outside", async () => {
+    const { main, linked } = await session()
     // `<main>/link` -> `<linked>/sub`, so `<main>/link/..` is `<linked>`, not `<main>`.
     mkdirSync(join(linked, "sub"))
     symlinkSync(join(linked, "sub"), join(main, "escape-link"))
@@ -2491,8 +2523,8 @@ describe("the Git start check", () => {
     for (const [name, spawn] of cases) expect([name, outside([spawn], main).length]).toEqual([name, 1])
   })
 
-  test("argv after the subcommand is not a repository selector", () => {
-    const { main, linked } = session()
+  test("argv after the subcommand is not a repository selector", async () => {
+    const { main, linked } = await session()
     expect(outside([start(main, ["log", "-C", linked])], main)).toEqual([])
   })
 })
@@ -2517,8 +2549,8 @@ describe("delivery_cleanup fails closed on another repository", () => {
 
   describe.each(selectors)("selected by %s", (_selector, params) => {
     test.each(hosts)("%s: refused before any Git process runs in the target", async (_name, host) => {
-      const f = fixture("foreign-target")
-      const session = fixture("foreign-session")
+      const f = await fixture("foreign-target")
+      const session = await fixture("foreign-session")
       const { markers } = hostileConfig(f)
       // Sanity: the same hostile checkout does run its programs under plain Git.
       execFileSync("git", ["status", "--porcelain"], {
@@ -2579,8 +2611,8 @@ describe("delivery_cleanup on a repository other than the session's, named expli
     ["repoPath", (f: Fixture): DeliveryCleanupParams => ({ receipt: f.receiptPath, repo: "owner/repo", repoPath: f.main })],
     ["a worktree of the target", (f: Fixture): DeliveryCleanupParams => ({ pr: 17, worktree: f.linked, repo: "owner/repo" })],
   ])("refuses another repository's cleanup named through %s, removing nothing", async (_label, params) => {
-    const f = fixture("explicit-refused")
-    const session = fixture("explicit-refused-session")
+    const f = await fixture("explicit-refused")
+    const session = await fixture("explicit-refused-session")
     const { result, calls } = await cleanupFrom(f, session, params(f))
     const reason = refusal(result)
     expect(reason).toContain('repo: observed "owner/repo"')
@@ -2591,8 +2623,8 @@ describe("delivery_cleanup on a repository other than the session's, named expli
   })
 
   test("refuses another repository without a clone, naming worktree and repoPath", async () => {
-    const f = fixture("explicit-none")
-    const session = fixture("explicit-none-session")
+    const f = await fixture("explicit-none")
+    const session = await fixture("explicit-none-session")
     const { result, calls } = await cleanupFrom(f, session, { receipt: f.receiptPath, repo: "owner/repo" })
     const reason = refusal(result)
     expect(reason).toContain("`repoPath`")
@@ -2602,8 +2634,8 @@ describe("delivery_cleanup on a repository other than the session's, named expli
   })
 
   test("refuses a clone whose remote names a different repository", async () => {
-    const f = fixture("explicit-mismatch")
-    const session = fixture("explicit-mismatch-session")
+    const f = await fixture("explicit-mismatch")
+    const session = await fixture("explicit-mismatch-session")
     const { result, calls } = await cleanupFrom(f, session, { receipt: f.receiptPath, repo: "owner/elsewhere", repoPath: f.main })
     expect(refusal(result)).toContain('expected one naming "owner/elsewhere"')
     expect(mutationCalls(calls)).toEqual([])
@@ -2616,8 +2648,8 @@ describe("delivery_cleanup with two remotes naming different repositories", () =
   const UPSTREAM = "upstream-owner/upstream-repo"
   const remotes = { origin: "https://github.com/owner/repo.git", upstream: `https://github.com/${UPSTREAM}.git` }
 
-  function twoRemotes(name: string): Fixture {
-    const f = fixture(name)
+  async function twoRemotes(name: string): Promise<Fixture> {
+    const f = await fixture(name)
     git(f.main, ["remote", "add", "upstream", remotes.upstream])
     return f
   }
@@ -2627,7 +2659,7 @@ describe("delivery_cleanup with two remotes naming different repositories", () =
     ["a pull request number", (_f: Fixture): DeliveryCleanupParams => ({ pr: 17, repo: UPSTREAM })],
     ["no other selector", (_f: Fixture): DeliveryCleanupParams => ({ repo: UPSTREAM })],
   ])("refuses a receipt of the other remote's repository, selected by %s", async (_label, params) => {
-    const f = twoRemotes("two-remotes-session")
+    const f = await twoRemotes("two-remotes-session")
     const { result, calls } = await invoke(f, params(f), { remotes })
     expect(result.ok).toBe(false)
     expect(mutationCalls(calls)).toEqual([])
@@ -2635,8 +2667,8 @@ describe("delivery_cleanup with two remotes naming different repositories", () =
   })
 
   test("refuses it when the named clone is retargeted from another session, issuing no mutation", async () => {
-    const f = twoRemotes("two-remotes-retargeted")
-    const session = fixture("two-remotes-retargeted-session")
+    const f = await twoRemotes("two-remotes-retargeted")
+    const session = await fixture("two-remotes-retargeted-session")
     const scripted = runner(f, { remotes })
     const run: CliRunner = (argv, options) =>
       argv[0] === "git" && argv.slice(-3, -1).join(" ") === "remote get-url" && options.cwd === session.main
@@ -2654,7 +2686,7 @@ describe("delivery_cleanup with two remotes naming different repositories", () =
   })
 
   test("cleans the receipt when the requested repo is the receipt's own", async () => {
-    const f = twoRemotes("two-remotes-match")
+    const f = await twoRemotes("two-remotes-match")
     const { result } = await invoke(f, { receipt: f.receiptPath, repo: "owner/repo" }, { remotes })
     expect(result.ok).toBe(true)
     expect(existsSync(f.linked)).toBe(false)
@@ -2700,7 +2732,7 @@ describe("delivery_cleanup reads the target's beads, not the session's", () => {
   }
 
   test("reads from the target root with every session pin variable removed", async () => {
-    const f = fixture("bd-env")
+    const f = await fixture("bd-env")
     const { result, details } = await fromSubdirectory(f, "closed", "closed", { ...f.env, ...PIN })
     expect(result.ok).toBe(true)
     const shows = details.filter((call) => call.argv[0] === "bd")
@@ -2711,14 +2743,14 @@ describe("delivery_cleanup reads the target's beads, not the session's", () => {
   }, 60_000)
 
   test("decides on the target's ledger when the session's says open and the target's says closed", async () => {
-    const f = fixture("bd-session-open")
+    const f = await fixture("bd-session-open")
     const { result } = await fromSubdirectory(f, "open", "closed", { ...f.env, ...PIN })
     expect(result.ok).toBe(true)
     expect(existsSync(f.linked)).toBe(false)
   }, 60_000)
 
   test("refuses on the target's ledger when the session's says closed and the target's says open", async () => {
-    const f = fixture("bd-session-closed")
+    const f = await fixture("bd-session-closed")
     const { result } = await fromSubdirectory(f, "closed", "open", { ...f.env, ...PIN })
     expect(refusal(result)).toContain("beads.delivery-17.status")
     expect(existsSync(f.linked)).toBe(true)
@@ -2740,7 +2772,7 @@ describe("delivery_cleanup Git options in its own repository", () => {
   }
 
   test("every checkout-bound Git command carries the literal safe options", async () => {
-    const f = fixture("safe-literal")
+    const f = await fixture("safe-literal")
     const { run, raw } = realGitRunner(f)
     const result = await cleanupDeliveryUnwrapped({ receipt: f.receiptPath }, f.main, {
       run,
@@ -2755,7 +2787,7 @@ describe("delivery_cleanup Git options in its own repository", () => {
   }, 60_000)
 
   test("hooks and filter drivers of the checkout do not run during a full cleanup", async () => {
-    const f = fixture("safe-hooks")
+    const f = await fixture("safe-hooks")
     const { markers } = hostileConfig(f)
     for (const marker of Object.values(markers)) rmSync(marker, { force: true }) // setup reads may have fired some
     const { run } = realGitRunner(f)
@@ -2777,7 +2809,7 @@ describe("delivery_cleanup Git options in its own repository", () => {
   }, 60_000)
 
   test("a refused cleanup leaves the index byte-identical", async () => {
-    const f = fixture("safe-index")
+    const f = await fixture("safe-index")
     const indexPath = join(git(f.linked, ["rev-parse", "--absolute-git-dir"]), "index")
     const tracked = git(f.linked, ["ls-files"]).split("\n")[0] ?? ""
     writeFileSync(join(f.linked, tracked), readFileSync(join(f.linked, tracked)))
@@ -2800,8 +2832,8 @@ describe("delivery_cleanup Git options in its own repository", () => {
 
 describe("delivery_cleanup pins Git to the verified worktree", () => {
   test("a marker swapped after verification does not redirect Git", async () => {
-    const f = fixture("pinned-swap")
-    const foreign = fixture("pinned-swap-foreign")
+    const f = await fixture("pinned-swap")
+    const foreign = await fixture("pinned-swap-foreign")
     const { markers } = hostileConfig(foreign)
     for (const marker of Object.values(markers)) rmSync(marker, { force: true })
     let swapped = false
@@ -2830,7 +2862,7 @@ describe("delivery_cleanup pins Git to the verified worktree", () => {
   }, 60_000)
 
   test("the removal and branch deletion run pinned to a verified main worktree", async () => {
-    const f = fixture("pinned-exec")
+    const f = await fixture("pinned-exec")
     const { result, details } = await invoke(f)
     expect(result.ok).toBe(true)
     for (const verb of [["worktree", "remove"], ["branch", "-d"]]) {
@@ -2843,8 +2875,8 @@ describe("delivery_cleanup pins Git to the verified worktree", () => {
 
 describe("delivery_cleanup resolves the target path once", () => {
   test("a symlinked parent switched between steps cannot move any step to another tree", async () => {
-    const f = fixture("resolve-once")
-    const foreign = fixture("resolve-once-foreign")
+    const f = await fixture("resolve-once")
+    const foreign = await fixture("resolve-once-foreign")
     const alias = join(scratch("alias"), "parent")
     symlinkSync(f.root, alias, "dir")
     const viaAlias = join(alias, basename(f.linked))
@@ -2884,7 +2916,7 @@ describe("delivery_cleanup resolves the target path once", () => {
   }, 60_000)
 
   test("a receipt path that does not resolve is treated as already gone and no Git runs in it", async () => {
-    const f = fixture("resolve-missing")
+    const f = await fixture("resolve-missing")
     const receipt = buildReceipt({
       ...f.receipt,
       now: NOW + 1,
@@ -2959,8 +2991,8 @@ describe("delivery_cleanup refuses a registered worktree whose directory is not 
   ]
 
   test.each(replacements)("%s", async (_name, replace) => {
-    const f = fixture("marker-target")
-    const foreign = fixture("marker-foreign")
+    const f = await fixture("marker-target")
+    const foreign = await fixture("marker-foreign")
     const { markers } = hostileConfig(foreign)
     for (const marker of Object.values(markers)) rmSync(marker, { force: true })
     replace(f, foreign)
@@ -3002,9 +3034,12 @@ describe("pending cleanup: one remover per worktree", () => {
       bounds?: Partial<CleanupBounds>
       observe?: GitRunner
       lock?: Record<string, unknown>
+      sessionLookupMs?: number
+      /** Prime the repository cache as `setupDelivery` does (default); false leaves it cold. */
+      prime?: boolean
     } = {},
   ) {
-    const f = fixture(name)
+    const f = await fixture(name)
     const options: RunnerOptions = { beadStatus: over.beadStatus ?? "closed", ...(over.before ? { before: over.before } : {}) }
     const scripted = runner(f, options)
     const fake = createFakeContext({ directory: f.main })
@@ -3027,8 +3062,10 @@ describe("pending cleanup: one remover per worktree", () => {
       now: () => clock,
       ...(over.observe === undefined ? {} : { observe: over.observe }),
       ...(over.lock === undefined ? {} : { lock: over.lock }),
+      ...(over.sessionLookupMs === undefined ? {} : { sessionLookupMs: over.sessionLookupMs }),
     })
-    const common = repositoryContext(f.main)?.commonDir as string
+    if (over.prime !== false) await pending.prime()
+    const common = (await repositoryContext(f.main))?.commonDir as string
     const advance = (ms: number) => {
       clock += ms
     }
@@ -3283,7 +3320,7 @@ describe("pending cleanup: one remover per worktree", () => {
 
   test("receipts that need no attempt do not starve one that does", async () => {
     const h = await harness("pending-window", { maxPerPass: 1 })
-    const key = repoKey(h.f.main) as string
+    const key = (await repoKey(h.f.main)) as string
     const parked = join(h.f.root, "parked worktree")
     mkdirSync(parked)
     const newer = buildReceipt({
@@ -3699,6 +3736,212 @@ describe("pending cleanup: one remover per worktree", () => {
     })
   })
 
+  test.each([
+    ["a denial is recorded", "cleanup was denied"],
+    ["a session in the worktree starts running", "a session is running"],
+  ] as const)("%s while any repository observation of the final check runs: the worktree is kept", async (event, reason) => {
+    // Every Git observation the final check makes is a wait in which another call can record a
+    // denial or a session can start. The change has to be seen whichever of those waits it lands in.
+    let observations = 0
+    let fireAt = 0
+    let fire: () => void = () => {}
+    let busy = false
+    const observe: GitRunner = (argv, cwd, timeoutMs, signal) => {
+      observations++
+      if (observations === fireAt) fire()
+      return spawnGit(argv, cwd, timeoutMs, signal)
+    }
+    const list = async () => ({ data: busy ? [{ time: { busy: 2, idle: 1 } }] : [] })
+    const dry = await harness("final-check-count", { observe, list })
+    observations = 0
+    expect(await dry.pending.removalFor("ses_lead").finalCheck(dry.f.linked)).toBeUndefined()
+    const total = observations
+    await dry.finish()
+    expect(total).toBeGreaterThan(0)
+    for (let at = 1; at <= total; at++) {
+      const h = await harness(`final-check-${reason.split(" ")[1]}-${at}`, { observe, list })
+      let recorded: Promise<void> = Promise.resolve()
+      busy = false
+      fire = () => {
+        if (event === "a denial is recorded") recorded = h.pending.record(h.f.receipt, "ses_other", { denied: true })
+        else busy = true
+      }
+      observations = 0
+      fireAt = at
+      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain(reason)
+      await recorded
+      await h.finish()
+    }
+  })
+
+  describe("a veto that is still being written is honoured by the final check", () => {
+    // While held, every repository observation of this instance waits until released, so a call that
+    // makes one is caught in the middle of publishing its veto. While failing, every one answers null.
+    let gate: { started: () => void; wait: Promise<void> } | undefined
+    let failing = false
+    const observe: GitRunner = async (argv, cwd, timeoutMs, signal) => {
+      if (failing) return null
+      const held = gate
+      if (held !== undefined) {
+        held.started()
+        await held.wait
+      }
+      return spawnGit(argv, cwd, timeoutMs, signal)
+    }
+    const holdObservations = () => {
+      const started = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      gate = { started: started.resolve, wait: release.promise }
+      releaseGate = () => {
+        gate = undefined
+        release.resolve()
+      }
+      return { started: started.promise, release: releaseGate }
+    }
+    // A test that fails while holding must not leave the next one's observations held.
+    let releaseGate = () => {}
+    afterEach(() => {
+      releaseGate()
+      failing = false
+    })
+    /** A harness whose priming observed the repository, or, with `primed` false, whose priming failed. */
+    const vetoHarness = async (name: string, primed: boolean, over: Parameters<typeof harness>[1] = {}) => {
+      failing = !primed
+      try {
+        return await harness(name, { observe, ...over })
+      } finally {
+        failing = false
+      }
+    }
+    const refuseExplicit = (h: Harness) =>
+      h.pending
+        .explicit(() => Promise.reject(new Error("rejected")), "ses_other")
+        .authorize({ worktree: h.f.linked })
+        .catch(() => {})
+    const shellReport = (h: Harness) =>
+      h.fake.fire.session("experimental.idle", {
+        sessionID: "ses_x",
+        background: [{ kind: "shell", sessionID: "ses_x", shellID: "sh1", command: `cd ${h.f.linked} && make test` }],
+      } as never)
+    /** Another delivery instance in the same repository, with no in-memory state of the first. */
+    const otherInstance = (h: Harness) =>
+      createPendingCleanup({ ctx: h.fake.context, cwd: h.f.main, env: h.f.env, host: () => undefined, now: () => NOW + 10 })
+    const priming = [
+      ["primed", true],
+      ["unprimed after a failed priming", false],
+    ] as const
+
+    test.each(priming)("%s: a refused explicit cleanup's denial is on disk for another instance before any git wait", async (_name, primed) => {
+      const h = await vetoHarness(`veto-deny-${primed}`, primed)
+      const other = otherInstance(h)
+      const held = holdObservations()
+      // The refusal finishes publishing, or this instance waits on git first.
+      await Promise.race([refuseExplicit(h), held.started])
+      expect(await other.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("cleanup was denied")
+      held.release()
+      await other.dispose()
+      await h.finish()
+    })
+
+    test.each(priming)("%s: a background shell reported by the idle hook is on disk as a hold before any git wait", async (_name, primed) => {
+      const h = await vetoHarness(`veto-hold-${primed}`, primed)
+      await h.pending.start()
+      const held = holdObservations()
+      // The hook's first git wait (its cleanup pass) comes only after the hold is written.
+      await Promise.race([shellReport(h), held.started])
+      expect(holdsState(h.common, h.f.linked, NOW + 10)).toBeDefined()
+      held.release()
+      await h.pending.settle()
+      expect(removed(h)).toBe(false)
+      await h.finish()
+    })
+
+    test("a session lookup that never settles neither keeps the report open nor leaves the worktree unguarded", async () => {
+      const h = await harness("veto-hold-lookup", { sessionLookupMs: 50 })
+      ;(h.fake.context.session as unknown as { get: () => Promise<never> }).get = () => new Promise<never>(() => {})
+      await h.pending.start()
+      await h.fake.fire.session("experimental.idle", {
+        sessionID: "ses_x",
+        background: [{ kind: "subagent", sessionID: "ses_x", childSessionID: "ses_hung" }],
+      } as never)
+      const hold = holdsState(h.common, h.f.linked, NOW + 10)
+      expect(hold).toBeDefined()
+      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toBe(hold)
+      await h.finish()
+    })
+
+    test("a removal attempted while a report's session lookup is pending is refused, before any hold is on disk", async () => {
+      const lookupStarted = Promise.withResolvers<void>()
+      const lookup = Promise.withResolvers<unknown>()
+      const h = await harness("veto-hold-pending-lookup", { list: async () => ({ data: [] }) })
+      ;(h.fake.context.session as unknown as { get: () => Promise<unknown> }).get = () => {
+        lookupStarted.resolve()
+        return lookup.promise
+      }
+      await h.pending.start()
+      const reported = h.fake.fire.session("experimental.idle", {
+        sessionID: "ses_x",
+        background: [{ kind: "subagent", sessionID: "ses_x", childSessionID: "ses_child" }],
+      } as never)
+      await lookupStarted.promise
+      expect(readHolds(h.common, h.f.linked).holds).toEqual([])
+      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("still being recorded")
+      lookup.resolve({ location: { directory: h.f.root } })
+      await reported
+      await h.finish()
+    })
+
+    const needsPermissions = process.getuid?.() === 0 ? test.skip : test
+    test("the receipts a report reads and the holds it writes come from one repository observation", async () => {
+      // Git answers the combined read for another repository and nothing else, so a location
+      // assembled from two sources would read this repository's receipts and write the holds
+      // into the other's common directory.
+      const other = await fixture("veto-pair-other")
+      const onlyCombinedRead: GitRunner = (argv, _cwd, timeoutMs, signal) =>
+        argv.length === REPOSITORY_OBSERVATION_ARGS.length && argv.every((part, i) => part === REPOSITORY_OBSERVATION_ARGS[i])
+          ? spawnGit(argv, other.main, timeoutMs, signal)
+          : null
+      const h = await harness("veto-pair", { observe: onlyCombinedRead })
+      await h.pending.start()
+      await shellReport(h)
+      const otherCommon = (await repositoryContext(other.main))?.commonDir as string
+      expect(readHolds(otherCommon, h.f.linked).holds).toEqual([])
+      await h.finish()
+      rmSync(other.root, { recursive: true, force: true })
+    })
+
+    needsPermissions("a hold that fails to be written while the final check lists sessions keeps the worktree", async () => {
+      // The final check's session listing waits until released; the report fails meanwhile.
+      const listing = Promise.withResolvers<void>()
+      const listed = Promise.withResolvers<void>()
+      let first = true
+      const list = async () => {
+        if (first) {
+          first = false
+          listed.resolve()
+          await listing.promise
+        }
+        return { data: [] }
+      }
+      const h = await harness("veto-hold-unwritable", { list })
+      await h.pending.start()
+      const check = h.pending.removalFor("ses_lead").finalCheck(h.f.linked)
+      await listed.promise
+      // The check's own writability probe has made the worktree's holds directory by now.
+      const holdsRoot = join(h.common, "opencode", "holds")
+      const holdsDir = join(holdsRoot, readdirSync(holdsRoot)[0] as string)
+      chmodSync(holdsDir, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        await shellReport(h)
+      } finally {
+        chmodSync(holdsDir, 0o755) // check-test-executables: directory permission, not a script
+      }
+      listing.resolve()
+      expect(await check).toContain("its running work could not be recorded")
+      await h.finish()
+    })
+  })
+
   describe("the repository observations follow the cleanup bound", () => {
     // A git that needs about 6 s: it answers only when allowed at least that long.
     const slowGit: GitRunner = (argv, cwd, timeoutMs) => {
@@ -3862,7 +4105,7 @@ describe("pending cleanup: one remover per worktree", () => {
 
     test("cleanup that checked before a denial was written, then waited on the lock, does not delete the record", async () => {
       const h = await harness("gc-waits-for-lock")
-      const key = repoKey(h.f.main) as string
+      const key = (await repoKey(h.f.main)) as string
       writeReceipt(
         buildReceipt({
           now: NOW + 5000,
@@ -3902,7 +4145,7 @@ describe("pending cleanup: one remover per worktree", () => {
 
     test("cleanup still drops a plain record whose evidence holds", async () => {
       const h = await harness("gc-still-drops")
-      const key = repoKey(h.f.main) as string
+      const key = (await repoKey(h.f.main)) as string
       writeReceipt(
         buildReceipt({
           now: NOW + 5000,
@@ -3926,12 +4169,12 @@ describe("pending cleanup: one remover per worktree", () => {
   })
 
   describe("a landing record is dropped only on positive evidence", () => {
-    const receiptsDir = (h: Harness) => receiptDirectory(h.f.env, repoKey(h.f.main) as string)
+    const receiptsDir = async (h: Harness) => receiptDirectory(h.f.env, (await repoKey(h.f.main)) as string)
 
     test("a missing receipt directory deletes nothing, denial or not", async () => {
       const h = await harness("gc-no-dir")
       await h.pending.record(h.f.receipt, "ses_lead", { denied: true })
-      rmSync(receiptsDir(h), { recursive: true, force: true })
+      rmSync((await receiptsDir(h)), { recursive: true, force: true })
       await h.pending.gc()
       expect(readLanding(h.common, h.f.receipt.receiptId)).toMatchObject({ kind: "present", value: { denied: { sessionID: "ses_lead" } } })
       await h.finish()
@@ -3941,7 +4184,7 @@ describe("pending cleanup: one remover per worktree", () => {
       const h = await harness("gc-corrupt")
       await h.pending.record(h.f.receipt, "ses_lead", { denied: true })
       await h.pending.record({ ...h.f.receipt, receiptId: "9-other" } as never, "ses_lead")
-      writeFileSync(join(receiptsDir(h), `${h.f.receipt.receiptId}.json`), "{not json")
+      writeFileSync(join((await receiptsDir(h)), `${h.f.receipt.receiptId}.json`), "{not json")
       await h.pending.gc()
       expect(readLanding(h.common, h.f.receipt.receiptId).kind).toBe("present")
       expect(readLanding(h.common, "9-other").kind).toBe("present")
@@ -3950,7 +4193,7 @@ describe("pending cleanup: one remover per worktree", () => {
 
     test("a superseded receipt's record is dropped, but a denial never is", async () => {
       const h = await harness("gc-superseded")
-      const key = repoKey(h.f.main) as string
+      const key = (await repoKey(h.f.main)) as string
       const later = buildReceipt({
         now: NOW + 5000,
         emitter: h.f.receipt.emitter,
@@ -3986,7 +4229,7 @@ describe("pending cleanup: one remover per worktree", () => {
 
   test("a worktree that is already gone is done and takes no slot", async () => {
     const h = await harness("pending-gone", { maxPerPass: 1 })
-    const key = repoKey(h.f.main) as string
+    const key = (await repoKey(h.f.main)) as string
     const gone = buildReceipt({
       now: NOW + 5000,
       emitter: h.f.receipt.emitter,
@@ -4044,8 +4287,11 @@ function selectionRefusal(result: ReturnType<typeof selectReceipt>): string {
   return result.reason
 }
 
+// Built at collection time, as the describe body did before the fixture became async.
+const selectPure = await fixture("select-pure")
+
 describe("selectReceipt", () => {
-  const f = fixture("select-pure")
+  const f = selectPure
   const one = candidate(f, 1, "feat/one", OID_A)
   const two = candidate(f, 2, "feat/two", OID_B)
   const pool = [two, one] // newest first, as listReceipts returns them
@@ -4149,7 +4395,7 @@ describe("planLocalRef", () => {
 
 describe("delivery_cleanup receipt selection", () => {
   test("with two receipts in one repository, the worktree argument picks its own, not the newest", async () => {
-    const f = fixture("two-receipts")
+    const f = await fixture("two-receipts")
     const newer = candidate(f, 18, "feat/newer", OID_B, { now: NOW + 5000 })
     writeReceipt(newer.receipt, receiptDirectory(f.env, newer.receipt.repo.key))
     const { result } = await invoke(f, { worktree: f.linked })
@@ -4159,7 +4405,7 @@ describe("delivery_cleanup receipt selection", () => {
   })
 
   test("with two uncleaned receipts and no selector nothing is removed and both are listed", async () => {
-    const f = fixture("two-receipts-ambiguous")
+    const f = await fixture("two-receipts-ambiguous")
     const newer = candidate(f, 18, "feat/newer", OID_B, { now: NOW + 5000 })
     writeReceipt(newer.receipt, receiptDirectory(f.env, newer.receipt.repo.key))
     const { result, calls } = await invoke(f, {})
@@ -4174,7 +4420,7 @@ describe("delivery_cleanup receipt selection", () => {
 
 describe("delivery_cleanup worktree acceptance", () => {
   test("a worktree renamed off the receipt branch at the reviewed head is removed and the leftover branch reported", async () => {
-    const f = fixture("renamed")
+    const f = await fixture("renamed")
     git(f.linked, ["branch", "-m", "renamed-branch"])
     const { result } = await invoke(f)
     if (!result.ok) throw new Error(result.reason)
@@ -4185,7 +4431,7 @@ describe("delivery_cleanup worktree acceptance", () => {
   })
 
   test("a worktree detached after its branch was deleted is removed", async () => {
-    const f = fixture("deleted-branch")
+    const f = await fixture("deleted-branch")
     git(f.linked, ["checkout", "-q", "--detach"])
     git(f.main, ["branch", "-D", f.branch])
     const { result } = await invoke(f)
@@ -4195,7 +4441,7 @@ describe("delivery_cleanup worktree acceptance", () => {
   })
 
   test("a renamed worktree whose HEAD moved past the reviewed head is still refused", async () => {
-    const f = fixture("renamed-moved")
+    const f = await fixture("renamed-moved")
     git(f.linked, ["branch", "-m", "renamed-branch"])
     writeFileSync(join(f.linked, "more.txt"), "more\n")
     git(f.linked, ["add", "more.txt"])
@@ -4207,7 +4453,7 @@ describe("delivery_cleanup worktree acceptance", () => {
   })
 
   test("a second cleanup of an already cleaned landing succeeds without touching anything", async () => {
-    const f = fixture("idempotent")
+    const f = await fixture("idempotent")
     const first = await invoke(f, { pr: 17 })
     if (!first.result.ok) throw new Error(first.result.reason)
     const second = await invoke(f, { pr: 17 })
@@ -4218,7 +4464,7 @@ describe("delivery_cleanup worktree acceptance", () => {
   })
 
   test("a worktree recreated at the cleaned path is refused with its path and HEAD, and kept", async () => {
-    const f = fixture("reappeared")
+    const f = await fixture("reappeared")
     const first = await invoke(f, { pr: 17 })
     expect(first.result.ok).toBe(true)
     git(f.main, ["worktree", "add", "-q", "-b", "reborn", f.linked])
@@ -4235,7 +4481,7 @@ describe("delivery_cleanup worktree acceptance", () => {
   })
 
   test("a plain directory at the cleaned path is refused and kept", async () => {
-    const f = fixture("reappeared-dir")
+    const f = await fixture("reappeared-dir")
     const first = await invoke(f, { pr: 17 })
     expect(first.result.ok).toBe(true)
     mkdirSync(f.linked)
@@ -4247,7 +4493,7 @@ describe("delivery_cleanup worktree acceptance", () => {
   })
 
   test("a cleaned landing whose path is absent but still registered is refused with the path and registered HEAD", async () => {
-    const f = fixture("registered-absent")
+    const f = await fixture("registered-absent")
     const first = await invoke(f, { pr: 17 })
     expect(first.result.ok).toBe(true)
     const head = "1234567890abcdef1234567890abcdef12345678"
@@ -4259,7 +4505,7 @@ describe("delivery_cleanup worktree acceptance", () => {
   })
 
   test("a registration spelled through a symlinked parent still names the cleaned path", async () => {
-    const f = fixture("registered-alias")
+    const f = await fixture("registered-alias")
     const first = await invoke(f, { pr: 17 })
     expect(first.result.ok).toBe(true)
     const alias = join(dirname(f.linked), "alias-parent")
@@ -4274,7 +4520,7 @@ describe("delivery_cleanup worktree acceptance", () => {
   })
 
   test("a cleaned landing whose worktree list cannot be read is refused, not treated as gone", async () => {
-    const f = fixture("list-unreadable")
+    const f = await fixture("list-unreadable")
     const first = await invoke(f, { pr: 17 })
     expect(first.result.ok).toBe(true)
     const second = await invoke(f, { pr: 17 }, { worktreeListTimeout: true })
@@ -4283,7 +4529,7 @@ describe("delivery_cleanup worktree acceptance", () => {
   })
 
   test("a directory created while the worktree list is read is still caught", async () => {
-    const f = fixture("created-during-read")
+    const f = await fixture("created-during-read")
     const first = await invoke(f, { pr: 17 })
     expect(first.result.ok).toBe(true)
     const second = await invoke(
@@ -4312,7 +4558,7 @@ describe("delivery_cleanup worktree acceptance", () => {
   })
 
   test("a worktree deleted by hand before cleanup is treated as already cleaned", async () => {
-    const f = fixture("gone-by-hand")
+    const f = await fixture("gone-by-hand")
     git(f.main, ["worktree", "remove", "--force", f.linked])
     const { result, calls } = await invoke(f)
     if (!result.ok) throw new Error(result.reason)
@@ -4323,7 +4569,7 @@ describe("delivery_cleanup worktree acceptance", () => {
 
 describe("delivery_cleanup stash gate on a renamed branch", () => {
   test("a stash on the worktree's renamed branch refuses and removes nothing", async () => {
-    const f = fixture("renamed-stash")
+    const f = await fixture("renamed-stash")
     git(f.linked, ["branch", "-m", "renamed-branch"])
     writeFileSync(join(f.linked, "stashed.txt"), "x\n")
     git(f.linked, ["stash", "push", "-u", "-q", "-m", "keep me"])
@@ -4334,7 +4580,7 @@ describe("delivery_cleanup stash gate on a renamed branch", () => {
   })
 
   test("a stash made under the receipt's former branch name still refuses after a rename", async () => {
-    const f = fixture("former-stash")
+    const f = await fixture("former-stash")
     writeFileSync(join(f.linked, "stashed.txt"), "x\n")
     git(f.linked, ["stash", "push", "-u", "-q", "-m", "keep me"])
     git(f.linked, ["branch", "-m", "renamed-branch"])
@@ -4347,7 +4593,7 @@ describe("delivery_cleanup stash gate on a renamed branch", () => {
 
 describe("reportFromCleanup over the real cleanup", () => {
   test("a receipt ref that moved is preserved and the report says the ref was not deleted", async () => {
-    const f = fixture("report-preserved")
+    const f = await fixture("report-preserved")
     git(f.linked, ["branch", "-m", "renamed-branch"])
     git(f.main, ["branch", f.branch, f.merge])
     const { result } = await invoke(f)
@@ -4359,7 +4605,7 @@ describe("reportFromCleanup over the real cleanup", () => {
   })
 
   test("a worktree already gone is reported as already cleaned with nothing removed", async () => {
-    const f = fixture("report-gone")
+    const f = await fixture("report-gone")
     git(f.main, ["worktree", "remove", "--force", f.linked])
     const { result } = await invoke(f)
     const report = reportFromCleanup(result)
@@ -4368,7 +4614,7 @@ describe("reportFromCleanup over the real cleanup", () => {
   })
 
   test("a removed worktree and deleted branch are reported as removed with the ref deleted", async () => {
-    const f = fixture("report-removed")
+    const f = await fixture("report-removed")
     const { result } = await invoke(f)
     expect(reportFromCleanup(result)).toMatchObject({ ok: true, localRefDeleted: true, alreadyCleaned: false, kept: [] })
   })
@@ -4376,7 +4622,7 @@ describe("reportFromCleanup over the real cleanup", () => {
 
 describe("delivery_cleanup round 2", () => {
   test("a stash made while detached at the reviewed head refuses and removes nothing", async () => {
-    const f = fixture("detached-stash")
+    const f = await fixture("detached-stash")
     git(f.linked, ["checkout", "-q", "--detach"])
     writeFileSync(join(f.linked, "stashed.txt"), "x\n")
     git(f.linked, ["stash", "push", "-u", "-q", "-m", "keep me"])
@@ -4404,7 +4650,7 @@ describe("delivery_cleanup round 2", () => {
     ["a preserved moved ref", (f: Fixture) => git(f.main, ["branch", f.branch, f.merge])],
     ["an already absent ref", () => undefined],
   ])("an unknown final local-ref probe on %s refuses and writes no cleaned receipt", async (_name, arrange) => {
-    const f = fixture("probe-unknown")
+    const f = await fixture("probe-unknown")
     git(f.linked, ["branch", "-m", "renamed-branch"])
     arrange(f)
     const before = listReceipts(receiptDirectory(f.env, f.receipt.repo.key)).length
@@ -4414,7 +4660,7 @@ describe("delivery_cleanup round 2", () => {
   })
 
   test("a ref that was already absent is reported as such, never as deleted", async () => {
-    const f = fixture("absent-not-deleted")
+    const f = await fixture("absent-not-deleted")
     git(f.linked, ["branch", "-m", "renamed-branch"])
     const { result } = await invoke(f)
     if (!result.ok) throw new Error(result.reason)
@@ -4426,7 +4672,7 @@ describe("delivery_cleanup round 2", () => {
   })
 
   test("a ref cleanup deleted is reported as deleted", async () => {
-    const f = fixture("deleted-reported")
+    const f = await fixture("deleted-reported")
     const { result } = await invoke(f)
     if (!result.ok) throw new Error(result.reason)
     expect(result.localRefDeleted).toBe(true)

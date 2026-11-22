@@ -961,17 +961,17 @@ async function gitOutput(
  * invokes the same seam directly. The key, recorded root, and ledger verdict cannot
  * therefore come from different observations or layout heuristics.
  *
- * The seam reads through a synchronous callback and asks for exactly that one
- * observation, so the read is made here, through the abortable runner, and its
- * stdout is what the callback answers. Any other request is answered as a failed
- * read, which the seam turns into a refusal rather than a guess.
+ * The seam asks for exactly that one observation, so the read is made here, through
+ * the abortable runner with this call's Git environment, and its stdout is what the
+ * seam's runner answers. Any other request is answered as a failed read, which the
+ * seam turns into a refusal rather than a guess.
  */
 async function observeRepository(
   git: GitRead,
   cwd: string,
 ): Promise<{ key: string; canonicalRoot: string; commonDir: string; ledger: CanonicalLedger } | { reason: string }> {
   const printed = await git(REPOSITORY_OBSERVATION_ARGS)
-  const repository = repositoryContext(cwd, (argv) =>
+  const repository = await repositoryContext(cwd, (argv) =>
     argv.length === REPOSITORY_OBSERVATION_ARGS.length &&
     argv.every((part, index) => part === REPOSITORY_OBSERVATION_ARGS[index])
       ? printed
