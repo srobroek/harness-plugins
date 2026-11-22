@@ -2,7 +2,7 @@
   "mcpServers": {
     "accessibility-scanner": {
       "command": "npx",
-      "args": ["-y", "accessibility-scanner-mcp@0.2.3"],
+      "args": ["-y", "accessibility-scanner-mcp@0.3.1"],
       "cwd": "${HOME}",
       "env": { "npm_config_registry": "https://registry.npmjs.org/" }
     },
