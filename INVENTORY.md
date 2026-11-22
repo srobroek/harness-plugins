@@ -33,7 +33,7 @@
 | lang-typescript | 0.8.0 | development | global | opencode, claude |
 | lsp | 0.5.0 | development | project | opencode |
 | model-roles | 0.11.0 | development | global | opencode |
-| modes | 1.1.1 | development | global | opencode |
+| modes | 1.2.0 | development | global | opencode |
 | parley | 0.4.2 | development | global | opencode |
 | plugin-audit | 0.2.0 | development | project | opencode |
 | project | 0.9.1 | productivity | global | opencode, claude |
