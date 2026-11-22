@@ -227,11 +227,14 @@ function applyActorAssignments(vars: ShellVars, assignments: string[]): void {
 /** What one top-level command does to the actor variables, on a copy of `vars`. */
 function afterCommand(vars: ShellVars, values: string[], assigned: string[]): ShellVars {
   const after = { ...vars }
-  const command = values[0] === "builtin" || values[0] === "command" ? values.slice(1) : values
-  const name = command[0]
+  const name = values[0]
+  const builtinName = (word: string): boolean => BUILTIN_OPTIONS[word] !== undefined || VARIABLE_BUILTINS[word] === true
   if (values.length === 0) applyActorAssignments(after, assigned)
-  else if (name !== undefined && BUILTIN_OPTIONS[name] !== undefined) applyVariableBuiltin(after, name, command.slice(1))
-  else if (name !== undefined && VARIABLE_BUILTINS[name] === true) markUnverified(after, mentioned(command.slice(1)))
+  // A `command` or `builtin` wrapper has options of its own; the gate does not emulate them.
+  else if ((name === "command" || name === "builtin") && values.slice(1).some(builtinName))
+    markUnverified(after, mentioned(values.slice(1)))
+  else if (name !== undefined && BUILTIN_OPTIONS[name] !== undefined) applyVariableBuiltin(after, name, values.slice(1))
+  else if (name !== undefined && VARIABLE_BUILTINS[name] === true) markUnverified(after, mentioned(values.slice(1)))
   return after
 }
 
