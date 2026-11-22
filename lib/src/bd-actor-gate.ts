@@ -1,4 +1,4 @@
-import { commandTextSources, interpreterCommandString, scanShell, stdinScriptSources } from "./shell-command.ts"
+import { interpreterCommandString, parse, readsScriptFromStdin, scanShell, stdinSource } from "./beads-shell.ts"
 
 const ACTOR_VARS = ["BEADS_ACTOR", "BD_ACTOR"] as const
 type ActorVar = (typeof ACTOR_VARS)[number]
@@ -68,10 +68,16 @@ export interface BdInvocation {
   globals: string[]
   /** `NAME=value` assignments prefixed to this very `bd` word. */
   prefix: string[]
-  /** Actor values an earlier `export NAME=value` set, read in order; `null` marks one an `unset` cleared. */
+  /** Actor values the shell exported before this command, read in order; `null` marks one it cleared or unexported. */
   exported: ActorState
   /** Actor variables removed by an `env -u`/`env -i` wrapper. */
   unset: Partial<Record<ActorVar, true>>
+  /**
+   * Actor variables whose value here the gate cannot know. Either the command line changes them where the
+   * gate cannot place the change, or this `bd` runs nested (a substitution, a pipeline stage, a script fed
+   * to a shell) in a command line that changes an actor variable anywhere.
+   */
+  unverified: Partial<Record<ActorVar, true>>
 }
 
 /** A string is an exported value, `null` a variable a shell `unset` cleared or unexported, absent one never touched here. */
@@ -87,44 +93,53 @@ interface ShellVar {
   exported: boolean | undefined
 }
 
-type ShellVars = Partial<Record<ActorVar, ShellVar>>
+/** `"unverified"` marks a variable changed where the gate cannot tell whether, or how, the change ran. */
+type ShellVars = Partial<Record<ActorVar, ShellVar | "unverified">>
 
 const OPENERS = new Set(["if", "while", "until", "for", "select", "case"])
 const HEADER_ONLY = new Set(["for", "select", "case"])
 const CLOSERS = new Set(["fi", "done", "esac"])
 const BRANCHES = new Set(["else", "elif"])
 const ASSIGNMENT = /^[A-Za-z_]\w*=/
+const BOTH: Partial<Record<ActorVar, true>> = { BEADS_ACTOR: true, BD_ACTOR: true }
+
+/** Builtins other than `export` and `unset` that can set or clear a shell variable named in their arguments. */
+const VARIABLE_BUILTINS = new Set([
+  "declare",
+  "eval",
+  "getopts",
+  "let",
+  "local",
+  "mapfile",
+  "printf",
+  "read",
+  "readarray",
+  "readonly",
+  "typeset",
+])
 
 const basename = (word: string): string => word.split("/").pop() ?? word
 
 const actorVarOf = (arg: string): ActorVar | undefined =>
   ACTOR_VARS.find((candidate) => arg === candidate || arg.startsWith(`${candidate}=`))
 
-/** What a child process inherits: an exported value, `null` for a variable the shell removed from the environment. */
-function exportedState(vars: ShellVars): ActorState {
-  const state: ActorState = {}
+/** What a child process inherits, and which actor variables the gate cannot know there. */
+function childView(vars: ShellVars): { exported: ActorState; unverified: Partial<Record<ActorVar, true>> } {
+  const exported: ActorState = {}
+  const unverified: Partial<Record<ActorVar, true>> = {}
   for (const variable of ACTOR_VARS) {
     const entry = vars[variable]
-    if (entry === undefined || entry.exported === undefined) continue
-    if (entry.exported && typeof entry.value === "string") state[variable] = entry.value
-    else if (!entry.exported || entry.value === null) state[variable] = null
+    if (entry === "unverified") unverified[variable] = true
+    else if (entry === undefined || entry.exported === undefined) continue
+    else if (entry.exported && typeof entry.value === "string") exported[variable] = entry.value
+    else if (!entry.exported || entry.value === null) exported[variable] = null
   }
-  return state
-}
-
-function shellVarsOf(state: ActorState): ShellVars {
-  const vars: ShellVars = {}
-  for (const variable of ACTOR_VARS) {
-    const value = state[variable]
-    if (value !== undefined) vars[variable] = { value, exported: value !== null }
-  }
-  return vars
+  return { exported, unverified }
 }
 
 /** Apply a command-position `export`, `export -n` or `unset` to the shell's actor variables. */
 function applyActorBuiltin(vars: ShellVars, values: string[]): void {
   const name = values[0]
-  if (name !== "export" && name !== "unset") return
   const unexport = name === "export" && values.slice(1).some((arg) => /^-[a-zA-Z]*n/.test(arg))
   for (const arg of values.slice(1)) {
     const variable = actorVarOf(arg)
@@ -132,8 +147,9 @@ function applyActorBuiltin(vars: ShellVars, values: string[]): void {
     const current = vars[variable]
     if (name === "unset") vars[variable] = { value: null, exported: false }
     else if (arg.includes("=")) vars[variable] = { value: arg.slice(variable.length + 1), exported: !unexport }
-    else if (unexport) vars[variable] = { value: current?.value, exported: false }
+    else if (unexport) vars[variable] = { value: current === "unverified" ? undefined : current?.value, exported: false }
     // A name-only export publishes the current value; an unset variable has none to publish.
+    else if (current === "unverified") continue
     else if (current !== undefined && current.value !== null) vars[variable] = { value: current.value, exported: true }
   }
 }
@@ -142,9 +158,56 @@ function applyActorBuiltin(vars: ShellVars, values: string[]): void {
 function applyActorAssignments(vars: ShellVars, assignments: string[]): void {
   for (const assignment of assignments) {
     const variable = actorVarOf(assignment)
-    if (variable !== undefined)
-      vars[variable] = { value: assignment.slice(variable.length + 1), exported: vars[variable]?.exported }
+    const current = variable === undefined ? undefined : vars[variable]
+    if (variable !== undefined && current !== "unverified")
+      vars[variable] = { value: assignment.slice(variable.length + 1), exported: current?.exported }
   }
+}
+
+/** What one top-level command does to the actor variables, on a copy of `vars`. */
+function afterCommand(vars: ShellVars, values: string[], assigned: string[]): ShellVars {
+  const after = { ...vars }
+  const command = values[0] === "builtin" || values[0] === "command" ? values.slice(1) : values
+  const name = command[0]
+  if (values.length === 0) applyActorAssignments(after, assigned)
+  else if (name === "export" || name === "unset") applyActorBuiltin(after, command)
+  else if (name !== undefined && VARIABLE_BUILTINS.has(name))
+    for (const variable of ACTOR_VARS) {
+      if (command.slice(1).some((arg) => arg.includes(variable))) after[variable] = "unverified"
+    }
+  return after
+}
+
+const changedVars = (before: ShellVars, after: ShellVars): ActorVar[] =>
+  ACTOR_VARS.filter((variable) => before[variable] !== after[variable])
+
+function markUnverified(vars: ShellVars, variables: ActorVar[]): void {
+  for (const variable of variables) vars[variable] = "unverified"
+}
+
+/**
+ * Whether any command in the parsed tree, other than a `bd` invocation itself, names an actor variable
+ * or clears the environment. A `bd` the gate reads nested is judged on the ambient actor only when
+ * nothing does; otherwise its actor cannot be verified.
+ */
+function actorTouched(parsed: { command: string; nested: unknown[] }): boolean {
+  for (const item of scanShell(parsed.command, { executableSubstitutionsOnly: true }).items) {
+    if (item.kind !== "command") continue
+    const values = item.words.map((word) => word.value)
+    let first = 0
+    while (first < values.length && ASSIGNMENT.test(values[first] ?? "")) first++
+    if (resolveBd(values.slice(first), values.slice(0, first)) !== undefined) continue
+    if (values.some((value) => ACTOR_VARS.some((variable) => value.includes(variable)))) return true
+    if (values.includes("env") && values.some((value) => value === "-" || value === "-i" || value === "--ignore-environment"))
+      return true
+  }
+  return parsed.nested.some((child) => isParsed(child) && actorTouched(child))
+}
+
+function isParsed(value: unknown): value is { command: string; nested: unknown[] } {
+  if (value === null || typeof value !== "object") return false
+  const candidate = value as { command?: unknown; nested?: unknown }
+  return typeof candidate.command === "string" && Array.isArray(candidate.nested)
 }
 
 /**
@@ -156,94 +219,63 @@ function applyActorAssignments(vars: ShellVars, assignments: string[]): void {
  * here-documents are read too. An `export BEADS_ACTOR=x` counts for the commands after it;
  * a bare `BEADS_ACTOR=x; bd close y` never does, since without `export` it does not reach `bd`.
  */
-export function bdInvocations(command: string, inherited: ActorState = {}): BdInvocation[] {
-  return readShell(command, shellVarsOf(inherited))
-}
-
-/** The shell's variables as an external process sees them, with a wrapper's own `NAME=value` and `env -u` applied. */
-function externalVars(
-  vars: ShellVars,
-  wrapped: { prefix: string[]; unset: Partial<Record<ActorVar, true>> },
-): ShellVars {
-  const child = shellVarsOf(exportedState(vars))
-  for (const assignment of wrapped.prefix) {
-    const variable = actorVarOf(assignment)
-    if (variable !== undefined) child[variable] = { value: assignment.slice(variable.length + 1), exported: true }
-  }
-  for (const variable of ACTOR_VARS)
-    if (wrapped.unset[variable] === true) child[variable] = { value: null, exported: false }
-  return child
-}
-
-/** `eval` runs in the calling shell, so it sees every variable, plus any assignment prefixed to it. */
-function sameShellVars(vars: ShellVars, assigned: string[]): ShellVars {
-  const child = { ...vars }
-  for (const assignment of assigned) {
-    const variable = actorVarOf(assignment)
-    if (variable !== undefined)
-      child[variable] = { value: assignment.slice(variable.length + 1), exported: vars[variable]?.exported }
-  }
-  return child
+export function bdInvocations(command: string): BdInvocation[] {
+  return readShell(command, { nested: false, touched: actorTouched(parse(command)) })
 }
 
 /**
- * Read `command` as the shell would, with `startVars` as its starting variables. A child that forks the
- * shell (a substitution, a subshell, `eval`) gets all of them; an external process gets only what is exported.
+ * Read `command`. At the top level the actor variables are followed through `;`, newline, `&&`, `||`,
+ * `&`, subshells and brace groups. Full shell emulation is out of scope: a change the gate cannot place
+ * (a chain member that may not run, a compound body, the final pipeline stage, `eval`) leaves the
+ * variable unverified, and a nested `bd` (a substitution, a pipeline stage, a script fed to a shell)
+ * gets no state at all, only `touched`.
  */
-function readShell(command: string, startVars: ShellVars): BdInvocation[] {
+function readShell(command: string, context: { nested: boolean; touched: boolean }): BdInvocation[] {
   const out: BdInvocation[] = []
   const scan = scanShell(command, { executableSubstitutionsOnly: true })
-  let vars: ShellVars = { ...startVars }
+  const child = { nested: true, touched: context.touched }
+  let vars: ShellVars = {}
+  // The variables as the current list began; a list run in the background changes nothing after it.
+  let list: ShellVars = {}
+  // Set after the first command of an `&&` / `||` chain: the variables then, and whether a `||` has come.
+  let chain: { base: ShellVars; or: boolean } | null = null
   // A subshell `( … )` runs on a copy; whatever it does ends with it.
-  const scopes: Array<{ vars: ShellVars; chain: ShellVars | null }> = []
-  // Compound-command depth: a body may not run, so what it does changes nothing we rely on.
+  const scopes: Array<{ vars: ShellVars; list: ShellVars; chain: typeof chain }> = []
+  // Compound-command depth: a body may not run, so what it changes is unverified.
   let compounds = 0
-  // The variables as they stood when the current `&&` / `||` chain began. What the chain's later commands
-  // do depends on its left side, so the chain ends by restoring this snapshot.
-  let chain: ShellVars | null = null
-  // Substitutions not claimed by a command's own words (here-document bodies) run with the final state.
-  const unclaimed = [...scan.substitutions]
   const isPipe = (other: (typeof scan.items)[number] | undefined): boolean =>
     other?.kind === "operator" && (other.operator === "|" || other.operator === "|&")
+  // A chain member after the first may not have run, so what it changed is unverified once the chain ends.
+  const endChain = (): void => {
+    if (chain !== null) markUnverified(vars, changedVars(chain.base, vars))
+    chain = null
+  }
 
   for (const [index, item] of scan.items.entries()) {
     if (item.kind === "operator") {
-      if (item.operator === "(") {
-        scopes.push({ vars, chain })
+      const operator = item.operator
+      if (operator === "(") {
+        scopes.push({ vars, list, chain })
         vars = { ...vars }
+        list = { ...vars }
         chain = null
-      } else if (item.operator === ")" && scopes.length > 0)
-        ({ vars, chain } = scopes.pop() as (typeof scopes)[number])
-      else if ((item.operator === "&&" || item.operator === "||") && chain === null) chain = { ...vars }
-      else if (item.operator === ";" || item.operator === "\n" || item.operator === "&") {
-        if (chain !== null) vars = chain
-        chain = null
+      } else if (operator === ")" && scopes.length > 0) ({ vars, list, chain } = scopes.pop() as (typeof scopes)[number])
+      else if (operator === "&&" || operator === "||") {
+        chain ??= { base: { ...vars }, or: false }
+        // What runs after `||` may follow a failure of the commands before it.
+        if (operator === "||") {
+          markUnverified(vars, changedVars(chain.base, vars))
+          chain.or = true
+        }
+      } else if (operator === ";" || operator === "\n") {
+        endChain()
+        list = { ...vars }
+      } else if (operator === "&") {
+        endChain()
+        vars = list
+        list = { ...vars }
       }
       continue
-    }
-
-    // With lastpipe off, as in bash by default, every pipeline stage runs in a subshell: it sees the
-    // variables but changes none.
-    const inPipeline = isPipe(scan.items[index + 1]) || isPipe(scan.items[index - 1])
-    const here = inPipeline ? { ...vars } : vars
-    const before = { ...here }
-    const spans = [...item.words, ...item.redirects]
-
-    // A substitution runs where its command does, with the shell's variables at that point.
-    // An unquoted here-document body expands in the shell that owns the command.
-    const texts: string[] = []
-    if (spans.length > 0) {
-      texts.push(command.slice(Math.min(...spans.map((w) => w.start)), Math.max(...spans.map((w) => w.end))))
-    }
-    for (const document of item.hereDocuments) {
-      if (!document.quoted) texts.push(`:<<__HEREDOC_END__\n${document.body}__HEREDOC_END__\n`)
-    }
-    for (const text of texts) {
-      for (const source of scanShell(text, { executableSubstitutionsOnly: true }).substitutions) {
-        const at = unclaimed.indexOf(source)
-        if (at >= 0) unclaimed.splice(at, 1)
-        out.push(...readShell(source, before))
-      }
     }
 
     const words = item.words
@@ -267,47 +299,51 @@ function readShell(command: string, startVars: ShellVars): BdInvocation[] {
     while (a < words.length && ASSIGNMENT.test(command.slice(words[a]?.start, words[a]?.end))) a++
     const assigned = words.slice(k, a).map((word) => word.value)
     const values = words.slice(a).map((word) => word.value)
-    if (compounds === 0) {
-      if (values.length === 0) applyActorAssignments(here, assigned)
-      else applyActorBuiltin(here, values)
-    }
-    if (values.length === 0) continue
+    const inPipeline = isPipe(scan.items[index - 1]) || isPipe(scan.items[index + 1])
     const found = resolveBd(values, assigned)
+
+    if (!context.nested && found === undefined) {
+      const after = afterCommand(vars, values, assigned)
+      const changed = changedVars(vars, after)
+      // Every pipeline stage but the last runs in a subshell in every shell; the last one does in bash
+      // but not in zsh or under `lastpipe`.
+      const finalStage = isPipe(scan.items[index - 1]) && !isPipe(scan.items[index + 1])
+      if (changed.length > 0 && !(inPipeline && !finalStage)) {
+        if (finalStage || compounds > 0 || chain?.or === true) markUnverified(vars, changed)
+        else vars = after
+      }
+    }
+
     if (found !== undefined) {
       const scanned = scanGlobals(values, found.next)
       const verb = values[scanned.next]
       if (verb !== undefined) {
+        const placed = !context.nested && !inPipeline
+        const view = placed ? childView(vars) : { exported: {}, unverified: context.touched ? BOTH : {} }
         out.push({
           verb: verb.toLowerCase(),
           args: values.slice(scanned.next + 1),
           globals: scanned.globals,
           prefix: found.prefix,
-          exported: exportedState(here),
+          exported: view.exported,
           unset: found.unset,
+          unverified: { ...view.unverified },
         })
       }
     }
-    // Every script this command runs, read under the variables it would see: a wrapper's own assignments
-    // (`BD_ACTOR=x bash -c …`, `env BD_ACTOR=x bash -c …`) reach the script, a parent's unexported ones do not.
-    const wrapped = skipWrappers(values, assigned) ?? { next: 0, prefix: assigned, unset: {} }
-    const external = externalVars(here, wrapped)
-    const children = new Map<string, ShellVars>()
     const inline = interpreterCommandString(values)
-    if (inline !== undefined) children.set(inline, external)
-    for (const script of stdinScriptSources(item, values)) children.set(script, external)
-    if (texts[0] !== undefined) {
-      for (const { source, sameShell } of commandTextSources(texts[0]).found) {
-        if (!children.has(source)) children.set(source, sameShell ? sameShellVars(here, wrapped.prefix) : external)
-      }
+    if (inline !== undefined) out.push(...readShell(inline, child))
+    if (readsScriptFromStdin(values)) {
+      const script = stdinSource(item)
+      if (script !== undefined) out.push(...readShell(script, child))
     }
-    for (const [source, childVars] of children) out.push(...readShell(source, childVars))
   }
-  for (const source of unclaimed) out.push(...readShell(source, { ...vars }))
+  for (const source of scan.substitutions) out.push(...readShell(source, child))
   return out
 }
 
-/** The word after shell assignments and transparent wrappers, with what those wrappers set. */
-function skipWrappers(
+/** The `bd` word after shell assignments and transparent wrappers, with what those wrappers set. */
+function resolveBd(
   values: string[],
   assigned: string[],
 ): { next: number; prefix: string[]; unset: Partial<Record<ActorVar, true>> } | undefined {
@@ -372,18 +408,9 @@ function skipWrappers(
       if (WRAPPER_VALUE_FLAGS[flag] === true) i++
     }
   }
-  return { next: i, prefix, unset }
-}
-
-/** The `bd` word after shell assignments and transparent wrappers, with what those wrappers set. */
-function resolveBd(
-  values: string[],
-  assigned: string[],
-): { next: number; prefix: string[]; unset: Partial<Record<ActorVar, true>> } | undefined {
-  const wrapped = skipWrappers(values, assigned)
-  const word = wrapped === undefined ? undefined : values[wrapped.next]
-  if (wrapped === undefined || word === undefined || basename(word) !== "bd") return undefined
-  return { ...wrapped, next: wrapped.next + 1 }
+  const word = values[i]
+  if (word === undefined || basename(word) !== "bd") return undefined
+  return { next: i + 1, prefix, unset }
 }
 
 /**
@@ -522,31 +549,49 @@ export function environmentForInput(
 
 export { agentActor } from "./beads-host.ts"
 
+const literal = (value: string | undefined): string | null => {
+  if (!value?.trim() || /[$`\\\0]/.test(value)) return null
+  return value.trim()
+}
+
+/** The actor one variable gives this invocation: `null` for none, `undefined` when the gate cannot know it. */
+function variableActor(invocation: BdInvocation, variable: ActorVar, env: NodeJS.ProcessEnv): string | null | undefined {
+  if (invocation.unset[variable] === true) return null
+  const assignment = invocation.prefix.findLast((token) => token.startsWith(`${variable}=`))
+  if (assignment !== undefined) return literal(assignment.slice(variable.length + 1))
+  if (invocation.unverified[variable] === true) return undefined
+  // A cleared variable stays cleared: the ambient value must not come back.
+  const exported = invocation.exported[variable]
+  if (exported === null) return null
+  return literal(exported ?? env[variable])
+}
+
 /**
- * The ONE actor this invocation will really write under.
+ * The ONE actor this invocation will really write under, or `null` when it has none or the gate
+ * cannot name it.
  *
  * Measured against bd 1.3.0: an explicit `--actor` flag wins, followed by
  * BEADS_ACTOR (command-local assignment, exported assignment, then ambient
  * environment), and finally BD_ACTOR with the same source precedence.
  */
 export function invocationActor(invocation: BdInvocation, env: NodeJS.ProcessEnv): string | null {
-  const literal = (value: string | undefined): string | null => {
-    if (!value?.trim() || /[$`\\\0]/.test(value)) return null
-    return value.trim()
-  }
-  const actorFlag = globalValue(invocation.globals, ["--actor"])
-  const explicit = literal(actorFlag)
+  const explicit = literal(globalValue(invocation.globals, ["--actor"]))
   if (explicit !== null) return explicit
-  const resolve = (variable: ActorVar): string | null => {
-    if (invocation.unset[variable] === true) return null
-    const assignment = invocation.prefix.findLast((token) => token.startsWith(`${variable}=`))
-    if (assignment !== undefined) return literal(assignment.slice(variable.length + 1))
-    // A cleared variable stays cleared: the ambient value must not come back.
-    const exported = invocation.exported[variable]
-    if (exported === null) return null
-    return literal(exported ?? env[variable])
-  }
-  return resolve("BEADS_ACTOR") ?? resolve("BD_ACTOR")
+  const canonical = variableActor(invocation, "BEADS_ACTOR", env)
+  if (canonical === undefined) return null
+  return canonical ?? variableActor(invocation, "BD_ACTOR", env) ?? null
+}
+
+/**
+ * Whether the invocation writes under some actor. `unverified` when that depends on a variable
+ * the gate cannot know; a literal from either variable still settles it, since bd then has an actor.
+ */
+function actorStatus(invocation: BdInvocation, env: NodeJS.ProcessEnv): "present" | "missing" | "unverified" {
+  if (literal(globalValue(invocation.globals, ["--actor"])) !== null) return "present"
+  const canonical = variableActor(invocation, "BEADS_ACTOR", env)
+  const legacy = variableActor(invocation, "BD_ACTOR", env)
+  if (typeof canonical === "string" || typeof legacy === "string") return "present"
+  return canonical === undefined || legacy === undefined ? "unverified" : "missing"
 }
 
 /**
@@ -585,6 +630,7 @@ export function invocationFromArgv(args: string[]): BdInvocation | undefined {
     prefix: [],
     exported: {},
     unset: {},
+    unverified: {},
   }
 }
 
@@ -648,22 +694,55 @@ const CREATE_REASON =
 const ADVISORY_TEXT =
   "BEADS_ACTOR and BD_ACTOR are unset on this mutating `bd` command. Without an actor, created_by records the invoking human's git identity; Owner is always the git identity and never identifies the agent. The plugin starts every subagent shell call with BD_ACTOR, so this command removed or blanked it; drop the `unset` or the empty assignment and run the bare `bd` command."
 
-/** Decide across command-position segments and recursively executable children. */
+const UNVERIFIED_TEXT =
+  "This command changes BEADS_ACTOR or BD_ACTOR where the actor gate cannot follow the change, or runs a mutating `bd` where the gate cannot place it (a command substitution, a pipeline stage, `eval`, a script run by `bash -c` or fed to a shell). The gate does not emulate the shell, so it cannot verify the actor of that `bd`. Run the `bd` command at the top level of the command line, or drop the change to the actor variables."
+
+/** The gate's verdict over a set of invocations. Duplicates do not change it. */
+function decideInvocations(invocations: BdInvocation[], env: NodeJS.ProcessEnv): ActorGateDecision {
+  let missing = false
+  let unverified = false
+  for (const invocation of invocations) {
+    if (!isMutatingInvocation(invocation)) continue
+    const status = actorStatus(invocation, env)
+    if (status === "present") continue
+    // Never refuse on a state the gate could not follow: an unverified actor only warns.
+    if (status === "unverified") {
+      unverified = true
+      continue
+    }
+    const { verb, args } = invocation
+    const claim = verb === "claim" || ((verb === "update" || verb === "ready") && flagEnabled(args, ["--claim"]))
+    if (claim) return { kind: "block", reason: CLAIM_REASON }
+    if (CREATING_VERBS[verb] === true) return { kind: "block", reason: CREATE_REASON }
+    missing = true
+  }
+  const texts = [...(missing ? [ADVISORY_TEXT] : []), ...(unverified ? [UNVERIFIED_TEXT] : [])]
+  return texts.length > 0 ? { kind: "advisory", text: texts.join(" ") } : { kind: "allow" }
+}
+
+/**
+ * Decide on the parsed command and every child the parser found in it. The children (substitutions,
+ * scripts fed to a shell, `bash -c`, `eval` and `xargs` bodies) are read nested: their own `--actor`,
+ * prefix and wrapper unsets count, and otherwise the ambient actor counts only when nothing on the
+ * command line changes an actor variable.
+ */
 export function decideActorParsed(
   parsed: unknown,
   env: NodeJS.ProcessEnv = process.env,
-  inherited: ActorState = {},
 ): ActorGateDecision {
-  if (parsed === null || typeof parsed !== "object") return { kind: "block", reason: "command could not be parsed" }
-  const candidate = parsed as { command?: unknown; nested?: unknown }
-  if (typeof candidate.command !== "string" || !Array.isArray(candidate.nested)) {
-    return { kind: "block", reason: "command could not be parsed" }
-  }
+  if (!isParsed(parsed)) return { kind: "block", reason: "command could not be parsed" }
   // Decide on the original command text. Re-joining argv with spaces drops quoting, so a
   // quoted "; bd create" would become a command and prefix assignments would vanish.
-  // Every child this command runs is read in order by `decideActorGate`, each under the variables of the
-  // command that runs it, so the parsed `nested` list is not walked.
-  return decideActorGate(candidate.command, env, inherited)
+  const touched = actorTouched(parsed)
+  const invocations = readShell(parsed.command, { nested: false, touched })
+  const pending = [...parsed.nested]
+  while (pending.length > 0) {
+    const child = pending.shift()
+    if (!isParsed(child)) return { kind: "block", reason: "command could not be parsed" }
+    invocations.push(...readShell(child.command, { nested: true, touched }))
+    pending.push(...child.nested)
+  }
+  return decideInvocations(invocations, env)
 }
 
 /**
@@ -676,18 +755,6 @@ export function decideActorParsed(
 export function decideActorGate(
   command: string,
   env: NodeJS.ProcessEnv = process.env,
-  inherited: ActorState = {},
 ): ActorGateDecision {
-  let advisory = false
-  for (const invocation of bdInvocations(command, inherited)) {
-    if (!isMutatingInvocation(invocation) || invocationActor(invocation, env) !== null) {
-      continue
-    }
-    const { verb, args } = invocation
-    const claim = verb === "claim" || ((verb === "update" || verb === "ready") && flagEnabled(args, ["--claim"]))
-    if (claim) return { kind: "block", reason: CLAIM_REASON }
-    if (CREATING_VERBS[verb] === true) return { kind: "block", reason: CREATE_REASON }
-    advisory = true
-  }
-  return advisory ? { kind: "advisory", text: ADVISORY_TEXT } : { kind: "allow" }
+  return decideInvocations(bdInvocations(command), env)
 }
