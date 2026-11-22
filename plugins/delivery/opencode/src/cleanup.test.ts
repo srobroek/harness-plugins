@@ -3870,6 +3870,27 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
+    test("a removal attempted while a report's session lookup is pending is refused, before any hold is on disk", async () => {
+      const lookupStarted = Promise.withResolvers<void>()
+      const lookup = Promise.withResolvers<unknown>()
+      const h = await harness("veto-hold-pending-lookup", { list: async () => ({ data: [] }) })
+      ;(h.fake.context.session as unknown as { get: () => Promise<unknown> }).get = () => {
+        lookupStarted.resolve()
+        return lookup.promise
+      }
+      await h.pending.start()
+      const reported = h.fake.fire.session("experimental.idle", {
+        sessionID: "ses_x",
+        background: [{ kind: "subagent", sessionID: "ses_x", childSessionID: "ses_child" }],
+      } as never)
+      await lookupStarted.promise
+      expect(readHolds(h.common, h.f.linked).holds).toEqual([])
+      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("still being recorded")
+      lookup.resolve({ location: { directory: h.f.root } })
+      await reported
+      await h.finish()
+    })
+
     const needsPermissions = process.getuid?.() === 0 ? test.skip : test
     test("the receipts a report reads and the holds it writes come from one repository observation", async () => {
       // Git answers the combined read for another repository and nothing else, so a location
