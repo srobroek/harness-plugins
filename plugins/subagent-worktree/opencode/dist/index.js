@@ -2212,10 +2212,16 @@ function createLifecycle(deps) {
   };
   const keptBecause = (kept, reason) => ({ removed: false, kept, reason });
   const HANDED_OVER = "its worktree was handed to another writer, whose lane keeps it";
-  const settleHandover = (lane) => withLock(lane.directory, lane.parentDir, () => deps.handedOff(lane)).catch((error) => {
-    console.error(`subagent-worktree: could not check the handover of ${lane.child}:`, error instanceof Error ? error.message : error);
-    return true;
-  });
+  const settleHandover = async (lane) => {
+    try {
+      if (await deps.releasedTo(lane.child) === undefined)
+        return false;
+      return await withLock(lane.directory, lane.parentDir, () => deps.handedOff(lane));
+    } catch (error) {
+      console.error(`subagent-worktree: could not check the handover of ${lane.child}:`, error instanceof Error ? error.message : error);
+      return true;
+    }
+  };
   const startedSince = (sessionIDs, seq) => {
     for (const id of sessionIDs) {
       if (shutdownPending.has(id))
@@ -3883,6 +3889,7 @@ The merge is done, but the worktree stays at ${lane2.directory} (branch ${lane2.
     save,
     scan,
     handedOff: settleHandover,
+    releasedTo: async (child) => parseRelease(await ctx.storage.get(releaseKey(child)))?.to,
     getSession,
     moveHome,
     removeWorktree,
