@@ -6591,6 +6591,14 @@ function createPendingCleanup(deps) {
         console.error(`delivery: landing records of ${entry.repo ?? entry.root} could not all be read; keeping its clone registration`);
         return;
       }
+      let pendingLeft;
+      try {
+        pendingLeft = pendingReceipts(listReceipts(directory)).some((receipt) => !settled.has(receipt.receiptId));
+      } catch {
+        pendingLeft = true;
+      }
+      if (pendingLeft)
+        return;
       const known = registered.get(entry.key);
       const left = known === undefined ? null : withoutReceipts(known, settled);
       if (left === null)

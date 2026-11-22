@@ -893,6 +893,15 @@ export function createPendingCleanup(deps: PendingDeps) {
         console.error(`delivery: landing records of ${entry.repo ?? entry.root} could not all be read; keeping its clone registration`)
         return
       }
+      // Another receipt of that repository (one this session never registered) may still need the
+      // clone to be found: keep the registration while any receipt is pending, or cannot be listed.
+      let pendingLeft: boolean
+      try {
+        pendingLeft = pendingReceipts(listReceipts(directory)).some((receipt) => !settled.has(receipt.receiptId))
+      } catch {
+        pendingLeft = true
+      }
+      if (pendingLeft) return
       const known = registered.get(entry.key)
       const left = known === undefined ? null : withoutReceipts(known, settled)
       if (left === null) registered.delete(entry.key)

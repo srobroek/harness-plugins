@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, expect, mock, setDefaultTimeout, spyOn, test } from "bun:test"
+import { afterAll, afterEach, beforeAll, beforeEach, expect, mock, setDefaultTimeout, setSystemTime, spyOn, test } from "bun:test"
 import { execFileSync } from "node:child_process"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -11,7 +11,7 @@ import * as realCleanup from "./cleanup.ts"
 import { registryFile } from "./clone-registry.ts"
 import { type CliRunner, runCli } from "./forge-adapter.ts"
 import * as realLand from "./land.ts"
-import { buildReceipt, type GitRunner, type LandingReceipt, receiptDirectory, repositoryContext, writeReceipt } from "./landing-receipt.ts"
+import { buildReceipt, type GitRunner, type LandingReceipt, listReceipts, receiptDirectory, repositoryContext, writeReceipt } from "./landing-receipt.ts"
 
 // Landing needs a forge and cleanup needs a real remote; both are replaced so the test sees only how
 // the registered tools and the turn-end retry chain them across two real repositories: the session's
@@ -238,6 +238,49 @@ test("an explicit cleanup that settles the receipt also collects the target's la
   expect(readLanding(commonB, receiptId).kind).toBe("missing")
 })
 
+test("a clone stays registered while another receipt of its repository is still pending", async () => {
+  const s = await session()
+  const { directory } = await landAndSettle(s)
+  // A second landing in the same repository, for another worktree, that this session never registered.
+  const other = mkdtempSync(join(tmpdir(), "clones-worktree2-"))
+  try {
+    const second = await receiptIn(repoB, Date.now() + 100, {
+      pr: {
+        number: 8,
+        url: "https://github.com/o/b/pull/8",
+        state: "MERGED",
+        baseRefName: "main",
+        headRefName: "feat-two",
+        headRefOid: "c".repeat(40),
+        mergeCommitOid: "d".repeat(40),
+        mergedAt: "2027-01-15T08:00:00.000Z",
+      },
+      branch: { name: "feat-two", deletedRemote: true, remoteAbsenceVerifiedAt: "2027-01-15T08:00:01.000Z", autoDeleteSetting: "on" },
+      worktree: { path: other, removed: false, localRefDeleted: false, absenceVerifiedAt: null },
+    })
+    writeReceipt(second, directory)
+    // The first receipt is settled, so the pass settles its registration; the second is not.
+    cleanupResult = FAILED
+    await s.idle()
+    expect((await registryOf())?.clones).toHaveLength(1)
+    // The clone is still discovered: a shell in the second worktree holds it ...
+    await s.idle([{ kind: "shell", shellID: "sh1", command: `tail -f ${other}/log` }])
+    expect(holdsState(commonB, other, Date.now())).toBeDefined()
+    // ... and its cleanup is retried once the retry window has passed.
+    cleanupCalls = []
+    cleanupResult = REMOVED
+    setSystemTime(new Date(Date.now() + 60_000))
+    try {
+      await s.idle([])
+    } finally {
+      setSystemTime()
+    }
+    expect(cleanupCalls.map((call) => call.params.receipt)).toContain(join(directory, `${second.receiptId}.json`))
+  } finally {
+    rmSync(other, { recursive: true, force: true })
+  }
+})
+
 test("a landing record the target cannot read keeps the registration: collection is incomplete", async () => {
   const s = await session()
   const { receiptId, receiptPath, landed } = await landAndSettle(s)
@@ -283,14 +326,17 @@ test("a registry that cannot be written is reported, not hidden: at landing and 
     const [receiptId] = (registry?.clones[0]?.receiptIds as string[] | undefined) ?? []
     const directory = receiptDirectory(env(), registry?.clones[0]?.key as string)
     const landed = JSON.parse(readFileSync(join(directory, `${receiptId}.json`), "utf8")) as LandingReceipt
-    writeReceipt(
-      await receiptIn(repoB, Date.now() + 5000, {
-        continues: landed,
-        outcome: "cleaned",
-        worktree: { path: worktree, removed: true, localRefDeleted: true, absenceVerifiedAt: "2027-01-15T08:00:02.000Z" },
-      }),
-      directory,
-    )
+    // Both landings of this test (the first one's registration was only in memory) are settled, so nothing pending keeps the clone.
+    for (const [index, earlier] of listReceipts(directory).entries()) {
+      writeReceipt(
+        await receiptIn(repoB, Date.now() + 5000 + index, {
+          continues: earlier,
+          outcome: "cleaned",
+          worktree: { path: worktree, removed: true, localRefDeleted: true, absenceVerifiedAt: "2027-01-15T08:00:02.000Z" },
+        }),
+        directory,
+      )
+    }
     const registryDirectory = join(receiptsRoot, ".clones")
     chmodSync(registryDirectory, 0o500) // check-test-executables: directory permission, not a script
     try {
