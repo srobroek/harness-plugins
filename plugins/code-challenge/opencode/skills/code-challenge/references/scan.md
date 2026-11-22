@@ -29,6 +29,8 @@ Consent: recipes that execute repository or downloaded code (clippy, golangci-li
 Rules:
 - `quick` depth runs no analyzer that needs a build.
 - A missing analyzer is a gap in the report, never an install. Install commands live in `lang-*-quality`.
+- Use the analyzer version the repository pins: its own `node_modules/.bin`, lockfile or toolchain file, not a global shim at another version. In a checkout without installed dependencies (no `node_modules`, no virtualenv), the pinned tools are a gap ("dependencies not installed"); never run `bun install`, `npm ci`, `uv sync` or the like to fill it. Ask the user to install, or report the gap.
+- Zero hits from a run whose tools did not start is a gap, never a clean result.
 - Output a tool did not produce in its format is a gap, never "no findings".
 - A hit is a lead for CHALLENGE; it becomes a finding only with its own evidence.
 - Record per hit: tool, rule, `path:line` (null when unknown), message, `rule_enabled_in_repo` (from `ruleEnabledInRepo`).

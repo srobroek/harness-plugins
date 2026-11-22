@@ -8,11 +8,21 @@ Phase INTAKE. Ask in one batch with `parley_ask`; fall back to the `question` to
 | 2 | Depth: `quick`, `standard` or `deep`? | `standard` | argument; `quick` for a diff under 300 lines |
 | 3 | Lenses: all 13, or a subset? | all 13 | a lens named in the request |
 | 4 | Is pluggability expected (more backends or providers, or frequent change in this area)? | no | see the seam signals below |
-| 5 | Which behaviour is frozen (public API, wire format, config keys, CLI flags)? | everything exported or documented | exports, docs, schema files |
+| 5 | Which behaviour is frozen (public API, wire format, config keys, CLI flags)? | the public surface (see below) and everything documented | exports, docs, schema files |
 | 6 | May the run execute benchmarks and build-needing tools? (No: the performance lens is dropped, see [lens-performance.md](lens-performance.md).) | interactive: ask once; autonomous: yes at `standard` and `deep` | depth |
 | 7 | How are tests run, and how long do they take? | the repo's check command | `package.json` scripts, `justfile`, CI |
 | 8 | Deliver beads for accepted findings and a PR comment draft? | beads yes, comment no | an open PR for the branch |
 | 9 | Which documents define what the target must do (spec, plan, decision record, bead, issue, PR description)? | every design source that the search below finds | see the design sources below |
+
+## Public surface (question 5 default)
+
+An `export` keyword alone does not make code public. Freeze what a consumer outside the module tree can reach:
+- the package's entry points: the files its manifest names (`main`, `exports`, `bin`, a plugin's registered entry) and what they export;
+- registered tool, command and hook names and their schemas, wire formats, config keys and CLI flags;
+- a shared library's exports that have an importer outside their own package;
+- anything the docs describe.
+
+An export with no importer outside its own module tree (none in other packages, `tests/` or `scripts/`) is internal. Removing it changes no contract: a dead-code finding for it may carry `blast_radius: low` and `changes_contract: false`, provided the reachability searches in [lens-dead-code.md](lens-dead-code.md) found no importer. Log the frozen list to `intake.json`.
 
 ## Design sources (question 9, autonomous)
 

@@ -103,6 +103,10 @@ you report, not a field you invent.
    mechanical or behavior-risky.
 4. Flag any recommendation that changes a public signature, wire format, config
    key, or documented behavior -- never "low-risk" regardless of how clean it looks.
+   Public means a consumer outside the module tree can reach it: an entry point's
+   exports, a registered tool or hook schema, a shared library export with outside
+   importers, or documented behavior. An `export` with no importer outside its own
+   module tree is internal; removing it changes no contract.
 5. For every finding on code no test protects, report that apart from the verdict.
 
 ## What you CAN do
@@ -126,6 +130,6 @@ NOT Do not pad if the plan is sound.
 ## Output
 
 VERDICT: KEEP|DOWNGRADE|DROP -- counts (K keep / D downgrade / X drop), one line.
-Per-finding table: one line per finding with its id or number, finding, verdict and test protection. Add one tight evidence-backed rationale line for each dropped or downgraded finding. Omit empty sections. Never reprint code, diffs, or file contents.
+Per-finding table: one line per finding with its id or number, finding, verdict, test protection, and your own `tier` (`proven`, `measured` or `hypothesis`), `blast_radius` (`low`, `medium` or `high`) and `changes_contract` (`true` or `false`). Fill all three on every row, even where you agree with the Brief; a contract concern goes in `changes_contract`, never in a separate free-text list. Add one tight evidence-backed rationale line for each dropped or downgraded finding, and for each row whose tier, blast radius or contract flag differs from the Brief. Omit empty sections. Never reprint code, diffs, or file contents.
 Never finish with an empty message: the verdict line comes first, always.
 CAP uncapped (scales with finding count)

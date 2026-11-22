@@ -10,7 +10,7 @@ Every run writes to `<git-dir>/code-challenge/<run-id>/`, so nothing lands in th
 | `scan.json` | SCAN | analyzer hits, each with tool, rule, `path:line`, and `rule_enabled_in_repo` |
 | `findings.json` | CHALLENGE | one finding per root cause, schema in [schemas.md](schemas.md) |
 | `research.json` | RESEARCH | candidate libraries with scores and gate results |
-| `verdicts.json` | REFUTE | KEEP, DOWNGRADE or DROP per finding, with the rationale |
+| `verdicts.json` | REFUTE | KEEP, DOWNGRADE or DROP per finding, with the rationale and the critic's `tier`, `blast_radius` and `changes_contract` |
 | `decisions.jsonl` | every phase | append-only log, one JSON object per line |
 | `report.json` | DELIVER | the final report, validated by `report.schema.json` |
 | `report.md` | DELIVER | the same report as the chat message |
