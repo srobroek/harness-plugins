@@ -60,10 +60,11 @@ a subagent is denied there: `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/op`, `~/.
 the ask. Add locations with `{ "subagentSecretPaths": ["~/.config/secret-tool"] }`. Turn the check off
 with `{ "disable": ["subagent-external-reads"] }`.
 
-The `root-external-reads` check does the same for a root session, but only for `read`, `glob`, `grep` and
-`list`. The shell, `edit`, `write` and `patch` keep the prompt there, because a command can write. Secret
-locations and `subagentSecretPaths` keep the prompt too. A session that cannot be looked up keeps it.
-Turn the check off with `{ "disable": ["root-external-reads"] }`.
+The `root-external-reads` check covers a root session, and only for `read` of one named file: the path the
+tool was given must be absolute, resolve to a regular file and not be a secret (the same rules, including
+symlinks and `subagentSecretPaths`). `glob`, `grep` and `list` keep the prompt, because a folder can hold an
+`.env` or a link to a secret that a check on the folder cannot see. The shell and the writers keep it too,
+and so does a session that cannot be looked up. Turn the check off with `{ "disable": ["root-external-reads"] }`.
 
 The `scratchDirs` check also allows direct file tools in the session's own directory (and its repository
 root) when the request reaches it through a symlink alias, such as `/home/u` for `/local/home/u`, and in

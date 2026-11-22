@@ -502,7 +502,7 @@ describe("scratch folders", () => {
     fake.fire.tool("execute.before", { ...call, id, tool, input } as never)
 
   test("allows a direct file tool in the session project's worktree folder only", async () => {
-    const { fake } = await load({ disable: ["root-external-reads"] }, { scratchRoots: [fixture] })
+    const { fake } = await load({}, { scratchRoots: [fixture] })
     const worktrees = fixture
     await start(fake, "r1", "read", { filePath: "x" })
     expect((await ask(fake, [`${worktrees}/lane/src`], "r1")).effect).toBe("allow")
@@ -566,7 +566,7 @@ describe("scratch folders", () => {
   })
 
   test("a session lookup that fails leaves the ask", async () => {
-    const { fake } = await load({ disable: ["root-external-reads"] })
+    const { fake } = await load()
     await start(fake, "r2", "read", {})
     expect((await ask(fake, [`${scratchRoots("41bad135")[1]}/x`], "r2")).effect).toBe("ask")
   })
@@ -636,7 +636,7 @@ describe("steering directories and same-repo worktrees", () => {
   })
 
   test("allows read-only tools in a configured steering directory, and no other tool", async () => {
-    const { fake } = await load({ steeringDirs: [steering], disable: ["root-external-reads"] }, { scratchRoots: [] })
+    const { fake } = await load({ steeringDirs: [steering] }, { scratchRoots: [] })
     for (const tool of ["read", "glob", "grep", "list"]) {
       await start(fake, `st-${tool}`, tool)
       expect((await ask(fake, [`${steering}/git-defender.md`], `st-${tool}`)).effect).toBe("allow")
@@ -651,14 +651,14 @@ describe("steering directories and same-repo worktrees", () => {
   })
 
   test("disable steering-dirs keeps the ask", async () => {
-    const { fake } = await load({ steeringDirs: [steering], disable: ["steering-dirs", "root-external-reads"] }, { scratchRoots: [] })
+    const { fake } = await load({ steeringDirs: [steering], disable: ["steering-dirs"] }, { scratchRoots: [] })
     await start(fake, "sx", "read")
     expect((await ask(fake, [`${steering}/x.md`], "sx")).effect).toBe("ask")
   })
 
   test("allows read-only tools in a worktree of the session repository, not writes or shell", async () => {
     const seam = git()
-    const { fake } = await load({ disable: ["root-external-reads"] }, { scratchRoots: [], directory: main, worktrees: seam })
+    const { fake } = await load({}, { scratchRoots: [], directory: main, worktrees: seam })
     await start(fake, "w1", "read")
     expect((await ask(fake, [`${lane}/src/a.ts`], "w1")).effect).toBe("allow")
     expect((await ask(fake, [`${outside}/a`], "w1")).effect).toBe("ask")
@@ -673,7 +673,7 @@ describe("steering directories and same-repo worktrees", () => {
 
   test("disable repo-worktrees keeps the ask and never runs git", async () => {
     const seam = git()
-    const { fake } = await load({ disable: ["repo-worktrees", "root-external-reads"] }, { scratchRoots: [], directory: main, worktrees: seam })
+    const { fake } = await load({ disable: ["repo-worktrees"] }, { scratchRoots: [], directory: main, worktrees: seam })
     await start(fake, "wd", "read")
     expect((await ask(fake, [`${lane}/a`], "wd")).effect).toBe("ask")
     expect(seam.calls).toEqual([])
@@ -748,7 +748,7 @@ describe("steering directories and same-repo worktrees", () => {
   })
 
   test("a git failure leaves the ask", async () => {
-    const { fake } = await load({ disable: ["root-external-reads"] }, { scratchRoots: [], directory: main, worktrees: { run: async () => undefined } })
+    const { fake } = await load({}, { scratchRoots: [], directory: main, worktrees: { run: async () => undefined } })
     await start(fake, "wf", "read")
     expect((await ask(fake, [`${lane}/a`], "wf")).effect).toBe("ask")
   })
@@ -968,9 +968,9 @@ describe("prompts a subagent cannot answer", () => {
     )
   })
 
-  test("a root session's shell keeps the prompt, with no message", async () => {
+  test("a root session keeps the prompt", async () => {
     const { fake } = await setup()
-    const result = await ask(fake, "ses_1", "shell", [`${outside}/*`])
+    const result = await ask(fake, "ses_1", "read", [`${outside}/*`])
     expect(result.effect).toBe("ask")
     expect(result.message).toBeUndefined()
   })
@@ -1026,8 +1026,7 @@ describe("prompts a subagent cannot answer", () => {
     ["a sibling that shares the directory's prefix", () => `${skillDir}-evil/*`],
     ["a symlink inside the skill directory that points outside", () => `${skillDir}/references/escape/*`],
   ])("%s keeps the prompt in a root and is denied in a child", async (_, resource) => {
-    // `root-external-reads` would allow a non-secret root read on its own; this proves the skill check alone.
-    const { fake } = await setup({ disable: ["root-external-reads"] })
+    const { fake } = await setup()
     expect((await ask(fake, "ses_1", "read", [resource()])).effect).toBe("ask")
     expect((await ask(fake, "ses_grandchild", "write", [resource()])).effect).toBe("deny")
   })
@@ -1272,7 +1271,7 @@ describe("prompts a subagent cannot answer", () => {
 
   test("a failed skill lookup keeps the prompt (never read as an empty skill list) and is warned about", async () => {
     const seen = warned("skill lookup failed")
-    const { fake } = await load({ disable: ["root-external-reads"] }, {
+    const { fake } = await load({}, {
       sessions: family,
       skills: [{ id: "review-core", name: "review-core", path: join(skillDir, "SKILL.md"), content: "" }],
       warn: seen.warn,
@@ -1330,32 +1329,9 @@ describe("prompts a subagent cannot answer", () => {
       expect((await ask(fake, "ses_grandchild", tool, [`${outside}/*`])).effect).toBe("deny")
     })
 
-    test("a root session's read-only tools outside its directory are allowed", async () => {
+    test("a root session's read outside its directory still asks", async () => {
       const { fake } = await setup()
-      for (const tool of ["read", "glob", "grep", "list"]) expect((await ask(fake, "ses_1", tool, [`${outside}/*`])).effect).toBe("allow")
-    })
-
-    test.each(["shell", "edit", "write", "patch"])("a root session's %s outside its directory still asks", async (tool) => {
-      const { fake } = await setup()
-      expect((await ask(fake, "ses_1", tool, [`${outside}/*`])).effect).toBe("ask")
-    })
-
-    test("a root session's read of a secret still asks", async () => {
-      const { fake } = await setup()
-      for (const resource of [join(home, ".ssh", "id_ed25519"), join(outside, ".env"), envLink, `${home}/*`]) {
-        expect((await ask(fake, "ses_1", "read", [resource])).effect).toBe("ask")
-      }
-    })
-
-    test("subagentSecretPaths keeps a root session's read of that location asking", async () => {
-      const { fake } = await setup({ subagentSecretPaths: [extra] })
-      expect((await ask(fake, "ses_1", "read", [`${extra}/*`])).effect).toBe("ask")
-    })
-
-    test('disable: ["root-external-reads"] leaves a root session\'s read asking and a child\'s read allowed', async () => {
-      const { fake } = await setup({ disable: ["root-external-reads"] })
       expect((await ask(fake, "ses_1", "read", [`${outside}/*`])).effect).toBe("ask")
-      expect((await ask(fake, "ses_grandchild", "read", [`${outside}/*`])).effect).toBe("allow")
     })
 
     test.each([
@@ -1395,8 +1371,77 @@ describe("prompts a subagent cannot answer", () => {
     })
   })
 
+  describe("root-external-reads", () => {
+    const home = homedir()
+    let plain: string
+    let envFile: string
+    let envLink: string
+    beforeAll(() => {
+      plain = join(outside, "root-plain.txt")
+      writeFileSync(plain, "notes\n")
+      envFile = join(outside, "root.env")
+      writeFileSync(envFile, "KEY=1\n")
+      envLink = join(outside, "root-notes.txt")
+      symlinkSync(envFile, envLink)
+    })
+    const fire = async (fake: Awaited<ReturnType<typeof load>>["fake"], sessionID: string, tool: string, input: Record<string, unknown>) => {
+      const id = `${sessionID}-${tool}-${JSON.stringify(input)}-root`
+      await fake.fire.tool("execute.before", { ...call, sessionID, id, tool, input } as never)
+      return fake.fire.permission("evaluate", {
+        sessionID,
+        action: "external_directory",
+        resources: [`${outside}/*`],
+        effect: "ask",
+        source: { type: "tool", messageID: "msg_1", id },
+      } as Evaluation)
+    }
+    const read = (fake: Awaited<ReturnType<typeof load>>["fake"], sessionID: string, tool: string, path: string | undefined) =>
+      fire(fake, sessionID, tool, path === undefined ? {} : { path })
+
+    test("a root session's read of one plain file outside its directory is allowed", async () => {
+      const { fake } = await setup()
+      expect((await read(fake, "ses_1", "read", plain)).effect).toBe("allow")
+    })
+
+    test("an older host's filePath argument counts the same", async () => {
+      const { fake } = await setup()
+      expect((await fire(fake, "ses_1", "read", { filePath: plain })).effect).toBe("allow")
+    })
+
+    test.each(["glob", "grep", "list", "shell", "edit", "write"])("a root session's %s over a folder that holds an .env still asks", async (tool) => {
+      const { fake } = await setup()
+      expect((await read(fake, "ses_1", tool, plain)).effect).toBe("ask")
+    })
+
+    test.each([
+      ["the folder itself", () => outside],
+      ["an .env file", () => envFile],
+      ["a plain name linking to an .env file", () => envLink],
+      ["a file in ~/.ssh", () => join(home, ".ssh", "config")],
+      ["no path", () => undefined],
+    ])("a root session's read of %s still asks", async (_, path) => {
+      const { fake } = await setup()
+      expect((await read(fake, "ses_1", "read", path())).effect).toBe("ask")
+    })
+
+    test("subagentSecretPaths keeps a root read of a file below it asking", async () => {
+      const { fake } = await setup({ subagentSecretPaths: [outside] })
+      expect((await read(fake, "ses_1", "read", plain)).effect).toBe("ask")
+    })
+
+    test("an unknown session's read of a plain file still asks", async () => {
+      const { fake } = await setup()
+      expect((await read(fake, "ses_missing", "read", plain)).effect).toBe("ask")
+    })
+
+    test('disable: ["root-external-reads"] leaves the root read asking', async () => {
+      const { fake } = await setup({ disable: ["root-external-reads"] })
+      expect((await read(fake, "ses_1", "read", plain)).effect).toBe("ask")
+    })
+  })
+
   test('disable: ["skill-references"] leaves a skill read asking', async () => {
-    const { fake } = await setup({ disable: ["skill-references", "root-external-reads"] })
+    const { fake } = await setup({ disable: ["skill-references"] })
     expect((await ask(fake, "ses_1", "read", [`${skillDir}/references/*`])).effect).toBe("ask")
   })
 })

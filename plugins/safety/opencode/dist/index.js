@@ -7023,6 +7023,7 @@ function denyUnanswerable(evaluation, session) {
 }
 
 // plugins/safety/opencode/src/subagent-reads.ts
+import { statSync as statSync3 } from "fs";
 import { homedir as homedir10 } from "os";
 import { basename as basename6, isAbsolute as isAbsolute13, join as join12 } from "path";
 var SHELL_TOOLS = new Set(["shell", "bash"]);
@@ -7057,25 +7058,35 @@ function isSecretResource(resource, extra = [], home = homedir10()) {
   });
 }
 function allowSubagentReads(evaluation, tool, isSubagent, extraSecrets = [], home) {
-  if (!isSubagent)
+  if (!isSubagent || evaluation.action !== "external_directory" || evaluation.effect !== "ask")
     return;
-  allowReads(evaluation, tool, true, extraSecrets, home);
-}
-function allowRootReads(evaluation, tool, isSubagent, extraSecrets = [], home) {
-  if (isSubagent)
-    return;
-  allowReads(evaluation, tool, false, extraSecrets, home);
-}
-function allowReads(evaluation, tool, shell, extraSecrets, home) {
-  if (evaluation.action !== "external_directory" || evaluation.effect !== "ask")
-    return;
-  if (tool === undefined || !(READ_ONLY_TOOLS.has(tool) || shell && SHELL_TOOLS.has(tool)))
+  if (tool === undefined || !(READ_ONLY_TOOLS.has(tool) || SHELL_TOOLS.has(tool)))
     return;
   if (evaluation.resources.length === 0)
     return;
   if (evaluation.resources.some((resource) => isSecretResource(resource, extraSecrets, home)))
     return;
   evaluation.effect = "allow";
+}
+function allowRootReads(evaluation, tool, filePath, isSubagent, extraSecrets = [], home) {
+  if (isSubagent || tool !== "read" || evaluation.action !== "external_directory" || evaluation.effect !== "ask")
+    return;
+  if (typeof filePath !== "string" || !isAbsolute13(filePath) || !isRegularFile(filePath))
+    return;
+  if (isSecretResource(filePath, extraSecrets, home))
+    return;
+  if (evaluation.resources.length === 0)
+    return;
+  if (evaluation.resources.some((resource) => isSecretResource(resource, extraSecrets, home)))
+    return;
+  evaluation.effect = "allow";
+}
+function isRegularFile(path) {
+  try {
+    return statSync3(path).isFile();
+  } catch {
+    return false;
+  }
 }
 
 // plugins/safety/opencode/src/index.ts
@@ -7248,7 +7259,7 @@ function createPlugin(overrides = {}) {
             running.delete(id);
       };
       const before = await ctx.tool.hook("execute.before", async (event) => {
-        running.set(event.id, { tool: event.tool, at: Date.now() });
+        running.set(event.id, { tool: event.tool, input: event.input, at: Date.now() });
         const call = shellCall(event.tool, event.input);
         if (call === undefined || call.command.trim() === "")
           return;
@@ -7451,7 +7462,8 @@ function createPlugin(overrides = {}) {
         if (evaluation.action !== "external_directory" || evaluation.effect !== "ask")
           return;
         const source = evaluation.source;
-        const tool = source?.type === "tool" ? running.get(source.id)?.tool : undefined;
+        const call = source?.type === "tool" ? running.get(source.id) : undefined;
+        const tool = call?.tool;
         if (tool === undefined)
           return;
         const info = await ctx.session.get({ sessionID: evaluation.sessionID }).catch(() => {
@@ -7462,8 +7474,10 @@ function createPlugin(overrides = {}) {
         const isSubagent = typeof info.parentID === "string" && info.parentID !== "";
         if (subagentReadsOn)
           allowSubagentReads(evaluation, tool, isSubagent, secretPaths);
+        const input = call?.input;
+        const filePath = input?.path ?? input?.filePath;
         if (rootReadsOn)
-          allowRootReads(evaluation, tool, isSubagent, secretPaths);
+          allowRootReads(evaluation, tool, filePath, isSubagent, secretPaths);
       }) : undefined;
       const unanswerable = on("subagent-prompts") ? await ctx.permission.hook("evaluate", async (evaluation) => {
         if (evaluation.effect !== "ask")
