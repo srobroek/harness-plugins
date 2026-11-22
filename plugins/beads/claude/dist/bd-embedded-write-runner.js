@@ -919,47 +919,54 @@ function interpreterCommandString(values) {
   }
   return;
 }
+function stdinScriptSources(item, values) {
+  if (!readsScriptFromStdin(values))
+    return [];
+  const script = stdinSource(item);
+  if (script !== undefined)
+    return [script];
+  return duplicatesStdin(item) ? documentSources(item) : [];
+}
+function commandTextSources(text) {
+  const found = [];
+  let unknown = false;
+  for (const match of text.matchAll(/\b(?:bash|sh|zsh|dash|ksh)\s+-c\s+((?:'[^']*')|(?:"[^"]*")|[^\s;&|]+)/g)) {
+    const value = match[1];
+    if (!value || value.startsWith('"$') || value.startsWith("'$"))
+      unknown = true;
+    else
+      found.push({ source: value.replace(/^['"]|['"]$/g, ""), sameShell: false });
+  }
+  for (const match of text.matchAll(/\beval\s+((?:'[^']*')|(?:"[^"]*")|[^\s;&|]+)/g)) {
+    const value = match[1];
+    if (value?.startsWith("$"))
+      unknown = true;
+    else if (value)
+      found.push({ source: value.replace(/^['"]|['"]$/g, ""), sameShell: true });
+  }
+  for (const match of text.matchAll(/\bxargs(?:\s+-[^\s;&|]+)*\s+([^;&|]+?)(?=\s*(?:[;&|]|$))/g)) {
+    const value = match[1]?.trim();
+    if (value?.startsWith("$"))
+      unknown = true;
+    else if (value)
+      found.push({ source: value.replace(/^['"]|['"]$/g, ""), sameShell: false });
+  }
+  return { found, unknown };
+}
 function nestedSources(source) {
   const scan = scanShell(source, { executableSubstitutionsOnly: true });
   const sources = [...scan.substitutions];
-  let unknown = !scan.complete;
   for (const item of scan.items) {
     if (item.kind !== "command")
       continue;
     let first = 0;
     while (first < item.words.length && /^[A-Za-z_]\w*=/.test(source.slice(item.words[first]?.start, item.words[first]?.end)))
       first++;
-    const values = item.words.slice(first).map((word) => word.value);
-    if (!readsScriptFromStdin(values))
-      continue;
-    const script = stdinSource(item);
-    if (script !== undefined)
-      sources.push(script);
-    else if (duplicatesStdin(item))
-      sources.push(...documentSources(item));
+    sources.push(...stdinScriptSources(item, item.words.slice(first).map((word) => word.value)));
   }
-  for (const match of source.matchAll(/\b(?:bash|sh|zsh|dash|ksh)\s+-c\s+((?:'[^']*')|(?:"[^"]*")|[^\s;&|]+)/g)) {
-    const value = match[1];
-    if (!value || value.startsWith('"$') || value.startsWith("'$"))
-      unknown = true;
-    else
-      sources.push(value.replace(/^['"]|['"]$/g, ""));
-  }
-  for (const match of source.matchAll(/\beval\s+((?:'[^']*')|(?:"[^"]*")|[^\s;&|]+)/g)) {
-    const value = match[1];
-    if (value?.startsWith("$"))
-      unknown = true;
-    else if (value)
-      sources.push(value.replace(/^['"]|['"]$/g, ""));
-  }
-  for (const match of source.matchAll(/\bxargs(?:\s+-[^\s;&|]+)*\s+([^;&|]+?)(?=\s*(?:[;&|]|$))/g)) {
-    const value = match[1]?.trim();
-    if (value?.startsWith("$"))
-      unknown = true;
-    else if (value)
-      sources.push(value.replace(/^['"]|['"]$/g, ""));
-  }
-  return { sources, unknown };
+  const text = commandTextSources(source);
+  sources.push(...text.found.map((entry) => entry.source));
+  return { sources, unknown: !scan.complete || text.unknown };
 }
 function staticParse(command) {
   if (command.length > 64000)
@@ -1261,21 +1268,38 @@ function applyActorAssignments(vars, assignments) {
   }
 }
 function bdInvocations(command, inherited = {}) {
-  return readCommand(command, inherited).invocations;
+  return readShell(command, shellVarsOf(inherited));
 }
-function actorStateAt(command, inherited = {}) {
-  const { marks } = readCommand(command, inherited);
-  return (offset) => marks.findLast((mark) => mark.start <= offset)?.state ?? inherited;
+function externalVars(vars, wrapped) {
+  const child = shellVarsOf(exportedState(vars));
+  for (const assignment of wrapped.prefix) {
+    const variable = actorVarOf(assignment);
+    if (variable !== undefined)
+      child[variable] = { value: assignment.slice(variable.length + 1), exported: true };
+  }
+  for (const variable of ACTOR_VARS)
+    if (wrapped.unset[variable] === true)
+      child[variable] = { value: null, exported: false };
+  return child;
 }
-function readCommand(command, inherited) {
+function sameShellVars(vars, assigned) {
+  const child = { ...vars };
+  for (const assignment of assigned) {
+    const variable = actorVarOf(assignment);
+    if (variable !== undefined)
+      child[variable] = { value: assignment.slice(variable.length + 1), exported: vars[variable]?.exported };
+  }
+  return child;
+}
+function readShell(command, startVars) {
   const out = [];
-  const marks = [];
   const scan = scanShell(command, { executableSubstitutionsOnly: true });
-  let vars = shellVarsOf(inherited);
+  let vars = { ...startVars };
   const scopes = [];
   let compounds = 0;
   let chain = null;
   const unclaimed = [...scan.substitutions];
+  const isPipe = (other) => other?.kind === "operator" && (other.operator === "|" || other.operator === "|&");
   for (const [index, item] of scan.items.entries()) {
     if (item.kind === "operator") {
       if (item.operator === "(") {
@@ -1294,13 +1318,10 @@ function readCommand(command, inherited) {
       }
       continue;
     }
-    const following = scan.items[index + 1];
-    const inPipe = following?.kind === "operator" && (following.operator === "|" || following.operator === "|&");
-    const here = inPipe ? { ...vars } : vars;
-    const before = exportedState(here);
+    const inPipeline = isPipe(scan.items[index + 1]) || isPipe(scan.items[index - 1]);
+    const here = inPipeline ? { ...vars } : vars;
+    const before = { ...here };
     const spans = [...item.words, ...item.redirects];
-    if (spans.length > 0)
-      marks.push({ start: Math.min(...spans.map((w) => w.start)), state: before });
     const texts = [];
     if (spans.length > 0) {
       texts.push(command.slice(Math.min(...spans.map((w) => w.start)), Math.max(...spans.map((w) => w.end))));
@@ -1316,7 +1337,7 @@ ${document.body}__HEREDOC_END__
         const at = unclaimed.indexOf(source);
         if (at >= 0)
           unclaimed.splice(at, 1);
-        out.push(...bdInvocations(source, before));
+        out.push(...readShell(source, before));
       }
     }
     const words = item.words;
@@ -1351,7 +1372,6 @@ ${document.body}__HEREDOC_END__
     }
     if (values.length === 0)
       continue;
-    const state = exportedState(here);
     const found = resolveBd(values, assigned);
     if (found !== undefined) {
       const scanned = scanGlobals(values, found.next);
@@ -1362,32 +1382,33 @@ ${document.body}__HEREDOC_END__
           args: values.slice(scanned.next + 1),
           globals: scanned.globals,
           prefix: found.prefix,
-          exported: { ...state },
+          exported: exportedState(here),
           unset: found.unset
         });
       }
     }
-    const scriptState = { ...state };
-    for (const assignment of assigned) {
-      const variable = ACTOR_VARS.find((candidate) => assignment.startsWith(`${candidate}=`));
-      if (variable !== undefined)
-        scriptState[variable] = assignment.slice(variable.length + 1);
-    }
+    const wrapped = skipWrappers(values, assigned) ?? { next: 0, prefix: assigned, unset: {} };
+    const external = externalVars(here, wrapped);
+    const children = new Map;
     const inline = interpreterCommandString(values);
     if (inline !== undefined)
-      out.push(...bdInvocations(inline, scriptState));
-    if (readsScriptFromStdin(values)) {
-      const script = stdinSource(item);
-      if (script !== undefined)
-        out.push(...bdInvocations(script, scriptState));
+      children.set(inline, external);
+    for (const script of stdinScriptSources(item, values))
+      children.set(script, external);
+    if (texts[0] !== undefined) {
+      for (const { source, sameShell } of commandTextSources(texts[0]).found) {
+        if (!children.has(source))
+          children.set(source, sameShell ? sameShellVars(here, wrapped.prefix) : external);
+      }
     }
+    for (const [source, childVars] of children)
+      out.push(...readShell(source, childVars));
   }
-  const final = exportedState(vars);
   for (const source of unclaimed)
-    out.push(...bdInvocations(source, final));
-  return { invocations: out, marks };
+    out.push(...readShell(source, { ...vars }));
+  return out;
 }
-function resolveBd(values, assigned) {
+function skipWrappers(values, assigned) {
   let i = 0;
   const prefix = [...assigned];
   const unset = {};
@@ -1451,10 +1472,14 @@ function resolveBd(values, assigned) {
         i++;
     }
   }
-  const word = values[i];
-  if (word === undefined || basename(word) !== "bd")
+  return { next: i, prefix, unset };
+}
+function resolveBd(values, assigned) {
+  const wrapped = skipWrappers(values, assigned);
+  const word = wrapped === undefined ? undefined : values[wrapped.next];
+  if (wrapped === undefined || word === undefined || basename(word) !== "bd")
     return;
-  return { next: i + 1, prefix, unset };
+  return { ...wrapped, next: wrapped.next + 1 };
 }
 function scanGlobals(tokens, from) {
   const globals = [];
@@ -1630,23 +1655,7 @@ function decideActorParsed(parsed, env = process.env, inherited = {}) {
   if (typeof candidate.command !== "string" || !Array.isArray(candidate.nested)) {
     return { kind: "block", reason: "command could not be parsed" };
   }
-  let advisory = false;
-  const own = decideActorGate(candidate.command, env, inherited);
-  if (own.kind === "block")
-    return own;
-  if (own.kind === "advisory")
-    advisory = true;
-  const stateAt = actorStateAt(candidate.command, inherited);
-  for (const child of candidate.nested) {
-    const text = child?.command;
-    const at = typeof text === "string" ? candidate.command.indexOf(text) : -1;
-    const decision = decideActorParsed(child, env, at < 0 ? inherited : stateAt(at));
-    if (decision.kind === "block")
-      return decision;
-    if (decision.kind === "advisory")
-      advisory = true;
-  }
-  return advisory ? { kind: "advisory", text: ADVISORY_TEXT } : { kind: "allow" };
+  return decideActorGate(candidate.command, env, inherited);
 }
 function decideActorGate(command, env = process.env, inherited = {}) {
   let advisory = false;
