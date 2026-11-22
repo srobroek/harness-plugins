@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { allowSubagentReads, isSecretResource } from "./subagent-reads.ts"
+import { allowRootReads, allowSubagentReads, isSecretResource } from "./subagent-reads.ts"
 
 let home: string
 beforeAll(() => {
@@ -63,5 +63,41 @@ describe("allowSubagentReads", () => {
     const e = ev([`${home}/work/*`, `${home}/.ssh/*`])
     allowSubagentReads(e, "read", true, [], home)
     expect(e.effect).toBe("ask")
+  })
+})
+
+describe("allowRootReads", () => {
+  const ev = (resources: string[]) => ({ action: "external_directory", resources, effect: "ask" })
+  test("allows a read-only tool in a root session only", () => {
+    const child = ev([`${home}/work/*`])
+    allowRootReads(child, "read", true, [], home)
+    expect(child.effect).toBe("ask")
+    const root = ev([`${home}/work/*`])
+    allowRootReads(root, "grep", false, [], home)
+    expect(root.effect).toBe("allow")
+  })
+  test.each(["shell", "bash", "edit", "write", "patch"])("keeps the ask for %s", (tool) => {
+    const e = ev([`${home}/work/*`])
+    allowRootReads(e, tool, false, [], home)
+    expect(e.effect).toBe("ask")
+  })
+  test("keeps the ask for a secret, an extra secret location and an empty resource list", () => {
+    for (const [resources, extra] of [
+      [[`${home}/work/*`, `${home}/.ssh/*`], []],
+      [[`${home}/work/private/a`], [`${home}/work/private`]],
+      [[], []],
+    ] as const) {
+      const e = ev([...resources])
+      allowRootReads(e, "read", false, extra, home)
+      expect(e.effect).toBe("ask")
+    }
+  })
+  test("leaves a deny and other actions alone", () => {
+    const deny = { action: "external_directory", resources: [`${home}/work/*`], effect: "deny" }
+    allowRootReads(deny, "read", false, [], home)
+    expect(deny.effect).toBe("deny")
+    const other = { action: "edit", resources: [`${home}/work/*`], effect: "ask" }
+    allowRootReads(other, "read", false, [], home)
+    expect(other.effect).toBe("ask")
   })
 })

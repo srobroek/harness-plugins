@@ -66,8 +66,28 @@ export function allowSubagentReads(
   extraSecrets: readonly string[] = [],
   home?: string,
 ): void {
-  if (!isSubagent || evaluation.action !== "external_directory" || evaluation.effect !== "ask") return
-  if (tool === undefined || !(READ_ONLY_TOOLS.has(tool) || SHELL_TOOLS.has(tool))) return
+  if (!isSubagent) return
+  allowReads(evaluation, tool, true, extraSecrets, home)
+}
+
+/**
+ * In a root session, turn an `external_directory` ask into an allow when `tool` is read-only and no
+ * resource is a secret. The shell keeps the ask here: the user can answer it, and a command can write.
+ */
+export function allowRootReads(
+  evaluation: Evaluation,
+  tool: string | undefined,
+  isSubagent: boolean,
+  extraSecrets: readonly string[] = [],
+  home?: string,
+): void {
+  if (isSubagent) return
+  allowReads(evaluation, tool, false, extraSecrets, home)
+}
+
+function allowReads(evaluation: Evaluation, tool: string | undefined, shell: boolean, extraSecrets: readonly string[], home?: string): void {
+  if (evaluation.action !== "external_directory" || evaluation.effect !== "ask") return
+  if (tool === undefined || !(READ_ONLY_TOOLS.has(tool) || (shell && SHELL_TOOLS.has(tool)))) return
   if (evaluation.resources.length === 0) return
   if (evaluation.resources.some((resource) => isSecretResource(resource, extraSecrets, home))) return
   evaluation.effect = "allow"

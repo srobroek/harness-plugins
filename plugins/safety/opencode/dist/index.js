@@ -7057,9 +7057,19 @@ function isSecretResource(resource, extra = [], home = homedir10()) {
   });
 }
 function allowSubagentReads(evaluation, tool, isSubagent, extraSecrets = [], home) {
-  if (!isSubagent || evaluation.action !== "external_directory" || evaluation.effect !== "ask")
+  if (!isSubagent)
     return;
-  if (tool === undefined || !(READ_ONLY_TOOLS.has(tool) || SHELL_TOOLS.has(tool)))
+  allowReads(evaluation, tool, true, extraSecrets, home);
+}
+function allowRootReads(evaluation, tool, isSubagent, extraSecrets = [], home) {
+  if (isSubagent)
+    return;
+  allowReads(evaluation, tool, false, extraSecrets, home);
+}
+function allowReads(evaluation, tool, shell, extraSecrets, home) {
+  if (evaluation.action !== "external_directory" || evaluation.effect !== "ask")
+    return;
+  if (tool === undefined || !(READ_ONLY_TOOLS.has(tool) || shell && SHELL_TOOLS.has(tool)))
     return;
   if (evaluation.resources.length === 0)
     return;
@@ -7083,6 +7093,7 @@ var FEATURE_IDS = [
   "scratch-shell",
   "repo-worktrees",
   "subagent-external-reads",
+  "root-external-reads",
   "subagent-prompts"
 ];
 function readOptions(options) {
@@ -7434,7 +7445,9 @@ function createPlugin(overrides = {}) {
         });
         return;
       });
-      const subagentReads = on("subagent-external-reads") ? await ctx.permission.hook("evaluate", async (evaluation) => {
+      const subagentReadsOn = on("subagent-external-reads");
+      const rootReadsOn = on("root-external-reads");
+      const subagentReads = subagentReadsOn || rootReadsOn ? await ctx.permission.hook("evaluate", async (evaluation) => {
         if (evaluation.action !== "external_directory" || evaluation.effect !== "ask")
           return;
         const source = evaluation.source;
@@ -7444,7 +7457,13 @@ function createPlugin(overrides = {}) {
         const info = await ctx.session.get({ sessionID: evaluation.sessionID }).catch(() => {
           return;
         });
-        allowSubagentReads(evaluation, tool, typeof info?.parentID === "string" && info.parentID !== "", secretPaths);
+        if (info === undefined)
+          return;
+        const isSubagent = typeof info.parentID === "string" && info.parentID !== "";
+        if (subagentReadsOn)
+          allowSubagentReads(evaluation, tool, isSubagent, secretPaths);
+        if (rootReadsOn)
+          allowRootReads(evaluation, tool, isSubagent, secretPaths);
       }) : undefined;
       const unanswerable = on("subagent-prompts") ? await ctx.permission.hook("evaluate", async (evaluation) => {
         if (evaluation.effect !== "ask")
@@ -7525,6 +7544,7 @@ export {
   MESSAGES2 as MESSAGES,
   SECRET_LOCATIONS,
   SECRET_STORE_INPUT,
+  allowRootReads,
   allowSkillReads,
   allowSubagentReads,
   applyDecision,
