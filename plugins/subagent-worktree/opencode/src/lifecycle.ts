@@ -1233,7 +1233,13 @@ export function createLifecycle(deps: LifecycleDeps) {
     timers.clear()
     pending.clear()
     for (const registration of registrations.reverse()) await registration.dispose()
-    await Promise.allSettled([chain, sweepChain])
+    // A pass already running can queue a continuation behind itself: wait until both chains stop changing, as `settle` does.
+    for (;;) {
+      const current = chain
+      const sweeping = sweepChain
+      await Promise.allSettled([current, sweeping])
+      if (current === chain && sweeping === sweepChain) break
+    }
     // The last chance to give back a reservation whose send failed; one still held is logged.
     for (const { lane } of [...unreleased.values()]) await flushReleases(lane)
   }

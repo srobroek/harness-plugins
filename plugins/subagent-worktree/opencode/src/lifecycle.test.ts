@@ -213,6 +213,10 @@ async function start(
     events,
     /** Resolves once no pass is scheduled and the lifecycle's serial chain is quiet: every queued recovery has run. */
     quiet: () => lifecycle?.settle() ?? Promise.resolve(),
+    lifecycle: (): Lifecycle => {
+      if (lifecycle === undefined) throw new Error("the lifecycle was not created")
+      return lifecycle
+    },
   }
 }
 
@@ -351,6 +355,27 @@ describe("execution events", () => {
     fake.emit({ type: "session.execution.failed", data: { sessionID: CHILD, error: {} } })
     await settle()
     expect(synthetic(fake)).toEqual([])
+  })
+
+  test("dispose waits for a follow-up that a running pass queues while dispose waits", async () => {
+    let disposing: Promise<void> | undefined
+    let followUpDone = false
+    const { lifecycle, cleanup } = await start({
+      onGit: async () => {
+        if (disposing !== undefined) return
+        disposing = cleanup()
+        // Let dispose reach its wait on the chains before the follow-up is queued behind this pass.
+        await settle(50)
+        void lifecycle()
+          .sweep("report")
+          .then(() => {
+            followUpDone = true
+          })
+      },
+    })
+    await lifecycle().sweep("report")
+    await disposing
+    expect(followUpDone).toBe(true)
   })
 })
 
