@@ -132,9 +132,10 @@ plugin removes the checkout through the same removal path as every other trigger
 removal), with the merge target as the proof: HEAD must be an ancestor of `target`. Then the lane is
 retired as `merged`. When the path keeps the lane (the child is running or was resumed, the tree
 changed), the merge commit still lands on the target. The checkout and the lane stay, and the result
-says why. The lane records the merge (`mergedInto`: the target and HEAD), but only when
-`refs/heads/<target>` contains HEAD, so a later trigger can remove it as merged once the child has
-ended. On a conflict or other failure the worktree is kept and the `wt` output is returned.
+says why. On a conflict or other failure the worktree is kept and the `wt` output is returned.
+
+When `refs/heads/<target>` contains HEAD after the merge, the lane records both (`mergedInto`). A
+later trigger can then remove the lane as merged once the child has ended (see Lane removal).
 
 `list` asserts the `subagent_worktree_merge` permission with resource `list` before reading any
 lane or session data. It reads every stored lane in the caller's project and reports the branch, worktree path,
