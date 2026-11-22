@@ -802,9 +802,10 @@ describe("worktree argument", () => {
         let waiting: () => void = () => {}
         const queued = new Promise<void>((done) => (waiting = done))
         // The lock's wait loop sleeps only while the lock is busy: its first sleep is the lifecycle waiting on the handover.
-        const sleep = (ms: number) => {
+        // Each retry waits one event-loop turn instead of the lock's back-off, so the test waits on no clock.
+        const sleep = () => {
           waiting()
-          return new Promise<void>((done) => setTimeout(done, ms))
+          return new Promise<void>((done) => setImmediate(done))
         }
         const setup = await dead({ debounceMs: 1, onLifecycle: (value) => (lifecycle = value), lock: { sleep } })
         await release(setup, "ses_dead")
