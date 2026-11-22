@@ -12,7 +12,7 @@
 | architecture | 0.9.0 | development | global | opencode, claude |
 | ast-grep | 1.3.0 | development | global | opencode, claude |
 | autopilot | 1.3.4 | development | global | opencode |
-| aws | 0.7.1 | development | global | opencode, claude |
+| aws | 0.8.0 | development | global | opencode, claude |
 | beads | 0.8.10 | development | project | opencode, claude |
 | build | 0.7.1 | development | project | opencode |
 | cad | 0.8.2 | development | project | opencode |
