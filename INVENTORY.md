@@ -22,7 +22,7 @@
 | debate | 0.6.0 | productivity | global | opencode, claude |
 | delivery | 0.12.0 | development | global | opencode |
 | dep-update | 0.6.1 | development | global | opencode |
-| design | 0.9.1 | development | project | opencode, claude |
+| design | 0.10.0 | development | project | opencode, claude |
 | docs | 0.4.0 | development | global | opencode |
 | eli5 | 0.5.1 | productivity | global | opencode, claude |
 | find-tools | 0.4.0 | development | global | opencode |
