@@ -1,5 +1,7 @@
 ## subagent-worktree [0.9.2](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.9.1...subagent-worktree--v0.9.2) (2026-11-23)
 
+## subagent-worktree [0.9.2](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.9.1...subagent-worktree--v0.9.2) (2026-11-23)
+
 ## subagent-worktree [0.9.1](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.9.0...subagent-worktree--v0.9.1) (2026-11-23)
 
 ### Bug Fixes
