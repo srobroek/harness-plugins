@@ -1,7 +1,7 @@
 {
   "name": "aws",
   "description": "AWS working guidance: route AWS tasks through the AWS MCP Server's guided skills, verify against AWS documentation, and price with the AWS Pricing MCP server.",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "author": {
     "name": "Sjors Robroek",
     "url": "https://github.com/srobroek"

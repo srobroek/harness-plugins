@@ -39,7 +39,7 @@
       "name": "aws",
       "description": "AWS working guidance: route AWS tasks through the AWS MCP Server's guided skills, verify against AWS documentation, and price with the AWS Pricing MCP server.",
       "source": "./plugins/aws/claude",
-      "version": "0.8.0",
+      "version": "0.8.1",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/aws",
       "repository": "https://github.com/srobroek/harness-plugins"
