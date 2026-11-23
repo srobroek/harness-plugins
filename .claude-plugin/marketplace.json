@@ -174,7 +174,7 @@
       "name": "toolchain",
       "description": "Toolchain defaults as skills: stack, frontend, infrastructure, languages, observability, shell, Terraform, caches, background jobs and worktree coexistence.",
       "source": "./plugins/toolchain/claude",
-      "version": "0.9.1",
+      "version": "0.10.0",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/toolchain",
       "repository": "https://github.com/srobroek/harness-plugins"
