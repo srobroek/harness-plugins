@@ -1,3 +1,9 @@
+## autopilot [1.3.7](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.3.6...autopilot--v1.3.7) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## autopilot [1.3.6](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.3.5...autopilot--v1.3.6) (2026-11-23)
 
 ### Bug Fixes
