@@ -110,7 +110,7 @@ export type LifecycleDeps = {
   lookupMs: number
   load: (child: string) => Promise<Lane | undefined>
   /** Store a lane; resolves false when the write was refused (its record names another writer now). */
-  save: (lane: Lane) => Promise<boolean>
+  save: (lane: Lane, guard?: () => boolean) => Promise<boolean>
   scan: () => Promise<Lane[]>
   getSession: (sessionID: string) => Promise<SessionLike | undefined>
   moveHome: (lane: Lane) => Promise<void>
@@ -738,9 +738,6 @@ export function createLifecycle(deps: LifecycleDeps) {
         if (stored === undefined || canonical(stored.directory) !== canonical(lane.directory) || (stored.state !== "active" && stored.state !== "removing")) {
           return keptBecause("retired", "the lane is already retired")
         }
-        // A fenced lane is never removed automatically (child end, idle gate, event pass, recovery); only a person clears the
-        // fence. An explicit `wt merge` (it names a target) and a worktree that is already gone are not automatic.
-        if (stored.fenced && options.target === undefined && options.gone !== true) return keptBecause("denied", `the lane is fenced (${stored.fenced.reason}); unfence it first`)
         const earlier = stored.state === "removing" ? stored.removal : undefined
         // One read decides both: whether `ifGone` refuses, and whether the worktree is removed. Two reads would let a
         // worktree that comes back between them pass the first and reach the host removal through the second.
@@ -749,6 +746,10 @@ export function createLifecycle(deps: LifecycleDeps) {
         if (options.ifGone === true && onDisk) return keptBecause("present", "the worktree exists")
         // Once the host removed the worktree, a retry only moves sessions: a directory that exists again is not this removal's.
         const present = options.gone !== true && earlier?.pending === undefined && onDisk
+        // A fenced lane's existing worktree is never removed automatically (child end, idle gate, event pass, recovery); only a
+        // person clears the fence. An explicit `wt merge` (it names a target) may remove it. Move-only recovery of a worktree that
+        // is already gone touches no files, so the fence never blocks it.
+        if (present && stored.fenced && options.target === undefined) return keptBecause("denied", `the lane is fenced (${stored.fenced.reason}); unfence it first`)
         let proof: "empty" | "merged" | "landed" | undefined
         let head: string | undefined
         let within: string | undefined
@@ -1326,18 +1327,21 @@ export function createLifecycle(deps: LifecycleDeps) {
         refusal = `the lane of ${child} is no longer fenced`
         return undefined
       }
-      if ((await childState(ctx.session.get({ sessionID: child } as never), deps.lookupMs, child)) !== "idle") {
-        refusal = `${child} is running or cannot be read`
-        return undefined
-      }
-      // Synchronous, directly before the write: a start event delivered during the lock wait or the lookup above is seen here.
-      const late = startedSince([child], seq)
-      if (late !== undefined) {
-        refusal = late.removed ? "the lane changed" : late.reason
+      const live = await childState(ctx.session.get({ sessionID: child } as never), deps.lookupMs, child)
+      if (live === "running" || live === "unknown") {
+        refusal = `${child} is ${live === "running" ? "running" : "unreadable"}`
         return undefined
       }
       const { fenced: _cleared, ...rest } = stored
-      return (await save(rest)) ? rest : undefined
+      // `save` runs this guard synchronously right before the record is written, after its own awaited preparation: a start
+      // event delivered during the lock wait, the lookup above or that preparation is seen here.
+      const guard = (): boolean => {
+        const late = startedSince([child], seq)
+        if (late === undefined) return true
+        refusal = late.removed ? "the lane changed" : late.reason
+        return false
+      }
+      return (await save(rest, guard)) ? rest : undefined
     })
     return next ? { ok: true, lane: next } : { ok: false, reason: refusal ?? "the lane changed meanwhile" }
   }

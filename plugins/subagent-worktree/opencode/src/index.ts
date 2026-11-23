@@ -229,8 +229,11 @@ export function createLanes(
     })
   }
 
-  /** Store `lane` and its claim; resolves false, writing nothing, when its record now names another writer. */
-  const save = async (lane: Lane): Promise<boolean> => {
+  /**
+   * Store `lane` and its claim; resolves false, writing nothing, when its record now names another writer or when `guard`
+   * returns false. `guard` runs synchronously on the line before the record write, after every awaited preparation step.
+   */
+  const save = async (lane: Lane, guard?: () => boolean): Promise<boolean> => {
     const write = async () => {
       // A copy read before a handover would put the old writer back: the record names the new one, so the copy is dropped.
       if (await superseded(lane)) {
@@ -239,6 +242,8 @@ export function createLanes(
       }
       // Claim first when activating (no record without its claim), record first when retiring (no claim without its record).
       if (claims(lane)) await syncClaim(lane)
+      // No await between the guard and the write: `storage.set` is called in the same synchronous turn.
+      if (guard !== undefined && !guard()) return false
       await ctx.storage.set(laneStoreKey(lane), lane)
       if (!claims(lane)) await syncClaim(lane)
       return true

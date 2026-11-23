@@ -1483,7 +1483,7 @@ describe("each lane notice is sent once, and only for a lane that is still there
     const { fake, state, cleanup } = await start({
       ...landedDirty,
       onGit: (cmd) => {
-        if (cmd === "status --porcelain" && ++reads === 3) state.porcelain = ""
+        if (cmd === "status --porcelain" && ++reads === 4) state.porcelain = ""
       },
     })
     fake.emit({ type: "session.idle", data: { sessionID: PARENT } })
@@ -3198,9 +3198,9 @@ describe("a fenced lane is never removed automatically", () => {
   const fenced = { reason: "moving it back failed", at: 1 }
 
   test("the end of a fenced, clean, landed lane's child keeps the lane", async () => {
-    const { fake, worktree, events, cleanup } = await start({ ancestor: 0 }, { stored: [lane({ fenced })] })
+    const { fake, worktree, events, quiet, cleanup } = await start({ ancestor: 0 }, { stored: [lane({ fenced })] })
     await deliver(fake, events, { type: "session.execution.succeeded", data: { sessionID: CHILD } })
-    await settle(100)
+    await quiet()
     expect(worktree).toEqual([])
     expect(stored(fake).state).toBe("active")
     expect(stored(fake).fenced).toEqual(fenced)
@@ -3208,12 +3208,50 @@ describe("a fenced lane is never removed automatically", () => {
   })
 
   test("the lead's idle gate keeps a fenced, clean, landed lane", async () => {
-    const { fake, worktree, cleanup } = await start({ ancestor: 0 }, { stored: [lane({ fenced })] })
+    const { fake, worktree, quiet, cleanup } = await start({ ancestor: 0 }, { stored: [lane({ fenced })] })
     await fake.fire.session("experimental.idle", { sessionID: PARENT } as never)
-    await settle(100)
+    await quiet()
     expect(worktree).toEqual([])
     expect(stored(fake).state).toBe("active")
     await cleanup()
+  })
+
+  describe("move-only recovery of a fenced lane whose worktree is gone", () => {
+    const removing = lane({ state: "removing", fenced, removal: { retireAs: "removed", head: BASE } })
+    const failMoves = (fake: Fake) => {
+      const session = fake.context.session as unknown as { move: (input: unknown) => Promise<unknown> }
+      const original = session.move.bind(session)
+      session.move = () => Promise.reject(new Error("host refused the move"))
+      return () => void (session.move = original)
+    }
+
+    test("resumeRemovals finishes the move once it works again", async () => {
+      const { fake, lifecycle, quiet, cleanup } = await start({ exists: false }, { stored: [] })
+      await quiet()
+      fake.storage.set(laneKey(CHILD), removing)
+      const restore = failMoves(fake)
+      await lifecycle().resumeRemovals()
+      expect(stored(fake).state).toBe("removing")
+      restore()
+      await lifecycle().resumeRemovals()
+      expect(stored(fake).state).toBe("removed")
+      await cleanup()
+    })
+
+    test("a lead idle event finishes the move once it works again", async () => {
+      const { fake, quiet, cleanup } = await start({ exists: false }, { stored: [] })
+      await quiet()
+      fake.storage.set(laneKey(CHILD), removing)
+      const restore = failMoves(fake)
+      fake.emit({ type: "session.idle", data: { sessionID: PARENT } })
+      await quiet()
+      expect(stored(fake).state).toBe("removing")
+      restore()
+      fake.emit({ type: "session.idle", data: { sessionID: PARENT } })
+      await until(() => stored(fake).state === "removed")
+      expect(stored(fake).state).toBe("removed")
+      await cleanup()
+    })
   })
 })
 
@@ -3291,8 +3329,26 @@ describe("unfence", () => {
     await cleanup()
   })
 
+  test.each([
+    ["archived", (fake: Fake) => void (fake.sessions.get(CHILD)!.time = { busy: 1, idle: 2, archived: 3 })],
+    ["deleted", (fake: Fake) => void fake.sessions.delete(CHILD)],
+  ])("clears the fence of a %s child's lane", async (_name, prepare) => {
+    const { fake, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced })] })
+    prepare(fake)
+    expect((await unfence(fake)).metadata.ok).toBe(true)
+    expect(stored(fake).fenced).toBeUndefined()
+    await cleanup()
+  })
+
   test("refuses when the child starts running while the unfence waits for the lane lock", async () => {
-    const { fake, common, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced })] })
+    // The lock waits through this sleep: its first call says the unfence is queued behind the holder.
+    let waiting!: () => void
+    const queued = new Promise<void>((done) => (waiting = done))
+    const sleep = (ms: number) => {
+      waiting()
+      return new Promise<void>((done) => setTimeout(done, ms))
+    }
+    const { fake, events, common, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced })], lock: { sleep } })
     let free!: () => void
     let taken!: () => void
     const acquired = new Promise<void>((done) => (taken = done))
@@ -3302,14 +3358,41 @@ describe("unfence", () => {
     })
     await acquired
     const pending = unfence(fake)
-    await settle(50)
+    await queued
     const child = fake.sessions.get(CHILD)
     if (child) child.time = { busy: 9, idle: 2 }
-    fake.emit({ type: "session.execution.started", data: { sessionID: CHILD } })
-    await settle(50)
+    await deliver(fake, events, { type: "session.execution.started", data: { sessionID: CHILD } })
     free()
     await held
     refused(await pending, "running")
+    expect(fenceOf(fake)).toEqual(fenced)
+    await cleanup()
+  })
+
+  test("refuses when the child starts while the write is being prepared (a delayed storage read)", async () => {
+    const { fake, events, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced })] })
+    const storage = fake.context.storage as unknown as { get: (key: string) => Promise<unknown> }
+    const original = storage.get.bind(storage)
+    // Reads of the lane record: the tool's, the unfence's first look, its read under the lock, then the write's superseded check, which is held.
+    let reads = 0
+    let reached!: () => void
+    const atWrite = new Promise<void>((done) => (reached = done))
+    let release!: () => void
+    const gate = new Promise<void>((done) => (release = done))
+    storage.get = async (key) => {
+      if (key === laneKey(CHILD) && ++reads === 4) {
+        reached()
+        await gate
+      }
+      return original(key)
+    }
+    const pending = unfence(fake)
+    await atWrite
+    const child = fake.sessions.get(CHILD)
+    if (child) child.time = { busy: 9, idle: 2 }
+    await deliver(fake, events, { type: "session.execution.started", data: { sessionID: CHILD } })
+    release()
+    refused(await pending, "started a new execution")
     expect(fenceOf(fake)).toEqual(fenced)
     await cleanup()
   })
