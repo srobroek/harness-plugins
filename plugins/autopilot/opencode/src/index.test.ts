@@ -88,6 +88,7 @@ const run: Run = async (cwd, command, args, _timeout, env) => {
     await listGate
     return json(beads.list)
   }
+  if (args[0] === "children") return json(beads.list.filter((bead) => (bead as { parent?: unknown }).parent === args[1]))
   if (args[0] === "ready") return json(beads.ready)
   if (args[0] === "blocked") return json(beads.blocked)
   if (args[0] === "create") {

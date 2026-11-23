@@ -1779,6 +1779,9 @@ var TICK_MS = 4 * 60000;
 var STALL_MS = 12 * 60000;
 var MAX_IDLE_TICKS = 6;
 var MAX_ATTEMPTS = 3;
+function isWorkBead(bead) {
+  return bead.issue_type !== "epic" && !(bead.labels ?? []).includes("autopilot-handoff");
+}
 function inScope(bead, scope, all) {
   if (scope.kind !== "bead")
     return true;
@@ -1792,8 +1795,7 @@ function inScope(bead, scope, all) {
 }
 function countBeads(snapshot, scope) {
   const all = new Map(snapshot.beads.map((bead) => [bead.id, bead]));
-  const scoped = snapshot.beads.filter((bead) => inScope(bead, scope, all) && !(bead.labels ?? []).includes("autopilot-handoff"));
-  const work = scoped.filter((bead) => bead.issue_type !== "epic");
+  const work = snapshot.beads.filter((bead) => inScope(bead, scope, all) && isWorkBead(bead));
   const ids = new Set(work.map((bead) => bead.id));
   const sorted = (list) => [...new Set(list)].sort();
   return {
@@ -2137,13 +2139,13 @@ function parseArray(text) {
 }
 var ids = (items) => items.map((item) => item?.id).filter((id) => typeof id === "string");
 var BD_READ_TIMEOUT_MS = 90000;
-var isWork = (bead) => bead.issue_type !== "epic" && !(bead.labels ?? []).includes("autopilot-handoff");
-async function readOnce(directory, run, ledger) {
+var BD_READ_BUDGET_MS = 180000;
+async function readOnce(directory, run, ledger, timeout) {
   const env = ledgerEnv(ledger);
   const [list, ready, blocked] = await Promise.all([
-    run(directory, "bd", ["list", "--all", "--brief", "--json", "--limit", "0"], BD_READ_TIMEOUT_MS, env),
-    run(directory, "bd", ["ready", "--brief", "--json", "--limit", "0"], BD_READ_TIMEOUT_MS, env),
-    run(directory, "bd", ["blocked", "--json"], BD_READ_TIMEOUT_MS, env)
+    run(directory, "bd", ["list", "--all", "--brief", "--json", "--limit", "0"], timeout, env),
+    run(directory, "bd", ["ready", "--brief", "--json", "--limit", "0"], timeout, env),
+    run(directory, "bd", ["blocked", "--json"], timeout, env)
   ]);
   const beads = parseArray(list.stdout).flatMap((raw) => {
     const item = raw;
@@ -2153,32 +2155,68 @@ async function readOnce(directory, run, ledger) {
   });
   return { beads, ready: ids(parseArray(ready.stdout)), blocked: ids(parseArray(blocked.stdout)), ok: list.ok && ready.ok && blocked.ok };
 }
-async function scopeProblem(directory, run, ledger, scopeId, view) {
+async function scopeProblem(directory, run, ledger, scopeId, view, timeout) {
   if (!view.beads.some((bead) => bead.id === scopeId))
     return `bd list did not return the scope bead ${scopeId}`;
   const all = new Map(view.beads.map((bead) => [bead.id, bead]));
   const scope = { kind: "bead", id: scopeId };
-  if (view.beads.some((bead) => bead.status !== "closed" && isWork(bead) && inScope(bead, scope, all)))
+  if (view.beads.some((bead) => bead.status !== "closed" && isWorkBead(bead) && inScope(bead, scope, all)))
     return;
-  const children = await run(directory, "bd", ["children", scopeId, "--json"], BD_READ_TIMEOUT_MS, ledgerEnv(ledger));
+  const left = timeout();
+  if (left <= 0)
+    return `no time was left to run bd children ${scopeId}, so a scope with no open work cannot be confirmed`;
+  const children = await run(directory, "bd", ["children", scopeId, "--json"], left, ledgerEnv(ledger));
   if (!children.ok)
     return `bd children ${scopeId} failed, so a scope with no open work cannot be confirmed`;
-  const open = parseArray(children.stdout).filter((raw) => {
-    const item = raw;
-    return typeof item?.status === "string" && item.status !== "closed" && isWork(item);
-  });
+  const kids = parseBeadList(children.stdout);
+  if (kids === undefined)
+    return `bd children ${scopeId} answered something that is not a list of beads, so a scope with no open work cannot be confirmed`;
+  const open = kids.filter((bead) => bead.status !== "closed" && isWorkBead(bead));
   return open.length > 0 ? `bd list shows no open work under ${scopeId} but bd children shows ${open.length} open` : undefined;
 }
+function parseBeadList(text) {
+  const start = text.indexOf("[");
+  if (start < 0)
+    return;
+  let value;
+  try {
+    value = JSON.parse(text.slice(start));
+  } catch {
+    return;
+  }
+  if (!Array.isArray(value))
+    return;
+  const beads = [];
+  for (const raw of value) {
+    const item = raw;
+    if (typeof item?.id !== "string" || typeof item.status !== "string")
+      return;
+    beads.push({
+      id: item.id,
+      status: item.status,
+      ...typeof item.issue_type === "string" ? { issue_type: item.issue_type } : {},
+      labels: Array.isArray(item.labels) ? item.labels.filter((label) => typeof label === "string") : null
+    });
+  }
+  return beads;
+}
+var realSleep = (ms) => new Promise((done) => setTimeout(done, ms));
 async function readBeads(directory, run, ledger, options = {}) {
-  const { scopeId, attempts = 3, pauseMs = 2000 } = options;
+  const { scopeId, attempts = 3, pauseMs = 2000, sleep = realSleep, budgetMs = BD_READ_BUDGET_MS, now = Date.now } = options;
+  const deadline = now() + budgetMs;
+  const timeout = () => Math.min(BD_READ_TIMEOUT_MS, deadline - now());
   let view = { beads: [], ready: [], blocked: [], ok: false };
   for (let attempt = 0;attempt < attempts; attempt++) {
-    if (attempt > 0 && pauseMs > 0)
-      await new Promise((done) => setTimeout(done, pauseMs));
-    view = await readOnce(directory, run, ledger);
+    if (attempt > 0) {
+      if (timeout() <= pauseMs)
+        break;
+      if (pauseMs > 0)
+        await sleep(pauseMs);
+    }
+    view = await readOnce(directory, run, ledger, timeout());
     if (!view.ok)
       continue;
-    const problem = scopeId === undefined ? undefined : await scopeProblem(directory, run, ledger, scopeId, view);
+    const problem = scopeId === undefined ? undefined : await scopeProblem(directory, run, ledger, scopeId, view, timeout);
     if (problem === undefined)
       return view;
     view = { ...view, ok: false, problem };
@@ -4497,6 +4535,7 @@ export {
   ASK_TOOLS,
   Activity,
   Autopilot,
+  BD_READ_BUDGET_MS,
   BD_READ_TIMEOUT_MS,
   CLAIM_DIR,
   COMMAND_DESCRIPTION,
@@ -4566,6 +4605,7 @@ export {
   identifyRoot,
   inScope,
   isAskTool,
+  isWorkBead,
   lastAssistantText,
   mergeDrift,
   mergeOutcome,

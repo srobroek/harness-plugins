@@ -92,6 +92,11 @@ export type TickResult = {
   ping: string
 }
 
+/** Whether a bead is work the run counts: epics are containers and the run's own handoff beads are not work. */
+export function isWorkBead(bead: Pick<Bead, "issue_type" | "labels">): boolean {
+  return bead.issue_type !== "epic" && !(bead.labels ?? []).includes("autopilot-handoff")
+}
+
 /** Whether `bead` is the scope bead or one of its descendants (by `parent` or dotted id). */
 export function inScope(bead: Bead, scope: Scope, all: ReadonlyMap<string, Bead>): boolean {
   if (scope.kind !== "bead") return true
@@ -106,8 +111,7 @@ export function inScope(bead: Bead, scope: Scope, all: ReadonlyMap<string, Bead>
 /** The scope's beads, by status; epics count only as containers. */
 export function countBeads(snapshot: Pick<Snapshot, "beads" | "ready" | "blocked">, scope: Scope): BeadCounts {
   const all = new Map(snapshot.beads.map((bead) => [bead.id, bead]))
-  const scoped = snapshot.beads.filter((bead) => inScope(bead, scope, all) && !(bead.labels ?? []).includes("autopilot-handoff"))
-  const work = scoped.filter((bead) => bead.issue_type !== "epic")
+  const work = snapshot.beads.filter((bead) => inScope(bead, scope, all) && isWorkBead(bead))
   const ids = new Set(work.map((bead) => bead.id))
   const sorted = (list: string[]) => [...new Set(list)].sort()
   return {
