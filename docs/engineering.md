@@ -4,7 +4,7 @@ This page records the stack, layout and standards for `srobroek/harness-plugins`
 
 ## Stack
 
-The repository is a workspace of OpenCode V2 plugins written in TypeScript, and most plugins also ship a Claude Code tree. A server entry (`opencode/src/index.ts`) default-exports `Plugin.define({ id, setup })` from `@opencode/plugin`. A TUI entry (`opencode/src/tui.tsx`) uses the TUI API and has its own shape; `statusline` has only that entry. No plugin uses the V1 API (`@opencode-ai/plugin`).
+The repository is a workspace of OpenCode V2 plugins written in TypeScript; most also ship a Claude Code tree, and some ship pi extensions. An OpenCode server entry (`opencode/src/index.ts`) default-exports `Plugin.define({ id, setup })` from `@opencode/plugin`. A TUI entry (`opencode/src/tui.tsx`) uses the TUI API and has its own shape; `statusline` has only that entry. No plugin uses the V1 API (`@opencode-ai/plugin`).
 
 | Tool | Version | Source |
 | --- | --- | --- |
@@ -25,6 +25,14 @@ The repository is a workspace of OpenCode V2 plugins written in TypeScript, and 
 `smol-toml` is a runtime `dependency` of `lib`, so it ships in the bundles that import it.
 
 The build leaves these modules external (`HOST_MODULES` in `scripts/build.ts`): `@opencode/plugin`, `effect`, `@opentui/*` and `solid-js`, with their subpaths. OpenCode supplies them at runtime. `@opencode/client` and `@opencode/theme` are not on that list. AGENTS.md has the pinning rule for the `@opentui/*` and `solid-js` host modules.
+
+### pi extension bundles
+
+`agent-plugins.piEntries` maps names to TypeScript sources in `plugins/<name>/pi-src/`. The build writes each bundle to `plugins/<name>/pi/extensions/<name>.js`. Pi's package manifest lists only these generated extensions.
+
+Pi's compiled runtime accepts Bun-targeted extension bundles. Pi resolves its host modules from its own copies:
+`@earendil-works/pi-coding-agent`, `@earendil-works/pi-agent-core`, `@earendil-works/pi-ai`, `@earendil-works/pi-tui`, and `typebox`, including subpaths.
+The builder inlines private `@srobroek/opencode-lib/*` imports.
 
 The TypeScript config extends the harness-kit base, which is strict and adds `noUncheckedIndexedAccess` and `moduleResolution: bundler`. The repository config adds `verbatimModuleSyntax`. Tests run under `bun test` with the preload `scripts/test-preload.ts` (see `bunfig.toml`).
 
