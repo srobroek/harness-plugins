@@ -68,7 +68,7 @@
       "name": "toolchain",
       "description": "Toolchain defaults as skills: stack, frontend, infrastructure, languages, observability, shell, Terraform, caches, background jobs and worktree coexistence.",
       "source": "./plugins/toolchain/omp",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "category": "development"
     }
   ]
