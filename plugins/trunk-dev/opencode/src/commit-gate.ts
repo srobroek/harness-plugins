@@ -5,9 +5,9 @@
  * title checks are the enforcement, this is the early local guardrail.
  */
 
-import { resolve } from "node:path"
-import { type GitRunner, isReleaseRepository, readText, runGit } from "./release-repo.ts"
-import { type GitInvocation, gitInvocation, invocations, overridden } from "./shell.ts"
+import { resolve } from "node:path";
+import { type GitInvocation, gitInvocation, invocations, overridden } from "../../shared/shell.js";
+import { type GitRunner, isReleaseRepository, readText, runGit } from "./release-repo.ts";
 
 export const COMMIT_OVERRIDE = "TRUNK_DEV_ALLOW_NONCONVENTIONAL_COMMIT"
 export const PUSH_OVERRIDE = "TRUNK_DEV_ALLOW_MAIN_PUSH"

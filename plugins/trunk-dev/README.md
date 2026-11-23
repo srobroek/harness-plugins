@@ -1,20 +1,15 @@
 # trunk-dev
 
-Trunk-based delivery for OpenCode: a local gate for Conventional Commit subjects and
-direct pushes to `main`/`master`, skip-CI and MR/PR advisories, a feature-flag cleanup
-bead after each flagged merge, and skills for the workflow, feature flags and
-semantic-release setup.
+Trunk-based delivery for OpenCode, Claude Code, and pi. The plugin checks Conventional Commit subjects and direct pushes to `main` or `master`.
+It adds skip-CI and merge-request advisories, then creates a feature-flag cleanup bead after flagged merges.
+Its skills cover the release workflow, feature flags, and semantic-release setup.
 
 Ported from the omp-plugins `trunk-dev` plugin. The omp rules
 `trunk-dev-workflow` and `trunk-dev-feature-flags` are skills here; the
 `trunk-dev-skip-ci-text` rule is code (below). Session-start reminders are delivered
 once on the first completed `shell`/`bash` result, never in the system prompt.
-
-Every check reads the command with the shared shell parser (`scanShell` from
-`@srobroek/opencode-lib`), never a regex over the tool input. Only top-level simple
-commands are read, with `cd DIR`, `env -C DIR` and `git -C DIR` moving the directory;
-quoted text (`echo 'git commit -m bad'`) is data. A command that does not scan cleanly,
-or whose deciding word expands (`"$MSG"`, `$(…)`), is allowed.
+The OpenCode and pi skip-CI adapters share the parser and decision function in `shared/`.
+The parser reads only statically visible shell commands. It does not evaluate shell text, so wrappers, expansions, and aliases may be outside its view.
 
 ## Install
 

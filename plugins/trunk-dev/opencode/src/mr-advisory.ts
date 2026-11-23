@@ -4,8 +4,8 @@
  * repositories, and pushes of long-lived topic branches. Probe failures are silent.
  */
 
-import { type GitRunner, isReleaseRepository, readText, runGit } from "./release-repo.ts"
-import { gitInvocation, type Invocation, invocations } from "./shell.ts"
+import { gitInvocation, type Invocation, invocations } from "../../shared/shell.js";
+import { type GitRunner, isReleaseRepository, readText, runGit } from "./release-repo.ts";
 
 const CONVENTIONAL_TITLE = /^[a-z]+(?:\([^)\r\n]+\))?!?: .+$/
 const FLAG_LINE = /^Flag:\s*\S/m

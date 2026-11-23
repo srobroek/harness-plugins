@@ -4,7 +4,7 @@
  * appends the reminder to the completed call's result.
  */
 
-import { invocations } from "./shell.ts"
+import { invocations } from "./shell.js"
 
 const MARKER = /\[(?:skip\s+ci|ci\s+skip|no\s+ci|skip\s+actions)\]/i
 

@@ -17,7 +17,7 @@
 
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs"
 import { basename, dirname, join, resolve } from "node:path"
-import { invocations } from "./shell.ts"
+import { invocations } from "../../shared/shell.js"
 
 const READ_TIMEOUT_MS = 5_000
 const GIT_TIMEOUT_MS = 2_000

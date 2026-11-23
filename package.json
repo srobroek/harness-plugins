@@ -36,6 +36,7 @@
     "@anolilab/multi-semantic-release": "4.6.3",
     "@anthropic-ai/claude-code": "2.1.330",
     "@biomejs/biome": "2.6.8",
+    "@earendil-works/pi-coding-agent": "1.6.0",
     "@opencode/client": "2.3.2",
     "@opencode/plugin": "2.3.2",
     "@opencode/theme": "2.3.2",
