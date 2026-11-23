@@ -61,6 +61,8 @@ export type Lane = {
   title?: string
   /** `removing`: `finalize` started taking the worktree away; it ends as `removed`, `merged` or `landed`. `removed`: the worktree is gone (empty lane, or merged); the child runs in `parentDir`. `landed`: its work reached the base branch and the worktree was removed. */
   state: "active" | "removing" | "removed" | "merged" | "landed"
+  /** The worktree incarnation: 0 at creation, +1 at each revival. A claim's generation restarts at a revival, so a call's fence names the epoch too. */
+  epoch?: number
   /** When a `subagent` call last targeted the child (a resume). */
   resumedAt?: number
   /** How the child's last execution ended, when it did not succeed. */

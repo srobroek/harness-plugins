@@ -131,6 +131,41 @@ describe("automatic git calls", () => {
   })
 })
 
+describe("exact ref probes beat a tag of the same short name (074)", () => {
+  let repo: string
+  const git = createGit(spawnRunner)
+  const sh = async (...args: string[]) => {
+    const child = Bun.spawn(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.com", ...args], { stdout: "ignore", stderr: "ignore" })
+    expect(await child.exited).toBe(0)
+  }
+  beforeAll(async () => {
+    repo = await mkdtemp(join(tmpdir(), "subagent-worktree-refs-"))
+    await sh("init", "--quiet", "-b", "main")
+    await Bun.write(join(repo, "a.txt"), "a")
+    await sh("add", "a.txt")
+    await sh("commit", "--quiet", "-m", "base")
+    await sh("switch", "--quiet", "-c", "lane")
+    await Bun.write(join(repo, "b.txt"), "b")
+    await sh("add", "b.txt")
+    await sh("commit", "--quiet", "-m", "lane work")
+    // Tags that shadow the short names of the local branch and of the remote-tracking branch, both at the lane's commit.
+    await sh("tag", "main")
+    await sh("tag", "origin/main")
+  })
+  afterAll(() => rm(repo, { recursive: true, force: true }))
+
+  test("changedFiles diffs against the local branch, not a tag named like it", async () => {
+    expect(await git.changedFiles(repo, "main")).toEqual(["b.txt"])
+  })
+
+  test("origin/main as a tag does not count as the remote-tracking branch", async () => {
+    const head = (await git.commit(repo, "HEAD")) ?? ""
+    expect(await git.branchContains(repo, head, "refs/remotes/origin/main")).toBe(false)
+    await sh("update-ref", "refs/remotes/origin/main", head)
+    expect(await git.branchContains(repo, head, "refs/remotes/origin/main")).toBe(true)
+  })
+})
+
 // Needs a real worktrunk: it is what reads .config/wt.toml.
 describe.skipIf(!Bun.which("wt"))("automatic merge against a repository with a committed wt project hook (CWE-78)", () => {
   let root: string

@@ -38,6 +38,8 @@ type World = {
   contains?: Record<string, string[]>
   /** The tip is already reachable from the main commit the lane was created at: no work of its own. */
   inMainAtCreation?: boolean
+  /** The repository has no `refs/remotes/origin/main`; a ref lookup by its short name `origin/main` (a tag, say) still resolves. */
+  noOriginMain?: boolean
   openBranches: string[]
   /** `git stash list` subjects. */
   stash?: string
@@ -99,7 +101,8 @@ function runner(world: World, log: string[][]) {
     if (cmd === "symbolic-ref --quiet --short HEAD") return world.onBranch ? ok("lane-a\n") : { code: 1, stdout: "", stderr: "" }
     if (cmd.startsWith("update-ref -d")) return { code: world.updateRefFails ? 1 : 0, stdout: "", stderr: "" }
     // An exact branch ref exists while `contains` lists it; it resolves to a commit of its own, which `merge-base` maps back.
-    const exact = /^show-ref --verify --hash (refs\/heads\/\S+)$/.exec(cmd)?.[1]
+    const exact = /^show-ref --verify --hash (refs\/(?:heads|remotes)\/\S+)$/.exec(cmd)?.[1]
+    if (exact === "refs/remotes/origin/main" && world.contains?.[exact] === undefined) return world.noOriginMain ? { code: 1, stdout: "", stderr: "" } : ok(`${"d".repeat(40)}\n`)
     if (exact !== undefined) return world.contains?.[exact] === undefined ? { code: 1, stdout: "", stderr: "" } : ok(`${branchTipOf(exact)}\n`)
     if (cmd.startsWith("merge-base --is-ancestor")) {
       // Only the commit the proof was about is an ancestor; a different tip is not.
@@ -348,6 +351,16 @@ describe("execution events", () => {
     expect(stored(fake).state).toBe("landed")
     expect(log).toContainEqual(["git", "-C", REPO, "update-ref", "-d", "refs/heads/lane-a", TIP])
     expect(log.some((argv) => argv.includes("-D"))).toBe(false)
+    await cleanup()
+  })
+
+  // A tag named `origin/main` answers to the short name only; landing needs the exact remote-tracking ref.
+  test("a tag named origin/main does not prove landing when refs/remotes/origin/main is absent", async () => {
+    const { fake, worktree, quiet, cleanup } = await start({ ancestor: 0, noOriginMain: true })
+    fake.emit({ type: "session.idle", data: { sessionID: PARENT } })
+    await quiet()
+    expect(worktree.map((entry) => entry.method)).not.toContain("remove")
+    expect(stored(fake).state).toBe("active")
     await cleanup()
   })
 

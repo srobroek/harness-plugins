@@ -94,7 +94,7 @@ export function createGit(run: Runner) {
   const files = (output: string | undefined) => output?.split("\0").filter((file) => file !== "")
   /** The commit an exact `refs/heads/<name>` ref points at; undefined when that ref does not exist (no other ref is tried). */
   const branchTip = async (directory: string, ref: string) => {
-    if (!ref.startsWith("refs/heads/")) return undefined
+    if (!ref.startsWith("refs/heads/") && !ref.startsWith("refs/remotes/")) return undefined
     const oid = await git(directory, "show-ref", "--verify", "--hash", ref)
     return oid !== undefined && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(oid) ? oid : undefined
   }
@@ -134,8 +134,12 @@ export function createGit(run: Runner) {
       return count !== undefined && /^\d+$/.test(count) ? Number(count) : undefined
     },
     /** Files HEAD changes since its merge base with `target`. */
-    changedFiles: async (directory: string, target: string) =>
-      isSafeBranchName(target) ? files(await git(directory, "diff", "--no-ext-diff", "--name-only", "-z", `${target}...HEAD`)) : undefined,
+    changedFiles: async (directory: string, target: string) => {
+      if (!isSafeBranchName(target)) return undefined
+      // The exact local branch, never a tag or other ref of the same short name.
+      const tip = await branchTip(directory, `refs/heads/${target}`)
+      return tip === undefined ? undefined : files(await git(directory, "diff", "--no-ext-diff", "--name-only", "-z", `${tip}...HEAD`))
+    },
     /**
      * Staged or unstaged tracked changes; untracked files do not affect automatic isolation.
      * The Beads ledger directory is ignored: bd rewrites its tracked export (`.beads/issues.jsonl`)
@@ -161,7 +165,7 @@ export function createGit(run: Runner) {
     /** Whether `tip` is an ancestor of `ref` (exit 0). */
     isAncestor,
     branchTip,
-    /** Whether the exact branch ref `ref` exists and its commit contains `tip`; a missing branch contains nothing. */
+    /** Whether the exact branch ref `ref` (`refs/heads/...` or `refs/remotes/...`) exists and its commit contains `tip`; a missing branch contains nothing. */
     branchContains: async (directory: string, tip: string, ref: string) => {
       const at = await branchTip(directory, ref)
       return at !== undefined && (await isAncestor(directory, tip, at))

@@ -493,6 +493,20 @@ export function createLanes(
     for (const [directory, reservation] of reservations) if (reservation.callId === callId) reservations.delete(directory)
   }
 
+  /** Per call: where its own spawn or resume was admitted. Its end is fenced by a later admission, not by the clock. */
+  type CallPoint = { epoch: number; generation: number }
+  const callPoints = new Map<string, CallPoint>()
+  /** A spawn: the lane is new, so nothing can resume it before the call returns its id. */
+  const notePointOfSpawn = async (event: { id: string; input: unknown }) => {
+    const child = readSubagentInput(event.input)?.sessionID
+    const lane = child === undefined ? undefined : await load(child)
+    if (lane?.state !== "active") return
+    const active = lane
+    // Under the lane's lock, like every other read of its claim generation.
+    const generation = await lifecycle.underLock(active.directory, active.parentDir, () => lifecycle.claimGeneration(active))
+    if (generation !== undefined) callPoints.set(event.id, { epoch: active.epoch ?? 0, generation })
+  }
+
   const begin = async (event: {
     tool: string
     sessionID: string
@@ -514,10 +528,13 @@ export function createLanes(
           `subagent-worktree: not resuming ${child}: ${child} was released from ${released.directory}${released.to ? ` and the worktree handed to ${released.to}` : ""}, so it may not write again. Start a new subagent instead.`,
         )
       }
-      await markResumed(input.sessionID)
+      const admitted = await markResumed(input.sessionID)
       const note = resumeWorktreeNote(input)
       if (note) notes.set(event.id, note)
-      return revive(event, input.sessionID, input.prompt)
+      // The call's own admission point: taken inside the admission (or revival) critical section, never re-read afterwards.
+      const point = (await revive(event, input.sessionID, input.prompt)) ?? admitted
+      if (point !== undefined) callPoints.set(event.id, point)
+      return
     }
 
     const parent = await getSession(event.sessionID)
@@ -620,7 +637,7 @@ export function createLanes(
     try {
       child = await createChild(event, input, agent, parent)
       await ctx.session.move({ sessionID: child, directory: worktree.directory } as never)
-      const mainAtCreation = await git.commit(plan.from, "origin/main")
+      const mainAtCreation = await git.commit(plan.from, "refs/remotes/origin/main")
       const lane: Lane = {
         child,
         parent: event.sessionID,
@@ -642,7 +659,9 @@ export function createLanes(
   /** A failed spawn releases its reservation; a finished one releases it in `after`. */
   const before: typeof begin = async (event) => {
     try {
+      const resuming = event.tool === SUBAGENT_TOOL && readSubagentInput(event.input)?.sessionID !== undefined
       await begin(event)
+      if (event.tool === SUBAGENT_TOOL && !resuming) await notePointOfSpawn(event)
     } catch (error) {
       release(event.id)
       throw error
@@ -683,20 +702,64 @@ export function createLanes(
     if (session.parentID !== event.sessionID) return refuse("it is not a child of this session")
     const agent = (event.input as { agent?: string }).agent ?? ""
     await assertSubagent(event, (await getAgent(agent, parent.location.directory))?.id ?? agent)
-    const worktree = await provision(parent, lane.title ?? "task")
-    try {
-      await ctx.session.move({ sessionID: child, directory: worktree.directory } as never)
-      // A revived lane is in a fresh worktree: it does not inherit a fence.
-      const { fenced: _fenced, ...kept } = lane
-      const next: Lane = { ...kept, ...worktree, state: "active" }
-      if (!worktree.target) delete next.target
-      await save(next)
-      event.input = { ...(event.input as object), prompt: rewritePrompt(prompt, next, false) }
-    } catch (error) {
-      await moveHome(lane)
-      await removeWorktree(parent.projectID, worktree.directory, true).catch(() => {})
-      throw new Error(`subagent-worktree: ${errorMessage(error)}`)
-    }
+    const retired = lane
+    // The whole transition runs under the old worktree's lock, so two revivals of one child cannot both prepare and move it:
+    // the loser finds the lane active and takes no part in the move.
+    const outcome = await lifecycle.underLock(retired.directory, retired.parentDir, async () => {
+      const stored = await load(child)
+      if (stored === undefined) return refuse("its lane record is gone")
+      if (stored.state === "active") return { taken: true } as const
+      if (stored.state === "removing") return refuse("an earlier removal of its worktree is not finished")
+      const worktree = await provision(parent, stored.title ?? "task")
+      let moved = false
+      try {
+        await ctx.session.move({ sessionID: child, directory: worktree.directory } as never)
+        moved = true
+        // A revived lane is in a fresh worktree: it does not inherit a fence, and it is a new incarnation (`epoch`).
+        const { fenced: _fenced, ...kept } = stored
+        const revived: Lane = { ...kept, ...worktree, state: "active", epoch: (stored.epoch ?? 0) + 1 }
+        if (!worktree.target) delete revived.target
+        // Publication and capture run under the lock of the directory whose claim is read (the new one), so no resume of the published lane, from any instance, can land between them.
+        // The old directory's lock is held as well (lock order: old, then new); a new directory that is the old one is already held.
+        const publish = async () => {
+          // `save` refuses a record that was handed to another writer; the stored record was read under the old lock.
+          if (!(await save(revived))) throw new Error("its lane changed while a fresh worktree was prepared")
+          return lifecycle.claimGeneration(revived)
+        }
+        const generation =
+          (await normalize(worktree.directory)) === (await normalize(stored.directory))
+            ? await publish()
+            : await lifecycle.underLock(worktree.directory, stored.parentDir, publish)
+        return { taken: false, lane: revived, generation } as const
+      } catch (error) {
+        // Only this call moved the child, and the old lock keeps every other revival out, so moving it home cannot undo a winner's move.
+        // The worktree goes only when the child is out of it; a failed rollback step is reported with the error that caused it.
+        const problems: unknown[] = [error]
+        let home = true
+        if (moved) {
+          try {
+            await moveHome(stored)
+          } catch (homeError) {
+            home = false
+            problems.push(new Error(`moving ${child} home failed (${errorMessage(homeError)}), so ${worktree.directory} was kept`, { cause: homeError }))
+          }
+        }
+        if (home) {
+          try {
+            await removeWorktree(parent.projectID, worktree.directory, true)
+          } catch (removeError) {
+            problems.push(new Error(`removing ${worktree.directory} failed (${errorMessage(removeError)})`, { cause: removeError }))
+          }
+        }
+        const reason = problems.map(errorMessage).join("; ")
+        if (problems.length === 1) throw new Error(`subagent-worktree: ${reason}`, { cause: error })
+        throw new AggregateError(problems, `subagent-worktree: ${reason}`)
+      }
+    })
+    // Another revival won: this call resumes into its lane like any resume.
+    if (outcome.taken) return markResumed(child)
+    event.input = { ...(event.input as object), prompt: rewritePrompt(prompt, outcome.lane, false) }
+    return outcome.generation === undefined ? undefined : { epoch: outcome.lane.epoch ?? 0, generation: outcome.generation }
   }
 
   const moveHome = async (lane: Lane) => {
@@ -714,7 +777,7 @@ export function createLanes(
    */
   const confirmLocation = async (stored: Lane): Promise<boolean> => {
     const child = stored.child
-    const lane = await repair(stored)
+    const lane = await repair(stored, true)
     if (lane.state !== "active") return false
     const refuse: (why: string) => never = (why) => {
       throw new Error(`subagent-worktree: not resuming ${child}: ${why}. Its worktree is ${lane.directory}; start a new subagent instead.`)
@@ -740,31 +803,53 @@ export function createLanes(
   }
 
   /** A `subagent` call targeted this child: record it, so its lane is not removed from under a follow-up. */
-  const markResumed = async (child: string) => {
-    const lane = await load(child)
-    if (lane?.state !== "active" && lane?.state !== "removing") return
-    // Waits for a removal already under way, and fences any that collected its facts before this. The location
-    // check and the bookkeeping run inside that same lock, on the lane as the last removal left it.
-    await lifecycle.noteResume(lane.directory, lane.parentDir, async () => {
-      const fresh = await load(child)
-      // Retired or still `removing` while this call waited: `revive` finishes the removal and gives a fresh worktree; nothing is admitted here.
-      if (fresh?.state !== "active" || !(await confirmLocation(fresh))) return false
-      const confirmed = (await load(child)) ?? fresh
-      await save({ ...confirmed, resumedAt: now(), quietSince: undefined })
-      return true
-    })
+  const markResumed = async (child: string): Promise<CallPoint | undefined> => {
+    let lane = await load(child)
+    if (lane?.state !== "active" && lane?.state !== "removing") return undefined
+    // The point is taken under the lock of the directory whose claim is bumped. A lane revived into another worktree between the load
+    // and the lock is not admitted here (that lock guards the old claim): the call retries under the new incarnation's lock.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let epoch = 0
+      let moved: Lane | undefined
+      const here = lane
+      // Waits for a removal already under way, and fences any that collected its facts before this. The location
+      // check and the bookkeeping run inside that same lock, on the lane as the last removal left it.
+      const generation = await lifecycle.noteResume(here.directory, here.parentDir, async () => {
+        const fresh = await load(child)
+        if (fresh?.state === "active" && (await normalize(fresh.directory)) !== (await normalize(here.directory))) {
+          moved = fresh
+          return false
+        }
+        // Retired or still `removing` while this call waited: `revive` finishes the removal and gives a fresh worktree; nothing is admitted here.
+        if (fresh?.state !== "active" || !(await confirmLocation(fresh))) return false
+        const confirmed = (await load(child)) ?? fresh
+        // Under the worktree's lock (so updateLane would wait on itself), on the record just read: `save` still refuses a handed-over copy.
+        await save({ ...confirmed, resumedAt: now(), quietSince: undefined })
+        epoch = confirmed.epoch ?? 0
+        return true
+      })
+      if (moved === undefined) return generation === undefined ? undefined : { epoch, generation }
+      lane = moved
+    }
+    throw new Error(`subagent-worktree: not resuming ${child}: its worktree kept changing`)
   }
 
-  const retire = async (lane: Lane, state: "removed" | "merged" | "landed") => {
-    const next: Lane = { ...lane, state }
-    await save(next)
-    return next
+  // Retire an active lane. `confirmLocation` calls this under the worktree's lock with the lane read fresh there, so it is
+  // written as it is. Elsewhere it goes through `updateLane`, so a snapshot cannot drop a field set meanwhile (a merge's
+  // `mergedInto`) or overwrite a record handed to another writer; a record whose state changed is left alone.
+  const retire = async (lane: Lane, state: "removed" | "merged" | "landed", locked: boolean) => {
+    if (locked) {
+      const next: Lane = { ...lane, state }
+      await save(next)
+      return next
+    }
+    return (await lifecycle.updateLane(lane, (stored) => (stored.state === lane.state ? { ...stored, state } : undefined))) ?? (await load(lane.child)) ?? lane
   }
 
-  const repair = async (lane: Lane) => {
+  const repair = async (lane: Lane, locked = false) => {
     if (lane.state !== "active" || await exists(lane.directory)) return lane
     await moveHome(lane)
-    return retire(lane, "removed")
+    return retire(lane, "removed", locked)
   }
 
   const after = async (
@@ -804,15 +889,17 @@ export function createLanes(
     let lane = await load(child)
     if (lane?.state !== "active") return
 
-    // A resume recorded after this point raced the removal and keeps the lane.
+    // A resume admitted after this point raced the removal and keeps the lane: judged by the call's own claim generation when known, else by the clock.
     const since = now()
+    const point = event.id === undefined ? undefined : callPoints.get(event.id)
+    if (event.id !== undefined) callPoints.delete(event.id)
     const resultStatus = event.status === "error" ? "error" : metadata.status === "running" ? "running" : "completed"
     const status = await git.status(lane.directory, lane.base)
     const childNow = await childState(ctx.session.get({ sessionID: child } as never), lookupMs, child)
     let removed = false
     if (shouldRemove(status, resultStatus, childNow)) {
       try {
-        if (await lifecycle.removeForeground(lane, since)) {
+        if (await lifecycle.removeForeground(lane, point === undefined ? { since } : { call: point })) {
           // Retired inside the removal's critical section; the note below describes this removal.
           removed = true
           lane = { ...lane, state: "removed" }

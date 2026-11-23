@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { Error as ToolError } from "@opencode/plugin/promise/tool"
 import { outsideLocks } from "@srobroek/opencode-lib/lease-lock"
 import { createFakeContext, type FakeContext } from "@srobroek/opencode-lib/testing"
-import { readClaim, writeClaim, writeLanding } from "@srobroek/opencode-lib/worktree-claims"
+import { bumpClaim, readClaim, writeClaim, writeLanding } from "@srobroek/opencode-lib/worktree-claims"
 import { setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
 import type { RunResult } from "./git.ts"
 import { createPlugin, SWEEP_TOOL } from "./index.ts"
@@ -23,6 +23,8 @@ type Repo = {
   /** `git --version` output; defaults to a supported git. */
   version?: string  /** A repository without a commit: HEAD does not resolve. */
   unborn?: boolean
+  /** The repository has no remote-tracking `origin/main`; a tag of that short name still exists. */
+  noOriginMain?: boolean
   branch: Record<string, string | undefined>
   ahead: number
   dirty: boolean
@@ -63,6 +65,10 @@ function fakeRun(repo: Repo, log: string[][]) {
     // A lane branch points where its worktree is: the ref follows the worktree's HEAD.
     const ref = /^rev-parse --verify --quiet refs\/heads\/(.+)\^\{commit\}$/.exec(cmd)
     if (ref) return ok(`${repo.heads[`/wt/${ref[1]}`] ?? BASE}\n`)
+    // A tag named like the remote-tracking branch: only the short name reaches it.
+    const probed = /^rev-parse --verify --quiet (.+)\^\{commit\}$/.exec(cmd)?.[1]
+    if (probed === "origin/main") return ok(`${"7".repeat(40)}\n`)
+    if (probed === "refs/remotes/origin/main" && repo.noOriginMain) return fail
     if (cmd.startsWith("rev-parse --verify")) return ok(`${repo.heads[dir] ?? BASE}\n`)
     if (cmd === "symbolic-ref --quiet --short HEAD") {
       const branch = repo.branch[dir]
@@ -1399,14 +1405,202 @@ describe("execute.after", () => {
     expect(lane(setup.fake)?.state).not.toBe("active")
   })
 
-  // The fence compares with `>=`: a resume stamped in the very millisecond the removal was decided cannot be ordered, so it keeps the lane.
-  test("a resume stamped in the same millisecond as the removal's fence keeps the lane", async () => {
+  // 89q: the fence is the call's own resume, not the wall-clock end of the call.
+  test("a second resume stamped while a first long call runs keeps the lane when the first call ends", async () => {
+    let clock = 1_000_000
+    const setup = await start({ now: () => clock })
+    await spawn(setup)
+    const resume = (id: string) => setup.fake.fire.tool("execute.before", { ...call({ sessionID: "ses_fake1", prompt: "again" }), id })
+    clock += 10
+    await resume("call_a")
+    clock += 10
+    await resume("call_b")
+    clock += 10
+    const event = await setup.fake.fire.tool("execute.after", { ...completed("ses_fake1"), id: "call_a" })
+    expect((event.result as { content: string }).content).not.toContain('state="removed"')
+    expect(setup.worktree.calls.filter((entry) => entry.method === "remove")).toHaveLength(0)
+    expect(lane(setup.fake)?.state).toBe("active")
+  })
+
+  // Resumes are ordered by claim generation, so even a second resume in the very millisecond of the first keeps the lane.
+  test("a second resume stamped in the same millisecond as the first keeps the lane when the first call ends", async () => {
     const setup = await start({ now: () => 1_000_000 })
     await spawn(setup)
-    await setup.fake.fire.tool("execute.before", call({ sessionID: "ses_fake1", prompt: "one more thing" }))
-    const event = await setup.fake.fire.tool("execute.after", completed("ses_fake1"))
+    await setup.fake.fire.tool("execute.before", { ...call({ sessionID: "ses_fake1", prompt: "one" }), id: "call_a" })
+    await setup.fake.fire.tool("execute.before", { ...call({ sessionID: "ses_fake1", prompt: "two" }), id: "call_b" })
+    const event = await setup.fake.fire.tool("execute.after", { ...completed("ses_fake1"), id: "call_a" })
     expect((event.result as { content: string }).content).not.toContain('state="removed"')
     expect(lane(setup.fake)?.state).toBe("active")
+  })
+
+  // Review of #124 (1): the call's point is taken inside its own admission, so a resume that lands right after cannot raise it.
+  test("a resume admitted right after an earlier call's admission does not move the earlier call's fence", async () => {
+    const setup = await start()
+    await spawn(setup)
+    const directory = lane(setup.fake)?.directory ?? ""
+    const first = (readClaim(setup.common, directory) as { value: { generation: number } }).value.generation
+    const get = setup.fake.context.storage.get.bind(setup.fake.context.storage)
+    let fired = false
+    Object.assign(setup.fake.context.storage, {
+      get: async (key: string) => {
+        const claim = readClaim(setup.common, directory)
+        // The first read after call A's admission: call B is admitted now.
+        if (!fired && claim.kind === "present" && claim.value.generation > first) {
+          fired = true
+          await setup.fake.fire.tool("execute.before", { ...call({ sessionID: "ses_fake1", prompt: "two" }), id: "call_b" })
+        }
+        return get(key)
+      },
+    })
+    await setup.fake.fire.tool("execute.before", { ...call({ sessionID: "ses_fake1", prompt: "one" }), id: "call_a" })
+    expect(fired).toBe(true)
+    const event = await setup.fake.fire.tool("execute.after", { ...completed("ses_fake1"), id: "call_a" })
+    expect((event.result as { content: string }).content).not.toContain('state="removed"')
+    expect(lane(setup.fake)?.state).toBe("active")
+  })
+
+  // Review of #124 (2): a revival recreates the claim from the clock, so its generation is not comparable with the old one.
+  test("a call from before a same-millisecond revival does not remove the fresh worktree", async () => {
+    let present = true
+    const setup = await start({ now: () => 1_000_000, exists: async () => present })
+    await spawn(setup)
+    await setup.fake.fire.tool("execute.before", { ...call({ sessionID: "ses_fake1", prompt: "one" }), id: "call_a" })
+    // The worktree is lost, so the next resume retires the lane and revives it in a fresh one.
+    present = false
+    await setup.fake.fire.tool("execute.before", { ...call({ sessionID: "ses_fake1", prompt: "two" }), id: "call_b" })
+    present = true
+    expect(lane(setup.fake)?.state).toBe("active")
+    const event = await setup.fake.fire.tool("execute.after", { ...completed("ses_fake1"), id: "call_a" })
+    expect((event.result as { content: string }).content).not.toContain('state="removed"')
+    expect(setup.worktree.calls.filter((entry) => entry.method === "remove")).toHaveLength(0)
+    expect(lane(setup.fake)?.state).toBe("active")
+  })
+
+  // Review of #124 (3): the loser of two revivals must not move the winner's session.
+  test("two concurrent revivals leave the child in the winner's worktree", async () => {
+    const setup = await start()
+    await spawn(setup)
+    await setup.fake.fire.tool("execute.after", completed("ses_fake1"))
+    expect(lane(setup.fake)?.state).toBe("removed")
+    await Promise.all(
+      ["call_a", "call_b"].map((id) => setup.fake.fire.tool("execute.before", { ...call({ sessionID: "ses_fake1", prompt: "again" }), id })),
+    )
+    const revived = lane(setup.fake)
+    expect(revived?.state).toBe("active")
+    expect(setup.fake.sessions.get("ses_fake1")?.location).toEqual({ directory: revived?.directory })
+    expect(setup.worktree.calls.filter((entry) => entry.method === "create")).toHaveLength(2)
+  })
+
+  // Review of #124, round 3 (1): a call's point is taken under the lock of the directory whose claim it bumps, in the critical section that publishes or admits the lane.
+  test("a resume that lands right after a revival is published is not captured as the reviving call's own", async () => {
+    const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms))
+    let lifecycle: Lifecycle | undefined
+    const setup = await start({ onLifecycle: (value) => (lifecycle = value) })
+    await spawn(setup)
+    await setup.fake.fire.tool("execute.after", completed("ses_fake1"))
+    expect(lane(setup.fake)?.state).toBe("removed")
+    let armed = false
+    let other: Promise<unknown> | undefined
+    const set = setup.fake.context.storage.set.bind(setup.fake.context.storage)
+    Object.assign(setup.fake.context.storage, {
+      set: async (key: string, value: unknown) => {
+        const record = value as Lane
+        // Published: exactly one other instance resumes the new lane, as soon as the lock lets it.
+        if (!armed && other === undefined && record.child === "ses_fake1" && record.state === "active" && record.epoch === 1) {
+          armed = true
+          // Outside this call chain's lock context, as another instance is.
+          other = outsideLocks(() =>
+            withDiskLock(setup.common, record.directory, { sessionID: "other-instance", waitMs: 5_000 }, async () => {
+              bumpClaim(setup.common, record.directory, 1)
+            }),
+          )
+        }
+        return set(key, value as never)
+      },
+    })
+    const read = lifecycle?.claimGeneration.bind(lifecycle)
+    if (lifecycle === undefined || read === undefined) throw new Error("no lifecycle")
+    lifecycle.claimGeneration = async (target) => {
+      // The reviving call reads the claim after this: the other instance goes first, if the lock lets it.
+      if (armed) {
+        armed = false
+        await Promise.race([other, sleep(50)])
+      }
+      return read(target)
+    }
+    // The revival lands in another directory than the lane had, so the two locks differ.
+    const create = setup.fake.context.worktree.create.bind(setup.fake.context.worktree)
+    Object.assign(setup.fake.context.worktree, { create: (input: Record<string, unknown>) => create({ ...input, name: "revived-elsewhere" } as never) })
+    await setup.fake.fire.tool("execute.before", { ...call({ sessionID: "ses_fake1", prompt: "again" }), id: "call_a" })
+    await other
+    expect(lane(setup.fake)?.directory).toBe("/wt/revived-elsewhere")
+    const event = await setup.fake.fire.tool("execute.after", { ...completed("ses_fake1"), id: "call_a" })
+    expect((event.result as { content: string }).content).not.toContain('state="removed"')
+    expect(lane(setup.fake)?.state).toBe("active")
+  })
+
+  test("a revival between the lane's load and its admission is admitted under the new incarnation's lock", async () => {
+    let lifecycle: Lifecycle | undefined
+    const setup = await start({ now: () => 1_000_000, onLifecycle: (value) => (lifecycle = value) })
+    await spawn(setup)
+    let swapped = false
+    const admit = lifecycle?.noteResume.bind(lifecycle)
+    if (lifecycle === undefined || admit === undefined) throw new Error("no lifecycle")
+    lifecycle.noteResume = (directory, parentDir, inside) => {
+      // The call loaded the lane at its first worktree; before it takes that worktree's lock, another instance revives the lane into a new one.
+      if (!swapped) {
+        swapped = true
+        const [key, stored] = [...setup.fake.storage.entries()].find(([, value]) => (value as Lane).child === "ses_fake1") ?? []
+        setup.fake.storage.set(key ?? "", { ...(stored as Lane), directory: "/wt/reincarnated", branch: "reincarnated", epoch: 1 })
+        writeClaim(setup.common, { directory: "/wt/reincarnated", branch: "reincarnated", sessionID: "ses_fake1", parentID: PARENT, createdAt: 1_000_000 })
+      }
+      return admit(directory, parentDir, inside)
+    }
+    await setup.fake.fire.tool("execute.before", { ...call({ sessionID: "ses_fake1", prompt: "one" }), id: "call_a" })
+    expect(swapped).toBe(true)
+    await setup.fake.fire.tool("execute.before", { ...call({ sessionID: "ses_fake1", prompt: "two" }), id: "call_b" })
+    const event = await setup.fake.fire.tool("execute.after", { ...completed("ses_fake1"), id: "call_a" })
+    expect((event.result as { content: string }).content).not.toContain('state="removed"')
+    expect(lane(setup.fake)?.state).toBe("active")
+  })
+
+  // Review of #124, round 3 (2): a rollback that fails is reported with the original error, and a worktree the child could not leave is kept.
+  test("a revival whose rollback fails reports both errors and keeps the worktree the child is still in", async () => {
+    const setup = await start()
+    await spawn(setup)
+    await setup.fake.fire.tool("execute.after", completed("ses_fake1"))
+    const move = setup.fake.context.session.move.bind(setup.fake.context.session)
+    let moves = 0
+    Object.assign(setup.fake.context.session, {
+      move: async (input: never) => {
+        moves += 1
+        if (moves > 1) throw new Error("home refused")
+        return move(input)
+      },
+    })
+    const set = setup.fake.context.storage.set.bind(setup.fake.context.storage)
+    Object.assign(setup.fake.context.storage, {
+      set: async (key: string, value: unknown) => {
+        if ((value as Lane).epoch === 1) throw new Error("record refused")
+        return set(key, value as never)
+      },
+    })
+    const removedBefore = setup.worktree.calls.filter((entry) => entry.method === "remove").length
+    const failure = await setup.fake.fire.tool("execute.before", call({ sessionID: "ses_fake1", prompt: "again" })).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(Error)
+    expect((failure as Error).message).toContain("record refused")
+    expect((failure as Error).message).toContain("home refused")
+    expect(setup.worktree.calls.filter((entry) => entry.method === "remove")).toHaveLength(removedBefore)
+  })
+
+  // Review of #124 (4): `origin/main` as a tag is not the remote-tracking branch.
+  test("a tag named origin/main does not become mainAtCreation, and the branch does when it exists", async () => {
+    const without = await start({ repo: { noOriginMain: true } })
+    await spawn(without)
+    expect(lane(without.fake)?.mainAtCreation).toBeUndefined()
+    const present = await start()
+    await spawn(present)
+    expect(lane(present.fake)?.mainAtCreation).toBe(BASE)
   })
 
   test("a commit that lands between the empty check and the HEAD read keeps the lane and its branch", async () => {
@@ -1879,6 +2073,43 @@ describe(MERGE_TOOL, () => {
       expect(lane(setup.fake)?.state).toBe("active")
       expect(setup.fake.sessions.get("ses_fake1")?.location).toEqual({ directory })
     })
+  })
+
+  // 24s: a repair builds its write from a snapshot, so a field another writer set during its session move must survive.
+  test("repairing a deleted lane keeps a mergedInto recorded while its sessions moved home", async () => {
+    let present = true
+    const setup = await start({ exists: async () => present })
+    await spawn(setup)
+    present = false
+    const move = setup.fake.context.session.move.bind(setup.fake.context.session)
+    Object.assign(setup.fake.context.session, {
+      move: async (input: never) => {
+        const [key, stored] = [...setup.fake.storage.entries()].find(([, value]) => (value as Lane).child === "ses_fake1") ?? []
+        if (key !== undefined) setup.fake.storage.set(key, { ...(stored as Lane), mergedInto: { target: "refs/heads/main", head: "e".repeat(40) } })
+        return move(input)
+      },
+    })
+    await run(setup, { method: "list" })
+    expect(lane(setup.fake)?.state).toBe("removed")
+    expect(lane(setup.fake)?.mergedInto).toEqual({ target: "refs/heads/main", head: "e".repeat(40) })
+  })
+
+  test("repairing a deleted lane does not write over a record handed to another writer", async () => {
+    let present = true
+    const setup = await start({ exists: async () => present })
+    await spawn(setup)
+    present = false
+    const move = setup.fake.context.session.move.bind(setup.fake.context.session)
+    Object.assign(setup.fake.context.session, {
+      move: async (input: never) => {
+        const [key, stored] = [...setup.fake.storage.entries()].find(([, value]) => (value as Lane).child === "ses_fake1") ?? []
+        if (key !== undefined) setup.fake.storage.set(key, { ...(stored as Lane), child: "ses_next", handedOver: { from: "ses_fake1", at: 1 } })
+        return move(input)
+      },
+    })
+    await run(setup, { method: "list" })
+    expect(lane(setup.fake, "ses_next")?.state).toBe("active")
+    expect(lane(setup.fake, "ses_fake1")).toBeUndefined()
   })
 
   test("list repairs externally deleted lanes and reports the moved session", async () => {
