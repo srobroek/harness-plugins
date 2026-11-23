@@ -1,8 +1,9 @@
+import { existsSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 import {
-  FORMULAS_DIR,
   installFormulas,
   journeysWrites,
   readIndexParams,
@@ -12,6 +13,17 @@ import {
 const within = (base: string, path: string) => (isAbsolute(path) ? path : resolve(base, path))
 
 export default function (pi: ExtensionAPI): void {
+  const packageRoot = fileURLToPath(new URL("../..", import.meta.url))
+  const asset = (path: string) => {
+    const common = resolve(packageRoot, "common/skills", path)
+    const harness = resolve(packageRoot, "pi/skills", path)
+    if (existsSync(common)) return common
+    if (existsSync(harness)) return harness
+    return common
+  }
+  const journeysScript = asset("journey-init/scripts/journeys.py")
+  const formulasDir = asset("journey-verify/formulas")
+
   pi.registerTool({
     name: "journeys_index",
     label: "Index Journeys",
@@ -39,7 +51,7 @@ export default function (pi: ExtensionAPI): void {
           return { content: [{ type: "text", text: "journeys_index: write cancelled" }], details: { ok: false } }
       }
       try {
-        const result = await runJourneys(ctx.cwd, resolved, signal)
+        const result = await runJourneys(ctx.cwd, resolved, signal, undefined, undefined, journeysScript)
         const output = result.stdout && result.stderr ? `${result.stdout}\n${result.stderr}` : result.stdout || result.stderr
         if ("unrun" in result) {
           const text = [`journeys.py ${params.command} did not finish: ${result.unrun}`, output].filter(Boolean).join("\n")
@@ -68,7 +80,7 @@ export default function (pi: ExtensionAPI): void {
       const target = within(ctx.cwd, repoRoot)
       if (!(await ctx.ui.confirm("Confirm formula install", `Copy journey formulas into ${target}/.beads/formulas/?`)))
         return { content: [{ type: "text", text: "journey_install_formulas: write cancelled" }], details: { ok: false } }
-      const result = installFormulas(repoRoot, force === true, ctx.cwd, FORMULAS_DIR)
+      const result = installFormulas(repoRoot, force === true, ctx.cwd, formulasDir)
       return { content: [{ type: "text", text: result.text }], details: { ok: result.ok, copied: result.copied, unchanged: result.unchanged } }
     },
   })

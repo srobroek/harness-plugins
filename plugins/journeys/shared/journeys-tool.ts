@@ -16,6 +16,7 @@ function pluginAsset(path: string): string {
   const candidates = [
     fileURLToPath(new URL(`../skills/${path}`, import.meta.url)),
     fileURLToPath(new URL(`../common/skills/${path}`, import.meta.url)),
+    fileURLToPath(new URL(`../../common/skills/${path}`, import.meta.url)),
   ]
   const asset = candidates.find(existsSync)
   if (asset === undefined) throw new Error(`journeys plugin asset not found: ${path}`)
@@ -100,9 +101,10 @@ export async function runJourneys(
   signal?: AbortSignal,
   runner: Exec = exec,
   timeoutMs = TIMEOUT_MS,
+  script = JOURNEYS_SCRIPT,
 ): Promise<JourneysExecution> {
   try {
-    const result = await runner("python3", journeysArgs(params), {
+    const result = await runner("python3", journeysArgs(params, script), {
       cwd,
       shell: false,
       timeout: timeoutMs,
