@@ -49,18 +49,33 @@ Picks from the package reviews below; one package per surface. Status: adopt = i
 | Browser | pi-agent-browser-native | `pi install npm:pi-agent-browser-native` | none | adopt |
 | Plan mode | @narumitw/pi-plan-mode | `pi install npm:@narumitw/pi-plan-mode` | modes plan reminders (partial) | adopt |
 | Plan and code review UI | @plannotator/pi-extension | `pi install npm:@plannotator/pi-extension` | none; not a second plan controller | trial |
-| Todo list | @juicesharp/rpiv-todo | `pi install npm:@juicesharp/rpiv-todo` | none | adopt |
-| Footer | @narumitw/pi-statusline | `pi install npm:@narumitw/pi-statusline` | statusline | adopt |
+| Todo list | @juicesharp/rpiv-todo (skip it in a Gentle Pi home, which ships its own todo) | `pi install npm:@juicesharp/rpiv-todo` | none | adopt |
+| Footer | @narumitw/pi-statusline (only to keep an OMP-style information-rich footer; otherwise the default footer suffices) | `pi install npm:@narumitw/pi-statusline` | statusline | adopt |
 | Session search and handoff | pi-sessions (disable its `subagents` feature) | `pi install npm:pi-sessions` | session (pi sessions only) | adopt |
 | Destructive-command gate | cc-safety-net | `npx -y cc-safety-net@latest install --pi` | safety force-push and remote-exec gates (full), destructive git/fs and indirect execution (partial) | trial |
 | Permission rules | @gotgenes/pi-permission-system | `pi install npm:@gotgenes/pi-permission-system` | safety basic command and path rules (partial) | trial |
-| Cross-session messaging | pi-intercom | `pi install npm:pi-intercom` | none; subagent questions use pi-subagents `contact_supervisor` | trial |
+| Cross-session messaging | pi-intercom (separate pi sessions only) | `pi install npm:pi-intercom` | none; subagent questions use pi-subagents `contact_supervisor` | trial |
 | Large-output context | context-mode (Elastic-2.0, Node 24.15+) | `pi install npm:context-mode` | agent-efficiency large-read guard (partial) | trial |
 | Repo wiki | openwiki (official; set `OPENWIKI_TELEMETRY_DISABLED=1`) | `pi install npm:openwiki` | none | trial |
 | Second-opinion advisor | pi-advisor-flow | `pi install npm:pi-advisor-flow` | none | trial |
 | Simplification review | pi-simplify | `pi install npm:pi-simplify` | code-challenge (partial) | trial |
-Keep ours: Parley (`rpiv-ask-user-question` is a one-shot questionnaire; Parley supports a round lifecycle) and autopilot (no goal package keeps Beads claims, lanes, stop policy and merge proof). Also keep delivery landing and cleanup, beads gates, trunk-dev, worktrunk and chezmoi.
-Skipped: @tintinweb/pi-subagents, pi-fabric, @quintinshaw/pi-dynamic-workflows (second runtimes). @narumitw/pi-goal, pi-goal-x, pi-loop (goal controllers). Pi-background-tasks (peer range stops at Pi 0.84). Pi-herdsman (second delegation runtime over herdr). Pi-mcp-adapter and pi-mcp-extension (replace built-in MCP. Adapter is the fallback if session-start connections get costly). Pi-openwiki-adapter. Pi-memory and Engram (second memory store). @agimon-ai po-hashline and po-grep (BUSL-1.1, replace built-in tools). See Package reviews for the evidence. |
+
+Keep ours:
+
+- Parley. `rpiv-ask-user-question` is a one-shot questionnaire. Parley supports a round lifecycle.
+- Autopilot. No goal package keeps Beads claims, lanes, stop policy and merge proof.
+- Delivery landing and cleanup, beads gates, trunk-dev, worktrunk and chezmoi.
+
+Skipped:
+
+- `@tintinweb/pi-subagents`, `pi-fabric`, `@quintinshaw/pi-dynamic-workflows`: second runtimes.
+- `@narumitw/pi-goal`, `pi-goal-x`, `pi-loop`: goal controllers.
+- `pi-background-tasks`: its published peer range stops at Pi 0.84.
+- `pi-herdsman`: a second delegation runtime over herdr.
+- `pi-mcp-adapter`, `pi-mcp-extension`: each replaces built-in MCP. The adapter is the fallback if session-start connections get costly.
+- `pi-openwiki-adapter`: the official `openwiki` package ships its own pi integration.
+- `pi-memory`, Engram: a second memory store.
+- `@agimon-ai/po-hashline`, `@agimon-ai/po-grep`: BUSL-1.1, and their protocol does not match Pi 1.6 built-in tools.
 
 ## Conflicts to avoid
 
@@ -78,7 +93,7 @@ Herdr 0.9.5 supports pi natively. `herdr integration install pi` writes `~/.pi/a
 
 ## Plugin portability
 
-The verdict names the smallest Pi implementation for each plugin. Pi skills can bundle scripts and run CLIs with `bash` (`pi docs/skills.md:3-6,11-20`). Pi also documents MCP (`pi docs/mcp.md:3-32`), templates (`pi docs/prompt-templates.md:3-19`), sessions (`pi docs/sessions.md:14-46`) and the default footer (`pi docs/usage.md:9,25`).
+Pi skills can bundle scripts and run CLIs with `bash` ([skills](https://pi.dev/docs/latest/skills)). Pi also documents [MCP](https://pi.dev/docs/latest/mcp), [prompt templates](https://pi.dev/docs/latest/prompt-templates), [sessions](https://pi.dev/docs/latest/sessions) and the default footer ([usage](https://pi.dev/docs/latest/usage)).
 
 | Verdict | Meaning |
 |---|---|
