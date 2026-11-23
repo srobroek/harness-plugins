@@ -111,7 +111,7 @@
       "name": "lang-python",
       "description": "Python skills: uv, ruff, mypy or pyright and pytest checks, testing, packaging, typing and pydantic, SQLAlchemy and Alembic, and profiling.",
       "source": "./plugins/lang-python/claude",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/lang-python",
       "repository": "https://github.com/srobroek/harness-plugins"

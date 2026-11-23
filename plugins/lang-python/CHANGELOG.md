@@ -1,3 +1,9 @@
+## lang-python [0.9.1](https://github.com/srobroek/harness-plugins/compare/lang-python--v0.9.0...lang-python--v0.9.1) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
 ## lang-python [0.9.0](https://github.com/srobroek/harness-plugins/compare/lang-python--v0.8.1...lang-python--v0.9.0) (2026-11-23)
 
 ### Features
