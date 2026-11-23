@@ -24,7 +24,7 @@ Thirteen lenses, one reference each: scope (the code against its design and docs
 
 | Agent | Tier | Role |
 | --- | --- | --- |
-| `code-challenger` (steps 60) | standard | Read-only and advisory. Always autonomous: skips INTAKE and takes its target and lens from the brief. Never a blocking verdict. One per lens at CHALLENGE. |
+| `code-challenger` (steps 60) | reviewer | Read-only and advisory. Always autonomous: skips INTAKE and takes its target and lens from the brief. Never a blocking verdict. One per lens at CHALLENGE. |
 | `refactor-challenger` (steps 60) | reviewer | Read-only critic at REFUTE. Accepts the sniff brief and the code-challenge brief. Attacks library swaps (maintenance, edge-case coverage, migration cost), performance claims without a measurement, simplifications that drop behaviour, and changes to code no test protects. |
 
 Both are composed by `bun run build` from `agents.src/` and the shared review core.

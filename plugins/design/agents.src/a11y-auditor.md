@@ -1,5 +1,6 @@
 ---
 description: "Audits a rendered surface and its source against WCAG 2.2 AA with measured values; spawn at CRITIQUE beside design-critic."
+x-omp-shell: "it runs the upstream preflight probes and the axe CLI fallback, and drives the browser through eval"
 mode: subagent
 steps: 60
 request:

@@ -185,7 +185,7 @@ An autopilot scope read counts only when confirmed: for a bead scope, the scope 
 
 ## OMP agent translation
 
-`scripts/omp-agents.ts` translates every composed agent into `common/agents/<id>.omp.md`. For a plugin that lists `omp`, harness-kit copies that file to `omp/agents/<id>.md`. The translation keeps `name`, `description` and the prompt body. It drops these keys:
+`scripts/omp-agents.ts` translates the OpenCode form of every agent, composed or vendored, into `common/agents/<id>.omp.md`. The build skips an agent whose `<id>.omp.md` someone wrote by hand. For a plugin that lists `omp`, harness-kit copies that file to `omp/agents/<id>.md`. The translation keeps `name`, `description` and the prompt body. It drops these keys:
 
 - `mode`, `steps`, `hidden` and `color`
 - the fallback `model`
@@ -203,7 +203,15 @@ An autopilot scope read counts only when confirmed: for a bead scope, the scope 
 
 `judge`, the other old name of `reviewer`, is not used: OMP defines `judge` as a model-kind role for judgment runners, not a chat role.
 
-The OMP `tools` key is an allowlist of built-ins. The translator therefore needs a `permissions` list that starts with a deny-all rule, as every shipped agent does, and refuses any other non-empty list. Each unrestricted allow maps to built-ins:
+Three `x-omp-*` keys in `agents.src/<id>.md` steer the OMP form only. The build takes them out before it composes the OpenCode form, because OpenCode reads a file with an unknown key as V1. Each key is one line:
+
+| Key | Effect | Used by |
+|---|---|---|
+| `x-omp-model` | OMP roles that replace the tier's `model:` | `architect` and `concept` (`@architect, @slow`), `ui-ux-specialist` and `ui-implementer` (`@designer, @slow`), `spec` (`@plan, @slow`) |
+| `x-omp-shell` | why a read-only agent keeps `bash` and `eval`, written into the generated comment | agents whose prompt runs commands, such as `code-reviewer` (`git diff`) and `researcher` (`bd`) |
+| `x-omp-tools` | OMP tools to add that no OpenCode permission stands for | `pr-reviewer` (`github`) |
+
+The OMP `tools` key is an allowlist of built-ins. OpenCode allows an action that no rule names, so the translator reads a `permissions` list on top of that default. Every shipped agent starts from a deny-all rule. `journey-validator` has only deny rules, so it gets every built-in it does not deny. Only an agent with no rules keeps the OMP default tools. Each unrestricted allow maps to built-ins:
 
 | OpenCode action | OMP tools |
 |---|---|
@@ -219,10 +227,31 @@ The OMP `tools` key is an allowlist of built-ins. The translator therefore needs
 
 When no tool is left, the file says `tools: []`, because an empty value means the OMP default tools.
 
-OMP has no per-resource rules, no per-agent ask and no per-agent skill filter. The translator keeps a tool whose unrestricted rule allows it and drops that tool's per-resource rules. It leaves out a tool whose unrestricted rule asks. A generated comment at the top of each file lists every dropped rule. Close two losses before such an agent ships to OMP:
+OMP has no per-resource rules, no per-agent ask and no per-agent skill filter. The translator keeps a tool whose unrestricted rule allows it and drops that tool's per-resource rules. It leaves out a tool whose unrestricted rule asks. It also leaves out a tool that only per-resource rules allow. An agent whose edits OpenCode limits to some paths therefore gets no edit tool: `concept`, `spec` and the cad designers. A generated comment at the top of each file lists every dropped rule.
 
-- A read-only agent built on `READ_ONLY_SHELL_RULES` keeps `bash` without its deny list.
-- `pr-reviewer` gets no built-in tool, because its only shell rules are its two `gh pr` commands.
+A read-only agent has no OMP edit tool. The translator also leaves out its `bash` and `eval`:
+
+- OMP cannot hold the per-command deny list of `READ_ONLY_SHELL_RULES`.
+- `eval` reaches the shell through `sh()`.
+
+Either tool would let the agent write. `x-omp-shell` keeps them for an agent whose prompt needs a command, and the generated comment states that reason.
+
+OMP merges agents by name, and the first one found wins. A plugin agent also replaces a bundled OMP agent of the same name. The bundled agents are these:
+
+- `scout`
+- `reviewer`
+- `security-reviewer`
+- `task`
+- `sonic`
+
+OMP has no plugin dependency, so `researcher`, `pr-reviewer` and `adversarial-challenger` each ship from two plugins. `ompNameConflicts` makes `bun run build` fail in two cases:
+
+- The OMP files of one agent in two plugins differ in more than the source comment.
+- A plugin agent takes a bundled name.
+
+The second case explains the name `security-auditor` in `agent-reviewer`. Named `security-reviewer`, it would replace the bundled OMP agent for every `task` caller without warning. The bundled agent returns structured output and has no shell, and the two serve different purposes.
+
+The cad agents come from cad-agent, so they carry no `x-omp-*` keys. The build translates the vendored OpenCode files. The cad designers get no edit tool and no `cad_run`, so an OMP form that can design must come from cad-agent upstream.
 
 ## code-challenge
 

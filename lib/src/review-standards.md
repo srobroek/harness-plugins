@@ -1,4 +1,4 @@
-<!-- The standards-review rules that code-reviewer, both pr-reviewer copies and security-reviewer share.
+<!-- The standards-review rules that code-reviewer, both pr-reviewer copies and security-auditor share.
 scripts/build.ts inlines this file where an agent source in agents.src/ has `{{include review-standards}}`
 (every part) or `{{include review-standards: <part> ...}}`. Keep the lines language-neutral: language
 rules live in the lang-<language> skills. The pr-reviewers cannot read files, so these lines must stand

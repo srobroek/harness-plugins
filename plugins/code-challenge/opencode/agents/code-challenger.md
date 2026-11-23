@@ -5,7 +5,7 @@ mode: subagent
 steps: 60
 request:
   headers:
-    x-opencode-model-role: standard
+    x-opencode-model-role: reviewer
 permissions:
   - action: "*"
     resource: "*"

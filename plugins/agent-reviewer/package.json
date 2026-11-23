@@ -15,7 +15,7 @@
     "claudeAgents": [
       "adversarial-challenger",
       "code-reviewer",
-      "security-reviewer"
+      "security-auditor"
     ],
     "entries": {
       "index": "index"

@@ -6,7 +6,7 @@ import { READ_ONLY_SHELL_RULES } from "@srobroek/opencode-lib/read-only-shell"
 const plugins = join(import.meta.dir, "../plugins")
 const agents = [
   "agent-reviewer/common/agents/code-reviewer.opencode.md",
-  "agent-reviewer/common/agents/security-reviewer.opencode.md",
+  "agent-reviewer/common/agents/security-auditor.opencode.md",
   "agent-reviewer/common/agents/adversarial-challenger.opencode.md",
   "quality/common/agents/adversarial-challenger.opencode.md",
   "architecture/common/agents/architect.opencode.md",

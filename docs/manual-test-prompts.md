@@ -362,14 +362,14 @@ Use the code-reviewer agent to review the diff between main and feature.
 **Expect:** first line `VERDICT: APPROVE|REQUEST-CHANGES|COMMENT`, with findings cited as `path:line` and no reprinted code.
 **If not:** `plugins/agent-reviewer/agents.src/code-reviewer.md` and `plugins/lib/src/review-core.md`.
 
-### Agent `security-reviewer`
+### Agent `security-auditor`
 
 ```text
-Write src/run.ts that passes process.argv[2] to child_process.exec, then use the security-reviewer agent to review src/.
+Write src/run.ts that passes process.argv[2] to child_process.exec, then use the security-auditor agent to review src/.
 ```
 
 **Expect:** first line `VERDICT: PASS|MINOR|MAJOR`, with a CWE-78 command-injection finding at `src/run.ts:<line>`.
-**If not:** `plugins/agent-reviewer/common/agents/security-reviewer.md`; it has no shell and no web access by design.
+**If not:** `plugins/agent-reviewer/agents.src/security-auditor.md`; it has no shell and no web access by design.
 
 ### Agent `adversarial-challenger`
 

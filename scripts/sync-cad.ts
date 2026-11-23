@@ -6,7 +6,8 @@
 // SKILL_DESCRIPTIONS overrides. plugins/cad/common/agents/<id>.md is cad-agent's agents/<id>.md prompt
 // under OpenCode frontmatter built here from its capabilities, plus an OpenCode section. The plugin
 // owns everything else: opencode/src/, common/formulas/, README.md and the pin itself. Never edit the vendored files; change cad-agent, tag
-// it, and move the pin.
+// it, and move the pin. scripts/build.ts translates each vendored agent into common/agents/<id>.omp.md;
+// the sync removes those translations with the rest of common/agents, so run `bun run build` after it.
 //
 //   bun scripts/sync-cad.ts                 vendor the pinned tag
 //   bun scripts/sync-cad.ts --tag v0.2.0    move the pin to that tag, then vendor it
@@ -17,6 +18,7 @@ import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync
 import os from "node:os"
 import path from "node:path"
 import { READ_ONLY_SHELL_RULES } from "../lib/src/read-only-shell.ts"
+import { isTranslatedAgentFile } from "./agent-files.ts"
 
 const PLUGIN_DIR = path.join(import.meta.dir, "..", "plugins", "cad")
 const PIN_FILE = "cad-agent.json"
@@ -241,7 +243,8 @@ export function collect(
 }
 
 /**
- * The files under the plugin's owned directories, ignoring Python caches and Finder metadata.
+ * The files under the plugin's owned directories, ignoring Python caches, Finder metadata and
+ * the agent translations scripts/build.ts writes next to the vendored agents (`<id>.omp.md`).
  * Symbolic links, an owned directory's own included, are never followed: each is recorded as a
  * `symlink` entry, so `drift` reports it even when its target holds the expected bytes.
  */
@@ -256,6 +259,7 @@ export function readTree(dir: string): Tree {
     if (stat.isDirectory()) {
       for (const name of readdirSync(full)) {
         if (name === "__pycache__" || name === ".DS_Store" || name.endsWith(".pyc")) continue
+        if (relative === "agents" && isTranslatedAgentFile(name)) continue
         walk(`${relative}/${name}`)
       }
       return

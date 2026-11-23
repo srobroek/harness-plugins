@@ -18,7 +18,7 @@ import { registerSkills, skillPaths } from "@srobroek/opencode-lib/skill-files"
 
 export const AGENTS_DIR = fileURLToPath(new URL("../agents", import.meta.url))
 export const SKILLS_DIR = fileURLToPath(new URL("../skills", import.meta.url))
-export const REVIEWERS = ["adversarial-challenger", "code-reviewer", "pr-reviewer", "security-reviewer"] as const
+export const REVIEWERS = ["adversarial-challenger", "code-reviewer", "pr-reviewer", "security-auditor"] as const
 
 export default Plugin.define({
   id: "srobroek.agent-reviewer",

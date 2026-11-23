@@ -7,8 +7,8 @@ import plugin, { filterLeadRouting, largeFile, newScratchEntries, runsSleep, scr
 
 describe("lead routing", () => {
   test("keeps a reviewer bullet if either reviewer exists, but ignores ids in its description", () => {
-    const text = "# Delegation\n- `coder`: code\n- `code-reviewer`, `security-reviewer`: diff\n- `operator`: use `aws logs`\nfooter"
-    expect(filterLeadRouting(text, new Set(["security-reviewer", "aws logs"]))).toBe("# Delegation\n- `code-reviewer`, `security-reviewer`: diff\nfooter")
+    const text = "# Delegation\n- `coder`: code\n- `code-reviewer`, `security-auditor`: diff\n- `operator`: use `aws logs`\nfooter"
+    expect(filterLeadRouting(text, new Set(["security-auditor", "aws logs"]))).toBe("# Delegation\n- `code-reviewer`, `security-auditor`: diff\nfooter")
     expect(filterLeadRouting(text, new Set())).toBe("# Delegation\nfooter")
   })
 

@@ -9,7 +9,7 @@ skill they load.
 | --- | --- | --- | --- | --- |
 | `pr-reviewer` (steps 80) | One GitHub pull request, against the caller's classification and accepted request | shell `gh pr view *`, `gh pr diff *` only | `APPROVE\|REQUEST-CHANGES\|COMMENT` | no (`hidden: true`) |
 | `code-reviewer` (steps 80) | A local diff: working tree, branch range or commits | read, grep, glob, `lsp_*`; shell `git diff`, `git log`, `git show` only, never `--output` | `APPROVE\|REQUEST-CHANGES\|COMMENT` | yes |
-| `security-reviewer` (steps 80) | A repository scope or the files a change touches, source to sink, CWE-tagged | read, grep, glob, `lsp_*`; no shell, no web | `PASS\|MINOR\|MAJOR` | yes |
+| `security-auditor` (steps 80) | A repository scope or the files a change touches, source to sink, CWE-tagged | read, grep, glob, `lsp_*`; no shell, no web | `PASS\|MINOR\|MAJOR` | yes |
 | `adversarial-challenger` (steps 60) | A claim, plan, design or decision, with evidence-backed counter-arguments | read, grep, glob, `lsp_*`, webfetch, websearch | `HOLDS\|WEAKENED\|REFUTED` | yes |
 
 Every reply starts with its `VERDICT:` line. The delivery plugin's verdict hook parses
@@ -24,7 +24,7 @@ Each permission list is an allowlist: a deny on every action, then the tools the
 uses. No reviewer can edit, spawn subagents, ask the user, or run Code Mode (`execute`),
 so the Code Mode catalog stays out of their requests. Skills are allowed by family
 pattern only (`quality-*` from the quality plugin, `review-*` from this one, and
-`ast-grep-*` from the ast-grep plugin on `code-reviewer` and `security-reviewer`), so a
+`ast-grep-*` from the ast-grep plugin on `code-reviewer` and `security-auditor`), so a
 skill added to any of those families is covered. Reads
 outside the workspace (`external_directory`) and `.env` files ask.
 
@@ -34,7 +34,7 @@ inherits the caller's.
 
 ## MCP tools
 
-`code-reviewer`, `security-reviewer` and `adversarial-challenger` cannot call MCP tools unless a rule allows them. The `tools` option adds allow rules for MCP tool patterns after the agent's own rules. OpenCode names an MCP tool's permission action `<server>_<tool>`, so `context7_*` allows every tool of the `context7` server and `context7_query-docs` allows one. Characters outside letters, digits, `_` and `-` become `_`.
+`code-reviewer`, `security-auditor` and `adversarial-challenger` cannot call MCP tools unless a rule allows them. The `tools` option adds allow rules for MCP tool patterns after the agent's own rules. OpenCode names an MCP tool's permission action `<server>_<tool>`, so `context7_*` allows every tool of the `context7` server and `context7_query-docs` allows one. Characters outside letters, digits, `_` and `-` become `_`.
 
 | Option | Default | Effect |
 | --- | --- | --- |

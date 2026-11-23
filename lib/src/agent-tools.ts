@@ -33,7 +33,7 @@ export const MCP_TOOL_AGENTS: ReadonlySet<string> = new Set([
   "refactor",
   "refactor-challenger",
   "researcher",
-  "security-reviewer",
+  "security-auditor",
   "spec",
   "ui-implementer",
 ])

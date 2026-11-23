@@ -33,7 +33,7 @@ export const DEFAULT_LEAN_AGENTS: ReadonlyArray<string> = [
   "a11y-auditor",
   "speckit-verify",
   "seance",
-  "security-reviewer",
+  "security-auditor",
   "code-reviewer",
   "researcher",
   "architect",

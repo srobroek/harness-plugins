@@ -1,5 +1,6 @@
 ---
 description: "Verifies SpecKit implementations; spawn with mode requirements, tasks or review."
+x-omp-shell: "it reads task state with bd query and the review diff with git diff"
 mode: subagent
 steps: 60
 hidden: true

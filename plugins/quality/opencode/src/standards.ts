@@ -21,10 +21,10 @@ export const STANDARDS_BLOCKS: ReadonlyArray<string> = [STANDARDS_TEXT, REPO_DOC
  * Subagents that get the block at runtime. Shipped agents that carry coding-core in their own prompt
  * (coder, the implementers, ui-implementer, ui-ux-specialist, architect, researcher, code-reviewer and
  * pr-reviewer) need no entry. Built-in agents such as `general` do not, so they stay listed here, and so
- * does security-reviewer, which carries only the review-standards rules.
+ * does security-auditor, which carries only the review-standards rules.
  * Primary sessions always get the block.
  */
-export const DEFAULT_STANDARDS_SUBAGENTS: ReadonlyArray<string> = ["general", "security-reviewer"]
+export const DEFAULT_STANDARDS_SUBAGENTS: ReadonlyArray<string> = ["general", "security-auditor"]
 
 export type StandardsOptions = { subagents: ReadonlySet<string> } | undefined
 
