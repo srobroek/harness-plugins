@@ -1,0 +1,7 @@
+{
+  "name": "@agent-plugins/modes",
+  "version": "1.2.1",
+  "description": "Debug, refactor and concept agents with plan-style mode reminders: root-cause diagnosis in a scratch worktree, behaviour-preserving refactoring, and design iteration.",
+  "private": true,
+  "omp": {}
+}

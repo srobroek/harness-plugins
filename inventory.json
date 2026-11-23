@@ -1211,6 +1211,20 @@
             "index"
           ],
           "mcp": []
+        },
+        "omp": {
+          "skills": [],
+          "agents": [
+            "concept",
+            "debug",
+            "refactor"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
         }
       },
       "scope": "global"
