@@ -1,0 +1,6 @@
+{
+  "name": "lang-python",
+  "description": "Python skills: uv, ruff, mypy or pyright and pytest checks, testing, packaging, typing and pydantic, SQLAlchemy and Alembic, and profiling.",
+  "version": "0.7.0",
+  "category": "development"
+}

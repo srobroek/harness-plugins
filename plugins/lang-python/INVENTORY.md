@@ -3,13 +3,13 @@
 
 Python skills: uv, ruff, mypy or pyright and pytest checks, testing, packaging, typing and pydantic, SQLAlchemy and Alembic, and profiling.
 
-| Kind | opencode | claude |
-| --- | --- | --- |
-| skills | lang-python, lang-python-libraries, lang-python-packaging, lang-python-persistence, lang-python-profiling, lang-python-quality, lang-python-testing, lang-python-types | lang-python, lang-python-libraries, lang-python-packaging, lang-python-persistence, lang-python-profiling, lang-python-quality, lang-python-testing, lang-python-types |
-| agents | - | - |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | - |
-| tools | - | - |
-| extensions | index | - |
-| mcp | - | - |
+| Kind | opencode | claude | omp |
+| --- | --- | --- | --- |
+| skills | lang-python, lang-python-libraries, lang-python-packaging, lang-python-persistence, lang-python-profiling, lang-python-quality, lang-python-testing, lang-python-types | lang-python, lang-python-libraries, lang-python-packaging, lang-python-persistence, lang-python-profiling, lang-python-quality, lang-python-testing, lang-python-types | lang-python, lang-python-libraries, lang-python-packaging, lang-python-persistence, lang-python-profiling, lang-python-quality, lang-python-testing, lang-python-types |
+| agents | - | - | - |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | - | - |
+| tools | - | - | - |
+| extensions | index | - | - |
+| mcp | - | - | - |
