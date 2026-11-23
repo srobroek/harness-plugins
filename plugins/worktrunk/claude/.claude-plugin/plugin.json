@@ -1,7 +1,7 @@
 {
   "name": "worktrunk",
   "description": "Worktrunk (wt) skills: work in linked worktrees and run deterministic preflight checks before an agent run or merge.",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "author": {
     "name": "Sjors Robroek",
     "url": "https://github.com/srobroek"

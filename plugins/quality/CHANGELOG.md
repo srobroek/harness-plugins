@@ -1,3 +1,9 @@
+## quality [0.14.1](https://github.com/srobroek/harness-plugins/compare/quality--v0.14.0...quality--v0.14.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## quality [0.14.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.13.1...quality--v0.14.0) (2026-11-22)
 
 ### Features

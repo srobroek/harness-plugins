@@ -629,7 +629,7 @@ function stashesOnBranch(subjects, branch) {
 // plugins/delivery/package.json
 var package_default = {
   name: "delivery",
-  version: "0.12.0",
+  version: "0.12.1",
   description: "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
   private: true,
   type: "module",
@@ -5284,125 +5284,10 @@ import { join as join9, resolve as resolve7 } from "path";
 
 // lib/src/session-eviction.ts
 import { basename as basename4, dirname as dirname5 } from "path";
-
-// lib/src/session-lanes.ts
-function insideDirectory(path, directory) {
-  const root = directory.replace(/\/+$/, "");
-  return path === root || path.startsWith(`${root}/`);
-}
-var MAX_LANE_DEPTH = 8;
-var LANE_CALL_TIMEOUT_MS = 1e4;
-var MAX_PAGES = 20;
-function isSessionNotFound(error, sessionID) {
-  if (typeof error !== "object" || error === null)
-    return false;
-  const fields = error;
-  for (const status of [fields.status, fields.statusCode])
-    if (status !== undefined && status !== 404)
-      return false;
-  const message = typeof fields.message === "string" ? fields.message : "";
-  if (/\b(location|service|directory|project|worktree|agent)\b/i.test(message))
-    return false;
-  const kind = [fields.name, fields._tag].filter((value) => typeof value === "string");
-  if (kind.some((value) => /^session.?not.?found/i.test(value)))
-    return fields.sessionID === undefined || fields.sessionID === sessionID;
-  const named = fields.sessionID === sessionID || message.includes(sessionID);
-  if (!named)
-    return false;
-  return kind.some((value) => /not.?found/i.test(value)) || /not found|no session|no such session|does not exist/i.test(message);
-}
-async function within2(work, ms) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error("timed out")), ms);
-  });
-  try {
-    return await Promise.race([work, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-async function children(client, parentID, ms) {
-  const ids = [];
-  let complete = true;
-  let cursor;
-  try {
-    for (let pages = 0;pages < MAX_PAGES; pages++) {
-      const query = cursor === undefined ? { parentID, limit: 100 } : { parentID, limit: 100, cursor };
-      const page = await within2(Promise.resolve().then(() => client.list(query)), ms);
-      if (!page || !Array.isArray(page.data))
-        return { ids, complete: false };
-      for (const raw of page.data) {
-        const id = raw?.id;
-        if (typeof id === "string")
-          ids.push(id);
-        else
-          complete = false;
-      }
-      const next = page.cursor?.next;
-      if (next === undefined || next === null)
-        return { ids, complete };
-      if (typeof next !== "string" || next === "")
-        return { ids, complete: false };
-      cursor = next;
-    }
-  } catch {
-    return { ids, complete: false };
-  }
-  return { ids, complete: false };
-}
-async function laneSessions(client, rootID, options = {}) {
-  const maxDepth = options.maxDepth ?? MAX_LANE_DEPTH;
-  const timeoutMs = options.timeoutMs ?? LANE_CALL_TIMEOUT_MS;
-  const seen = new Set([rootID]);
-  const ids = [rootID];
-  let level = [rootID];
-  let complete = true;
-  for (let depth = 1;level.length > 0; depth++) {
-    const next = [];
-    for (const parent of level) {
-      const kids = await children(client, parent, timeoutMs);
-      if (!kids.complete)
-        complete = false;
-      for (const id of kids.ids) {
-        if (seen.has(id))
-          continue;
-        seen.add(id);
-        next.push(id);
-      }
-    }
-    if (depth > maxDepth) {
-      if (next.length > 0)
-        complete = false;
-      break;
-    }
-    ids.push(...next);
-    level = next;
-  }
-  return { ids, complete };
-}
-var FIXED_REASON = "move failed";
-function classify(error, id) {
-  try {
-    if (isSessionNotFound(error, id))
-      return { id, status: "not-found" };
-    const text = error instanceof Error ? error.message : String(error);
-    return { id, status: "error", reason: text === "" ? FIXED_REASON : text };
-  } catch {
-    return { id, status: "error", reason: FIXED_REASON };
-  }
-}
-async function moveSessionsHome(client, ids, destination) {
-  const results = [];
-  for (const id of ids) {
-    try {
-      await client.move({ sessionID: id, directory: destination });
-      results.push({ id, status: "moved" });
-    } catch (error) {
-      results.push(classify(error, id));
-    }
-  }
-  return results;
+function canonicalCheckout(commonDir, fallback) {
+  if (commonDir !== undefined && basename4(commonDir) === ".git")
+    return dirname5(commonDir);
+  return fallback;
 }
 
 // lib/src/worktree-claims.ts
@@ -5531,13 +5416,6 @@ function ownershipOf(read) {
   if (read.kind === "unreadable")
     return { owner: "unknown", reason: read.reason };
   return { owner: "none" };
-}
-
-// lib/src/session-eviction.ts
-function canonicalCheckout(commonDir, fallback) {
-  if (commonDir !== undefined && basename4(commonDir) === ".git")
-    return dirname5(commonDir);
-  return fallback;
 }
 
 // lib/src/worktree-locks.ts
@@ -6001,6 +5879,126 @@ async function settleReceipts(env, sessionKey, key, ids, options = {}) {
   });
   if (result.kind === "failed")
     throw new Error(`the clone registry ${file} could not be updated: ${result.reason}`);
+}
+
+// lib/src/session-lanes.ts
+function insideDirectory(path, directory) {
+  const root = directory.replace(/\/+$/, "");
+  return path === root || path.startsWith(`${root}/`);
+}
+var MAX_LANE_DEPTH = 8;
+var LANE_CALL_TIMEOUT_MS = 1e4;
+var MAX_PAGES = 20;
+function isSessionNotFound(error, sessionID) {
+  if (typeof error !== "object" || error === null)
+    return false;
+  const fields = error;
+  for (const status of [fields.status, fields.statusCode])
+    if (status !== undefined && status !== 404)
+      return false;
+  const message = typeof fields.message === "string" ? fields.message : "";
+  if (/\b(location|service|directory|project|worktree|agent)\b/i.test(message))
+    return false;
+  const kind = [fields.name, fields._tag].filter((value) => typeof value === "string");
+  if (kind.some((value) => /^session.?not.?found/i.test(value)))
+    return fields.sessionID === undefined || fields.sessionID === sessionID;
+  const named = fields.sessionID === sessionID || message.includes(sessionID);
+  if (!named)
+    return false;
+  return kind.some((value) => /not.?found/i.test(value)) || /not found|no session|no such session|does not exist/i.test(message);
+}
+async function within2(work, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timed out")), ms);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function children(client, parentID, ms) {
+  const ids = [];
+  let complete = true;
+  let cursor;
+  try {
+    for (let pages = 0;pages < MAX_PAGES; pages++) {
+      const query = cursor === undefined ? { parentID, limit: 100 } : { parentID, limit: 100, cursor };
+      const page = await within2(Promise.resolve().then(() => client.list(query)), ms);
+      if (!page || !Array.isArray(page.data))
+        return { ids, complete: false };
+      for (const raw of page.data) {
+        const id = raw?.id;
+        if (typeof id === "string")
+          ids.push(id);
+        else
+          complete = false;
+      }
+      const next = page.cursor?.next;
+      if (next === undefined || next === null)
+        return { ids, complete };
+      if (typeof next !== "string" || next === "")
+        return { ids, complete: false };
+      cursor = next;
+    }
+  } catch {
+    return { ids, complete: false };
+  }
+  return { ids, complete: false };
+}
+async function laneSessions(client, rootID, options = {}) {
+  const maxDepth = options.maxDepth ?? MAX_LANE_DEPTH;
+  const timeoutMs = options.timeoutMs ?? LANE_CALL_TIMEOUT_MS;
+  const seen = new Set([rootID]);
+  const ids = [rootID];
+  let level = [rootID];
+  let complete = true;
+  for (let depth = 1;level.length > 0; depth++) {
+    const next = [];
+    for (const parent of level) {
+      const kids = await children(client, parent, timeoutMs);
+      if (!kids.complete)
+        complete = false;
+      for (const id of kids.ids) {
+        if (seen.has(id))
+          continue;
+        seen.add(id);
+        next.push(id);
+      }
+    }
+    if (depth > maxDepth) {
+      if (next.length > 0)
+        complete = false;
+      break;
+    }
+    ids.push(...next);
+    level = next;
+  }
+  return { ids, complete };
+}
+var FIXED_REASON = "move failed";
+function classify(error, id) {
+  try {
+    if (isSessionNotFound(error, id))
+      return { id, status: "not-found" };
+    const text = error instanceof Error ? error.message : String(error);
+    return { id, status: "error", reason: text === "" ? FIXED_REASON : text };
+  } catch {
+    return { id, status: "error", reason: FIXED_REASON };
+  }
+}
+async function moveSessionsHome(client, ids, destination) {
+  const results = [];
+  for (const id of ids) {
+    try {
+      await client.move({ sessionID: id, directory: destination });
+      results.push({ id, status: "moved" });
+    } catch (error) {
+      results.push(classify(error, id));
+    }
+  }
+  return results;
 }
 
 // plugins/delivery/opencode/src/lane-move.ts
