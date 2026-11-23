@@ -287,7 +287,7 @@ function serial() {
 }
 
 /** Test seam: the backoff clock of the event watch. */
-export const eventWatchTiming: Pick<EventWatchDeps, "delaysMs" | "sleep"> = {}
+export const eventWatchTiming: { -readonly [K in "delaysMs" | "sleep"]?: EventWatchDeps[K] } = {}
 
 export default Plugin.define({
   id: "srobroek.model-roles",
