@@ -13,6 +13,9 @@
     "scope": "global",
     "entries": {
       "index": "index"
+    },
+    "piEntries": {
+      "index": "index"
     }
   }
 }
