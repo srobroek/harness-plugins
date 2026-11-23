@@ -3,13 +3,13 @@
 
 Worktrunk (wt) skills: work in linked worktrees and run deterministic preflight checks before an agent run or merge.
 
-| Kind | opencode | claude |
-| --- | --- | --- |
-| skills | worktrunk-preflight, worktrunk-worktrees | worktrunk-preflight, worktrunk-worktrees |
-| agents | - | - |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | - |
-| tools | - | - |
-| extensions | index | - |
-| mcp | - | - |
+| Kind | opencode | claude | pi |
+| --- | --- | --- | --- |
+| skills | worktrunk-preflight, worktrunk-worktrees | worktrunk-preflight, worktrunk-worktrees | worktrunk-preflight, worktrunk-worktrees |
+| agents | - | - | - |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | - | - |
+| tools | - | - | - |
+| extensions | index | - | worktrunk |
+| mcp | - | - | - |
