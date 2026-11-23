@@ -3,14 +3,13 @@ import { fileURLToPath } from "node:url";
 import { Plugin } from "@opencode/plugin";
 import { appendResultText, shellCall, shellExit } from "@srobroek/opencode-lib";
 import { registerSkills } from "@srobroek/opencode-lib/skill-files";
+import { decideCommitGate } from "../../shared/commit-gate.js";
+import { flagCleanupFollowUp, landedMerge, type MergeRequest, shellMerges } from "../../shared/flag-cleanup.js";
+import { decideMrAdvisory } from "../../shared/mr-advisory.js";
 import { skipCiAdvisory } from "../../shared/skip-ci.js";
-import { decideCommitGate } from "./commit-gate.ts";
-import { flagCleanupFollowUp, landedMerge, type MergeRequest, shellMerges } from "./flag-cleanup.ts";
-import { decideMrAdvisory } from "./mr-advisory.ts";
 import { sessionReminder } from "./session-reminders.ts";
 
-export { SKIP_CI_ADVISORY, skipCiAdvisory } from "../../shared/skip-ci.js";
-export { COMMIT_OVERRIDE, conventional, decideCommitGate, MESSAGES, PUSH_OVERRIDE } from "./commit-gate.ts";
+export { COMMIT_OVERRIDE, conventional, decideCommitGate, MESSAGES, PUSH_OVERRIDE } from "../../shared/commit-gate.js";
 export {
     createCleanup,
     decideFlagCleanup,
@@ -18,8 +17,9 @@ export {
     landedMerge,
     mergedForgeData,
     shellMerges
-} from "./flag-cleanup.ts";
-export { ADVICE, decideMrAdvisory } from "./mr-advisory.ts";
+} from "../../shared/flag-cleanup.js";
+export { ADVICE, decideMrAdvisory } from "../../shared/mr-advisory.js";
+export { SKIP_CI_ADVISORY, skipCiAdvisory } from "../../shared/skip-ci.js";
 
 export const LAND_TOOL = "delivery_land"
 

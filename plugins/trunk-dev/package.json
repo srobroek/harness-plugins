@@ -17,7 +17,7 @@
       "index": "index"
     },
     "piEntries": {
-      "skip-ci": "skip-ci"
+      "trunk-dev": "trunk-dev"
     },
     "claude": {
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/trunk-dev"

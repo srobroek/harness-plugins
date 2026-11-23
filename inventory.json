@@ -1986,7 +1986,7 @@
           "hooks": [],
           "tools": [],
           "extensions": [
-            "skip-ci"
+            "trunk-dev"
           ],
           "mcp": []
         }
@@ -2048,6 +2048,21 @@
           "hooks": [],
           "tools": [],
           "extensions": [],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "worktrunk-preflight",
+            "worktrunk-worktrees"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "worktrunk"
+          ],
           "mcp": []
         }
       },

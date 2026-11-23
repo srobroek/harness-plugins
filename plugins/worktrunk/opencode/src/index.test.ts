@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Worktree } from "@opencode/plugin"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
+import type { Probes } from "../../shared/merge-gate.ts"
 import { createPlugin, mergeGateCall, operationError, readOptions, shellCwd } from "./index.ts"
-import type { Probes } from "./merge-gate.ts"
 import { STRATEGY_ID } from "./worktree.ts"
 
 type Loose = Record<string, unknown>

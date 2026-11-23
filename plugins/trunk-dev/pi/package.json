@@ -7,7 +7,7 @@
   ],
   "pi": {
     "extensions": [
-      "./extensions/skip-ci.js"
+      "./extensions/trunk-dev.js"
     ],
     "skills": [
       "./skills"
