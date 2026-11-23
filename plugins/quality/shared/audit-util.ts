@@ -2,8 +2,14 @@ import { readFileSync, realpathSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { isAbsolute, join, relative, resolve, sep } from "node:path"
 
+
 /** The most characters a helper tool puts in its text result. */
 export const TEXT_CAP = 4000
+/** The OpenCode temp directory, where the audit keeps its reports. */
+export function opencodeTempDir(): string {
+  return join(realpathSync(tmpdir()), "opencode")
+}
+
 
 /** Join lines and cut the result at `cap` characters, saying so. */
 export function capText(lines: readonly string[], cap = TEXT_CAP): string {
@@ -48,13 +54,9 @@ function inside(root: string, target: string): boolean {
 
 export class PathError extends Error {}
 
-/** The OpenCode temp directory, where the audit keeps its reports. */
-export function opencodeTempDir(): string {
-  return join(realpathSync(tmpdir()), "opencode")
-}
 
-/** The directories a report may live in: the session directory and the OpenCode temp directory. */
-export function reportRoots(sessionDirectory: string): string[] {
+/** The directories a report may live in: the session and the harness's temp directory. */
+export function reportRoots(sessionDirectory: string, temporaryDirectory = opencodeTempDir()): string[] {
   const real = (path: string): string => {
     try {
       return realpathSync(path)
@@ -62,16 +64,16 @@ export function reportRoots(sessionDirectory: string): string[] {
       return resolve(path)
     }
   }
-  return [real(sessionDirectory), opencodeTempDir()]
+  return [real(sessionDirectory), real(temporaryDirectory)]
 }
 
 export const MAX_REPORT_BYTES = 200 * 1024 * 1024
 
 /**
- * Read a report. A relative path resolves against the session directory. The file is resolved with
- * `realpathSync` at read time and its real path must be inside one of the roots, so a link that
- * points elsewhere is refused. Throws {@link PathError} for a path outside the roots; a missing
- * file or an oversized one throws a plain Error.
+ * Read a report. Relative paths resolve against the session directory. The file is resolved with
+ * `realpathSync` at read time and its real path must be inside one of the supplied roots, so a link
+ * that points elsewhere is refused. Throws {@link PathError} for a path outside those roots; a
+ * missing file or an oversized one throws a plain Error.
  */
 export function readReportFile(sessionDirectory: string, path: string, roots = reportRoots(sessionDirectory)): string {
   const target = isAbsolute(path) ? path : resolve(sessionDirectory, path)
@@ -80,12 +82,13 @@ export function readReportFile(sessionDirectory: string, path: string, roots = r
     real = realpathSync(target)
   } catch {
     // Nothing to follow yet: judge the lexical path, so a missing file elsewhere is still a refusal.
-    const lexical = [...roots, resolve(sessionDirectory), join(tmpdir(), "opencode")]
-    if (!lexical.some((root) => inside(root, resolve(target))))
-      throw new PathError(`${path} is outside the session and OpenCode temp directories`)
+    if (!roots.some((root) => inside(root, resolve(target))))
+      throw new PathError(`${path} is outside the session and allowed report directories`)
     throw new Error(`${path} does not exist`)
   }
-  if (!roots.some((root) => inside(root, real))) throw new PathError(`${path} is outside the session and OpenCode temp directories`)
+  if (!roots.some((root) => inside(root, real))) throw new PathError(`${path} is outside the session and allowed report directories`)
   if (statSync(real).size > MAX_REPORT_BYTES) throw new Error(`${path} is larger than ${MAX_REPORT_BYTES / 1024 / 1024} MB`)
   return readFileSync(real, "utf8")
 }
+
+
