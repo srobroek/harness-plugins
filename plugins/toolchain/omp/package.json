@@ -1,0 +1,7 @@
+{
+  "name": "@agent-plugins/toolchain",
+  "version": "0.8.0",
+  "description": "Toolchain defaults as skills: stack, frontend, infrastructure, languages, observability, shell, Terraform, caches, background jobs and worktree coexistence.",
+  "private": true,
+  "omp": {}
+}

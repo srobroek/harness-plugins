@@ -3,13 +3,13 @@
 
 Toolchain defaults as skills: stack, frontend, infrastructure, languages, observability, shell, Terraform, caches, background jobs and worktree coexistence.
 
-| Kind | opencode | claude |
-| --- | --- | --- |
-| skills | backend-background-jobs, ci-github-actions, coexistence-worktree, infrastructure-tfstate-guard, ops-no-global-cargo-target, ops-toolchain-cache-policy, shell-language, terraform-language, toolchain-api, toolchain-asset-ownership, toolchain-frontend, toolchain-guide, toolchain-infrastructure, toolchain-languages, toolchain-quality-observability, toolchain-stack-defaults | backend-background-jobs, ci-github-actions, coexistence-worktree, infrastructure-tfstate-guard, ops-no-global-cargo-target, ops-toolchain-cache-policy, shell-language, terraform-language, toolchain-api, toolchain-asset-ownership, toolchain-frontend, toolchain-guide, toolchain-infrastructure, toolchain-languages, toolchain-quality-observability, toolchain-stack-defaults |
-| agents | - | - |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | - |
-| tools | - | - |
-| extensions | index | - |
-| mcp | - | - |
+| Kind | opencode | claude | omp |
+| --- | --- | --- | --- |
+| skills | backend-background-jobs, ci-github-actions, coexistence-worktree, infrastructure-tfstate-guard, ops-no-global-cargo-target, ops-toolchain-cache-policy, shell-language, terraform-language, toolchain-api, toolchain-asset-ownership, toolchain-frontend, toolchain-guide, toolchain-infrastructure, toolchain-languages, toolchain-quality-observability, toolchain-stack-defaults | backend-background-jobs, ci-github-actions, coexistence-worktree, infrastructure-tfstate-guard, ops-no-global-cargo-target, ops-toolchain-cache-policy, shell-language, terraform-language, toolchain-api, toolchain-asset-ownership, toolchain-frontend, toolchain-guide, toolchain-infrastructure, toolchain-languages, toolchain-quality-observability, toolchain-stack-defaults | backend-background-jobs, ci-github-actions, coexistence-worktree, infrastructure-tfstate-guard, ops-no-global-cargo-target, ops-toolchain-cache-policy, shell-language, terraform-language, toolchain-api, toolchain-asset-ownership, toolchain-frontend, toolchain-guide, toolchain-infrastructure, toolchain-languages, toolchain-quality-observability, toolchain-stack-defaults |
+| agents | - | - | - |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | - | - |
+| tools | - | - | - |
+| extensions | index | - | - |
+| mcp | - | - | - |
