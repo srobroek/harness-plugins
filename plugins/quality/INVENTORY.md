@@ -11,5 +11,5 @@ Code design and review guidance, a code-quality policy, testing standards and a 
 | rules | - | - | - |
 | hooks | - | - | - |
 | tools | - | - | - |
-| extensions | index | - | quality.js |
+| extensions | index | - | quality |
 | mcp | - | - | - |

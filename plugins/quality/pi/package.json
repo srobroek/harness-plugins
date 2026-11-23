@@ -7,7 +7,7 @@
   ],
   "pi": {
     "extensions": [
-      "./extensions/quality.js.js"
+      "./extensions/quality.js"
     ],
     "skills": [
       "./skills"
