@@ -108,10 +108,9 @@ describe("checkPractices", () => {
     ])
   })
 
-  test("an exact version pin in a skill is a warning, except for the vendored cad plugin", () => {
+  test("an exact version pin in a skill is a warning", () => {
     const skills = [{ path: "plugins/demo/skills/s/SKILL.md", text: "run `pip install ruff==0.6.1`" }]
     expect(codes(demo({}, { skills }))).toContain("exact-pin")
-    expect(codes(plugin("cad", CONFORMING, { src: CLEAN_SRC, skills }))).not.toContain("exact-pin")
   })
 
   test("a shipped agent on an older model generation is a warning", () => {

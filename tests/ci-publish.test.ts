@@ -42,7 +42,7 @@ function fixture(completeAfterSleeps = 1) {
     path: ".github/workflows/ci.yml", head_sha: sha, head_branch: "renovate/example", head_repository: { full_name: "owner/repo" },
   }
   const pr = { state: "open", user: { login: "renovate[bot]" }, head: { sha, ref: run.head_branch, repo: { full_name: "owner/repo", fork: false } } }
-  const jobs = ["check / check", "repo-checks", "changes", "cad"].map((name) => ({ name, status: "completed", conclusion: "success" }))
+  const jobs = ["check / check", "repo-checks"].map((name) => ({ name, status: "completed", conclusion: "success" }))
   const statuses: { sha: string; context: string; state: string; target_url: string }[] = []
   const requests: string[] = []
   const responses: Record<string, unknown> = {
@@ -82,13 +82,12 @@ function fixture(completeAfterSleeps = 1) {
   return { run, pr, jobs, responses, statuses, requests, env, delays, execute: (clock: Pick<DateConstructor, "now"> = Date) => execute({ env }, fetch, sleep, clock) }
 }
 
-test("publishes the three expected statuses on the exact dispatched head", async () => {
+test("publishes the expected statuses on the exact dispatched head", async () => {
   const f = fixture()
   await f.execute()
   expect(f.statuses.map(({ sha, context, state }) => ({ sha, context, state }))).toEqual([
     { sha: "a".repeat(40), context: "check / check", state: "success" },
     { sha: "a".repeat(40), context: "repo-checks", state: "success" },
-    { sha: "a".repeat(40), context: "changes", state: "success" },
   ])
   expect(f.statuses.every((status) => status.target_url === "https://github.com/owner/repo/actions/runs/123")).toBe(true)
 })
@@ -97,7 +96,7 @@ test.each(["failure", "cancelled", "timed_out"])("publishes failure for an unsuc
   const f = fixture()
   f.run.conclusion = conclusion
   await f.execute()
-  expect(f.statuses.map((status) => status.state)).toEqual(["failure", "failure", "failure"])
+  expect(f.statuses.map((status) => status.state)).toEqual(["failure", "failure"])
 })
 
 test.each(["skipped", "failure"])("never promotes an unsuccessful required job: %s", async (conclusion) => {
@@ -106,14 +105,14 @@ test.each(["skipped", "failure"])("never promotes an unsuccessful required job: 
   if (!job) throw new Error("Missing fixture job")
   job.conclusion = conclusion
   await f.execute()
-  expect(f.statuses.map((status) => status.state)).toEqual(["failure", "failure", "failure"])
+  expect(f.statuses.map((status) => status.state)).toEqual(["failure", "failure"])
 })
 
 test("publishes pending, waits thirty seconds, then publishes completion", async () => {
   const f = fixture()
   f.run.status = "in_progress"
   await f.execute()
-  expect(f.statuses.map((status) => status.state)).toEqual(["pending", "pending", "pending", "success", "success", "success"])
+  expect(f.statuses.map((status) => status.state)).toEqual(["pending", "pending", "success", "success"])
   expect(f.delays).toEqual([30_000])
 })
 
@@ -123,7 +122,7 @@ test("stops polling after twenty minutes without publishing success", async () =
   let reads = 0
   const clock = { now: () => (++reads === 1 ? 0 : 21 * 60_000) }
   await expect(f.execute(clock)).rejects.toThrow("Timed out waiting for dispatched CI")
-  expect(f.statuses.map((status) => status.state)).toEqual(["pending", "pending", "pending"])
+  expect(f.statuses.map((status) => status.state)).toEqual(["pending", "pending"])
   expect(f.delays).toEqual([])
 })
 
@@ -135,7 +134,7 @@ test("retries when CI completes during the freshness check", async () => {
     get: () => ({ ...f.run, status: ++reads === 1 ? "in_progress" : "completed" }),
   })
   await f.execute()
-  expect(f.statuses.map((status) => status.state)).toEqual(["success", "success", "success"])
+  expect(f.statuses.map((status) => status.state)).toEqual(["success", "success"])
   expect(f.delays).toEqual([30_000])
 })
 
@@ -143,7 +142,7 @@ test("repeated pending polls reuse immutable CI definitions and publish only sta
   const f = fixture(3)
   f.run.status = "in_progress"
   await f.execute()
-  expect(f.statuses.map((status) => status.state)).toEqual(["pending", "pending", "pending", "success", "success", "success"])
+  expect(f.statuses.map((status) => status.state)).toEqual(["pending", "pending", "success", "success"])
   expect(f.requests.filter((request) => request.startsWith("/contents/")).length).toBe(2)
   expect(f.delays).toEqual([30_000, 30_000, 30_000])
 })
@@ -183,17 +182,9 @@ test("fails closed when a required job is absent", async () => {
   f.jobs.splice(0, 1)
   f.responses["/actions/runs/123/jobs"] = { total_count: f.jobs.length, jobs: f.jobs }
   await f.execute()
-  expect(f.statuses.map((status) => status.state)).toEqual(["failure", "failure", "failure"])
+  expect(f.statuses.map((status) => status.state)).toEqual(["failure", "failure"])
 })
 
-test.each(["success", "skipped", "failure"])("includes the optional cad result in the status: %s", async (conclusion) => {
-  const f = fixture()
-  const cad = f.jobs.find((job) => job.name === "cad")
-  if (!cad) throw new Error("Missing fixture job")
-  cad.conclusion = conclusion
-  await f.execute()
-  expect(f.statuses.map((status) => status.state)).toEqual(conclusion === "failure" ? ["failure", "failure", "failure"] : ["success", "success", "success"])
-})
 
 test("does not publish when a GitHub API read fails", async () => {
   const f = fixture()
@@ -231,7 +222,7 @@ test("does not treat truncated job results as success", async () => {
   const f = fixture()
   f.responses["/actions/runs/123/jobs"] = { total_count: 101, jobs: f.jobs }
   await f.execute()
-  expect(f.statuses.map((status) => status.state)).toEqual(["failure", "failure", "failure"])
+  expect(f.statuses.map((status) => status.state)).toEqual(["failure", "failure"])
 })
 
 test.each(["harness-kit", "action"])("allows a version-only update to an approved CI dependency: %s", async (dependency) => {
@@ -241,7 +232,7 @@ test.each(["harness-kit", "action"])("allows a version-only update to an approve
     : trustedCi.replace(/actions\/checkout@[a-f0-9]{40} # v[^\n]+/g, `actions/checkout@${"d".repeat(40)} # v99.0.0`)
   f.responses[`/contents/.github/workflows/ci.yml?ref=${f.run.head_sha}`] = definition(updated, "updated-pins")
   await f.execute()
-  expect(f.statuses.map((status) => status.state)).toEqual(["success", "success", "success"])
+  expect(f.statuses.map((status) => status.state)).toEqual(["success", "success"])
 })
 
 // Every action the publisher's normalizer lists. setup-bun is not in the current ci.yml, so each test appends one pinned step per action.
@@ -256,7 +247,7 @@ test.each(listedActions)("allows a digest-only bump of a listed action: %s", asy
   f.responses[`/contents/.github/workflows/ci.yml?ref=${"b".repeat(40)}`] = definition(withPins(trustedCi, pinsAt("a")), "trusted-pins")
   f.responses[`/contents/.github/workflows/ci.yml?ref=${f.run.head_sha}`] = definition(withPins(trustedCi, pinsAt("a", action)), "bumped-pin")
   await f.execute()
-  expect(f.statuses.map((status) => status.state)).toEqual(["success", "success", "success"])
+  expect(f.statuses.map((status) => status.state)).toEqual(["success", "success"])
 })
 
 test("rejects a digest-only bump of an action outside the list: actions/cache", async () => {

@@ -6,6 +6,7 @@ import type { Context } from "@opencode/plugin/promise/plugin"
 import { type BoundedBytes, readBoundedBytes } from "@srobroek/opencode-lib/bounded-read"
 import { type Schema, validate } from "./json-schema.ts"
 import { sessionDirectory } from "./session-directory.ts"
+import type { ToolCall, ToolOutcome } from "./tool-call.ts"
 
 export const VALIDATE_TOOL = "challenge_validate"
 
@@ -122,6 +123,19 @@ export function resolveRunDir(directory: string, runDir: unknown): { path: strin
   return roots.some(direct) ? { path: real } : { error: inside }
 }
 
+/** `challenge_validate` for any host: check the input, resolve the run directory, validate its two files. */
+export async function runValidate(input: unknown, call: ToolCall): Promise<ToolOutcome> {
+  const keys = Object.keys((input ?? {}) as object)
+  if (keys.length !== 1 || keys[0] !== "run_dir") return { content: `${VALIDATE_TOOL}: expected exactly { run_dir }`, metadata: { ok: false } }
+  const resolved = resolveRunDir(await call.directory(), (input as { run_dir?: unknown }).run_dir)
+  if ("error" in resolved) return { content: resolved.error, metadata: { ok: false } }
+  const errors = validateRun(resolved.path)
+  return {
+    content: errors.length === 0 ? "report.json and decisions.jsonl are valid" : errors.join("\n"),
+    metadata: { ok: errors.length === 0, errors },
+  }
+}
+
 /** Register `challenge_validate`. Dispose the returned registration with the plugin's other cleanups. */
 export function registerValidateTool(ctx: Context) {
   return ctx.tool.transform((editor) => {
@@ -129,19 +143,7 @@ export function registerValidateTool(ctx: Context) {
       name: VALIDATE_TOOL,
       description: VALIDATE_DESCRIPTION,
       input: VALIDATE_INPUT,
-      execute: async (input, context) => {
-        const keys = Object.keys((input ?? {}) as object)
-        if (keys.length !== 1 || keys[0] !== "run_dir")
-          return { content: `${VALIDATE_TOOL}: expected exactly { run_dir }`, metadata: { ok: false } }
-        const directory = await sessionDirectory(ctx, context.sessionID, VALIDATE_TOOL)
-        const resolved = resolveRunDir(directory, (input as { run_dir?: unknown }).run_dir)
-        if ("error" in resolved) return { content: resolved.error, metadata: { ok: false } }
-        const errors = validateRun(resolved.path)
-        return {
-          content: errors.length === 0 ? "report.json and decisions.jsonl are valid" : errors.join("\n"),
-          metadata: { ok: errors.length === 0, errors },
-        }
-      },
+      execute: (input, context) => runValidate(input, { directory: () => sessionDirectory(ctx, context.sessionID, VALIDATE_TOOL) }),
     })
   })
 }

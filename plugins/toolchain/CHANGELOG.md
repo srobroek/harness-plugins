@@ -1,3 +1,15 @@
+## toolchain [0.10.0](https://github.com/srobroek/harness-plugins/compare/toolchain--v0.9.1...toolchain--v0.10.0) (2026-11-23)
+
+### Features
+
+* **project:** port content plugins to Pi ([5b0d32a](https://github.com/srobroek/harness-plugins/commit/5b0d32abbe2faf67934ca1d8e3b53f9eca0cee01))
+
+## toolchain [0.9.1](https://github.com/srobroek/harness-plugins/compare/toolchain--v0.9.0...toolchain--v0.9.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## toolchain [0.9.0](https://github.com/srobroek/harness-plugins/compare/toolchain--v0.8.0...toolchain--v0.9.0) (2026-11-23)
 
 ### Features

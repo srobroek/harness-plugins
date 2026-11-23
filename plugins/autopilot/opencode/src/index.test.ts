@@ -246,6 +246,52 @@ describe("/autopilot", () => {
     expect(await denied("read", "ses_lead")).toBeUndefined()
   })
 
+  test("a session whose lineage cannot be read is denied while a run is armed; once readable, only a run child is", async () => {
+    await command("")
+    await status({ action: "arm", setup: { scope: "p-1", lanes: 3 } })
+    const session = fake.context.session as unknown as { get: (input: { sessionID: string }) => Promise<unknown> }
+    const get = session.get.bind(session)
+    let failing = true
+    session.get = async (input) => {
+      if (failing) throw new Error("host busy")
+      return get(input)
+    }
+    expect(await denied("question", "ses_child")).toBe(DENY_QUESTION)
+    const asked = { sessionID: "ses_child", action: "shell", resources: ["rm x"], effect: "ask", message: undefined as string | undefined }
+    await fake.fire.permission("evaluate", asked)
+    expect(asked.effect).toBe("deny")
+    const blockers = journal().filter((entry) => entry.type === "blocker")
+    expect(blockers).toEqual([expect.objectContaining({ summary: "permission ask denied: shell", evidence: expect.stringContaining("unknown lineage of ses_child") })])
+
+    failing = false
+    expect(await denied("question", "ses_child")).toBe(DENY_QUESTION)
+    expect(await denied("question", "ses_other")).toBeUndefined()
+    const other = { sessionID: "ses_other", action: "shell", resources: ["rm x"], effect: "ask", message: undefined as string | undefined }
+    await fake.fire.permission("evaluate", other)
+    expect(other.effect).toBe("ask")
+  })
+
+  test("a lookup that fails once, then finds the armed lead, still denies the question and the ask, and journals the ask", async () => {
+    await command("")
+    await status({ action: "arm", setup: { scope: "p-1", lanes: 3 } })
+    const session = fake.context.session as unknown as { get: (input: { sessionID: string }) => Promise<unknown> }
+    const get = session.get.bind(session)
+    const failOnce = () => {
+      let failures = 1
+      session.get = async (input) => {
+        if (failures-- > 0) throw new Error("host busy")
+        return get(input)
+      }
+    }
+    failOnce()
+    expect(await denied("question", "ses_child")).toBe(DENY_QUESTION)
+    failOnce()
+    const asked = { sessionID: "ses_child", action: "shell", resources: ["rm x"], effect: "ask", message: undefined as string | undefined }
+    await fake.fire.permission("evaluate", asked)
+    expect(asked.effect).toBe("deny")
+    expect(journal().filter((entry) => entry.type === "blocker")).toHaveLength(1)
+  })
+
   test("arming returns the 4-minute tick automation for this run", async () => {
     const result = await armed()
     expect(result.automation).toMatchObject({ trigger: { type: "every", every: "4 minutes" }, action: { type: "code" }, expires: new Date(NOW + 2 * 3_600_000 + 60_000).toISOString() })

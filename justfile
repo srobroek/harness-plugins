@@ -48,13 +48,6 @@ descriptions:
 concerns:
     bun run concerns
 
-# Needs network.
-cad-sync:
-    bun run cad:sync
-
-# Needs network.
-cad-check:
-    bun run cad:check
 
 release:
     bun run release
@@ -63,7 +56,7 @@ release:
 release-dry-run:
     bun run release -- --dry-run --branches "$(git branch --show-current)"
 
-# Make the delivery and cad bundles stale, run each release prepare step, fail if one stays stale.
+# Make the delivery bundle stale, run its release prepare step, and fail if it stays stale.
 release-prepare-check:
     bun scripts/check-release-prepare.ts
 
@@ -72,8 +65,7 @@ test-executables:
 
 # Python unit tests of the shipped scripts.
 python-tests:
-    for dir in plugins/cad/common/formulas plugins/beads/common/skills/beads-preflight plugins/worktrunk/common/skills/worktrunk-preflight; do python3 -B -m unittest discover -s "$dir" -p 'test_*.py' -v; done
+    for dir in plugins/beads/common/skills/beads-preflight plugins/worktrunk/common/skills/worktrunk-preflight; do python3 -B -m unittest discover -s "$dir" -p 'test_*.py' -v; done
 
-# Everything CI runs: the `check` job (harness-kit check, tests, tsc), the `repo-checks` job and the `cad` job.
-# CI runs `cad-check` only when plugins/cad changes; locally it always runs, so `verify` needs network.
-verify: typecheck lint test build-check check plugin-table-check steering pitfalls agent-roles descriptions concerns test-executables release-prepare-check python-tests cad-check
+# Everything CI runs: the `check` job (harness-kit check, tests, tsc) and the `repo-checks` job.
+verify: typecheck lint test build-check check plugin-table-check steering pitfalls agent-roles descriptions concerns test-executables release-prepare-check python-tests
