@@ -9,26 +9,13 @@ without `setup-tools`.
 
 ## Install
 
-Create a local Pi package manifest that points to the extension entry:
+The plugin directory is a Pi package. Add its repository path to `packages` in `~/.pi/agent/settings.json`:
 
 ```json
-{
-  "name": "find-tools",
-  "pi": { "extensions": ["./plugins/find-tools/pi/extensions/find-tools.js"] }
-}
+{ "packages": ["/absolute/path/to/harness-plugins/plugins/find-tools"] }
 ```
 
-Add this manifest directory to `packages` in `~/.pi/agent/settings.json`:
-
-```json
-{
-  "packages": ["/absolute/path/to/harness-plugins/plugins/find-tools"]
-}
-```
-
-For foreground pi-subagents children, add `find-tools` to `subagents.defaultSubagentOnlyExtensions`. Agents can set `subagentOnlyExtensions` instead.
-
-The build output is `plugins/find-tools/pi/extensions/find-tools.js`.
+Pi loads the extension from `pi/extensions/find-tools.js`. For foreground pi-subagents children, add `find-tools` to `subagents.defaultSubagentOnlyExtensions`; agents can set `subagentOnlyExtensions` instead.
 
 The OpenCode plugin is available separately:
 

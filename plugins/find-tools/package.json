@@ -17,5 +17,8 @@
     "piEntries": {
       "find-tools": "find-tools"
     }
+  },
+  "pi": {
+    "extensions": ["./pi/extensions/find-tools.js"]
   }
 }
