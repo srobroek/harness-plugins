@@ -1582,14 +1582,13 @@
     {
       "name": "project",
       "version": "0.12.1",
-      "description": "Project lifecycle: scaffold a project with /new-project, set up fnox and 1Password secrets, and pick an OSI-approved license.",
+      "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
       "category": "productivity",
       "harnesses": {
         "opencode": {
           "skills": [
             "license-picker",
-            "project-scaffold",
-            "project-secrets"
+            "project-scaffold"
           ],
           "agents": [],
           "commands": [],
@@ -1604,8 +1603,7 @@
         "claude": {
           "skills": [
             "license-picker",
-            "project-scaffold",
-            "project-secrets"
+            "project-scaffold"
           ],
           "agents": [],
           "commands": [],
@@ -1618,8 +1616,7 @@
         "omp": {
           "skills": [
             "license-picker",
-            "project-scaffold",
-            "project-secrets"
+            "project-scaffold"
           ],
           "agents": [],
           "commands": [],
@@ -1632,8 +1629,7 @@
         "pi": {
           "skills": [
             "license-picker",
-            "project-scaffold",
-            "project-secrets"
+            "project-scaffold"
           ],
           "agents": [],
           "commands": [
@@ -1646,7 +1642,80 @@
           "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "companions": [
+        {
+          "package": "@srobroek/pi-project-secrets",
+          "for": "the project-secrets skill that the scaffold's secrets step loads",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "project-secrets",
+      "version": "0.1.0",
+      "description": "Per-project secrets with fnox and 1Password: store, use, inspect and rotate them with no value in the transcript.",
+      "category": "productivity",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "project-secrets"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "project-secrets"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "omp": {
+          "skills": [
+            "project-secrets"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "project-secrets"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global",
+      "companions": [
+        {
+          "package": "@srobroek/pi-secret-store",
+          "for": "the safety_secret_store tool that references/store.md uses to write a value without a shell",
+          "required": false
+        }
+      ]
     },
     {
       "name": "quality",

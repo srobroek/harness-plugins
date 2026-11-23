@@ -1,0 +1,11 @@
+{
+  "plugin": "project",
+  "prerequisites": [],
+  "companions": [
+    {
+      "package": "@srobroek/pi-project-secrets",
+      "for": "the project-secrets skill that the scaffold's secrets step loads",
+      "required": false
+    }
+  ]
+}

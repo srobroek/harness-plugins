@@ -1,7 +1,7 @@
 {
   "name": "@srobroek/pi-project",
   "version": "0.12.1",
-  "description": "Project lifecycle: scaffold a project with /new-project, set up fnox and 1Password secrets, and pick an OSI-approved license.",
+  "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
   "keywords": [
     "pi-package"
   ],
@@ -15,6 +15,7 @@
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "_kit",
     "commands",
     "skills"
   ],
@@ -22,7 +23,18 @@
     "access": "public",
     "provenance": true
   },
+  "peerDependencies": {
+    "@srobroek/pi-project-secrets": "*"
+  },
+  "peerDependenciesMeta": {
+    "@srobroek/pi-project-secrets": {
+      "optional": true
+    }
+  },
   "pi": {
+    "extensions": [
+      "./_kit/prereqs.ts"
+    ],
     "skills": [
       "./skills"
     ],
