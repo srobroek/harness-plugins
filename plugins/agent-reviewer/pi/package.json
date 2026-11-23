@@ -1,0 +1,18 @@
+{
+  "name": "@srobroek/agent-reviewer",
+  "version": "0.11.1",
+  "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "skills": [
+      "./skills"
+    ],
+    "subagents": {
+      "agents": [
+        "./agents"
+      ]
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "@srobroek/build",
+  "version": "0.8.1",
+  "description": "External-repository worker subagent: clone, follow the target's conventions, edit, verify, and publish only when delegated.",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "subagents": {
+      "agents": [
+        "./agents"
+      ]
+    }
+  }
+}

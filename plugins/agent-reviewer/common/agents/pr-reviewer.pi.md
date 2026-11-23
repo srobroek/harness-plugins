@@ -1,7 +1,7 @@
 ---
 name: pr-reviewer
 description: "Reviews one caller-named GitHub pull request diff for correctness, security, and coverage. Read-only; returns a verdict."
-tools: read, grep, find, ls, bash, github
+tools: read, grep, find, ls, bash
 skills: quality-code-design, quality-code-policy, quality-testing, review-security, review-core, review-tests, review-standards, lang-go, lang-python, lang-rust, lang-typescript
 inheritProjectContext: false
 inheritSkills: true

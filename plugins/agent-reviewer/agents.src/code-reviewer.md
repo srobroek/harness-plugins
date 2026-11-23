@@ -1,4 +1,5 @@
 ---
+description: "Read-only review of a local diff (working tree, branch or commits) for bugs the author wants fixed before merge; returns a verdict."
 x-omp-shell: "it reads the patch with git diff, git log and git show"
 mode: subagent
 steps: 80

@@ -1,4 +1,5 @@
 ---
+description: "Read-only security review of a repository scope or the files a change touches: traces untrusted input to sinks and returns CWE-tagged findings."
 mode: subagent
 steps: 80
 request:
