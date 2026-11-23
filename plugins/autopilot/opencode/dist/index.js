@@ -2289,56 +2289,62 @@ class Activity {
 
 // plugins/autopilot/opencode/src/review-claim.ts
 import { randomUUID as randomUUID2 } from "crypto";
-import { linkSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { closeSync as closeSync4, linkSync, mkdirSync, openSync as openSync4, rmSync, writeSync as writeSync3 } from "fs";
 import { join as join3 } from "path";
 var CLAIM_DIR = "review-claims";
 var claimNames = (pr, sha) => [`pr-${pr}@${sha}`, `head-${sha}`];
-var realFs = { linkSync, mkdirSync, rmSync, writeFileSync };
+var realFs = { closeSync: closeSync4, linkSync, mkdirSync, openSync: openSync4, rmSync, writeSync: writeSync3 };
 var messageOf = (error) => error instanceof Error ? error.message : String(error);
+function describeClaimFailure(result) {
+  return [messageOf(result.error), ...result.cleanup.map((failure) => `${failure.target}: ${messageOf(failure.error)}`)].join("; ");
+}
 function takeClaims(root, names, owner, fs = realFs) {
   const dir = join3(root, CLAIM_DIR);
   const held = [];
-  const rollback = () => {
-    const failures = [];
-    for (const name of held) {
-      try {
-        fs.rmSync(join3(dir, name), { force: true });
-      } catch (error) {
-        failures.push(`claim ${name} not released: ${messageOf(error)}`);
-      }
+  const cleanup = [];
+  const remove = (path, target) => {
+    try {
+      fs.rmSync(path, { force: true });
+    } catch (error) {
+      cleanup.push({ target, error });
     }
-    return failures;
   };
   try {
     fs.mkdirSync(dir, { recursive: true });
   } catch (error) {
-    return { ok: false, error: messageOf(error) };
+    return { ok: false, error, cleanup };
   }
   for (const name of names) {
     const temporary = join3(dir, `.tmp-${randomUUID2()}`);
-    let linking = false;
-    let outcome;
+    let created = false;
+    let failure;
     try {
-      fs.writeFileSync(temporary, JSON.stringify({ owner, at: Date.now() }), { flag: "wx" });
-      linking = true;
-      fs.linkSync(temporary, join3(dir, name));
-      held.push(name);
+      const fd = fs.openSync(temporary, "wx");
+      created = true;
+      try {
+        fs.writeSync(fd, JSON.stringify({ owner, at: Date.now() }));
+      } finally {
+        fs.closeSync(fd);
+      }
+      try {
+        fs.linkSync(temporary, join3(dir, name));
+        held.push(name);
+      } catch (error) {
+        failure = error.code === "EEXIST" ? { taken: name } : { error };
+      }
     } catch (error) {
-      outcome = linking && error.code === "EEXIST" ? { taken: name } : { error: messageOf(error) };
+      failure = { error };
     }
-    const failures = [];
-    try {
-      fs.rmSync(temporary, { force: true });
-    } catch (error) {
-      failures.push(`temporary file ${temporary} not removed: ${messageOf(error)}`);
-    }
-    if (outcome === undefined && failures.length === 0)
+    if (created)
+      remove(temporary, `temporary file ${temporary} not removed`);
+    if (failure === undefined && cleanup.length === 0)
       continue;
-    failures.push(...rollback());
-    if (outcome && "taken" in outcome && failures.length === 0)
-      return { ok: false, taken: outcome.taken };
-    const reason = outcome ? "error" in outcome ? outcome.error : `claim ${outcome.taken} is taken` : "cleanup failed";
-    return { ok: false, error: failures.length ? `${reason}; ${failures.join("; ")}` : reason };
+    for (const claimed of held)
+      remove(join3(dir, claimed), `claim ${claimed} not released`);
+    if (failure && "taken" in failure && cleanup.length === 0)
+      return { ok: false, taken: failure.taken };
+    const error = failure ? "taken" in failure ? new Error(`claim ${failure.taken} is taken`) : failure.error : new Error("claim cleanup failed");
+    return { ok: false, error, cleanup };
   }
   return { ok: true };
 }
@@ -2349,7 +2355,7 @@ function releaseClaims(root, names) {
 
 // plugins/autopilot/opencode/src/review-export.ts
 import { createHash, randomUUID as randomUUID3 } from "crypto";
-import { lstatSync as lstatSync3, mkdirSync as mkdirSync2, readdirSync as readdirSync2, renameSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "fs";
+import { lstatSync as lstatSync3, mkdirSync as mkdirSync2, readdirSync as readdirSync2, renameSync, rmSync as rmSync2, writeFileSync } from "fs";
 import { basename as basename3, dirname as dirname4, join as join4, sep } from "path";
 var REVIEW_DIR = "review";
 var MANIFEST = "manifest.json";
@@ -2528,9 +2534,9 @@ function publish(reviewRoot, head, manifestHash, parts) {
   const temporary = join4(headDir, `.tmp-${randomUUID3()}`);
   mkdirSync2(temporary);
   try {
-    writeFileSync2(join4(temporary, MANIFEST), parts.manifestText, { flag: "wx" });
-    writeFileSync2(join4(temporary, "round.diff"), parts.diff, { flag: "wx" });
-    writeFileSync2(join4(temporary, "diffstat.txt"), parts.stat, { flag: "wx" });
+    writeFileSync(join4(temporary, MANIFEST), parts.manifestText, { flag: "wx" });
+    writeFileSync(join4(temporary, "round.diff"), parts.diff, { flag: "wx" });
+    writeFileSync(join4(temporary, "diffstat.txt"), parts.stat, { flag: "wx" });
     const filesDir = join4(temporary, "files");
     mkdirSync2(filesDir);
     for (const file of parts.contents) {
@@ -2538,7 +2544,7 @@ function publish(reviewRoot, head, manifestHash, parts) {
       if (!path.startsWith(`${filesDir}${sep}`))
         throw new Error(`${file.path} would leave the export directory`);
       mkdirSync2(dirname4(path), { recursive: true });
-      writeFileSync2(path, file.text, { flag: "wx" });
+      writeFileSync(path, file.text, { flag: "wx" });
     }
     if (lstatOrUndefined(target) !== undefined) {
       if (verifyExport(target, manifestHash).ok) {
@@ -2854,12 +2860,12 @@ function resolveReview(input) {
 import { execFile } from "child_process";
 import { randomUUID as randomUUID4 } from "crypto";
 import {
-  closeSync as closeSync4,
+  closeSync as closeSync5,
   existsSync as existsSync3,
   ftruncateSync,
   linkSync as linkSync2,
   mkdirSync as mkdirSync3,
-  openSync as openSync4,
+  openSync as openSync5,
   readdirSync as readdirSync3,
   readFileSync as readFileSync3,
   readlinkSync,
@@ -2868,8 +2874,8 @@ import {
   rmSync as rmSync3,
   statSync as statSync5,
   symlinkSync,
-  writeFileSync as writeFileSync3,
-  writeSync as writeSync3
+  writeFileSync as writeFileSync2,
+  writeSync as writeSync4
 } from "fs";
 import { isAbsolute as isAbsolute4, join as join5, resolve as resolve4 } from "path";
 
@@ -3004,7 +3010,7 @@ class RunDir {
   create() {
     mkdirSync3(this.path, { recursive: true });
     if (!existsSync3(this.journalPath))
-      writeFileSync3(this.journalPath, "");
+      writeFileSync2(this.journalPath, "");
     const link = join5(this.root, "latest");
     rmSync3(link, { force: true });
     symlinkSync(this.runId, link);
@@ -3053,7 +3059,7 @@ class RunDir {
     const temporary = `${target}.tmp-${randomUUID4()}`;
     try {
       try {
-        writeFileSync3(temporary, `${JSON.stringify(written, null, 2)}
+        writeFileSync2(temporary, `${JSON.stringify(written, null, 2)}
 `, { flag: "wx" });
       } catch (error) {
         throw new RunFileError("io", target, describe(error), error);
@@ -3112,7 +3118,7 @@ class RunDir {
   append(entry) {
     let fd;
     try {
-      fd = openSync4(this.journalPath, "a+");
+      fd = openSync5(this.journalPath, "a+");
     } catch (error) {
       throw new RunFileError("io", this.journalPath, describe(error), error);
     }
@@ -3124,12 +3130,12 @@ class RunDir {
         if (last[0] !== 10)
           ftruncateSync(fd, this.#lastLineEnd(fd, size));
       }
-      writeSync3(fd, `${JSON.stringify(entry)}
+      writeSync4(fd, `${JSON.stringify(entry)}
 `);
     } catch (error) {
       throw error instanceof RunFileError ? error : new RunFileError("io", this.journalPath, describe(error), error);
     } finally {
-      closeSync4(fd);
+      closeSync5(fd);
     }
   }
   #lastLineEnd(fd, size) {
@@ -3151,7 +3157,7 @@ class RunDir {
   }
   writeSummary(text) {
     try {
-      writeFileSync3(this.summaryPath, text);
+      writeFileSync2(this.summaryPath, text);
     } catch (error) {
       throw new RunFileError("io", this.summaryPath, describe(error), error);
     }
@@ -3276,6 +3282,7 @@ class Ticks {
 }
 
 // plugins/autopilot/opencode/src/index.ts
+var UNKNOWN_LINEAGE = Symbol("unknown lineage");
 var ID = "srobroek.autopilot";
 var SKILL = "autopilot";
 var SKILL_FILE = fileURLToPath(new URL("../skills/autopilot/SKILL.md", import.meta.url));
@@ -3589,6 +3596,10 @@ class Autopilot {
     await this.ctx.storage.remove(`armed/${sessionID}`);
   }
   async leadFor(sessionID) {
+    const found = await this.#lineage(sessionID);
+    return typeof found === "string" ? found : undefined;
+  }
+  async#lineage(sessionID) {
     let id = sessionID;
     for (let depth = 0;id && depth < 12; depth++) {
       if (this.armed.has(id))
@@ -3599,13 +3610,44 @@ class Autopilot {
           return;
         });
         if (info === undefined)
-          return;
+          return UNKNOWN_LINEAGE;
         parent = typeof info.parentID === "string" && info.parentID !== "" ? info.parentID : null;
         this.activity.rememberParent(id, parent ?? undefined);
       }
       id = parent ?? undefined;
     }
     return;
+  }
+  #enforcingRuns() {
+    const runs = [];
+    for (const armed of this.armed.values()) {
+      const dir = new RunDir(armed.root, armed.runId);
+      try {
+        const phase = dir.readState()?.phase;
+        if (phase === "running" || phase === "stopping")
+          runs.push(dir);
+      } catch {
+        runs.push(dir);
+      }
+    }
+    return runs;
+  }
+  async#denyUnknownLineage(event) {
+    if (await this.#lineage(event.sessionID) !== UNKNOWN_LINEAGE)
+      return;
+    const runs = this.#enforcingRuns();
+    if (runs.length === 0)
+      return;
+    const asked = event.resources.join(" ").slice(0, 300);
+    event.effect = "deny";
+    event.message = `autopilot never approves a permission ask while a run is unattended, and the session lineage could not be read; logged as a blocker (${event.action}: ${asked})`;
+    for (const dir of runs) {
+      try {
+        dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: `permission ask denied: ${event.action}`, evidence: `unknown lineage of ${event.sessionID}: ${asked}` });
+      } catch (error) {
+        this.#warn("could not journal a denied permission", { run: dir.runId, error: errorText(error) });
+      }
+    }
   }
   async runningFor(sessionID) {
     const lead = await this.leadFor(sessionID);
@@ -4085,13 +4127,15 @@ class Autopilot {
       return;
     if (await this.runningFor(sessionID))
       throw new Error(DENY_QUESTION);
+    if (await this.#lineage(sessionID) === UNKNOWN_LINEAGE && this.#enforcingRuns().length > 0)
+      throw new Error(DENY_QUESTION);
   }
   async evaluate(event) {
     if (event.effect !== "ask")
       return;
     const running = await this.runningFor(event.sessionID);
     if (!running)
-      return;
+      return this.#denyUnknownLineage(event);
     if (running.state && await this.#autoAllowed(event, running.state, running.dir)) {
       event.effect = "allow";
       return;
@@ -4256,7 +4300,7 @@ class Autopilot {
     const claim = takeClaims(dir.root, names, `${ID}/${dir.runId}/${randomUUID5()}`);
     if (!claim.ok) {
       if ("error" in claim)
-        return `refused: could not take the review claim (${claim.error})`;
+        return `refused: could not take the review claim (${describeClaimFailure(claim)})`;
       const existing = await this.#resolveReview(lead, pr, sha);
       if (existing?.state === "unreadable")
         return JSON.stringify({ started: false, state: "unreadable", reason: existing.reason });
@@ -4626,6 +4670,7 @@ export {
   decodeRunState,
   src_default as default,
   describeAction,
+  describeClaimFailure,
   endsWithQuestion,
   exportDirFor,
   exportReview,

@@ -8,7 +8,7 @@
  */
 
 import { randomUUID } from "node:crypto"
-import { linkSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { closeSync, linkSync, mkdirSync, openSync, rmSync, writeSync } from "node:fs"
 import { join } from "node:path"
 
 export const CLAIM_DIR = "review-claims"
@@ -16,69 +16,84 @@ export const CLAIM_DIR = "review-claims"
 /** The claim names for one start: one per PR and head, and one per head alone. */
 export const claimNames = (pr: string, sha: string): string[] => [`pr-${pr}@${sha}`, `head-${sha}`]
 
-export type ClaimResult = { ok: true } | { ok: false; taken: string } | { ok: false; error: string }
+/** A cleanup step that failed, with the original error. */
+export interface CleanupFailure {
+  target: string
+  error: unknown
+}
+
+export type ClaimResult = { ok: true } | { ok: false; taken: string } | { ok: false; error: unknown; cleanup: readonly CleanupFailure[] }
 
 /** The file operations the claim code uses; tests inject failures through it. */
 export interface ClaimFs {
+  closeSync: typeof closeSync
   linkSync: typeof linkSync
   mkdirSync: typeof mkdirSync
+  openSync: typeof openSync
   rmSync: typeof rmSync
-  writeFileSync: typeof writeFileSync
+  writeSync: typeof writeSync
 }
 
-const realFs: ClaimFs = { linkSync, mkdirSync, rmSync, writeFileSync }
+const realFs: ClaimFs = { closeSync, linkSync, mkdirSync, openSync, rmSync, writeSync }
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
+/** One line for a refused claim: the error and every cleanup failure. */
+export function describeClaimFailure(result: { error: unknown; cleanup: readonly CleanupFailure[] }): string {
+  return [messageOf(result.error), ...result.cleanup.map((failure) => `${failure.target}: ${messageOf(failure.error)}`)].join("; ")
+}
+
 /**
  * Take every claim in `names`, or none: a claim taken before a collision is released again. Never
- * throws. When a rollback or a temporary file cannot be removed, the result is an error that says so
- * and the start is refused, never retried; a claim that could not be released stays held, so the
- * once-only rule still holds.
+ * throws. A temporary file is removed only when this attempt created it (a successful exclusive
+ * open). When a rollback or a temporary file cannot be removed, the result is an error that keeps
+ * the original errors and the start is refused, never retried; a claim that could not be released
+ * stays held, so the once-only rule still holds.
  */
 export function takeClaims(root: string, names: readonly string[], owner: string, fs: ClaimFs = realFs): ClaimResult {
   const dir = join(root, CLAIM_DIR)
   const held: string[] = []
-  const rollback = (): string[] => {
-    const failures: string[] = []
-    for (const name of held) {
-      try {
-        fs.rmSync(join(dir, name), { force: true })
-      } catch (error) {
-        failures.push(`claim ${name} not released: ${messageOf(error)}`)
-      }
+  const cleanup: CleanupFailure[] = []
+  const remove = (path: string, target: string): void => {
+    try {
+      fs.rmSync(path, { force: true })
+    } catch (error) {
+      cleanup.push({ target, error })
     }
-    return failures
   }
   try {
     fs.mkdirSync(dir, { recursive: true })
   } catch (error) {
-    return { ok: false, error: messageOf(error) }
+    return { ok: false, error, cleanup }
   }
   for (const name of names) {
     const temporary = join(dir, `.tmp-${randomUUID()}`)
-    let linking = false
-    let outcome: { taken: string } | { error: string } | undefined
+    let created = false
+    let failure: { error: unknown } | { taken: string } | undefined
     try {
-      // `wx` creates the file, so a failure partway may leave it: the cleanup below covers the write too.
-      fs.writeFileSync(temporary, JSON.stringify({ owner, at: Date.now() }), { flag: "wx" })
-      linking = true
-      fs.linkSync(temporary, join(dir, name))
-      held.push(name)
+      const fd = fs.openSync(temporary, "wx")
+      created = true
+      try {
+        fs.writeSync(fd, JSON.stringify({ owner, at: Date.now() }))
+      } finally {
+        fs.closeSync(fd)
+      }
+      try {
+        fs.linkSync(temporary, join(dir, name))
+        held.push(name)
+      } catch (error) {
+        failure = (error as NodeJS.ErrnoException).code === "EEXIST" ? { taken: name } : { error }
+      }
     } catch (error) {
-      outcome = linking && (error as NodeJS.ErrnoException).code === "EEXIST" ? { taken: name } : { error: messageOf(error) }
+      failure = { error }
     }
-    const failures: string[] = []
-    try {
-      fs.rmSync(temporary, { force: true })
-    } catch (error) {
-      failures.push(`temporary file ${temporary} not removed: ${messageOf(error)}`)
-    }
-    if (outcome === undefined && failures.length === 0) continue
-    failures.push(...rollback())
-    if (outcome && "taken" in outcome && failures.length === 0) return { ok: false, taken: outcome.taken }
-    const reason = outcome ? ("error" in outcome ? outcome.error : `claim ${outcome.taken} is taken`) : "cleanup failed"
-    return { ok: false, error: failures.length ? `${reason}; ${failures.join("; ")}` : reason }
+    // Only a file this attempt created is removed; an EEXIST on the exclusive open is someone else's.
+    if (created) remove(temporary, `temporary file ${temporary} not removed`)
+    if (failure === undefined && cleanup.length === 0) continue
+    for (const claimed of held) remove(join(dir, claimed), `claim ${claimed} not released`)
+    if (failure && "taken" in failure && cleanup.length === 0) return { ok: false, taken: failure.taken }
+    const error = failure ? ("taken" in failure ? new Error(`claim ${failure.taken} is taken`) : failure.error) : new Error("claim cleanup failed")
+    return { ok: false, error, cleanup }
   }
   return { ok: true }
 }

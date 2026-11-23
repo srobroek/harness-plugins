@@ -246,18 +246,29 @@ describe("/autopilot", () => {
     expect(await denied("read", "ses_lead")).toBeUndefined()
   })
 
-  test("a failed parent lookup is not remembered: the subagent is a run child again on the next call", async () => {
+  test("a session whose lineage cannot be read is denied while a run is armed; once readable, only a run child is", async () => {
     await command("")
     await status({ action: "arm", setup: { scope: "p-1", lanes: 3 } })
     const session = fake.context.session as unknown as { get: (input: { sessionID: string }) => Promise<unknown> }
     const get = session.get.bind(session)
-    let failures = 1
+    let failing = true
     session.get = async (input) => {
-      if (failures-- > 0) throw new Error("host busy")
+      if (failing) throw new Error("host busy")
       return get(input)
     }
-    expect(await denied("question", "ses_child")).toBeUndefined()
     expect(await denied("question", "ses_child")).toBe(DENY_QUESTION)
+    const asked = { sessionID: "ses_child", action: "shell", resources: ["rm x"], effect: "ask", message: undefined as string | undefined }
+    await fake.fire.permission("evaluate", asked)
+    expect(asked.effect).toBe("deny")
+    const blockers = journal().filter((entry) => entry.type === "blocker")
+    expect(blockers).toEqual([expect.objectContaining({ summary: "permission ask denied: shell", evidence: expect.stringContaining("unknown lineage of ses_child") })])
+
+    failing = false
+    expect(await denied("question", "ses_child")).toBe(DENY_QUESTION)
+    expect(await denied("question", "ses_other")).toBeUndefined()
+    const other = { sessionID: "ses_other", action: "shell", resources: ["rm x"], effect: "ask", message: undefined as string | undefined }
+    await fake.fire.permission("evaluate", other)
+    expect(other.effect).toBe("ask")
   })
 
   test("arming returns the 4-minute tick automation for this run", async () => {

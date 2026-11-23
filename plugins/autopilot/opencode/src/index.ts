@@ -38,7 +38,7 @@ import {
   rootIntact,
   type Witnessed,
 } from "./policy.ts"
-import { claimNames, releaseClaims, takeClaims } from "./review-claim.ts"
+import { claimNames, describeClaimFailure, releaseClaims, takeClaims } from "./review-claim.ts"
 import { type ExportResult, exportDirFor, exportReview, reviewCurrentKey, reviewManifestKey, verifyExport } from "./review-export.ts"
 import {
   buildReviewPrompt,
@@ -66,6 +66,9 @@ export * from "./automation.ts"
 export * from "./gather.ts"
 export * from "./journal.ts"
 export * from "./policy.ts"
+/** Marks a session whose parent lookup failed, so its lineage is neither a run's nor confirmed unrelated. */
+const UNKNOWN_LINEAGE = Symbol("unknown lineage")
+
 export * from "./review-claim.ts"
 export * from "./review-export.ts"
 export * from "./review-session.ts"
@@ -460,20 +463,63 @@ export class Autopilot {
 
   /** The armed lead session `sessionID` belongs to (itself or an ancestor), if any. */
   async leadFor(sessionID: string): Promise<string | undefined> {
+    const found = await this.#lineage(sessionID)
+    return typeof found === "string" ? found : undefined
+  }
+
+  /**
+   * The lead of `sessionID`; `undefined` when its lineage is confirmed to reach no armed session;
+   * `UNKNOWN_LINEAGE` when a lookup failed. Only successful lookups are remembered, so a failed one is retried.
+   */
+  async #lineage(sessionID: string): Promise<string | undefined | typeof UNKNOWN_LINEAGE> {
     let id: string | undefined = sessionID
     for (let depth = 0; id && depth < 12; depth++) {
       if (this.armed.has(id)) return id
       let parent = this.activity.cachedParent(id)
       if (parent === undefined) {
         const info: { parentID?: string } | undefined = await this.ctx.session.get({ sessionID: id }).catch(() => undefined)
-        // A failed lookup is unknown, not "no parent": it is not remembered, so the next call retries.
-        if (info === undefined) return undefined
+        if (info === undefined) return UNKNOWN_LINEAGE
         parent = typeof info.parentID === "string" && info.parentID !== "" ? info.parentID : null
         this.activity.rememberParent(id, parent ?? undefined)
       }
       id = parent ?? undefined
     }
     return undefined
+  }
+
+  /**
+   * The armed runs that still enforce their rules (running, stopping, or with unreadable state).
+   * A session whose lineage is unknown may belong to any of them, so the hooks fail closed on these.
+   */
+  #enforcingRuns(): RunDir[] {
+    const runs: RunDir[] = []
+    for (const armed of this.armed.values()) {
+      const dir = new RunDir(armed.root, armed.runId)
+      try {
+        const phase = dir.readState()?.phase
+        if (phase === "running" || phase === "stopping") runs.push(dir)
+      } catch {
+        runs.push(dir)
+      }
+    }
+    return runs
+  }
+
+  /** An ask from a session whose lineage could not be read: denied and journaled on every enforcing run, since it may be one of theirs. */
+  async #denyUnknownLineage(event: PermissionEvaluation): Promise<void> {
+    if ((await this.#lineage(event.sessionID)) !== UNKNOWN_LINEAGE) return
+    const runs = this.#enforcingRuns()
+    if (runs.length === 0) return
+    const asked = event.resources.join(" ").slice(0, 300)
+    event.effect = "deny"
+    event.message = `autopilot never approves a permission ask while a run is unattended, and the session lineage could not be read; logged as a blocker (${event.action}: ${asked})`
+    for (const dir of runs) {
+      try {
+        dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary: `permission ask denied: ${event.action}`, evidence: `unknown lineage of ${event.sessionID}: ${asked}` })
+      } catch (error) {
+        this.#warn("could not journal a denied permission", { run: dir.runId, error: errorText(error) })
+      }
+    }
   }
 
   /**
@@ -974,6 +1020,7 @@ export class Autopilot {
   async beforeTool(tool: string, sessionID: string): Promise<void> {
     if (!isAskTool(tool)) return
     if (await this.runningFor(sessionID)) throw new Error(DENY_QUESTION)
+    if ((await this.#lineage(sessionID)) === UNKNOWN_LINEAGE && this.#enforcingRuns().length > 0) throw new Error(DENY_QUESTION)
   }
 
   /**
@@ -984,7 +1031,7 @@ export class Autopilot {
   async evaluate(event: PermissionEvaluation): Promise<void> {
     if (event.effect !== "ask") return
     const running = await this.runningFor(event.sessionID)
-    if (!running) return
+    if (!running) return this.#denyUnknownLineage(event)
     if (running.state && (await this.#autoAllowed(event, running.state, running.dir))) {
       event.effect = "allow"
       return
@@ -1169,7 +1216,7 @@ export class Autopilot {
     const names = claimNames(pr, sha)
     const claim = takeClaims(dir.root, names, `${ID}/${dir.runId}/${randomUUID()}`)
     if (!claim.ok) {
-      if ("error" in claim) return `refused: could not take the review claim (${claim.error})`
+      if ("error" in claim) return `refused: could not take the review claim (${describeClaimFailure(claim)})`
       const existing = await this.#resolveReview(lead, pr, sha)
       if (existing?.state === "unreadable") return JSON.stringify({ started: false, state: "unreadable", reason: existing.reason })
       const note = "this head already has a review; it is never reviewed twice"
