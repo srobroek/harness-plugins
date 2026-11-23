@@ -1,6 +1,6 @@
 ---
 name: concept
-description: "Explores options, tests the riskiest assumption, records a decision. Edits only design docs and scratch paths. OMP cannot enforce this boundary."
+description: "Explores options, tests the riskiest assumption, records a decision. Edits only design docs and scratch paths."
 tools: read, grep, ast_grep, glob, lsp, edit, write, ast_edit, web_search, task
 spawns: "scout, researcher, architect, adversarial-challenger, design-critic, seance, ui-ux-specialist, a11y-auditor"
 model: "@architect, @slow"

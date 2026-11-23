@@ -1,5 +1,5 @@
 ---
-description: "Diagnoses a failure to a confirmed root cause; experiments in a scratch worktree, never fixes your checkout. Use before fixing a bug of unknown cause."
+description: "Confirms failure causes in scratch worktrees; never writes to the user's checkout. Spawn before fixing an unknown bug."
 x-omp-shell: "it reproduces the failure and commits experiments in its scratch worktree"
 mode: all
 steps: 150

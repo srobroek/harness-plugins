@@ -1,6 +1,6 @@
 ---
 name: debug
-description: "Confirms failure causes in scratch worktrees; never writes to the user's checkout. Spawn before fixing an unknown bug. OMP cannot enforce this boundary."
+description: "Confirms failure causes in scratch worktrees; never writes to the user's checkout. Spawn before fixing an unknown bug."
 tools: read, grep, ast_grep, glob, lsp, bash, eval, web_search, task
 spawns: "scout, researcher, adversarial-challenger, seance, architect"
 model: "@slow"
