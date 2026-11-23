@@ -82,7 +82,7 @@ Loaded in every project by the global configuration. Do not add them per project
 | statusline | omp-style status line above the OpenCode session composer |
 | subagent-worktree | Runs opted-in subagents in their own git worktree and merges their branch back with wt merge |
 | toolchain | Toolchain defaults as skills: stack, frontend, infrastructure, languages, observability, shell, Terraform, caches, background jobs and worktree coexistence |
-| trunk-dev | Trunk-based delivery for OpenCode: a Conventional Commit and main-push gate, skip-CI and MR/PR advisories, a feature-flag cleanup bead after each flagged merge, and release-setup skills |
+| trunk-dev | Trunk-based delivery for OpenCode, Claude Code, and pi: Conventional Commit and main-push gates, skip-CI and MR/PR advisories, feature-flag cleanup beads, and release-setup skills |
 | whats-new | Research breaking changes, deprecations and new features between two versions, report-only |
 
 ### Per-project plugins
