@@ -1,3 +1,9 @@
+## agent-seance [0.8.2](https://github.com/srobroek/harness-plugins/compare/agent-seance--v0.8.1...agent-seance--v0.8.2) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
 ## agent-seance [0.8.1](https://github.com/srobroek/harness-plugins/compare/agent-seance--v0.8.0...agent-seance--v0.8.1) (2026-11-23)
 
 ### Bug Fixes
