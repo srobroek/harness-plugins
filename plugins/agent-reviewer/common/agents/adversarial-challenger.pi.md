@@ -1,8 +1,8 @@
 ---
 name: adversarial-challenger
 description: "Read-only challenger that stress-tests a claim, plan, design or decision and returns evidence-backed counter-arguments."
-tools: read, grep, find, ls, bash
-skills: quality-code-design, quality-code-policy, quality-testing, lang-go, lang-python, lang-rust, lang-typescript, architecture-guide
+tools: read, grep, find, ls, bash, web_search, fetch_content, get_search_content, source_check
+skills: quality-code-design, quality-code-policy, quality-testing, quality-test-audit, quality-profiling, prototype-logic, lang-go, lang-python, lang-rust, lang-typescript, architecture-guide
 inheritProjectContext: true
 inheritSkills: true
 ---
