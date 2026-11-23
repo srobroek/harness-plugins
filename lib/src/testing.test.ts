@@ -189,30 +189,62 @@ describe("createFakeContext", () => {
     expect(fake.calls).toEqual([{ method: "event.subscribe", input: undefined }])
   })
 
-  test("a subscription that names types receives only those, and emit resolves once it has handled the event", async () => {
+  /** A promise and the function that settles it, for a handler a test holds until it releases it. */
+  const barrier = () => {
+    let open: () => void = () => {}
+    const reached = new Promise<void>((done) => {
+      open = done
+    })
+    return { reached, open }
+  }
+
+  test("a subscription that names types receives only those, in emit order", async () => {
     const fake = createFakeContext()
     const seen: unknown[] = []
-    let handling: () => void = () => {}
     const reader = (async () => {
-      for await (const event of fake.context.event.subscribe({ types: ["wanted"] } as never)) {
-        // The handler is still busy with this event: emit must not resolve yet.
-        await new Promise<void>((done) => {
-          handling = done
-          seen.push(event)
-        })
-      }
+      for await (const event of fake.context.event.subscribe({ types: ["wanted"] } as never)) seen.push(event)
     })()
     await fake.emit({ type: "unwanted" })
-    let handled = false
-    const delivery = fake.emit({ type: "wanted" }).then(() => {
-      handled = true
+    await fake.emit({ type: "wanted", n: 1 })
+    await fake.emit({ type: "other" })
+    await fake.emit({ type: "wanted", n: 2 })
+    fake.closeEvents()
+    await reader
+    expect(seen).toEqual([
+      { type: "wanted", n: 1 },
+      { type: "wanted", n: 2 },
+    ])
+  })
+
+  test("emit resolves when its own event is handled, though a later one is still being handled", async () => {
+    const fake = createFakeContext()
+    const seen: string[] = []
+    const enteredB = barrier()
+    const releaseB = barrier()
+    const reader = (async () => {
+      for await (const event of fake.context.event.subscribe()) {
+        const name = (event as { type: string }).type
+        seen.push(name)
+        if (name === "b") {
+          enteredB.open()
+          await releaseB.reached
+        }
+      }
+    })()
+    // Both are queued before the subscriber takes either.
+    const a = fake.emit({ type: "a" })
+    let bHandled = false
+    const b = fake.emit({ type: "b" }).then(() => {
+      bHandled = true
     })
-    await Bun.sleep(5)
-    expect(seen).toEqual([{ type: "wanted" }])
-    expect(handled).toBe(false)
-    handling()
-    await delivery
-    expect(handled).toBe(true)
+    await enteredB.reached
+    // B's handler is still running: A is acknowledged, B is not.
+    await a
+    expect(seen).toEqual(["a", "b"])
+    expect(bHandled).toBe(false)
+    releaseB.open()
+    await b
+    expect(bHandled).toBe(true)
     fake.closeEvents()
     await reader
   })

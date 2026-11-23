@@ -218,33 +218,47 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
     await options.assert?.(input)
   }
 
-  /** One `event.subscribe` iterator: the types it asked for (all when absent), and what it has not taken yet. */
-  type Subscriber = { types?: ReadonlySet<string>; queue: unknown[]; closed: boolean; wake?: () => void; idle: Array<() => void> }
+  /** An event waiting for a subscriber, and the acknowledgement `emit` resolves on once it is handled. */
+  type Queued = { event: unknown; handled: () => void }
+  /**
+   * One `event.subscribe` iterator: the types it asked for (all when absent), what it has not taken
+   * yet, and the acknowledgement of the event it is handling now.
+   */
+  type Subscriber = { types?: ReadonlySet<string>; queue: Queued[]; closed: boolean; wake?: () => void; handling?: () => void }
   const subscribers = new Set<Subscriber>()
+  /** Acknowledge what `subscriber` holds: the event it is handling and every one still queued. */
+  const release = (subscriber: Subscriber) => {
+    subscriber.handling?.()
+    subscriber.handling = undefined
+    for (const queued of subscriber.queue.splice(0)) queued.handled()
+  }
   const subscribe = (input?: unknown): AsyncIterable<unknown> => {
     calls.push({ method: "event.subscribe", input })
     const types = (input as { types?: unknown } | undefined)?.types
-    const subscriber: Subscriber = { queue: [], closed: false, idle: [], ...(Array.isArray(types) ? { types: new Set(types as string[]) } : {}) }
+    const subscriber: Subscriber = { queue: [], closed: false, ...(Array.isArray(types) ? { types: new Set(types as string[]) } : {}) }
     subscribers.add(subscriber)
     const done = { value: undefined, done: true as const }
     return {
       [Symbol.asyncIterator]: () => ({
         next: async () => {
-          // Asking for the next event means every earlier one was handled: acknowledge them.
-          if (subscriber.queue.length === 0) for (const handled of subscriber.idle.splice(0)) handled()
+          // Asking for the next event means the one taken before it was handled: acknowledge that one only.
+          subscriber.handling?.()
+          subscriber.handling = undefined
           while (subscriber.queue.length === 0 && !subscriber.closed) {
             await new Promise<void>((resolve) => {
               subscriber.wake = resolve
             })
           }
           subscriber.wake = undefined
-          if (subscriber.queue.length > 0) return { value: subscriber.queue.shift(), done: false as const }
-          return done
+          const queued = subscriber.queue.shift()
+          if (queued === undefined) return done
+          subscriber.handling = queued.handled
+          return { value: queued.event, done: false as const }
         },
         return: async () => {
           subscriber.closed = true
           subscribers.delete(subscriber)
-          for (const handled of subscriber.idle.splice(0)) handled()
+          release(subscriber)
           return done
         },
       }),
@@ -484,17 +498,16 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
       for (const subscriber of subscribers) {
         // A subscriber that asked for some types gets only those, as the host's stream does.
         if (subscriber.types !== undefined && !(typeof type === "string" && subscriber.types.has(type))) continue
-        subscriber.queue.push(event)
-        handled.push(new Promise<void>((resolve) => subscriber.idle.push(resolve)))
+        handled.push(new Promise<void>((resolve) => subscriber.queue.push({ event, handled: resolve })))
         subscriber.wake?.()
       }
       return Promise.all(handled).then(() => {})
     },
     closeEvents: () => {
+      // Events already queued are still delivered, and acknowledged as they are handled.
       for (const subscriber of subscribers) {
         subscriber.closed = true
         subscriber.wake?.()
-        for (const handled of subscriber.idle.splice(0)) handled()
       }
       subscribers.clear()
     },
