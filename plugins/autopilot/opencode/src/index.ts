@@ -510,7 +510,7 @@ export class Autopilot {
       this.#children(state.sessionID),
       this.leadBusy(state.sessionID),
     ])
-    if (beads.problem !== undefined) this.#journalScopeUnknown(dir, beads.problem)
+    if (beads.problem !== undefined && state.scope.kind === "bead") this.#journalScopeUnknown(dir, state.scope.id, beads.problem)
     const places = await this.#worktrees()
     const children = kids.sessions
       .filter((kid): kid is SessionView & { id: string } => typeof kid?.id === "string")
@@ -529,11 +529,15 @@ export class Autopilot {
     }
   }
 
-  /** Journal an unconfirmed scope read as a blocker, once while it lasts; the run keeps going and never stops on it. */
-  #journalScopeUnknown(dir: RunDir, problem: string): void {
-    const summary = `scope read unconfirmed, not treated as finished: ${problem}`
+  /**
+   * Journal an unconfirmed scope read as a blocker, once while it lasts; the run keeps going and never stops
+   * on it. The summary identifies the scope only, so ticks of one outage dedupe whatever their retries did;
+   * the latest diagnostic goes in `evidence`.
+   */
+  #journalScopeUnknown(dir: RunDir, scopeId: string, problem: string): void {
+    const summary = `scope ${scopeId} could not be confirmed, so the run is not treated as finished`
     if (dir.journal().some((entry) => entry.type === "blocker" && entry.summary === summary)) return
-    dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary })
+    dir.append({ ts: new Date(this.#now()).toISOString(), type: "blocker", summary, evidence: problem })
   }
 
   /** Every direct child of `sessionID`, page by page, and whether the listing reached its end. */
@@ -931,7 +935,7 @@ export class Autopilot {
 
   async #readBeads(state: RunState): Promise<BeadView> {
     const ledger = this.#ledgerOf(state)
-    return ledger === undefined ? { beads: [], ready: [], blocked: [], ok: false } : readBeads(state.directory, this.#run, ledger, state.scope.kind === "bead" ? { scopeId: state.scope.id, ...(this.#readPauseMs !== undefined ? { pauseMs: this.#readPauseMs } : {}) } : {})
+    return ledger === undefined ? { beads: [], ready: [], blocked: [], ok: false } : readBeads(state.directory, this.#run, ledger, state.scope.kind === "bead" ? { scopeId: state.scope.id, now: this.#now, ...(this.#readPauseMs !== undefined ? { pauseMs: this.#readPauseMs } : {}) } : {})
   }
 
   /**

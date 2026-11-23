@@ -170,3 +170,31 @@ describe("readBeads with a bead scope", () => {
     expect(bd.timeouts.list).toEqual([90_000])
   })
 })
+
+describe("readBeads keeps a reason that names the scope on every unsuccessful read", () => {
+  test("an empty list followed by failed retries keeps the empty-list diagnostic", async () => {
+    const { run } = fakeBd([[], null])
+    const view = await readBeads("/repo", run, "/l/.beads", scope)
+    expect(view.ok).toBe(false)
+    expect(view.problem).toContain("did not return the scope bead p-1")
+  })
+
+  test("a list that disagrees with bd children, then failed retries, keeps the disagreement", async () => {
+    const { run } = fakeBd([[epic], null], [[child("open")]])
+    const view = await readBeads("/repo", run, "/l/.beads", scope)
+    expect(view.ok).toBe(false)
+    expect(view.problem).toContain("bd children shows 1 open")
+  })
+
+  test("reads that fail every time report a failure that names the scope", async () => {
+    const { run } = fakeBd([null])
+    const view = await readBeads("/repo", run, "/l/.beads", scope)
+    expect(view.ok).toBe(false)
+    expect(view.problem).toContain("p-1")
+  })
+
+  test("a failed read of a run with no scope bead has no scope problem to report", async () => {
+    const { run } = fakeBd([null])
+    expect((await readBeads("/repo", run, "/l/.beads", { pauseMs: 0 })).problem).toBeUndefined()
+  })
+})

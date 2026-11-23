@@ -43,6 +43,12 @@ let onRevParse: (() => void) | undefined
 let failCreates = 0
 /** How many handoff lookups (`bd list --label ...`) fail before one succeeds. */
 let failLookups = 0
+/** When set, `bd list --all` (the scope read) fails every time. */
+let failScopeReads = false
+/** With `failScopeReads`, each failed read also uses up its whole timeout on the injected clock. */
+let slowScopeReads = false
+/** Milliseconds the injected clock is ahead of NOW. */
+let skewMs = 0
 /** When set, what a handoff lookup prints instead of the bead list. */
 let lookupStdout: string | undefined
 /** Called after a `bd create` succeeds. */
@@ -60,7 +66,7 @@ let realRepo: string | undefined
 /** With `realRepo`, the directory the session reports (a subdirectory of the repository); default: the repository root. */
 let realSessionDir: string | undefined
 
-const run: Run = async (cwd, command, args, _timeout, env) => {
+const run: Run = async (cwd, command, args, timeout, env) => {
   calls.push({ command, args, ...(env ? { env } : {}) })
   if (realRepo !== undefined && command === "git" && args.includes("--no-optional-locks")) return runCommand(cwd === SESSION_DIRECTORY ? (realSessionDir ?? realRepo) : cwd, command, args)
   const json = (value: unknown) => ({ ok: true, stdout: JSON.stringify(value), stderr: "" })
@@ -86,6 +92,10 @@ const run: Run = async (cwd, command, args, _timeout, env) => {
   }
   if (args[0] === "list") {
     await listGate
+    if (failScopeReads) {
+      if (slowScopeReads) skewMs += timeout ?? 0
+      return { ok: false, stdout: "", stderr: "store locked" }
+    }
     return json(beads.list)
   }
   if (args[0] === "children") return json(beads.list.filter((bead) => (bead as { parent?: unknown }).parent === args[1]))
@@ -118,7 +128,7 @@ async function start(storage?: Record<string, unknown>) {
     storage,
     sessions: [lead(), { id: "ses_child", parentID: "ses_lead", agent: "coder", time: {} }, { id: "ses_grand", parentID: "ses_child", time: {} }, { id: "ses_other", time: {} }],
   })
-  cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock, warn, ledger: ledgerHost, readPauseMs: 0 })
+  cleanup = await setupAutopilot(fake.context, { run, now: () => NOW + skewMs, lock, warn, ledger: ledgerHost, readPauseMs: 0 })
 }
 
 async function command(text: string, sessionID = "ses_lead"): Promise<string> {
@@ -200,6 +210,9 @@ beforeEach(async () => {
   routesText = undefined
   routesUnreadable = false
   failLookups = 0
+  failScopeReads = false
+  slowScopeReads = false
+  skewMs = 0
   lookupStdout = undefined
   onCreated = undefined
   warnings = []
@@ -278,6 +291,30 @@ describe("tick", () => {
     const blockers = journal().filter((entry) => entry.type === "blocker")
     expect(blockers).toHaveLength(1)
     expect(blockers[0]?.summary).toContain("p-1")
+  })
+
+  test("scope reads that fail on every attempt journal one blocker naming the scope and never stop the run", async () => {
+    await armed()
+    failScopeReads = true
+    const result = await status(tickInput())
+    expect(result.done).toBeUndefined()
+    expect(result.prompt).toContain("beads unread")
+    await status(tickInput())
+    const blockers = journal().filter((entry) => entry.type === "blocker")
+    expect(blockers).toHaveLength(1)
+    expect(blockers[0]?.summary).toContain("p-1")
+  })
+
+  test("ticks of one outage whose reads ran a different number of retries journal one blocker", async () => {
+    await armed()
+    failScopeReads = true
+    await status(tickInput()) // three quick failures
+    slowScopeReads = true
+    await status(tickInput()) // each failure uses its whole timeout, so the budget ends the retries after two
+    const blockers = journal().filter((entry) => entry.type === "blocker")
+    expect(blockers).toHaveLength(1)
+    expect(blockers[0]?.summary).toBe("scope p-1 could not be confirmed, so the run is not treated as finished")
+    expect(blockers[0]).toMatchObject({ evidence: expect.stringContaining("p-1") })
   })
 })
 
@@ -1089,7 +1126,7 @@ test("startup reads every page of armed runs from storage", async () => {
   const host = fake.context.storage as unknown as { scan: (input: { prefix: string; after?: string; limit?: number }) => Promise<unknown> }
   const scan = host.scan
   host.scan = (input) => scan({ ...input, limit: Math.min(input.limit ?? 100, 100) })
-  cleanup = await setupAutopilot(fake.context, { run, now: () => NOW, lock, warn, ledger: ledgerHost, readPauseMs: 0 })
+  cleanup = await setupAutopilot(fake.context, { run, now: () => NOW + skewMs, lock, warn, ledger: ledgerHost, readPauseMs: 0 })
   expect(await denied("question", "ses_lead")).toBe(DENY_QUESTION)
 })
 
