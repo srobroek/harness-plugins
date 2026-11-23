@@ -32,11 +32,7 @@ a tool hands it. It asks the user for values only the user has (`references/stor
 
 ## Hosts
 
-The laptop uses 1Password through fnox's `op` provider, plus the daemon's in-memory cache
-(8h idle timeout). `pace` and `work-linux` have no 1Password. They have a global `host`
-age store. The agent stores values there with `safety_secret_store` (target `fnox-store`,
-provider `host`), or without that tool pipes them into `fnox set NAME --provider host`. Check with
-`fnox provider list` and `fnox config-files`.
+Configure the host's secret provider through its supported fnox configuration. Keep values out of this plugin; confirm provider availability with `fnox provider list` and `fnox config-files`.
 
 ## Fewer approvals
 
@@ -64,7 +60,6 @@ Each new 1Password session asks the user again. Keep it to one per session:
 | Environments, staging or production | `references/profiles.md` |
 | Cache values for offline use | `references/fnox-config.md` |
 | GitHub Actions | `references/ci-github.md` |
-| AWS temporary credentials | `references/aws-leases.md` |
 | Agent-side MCP | `references/mcp.md` |
 
 Read the reference for your task only.

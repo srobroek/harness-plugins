@@ -7,7 +7,7 @@ Project lifecycle: scaffold a project with /new-project, set up fnox and 1Passwo
 | --- | --- | --- | --- | --- |
 | skills | license-picker, project-scaffold, project-secrets | license-picker, project-scaffold, project-secrets | license-picker, project-scaffold, project-secrets | license-picker, project-scaffold, project-secrets |
 | agents | - | - | - | - |
-| commands | - | - | - | - |
+| commands | - | - | - | new-project |
 | rules | - | - | - | - |
 | hooks | - | - | - | - |
 | tools | - | - | - | - |

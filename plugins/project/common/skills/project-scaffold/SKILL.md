@@ -9,8 +9,7 @@ Instructions, not a script. Interview the user, then set the project up with eac
 language's own tools. Never copy template trees by hand. Keep what the user already
 has in an existing repository unless they ask to change it.
 
-For OMP configuration, installed plugins, project-local skills, MCP servers, and
-reloading tooling, load the `new-project` skill. Do not duplicate its host setup here.
+For harness configuration, installed plugins or packages, project-local skills, MCP servers, and reloading, use the `new-project` skill and its active-harness guidance. Do not duplicate host setup here.
 
 Preferences live in other skills; load them by id instead of restating them here:
 `toolchain-guide` (routes to `toolchain-stack-defaults`, `toolchain-languages`,
@@ -21,10 +20,7 @@ Where neither this skill nor those say what to use, ask the user. Do not invent 
 
 ## 1. Interview
 
-Ask in rounds using OMP's `ask` tool. Skip what the argument or repository already
-answers. Check the target first: `git rev-parse --is-inside-work-tree` and
-`git ls-files | head` tell greenfield from existing; an existing repository follows
-`references/brownfield.md`.
+Ask in rounds through the host's user-interaction tool when available; otherwise ask in the conversation. Skip what the argument or repository already answers. Check the target first: `git rev-parse --is-inside-work-tree` and `git ls-files | head` tell greenfield from existing; an existing repository follows `references/brownfield.md`.
 
 1. Shape: purpose in one sentence and the project name; app, library, CLI, service, worker
    or desktop app; language(s); one package or a monorepo. Offer the closest suggested
@@ -63,9 +59,7 @@ in the final report instead of inventing a value.
    `toolchain-stack-defaults`; a larger monorepo may want `moon` (ask).
 4. Run the language setup from `references/<lang>.md`: `rust.md`, `python.md`,
    `go.md`, `typescript.md`. Several languages or packages: `references/monorepo.md`.
-5. Formatter config: commit an explicit formatter config for each language
-   (`formatters.md`; OMP uses `formatters.omp.md`): Ruff in `pyproject.toml`, `biome.json` or
-   `.oxfmtrc.json` (one formatter per file type). This keeps the formatter and check aligned.
+5. Formatter config: commit an explicit formatter config for each language (`formatters.md`; the OMP guidance is `formatters.omp.md`). Prefer the language's native config, such as Ruff in `pyproject.toml`, `biome.json` or `.oxfmtrc.json`, and use one formatter per file type.
 6. Add the license through `license-picker`; a published project also gets REUSE
    (`license-picker`'s REUSE reference: `reuse annotate` headers, `LICENSES/`,
    `REUSE.toml`, `reuse lint` in the required CI gate). Then a short `README.md` (what,
@@ -91,10 +85,9 @@ Tree and file contents: `references/layout.md` (`layout.omp.md` for OMP). Follow
    files may be needed for other coding agents; choose only those the project uses.
 5. `CONTRIBUTING.md` only for a project others contribute to.
 
-## 4. OMP project tooling
+## 4. Harness project tooling
 
-Follow `new-project` for `.omp/` configuration, project-local plugins, skills, and
-MCP servers. Add project skills under `.omp/skills/<id>/SKILL.md` only when needed.
+Follow `new-project` for harness configuration, project-local plugins or packages, skills, and MCP servers. Add project skills only in the active harness's documented project-local skills directory.
 
 ## 5. Tracking and workflow (if chosen)
 
@@ -113,10 +106,7 @@ MCP servers. Add project skills under `.omp/skills/<id>/SKILL.md` only when need
 
 ## 6. Pick plugins
 
-Load `references/plugins.md`: it explains the OpenCode plugin setup. For OMP plugins,
-skills, and MCP servers, follow `new-project` instead. Recommend by the project's
-languages and workflow, show the shortlist with one line each, install only what the user
-accepts.
+Load `references/plugins.md`: it explains OpenCode plugin setup. For other harnesses, use their package documentation and follow `new-project` for configuration, skills, and MCP servers. Recommend by the project's languages and workflow, show the shortlist with one line each, install only what the user accepts.
 
 ## 7. First commit and verify
 

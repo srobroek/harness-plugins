@@ -95,9 +95,7 @@ when the checks need dependency groups beyond `dev`) and `uv run --locked` each 
 Workflow structure, the required `ci-gate` job and action pinning are the `toolchain`
 plugin's `ci-github-actions` skill.
 
-In OpenCode, the built-in `ruff` (or `uv`) formatter rewrites each `.py` file after
-the `edit`, `write` or `patch` tool changes it when `"formatter": true` is set in
-`opencode.json`. Other harnesses should run the listed format check after edits.
+After an edit, run the listed format check for changed files. The host may format files automatically; do not rely on that instead of the project check.
 
 A missing project file or tool means that step did not run. Report it as not run,
 never as a pass. Read failures as the project's actual toolchain output; do not

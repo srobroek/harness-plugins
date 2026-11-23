@@ -1,9 +1,6 @@
 # Standard layout
 
-Baseline every project gets, then a sketch per project type. Adapt names; keep the
-intent. Top-level placement rules are `architecture-top-level`; the docs files are
-`architecture-docs-files`. The `CLAUDE.md` symlink of the old bootstrapper is retired on
-purpose: OpenCode V2 reads `AGENTS.md` only.
+Baseline every project gets, then a sketch per project type. Adapt names; keep the intent. Top-level placement rules are `architecture-top-level`; the docs files are `architecture-docs-files`.
 
 ## Baseline tree
 
@@ -32,18 +29,10 @@ docs/
                        .gitlab/merge_request_templates/default.md, .gitlab-ci.yml)
 ```
 
-- ADRs: when and how to record one is `quality-code-design` `references/lifecycle.md`
-  ("Durable decisions"). Old ADR fields: title, status, date, decision, rationale,
-  alternatives considered, consequences, confirmation. Do not write ADRs for decisions
-  nobody made.
+- ADRs: when and how to record one is `quality-code-design` `references/lifecycle.md` ("Durable decisions"). Old ADR fields: title, status, date, decision, rationale, alternatives considered, consequences, confirmation. Do not write ADRs for decisions nobody made.
 - `docs/engineering.md` names environment variables, never values (secrets: `project-secrets`).
-- The old scaffold generated a `docs/agents/` steering tree (quality, ci, release, testing,
-  docs, env, conventions). Here those live as sections of `docs/engineering.md` and
-  `docs/stack.md` that the global OpenCode config already loads; split into more files
-  only when a section outgrows its file.
-- Issue and PR templates ask for: summary, reproduction (member path, command, inputs),
-  expected versus actual, environment (commit, runtime, tool versions), a verification
-  checklist (ran the command, recorded result, no credentials), and compatibility notes.
+- Keep agent instructions in `AGENTS.md`; split into more files only when a section outgrows its file.
+- Issue and PR templates ask for: summary, reproduction (member path, command, inputs), expected versus actual, environment (commit, runtime, tool versions), a verification checklist (ran the command, recorded result, no credentials), and compatibility notes.
 
 ## `.editorconfig`
 
@@ -85,11 +74,7 @@ indent_style = tab
 
 ## `.gitignore`
 
-Start from the language's own init output and add: OS junk (`.DS_Store`, `Thumbs.db`,
-`*~`, `.nfs*`), `scripts/__pycache__/` and `*.py[cod]` (hook scripts are Python in every
-project), `.env*` (keep `.env.example`), `fnox.local.toml` when using `project-secrets`,
-build output per language (`target/`, `node_modules/`, `.venv/`, `dist/`), and `.a11y/node_modules/`
-when that capability is on.
+Start from the language's own init output and add: OS junk (`.DS_Store`, `Thumbs.db`, `*~`, `.nfs*`), `scripts/__pycache__/` and `*.py[cod]`, `.env*` (keep `.env.example`), `fnox.local.toml` when using `project-secrets`, build output per language (`target/`, `node_modules/`, `.venv/`, `dist/`), and `.a11y/node_modules/` when that capability is on.
 
 ## Per project type (sketch)
 
@@ -102,6 +87,4 @@ when that capability is on.
 | Desktop (Tauri) | Rust core crate + TypeScript UI; see `lang-rust-tauri`; `just dev` runs both |
 | Monorepo | `apps/` deployables and UIs, `services/` backends, `packages/` or `crates/` shared libraries, `infrastructure/`, `docs/`; each member owns its manifest; `references/monorepo.md` |
 
-Name the commit scopes after the real top-level pieces (old presets used `api`, `web`,
-`cli`, `core`, `ui`, `i18n`, `a11y`, `infra`, `ci`, `deps`; for a library `lib`, `docs`,
-`ci`, `deps`). Ask the user before restricting scopes at all.
+Name commit scopes after the real top-level pieces (`api`, `web`, `cli`, `core`, `ui`, `i18n`, `a11y`, `infra`, `ci`, `deps`; for a library `lib`, `docs`, `ci`, `deps`). Ask before restricting scopes.

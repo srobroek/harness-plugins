@@ -1492,7 +1492,9 @@
             "project-secrets"
           ],
           "agents": [],
-          "commands": [],
+          "commands": [
+            "new-project"
+          ],
           "rules": [],
           "hooks": [],
           "tools": [],
@@ -1611,7 +1613,9 @@
           "rules": [],
           "hooks": [],
           "tools": [],
-          "extensions": [],
+          "extensions": [
+            "repomix"
+          ],
           "mcp": []
         }
       },

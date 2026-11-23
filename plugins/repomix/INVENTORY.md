@@ -11,5 +11,5 @@ Pack a local or remote repo into one file with repomix for bulk context: externa
 | rules | - | - | - |
 | hooks | - | - | - |
 | tools | - | - | - |
-| extensions | index | - | - |
+| extensions | index | - | repomix |
 | mcp | - | - | - |
