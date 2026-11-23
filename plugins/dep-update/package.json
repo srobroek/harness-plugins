@@ -8,7 +8,8 @@
     "description": "Classify dependency updates by semver safety and apply confirmed patch and minor bumps.",
     "category": "development",
     "harnesses": [
-      "opencode"
+      "opencode",
+      "pi"
     ],
     "scope": "global",
     "entries": {
