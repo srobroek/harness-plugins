@@ -15,6 +15,9 @@
     "entries": {
       "index": "index"
     },
+    "piEntries": {
+      "chezmoi": "chezmoi"
+    },
     "claude": {
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/chezmoi"
     }
