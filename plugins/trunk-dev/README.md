@@ -8,7 +8,7 @@ Ported from the omp-plugins `trunk-dev` plugin. The omp rules
 `trunk-dev-workflow` and `trunk-dev-feature-flags` are skills here; the
 `trunk-dev-skip-ci-text` rule is code (below). Session-start reminders are delivered
 once on the first completed `shell`/`bash` result, never in the system prompt.
-The OpenCode and pi skip-CI adapters share the parser and decision function in `shared/`.
+The OpenCode and pi adapters share the parser and decision functions in `shared/`.
 The parser reads only statically visible shell commands. It does not evaluate shell text, so wrappers, expansions, and aliases may be outside its view.
 
 ## Install
@@ -92,7 +92,7 @@ The write follows the beads plugin's conventions: `bd --actor <actor> create …
 under that plugin's `bd-embedded-write-runner`, which holds the embedded store's
 single-writer lock for the life of `bd`, with `BEADS_DIR` pinned and
 `BEADS_DOLT_SHARED_SERVER` cleared. The actor is `BEADS_ACTOR`, else `BD_ACTOR`, else
-`opencode/trunk-dev`. The hook waits 30 s and never kills the writer. When the runner
+`opencode/trunk-dev` (`pi/trunk-dev` on pi). The hook waits 30 s and never kills the writer. When the runner
 cannot be found or refuses, the result carries the exact `bd create` command to run
 through the shell tool, where the beads gates apply and the beads plugin supplies a
 subagent's actor (the command names none). Every other failure is silent.
@@ -110,6 +110,32 @@ Registered through `ctx.skill.transform` (a user skill of the same name wins):
 | `trunk-dev-workflow` | Branching, opening, merging or landing an MR/PR: small batches, short-lived branches, required CI, squash release units, exact-SHA previews, forge enforcement, skip-CI markers. |
 | `trunk-dev-feature-flags` | Adding a `feat`, writing the `Flag:` line, rolling out or removing a flag. Code and storage details live in `quality-code-design`'s `feature-flags.md`; AWS specifics live in `aws-guidance`. |
 | `trunk-dev-release-setup` | Setting up semantic-release on GitLab or GitHub, and the daily stale-branch CI job for Beads repositories (templates in `templates/`). |
+
+## pi
+
+One extension, `pi/extensions/trunk-dev.js` (source `pi-src/trunk-dev.ts`), carries every pi feature. Advisories keep the OpenCode order. It replaces the `skip-ci` entry that shipped skip-CI alone.
+
+| Feature | pi hook | Behavior |
+| --- | --- | --- |
+| Commit gate | `tool_call` on `bash` | Returns `{ block: true, reason: "trunk-dev: …" }` for the commits and pushes listed under Commit gate, checked in `ctx.cwd`. The same overrides apply. A gate that throws allows the call. |
+| Advisories | `tool_result` on `bash` | Appends skip-CI, then the title, flag-line, squash and branch-age advice, as one text block on a result that is not an error. The structured result is kept. |
+| Flag-cleanup bead | `tool_result` on `bash` | Follows a `gh pr merge <n>`/`glab mr merge <n>` that exited 0, as described under Flag-cleanup bead. |
+
+The gate never asks: it refuses as the OpenCode gate does, so print, JSON and RPC modes, where pi has no dialog, behave the same as the TUI.
+
+Not on pi: the `delivery_land` merge source, session reminders, and the `disable` option. Pi passes no options to an extension.
+
+pi-subagents' foreground children do not load the parent's extensions ([required host extensions](https://github.com/nicobailon/pi-subagents/blob/main/docs/agents.md#required-host-extensions)). List this extension for every child in `~/.pi/agent/settings.json`, with the path where pi installed this repository:
+
+```json
+{
+  "subagents": {
+    "defaultSubagentOnlyExtensions": ["<harness-plugins>/plugins/trunk-dev/pi/extensions/trunk-dev.js"]
+  }
+}
+```
+
+An agent that sets its own `subagentOnlyExtensions` replaces this default, so it must list the path too.
 
 ## Options
 

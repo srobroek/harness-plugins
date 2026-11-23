@@ -1,8 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { supervise } from "@srobroek/opencode-lib/subprocess"
-import { bdEnvironment, type CommandRunner, repository } from "./flag-cleanup.ts"
-import { isReleaseRepository } from "./release-repo.ts"
+import { bdEnvironment, type CommandRunner, repository } from "../../shared/flag-cleanup.js"
+import { isReleaseRepository } from "../../shared/release-repo.js"
 
 export function staleThresholdHours(value: string | undefined): number {
   const hours = value !== undefined && /^\d+$/.test(value) ? Number(value) : 48
