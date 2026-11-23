@@ -6,9 +6,9 @@ import { loadConfig } from "@srobroek/harness-kit"
 const root = path.join(import.meta.dir, "..")
 const json = (file: string) => JSON.parse(readFileSync(path.join(root, file), "utf8"))
 
-test("harness-kit.json is valid and targets OpenCode and Claude Code", () => {
+test("harness-kit.json is valid and targets OpenCode, Claude Code, and OMP", () => {
   const config = loadConfig(root)
-  expect(config.harnesses).toEqual(["opencode", "claude"])
+  expect(config.harnesses).toEqual(["opencode", "claude", "omp"])
   expect(config.marketplace.name).toBe("harness-plugins")
 })
 

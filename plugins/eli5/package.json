@@ -9,7 +9,8 @@
     "category": "productivity",
     "harnesses": [
       "opencode",
-      "claude"
+      "claude",
+      "omp"
     ],
     "scope": "global",
     "entries": {

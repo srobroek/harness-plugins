@@ -1,0 +1,19 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "harness-plugins",
+  "owner": {
+    "name": "Sjors Robroek"
+  },
+  "metadata": {
+    "description": "Agent plugins for OpenCode and Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "eli5",
+      "description": "Explain a topic at five depth levels, from metaphor to frontier.",
+      "source": "./plugins/eli5/omp",
+      "version": "0.6.0",
+      "category": "productivity"
+    }
+  ]
+}
