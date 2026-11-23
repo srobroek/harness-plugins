@@ -122,7 +122,9 @@ export function readClones(env: NodeJS.ProcessEnv, sessionKey: string): CloneEnt
   try {
     text = readFileSync(file, "utf8")
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+    // ENOTDIR: a path component is a file, so no registry file can exist there (a write fails, a read finds nothing).
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === "ENOENT" || code === "ENOTDIR") return []
     throw new Error(`the clone registry ${file} cannot be read (${error instanceof Error ? error.message : String(error)})`, { cause: error })
   }
   const entries = entriesOf(text)
