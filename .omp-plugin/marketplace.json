@@ -54,7 +54,7 @@
       "name": "lang-typescript",
       "description": "TypeScript and JavaScript skills: install, lint, tsc and test checks, testing, monorepo packaging, type safety and zod, and Bun and Node profiling.",
       "source": "./plugins/lang-typescript/omp",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "category": "development"
     },
     {
