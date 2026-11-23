@@ -61,20 +61,15 @@ describe("tools option refuses every tool a plugin in this repository registers"
 })
 
 describe("MCP grant sets", () => {
-  // Vendored agents (cad) follow their own source, so they are not part of the grant sets.
-  const VENDORED = ["cad"]
-  // Read the first rule as text: delivery's agents carry a `model` key that the shared parser refuses.
   const DENY_ALL_FIRST = /^permissions:\n {2}- action: "\*"\n {4}resource: "\*"\n {4}effect: deny$/m
-  const shipped = readdirSync(PLUGINS)
-    .filter((name) => !VENDORED.includes(name))
-    .flatMap((plugin) =>
-      agentPaths(join(PLUGINS, plugin, "common", "agents"))
-        .filter((path) => !path.endsWith(".claude.md"))
-        .map((path) => ({
+  const shipped = readdirSync(PLUGINS).flatMap((plugin) =>
+    agentPaths(join(PLUGINS, plugin, "common", "agents"))
+      .filter((path) => !path.endsWith(".claude.md"))
+      .map((path) => ({
         id: basename(path, ".md").replace(/\.opencode$/, ""),
         denyAll: DENY_ALL_FIRST.test(readFileSync(path, "utf8")),
       })),
-    )
+  )
   const shippedIds = new Set(shipped.map((agent) => agent.id))
 
   test("every id in either set ships in a plugin, or is OpenCode's built-in explore", () => {

@@ -27,6 +27,7 @@ INVENTORY.md, inventory.json      generated
 harness-kit.json                  generator config
 ```
 
+
 `opencode/src/index.ts` default-exports `Plugin.define({ id, setup })`. Plugin ids use the
 `srobroek.<name>` prefix. The `agent-plugins` key holds the description, category, `harnesses`,
 `scope`, `signals` and `requires` (read by `scripts/build-plugin-table.ts`), `entries` (OpenCode
@@ -58,6 +59,16 @@ Claude Code installs from the marketplace `harness-plugins`:
 claude plugin marketplace add srobroek/harness-plugins
 claude plugin install worktrunk@harness-plugins
 ```
+
+The CAD plugin now lives in [srobroek/cad-agent](https://github.com/srobroek/cad-agent). To install
+it for OpenCode from a checkout, set `CAD_AGENT` to that checkout and run:
+
+```sh
+CAD_AGENT=/path/to/cad-agent
+python3 "$CAD_AGENT/harness/install.py" --harness opencode
+```
+
+See the [cad-agent install instructions](https://github.com/srobroek/cad-agent#install) for other harnesses.
 
 Plugins with `claude` in their `harnesses` are in the marketplace. They carry the skills, the
 `.mcp.json` where there is one, the subagents translated by `scripts/claude-agents.ts`, and hooks.
@@ -146,9 +157,8 @@ strict YAML.
 
 - `.github/workflows/ci.yml` calls the reusable `check.yml` of harness-kit (`harness-kit check`,
   `bun test`, `tsc`), runs the `repo-checks` job (lint, `build:check`, the content checks and the
-  Python tests of the shipped scripts) and, when `plugins/cad` changes, the `cad` job
-  (`scripts/sync-cad.ts --check`). The two jobs it runs itself install bun and just from
-  `.mise.toml` and call `just` recipes.
+  Python tests of the shipped scripts). The job installs bun and just from `.mise.toml` and calls
+  `just` recipes.
 - `.github/workflows/release.yml` calls the reusable `release.yml` (multi-semantic-release). It
   tags each plugin as `<name>--v<version>`.
 

@@ -28,8 +28,6 @@
     "agent-roles": "bun scripts/check-agent-roles.ts",
     "descriptions": "bun scripts/check-descriptions.ts",
     "concerns": "bun scripts/check-concerns.ts",
-    "cad:sync": "bun scripts/sync-cad.ts",
-    "cad:check": "bun scripts/sync-cad.ts --check",
     "release": "multi-semantic-release --no-ci"
   },
   "devDependencies": {
