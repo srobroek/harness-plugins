@@ -89,7 +89,7 @@ Declare the secret with `env = "exec"`. For a required secret, also add
 
 ## Headless `host` store
 
-`pace` and `work-linux` declare a global age provider `host` with
+A headless host declares a global age provider `host` with
 `key_file = "~/.config/fnox/age.txt"`. The project declares none. `fnox set` may write the
 ciphertext into the committed `fnox.toml`, and only that host's recipient can decrypt it.
 Keep it out of git with `fnox -c fnox.local.toml set NAME --provider host`.
