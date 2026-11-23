@@ -1,3 +1,9 @@
+## modes [1.2.1](https://github.com/srobroek/harness-plugins/compare/modes--v1.2.0...modes--v1.2.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## modes [1.2.0](https://github.com/srobroek/harness-plugins/compare/modes--v1.1.1...modes--v1.2.0) (2026-11-22)
 
 ### Features
