@@ -35,7 +35,7 @@
 | modes | 1.3.0 | development | global | opencode, omp |
 | parley | 0.4.2 | development | global | opencode |
 | plugin-audit | 0.2.0 | development | project | opencode |
-| project | 0.11.1 | productivity | global | opencode, claude, omp, pi |
+| project | 0.12.0 | productivity | global | opencode, claude, omp, pi |
 | quality | 0.14.1 | development | global | opencode, claude, pi |
 | repomix | 0.5.1 | development | global | opencode, claude, pi |
 | safety | 0.13.1 | development | global | opencode |
