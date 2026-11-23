@@ -14,31 +14,42 @@ const questions: Question[] = [
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown
 type Command = { handler: (args: string, ctx: ExtensionContext) => Promise<void> }
+type HostApi = "registerCommand" | "appendEntry" | "sendMessage"
 
-/** The extension loaded against a stand-in pi: what it registers and what it writes to the session. */
-function load() {
+/** The extension loaded against a stand-in pi: what it registers and what it writes to the session. `without` drops host APIs. */
+function load(without: readonly HostApi[] = []) {
   const tools = new Map<string, ToolDefinition>()
   const handlers = new Map<string, Handler>()
   const commands = new Map<string, Command>()
   const entries: { type: "custom"; customType: string; data: unknown }[] = []
   const messages: { message: { customType: string; content: string }; options: unknown }[] = []
-  const pi = {
+  const api: Record<string, unknown> = {
     on: (event: string, handler: Handler) => handlers.set(event, handler),
     registerTool: (tool: ToolDefinition) => tools.set(tool.name, tool),
     registerCommand: (name: string, options: Command) => commands.set(name, options),
     appendEntry: (customType: string, data: unknown) => entries.push({ type: "custom", customType, data }),
     sendMessage: (message: { customType: string; content: string }, options: unknown) => messages.push({ message, options }),
-  } as unknown as ExtensionAPI
-  parley(pi)
+  }
+  for (const name of without) delete api[name]
+  parley(api as unknown as ExtensionAPI)
   return { tools, handlers, commands, entries, messages }
 }
 
-/** A pi context; in "tui" mode `ui.custom` builds the panel and records it, as pi's interactive mode would. */
-function context(mode: ExtensionContext["mode"], branch: readonly unknown[] = []) {
+/** Waits until `ready` holds: the panel surface loads pi-tui on first use. */
+async function until(ready: () => boolean) {
+  for (let i = 0; i < 400 && !ready(); i++) await new Promise((resolve) => setTimeout(resolve, 5))
+  expect(ready()).toBe(true)
+}
+
+/**
+ * A pi context. In "tui" mode `ui.custom` builds the panel and records it, as pi's interactive mode
+ * would; `custom: "missing"` drops it and `"nothing"` returns without showing anything (pi's RPC mode).
+ */
+function context(mode: ExtensionContext["mode"], branch: readonly unknown[] = [], custom: "pi" | "missing" | "nothing" = "pi") {
   const panels: ParleyPanel[] = []
   const notices: string[] = []
   const status: (string | undefined)[] = []
-  const ui = {
+  const ui: Record<string, unknown> = {
     theme: plain,
     notify: (text: string) => notices.push(text),
     setStatus: (_key: string, text: string | undefined) => status.push(text),
@@ -52,6 +63,8 @@ function context(mode: ExtensionContext["mode"], branch: readonly unknown[] = []
         panels.push(panel)
       }),
   }
+  if (custom === "missing") delete ui.custom
+  if (custom === "nothing") ui.custom = () => undefined
   const ctx = {
     mode,
     hasUI: mode === "tui" || mode === "rpc",
@@ -66,6 +79,14 @@ const run = (tool: ToolDefinition | undefined, params: unknown, ctx: ExtensionCo
   (tool as ToolDefinition).execute("call-1", params as never, signal, undefined, ctx as never)
 
 const text = (result: { content: { type: string; text?: string }[] }) => result.content.map((part) => part.text ?? "").join("\n")
+
+/** Starts a session in `ctx` and opens a round whose panel is up. The call is wrapped: awaiting it would wait for the answer. */
+async function opened(loaded: ReturnType<typeof load>, shown: ReturnType<typeof context>, params: Record<string, unknown> = {}) {
+  await loaded.handlers.get("session_start")?.({ reason: "startup" }, shown.ctx)
+  const pending = run(loaded.tools.get("parley_ask"), { questions, ...params }, shown.ctx)
+  await until(() => shown.panels.length > 0)
+  return { pending }
+}
 
 describe("parley pi extension", () => {
   test("registers the three tools with the shared schemas and the /parley command", () => {
@@ -89,46 +110,59 @@ describe("parley pi extension", () => {
     expect(entries).toEqual([])
   })
 
+  test("a TUI without ctx.ui.custom, or whose custom shows nothing, gets unavailable at once", async () => {
+    for (const custom of ["missing", "nothing"] as const) {
+      const loaded = load()
+      const { ctx } = context("tui", [], custom)
+      await loaded.handlers.get("session_start")?.({ reason: "startup" }, ctx)
+      const result = await run(loaded.tools.get("parley_ask"), { questions }, ctx)
+      expect(result.structuredContent).toMatchObject({ status: "unavailable", reason: "no_tui" })
+    }
+  })
+
+  test("loads and answers on a host without registerCommand, appendEntry or sendMessage", async () => {
+    const loaded = load(["registerCommand", "appendEntry", "sendMessage"])
+    expect([...loaded.tools.keys()]).toEqual(["parley_ask", "parley_wait", "parley_end"])
+    const shown = context("tui")
+    const { pending } = await opened(loaded, shown)
+    shown.panels[0]?.handleInput("\x13")
+    expect((await pending).structuredContent).toMatchObject({ status: "submitted" })
+  })
+
   test("in the TUI the panel answers the call and every change is written to the session", async () => {
-    const { tools, handlers, entries } = load()
-    const { ctx, panels, status } = context("tui")
-    await handlers.get("session_start")?.({ reason: "startup" }, ctx)
-    const pending = run(tools.get("parley_ask"), { questions, title: "Setup" }, ctx)
-    await tick()
-    const panel = panels[0] as ParleyPanel
+    const loaded = load()
+    const shown = context("tui")
+    const { pending } = await opened(loaded, shown, { title: "Setup" })
+    const panel = shown.panels[0] as ParleyPanel
     expect(panel.render(80).join("\n")).toContain("Parley round 1 · Setup")
     for (const key of ["\t", "e", ..."reports", "\r", "\x13"]) panel.handleInput(key)
     const result = await pending
     expect(text(result)).toContain("Parley round 1: submitted — 2 answers, 0 pending")
     expect(result.structuredContent).toMatchObject({ status: "submitted", channel: "tui" })
-    expect(panels).toEqual([])
-    expect(entries.every((entry) => entry.customType === ROUND_ENTRY)).toBe(true)
-    expect(entries.at(-1)?.data).toMatchObject({ status: "submitted", title: "Setup" })
-    expect(status.at(-1)).toBeUndefined()
+    expect(shown.panels).toEqual([])
+    expect(loaded.entries.every((entry) => entry.customType === ROUND_ENTRY)).toBe(true)
+    expect(loaded.entries.at(-1)?.data).toMatchObject({ status: "submitted", title: "Setup" })
+    expect(shown.status.at(-1)).toBeUndefined()
   })
 
   test("esc minimises: the status line points at /parley, which brings the round back", async () => {
-    const { tools, handlers, commands } = load()
-    const { ctx, panels, status } = context("tui")
-    await handlers.get("session_start")?.({ reason: "startup" }, ctx)
-    const pending = run(tools.get("parley_ask"), { questions }, ctx)
+    const loaded = load()
+    const shown = context("tui")
+    const { pending } = await opened(loaded, shown)
+    shown.panels[0]?.handleInput("\x1b")
     await tick()
-    panels[0]?.handleInput("\x1b")
-    await tick()
-    expect(panels).toEqual([])
-    expect(status.at(-1)).toBe("parley: round 1 waiting · /parley")
-    await commands.get("parley")?.handler("", ctx)
-    expect(panels).toHaveLength(1)
-    panels[0]?.handleInput("\x13")
+    expect(shown.panels).toEqual([])
+    expect(shown.status.at(-1)).toBe("parley: round 1 waiting · /parley")
+    await loaded.commands.get("parley")?.handler("", shown.ctx)
+    expect(shown.panels).toHaveLength(1)
+    shown.panels[0]?.handleInput("\x13")
     expect((await pending).structuredContent).toMatchObject({ status: "submitted" })
   })
 
   test("a round left open by an earlier pi process is answered later and sent to the agent as a message", async () => {
     const first = load()
     const before = context("tui")
-    await first.handlers.get("session_start")?.({ reason: "startup" }, before.ctx)
-    const pending = run(first.tools.get("parley_ask"), { questions }, before.ctx)
-    await tick()
+    const { pending } = await opened(first, before)
     await first.handlers.get("session_shutdown")?.({ reason: "quit" }, before.ctx)
     expect((await pending).structuredContent).toMatchObject({ status: "unavailable" })
 
@@ -144,17 +178,29 @@ describe("parley pi extension", () => {
     expect(second.messages[0]?.options).toEqual({ triggerTurn: true, deliverAs: "followUp" })
   })
 
+  test("parley_wait without the TUI does not wait on a restored open round", async () => {
+    const first = load()
+    const before = context("tui")
+    const { pending } = await opened(first, before)
+    await first.handlers.get("session_shutdown")?.({ reason: "quit" }, before.ctx)
+    await pending
+
+    const second = load()
+    const { ctx } = context("print", first.entries)
+    await second.handlers.get("session_start")?.({ reason: "resume" }, ctx)
+    const result = await run(second.tools.get("parley_wait"), {}, ctx)
+    expect(result.structuredContent).toMatchObject({ status: "unavailable", reason: "no_tui", round: 1, pending: ["db", "name"] })
+  })
+
   test("parley_end closes the panel and shows the agent's message", async () => {
-    const { tools, handlers } = load()
-    const { ctx, panels, notices } = context("tui")
-    await handlers.get("session_start")?.({ reason: "startup" }, ctx)
-    void run(tools.get("parley_ask"), { questions, wait: "none" }, ctx)
-    await tick()
-    const ended = await run(tools.get("parley_end"), { message: "Thanks, all settled" }, ctx)
+    const loaded = load()
+    const shown = context("tui")
+    await opened(loaded, shown, { wait: "none" })
+    const ended = await run(loaded.tools.get("parley_end"), { message: "Thanks, all settled" }, shown.ctx)
     expect(text(ended)).toBe("Parley closed.")
     await tick()
-    expect(panels).toEqual([])
-    expect(notices).toContain("Thanks, all settled")
+    expect(shown.panels).toEqual([])
+    expect(shown.notices).toContain("Thanks, all settled")
   })
 
   test("invalid questions fail the call with the reasons", async () => {

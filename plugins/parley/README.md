@@ -364,9 +364,16 @@ unchanged. It leaves pi's own question tools alone. Load it with
   footer then shows `parley: round N waiting · /parley`. `/parley` shows the
   round again with your edits.
 - **No panel.** In print, JSON and RPC mode, `parley_ask` checks the questions
-  and returns `unavailable` at once, with the reason `no_tui`. With
-  `PARLEY_DISABLE=1` it returns `unavailable` (`disabled`) in every mode. pi has
-  no `fallback` or `questionTool` option.
+  and returns `unavailable` at once, with the reason `no_tui`. A host UI
+  without `ctx.ui.custom` gets the same result. So does a host whose
+  `@earendil-works/pi-tui` lacks a member the panel uses. The extension still
+  loads on both. `parley_wait` on an open round also returns `unavailable`
+  there instead of waiting. With `PARLEY_DISABLE=1` it returns `unavailable`
+  (`disabled`) in every mode. pi has no `fallback` or `questionTool` option.
+- **One UI module.** `pi-src/panel.ts` holds every use of `ctx.ui.custom()`.
+  It imports pi-tui at run time. The adapter sees only its `PanelSurface`
+  interface, so a host with another UI (such as OMP) replaces that one module.
+  The round logic lives in `pi-src/session.ts` and `shared/`.
 - **Waiting.** The wait modes, `timeout_s` and `parley_wait` work as in
   OpenCode. A second `parley_ask` joins the open round. When you interrupt the
   agent's turn, its round closes as `aborted`.

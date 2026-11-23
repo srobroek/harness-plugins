@@ -1,11 +1,14 @@
 /**
- * The parley round panel for pi: a pi-tui component that `ctx.ui.custom()` shows in place of the
- * editor. Card state, keys and answer values come from the shared card state machine
+ * The parley round panel for pi, and the only module that touches the host's terminal UI: a pi-tui
+ * component that `ctx.ui.custom()` shows in place of the editor. The adapter sees it only through
+ * `PanelSurface` and `loadPanelSurface`, so a host with another UI replaces this one module. pi-tui
+ * is imported at run time (types only here), so a host without it still loads parley and answers
+ * `unavailable`. Card state, keys and answer values come from the shared card state machine
  * (`shared/tui-state.ts`), so every kind behaves as in the OpenCode panel. pi has no side panel,
  * clipboard paste or copy, so `f`, `y` and `ctrl+v` are not bound.
  */
 
-import { type Component, Editor, type EditorTheme, type Focusable, parseKey, type TUI, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui"
+import type { Component, Editor, EditorTheme, Focusable, TUI } from "@earendil-works/pi-tui"
 import type { FileValue, SubmittedAnswer } from "../shared/answers.ts"
 import { visibleQuestions } from "../shared/conditions.ts"
 import { optionLabel, type Question, sliderBounds, sliderText } from "../shared/questions.ts"
@@ -86,9 +89,12 @@ const PI_FILE_KEYS: Partial<Record<Question["kind"], string>> = {
 
 const COMPLETING = new Set(["ask_image", "ask_file", "path", "tags"])
 
+/** The pi-tui members the panel uses. `loadPanelSurface` imports them at run time, so a host without them still loads parley. */
+export type TuiKit = Pick<typeof import("@earendil-works/pi-tui"), "Editor" | "parseKey" | "truncateToWidth" | "wrapTextWithAnsi">
+
 /** `parseKey` names shift+letter by the capital letter; the panel's bindings use `shift+<letter>`. */
-export function keyName(data: string): string | undefined {
-  const key = parseKey(data)
+export function keyName(parse: TuiKit["parseKey"], data: string): string | undefined {
+  const key = parse(data)
   return key !== undefined && /^[A-Z]$/.test(key) ? `shift+${key.toLowerCase()}` : key
 }
 
@@ -123,6 +129,7 @@ export class ParleyPanel implements Component, Focusable {
   readonly #timer: ReturnType<typeof setInterval>
 
   constructor(
+    readonly kit: TuiKit,
     readonly tui: PanelTui,
     readonly theme: PanelTheme,
     readonly host: PanelHost,
@@ -220,7 +227,7 @@ export class ParleyPanel implements Component, Focusable {
     const question = this.#current()
     if (!question || (field === "text" && !editable(question))) return
     const draft = this.#draft(question)
-    const editor = new Editor(this.tui as TUI, this.#editorTheme())
+    const editor = new this.kit.Editor(this.tui as TUI, this.#editorTheme())
     editor.setText(field === "note" ? draft.note : editText(question, draft))
     editor.focused = this.#focused
     editor.onSubmit = (text) => this.#finishEdit(text)
@@ -309,7 +316,7 @@ export class ParleyPanel implements Component, Focusable {
   // Input
 
   handleInput(data: string): void {
-    const key = keyName(data)
+    const key = keyName(this.kit.parseKey, data)
     if (this.#confirming) {
       this.#confirming = false
       if (key === "y" || key === "enter") {
@@ -436,7 +443,7 @@ export class ParleyPanel implements Component, Focusable {
     const w = Math.max(1, width)
     const out: string[] = []
     const push = (text: string, indent = "") => {
-      for (const line of wrapTextWithAnsi(text, Math.max(1, w - indent.length))) out.push(`${indent}${line}`)
+      for (const line of this.kit.wrapTextWithAnsi(text, Math.max(1, w - indent.length))) out.push(`${indent}${line}`)
     }
     const t = this.theme
     const view = this.host.round()
@@ -484,7 +491,7 @@ export class ParleyPanel implements Component, Focusable {
   }
 
   #store(width: number, lines: string[]) {
-    const fitted = lines.map((line) => truncateToWidth(line, width))
+    const fitted = lines.map((line) => this.kit.truncateToWidth(line, width))
     this.#cache = { width, lines: fitted }
     return fitted
   }
@@ -494,7 +501,7 @@ export class ParleyPanel implements Component, Focusable {
     const t = this.theme
     const lines: string[] = []
     const add = (text: string, tone: Tone = "text") => {
-      for (const line of text.split("\n")) for (const wrapped of wrapTextWithAnsi(t.fg(tone, line), Math.max(1, width - 1))) lines.push(` ${wrapped}`)
+      for (const line of text.split("\n")) for (const wrapped of this.kit.wrapTextWithAnsi(t.fg(tone, line), Math.max(1, width - 1))) lines.push(` ${wrapped}`)
     }
     if (q.body) add(q.body)
     if (q.kind === "review") {
@@ -683,5 +690,101 @@ export class ParleyPanel implements Component, Focusable {
         this.#field(q, draft, q.multiple ? "paths, comma or line separated (e)" : "path (e)", q.kind === "ask_image" ? "screenshot.png" : "./path/to/file", out, push, width)
         return
     }
+  }
+}
+
+// The host surface: the one place parley calls `ctx.ui.custom()`. A host whose UI differs replaces this
+// module with its own `loadPanelSurface`; the adapter depends only on `PanelSurface`.
+
+/** What the adapter hands a surface to show one round. */
+export interface PanelRequest {
+  /** The round and what the user's keys do to it; the surface adds minimising. */
+  readonly host: Omit<PanelHost, "minimise">
+  readonly state: PanelState
+  /** Why pi is blocked while the panel shows, for terminals that report program status. */
+  readonly label: string
+  /** Runs once when the panel goes away: `shown` is false when the host never showed it. */
+  readonly onGone: (shown: boolean) => void
+}
+
+/** A shown panel, as the adapter drives it. */
+export interface OpenPanel {
+  /** Redraws with the round's current state. */
+  refresh(): void
+  /** Takes the panel down; `onGone` follows. */
+  close(): void
+}
+
+export interface PanelSurface {
+  /** Shows a round through the host UI `ui`, or returns undefined when that UI cannot show one. */
+  open(ui: unknown, request: PanelRequest): OpenPanel | undefined
+}
+
+type Custom = (
+  factory: (tui: PanelTui, theme: PanelTheme, keybindings: unknown, done: (result: undefined) => void) => Component,
+  options: { blocked: { kind: "question"; message: string } },
+) => unknown
+
+const isThenable = (value: unknown): value is PromiseLike<unknown> => typeof (value as { then?: unknown } | null)?.then === "function"
+
+/** The panel surface over pi's `ctx.ui.custom()` and a pi-tui kit. */
+export function piSurface(kit: TuiKit): PanelSurface {
+  return {
+    open(ui, request) {
+      const custom = (ui as { custom?: unknown } | undefined)?.custom
+      if (typeof custom !== "function") return undefined
+      let panel: ParleyPanel | undefined
+      let finish: (() => void) | undefined
+      let closing = false
+      let gone = false
+      const leave = () => {
+        if (gone) return
+        gone = true
+        request.onGone(panel !== undefined)
+      }
+      let shown: unknown
+      try {
+        shown = (custom as Custom).call(
+          ui,
+          (tui, theme, _keybindings, done) => {
+            finish = () => done(undefined)
+            panel = new ParleyPanel(kit, tui, theme, { ...request.host, minimise: () => done(undefined) }, request.state)
+            // Closed before the host built the panel: finish as soon as it shows.
+            if (closing) queueMicrotask(() => done(undefined))
+            return panel
+          },
+          { blocked: { kind: "question", message: request.label } },
+        )
+      } catch {
+        return undefined
+      }
+      // pi's RPC mode answers `custom()` without showing anything; a promise that settles unbuilt reports it through `onGone`.
+      if (!isThenable(shown)) return undefined
+      shown.then(leave, leave)
+      return {
+        refresh: () => panel?.refresh(),
+        close: () => {
+          closing = true
+          finish?.()
+        },
+      }
+    },
+  }
+}
+
+/** The pi panel surface over a pi-tui module, or undefined when the module lacks a member the panel needs. */
+export function surfaceFrom(module: unknown): PanelSurface | undefined {
+  const { Editor, parseKey, truncateToWidth, wrapTextWithAnsi } = (module ?? {}) as Partial<TuiKit>
+  if (typeof Editor !== "function" || typeof parseKey !== "function" || typeof truncateToWidth !== "function" || typeof wrapTextWithAnsi !== "function")
+    return undefined
+  return piSurface({ Editor, parseKey, truncateToWidth, wrapTextWithAnsi })
+}
+
+/** The pi panel surface, or undefined when the host has no pi-tui it can lend. Imported at run time, so parley loads without it. */
+export async function loadPanelSurface(): Promise<PanelSurface | undefined> {
+  try {
+    return surfaceFrom(await import("@earendil-works/pi-tui"))
+  } catch {
+    return undefined
   }
 }

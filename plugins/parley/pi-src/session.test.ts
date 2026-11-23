@@ -130,6 +130,31 @@ describe("PiParley.ask", () => {
   })
 })
 
+describe("no panel after all", () => {
+  test("a withdrawn round answers its calls with unavailable", async () => {
+    const { parley, closures } = harness()
+    const asked = parley.ask({ questions }, ui)
+    await tick()
+    parley.withdraw(parley.current()?.id as string)
+    expect((await asked).result).toMatchObject({ status: "unavailable", reason: NO_UI, round: 1, pending: ["db", "retries"] })
+    expect(closures[0]?.round.reason).toBe(NO_UI)
+  })
+
+  test("a host that withdraws inside present never leaves the call waiting", async () => {
+    let parley: PiParley | undefined
+    const own = harness({ present: (round) => parley?.withdraw(round.id) })
+    parley = own.parley
+    expect((await parley.ask({ questions }, ui)).result).toMatchObject({ status: "unavailable", reason: NO_UI })
+  })
+
+  test("parley_wait without a panel returns unavailable instead of waiting on an open round", async () => {
+    const { parley } = harness()
+    await parley.ask({ questions, wait: "none" }, ui)
+    expect((await parley.wait({}, { ui: false })).result).toMatchObject({ status: "unavailable", reason: NO_UI, pending: ["db", "retries"] })
+    expect(parley.current()).toBeDefined()
+  })
+})
+
 describe("PiParley.end", () => {
   test("closes the open round with the agent's message", async () => {
     const { parley, closures } = harness()

@@ -167,9 +167,11 @@ export class PiParley {
     const round = this.current() ?? this.rounds.latest(this.deps.sessionID)
     if (!round) return { result: { status: "none", answers: [], pending: [] }, questions: [] }
     if (round.status === "open") {
+      // Nobody here can answer it: say so instead of waiting out the timeout.
+      if (!call.ui) return { result: { ...unavailable(NO_UI), round: round.number, round_id: round.id, pending: collect(round, { keep: true }).pending }, questions: round.questions }
       this.#extendDeadline(round, input.timeout_s)
       // The agent now waits on the user: bring the round back up if it was minimised or restored.
-      if (call.ui) this.deps.present(round)
+      this.deps.present(round)
     }
     const result = await this.#await(round, { mode: input.wait ?? "all", ids: input.ids, timeout_s: input.timeout_s, call })
     return { result, questions: round.questions }
@@ -190,6 +192,12 @@ export class PiParley {
   dismiss(roundID: string) {
     const round = this.rounds.get(roundID)
     if (round) this.#close(round, "user_closed")
+  }
+
+  /** The host could not show the round's panel after all: the round closes and its calls return `unavailable`. */
+  withdraw(roundID: string) {
+    const round = this.rounds.get(roundID)
+    if (round) this.#close(round, NO_UI)
   }
 
   /** The session is going away: waiting calls end as `unavailable` and their rounds stay open in the session. */
@@ -215,8 +223,8 @@ export class PiParley {
     this.#persist(round)
     if (round.status === "open") return
     this.deps.closed({ round, ...(this.#message === undefined ? {} : { message: this.#message }) })
-    // The agent ended it itself; anything else closing a restored round goes to the agent as a message.
-    if (!this.#orphans.delete(round.id) || round.reason === "ended") return
+    // The agent ended it, or the host could not show it; anything else closing a restored round goes to the agent as a message.
+    if (!this.#orphans.delete(round.id) || round.reason === "ended" || round.reason === NO_UI) return
     this.deps.deliver(deliveryText(collect(round), round.questions))
     this.#persist(round)
   }
@@ -324,6 +332,8 @@ export class PiParley {
       // An interrupted call cancels its round; a timeout closes it only for the call holding the latest deadline.
       const closing = outcome === "aborted" ? "aborted" : outcome === "timeout" && holdsDeadline(round, this.#now()) ? TIMEOUT : undefined
       if (closing) this.#close(round, closing)
+      if (round.status === "cancelled" && round.reason === NO_UI)
+        return { ...unavailable(NO_UI), round: round.number, round_id: round.id, pending: collect(round, { ...(ids === undefined ? {} : { ids }) }).pending }
       return { ...collect(round, { ...(ids === undefined ? {} : { ids }), timedOut: outcome === "timeout" }), channel: "tui" }
     } finally {
       stop()

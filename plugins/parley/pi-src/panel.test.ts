@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { visibleWidth } from "@earendil-works/pi-tui"
+import * as piTui from "@earendil-works/pi-tui"
 import type { Question } from "../shared/questions.ts"
 import { type Round, view } from "../shared/rounds.ts"
-import { keyName, newPanelState, type PanelState, ParleyPanel, panelHints } from "./panel.ts"
+import { keyName, newPanelState, type PanelState, ParleyPanel, panelHints, surfaceFrom, type TuiKit } from "./panel.ts"
 import { PiParley } from "./session.ts"
 
 /** Raw terminal input, as pi hands it to `handleInput`. */
@@ -21,6 +21,7 @@ const KEY = {
 
 const plain = { fg: (_tone: string, text: string) => text, bold: (text: string) => text }
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+const kit: TuiKit = piTui
 
 const db: Question = {
   id: "db",
@@ -54,6 +55,7 @@ async function open(questions: Question[], state: PanelState = newPanelState()) 
   const round = rounds[0] as Round
   let renders = 0
   const panel = new ParleyPanel(
+    kit,
     { requestRender: () => renders++, terminal: { rows: 40 } },
     plain,
     {
@@ -177,14 +179,53 @@ describe("ParleyPanel keyboard", () => {
   test("every rendered line fits the width", async () => {
     const long: Question = { ...db, body: "A ".repeat(200), options: [{ id: "a", label: "x".repeat(120) }, { id: "b", label: "B" }], recommended: "a" }
     const { panel } = await open([long, name])
-    for (const width of [20, 50, 120]) for (const line of panel.render(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width)
+    for (const width of [20, 50, 120]) for (const line of panel.render(width)) expect(piTui.visibleWidth(line)).toBeLessThanOrEqual(width)
   })
 })
 
 test("keyName names shifted letters like the panel's bindings", () => {
-  expect(keyName("D")).toBe("shift+d")
-  expect(keyName("\x13")).toBe("ctrl+s")
-  expect(keyName("j")).toBe("j")
+  expect(keyName(kit.parseKey, "D")).toBe("shift+d")
+  expect(keyName(kit.parseKey, "\x13")).toBe("ctrl+s")
+  expect(keyName(kit.parseKey, "j")).toBe("j")
+})
+
+describe("panel surface", () => {
+  const request = (gone: boolean[]) => ({
+    host: { round: () => undefined, submit: () => [], dismiss: () => {}, readFiles: () => [], findPaths: () => [], now: Date.now },
+    state: newPanelState(),
+    label: "Parley round 1",
+    onGone: (shown: boolean) => gone.push(shown),
+  })
+
+  test("needs every pi-tui member the panel uses", () => {
+    expect(surfaceFrom(undefined)).toBeUndefined()
+    expect(surfaceFrom({ Editor: piTui.Editor, parseKey: piTui.parseKey })).toBeUndefined()
+    expect(surfaceFrom(piTui)).toBeDefined()
+  })
+
+  test("cannot open without ctx.ui.custom, or when custom shows nothing", async () => {
+    const surface = surfaceFrom(piTui)
+    const gone: boolean[] = []
+    expect(surface?.open({}, request(gone))).toBeUndefined()
+    expect(surface?.open({ custom: () => undefined }, request(gone))).toBeUndefined()
+    expect(surface?.open({ custom: () => Promise.resolve(undefined) }, request(gone))).toBeDefined()
+    await tick()
+    expect(gone).toEqual([false])
+  })
+
+  test("reports a built panel gone once it closes", async () => {
+    const gone: boolean[] = []
+    const ui = {
+      custom: (factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (value: undefined) => void) => unknown) =>
+        new Promise((resolve) => factory({ requestRender: () => {}, terminal: { rows: 40 } }, plain, {}, resolve)),
+    }
+    const open = surfaceFrom(piTui)?.open(ui, request(gone))
+    await tick()
+    expect(gone).toEqual([])
+    open?.close()
+    await tick()
+    expect(gone).toEqual([true])
+  })
 })
 
 test("panelHints lists only keys the pi panel binds", () => {
