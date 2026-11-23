@@ -1,3 +1,9 @@
+## debate [0.7.0](https://github.com/srobroek/harness-plugins/compare/debate--v0.6.0...debate--v0.7.0) (2026-11-23)
+
+### Features
+
+* ship seven skills plugins to OMP ([6658a5f](https://github.com/srobroek/harness-plugins/commit/6658a5fe470ab0f1eea0e41803af29b98e7e3a27))
+
 ## debate [0.6.0](https://github.com/srobroek/harness-plugins/compare/debate--v0.5.1...debate--v0.6.0) (2026-11-22)
 
 ### Features
