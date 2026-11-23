@@ -1,7 +1,7 @@
 ---
 name: concept
-description: "Design iteration: frames the problem, explores options, prototypes the riskiest, records a decision. Edits only design docs and scratch."
-tools: read, grep, ast_grep, glob, lsp, web_search, task
+description: "Explores options, tests the riskiest assumption, records a decision. Edits only design docs and scratch paths. OMP cannot enforce this boundary."
+tools: read, grep, ast_grep, glob, lsp, edit, write, ast_edit, web_search, task
 spawns: "scout, researcher, architect, adversarial-challenger, design-critic, seance, ui-ux-specialist, a11y-auditor"
 model: "@architect, @slow"
 ---
