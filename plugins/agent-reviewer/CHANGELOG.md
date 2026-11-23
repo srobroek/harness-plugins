@@ -1,3 +1,13 @@
+## agent-reviewer [0.13.0](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.12.0...agent-reviewer--v0.13.0) (2026-11-23)
+
+### Features
+
+* **agent-plugins:** complete pi agent prompts ([bd49ec4](https://github.com/srobroek/harness-plugins/commit/bd49ec4a310c315702f2ce63789cda4cf345760d))
+
+### Bug Fixes
+
+* **agent-reviewer:** align duplicate harness agents ([b5bf82a](https://github.com/srobroek/harness-plugins/commit/b5bf82a275d3127e73518336c5b1a9228c4f6a71))
+
 ## agent-reviewer [0.12.0](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.11.1...agent-reviewer--v0.12.0) (2026-11-23)
 
 ### Features
