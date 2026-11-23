@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { type Evaluation, evaluationKind, guardInstall, installKind, MESSAGES, packageName } from "./install-gate.ts"
+import { type Evaluation, evaluationKind, guardInstall, installKind, MESSAGES, packageName } from "../../shared/install-gate.js"
 
 const evaluation = (resources: string[], effect: Evaluation["effect"] = "allow", action = "shell"): Evaluation => ({
   action,

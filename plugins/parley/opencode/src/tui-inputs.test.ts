@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { describeValue, validateValue } from "./answers.ts"
-import { fileURLs } from "./clipboard.ts"
-import { type Question, sliderText } from "./questions.ts"
+import { describeValue, validateValue } from "../../shared/answers.ts"
+import { type Question, sliderText } from "../../shared/questions.ts"
 import {
   acceptsPath,
   applyCompletion,
@@ -19,7 +18,8 @@ import {
   setFiles,
   setText,
   toSubmission,
-} from "./tui-state.ts"
+} from "../../shared/tui-state.ts"
+import { fileURLs } from "./clipboard.ts"
 
 const options = [
   { id: "a", label: "A" },

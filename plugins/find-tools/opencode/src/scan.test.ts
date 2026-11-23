@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { npmSearchText } from "./query.ts"
+import { npmSearchText } from "../../shared/query.js"
 import {
   AWESOME_OPENCODE_URL,
   awesomeEntries,
@@ -12,7 +12,7 @@ import {
   type ScanDeps,
   SOURCES,
   scanSources,
-} from "./scan.ts"
+} from "../../shared/scan.js"
 
 type Handler = (url: URL, init?: RequestInit) => Response | Promise<Response>
 
@@ -373,6 +373,30 @@ describe("local inventory", () => {
       { name: "skill:find-tools", detail: "Discover tools" },
       { name: "mcp", detail: '{"configured":3,"connected":1,"failed":1,"unknown":1}' },
     ])
+  })
+
+  test("lists Pi packages, skills and MCP status counts without private paths", async () => {
+    const secret = "/Users/private/secret-package"
+    const report = await scanSources(
+      { query: "x", sources: ["local"] },
+      deps({
+        local: {
+          pi: async () => ({
+            packages: ["npm:@acme/tools@1.2.0", { source: `file:${secret}` }],
+            skills: [{ name: "pi-browser" }, { path: secret }],
+            mcp: {
+              browser: { command: `run ${secret}`, status: { status: "connected" } },
+              broken: { status: { status: "failed" }, url: `https://${secret}` },
+            },
+          }),
+        },
+      }),
+    )
+    expect(JSON.stringify(report)).not.toContain(secret)
+    expect(result(report, "local")?.hits).toContainEqual({ name: "pi-package:@acme/tools" })
+    expect(result(report, "local")?.hits).not.toContainEqual({ name: `pi-package:file:${secret}` })
+    expect(result(report, "local")?.hits).toContainEqual({ name: "pi-skill:pi-browser" })
+    expect(result(report, "local")?.hits).toContainEqual({ name: "pi-mcp", detail: '{"configured":2}' })
   })
 
   test("a failing MCP list is reported without its error text", async () => {

@@ -9,33 +9,11 @@ import { Plugin } from "@opencode/plugin/tui";
 import { SyntaxStyle } from "@opentui/core";
 import { createEffect as createEffect2, createSignal as createSignal2, Show as Show2 } from "solid-js";
 
-// plugins/parley/opencode/src/panel.tsx
-import { spread as _$spread } from "@opentui/solid";
-import { mergeProps as _$mergeProps } from "@opentui/solid";
-import { memo as _$memo } from "@opentui/solid";
-import { createTextNode as _$createTextNode } from "@opentui/solid";
-import { insertNode as _$insertNode } from "@opentui/solid";
-import { createComponent as _$createComponent } from "@opentui/solid";
-import { effect as _$effect } from "@opentui/solid";
-import { insert as _$insert } from "@opentui/solid";
-import { setProp as _$setProp } from "@opentui/solid";
-import { use as _$use } from "@opentui/solid";
-import { createElement as _$createElement } from "@opentui/solid";
-import { EditBufferRenderable, TextAttributes } from "@opentui/core";
-import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, untrack } from "solid-js";
-import { createStore, reconcile } from "solid-js/store";
-
-// plugins/parley/opencode/src/clipboard.ts
-import { mkdtempSync, readFileSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import path from "path";
-import { createHostClipboard } from "@opentui/core";
-
-// plugins/parley/opencode/src/guards.ts
+// plugins/parley/shared/guards.ts
 var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 var strings = (input) => Array.isArray(input) ? input.filter((item) => typeof item === "string") : [];
 
-// plugins/parley/opencode/src/value-json.ts
+// plugins/parley/shared/value-json.ts
 function canonical(value) {
   if (Array.isArray(value))
     return `[${value.map(canonical).join(",")}]`;
@@ -44,7 +22,7 @@ function canonical(value) {
   return JSON.stringify(value);
 }
 
-// plugins/parley/opencode/src/structured.ts
+// plugins/parley/shared/structured.ts
 var NEW_KINDS = [
   "form",
   "buckets",
@@ -738,7 +716,7 @@ function structuredSummary(question, value) {
   }
 }
 
-// plugins/parley/opencode/src/questions.ts
+// plugins/parley/shared/questions.ts
 var PHASE_ONE_KINDS = [
   "pick_one",
   "show_options",
@@ -1024,7 +1002,7 @@ function coerceQuestion(raw) {
   return question;
 }
 
-// plugins/parley/opencode/src/answers.ts
+// plugins/parley/shared/answers.ts
 var ANSWER_STATUSES = ["answered", "accepted", "noted", "deferred"];
 var MAX_FILE_BYTES = 10 * 1024 * 1024;
 var text = (value) => typeof value === "string" && value.trim() !== "" ? value : undefined;
@@ -1281,7 +1259,7 @@ function describeAnswer(question, answer, index) {
   return `${head}${value}${note}`;
 }
 
-// plugins/parley/opencode/src/structured-ui.ts
+// plugins/parley/shared/structured-ui.ts
 var draftValue = (q, draft) => JSON.parse(JSON.stringify(draft.value ?? structuredDefault(q)));
 var clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 var tidy2 = (n) => Number(n.toPrecision(15));
@@ -1619,7 +1597,7 @@ ${weeks.join(`
 }
 var structuredEditable = (q) => isStructured(q) && q.kind !== "buckets" && q.kind !== "match";
 
-// plugins/parley/opencode/src/tui-state.ts
+// plugins/parley/shared/tui-state.ts
 function inlineEligible(questions) {
   return questions.length === 1;
 }
@@ -2057,7 +2035,41 @@ function countdown(seconds) {
   return `closes in ${minutes > 0 ? `${minutes}m ${String(rest).padStart(2, "0")}s` : `${rest}s`}`;
 }
 
+// plugins/parley/opencode/src/panel.tsx
+import { spread as _$spread } from "@opentui/solid";
+import { mergeProps as _$mergeProps } from "@opentui/solid";
+import { memo as _$memo } from "@opentui/solid";
+import { createTextNode as _$createTextNode } from "@opentui/solid";
+import { insertNode as _$insertNode } from "@opentui/solid";
+import { createComponent as _$createComponent } from "@opentui/solid";
+import { effect as _$effect } from "@opentui/solid";
+import { insert as _$insert } from "@opentui/solid";
+import { setProp as _$setProp } from "@opentui/solid";
+import { use as _$use } from "@opentui/solid";
+import { createElement as _$createElement } from "@opentui/solid";
+import { EditBufferRenderable, TextAttributes } from "@opentui/core";
+import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, untrack } from "solid-js";
+import { createStore, reconcile } from "solid-js/store";
+
+// plugins/parley/shared/conditions.ts
+function visibleQuestions(questions, value) {
+  const visible = [];
+  const ids = new Set;
+  for (const question of questions) {
+    const condition = question.show_if;
+    if (condition && (!ids.has(condition.id) || value(condition.id) === undefined || canonical(value(condition.id)) !== canonical(condition.equals)))
+      continue;
+    visible.push(question);
+    ids.add(question.id);
+  }
+  return visible;
+}
+
 // plugins/parley/opencode/src/clipboard.ts
+import { mkdtempSync, readFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import path from "path";
+import { createHostClipboard } from "@opentui/core";
 var IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/tiff"];
 function clipboardCommands(platform) {
   return platform === "darwin" ? [["pbcopy"]] : platform === "linux" ? [["wl-copy"], ["xclip", "-selection", "clipboard"]] : [];
@@ -2158,20 +2170,6 @@ async function clipboardFiles(images) {
   if (png)
     return [{ name: `clipboard-${stamp()}.png`, mime: "image/png", size: png.length, data: Buffer.from(png).toString("base64") }];
   return [];
-}
-
-// plugins/parley/opencode/src/conditions.ts
-function visibleQuestions(questions, value) {
-  const visible = [];
-  const ids = new Set;
-  for (const question of questions) {
-    const condition = question.show_if;
-    if (condition && (!ids.has(condition.id) || value(condition.id) === undefined || canonical(value(condition.id)) !== canonical(condition.equals)))
-      continue;
-    visible.push(question);
-    ids.add(question.id);
-  }
-  return visible;
 }
 
 // plugins/parley/opencode/src/copy-text.ts

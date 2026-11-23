@@ -86,10 +86,40 @@ resolve it as `../skills`. A skill with the same id that the host already has wi
 
 - `worktrunk-preflight`: `preflight.py` checks `wt`, hook approvals, ignored project-config keys,
   the default branch, merge evidence, provisioning hooks and `node_modules`. Read-only unless
-  `--apply`. Python tests: `skills/worktrunk-preflight/test_preflight.py`, run by `bun test`.
+  `--apply`. Python tests: `skills/worktrunk-preflight/test_preflight.py`, run by `bun test`. On pi
+  the skill calls the `worktrunk_preflight` tool instead (below).
 - `worktrunk-worktrees`: the worktree discipline from the omp rule `worktrunk-worktree-required`:
   create with `wt switch`, cut from the recorded base commit, use absolute paths, wait for
   provisioning, merge from the source worktree.
+
+## pi
+
+One extension, `pi/extensions/worktrunk.js` (source `pi-src/worktrunk.ts`). The merge gate and the
+`wt switch` timeout share `shared/merge-gate.ts` and `shared/switch-timeout.ts` with OpenCode.
+
+| Feature | pi hook | Behavior |
+| --- | --- | --- |
+| Merge policy gate | `tool_call` on `bash` | Returns `{ block: true, reason }` for every merge the OpenCode gate refuses, checked in `ctx.cwd`. A handler error blocks the call, as pi treats a throwing `tool_call` handler. |
+| `wt switch` timeout | `tool_call` on `bash` | Raises a `timeout` shorter than 600 s to 600 s on a `wt switch` call, so foreground hooks are not killed mid-provisioning. pi's bash tool has no default timeout, so a call without one is left alone. |
+| `worktrunk_preflight` tool | `registerTool` | The checks of `preflight.py`, ported to TypeScript in `shared/preflight.ts` with the same ids, statuses and `{ ok, summary, checks }` JSON. Parameters: `path` (default: the session directory), `only` (check ids), `apply`. `apply` writes `.config/wt.toml` under pi's file-mutation queue. |
+
+The worktree strategy has no pi counterpart: pi has no worktree-strategy hook. pi-subagents allocates
+its child worktrees itself, running `wt -C <root> switch --create <branch> --base <commit> --no-cd
+--no-hooks --format json` with `spawnSync` from its extension process, not through the bash tool.
+pi fires `tool_call` only for tool calls, so neither gate sees that allocation.
+
+pi-subagents' foreground children do not load the parent's extensions ([required host extensions](https://github.com/nicobailon/pi-subagents/blob/main/docs/agents.md#required-host-extensions)). List this extension for every child in `~/.pi/agent/settings.json`, with the path where pi installed this repository:
+
+```json
+{
+  "subagents": {
+    "defaultSubagentOnlyExtensions": ["<harness-plugins>/plugins/worktrunk/pi/extensions/worktrunk.js"]
+  }
+}
+```
+
+An agent that sets its own `subagentOnlyExtensions` replaces this default, so it must list the path too.
+The Python script stays for OpenCode and Claude Code; the two implementations must change together.
 
 ## Smoke test
 

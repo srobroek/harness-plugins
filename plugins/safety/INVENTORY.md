@@ -3,13 +3,13 @@
 
 Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help, redaction of secret environment values from tool output, and a tool that stores a secret without a shell.
 
-| Kind | opencode |
-| --- | --- |
-| skills | - |
-| agents | - |
-| commands | - |
-| rules | - |
-| hooks | - |
-| tools | - |
-| extensions | index |
-| mcp | - |
+| Kind | opencode | pi |
+| --- | --- | --- |
+| skills | - | - |
+| agents | - | - |
+| commands | - | - |
+| rules | - | - |
+| hooks | - | - |
+| tools | - | - |
+| extensions | index | safety |
+| mcp | - | - |

@@ -11,15 +11,12 @@ import {
 } from "@opentui/core"
 import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, onMount, Show, Switch, untrack } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
-import type { FileValue, SubmittedAnswer } from "./answers.ts"
-import { clipboardFiles, copyText } from "./clipboard.ts"
-import { visibleQuestions } from "./conditions.ts"
-import { cardText } from "./copy-text.ts"
-import { FocusGuard, INPUT_MODE } from "./focus.ts"
-import { DEFAULT_EMOJIS, optionLabel, type Question, sliderBounds, sliderText } from "./questions.ts"
-import type { RoundView } from "./rounds.ts"
-import { isStructured, structuredSummary } from "./structured.ts"
-import { calendarText, structuredRows, structuredRowText, structuredSetText, structuredStep } from "./structured-ui.ts"
+import type { FileValue, SubmittedAnswer } from "../../shared/answers.ts"
+import { visibleQuestions } from "../../shared/conditions.ts"
+import { DEFAULT_EMOJIS, optionLabel, type Question, sliderBounds, sliderText } from "../../shared/questions.ts"
+import type { RoundView } from "../../shared/rounds.ts"
+import { isStructured, structuredSummary } from "../../shared/structured.ts"
+import { calendarText, structuredRows, structuredRowText, structuredSetText, structuredStep } from "../../shared/structured-ui.ts"
 import {
   type Arrow,
   accept,
@@ -51,7 +48,10 @@ import {
   step,
   submissions,
   toggleDefer,
-} from "./tui-state.ts"
+} from "../../shared/tui-state.ts"
+import { clipboardFiles, copyText } from "./clipboard.ts"
+import { cardText } from "./copy-text.ts"
+import { FocusGuard, INPUT_MODE } from "./focus.ts"
 
 export const PANEL = "srobroek.parley.round"
 

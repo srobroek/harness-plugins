@@ -1,3 +1,11 @@
+## safety [0.14.0](https://github.com/srobroek/harness-plugins/compare/safety--v0.13.1...safety--v0.14.0) (2026-11-23)
+
+### Features
+
+* **safety:** add pi extension layered on cc-safety-net ([42cb883](https://github.com/srobroek/harness-plugins/commit/42cb88359abd6cbd6276c558d0843024a115b2cd))
+* **safety:** add pi gates for profiles, system permissions, fork bombs, disks and power ([1d23923](https://github.com/srobroek/harness-plugins/commit/1d2392376378fad93afae85ae4619ec8ab8022df))
+* **safety:** remove the Git Defender and Route 53 parent-marker gates ([8bdb0e5](https://github.com/srobroek/harness-plugins/commit/8bdb0e58ae24d1c16b84541f9239b793246a8737))
+
 ## safety [0.13.1](https://github.com/srobroek/harness-plugins/compare/safety--v0.13.0...safety--v0.13.1) (2026-11-23)
 
 ### Bug Fixes
