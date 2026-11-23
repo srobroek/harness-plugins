@@ -30,7 +30,7 @@ describe("agent-reviewer", () => {
     const fake = createFakeContext()
     await plugin.setup(fake.context)
     expect(fake.agents.get("pr-reviewer")?.hidden).toBe(true)
-    for (const id of ["code-reviewer", "security-reviewer", "adversarial-challenger"]) expect(fake.agents.get(id)?.hidden).toBeUndefined()
+    for (const id of ["code-reviewer", "security-auditor", "adversarial-challenger"]) expect(fake.agents.get(id)?.hidden).toBeUndefined()
   })
 
   test("every reviewer composes the whole review core and names its verdict line", () => {
@@ -77,10 +77,10 @@ describe("agent-reviewer", () => {
     expect(permissionEffect(code, "skill", "delivery-git-workflow")).toBe("allow")
   })
 
-  test("security-reviewer reads code with a read-only shell and no web", async () => {
+  test("security-auditor reads code with a read-only shell and no web", async () => {
     const fake = createFakeContext()
     await plugin.setup(fake.context)
-    const security = rules(fake, "security-reviewer")
+    const security = rules(fake, "security-auditor")
     for (const action of ["read", "grep", "glob", "lsp_hover"]) expect(permissionEffect(security, action)).toBe("allow")
     for (const action of ["webfetch", "websearch"]) expect(permissionEffect(security, action)).toBe("deny")
     expect(permissionEffect(security, "shell", "git log -3")).toBe("allow")
@@ -89,8 +89,8 @@ describe("agent-reviewer", () => {
     for (const skill of ["quality-code-design", "lang-rust"]) expect(permissionEffect(security, "skill", skill)).toBe("allow")
     expect(permissionEffect(security, "skill", "ast-grep-search")).toBe("allow")
     expect(permissionEffect(security, "read", ".env")).toBe("ask")
-    expect(file("security-reviewer").system).toContain("CWE id")
-    expect(file("security-reviewer").system).toContain("VERDICT: PASS|MINOR|MAJOR")
+    expect(file("security-auditor").system).toContain("CWE id")
+    expect(file("security-auditor").system).toContain("VERDICT: PASS|MINOR|MAJOR")
   })
 
   test("adversarial-challenger keeps web reads for cited sources and a read-only shell", async () => {

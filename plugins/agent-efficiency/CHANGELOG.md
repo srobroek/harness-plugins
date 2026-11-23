@@ -1,3 +1,9 @@
+## agent-efficiency [0.14.1](https://github.com/srobroek/harness-plugins/compare/agent-efficiency--v0.14.0...agent-efficiency--v0.14.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## agent-efficiency [0.14.0](https://github.com/srobroek/harness-plugins/compare/agent-efficiency--v0.13.0...agent-efficiency--v0.14.0) (2026-11-22)
 
 ### Features

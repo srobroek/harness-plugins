@@ -23,7 +23,7 @@ Prerequisites: `ast-grep` (`brew install ast-grep`, `mise use -g ast-grep`,
 
 `agent-coder`'s `coder` runs the CLI through its shell. `agent-reviewer`'s
 `code-reviewer` may run `ast-grep run`/`scan` and `semgrep scan`, with the writing flags
-(`-U`, `--update-all`, `-i`, `--autofix`) denied. `security-reviewer` has no shell, so it
+(`-U`, `--update-all`, `-i`, `--autofix`) denied. `security-auditor` has no shell, so it
 loads the skill and searches with grep.
 
 ### Claude Code

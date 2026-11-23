@@ -184,7 +184,7 @@ test("the agents name the tiers the design gives them", async () => {
     (readAgentFile(join(root, `${id}.md`)) as unknown as { request?: { headers?: Record<string, string> } }).request?.headers?.[
       "x-opencode-model-role"
     ]
-  expect(role("code-challenger")).toBe("standard")
+  expect(role("code-challenger")).toBe("reviewer")
   expect(role("refactor-challenger")).toBe("reviewer")
 })
 

@@ -41,7 +41,7 @@
       ]
     }
   ],
-  "security-reviewer": [
+  "security-auditor": [
     {
       "tools": [
         "Read"

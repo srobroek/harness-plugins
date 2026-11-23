@@ -15,8 +15,9 @@
 //
 // It also composes each `agents.src/<id>.md` into `common/agents/<id>.md` (`<id>.opencode.md`
 // when the plugin also ships to Claude Code), inlining `{{include <fragment>}}` lines from
-// lib/src/<fragment>.md, translates each composed agent into the OMP task agent
-// `common/agents/<id>.omp.md` (scripts/omp-agents.ts), and writes the Claude Code files of
+// lib/src/<fragment>.md and taking out the `x-omp-*` hints, translates the OpenCode form of every
+// agent into the OMP task agent `common/agents/<id>.omp.md` (scripts/omp-agents.ts), fails when
+// two plugins' OMP agents of one name differ, and writes the Claude Code files of
 // scripts/build-claude.ts.
 // It copies `common/.mcp.json` to each harness tree. `harness-kit build` then copies common/ into the harness trees.
 //
@@ -30,7 +31,7 @@ import { createSolidTransformPlugin } from "@opentui/solid/bun-plugin"
 import { composeAgentFile, generatedComment } from "../lib/src/fragments.ts"
 import { isTranslatedAgentFile, ompAgentFile } from "./agent-files.ts"
 import { claudeOutputs, openCodeAgentFile, staleClaudeFiles } from "./build-claude.ts"
-import { translateOmpAgent } from "./omp-agents.ts"
+import { type OmpHints, ompNameConflicts, type ShippedOmpAgent, splitOmpHints, translateOmpAgent } from "./omp-agents.ts"
 
 const HOST_MODULES = [
   "@opencode/plugin",
@@ -196,17 +197,34 @@ export function mcpCopies(dir: string, harnesses: readonly string[]): Output[] {
 
 const AGENT_SOURCES = "agents.src"
 
-/** The `common/agents/<id>.md` (`<id>.opencode.md` for a plugin with a Claude Code tree) composed from every `agents.src/<id>.md`. */
-export function composeAgents(dir: string, claude = false, read?: (name: string) => string): Output[] {
+/** A composed agent file, with the OMP hints its source carries. */
+export type ComposedAgent = Output & { hints: OmpHints }
+
+/**
+ * The `common/agents/<id>.md` (`<id>.opencode.md` for a plugin with a Claude Code tree) composed
+ * from every `agents.src/<id>.md`, without the source's `x-omp-*` keys, which go to `hints`.
+ */
+export function composeAgents(dir: string, claude = false, read?: (name: string) => string): ComposedAgent[] {
   const sources = path.join(dir, AGENT_SOURCES)
   if (!existsSync(sources)) return []
   return readdirSync(sources)
     .filter((name) => name.endsWith(".md"))
     .sort()
-    .map((name) => ({
-      file: path.join(dir, "common", "agents", openCodeAgentFile(name.slice(0, -3), claude)),
-      contents: composeAgentFile(readFileSync(path.join(sources, name), "utf8"), `${AGENT_SOURCES}/${name}`, read),
-    }))
+    .map((name) => {
+      const where = `${AGENT_SOURCES}/${name}`
+      const { source, hints } = splitOmpHints(readFileSync(path.join(sources, name), "utf8"), `plugins/${path.basename(dir)}/${where}`)
+      return {
+        file: path.join(dir, "common", "agents", openCodeAgentFile(name.slice(0, -3), claude)),
+        contents: composeAgentFile(source, where, read),
+        hints,
+      }
+    })
+}
+
+/** Whether a `common/agents/` file is composed output: it starts with the generated comment of its `agents.src/<id>.md`. */
+function isComposed(file: string): boolean {
+  const source = `${AGENT_SOURCES}/${path.basename(file).replace(/\.opencode\.md$/, ".md")}`
+  return readFileSync(file, "utf8").startsWith(`---\n${generatedComment(source)}\n`)
 }
 
 /** Composed agent files whose source is gone: they carry the generated comment but no build produces them. */
@@ -217,18 +235,20 @@ export function orphanAgents(dir: string, outputs: readonly Output[]): string[] 
   return readdirSync(agents)
     .filter((name) => name.endsWith(".md") && !isTranslatedAgentFile(name))
     .map((name) => path.join(agents, name))
-    .filter((file) => !expected.has(file))
-    .filter((file) => readFileSync(file, "utf8").startsWith(`---\n${generatedComment(`${AGENT_SOURCES}/${path.basename(file).replace(/\.opencode\.md$/, ".md")}`)}\n`))
+    .filter((file) => !expected.has(file) && isComposed(file))
 }
 
-/** The OpenCode form of every agent of a plugin by id: composed, else hand-written in `common/agents/`. */
+/**
+ * The OpenCode form of every agent of a plugin by id: composed, else hand-written in
+ * `common/agents/`. An orphaned composed file is left out, since the build removes it.
+ */
 export function agentTexts(dir: string, claude: boolean, composed: readonly Output[]): Map<string, string> {
   const texts = new Map<string, string>()
   const agents = path.join(dir, "common", "agents")
   const suffix = claude ? ".opencode.md" : ".md"
   if (existsSync(agents)) {
     for (const name of readdirSync(agents)) {
-      if (isTranslatedAgentFile(name) || !name.endsWith(suffix)) continue
+      if (isTranslatedAgentFile(name) || !name.endsWith(suffix) || isComposed(path.join(agents, name))) continue
       texts.set(name.slice(0, -suffix.length), readFileSync(path.join(agents, name), "utf8"))
     }
   }
@@ -239,18 +259,26 @@ export function agentTexts(dir: string, claude: boolean, composed: readonly Outp
 /** The header every translated agent file starts with. */
 const TRANSLATED_HEADER = "---\n# Generated by scripts/build.ts from "
 
+/** One translated OMP agent file. */
+export type OmpOutput = Output & { id: string }
+
 /**
- * The OMP task agent (`common/agents/<id>.omp.md`) translated from every composed agent. harness-kit
- * copies it into the omp tree as `agents/<id>.md` when the plugin lists `omp`.
+ * The OMP task agent (`common/agents/<id>.omp.md`) translated from the OpenCode form of every
+ * agent of the plugin (`texts`, from agentTexts), steered by the hints of its composed source.
+ * A hand-written `<id>.omp.md` is kept rather than translated. harness-kit copies the file into
+ * the omp tree as `agents/<id>.md` when the plugin lists `omp`.
  */
-export function ompAgents(dir: string, claude: boolean, composed: readonly Output[]): Output[] {
+export function ompAgents(dir: string, claude: boolean, texts: ReadonlyMap<string, string>, composed: readonly ComposedAgent[] = []): OmpOutput[] {
   const suffix = openCodeAgentFile("", claude)
-  return composed.map((output) => {
-    const name = path.basename(output.file)
-    const id = name.slice(0, -suffix.length)
-    const where = `plugins/${path.basename(dir)}/common/agents/${name}`
-    return { file: path.join(dir, "common", "agents", ompAgentFile(id)), contents: translateOmpAgent(id, output.contents, where).contents }
-  })
+  const hints = new Map(composed.map((agent) => [path.basename(agent.file).slice(0, -suffix.length), agent.hints]))
+  const outputs: OmpOutput[] = []
+  for (const [id, text] of [...texts].sort(([a], [b]) => a.localeCompare(b))) {
+    const file = path.join(dir, "common", "agents", ompAgentFile(id))
+    if (existsSync(file) && !readFileSync(file, "utf8").startsWith(TRANSLATED_HEADER)) continue
+    const where = `plugins/${path.basename(dir)}/common/agents/${openCodeAgentFile(id, claude)}`
+    outputs.push({ id, file, contents: translateOmpAgent(id, text, where, hints.get(id)).contents })
+  }
+  return outputs
 }
 
 /** Translated OMP agents in `common/agents/` that a fresh build no longer produces; a hand-written `<id>.omp.md` is kept. */
@@ -302,16 +330,17 @@ async function main(check: boolean, only: readonly string[]) {
   const selected = selectPlugins(dirs, only)
   const problems: string[] = []
   const warnings: string[] = []
+  const shipped: ShippedOmpAgent[] = []
   for (const dir of selected) {
     const build = readBuild(dir)
     if (build === undefined) continue
     const composed = composeAgents(dir, build.claude)
     const orphans = orphanAgents(dir, composed)
-    const omp = ompAgents(dir, build.claude, composed)
+    const texts = agentTexts(dir, build.claude, composed)
+    const omp = ompAgents(dir, build.claude, texts, composed)
+    shipped.push(...omp.map((output) => ({ plugin: path.basename(dir), id: output.id, contents: output.contents })))
     const staleOmp = staleOmpAgents(dir, omp)
-    const claude = build.claude
-      ? claudeOutputs({ dir, agents: agentTexts(dir, true, composed), selected: build.claudeAgents }, (message) => warnings.push(message))
-      : []
+    const claude = build.claude ? claudeOutputs({ dir, agents: texts, selected: build.claudeAgents }, (message) => warnings.push(message)) : []
     const generated = [...composed, ...claude, ...omp, ...mcpCopies(dir, build.harnesses)]
     const bundles = await buildPlugin(dir, build)
     const staleBundles = stale(dir, bundles)
@@ -329,6 +358,12 @@ async function main(check: boolean, only: readonly string[]) {
     if (generated.length + bundles.length > 0) console.log(`built ${path.relative(root, dir)}`)
   }
   for (const warning of warnings) console.warn(`warning: ${warning}`)
+  const conflicts = ompNameConflicts(shipped)
+  if (conflicts.length > 0) {
+    console.error("OMP merges agents by name, first one wins:")
+    for (const conflict of conflicts) console.error(`  ${conflict}`)
+    process.exit(1)
+  }
   if (problems.length > 0) {
     console.error("Build output is stale. Run `bun run build` and commit the result:")
     for (const file of problems) console.error(`  ${path.relative(root, file)}`)

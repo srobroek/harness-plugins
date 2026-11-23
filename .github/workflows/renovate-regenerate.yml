@@ -86,11 +86,15 @@ jobs:
                   return False
               if name.startswith("plugins/cad/common/"):
                   return False
+              if name == ".omp-plugin/marketplace.json":
+                  return True
               if name in ("INVENTORY.md", "inventory.json", ".claude-plugin/marketplace.json"):
                   return True
               if re.fullmatch(r"plugins/[^/]+/INVENTORY\.md", name):
                   return True
               if re.fullmatch(r"plugins/[^/]+/(opencode|claude)/(skills|agents|formulas|dist|_kit)/.+", name):
+                  return True
+              if re.fullmatch(r"plugins/[^/]+/omp/.+", name):
                   return True
               if re.fullmatch(r"plugins/[^/]+/(opencode|claude)/(package\.json|options\.json|\.mcp\.json)", name):
                   return True
@@ -98,6 +102,18 @@ jobs:
                   return True
               if re.fullmatch(r"plugins/[^/]+/opencode/(index|tui|commit-msg|embedded-write-runner)\.js", name):
                   return True
+              match = re.fullmatch(r"plugins/([^/]+)/common/agents/([^/]+)\.omp\.md", name)
+              if match:
+                  plugin, agent = match.groups()
+                  sources = (
+                      f"plugins/{plugin}/agents.src/{agent}.md",
+                      f"plugins/{plugin}/opencode/agents/{agent}.md",
+                      f"plugins/{plugin}/common/agents/{agent}.md",
+                  )
+                  return any(
+                      subprocess.run(["git", "cat-file", "-e", f"HEAD:{source}"], check=False, stderr=subprocess.DEVNULL).returncode == 0
+                      for source in sources
+                  )
               match = re.fullmatch(r"plugins/([^/]+)/common/agents/([^/]+)\.md", name)
               if match:
                   plugin, agent = match.groups()

@@ -1,10 +1,11 @@
 ---
 description: "Read-only advisory challenger for one lens or a whole target: finds simplification, performance, stability and structure wins with evidence."
+x-omp-shell: "it confirms findings with type checks, lint rules and read-only benchmarks"
 mode: subagent
 steps: 60
 request:
   headers:
-    x-opencode-model-role: standard
+    x-opencode-model-role: reviewer
 permissions:
   - action: "*"
     resource: "*"

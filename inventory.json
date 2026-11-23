@@ -2,7 +2,7 @@
   "plugins": [
     {
       "name": "agent-coder",
-      "version": "0.11.0",
+      "version": "0.11.1",
       "description": "coder subagent for any code development task (implement, fix, debug, test, build, profile, upgrade deps) with only coding tools and skills.",
       "category": "development",
       "harnesses": {
@@ -25,7 +25,7 @@
     },
     {
       "name": "agent-efficiency",
-      "version": "0.14.0",
+      "version": "0.14.1",
       "description": "Cut agent tokens: run bash calls as the built-in shell tool, narrow explore to search and web tools, and trim read-only subagent prompts.",
       "category": "development",
       "harnesses": {
@@ -46,7 +46,7 @@
     },
     {
       "name": "agent-mechanic",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "description": "mechanic subagent: cheap, exact mechanical edits (renames, bulk edits, formatting, moving code) that run the given check.",
       "category": "development",
       "harnesses": {
@@ -81,7 +81,7 @@
     },
     {
       "name": "agent-researcher",
-      "version": "0.8.0",
+      "version": "0.8.1",
       "description": "The researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one.",
       "category": "development",
       "harnesses": {
@@ -116,7 +116,7 @@
             "adversarial-challenger",
             "code-reviewer",
             "pr-reviewer",
-            "security-reviewer"
+            "security-auditor"
           ],
           "commands": [],
           "rules": [],
@@ -134,7 +134,7 @@
           "agents": [
             "adversarial-challenger",
             "code-reviewer",
-            "security-reviewer"
+            "security-auditor"
           ],
           "commands": [],
           "rules": [],
