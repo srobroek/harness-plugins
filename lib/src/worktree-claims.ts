@@ -18,7 +18,7 @@
  */
 
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 
 const MAX_FILE_BYTES = 64 * 1024
@@ -221,7 +221,13 @@ export function removeLanding(commonDir: string, receiptId: string) {
  */
 export function listLandings(commonDir: string): { records: LandingRecord[]; unreadable: boolean } {
   const directory = join(commonDir, "opencode", "landings")
-  if (!existsSync(directory)) return { records: [], unreadable: false }
+  try {
+    statSync(directory)
+  } catch (error) {
+    // Only absence is "no records"; a directory a parent's permissions hide may hold some.
+    const code = (error as NodeJS.ErrnoException).code
+    return { records: [], unreadable: !(code === "ENOENT" || code === "ENOTDIR") }
+  }
   let names: string[]
   try {
     names = readdirSync(directory).filter((name) => name.endsWith(".json"))

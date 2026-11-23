@@ -4557,6 +4557,48 @@ describe("cleanup of another repository's landing runs against that repository",
     await h.finish()
   })
 
+  // Nothing is pending in this clone; only the target's landing records can keep it registered. The
+  // registration under pressure is delivery's own (`record`), so the predicate it passes is the one tested.
+  const collectionMarks = [
+    ["its landing record", (common: string) => writeLanding(common, { receiptId: "r1", worktree: "/w", headRefOid: "a".repeat(40), sessionID: "s", landedAt: 1 }), () => {}],
+    [
+      "a landing record it cannot read",
+      (common: string) => {
+        mkdirSync(dirname(landingFile(common, "r9")), { recursive: true })
+        writeFileSync(landingFile(common, "r9"), "garbage")
+      },
+      () => {},
+    ],
+    [
+      "landing records hidden by a parent's permissions",
+      (common: string) => {
+        writeLanding(common, { receiptId: "r1", worktree: "/w", headRefOid: "a".repeat(40), sessionID: "s", landedAt: 1 })
+        chmodSync(join(common, "opencode"), 0o000) // check-test-executables: directory permission, not a script
+      },
+      (common: string) => chmodSync(join(common, "opencode"), 0o700), // check-test-executables: directory permission, not a script
+    ],
+  ] as const
+  test.each(collectionMarks)("a clone whose target still has %s is kept when delivery's registration fills the registry", async (_name, mark, unmark) => {
+    if (process.getuid?.() === 0) return // root reads any directory
+    const h = await foreignHarness("foreign-uncollected")
+    const commonDir = scratch("foreign-uncollected-common")
+    const kept = { key: "f".repeat(16), root: "/repos/uncollected", commonDir, receiptIds: ["r1"] }
+    mark(commonDir)
+    try {
+      await addClone(h.f.env, h.sessionKey, kept, () => true)
+      for (let index = 0; index < MAX_CLONES - 1; index++) {
+        await addClone(h.f.env, h.sessionKey, { key: index.toString(16).padStart(16, "0"), root: `/repos/${index}` }, () => true)
+      }
+      await h.pending.record(h.f.receipt, "ses_lead")
+      const entries = readClones(h.f.env, h.sessionKey)
+      expect(entries).toHaveLength(MAX_CLONES)
+      expect(entries.map((entry) => entry.key)).toContain(kept.key)
+    } finally {
+      unmark(commonDir)
+    }
+    await h.finish()
+  })
+
   test("a repository whose receipts cannot be listed while running work is recorded refuses removal until holds are recorded", async () => {
     const h = await foreignHarness("foreign-holds-unknown")
     await h.pending.record(h.f.receipt, "ses_lead")

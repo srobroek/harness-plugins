@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -120,6 +120,19 @@ describe("landing records on disk", () => {
     const listed = listLandings(common)
     expect(listed.unreadable).toBe(true)
     expect(listed.records.map((record) => record.receiptId)).toEqual(["1-abc"])
+  })
+
+  test("a records directory hidden by a parent's permissions is unreadable, not absent", () => {
+    if (process.getuid?.() === 0) return // root reads any directory
+    const common = scratch()
+    writeLanding(common, landing)
+    const parent = join(common, "opencode")
+    chmodSync(parent, 0o000) // check-test-executables: directory permission, not a script
+    try {
+      expect(listLandings(common)).toEqual({ records: [], unreadable: true })
+    } finally {
+      chmodSync(parent, 0o700) // check-test-executables: directory permission, not a script
+    }
   })
 })
 
