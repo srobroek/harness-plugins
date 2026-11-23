@@ -2293,32 +2293,54 @@ import { linkSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { join as join3 } from "path";
 var CLAIM_DIR = "review-claims";
 var claimNames = (pr, sha) => [`pr-${pr}@${sha}`, `head-${sha}`];
-function takeClaims(root, names, owner) {
+var realFs = { linkSync, mkdirSync, rmSync, writeFileSync };
+var messageOf = (error) => error instanceof Error ? error.message : String(error);
+function takeClaims(root, names, owner, fs = realFs) {
   const dir = join3(root, CLAIM_DIR);
   const held = [];
-  try {
-    mkdirSync(dir, { recursive: true });
-    for (const name of names) {
-      const temporary = join3(dir, `.tmp-${randomUUID2()}`);
-      writeFileSync(temporary, JSON.stringify({ owner, at: Date.now() }), { flag: "wx" });
+  const rollback = () => {
+    const failures = [];
+    for (const name of held) {
       try {
-        linkSync(temporary, join3(dir, name));
-        held.push(name);
+        fs.rmSync(join3(dir, name), { force: true });
       } catch (error) {
-        if (error.code === "EEXIST") {
-          releaseClaims(root, held);
-          return { ok: false, taken: name };
-        }
-        throw error;
-      } finally {
-        rmSync(temporary, { force: true });
+        failures.push(`claim ${name} not released: ${messageOf(error)}`);
       }
     }
-    return { ok: true };
+    return failures;
+  };
+  try {
+    fs.mkdirSync(dir, { recursive: true });
   } catch (error) {
-    releaseClaims(root, held);
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    return { ok: false, error: messageOf(error) };
   }
+  for (const name of names) {
+    const temporary = join3(dir, `.tmp-${randomUUID2()}`);
+    let linking = false;
+    let outcome;
+    try {
+      fs.writeFileSync(temporary, JSON.stringify({ owner, at: Date.now() }), { flag: "wx" });
+      linking = true;
+      fs.linkSync(temporary, join3(dir, name));
+      held.push(name);
+    } catch (error) {
+      outcome = linking && error.code === "EEXIST" ? { taken: name } : { error: messageOf(error) };
+    }
+    const failures = [];
+    try {
+      fs.rmSync(temporary, { force: true });
+    } catch (error) {
+      failures.push(`temporary file ${temporary} not removed: ${messageOf(error)}`);
+    }
+    if (outcome === undefined && failures.length === 0)
+      continue;
+    failures.push(...rollback());
+    if (outcome && "taken" in outcome && failures.length === 0)
+      return { ok: false, taken: outcome.taken };
+    const reason = outcome ? "error" in outcome ? outcome.error : `claim ${outcome.taken} is taken` : "cleanup failed";
+    return { ok: false, error: failures.length ? `${reason}; ${failures.join("; ")}` : reason };
+  }
+  return { ok: true };
 }
 function releaseClaims(root, names) {
   for (const name of names)
@@ -3576,7 +3598,9 @@ class Autopilot {
         const info = await this.ctx.session.get({ sessionID: id }).catch(() => {
           return;
         });
-        parent = typeof info?.parentID === "string" && info.parentID !== "" ? info.parentID : null;
+        if (info === undefined)
+          return;
+        parent = typeof info.parentID === "string" && info.parentID !== "" ? info.parentID : null;
         this.activity.rememberParent(id, parent ?? undefined);
       }
       id = parent ?? undefined;

@@ -246,6 +246,20 @@ describe("/autopilot", () => {
     expect(await denied("read", "ses_lead")).toBeUndefined()
   })
 
+  test("a failed parent lookup is not remembered: the subagent is a run child again on the next call", async () => {
+    await command("")
+    await status({ action: "arm", setup: { scope: "p-1", lanes: 3 } })
+    const session = fake.context.session as unknown as { get: (input: { sessionID: string }) => Promise<unknown> }
+    const get = session.get.bind(session)
+    let failures = 1
+    session.get = async (input) => {
+      if (failures-- > 0) throw new Error("host busy")
+      return get(input)
+    }
+    expect(await denied("question", "ses_child")).toBeUndefined()
+    expect(await denied("question", "ses_child")).toBe(DENY_QUESTION)
+  })
+
   test("arming returns the 4-minute tick automation for this run", async () => {
     const result = await armed()
     expect(result.automation).toMatchObject({ trigger: { type: "every", every: "4 minutes" }, action: { type: "code" }, expires: new Date(NOW + 2 * 3_600_000 + 60_000).toISOString() })

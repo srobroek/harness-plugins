@@ -466,7 +466,9 @@ export class Autopilot {
       let parent = this.activity.cachedParent(id)
       if (parent === undefined) {
         const info: { parentID?: string } | undefined = await this.ctx.session.get({ sessionID: id }).catch(() => undefined)
-        parent = typeof info?.parentID === "string" && info.parentID !== "" ? info.parentID : null
+        // A failed lookup is unknown, not "no parent": it is not remembered, so the next call retries.
+        if (info === undefined) return undefined
+        parent = typeof info.parentID === "string" && info.parentID !== "" ? info.parentID : null
         this.activity.rememberParent(id, parent ?? undefined)
       }
       id = parent ?? undefined
