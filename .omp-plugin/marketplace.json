@@ -103,7 +103,7 @@
       "name": "project",
       "description": "Project lifecycle: scaffold a project with /new-project, set up fnox and 1Password secrets, and pick an OSI-approved license.",
       "source": "./plugins/project/omp",
-      "version": "0.12.0",
+      "version": "0.12.1",
       "category": "productivity"
     },
     {
