@@ -997,6 +997,20 @@
             "index"
           ],
           "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "find-tools"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "find-tools"
+          ],
+          "mcp": []
         }
       },
       "scope": "global"

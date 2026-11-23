@@ -1,12 +1,12 @@
 import { fileURLToPath } from "node:url"
 import { Plugin } from "@opencode/plugin"
 import { registerSkills } from "@srobroek/opencode-lib/skill-files"
-import { guardInstall } from "./install-gate.ts"
-import { type LocalInventory, renderScan, type ScanParams, SOURCES, scanSources } from "./scan.ts"
+import { guardInstall } from "../../shared/install-gate.js"
+import { type LocalInventory, renderScan, type ScanParams, SOURCES, scanSources } from "../../shared/scan.js"
 
-export { evaluationKind, guardInstall, installKind, readsStdin } from "./install-gate.ts"
-export { keyTerms, npmSearchText, queryTerms, relevance } from "./query.ts"
-export { defaultRun } from "./run.ts"
+export { evaluationKind, guardInstall, installKind, readsStdin } from "../../shared/install-gate.js"
+export { keyTerms, npmSearchText, queryTerms, relevance } from "../../shared/query.js"
+export { defaultRun } from "../../shared/run.js"
 export {
   awesomeEntries,
   catalogEntries,
@@ -18,7 +18,7 @@ export {
   renderScan,
   SOURCES,
   scanSources,
-} from "./scan.ts"
+} from "../../shared/scan.js"
 
 export const SKILL_PATH = fileURLToPath(new URL("../skills/find-tools/SKILL.md", import.meta.url))
 
@@ -46,7 +46,11 @@ export function localInventory(ctx: { plugin?: unknown; skill?: unknown; mcp?: u
     if (typeof list !== "function") throw new Error(`${name}.list unavailable`)
     return list.call(api)
   }
-  return { plugins: call(ctx.plugin, "plugin"), skills: call(ctx.skill, "skill"), mcp: call(ctx.mcp, "mcp") }
+  return {
+    plugins: call(ctx.plugin, "plugin"),
+    skills: call(ctx.skill, "skill"),
+    mcp: call(ctx.mcp, "mcp"),
+  }
 }
 
 export default Plugin.define({

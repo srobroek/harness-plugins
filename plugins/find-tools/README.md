@@ -9,11 +9,21 @@ without `setup-tools`.
 
 ## Install
 
+The plugin directory is a Pi package. Add its repository path to `packages` in `~/.pi/agent/settings.json`:
+
+```json
+{ "packages": ["/absolute/path/to/harness-plugins/plugins/find-tools"] }
+```
+
+Pi loads the extension from `pi/extensions/find-tools.js`. For foreground pi-subagents children, add `find-tools` to `subagents.defaultSubagentOnlyExtensions`; agents can set `subagentOnlyExtensions` instead.
+
+The OpenCode plugin is available separately:
+
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/find-tools/opencode'
 ```
 
-Not exported to Claude Code: the skill drives the `find_tools_scan` tool.
+The skill drives the `find_tools_scan` tool. The plugin is not exported to Claude Code.
 
 ## Tool
 
@@ -25,7 +35,7 @@ and a coverage count.
 
 | Source | Searches |
 | --- | --- |
-| `local` | Installed plugins and skills; MCP servers as status counts only, never names, commands, URLs or environment |
+| `local` | Pi packages from `~/.pi/agent/settings.json`; user skills from `~/.pi/agent/skills`; MCP status counts from `~/.pi/agent/mcp.json`, without names, commands, URLs or environment |
 | `catalog` | This repository's `.claude-plugin/marketplace.json` from GitHub, plus `skillCatalogs` |
 | `mcp_registry` | The official MCP Registry (`/v0.1/servers?search=…&version=latest`) |
 | `npm` | Keywords `opencode-plugin`, `mcp-server`, `agent-skill`, `claude-skill`; ranked and capped at 20 |
@@ -37,6 +47,8 @@ and a coverage count.
 Hits carry install hints (project scope first, user-wide for plugins). Hints
 that start a package runner are marked *runs package code*. The tool shows them
 and never runs them.
+
+[`pi-vetter`](https://pi.dev/packages/pi-vetter) is an optional Pi package for package vetting. It complements this discovery workflow; it does not replace it.
 
 ## Skill
 

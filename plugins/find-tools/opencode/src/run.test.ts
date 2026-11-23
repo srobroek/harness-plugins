@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
-import { defaultRun, OUTPUT_LIMIT_BYTES } from "./run.ts"
+import { defaultRun, OUTPUT_LIMIT_BYTES } from "../../shared/run.js"
 
 // Real child processes; 30 s leaves headroom for a loaded machine (AGENTS.md, Testing).
 setDefaultTimeout(30_000)

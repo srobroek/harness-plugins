@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/beads",
-  "version": "0.8.10",
+  "version": "0.9.0",
   "description": "Beads issue tracking: bd prime session context, shell gates on bd, git and gh commands, store pinning and the Beads skills.",
   "keywords": [
     "pi-package"
