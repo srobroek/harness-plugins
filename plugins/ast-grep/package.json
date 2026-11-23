@@ -1,6 +1,6 @@
 {
   "name": "ast-grep",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Structural code search with the ast-grep CLI: a skill on patterns, Rust macro and Go call gotchas, bounded output, preview-only rewrites, and when to use Semgrep or rust-analyzer instead.",
   "private": true,
   "type": "module",
