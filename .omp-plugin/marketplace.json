@@ -9,6 +9,13 @@
   },
   "plugins": [
     {
+      "name": "agent-mechanic",
+      "description": "mechanic subagent: cheap, exact mechanical edits (renames, bulk edits, formatting, moving code) that run the given check.",
+      "source": "./plugins/agent-mechanic/omp",
+      "version": "0.7.0",
+      "category": "development"
+    },
+    {
       "name": "debate",
       "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
       "source": "./plugins/debate/omp",
