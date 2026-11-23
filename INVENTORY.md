@@ -30,7 +30,7 @@
 | lang-go | 0.8.0 | development | global | opencode, claude, omp |
 | lang-python | 0.8.0 | development | global | opencode, claude, omp |
 | lang-rust | 0.8.0 | development | global | opencode, claude, omp |
-| lang-typescript | 0.8.0 | development | global | opencode, claude, omp |
+| lang-typescript | 0.9.0 | development | global | opencode, claude, omp |
 | lsp | 0.5.0 | development | project | opencode |
 | model-roles | 0.11.0 | development | global | opencode |
 | modes | 1.2.0 | development | global | opencode |
