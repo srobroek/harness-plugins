@@ -33,6 +33,7 @@ var MCP_EXCLUDED_AGENTS = new Set([
   "journey-validator",
   "mechanic",
   "operator",
+  "orchestrator",
   "pr-reviewer",
   "seance",
   "shepherd",
@@ -263,7 +264,8 @@ var AGENT_IDS = [
   "researcher",
   "pr-reviewer",
   "operator",
-  "shepherd"
+  "shepherd",
+  "orchestrator"
 ];
 var FRONTMATTER2 = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 function agentPath(id) {
@@ -627,7 +629,7 @@ function stashesOnBranch(subjects, branch) {
 // plugins/delivery/package.json
 var package_default = {
   name: "delivery",
-  version: "0.11.1",
+  version: "0.12.0",
   description: "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
   private: true,
   type: "module",

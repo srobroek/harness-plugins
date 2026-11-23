@@ -1,3 +1,9 @@
+## speckit [0.11.0](https://github.com/srobroek/harness-plugins/compare/speckit--v0.10.3...speckit--v0.11.0) (2026-11-22)
+
+### Features
+
+* **delivery:** ship the orchestrator agent ([#121](https://github.com/srobroek/harness-plugins/issues/121)) ([53f33c0](https://github.com/srobroek/harness-plugins/commit/53f33c016315732220a7c87066267931ee87f514))
+
 ## speckit [0.10.3](https://github.com/srobroek/harness-plugins/compare/speckit--v0.10.2...speckit--v0.10.3) (2026-11-22)
 
 ### Bug Fixes

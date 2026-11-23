@@ -68,6 +68,7 @@ function fakeRun(repo: Repo, log: string[][]) {
       const branch = repo.branch[dir]
       return branch ? ok(`${branch}\n`) : fail
     }
+    if (cmd.startsWith("show-ref --verify --hash refs/heads/")) return ok(`${"c".repeat(40)}\n`)
     if (cmd.startsWith("show-ref")) return fail
     if (cmd.startsWith("check-ref-format --branch ")) return args[2]?.startsWith("-") ? fail : ok(args[2] ?? "")
     // After the merge the lane tip is an ancestor of the target.

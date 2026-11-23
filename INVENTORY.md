@@ -3,50 +3,50 @@
 
 | Plugin | Version | Category | Scope | Harnesses |
 | --- | --- | --- | --- | --- |
-| agent-coder | 0.10.1 | development | global | opencode |
-| agent-efficiency | 0.13.0 | development | global | opencode |
-| agent-mechanic | 0.6.1 | development | global | opencode |
-| agent-researcher | 0.7.1 | development | global | opencode |
-| agent-reviewer | 0.10.1 | development | global | opencode, claude |
-| agent-seance | 0.7.1 | development | global | opencode |
-| architecture | 0.8.1 | development | global | opencode, claude |
-| ast-grep | 1.2.1 | development | global | opencode, claude |
+| agent-coder | 0.11.0 | development | global | opencode |
+| agent-efficiency | 0.14.0 | development | global | opencode |
+| agent-mechanic | 0.7.0 | development | global | opencode |
+| agent-researcher | 0.8.0 | development | global | opencode |
+| agent-reviewer | 0.11.0 | development | global | opencode, claude |
+| agent-seance | 0.8.0 | development | global | opencode |
+| architecture | 0.9.0 | development | global | opencode, claude |
+| ast-grep | 1.3.0 | development | global | opencode, claude |
 | autopilot | 1.3.4 | development | global | opencode |
-| aws | 0.7.1 | development | global | opencode, claude |
+| aws | 0.8.0 | development | global | opencode, claude |
 | beads | 0.8.10 | development | project | opencode, claude |
-| build | 0.7.1 | development | project | opencode |
-| cad | 0.8.1 | development | project | opencode |
+| build | 0.8.0 | development | project | opencode |
+| cad | 0.9.0 | development | project | opencode |
 | chezmoi | 0.6.0 | development | global | opencode, claude |
-| claude-compat | 0.4.0 | development | project | opencode |
-| code-challenge | 1.4.0 | development | global | opencode |
-| debate | 0.5.1 | productivity | global | opencode, claude |
-| delivery | 0.11.1 | development | global | opencode |
+| claude-compat | 0.5.0 | development | project | opencode |
+| code-challenge | 1.5.0 | development | global | opencode |
+| debate | 0.6.0 | productivity | global | opencode, claude |
+| delivery | 0.12.0 | development | global | opencode |
 | dep-update | 0.6.1 | development | global | opencode |
-| design | 0.9.1 | development | project | opencode, claude |
+| design | 0.10.0 | development | project | opencode, claude |
 | docs | 0.4.0 | development | global | opencode |
-| eli5 | 0.5.1 | productivity | global | opencode, claude |
+| eli5 | 0.6.0 | productivity | global | opencode, claude |
 | find-tools | 0.4.0 | development | global | opencode |
 | journeys | 0.5.0 | development | project | opencode, claude |
-| lang-go | 0.6.1 | development | global | opencode, claude |
-| lang-python | 0.6.1 | development | global | opencode, claude |
-| lang-rust | 0.6.1 | development | global | opencode, claude |
-| lang-typescript | 0.7.1 | development | global | opencode, claude |
+| lang-go | 0.7.0 | development | global | opencode, claude |
+| lang-python | 0.7.0 | development | global | opencode, claude |
+| lang-rust | 0.7.0 | development | global | opencode, claude |
+| lang-typescript | 0.8.0 | development | global | opencode, claude |
 | lsp | 0.5.0 | development | project | opencode |
-| model-roles | 0.10.0 | development | global | opencode |
-| modes | 1.1.1 | development | global | opencode |
+| model-roles | 0.11.0 | development | global | opencode |
+| modes | 1.2.0 | development | global | opencode |
 | parley | 0.4.2 | development | global | opencode |
 | plugin-audit | 0.2.0 | development | project | opencode |
-| project | 0.9.1 | productivity | global | opencode, claude |
-| quality | 0.13.1 | development | global | opencode, claude |
-| repomix | 0.4.1 | development | global | opencode, claude |
-| safety | 0.12.2 | development | global | opencode |
+| project | 0.10.0 | productivity | global | opencode, claude |
+| quality | 0.14.0 | development | global | opencode, claude |
+| repomix | 0.5.0 | development | global | opencode, claude |
+| safety | 0.13.0 | development | global | opencode |
 | session | 0.4.1 | development | global | opencode |
-| speckit | 0.10.3 | development | project | opencode, claude |
+| speckit | 0.11.0 | development | project | opencode, claude |
 | statusline | 0.4.0 | development | global | opencode |
-| subagent-worktree | 0.8.2 | development | global | opencode |
-| toolchain | 0.7.2 | development | global | opencode, claude |
-| trunk-dev | 0.9.0 | development | global | opencode, claude |
+| subagent-worktree | 0.8.3 | development | global | opencode |
+| toolchain | 0.8.0 | development | global | opencode, claude |
+| trunk-dev | 0.10.0 | development | global | opencode, claude |
 | whats-new | 0.4.0 | development | global | opencode |
-| worktrunk | 0.5.1 | development | project | opencode, claude |
+| worktrunk | 0.6.0 | development | project | opencode, claude |
 
 Each plugin's own `INVENTORY.md` lists what it ships per harness.

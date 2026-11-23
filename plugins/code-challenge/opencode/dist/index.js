@@ -1117,6 +1117,7 @@ var MCP_EXCLUDED_AGENTS = new Set([
   "journey-validator",
   "mechanic",
   "operator",
+  "orchestrator",
   "pr-reviewer",
   "seance",
   "shepherd",

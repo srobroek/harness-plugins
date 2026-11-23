@@ -1,3 +1,9 @@
+## safety [0.13.0](https://github.com/srobroek/harness-plugins/compare/safety--v0.12.2...safety--v0.13.0) (2026-11-22)
+
+### Features
+
+* **delivery:** ship the orchestrator agent ([#121](https://github.com/srobroek/harness-plugins/issues/121)) ([53f33c0](https://github.com/srobroek/harness-plugins/commit/53f33c016315732220a7c87066267931ee87f514))
+
 ## safety [0.12.2](https://github.com/srobroek/harness-plugins/compare/safety--v0.12.1...safety--v0.12.2) (2026-11-22)
 
 ### Bug Fixes
