@@ -1,3 +1,9 @@
+## agent-coder [0.12.2](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.1...agent-coder--v0.12.2) (2026-11-23)
+
+### Bug Fixes
+
+* **release:** commit regenerated pi trees in release commits ([4a648a2](https://github.com/srobroek/harness-plugins/commit/4a648a2d2e83b393ee8a7d6d4e26f5538e513a1c))
+
 ## agent-coder [0.12.1](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.0...agent-coder--v0.12.1) (2026-11-23)
 
 ### Bug Fixes

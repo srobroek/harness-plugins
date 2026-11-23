@@ -201,7 +201,7 @@
       "name": "worktrunk",
       "description": "Worktrunk (wt) skills: work in linked worktrees and run deterministic preflight checks before an agent run or merge.",
       "source": "./plugins/worktrunk/claude",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/worktrunk",
       "repository": "https://github.com/srobroek/harness-plugins"

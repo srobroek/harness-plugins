@@ -2,7 +2,7 @@
   "plugins": [
     {
       "name": "agent-coder",
-      "version": "0.12.1",
+      "version": "0.12.2",
       "description": "coder subagent for any code development task (implement, fix, debug, test, build, profile, upgrade deps) with only coding tools and skills.",
       "category": "development",
       "harnesses": {
@@ -2240,7 +2240,7 @@
     },
     {
       "name": "worktrunk",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "description": "Worktrunk (wt) skills: work in linked worktrees and run deterministic preflight checks before an agent run or merge.",
       "category": "development",
       "harnesses": {
