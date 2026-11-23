@@ -1,57 +1,61 @@
-import { execFile } from "node:child_process"
-import { existsSync, statSync } from "node:fs"
+import { existsSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
-import { promisify } from "node:util"
+import { fileURLToPath } from "node:url"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
-import { JOURNEYS_SCRIPT, journeysArgs, journeysWrites, runJourneys, type JourneysCommand, type JourneysIndexParams } from "../opencode/src/journeys-tool.ts"
+import {
+  installFormulas,
+  journeysWrites,
+  readIndexParams,
+  runJourneys,
+} from "../shared/journeys-tool.ts"
 
-const execFileAsync = promisify(execFile)
-const COMMANDS: readonly JourneysCommand[] = ["index", "lint", "prune"]
-
-function readParams(input: unknown): JourneysIndexParams | string {
-  const value = (input ?? {}) as Record<string, unknown>
-  const command = value.command as JourneysCommand
-  if (!COMMANDS.includes(command)) return "command must be index, lint or prune"
-  if (typeof value.journeysDir !== "string" || value.journeysDir === "") return "journeysDir is required"
-  const params: JourneysIndexParams = { command, journeysDir: value.journeysDir }
-  if (value.keep !== undefined) {
-    if (typeof value.keep !== "number" || !Number.isSafeInteger(value.keep) || value.keep < 0) return "keep must be a nonnegative safe integer"
-    params.keep = value.keep
-  }
-  if (value.yes !== undefined) params.yes = value.yes === true
-  if (value.journey !== undefined) {
-    if (typeof value.journey !== "string" || value.journey === "") return "journey must be a non-empty string"
-    params.journey = value.journey
-  }
-  return params
-}
-
-const within = (base: string, path: string) => isAbsolute(path) ? path : resolve(base, path)
+const within = (base: string, path: string) => (isAbsolute(path) ? path : resolve(base, path))
 
 export default function (pi: ExtensionAPI): void {
+  const packageRoot = fileURLToPath(new URL("..", import.meta.url))
+  const asset = (path: string) => {
+    const candidates = [
+      resolve(packageRoot, "skills", path),
+      resolve(packageRoot, "common/skills", path),
+      resolve(packageRoot, "pi/skills", path),
+      resolve(packageRoot, "../common/skills", path),
+    ]
+    const found = candidates.find(existsSync)
+    if (found === undefined) throw new Error(`journeys plugin asset not found: ${path}`)
+    return found
+  }
+  const journeysScript = asset("journey-init/scripts/journeys.py")
+  const formulasDir = asset("journey-verify/formulas")
+
   pi.registerTool({
     name: "journeys_index",
     label: "Index Journeys",
-    description: "Index, structurally lint, or prune a user-journeys directory with the bundled journeys.py helper. index rewrites INDEX.md; prune is a dry run unless yes=true. Writes require UI confirmation.",
+    description: "Index, structurally lint or prune a user-journeys directory with the bundled journeys.py helper. Lint is structural, not semantic readiness. index rewrites INDEX.md; prune is a dry run unless yes=true. Every prune invocation is confirmed because it may delete runs.",
     parameters: Type.Object({
       command: Type.Union([Type.Literal("index"), Type.Literal("lint"), Type.Literal("prune")]),
       journeysDir: Type.String({ description: "Path to the journeys directory" }),
-      keep: Type.Optional(Type.Integer({ minimum: 0, description: "For prune, retain the newest N runs (default 20)" })),
-      yes: Type.Optional(Type.Boolean({ description: "For prune, actually delete (default dry run)" })),
-      journey: Type.Optional(Type.String({ description: "For prune, journey directory name; omit only for authorized directory-wide prune" })),
+      keep: Type.Optional(Type.Integer({ minimum: 0, description: "prune: keep the newest N runs (default 20)" })),
+      yes: Type.Optional(Type.Boolean({ description: "prune: actually delete (default dry run)" })),
+      journey: Type.Optional(Type.String({ description: "prune: the journey directory name; omit only for an authorized directory-wide prune" })),
     }, { required: ["command", "journeysDir"], additionalProperties: false }),
     async execute(_id, raw, signal, _update, ctx) {
-      const params = readParams(raw)
+      const params = readIndexParams(raw)
       if (typeof params === "string") return { content: [{ type: "text", text: `journeys_index: ${params}` }], details: { ok: false } }
       const resolved = { ...params, journeysDir: within(ctx.cwd, params.journeysDir) }
-      if (journeysWrites(resolved)) {
-        if (!ctx.hasUI) return { content: [{ type: "text", text: "journeys_index: write refused because confirmation UI is unavailable" }], details: { ok: false } }
-        const action = resolved.command === "index" ? `write INDEX.md in ${resolved.journeysDir}` : `delete selected runs in ${resolved.journeysDir}`
-        if (!(await ctx.ui.confirm("Confirm journeys write", action))) return { content: [{ type: "text", text: "journeys_index: write cancelled" }], details: { ok: false } }
+      if ((resolved.command === "prune" || journeysWrites(resolved)) && !ctx.hasUI)
+        return { content: [{ type: "text", text: `journeys_index: ${resolved.command} refused because confirmation UI is unavailable` }], details: { ok: false } }
+      if (resolved.command === "prune" || journeysWrites(resolved)) {
+        const action = resolved.command === "index"
+          ? `write INDEX.md in ${resolved.journeysDir}`
+          : resolved.yes === true
+            ? `delete selected runs in ${resolved.journeysDir}`
+            : `show prune candidates in ${resolved.journeysDir}`
+        if (!(await ctx.ui.confirm("Confirm journeys write", action)))
+          return { content: [{ type: "text", text: "journeys_index: write cancelled" }], details: { ok: false } }
       }
       try {
-        const result = await runJourneys(ctx.cwd, resolved, signal)
+        const result = await runJourneys(ctx.cwd, resolved, signal, undefined, undefined, journeysScript)
         const output = result.stdout && result.stderr ? `${result.stdout}\n${result.stderr}` : result.stdout || result.stderr
         if ("unrun" in result) {
           const text = [`journeys.py ${params.command} did not finish: ${result.unrun}`, output].filter(Boolean).join("\n")
@@ -67,19 +71,20 @@ export default function (pi: ExtensionAPI): void {
   pi.registerTool({
     name: "journey_install_formulas",
     label: "Install Journey Formulas",
-    description: "Copy package-owned journey formula TOMLs into a Beads workspace .beads/formulas/. Identical copies stay; divergent files are refused unless force=true; symlinked paths are refused. Requires UI confirmation.",
+    description: "Copy the journeys plugin's formula TOMLs into a Beads workspace's .beads/formulas/. Identical copies stay; divergent destinations are refused unless force=true; symlinked paths are always refused.",
     parameters: Type.Object({
       repoRoot: Type.String({ description: "Repository root containing .beads/" }),
       force: Type.Optional(Type.Boolean({ description: "Overwrite divergent destination files" })),
     }, { required: ["repoRoot"], additionalProperties: false }),
-    async execute(_id, { repoRoot, force }, _signal, _update, ctx) {
+    async execute(_id, raw, _signal, _update, ctx) {
+      const { repoRoot, force } = raw as { repoRoot?: unknown; force?: unknown }
+      if (typeof repoRoot !== "string" || repoRoot === "")
+        return { content: [{ type: "text", text: "journey_install_formulas: repoRoot is required" }], details: { ok: false } }
       if (!ctx.hasUI) return { content: [{ type: "text", text: "journey_install_formulas: write refused because confirmation UI is unavailable" }], details: { ok: false } }
       const target = within(ctx.cwd, repoRoot)
       if (!(await ctx.ui.confirm("Confirm formula install", `Copy journey formulas into ${target}/.beads/formulas/?`)))
         return { content: [{ type: "text", text: "journey_install_formulas: write cancelled" }], details: { ok: false } }
-      const sources = resolve(JOURNEYS_SCRIPT, "../../journey-verify/formulas")
-      const { installFormulas } = await import("../opencode/src/journeys-tool.ts")
-      const result = installFormulas(target, force === true, ctx.cwd, sources)
+      const result = installFormulas(repoRoot, force === true, ctx.cwd, formulasDir)
       return { content: [{ type: "text", text: result.text }], details: { ok: result.ok, copied: result.copied, unchanged: result.unchanged } }
     },
   })
