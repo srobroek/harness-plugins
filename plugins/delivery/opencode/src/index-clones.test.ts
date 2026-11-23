@@ -677,18 +677,21 @@ const landedReceipt = async () => {
   return join(receiptDirectory(env(), (await repositoryContext(repoB))?.key as string), `${receiptId}.json`)
 }
 
-/** Let an emitted event reach the plugin's subscription. */
-const delivered = () => new Promise((done) => setTimeout(done, 20))
-
-test("an empty report whose hold scan fails creates no veto", async () => {
+test("an empty report, though its hold scan fails, lifts the same session's earlier veto and creates none", async () => {
   if (process.getuid?.() === 0) return // root reads any directory
   const errors = spyOn(console, "error").mockImplementation(() => {})
   try {
     const s = await session()
     await s.land()
     cleanupResult = REMOVED
-    await withUnreadableReceipts(() => s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] }))
+    // A veto from session a: its shell report could not be recorded in the target.
+    await withUnreadableReceipts(() => s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() }))
     cleanupCalls = []
+    await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
+    expect(cleanupCalls).toEqual([])
+    // Session a now reports no running work, and that scan fails too.
+    await withUnreadableReceipts(() => s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] }))
+    // Reads recover; another session's turn end cleans.
     await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
     expect(cleanupCalls).toHaveLength(1)
   } finally {
@@ -710,8 +713,62 @@ test("a deleted session's veto goes, and while it holds the log names the sessio
     expect(cleanupCalls).toEqual([])
     const logged = errors.mock.calls.map((call) => String(call[0])).join("\n")
     expect(logged).toContain("held for session a until it reports again with its running work recorded, reports no running work, or is deleted")
-    s.fake.emit({ type: "session.deleted", data: { sessionID: "a" } })
-    await delivered()
+    // Resolves once the plugin's subscription has handled it.
+    await s.fake.emit({ type: "session.deleted", data: { sessionID: "a" } })
+    await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
+    expect(cleanupCalls).toHaveLength(1)
+  } finally {
+    errors.mockRestore()
+  }
+})
+
+test("a report still in flight when its session is deleted leaves no veto, though its clone scan then fails", async () => {
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const rootB = (await repositoryContext(repoB))?.ledger.root as string
+    // Resolving the clone waits here once, so the deletion lands mid-report; then it fails.
+    let entered: () => void = () => {}
+    const inside = new Promise<void>((done) => {
+      entered = done
+    })
+    let release: () => void = () => {}
+    const released = new Promise<void>((done) => {
+      release = done
+    })
+    let gated = false
+    const observe: GitRunner = async (argv, cwd, timeoutMs) => {
+      if (gated && (cwd === rootB || cwd === repoB)) {
+        gated = false
+        entered()
+        await released
+        return null
+      }
+      try {
+        return execFileSync("git", [...argv], { cwd, timeout: timeoutMs, encoding: "utf8" })
+      } catch {
+        return null
+      }
+    }
+    const s = await session("s", undefined, observe)
+    await s.land()
+    cleanupResult = REMOVED
+    const away = `${repoB}.away`
+    // The clone's .git marker is gone with it, so resolving it asks git.
+    renameSync(repoB, away)
+    let report: Promise<unknown> | undefined
+    try {
+      gated = true
+      report = s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
+      await inside
+      await s.fake.emit({ type: "session.deleted", data: { sessionID: "a" } })
+      release()
+      await report
+    } finally {
+      release()
+      await report
+      renameSync(away, repoB)
+    }
+    cleanupCalls = []
     await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
     expect(cleanupCalls).toHaveLength(1)
   } finally {

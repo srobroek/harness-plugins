@@ -297,6 +297,13 @@ export function createPendingCleanup(deps: PendingDeps) {
    */
   const missedReports = new Map<string, string>()
   /**
+   * Per session, how many times its running work was confirmed stopped (an empty report, or its
+   * deletion). A report remembers the count it started under and writes a veto only while it is
+   * unchanged, so a report still in flight then cannot restore a veto nobody could lift.
+   */
+  const reportGeneration = new Map<string, number>()
+  const generationOf = (sessionID: string) => reportGeneration.get(sessionID) ?? 0
+  /**
    * Repositories (by canonical checkout) where a session's last report of running work could not be
    * recorded, by reporting session: nothing is removed there until that session's next report records it.
    */
@@ -496,6 +503,7 @@ export function createPendingCleanup(deps: PendingDeps) {
    * veto its earlier reports left is dropped.
    */
   const forgetReports = (sessionID: string) => {
+    reportGeneration.set(sessionID, generationOf(sessionID) + 1)
     missedReports.delete(sessionID)
     for (const directory of [...holdsUnknown.keys()]) clearHoldsUnknown(directory, sessionID)
   }
@@ -1234,7 +1242,10 @@ export function createPendingCleanup(deps: PendingDeps) {
     `held for session ${sessionID} until it reports again with its running work recorded, reports no running work, or is deleted`
 
   const writeHolds = async (sessionID: string, background: ReadonlyArray<BackgroundJob>) => {
-    const vetoes = background.length > 0
+    // A report of running work may leave vetoes, and only while its session's work was not confirmed
+    // stopped since it started (an empty report or a deletion in between makes it stale).
+    const generation = generationOf(sessionID)
+    const vetoes = () => background.length > 0 && generationOf(sessionID) === generation
     // One lookup per session, shared by every repository's writes.
     const locations = new Map<string, Promise<Location>>()
     const locationOf = (id: string): Promise<Location> => {
@@ -1251,7 +1262,7 @@ export function createPendingCleanup(deps: PendingDeps) {
       const mine = own.veto() ?? (await own.observe())
       if (mine === null) {
         const why = `the session's repository could not be resolved to find the clones the running work of ${sessionID} may be in`
-        if (vetoes) missedReports.set(sessionID, `${why}; ${recovery(sessionID)}`)
+        if (vetoes()) missedReports.set(sessionID, `${why}; ${recovery(sessionID)}`)
         console.error(`delivery: ${why}`)
         return
       }
@@ -1261,7 +1272,7 @@ export function createPendingCleanup(deps: PendingDeps) {
       } catch (error) {
         // The clones are unknown: until this session reports again and reaches them, no other repository's worktree is removed.
         const why = `the running work of ${sessionID} could not be recorded in the clones (${error instanceof Error ? error.message : String(error)})`
-        if (vetoes) missedReports.set(sessionID, `${why}; ${recovery(sessionID)}`)
+        if (vetoes()) missedReports.set(sessionID, `${why}; ${recovery(sessionID)}`)
         console.error(`delivery: ${why}`, error)
         return
       }
@@ -1278,7 +1289,7 @@ export function createPendingCleanup(deps: PendingDeps) {
           const repo = await cloneAt(entry).catch(() => null)
           if (repo === null) {
             const why = `the clone ${entry.root} could not be resolved to record the running work of ${sessionID}`
-            if (vetoes) markHoldsUnknown(canonicalDirectory(entry.root), sessionID, `${why}; ${recovery(sessionID)}`)
+            if (vetoes()) markHoldsUnknown(canonicalDirectory(entry.root), sessionID, `${why}; ${recovery(sessionID)}`)
             console.error(`delivery: ${why}`)
             return
           }
@@ -1299,7 +1310,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     sessionID: string,
     background: ReadonlyArray<BackgroundJob>,
     locationOf: (id: string) => Promise<Location>,
-    vetoes: boolean,
+    vetoes: () => boolean,
   ) => {
     const guard = canonicalDirectory(repo.cwd)
     try {
@@ -1307,7 +1318,7 @@ export function createPendingCleanup(deps: PendingDeps) {
       clearHoldsUnknown(guard, sessionID)
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error)
-      if (vetoes) markHoldsUnknown(guard, sessionID, `the running work of ${sessionID} could not be recorded in ${repo.cwd} (${why}); ${recovery(sessionID)}`)
+      if (vetoes()) markHoldsUnknown(guard, sessionID, `the running work of ${sessionID} could not be recorded in ${repo.cwd} (${why}); ${recovery(sessionID)}`)
       console.error(`delivery: could not record holds in ${repo.cwd}: ${why}`)
     }
   }

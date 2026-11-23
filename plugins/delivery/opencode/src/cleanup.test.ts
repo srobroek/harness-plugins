@@ -4592,10 +4592,31 @@ describe("cleanup of another repository's landing runs against that repository",
       await h.pending.record(h.f.receipt, "ses_lead")
       const entries = readClones(h.f.env, h.sessionKey)
       expect(entries).toHaveLength(MAX_CLONES)
+      // The incoming clone was registered, so retention is not a write that failed.
+      expect(entries.map((entry) => entry.key)).toContain(h.f.receipt.repo.key)
       expect(entries.map((entry) => entry.key)).toContain(kept.key)
     } finally {
       unmark(commonDir)
     }
+    await h.finish()
+  })
+
+  test("a clone whose landing records are collected is evicted, oldest first, when delivery's registration fills the registry", async () => {
+    const h = await foreignHarness("foreign-collected")
+    // The target's records directory exists and holds nothing for its receipts: collected.
+    const commonDir = scratch("foreign-collected-common")
+    writeLanding(commonDir, { receiptId: "r1", worktree: "/w", headRefOid: "a".repeat(40), sessionID: "s", landedAt: 1 })
+    rmSync(landingFile(commonDir, "r1"))
+    const collected = { key: "f".repeat(16), root: "/repos/collected", commonDir, receiptIds: ["r1"] }
+    await addClone(h.f.env, h.sessionKey, collected, () => true)
+    for (let index = 0; index < MAX_CLONES - 1; index++) {
+      await addClone(h.f.env, h.sessionKey, { key: index.toString(16).padStart(16, "0"), root: `/repos/${index}` }, () => true)
+    }
+    await h.pending.record(h.f.receipt, "ses_lead")
+    const keys = readClones(h.f.env, h.sessionKey).map((entry) => entry.key)
+    expect(keys).toHaveLength(MAX_CLONES)
+    expect(keys).toContain(h.f.receipt.repo.key)
+    expect(keys).not.toContain(collected.key)
     await h.finish()
   })
 

@@ -224,9 +224,9 @@ export function listLandings(commonDir: string): { records: LandingRecord[]; unr
   try {
     statSync(directory)
   } catch (error) {
-    // Only absence is "no records"; a directory a parent's permissions hide may hold some.
-    const code = (error as NodeJS.ErrnoException).code
-    return { records: [], unreadable: !(code === "ENOENT" || code === "ENOTDIR") }
+    // Only absence is "no records". A directory a parent's permissions hide, or an ancestor that is not
+    // a directory (ENOTDIR, never written by delivery), may stand where records are expected.
+    return { records: [], unreadable: (error as NodeJS.ErrnoException).code !== "ENOENT" }
   }
   let names: string[]
   try {

@@ -134,6 +134,12 @@ describe("landing records on disk", () => {
       chmodSync(parent, 0o700) // check-test-executables: directory permission, not a script
     }
   })
+
+  test("a records directory under an ancestor that is not a directory is unreadable, not absent", () => {
+    const common = scratch()
+    writeFileSync(join(common, "opencode"), "not a directory")
+    expect(listLandings(common)).toEqual({ records: [], unreadable: true })
+  })
 })
 
 describe("lane notices on disk", () => {

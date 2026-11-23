@@ -97,8 +97,11 @@ export type FakeContext = {
   }
   /** Names of the hooks currently registered per domain, in registration order. */
   hooks: (domain: Domain) => string[]
-  /** Deliver an event to every open `event.subscribe` iterator. */
-  emit: (event: unknown) => void
+  /**
+   * Deliver an event to every open `event.subscribe` iterator whose `types` include its type (all, when
+   * it named none). Resolves once each of them has handled it: asked for the next event, or closed.
+   */
+  emit: (event: unknown) => Promise<void>
   /** End every open `event.subscribe` iterator. */
   closeEvents: () => void
   /** Number of registrations not yet disposed. */
@@ -215,16 +218,20 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
     await options.assert?.(input)
   }
 
-  type Subscriber = { queue: unknown[]; closed: boolean; wake?: () => void }
+  /** One `event.subscribe` iterator: the types it asked for (all when absent), and what it has not taken yet. */
+  type Subscriber = { types?: ReadonlySet<string>; queue: unknown[]; closed: boolean; wake?: () => void; idle: Array<() => void> }
   const subscribers = new Set<Subscriber>()
   const subscribe = (input?: unknown): AsyncIterable<unknown> => {
     calls.push({ method: "event.subscribe", input })
-    const subscriber: Subscriber = { queue: [], closed: false }
+    const types = (input as { types?: unknown } | undefined)?.types
+    const subscriber: Subscriber = { queue: [], closed: false, idle: [], ...(Array.isArray(types) ? { types: new Set(types as string[]) } : {}) }
     subscribers.add(subscriber)
     const done = { value: undefined, done: true as const }
     return {
       [Symbol.asyncIterator]: () => ({
         next: async () => {
+          // Asking for the next event means every earlier one was handled: acknowledge them.
+          if (subscriber.queue.length === 0) for (const handled of subscriber.idle.splice(0)) handled()
           while (subscriber.queue.length === 0 && !subscriber.closed) {
             await new Promise<void>((resolve) => {
               subscriber.wake = resolve
@@ -237,6 +244,7 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
         return: async () => {
           subscriber.closed = true
           subscribers.delete(subscriber)
+          for (const handled of subscriber.idle.splice(0)) handled()
           return done
         },
       }),
@@ -471,15 +479,22 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
     fire: { tool: fire("tool"), shell: fire("shell"), permission: fire("permission"), session: fire("session") },
     hooks: (domain) => hooks[domain].map((entry) => entry.name),
     emit: (event) => {
+      const type = (event as { type?: unknown } | null)?.type
+      const handled: Array<Promise<void>> = []
       for (const subscriber of subscribers) {
+        // A subscriber that asked for some types gets only those, as the host's stream does.
+        if (subscriber.types !== undefined && !(typeof type === "string" && subscriber.types.has(type))) continue
         subscriber.queue.push(event)
+        handled.push(new Promise<void>((resolve) => subscriber.idle.push(resolve)))
         subscriber.wake?.()
       }
+      return Promise.all(handled).then(() => {})
     },
     closeEvents: () => {
       for (const subscriber of subscribers) {
         subscriber.closed = true
         subscriber.wake?.()
+        for (const handled of subscriber.idle.splice(0)) handled()
       }
       subscribers.clear()
     },

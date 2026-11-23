@@ -189,6 +189,34 @@ describe("createFakeContext", () => {
     expect(fake.calls).toEqual([{ method: "event.subscribe", input: undefined }])
   })
 
+  test("a subscription that names types receives only those, and emit resolves once it has handled the event", async () => {
+    const fake = createFakeContext()
+    const seen: unknown[] = []
+    let handling: () => void = () => {}
+    const reader = (async () => {
+      for await (const event of fake.context.event.subscribe({ types: ["wanted"] } as never)) {
+        // The handler is still busy with this event: emit must not resolve yet.
+        await new Promise<void>((done) => {
+          handling = done
+          seen.push(event)
+        })
+      }
+    })()
+    await fake.emit({ type: "unwanted" })
+    let handled = false
+    const delivery = fake.emit({ type: "wanted" }).then(() => {
+      handled = true
+    })
+    await Bun.sleep(5)
+    expect(seen).toEqual([{ type: "wanted" }])
+    expect(handled).toBe(false)
+    handling()
+    await delivery
+    expect(handled).toBe(true)
+    fake.closeEvents()
+    await reader
+  })
+
   test("skill transforms add skills and dispose them; existing skills stay", async () => {
     const fake = createFakeContext({ skills: [{ id: "host", content: "host" }] })
     const registration = await fake.context.skill.transform((editor) => {
