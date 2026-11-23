@@ -1,3 +1,9 @@
+## beads [0.9.0](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.10...beads--v0.9.0) (2026-11-23)
+
+### Features
+
+* **beads:** add the pi extension with the shell, claim and evidence gates ([9a41e9f](https://github.com/srobroek/harness-plugins/commit/9a41e9f3c26cf95a31e8a3fa42753fae85cd65c1))
+
 ## beads [0.8.10](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.9...beads--v0.8.10) (2026-11-22)
 
 ### Bug Fixes
