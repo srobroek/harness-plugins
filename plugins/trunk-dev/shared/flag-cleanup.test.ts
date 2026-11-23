@@ -300,16 +300,17 @@ describe("flagCleanupFollowUp", () => {
 })
 
 describe("findRunner", () => {
-  test("finds the beads plugin's runner from this plugin's dist directory in the repository", () => {
-    const found = findRunner(join(import.meta.dir, "..", "dist"))
-    expect(found?.script).toBe(join(import.meta.dir, "..", "..", "..", "beads", "opencode", "dist", "bd-embedded-write-runner.js"))
+  test("finds the beads plugin's runner from this plugin's OpenCode and pi bundle directories in the repository", () => {
+    const runner = join(import.meta.dir, "..", "..", "beads", "opencode", "dist", "bd-embedded-write-runner.js")
+    expect(findRunner(join(import.meta.dir, "..", "opencode", "dist"))?.script).toBe(runner)
+    expect(findRunner(join(import.meta.dir, "..", "pi", "extensions"))?.script).toBe(runner)
   })
 })
 
 describe("templates", () => {
   test("ship the stale-bead-branches job for both forges", () => {
     for (const name of ["stale-branches.github.yml", "stale-branches.gitlab-ci.yml"]) {
-      const text = readFileSync(join(import.meta.dir, "..", "skills", "trunk-dev-release-setup", "templates", name), "utf8")
+      const text = readFileSync(join(import.meta.dir, "..", "common", "skills", "trunk-dev-release-setup", "templates", name), "utf8")
       expect(text).toMatch(/^\s*stale-bead-branches\s*:/m)
     }
   })

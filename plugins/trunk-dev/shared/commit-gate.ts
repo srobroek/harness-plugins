@@ -6,8 +6,8 @@
  */
 
 import { resolve } from "node:path";
-import { type GitInvocation, gitInvocation, invocations, overridden } from "../../shared/shell.js";
-import { type GitRunner, isReleaseRepository, readText, runGit } from "./release-repo.ts";
+import { type GitRunner, isReleaseRepository, readText, runGit } from "./release-repo.js";
+import { type GitInvocation, gitInvocation, invocations, overridden } from "./shell.js";
 
 export const COMMIT_OVERRIDE = "TRUNK_DEV_ALLOW_NONCONVENTIONAL_COMMIT"
 export const PUSH_OVERRIDE = "TRUNK_DEV_ALLOW_MAIN_PUSH"
