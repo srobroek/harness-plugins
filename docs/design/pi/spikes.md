@@ -42,14 +42,15 @@ What remains for our own extension: a per-child actor, claim before work, store 
 
 ## cc-safety-net vs our safety plugin
 
-Both analyzers ran over cases taken from our safety plugin's tests (`guards`, `permission` and `op-guard`), plus 11 adversarial wrappers per block or ask case: `bash -c`, `eval`, `xargs`, env assignment, `command`, `builtin`, `exec`, `git -C`, `&&`, a subshell and a pipeline. cc-safety-net 2.8.2 ran through its `checkCommand` API in strict mode.
+Model-run probes used `omp -p --no-extensions -e <bundle>`; each had a control run without `-e` that did not block. Safety blocked attributed commits, and an ask in print mode failed closed. Worktrunk blocked `wt merge develop` without `--no-squash --no-ff`. Trunk-dev blocked a non-Conventional commit in a release repository. `dep_scan` ran. Quality, Journeys, Repomix and whats-new tools registered. Parley returned `unavailable` without a TUI. cc-safety-net blocked `git push --mirror`.
+
 
 | Gate | Cases | cc-safety-net blocks | ours blocks or asks |
 |---|---:|---:|---:|
 | Indirect execution | 348 block | 300 | 319 |
 | Remote execution | 132 block | 104 | 117 |
 | Force push and destructive git | 96 block | 70 | 88 |
-| Attribution, worktree under `/tmp`, DNS, Git Defender | 17 block | 0 | 17 |
+| Attribution and worktree under `/tmp` | 17 block | 0 | 17 |
 | Allow fixtures | 88 allow | 8 wrongly blocked | 5 wrongly blocked |
 | State-aware asks (branch delete, worktree remove, reset, stash, clean) | 168 ask | no ask outcome: 109 blocked, 59 allowed | 96 asked |
 | Secret tool guard (`op`, `fnox`) | 292 block | 28 | 276 |
@@ -104,8 +105,8 @@ cc-safety-net's extension points are narrow:
 | Modes | `standard`, `strict`, `paranoid`, plus a worktree mode; no ask outcome |
 | Library API | `checkCommand({command, cwd})` from `cc-safety-net/api`, returning allow or deny; no parse results |
 
-A v2 rulebook rule blocked `git commit -m 'Co-Authored-By: Claude'` and allowed `git commit -m 'Fix the bug'` in `explain`. It matches whole arguments only, so it cannot see a phrase inside a longer message, a `-F` file or a heredoc. All the other gates (migrations, external directories, push-via, `/tmp` worktrees, Git Defender, the DNS marker, history rewrite, the `op`/`fnox` guard, state-aware asks, close-keyword rewrite, package advisory) need repository state, path resolution or a rewrite. They stay in our own extension with our own parser. Redaction and the secret-store tool are `tool_result` and `registerTool` features.
+Host-specific gates moved to private configuration. The close-keyword rewrite, package advisory, redaction and secret-store tool retain their repository-specific Pi extension behavior (`plugins/safety/opencode/src/index.ts:393-402,484-565,651-673`).
 
-Composition, tested in a model-free pi 1.6.0 harness with a fake `git branch -D x` call: pi runs `tool_call` handlers in package order, and the first block stops the call. With cc-safety-net first, its `git.branch-force-delete` block ran and our ask never did. With our ask first, an approval was still denied by cc-safety-net afterwards. Reversing the `packages` array reversed the order.
+Composition, tested in a model-free Pi 1.6.0 harness with a fake `git branch -D x` call: Pi runs `tool_call` handlers in package order, and the first block stops the call. With cc-safety-net first, its `git.branch-force-delete` block ran and our ask never did. With our ask first, an approval was still denied by cc-safety-net afterwards. Reversing the `packages` array reversed the order.
 
-Architecture: load cc-safety-net first as the baseline for generic destructive commands and sensitive paths. Our slim extension owns the workflow gates, redaction and the secret store. Where we want an evidence-based ask instead of a hard block, turn off the overlapping built-in rule in `policy.json`: `git.branch-force-delete`, `git.stash-drop`, `git.stash-clear`, `git.worktree-remove-force`, `git.reset-hard`, `git.clean-force`. Our extension then owns those decisions. It imports nothing from cc-safety-net. Pin cc-safety-net to a tested version and run `rule verify` after upgrades, because an invalid rulebook silently contributes no rules.
+Architecture: load cc-safety-net first and unpinned on Pi and OMP. Dotfiles configure its rulebooks and policy. Our extension owns workflow gates, redaction and the secret store; keep its overlapping guards without an on/off switch. Keep cc-safety-net's six Git rules enabled until our safety package is installed on every host. Turn off these overlapping built-in rules only when Pi must ask instead of hard-blocking: `git.branch-force-delete`, `git.stash-drop`, `git.stash-clear`, `git.worktree-remove-force`, `git.reset-hard`, and `git.clean-force`. The extension imports nothing from cc-safety-net.
