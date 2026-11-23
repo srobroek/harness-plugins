@@ -1971,6 +1971,12 @@ var EVENT_TYPES = [
 var PRIORITY = { idle: 0, succeeded: 1, interrupted: 2, failed: 3, archived: 4 };
 var ENDS_LANE = new Set(["succeeded", "failed", "interrupted", "archived"]);
 var IDLE_REPORT_MS = 7 * 24 * 60 * 60 * 1000;
+function longIdleReport(input) {
+  const { child, idle, now, removable } = input;
+  if (child !== "idle" || idle === undefined || !removable || now - idle <= IDLE_REPORT_MS)
+    return;
+  return `its subagent session has been idle since ${new Date(idle).toISOString()}; archive or delete the child to release`;
+}
 var canonical = (path) => {
   try {
     return realpathSync2(path);
@@ -2470,6 +2476,8 @@ function createLifecycle(deps) {
         if (stored === undefined || canonical(stored.directory) !== canonical(lane.directory) || stored.state !== "active" && stored.state !== "removing") {
           return keptBecause("retired", "the lane is already retired");
         }
+        if (stored.fenced && options.target === undefined && options.gone !== true)
+          return keptBecause("denied", `the lane is fenced (${stored.fenced.reason}); unfence it first`);
         const earlier = stored.state === "removing" ? stored.removal : undefined;
         const looks = options.ifGone === true || options.gone !== true && earlier?.pending === undefined;
         const onDisk = looks && await deps.exists(stored.directory);
@@ -2924,9 +2932,9 @@ function createLifecycle(deps) {
     const idleSince = child === "idle" && idle !== undefined ? { idleSince: idle } : {};
     const preview = await previewFinalize(lane, fence);
     if (!childReleasesLane(child)) {
-      if (child === "idle" && idle !== undefined && fence.since - idle > IDLE_REPORT_MS && preview.removable) {
-        return { ...entry, verdict: "keep", reason: `its subagent session has been idle since ${new Date(idle).toISOString()}; archive or delete the child to release`, needsPerson: true, ...idleSince };
-      }
+      const stale = longIdleReport({ child, idle, now: fence.since, removable: preview.removable });
+      if (stale !== undefined)
+        return { ...entry, verdict: "keep", reason: stale, needsPerson: true, ...idleSince };
       return { ...entry, verdict: "keep", reason: `its subagent session is ${child}`, ...idleSince };
     }
     if (!preview.removable)
@@ -2984,14 +2992,25 @@ function createLifecycle(deps) {
       return { ok: false, reason: `${child} is running` };
     if (state === "unknown")
       return { ok: false, reason: `${child}'s session cannot be read` };
+    const seq = eventSeq;
     let refusal;
-    const next = await updateLane(lane, (stored) => {
-      if (stored.state !== "active" || !stored.fenced) {
+    const next = await withLock(lane.directory, lane.parentDir, async () => {
+      const stored = await load(child);
+      if (stored === undefined || stored.child !== child || stored.state !== "active" || canonical(stored.directory) !== canonical(lane.directory) || !stored.fenced) {
         refusal = `the lane of ${child} is no longer fenced`;
         return;
       }
+      if (await childState(ctx.session.get({ sessionID: child }), deps.lookupMs, child) !== "idle") {
+        refusal = `${child} is running or cannot be read`;
+        return;
+      }
+      const late = startedSince([child], seq);
+      if (late !== undefined) {
+        refusal = late.removed ? "the lane changed" : late.reason;
+        return;
+      }
       const { fenced: _cleared, ...rest } = stored;
-      return rest;
+      return await save(rest) ? rest : undefined;
     });
     return next ? { ok: true, lane: next } : { ok: false, reason: refusal ?? "the lane changed meanwhile" };
   };
