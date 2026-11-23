@@ -3,13 +3,12 @@ name: pitfalls
 ---
 # Pitfalls
 
-## Project plugin install scope
+## Installing project tooling
 
-Use `omp plugin install NAME@MARKETPLACE --scope project` for a marketplace plugin owned by a
-project. `omp plugin install PACKAGE` installs user-wide; the project scope flag applies only to
-marketplace installs.
+Follow `new-project` for project tooling discovery and setup. It distinguishes marketplace
+extensions, project-local skills, and npm packages and asks before installs.
 
 ## Project-local skills
 
-Project-local skill setup is not the same as a plugin install. Use the `new-project` workflow;
-project skills install under `.agents/skills/<name>/` through the `agents` provider.
+Project-local skills install to `.agents/skills/<name>/` through the `agents` provider. This is
+not the same as installing a marketplace extension.
