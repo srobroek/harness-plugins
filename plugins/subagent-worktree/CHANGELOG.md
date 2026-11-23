@@ -1,3 +1,9 @@
+## subagent-worktree [0.9.0](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.8.3...subagent-worktree--v0.9.0) (2026-11-23)
+
+### Features
+
+* **subagent-worktree:** report long-idle and fenced lanes, add unfence ([#123](https://github.com/srobroek/harness-plugins/issues/123)) ([541f316](https://github.com/srobroek/harness-plugins/commit/541f31639c9f38e2f7bf7674b8c44f43ea79195f))
+
 ## subagent-worktree [0.8.3](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.8.2...subagent-worktree--v0.8.3) (2026-11-22)
 
 ### Bug Fixes

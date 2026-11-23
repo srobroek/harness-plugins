@@ -1350,7 +1350,7 @@
     },
     {
       "name": "subagent-worktree",
-      "version": "0.8.3",
+      "version": "0.9.0",
       "description": "Runs opted-in subagents in their own git worktree and merges their branch back with wt merge.",
       "category": "development",
       "harnesses": {
