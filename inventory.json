@@ -750,11 +750,25 @@
     },
     {
       "name": "dep-update",
-      "version": "0.6.1",
+      "version": "0.7.0",
       "description": "Classify dependency updates by semver safety and apply confirmed patch and minor bumps.",
       "category": "development",
       "harnesses": {
         "opencode": {
+          "skills": [
+            "dep-update"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "pi": {
           "skills": [
             "dep-update"
           ],
@@ -1713,6 +1727,18 @@
             "index"
           ],
           "mcp": []
+        },
+        "pi": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "safety"
+          ],
+          "mcp": []
         }
       },
       "scope": "global"
@@ -1949,7 +1975,7 @@
     },
     {
       "name": "trunk-dev",
-      "version": "0.11.0",
+      "version": "0.12.0",
       "description": "Trunk-based delivery for OpenCode, Claude Code, and pi: Conventional Commit and main-push gates, skip-CI and MR/PR advisories, feature-flag cleanup beads, and release-setup skills.",
       "category": "development",
       "harnesses": {
@@ -1998,7 +2024,7 @@
           "hooks": [],
           "tools": [],
           "extensions": [
-            "skip-ci"
+            "trunk-dev"
           ],
           "mcp": []
         }
@@ -2030,7 +2056,7 @@
     },
     {
       "name": "worktrunk",
-      "version": "0.6.1",
+      "version": "0.7.0",
       "description": "Worktrunk (wt) skills: work in linked worktrees and run deterministic preflight checks before an agent run or merge.",
       "category": "development",
       "harnesses": {
@@ -2060,6 +2086,21 @@
           "hooks": [],
           "tools": [],
           "extensions": [],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "worktrunk-preflight",
+            "worktrunk-worktrees"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "worktrunk"
+          ],
           "mcp": []
         }
       },

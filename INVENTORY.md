@@ -20,7 +20,7 @@
 | code-challenge | 2.0.0 | development | global | opencode, omp, pi |
 | debate | 0.7.1 | productivity | global | opencode, claude, omp |
 | delivery | 0.12.1 | development | global | opencode |
-| dep-update | 0.6.1 | development | global | opencode |
+| dep-update | 0.7.0 | development | global | opencode, pi |
 | design | 0.10.1 | development | project | opencode, claude |
 | docs | 0.4.0 | development | global | opencode |
 | eli5 | 0.7.1 | productivity | global | opencode, claude, omp, pi |
@@ -38,14 +38,14 @@
 | project | 0.12.0 | productivity | global | opencode, claude, omp, pi |
 | quality | 0.15.0 | development | global | opencode, claude, pi |
 | repomix | 0.6.0 | development | global | opencode, claude, pi |
-| safety | 0.13.1 | development | global | opencode |
+| safety | 0.13.1 | development | global | opencode, pi |
 | session | 0.4.1 | development | global | opencode |
 | speckit | 0.11.1 | development | project | opencode, claude |
 | statusline | 0.4.0 | development | global | opencode |
 | subagent-worktree | 0.9.2 | development | global | opencode |
 | toolchain | 0.10.0 | development | global | opencode, claude, omp, pi |
-| trunk-dev | 0.11.0 | development | global | opencode, claude, pi |
+| trunk-dev | 0.12.0 | development | global | opencode, claude, pi |
 | whats-new | 0.4.0 | development | global | opencode |
-| worktrunk | 0.6.1 | development | project | opencode, claude |
+| worktrunk | 0.7.0 | development | project | opencode, claude, pi |
 
 Each plugin's own `INVENTORY.md` lists what it ships per harness.

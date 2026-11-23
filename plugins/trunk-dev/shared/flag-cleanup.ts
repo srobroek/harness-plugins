@@ -17,7 +17,7 @@
 
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs"
 import { basename, dirname, join, resolve } from "node:path"
-import { invocations } from "../../shared/shell.js"
+import { invocations } from "./shell.js"
 
 const READ_TIMEOUT_MS = 5_000
 const GIT_TIMEOUT_MS = 2_000
@@ -27,6 +27,7 @@ const WRITE_WAIT_MS = 30_000
 const FLAG_NAME = /^[A-Za-z0-9_.-]{1,64}$/
 const BEAD_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const RUNNER_NAME = "bd-embedded-write-runner"
+/** The actor the OpenCode adapter writes as when the environment names none. */
 export const DEFAULT_ACTOR = "opencode/trunk-dev"
 
 export type CleanupLinks = { branch?: string; url?: string; bead?: string }
@@ -354,8 +355,8 @@ export type BeadsRuntime = {
 
 export const productionRuntime: BeadsRuntime = { findRunner: () => findRunner(), run: runCommand }
 
-function actorOf(env: NodeJS.ProcessEnv): string {
-  return env.BEADS_ACTOR?.trim() || env.BD_ACTOR?.trim() || DEFAULT_ACTOR
+function actorOf(env: NodeJS.ProcessEnv, defaultActor: string): string {
+  return env.BEADS_ACTOR?.trim() || env.BD_ACTOR?.trim() || defaultActor
 }
 
 // The beads plugin prefixes a subagent shell call with its own actor, so the command names none.
@@ -382,8 +383,9 @@ export async function createCleanup(
   cwd: string,
   env: NodeJS.ProcessEnv,
   runtime: BeadsRuntime = productionRuntime,
+  defaultActor: string = DEFAULT_ACTOR,
 ): Promise<string> {
-  const actor = actorOf(env)
+  const actor = actorOf(env, defaultActor)
   const runner = runtime.findRunner()
   if (runner === undefined) return followUp(decision)
   // The runner waits RUNNER_WAIT_MS for the lock. It is never killed: a killed writer
@@ -424,6 +426,7 @@ export async function flagCleanupFollowUp(
   merges: readonly MergeRequest[],
   env: NodeJS.ProcessEnv,
   runtime: BeadsRuntime = productionRuntime,
+  defaultActor: string = DEFAULT_ACTOR,
 ): Promise<string | undefined> {
   const notes: string[] = []
   for (const merge of merges) {
@@ -448,7 +451,7 @@ export async function flagCleanupFollowUp(
       bead: merge.bead,
     })
     if (decision === undefined) continue
-    notes.push(await createCleanup(decision, repo.store, merge.cwd, env, runtime))
+    notes.push(await createCleanup(decision, repo.store, merge.cwd, env, runtime, defaultActor))
   }
   return notes.length === 0 ? undefined : notes.join("\n")
 }

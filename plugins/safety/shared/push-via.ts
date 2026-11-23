@@ -1,6 +1,6 @@
 /*
  * The `push-via` guard: on a host where plain `git push` to one forge cannot work, a wrapper
- * command (for example `dgit`) is the only way to push. With `pushVia: { host, command }` set,
+ * command (for example a host-specific git wrapper) is the only way to push. With `pushVia: { host, command }` set,
  * a literal `git push` whose remote resolves to `host` is refused with a hint to use the wrapper.
  *
  * Scope, by the user's decision: only a call whose first command is a literal `git push`, or

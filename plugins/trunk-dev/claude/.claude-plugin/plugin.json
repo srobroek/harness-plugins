@@ -1,7 +1,7 @@
 {
   "name": "trunk-dev",
   "description": "Trunk-based delivery for OpenCode, Claude Code, and pi: Conventional Commit and main-push gates, skip-CI and MR/PR advisories, feature-flag cleanup beads, and release-setup skills.",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "author": {
     "name": "Sjors Robroek",
     "url": "https://github.com/srobroek"
