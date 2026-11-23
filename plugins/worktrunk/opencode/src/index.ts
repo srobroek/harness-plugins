@@ -1,12 +1,12 @@
 import { isAbsolute, resolve } from "node:path"
 import { Plugin, Skill, Worktree } from "@opencode/plugin"
 import { shellCall } from "@srobroek/opencode-lib"
-import { decideMergePolicy, type Probes } from "./merge-gate.ts"
+import { decideMergePolicy, type Probes } from "../../shared/merge-gate.js"
+import { withSwitchTimeout } from "../../shared/switch-timeout.js"
 import { type LoadedSkill, loadSkills } from "./skills.ts"
-import { withSwitchTimeout } from "./switch-timeout.ts"
 import { createStrategy, type Runner } from "./worktree.ts"
 
-export { decideMergePolicy, MERGE_POLICY_REFUSAL, parseMergeInvocation } from "./merge-gate.ts"
+export { decideMergePolicy, MERGE_POLICY_REFUSAL, parseMergeInvocation } from "../../shared/merge-gate.js"
 export { createStrategy, STRATEGY_ID } from "./worktree.ts"
 
 export type WorktrunkOptions = {
