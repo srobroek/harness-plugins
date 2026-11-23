@@ -94,7 +94,7 @@ const DROPPED_TOOLS = new Set(["lsp", "ast_grep", "eval", "yield", "github"])
 const EXCLUSIVE_BASE = ["skill", "execute"] as const
 
 /** omp agent ids that have a different V2 counterpart. */
-const AGENT_MAP: Record<string, string> = { scout: "explore" }
+export const AGENT_MAP: Readonly<Record<string, string>> = { scout: "explore" }
 
 const IGNORED_KEYS: Record<string, string> = {
   "read-summarize": "no V2 equivalent",

@@ -183,6 +183,47 @@ An autopilot scope read counts only when confirmed: for a bead scope, the scope 
 - `plugins/safety/opencode/src/subagent-reads.ts` owns the `subagent-external-reads` hook (feature id of the same name, registered before `subagent-prompts`). In a subagent session it turns an `external_directory` ask into an allow for `read`, `glob`, `grep`, `list` and the shell. Edit, write and patch keep the ask. Secrets keep it too: `SECRET_LOCATIONS` (exported), `*.env` and `*.env.*`, plus the `subagentSecretPaths` option. Limits: paths resolve through `realpath` before any check; a resource that is inside or an ancestor of a protected location (`~/*`, `/*`) is refused; a relative path, a mid-path wildcard or `..` keeps the ask. A root session gets a narrower grant through `root-external-reads` (same file, feature id of the same name): `read` of one file whose given path (`path`, or `filePath` on older hosts) is absolute, is a regular file and is no secret by the same rules. `glob`, `grep`, `list`, the shell and the writers keep the ask, since a folder's name says nothing about the `.env` files or secret links inside it; a failed session lookup keeps it too. `disable: ["root-external-reads"]` turns it off; `disable: ["subagent-external-reads"]` turns the subagent half off.
 - `scratch-dirs.ts` also allows the session directory spelled through a symlink alias, `<data>/opencode/shell/<project id>` and `<data>/opencode/tool-output`.
 
+## OMP agent translation
+
+`scripts/omp-agents.ts` translates every composed agent into `common/agents/<id>.omp.md`. For a plugin that lists `omp`, harness-kit copies that file to `omp/agents/<id>.md`. The translation keeps `name`, `description` and the prompt body. It drops these keys:
+
+- `mode`, `steps`, `hidden` and `color`
+- the fallback `model`
+- the request headers, after it reads the tier from them
+
+`model:` lists OMP role aliases, tried in order. OMP 19.1.1 skips a role the user has not assigned: an agent whose first role was unset ran on its second.
+
+| Tier | `model:` | Reason |
+|---|---|---|
+| `cheap` | `@smol` | the built-in OMP fast role, and the tier's old role name |
+| `standard` | `@task` | the built-in role for task subagents, and the tier's old role name |
+| `strong` | `@slow` | the built-in strongest role, and the tier's old role name |
+| `reviewer` | `@challenger, @slow` | OMP has no built-in review role. `challenger` is the tier's old role name, assigned to a model from another vendor. When it is unassigned, the tier falls back to `strong`, as in model-roles. |
+| `orchestrate` | `@orchestrate, @slow` | OMP has no built-in role for it. It falls back to `strong`, as in model-roles. |
+
+`judge`, the other old name of `reviewer`, is not used: OMP defines `judge` as a model-kind role for judgment runners, not a chat role.
+
+The OMP `tools` key is an allowlist of built-ins. The translator therefore needs a `permissions` list that starts with a deny-all rule, as every shipped agent does, and refuses any other non-empty list. Each unrestricted allow maps to built-ins:
+
+| OpenCode action | OMP tools |
+|---|---|
+| `read` | `read` |
+| `grep` | `grep`, `ast_grep` |
+| `glob` | `glob` |
+| `lsp_*` | `lsp` |
+| `edit` | `edit`, `write`, `ast_edit` |
+| `shell` | `bash` |
+| `execute` | `eval` |
+| `websearch` | `web_search` |
+| `subagent` | `task`, with the allowed agents in `spawns` (`explore` as `scout`, `general` as `task`). OMP gives every agent `wait` itself. |
+
+When no tool is left, the file says `tools: []`, because an empty value means the OMP default tools.
+
+OMP has no per-resource rules, no per-agent ask and no per-agent skill filter. The translator keeps a tool whose unrestricted rule allows it and drops that tool's per-resource rules. It leaves out a tool whose unrestricted rule asks. A generated comment at the top of each file lists every dropped rule. Close two losses before such an agent ships to OMP:
+
+- A read-only agent built on `READ_ONLY_SHELL_RULES` keeps `bash` without its deny list.
+- `pr-reviewer` gets no built-in tool, because its only shell rules are its two `gh pr` commands.
+
 ## code-challenge
 
 `plugins/code-challenge` is OpenCode only (`harnesses: ["opencode"]`). It challenges existing code for simplification, performance, stability, hand-rolled code and structure, and plans only: it edits no source file.
