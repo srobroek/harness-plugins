@@ -26,7 +26,7 @@
 | docs | 0.4.0 | development | global | opencode |
 | eli5 | 0.7.1 | productivity | global | opencode, claude, omp |
 | find-tools | 0.4.0 | development | global | opencode |
-| journeys | 0.5.0 | development | project | opencode, claude |
+| journeys | 0.5.1 | development | project | opencode, claude |
 | lang-go | 0.8.0 | development | global | opencode, claude, omp |
 | lang-python | 0.8.0 | development | global | opencode, claude, omp |
 | lang-rust | 0.8.0 | development | global | opencode, claude, omp |
