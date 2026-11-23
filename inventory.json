@@ -150,7 +150,7 @@
     },
     {
       "name": "agent-seance",
-      "version": "0.8.0",
+      "version": "0.8.1",
       "description": "seance subagent and read-only seance_read tool: answer a question from a past session and its subagent transcripts.",
       "category": "development",
       "harnesses": {

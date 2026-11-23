@@ -8,7 +8,7 @@
 | agent-mechanic | 0.7.1 | development | global | opencode, omp |
 | agent-researcher | 0.8.1 | development | global | opencode |
 | agent-reviewer | 0.11.1 | development | global | opencode, claude |
-| agent-seance | 0.8.0 | development | global | opencode |
+| agent-seance | 0.8.1 | development | global | opencode |
 | architecture | 0.9.0 | development | global | opencode, claude |
 | ast-grep | 1.3.0 | development | global | opencode, claude |
 | autopilot | 1.3.6 | development | global | opencode |
