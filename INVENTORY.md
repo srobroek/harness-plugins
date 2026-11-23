@@ -12,35 +12,35 @@
 | architecture | 0.11.1 | development | global | opencode, claude, omp, pi |
 | ast-grep | 1.3.2 | development | global | opencode, claude |
 | autopilot | 1.3.8 | development | global | opencode |
-| aws | 0.9.0 | development | global | opencode, claude, pi |
+| aws | 0.9.1 | development | global | opencode, claude, pi |
 | beads | 0.9.0 | development | project | opencode, claude, pi |
-| build | 0.10.0 | development | project | opencode, omp, pi |
+| build | 0.10.1 | development | project | opencode, omp, pi |
 | chezmoi | 0.7.0 | development | global | opencode, claude, pi |
-| claude-compat | 0.5.1 | development | project | opencode |
-| code-challenge | 2.0.0 | development | global | opencode, omp, pi |
-| debate | 0.7.1 | productivity | global | opencode, claude, omp |
-| delivery | 0.12.1 | development | global | opencode |
+| claude-compat | 0.5.2 | development | project | opencode |
+| code-challenge | 2.0.1 | development | global | opencode, omp, pi |
+| debate | 0.7.2 | productivity | global | opencode, claude, omp |
+| delivery | 0.12.2 | development | global | opencode |
 | dep-update | 0.7.0 | development | global | opencode, pi |
-| design | 0.10.1 | development | project | opencode, claude |
+| design | 0.10.2 | development | project | opencode, claude |
 | docs | 0.4.0 | development | global | opencode |
-| eli5 | 0.7.1 | productivity | global | opencode, claude, omp, pi |
+| eli5 | 0.7.2 | productivity | global | opencode, claude, omp, pi |
 | find-tools | 0.5.0 | development | global | opencode, pi |
 | journeys | 0.6.0 | development | project | opencode, claude, pi |
-| lang-go | 0.9.0 | development | global | opencode, claude, omp, pi |
-| lang-python | 0.9.0 | development | global | opencode, claude, omp, pi |
-| lang-rust | 0.9.0 | development | global | opencode, claude, omp, pi |
-| lang-typescript | 0.10.0 | development | global | opencode, claude, omp, pi |
+| lang-go | 0.9.1 | development | global | opencode, claude, omp, pi |
+| lang-python | 0.9.1 | development | global | opencode, claude, omp, pi |
+| lang-rust | 0.9.1 | development | global | opencode, claude, omp, pi |
+| lang-typescript | 0.10.1 | development | global | opencode, claude, omp, pi |
 | lsp | 0.5.0 | development | project | opencode |
-| model-roles | 0.11.1 | development | global | opencode |
-| modes | 1.3.0 | development | global | opencode, omp |
+| model-roles | 0.11.2 | development | global | opencode |
+| modes | 1.3.1 | development | global | opencode, omp |
 | parley | 0.5.0 | development | global | opencode, pi |
 | plugin-audit | 0.2.0 | development | project | opencode |
-| project | 0.12.0 | productivity | global | opencode, claude, omp, pi |
-| quality | 0.15.0 | development | global | opencode, claude, pi |
-| repomix | 0.6.0 | development | global | opencode, claude, pi |
-| safety | 0.14.0 | development | global | opencode, pi |
+| project | 0.12.1 | productivity | global | opencode, claude, omp, pi |
+| quality | 0.15.1 | development | global | opencode, claude, pi |
+| repomix | 0.6.1 | development | global | opencode, claude, pi |
+| safety | 0.14.1 | development | global | opencode, pi |
 | session | 0.4.1 | development | global | opencode |
-| speckit | 0.11.1 | development | project | opencode, claude |
+| speckit | 0.11.2 | development | project | opencode, claude |
 | statusline | 0.4.0 | development | global | opencode |
 | subagent-worktree | 0.9.2 | development | global | opencode |
 | toolchain | 0.10.0 | development | global | opencode, claude, omp, pi |
