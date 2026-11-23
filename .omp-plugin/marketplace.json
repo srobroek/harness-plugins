@@ -65,6 +65,13 @@
       "category": "development"
     },
     {
+      "name": "modes",
+      "description": "Debug, refactor and concept agents with plan-style mode reminders: root-cause diagnosis in a scratch worktree, behaviour-preserving refactoring, and design iteration.",
+      "source": "./plugins/modes/omp",
+      "version": "1.2.1",
+      "category": "development"
+    },
+    {
       "name": "project",
       "description": "Project lifecycle: scaffold a project with /new-project, set up fnox and 1Password secrets, and pick an OSI-approved license.",
       "source": "./plugins/project/omp",
