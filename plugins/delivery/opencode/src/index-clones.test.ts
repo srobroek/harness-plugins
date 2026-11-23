@@ -523,7 +523,7 @@ const lastCoordination = async () => {
 }
 
 /** Make the target's receipt directory unreadable while `work` runs. */
-const withUnreadableReceipts = async (work: () => Promise<void>) => {
+const withUnreadableReceipts = async (work: () => Promise<unknown>) => {
   const directory = receiptDirectory(env(), (await repositoryContext(repoB))?.key as string)
   chmodSync(directory, 0o000) // check-test-executables: directory permission, not a script
   try {

@@ -5917,20 +5917,28 @@ function withClone(entries, entry, pending = () => false) {
   }
   return next.filter((known) => !drop.has(known));
 }
+function registrationNeeded(entry, pending) {
+  if (pending(entry.key))
+    return true;
+  if (entry.commonDir === undefined)
+    return false;
+  const landings = listLandings(entry.commonDir);
+  if (landings.unreadable)
+    return true;
+  return landings.records.some((record) => entry.receiptIds === undefined || entry.receiptIds.includes(record.receiptId));
+}
 function readClones(env, sessionKey) {
   const file = registryFile(env, sessionKey);
   let text;
   try {
     text = readFileSync7(file, "utf8");
   } catch (error) {
-    if (error.code === "ENOENT")
+    const code = error.code;
+    if (code === "ENOENT" || code === "ENOTDIR")
       return [];
     throw new Error(`the clone registry ${file} cannot be read (${error instanceof Error ? error.message : String(error)})`, { cause: error });
   }
-  const entries = entriesOf(text);
-  if (entries === null)
-    throw new Error(`the clone registry ${file} cannot be parsed as a JSON list`);
-  return entries;
+  return entriesIn(file, text, "");
 }
 function loadForUpdate(file) {
   let text;
@@ -5943,16 +5951,19 @@ function loadForUpdate(file) {
       cause: error
     });
   }
+  return entriesIn(file, text, "; it was left unchanged");
+}
+function entriesIn(file, text, note) {
   try {
     JSON.parse(text);
   } catch (error) {
-    throw new Error(`the clone registry ${file} cannot be parsed (${error instanceof Error ? error.message : String(error)}); it was left unchanged`, {
+    throw new Error(`the clone registry ${file} cannot be parsed (${error instanceof Error ? error.message : String(error)})${note}`, {
       cause: error
     });
   }
   const entries = entriesOf(text);
   if (entries === null)
-    throw new Error(`the clone registry ${file} cannot be parsed as a JSON list; it was left unchanged`);
+    throw new Error(`the clone registry ${file} cannot be parsed as a JSON list${note}`);
   return entries;
 }
 async function addClone(env, sessionKey, entry, pending, options = {}) {
@@ -6264,7 +6275,19 @@ function createPendingCleanup(deps) {
   const attemptedAt = new Map;
   const registered = new Map;
   let discoveryFailure;
+  const missedReports = new Map;
   const holdsUnknown = new Map;
+  const markHoldsUnknown = (directory, sessionID, why) => {
+    const bySession = holdsUnknown.get(directory) ?? new Map;
+    bySession.set(sessionID, why);
+    holdsUnknown.set(directory, bySession);
+  };
+  const clearHoldsUnknown = (directory, sessionID) => {
+    const bySession = holdsUnknown.get(directory);
+    bySession?.delete(sessionID);
+    if (bySession?.size === 0)
+      holdsUnknown.delete(directory);
+  };
   const timers = new Map;
   const pendingIdle = new Set;
   let disposed = false;
@@ -6359,6 +6382,27 @@ function createPendingCleanup(deps) {
       throw error;
     }
   };
+  const discover = async () => {
+    const mine = own.veto() ?? await own.observe();
+    if (mine === null) {
+      discoveryFailure = "the session's repository could not be resolved, so the clones it landed in are unknown";
+      return;
+    }
+    try {
+      registryEntries(mine.key);
+    } catch {}
+  };
+  const reportVeto = (repo) => {
+    if (repo.foreign) {
+      if (discoveryFailure !== undefined)
+        return discoveryFailure;
+      for (const why of missedReports.values())
+        return why;
+    }
+    for (const why of holdsUnknown.get(canonicalDirectory(repo.cwd))?.values() ?? [])
+      return why;
+    return;
+  };
   const cloneEntryFor = (receipt, commonDir) => ({
     key: receipt.repo.key,
     root: receipt.repo.canonicalRoot,
@@ -6372,7 +6416,7 @@ function createPendingCleanup(deps) {
     if (mine === null)
       return;
     try {
-      await addClone(env, mine.key, entry, (known) => mayHavePending(known.key));
+      await addClone(env, mine.key, entry, (known) => registrationNeeded(known, mayHavePending));
     } catch (error) {
       console.error(`delivery: could not record the clone ${entry.root}: ${error instanceof Error ? error.message : String(error)}`, error);
     }
@@ -6572,11 +6616,11 @@ function createPendingCleanup(deps) {
       return owned;
     if (common === null)
       return "the git common directory could not be resolved";
-    if (repo.foreign && discoveryFailure !== undefined)
-      return discoveryFailure;
-    const unknownHolds = holdsUnknown.get(canonicalDirectory(repo.cwd));
-    if (unknownHolds !== undefined)
-      return unknownHolds;
+    if (repo.foreign)
+      await discover();
+    const vetoed = reportVeto(repo);
+    if (vetoed !== undefined)
+      return vetoed;
     const failed = unsafe.get(canonicalDirectory(path));
     if (failed !== undefined)
       return failed;
@@ -6625,7 +6669,7 @@ function createPendingCleanup(deps) {
     }
     return;
   };
-  const holdCheckAt = async (repo, common, worktree) => await holdAt(repo, common, worktree) ?? landingBlockAt(common, worktree) ?? unsafe.get(canonicalDirectory(worktree)) ?? (holdReportsInFlight > 0 ? "running work reported by an idle session is still being recorded" : undefined);
+  const holdCheckAt = async (repo, common, worktree) => await holdAt(repo, common, worktree) ?? landingBlockAt(common, worktree) ?? reportVeto(repo) ?? unsafe.get(canonicalDirectory(worktree)) ?? (holdReportsInFlight > 0 ? "running work reported by an idle session is still being recorded" : undefined);
   const holdCheck = async (repo, worktree) => holdCheckAt(repo, await commonOf(repo), worktree);
   const sectionIn = (repo) => async (worktree, run) => {
     const common = await commonOf(repo);
@@ -6931,19 +6975,27 @@ function createPendingCleanup(deps) {
     };
     const inClones = async () => {
       const mine = own.veto() ?? await own.observe();
-      if (mine === null)
+      if (mine === null) {
+        const why = "the session's repository could not be resolved to find the clones its running work may be in";
+        missedReports.set(sessionID, why);
+        console.error(`delivery: ${why}`);
         return;
+      }
       let entries;
       try {
         entries = cloneEntries(mine.key);
       } catch (error) {
+        missedReports.set(sessionID, `the running work of ${sessionID} could not be recorded in the clones (${error instanceof Error ? error.message : String(error)})`);
         console.error("delivery: the clones could not be listed to record holds", error);
         return;
       }
+      missedReports.delete(sessionID);
       await Promise.all(entries.map(async (entry) => {
         const repo = await cloneAt(entry).catch(() => null);
         if (repo === null) {
-          holdsUnknown.set(canonicalDirectory(entry.root), `the clone ${entry.root} could not be resolved to record its running work`);
+          const why = `the clone ${entry.root} could not be resolved to record its running work`;
+          markHoldsUnknown(canonicalDirectory(entry.root), sessionID, why);
+          console.error(`delivery: ${why}`);
           return;
         }
         await writeHoldsIn(repo, sessionID, background, locationOf);
@@ -6955,10 +7007,10 @@ function createPendingCleanup(deps) {
     const guard = canonicalDirectory(repo.cwd);
     try {
       await establishHolds(repo, sessionID, background, locationOf);
-      holdsUnknown.delete(guard);
+      clearHoldsUnknown(guard, sessionID);
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error);
-      holdsUnknown.set(guard, `its running work could not be recorded (${why})`);
+      markHoldsUnknown(guard, sessionID, `its running work could not be recorded (${why})`);
       console.error(`delivery: could not record holds in ${repo.cwd}: ${why}`);
     }
   };
