@@ -70,7 +70,7 @@ the `toolchain` plugin's `ci-github-actions` skill.
 
 In OpenCode, the built-in `gofmt` formatter rewrites each `.go` file after the
 `edit`, `write` or `patch` tool changes it when `"formatter": true` is set in
-`opencode.json`. Keep the format check for files changed any other way.
+`opencode.json`. Other harnesses should run the listed format check after edits.
 
 A missing `go.mod` or toolchain binary means that step did not run. Report it as
 not run, never as a pass. Read failures as the project's actual toolchain output;

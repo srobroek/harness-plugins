@@ -20,7 +20,7 @@ with bound values, real-database tests) are the `quality-code-design` skill's
   `pool.begin()`; check `result.rows_affected()`. Zero rows: re-read to tell not-found
   from CAS-failed. No SELECT-then-write on a bare pool.
   `pool.begin()` and run with `.run(&pool)` at startup. In OpenCode the safety plugin refuses
-  edits to a migration that has already shipped; add a new migration instead.
+  edits to a migration that has already shipped; other harnesses should add a new migration instead.
 - Embed macro gotcha: a new migration file goes unapplied until the crate recompiles.
   Add `println!("cargo:rerun-if-changed=migrations");` to `build.rs`
   (`sqlx migrate build-script` writes it).

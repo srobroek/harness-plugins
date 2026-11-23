@@ -1,6 +1,5 @@
 ---
-description: "Reviews a GitHub pull request diff for code quality, security, correctness, and coverage. Read-only; returns a verdict. Not for Beads run nodes."
-x-omp-tools: github
+tools: read, grep, find, ls, bash, github
 mode: subagent
 steps: 80
 hidden: true

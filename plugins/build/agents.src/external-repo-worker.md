@@ -1,5 +1,4 @@
 ---
-description: "Works in an external repo outside the caller project: clones, follows its conventions, edits, verifies, optionally publishes."
 mode: subagent
 steps: 150
 request:

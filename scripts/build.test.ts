@@ -177,6 +177,19 @@ describe("composeAgents", () => {
     }
   })
 
+  test("a pi agent variant is not treated as an OpenCode or OMP agent", () => {
+    const dir = plugin()
+    try {
+      const agents = path.join(dir, "common", "agents")
+      writeFileSync(path.join(agents, "rev.pi.md"), "---\\ntools: read\\n---\\nPi only")
+      expect(orphanAgents(dir, [])).toEqual([])
+      expect(Object.fromEntries(agentTexts(dir, false, composeAgents(dir, false, read)))).toEqual({ rev: composed })
+      expect(ompAgents(dir, false, new Map([["rev", composed]]))).toHaveLength(1)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   test("a composed agent without a source is an orphan; a hand-written agent and a translation are not", () => {
     const dir = plugin()
     try {

@@ -1,5 +1,4 @@
 ---
-description: "Read-only challenger that stress-tests a claim, plan, design or decision and returns evidence-backed counter-arguments."
 mode: subagent
 steps: 60
 request:
