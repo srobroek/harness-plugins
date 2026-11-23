@@ -43,6 +43,8 @@ let onRevParse: (() => void) | undefined
 let failCreates = 0
 /** How many handoff lookups (`bd list --label ...`) fail before one succeeds. */
 let failLookups = 0
+/** When set, `bd list --all` (the scope read) fails every time. */
+let failScopeReads = false
 /** When set, what a handoff lookup prints instead of the bead list. */
 let lookupStdout: string | undefined
 /** Called after a `bd create` succeeds. */
@@ -86,6 +88,7 @@ const run: Run = async (cwd, command, args, _timeout, env) => {
   }
   if (args[0] === "list") {
     await listGate
+    if (failScopeReads) return { ok: false, stdout: "", stderr: "store locked" }
     return json(beads.list)
   }
   if (args[0] === "children") return json(beads.list.filter((bead) => (bead as { parent?: unknown }).parent === args[1]))
@@ -200,6 +203,7 @@ beforeEach(async () => {
   routesText = undefined
   routesUnreadable = false
   failLookups = 0
+  failScopeReads = false
   lookupStdout = undefined
   onCreated = undefined
   warnings = []
@@ -271,6 +275,18 @@ describe("tick", () => {
   test("an empty list for the scope epic is unknown: no stop, and one blocker in the journal", async () => {
     await armed()
     beads = { list: [], ready: [], blocked: [] }
+    const result = await status(tickInput())
+    expect(result.done).toBeUndefined()
+    expect(result.prompt).toContain("beads unread")
+    await status(tickInput())
+    const blockers = journal().filter((entry) => entry.type === "blocker")
+    expect(blockers).toHaveLength(1)
+    expect(blockers[0]?.summary).toContain("p-1")
+  })
+
+  test("scope reads that fail on every attempt journal one blocker naming the scope and never stop the run", async () => {
+    await armed()
+    failScopeReads = true
     const result = await status(tickInput())
     expect(result.done).toBeUndefined()
     expect(result.prompt).toContain("beads unread")

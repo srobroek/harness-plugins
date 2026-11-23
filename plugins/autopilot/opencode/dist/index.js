@@ -2206,6 +2206,8 @@ async function readBeads(directory, run, ledger, options = {}) {
   const deadline = now() + budgetMs;
   const timeout = () => Math.min(BD_READ_TIMEOUT_MS, deadline - now());
   let view = { beads: [], ready: [], blocked: [], ok: false };
+  let problem;
+  const unconfirmed = (reason) => problem === undefined ? reason : `${problem}; then ${reason}`;
   for (let attempt = 0;attempt < attempts; attempt++) {
     if (attempt > 0) {
       if (timeout() <= pauseMs)
@@ -2217,14 +2219,19 @@ async function readBeads(directory, run, ledger, options = {}) {
     if (left <= 0)
       break;
     view = await readOnce(directory, run, ledger, left);
-    if (!view.ok)
+    if (!view.ok) {
+      if (scopeId !== undefined)
+        problem = unconfirmed(`a bd read failed, so the scope ${scopeId} cannot be confirmed`);
       continue;
-    const problem = scopeId === undefined ? undefined : await scopeProblem(directory, run, ledger, scopeId, view, timeout);
-    if (problem === undefined)
+    }
+    const found = scopeId === undefined ? undefined : await scopeProblem(directory, run, ledger, scopeId, view, timeout);
+    if (found === undefined)
       return view;
-    view = { ...view, ok: false, problem };
+    problem = found;
   }
-  return view;
+  if (scopeId !== undefined && problem === undefined)
+    problem = `no time was left to read the scope ${scopeId}`;
+  return problem === undefined ? view : { ...view, ok: false, problem };
 }
 async function commitCount(directory, run) {
   const result = await run(directory, "git", ["rev-list", "--all", "--count"]);
