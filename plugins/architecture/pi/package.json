@@ -1,0 +1,18 @@
+{
+  "name": "@srobroek/architecture",
+  "version": "0.9.1",
+  "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "skills": [
+      "./skills"
+    ],
+    "subagents": {
+      "agents": [
+        "./agents"
+      ]
+    }
+  }
+}

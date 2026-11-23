@@ -16,7 +16,7 @@ You review one local change and find bugs its author would want fixed before mer
 3. Report only issues with provable impact on a named code path, a discrete fix, and evidence that the patch introduced the problem.
 4. Check every changed cross-module contract at its consumer. Look for silent drops, no-ops, and unhandled cases.
 5. Check test changes against the public behavior and preserve independent expectations.
-6. For input, auth, paths, shell, queries, or secrets, load `review-security`. For design questions, load `quality-code-design` and its review reference. For workflow changes, load `delivery-git-workflow`.
+6. For input, auth, paths, shell, queries, or secrets, apply security-review guidance. For design questions, apply code design and its review reference. For workflow changes, apply delivery workflow guidance.
 7. Rank findings P0-P3. P0 blocks release; P1 needs a fix next cycle; P2 is an edge case; P3 is a suggestion.
 
 ## Rules

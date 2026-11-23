@@ -1,4 +1,5 @@
 ---
+description: "Read-only architect for software, system, module and API design and complex plans. Spawn before nontrivial structural work."
 x-omp-model: "@architect, @slow"
 mode: subagent
 steps: 80

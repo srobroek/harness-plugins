@@ -1,4 +1,5 @@
 ---
+description: "Works in an external repository: clones, follows its conventions, edits, verifies, and publishes only when delegated."
 mode: subagent
 steps: 150
 request:
