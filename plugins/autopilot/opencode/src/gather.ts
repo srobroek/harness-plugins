@@ -128,7 +128,9 @@ export async function readBeads(directory: string, run: Run, ledger: string, opt
       if (timeout() <= pauseMs) break
       if (pauseMs > 0) await sleep(pauseMs)
     }
-    view = await readOnce(directory, run, ledger, timeout())
+    const left = timeout()
+    if (left <= 0) break
+    view = await readOnce(directory, run, ledger, left)
     if (!view.ok) continue
     const problem = scopeId === undefined ? undefined : await scopeProblem(directory, run, ledger, scopeId, view, timeout)
     if (problem === undefined) return view

@@ -96,36 +96,77 @@ describe("readBeads with a bead scope", () => {
     expect((await readBeads("/repo", run, "/l/.beads", scope)).ok).toBe(true)
   })
 
-  test("each retry waits the pause before it reads again", async () => {
+  test("no retry reads until the pause has finished", async () => {
     const { run, calls } = fakeBd([[]])
-    const events: string[] = []
-    const counted: Run = async (...args) => {
-      if (args[2][0] === "list") events.push("read")
-      return run(...args)
+    const lists = () => calls.filter((call) => call === "list").length
+    let release = () => {}
+    let started = () => {}
+    const sleeping = new Promise<void>((done) => {
+      started = done
+    })
+    const pauses: number[] = []
+    const sleep = (ms: number) => {
+      pauses.push(ms)
+      started()
+      return new Promise<void>((done) => {
+        release = done
+      })
     }
-    const view = await readBeads("/repo", counted, "/l/.beads", { scopeId: "p-1", pauseMs: 2_000, sleep: async (ms) => void events.push(`sleep ${ms}`) })
-    expect(view.ok).toBe(false)
-    expect(events).toEqual(["read", "sleep 2000", "read", "sleep 2000", "read"])
-    expect(calls.filter((call) => call === "list")).toHaveLength(3)
+    const pending = readBeads("/repo", run, "/l/.beads", { scopeId: "p-1", attempts: 2, pauseMs: 2_000, sleep })
+    await sleeping
+    for (let turn = 0; turn < 10; turn++) await Promise.resolve()
+    expect(lists()).toBe(1)
+    release()
+    expect((await pending).ok).toBe(false)
+    expect(lists()).toBe(2)
+    expect(pauses).toEqual([2_000])
   })
 
-  test("the reads and retries stop within the budget, each call getting at most the time left", async () => {
+  /** A bd whose `slow` command uses up its whole timeout and fails; the rest answer at once with a closed scope. */
+  function clockedBd(slow: string, sleepExtraMs = 0) {
     let clock = 0
-    const timeouts: number[] = []
-    const slow: Run = async (_cwd, _command, args, timeout) => {
-      if (args[0] === "list") {
-        timeouts.push(timeout as number)
+    const timeouts: Record<string, number[]> = {}
+    const run: Run = async (_cwd, _command, args, timeout) => {
+      const name = args[0] as string
+      timeouts[name] = [...(timeouts[name] ?? []), timeout as number]
+      if (name === slow) {
         clock += timeout as number
         return { ok: false, stdout: "", stderr: "timed out" }
       }
-      return { ok: true, stdout: "[]", stderr: "" }
+      const out = name === "list" ? [epic, child("closed")] : name === "children" ? [child("closed")] : []
+      return { ok: true, stdout: JSON.stringify(out), stderr: "" }
     }
     const sleep = async (ms: number) => {
-      clock += ms
+      clock += ms + sleepExtraMs
     }
-    const view = await readBeads("/repo", slow, "/l/.beads", { scopeId: "p-1", budgetMs: 180_000, now: () => clock, sleep })
+    return { run, sleep, timeouts, now: () => clock }
+  }
+
+  test.each(["list", "ready", "blocked", "children"])("a slow bd %s gets only the time left, and the reads stop at the budget", async (slow) => {
+    const bd = clockedBd(slow)
+    const view = await readBeads("/repo", bd.run, "/l/.beads", { scopeId: "p-1", budgetMs: 180_000, now: bd.now, sleep: bd.sleep })
     expect(view.ok).toBe(false)
-    expect(timeouts).toEqual([90_000, 88_000])
-    expect(clock).toBe(180_000)
+    expect(bd.timeouts[slow]).toEqual([90_000, 88_000])
+    expect(bd.now()).toBe(180_000)
+  })
+
+  test("a budget spent by the list leaves no time for bd children, and the scope is unconfirmed", async () => {
+    const bd = clockedBd("none")
+    const run: Run = async (...args) => {
+      const reply = await bd.run(...args)
+      if (args[2][0] === "list") await bd.sleep(180_000)
+      return reply
+    }
+    const view = await readBeads("/repo", run, "/l/.beads", { scopeId: "p-1", budgetMs: 180_000, now: bd.now, sleep: bd.sleep })
+    expect(view.ok).toBe(false)
+    expect(view.problem).toContain("no time was left")
+    expect(bd.timeouts.children).toBeUndefined()
+  })
+
+  test("a pause that oversleeps the budget starts no further read", async () => {
+    const bd = clockedBd("list", 100_000)
+    const view = await readBeads("/repo", bd.run, "/l/.beads", { scopeId: "p-1", budgetMs: 180_000, now: bd.now, sleep: bd.sleep })
+    expect(view.ok).toBe(false)
+    expect(bd.timeouts.list).toEqual([90_000])
   })
 })
