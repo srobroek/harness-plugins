@@ -1,3 +1,9 @@
+## autopilot [1.3.5](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.3.4...autopilot--v1.3.5) (2026-11-23)
+
+### Bug Fixes
+
+* **autopilot:** treat an empty or failed scope read as unknown, not finished ([#125](https://github.com/srobroek/harness-plugins/issues/125)) ([81e26de](https://github.com/srobroek/harness-plugins/commit/81e26de9c5be0ba30022ca679a70ae7e1cf12136))
+
 ## autopilot [1.3.4](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.3.3...autopilot--v1.3.4) (2026-11-22)
 
 ### Bug Fixes
