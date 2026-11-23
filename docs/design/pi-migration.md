@@ -37,28 +37,29 @@ Discovery:
 
 ## Recommended stack
 
-Picks from the package reviews below; one package per surface. Status: adopt = install as part of the base setup; trial = install for a bounded test first.
+Status as of 2026-11-23. Adopt: installed on every pi host and seeded by the dotfiles. Pending: decided by a spike. One package owns each surface. Evidence: [package reviews](#package-reviews) and [spikes](pi/spikes.md).
 
 | Capability | Pick | Install | Replaces or affects ours | Status |
 |---|---|---|---|---|
 | Subagents and scripted workflows | pi-subagents | `pi install npm:pi-subagents` | dispatch mechanism for agent-* plugins, build, subagent-worktree, design/code-challenge/speckit/cad/delivery fan-out; our policies, Beads flows and landing proof stay | adopt |
-| MCP | pi built-in MCP | `pi mcp add`, `~/.pi/agent/mcp.json` | docs, aws (server registration only) | adopt |
-| Web search and fetch | pi-web-access | `pi install npm:pi-web-access`; launch with `fnox exec -- pi` so `EXA_API_KEY`, `BRAVE_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY`, `TINYFISH_API_KEY` reach it | none | adopt |
+| MCP | pi built-in MCP, `exposure: "deferred"` | `~/.pi/agent/mcp.json` | docs, aws (server registration only) | adopt |
+| Web search and fetch | pi-web-access | `pi install npm:pi-web-access`; provider order in `~/.pi/agent/web-search.json`, keys `EXA_API_KEY`, `BRAVE_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY`, `TINYFISH_API_KEY` from the shell environment | none | adopt |
 | LSP and post-edit diagnostics | pi-lens | `pi install npm:pi-lens` | lsp post-edit append (partial; navigation contract stays) | adopt |
 | Beads context and recovery | pi-beads-companion | `pi install npm:pi-beads-companion` | beads context (partial); our gates stay as an extension | adopt |
 | Browser | pi-agent-browser-native | `pi install npm:pi-agent-browser-native` | none | adopt |
 | Plan mode | @narumitw/pi-plan-mode | `pi install npm:@narumitw/pi-plan-mode` | modes plan reminders (partial) | adopt |
-| Plan and code review UI | @plannotator/pi-extension | `pi install npm:@plannotator/pi-extension` | none; not a second plan controller | trial |
-| Todo list | @juicesharp/rpiv-todo (skip it in a Gentle Pi home, which ships its own todo) | `pi install npm:@juicesharp/rpiv-todo` | none | adopt |
-| Footer | @narumitw/pi-statusline (only to keep an OMP-style information-rich footer; otherwise the default footer suffices) | `pi install npm:@narumitw/pi-statusline` | statusline | adopt |
-| Session search and handoff | pi-sessions (disable its `subagents` feature) | `pi install npm:pi-sessions` | session (pi sessions only) | adopt |
-| Destructive-command gate | cc-safety-net | `npx -y cc-safety-net@latest install --pi` | safety force-push and remote-exec gates (full), destructive git/fs and indirect execution (partial) | trial |
-| Permission rules | @gotgenes/pi-permission-system | `pi install npm:@gotgenes/pi-permission-system` | safety basic command and path rules (partial) | trial |
-| Cross-session messaging | pi-intercom (separate pi sessions only) | `pi install npm:pi-intercom` | none; subagent questions use pi-subagents `contact_supervisor` | trial |
-| Large-output context | context-mode (Elastic-2.0, Node 24.15+) | `pi install npm:context-mode` | agent-efficiency large-read guard (partial) | trial |
-| Repo wiki | openwiki (official; set `OPENWIKI_TELEMETRY_DISABLED=1`) | `pi install npm:openwiki` | none | trial |
-| Second-opinion advisor | pi-advisor-flow | `pi install npm:pi-advisor-flow` | none | trial |
-| Simplification review | pi-simplify | `pi install npm:pi-simplify` | code-challenge (partial) | trial |
+| Plan and code review UI | @plannotator/pi-extension (its own `/plannotator-plan-mode` and Ctrl+Alt+P cannot be disabled; use `/plan`) | `pi install npm:@plannotator/pi-extension` | none | adopt |
+| Todo list | @juicesharp/rpiv-todo | `pi install npm:@juicesharp/rpiv-todo` | none | adopt |
+| Footer | @narumitw/pi-statusline | `pi install npm:@narumitw/pi-statusline` | statusline | adopt |
+| Session search and handoff | pi-sessions (its `subagents` feature off) | `pi install npm:pi-sessions` | session, agent-seance | adopt |
+| Destructive-command gate | cc-safety-net | `npx -y cc-safety-net@latest install --pi` | safety baseline; our extension keeps the workflow gates and owns ask-type operations (see [spikes](pi/spikes.md#building-on-cc-safety-net)) | pending |
+| Cross-session messaging | pi-intercom | `pi install npm:pi-intercom` | none; subagent questions use pi-subagents `contact_supervisor` | adopt |
+| Large-output context | context-mode (Elastic-2.0, Node 24.15+) | `pi install npm:context-mode` | agent-efficiency large-read guard (partial) | adopt |
+| Repo wiki | openwiki (telemetry off in `~/.openwiki/.env`) | `pi install npm:openwiki` | none | adopt |
+| Second-opinion advisor | pi-advisor-flow | `pi install npm:pi-advisor-flow` | none | adopt |
+| Simplification review | pi-simplify | `pi install npm:pi-simplify` | code-challenge (partial) | adopt |
+| Side conversations | pi-btw | `pi install npm:pi-btw` | none | adopt |
+| Memory | gentle-engram (the same Engram store omp reaches through `engram mcp`) | `pi install npm:gentle-engram` | none | adopt |
 
 Keep ours:
 
@@ -72,10 +73,16 @@ Skipped:
 - `@narumitw/pi-goal`, `pi-goal-x`, `pi-loop`: goal controllers.
 - `pi-background-tasks`: its published peer range stops at Pi 0.84.
 - `pi-herdsman`: a second delegation runtime over herdr.
-- `pi-mcp-adapter`, `pi-mcp-extension`: each replaces built-in MCP. The adapter is the fallback if session-start connections get costly.
+- `pi-mcp-extension`: replaces built-in MCP; 11 stars and 47 open issues.
 - `pi-openwiki-adapter`: the official `openwiki` package ships its own pi integration.
-- `pi-memory`, Engram: a second memory store.
+- `pi-memory`: a second memory store next to Engram.
+- `@gotgenes/pi-permission-system`: dropped by the owner.
+- `@onkernel/browser-loop`: needs a Kernel cloud browser key and has no Bedrock adapter.
 - `@agimon-ai/po-hashline`, `@agimon-ai/po-grep`: BUSL-1.1, and their protocol does not match Pi 1.6 built-in tools.
+
+- `pi-mcp-adapter`: replaces built-in MCP. Built-in with `exposure: "deferred"` measured the same prompt size; revisit only for MCP prompts, elicitation, UI or Tasks (see [spikes](pi/spikes.md#pi-mcp-adapter-vs-built-in-mcp)).
+
+Trial: `glimpseui`, Mac only (see [spikes](pi/spikes.md#glimpseui)).
 
 ## Conflicts to avoid
 
@@ -85,13 +92,15 @@ Skipped:
 - One MCP layer.
 - No second goal controller.
 - One memory store.
-- cc-safety-net and the permission system both gate `tool_call`, so test their combined allow/deny behavior before relying on either.
+- cc-safety-net and any port of our safety gates both hook `tool_call`. cc-safety-net only blocks, so an approval from our extension must not be denied by it afterwards; split ownership per operation.
 
 ## Herdr
 
 Herdr 0.9.5 supports pi natively. `herdr integration install pi` writes `~/.pi/agent/extensions/herdr-agent-state.ts`, which reports pane state and the session identity over the herdr socket. It matches the OpenCode integration (`pane.report_agent` with `working`, `blocked` and `idle`). The omp label extensions (`agents.subs`, `agents.tasks`, `agents.todo` through `hc label`) have no pi counterpart. Port them only after choosing a subagent and todo package, because their data comes from those packages.
 
 ## Plugin portability
+
+The per-plugin decisions after the package adoption and the spikes are in [plugin adoption](pi/plugin-adoption.md). It supersedes this table where they differ. This table keeps the first-pass classification by mechanism.
 
 Pi skills can bundle scripts and run CLIs with `bash` ([skills](https://pi.dev/docs/latest/skills)). Pi also documents [MCP](https://pi.dev/docs/latest/mcp), [prompt templates](https://pi.dev/docs/latest/prompt-templates), [sessions](https://pi.dev/docs/latest/sessions) and the default footer ([usage](https://pi.dev/docs/latest/usage)).
 
@@ -261,3 +270,5 @@ Detailed reviews behind the recommended stack, as of 2026-11-23. Metrics are npm
 - [UI, planning and interaction](pi/ui-planning.md)
 - [Code tools, browser and beads](pi/code-tools-beads.md)
 - [Ecosystem survey](pi/ecosystem-survey.md)
+- [Plugin adoption](pi/plugin-adoption.md)
+- [Spikes](pi/spikes.md)
