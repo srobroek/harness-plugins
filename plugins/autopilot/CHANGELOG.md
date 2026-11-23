@@ -1,3 +1,9 @@
+## autopilot [1.3.6](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.3.5...autopilot--v1.3.6) (2026-11-23)
+
+### Bug Fixes
+
+* **autopilot:** journal a blocker when every scope read fails ([b6ac173](https://github.com/srobroek/harness-plugins/commit/b6ac173ff1a94d8f2d807d267afeb4d199b9013f))
+
 ## autopilot [1.3.5](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.3.4...autopilot--v1.3.5) (2026-11-23)
 
 ### Bug Fixes
