@@ -57,7 +57,7 @@ import {
   type RemovalFacts,
   type RepositoryIdentity,
 } from "./cleanup.ts"
-import { addClone, type CloneEntry, mergeClone, readClones, settleReceipts, withoutReceipts } from "./clone-registry.ts"
+import { addClone, type CloneEntry, mergeClone, readClones, registrationNeeded, settleReceipts, withoutReceipts } from "./clone-registry.ts"
 import { inClone } from "./land.ts"
 import {
   closeoutCommands,
@@ -450,7 +450,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     const mine = own.veto() ?? (await own.observe())
     if (mine === null) return
     try {
-      await addClone(env, mine.key, entry, (known) => mayHavePending(known.key))
+      await addClone(env, mine.key, entry, (known) => registrationNeeded(known, mayHavePending))
     } catch (error) {
       console.error(`delivery: could not record the clone ${entry.root}: ${error instanceof Error ? error.message : String(error)}`, error)
     }

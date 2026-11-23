@@ -4557,43 +4557,6 @@ describe("cleanup of another repository's landing runs against that repository",
     await h.finish()
   })
 
-  /** The target's landing of `h.f.receipt`, superseded by a cleaned receipt, so nothing is pending there. */
-  const supersede = (h: { f: Fixture }) =>
-    writeReceipt(
-      buildReceipt({
-        now: NOW + 5000,
-        emitter: h.f.receipt.emitter,
-        repo: h.f.receipt.repo,
-        pr: h.f.receipt.pr,
-        branch: h.f.receipt.branch,
-        worktree: { ...h.f.receipt.worktree, removed: true },
-        beads: h.f.receipt.beads,
-        proof: h.f.receipt.proof,
-        outcome: "cleaned",
-        supersedes: h.f.receipt.receiptId,
-      }),
-      receiptDirectory(h.f.env, h.f.receipt.repo.key),
-    )
-
-  test("a clone whose receipts are all superseded stays registered until its landing records are collected", async () => {
-    const h = await foreignHarness("foreign-gc-complete")
-    await h.pending.record(h.f.receipt, "ses_lead")
-    supersede(h)
-    // A landing record in the target that cannot be read: collection cannot finish.
-    mkdirSync(dirname(landingFile(h.targetCommon, "9-bad")), { recursive: true })
-    writeFileSync(landingFile(h.targetCommon, "9-bad"), "garbage")
-    await h.pending.start()
-    await h.idle()
-    expect(readClones(h.f.env, h.sessionKey).map((entry) => entry.key)).toContain(h.f.receipt.repo.key)
-    expect(readLanding(h.targetCommon, h.f.receipt.receiptId).kind).toBe("present")
-    rmSync(landingFile(h.targetCommon, "9-bad"))
-    await h.idle()
-    expect(readLanding(h.targetCommon, h.f.receipt.receiptId)).toEqual({ kind: "missing" })
-    // Collection finished with nothing pending: only now is the clone forgotten.
-    expect(readClones(h.f.env, h.sessionKey)).toEqual([])
-    await h.finish()
-  })
-
   test("a repository whose receipts cannot be listed while running work is recorded refuses removal until holds are recorded", async () => {
     const h = await foreignHarness("foreign-holds-unknown")
     await h.pending.record(h.f.receipt, "ses_lead")

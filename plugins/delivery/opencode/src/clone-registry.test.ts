@@ -2,7 +2,8 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { hostname, tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import { addClone, MAX_CLONES, mergeClone, parseClones, readClones, registryFile, removeClone, settleReceipts, withClone, withoutReceipts } from "./clone-registry.ts"
+import { landingFile, removeLanding, writeLanding } from "@srobroek/opencode-lib/worktree-claims"
+import { addClone, MAX_CLONES, mergeClone, parseClones, readClones, registrationNeeded, registryFile, removeClone, settleReceipts, withClone, withoutReceipts } from "./clone-registry.ts"
 
 const A = { key: "a".repeat(16), root: "/repos/a" }
 const B = { key: "b".repeat(16), root: "/repos/b" }
@@ -157,6 +158,44 @@ describe("mergeClone and withoutReceipts", () => {
   })
   test("the new root wins and the ids are the union", () => {
     expect(mergeClone({ ...A, receiptIds: ["r1"] }, { ...A, root: "/moved", receiptIds: ["r2"] })).toEqual({ ...A, root: "/moved", receiptIds: ["r1", "r2"] })
+  })
+})
+
+describe("registrationNeeded under registry pressure", () => {
+  // Nothing is pending in any clone here: only the target's landing records can keep an entry.
+  const nothingPending = () => false
+  const fill = async (receipts: NodeJS.ProcessEnv, session: string, from: number) => {
+    for (let index = from; index < from + MAX_CLONES; index++) {
+      await addClone(receipts, session, { key: index.toString(16).padStart(16, "0"), root: `/repos/${index}` }, (entry) => registrationNeeded(entry, nothingPending))
+    }
+  }
+  const marks = [
+    ["its own landing record", (common: string) => writeLanding(common, { receiptId: "r1", worktree: "/w", headRefOid: "a".repeat(40), sessionID: "s", landedAt: 1 })],
+    [
+      "a landing record that cannot be read",
+      (common: string) => {
+        mkdirSync(dirname(landingFile(common, "r9")), { recursive: true })
+        writeFileSync(landingFile(common, "r9"), "{not json")
+      },
+    ],
+  ] as const
+  test.each(marks)("a clone whose target still has %s outlives a full registry, and goes once it is collected", async (_name, mark) => {
+    const root = mkdtempSync(join(tmpdir(), "delivery-clones-pressure-"))
+    try {
+      const receipts = { DELIVERY_RECEIPTS_DIR: join(root, "receipts") }
+      const session = "c".repeat(16)
+      const commonDir = join(root, "common")
+      mark(commonDir)
+      await addClone(receipts, session, { ...A, commonDir, receiptIds: ["r1"] }, () => true)
+      await fill(receipts, session, 0)
+      expect(readClones(receipts, session).map((entry) => entry.key)).toContain(A.key)
+      removeLanding(commonDir, "r1")
+      removeLanding(commonDir, "r9")
+      await fill(receipts, session, MAX_CLONES)
+      expect(readClones(receipts, session).map((entry) => entry.key)).not.toContain(A.key)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 

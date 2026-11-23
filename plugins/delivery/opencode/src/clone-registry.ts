@@ -21,6 +21,7 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { isAbsolute, join } from "node:path"
 import { withLease } from "@srobroek/opencode-lib/lease-lock"
+import { listLandings } from "@srobroek/opencode-lib/worktree-claims"
 import { receiptDirectory } from "./landing-receipt.ts"
 
 export type CloneEntry = {
@@ -109,6 +110,20 @@ export function withClone(entries: readonly CloneEntry[], entry: CloneEntry, pen
     if (!pending(candidate)) drop.add(candidate)
   }
   return next.filter((known) => !drop.has(known))
+}
+
+/**
+ * Whether `entry` must stay registered whatever the count: a receipt there may be `pending`, or its
+ * target's landing records are not collected yet (one of its receipts still has a record, or the
+ * records cannot be read). Once the registration is gone nothing else would find those records. An
+ * entry with no common directory (older) is left to the count rule.
+ */
+export function registrationNeeded(entry: CloneEntry, pending: (key: string) => boolean): boolean {
+  if (pending(entry.key)) return true
+  if (entry.commonDir === undefined) return false
+  const landings = listLandings(entry.commonDir)
+  if (landings.unreadable) return true
+  return landings.records.some((record) => entry.receiptIds === undefined || entry.receiptIds.includes(record.receiptId))
 }
 
 /**
