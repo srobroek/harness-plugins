@@ -1638,7 +1638,10 @@
           "skills": [
             "whats-new"
           ],
-          "agents": [],
+          "agents": [
+            "whats-new",
+            "whats-new.pi"
+          ],
           "commands": [],
           "rules": [],
           "hooks": [],

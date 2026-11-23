@@ -6,7 +6,7 @@ Research breaking changes, deprecations and new features between two versions, r
 | Kind | opencode |
 | --- | --- |
 | skills | whats-new |
-| agents | - |
+| agents | whats-new, whats-new.pi |
 | commands | - |
 | rules | - |
 | hooks | - |
