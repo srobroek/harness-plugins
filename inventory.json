@@ -202,7 +202,7 @@
     },
     {
       "name": "architecture",
-      "version": "0.9.1",
+      "version": "0.10.0",
       "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
       "category": "development",
       "harnesses": {
