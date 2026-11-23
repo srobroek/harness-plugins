@@ -147,7 +147,7 @@
       "name": "quality",
       "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
       "source": "./plugins/quality/claude",
-      "version": "0.15.0",
+      "version": "0.15.1",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/quality",
       "repository": "https://github.com/srobroek/harness-plugins"
