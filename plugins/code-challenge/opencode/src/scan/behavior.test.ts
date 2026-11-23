@@ -95,7 +95,7 @@ describe.skipIf(!installed("golangci-lint") || !installed("go"))("golangci-lint 
 
   test("reports a linter the repo did not enable, but honours //nolint", async () => {
     const root = repo(files)
-    const report = await runScan({ root, languages: ["go"], lenses: ["dead-code"] }, { approved: new Set(["golangci:lenses", "deadcode:go"]) })
+    const report = await runScan({ root, languages: ["go"], lenses: ["dead-code"], allowCode: true })
     const hits = only(report, "golangci-lint")
     expect(hits.map((c) => [c.file, c.rule, c.ruleEnabledInRepo])).toEqual([["main.go", "unused", false]])
     expect(hits[0]?.message).toContain("unusedBad")

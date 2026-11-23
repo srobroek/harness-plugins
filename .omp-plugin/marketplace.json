@@ -16,6 +16,13 @@
       "category": "development"
     },
     {
+      "name": "code-challenge",
+      "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
+      "source": "./plugins/code-challenge/omp",
+      "version": "1.5.1",
+      "category": "development"
+    },
+    {
       "name": "debate",
       "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
       "source": "./plugins/debate/omp",

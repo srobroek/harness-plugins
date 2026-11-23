@@ -468,6 +468,23 @@
             "index"
           ],
           "mcp": []
+        },
+        "omp": {
+          "skills": [
+            "code-challenge"
+          ],
+          "agents": [
+            "code-challenger",
+            "refactor-challenger"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
         }
       },
       "scope": "global"

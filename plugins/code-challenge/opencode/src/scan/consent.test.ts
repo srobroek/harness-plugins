@@ -1,12 +1,12 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { realpathSync, writeFileSync } from "node:fs"
+import { writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import { cleanup, exited, fakeExec, pythonRepo, RUFF_HIT, temp, withTools } from "./fixtures.ts"
-import { confirmScan, registerScanTool, SCAN_TOOL } from "./index.ts"
+import { registerScanTool, SCAN_TOOL } from "./index.ts"
 import { PINS } from "./pins.ts"
-import { consentRisks, runScan } from "./run.ts"
+import { runScan } from "./run.ts"
 
 afterAll(cleanup)
 
@@ -21,144 +21,65 @@ const CLIPPY_LINE = JSON.stringify({
   message: { code: { code: "clippy::needless_range_loop" }, message: "m", spans: [{ is_primary: true, file_name: "src/main.rs", line_start: 4 }] },
 })
 
-describe("consent", () => {
-  test("a recipe that runs repository code is a gap without consent and runs with it", async () => {
+describe("allowCode", () => {
+  test("a recipe that runs repository code is a gap by default and runs with allowCode", async () => {
     const root = rustRepo()
     const calls: Parameters<typeof fakeExec>[1] = []
     const exec = fakeExec({ clippy: exited(CLIPPY_LINE) }, calls)
-    const denied = await runScan({ root, languages: ["rust"] }, { exec, which: withTools("cargo") })
-    expect(denied.coverage.find((c) => c.recipe === "clippy:lenses")).toMatchObject({ status: "gap" })
-    expect(denied.coverage.find((c) => c.recipe === "clippy:lenses")?.reason).toMatch(/^not run without consent: .*build scripts and procedural macros/)
+    const gated = await runScan({ root, languages: ["rust"] }, { exec, which: withTools("cargo") })
+    expect(gated.coverage.find((c) => c.recipe === "clippy:lenses")).toMatchObject({ status: "gap" })
+    expect(gated.coverage.find((c) => c.recipe === "clippy:lenses")?.reason).toMatch(/^not run without allowCode: .*build scripts and procedural macros/)
     expect(calls.some((c) => c.argv.includes("clippy"))).toBe(false)
-    const allowed = await runScan({ root, languages: ["rust"] }, { exec, which: withTools("cargo"), approved: new Set(["clippy:lenses"]) })
+    const allowed = await runScan({ root, languages: ["rust"], allowCode: true }, { exec, which: withTools("cargo") })
     expect(allowed.coverage.find((c) => c.recipe === "clippy:lenses")).toMatchObject({ status: "ran" })
     expect(allowed.candidates.map((c) => c.rule)).toEqual(["clippy::needless_range_loop"])
   })
 
-  test("a downloaded one-off needs consent, a local binary of the same tool does not", async () => {
+  test("a downloaded one-off needs allowCode, a local binary of the same tool does not", async () => {
     const root = pythonRepo()
     const oneOff = await runScan({ root, languages: ["python"] }, { exec: fakeExec({ x: exited("[]") }), which: withTools("uvx") })
     const gap = oneOff.coverage.find((c) => c.recipe === "ruff:lenses")
     expect(gap).toMatchObject({ status: "gap" })
-    expect(gap?.reason).toStartWith(`not run without consent: downloads and runs ruff==${PINS.ruff} with uvx`)
+    expect(gap?.reason).toStartWith(`not run without allowCode: downloads and runs ruff==${PINS.ruff} with uvx`)
+    expect(gap?.reason).toEndWith("; pass allowCode: true to run it")
     const local = await runScan({ root, languages: ["python"] }, { exec: fakeExec({ x: exited("[]") }), which: withTools("ruff") })
     expect(local.coverage.find((c) => c.recipe === "ruff:lenses")).toMatchObject({ status: "ran" })
   })
 
-  test("consentRisks lists each recipe that would run code, with what it runs and writes", async () => {
+  test("every recipe that would run code is a gap that says what it runs and writes", async () => {
     const root = rustRepo()
     writeFileSync(join(root, "package.json"), "{}")
-    const risks = await consentRisks({ root, languages: ["rust", "ts"] }, { exec: fakeExec({}), which: withTools("cargo", "knip", "bunx") })
-    expect(risks.map((r) => r.recipe).sort()).toEqual([
-      "biome:lenses",
-      "clippy:lenses",
-      "depcruise:cycles",
-      "jscpd:duplication",
-      "knip:unused",
-      "oxlint:perf",
-    ])
-    const clippy = risks.find((r) => r.recipe === "clippy:lenses")
-    expect(clippy?.reasons.join(" ")).toContain("writes target/")
-  })
-
-  test("no risk, no question: only local, static recipes", async () => {
-    const root = pythonRepo()
-    expect(await consentRisks({ root, languages: ["python"] }, { exec: fakeExec({}), which: withTools("ruff", "vulture") })).toEqual([])
+    const report = await runScan({ root, languages: ["rust", "ts"] }, { exec: fakeExec({}), which: withTools("cargo", "knip", "bunx") })
+    const gaps = report.coverage.filter((c) => c.reason?.startsWith("not run without allowCode: "))
+    expect(gaps.map((c) => c.recipe).sort()).toEqual(["biome:lenses", "clippy:lenses", "depcruise:cycles", "jscpd:duplication", "knip:unused", "oxlint:perf"])
+    expect(gaps.find((c) => c.recipe === "clippy:lenses")?.reason).toContain("writes target/")
   })
 })
 
-describe("the permission prompt", () => {
-  test("confirmScan turns an allowed scan with risky recipes into a prompt that names them", () => {
-    const evaluation = {
-      action: SCAN_TOOL,
-      resources: ["/repo"],
-      effect: "allow",
-      message: undefined as string | undefined,
-      metadata: { recipes: [{ recipe: "clippy:lenses", tool: "clippy", reasons: ["builds the crate: runs its build scripts"] }] },
-    }
-    confirmScan(evaluation)
-    expect(evaluation.effect).toBe("ask")
-    expect(evaluation.message).toContain("/repo")
-    expect(evaluation.message).toContain("clippy:lenses: builds the crate: runs its build scripts")
-  })
-
-  test.each([
-    ["another action", { action: "shell", effect: "allow", metadata: { recipes: [{ recipe: "r", tool: "t", reasons: ["x"] }] } }],
-    ["a denied scan", { action: SCAN_TOOL, effect: "deny", metadata: { recipes: [{ recipe: "r", tool: "t", reasons: ["x"] }] } }],
-    ["a scan with no risky recipes", { action: SCAN_TOOL, effect: "allow", metadata: { recipes: [] } }],
-  ])("confirmScan leaves %s alone", (_name, partial) => {
-    const evaluation = { resources: ["/repo"], message: undefined as string | undefined, ...partial }
-    const before = evaluation.effect
-    confirmScan(evaluation)
-    expect(evaluation.effect).toBe(before)
-    expect(evaluation.message).toBeUndefined()
-  })
-
-  async function runTool(root: string) {
+describe("the OpenCode tool", () => {
+  async function runTool(input: object) {
+    const root = rustRepo()
+    writeFileSync(join(root, "pyproject.toml"), "")
+    writeFileSync(join(root, "a.py"), "")
     const fake = createFakeContext({ sessions: [{ id: "s", location: { directory: tmpdir() } }] })
     const exec = fakeExec({ clippy: exited(CLIPPY_LINE), "check --isolated": exited(RUFF_HIT, 1), "--show-settings": exited("") })
     await registerScanTool(fake.context as never, { exec, which: withTools("cargo", "ruff") })
-    type Execute = (i: unknown, c: unknown) => Promise<{ content: string; metadata: Record<string, unknown> }>
+    type Execute = (i: unknown, c: unknown) => Promise<{ content: string }>
     const execute = fake.tools.get(SCAN_TOOL)?.execute as Execute
-    const result = await execute({ root, languages: ["rust", "python"] }, { sessionID: "s", agent: "a", messageID: "m", id: "t" })
-    return { fake, report: JSON.parse(result.content) as { coverage: Array<{ recipe: string; status: string }> } }
+    const result = await execute({ root, languages: ["rust", "python"], ...input }, { sessionID: "s", agent: "a", messageID: "m", id: "t" })
+    const report = JSON.parse(result.content) as { coverage: Array<{ recipe: string; status: string }> }
+    return { fake, status: (recipe: string) => report.coverage.find((c) => c.recipe === recipe)?.status }
   }
 
-  test("the tool asks once for the root, listing the risky recipes, and runs them when approved", async () => {
-    const root = rustRepo()
-    writeFileSync(join(root, "pyproject.toml"), "")
-    writeFileSync(join(root, "a.py"), "")
-    const { fake, report } = await runTool(root)
-    expect(fake.asserts).toHaveLength(1)
-    expect(fake.asserts[0]).toMatchObject({ action: SCAN_TOOL, resources: [`${realpathSync(root)} [clippy:lenses]`] })
-    const listed = (fake.asserts[0] as { metadata?: { recipes?: Array<{ recipe: string }> } }).metadata?.recipes
-    expect(listed?.map((r) => r.recipe)).toEqual(["clippy:lenses"])
-    expect(report.coverage.find((c) => c.recipe === "clippy:lenses")?.status).toBe("ran")
-  })
-
-  test("a rejected prompt propagates and nothing runs", async () => {
-    const root = rustRepo()
-    const calls: Parameters<typeof fakeExec>[1] = []
-    const fake = createFakeContext({
-      sessions: [{ id: "s", location: { directory: tmpdir() } }],
-      assert: async () => {
-        throw new Error("rejected")
-      },
-    })
-    await registerScanTool(fake.context as never, { exec: fakeExec({ clippy: exited(CLIPPY_LINE) }, calls), which: withTools("cargo") })
-    const execute = fake.tools.get(SCAN_TOOL)?.execute as (i: unknown, c: unknown) => Promise<unknown>
-    await expect(execute({ root, languages: ["rust"] }, { sessionID: "s" })).rejects.toThrow("rejected")
-    expect(calls.some((c) => c.argv.includes("clippy"))).toBe(false)
-  })
-
-  test("staticOnly asks nothing and leaves the risky recipes as gaps while static ones run", async () => {
-    const root = rustRepo()
-    writeFileSync(join(root, "pyproject.toml"), "")
-    writeFileSync(join(root, "a.py"), "")
-    const fake = createFakeContext({ sessions: [{ id: "s", location: { directory: tmpdir() } }] })
-    const exec = fakeExec({ clippy: exited(CLIPPY_LINE), "check --isolated": exited(RUFF_HIT, 1), "--show-settings": exited("") })
-    await registerScanTool(fake.context as never, { exec, which: withTools("cargo", "ruff") })
-    const execute = fake.tools.get(SCAN_TOOL)?.execute as (i: unknown, c: unknown) => Promise<{ content: string }>
-    const result = await execute({ root, languages: ["rust", "python"], staticOnly: true }, { sessionID: "s" })
-    const report = JSON.parse(result.content) as { coverage: Array<{ recipe: string; status: string }> }
+  test("by default it asks nothing, runs the static recipes and leaves the risky ones as gaps", async () => {
+    const { fake, status } = await runTool({})
     expect(fake.asserts).toEqual([])
-    expect(report.coverage.find((c) => c.recipe === "clippy:lenses")?.status).toBe("gap")
-    expect(report.coverage.find((c) => c.recipe === "ruff:lenses")?.status).toBe("ran")
+    expect([status("ruff:lenses"), status("clippy:lenses")]).toEqual(["ran", "gap"])
   })
 
-  test("a risky recipe outside the approved set is a gap, even when the set is empty", async () => {
-    const root = rustRepo()
-    const report = await runScan({ root, languages: ["rust"] }, { exec: fakeExec({ clippy: exited(CLIPPY_LINE) }), which: withTools("cargo"), approved: new Set() })
-    expect(report.coverage.find((c) => c.recipe === "clippy:lenses")?.reason).toStartWith("not approved for this run:")
-  })
-
-  test("a scan with nothing risky asks nothing", async () => {
-    const fake = createFakeContext({ sessions: [{ id: "s", location: { directory: tmpdir() } }] })
-    const root = pythonRepo()
-    await registerScanTool(fake.context as never, { exec: fakeExec({ "check --isolated": exited("[]") }), which: withTools("ruff") })
-    type Execute = (i: unknown, c: unknown) => Promise<unknown>
-    const execute = fake.tools.get(SCAN_TOOL)?.execute as Execute
-    await execute({ root, languages: ["python"], lenses: ["performance"] }, { sessionID: "s" })
+  test("with allowCode it asks nothing and runs every recipe", async () => {
+    const { fake, status } = await runTool({ allowCode: true })
     expect(fake.asserts).toEqual([])
+    expect([status("ruff:lenses"), status("clippy:lenses")]).toEqual(["ran", "ran"])
   })
 })

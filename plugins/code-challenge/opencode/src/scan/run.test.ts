@@ -118,7 +118,7 @@ describe("runScan", () => {
       ],
     })
     const exec = fakeExec({ "--no-config": exited(hits, 1), "linters --json": exited('{"Enabled":[{"name":"unused"}]}') })
-    const report = await runScan({ root, files: ["main.go"] }, { exec, which: withTools("golangci-lint"), approved: new Set(["golangci:lenses"]) })
+    const report = await runScan({ root, files: ["main.go"], allowCode: true }, { exec, which: withTools("golangci-lint") })
     expect(report.languages).toEqual(["go"])
     expect(report.candidates.map((c) => [c.file, c.ruleEnabledInRepo])).toEqual([["main.go", true]])
   })
