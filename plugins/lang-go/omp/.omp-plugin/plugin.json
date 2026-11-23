@@ -1,6 +1,6 @@
 {
   "name": "lang-go",
   "description": "Go skills: build, lint, go test -race, tidy and govulncheck checks, testing and fuzzing, module and package layout, and pprof profiling.",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "category": "development"
 }
