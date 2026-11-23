@@ -265,7 +265,11 @@ describe("interval coverage (seeded Monte Carlo)", () => {
   // Control 0.6, the arm under test 0.7, a third arm 0.65; two alternatives share ε.
   // 1200 to 3600 spawns give the arm 30 to 90 expected runs (minN to 3 × minN).
   const RATES = [0.6, 0.7, 0.65]
-  const REPLICATIONS = 2000
+  // Measured unloaded (bun 1.4.5, 14 cores): 50 and 105 ms at 2000 replications, 29 and 21 ms at 500. The 7.5 s seen
+  // under full-suite load is a 70-150x slowdown, so a 4x cheaper fixture is what keeps it under the 5 s default.
+  // At true coverage 0.95 the standard error of 500 replications is 0.0097, so the 0.93 floor is 2 SE down; a
+  // mis-sized interval (coverage 0.90 or less) is 3 SE or more below it. The seeds make the result deterministic.
+  const REPLICATIONS = 500
   const coverage = (epsilonAt: (i: number, spawns: number) => number, seed: number): number => {
     const rand = mulberry32(seed)
     let covered = 0
