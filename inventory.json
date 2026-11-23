@@ -492,7 +492,7 @@
     },
     {
       "name": "code-challenge",
-      "version": "1.5.0",
+      "version": "1.5.1",
       "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
       "category": "development",
       "harnesses": {
