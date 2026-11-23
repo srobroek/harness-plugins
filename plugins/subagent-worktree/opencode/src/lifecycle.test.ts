@@ -921,15 +921,15 @@ describe("a merge into a local target is a merged proof later", () => {
     await cleanup()
   })
 
-  test("a target reset while the other sessions are evicted keeps the worktree and the branch", async () => {
+  test("a target reset while the descendants are listed keeps the worktree and the branch", async () => {
     let reset = false
     const { fake, worktree, log, states, cleanup } = await mergeThenEnd([TIP], ({ fake, state }) => {
       const session = fake.context.session as unknown as { list: (input: { parentID?: string }) => Promise<unknown> }
       const original = session.list.bind(session)
       session.list = async (input) => {
         const answer = await original(input)
-        // The eviction's project listing (no parentID): the target moves after the checks proved it.
-        if (input?.parentID === undefined && !reset) {
+        // The descendant listing: the target moves after the earlier checks proved it.
+        if (input?.parentID !== undefined && !reset) {
           reset = true
           state.contains = { [MAIN]: [] }
         }
