@@ -1,0 +1,21 @@
+{
+  "name": "@srobroek/code-challenge",
+  "version": "2.0.0",
+  "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/index.js"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "subagents": {
+      "agents": [
+        "./agents"
+      ]
+    }
+  }
+}

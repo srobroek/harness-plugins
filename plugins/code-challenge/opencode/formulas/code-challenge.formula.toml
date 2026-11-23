@@ -88,7 +88,7 @@ type = "task"
 needs = ["refute"]
 labels = ["code-challenge", "phase:decide"]
 description = """
-Run the code-challenge skill, phase DECIDE in {{mode}} mode: parley_ask batches of up to 12 when interactive; the autonomous rule (kept, proven or measured, low blast radius, contract kept, not a scope finding) otherwise. Every choice goes to decisions.jsonl.
+Run the code-challenge skill, phase DECIDE in {{mode}} mode: question batches of up to 12 when interactive (the tool references/decide.md names); the autonomous rule (kept, proven or measured, low blast radius, contract kept, not a scope finding) otherwise. Every choice goes to decisions.jsonl.
 """
 
 [[steps]]

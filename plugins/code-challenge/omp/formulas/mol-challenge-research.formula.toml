@@ -1,0 +1,61 @@
+# mol-challenge-research -- the RESEARCH phase of a code-challenge run, runnable alone
+#
+# Install: run the challenge_setup tool, which copies every code-challenge formula into
+# <repo>/.beads/formulas/, or copy this file there (or into ~/.beads/formulas/).
+# Pour one phase:
+#   bd mol pour mol-challenge-research --var target=<paths> --var run_id=<run-id> --var depth=<depth> --var mode=<mode>
+#
+# The phase needs the earlier phases' files in the run directory; each file is named in the
+# code-challenge skill's references/run-storage.md. The vars have no defaults because bd mol bond
+# does not apply them.
+#
+# PRECONDITION: the skills and agents named here ship in the code-challenge plugin
+# (srobroek.code-challenge). Install it first.
+#
+# Evidence rule: every finding carries a tier -- proven, measured or hypothesis -- and a
+# path:line locator. A speed claim without a measurement is a hypothesis.
+formula = "mol-challenge-research"
+description = "Run the RESEARCH phase for {{target}}: score 2 to 4 candidates per library finding with the weights and gates"
+type = "workflow"
+
+[vars.target]
+required = true
+description = "paths, packages or diff range under challenge"
+
+[vars.run_id]
+required = true
+description = "run id; the run directory is <git-dir>/code-challenge/<run-id>/"
+
+[vars.depth]
+required = true
+description = "quick, standard or deep"
+
+[vars.mode]
+required = true
+description = "interactive or autonomous"
+
+[[steps]]
+id = "gather-facts"
+title = "GATHER library facts for each library finding"
+type = "task"
+labels = ["code-challenge", "sub:research", "phase:research"]
+description = """
+Run the code-challenge skill, phase RESEARCH, from run {{run_id}}. For every hand-rolled-library
+finding, and at depth deep for every direct dependency used for one or two functions, pick 2 to 4
+candidates plus "keep what exists". Collect facts with challenge_lib_facts when it is in the tool
+list (it ships in a later PR); otherwise fetch the registry page and the OSV record (`read` in OMP) and
+cite each URL. Use context7 for API coverage. Skip this phase at depth quick.
+"""
+
+[[steps]]
+id = "score-candidates"
+title = "SCORE the candidates and write research.json"
+type = "task"
+needs = ["gather-facts"]
+labels = ["code-challenge", "sub:research", "phase:research"]
+description = """
+Apply references/library-scoring.md: the two hard gates (an unpatched CVE, an incompatible
+licence), then the weights fit, compat, stability, maintained, popularity, footprint and migration.
+Maintenance is a weighted signal, never a gate. Evaluate partial adoption plus an extension. Record
+per-criterion values, gate results and the baseline score of the existing code.
+"""

@@ -1,6 +1,6 @@
 {
   "name": "toolchain",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Toolchain defaults as skills: stack, frontend, infrastructure, languages, observability, shell, Terraform, caches, background jobs and worktree coexistence.",
   "private": true,
   "type": "module",
@@ -10,7 +10,8 @@
     "harnesses": [
       "opencode",
       "claude",
-      "omp"
+      "omp",
+      "pi"
     ],
     "scope": "global",
     "entries": {

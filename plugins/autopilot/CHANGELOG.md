@@ -1,3 +1,9 @@
+## autopilot [1.3.8](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.3.7...autopilot--v1.3.8) (2026-11-23)
+
+### Bug Fixes
+
+* **autopilot:** retry failed parent lookups, harden takeClaims ([#135](https://github.com/srobroek/harness-plugins/issues/135)) ([b5ed7a2](https://github.com/srobroek/harness-plugins/commit/b5ed7a2dfbc9d135b618a57798a81241cc7d2a73))
+
 ## autopilot [1.3.7](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.3.6...autopilot--v1.3.7) (2026-11-23)
 
 ### Bug Fixes

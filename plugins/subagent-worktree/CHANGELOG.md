@@ -1,3 +1,13 @@
+## subagent-worktree [0.9.2](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.9.1...subagent-worktree--v0.9.2) (2026-11-23)
+
+## subagent-worktree [0.9.2](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.9.1...subagent-worktree--v0.9.2) (2026-11-23)
+
+## subagent-worktree [0.9.1](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.9.0...subagent-worktree--v0.9.1) (2026-11-23)
+
+### Bug Fixes
+
+* **subagent-worktree:** drop project-wide session eviction from finalize ([398ba17](https://github.com/srobroek/harness-plugins/commit/398ba1791911536abc585fd37a129e83347e1e9b))
+
 ## subagent-worktree [0.9.0](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.8.3...subagent-worktree--v0.9.0) (2026-11-23)
 
 ### Features

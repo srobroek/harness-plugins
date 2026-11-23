@@ -1,3 +1,10 @@
+## delivery [0.12.1](https://github.com/srobroek/harness-plugins/compare/delivery--v0.12.0...delivery--v0.12.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+* **subagent-worktree:** drop project-wide session eviction from finalize ([398ba17](https://github.com/srobroek/harness-plugins/commit/398ba1791911536abc585fd37a129e83347e1e9b))
+
 ## delivery [0.12.0](https://github.com/srobroek/harness-plugins/compare/delivery--v0.11.1...delivery--v0.12.0) (2026-11-22)
 
 ### Features

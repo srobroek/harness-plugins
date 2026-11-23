@@ -17,7 +17,7 @@ test("registers the python skills and disposes them", async () => {
   ])
   for (const skill of fake.skills.values())
     expect(String(skill.content)).not.toMatch(/skill:\/\/|rule:\/\/|_quality`? tool|\bbash\b|TTSR/)
-  expect(String(fake.skills.get("lang-python-persistence")?.content)).toContain("safety plugin")
+  expect(String(fake.skills.get("lang-python-persistence")?.content)).toContain("Never edit a revision in `versions/` that has already shipped")
   await cleanup?.()
   expect(fake.active()).toBe(0)
   expect(fake.skills.size).toBe(0)

@@ -1,0 +1,13 @@
+{
+  "name": "@srobroek/toolchain",
+  "version": "0.9.1",
+  "description": "Toolchain defaults as skills: stack, frontend, infrastructure, languages, observability, shell, Terraform, caches, background jobs and worktree coexistence.",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  }
+}

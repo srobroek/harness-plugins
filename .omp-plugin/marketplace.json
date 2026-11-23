@@ -5,7 +5,7 @@
     "name": "Sjors Robroek"
   },
   "metadata": {
-    "description": "Agent plugins for OpenCode and Claude Code."
+    "description": "Agent plugins for OpenCode, Claude Code, OMP and pi."
   },
   "plugins": [
     {
@@ -16,59 +16,101 @@
       "category": "development"
     },
     {
+      "name": "agent-researcher",
+      "description": "The researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one.",
+      "source": "./plugins/agent-researcher/omp",
+      "version": "0.9.0",
+      "category": "development"
+    },
+    {
+      "name": "agent-reviewer",
+      "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
+      "source": "./plugins/agent-reviewer/omp",
+      "version": "0.12.0",
+      "category": "development"
+    },
+    {
+      "name": "architecture",
+      "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
+      "source": "./plugins/architecture/omp",
+      "version": "0.10.0",
+      "category": "development"
+    },
+    {
+      "name": "build",
+      "description": "External-repository worker subagent: clone, follow the target's conventions, edit, verify, and publish only when delegated.",
+      "source": "./plugins/build/omp",
+      "version": "0.9.0",
+      "category": "development"
+    },
+    {
+      "name": "code-challenge",
+      "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
+      "source": "./plugins/code-challenge/omp",
+      "version": "2.0.0",
+      "category": "development"
+    },
+    {
       "name": "debate",
       "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
       "source": "./plugins/debate/omp",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "category": "productivity"
     },
     {
       "name": "eli5",
       "description": "Explain a topic at five depth levels, from metaphor to frontier.",
       "source": "./plugins/eli5/omp",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "category": "productivity"
     },
     {
       "name": "lang-go",
       "description": "Go skills: build, lint, go test -race, tidy and govulncheck checks, testing and fuzzing, module and package layout, and pprof profiling.",
       "source": "./plugins/lang-go/omp",
-      "version": "0.8.0",
+      "version": "0.8.1",
       "category": "development"
     },
     {
       "name": "lang-python",
       "description": "Python skills: uv, ruff, mypy or pyright and pytest checks, testing, packaging, typing and pydantic, SQLAlchemy and Alembic, and profiling.",
       "source": "./plugins/lang-python/omp",
-      "version": "0.8.0",
+      "version": "0.8.1",
       "category": "development"
     },
     {
       "name": "lang-rust",
       "description": "Rust skills: fmt, clippy and test checks, testing with nextest, proptest and insta, crates and workspaces, CI, sqlx persistence, Tauri and profiling.",
       "source": "./plugins/lang-rust/omp",
-      "version": "0.8.0",
+      "version": "0.8.1",
       "category": "development"
     },
     {
       "name": "lang-typescript",
       "description": "TypeScript and JavaScript skills: install, lint, tsc and test checks, testing, monorepo packaging, type safety and zod, and Bun and Node profiling.",
       "source": "./plugins/lang-typescript/omp",
-      "version": "0.9.0",
+      "version": "0.9.1",
+      "category": "development"
+    },
+    {
+      "name": "modes",
+      "description": "Debug, refactor and concept agents with plan-style mode reminders: root-cause diagnosis in a scratch worktree, behaviour-preserving refactoring, and design iteration.",
+      "source": "./plugins/modes/omp",
+      "version": "1.3.0",
       "category": "development"
     },
     {
       "name": "project",
       "description": "Project lifecycle: scaffold a project with /new-project, set up fnox and 1Password secrets, and pick an OSI-approved license.",
       "source": "./plugins/project/omp",
-      "version": "0.11.0",
+      "version": "0.11.1",
       "category": "productivity"
     },
     {
       "name": "toolchain",
       "description": "Toolchain defaults as skills: stack, frontend, infrastructure, languages, observability, shell, Terraform, caches, background jobs and worktree coexistence.",
       "source": "./plugins/toolchain/omp",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "category": "development"
     }
   ]

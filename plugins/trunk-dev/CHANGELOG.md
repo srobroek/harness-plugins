@@ -1,3 +1,13 @@
+## trunk-dev [0.11.0](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.10.0...trunk-dev--v0.11.0) (2026-11-23)
+
+### Features
+
+* **trunk-dev:** add pi skip-CI advisory extension ([da93feb](https://github.com/srobroek/harness-plugins/commit/da93febd06b1e44e864f369eff8414d78d0e3a6b))
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## trunk-dev [0.10.0](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.9.0...trunk-dev--v0.10.0) (2026-11-22)
 
 ### Features
