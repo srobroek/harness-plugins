@@ -1,0 +1,16 @@
+{
+  "name": "@srobroek/chezmoi",
+  "version": "0.6.0",
+  "description": "Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill.",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/chezmoi.js"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  }
+}
