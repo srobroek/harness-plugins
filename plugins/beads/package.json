@@ -9,7 +9,8 @@
     "category": "development",
     "harnesses": [
       "opencode",
-      "claude"
+      "claude",
+      "pi"
     ],
     "scope": "project",
     "signals": [
@@ -22,6 +23,10 @@
     },
     "claudeEntries": {
       "claude-hook": "claude-hook",
+      "bd-embedded-write-runner": "bd-embedded-write-runner"
+    },
+    "piEntries": {
+      "beads": "beads",
       "bd-embedded-write-runner": "bd-embedded-write-runner"
     },
     "claude": {

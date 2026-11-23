@@ -1,6 +1,6 @@
 {
   "name": "worktrunk",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Worktrunk (wt) worktree strategy, wt merge policy gate and Worktrunk skills for OpenCode V2.",
   "private": true,
   "type": "module",
@@ -9,7 +9,8 @@
     "category": "development",
     "harnesses": [
       "opencode",
-      "claude"
+      "claude",
+      "pi"
     ],
     "scope": "project",
     "signals": [
@@ -17,6 +18,9 @@
     ],
     "entries": {
       "index": "index"
+    },
+    "piEntries": {
+      "worktrunk": "worktrunk"
     },
     "claude": {
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/worktrunk"

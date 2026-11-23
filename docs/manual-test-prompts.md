@@ -186,7 +186,7 @@ Run exactly: git commit --allow-empty -m "update stuff"
 ```
 
 **Expect:** refused with ``trunk-dev: Use a Conventional Commit subject such as `feat(scope): summary`...``.
-**If not:** `plugins/trunk-dev/opencode/src/commit-gate.ts`; the repo needs `.releaserc.json` at its root.
+**If not:** `plugins/trunk-dev/shared/commit-gate.ts`; the repo needs `.releaserc.json` at its root.
 
 **3. beads: `bd edit` is refused**
 
@@ -240,7 +240,7 @@ Run exactly: wt merge epic
 ```
 
 **Expect:** refused with `worker-to-epic merges must preserve history; retry with wt merge epic --no-squash --no-ff`.
-**If not:** `plugins/worktrunk/opencode/src/merge-gate.ts`; `git symbolic-ref refs/remotes/origin/HEAD` must print `origin/main`.
+**If not:** `plugins/worktrunk/shared/merge-gate.ts`; `git symbolic-ref refs/remotes/origin/HEAD` must print `origin/main`.
 
 **9. statusline: the row renders**
 
@@ -2068,7 +2068,7 @@ Run exactly: git commit --allow-empty -m "update stuff"
 ```
 
 **Expect:** refused with ``trunk-dev: Use a Conventional Commit subject such as `feat(scope): summary`, or set TRUNK_DEV_ALLOW_NONCONVENTIONAL_COMMIT=1 to override.``
-**If not:** `plugins/trunk-dev/opencode/src/commit-gate.ts` and `release-repo.ts`.
+**If not:** `plugins/trunk-dev/shared/commit-gate.ts` and `release-repo.ts`.
 
 ```text
 Run exactly: TRUNK_DEV_ALLOW_NONCONVENTIONAL_COMMIT=1 git commit --allow-empty -m "update stuff"
@@ -2084,7 +2084,7 @@ Run exactly: git push origin main
 ```
 
 **Expect:** refused with `trunk-dev: Do not push directly to main/master; push to a branch and open an MR (or set TRUNK_DEV_ALLOW_MAIN_PUSH=1 to override).`
-**If not:** `plugins/trunk-dev/opencode/src/commit-gate.ts`.
+**If not:** `plugins/trunk-dev/shared/commit-gate.ts`.
 
 ### Advisory: skip-CI marker
 
@@ -2093,7 +2093,7 @@ Run exactly: git commit --allow-empty -m "chore: probe [skip ci]"
 ```
 
 **Expect:** the commit runs, and the result ends with `trunk-dev: this command's commit/MR/PR text contains a skip-CI marker...`.
-**If not:** `plugins/trunk-dev/opencode/src/skip-ci.ts`.
+**If not:** `plugins/trunk-dev/shared/skip-ci.ts`.
 
 ### Advisory: branch age
 
@@ -2102,7 +2102,7 @@ Run exactly: git push -u origin feature
 ```
 
 **Expect:** the push runs, and the result ends with `trunk-dev: This topic branch is based on a commit 3 days old; ...`.
-**If not:** `plugins/trunk-dev/opencode/src/mr-advisory.ts`; the scratch `main` commit must be backdated.
+**If not:** `plugins/trunk-dev/shared/mr-advisory.ts`; the scratch `main` commit must be backdated.
 
 ### Advisory: PR title, Flag line, squash (GitHub sandbox)
 
@@ -2111,7 +2111,7 @@ In my GitHub sandbox repo, run exactly: gh pr create --title "feat: add probe" -
 ```
 
 **Expect:** the result ends with ``trunk-dev: every `feat` MR/PR ships behind a feature flag; add a `Flag: <name> ...` line``. A title like `update` adds the Conventional Commits title note, and `gh pr merge <n>` without `--squash` adds the squash note.
-**If not:** `plugins/trunk-dev/opencode/src/mr-advisory.ts`.
+**If not:** `plugins/trunk-dev/shared/mr-advisory.ts`.
 
 ### Flag-cleanup bead (GitHub sandbox and beads)
 
@@ -2119,7 +2119,7 @@ Open and merge a PR whose body has `Flag: probe-flag (default off; owner me; rem
 with `gh pr merge <n> --squash`.
 
 **Expect:** one open chore `chore: remove feature flag probe-flag`, due 2026-12-31, with `metadata.trunk_dev_flag`.
-**If not:** `plugins/trunk-dev/opencode/src/flag-cleanup.ts`; when the runner refuses, the result carries the exact `bd create` command.
+**If not:** `plugins/trunk-dev/shared/flag-cleanup.ts`; when the runner refuses, the result carries the exact `bd create` command.
 
 ### Skill `trunk-dev-guide` (router) and its members
 
@@ -2202,7 +2202,7 @@ Run exactly: wt merge epic
 ```
 
 **Expect:** refused with `worker-to-epic merges must preserve history; retry with wt merge epic --no-squash --no-ff`.
-**If not:** `plugins/worktrunk/opencode/src/merge-gate.ts`.
+**If not:** `plugins/worktrunk/shared/merge-gate.ts`.
 
 ### Gate: merge from the target branch
 
@@ -2220,7 +2220,7 @@ Run exactly: cmd="wt merge epic"; eval "$cmd"
 ```
 
 **Expect:** refused with `opaque dynamic shell body names a merge or land command; retry with a literal command`.
-**If not:** `collectCommands` in `plugins/worktrunk/opencode/src/merge-gate.ts`.
+**If not:** `collectCommands` in `plugins/worktrunk/shared/merge-gate.ts`.
 
 ### Skill `worktrunk-preflight`
 

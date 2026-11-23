@@ -3,13 +3,13 @@
 
 Beads issue tracking: bd prime session context, shell gates on bd, git and gh commands, store pinning and the Beads skills.
 
-| Kind | opencode | claude |
-| --- | --- | --- |
-| skills | beads-contention-retry, beads-evidence, beads-guide, beads-ledger, beads-preflight, beads-setup | beads-contention-retry, beads-evidence, beads-guide, beads-ledger, beads-preflight, beads-setup |
-| agents | - | - |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | PreToolUse, SessionStart |
-| tools | - | - |
-| extensions | index | - |
-| mcp | - | - |
+| Kind | opencode | claude | pi |
+| --- | --- | --- | --- |
+| skills | beads-contention-retry, beads-evidence, beads-guide, beads-ledger, beads-preflight, beads-setup | beads-contention-retry, beads-evidence, beads-guide, beads-ledger, beads-preflight, beads-setup | beads-contention-retry, beads-evidence, beads-guide, beads-ledger, beads-preflight, beads-setup |
+| agents | - | - | - |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | PreToolUse, SessionStart | - |
+| tools | - | - | - |
+| extensions | index | - | bd-embedded-write-runner, beads |
+| mcp | - | - | - |

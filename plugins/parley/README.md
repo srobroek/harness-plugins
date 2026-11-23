@@ -345,6 +345,51 @@ the `toolchain-asset-ownership` skill, then restart at a planned time.
   dismiss the card. Retrying the send reuses one delivery id and one message id,
   so the message arrives once.
 
+## pi
+
+`pi/extensions/parley.js` is the same parley as a pi extension, built from
+`pi-src/` on the round, answer and result code in `shared/`. It registers
+`parley_ask`, `parley_wait` and `parley_end` with the OpenCode names, input
+schemas, output schema and descriptions, so skills and agents call them
+unchanged. It leaves pi's own question tools alone. Load it with
+`pi -e plugins/parley/pi/extensions/parley.js`, or copy the file to
+`~/.pi/agent/extensions/`.
+
+- **Panel.** In pi's interactive TUI a round shows in place of the editor
+  (`ctx.ui.custom()`). It takes the keys of [TUI panel](#tui-panel), except
+  `f`, `y`, `ctrl+v` and `alt+p`. Every question kind works. In a path field,
+  `tab` completes from the session directory. A one-question round submits on
+  `enter`, like the OpenCode inline card.
+- **Minimised rounds.** `esc` hides the panel and the round stays open. The
+  footer then shows `parley: round N waiting · /parley`. `/parley` shows the
+  round again with your edits.
+- **No panel.** In print, JSON and RPC mode, `parley_ask` checks the questions
+  and returns `unavailable` at once, with the reason `no_tui`. A host UI
+  without `ctx.ui.custom` gets the same result. So does a host whose
+  `@earendil-works/pi-tui` lacks a member the panel uses. The extension still
+  loads on both. `parley_wait` on an open round also returns `unavailable`
+  there instead of waiting. With `PARLEY_DISABLE=1` it returns `unavailable`
+  (`disabled`) in every mode. pi has no `fallback` or `questionTool` option.
+- **One UI module.** `pi-src/panel.ts` holds every use of `ctx.ui.custom()`.
+  It imports pi-tui at run time. The adapter sees only its `PanelSurface`
+  interface, so a host with another UI (such as OMP) replaces that one module.
+  The round logic lives in `pi-src/session.ts` and `shared/`.
+- **Waiting.** The wait modes, `timeout_s` and `parley_wait` work as in
+  OpenCode. A second `parley_ask` joins the open round. When you interrupt the
+  agent's turn, its round closes as `aborted`.
+- **Persistence.** parley writes each change to a round into the session as a
+  `parley-round` custom entry. The model does not see these entries. On start,
+  resume, `/reload` and `/tree`, parley reads back the latest entry of each
+  round on the current branch, so rounds survive compaction. It drops closed
+  rounds after 30 minutes and open rounds after 24 hours. It keeps no upload
+  bytes.
+- **Answers after the call ended.** If pi quits or leaves the session while a
+  call waits, the call returns `unavailable` and the round stays open. The next
+  pi on that session shows the round in the footer. A call that asks the same
+  questions again takes the round over. If no call does, submitting or
+  dismissing the round sends the outcome to the agent as a `parley` custom
+  message. That message starts a turn when pi is idle.
+
 ## RPC
 
 `parley` methods: `attach { clientID, sessionIDs?, detach? }` (replies with the
@@ -370,3 +415,6 @@ with `action` `opened`, `updated`, `closed` or `ended`.
    dismiss the built-in form.
 6. Repeat with `opencode run` (no TUI): the call returns `unavailable`, or with
    `fallback: "question"` the questions appear as a form.
+
+For pi, `bun test plugins/parley/pi-src` drives the panel with keypresses and
+no model. `pi -p "Call parley_ask …"` returns `unavailable` (`no_tui`).

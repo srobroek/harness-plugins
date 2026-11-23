@@ -21,6 +21,14 @@ opencode plugin add 'github:srobroek/harness-plugins::path:plugins/dep-update/op
 
 `dep_scan` honours cancellation and stops after 5 minutes in total. A stopped scan
 returns `complete: false` and marks every dependency it did not query `UNCHECKED`.
+## pi
+
+Load `plugins/dep-update/pi/extensions/index.js` as a pi extension. It registers `dep_scan` and `dep_apply` with the existing names and input schemas.
+
+`dep_apply` asks `ctx.ui.confirm` to approve the exact bump. In print or JSON mode, where no UI is available, it refuses without changing files.
+
+To load this extension in foreground pi-subagents, add its path to `subagents.defaultSubagentOnlyExtensions` or an agent's `subagentOnlyExtensions` setting.
+
 
 ## Permissions for a bump
 

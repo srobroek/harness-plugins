@@ -1,6 +1,6 @@
-import type { FileValue } from "./answers.ts"
-import { optionLabel, type Question } from "./questions.ts"
-import type { Draft } from "./tui-state.ts"
+import type { FileValue } from "../../shared/answers.ts"
+import { optionLabel, type Question } from "../../shared/questions.ts"
+import type { Draft } from "../../shared/tui-state.ts"
 
 /** Plain text of the focused card, excluding uploaded bytes and UI/key hints. */
 export function cardText(question: Question, draft: Draft): string {

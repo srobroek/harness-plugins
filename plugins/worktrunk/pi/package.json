@@ -1,0 +1,16 @@
+{
+  "name": "@srobroek/worktrunk",
+  "version": "0.7.0",
+  "description": "Worktrunk (wt) skills: work in linked worktrees and run deterministic preflight checks before an agent run or merge.",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/worktrunk.js"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  }
+}

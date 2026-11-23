@@ -3,11 +3,11 @@
 // plugins/parley/opencode/src/index.ts
 import { Plugin } from "@opencode/plugin";
 
-// plugins/parley/opencode/src/guards.ts
+// plugins/parley/shared/guards.ts
 var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 var strings = (input) => Array.isArray(input) ? input.filter((item) => typeof item === "string") : [];
 
-// plugins/parley/opencode/src/value-json.ts
+// plugins/parley/shared/value-json.ts
 function canonical(value) {
   if (Array.isArray(value))
     return `[${value.map(canonical).join(",")}]`;
@@ -16,7 +16,7 @@ function canonical(value) {
   return JSON.stringify(value);
 }
 
-// plugins/parley/opencode/src/structured.ts
+// plugins/parley/shared/structured.ts
 var NEW_KINDS = [
   "form",
   "buckets",
@@ -710,7 +710,7 @@ function structuredSummary(question, value) {
   }
 }
 
-// plugins/parley/opencode/src/questions.ts
+// plugins/parley/shared/questions.ts
 var PHASE_ONE_KINDS = [
   "pick_one",
   "show_options",
@@ -996,7 +996,7 @@ function coerceQuestion(raw) {
   return question;
 }
 
-// plugins/parley/opencode/src/answers.ts
+// plugins/parley/shared/answers.ts
 var ANSWER_STATUSES = ["answered", "accepted", "noted", "deferred"];
 var MAX_FILE_BYTES = 10 * 1024 * 1024;
 var text = (value) => typeof value === "string" && value.trim() !== "" ? value : undefined;
@@ -1253,10 +1253,41 @@ function describeAnswer(question, answer, index) {
   return `${head}${value}${note}`;
 }
 
-// plugins/parley/opencode/src/notes.ts
+// plugins/parley/shared/notes.ts
 var NOTES_HINT = "Notes are the user's input: act on each one. If a note asks a question or raises a concern, answer it, or ask a follow-up parley round, before you proceed.";
 
-// plugins/parley/opencode/src/conditions.ts
+// plugins/parley/shared/native.ts
+function nativeText(entries) {
+  const formatted = entries.map((entry) => `"${entry.question}"="${entry.answer.length ? entry.answer.join(", ") : "Unanswered"}"`).join(", ");
+  const lines = [`User has answered your questions: ${formatted}. You can now continue with the user's answers in mind.`];
+  for (const entry of entries)
+    if (entry.note)
+      lines.push(`Note on "${entry.question}": ${entry.note}`);
+  if (entries.some((entry) => entry.note))
+    lines.push(NOTES_HINT);
+  const deferred = entries.filter((entry) => entry.deferred).map((entry) => `"${entry.question}"`);
+  if (deferred.length > 0)
+    lines.push(`Deferred (the user will answer later): ${deferred.join(", ")}`);
+  return lines.join(`
+`);
+}
+function nativeSummary(result, questions) {
+  const asked = result.pending.length + result.answers.length;
+  const scope = asked === 0 ? questions : questions.filter((q) => result.pending.includes(q.id) || result.answers.some((a) => a.id === q.id));
+  return nativeText(scope.map((question) => {
+    const answer = result.answers.find((candidate) => candidate.id === question.id);
+    const value = answer?.value;
+    const described = value === undefined ? "" : typeof value.text === "string" ? value.text : describeValue(question, value);
+    return {
+      question: question.title,
+      answer: described === "" ? [] : [described],
+      ...answer?.note ? { note: answer.note } : {},
+      deferred: answer?.status === "deferred"
+    };
+  }));
+}
+
+// plugins/parley/shared/conditions.ts
 function visibleQuestions(questions, value) {
   const visible = [];
   const ids = new Set;
@@ -1270,9 +1301,36 @@ function visibleQuestions(questions, value) {
   return visible;
 }
 
-// plugins/parley/opencode/src/rounds.ts
+// plugins/parley/shared/rounds.ts
 var TIMEOUT = "timeout";
 var RELOADED_REASON = "parley reloaded; the round stays open and its answers will arrive as a message";
+var DEFAULT_TIMEOUT_S = 1800;
+function timeoutSeconds(value) {
+  const seconds = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
+  return typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds : DEFAULT_TIMEOUT_S;
+}
+var DEADLINE_SLACK_MS = 250;
+var holdsDeadline = (round, now) => round.deadline === undefined || now >= round.deadline - DEADLINE_SLACK_MS;
+function sameQuestions(held, asked) {
+  return asked.every((question) => {
+    const known = held.find((candidate) => candidate.id === question.id);
+    return known !== undefined && known.kind === question.kind && known.title === question.title && known.body === question.body;
+  });
+}
+function rekey(held, asked) {
+  const taken = new Set([...held, ...asked].map((question) => question.id));
+  const keys = new Map;
+  for (const { id } of asked) {
+    if (!held.some((question) => question.id === id))
+      continue;
+    let n = 2;
+    while (taken.has(`${id}-${n}`))
+      n++;
+    keys.set(id, `${id}-${n}`);
+    taken.add(`${id}-${n}`);
+  }
+  return keys;
+}
 
 class Rounds {
   newID;
@@ -1502,118 +1560,7 @@ function waitFor(rounds, round, options) {
   });
 }
 
-// plugins/parley/opencode/src/takeover.ts
-var RECOMMENDED = /\s*\(recommended\)\s*$/i;
-var BUILTIN = Symbol("parley.builtin");
-function wrapQuestion(builtin, takeover, onBuiltin) {
-  return async (input, context) => {
-    const outcome = await takeover(input, context);
-    if (outcome !== BUILTIN)
-      return outcome;
-    onBuiltin?.(context);
-    return builtin(input, context);
-  };
-}
-var clip = (text, max) => text.length > max ? `${text.slice(0, max - 1)}\u2026` : text;
-function fromPrompts(prompts) {
-  if (!Array.isArray(prompts) || prompts.length === 0)
-    return { errors: ["questions must be a non-empty array"] };
-  const questions = prompts.map((prompt, index) => {
-    const text = typeof prompt.question === "string" ? prompt.question.trim() : "";
-    const header = typeof prompt.header === "string" ? prompt.header.trim() : "";
-    const base = { id: `q${index + 1}`, title: header || clip(text, 60) || `Question ${index + 1}`, ...text ? { body: text } : {} };
-    const raw = Array.isArray(prompt.options) ? prompt.options : [];
-    if (raw.length === 0)
-      return { ...base, kind: "ask_text" };
-    const options = raw.map((option, at) => {
-      const label = option.label.replace(RECOMMENDED, "") || option.label;
-      const description = option.description?.trim();
-      return { id: `o${at + 1}`, label, ...description && description !== label ? { description } : {} };
-    });
-    const recommended = raw.flatMap((option, at) => RECOMMENDED.test(option.label) ? [`o${at + 1}`] : []);
-    if (prompt.multiple === true)
-      return { ...base, kind: "pick_many", options, allow_other: true, ...recommended.length > 0 ? { recommended } : {} };
-    return { ...base, kind: "pick_one", options, allow_other: true, ...recommended[0] ? { recommended: recommended[0] } : {} };
-  });
-  const errors = validateQuestions(questions);
-  return errors.length > 0 ? { errors } : { questions };
-}
-function shouldTakeOver(settings, attached) {
-  return settings.questionTool === "takeover" && !settings.disabled && attached;
-}
-function nativeAnswer(prompt, question, answer) {
-  if (answer === undefined || answer.value === undefined)
-    return [];
-  if (isStructured(question))
-    return [structuredSummary(question, answer.value)];
-  const value = answer.value;
-  const label = (id) => {
-    const index = (question.options ?? []).findIndex((option) => option.id === id);
-    return prompt.options[index]?.label ?? id;
-  };
-  const selected = value.selected === undefined ? [] : Array.isArray(value.selected) ? value.selected : [value.selected];
-  const parts = [...selected.map(label)];
-  if (typeof value.other === "string" && value.other.trim() !== "")
-    parts.push(value.other);
-  if (typeof value.text === "string" && value.text.trim() !== "")
-    parts.push(value.text);
-  return parts;
-}
-function nativeText(entries) {
-  const formatted = entries.map((entry) => `"${entry.question}"="${entry.answer.length ? entry.answer.join(", ") : "Unanswered"}"`).join(", ");
-  const lines = [`User has answered your questions: ${formatted}. You can now continue with the user's answers in mind.`];
-  for (const entry of entries)
-    if (entry.note)
-      lines.push(`Note on "${entry.question}": ${entry.note}`);
-  if (entries.some((entry) => entry.note))
-    lines.push(NOTES_HINT);
-  const deferred = entries.filter((entry) => entry.deferred).map((entry) => `"${entry.question}"`);
-  if (deferred.length > 0)
-    lines.push(`Deferred (the user will answer later): ${deferred.join(", ")}`);
-  return lines.join(`
-`);
-}
-function nativeResult(prompts, questions, result) {
-  const answers = questions.map((question, index) => nativeAnswer(prompts[index], question, result.answers.find((answer) => answer.id === question.id)));
-  const content = nativeText(questions.map((question, index) => {
-    const answer = result.answers.find((candidate) => candidate.id === question.id);
-    return {
-      question: prompts[index].question,
-      answer: answers[index] ?? [],
-      ...answer?.note ? { note: answer.note } : {},
-      deferred: answer?.status === "deferred"
-    };
-  }));
-  return {
-    output: { answers },
-    content,
-    metadata: {
-      answers,
-      parley: {
-        ...result.round === undefined ? {} : { round: result.round },
-        answers: result.answers.map(publicAnswer),
-        pending: result.pending
-      }
-    }
-  };
-}
-function nativeSummary(result, questions) {
-  const asked = result.pending.length + result.answers.length;
-  const scope = asked === 0 ? questions : questions.filter((q) => result.pending.includes(q.id) || result.answers.some((a) => a.id === q.id));
-  return nativeText(scope.map((question) => {
-    const answer = result.answers.find((candidate) => candidate.id === question.id);
-    const value = answer?.value;
-    const described = value === undefined ? "" : typeof value.text === "string" ? value.text : describeValue(question, value);
-    return {
-      question: question.title,
-      answer: described === "" ? [] : [described],
-      ...answer?.note ? { note: answer.note } : {},
-      deferred: answer?.status === "deferred"
-    };
-  }));
-}
-
-// plugins/parley/opencode/src/format.ts
+// plugins/parley/shared/format.ts
 var HINTS = {
   open: "The round is open in the parley panel. Call parley_wait to collect the answers.",
   partial: "Some answers are in; the round is still open. Call parley_wait for the rest.",
@@ -1705,7 +1652,7 @@ function render(result, questions, save, format = "parley") {
   return { output, content };
 }
 
-// plugins/parley/opencode/src/outbox.ts
+// plugins/parley/shared/outbox.ts
 var OUTBOX_KEY_PREFIX = "outbox:";
 var MAX_ATTEMPTS = 3;
 var SENT_TTL_MS = 60 * 60000;
@@ -1764,9 +1711,10 @@ function fromOutbox(value) {
   return { ...head, key, directory, sessionID, text };
 }
 
-// plugins/parley/opencode/src/persist.ts
+// plugins/parley/shared/persist.ts
 var ROUND_KEY_PREFIX = "round:";
 var OPEN_TTL_MS = 24 * 60 * 60000;
+var CLOSED_TTL_MS = 30 * 60000;
 var roundKey = (roundID) => `${ROUND_KEY_PREFIX}${roundID}`;
 function toStored(round, directory) {
   return {
@@ -1839,85 +1787,23 @@ function stale(round, now, closedTtlMs) {
   return now - round.updated > (round.status === "open" || awaitsDelivery(round) ? OPEN_TTL_MS : closedTtlMs);
 }
 
-// plugins/parley/opencode/src/rpc.ts
-import { Rpc } from "@opencode/plugin/rpc";
-var RPC_ID = "parley";
-var ParleyRpc = Rpc.define({
-  id: RPC_ID,
-  methods: {
-    attach: {
-      input: {
-        type: "object",
-        required: ["clientID"],
-        properties: {
-          clientID: { type: "string" },
-          sessionIDs: { type: "array", items: { type: "string" } },
-          detach: { type: "boolean" }
-        }
-      },
-      output: { type: "object" }
-    },
-    pending: {
-      input: { type: "object", properties: { sessionID: { type: "string" } } },
-      output: { type: "object" }
-    },
-    submit: {
-      input: {
-        type: "object",
-        required: ["roundID", "answers"],
-        properties: {
-          roundID: { type: "string" },
-          sessionID: { type: "string" },
-          answers: { type: "array", items: { type: "object" } },
-          final: { type: "boolean" }
-        }
-      },
-      output: { type: "object" }
-    },
-    deliver: {
-      input: {
-        type: "object",
-        required: ["sessionID", "questions", "answers"],
-        properties: {
-          sessionID: { type: "string" },
-          number: { type: "number" },
-          roundID: { type: "string" },
-          deliveryID: { type: "string" },
-          questions: { type: "array", items: { type: "object" } },
-          answers: { type: "array", items: { type: "object" } }
-        }
-      },
-      output: { type: "object" }
-    },
-    cancel: {
-      input: {
-        type: "object",
-        required: ["roundID"],
-        properties: { roundID: { type: "string" }, reason: { type: "string" } }
-      },
-      output: { type: "object" }
-    }
-  },
-  events: {
-    round: {
-      schema: {
-        type: "object",
-        required: ["sessionID", "roundID", "action"],
-        properties: {
-          sessionID: { type: "string" },
-          roundID: { type: "string" },
-          action: { type: "string", enum: ["opened", "updated", "closed", "ended", "native"] },
-          status: { type: "string" },
-          reason: { type: "string" },
-          message: { type: "string" },
-          callID: { type: "string" }
-        }
-      }
-    }
-  }
-});
-
-// plugins/parley/opencode/src/schema.ts
+// plugins/parley/shared/schema.ts
+var ASK_DESCRIPTION = `Ask the user one round of questions in the parley panel and wait for the answers.
+Send every question whose prerequisites are settled in one call, each with your recommended answer and rationale.
+Kinds: pick_one for categorical choices (how wide, which approach), never a slider; slider only for numeric quantities.
+ask_code is for code the user writes; to confirm a snippet use confirm with it in the body, or show_diff.
+New kinds use config and recommended as the complete answer object:
+form config.fields [{id,label,type:text|number|choice|toggle,options?:string[],min?,max?,required?}], answer {fields:{id:value}}.
+buckets config.items/categories [{id,label}], answer {buckets:{categoryId:[itemId]}}; match config.items/targets, answer {pairs:{itemId:targetId}} (bijection).
+allocate options + config.total (100), answer {allocations:{optionId:number}} summing to total; matrix options + config.criteria [{id,label}], answer {scores:{optionId:{criterionId:number}}}.
+range min/max/step/unit, answer {min,max}; path config.mode files|dirs|both + question.multiple, answer {paths:[strings]} (directories end /, no upload).
+date/time/datetime config.min/max ISO bounds, answer {value:YYYY-MM-DD|HH:mm|YYYY-MM-DDTHH:mm}; tags config.suggestions + min/max counts, answer {tags:[strings]}; colour config.swatches, answer {hex:'#rrggbb'}.
+show_if {id:earlierQuestionId,equals:answerValue} hides conditional questions until that earlier answer matches. Hidden questions are omitted, not pending.
+Answers are keyed by id: answered, accepted (took your recommendation), noted (comment only) or deferred; unanswered ids are in pending.
+Notes are user input: answer a question or concern in a note, or ask a follow-up round, before you proceed.
+Status unavailable: no parley UI, so use the question tool or chat for the rest of the session. timeout: the round closed unanswered.`;
+var WAIT_DESCRIPTION = "Keep waiting on this session's open parley round after wait none/any; returns only new answers.";
+var END_DESCRIPTION = "Close the parley for this session once every question is settled and the user confirmed the outcome.";
 var option = {
   type: "object",
   required: ["id", "label"],
@@ -2049,6 +1935,84 @@ var endOutput = {
   required: ["ok"],
   properties: { ok: { type: "boolean" }, closed: { type: "integer" } }
 };
+
+// plugins/parley/opencode/src/rpc.ts
+import { Rpc } from "@opencode/plugin/rpc";
+var RPC_ID = "parley";
+var ParleyRpc = Rpc.define({
+  id: RPC_ID,
+  methods: {
+    attach: {
+      input: {
+        type: "object",
+        required: ["clientID"],
+        properties: {
+          clientID: { type: "string" },
+          sessionIDs: { type: "array", items: { type: "string" } },
+          detach: { type: "boolean" }
+        }
+      },
+      output: { type: "object" }
+    },
+    pending: {
+      input: { type: "object", properties: { sessionID: { type: "string" } } },
+      output: { type: "object" }
+    },
+    submit: {
+      input: {
+        type: "object",
+        required: ["roundID", "answers"],
+        properties: {
+          roundID: { type: "string" },
+          sessionID: { type: "string" },
+          answers: { type: "array", items: { type: "object" } },
+          final: { type: "boolean" }
+        }
+      },
+      output: { type: "object" }
+    },
+    deliver: {
+      input: {
+        type: "object",
+        required: ["sessionID", "questions", "answers"],
+        properties: {
+          sessionID: { type: "string" },
+          number: { type: "number" },
+          roundID: { type: "string" },
+          deliveryID: { type: "string" },
+          questions: { type: "array", items: { type: "object" } },
+          answers: { type: "array", items: { type: "object" } }
+        }
+      },
+      output: { type: "object" }
+    },
+    cancel: {
+      input: {
+        type: "object",
+        required: ["roundID"],
+        properties: { roundID: { type: "string" }, reason: { type: "string" } }
+      },
+      output: { type: "object" }
+    }
+  },
+  events: {
+    round: {
+      schema: {
+        type: "object",
+        required: ["sessionID", "roundID", "action"],
+        properties: {
+          sessionID: { type: "string" },
+          roundID: { type: "string" },
+          action: { type: "string", enum: ["opened", "updated", "closed", "ended", "native"] },
+          status: { type: "string" },
+          reason: { type: "string" },
+          message: { type: "string" },
+          callID: { type: "string" }
+        }
+      }
+    }
+  }
+});
 
 // plugins/parley/opencode/src/fallback.ts
 var FALLBACK_KINDS = new Set(["pick_one", "show_options", "pick_many", "confirm", "ask_text"]);
@@ -2212,10 +2176,89 @@ class Presence {
   }
 }
 
+// plugins/parley/opencode/src/takeover.ts
+var RECOMMENDED = /\s*\(recommended\)\s*$/i;
+var BUILTIN = Symbol("parley.builtin");
+function wrapQuestion(builtin, takeover, onBuiltin) {
+  return async (input, context) => {
+    const outcome = await takeover(input, context);
+    if (outcome !== BUILTIN)
+      return outcome;
+    onBuiltin?.(context);
+    return builtin(input, context);
+  };
+}
+var clip = (text, max) => text.length > max ? `${text.slice(0, max - 1)}\u2026` : text;
+function fromPrompts(prompts) {
+  if (!Array.isArray(prompts) || prompts.length === 0)
+    return { errors: ["questions must be a non-empty array"] };
+  const questions = prompts.map((prompt, index) => {
+    const text = typeof prompt.question === "string" ? prompt.question.trim() : "";
+    const header = typeof prompt.header === "string" ? prompt.header.trim() : "";
+    const base = { id: `q${index + 1}`, title: header || clip(text, 60) || `Question ${index + 1}`, ...text ? { body: text } : {} };
+    const raw = Array.isArray(prompt.options) ? prompt.options : [];
+    if (raw.length === 0)
+      return { ...base, kind: "ask_text" };
+    const options = raw.map((option, at) => {
+      const label = option.label.replace(RECOMMENDED, "") || option.label;
+      const description = option.description?.trim();
+      return { id: `o${at + 1}`, label, ...description && description !== label ? { description } : {} };
+    });
+    const recommended = raw.flatMap((option, at) => RECOMMENDED.test(option.label) ? [`o${at + 1}`] : []);
+    if (prompt.multiple === true)
+      return { ...base, kind: "pick_many", options, allow_other: true, ...recommended.length > 0 ? { recommended } : {} };
+    return { ...base, kind: "pick_one", options, allow_other: true, ...recommended[0] ? { recommended: recommended[0] } : {} };
+  });
+  const errors = validateQuestions(questions);
+  return errors.length > 0 ? { errors } : { questions };
+}
+function shouldTakeOver(settings, attached) {
+  return settings.questionTool === "takeover" && !settings.disabled && attached;
+}
+function nativeAnswer(prompt, question, answer) {
+  if (answer === undefined || answer.value === undefined)
+    return [];
+  if (isStructured(question))
+    return [structuredSummary(question, answer.value)];
+  const value = answer.value;
+  const label = (id) => {
+    const index = (question.options ?? []).findIndex((option) => option.id === id);
+    return prompt.options[index]?.label ?? id;
+  };
+  const selected = value.selected === undefined ? [] : Array.isArray(value.selected) ? value.selected : [value.selected];
+  const parts = [...selected.map(label)];
+  if (typeof value.other === "string" && value.other.trim() !== "")
+    parts.push(value.other);
+  if (typeof value.text === "string" && value.text.trim() !== "")
+    parts.push(value.text);
+  return parts;
+}
+function nativeResult(prompts, questions, result) {
+  const answers = questions.map((question, index) => nativeAnswer(prompts[index], question, result.answers.find((answer) => answer.id === question.id)));
+  const content = nativeText(questions.map((question, index) => {
+    const answer = result.answers.find((candidate) => candidate.id === question.id);
+    return {
+      question: prompts[index].question,
+      answer: answers[index] ?? [],
+      ...answer?.note ? { note: answer.note } : {},
+      deferred: answer?.status === "deferred"
+    };
+  }));
+  return {
+    output: { answers },
+    content,
+    metadata: {
+      answers,
+      parley: {
+        ...result.round === undefined ? {} : { round: result.round },
+        answers: result.answers.map(publicAnswer),
+        pending: result.pending
+      }
+    }
+  };
+}
+
 // plugins/parley/opencode/src/service.ts
-var DEFAULT_TIMEOUT_S = 1800;
-var CLOSED_TTL_MS = 30 * 60000;
-var DEADLINE_SLACK_MS = 250;
 function settingsFrom(options, env) {
   const window = Number(options.heartbeat_window_s);
   return {
@@ -2224,10 +2267,6 @@ function settingsFrom(options, env) {
     disabled: options.ui === "off" || env.PARLEY_DISABLE === "1",
     heartbeatWindowMs: Number.isFinite(window) && window > 0 ? window * 1000 : 30000
   };
-}
-function timeoutSeconds(value) {
-  const seconds = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
-  return typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds : DEFAULT_TIMEOUT_S;
 }
 var unavailable = (reason) => ({ status: "unavailable", reason, answers: [], pending: [] });
 
@@ -3014,7 +3053,7 @@ class Parley {
           pending: round.questions.map((question) => question.id).filter((id) => !round.answers.has(id)),
           channel: "tui"
         };
-      const last = round.deadline === undefined || this.#now() >= round.deadline - DEADLINE_SLACK_MS;
+      const last = holdsDeadline(round, this.#now());
       const closing = outcome === "aborted" ? "aborted" : outcome === "timeout" && last ? TIMEOUT : undefined;
       if (closing && this.rounds.cancel(round.id, closing, this.#now()))
         await this.deps.emit({
@@ -3116,26 +3155,6 @@ class Parley {
     }
   }
 }
-function sameQuestions(held, asked) {
-  return asked.every((question) => {
-    const known = held.find((candidate) => candidate.id === question.id);
-    return known !== undefined && known.kind === question.kind && known.title === question.title && known.body === question.body;
-  });
-}
-function rekey(held, asked) {
-  const taken = new Set([...held, ...asked].map((question) => question.id));
-  const keys = new Map;
-  for (const { id } of asked) {
-    if (!held.some((question) => question.id === id))
-      continue;
-    let n = 2;
-    while (taken.has(`${id}-${n}`))
-      n++;
-    keys.set(id, `${id}-${n}`);
-    taken.add(`${id}-${n}`);
-  }
-  return keys;
-}
 
 // plugins/parley/opencode/src/uploads.ts
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
@@ -3219,20 +3238,6 @@ function sweepUploads(now, base = tmpdir()) {
 }
 
 // plugins/parley/opencode/src/index.ts
-var ASK_DESCRIPTION = `Ask the user one round of questions in the parley panel and wait for the answers.
-Send every question whose prerequisites are settled in one call, each with your recommended answer and rationale.
-Kinds: pick_one for categorical choices (how wide, which approach), never a slider; slider only for numeric quantities.
-ask_code is for code the user writes; to confirm a snippet use confirm with it in the body, or show_diff.
-New kinds use config and recommended as the complete answer object:
-form config.fields [{id,label,type:text|number|choice|toggle,options?:string[],min?,max?,required?}], answer {fields:{id:value}}.
-buckets config.items/categories [{id,label}], answer {buckets:{categoryId:[itemId]}}; match config.items/targets, answer {pairs:{itemId:targetId}} (bijection).
-allocate options + config.total (100), answer {allocations:{optionId:number}} summing to total; matrix options + config.criteria [{id,label}], answer {scores:{optionId:{criterionId:number}}}.
-range min/max/step/unit, answer {min,max}; path config.mode files|dirs|both + question.multiple, answer {paths:[strings]} (directories end /, no upload).
-date/time/datetime config.min/max ISO bounds, answer {value:YYYY-MM-DD|HH:mm|YYYY-MM-DDTHH:mm}; tags config.suggestions + min/max counts, answer {tags:[strings]}; colour config.swatches, answer {hex:'#rrggbb'}.
-show_if {id:earlierQuestionId,equals:answerValue} hides conditional questions until that earlier answer matches. Hidden questions are omitted, not pending.
-Answers are keyed by id: answered, accepted (took your recommendation), noted (comment only) or deferred; unanswered ids are in pending.
-Notes are user input: answer a question or concern in a note, or ask a follow-up round, before you proceed.
-Status unavailable: no parley UI, so use the question tool or chat for the rest of the session. timeout: the round closed unanswered.`;
 var options = { permission: "parley" };
 async function roundStore(ctx) {
   const storage = ctx.storage;
@@ -3350,7 +3355,7 @@ var src_default = Plugin.define({
       });
       editor.add({
         name: "parley_wait",
-        description: "Keep waiting on this session's open parley round after wait none/any; returns only new answers.",
+        description: WAIT_DESCRIPTION,
         input: waitInput,
         output: resultOutput,
         options,
@@ -3361,7 +3366,7 @@ var src_default = Plugin.define({
       });
       editor.add({
         name: "parley_end",
-        description: "Close the parley for this session once every question is settled and the user confirmed the outcome.",
+        description: END_DESCRIPTION,
         input: endInput,
         output: endOutput,
         options,

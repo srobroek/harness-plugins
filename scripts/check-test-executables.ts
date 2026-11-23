@@ -64,7 +64,13 @@ export function checkTree(files: Map<string, string>): Finding[] {
 function main(): number {
   const root = path.resolve(import.meta.dir, "..")
   const files = new Map<string, string>()
-  for (const pattern of ["plugins/*/opencode/src/**/*.test.ts", "lib/src/**/*.test.ts", "scripts/**/*.test.ts"])
+  for (const pattern of [
+    "plugins/*/opencode/src/**/*.test.ts",
+    "plugins/*/shared/**/*.test.ts",
+    "plugins/*/pi-src/**/*.test.ts",
+    "lib/src/**/*.test.ts",
+    "scripts/**/*.test.ts",
+  ])
     for (const file of new Bun.Glob(pattern).scanSync({ cwd: root }))
       if (!file.includes("node_modules") && file !== "scripts/check-test-executables.test.ts")
         files.set(file, readFileSync(path.join(root, file), "utf8"))

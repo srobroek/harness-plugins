@@ -166,9 +166,9 @@ export async function decideBdCloseParsed(
   return undefined
 }
 
-/** The directory and environment one close's lookup runs with. */
-function lookupSite(
-  invocation: CloseSite,
+/** The directory and environment one `bd` write's lookup runs with: where the write lands. */
+export function lookupSite(
+  invocation: Pick<CloseSite, "beadsDir">,
   cwd: string,
   env: NodeJS.ProcessEnv,
   target: BdTarget | undefined,

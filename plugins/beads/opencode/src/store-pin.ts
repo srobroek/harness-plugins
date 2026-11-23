@@ -102,3 +102,12 @@ export function selectStore(
 export function pinnedEnvironment(cwd: string, base: NodeJS.ProcessEnv, pinFor = sessionPinFor): NodeJS.ProcessEnv {
   return selectStore(cwd, base, pinFor).env
 }
+
+const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
+
+/** The shell lines that give a later shell `selection`'s store, for a host that cannot set a child's environment. */
+export function selectionExports(selection: StoreSelection): string[] {
+  // An inherited pin with no replacement must leave the shell too, or bd keeps writing its ledger.
+  const unset = selection.unset.length === 0 ? [] : [`unset ${selection.unset.join(" ")}`]
+  return [...unset, ...Object.entries(selection.set).map(([name, value]) => `export ${name}=${shellQuote(value)}`)]
+}

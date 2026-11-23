@@ -57,7 +57,7 @@
       "name": "chezmoi",
       "description": "Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill.",
       "source": "./plugins/chezmoi/claude",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/chezmoi",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -183,7 +183,7 @@
       "name": "trunk-dev",
       "description": "Trunk-based delivery for OpenCode, Claude Code, and pi: Conventional Commit and main-push gates, skip-CI and MR/PR advisories, feature-flag cleanup beads, and release-setup skills.",
       "source": "./plugins/trunk-dev/claude",
-      "version": "0.11.0",
+      "version": "0.12.0",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/trunk-dev",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -192,7 +192,7 @@
       "name": "worktrunk",
       "description": "Worktrunk (wt) skills: work in linked worktrees and run deterministic preflight checks before an agent run or merge.",
       "source": "./plugins/worktrunk/claude",
-      "version": "0.6.1",
+      "version": "0.7.0",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/worktrunk",
       "repository": "https://github.com/srobroek/harness-plugins"

@@ -496,6 +496,26 @@
           "tools": [],
           "extensions": [],
           "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "beads-contention-retry",
+            "beads-evidence",
+            "beads-guide",
+            "beads-ledger",
+            "beads-preflight",
+            "beads-setup"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "bd-embedded-write-runner",
+            "beads"
+          ],
+          "mcp": []
         }
       },
       "scope": "project"
@@ -549,7 +569,7 @@
     },
     {
       "name": "chezmoi",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "description": "Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill.",
       "category": "development",
       "harnesses": {
@@ -577,6 +597,20 @@
           "hooks": [],
           "tools": [],
           "extensions": [],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "chezmoi-editor"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "chezmoi"
+          ],
           "mcp": []
         }
       },
@@ -750,11 +784,25 @@
     },
     {
       "name": "dep-update",
-      "version": "0.6.1",
+      "version": "0.7.0",
       "description": "Classify dependency updates by semver safety and apply confirmed patch and minor bumps.",
       "category": "development",
       "harnesses": {
         "opencode": {
+          "skills": [
+            "dep-update"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "pi": {
           "skills": [
             "dep-update"
           ],
@@ -1469,7 +1517,7 @@
     },
     {
       "name": "parley",
-      "version": "0.4.2",
+      "version": "0.5.0",
       "description": "Ask the user rounds of typed questions in a TUI panel, with recommended answers, notes and deferrals.",
       "category": "development",
       "harnesses": {
@@ -1483,6 +1531,18 @@
           "extensions": [
             "index",
             "tui"
+          ],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "parley"
           ],
           "mcp": []
         }
@@ -1700,7 +1760,7 @@
     },
     {
       "name": "safety",
-      "version": "0.13.1",
+      "version": "0.14.0",
       "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help, redaction of secret environment values from tool output, and a tool that stores a secret without a shell.",
       "category": "development",
       "harnesses": {
@@ -1713,6 +1773,18 @@
           "tools": [],
           "extensions": [
             "index"
+          ],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "safety"
           ],
           "mcp": []
         }
@@ -1951,7 +2023,7 @@
     },
     {
       "name": "trunk-dev",
-      "version": "0.11.0",
+      "version": "0.12.0",
       "description": "Trunk-based delivery for OpenCode, Claude Code, and pi: Conventional Commit and main-push gates, skip-CI and MR/PR advisories, feature-flag cleanup beads, and release-setup skills.",
       "category": "development",
       "harnesses": {
@@ -2000,7 +2072,7 @@
           "hooks": [],
           "tools": [],
           "extensions": [
-            "skip-ci"
+            "trunk-dev"
           ],
           "mcp": []
         }
@@ -2032,7 +2104,7 @@
     },
     {
       "name": "worktrunk",
-      "version": "0.6.1",
+      "version": "0.7.0",
       "description": "Worktrunk (wt) skills: work in linked worktrees and run deterministic preflight checks before an agent run or merge.",
       "category": "development",
       "harnesses": {
@@ -2062,6 +2134,21 @@
           "hooks": [],
           "tools": [],
           "extensions": [],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "worktrunk-preflight",
+            "worktrunk-worktrees"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "worktrunk"
+          ],
           "mcp": []
         }
       },

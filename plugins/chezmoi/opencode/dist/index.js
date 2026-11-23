@@ -799,154 +799,11 @@ function writtenPaths(tool, input, cwd) {
   return [...new Set(writeTargets(tool, input).map((path) => lexicalAbs(path, cwd)))];
 }
 
-// plugins/chezmoi/opencode/src/guard.ts
+// plugins/chezmoi/shared/guard.ts
+import { spawn as spawnProcess } from "child_process";
 import { realpathSync } from "fs";
 import { homedir as homedir2 } from "os";
 import { basename as basename2 } from "path";
-
-// lib/src/subprocess.ts
-import { constants } from "os";
-var EXIT_GRACE_MS = 2000;
-var EXIT_POLL_MS = 100;
-function goneWatch(graceMs, pollMs) {
-  const polls = Math.max(1, Math.ceil(graceMs / Math.max(1, pollMs)));
-  let since = null;
-  let seen = 0;
-  return (alive) => {
-    if (alive) {
-      since = null;
-      seen = 0;
-      return false;
-    }
-    since ??= Date.now();
-    seen++;
-    return seen > polls && Date.now() - since >= graceMs;
-  };
-}
-function processAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === "EPERM";
-  }
-}
-function killChild(child, group) {
-  if (group) {
-    try {
-      process.kill(-child.pid, "SIGKILL");
-      return;
-    } catch {}
-  }
-  try {
-    child.kill("SIGKILL");
-  } catch {}
-}
-function unref(timer) {
-  timer.unref?.();
-}
-function capture(stream) {
-  if (!(stream instanceof ReadableStream))
-    return { text: Promise.resolve(""), snapshot: () => "", cancel: () => {} };
-  const reader = stream.getReader();
-  const decoder = new TextDecoder;
-  let collected = "";
-  const text = (async () => {
-    try {
-      for (;; ) {
-        const chunk = await reader.read();
-        if (chunk.done)
-          break;
-        collected += decoder.decode(chunk.value, { stream: true });
-      }
-    } catch {}
-    collected += decoder.decode();
-    return collected;
-  })();
-  const cancel = () => {
-    try {
-      reader.cancel().catch(() => {
-        return;
-      });
-    } catch {}
-  };
-  return { text, snapshot: () => collected, cancel };
-}
-function supervise(child, options = {}) {
-  const grace = Math.max(0, options.graceMs ?? EXIT_GRACE_MS);
-  const pollMs = Math.max(1, options.pollMs ?? EXIT_POLL_MS);
-  const alive = options.alive ?? processAlive;
-  const group = options.group ?? false;
-  const { signal, timeoutMs } = options;
-  const out = capture(child.stdout);
-  const err = capture(child.stderr);
-  return new Promise((resolve) => {
-    let ended = null;
-    let exitSeen = false;
-    let settled = false;
-    const gone = goneWatch(grace, pollMs);
-    let deadline;
-    let graceTimer;
-    const settle = (run) => {
-      if (settled)
-        return;
-      settled = true;
-      clearTimeout(deadline);
-      clearTimeout(graceTimer);
-      clearInterval(poller);
-      signal?.removeEventListener("abort", onAbort);
-      resolve(run);
-    };
-    const end = (cause) => {
-      if (ended !== null || settled)
-        return;
-      ended = cause;
-      if (cause !== "lost" || group)
-        killChild(child, group);
-      out.cancel();
-      err.cancel();
-      graceTimer = setTimeout(() => settle({ kind: cause, stdout: out.snapshot(), stderr: err.snapshot() }), grace);
-      if (options.unref)
-        unref(graceTimer);
-    };
-    const onAbort = () => end("aborted");
-    const poller = setInterval(() => {
-      if (exitSeen || ended !== null || settled)
-        return;
-      if (gone(alive(child.pid)))
-        end("lost");
-    }, pollMs);
-    unref(poller);
-    if (timeoutMs !== undefined && timeoutMs > 0 && Number.isFinite(timeoutMs)) {
-      deadline = setTimeout(() => end("timeout"), timeoutMs);
-      if (options.unref)
-        unref(deadline);
-    }
-    signal?.addEventListener("abort", onAbort, { once: true });
-    if (signal?.aborted)
-      onAbort();
-    child.exited.then(() => {
-      exitSeen = true;
-    }, () => {
-      return;
-    });
-    Promise.all([child.exited, out.text, err.text]).then(([exitCode, stdout, stderr]) => {
-      if (ended !== null)
-        settle({ kind: ended, stdout, stderr });
-      else
-        settle({ kind: "exited", exitCode, signalCode: signalName(child.signalCode), stdout, stderr });
-    }, () => end("lost"));
-  });
-}
-function signalName(code) {
-  if (code === null || code === undefined)
-    return null;
-  if (typeof code === "string")
-    return code;
-  return Object.entries(constants.signals).find(([, n]) => n === code)?.[0] ?? String(code);
-}
-
-// plugins/chezmoi/opencode/src/guard.ts
 var SUBPROCESS_TIMEOUT_MS = 2000;
 var MANAGED_TTL_MS = 5000;
 var ATTRIBUTE_PREFIXES = new Set([
@@ -979,15 +836,30 @@ function isSeedOnceSource(source) {
   }
 }
 var CHEZMOI_RUN = /(?:^|[\s;&|(/])chezmoi(?:\s|$)/;
-var spawnChezmoi = async (args) => {
-  try {
-    const proc = Bun.spawn(["chezmoi", ...args], { stdout: "pipe", stderr: "ignore" });
-    const run = await supervise(proc, { timeoutMs: SUBPROCESS_TIMEOUT_MS });
-    return run.kind === "exited" && run.exitCode === 0 ? run.stdout : null;
-  } catch {
-    return null;
-  }
-};
+var spawnChezmoi = (args, globalArgs = []) => new Promise((resolve) => {
+  let stdout = "";
+  let settled = false;
+  const child = spawnProcess("chezmoi", [...globalArgs, ...args], { stdio: ["ignore", "pipe", "ignore"] });
+  const timer = setTimeout(() => child.kill("SIGKILL"), SUBPROCESS_TIMEOUT_MS);
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  child.on("error", () => {
+    if (settled)
+      return;
+    settled = true;
+    clearTimeout(timer);
+    resolve(null);
+  });
+  child.on("close", (code) => {
+    if (settled)
+      return;
+    settled = true;
+    clearTimeout(timer);
+    resolve(code === 0 ? stdout : null);
+  });
+});
 function normalized(path) {
   try {
     return realpathSync(path);
@@ -1008,6 +880,13 @@ function createGuard(options = {}) {
   let aliases = null;
   let managedAt = 0;
   let sourceDir;
+  let unavailableNotified = false;
+  const notifyUnavailable = () => {
+    if (unavailableNotified)
+      return;
+    unavailableNotified = true;
+    options.onUnavailable?.();
+  };
   const invalidate = () => {
     managed = null;
     aliases = null;
@@ -1015,16 +894,20 @@ function createGuard(options = {}) {
   const loadSourceDir = async () => {
     if (sourceDir !== undefined)
       return sourceDir;
-    const out = await spawn(["source-path"]);
+    const out = await spawn(["source-path"], options.globalArgs);
+    if (out === null)
+      notifyUnavailable();
     sourceDir = out?.trim() || null;
     return sourceDir;
   };
   const loadManaged = async () => {
     if (managed && now() - managedAt < ttl)
       return managed;
-    const out = await spawn(["managed", "--path-style=absolute"]);
-    if (out === null)
+    const out = await spawn(["managed", "--path-style=absolute"], options.globalArgs);
+    if (out === null) {
+      notifyUnavailable();
       return null;
+    }
     managed = new Set(out.split(`
 `).map((line) => line.trim()).filter(Boolean));
     aliases = null;
@@ -1051,7 +934,7 @@ function createGuard(options = {}) {
     const target = managedTarget(set, abs);
     if (!target)
       return;
-    const targetSource = (await spawn(["source-path", target]))?.trim() || undefined;
+    const targetSource = (await spawn(["source-path", target], options.globalArgs))?.trim() || undefined;
     if (targetSource && isSeedOnceSource(targetSource))
       return;
     return refusal(abs, targetSource);

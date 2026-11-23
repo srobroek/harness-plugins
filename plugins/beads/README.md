@@ -322,6 +322,99 @@ These parts stay OpenCode-only:
 Without `bun`, session start falls back to `bd prime` and no gate runs. A hook that fails
 exits 0, so Claude Code carries on without it.
 
+## pi
+
+`pi/extensions/beads.js` (source `pi-src/beads.ts`) is a pi extension. It runs the shell gates
+above on every `bash` call with every gate on, and it adds three pi-only gates and the
+`beads_preflight` tool. It injects no context: install
+[`npm:pi-beads-companion`](https://www.npmjs.com/package/pi-beads-companion) beside it for
+`bd prime` and the selected issue.
+
+A refusal blocks the call with `<cause>; <fix>. (beads gate <name>)`. A call that passes
+gets two prefixes:
+
+- The store pin: `export` lines for `BEADS_DIR`, its `SROBROEK_BEADS_PIN` marker and an empty
+  `BEADS_DOLT_SHARED_SERVER`. A directory without a store gets an `unset` of an inherited pin.
+- The actor: `unset BEADS_ACTOR; export BD_ACTOR='pi/<root session>/.../<this session>';`.
+
+Every pi session gets its own actor, the interactive root session included. pi runs a
+foreground subagent inside the parent's process. The process environment therefore cannot
+tell the child's writes from the parent's, but each session's `parentSession` header can. The
+actor lists the session ids from the root down. A `--actor` flag or `BEADS_ACTOR=` in the
+command still wins. An embedded-store write runs under `bd-embedded-write-runner.js` beside
+the extension, which needs `bun` on `PATH`.
+
+### Gates only pi has
+
+The OpenCode plugin and the Claude Code hook do not run these three gates.
+
+1. `bd-claim-gate`: these commands need each bead they name to be `in_progress` under this
+   session's actor or under a descendant's:
+
+   - `bd close` and `bd done`
+   - `bd update` without `--claim`
+   - `bd comment` and `bd comments add`
+
+   `pi/<root>/<child>` descends from `pi/<root>`. A parent can therefore close the bead its
+   child claimed, but the child cannot close the parent's. Name the ids as literal words. The
+   gate reads the claim with `bd show --json` from the store the write lands in. It refuses
+   the command when bd cannot answer.
+2. `bd-close-evidence-gate`: a close needs `--reason` (or `-r`, or a readable `--reason-file`)
+   that names checkable evidence, as `rule://beads-evidence` asks. The gate accepts any of
+   these:
+
+   - a backticked command, or a tool command such as `bun test x.test.ts`
+   - a path or a file name
+   - a commit SHA, a PR or issue reference, or a URL
+   - a test count or an exit code
+
+   A reason such as `done` or `N/A` fails this gate.
+3. `write-claim-gate`: in a pi-subagents child, `edit` and `write` need a claim. The rule
+   covers a file in a checkout with a Beads store: the child must hold at least one
+   `in_progress` claim in that store. The gate asks
+   `bd list --assignee <actor> --status in_progress`. A confirmed claim counts for 30 seconds,
+   and the gate asks again after any `bd` write. The gate leaves the interactive root session
+   and its `/fork` or `/clone` copies alone. A session counts as a child in two cases:
+
+   - it runs in a detached pi-subagents runner (`PI_SUBAGENT_CHILD=1`)
+   - its session file sits under its parent's pi-subagents session directory.
+
+### `beads_preflight`
+
+The tool runs the checks of the `beads-preflight` skill and returns its JSON report:
+`{ ok, summary, checks: [{ id, status, detail, fix }] }`. Its parameters follow the script's
+flags: `only` (a list of check ids), `include_slow`, `timeout` (seconds) and `apply`. The
+checks see what the session's `bash` calls see, including its store pin and actor. The logic
+is `shared/preflight.ts`, a port of `preflight.py`. OpenCode and Claude Code still run the
+Python script, so a change to either copy must reach the other.
+
+### Subagents
+
+A foreground pi-subagents child loads none of the parent's extensions. List this extension
+for every child in pi's `settings.json` (user `~/.pi/agent/settings.json` or the project's
+`.pi/settings.json`):
+
+```json
+{
+  "subagents": {
+    "defaultSubagentOnlyExtensions": ["/absolute/path/to/beads/pi/extensions/beads.js"]
+  }
+}
+```
+
+An agent whose frontmatter sets `subagentOnlyExtensions` replaces this default, so add the
+path to that list as well. A background child can load the extension twice, through ambient
+discovery and through this list. In that case the second copy skips any call that the first
+copy already gated. See the `extensions` and `subagentOnlyExtensions` fields in the
+[pi-subagents agent docs](https://github.com/nicobailon/pi-subagents/blob/main/docs/agents.md).
+
+These parts stay OpenCode-only:
+
+- claim tracking and lease heartbeats
+- the stop nudge and guarded claim release
+- subagent routing (`bead-agent-routing`) and the fork notice
+- session-start advisories and plugin options
+
 # Project ledger store
 
 Set `options.store` when the project's ledger lives outside its checkout:

@@ -52,7 +52,7 @@ describe("allowSteeringReads", () => {
   const roots = () => steeringRoots([steering])
 
   test("allows a file and a directory pattern inside the directory", () => {
-    for (const resource of [join(steering, "git-defender.md"), `${steering}/*`, steering]) {
+    for (const resource of [join(steering, "release-checklist.md"), `${steering}/*`, steering]) {
       const e = evaluation([resource])
       allowSteeringReads(e, roots())
       expect(e.effect).toBe("allow")

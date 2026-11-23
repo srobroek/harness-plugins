@@ -11,5 +11,5 @@ Trunk-based delivery for OpenCode, Claude Code, and pi: Conventional Commit and 
 | rules | - | - | - |
 | hooks | - | - | - |
 | tools | - | - | - |
-| extensions | index | - | skip-ci |
+| extensions | index | - | trunk-dev |
 | mcp | - | - | - |
