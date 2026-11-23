@@ -25,24 +25,10 @@ secrets = ["STRIPE_KEY", "SENTRY_TOKEN"]   # allowlist; default is every secret 
   - a remote store (1Password)
 
   Prefer keychain or age, since `fnox set` cannot write to 1Password.
-- Whatever `[mcp]` says, the agent can read:
-  - the machine keys the user's shells load at start
-  - anything the OpenCode service inherited
-
+- Whatever `[mcp]` says, the agent can read machine keys loaded by the user's shells at start.
   Keep project secrets `env = "exec"`.
 
-OpenCode project config (`opencode.jsonc`, V2 `mcp.servers`). Start from the project
-directory so that fnox finds `fnox.toml`. Sign in to providers first, because the server
-never prompts:
-
-```jsonc
-{
-  "mcp": {
-    "servers": {
-      "fnox": { "type": "local", "command": ["fnox", "mcp"] }
-    }
-  }
-}
-```
-
-Use `["fnox", "-P", "staging", "mcp"]` to serve a profile. Before you add it, ask.
+Start the OMP client from the project directory so fnox finds `fnox.toml`. Sign in to providers
+first, because the server never prompts. Use `fnox -P staging mcp` to serve a profile. Follow
+`new-project` for the OMP-specific `.omp/mcp.json` configuration format. Add an MCP server only
+when the user asks.

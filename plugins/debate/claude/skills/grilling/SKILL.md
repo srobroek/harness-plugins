@@ -87,8 +87,8 @@ Deliver the round through the first channel that works, and stay on it for the s
    - `unavailable`: use the next channel for the rest of the session.
    When a background lookup lands while a round is open, send the questions it unblocks
    with `parley_ask` and `wait: "none"`; they join the open round.
-2. **question tool**: the host's built-in tool for asking the user (`question` in
-   OpenCode, `AskUserQuestion` in Claude Code). One prompt per question: the title as
+2. **question tool**: use the host's question tool (`question` in OpenCode,
+   `AskUserQuestion` in Claude Code, `ask` in OMP). One prompt per question: the title as
    header, the body's first paragraph plus `Why: {rationale}` as the question, and the
    recommended option first with ` (Recommended)` on its label. Use Yes/No for `confirm`,
    multiple selection for `pick_many`, a few preset values for `slider`, and a single
