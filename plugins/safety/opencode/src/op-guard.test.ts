@@ -1,8 +1,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Tool } from "@opencode/plugin/effect"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
-import { type GuardOptions, hardGate } from "./guards.ts"
-import { createPlugin, readOptions } from "./index.ts"
+import { type GuardOptions, hardGate } from "../../shared/guards.ts"
 import {
   CHECK_FAILED_MESSAGE,
   FNOX_CONFIG_MESSAGE,
@@ -11,7 +10,8 @@ import {
   FNOX_SET_MESSAGE,
   FNOX_STORE_MESSAGE,
   LITERAL_MESSAGE,
-  MAX_NESTING, NESTING_MESSAGE, OP_MESSAGE, SECRET_STORE_TOOL, VALUE_MESSAGE } from "./op-guard.ts"
+  MAX_NESTING, NESTING_MESSAGE, OP_MESSAGE, SECRET_STORE_TOOL, VALUE_MESSAGE } from "../../shared/op-guard.ts"
+import { createPlugin, readOptions } from "./index.ts"
 
 /** Provider types as a fnox config would declare them. */
 const TYPES: Record<string, string> = {

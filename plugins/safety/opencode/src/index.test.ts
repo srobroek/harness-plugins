@@ -4,13 +4,13 @@ import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { Tool } from "@opencode/plugin/effect"
 import { createFakeContext, type FakeAssert, type FakeSession, type FakeSkill } from "@srobroek/opencode-lib/testing"
+import { FNOX_CONFIG_MESSAGE, FNOX_INDIRECT_MESSAGE, FNOX_STORE_MESSAGE, VALUE_MESSAGE } from "../../shared/op-guard.ts"
+import { INVESTIGATE_NOTICE } from "../../shared/package-investigate.ts"
+import { FORCE_PUSH_MESSAGE } from "../../shared/permission.ts"
+import { COMMAND_ACTION, STORE_ACTION } from "../../shared/secret-store.ts"
 import plugin, { applyDecision, confirmSecretCommand, createPlugin, type Evaluation, type Overrides, readOptions, shellCwd } from "./index.ts"
-import { FNOX_CONFIG_MESSAGE, FNOX_INDIRECT_MESSAGE, FNOX_STORE_MESSAGE, VALUE_MESSAGE } from "./op-guard.ts"
-import { INVESTIGATE_NOTICE } from "./package-investigate.ts"
-import { FORCE_PUSH_MESSAGE } from "./permission.ts"
 import type { GitRun } from "./repo-worktrees.ts"
 import { scratchRoots } from "./scratch-dirs.ts"
-import { COMMAND_ACTION, STORE_ACTION } from "./secret-store.ts"
 
 // Every decision spawns real git processes; a loaded machine can take seconds.
 setDefaultTimeout(60_000)

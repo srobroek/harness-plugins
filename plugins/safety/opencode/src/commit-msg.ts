@@ -11,7 +11,7 @@ import { spawnSync } from "node:child_process"
 import { chmodSync, copyFileSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { hasAttribution } from "./attribution.ts"
+import { hasAttribution } from "../../shared/attribution.ts"
 
 export const MARKER = "srobroek.safety commit-msg hook"
 export const CHECKER_NAME = "safety-commit-msg.js"

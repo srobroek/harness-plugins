@@ -6,7 +6,7 @@ import { chmodSync, copyFileSync, existsSync, readFileSync, renameSync, rmSync, 
 import { join, resolve } from "path";
 import { fileURLToPath } from "url";
 
-// plugins/safety/opencode/src/attribution.ts
+// plugins/safety/shared/attribution.ts
 var ATTRIBUTION = /co-authored-by:[^\n]{0,120}(?:claude|codex|gpt|copilot|cursor|devin|anthropic|openai|gemini)|generated (?:with|by) [[(]?(?:claude|codex|copilot|opencode|gemini)|noreply@(?:anthropic|openai)\.com/i;
 function hasAttribution(text) {
   return ATTRIBUTION.test(text);
