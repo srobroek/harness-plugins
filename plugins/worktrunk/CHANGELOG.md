@@ -1,3 +1,10 @@
+## worktrunk [0.7.0](https://github.com/srobroek/harness-plugins/compare/worktrunk--v0.6.1...worktrunk--v0.7.0) (2026-11-23)
+
+### Features
+
+* **trunk-dev:** enforce commit and push gates and merge advisories on pi ([a96175c](https://github.com/srobroek/harness-plugins/commit/a96175c53d82b6ff71a8c9b2f55c43426983f639))
+* **worktrunk:** add pi merge gate, wt switch timeout and preflight tool ([5b5ef87](https://github.com/srobroek/harness-plugins/commit/5b5ef87b10fe4108d3b75ea4d2c0d0fef690c2ff))
+
 ## worktrunk [0.6.1](https://github.com/srobroek/harness-plugins/compare/worktrunk--v0.6.0...worktrunk--v0.6.1) (2026-11-23)
 
 ### Bug Fixes
