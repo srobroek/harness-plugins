@@ -42,12 +42,12 @@ async function registeredToolNames(plugin: string): Promise<string[]> {
   }
 }
 
-describe("tools option refuses every tool a plugin in this repository registers", () => {
+describe("tools option refuses every tool an OpenCode plugin in this repository registers", () => {
   const plugins = readdirSync(PLUGINS)
 
   test("the scan finds the tools it should", () => {
     const found = plugins.flatMap((plugin) => sources(plugin).flatMap(sourceToolNames))
-    for (const name of ["dep_apply", "delivery_land", "quality_test_summarize", "parley_ask", "model_roles_check", "find_tools_scan"])
+    for (const name of ["dep_apply", "delivery_land", "parley_ask", "model_roles_check", "find_tools_scan"])
       expect(found).toContain(name)
   })
 

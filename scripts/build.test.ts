@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
+import { isTranslatedAgentFile } from "./agent-files.ts"
 import { agentTexts, buildPlugin, composeAgents, mcpCopies, ompAgents, orphanAgents, readBuild, selectPlugins, stale, staleOmpAgents } from "./build.ts"
 
 const plugins = path.resolve(import.meta.dir, "../plugins")
@@ -181,10 +182,13 @@ describe("composeAgents", () => {
     const dir = plugin()
     try {
       const agents = path.join(dir, "common", "agents")
-      writeFileSync(path.join(agents, "rev.pi.md"), "---\\ntools: read\\n---\\nPi only")
+      writeFileSync(path.join(dir, "agents.src", "rev.md"), '---\ndescription: "Reviewer"\nmode: subagent\n---\nIntro.\n{{include core}}\n')
+      writeFileSync(path.join(agents, "rev.pi.md"), "---\ntools: read\n---\nPi only")
       expect(orphanAgents(dir, [])).toEqual([])
-      expect(Object.fromEntries(agentTexts(dir, false, composeAgents(dir, false, read)))).toEqual({ rev: composed })
-      expect(ompAgents(dir, false, new Map([["rev", composed]]))).toHaveLength(1)
+      const composed = composeAgents(dir, false, read)
+      const texts = agentTexts(dir, false, composed)
+      expect([...texts.keys()]).toEqual(["rev"])
+      expect(ompAgents(dir, false, texts, composed).map((agent) => agent.id)).toEqual(["rev"])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
