@@ -1,3 +1,9 @@
+## project [0.11.0](https://github.com/srobroek/harness-plugins/compare/project--v0.10.0...project--v0.11.0) (2026-11-23)
+
+### Features
+
+* ship seven skills plugins to OMP ([6658a5f](https://github.com/srobroek/harness-plugins/commit/6658a5fe470ab0f1eea0e41803af29b98e7e3a27))
+
 ## project [0.10.0](https://github.com/srobroek/harness-plugins/compare/project--v0.9.1...project--v0.10.0) (2026-11-22)
 
 ### Features
