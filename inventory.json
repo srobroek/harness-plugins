@@ -1471,6 +1471,18 @@
             "tui"
           ],
           "mcp": []
+        },
+        "pi": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "parley"
+          ],
+          "mcp": []
         }
       },
       "scope": "global"

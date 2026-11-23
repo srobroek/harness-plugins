@@ -8,7 +8,8 @@
     "description": "Ask the user rounds of typed questions in a TUI panel, with recommended answers, notes and deferrals.",
     "category": "development",
     "harnesses": [
-      "opencode"
+      "opencode",
+      "pi"
     ],
     "scope": "global",
     "entries": {
