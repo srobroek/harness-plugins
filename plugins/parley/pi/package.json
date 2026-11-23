@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/parley",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Ask the user rounds of typed questions in a TUI panel, with recommended answers, notes and deferrals.",
   "keywords": [
     "pi-package"
