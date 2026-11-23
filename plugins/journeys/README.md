@@ -61,10 +61,11 @@ Both are hidden from the subagent catalog: the `journey-write`, `journey-verify`
 `journey-campaign` skills name them, so the parent spawns them by id.
 
 Fields you configure for an agent with the same id win, and your permissions are
-added after the shipped ones, so they take precedence. Both agents declare the
-`standard` model tier through the `x-opencode-model-role` request header; with the
-model-roles plugin, the `standard` tier picks their model. Without it they
-inherit the caller's model. `journey-validator` runs at most 400 steps.
+added after the shipped ones, so they take precedence. `journey-scribe` declares the
+`standard` model tier and `journey-validator` the `reviewer` tier, in the
+`x-opencode-model-role` request header. With the model-roles plugin, the tier picks
+their model. Without it they inherit the caller's model. `journey-validator` runs at
+most 400 steps.
 
 ## Tools
 
