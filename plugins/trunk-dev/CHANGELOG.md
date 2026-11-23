@@ -1,3 +1,9 @@
+## trunk-dev [0.12.0](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.11.0...trunk-dev--v0.12.0) (2026-11-23)
+
+### Features
+
+* **trunk-dev:** enforce commit and push gates and merge advisories on pi ([a96175c](https://github.com/srobroek/harness-plugins/commit/a96175c53d82b6ff71a8c9b2f55c43426983f639))
+
 ## trunk-dev [0.11.0](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.10.0...trunk-dev--v0.11.0) (2026-11-23)
 
 ### Features

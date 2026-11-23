@@ -44,7 +44,7 @@
 | statusline | 0.4.0 | development | global | opencode |
 | subagent-worktree | 0.9.2 | development | global | opencode |
 | toolchain | 0.10.0 | development | global | opencode, claude, omp, pi |
-| trunk-dev | 0.11.0 | development | global | opencode, claude, pi |
+| trunk-dev | 0.12.0 | development | global | opencode, claude, pi |
 | whats-new | 0.4.0 | development | global | opencode |
 | worktrunk | 0.6.1 | development | project | opencode, claude, pi |
 
