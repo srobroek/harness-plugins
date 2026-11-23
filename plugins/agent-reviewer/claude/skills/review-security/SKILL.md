@@ -4,7 +4,6 @@ description: Use when reviewing code for vulnerabilities to trace untrusted inpu
 metadata:
   opencode/autoinvoke: false
 ---
-
 # Security review
 
 Find vulnerabilities an attacker can reach. A finding needs a path from a source the attacker controls to a sink or a missing control, not a pattern match.

@@ -3,13 +3,13 @@
 
 A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.
 
-| Kind | opencode | claude |
-| --- | --- | --- |
-| skills | review-security | review-security |
-| agents | adversarial-challenger, code-reviewer, pr-reviewer, security-auditor | adversarial-challenger, code-reviewer, security-auditor |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | PreToolUse |
-| tools | - | - |
-| extensions | index | - |
-| mcp | - | - |
+| Kind | opencode | claude | omp |
+| --- | --- | --- | --- |
+| skills | review-security | review-security | review-security |
+| agents | adversarial-challenger, code-reviewer, pr-reviewer, security-auditor | adversarial-challenger, code-reviewer, security-auditor | adversarial-challenger, code-reviewer, pr-reviewer, security-auditor |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | PreToolUse | - |
+| tools | - | - | - |
+| extensions | index | - | - |
+| mcp | - | - | - |
