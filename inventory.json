@@ -152,7 +152,7 @@
     },
     {
       "name": "agent-reviewer",
-      "version": "0.13.0",
+      "version": "0.13.1",
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "category": "development",
       "harnesses": {
