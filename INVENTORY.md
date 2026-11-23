@@ -5,7 +5,7 @@
 | --- | --- | --- | --- | --- |
 | agent-coder | 0.12.0 | development | global | opencode, pi |
 | agent-efficiency | 0.14.2 | development | global | opencode |
-| agent-mechanic | 0.7.1 | development | global | opencode, omp, pi |
+| agent-mechanic | 0.8.0 | development | global | opencode, omp, pi |
 | agent-researcher | 0.9.0 | development | global | opencode, omp, pi |
 | agent-reviewer | 0.12.0 | development | global | opencode, claude, omp, pi |
 | agent-seance | 0.8.1 | development | global | opencode |
