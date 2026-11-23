@@ -64,7 +64,6 @@ var BUILT_IN_ACTIONS = [
 ];
 var RESERVED_TOOL_PREFIXES = [
   "autopilot_",
-  "cad_",
   "challenge_",
   "claude_",
   "dep_",
