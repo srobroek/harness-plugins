@@ -72,9 +72,12 @@ test.each([
   "plugins/aws/opencode/package.json",
   "plugins/aws/omp/plugin.json",
   "plugins/aws/omp/generated.json",
+  "plugins/aws/common/agents/writer.omp.md",
+  "plugins/aws/common/agents/vendored.omp.md",
   "inventory.json",
 ])("applies a text patch to generated output %s", (name) => {
-  const { dir, file } = fixture()
+  const vendoredSource = name.endsWith("vendored.omp.md") ? "plugins/aws/opencode/agents/vendored.md" : undefined
+  const { dir, file } = fixture(undefined, name.endsWith("writer.omp.md") ? "plugins/aws/agents.src/writer.md" : vendoredSource)
   file(name, "generated fixture\n")
   const { result, output } = apply(dir)
   expect(result.exitCode).toBe(0)

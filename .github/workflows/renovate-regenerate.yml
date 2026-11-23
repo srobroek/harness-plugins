@@ -105,8 +105,15 @@ jobs:
               match = re.fullmatch(r"plugins/([^/]+)/common/agents/([^/]+)\.omp\.md", name)
               if match:
                   plugin, agent = match.groups()
-                  source = f"plugins/{plugin}/agents.src/{agent}.md"
-                  return subprocess.run(["git", "cat-file", "-e", f"HEAD:{source}"], check=False, stderr=subprocess.DEVNULL).returncode == 0
+                  sources = (
+                      f"plugins/{plugin}/agents.src/{agent}.md",
+                      f"plugins/{plugin}/opencode/agents/{agent}.md",
+                      f"plugins/{plugin}/common/agents/{agent}.md",
+                  )
+                  return any(
+                      subprocess.run(["git", "cat-file", "-e", f"HEAD:{source}"], check=False, stderr=subprocess.DEVNULL).returncode == 0
+                      for source in sources
+                  )
               match = re.fullmatch(r"plugins/([^/]+)/common/agents/([^/]+)\.md", name)
               if match:
                   plugin, agent = match.groups()
