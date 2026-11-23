@@ -1,6 +1,6 @@
 {
   "name": "agent-researcher",
   "description": "The researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one.",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "category": "development"
 }
