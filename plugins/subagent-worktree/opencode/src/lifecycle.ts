@@ -39,7 +39,7 @@ import {
 } from "./events.ts"
 import type { Git } from "./git.ts"
 import { LANDING_TOOLS, laneForLanding } from "./landing.ts"
-import { branchRef, childReleasesLane, childState, isRunning, type Lane, laneStoreKey, type Options, storedBranchRef } from "./lane.ts"
+import { branchRef, type ChildState, childReleasesLane, childState, isRunning, type Lane, laneStoreKey, type Options, storedBranchRef } from "./lane.ts"
 import { formatSweep, orderEntries, type SweepEntry, type SweepMode } from "./sweep.ts"
 
 /** Epoch milliseconds from a number, Date or date string; undefined otherwise. */
@@ -87,6 +87,13 @@ export type FinalizeOptions = {
 }
 /** A clean, removable lane whose child has been idle longer than this is reported for a person (sweep). */
 export const IDLE_REPORT_MS = 7 * 24 * 60 * 60 * 1000
+
+/** The sweep's advice for a removable lane whose child has been idle past `IDLE_REPORT_MS`, else undefined. Only a person releases such a lane. */
+export function longIdleReport(input: { child: ChildState; idle: number | undefined; now: number; removable: boolean }): string | undefined {
+  const { child, idle, now, removable } = input
+  if (child !== "idle" || idle === undefined || !removable || now - idle <= IDLE_REPORT_MS) return undefined
+  return `its subagent session has been idle since ${new Date(idle).toISOString()}; archive or delete the child to release`
+}
 
 export type Finalized =
   | { removed: true }
@@ -731,6 +738,9 @@ export function createLifecycle(deps: LifecycleDeps) {
         if (stored === undefined || canonical(stored.directory) !== canonical(lane.directory) || (stored.state !== "active" && stored.state !== "removing")) {
           return keptBecause("retired", "the lane is already retired")
         }
+        // A fenced lane is never removed automatically (child end, idle gate, event pass, recovery); only a person clears the
+        // fence. An explicit `wt merge` (it names a target) and a worktree that is already gone are not automatic.
+        if (stored.fenced && options.target === undefined && options.gone !== true) return keptBecause("denied", `the lane is fenced (${stored.fenced.reason}); unfence it first`)
         const earlier = stored.state === "removing" ? stored.removal : undefined
         // One read decides both: whether `ifGone` refuses, and whether the worktree is removed. Two reads would let a
         // worktree that comes back between them pass the first and reach the host removal through the second.
@@ -1247,9 +1257,8 @@ export function createLifecycle(deps: LifecycleDeps) {
     const idleSince = child === "idle" && idle !== undefined ? { idleSince: idle } : {}
     const preview = await previewFinalize(lane, fence)
     if (!childReleasesLane(child)) {
-      if (child === "idle" && idle !== undefined && fence.since - idle > IDLE_REPORT_MS && preview.removable) {
-        return { ...entry, verdict: "keep", reason: `its subagent session has been idle since ${new Date(idle).toISOString()}; archive or delete the child to release`, needsPerson: true, ...idleSince }
-      }
+      const stale = longIdleReport({ child, idle, now: fence.since, removable: preview.removable })
+      if (stale !== undefined) return { ...entry, verdict: "keep", reason: stale, needsPerson: true, ...idleSince }
       return { ...entry, verdict: "keep", reason: `its subagent session is ${child}`, ...idleSince }
     }
     if (!preview.removable) return { ...entry, verdict: "keep", reason: preview.reason, ...(preview.needsPerson ? { needsPerson: true as const } : {}) }
@@ -1308,14 +1317,27 @@ export function createLifecycle(deps: LifecycleDeps) {
     const state = await childState(ctx.session.get({ sessionID: child } as never), deps.lookupMs, child)
     if (state === "running") return { ok: false, reason: `${child} is running` }
     if (state === "unknown") return { ok: false, reason: `${child}'s session cannot be read` }
+    // An event seen from here on, or a run the host reports under the lock, refuses: the check above is only a first look.
+    const seq = eventSeq
     let refusal: string | undefined
-    const next = await updateLane(lane, (stored) => {
-      if (stored.state !== "active" || !stored.fenced) {
+    const next = await withLock(lane.directory, lane.parentDir, async () => {
+      const stored = await load(child)
+      if (stored === undefined || stored.child !== child || stored.state !== "active" || canonical(stored.directory) !== canonical(lane.directory) || !stored.fenced) {
         refusal = `the lane of ${child} is no longer fenced`
         return undefined
       }
+      if ((await childState(ctx.session.get({ sessionID: child } as never), deps.lookupMs, child)) !== "idle") {
+        refusal = `${child} is running or cannot be read`
+        return undefined
+      }
+      // Synchronous, directly before the write: a start event delivered during the lock wait or the lookup above is seen here.
+      const late = startedSince([child], seq)
+      if (late !== undefined) {
+        refusal = late.removed ? "the lane changed" : late.reason
+        return undefined
+      }
       const { fenced: _cleared, ...rest } = stored
-      return rest
+      return (await save(rest)) ? rest : undefined
     })
     return next ? { ok: true, lane: next } : { ok: false, reason: refusal ?? "the lane changed meanwhile" }
   }

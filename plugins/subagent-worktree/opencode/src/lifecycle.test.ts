@@ -9,7 +9,7 @@ import { lockFile, readHolds, setHold, withDiskLock } from "@srobroek/opencode-l
 import { type Runner, type RunResult, spawnRunner } from "./git.ts"
 import { createPlugin } from "./index.ts"
 import { type Lane, laneKey } from "./lane.ts"
-import { type Lifecycle, within } from "./lifecycle.ts"
+import { IDLE_REPORT_MS, type Lifecycle, longIdleReport, within } from "./lifecycle.ts"
 
 const PARENT = "ses_parent"
 const CHILD = "ses_child"
@@ -3194,12 +3194,59 @@ describe("sweep reporting of lanes that keep forever", () => {
   })
 })
 
+describe("a fenced lane is never removed automatically", () => {
+  const fenced = { reason: "moving it back failed", at: 1 }
+
+  test("the end of a fenced, clean, landed lane's child keeps the lane", async () => {
+    const { fake, worktree, events, cleanup } = await start({ ancestor: 0 }, { stored: [lane({ fenced })] })
+    await deliver(fake, events, { type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await settle(100)
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    expect(stored(fake).fenced).toEqual(fenced)
+    await cleanup()
+  })
+
+  test("the lead's idle gate keeps a fenced, clean, landed lane", async () => {
+    const { fake, worktree, cleanup } = await start({ ancestor: 0 }, { stored: [lane({ fenced })] })
+    await fake.fire.session("experimental.idle", { sessionID: PARENT } as never)
+    await settle(100)
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+})
+
+describe("longIdleReport", () => {
+  const DAY = 24 * 60 * 60 * 1000
+  const base = { child: "idle" as const, idle: 100 * DAY, now: 108 * DAY, removable: true }
+
+  test("reports a removable lane whose idle child is older than the limit, with the advice", () => {
+    expect(longIdleReport(base)).toContain("archive or delete the child to release")
+  })
+
+  test.each([
+    ["exactly the limit", { now: 100 * DAY + IDLE_REPORT_MS }],
+    ["a lane that is not removable", { removable: false }],
+    ["a running child", { child: "running" as const }],
+    ["an unknown idle time", { idle: undefined }],
+  ])("reports nothing for %s", (_name, over) => {
+    expect(longIdleReport({ ...base, ...over })).toBeUndefined()
+  })
+})
+
 describe("unfence", () => {
   const fenced = { reason: "moving it back failed", at: 1 }
-  const unfence = async (fake: Fake, caller = tool) => {
-    const execute = fake.tools.get("subagent_worktree_merge")?.execute as (i: unknown, c: unknown) => Promise<{ content: string; metadata: { ok: boolean } }>
+  type Out = { content: string; metadata: { ok: boolean } }
+  const unfence = async (fake: Fake, caller: typeof tool = tool) => {
+    const execute = fake.tools.get("subagent_worktree_merge")?.execute as (i: unknown, c: unknown) => Promise<Out>
     return execute({ method: "unfence", sessionID: CHILD }, caller)
   }
+  const refused = (result: Out, text: string) => {
+    expect(result.metadata.ok).toBe(false)
+    expect(result.content).toContain(text)
+  }
+  const fenceOf = (fake: Fake) => (fake.storage.get(laneKey(CHILD)) as Lane).fenced
 
   test("clears the fence of an idle child's lane", async () => {
     const { fake, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced })] })
@@ -3211,22 +3258,59 @@ describe("unfence", () => {
 
   test("refuses while the child is running", async () => {
     const { fake, cleanup } = await start({ time: { [CHILD]: { busy: 5, idle: 2 } } }, { stored: [lane({ fenced })] })
-    const result = await unfence(fake)
-    expect(result.metadata.ok).toBe(false)
-    expect(stored(fake).fenced).toEqual(fenced)
+    refused(await unfence(fake), "ses_child is running")
+    expect(fenceOf(fake)).toEqual(fenced)
+    await cleanup()
+  })
+
+  test("refuses when the child's session cannot be read", async () => {
+    const { fake, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced })] })
+    Object.assign(fake.context.session, { get: () => Promise.reject(new Error("503 unavailable")) })
+    refused(await unfence(fake), "session cannot be read")
+    expect(fenceOf(fake)).toEqual(fenced)
+    await cleanup()
+  })
+
+  test("refuses a caller that is not the lane's parent", async () => {
+    const { fake, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced })] })
+    refused(await unfence(fake, { ...tool, sessionID: "ses_other" }), "no lane of yours")
+    expect(fenceOf(fake)).toEqual(fenced)
     await cleanup()
   })
 
   test("refuses a lane handed to another writer", async () => {
     const { fake, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced, child: "ses_new", handedOver: { from: CHILD, at: 1 } } as Partial<Lane>)] })
-    const execute = fake.tools.get("subagent_worktree_merge")?.execute as (i: unknown, c: unknown) => Promise<{ metadata: { ok: boolean } }>
-    expect((await execute({ method: "unfence", sessionID: CHILD }, tool)).metadata.ok).toBe(false)
+    refused(await unfence(fake), "no lane of yours")
+    expect((fake.storage.get(laneKey("ses_new")) as Lane).fenced).toEqual(fenced)
     await cleanup()
   })
 
   test("refuses a lane that is not fenced", async () => {
     const { fake, cleanup } = await start({ time: IDLE })
-    expect((await unfence(fake)).metadata.ok).toBe(false)
+    refused(await unfence(fake), "is not fenced")
+    await cleanup()
+  })
+
+  test("refuses when the child starts running while the unfence waits for the lane lock", async () => {
+    const { fake, common, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced })] })
+    let free!: () => void
+    let taken!: () => void
+    const acquired = new Promise<void>((done) => (taken = done))
+    const held = withDiskLock(common, WT, { sessionID: "ses_other", waitMs: 5_000 }, async () => {
+      taken()
+      await new Promise<void>((done) => (free = done))
+    })
+    await acquired
+    const pending = unfence(fake)
+    await settle(50)
+    const child = fake.sessions.get(CHILD)
+    if (child) child.time = { busy: 9, idle: 2 }
+    fake.emit({ type: "session.execution.started", data: { sessionID: CHILD } })
+    await settle(50)
+    free()
+    await held
+    refused(await pending, "running")
+    expect(fenceOf(fake)).toEqual(fenced)
     await cleanup()
   })
 })
