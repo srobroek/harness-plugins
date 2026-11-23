@@ -1,0 +1,68 @@
+# mol-challenge-intake -- the INTAKE phase of a code-challenge run, runnable alone
+#
+# Install: run the challenge_setup tool, which copies every code-challenge formula into
+# <repo>/.beads/formulas/, or copy this file there (or into ~/.beads/formulas/).
+# Pour one phase:
+#   bd mol pour mol-challenge-intake --var target=<paths> --var run_id=<run-id> --var depth=<depth> --var mode=<mode>
+#
+# The phase needs the earlier phases' files in the run directory; each file is named in the
+# code-challenge skill's references/run-storage.md. The vars have no defaults because bd mol bond
+# does not apply them.
+#
+# PRECONDITION: the skills and agents named here ship in the code-challenge plugin
+# (srobroek.code-challenge). Install it first.
+#
+# Evidence rule: every finding carries a tier -- proven, measured or hypothesis -- and a
+# path:line locator. A speed claim without a measurement is a hypothesis.
+formula = "mol-challenge-intake"
+description = "Run the INTAKE phase for {{target}}: ask or infer the scope, depth, lenses, pluggability and frozen surfaces"
+type = "workflow"
+
+[vars.target]
+required = true
+description = "paths, packages or diff range under challenge"
+
+[vars.run_id]
+required = true
+description = "run id; the run directory is <git-dir>/code-challenge/<run-id>/"
+
+[vars.depth]
+required = true
+description = "quick, standard or deep"
+
+[vars.mode]
+required = true
+description = "interactive or autonomous"
+
+[[steps]]
+id = "ask-or-infer"
+title = "ASK or INFER the intake answers for {{target}}"
+type = "task"
+labels = ["code-challenge", "sub:intake", "phase:intake"]
+description = """
+Run the code-challenge skill, phase INTAKE, in {{mode}} mode at depth {{depth}}. Interactive:
+ask the batch in references/intake-questions.md through parley_ask, falling back to the host's ask
+tool (`question` in OpenCode), each question with a recommended answer. Autonomous: infer every answer from the arguments
+and the repository, and ask only for a missing target or depth.
+
+Question 4 (is pluggability expected) decides how the structure and over-engineering lenses
+treat abstraction seams. Autonomous mode answers it from the signals listed in the reference and
+logs the signal it used. With no signal the answer is no.
+
+Question 9 (design sources) feeds the scope lens. Autonomous mode collects the specs, docs, ADRs,
+bead fields and PR description that cover the target, logs each one, and answers "none" when it
+finds none.
+"""
+
+[[steps]]
+id = "record-intake"
+title = "RECORD intake.json for run {{run_id}}"
+type = "task"
+needs = ["ask-or-infer"]
+labels = ["code-challenge", "sub:intake", "phase:intake"]
+description = """
+Resolve the run directory with git rev-parse --git-dir, create
+<git-dir>/code-challenge/{{run_id}}/ and write intake.json: target, depth, lenses, pluggable with its
+signal, frozen surfaces, benchmark allowance, test command, delivery choices and design sources. Append one
+decisions.jsonl line per inference or user answer, with the phase INTAKE.
+"""

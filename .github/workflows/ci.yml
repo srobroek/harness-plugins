@@ -12,7 +12,7 @@ permissions:
 jobs:
   check:
     # Same version as @srobroek/harness-kit in package.json; `harness-kit check` warns when they differ.
-    uses: srobroek/harness-kit/.github/workflows/check.yml@v1.7.0
+    uses: srobroek/harness-kit/.github/workflows/check.yml@v1.8.0
 
   # The gates the reusable workflow does not run: lint, bundles, and the repository's content checks.
   repo-checks:
@@ -45,47 +45,3 @@ jobs:
       - run: just test-executables
       - name: Python tests of the shipped scripts
         run: just python-tests
-
-  # Actions has no job-level `paths` filter, so this job works out whether a push
-  # or pull request touched the files the path-filtered `cad` job covers.
-  changes:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      cad: ${{ steps.diff.outputs.cad }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - id: diff
-        env:
-          # A pull request is checked out as its merge commit, whose first parent is
-          # the base branch; a push compares against the commit it replaced.
-          BASE: ${{ github.event_name == 'pull_request' && 'HEAD^1' || github.event.before }}
-        run: |
-          if ! git rev-parse --verify --quiet "$BASE^{commit}" >/dev/null; then
-            cad=true  # no base to compare against: a new branch or a force push
-          elif git diff --quiet "$BASE" HEAD -- plugins/cad scripts/sync-cad.ts .github/workflows/ci.yml; then
-            cad=false
-          else
-            cad=true
-          fi
-          echo "cad=$cad" >> "$GITHUB_OUTPUT"
-
-  # plugins/cad vendors its skills, example and agents from srobroek/cad-agent at
-  # the tag in plugins/cad/cad-agent.json; cad-agent's CI runs their test suites.
-  cad:
-    needs: changes
-    if: needs.changes.outputs.cad == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # bun and just at the versions in .mise.toml.
-      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
-        with:
-          version: 2026.11.12
-          # Only pushes to main write the cache; pull request and dispatched runs restore it.
-          cache_save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-      - name: Vendored files match the pinned cad-agent tag
-        run: just cad-check

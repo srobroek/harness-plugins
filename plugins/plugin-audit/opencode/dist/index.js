@@ -927,7 +927,6 @@ async function unreleasedCommits(root, name, tag, signal) {
 }
 
 // plugins/plugin-audit/opencode/src/practices.ts
-var VENDORED = new Set(["cad"]);
 var STALE_MODELS = ["-4-5", "claude-3", "claude-4", "gpt-4", "gpt-5"];
 var EXACT_PIN = /==\s?\d+\.\d+\.\d+|\b[\w.-]+@\d+\.\d+\.\d+\b/;
 var TOOL_NAME = /editor\.add\(\{\s*name:\s*"([^"]+)"/g;
@@ -991,11 +990,9 @@ function checkPractices(plugin) {
         warn("tool-name", `tool ${match[1]} should start with ${prefix}`, file.path);
     }
   }
-  if (!VENDORED.has(name)) {
-    for (const file of plugin.skills) {
-      if (EXACT_PIN.test(file.text))
-        warn("exact-pin", "exact version pin in a skill; state the minimum or the command without one", file.path);
-    }
+  for (const file of plugin.skills) {
+    if (EXACT_PIN.test(file.text))
+      warn("exact-pin", "exact version pin in a skill; state the minimum or the command without one", file.path);
   }
   for (const agent of plugin.agents) {
     const model = MODEL_LINE.exec(agent.text)?.[1];

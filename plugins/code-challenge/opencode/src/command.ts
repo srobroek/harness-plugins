@@ -3,6 +3,16 @@ import { DEPTHS, type Depth } from "./lenses.ts"
 export const COMMAND = "code-challenge"
 export const SKILL = "code-challenge"
 
+export const COMMAND_DESCRIPTION = "challenge code for simplification, performance and structure: [auto] [quick|standard|deep] [target]"
+
+/** A host the command runs in: OpenCode, or a Pi-API host (Pi, OMP). They differ only in how the prompt loads the skill. */
+export type Host = "opencode" | "pi"
+
+const LOAD_SKILL: Record<Host, string> = {
+  opencode: `Load the \`${SKILL}\` skill with the skill tool and follow it.`,
+  pi: `Read the \`${SKILL}\` skill (\`skill://${SKILL}\` in OMP) and follow it.`,
+}
+
 export type Invocation = { autonomous: boolean; depth: Depth | undefined; target: string }
 
 /**
@@ -24,10 +34,10 @@ export function parseInvocation(args: string): Invocation {
 }
 
 /** The prompt `/code-challenge` submits: load the skill and pass the mode, depth and target on. */
-export function challengePrompt(args: string): string {
+export function challengePrompt(args: string, host: Host = "opencode"): string {
   const { autonomous, depth, target } = parseInvocation(args)
   return [
-    `Load the \`${SKILL}\` skill with the skill tool and follow it.`,
+    LOAD_SKILL[host],
     `Mode: ${autonomous ? "autonomous (ask only what INTAKE cannot infer; never post)" : "interactive"}.`,
     depth ? `Depth: ${depth}.` : "Depth: not given; INTAKE decides (default standard).",
     target ? `Target: ${target}` : "Target: not given; INTAKE asks or infers it from the branch diff.",

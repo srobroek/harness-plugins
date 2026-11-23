@@ -61,18 +61,13 @@ script or `just`/`make` target for it when it has one.
 CI runs the same steps with `--locked`; the Rust-specific workflow settings are in
 `lang-rust-ci`.
 
-In OpenCode, formatting after an edit is the host's job: with `"formatter": true` in
-`opencode.json`, the built-in `rustfmt` formatter rewrites each `.rs` file after the
-`edit`, `write` or `patch` tool changes it. `cargo fmt --check` still belongs in the
-check, because files changed outside those tools are not formatted.
+After formatting changes, run `cargo fmt --check` on the project; do not rely on the host's edit-time formatting.
 
 A missing `Cargo.toml` or `cargo` means the check did not run. Report it as not run,
 never as a pass. Read failures as the project's actual toolchain output; do not
 invent extra linters.
 
-In OpenCode, the rust plugin refuses edits to a committed migration: only the
-highest-numbered entry under a `migrations/` directory is editable. Write a new
-migration instead.
+Never edit a committed migration; only the highest-numbered entry under a `migrations/` directory is editable. Add a new migration instead.
 
 ## Lint baseline
 

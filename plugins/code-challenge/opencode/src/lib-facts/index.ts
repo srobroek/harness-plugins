@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process"
 import type { Context } from "@opencode/plugin/promise/plugin"
+import type { ToolCall, ToolOutcome } from "../tool-call.ts"
 import { DiskCache, defaultCacheDir } from "./cache.ts"
 import { collectPackage } from "./facts.ts"
 import { Http } from "./http.ts"
@@ -109,6 +110,14 @@ export async function lookupLibFacts(
   return { ecosystem, fetchedAt: now().toISOString(), packages: results }
 }
 
+/** `challenge_lib_facts` for any host: validate the request, then look the packages up. */
+export async function runLibFacts(input: unknown, call: Pick<ToolCall, "signal">, overrides: LibFactsOverrides = {}): Promise<ToolOutcome> {
+  const request = readRequest(input)
+  if (typeof request === "string") return { content: `${LIB_FACTS_TOOL}: ${request}`, metadata: { ok: false } }
+  const facts = await lookupLibFacts(request.ecosystem, request.packages, overrides, call.signal)
+  return { content: JSON.stringify(facts, null, 1), metadata: { ok: true, facts } }
+}
+
 /** Register `challenge_lib_facts`. Dispose the returned registration with the plugin's other cleanups. */
 export function registerLibFacts(ctx: Context, overrides: LibFactsOverrides = {}) {
   return ctx.tool.transform((editor) => {
@@ -116,12 +125,7 @@ export function registerLibFacts(ctx: Context, overrides: LibFactsOverrides = {}
       name: LIB_FACTS_TOOL,
       description: LIB_FACTS_DESCRIPTION,
       input: LIB_FACTS_INPUT,
-      execute: async (input, context) => {
-        const request = readRequest(input)
-        if (typeof request === "string") return { content: `${LIB_FACTS_TOOL}: ${request}`, metadata: { ok: false } }
-        const facts = await lookupLibFacts(request.ecosystem, request.packages, overrides, context.signal)
-        return { content: JSON.stringify(facts, null, 1), metadata: { ok: true, facts } }
-      },
+      execute: (input, context) => runLibFacts(input, { signal: context.signal }, overrides),
     })
   })
 }

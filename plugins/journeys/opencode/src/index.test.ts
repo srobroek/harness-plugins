@@ -7,9 +7,9 @@ import { pathToFileURL } from "node:url"
 import { promisify } from "node:util"
 import { permissionEffect } from "@srobroek/opencode-lib/agent-files"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
+import { type Exec, installFormulas, JOURNEYS_SCRIPT, journeysWrites, runJourneys } from "../../shared/journeys-tool.ts"
 import { AGENT_IDS, type AgentFile, loadAgents, type Permission, parseAgentFile, shapeAgent } from "./agents.ts"
 import { createPlugin, indexResource, readIndexParams, SKILL_NAMES } from "./index.ts"
-import { type Exec, installFormulas, JOURNEYS_SCRIPT, journeysWrites, runJourneys } from "./journeys-tool.ts"
 
 // Real child processes: 3.0 s for the bounded-run case; 30 s leaves headroom for a loaded machine (AGENTS.md, Testing).
 setDefaultTimeout(30_000)
@@ -229,7 +229,6 @@ describe("agents", () => {
 })
 
 type Execute = (input: unknown, context: unknown) => Promise<{ content: string; metadata: Record<string, unknown> }>
-
 describe("plugin", () => {
   const context = { sessionID: "ses_1", agent: "build", messageID: "msg_1", id: "call_1", signal: new AbortController().signal }
 

@@ -3,13 +3,13 @@
 
 Go skills: build, lint, go test -race, tidy and govulncheck checks, testing and fuzzing, module and package layout, and pprof profiling.
 
-| Kind | opencode | claude | omp |
-| --- | --- | --- | --- |
-| skills | lang-go, lang-go-libraries, lang-go-packaging, lang-go-profiling, lang-go-quality, lang-go-testing | lang-go, lang-go-libraries, lang-go-packaging, lang-go-profiling, lang-go-quality, lang-go-testing | lang-go, lang-go-libraries, lang-go-packaging, lang-go-profiling, lang-go-quality, lang-go-testing |
-| agents | - | - | - |
-| commands | - | - | - |
-| rules | - | - | - |
-| hooks | - | - | - |
-| tools | - | - | - |
-| extensions | index | - | - |
-| mcp | - | - | - |
+| Kind | opencode | claude | omp | pi |
+| --- | --- | --- | --- | --- |
+| skills | lang-go, lang-go-libraries, lang-go-packaging, lang-go-profiling, lang-go-quality, lang-go-testing | lang-go, lang-go-libraries, lang-go-packaging, lang-go-profiling, lang-go-quality, lang-go-testing | lang-go, lang-go-libraries, lang-go-packaging, lang-go-profiling, lang-go-quality, lang-go-testing | lang-go, lang-go-libraries, lang-go-packaging, lang-go-profiling, lang-go-quality, lang-go-testing |
+| agents | - | - | - | - |
+| commands | - | - | - | - |
+| rules | - | - | - | - |
+| hooks | - | - | - | - |
+| tools | - | - | - | - |
+| extensions | index | - | - | - |
+| mcp | - | - | - | - |

@@ -84,10 +84,7 @@ frozen-lockfile command, then run each check. Workflow structure, the required
 `ci-gate` job and action pinning are the `toolchain` plugin's `ci-github-actions`
 skill.
 
-In OpenCode, the built-in `biome`, `prettier` or `oxfmt` formatter rewrites each
-file after the `edit`, `write` or `patch` tool changes it when `"formatter": true`
-is set in `opencode.json` and the project configures that formatter. Keep the format
-check for files changed any other way.
+After an edit, run the project's format check for changed files. The host may format files automatically; do not rely on that instead of the project check.
 
 A missing `package.json`, `tsconfig.json` or tool means that step did not run.
 Report it as not run, never as a pass. Read failures as the project's actual
