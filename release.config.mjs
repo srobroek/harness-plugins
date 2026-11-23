@@ -10,7 +10,9 @@ const releaseRules = [
 ]
 
 export default repoRelease({
-  forge: "@semantic-release/github",
+  // No "released in" comments: the success step looks up every released commit's pull request, and GitHub refuses
+  // that lookup for a pull request that regenerates every bundle ("too many files changed"), failing the whole run.
+  forge: ["@semantic-release/github", { successCommentCondition: false }],
   releaseRules,
   assets: ["CHANGELOG.md", "package.json", "INVENTORY.md", "opencode/**", "claude/**", "omp/**", "pi/**"],
 })
