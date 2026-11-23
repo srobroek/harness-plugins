@@ -1,6 +1,6 @@
 ---
 name: project-scaffold
-description: "Use for a new project, scaffold, bootstrap or init repo: ask, set up the language, docs, OpenCode config, plugins."
+description: "Scaffold a project with its language tools after approval. Use new-project for OMP project tooling."
 ---
 
 # Project scaffold
@@ -8,6 +8,9 @@ description: "Use for a new project, scaffold, bootstrap or init repo: ask, set 
 Instructions, not a script. Interview the user, then set the project up with each
 language's own tools. Never copy template trees by hand. Keep what the user already
 has in an existing repository unless they ask to change it.
+
+For OMP configuration, installed plugins, project-local skills, MCP servers, and
+reloading tooling, load the `new-project` skill. Do not duplicate its host setup here.
 
 Preferences live in other skills; load them by id instead of restating them here:
 `toolchain-guide` (routes to `toolchain-stack-defaults`, `toolchain-languages`,
@@ -18,9 +21,8 @@ Where neither this skill nor those say what to use, ask the user. Do not invent 
 
 ## 1. Interview
 
-Ask in rounds, with structured questions when the host offers them (`parley` or the
-question tool), recommended answer first. Skip what the argument or the repository
-already answers. Check the target first: `git rev-parse --is-inside-work-tree` and
+Ask in rounds using OMP's `ask` tool. Skip what the argument or repository already
+answers. Check the target first: `git rev-parse --is-inside-work-tree` and
 `git ls-files | head` tell greenfield from existing; an existing repository follows
 `references/brownfield.md`.
 
@@ -62,8 +64,8 @@ in the final report instead of inventing a value.
 4. Run the language setup from `references/<lang>.md`: `rust.md`, `python.md`,
    `go.md`, `typescript.md`. Several languages or packages: `references/monorepo.md`.
 5. Formatter config: commit an explicit formatter config for each language
-   (`references/formatters.md`): Ruff in `pyproject.toml`, `biome.json` or `.oxfmtrc.json`
-   (one formatter per file type). OpenCode's config-gated formatters run only with it.
+   (`formatters.md`; OMP uses `formatters.omp.md`): Ruff in `pyproject.toml`, `biome.json` or
+   `.oxfmtrc.json` (one formatter per file type). This keeps the formatter and check aligned.
 6. Add the license through `license-picker`; a published project also gets REUSE
    (`license-picker`'s REUSE reference: `reuse annotate` headers, `LICENSES/`,
    `REUSE.toml`, `reuse lint` in the required CI gate). Then a short `README.md` (what,
@@ -72,45 +74,27 @@ in the final report instead of inventing a value.
    (fnox.toml with 1Password vault refs, local sync cache, GitHub Actions push
    targets, AWS leases). Skip it when the project has no secrets.
 
-## 3. Docs and agent instructions
+Tree and file contents: `references/layout.md` (`layout.omp.md` for OMP). Follow
+`architecture-docs-files`: write the smallest useful `CONTRIBUTING.md`, `docs/stack.md`,
+`docs/architecture.md`, `docs/engineering.md`, and `AGENTS.md` for the project.
+`AGENTS.md` carries commands and links to the docs. Add `docs/operations.md` and
+`docs/product.md` only when needed.
+1. `docs/stack.md`: languages, package manager, frameworks, quality tools, as decided.
+2. `docs/architecture.md`: system shape and boundaries; top-level layout from
+   `architecture-top-level`. A one-paragraph stub is fine early.
+3. `docs/engineering.md` (always create it): stack with toolchain versions, layout and
+   dependency direction, standards and approved departures with reasons, how to build, test
+   and lint, release; commit and branch rules (`trunk-dev-guide`). A later stack change
+   updates it in the same PR.
+4. `AGENTS.md`: commands to build, test and check; layout pointers into `docs/`; project
+   rules. Keep it short and link to `docs/` instead of copying. Other harness instruction
+   files may be needed for other coding agents; choose only those the project uses.
+5. `CONTRIBUTING.md` only for a project others contribute to.
 
-Tree and file contents: `references/layout.md`. Follow `architecture-docs-files`. The global OpenCode config loads `CONTRIBUTING.md`,
-`docs/architecture.md`, `docs/stack.md` and `docs/engineering.md` as instructions when
-present, so write the smallest useful version of each:
+## 4. OMP project tooling
 
-- `docs/stack.md`: languages, package manager, frameworks, quality tools, as decided.
-- `docs/architecture.md`: system shape and boundaries; top-level layout from
-  `architecture-top-level`. A one-paragraph stub is fine early.
-- `docs/engineering.md` (always create it): the stack with toolchain versions, layout and
-  dependency direction, standards and approved departures with reasons, how to build, test
-  and lint, release; commit and branch rules (Conventional Commits, trunk-based;
-  `trunk-dev-guide`). `AGENTS.md` links it. A later stack change updates it in the same PR.
-- `docs/operations.md` and `docs/product.md` only when there is something to say.
-- `CONTRIBUTING.md` only for a project others contribute to.
-- `AGENTS.md` at the root: commands to build, test and check, layout pointers to
-  `docs/`, project rules. Keep it short and link to `docs/` instead of copying.
-  OpenCode V2 reads `AGENTS.md` only, not `CLAUDE.md`.
-
-## 4. OpenCode project config
-
-Docs: https://opencode.ai/v2/docs/config/. Project config is `opencode.jsonc` in the
-root or `.opencode/opencode.jsonc`; pick one form. It merges over the global
-`~/.config/opencode/opencode.json`, so read the global file first and add only what
-the project needs:
-
-- `plugins`: the project-specific plugins from step 6 (arrays merge with the global list).
-- `formatter`: disable the built-ins the project opts out of
-  (`"formatter": { "ruff": { "disabled": true } }`), or the second formatter when two
-  match the same files, or re-enable one the global config disables, such as
-  Prettier (`references/formatters.md`).
-- `instructions`: only extra files the global list does not already load.
-- `permissions`: allow the project's check commands (`just check`, `cargo clippy *`)
-  when the user wants fewer prompts.
-- `mcp`, `references`, `skills`: only on request.
-- Project skills go under `.opencode/skills/<id>/SKILL.md`; project commands under
-  `.opencode/commands/<name>.md`.
-
-Never put secrets in the file; use `{env:NAME}` or the `project-secrets` skill.
+Follow `new-project` for `.omp/` configuration, project-local plugins, skills, and
+MCP servers. Add project skills under `.omp/skills/<id>/SKILL.md` only when needed.
 
 ## 5. Tracking and workflow (if chosen)
 
@@ -122,30 +106,32 @@ Never put secrets in the file; use `{env:NAME}` or the `project-secrets` skill.
   permissions) plus the language's CI notes in its plugin skills.
 - Branch protection, the merge queue and the CI lanes on GitHub: load `delivery-git-workflow`
   and read its `repo-setup-parallel-agents.md` reference.
-- Worktrees: `references/worktrees.md` (the `worktrunk` plugin). For Rust, never set a global `CARGO_TARGET_DIR`
-  (`ops-no-global-cargo-target`); caches follow `ops-toolchain-cache-policy`.
+- Worktrees: `references/worktrees.md` (the `worktrunk` plugin). For Rust, never set a global
+  `CARGO_TARGET_DIR` (`ops-no-global-cargo-target`); caches follow `ops-toolchain-cache-policy`.
 - Hooks, CI jobs, release-please and Renovate defaults to offer: `references/ci-hooks.md`.
   Wire hooks into `just check` so CI and local agree.
 
 ## 6. Pick plugins
 
-Load `references/plugins.md`: it explains how to list every plugin, which are
-already global, and the install spec. Recommend by the project's languages and
-workflow, show the shortlist with one line each, install only what the user accepts.
+Load `references/plugins.md`: it explains the OpenCode plugin setup. For OMP plugins,
+skills, and MCP servers, follow `new-project` instead. Recommend by the project's
+languages and workflow, show the shortlist with one line each, install only what the user
+accepts.
 
 ## 7. First commit and verify
 
 1. Run the full gate (`just check`, or the language commands) and fix it until green.
    A tool that cannot run is "not run", never a pass. The hygiene fixer hooks may rewrite
    files and fail the first run; review the diff and rerun until it passes.
-2. Start OpenCode checks: the project config parses (`opencode.jsonc` valid JSONC),
-   new skills show up, the added plugins load (`opencode plugin list`).
-3. `git add` specific files, review `git status`, then commit once:
-   `chore: scaffold <name>` (Conventional Commits). Do not push, create the remote
-   repository, or add branch protection unless the user asked; offer it. When you create
-   a GitHub repository, set its merge settings (`references/governance.md`, Forge).
+2. Start project checks for the selected harnesses: validate their config, discover the new
+   skills, and confirm plugins load.
+3. Stage specific files, review the changes, then commit once:
+   `chore: scaffold <name>` (Conventional Commits). Do not push or create the remote
+   repository unless the user asked; offer it. When you create a GitHub repository, set its
+   merge settings (`references/governance.md`, Forge).
 4. Report: what was created, versions chosen, commands to run, open decisions.
 
 Checklist before reporting: git initialised; tools pinned; gate green; license set;
-`README.md`, `AGENTS.md`, `docs/stack.md`, `docs/engineering.md` written and linked from `AGENTS.md`; formatter config committed; `.gitignore` covers build output
-and `.env`; no secrets committed; plugins and OpenCode config as agreed; one commit.
+`README.md`, `AGENTS.md`, `docs/stack.md`, `docs/engineering.md` written and linked from
+`AGENTS.md`; formatter config committed; `.gitignore` covers build output and `.env`; no
+secrets committed; plugins and harness configuration as agreed; one commit.

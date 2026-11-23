@@ -19,7 +19,7 @@
 | chezmoi | 0.6.0 | development | global | opencode, claude |
 | claude-compat | 0.5.0 | development | project | opencode |
 | code-challenge | 1.5.0 | development | global | opencode |
-| debate | 0.6.0 | productivity | global | opencode, claude |
+| debate | 0.6.0 | productivity | global | opencode, claude, omp |
 | delivery | 0.12.0 | development | global | opencode |
 | dep-update | 0.6.1 | development | global | opencode |
 | design | 0.10.0 | development | project | opencode, claude |
@@ -27,16 +27,16 @@
 | eli5 | 0.7.0 | productivity | global | opencode, claude, omp |
 | find-tools | 0.4.0 | development | global | opencode |
 | journeys | 0.5.0 | development | project | opencode, claude |
-| lang-go | 0.7.0 | development | global | opencode, claude |
-| lang-python | 0.7.0 | development | global | opencode, claude |
-| lang-rust | 0.7.0 | development | global | opencode, claude |
-| lang-typescript | 0.8.0 | development | global | opencode, claude |
+| lang-go | 0.7.0 | development | global | opencode, claude, omp |
+| lang-python | 0.7.0 | development | global | opencode, claude, omp |
+| lang-rust | 0.7.0 | development | global | opencode, claude, omp |
+| lang-typescript | 0.8.0 | development | global | opencode, claude, omp |
 | lsp | 0.5.0 | development | project | opencode |
 | model-roles | 0.11.0 | development | global | opencode |
 | modes | 1.2.0 | development | global | opencode |
 | parley | 0.4.2 | development | global | opencode |
 | plugin-audit | 0.2.0 | development | project | opencode |
-| project | 0.10.0 | productivity | global | opencode, claude |
+| project | 0.10.0 | productivity | global | opencode, claude, omp |
 | quality | 0.14.0 | development | global | opencode, claude |
 | repomix | 0.5.0 | development | global | opencode, claude |
 | safety | 0.13.0 | development | global | opencode |
@@ -44,7 +44,7 @@
 | speckit | 0.11.0 | development | project | opencode, claude |
 | statusline | 0.4.0 | development | global | opencode |
 | subagent-worktree | 0.9.0 | development | global | opencode |
-| toolchain | 0.8.0 | development | global | opencode, claude |
+| toolchain | 0.8.0 | development | global | opencode, claude, omp |
 | trunk-dev | 0.10.0 | development | global | opencode, claude |
 | whats-new | 0.4.0 | development | global | opencode |
 | worktrunk | 0.6.0 | development | project | opencode, claude |

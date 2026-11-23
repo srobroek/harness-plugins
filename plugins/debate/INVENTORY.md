@@ -3,13 +3,13 @@
 
 Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.
 
-| Kind | opencode | claude |
-| --- | --- | --- |
-| skills | debate, grilling, to-questionnaire | debate, grilling, to-questionnaire |
-| agents | - | - |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | - |
-| tools | - | - |
-| extensions | index | - |
-| mcp | - | - |
+| Kind | opencode | claude | omp |
+| --- | --- | --- | --- |
+| skills | debate, grilling, to-questionnaire | debate, grilling, to-questionnaire | debate, grilling, to-questionnaire |
+| agents | - | - | - |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | - | - |
+| tools | - | - | - |
+| extensions | index | - | - |
+| mcp | - | - | - |

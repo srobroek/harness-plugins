@@ -3,13 +3,13 @@
 
 Rust skills: fmt, clippy and test checks, testing with nextest, proptest and insta, crates and workspaces, CI, sqlx persistence, Tauri and profiling.
 
-| Kind | opencode | claude |
-| --- | --- | --- |
-| skills | lang-rust, lang-rust-ci, lang-rust-libraries, lang-rust-packaging, lang-rust-persistence, lang-rust-profiling, lang-rust-quality, lang-rust-tauri, lang-rust-testing | lang-rust, lang-rust-ci, lang-rust-libraries, lang-rust-packaging, lang-rust-persistence, lang-rust-profiling, lang-rust-quality, lang-rust-tauri, lang-rust-testing |
-| agents | - | - |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | - |
-| tools | - | - |
-| extensions | index | - |
-| mcp | - | - |
+| Kind | opencode | claude | omp |
+| --- | --- | --- | --- |
+| skills | lang-rust, lang-rust-ci, lang-rust-libraries, lang-rust-packaging, lang-rust-persistence, lang-rust-profiling, lang-rust-quality, lang-rust-tauri, lang-rust-testing | lang-rust, lang-rust-ci, lang-rust-libraries, lang-rust-packaging, lang-rust-persistence, lang-rust-profiling, lang-rust-quality, lang-rust-tauri, lang-rust-testing | lang-rust, lang-rust-ci, lang-rust-libraries, lang-rust-packaging, lang-rust-persistence, lang-rust-profiling, lang-rust-quality, lang-rust-tauri, lang-rust-testing |
+| agents | - | - | - |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | - | - |
+| tools | - | - | - |
+| extensions | index | - | - |
+| mcp | - | - | - |

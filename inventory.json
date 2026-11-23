@@ -539,6 +539,20 @@
           "tools": [],
           "extensions": [],
           "mcp": []
+        },
+        "omp": {
+          "skills": [
+            "debate",
+            "grilling",
+            "to-questionnaire"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
         }
       },
       "scope": "global"
@@ -864,6 +878,23 @@
           "tools": [],
           "extensions": [],
           "mcp": []
+        },
+        "omp": {
+          "skills": [
+            "lang-go",
+            "lang-go-libraries",
+            "lang-go-packaging",
+            "lang-go-profiling",
+            "lang-go-quality",
+            "lang-go-testing"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
         }
       },
       "scope": "global"
@@ -896,6 +927,25 @@
           "mcp": []
         },
         "claude": {
+          "skills": [
+            "lang-python",
+            "lang-python-libraries",
+            "lang-python-packaging",
+            "lang-python-persistence",
+            "lang-python-profiling",
+            "lang-python-quality",
+            "lang-python-testing",
+            "lang-python-types"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "omp": {
           "skills": [
             "lang-python",
             "lang-python-libraries",
@@ -964,6 +1014,26 @@
           "tools": [],
           "extensions": [],
           "mcp": []
+        },
+        "omp": {
+          "skills": [
+            "lang-rust",
+            "lang-rust-ci",
+            "lang-rust-libraries",
+            "lang-rust-packaging",
+            "lang-rust-persistence",
+            "lang-rust-profiling",
+            "lang-rust-quality",
+            "lang-rust-tauri",
+            "lang-rust-testing"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
         }
       },
       "scope": "global"
@@ -995,6 +1065,24 @@
           "mcp": []
         },
         "claude": {
+          "skills": [
+            "lang-typescript",
+            "lang-typescript-libraries",
+            "lang-typescript-packaging",
+            "lang-typescript-profiling",
+            "lang-typescript-quality",
+            "lang-typescript-testing",
+            "lang-typescript-types"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "omp": {
           "skills": [
             "lang-typescript",
             "lang-typescript-libraries",
@@ -1151,6 +1239,20 @@
           "mcp": []
         },
         "claude": {
+          "skills": [
+            "license-picker",
+            "project-scaffold",
+            "project-secrets"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "omp": {
           "skills": [
             "license-picker",
             "project-scaffold",
@@ -1417,6 +1519,33 @@
           "mcp": []
         },
         "claude": {
+          "skills": [
+            "backend-background-jobs",
+            "ci-github-actions",
+            "coexistence-worktree",
+            "infrastructure-tfstate-guard",
+            "ops-no-global-cargo-target",
+            "ops-toolchain-cache-policy",
+            "shell-language",
+            "terraform-language",
+            "toolchain-api",
+            "toolchain-asset-ownership",
+            "toolchain-frontend",
+            "toolchain-guide",
+            "toolchain-infrastructure",
+            "toolchain-languages",
+            "toolchain-quality-observability",
+            "toolchain-stack-defaults"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "omp": {
           "skills": [
             "backend-background-jobs",
             "ci-github-actions",
