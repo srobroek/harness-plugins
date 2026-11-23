@@ -6,7 +6,7 @@ Per-project secrets with [fnox](https://fnox.jdx.dev/) and 1Password, as one ski
 | --- | --- |
 | `project-secrets` | Secrets, API keys, `.env`, fnox, 1Password, CI secrets or AWS credentials for a project |
 
-The skill is guidance and the questions to ask, not a script. It covers:
+The skill gives guidance and the questions to ask the user. It covers:
 
 - a committed `fnox.toml` of references, never values
 - where a secret lives: Private, a shared `dev-shared` vault, or a `proj-<name>` vault only when
