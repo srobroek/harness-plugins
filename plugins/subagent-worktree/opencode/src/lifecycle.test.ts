@@ -9,7 +9,7 @@ import { lockFile, readHolds, setHold, withDiskLock } from "@srobroek/opencode-l
 import { type Runner, type RunResult, spawnRunner } from "./git.ts"
 import { createPlugin } from "./index.ts"
 import { type Lane, laneKey } from "./lane.ts"
-import { type Lifecycle, within } from "./lifecycle.ts"
+import { IDLE_REPORT_MS, type Lifecycle, longIdleReport, within } from "./lifecycle.ts"
 
 const PARENT = "ses_parent"
 const CHILD = "ses_child"
@@ -3144,4 +3144,261 @@ describe("recovery proves a merge target by its exact branch ref, in a real repo
     },
     REAL_GIT_MS,
   )
+})
+
+describe("sweep reporting of lanes that keep forever", () => {
+  type Entry = { verdict: string; reason: string; needsPerson?: true; idleSince?: number }
+  const DAY = 24 * 60 * 60 * 1000
+  const sweep = async (fake: Fake, mode: string) => {
+    const execute = fake.tools.get("subagent_worktree_sweep")?.execute as (i: unknown, c: unknown) => Promise<{ metadata: { plan: Entry[] } }>
+    return (await execute({ mode }, tool)).metadata.plan
+  }
+  const LATE = 60 * DAY
+  const idleFor = (days: number) => ({ [CHILD]: { busy: 1, idle: LATE - days * DAY } })
+
+  test("a clean landed lane whose child has been idle over 7 days is reported for a person, with the idle time", async () => {
+    const { fake, worktree, cleanup } = await start({ ancestor: 0, time: idleFor(8), now: LATE })
+    const plan = await sweep(fake, "prune")
+    expect(plan[0]).toMatchObject({ verdict: "keep", needsPerson: true, idleSince: LATE - 8 * DAY })
+    expect(plan[0]?.reason).toContain("archive or delete the child to release")
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+
+  test("a child idle for 6 days is a plain keep that needs no person", async () => {
+    const { fake, cleanup } = await start({ ancestor: 0, time: idleFor(6), now: LATE })
+    const plan = await sweep(fake, "report")
+    expect(plan[0]).toMatchObject({ verdict: "keep", reason: "its subagent session is idle", idleSince: LATE - 6 * DAY })
+    expect(plan[0]?.needsPerson).toBeUndefined()
+    await cleanup()
+  })
+
+  test("a long-idle child with unmerged work is reported as unmerged, not as the idle advice", async () => {
+    const { fake, cleanup } = await start({ ancestor: 1, time: idleFor(30), now: LATE })
+    const plan = await sweep(fake, "report")
+    expect(plan[0]?.reason).not.toContain("archive or delete")
+    await cleanup()
+  })
+
+  test("a fenced lane is kept for a person with the fence reason, even with a deleted child", async () => {
+    const fenced = lane({ fenced: { reason: "moving it back failed: boom", at: 1 } })
+    const { fake, worktree, cleanup } = await start({ ancestor: 0 }, { stored: [fenced] })
+    fake.sessions.delete(CHILD)
+    const plan = await sweep(fake, "prune")
+    expect(plan[0]).toMatchObject({ verdict: "keep", needsPerson: true })
+    expect(plan[0]?.reason).toContain("moving it back failed: boom")
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+})
+
+describe("a fenced lane is never removed automatically", () => {
+  const fenced = { reason: "moving it back failed", at: 1 }
+
+  test("the end of a fenced, clean, landed lane's child keeps the lane", async () => {
+    const { fake, worktree, events, quiet, cleanup } = await start({ ancestor: 0 }, { stored: [lane({ fenced })] })
+    await deliver(fake, events, { type: "session.execution.succeeded", data: { sessionID: CHILD } })
+    await quiet()
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    expect(stored(fake).fenced).toEqual(fenced)
+    await cleanup()
+  })
+
+  test("the lead's idle gate keeps a fenced, clean, landed lane", async () => {
+    const { fake, worktree, quiet, cleanup } = await start({ ancestor: 0 }, { stored: [lane({ fenced })] })
+    await fake.fire.session("experimental.idle", { sessionID: PARENT } as never)
+    await quiet()
+    expect(worktree).toEqual([])
+    expect(stored(fake).state).toBe("active")
+    await cleanup()
+  })
+
+  describe("move-only recovery of a fenced lane whose worktree is gone", () => {
+    const removing = lane({ state: "removing", fenced, removal: { retireAs: "removed", head: BASE } })
+    const failMoves = (fake: Fake) => {
+      const session = fake.context.session as unknown as { move: (input: unknown) => Promise<unknown> }
+      const original = session.move.bind(session)
+      session.move = () => Promise.reject(new Error("host refused the move"))
+      return () => {
+        session.move = original
+      }
+    }
+
+    test("resumeRemovals finishes the move once it works again", async () => {
+      const { fake, lifecycle, quiet, cleanup } = await start({ exists: false }, { stored: [] })
+      await quiet()
+      fake.storage.set(laneKey(CHILD), removing)
+      const restore = failMoves(fake)
+      await lifecycle().resumeRemovals()
+      expect(stored(fake).state).toBe("removing")
+      restore()
+      await lifecycle().resumeRemovals()
+      expect(stored(fake).state).toBe("removed")
+      await cleanup()
+    })
+
+    test("a lead idle event finishes the move once it works again", async () => {
+      const { fake, quiet, cleanup } = await start({ exists: false }, { stored: [] })
+      await quiet()
+      fake.storage.set(laneKey(CHILD), removing)
+      const restore = failMoves(fake)
+      fake.emit({ type: "session.idle", data: { sessionID: PARENT } })
+      await quiet()
+      expect(stored(fake).state).toBe("removing")
+      restore()
+      fake.emit({ type: "session.idle", data: { sessionID: PARENT } })
+      await until(() => stored(fake).state === "removed")
+      expect(stored(fake).state).toBe("removed")
+      await cleanup()
+    })
+  })
+})
+
+describe("longIdleReport", () => {
+  const DAY = 24 * 60 * 60 * 1000
+  const base = { child: "idle" as const, idle: 100 * DAY, now: 108 * DAY, removable: true }
+
+  test("reports a removable lane whose idle child is older than the limit, with the advice", () => {
+    expect(longIdleReport(base)).toContain("archive or delete the child to release")
+  })
+
+  test.each([
+    ["exactly the limit", { now: 100 * DAY + IDLE_REPORT_MS }],
+    ["a lane that is not removable", { removable: false }],
+    ["a running child", { child: "running" as const }],
+    ["an unknown idle time", { idle: undefined }],
+  ])("reports nothing for %s", (_name, over) => {
+    expect(longIdleReport({ ...base, ...over })).toBeUndefined()
+  })
+})
+
+describe("unfence", () => {
+  const fenced = { reason: "moving it back failed", at: 1 }
+  type Out = { content: string; metadata: { ok: boolean } }
+  const unfence = async (fake: Fake, caller: typeof tool = tool) => {
+    const execute = fake.tools.get("subagent_worktree_merge")?.execute as (i: unknown, c: unknown) => Promise<Out>
+    return execute({ method: "unfence", sessionID: CHILD }, caller)
+  }
+  const refused = (result: Out, text: string) => {
+    expect(result.metadata.ok).toBe(false)
+    expect(result.content).toContain(text)
+  }
+  const fenceOf = (fake: Fake) => (fake.storage.get(laneKey(CHILD)) as Lane).fenced
+
+  test("clears the fence of an idle child's lane", async () => {
+    const { fake, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced })] })
+    const result = await unfence(fake)
+    expect(result.metadata.ok).toBe(true)
+    expect(stored(fake).fenced).toBeUndefined()
+    await cleanup()
+  })
+
+  test("refuses while the child is running", async () => {
+    const { fake, cleanup } = await start({ time: { [CHILD]: { busy: 5, idle: 2 } } }, { stored: [lane({ fenced })] })
+    refused(await unfence(fake), "ses_child is running")
+    expect(fenceOf(fake)).toEqual(fenced)
+    await cleanup()
+  })
+
+  test("refuses when the child's session cannot be read", async () => {
+    const { fake, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced })] })
+    Object.assign(fake.context.session, { get: () => Promise.reject(new Error("503 unavailable")) })
+    refused(await unfence(fake), "session cannot be read")
+    expect(fenceOf(fake)).toEqual(fenced)
+    await cleanup()
+  })
+
+  test("refuses a caller that is not the lane's parent", async () => {
+    const { fake, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced })] })
+    refused(await unfence(fake, { ...tool, sessionID: "ses_other" }), "no lane of yours")
+    expect(fenceOf(fake)).toEqual(fenced)
+    await cleanup()
+  })
+
+  test("refuses a lane handed to another writer", async () => {
+    const { fake, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced, child: "ses_new", handedOver: { from: CHILD, at: 1 } } as Partial<Lane>)] })
+    refused(await unfence(fake), "no lane of yours")
+    expect((fake.storage.get(laneKey("ses_new")) as Lane).fenced).toEqual(fenced)
+    await cleanup()
+  })
+
+  test("refuses a lane that is not fenced", async () => {
+    const { fake, cleanup } = await start({ time: IDLE })
+    refused(await unfence(fake), "is not fenced")
+    await cleanup()
+  })
+
+  test.each([
+    ["archived", (fake: Fake) => {
+      const child = fake.sessions.get(CHILD)
+      if (child) child.time = { busy: 1, idle: 2, archived: 3 }
+    }],
+    ["deleted", (fake: Fake) => void fake.sessions.delete(CHILD)],
+  ])("clears the fence of a %s child's lane", async (_name, prepare) => {
+    const { fake, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced })] })
+    prepare(fake)
+    expect((await unfence(fake)).metadata.ok).toBe(true)
+    expect(stored(fake).fenced).toBeUndefined()
+    await cleanup()
+  })
+
+  test("refuses when the child starts running while the unfence waits for the lane lock", async () => {
+    // The lock waits through this sleep: its first call says the unfence is queued behind the holder.
+    let waiting!: () => void
+    const queued = new Promise<void>((done) => (waiting = done))
+    const sleep = (ms: number) => {
+      waiting()
+      return new Promise<void>((done) => setTimeout(done, ms))
+    }
+    const { fake, events, common, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced })], lock: { sleep } })
+    let free!: () => void
+    let taken!: () => void
+    const acquired = new Promise<void>((done) => (taken = done))
+    const held = withDiskLock(common, WT, { sessionID: "ses_other", waitMs: 5_000 }, async () => {
+      taken()
+      await new Promise<void>((done) => (free = done))
+    })
+    await acquired
+    const pending = unfence(fake)
+    await queued
+    const child = fake.sessions.get(CHILD)
+    if (child) child.time = { busy: 9, idle: 2 }
+    await deliver(fake, events, { type: "session.execution.started", data: { sessionID: CHILD } })
+    free()
+    await held
+    refused(await pending, "running")
+    expect(fenceOf(fake)).toEqual(fenced)
+    await cleanup()
+  })
+
+  test("refuses when the child starts while the write is being prepared (a delayed storage read)", async () => {
+    const { fake, events, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced })] })
+    const storage = fake.context.storage as unknown as { get: (key: string) => Promise<unknown> }
+    const original = storage.get.bind(storage)
+    // Reads of the lane record: the tool's, the unfence's first look, its read under the lock, then the write's superseded check, which is held.
+    let reads = 0
+    let reached!: () => void
+    const atWrite = new Promise<void>((done) => (reached = done))
+    let release!: () => void
+    const gate = new Promise<void>((done) => (release = done))
+    storage.get = async (key) => {
+      if (key === laneKey(CHILD) && ++reads === 4) {
+        reached()
+        await gate
+      }
+      return original(key)
+    }
+    const pending = unfence(fake)
+    await atWrite
+    const child = fake.sessions.get(CHILD)
+    if (child) child.time = { busy: 9, idle: 2 }
+    await deliver(fake, events, { type: "session.execution.started", data: { sessionID: CHILD } })
+    release()
+    refused(await pending, "started a new execution")
+    expect(fenceOf(fake)).toEqual(fenced)
+    await cleanup()
+  })
 })

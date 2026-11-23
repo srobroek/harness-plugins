@@ -73,7 +73,8 @@ export const MERGE_DESCRIPTION =
   'method "keep" (with reason) records that an unmerged lane is kept on purpose, so the idle gate stops nudging about it. method "none" only reports the lane status. method "list" (no sessionID) reports every active lane in the project ' +
   "with commits ahead, uncommitted changes, and orphaned lanes; missing worktrees move their child sessions back. " +
   'method "release" (with reason) hands the lane of a dead writer you spawned to the next writer spawned into its worktree: ' +
-  "the writer's session must be deleted (stop it and delete it in OpenCode first), and the worktree clean and pushed."
+  "the writer's session must be deleted (stop it and delete it in OpenCode first), and the worktree clean and pushed. " +
+  'method "unfence" clears the fence of your lane when its child is not running.'
 
 export const SWEEP_TOOL = "subagent_worktree_sweep"
 
@@ -98,13 +99,13 @@ export const MERGE_INPUT = {
       type: "string",
       description: 'From the subagent tool result; required unless method is "list"',
     },
-    method: { type: "string", enum: ["wt-merge", "none", "list", "keep", "release"] },
+    method: { type: "string", enum: ["wt-merge", "none", "list", "keep", "release", "unfence"] },
     target: { type: "string", description: "Defaults to the lane's base branch" },
     reason: { type: "string", description: 'Why the lane is kept (method "keep") or the writer released (method "release")' },
   },
 } as const
 
-type MergeInput = { sessionID?: string; method: "wt-merge" | "none" | "list" | "keep" | "release"; target?: string; reason?: string }
+type MergeInput = { sessionID?: string; method: "wt-merge" | "none" | "list" | "keep" | "release" | "unfence"; target?: string; reason?: string }
 
 type Session = {
   id: string
@@ -228,8 +229,11 @@ export function createLanes(
     })
   }
 
-  /** Store `lane` and its claim; resolves false, writing nothing, when its record now names another writer. */
-  const save = async (lane: Lane): Promise<boolean> => {
+  /**
+   * Store `lane` and its claim; resolves false, writing nothing, when its record now names another writer or when `guard`
+   * returns false. `guard` runs synchronously on the line before the record write, after every awaited preparation step.
+   */
+  const save = async (lane: Lane, guard?: () => boolean): Promise<boolean> => {
     const write = async () => {
       // A copy read before a handover would put the old writer back: the record names the new one, so the copy is dropped.
       if (await superseded(lane)) {
@@ -238,6 +242,8 @@ export function createLanes(
       }
       // Claim first when activating (no record without its claim), record first when retiring (no claim without its record).
       if (claims(lane)) await syncClaim(lane)
+      // No await between the guard and the write: `storage.set` is called in the same synchronous turn.
+      if (guard !== undefined && !guard()) return false
       await ctx.storage.set(laneStoreKey(lane), lane)
       if (!claims(lane)) await syncClaim(lane)
       return true
@@ -991,6 +997,20 @@ export function createLanes(
     }
     if (input.method === "release") return releaseWriter(input.sessionID, input.reason?.trim() || "released by its parent", tool)
     let lane = await load(input.sessionID)
+    if (input.method === "unfence") {
+      await ctx.permission.assert({
+        sessionID: tool.sessionID,
+        agent: tool.agent,
+        action: MERGE_TOOL,
+        resources: [lane?.branch ?? input.sessionID],
+        source: { type: "tool", messageID: tool.messageID, id: tool.id },
+      } as never)
+      if (!lane || lane.parent !== tool.sessionID) return { content: `${MERGE_TOOL}: no lane of yours for session ${input.sessionID}`, metadata: { ok: false } }
+      const done = await lifecycle.unfence(lane.child)
+      return done.ok
+        ? { content: `${MERGE_TOOL}: unfenced ${done.lane.branch}; ${input.sessionID} may be resumed.`, metadata: { ok: true, lane: done.lane } }
+        : { content: `${MERGE_TOOL}: not unfenced: ${done.reason}`, metadata: { ok: false, reason: done.reason } }
+    }
     if (input.method === "keep") {
       await ctx.permission.assert({
         sessionID: tool.sessionID,

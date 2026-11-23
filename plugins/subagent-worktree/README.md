@@ -177,6 +177,7 @@ plugin instance.
 | `method: "none"` | Reports the lane status only. |
 | `method: "list"` | Reports every active lane in the caller's project. |
 | `method: "release"` | Frees the worktree of a dead writer, so the parent can spawn a new writer into it (see One writer per worktree). |
+| `method: "unfence"` | Clears the fence of your lane (moving its child back failed) after you checked it. Refused while the child runs, or when the lane now names another writer. |
 | `target` | Branch to merge into. Defaults to the branch the caller was on. |
 
 For `wt-merge` and `none` the tool asserts the `subagent_worktree_merge` permission for the lane
@@ -300,6 +301,13 @@ They remove an empty lane (no commits, clean) after the child and parent stay id
 
 The sweep tool is on demand: it reports by default (`mode: "report"`), and removes only when called
 with `mode: "prune"`. The last plan is stored under `sweep/last`.
+
+Two kinds of lane are never removed by the sweep and are reported as needing a person:
+
+- A fenced lane. The entry gives the fence reason. After you check the lane, clear the fence with
+  `subagent_worktree_merge` `method: "unfence"`; the lane then follows the normal rules.
+- A clean lane that is landed or empty whose child session has been idle for more than 7 days.
+  The entry carries `idleSince` and the advice to archive or delete the child to release it.
 
 ### Coordination on disk
 

@@ -1970,6 +1970,13 @@ var EVENT_TYPES = [
 ];
 var PRIORITY = { idle: 0, succeeded: 1, interrupted: 2, failed: 3, archived: 4 };
 var ENDS_LANE = new Set(["succeeded", "failed", "interrupted", "archived"]);
+var IDLE_REPORT_MS = 7 * 24 * 60 * 60 * 1000;
+function longIdleReport(input) {
+  const { child, idle, now, removable } = input;
+  if (child !== "idle" || idle === undefined || !removable || now - idle <= IDLE_REPORT_MS)
+    return;
+  return `its subagent session has been idle since ${new Date(idle).toISOString()}; archive or delete the child to release`;
+}
 var canonical = (path) => {
   try {
     return realpathSync2(path);
@@ -2475,6 +2482,8 @@ function createLifecycle(deps) {
         if (options.ifGone === true && onDisk)
           return keptBecause("present", "the worktree exists");
         const present = options.gone !== true && earlier?.pending === undefined && onDisk;
+        if (present && stored.fenced && options.target === undefined)
+          return keptBecause("denied", `the lane is fenced (${stored.fenced.reason}); unfence it first`);
         let proof;
         let head;
         let within;
@@ -2889,7 +2898,10 @@ function createLifecycle(deps) {
       await finalize(lane, { gone: true, retireAs: "landed" });
   };
   const PROOF_TEXT = { empty: "empty: no commits of its own", merged: "merged", landed: "landed" };
+  const fencedReason = (lane) => `fenced: ${lane.fenced?.reason ?? "unknown"}; check the lane, then unfence it with subagent_worktree_merge method "unfence"`;
   const previewFinalize = async (lane, fence) => {
+    if (lane.fenced)
+      return { removable: false, reason: fencedReason(lane), needsPerson: true };
     const checked = await checkFinalize(lane, fence, fence.seq, undefined);
     if ("proof" in checked) {
       const descendants = await descendantRefusal(lane);
@@ -2907,10 +2919,24 @@ function createLifecycle(deps) {
     const fence = { seq: eventSeq, since: now() };
     if (!await deps.exists(lane.directory))
       return { ...entry, verdict: "keep", reason: "its worktree directory is gone and the lane was not retired (removed outside the plugin)", needsPerson: true };
-    const child = await childState(ctx.session.get({ sessionID: lane.child }), deps.lookupMs, lane.child);
-    if (!childReleasesLane(child))
-      return { ...entry, verdict: "keep", reason: `its subagent session is ${child}` };
+    if (lane.fenced)
+      return { ...entry, verdict: "keep", reason: fencedReason(lane), needsPerson: true };
+    let idle;
+    const lookup = ctx.session.get({ sessionID: lane.child }).then((session) => {
+      const at = session?.time?.idle;
+      if (typeof at === "number")
+        idle = at;
+      return session;
+    });
+    const child = await childState(lookup, deps.lookupMs, lane.child);
+    const idleSince = child === "idle" && idle !== undefined ? { idleSince: idle } : {};
     const preview = await previewFinalize(lane, fence);
+    if (!childReleasesLane(child)) {
+      const stale = longIdleReport({ child, idle, now: fence.since, removable: preview.removable });
+      if (stale !== undefined)
+        return { ...entry, verdict: "keep", reason: stale, needsPerson: true, ...idleSince };
+      return { ...entry, verdict: "keep", reason: `its subagent session is ${child}`, ...idleSince };
+    }
     if (!preview.removable)
       return { ...entry, verdict: "keep", reason: preview.reason, ...preview.needsPerson ? { needsPerson: true } : {} };
     if (mode === "report")
@@ -2954,6 +2980,42 @@ function createLifecycle(deps) {
     const facts = await laneFacts(lane, { child: "unknown", parent: "unknown" });
     const token = stateToken(facts);
     return updateLane(lane, (stored) => stored.state === "active" ? { ...stored, kept: { reason, token } } : undefined);
+  };
+  const unfence = async (child) => {
+    const lane = await load(child);
+    if (lane === undefined || lane.state !== "active")
+      return { ok: false, reason: `no active lane names ${child}` };
+    if (!lane.fenced)
+      return { ok: false, reason: `the lane of ${child} is not fenced` };
+    const state = await childState(ctx.session.get({ sessionID: child }), deps.lookupMs, child);
+    if (state === "running")
+      return { ok: false, reason: `${child} is running` };
+    if (state === "unknown")
+      return { ok: false, reason: `${child}'s session cannot be read` };
+    const seq = eventSeq;
+    let refusal;
+    const next = await withLock(lane.directory, lane.parentDir, async () => {
+      const stored = await load(child);
+      if (stored === undefined || stored.child !== child || stored.state !== "active" || canonical(stored.directory) !== canonical(lane.directory) || !stored.fenced) {
+        refusal = `the lane of ${child} is no longer fenced`;
+        return;
+      }
+      const live = await childState(ctx.session.get({ sessionID: child }), deps.lookupMs, child);
+      if (live === "running" || live === "unknown") {
+        refusal = `${child} is ${live === "running" ? "running" : "unreadable"}`;
+        return;
+      }
+      const { fenced: _cleared, ...rest } = stored;
+      const guard = () => {
+        const late = startedSince([child], seq);
+        if (late === undefined)
+          return true;
+        refusal = late.removed ? "the lane changed" : late.reason;
+        return false;
+      };
+      return await save(rest, guard) ? rest : undefined;
+    });
+    return next ? { ok: true, lane: next } : { ok: false, reason: refusal ?? "the lane changed meanwhile" };
   };
   const registrations = [];
   const abort = new AbortController;
@@ -3014,7 +3076,7 @@ function createLifecycle(deps) {
         return;
     }
   };
-  return { start, dispose, handleEvent, onIdle, onLanding, keep, removeForeground, removeAfterMerge, resumeRemovals, noteResume, spawnInto, sweep: runSweep, settle };
+  return { start, dispose, handleEvent, onIdle, onLanding, keep, unfence, removeForeground, removeAfterMerge, resumeRemovals, noteResume, spawnInto, sweep: runSweep, settle };
 }
 
 // plugins/subagent-worktree/opencode/src/release.ts
@@ -3065,7 +3127,7 @@ function decideRelease(facts) {
 
 // plugins/subagent-worktree/opencode/src/index.ts
 var MERGE_DESCRIPTION = `Merge a subagent's worktree branch back, report one lane, or list every active lane.
-` + "The subagent tool result names the lane (branch, base, sessionID). " + 'method "wt-merge" runs `wt merge <target> --no-squash --no-ff --no-hooks` from the subagent worktree, keeping its commits, ' + "and removes the worktree on success; a conflict keeps the worktree and reports the output. " + "The worktree must be committed and clean, and the target checkout must have no uncommitted or untracked changes to files the lane changes. " + 'method "keep" (with reason) records that an unmerged lane is kept on purpose, so the idle gate stops nudging about it. method "none" only reports the lane status. method "list" (no sessionID) reports every active lane in the project ' + "with commits ahead, uncommitted changes, and orphaned lanes; missing worktrees move their child sessions back. " + 'method "release" (with reason) hands the lane of a dead writer you spawned to the next writer spawned into its worktree: ' + "the writer's session must be deleted (stop it and delete it in OpenCode first), and the worktree clean and pushed.";
+` + "The subagent tool result names the lane (branch, base, sessionID). " + 'method "wt-merge" runs `wt merge <target> --no-squash --no-ff --no-hooks` from the subagent worktree, keeping its commits, ' + "and removes the worktree on success; a conflict keeps the worktree and reports the output. " + "The worktree must be committed and clean, and the target checkout must have no uncommitted or untracked changes to files the lane changes. " + 'method "keep" (with reason) records that an unmerged lane is kept on purpose, so the idle gate stops nudging about it. method "none" only reports the lane status. method "list" (no sessionID) reports every active lane in the project ' + "with commits ahead, uncommitted changes, and orphaned lanes; missing worktrees move their child sessions back. " + 'method "release" (with reason) hands the lane of a dead writer you spawned to the next writer spawned into its worktree: ' + "the writer's session must be deleted (stop it and delete it in OpenCode first), and the worktree clean and pushed. " + 'method "unfence" clears the fence of your lane when its child is not running.';
 var SWEEP_TOOL = "subagent_worktree_sweep";
 var SWEEP_DESCRIPTION = `Report, or on request remove, finished agent lanes. Runs only when called.
 ` + "Each active lane whose subagent session is deleted or archived is checked as `finalize` checks it: not running, clean, no stash or operation, " + 'and its tip is the lane base, or an ancestor of origin/main, or a delivery landing record, or the head a merge into a local target recorded, while it is still HEAD and that branch still contains it. Mode "report" (default) lists what would be removed and what is kept, and why. ' + 'Mode "prune" removes the removable ones through `finalize`, never forced, and touches no remote branch.';
@@ -3083,7 +3145,7 @@ var MERGE_INPUT = {
       type: "string",
       description: 'From the subagent tool result; required unless method is "list"'
     },
-    method: { type: "string", enum: ["wt-merge", "none", "list", "keep", "release"] },
+    method: { type: "string", enum: ["wt-merge", "none", "list", "keep", "release", "unfence"] },
     target: { type: "string", description: "Defaults to the lane's base branch" },
     reason: { type: "string", description: 'Why the lane is kept (method "keep") or the writer released (method "release")' }
   }
@@ -3161,7 +3223,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
       });
     });
   };
-  const save = async (lane2) => {
+  const save = async (lane2, guard) => {
     const write = async () => {
       if (await superseded(lane2)) {
         console.error(`subagent-worktree: not saving the lane of ${lane2.child}: its worktree was handed to another writer`);
@@ -3169,6 +3231,8 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
       }
       if (claims(lane2))
         await syncClaim(lane2);
+      if (guard !== undefined && !guard())
+        return false;
       await ctx.storage.set(laneStoreKey(lane2), lane2);
       if (!claims(lane2))
         await syncClaim(lane2);
@@ -3845,6 +3909,19 @@ Missing worktrees: moved child sessions back to their parent directory: ${repair
     if (input.method === "release")
       return releaseWriter(input.sessionID, input.reason?.trim() || "released by its parent", tool);
     let lane2 = await load(input.sessionID);
+    if (input.method === "unfence") {
+      await ctx.permission.assert({
+        sessionID: tool.sessionID,
+        agent: tool.agent,
+        action: MERGE_TOOL,
+        resources: [lane2?.branch ?? input.sessionID],
+        source: { type: "tool", messageID: tool.messageID, id: tool.id }
+      });
+      if (!lane2 || lane2.parent !== tool.sessionID)
+        return { content: `${MERGE_TOOL}: no lane of yours for session ${input.sessionID}`, metadata: { ok: false } };
+      const done = await lifecycle.unfence(lane2.child);
+      return done.ok ? { content: `${MERGE_TOOL}: unfenced ${done.lane.branch}; ${input.sessionID} may be resumed.`, metadata: { ok: true, lane: done.lane } } : { content: `${MERGE_TOOL}: not unfenced: ${done.reason}`, metadata: { ok: false, reason: done.reason } };
+    }
     if (input.method === "keep") {
       await ctx.permission.assert({
         sessionID: tool.sessionID,
