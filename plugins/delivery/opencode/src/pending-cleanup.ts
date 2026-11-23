@@ -290,8 +290,27 @@ export function createPendingCleanup(deps: PendingDeps) {
   const registered = new Map<string, CloneEntry>()
   /** Why the clone registry could not be listed at the last read; while set, no other repository's worktree is removed. */
   let discoveryFailure: string | undefined
-  /** Repositories (by canonical checkout) whose running work could not be recorded at the last report: nothing is removed there. */
-  const holdsUnknown = new Map<string, string>()
+  /**
+   * Sessions whose last report of running work could not reach the clones (the registry could not be
+   * listed, or the session's repository not resolved): their running work there is unknown, so no
+   * other repository's worktree is removed until a later report from the same session reaches them.
+   */
+  const missedReports = new Map<string, string>()
+  /**
+   * Repositories (by canonical checkout) where a session's last report of running work could not be
+   * recorded, by reporting session: nothing is removed there until that session's next report records it.
+   */
+  const holdsUnknown = new Map<string, Map<string, string>>()
+  const markHoldsUnknown = (directory: string, sessionID: string, why: string) => {
+    const bySession = holdsUnknown.get(directory) ?? new Map<string, string>()
+    bySession.set(sessionID, why)
+    holdsUnknown.set(directory, bySession)
+  }
+  const clearHoldsUnknown = (directory: string, sessionID: string) => {
+    const bySession = holdsUnknown.get(directory)
+    bySession?.delete(sessionID)
+    if (bySession?.size === 0) holdsUnknown.delete(directory)
+  }
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const pendingIdle = new Set<string>()
   let disposed = false
@@ -433,6 +452,34 @@ export function createPendingCleanup(deps: PendingDeps) {
       discoveryFailure = `the clones this session landed in could not be listed (${error instanceof Error ? error.message : String(error)}); the clone registry is unreadable`
       throw error
     }
+  }
+
+  /** Read the registry now, so {@link discoveryFailure} says whether it can be read at this moment. */
+  const discover = async (): Promise<void> => {
+    const mine = own.veto() ?? (await own.observe())
+    if (mine === null) {
+      discoveryFailure = "the session's repository could not be resolved, so the clones it landed in are unknown"
+      return
+    }
+    try {
+      registryEntries(mine.key)
+    } catch {
+      // registryEntries recorded the failure.
+    }
+  }
+
+  /**
+   * Why a report of running work cannot rule out work in `repo`, or undefined: for another repository,
+   * an unreadable registry or a session whose report missed the clones; for any, a session whose
+   * report could not be recorded there. Synchronous, so it can be read again after any wait.
+   */
+  const reportVeto = (repo: Repository): string | undefined => {
+    if (repo.foreign) {
+      if (discoveryFailure !== undefined) return discoveryFailure
+      for (const why of missedReports.values()) return why
+    }
+    for (const why of holdsUnknown.get(canonicalDirectory(repo.cwd))?.values() ?? []) return why
+    return undefined
   }
 
   /** The registry entry for `receipt`'s landing: where the clone is, and which receipt the session landed there. */
@@ -715,9 +762,10 @@ export function createPendingCleanup(deps: PendingDeps) {
     // Background work any idle gate (this plugin's or the lane owner's) recorded for this directory,
     // and whether the store those records live in can be written at all.
     if (common === null) return "the git common directory could not be resolved"
-    if (repo.foreign && discoveryFailure !== undefined) return discoveryFailure
-    const unknownHolds = holdsUnknown.get(canonicalDirectory(repo.cwd))
-    if (unknownHolds !== undefined) return unknownHolds
+    // Discovery runs now, before any removal, so a fresh instance never removes on an unread registry.
+    if (repo.foreign) await discover()
+    const vetoed = reportVeto(repo)
+    if (vetoed !== undefined) return vetoed
     const failed = unsafe.get(canonicalDirectory(path))
     if (failed !== undefined) return failed
     const running = holdsState(common, path, now())
@@ -770,7 +818,9 @@ export function createPendingCleanup(deps: PendingDeps) {
   const holdCheckAt = async (repo: Repository, common: string | null, worktree: string): Promise<string | undefined> =>
     (await holdAt(repo, common, worktree)) ??
     landingBlockAt(common, worktree) ??
-    // Read again after the session listing: a report that failed to write its hold during it marks the worktree.
+    // Read again after the session listing: a report that failed to write its hold during it marks the worktree,
+    // and one whose hold scan or clone listing failed during it marks the repository.
+    reportVeto(repo) ??
     unsafe.get(canonicalDirectory(worktree)) ??
     (holdReportsInFlight > 0 ? "running work reported by an idle session is still being recorded" : undefined)
 
@@ -1164,20 +1214,29 @@ export function createPendingCleanup(deps: PendingDeps) {
     // or observation (a stale clone that needs git delays only itself).
     const inClones = async () => {
       const mine = own.veto() ?? (await own.observe())
-      if (mine === null) return
+      if (mine === null) {
+        const why = "the session's repository could not be resolved to find the clones its running work may be in"
+        missedReports.set(sessionID, why)
+        console.error(`delivery: ${why}`)
+        return
+      }
       let entries: CloneEntry[]
       try {
         entries = cloneEntries(mine.key)
       } catch (error) {
-        // The clones are unknown; discoveryFailure now holds every other repository's worktrees.
+        // The clones are unknown: until this session reports again and reaches them, no other repository's worktree is removed.
+        missedReports.set(sessionID, `the running work of ${sessionID} could not be recorded in the clones (${error instanceof Error ? error.message : String(error)})`)
         console.error("delivery: the clones could not be listed to record holds", error)
         return
       }
+      missedReports.delete(sessionID)
       await Promise.all(
         entries.map(async (entry) => {
           const repo = await cloneAt(entry).catch(() => null)
           if (repo === null) {
-            holdsUnknown.set(canonicalDirectory(entry.root), `the clone ${entry.root} could not be resolved to record its running work`)
+            const why = `the clone ${entry.root} could not be resolved to record its running work`
+            markHoldsUnknown(canonicalDirectory(entry.root), sessionID, why)
+            console.error(`delivery: ${why}`)
             return
           }
           await writeHoldsIn(repo, sessionID, background, locationOf)
@@ -1189,7 +1248,7 @@ export function createPendingCleanup(deps: PendingDeps) {
 
   /**
    * {@link establishHolds} for one repository. When its holds cannot be established the repository
-   * refuses every removal ({@link holdsUnknown}) until a later report records them.
+   * refuses every removal ({@link holdsUnknown}) until a later report from the same session records them.
    */
   const writeHoldsIn = async (
     repo: Repository,
@@ -1200,10 +1259,10 @@ export function createPendingCleanup(deps: PendingDeps) {
     const guard = canonicalDirectory(repo.cwd)
     try {
       await establishHolds(repo, sessionID, background, locationOf)
-      holdsUnknown.delete(guard)
+      clearHoldsUnknown(guard, sessionID)
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error)
-      holdsUnknown.set(guard, `its running work could not be recorded (${why})`)
+      markHoldsUnknown(guard, sessionID, `its running work could not be recorded (${why})`)
       console.error(`delivery: could not record holds in ${repo.cwd}: ${why}`)
     }
   }
