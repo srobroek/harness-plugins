@@ -1,3 +1,13 @@
+## whats-new [0.5.0](https://github.com/srobroek/harness-plugins/compare/whats-new--v0.4.0...whats-new--v0.5.0) (2026-11-23)
+
+### Features
+
+* **whats-new:** add pi research tools and report-only gate ([4771993](https://github.com/srobroek/harness-plugins/commit/4771993906dcc7d3a399d274db0bb1d399b54f57))
+
+### Bug Fixes
+
+* **whats-new:** align Pi agent with supported tools ([6f5aea7](https://github.com/srobroek/harness-plugins/commit/6f5aea7b24dd59764b5c1941efb3b7c9fa53e16f))
+
 # Changelog
 
 ## [0.4.0](https://github.com/srobroek/opencode-plugins/compare/whats-new--v0.3.0...whats-new--v0.4.0) (2026-11-20)

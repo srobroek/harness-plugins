@@ -1,6 +1,6 @@
 {
   "name": "whats-new",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Research breaking changes, deprecations and new features between two versions, report-only.",
   "private": true,
   "type": "module",
