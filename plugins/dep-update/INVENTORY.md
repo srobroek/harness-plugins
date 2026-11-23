@@ -3,13 +3,13 @@
 
 Classify dependency updates by semver safety and apply confirmed patch and minor bumps.
 
-| Kind | opencode |
-| --- | --- |
-| skills | dep-update |
-| agents | - |
-| commands | - |
-| rules | - |
-| hooks | - |
-| tools | - |
-| extensions | index |
-| mcp | - |
+| Kind | opencode | pi |
+| --- | --- | --- |
+| skills | dep-update | dep-update |
+| agents | - | - |
+| commands | - | - |
+| rules | - | - |
+| hooks | - | - |
+| tools | - | - |
+| extensions | index | index |
+| mcp | - | - |

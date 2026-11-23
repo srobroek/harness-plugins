@@ -1337,7 +1337,7 @@ function hardenedGitEnv(base) {
   return env;
 }
 
-// plugins/worktrunk/opencode/src/merge-gate.ts
+// plugins/worktrunk/shared/merge-gate.ts
 var MERGE_RETRY = "wt merge <target> --no-squash --no-ff";
 var SOURCE_WORKTREE_RETRY = `${MERGE_RETRY} from the source worktree`;
 var MERGE_POLICY_REFUSAL = `worker-to-epic merges must preserve history; retry with ${MERGE_RETRY}`;
@@ -1545,6 +1545,33 @@ async function decideCommands(command, cwd, git, wt) {
   return;
 }
 
+// plugins/worktrunk/shared/switch-timeout.ts
+var SWITCH_TIMEOUT_MS = 600000;
+var GLOBAL_VALUE_OPTIONS2 = new Set(["-C", "--config", "--config-set"]);
+function isSwitch(argv) {
+  if (argv[0]?.split("/").pop() !== "wt")
+    return false;
+  let index = 1;
+  while (argv[index]?.startsWith("-"))
+    index += GLOBAL_VALUE_OPTIONS2.has(argv[index] ?? "") ? 2 : 1;
+  return argv[index] === "switch" && !argv.includes("--help") && !argv.includes("-h");
+}
+function namesSwitchCommand(source) {
+  if (!/\bswitch\b/.test(source))
+    return false;
+  return scanShell(source).items.some((item) => item.kind === "command" && isSwitch(commandWords(item.words.map((word) => word.value)).argv));
+}
+function withSwitchTimeout(tool, input) {
+  const call = shellCall(tool, input);
+  if (!call || call.background === true || !namesSwitchCommand(call.command))
+    return;
+  if (call.timeout !== undefined && (call.timeout === 0 || call.timeout >= SWITCH_TIMEOUT_MS))
+    return;
+  if (typeof input !== "object" || input === null || Array.isArray(input))
+    return;
+  return { ...input, timeout: SWITCH_TIMEOUT_MS };
+}
+
 // plugins/worktrunk/opencode/src/skills.ts
 import { readFile } from "fs/promises";
 import { join } from "path";
@@ -1583,33 +1610,6 @@ async function loadSkills(directory = SKILLS_DIRECTORY) {
     const path = join(directory, name, "SKILL.md");
     return { ...parseSkillMarkdown(await readFile(path, "utf8")), path };
   }));
-}
-
-// plugins/worktrunk/opencode/src/switch-timeout.ts
-var SWITCH_TIMEOUT_MS = 600000;
-var GLOBAL_VALUE_OPTIONS2 = new Set(["-C", "--config", "--config-set"]);
-function isSwitch(argv) {
-  if (argv[0]?.split("/").pop() !== "wt")
-    return false;
-  let index = 1;
-  while (argv[index]?.startsWith("-"))
-    index += GLOBAL_VALUE_OPTIONS2.has(argv[index] ?? "") ? 2 : 1;
-  return argv[index] === "switch" && !argv.includes("--help") && !argv.includes("-h");
-}
-function namesSwitchCommand(source) {
-  if (!/\bswitch\b/.test(source))
-    return false;
-  return scanShell(source).items.some((item) => item.kind === "command" && isSwitch(commandWords(item.words.map((word) => word.value)).argv));
-}
-function withSwitchTimeout(tool, input) {
-  const call = shellCall(tool, input);
-  if (!call || call.background === true || !namesSwitchCommand(call.command))
-    return;
-  if (call.timeout !== undefined && (call.timeout === 0 || call.timeout >= SWITCH_TIMEOUT_MS))
-    return;
-  if (typeof input !== "object" || input === null || Array.isArray(input))
-    return;
-  return { ...input, timeout: SWITCH_TIMEOUT_MS };
 }
 
 // plugins/worktrunk/opencode/src/worktree.ts
