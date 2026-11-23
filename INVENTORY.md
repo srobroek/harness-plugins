@@ -6,15 +6,15 @@
 | agent-coder | 0.11.1 | development | global | opencode |
 | agent-efficiency | 0.14.2 | development | global | opencode |
 | agent-mechanic | 0.7.1 | development | global | opencode, omp |
-| agent-researcher | 0.8.1 | development | global | opencode |
-| agent-reviewer | 0.11.1 | development | global | opencode, claude |
+| agent-researcher | 0.8.1 | development | global | opencode, omp |
+| agent-reviewer | 0.11.1 | development | global | opencode, claude, omp |
 | agent-seance | 0.8.1 | development | global | opencode |
-| architecture | 0.9.1 | development | global | opencode, claude |
+| architecture | 0.9.1 | development | global | opencode, claude, omp |
 | ast-grep | 1.3.1 | development | global | opencode, claude |
 | autopilot | 1.3.8 | development | global | opencode |
 | aws | 0.8.1 | development | global | opencode, claude |
 | beads | 0.8.10 | development | project | opencode, claude |
-| build | 0.8.1 | development | project | opencode |
+| build | 0.8.1 | development | project | opencode, omp |
 | chezmoi | 0.6.0 | development | global | opencode, claude |
 | claude-compat | 0.5.1 | development | project | opencode |
 | code-challenge | 2.0.0 | development | global | opencode, omp |

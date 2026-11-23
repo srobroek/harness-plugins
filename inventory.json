@@ -98,6 +98,18 @@
             "index"
           ],
           "mcp": []
+        },
+        "omp": {
+          "skills": [],
+          "agents": [
+            "researcher"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
         }
       },
       "scope": "global"
@@ -141,6 +153,23 @@
           "hooks": [
             "PreToolUse"
           ],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "omp": {
+          "skills": [
+            "review-security"
+          ],
+          "agents": [
+            "adversarial-challenger",
+            "code-reviewer",
+            "pr-reviewer",
+            "security-auditor"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
           "tools": [],
           "extensions": [],
           "mcp": []
@@ -213,6 +242,24 @@
           "hooks": [
             "PreToolUse"
           ],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "omp": {
+          "skills": [
+            "architecture-docs-files",
+            "architecture-guide",
+            "architecture-ownership",
+            "architecture-repositories",
+            "architecture-top-level"
+          ],
+          "agents": [
+            "architect"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
           "tools": [],
           "extensions": [],
           "mcp": []
@@ -385,6 +432,18 @@
           "extensions": [
             "index"
           ],
+          "mcp": []
+        },
+        "omp": {
+          "skills": [],
+          "agents": [
+            "external-repo-worker"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
           "mcp": []
         }
       },
