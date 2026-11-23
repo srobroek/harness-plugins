@@ -25,7 +25,8 @@ var MCP_TOOL_AGENTS = new Set([
   "researcher",
   "security-auditor",
   "spec",
-  "ui-implementer"
+  "ui-implementer",
+  "whats-new"
 ]);
 var MCP_EXCLUDED_AGENTS = new Set([
   "a11y-auditor",
