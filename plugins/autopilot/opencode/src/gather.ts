@@ -123,6 +123,9 @@ export async function readBeads(directory: string, run: Run, ledger: string, opt
   const deadline = now() + budgetMs
   const timeout = () => Math.min(BD_READ_TIMEOUT_MS, deadline - now())
   let view: BeadView = { beads: [], ready: [], blocked: [], ok: false }
+  // The newest reason a scope read was not trusted; a later failed read adds to it and never erases it.
+  let problem: string | undefined
+  const unconfirmed = (reason: string) => (problem === undefined ? reason : `${problem}; then ${reason}`)
   for (let attempt = 0; attempt < attempts; attempt++) {
     if (attempt > 0) {
       if (timeout() <= pauseMs) break
@@ -131,12 +134,16 @@ export async function readBeads(directory: string, run: Run, ledger: string, opt
     const left = timeout()
     if (left <= 0) break
     view = await readOnce(directory, run, ledger, left)
-    if (!view.ok) continue
-    const problem = scopeId === undefined ? undefined : await scopeProblem(directory, run, ledger, scopeId, view, timeout)
-    if (problem === undefined) return view
-    view = { ...view, ok: false, problem }
+    if (!view.ok) {
+      if (scopeId !== undefined) problem = unconfirmed(`a bd read failed, so the scope ${scopeId} cannot be confirmed`)
+      continue
+    }
+    const found = scopeId === undefined ? undefined : await scopeProblem(directory, run, ledger, scopeId, view, timeout)
+    if (found === undefined) return view
+    problem = found
   }
-  return view
+  if (scopeId !== undefined && problem === undefined) problem = `no time was left to read the scope ${scopeId}`
+  return problem === undefined ? view : { ...view, ok: false, problem }
 }
 
 /** Commits reachable from any ref; a rising count means someone committed. */
