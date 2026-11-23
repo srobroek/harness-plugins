@@ -19,8 +19,8 @@ with bound values, real-database tests) are the `quality-code-design` skill's
 - State transitions: one conditional `UPDATE … WHERE id = $1 AND state = $2` inside
   `pool.begin()`; check `result.rows_affected()`. Zero rows: re-read to tell not-found
   from CAS-failed. No SELECT-then-write on a bare pool.
-- Migrations embed with `sqlx::migrate!()` and run with `.run(&pool)` at startup. Never edit a
-  migration that has shipped; add a new migration instead.
+  `pool.begin()` and run with `.run(&pool)` at startup. In OpenCode the safety plugin refuses
+  edits to a migration that has already shipped; add a new migration instead.
 - Embed macro gotcha: a new migration file goes unapplied until the crate recompiles.
   Add `println!("cargo:rerun-if-changed=migrations");` to `build.rs`
   (`sqlx migrate build-script` writes it).
