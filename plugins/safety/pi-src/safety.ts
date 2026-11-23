@@ -48,12 +48,21 @@ import {
   storeSecret,
   stringEnv,
 } from "../shared/secret-store.ts"
+import { SYSTEM_GATE_IDS, type SystemGateID, type SystemGateOptions, systemGate } from "./system-gates.ts"
 
-export type PiFeatureID = GuardID | DecisionID | "migration-edit" | "external-directory" | "close-keywords" | "package-investigate"
+export type PiFeatureID =
+  | GuardID
+  | SystemGateID
+  | DecisionID
+  | "migration-edit"
+  | "external-directory"
+  | "close-keywords"
+  | "package-investigate"
 
 /** What `disable` in the options file can turn off. */
 export const PI_FEATURE_IDS: readonly PiFeatureID[] = [
   ...GUARD_IDS,
+  ...SYSTEM_GATE_IDS,
   "force-push",
   "sudo-destructive",
   "worktree-destruction",
@@ -114,6 +123,7 @@ export type GateConfig = {
   guard?: Pick<GuardOptions, "read" | "analyzeOp" | "providerTypes" | "resolveRemote">
   review?: ReviewOptions
   migrations?: MigrationOptions
+  system?: Pick<SystemGateOptions, "home" | "tempRoots" | "managed">
 }
 
 export const REVIEW_FAILED =
@@ -163,6 +173,8 @@ export async function gateBash(command: string, cwd: string, config: GateConfig)
     }),
   )
   if (refusal !== undefined) return { kind: "block", reason: refusal.reason }
+  const system = await systemGate(command, gateCwd, { ...config.system, disabled }).catch(() => undefined)
+  if (system !== undefined) return { kind: "block", reason: system.reason }
   if (migrationsOn(config)) {
     const reason = await decideToolCall("bash", { command }, cwd, config.migrations).catch(() => undefined)
     if (reason) return { kind: "block", reason }
@@ -264,6 +276,7 @@ export type Overrides = {
   guard?: GateConfig["guard"]
   review?: ReviewOptions
   migrations?: MigrationOptions
+  system?: GateConfig["system"]
   secretStore?: Partial<Pick<StoreDeps, "run" | "which" | "env" | "home">>
 }
 
@@ -279,6 +292,7 @@ export function createSafetyExtension(overrides: Overrides = {}) {
       ...(overrides.guard ? { guard: overrides.guard } : {}),
       ...(overrides.review ? { review: overrides.review } : {}),
       ...(overrides.migrations ? { migrations: overrides.migrations } : {}),
+      ...(overrides.system ? { system: overrides.system } : {}),
     }
     const advisor = createPackageAdvisor()
     const redactor = options.redact.enabled ? createRedactor(() => env, options.redact) : undefined

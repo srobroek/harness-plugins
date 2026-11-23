@@ -214,6 +214,11 @@ extension's asks.
 | A plain `git push` to a host that needs a wrapper | None | Blocks when `pushVia` is set (`push-via`) |
 | A write to a shipped migration through `edit`, `write` or a shell redirect | None | Blocks (`migration-edit`) |
 | A directory flag outside the session (`git -C`, `--prefix`, …) | None | Asks (`external-directory`) |
+| A redirect, `tee`, `cp`, `sed -i` or `truncate` write to `~/.zshrc`, `~/.bashrc`, `~/.profile`, `~/.zprofile` or `~/.bash_profile`, also inside `bash -c` | None | Blocks (`shell-profile`); reads pass, and a profile chezmoi manages (`chezmoi source-path` exits 0) is left to the chezmoi guard |
+| A recursive `chmod`, `chown` or `chgrp` without `sudo` on `/`, `/Users`, `/Volumes` or anything under `/System`, `/Library`, `/usr` (including `/usr/local`), `/bin`, `/sbin`, `/etc`, `/opt`, `/Applications`, `/var`, `/private` or `/cores`, outside the temp folders | Blocks only the literal top-level directories, through a local rulebook | Blocks (`system-permissions`) |
+| A fork bomb: a function that starts itself through a pipe, or twice with one in the background | Blocks only at the `strict` level | Blocks (`fork-bomb`) |
+| A `tee`, `dd of=`, `cp` or redirect write to `/dev/diskN` or `/dev/rdiskN` | Blocks `dd` and redirects | Blocks (`disk-write`) |
+| `halt`, `reboot` and `poweroff`, with or without arguments | None | Blocks (`power`) |
 | A close-keyword list in `gh pr create\|edit --body` | None | Rewrites it in `event.input.command` (`close-keywords`) |
 | A package add or install | None | Appends the vetting advisory to the result (`package-investigate`) |
 | Secret environment values in any tool result | None | Redacts them in `tool_result` |
@@ -277,6 +282,7 @@ that apply on pi:
   "redactExclude": []
 }
 ```
+- `shell-profile`, `system-permissions`, `fork-bomb`, `disk-write` and `power`
 
 `disable` takes these ids:
 

@@ -26,6 +26,7 @@ import {
   settle,
   type Verdict,
 } from "./safety.ts"
+import { SYSTEM_MESSAGES, type SystemGateID } from "./system-gates.ts"
 
 // Real git runs: the file took 2.3 s alone and 11 s beside other suites, so 30 s per test leaves headroom.
 setDefaultTimeout(30_000)
@@ -144,6 +145,21 @@ describe("gateBash hard gates", () => {
       ["echo ok && sudo chmod -R 777 /srv/app", "sudo-destructive", { kind: "ask", message: SUDO_MESSAGE }],
     ]
     for (const [command, id, verdict] of cases) {
+
+  test("the system gates run after the shared ones, and each can be disabled", async () => {
+    const unmanaged = { managed: async () => false }
+    const cases: [string, SystemGateID][] = [
+      ["echo x >> ~/.zshrc", "shell-profile"],
+      ["cd /opt && chown -R me .", "system-permissions"],
+      [":(){ :|:& };:", "fork-bomb"],
+      ["tee /dev/disk2 < disk.img", "disk-write"],
+      ["halt", "power"],
+    ]
+    for (const [command, id] of cases) {
+      expect(await gateBash(command, plain, { ...config(), system: unmanaged })).toEqual(block(SYSTEM_MESSAGES[id]))
+      expect(await gateBash(command, plain, { ...config({ disable: [id] }), system: unmanaged })).toEqual({ kind: "run" })
+    }
+  })
       expect(await gateBash(command, plain, config())).toEqual(verdict)
       expect(await gateBash(command, plain, config({ disable: [id] }))).toEqual({ kind: "run" })
     }
