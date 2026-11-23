@@ -6,7 +6,7 @@
 | agent-coder | 0.11.1 | development | global | opencode |
 | agent-efficiency | 0.14.1 | development | global | opencode |
 | agent-mechanic | 0.7.1 | development | global | opencode, omp |
-| agent-researcher | 0.8.0 | development | global | opencode |
+| agent-researcher | 0.8.1 | development | global | opencode |
 | agent-reviewer | 0.11.0 | development | global | opencode, claude |
 | agent-seance | 0.8.0 | development | global | opencode |
 | architecture | 0.9.0 | development | global | opencode, claude |
