@@ -25,7 +25,7 @@ function run(dir: string, args: string[]) {
   return result.stdout.toString()
 }
 
-function fixture(source?: string) {
+function fixture(source?: string, ompAgentSource?: string) {
   const dir = mkdtempSync(path.join(tmpdir(), "renovate-patch-"))
   fixtures.push(dir)
   run(dir, ["git", "init", "--quiet"])
@@ -37,6 +37,7 @@ function fixture(source?: string) {
   }
   file("README.md", "fixture\n")
   if (source) file(source, "executable source fixture\n")
+  if (ompAgentSource) file(ompAgentSource, "agent source fixture\n")
   run(dir, ["git", "add", "--all"])
   if (source) run(dir, ["git", "update-index", "--chmod=+x", source])
   run(dir, ["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--quiet", "-m", "fixture"])
@@ -69,6 +70,8 @@ test.each([
   "plugins/repomix/opencode/dist/index.js",
   "plugins/beads/claude/skills/beads-preflight/SKILL.md",
   "plugins/aws/opencode/package.json",
+  "plugins/aws/omp/plugin.json",
+  "plugins/aws/omp/generated.json",
   "inventory.json",
 ])("applies a text patch to generated output %s", (name) => {
   const { dir, file } = fixture()
@@ -87,6 +90,8 @@ test.each([
   "plugins/repomix/opencode/src/pack.ts",
   "plugins/aws/common/agents/hand-written.md",
   "plugins/aws/common/agents/missing-source.claude.md",
+  "plugins/aws/omp/../agents/source.md",
+  "plugins/aws/common/agents/hand-written.omp.md",
   "plugins/cad/opencode/examples/fixture.py",
 ])("rejects a source patch before applying %s", (name) => {
   const { dir, file } = fixture()
