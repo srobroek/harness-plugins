@@ -541,7 +541,7 @@ test("a fresh instance runs discovery before an explicit cleanup in the target: 
   try {
     const first = await session()
     await first.land()
-    const receiptId = ((await registryOf())?.clones[0]?.receiptIds as string[])[0] as string
+    const receiptId = (((await registryOf())?.clones[0]?.receiptIds as string[] | undefined) ?? [])[0] as string
     await first.dispose()
     const file = registryFile(env(), (await repositoryContext(repoA))?.key as string)
     // No idle pass runs in the fresh instance: only the removal's own checks can see the registry.
@@ -641,7 +641,7 @@ test("a hold scan that fails while the final check lists sessions refuses the re
       }
       return list(query)
     }
-    const receiptId = ((await registryOf())?.clones[0]?.receiptIds as string[])[0] as string
+    const receiptId = (((await registryOf())?.clones[0]?.receiptIds as string[] | undefined) ?? [])[0] as string
     let refused: string | undefined
     onCleanup = (() =>
       (async () => {
