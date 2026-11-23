@@ -1,9 +1,6 @@
 ---
 name: lang-python-persistence
 description: Use for Python SQLAlchemy 2.x sessions and Alembic migrations (autogenerate review, single head, rowcount CAS, test DBs).
-metadata:
-  opencode/autoinvoke: false
-  omp/autoinvoke: false
 ---
 # Python Persistence (SQLAlchemy and Alembic)
 

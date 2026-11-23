@@ -1,9 +1,6 @@
 ---
 name: lang-go-quality
 description: Use to run Go build, format, lint, vet, go mod tidy, govulncheck and go test -race checks with the project toolchain.
-metadata:
-  opencode/autoinvoke: false
-  omp/autoinvoke: false
 ---
 # Go Quality
 

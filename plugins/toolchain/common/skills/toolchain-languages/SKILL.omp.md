@@ -1,9 +1,6 @@
 ---
 name: toolchain-languages
 description: Defaults for choosing language libraries and runtime dependencies.
-metadata:
-  opencode/autoinvoke: false
-  omp/autoinvoke: false
 ---
 # Toolchain languages
 

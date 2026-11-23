@@ -1,9 +1,6 @@
 ---
 name: lang-rust-persistence
 description: Use for Rust persistence crates with sqlx (migrate!, build.rs reruns, offline .sqlx data, CAS updates, sqlx::test).
-metadata:
-  opencode/autoinvoke: false
-  omp/autoinvoke: false
 ---
 # Rust Persistence (sqlx)
 

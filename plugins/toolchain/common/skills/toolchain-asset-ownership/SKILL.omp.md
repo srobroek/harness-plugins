@@ -1,10 +1,7 @@
 ---
 name: toolchain-asset-ownership
 description: "Use when adding or changing OMP config, plugins, skills, agents, or tools."
-metadata:
-  opencode/autoinvoke: false
 ---
-# Agentic asset ownership
 
 Keep these ownership boundaries when changing agentic assets. `AGENTS.md` may add machine-
 specific paths.

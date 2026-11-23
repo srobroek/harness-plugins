@@ -1,9 +1,6 @@
 ---
 name: lang-rust-quality
 description: Use to run Rust format, lint, and test checks with the project toolchain.
-metadata:
-  opencode/autoinvoke: false
-  omp/autoinvoke: false
 ---
 # Rust Quality
 

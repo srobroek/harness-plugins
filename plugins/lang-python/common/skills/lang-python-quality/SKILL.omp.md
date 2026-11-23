@@ -1,9 +1,6 @@
 ---
 name: lang-python-quality
 description: Use to run Python uv lock --check, ruff, mypy or pyright, and pytest -x checks with the project toolchain.
-metadata:
-  opencode/autoinvoke: false
-  omp/autoinvoke: false
 ---
 # Python Quality
 

@@ -1,9 +1,6 @@
 ---
 name: lang-typescript-quality
 description: Use to run TypeScript/JavaScript install, lint, format, tsc or tsc -b, and test checks with the project toolchain.
-metadata:
-  opencode/autoinvoke: false
-  omp/autoinvoke: false
 ---
 # TypeScript Quality
 
