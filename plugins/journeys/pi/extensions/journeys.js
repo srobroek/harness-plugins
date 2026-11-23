@@ -202,15 +202,18 @@ function installFormulas(rawRepoRoot, force, base, rawSourcesDir = FORMULAS_DIR)
 // plugins/journeys/pi-src/journeys.ts
 var within = (base, path) => isAbsolute2(path) ? path : resolve2(base, path);
 function journeys_default(pi) {
-  const packageRoot = fileURLToPath2(new URL("../..", import.meta.url));
+  const packageRoot = fileURLToPath2(new URL("..", import.meta.url));
   const asset = (path) => {
-    const common = resolve2(packageRoot, "common/skills", path);
-    const harness = resolve2(packageRoot, "pi/skills", path);
-    if (existsSync2(common))
-      return common;
-    if (existsSync2(harness))
-      return harness;
-    return common;
+    const candidates = [
+      resolve2(packageRoot, "skills", path),
+      resolve2(packageRoot, "common/skills", path),
+      resolve2(packageRoot, "pi/skills", path),
+      resolve2(packageRoot, "../common/skills", path)
+    ];
+    const found = candidates.find(existsSync2);
+    if (found === undefined)
+      throw new Error(`journeys plugin asset not found: ${path}`);
+    return found;
   };
   const journeysScript = asset("journey-init/scripts/journeys.py");
   const formulasDir = asset("journey-verify/formulas");

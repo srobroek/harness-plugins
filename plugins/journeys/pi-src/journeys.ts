@@ -13,13 +13,17 @@ import {
 const within = (base: string, path: string) => (isAbsolute(path) ? path : resolve(base, path))
 
 export default function (pi: ExtensionAPI): void {
-  const packageRoot = fileURLToPath(new URL("../..", import.meta.url))
+  const packageRoot = fileURLToPath(new URL("..", import.meta.url))
   const asset = (path: string) => {
-    const common = resolve(packageRoot, "common/skills", path)
-    const harness = resolve(packageRoot, "pi/skills", path)
-    if (existsSync(common)) return common
-    if (existsSync(harness)) return harness
-    return common
+    const candidates = [
+      resolve(packageRoot, "skills", path),
+      resolve(packageRoot, "common/skills", path),
+      resolve(packageRoot, "pi/skills", path),
+      resolve(packageRoot, "../common/skills", path),
+    ]
+    const found = candidates.find(existsSync)
+    if (found === undefined) throw new Error(`journeys plugin asset not found: ${path}`)
+    return found
   }
   const journeysScript = asset("journey-init/scripts/journeys.py")
   const formulasDir = asset("journey-verify/formulas")
