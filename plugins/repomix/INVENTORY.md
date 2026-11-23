@@ -3,13 +3,13 @@
 
 Pack a local or remote repo into one file with repomix for bulk context: external repos, module packs and version diffs.
 
-| Kind | opencode | claude |
-| --- | --- | --- |
-| skills | repomix | repomix |
-| agents | - | - |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | - |
-| tools | - | - |
-| extensions | index | - |
-| mcp | - | - |
+| Kind | opencode | claude | pi |
+| --- | --- | --- | --- |
+| skills | repomix | repomix | repomix |
+| agents | - | - | - |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | - | - |
+| tools | - | - | - |
+| extensions | index | - | - |
+| mcp | - | - | - |

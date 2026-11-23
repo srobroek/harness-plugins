@@ -75,7 +75,7 @@ line:
   silent `pass`.
 
 In OpenCode the safety plugin refuses edits to a revision in `versions/` that has
-already shipped; write a new revision instead.
+already shipped; in other harnesses, never edit shipped revisions either.
 
 ## CI checks
 

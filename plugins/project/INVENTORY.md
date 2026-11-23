@@ -3,13 +3,13 @@
 
 Project lifecycle: scaffold a project with /new-project, set up fnox and 1Password secrets, and pick an OSI-approved license.
 
-| Kind | opencode | claude | omp |
-| --- | --- | --- | --- |
-| skills | license-picker, project-scaffold, project-secrets | license-picker, project-scaffold, project-secrets | license-picker, project-scaffold, project-secrets |
-| agents | - | - | - |
-| commands | - | - | - |
-| rules | - | - | - |
-| hooks | - | - | - |
-| tools | - | - | - |
-| extensions | index | - | - |
-| mcp | - | - | - |
+| Kind | opencode | claude | omp | pi |
+| --- | --- | --- | --- | --- |
+| skills | license-picker, project-scaffold, project-secrets | license-picker, project-scaffold, project-secrets | license-picker, project-scaffold, project-secrets | license-picker, project-scaffold, project-secrets |
+| agents | - | - | - | - |
+| commands | - | - | - | - |
+| rules | - | - | - | - |
+| hooks | - | - | - | - |
+| tools | - | - | - | - |
+| extensions | index | - | - | - |
+| mcp | - | - | - | - |

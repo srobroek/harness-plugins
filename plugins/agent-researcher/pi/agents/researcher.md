@@ -4,6 +4,7 @@ description: "Answers one scoped research question from code, docs and the web w
 tools: read, grep, find, ls, bash, subagent, web_search, fetch_content, get_search_content, source_check
 allowedAgents: scout
 allowNestedSubagents: true
+subagentOnlyExtensions: npm:pi-web-access
 skills: repomix, quality-code-design, quality-code-policy, quality-testing, quality-test-audit, quality-profiling, lang-go, lang-python, lang-rust, lang-typescript, toolchain-guide, aws-guidance, whats-new
 inheritProjectContext: true
 inheritSkills: true

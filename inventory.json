@@ -19,6 +19,18 @@
             "index"
           ],
           "mcp": []
+        },
+        "pi": {
+          "skills": [],
+          "agents": [
+            "coder"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
         }
       },
       "scope": "global"
@@ -75,6 +87,18 @@
           "tools": [],
           "extensions": [],
           "mcp": []
+        },
+        "pi": {
+          "skills": [],
+          "agents": [
+            "mechanic"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
         }
       },
       "scope": "global"
@@ -97,6 +121,18 @@
           "extensions": [
             "index"
           ],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [],
+          "agents": [
+            "researcher"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
           "mcp": []
         }
       },
@@ -141,6 +177,23 @@
           "hooks": [
             "PreToolUse"
           ],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "review-security"
+          ],
+          "agents": [
+            "adversarial-challenger",
+            "code-reviewer",
+            "pr-reviewer",
+            "security-auditor"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
           "tools": [],
           "extensions": [],
           "mcp": []
@@ -213,6 +266,24 @@
           "hooks": [
             "PreToolUse"
           ],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "architecture-docs-files",
+            "architecture-guide",
+            "architecture-ownership",
+            "architecture-repositories",
+            "architecture-top-level"
+          ],
+          "agents": [
+            "architect"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
           "tools": [],
           "extensions": [],
           "mcp": []
@@ -315,6 +386,21 @@
             "aws-mcp",
             "aws-pricing"
           ]
+        },
+        "pi": {
+          "skills": [
+            "aws-guidance"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": [
+            "aws-mcp",
+            "aws-pricing"
+          ]
         }
       },
       "scope": "global"
@@ -385,6 +471,18 @@
           "extensions": [
             "index"
           ],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [],
+          "agents": [
+            "external-repo-worker"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
           "mcp": []
         }
       },
@@ -767,6 +865,18 @@
           "tools": [],
           "extensions": [],
           "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "eli5"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
         }
       },
       "scope": "global"
@@ -845,6 +955,29 @@
           "tools": [],
           "extensions": [],
           "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "journey-campaign",
+            "journey-consolidate",
+            "journey-init",
+            "journey-verify",
+            "journey-verify-changed",
+            "journey-write",
+            "journeys-guide"
+          ],
+          "agents": [
+            "journey-scribe",
+            "journey-validator"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "journeys"
+          ],
+          "mcp": []
         }
       },
       "scope": "project"
@@ -892,6 +1025,23 @@
           "mcp": []
         },
         "omp": {
+          "skills": [
+            "lang-go",
+            "lang-go-libraries",
+            "lang-go-packaging",
+            "lang-go-profiling",
+            "lang-go-quality",
+            "lang-go-testing"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "pi": {
           "skills": [
             "lang-go",
             "lang-go-libraries",
@@ -958,6 +1108,25 @@
           "mcp": []
         },
         "omp": {
+          "skills": [
+            "lang-python",
+            "lang-python-libraries",
+            "lang-python-packaging",
+            "lang-python-persistence",
+            "lang-python-profiling",
+            "lang-python-quality",
+            "lang-python-testing",
+            "lang-python-types"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "pi": {
           "skills": [
             "lang-python",
             "lang-python-libraries",
@@ -1046,6 +1215,26 @@
           "tools": [],
           "extensions": [],
           "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "lang-rust",
+            "lang-rust-ci",
+            "lang-rust-libraries",
+            "lang-rust-packaging",
+            "lang-rust-persistence",
+            "lang-rust-profiling",
+            "lang-rust-quality",
+            "lang-rust-tauri",
+            "lang-rust-testing"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
         }
       },
       "scope": "global"
@@ -1095,6 +1284,24 @@
           "mcp": []
         },
         "omp": {
+          "skills": [
+            "lang-typescript",
+            "lang-typescript-libraries",
+            "lang-typescript-packaging",
+            "lang-typescript-profiling",
+            "lang-typescript-quality",
+            "lang-typescript-testing",
+            "lang-typescript-types"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "pi": {
           "skills": [
             "lang-typescript",
             "lang-typescript-libraries",
@@ -1277,6 +1484,20 @@
           "tools": [],
           "extensions": [],
           "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "license-picker",
+            "project-scaffold",
+            "project-secrets"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
         }
       },
       "scope": "global"
@@ -1324,6 +1545,27 @@
           "tools": [],
           "extensions": [],
           "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "prototype-logic",
+            "quality-code-design",
+            "quality-code-policy",
+            "quality-profiling",
+            "quality-test-audit",
+            "quality-testing"
+          ],
+          "agents": [
+            "adversarial-challenger"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "quality.js"
+          ],
+          "mcp": []
         }
       },
       "scope": "global"
@@ -1349,6 +1591,18 @@
           "mcp": []
         },
         "claude": {
+          "skills": [
+            "repomix"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "pi": {
           "skills": [
             "repomix"
           ],
@@ -1583,6 +1837,33 @@
           "tools": [],
           "extensions": [],
           "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "backend-background-jobs",
+            "ci-github-actions",
+            "coexistence-worktree",
+            "infrastructure-tfstate-guard",
+            "ops-no-global-cargo-target",
+            "ops-toolchain-cache-policy",
+            "shell-language",
+            "terraform-language",
+            "toolchain-api",
+            "toolchain-asset-ownership",
+            "toolchain-frontend",
+            "toolchain-guide",
+            "toolchain-infrastructure",
+            "toolchain-languages",
+            "toolchain-quality-observability",
+            "toolchain-stack-defaults"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
         }
       },
       "scope": "global"
@@ -1623,6 +1904,23 @@
           "hooks": [],
           "tools": [],
           "extensions": [],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "trunk-dev-feature-flags",
+            "trunk-dev-guide",
+            "trunk-dev-release-setup",
+            "trunk-dev-workflow"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "skip-ci"
+          ],
           "mcp": []
         }
       },

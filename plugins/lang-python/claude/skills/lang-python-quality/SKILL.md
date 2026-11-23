@@ -97,7 +97,7 @@ plugin's `ci-github-actions` skill.
 
 In OpenCode, the built-in `ruff` (or `uv`) formatter rewrites each `.py` file after
 the `edit`, `write` or `patch` tool changes it when `"formatter": true` is set in
-`opencode.json`. Keep `ruff format --check` for files changed any other way.
+`opencode.json`. Other harnesses should run the listed format check after edits.
 
 A missing project file or tool means that step did not run. Report it as not run,
 never as a pass. Read failures as the project's actual toolchain output; do not

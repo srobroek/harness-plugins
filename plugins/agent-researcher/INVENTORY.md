@@ -3,13 +3,13 @@
 
 The researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one.
 
-| Kind | opencode |
-| --- | --- |
-| skills | - |
-| agents | researcher |
-| commands | - |
-| rules | - |
-| hooks | - |
-| tools | - |
-| extensions | index |
-| mcp | - |
+| Kind | opencode | pi |
+| --- | --- | --- |
+| skills | - | - |
+| agents | researcher | researcher |
+| commands | - | - |
+| rules | - | - |
+| hooks | - | - |
+| tools | - | - |
+| extensions | index | - |
+| mcp | - | - |
