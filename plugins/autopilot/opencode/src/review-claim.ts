@@ -8,7 +8,7 @@
  */
 
 import { randomUUID } from "node:crypto"
-import { closeSync, linkSync, mkdirSync, openSync, rmSync, writeSync } from "node:fs"
+import { closeSync, linkSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 export const CLAIM_DIR = "review-claims"
@@ -31,10 +31,10 @@ export interface ClaimFs {
   mkdirSync: typeof mkdirSync
   openSync: typeof openSync
   rmSync: typeof rmSync
-  writeSync: typeof writeSync
+  writeFileSync: typeof writeFileSync
 }
 
-const realFs: ClaimFs = { closeSync, linkSync, mkdirSync, openSync, rmSync, writeSync }
+const realFs: ClaimFs = { closeSync, linkSync, mkdirSync, openSync, rmSync, writeFileSync }
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
@@ -69,20 +69,29 @@ export function takeClaims(root: string, names: readonly string[], owner: string
   for (const name of names) {
     const temporary = join(dir, `.tmp-${randomUUID()}`)
     let created = false
-    let failure: { error: unknown } | { taken: string } | undefined
+    let failure: { error: unknown; taken?: string } | undefined
     try {
       const fd = fs.openSync(temporary, "wx")
       created = true
       try {
-        fs.writeSync(fd, JSON.stringify({ owner, at: Date.now() }))
-      } finally {
-        fs.closeSync(fd)
+        fs.writeFileSync(fd, JSON.stringify({ owner, at: Date.now() }))
+      } catch (error) {
+        failure = { error }
       }
       try {
-        fs.linkSync(temporary, join(dir, name))
-        held.push(name)
+        fs.closeSync(fd)
       } catch (error) {
-        failure = (error as NodeJS.ErrnoException).code === "EEXIST" ? { taken: name } : { error }
+        // A close failure never replaces the primary error.
+        if (failure) cleanup.push({ target: `temporary file ${temporary} not closed`, error })
+        else failure = { error }
+      }
+      if (!failure) {
+        try {
+          fs.linkSync(temporary, join(dir, name))
+          held.push(name)
+        } catch (error) {
+          failure = (error as NodeJS.ErrnoException).code === "EEXIST" ? { error, taken: name } : { error }
+        }
       }
     } catch (error) {
       failure = { error }
@@ -91,9 +100,8 @@ export function takeClaims(root: string, names: readonly string[], owner: string
     if (created) remove(temporary, `temporary file ${temporary} not removed`)
     if (failure === undefined && cleanup.length === 0) continue
     for (const claimed of held) remove(join(dir, claimed), `claim ${claimed} not released`)
-    if (failure && "taken" in failure && cleanup.length === 0) return { ok: false, taken: failure.taken }
-    const error = failure ? ("taken" in failure ? new Error(`claim ${failure.taken} is taken`) : failure.error) : new Error("claim cleanup failed")
-    return { ok: false, error, cleanup }
+    if (failure?.taken !== undefined && cleanup.length === 0) return { ok: false, taken: failure.taken }
+    return { ok: false, error: failure ? failure.error : new Error("claim cleanup failed"), cleanup }
   }
   return { ok: true }
 }

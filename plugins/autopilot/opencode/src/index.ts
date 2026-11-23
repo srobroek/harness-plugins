@@ -66,9 +66,6 @@ export * from "./automation.ts"
 export * from "./gather.ts"
 export * from "./journal.ts"
 export * from "./policy.ts"
-/** Marks a session whose parent lookup failed, so its lineage is neither a run's nor confirmed unrelated. */
-const UNKNOWN_LINEAGE = Symbol("unknown lineage")
-
 export * from "./review-claim.ts"
 export * from "./review-export.ts"
 export * from "./review-session.ts"
@@ -76,6 +73,12 @@ export * from "./rundir.ts"
 export * from "./state.ts"
 export * from "./state-schema.ts"
 export * from "./summary.ts"
+
+/** Marks a session whose parent lookup failed, so its lineage is neither a run's nor confirmed unrelated. */
+const UNKNOWN_LINEAGE = Symbol("unknown lineage")
+
+/** A run whose rules apply to a session; `unreadable` is set when its state could not be read. */
+type Running = { lead: string; dir: RunDir; state?: RunState; unreadable?: string }
 
 export const ID = "srobroek.autopilot"
 export const SKILL = "autopilot"
@@ -506,10 +509,7 @@ export class Autopilot {
   }
 
   /** An ask from a session whose lineage could not be read: denied and journaled on every enforcing run, since it may be one of theirs. */
-  async #denyUnknownLineage(event: PermissionEvaluation): Promise<void> {
-    if ((await this.#lineage(event.sessionID)) !== UNKNOWN_LINEAGE) return
-    const runs = this.#enforcingRuns()
-    if (runs.length === 0) return
+  #denyUnknownLineage(event: PermissionEvaluation, runs: readonly RunDir[]): void {
     const asked = event.resources.join(" ").slice(0, 300)
     event.effect = "deny"
     event.message = `autopilot never approves a permission ask while a run is unattended, and the session lineage could not be read; logged as a blocker (${event.action}: ${asked})`
@@ -526,9 +526,13 @@ export class Autopilot {
    * The run whose rules apply to `sessionID`, when it is running. A run whose state cannot be
    * read counts as running with `unreadable` set, so the hooks fail closed.
    */
-  async runningFor(sessionID: string): Promise<{ lead: string; dir: RunDir; state?: RunState; unreadable?: string } | undefined> {
+  async runningFor(sessionID: string): Promise<Running | undefined> {
     const lead = await this.leadFor(sessionID)
-    if (lead === undefined) return undefined
+    return lead === undefined ? undefined : this.#runOf(lead)
+  }
+
+  /** The run led by `lead`, when it is running (or its state is unreadable). */
+  #runOf(lead: string): Running | undefined {
     const armed = this.armed.get(lead) as Armed
     const dir = new RunDir(armed.root, armed.runId)
     let state: RunState | undefined
@@ -539,6 +543,18 @@ export class Autopilot {
     }
     // A stopping run still enforces its rules: its artifacts are not written yet.
     return state?.phase === "running" || state?.phase === "stopping" ? { lead, dir, state } : undefined
+  }
+
+  /** Resolves the lineage of `sessionID` once, for a hook: the run it belongs to, unknown while a run enforces, or neither. */
+  async #hookOutcome(sessionID: string): Promise<{ running: Running } | { unknown: RunDir[] } | undefined> {
+    const lineage = await this.#lineage(sessionID)
+    if (typeof lineage === "string") {
+      const running = this.#runOf(lineage)
+      return running ? { running } : undefined
+    }
+    if (lineage !== UNKNOWN_LINEAGE) return undefined
+    const unknown = this.#enforcingRuns()
+    return unknown.length > 0 ? { unknown } : undefined
   }
 
   #dirFor(sessionID: string, runId: string | undefined): RunDir | undefined {
@@ -1019,8 +1035,8 @@ export class Autopilot {
   /** Throws to deny an ask-the-user tool while a run is armed. */
   async beforeTool(tool: string, sessionID: string): Promise<void> {
     if (!isAskTool(tool)) return
-    if (await this.runningFor(sessionID)) throw new Error(DENY_QUESTION)
-    if ((await this.#lineage(sessionID)) === UNKNOWN_LINEAGE && this.#enforcingRuns().length > 0) throw new Error(DENY_QUESTION)
+    const outcome = await this.#hookOutcome(sessionID)
+    if (outcome) throw new Error(DENY_QUESTION)
   }
 
   /**
@@ -1030,8 +1046,10 @@ export class Autopilot {
    */
   async evaluate(event: PermissionEvaluation): Promise<void> {
     if (event.effect !== "ask") return
-    const running = await this.runningFor(event.sessionID)
-    if (!running) return this.#denyUnknownLineage(event)
+    const outcome = await this.#hookOutcome(event.sessionID)
+    if (!outcome) return
+    if ("unknown" in outcome) return this.#denyUnknownLineage(event, outcome.unknown)
+    const { running } = outcome
     if (running.state && (await this.#autoAllowed(event, running.state, running.dir))) {
       event.effect = "allow"
       return

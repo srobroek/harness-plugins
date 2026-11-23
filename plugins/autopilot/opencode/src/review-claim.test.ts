@@ -12,7 +12,7 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }))
 
 const files = () => (existsSync(join(root, CLAIM_DIR)) ? readdirSync(join(root, CLAIM_DIR)).sort() : [])
-const withFs = (over: Partial<ClaimFs>): ClaimFs => ({ closeSync: real.closeSync, linkSync: real.linkSync, mkdirSync: real.mkdirSync, openSync: real.openSync, rmSync: real.rmSync, writeSync: real.writeSync, ...over })
+const withFs = (over: Partial<ClaimFs>): ClaimFs => ({ closeSync: real.closeSync, linkSync: real.linkSync, mkdirSync: real.mkdirSync, openSync: real.openSync, rmSync: real.rmSync, writeFileSync: real.writeFileSync, ...over })
 const errno = (code: string) => Object.assign(new Error(code), { code })
 const failed = (result: ReturnType<typeof takeClaims>) => {
   if (result.ok || "taken" in result) throw new Error("expected an error result")
@@ -20,9 +20,10 @@ const failed = (result: ReturnType<typeof takeClaims>) => {
 }
 
 describe("takeClaims", () => {
-  test("takes every claim and leaves no temporary file", () => {
+  test("takes every claim, writes the owner and leaves no temporary file", () => {
     expect(takeClaims(root, ["a", "b"], "me")).toEqual({ ok: true })
     expect(files()).toEqual(["a", "b"])
+    expect(JSON.parse(readFileSync(join(root, CLAIM_DIR, "a"), "utf8"))).toMatchObject({ owner: "me" })
   })
 
   test("a taken name rolls back the claims taken before it", () => {
@@ -35,10 +36,10 @@ describe("takeClaims", () => {
   test("a write that fails partway removes the temporary file this attempt created", () => {
     const boom = errno("ENOSPC")
     const fs = withFs({
-      writeSync: ((fd: number) => {
-        real.writeSync(fd, "partial")
+      writeFileSync: ((fd: number) => {
+        real.writeFileSync(fd, "partial")
         throw boom
-      }) as ClaimFs["writeSync"],
+      }) as ClaimFs["writeFileSync"],
     })
     const result = failed(takeClaims(root, ["a"], "me", fs))
     expect(result.error).toBe(boom)
@@ -46,18 +47,40 @@ describe("takeClaims", () => {
     expect(files()).toEqual([])
   })
 
-  test("an exclusive create that collides leaves the pre-existing file in place", () => {
-    mkdirSync(join(root, CLAIM_DIR), { recursive: true })
-    const existing = join(root, CLAIM_DIR, ".tmp-fixed")
-    writeFileSync(existing, "someone else")
-    const fs = withFs({ openSync: ((_path: string, flags: string) => real.openSync(existing, flags)) as ClaimFs["openSync"] })
+  test("an exclusive create that collides leaves the competing file at that exact path in place", () => {
+    const fs = withFs({
+      openSync: ((path: string, flags: string) => {
+        writeFileSync(path, "someone else")
+        return real.openSync(path, flags)
+      }) as ClaimFs["openSync"],
+    })
     const result = failed(takeClaims(root, ["a"], "me", fs))
     expect((result.error as NodeJS.ErrnoException).code).toBe("EEXIST")
-    expect(readFileSync(existing, "utf8")).toBe("someone else")
-    expect(files()).toEqual([".tmp-fixed"])
+    const [left] = files()
+    expect(files()).toHaveLength(1)
+    expect(left).toStartWith(".tmp-")
+    expect(readFileSync(join(root, CLAIM_DIR, left as string), "utf8")).toBe("someone else")
   })
 
-  test("a rollback that cannot remove a claim keeps the original error, is not thrown, and the claim stays held", () => {
+  test("a close error does not mask the write error; it is reported in cleanup", () => {
+    const boom = errno("ENOSPC")
+    const busy = errno("EIO")
+    const fs = withFs({
+      writeFileSync: (() => {
+        throw boom
+      }) as ClaimFs["writeFileSync"],
+      closeSync: ((fd: number) => {
+        real.closeSync(fd)
+        throw busy
+      }) as ClaimFs["closeSync"],
+    })
+    const result = failed(takeClaims(root, ["a"], "me", fs))
+    expect(result.error).toBe(boom)
+    expect(result.cleanup).toEqual([{ target: expect.stringContaining("not closed"), error: busy }])
+    expect(files()).toEqual([])
+  })
+
+  test("a rollback failure after a collision keeps the collision as the error", () => {
     mkdirSync(join(root, CLAIM_DIR), { recursive: true })
     writeFileSync(join(root, CLAIM_DIR, "b"), "x")
     const eperm = errno("EPERM")
@@ -68,6 +91,7 @@ describe("takeClaims", () => {
       }) as ClaimFs["rmSync"],
     })
     const result = failed(takeClaims(root, ["a", "b"], "me", fs))
+    expect((result.error as NodeJS.ErrnoException).code).toBe("EEXIST")
     expect(result.cleanup).toEqual([{ target: "claim a not released", error: eperm }])
     expect(describeClaimFailure(result)).toContain("claim a not released: EPERM")
     expect(files()).toEqual(["a", "b"])
