@@ -53,11 +53,11 @@ describe("buildPlugin", () => {
 
   test("bundles pi entries with host modules external and shared lib inlined", async () => {
     const outputs = await buildPlugin(path.resolve(plugins, "trunk-dev"))
-    const bundle = outputs.find((output) => output.file.endsWith("/pi/extensions/skip-ci.js"))
+    const bundle = outputs.find((output) => output.file.endsWith("/pi/extensions/trunk-dev.js"))
     expect(bundle?.contents).toContain('from "@earendil-works/pi-coding-agent"')
     expect(bundle?.contents).not.toContain("@srobroek/opencode-lib")
     expect(bundle?.contents).toContain("function scanShell(")
-    expect(bundle?.contents).toContain("skip_ci_default as default")
+    expect(bundle?.contents).toContain("trunk_dev_default as default")
   })
 })
 
