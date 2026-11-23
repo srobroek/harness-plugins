@@ -1483,7 +1483,7 @@ describe("each lane notice is sent once, and only for a lane that is still there
     const { fake, state, cleanup } = await start({
       ...landedDirty,
       onGit: (cmd) => {
-        if (cmd === "status --porcelain" && ++reads === 4) state.porcelain = ""
+        if (cmd === "status --porcelain" && ++reads === 3) state.porcelain = ""
       },
     })
     fake.emit({ type: "session.idle", data: { sessionID: PARENT } })
@@ -3222,7 +3222,9 @@ describe("a fenced lane is never removed automatically", () => {
       const session = fake.context.session as unknown as { move: (input: unknown) => Promise<unknown> }
       const original = session.move.bind(session)
       session.move = () => Promise.reject(new Error("host refused the move"))
-      return () => void (session.move = original)
+      return () => {
+        session.move = original
+      }
     }
 
     test("resumeRemovals finishes the move once it works again", async () => {
@@ -3330,7 +3332,10 @@ describe("unfence", () => {
   })
 
   test.each([
-    ["archived", (fake: Fake) => void (fake.sessions.get(CHILD)!.time = { busy: 1, idle: 2, archived: 3 })],
+    ["archived", (fake: Fake) => {
+      const child = fake.sessions.get(CHILD)
+      if (child) child.time = { busy: 1, idle: 2, archived: 3 }
+    }],
     ["deleted", (fake: Fake) => void fake.sessions.delete(CHILD)],
   ])("clears the fence of a %s child's lane", async (_name, prepare) => {
     const { fake, cleanup } = await start({ time: IDLE }, { stored: [lane({ fenced })] })

@@ -2476,14 +2476,14 @@ function createLifecycle(deps) {
         if (stored === undefined || canonical(stored.directory) !== canonical(lane.directory) || stored.state !== "active" && stored.state !== "removing") {
           return keptBecause("retired", "the lane is already retired");
         }
-        if (stored.fenced && options.target === undefined && options.gone !== true)
-          return keptBecause("denied", `the lane is fenced (${stored.fenced.reason}); unfence it first`);
         const earlier = stored.state === "removing" ? stored.removal : undefined;
         const looks = options.ifGone === true || options.gone !== true && earlier?.pending === undefined;
         const onDisk = looks && await deps.exists(stored.directory);
         if (options.ifGone === true && onDisk)
           return keptBecause("present", "the worktree exists");
         const present = options.gone !== true && earlier?.pending === undefined && onDisk;
+        if (present && stored.fenced && options.target === undefined)
+          return keptBecause("denied", `the lane is fenced (${stored.fenced.reason}); unfence it first`);
         let proof;
         let head;
         let within;
@@ -3000,17 +3000,20 @@ function createLifecycle(deps) {
         refusal = `the lane of ${child} is no longer fenced`;
         return;
       }
-      if (await childState(ctx.session.get({ sessionID: child }), deps.lookupMs, child) !== "idle") {
-        refusal = `${child} is running or cannot be read`;
-        return;
-      }
-      const late = startedSince([child], seq);
-      if (late !== undefined) {
-        refusal = late.removed ? "the lane changed" : late.reason;
+      const live = await childState(ctx.session.get({ sessionID: child }), deps.lookupMs, child);
+      if (live === "running" || live === "unknown") {
+        refusal = `${child} is ${live === "running" ? "running" : "unreadable"}`;
         return;
       }
       const { fenced: _cleared, ...rest } = stored;
-      return await save(rest) ? rest : undefined;
+      const guard = () => {
+        const late = startedSince([child], seq);
+        if (late === undefined)
+          return true;
+        refusal = late.removed ? "the lane changed" : late.reason;
+        return false;
+      };
+      return await save(rest, guard) ? rest : undefined;
     });
     return next ? { ok: true, lane: next } : { ok: false, reason: refusal ?? "the lane changed meanwhile" };
   };
@@ -3220,7 +3223,7 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
       });
     });
   };
-  const save = async (lane2) => {
+  const save = async (lane2, guard) => {
     const write = async () => {
       if (await superseded(lane2)) {
         console.error(`subagent-worktree: not saving the lane of ${lane2.child}: its worktree was handed to another writer`);
@@ -3228,6 +3231,8 @@ function createLanes(ctx, options, git2, suffix, lookupMs = SESSION_LOOKUP_MS, e
       }
       if (claims(lane2))
         await syncClaim(lane2);
+      if (guard !== undefined && !guard())
+        return false;
       await ctx.storage.set(laneStoreKey(lane2), lane2);
       if (!claims(lane2))
         await syncClaim(lane2);
