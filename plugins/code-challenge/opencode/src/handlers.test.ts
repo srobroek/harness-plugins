@@ -7,7 +7,7 @@ import { challengePrompt } from "./command.ts"
 import { FORMULAS, runSetup } from "./formulas.ts"
 import { runLibFacts } from "./lib-facts/index.ts"
 import { cleanup, exited, fakeExec, withTools } from "./scan/fixtures.ts"
-import { consentMessage, runScanTool, type ScanConsent } from "./scan/index.ts"
+import { runScanTool } from "./scan/index.ts"
 import type { ToolCall } from "./tool-call.ts"
 import { runValidate } from "./validate.ts"
 
@@ -122,71 +122,43 @@ describe("runLibFacts", () => {
   })
 })
 
-describe("runScanTool consent", () => {
+describe("runScanTool", () => {
   const rustRepo = () => {
     const root = temp()
     writeFileSync(join(root, "Cargo.toml"), '[package]\nname="x"\nversion="0.1.0"\n')
+    writeFileSync(join(root, "pyproject.toml"), "")
+    writeFileSync(join(root, "a.py"), "")
     return root
   }
-
-  test("a plan with a risky recipe asks once, naming it, and runs only after approval", async () => {
-    const root = rustRepo()
+  const scan = async (input: object) => {
     const calls: Parameters<typeof fakeExec>[1] = []
-    const asked: ScanConsent[] = []
-    const outcome = await runScanTool(
-      { languages: ["rust"] },
-      {
-        ...callAt(root),
-        consent: async (consent) => {
-          asked.push(consent)
-        },
-      },
-      { exec: fakeExec({ clippy: exited("") }, calls), which: withTools("cargo") },
-    )
-    expect(asked.map((c) => c.risks.map((r) => r.recipe))).toEqual([["clippy:lenses"]])
-    expect(asked[0]?.resource).toBe(`${root} [clippy:lenses]`)
+    const outcome = await runScanTool({ languages: ["rust", "python"], ...input }, callAt(rustRepo()), {
+      exec: fakeExec({ clippy: exited(""), "check --isolated": exited("[]") }, calls),
+      which: withTools("cargo", "ruff"),
+    })
+    const coverage = outcome.metadata.coverage as Array<{ recipe: string; status: string; reason?: string }>
+    return { outcome, status: (recipe: string) => coverage.find((c) => c.recipe === recipe), calls }
+  }
+
+  test("by default static recipes run and a recipe that runs repository code is a gap naming it and allowCode", async () => {
+    const { outcome, status, calls } = await scan({})
     expect(outcome.metadata.ok).toBe(true)
-    expect(calls.some((c) => c.argv.includes("clippy"))).toBe(true)
-  })
-
-  test("a refused consent propagates and no analyzer runs", async () => {
-    const root = rustRepo()
-    const calls: Parameters<typeof fakeExec>[1] = []
-    const scan = runScanTool(
-      { languages: ["rust"] },
-      {
-        ...callAt(root),
-        consent: async () => {
-          throw new Error("refused")
-        },
-      },
-      { exec: fakeExec({}, calls), which: withTools("cargo") },
-    )
-    await expect(scan).rejects.toThrow("refused")
+    expect(status("ruff:lenses")?.status).toBe("ran")
+    expect(status("clippy:lenses")?.status).toBe("gap")
+    expect(status("clippy:lenses")?.reason).toMatch(/^not run without allowCode: .*build scripts and procedural macros.*; pass allowCode: true to run it$/)
     expect(calls.some((c) => c.argv.includes("clippy"))).toBe(false)
   })
 
-  test("staticOnly asks nothing", async () => {
-    const root = rustRepo()
-    let asked = false
-    const outcome = await runScanTool(
-      { languages: ["rust"], staticOnly: true },
-      {
-        ...callAt(root),
-        consent: async () => {
-          asked = true
-        },
-      },
-      { exec: fakeExec({}), which: withTools("cargo") },
-    )
-    expect(asked).toBe(false)
-    expect(outcome.metadata.ok).toBe(true)
+  test("allowCode runs every recipe", async () => {
+    const { status, calls } = await scan({ allowCode: true })
+    expect([status("ruff:lenses")?.status, status("clippy:lenses")?.status]).toEqual(["ran", "ran"])
+    expect(calls.some((c) => c.argv.includes("clippy"))).toBe(true)
   })
 
-  test("consentMessage names the root and each recipe with its reasons", () => {
-    const message = consentMessage("/repo", [{ recipe: "clippy:lenses", tool: "clippy", reasons: ["builds the crate", "writes target/"] }])
-    expect(message).toStartWith("challenge_scan in /repo will run code that is not static analysis.")
-    expect(message).toEndWith("\n- clippy:lenses: builds the crate; writes target/")
+  test("a non-boolean allowCode is refused before anything runs", async () => {
+    const { outcome, calls } = await scan({ allowCode: "yes" })
+    expect(outcome).toEqual({ content: "challenge_scan: allowCode must be a boolean", metadata: { ok: false } })
+    expect(calls).toEqual([])
   })
 })
 

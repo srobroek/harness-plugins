@@ -10,12 +10,9 @@ import type { TSchema } from "typebox"
 import { COMMAND, COMMAND_DESCRIPTION, challengePrompt } from "../opencode/src/command.ts"
 import { runSetup, SETUP_DESCRIPTION, SETUP_INPUT, SETUP_TOOL } from "../opencode/src/formulas.ts"
 import { LIB_FACTS_DESCRIPTION, LIB_FACTS_INPUT, LIB_FACTS_TOOL, runLibFacts } from "../opencode/src/lib-facts/index.ts"
-import { type AskConsent, consentMessage, runScanTool, SCAN_DESCRIPTION, SCAN_INPUT, SCAN_TOOL, type ScanDeps } from "../opencode/src/scan/index.ts"
+import { runScanTool, SCAN_DESCRIPTION, SCAN_INPUT, SCAN_TOOL, type ScanDeps } from "../opencode/src/scan/index.ts"
 import type { ToolCall, ToolOutcome } from "../opencode/src/tool-call.ts"
 import { runValidate, VALIDATE_DESCRIPTION, VALIDATE_INPUT, VALIDATE_TOOL } from "../opencode/src/validate.ts"
-
-/** How long the scan consent prompt waits for an answer before it counts as a refusal. */
-export const CONSENT_TIMEOUT_MS = 120_000
 
 /** OMP's approval tier for a tool (omp://approval-mode.md). Pi ignores the key. */
 export type Approval = "read" | "write" | "exec"
@@ -23,8 +20,8 @@ export type Approval = "read" | "write" | "exec"
 /** A registered tool: Pi's definition plus the tier OMP's approval mode reads. */
 export type ChallengeTool = ToolDefinition & { approval: Approval }
 
-/** The part of a tool call's host context the handlers and the consent gate read. */
-export type ChallengeContext = Pick<ExtensionToolContext, "cwd" | "hasUI"> & { ui: Pick<ExtensionToolContext["ui"], "confirm"> }
+/** The part of a tool call's host context the handlers read. */
+export type ChallengeContext = Pick<ExtensionToolContext, "cwd">
 
 /** The host form of a handler's result: the same text as one text block, the same metadata as `details`. */
 export function toToolResult(outcome: ToolOutcome): AgentToolResult<Record<string, unknown>> {
@@ -34,23 +31,6 @@ export function toToolResult(outcome: ToolOutcome): AgentToolResult<Record<strin
 /** A call's host context as the handlers read it: the session cwd is the session directory. */
 function toolCall(ctx: ChallengeContext, signal: AbortSignal | undefined): ToolCall {
   return { directory: async () => ctx.cwd, signal }
-}
-
-/**
- * The scan consent: an explicit confirmation that names the root and every risky recipe. Without
- * an interactive UI (print mode, headless subagents) nobody can approve, so it refuses.
- */
-export function scanConsent(ctx: ChallengeContext, signal: AbortSignal | undefined): AskConsent {
-  return async ({ root, risks }) => {
-    signal?.throwIfAborted()
-    const unscanned = "no analyzer ran; pass staticOnly to scan without these recipes"
-    if (!ctx.hasUI) throw new Error(`${SCAN_TOOL}: consent needs an interactive session to approve ${risks.map((r) => r.recipe).join(", ")}; ${unscanned}`)
-    const approved = await ctx.ui.confirm(`${SCAN_TOOL}: run code that is not static analysis?`, consentMessage(root, risks), {
-      signal,
-      timeout: CONSENT_TIMEOUT_MS,
-    })
-    if (!approved) throw new Error(`${SCAN_TOOL}: consent refused; ${unscanned}`)
-  }
 }
 
 // The tool inputs are the OpenCode JSON Schemas; Pi and OMP both take a plain JSON Schema object.
@@ -89,12 +69,10 @@ export function challengeTools(deps: ScanDeps = {}): ChallengeTool[] {
       label: "Code challenge: scan",
       description: SCAN_DESCRIPTION,
       parameters: schema(SCAN_INPUT),
-      // Analyzers execute, so OMP's tier is exec and its approval mode applies as usual. The consent
-      // for recipes that run repository or downloaded code is scanConsent, which names those recipes
-      // and asks in every approval mode; a host prompt policy could not name them.
+      // Analyzers execute, so OMP's tier is exec and its approval mode governs the call. Recipes that
+      // run repository or downloaded code run only with allowCode; the tool itself asks nothing.
       approval: "exec",
-      execute: async (_id, params, signal, _onUpdate, ctx) =>
-        toToolResult(await runScanTool(params, { ...toolCall(ctx, signal), consent: scanConsent(ctx, signal) }, deps)),
+      execute: async (_id, params, signal, _onUpdate, ctx) => toToolResult(await runScanTool(params, toolCall(ctx, signal), deps)),
     },
   ]
 }

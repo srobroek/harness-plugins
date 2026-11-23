@@ -3385,12 +3385,6 @@ function plan(p) {
   }
   return items;
 }
-async function consentRisks(input, deps = {}, signal) {
-  const prepared = await prepare(input, deps, signal);
-  if (prepared.emptySelection)
-    return [];
-  return plan(prepared).flatMap((item) => item.status === "ready" && item.risks.length > 0 ? [{ recipe: item.recipe.id, tool: item.recipe.tool, reasons: item.risks }] : []);
-}
 function ensureToolsDir(p) {
   return p.git.kind === "repo" && p.toolsDir === join9(p.git.dir, "code-challenge", "tools") ? ensureDir(p.git.dir, "code-challenge", "tools") : ensureDir(p.toolsDir);
 }
@@ -3432,8 +3426,8 @@ async function runScan(input, deps = {}, signal) {
         entry(item.status, item.reason);
         continue;
       }
-      if (item.risks.length > 0 && deps.approved?.has(recipe.id) !== true) {
-        entry("gap", `${deps.approved === undefined ? "not run without consent" : "not approved for this run"}: ${item.risks.join("; ")}`);
+      if (item.risks.length > 0 && input.allowCode !== true) {
+        entry("gap", `not run without allowCode: ${item.risks.join("; ")}; pass allowCode: true to run it`);
         continue;
       }
       if (signal?.aborted) {
@@ -3545,7 +3539,7 @@ async function runScan(input, deps = {}, signal) {
 var SCAN_TOOL = "challenge_scan";
 var MAX_INLINE_CANDIDATES = 500;
 var SCAN_DESCRIPTION = `Run existing static analyzers in a lens profile and return normalised code-challenge candidates.
-` + "Not read-only: clippy builds the crate (build scripts, proc macros; writes target/), golangci-lint and deadcode " + "compile Go, knip and import-linter load repo config code, and one-off bunx/uvx/go runs download and run pinned " + "packages. Those recipes run only after the user approves them (staticOnly skips them without asking). " + "Hits carry lens, tool, rule, file, line, message, ruleEnabledInRepo. Quick depth skips build-backed analyzers. " + "With runId, raw output goes to <git-dir>/code-challenge/<runId>/scan/.";
+` + "By default only recipes that execute no repository or downloaded code run; the others are coverage gaps that " + "name what they would run. allowCode=true also runs them: clippy builds the crate (build scripts, proc macros; " + "writes target/), golangci-lint and deadcode compile Go, knip and import-linter load repo config code, and one-off " + "bunx/uvx/go runs download and run pinned packages. Pass allowCode only for a repository the user trusts. " + "Hits carry lens, tool, rule, file, line, message, ruleEnabledInRepo. Quick depth skips build-backed analyzers. " + "With runId, raw output goes to <git-dir>/code-challenge/<runId>/scan/.";
 var SCAN_INPUT = {
   type: "object",
   properties: {
@@ -3556,7 +3550,7 @@ var SCAN_INPUT = {
     depth: { enum: [...DEPTHS2], description: "quick skips analyzers that need a build; default standard" },
     timeoutSeconds: { type: "number", maximum: 900, description: "Per-analyzer timeout in seconds; default 120, at most 900" },
     runId: { type: "string", description: "Run id; raw outputs go to <git-dir>/code-challenge/<runId>/scan/" },
-    staticOnly: { type: "boolean", description: "Run only analyzers that execute no repo or downloaded code; ask nothing" }
+    allowCode: { type: "boolean", description: "Also run analyzers that execute repo or downloaded code; only for a trusted repo" }
   },
   additionalProperties: false
 };
@@ -3579,6 +3573,8 @@ function readScanInput(raw, base) {
   }
   if (input.depth !== undefined && !DEPTHS2.includes(input.depth))
     return `depth must be one of ${DEPTHS2.join(", ")}`;
+  if (input.allowCode !== undefined && typeof input.allowCode !== "boolean")
+    return "allowCode must be a boolean";
   const languages = pick("languages", input.languages, LANGUAGES);
   if (typeof languages === "string")
     return languages;
@@ -3594,7 +3590,7 @@ function readScanInput(raw, base) {
     depth: input.depth,
     timeoutSeconds: timeout,
     runId: input.runId,
-    staticOnly: input.staticOnly === true ? true : undefined
+    allowCode: input.allowCode === true ? true : undefined
   };
 }
 function formatScan(report) {
@@ -3602,35 +3598,13 @@ function formatScan(report) {
   const shown = truncated ? report.candidates.slice(0, MAX_INLINE_CANDIDATES) : report.candidates;
   return JSON.stringify({ ...report, candidates: shown, candidateCount: report.candidates.length, truncated }, null, 1);
 }
-function planResource(root, risks) {
-  return `${root} [${risks.map((r) => r.recipe).sort().join(", ")}]`;
-}
-function consentMessage(root, recipes) {
-  return `challenge_scan in ${root} will run code that is not static analysis. ` + "There is no sandbox: these recipes run with your user's permissions. Approving covers exactly these recipes; " + `pass staticOnly to scan without them.
-` + recipes.map((r) => `- ${r.recipe}: ${r.reasons.join("; ")}`).join(`
-`);
-}
 async function runScanTool(raw, call, deps = {}) {
   const base = await call.directory();
   const parsed = readScanInput(raw, base);
   if (typeof parsed === "string")
     return { content: `${SCAN_TOOL}: ${parsed}`, metadata: { ok: false } };
-  let input;
-  let risks;
   try {
-    input = { ...parsed, root: realpathSync3(parsed.root ?? base) };
-    risks = parsed.staticOnly ? [] : await consentRisks(input, deps, call.signal);
-  } catch (error) {
-    return { content: `${SCAN_TOOL}: ${error.message}`, metadata: { ok: false } };
-  }
-  let approved = deps.approved ?? new Set;
-  if (risks.length > 0 && deps.approved === undefined) {
-    const root = input.root ?? base;
-    await call.consent({ root, depth: input.depth ?? "standard", risks, resource: planResource(root, risks) });
-    approved = new Set(risks.map((r) => r.recipe));
-  }
-  try {
-    const report = await runScan(input, { ...deps, approved }, call.signal);
+    const report = await runScan({ ...parsed, root: realpathSync3(parsed.root ?? base) }, deps, call.signal);
     return { content: formatScan(report), metadata: { ok: true, candidates: report.candidates.length, coverage: report.coverage } };
   } catch (error) {
     return { content: `${SCAN_TOOL}: ${error.message}`, metadata: { ok: false } };
@@ -3826,26 +3800,11 @@ async function runValidate(input, call) {
 }
 
 // plugins/code-challenge/pi-src/index.ts
-var CONSENT_TIMEOUT_MS = 120000;
 function toToolResult(outcome) {
   return { content: [{ type: "text", text: outcome.content }], details: outcome.metadata };
 }
 function toolCall(ctx, signal) {
   return { directory: async () => ctx.cwd, signal };
-}
-function scanConsent(ctx, signal) {
-  return async ({ root, risks }) => {
-    signal?.throwIfAborted();
-    const unscanned = "no analyzer ran; pass staticOnly to scan without these recipes";
-    if (!ctx.hasUI)
-      throw new Error(`${SCAN_TOOL}: consent needs an interactive session to approve ${risks.map((r) => r.recipe).join(", ")}; ${unscanned}`);
-    const approved = await ctx.ui.confirm(`${SCAN_TOOL}: run code that is not static analysis?`, consentMessage(root, risks), {
-      signal,
-      timeout: CONSENT_TIMEOUT_MS
-    });
-    if (!approved)
-      throw new Error(`${SCAN_TOOL}: consent refused; ${unscanned}`);
-  };
 }
 var schema = (input) => input;
 function challengeTools(deps = {}) {
@@ -3880,7 +3839,7 @@ function challengeTools(deps = {}) {
       description: SCAN_DESCRIPTION,
       parameters: schema(SCAN_INPUT),
       approval: "exec",
-      execute: async (_id, params, signal, _onUpdate, ctx) => toToolResult(await runScanTool(params, { ...toolCall(ctx, signal), consent: scanConsent(ctx, signal) }, deps))
+      execute: async (_id, params, signal, _onUpdate, ctx) => toToolResult(await runScanTool(params, toolCall(ctx, signal), deps))
     }
   ];
 }
@@ -3896,10 +3855,8 @@ function codeChallenge(pi) {
   registerCodeChallenge(pi);
 }
 export {
-  CONSENT_TIMEOUT_MS,
   challengeTools,
   codeChallenge as default,
   registerCodeChallenge,
-  scanConsent,
   toToolResult
 };

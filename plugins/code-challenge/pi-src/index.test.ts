@@ -8,7 +8,7 @@ import { LIB_FACTS_INPUT } from "../opencode/src/lib-facts/index.ts"
 import { cleanup, exited, fakeExec, temp, withTools } from "../opencode/src/scan/fixtures.ts"
 import { SCAN_INPUT, type ScanDeps } from "../opencode/src/scan/index.ts"
 import { VALIDATE_INPUT } from "../opencode/src/validate.ts"
-import codeChallenge, { type ChallengeContext, type ChallengeTool, CONSENT_TIMEOUT_MS, registerCodeChallenge, scanConsent, toToolResult } from "./index.ts"
+import codeChallenge, { type ChallengeTool, registerCodeChallenge, toToolResult } from "./index.ts"
 
 // The scan tests resolve real paths and run a fake exec; measured under 100 ms each, 30 s is headroom.
 setDefaultTimeout(30_000)
@@ -29,31 +29,24 @@ function fakePi() {
   return { api: api as unknown as ExtensionAPI, tools, commands, sent }
 }
 
-type Asked = { title: string; message: string; options?: object }
-
-/** A tool context with a recording confirm that answers `answer`; `hasUI: false` when `answer` is undefined. */
-function context(cwd: string, answer?: boolean): ChallengeContext & { asked: Asked[] } {
-  const asked: Asked[] = []
+/** A tool context; `hasUI` and a confirm that fails the test show the scan never asks, with or without a UI. */
+function context(cwd: string, hasUI: boolean) {
   return {
     cwd,
-    hasUI: answer !== undefined,
-    asked,
+    hasUI,
     ui: {
-      confirm: async (title, message, options) => {
-        asked.push({ title, message, options })
-        return answer ?? false
+      confirm: async () => {
+        throw new Error("challenge_scan must not ask")
       },
     },
-  }
+  } as unknown as ExtensionToolContext
 }
 
-/** Run a registered tool as the host would, with `ctx` standing in for the full tool context. */
-function run(tool: ChallengeTool | undefined, params: unknown, ctx: ChallengeContext, signal?: AbortSignal) {
+/** Run a registered tool as the host would. */
+function run(tool: ChallengeTool | undefined, params: unknown, ctx: ExtensionToolContext) {
   if (tool === undefined) throw new Error("tool not registered")
-  return tool.execute("call_1", params as never, signal, undefined, ctx as unknown as ExtensionToolContext)
+  return tool.execute("call_1", params as never, undefined, undefined, ctx)
 }
-
-const RISK = { root: "/repo", depth: "standard", risks: [{ recipe: "clippy:lenses", tool: "clippy", reasons: ["builds the crate"] }], resource: "/repo [clippy:lenses]" }
 
 describe("registration", () => {
   test("the default export registers the four tools with the OpenCode parameters, and the command", () => {
@@ -88,73 +81,38 @@ describe("registration", () => {
   test("challenge_validate reads the session cwd and keeps the OpenCode result in host form", async () => {
     const pi = fakePi()
     registerCodeChallenge(pi.api)
-    const result = await run(pi.tools.get("challenge_validate"), { run_dir: "relative" }, context(temp()))
+    const result = await run(pi.tools.get("challenge_validate"), { run_dir: "relative" }, context(temp(), false))
     expect(result).toEqual({ content: [{ type: "text", text: "challenge_validate: run_dir must be an absolute path" }], details: { ok: false } })
   })
 })
 
-describe("the scan consent gate", () => {
-  test("without an interactive UI it refuses and never prompts", async () => {
-    const ctx = context("/repo")
-    await expect(scanConsent(ctx, undefined)(RISK)).rejects.toThrow(
-      "challenge_scan: consent needs an interactive session to approve clippy:lenses; no analyzer ran; pass staticOnly to scan without these recipes",
-    )
-    expect(ctx.asked).toEqual([])
-  })
-
-  test("asks with the consent message and a timeout, and a no refuses", async () => {
-    const ctx = context("/repo", false)
-    const signal = new AbortController().signal
-    await expect(scanConsent(ctx, signal)(RISK)).rejects.toThrow("challenge_scan: consent refused; no analyzer ran")
-    expect(ctx.asked).toHaveLength(1)
-    expect(ctx.asked[0]?.message).toContain("challenge_scan in /repo will run code that is not static analysis.")
-    expect(ctx.asked[0]?.message).toContain("- clippy:lenses: builds the crate")
-    expect(ctx.asked[0]?.options).toEqual({ signal, timeout: CONSENT_TIMEOUT_MS })
-  })
-
-  test("a yes approves", async () => {
-    await expect(scanConsent(context("/repo", true), undefined)(RISK)).resolves.toBeUndefined()
-  })
-
-  test("an aborted call refuses before asking", async () => {
-    const ctx = context("/repo", true)
-    const controller = new AbortController()
-    controller.abort()
-    await expect(scanConsent(ctx, controller.signal)(RISK)).rejects.toThrow()
-    expect(ctx.asked).toEqual([])
-  })
-
+describe("challenge_scan through the extension", () => {
   const rustRepo = () => {
     const root = temp()
     writeFileSync(join(root, "Cargo.toml"), '[package]\nname="x"\nversion="0.1.0"\n')
     return root
   }
-  const scanTool = (deps: ScanDeps) => {
+  const scan = async (params: object, hasUI: boolean) => {
+    const calls: Parameters<typeof fakeExec>[1] = []
+    const deps: ScanDeps = { exec: fakeExec({ clippy: exited("") }, calls), which: withTools("cargo") }
     const pi = fakePi()
     registerCodeChallenge(pi.api, deps)
-    return pi.tools.get("challenge_scan")
+    const result = await run(pi.tools.get("challenge_scan"), { languages: ["rust"], ...params }, context(rustRepo(), hasUI))
+    const coverage = (result.details as { coverage: Array<{ recipe: string; status: string; reason?: string }> }).coverage
+    return { clippy: coverage.find((c) => c.recipe === "clippy:lenses"), ranClippy: calls.some((c) => c.argv.includes("clippy")) }
   }
 
-  test("challenge_scan in a session without UI refuses a risky plan and runs no analyzer", async () => {
-    const calls: Parameters<typeof fakeExec>[1] = []
-    const tool = scanTool({ exec: fakeExec({ clippy: exited("") }, calls), which: withTools("cargo") })
-    await expect(run(tool, { languages: ["rust"] }, context(rustRepo()))).rejects.toThrow("consent needs an interactive session")
-    expect(calls.some((c) => c.argv.includes("clippy"))).toBe(false)
+  test.each([false, true])("by default it runs no repository code and reports the recipe as a gap (hasUI %p)", async (hasUI) => {
+    const { clippy, ranClippy } = await scan({}, hasUI)
+    expect(clippy?.status).toBe("gap")
+    expect(clippy?.reason).toStartWith("not run without allowCode: ")
+    expect(clippy?.reason).toEndWith("; pass allowCode: true to run it")
+    expect(ranClippy).toBe(false)
   })
 
-  test("challenge_scan runs the approved recipe after a yes", async () => {
-    const calls: Parameters<typeof fakeExec>[1] = []
-    const tool = scanTool({ exec: fakeExec({ clippy: exited("") }, calls), which: withTools("cargo") })
-    const ctx = context(rustRepo(), true)
-    const result = await run(tool, { languages: ["rust"] }, ctx)
-    expect(ctx.asked).toHaveLength(1)
-    expect(result.details).toMatchObject({ ok: true })
-    expect(calls.some((c) => c.argv.includes("clippy"))).toBe(true)
-  })
-
-  test("challenge_scan with staticOnly needs no UI", async () => {
-    const tool = scanTool({ exec: fakeExec({}), which: withTools("cargo") })
-    const result = await run(tool, { languages: ["rust"], staticOnly: true }, context(rustRepo()))
-    expect(result.details).toMatchObject({ ok: true })
+  test.each([false, true])("allowCode runs the recipe without asking (hasUI %p)", async (hasUI) => {
+    const { clippy, ranClippy } = await scan({ allowCode: true }, hasUI)
+    expect(clippy?.status).toBe("ran")
+    expect(ranClippy).toBe(true)
   })
 })

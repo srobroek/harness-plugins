@@ -39,7 +39,7 @@ Both are composed by `bun run build` from `agents.src/` and the shared review co
 | `challenge_setup` | tool | Copy the formulas into a beads workspace's `.beads/formulas/` |
 | `challenge_lib_facts` | tool | Registry, OSV and GitHub facts for 1 to 6 packages (npm, pypi, crates, go); facts only |
 | `challenge_validate` | tool | Check a run's `report.json` and `decisions.jsonl` against the shipped JSON Schemas |
-| `challenge_scan` | tool | Run the SCAN analyzers and return normalised candidates. Recipes that run repository or downloaded code need the user's consent |
+| `challenge_scan` | tool | Run the SCAN analyzers and return normalised candidates. Recipes that run repository or downloaded code run only with `allowCode: true` |
 
 ## OMP
 
@@ -49,15 +49,17 @@ The OMP tree has the same skill, agents and formulas. Its extension registers th
 - Build: `scripts/build.ts` bundles it to `pi/extensions/index.js` and copies that bundle to `omp/extensions/index.js`. OMP loads Pi extensions unchanged.
 - Skill text: the `*.omp.md` files name OMP's `ask` and `read` tools instead of OpenCode's `question` tool and `webfetch`. The CHALLENGE brief names each lens reference by its `skill://code-challenge/references/` URI.
 
-Scan consent works as follows:
+## Code-running analyzers
 
-- A scan whose plan holds recipes that run repository or downloaded code opens a `ctx.ui.confirm` dialog. The dialog names the root and each recipe with what it runs.
-- The dialog closes after two minutes, and a timeout counts as a refusal.
-- Without an interactive UI (`omp -p`, headless subagents), `challenge_scan` returns an error and starts no analyzer.
-- `staticOnly` leaves those recipes out and opens no dialog, as in OpenCode.
-- The tool declares the `exec` approval tier, so OMP's approval mode applies to it as to any tool that executes code. A `tools.approval.challenge_scan: deny` entry blocks it.
+Some recipes execute repository or downloaded code: clippy, golangci-lint, deadcode, knip, import-linter and the one-off `bunx`, `uvx` and `go run` runs.
 
-The consent is not a host `prompt` policy. OMP decides that policy from the arguments, before the scan plan exists, so the prompt could not list the recipes or tell a risky plan from a static one.
+- By default `challenge_scan` skips them. Each one is a coverage gap that names what it would run and says to pass `allowCode: true`.
+- With `allowCode: true`, every planned recipe runs.
+- The tool shows no dialog, so it behaves the same with and without an interactive UI, in OpenCode and in OMP.
+- The skill passes `allowCode` only for a repository the user trusts, or after asking them.
+- In OMP the tool declares the `exec` approval tier, so OMP's approval mode governs each call, and a `tools.approval.challenge_scan: deny` entry blocks it.
+
+`allowCode` replaced `staticOnly` in 2.0.0. The default now runs static recipes only, and no call asks for consent.
 
 ## Beads formulas
 
