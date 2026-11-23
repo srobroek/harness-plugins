@@ -32,7 +32,7 @@
 | lang-rust | 0.8.1 | development | global | opencode, claude, omp |
 | lang-typescript | 0.9.1 | development | global | opencode, claude, omp |
 | lsp | 0.5.0 | development | project | opencode |
-| model-roles | 0.11.0 | development | global | opencode |
+| model-roles | 0.11.1 | development | global | opencode |
 | modes | 1.2.0 | development | global | opencode |
 | parley | 0.4.2 | development | global | opencode |
 | plugin-audit | 0.2.0 | development | project | opencode |
