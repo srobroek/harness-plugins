@@ -34,12 +34,6 @@ export type ScanDeps = {
   /** Directory holding the `tool-dir` recipes' node_modules. */
   toolsDir?: string
   now?: () => number
-  /**
-   * Ids of the risky recipes the caller approved for this exact plan. A recipe that executes repository
-   * or downloaded code and is not in the set is a coverage gap, including one that only became risky
-   * since the plan was approved. Host-side only: tool input cannot set it.
-   */
-  approved?: ReadonlySet<string>
 }
 
 const DEFAULT_TIMEOUT_SECONDS = 120
@@ -225,17 +219,6 @@ function plan(p: Prepared): PlanItem[] {
   return items
 }
 
-export type Risk = { recipe: string; tool: string; reasons: string[] }
-
-/** The recipes this scan would run that execute repository or downloaded code, and what each runs and writes. */
-export async function consentRisks(input: ScanInput, deps: ScanDeps = {}, signal?: AbortSignal): Promise<Risk[]> {
-  const prepared = await prepare(input, deps, signal)
-  if (prepared.emptySelection) return []
-  return plan(prepared).flatMap((item) =>
-    item.status === "ready" && item.risks.length > 0 ? [{ recipe: item.recipe.id, tool: item.recipe.tool, reasons: item.risks }] : [],
-  )
-}
-
 /** The eslint tools directory, validated one real directory at a time like every other output path. */
 function ensureToolsDir(p: Prepared): string {
   return p.git.kind === "repo" && p.toolsDir === join(p.git.dir, "code-challenge", "tools")
@@ -294,8 +277,8 @@ export async function runScan(input: ScanInput, deps: ScanDeps = {}, signal?: Ab
         entry(item.status, item.reason)
         continue
       }
-      if (item.risks.length > 0 && deps.approved?.has(recipe.id) !== true) {
-        entry("gap", `${deps.approved === undefined ? "not run without consent" : "not approved for this run"}: ${item.risks.join("; ")}`)
+      if (item.risks.length > 0 && input.allowCode !== true) {
+        entry("gap", `not run without allowCode: ${item.risks.join("; ")}; pass allowCode: true to run it`)
         continue
       }
       if (signal?.aborted) {

@@ -105,7 +105,7 @@
     },
     {
       "name": "agent-researcher",
-      "version": "0.8.1",
+      "version": "0.9.0",
       "description": "The researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one.",
       "category": "development",
       "harnesses": {
@@ -121,6 +121,18 @@
           "extensions": [
             "index"
           ],
+          "mcp": []
+        },
+        "omp": {
+          "skills": [],
+          "agents": [
+            "researcher"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
           "mcp": []
         },
         "pi": {
@@ -140,7 +152,7 @@
     },
     {
       "name": "agent-reviewer",
-      "version": "0.11.1",
+      "version": "0.12.0",
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "category": "development",
       "harnesses": {
@@ -177,6 +189,23 @@
           "hooks": [
             "PreToolUse"
           ],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "omp": {
+          "skills": [
+            "review-security"
+          ],
+          "agents": [
+            "adversarial-challenger",
+            "code-reviewer",
+            "pr-reviewer",
+            "security-auditor"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
           "tools": [],
           "extensions": [],
           "mcp": []
@@ -226,7 +255,7 @@
     },
     {
       "name": "architecture",
-      "version": "0.9.1",
+      "version": "0.10.0",
       "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
       "category": "development",
       "harnesses": {
@@ -266,6 +295,24 @@
           "hooks": [
             "PreToolUse"
           ],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "omp": {
+          "skills": [
+            "architecture-docs-files",
+            "architecture-guide",
+            "architecture-ownership",
+            "architecture-repositories",
+            "architecture-top-level"
+          ],
+          "agents": [
+            "architect"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
           "tools": [],
           "extensions": [],
           "mcp": []
@@ -455,7 +502,7 @@
     },
     {
       "name": "build",
-      "version": "0.8.1",
+      "version": "0.9.0",
       "description": "External-repository worker subagent: clone, follow the target's conventions, edit, verify, and publish only when delegated.",
       "category": "development",
       "harnesses": {
@@ -473,7 +520,7 @@
           ],
           "mcp": []
         },
-        "pi": {
+        "omp": {
           "skills": [],
           "agents": [
             "external-repo-worker"
@@ -484,49 +531,17 @@
           "tools": [],
           "extensions": [],
           "mcp": []
-        }
-      },
-      "scope": "project"
-    },
-    {
-      "name": "cad",
-      "version": "0.9.1",
-      "description": "Agent-assisted mechanical CAD from a rapid concept to a released STEP AP242 design: fifteen CAD skills with their Python scripts, six worker subagents, eleven beads formulas with a cad_setup installer, and the cad_run and cad_stop script tools.",
-      "category": "development",
-      "harnesses": {
-        "opencode": {
-          "skills": [
-            "cad-analysis",
-            "cad-bom",
-            "cad-concept",
-            "cad-design",
-            "cad-drawings",
-            "cad-fits",
-            "cad-flow",
-            "cad-model",
-            "cad-motion",
-            "cad-recheck",
-            "cad-record",
-            "cad-render",
-            "cad-review-dfm",
-            "cad-review-mech",
-            "cad-viewer"
-          ],
+        },
+        "pi": {
+          "skills": [],
           "agents": [
-            "cad-analyst",
-            "cad-concept-designer",
-            "cad-dfm-reviewer",
-            "cad-mech-reviewer",
-            "cad-part-designer",
-            "cad-sourcing-researcher"
+            "external-repo-worker"
           ],
           "commands": [],
           "rules": [],
           "hooks": [],
           "tools": [],
-          "extensions": [
-            "index"
-          ],
+          "extensions": [],
           "mcp": []
         }
       },
@@ -590,11 +605,45 @@
     },
     {
       "name": "code-challenge",
-      "version": "1.5.1",
+      "version": "2.0.0",
       "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
       "category": "development",
       "harnesses": {
         "opencode": {
+          "skills": [
+            "code-challenge"
+          ],
+          "agents": [
+            "code-challenger",
+            "refactor-challenger"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "omp": {
+          "skills": [
+            "code-challenge"
+          ],
+          "agents": [
+            "code-challenger",
+            "refactor-challenger"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "pi": {
           "skills": [
             "code-challenge"
           ],

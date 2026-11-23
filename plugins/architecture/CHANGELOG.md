@@ -1,3 +1,9 @@
+## architecture [0.10.0](https://github.com/srobroek/harness-plugins/compare/architecture--v0.9.1...architecture--v0.10.0) (2026-11-23)
+
+### Features
+
+* **agent-reviewer:** ship agent-only plugins to OMP ([4651445](https://github.com/srobroek/harness-plugins/commit/4651445bd2b5ce547a1bf781c7049acf4f894019))
+
 ## architecture [0.9.1](https://github.com/srobroek/harness-plugins/compare/architecture--v0.9.0...architecture--v0.9.1) (2026-11-23)
 
 ### Bug Fixes

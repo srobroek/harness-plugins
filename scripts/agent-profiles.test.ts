@@ -51,12 +51,6 @@ const PROFILES: Readonly<Record<string, Profile>> = {
   debug: { hidden: false, codeMode: ["worktree_create", "worktree_remove"], web: true },
   refactor: { hidden: false, codeMode: [], web: true },
   concept: { hidden: false, codeMode: ["parley", "wire-dsl_*", "browser"], web: true },
-  "cad-analyst": { hidden: false, codeMode: ["cad_run"], web: false },
-  "cad-concept-designer": { hidden: false, codeMode: ["cad_run"], web: false },
-  "cad-part-designer": { hidden: false, codeMode: ["cad_run"], web: false },
-  "cad-sourcing-researcher": { hidden: false, codeMode: [], web: true },
-  "cad-mech-reviewer": { hidden: false, codeMode: [], web: false },
-  "cad-dfm-reviewer": { hidden: false, codeMode: [], web: false },
 }
 
 /** Agents that keep a denylist: journey-validator drives the product through MCP tools named per project. */

@@ -64,7 +64,6 @@ var BUILT_IN_ACTIONS = [
 ];
 var RESERVED_TOOL_PREFIXES = [
   "autopilot_",
-  "cad_",
   "challenge_",
   "claude_",
   "dep_",
@@ -1779,10 +1778,7 @@ var DEFAULT_LEAN_AGENTS = [
   "code-reviewer",
   "researcher",
   "architect",
-  "speckit-sync",
-  "cad-mech-reviewer",
-  "cad-dfm-reviewer",
-  "cad-sourcing-researcher"
+  "speckit-sync"
 ];
 var IDENTITY = `# Your Model
 - Name: `;

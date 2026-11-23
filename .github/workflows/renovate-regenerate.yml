@@ -84,8 +84,6 @@ jobs:
               parts = name.split("/")
               if any(part in ("", ".", "..", ".git") or not re.fullmatch(r"[A-Za-z0-9_.-]+", part) for part in parts):
                   return False
-              if name.startswith("plugins/cad/common/"):
-                  return False
               if name == ".omp-plugin/marketplace.json":
                   return True
               if name in ("INVENTORY.md", "inventory.json", ".claude-plugin/marketplace.json"):

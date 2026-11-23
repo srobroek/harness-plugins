@@ -1621,6 +1621,8 @@ describe("runCli against real processes", () => {
     expect(result.ok).toBe(false)
     expect(result.exitCode).toBeNull()
     expect(result.error).toContain("abort")
+    // What the command wrote before it was killed is kept.
+    expect(result.stdout).toBe("started\n")
     // Allow SIGKILL to reach and reap the group; 5s covers 500 ten-millisecond polls.
     expect(await exitsWithin(pid(self), 5_000)).toBe(true)
     expect(await exitsWithin(pid(child), 5_000)).toBe(true)

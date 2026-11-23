@@ -6,16 +6,17 @@ import { MCP_EXCLUDED_AGENTS, MCP_TOOL_AGENTS, refusedTool } from "./agent-tools
 import { createFakeContext } from "./testing.ts"
 
 const PLUGINS = join(import.meta.dir, "../../plugins")
-const sources = (plugin: string) => {
-  const dir = join(PLUGINS, plugin, "opencode", "src")
-  try {
-    return readdirSync(dir)
-      .filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file))
-      .map((file) => readFileSync(join(dir, file), "utf8"))
-  } catch {
-    return []
-  }
-}
+/** A plugin's OpenCode sources: `opencode/src` plus the `shared/` modules its OpenCode and pi adapters both import. */
+const sources = (plugin: string) =>
+  [join(PLUGINS, plugin, "opencode", "src"), join(PLUGINS, plugin, "shared")].flatMap((dir) => {
+    try {
+      return readdirSync(dir)
+        .filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file))
+        .map((file) => readFileSync(join(dir, file), "utf8"))
+    } catch {
+      return []
+    }
+  })
 
 /** Tool names a plugin's source names: `*_TOOL`/`*_ACTION` constants and `name: "x_y"` literals. */
 function sourceToolNames(text: string): string[] {
@@ -42,12 +43,12 @@ async function registeredToolNames(plugin: string): Promise<string[]> {
   }
 }
 
-describe("tools option refuses every tool an OpenCode plugin in this repository registers", () => {
+describe("tools option refuses every tool a plugin in this repository registers", () => {
   const plugins = readdirSync(PLUGINS)
 
   test("the scan finds the tools it should", () => {
     const found = plugins.flatMap((plugin) => sources(plugin).flatMap(sourceToolNames))
-    for (const name of ["dep_apply", "delivery_land", "parley_ask", "model_roles_check", "find_tools_scan"])
+    for (const name of ["dep_apply", "delivery_land", "quality_test_summarize", "parley_ask", "model_roles_check", "find_tools_scan"])
       expect(found).toContain(name)
   })
 
@@ -61,20 +62,15 @@ describe("tools option refuses every tool an OpenCode plugin in this repository 
 })
 
 describe("MCP grant sets", () => {
-  // Vendored agents (cad) follow their own source, so they are not part of the grant sets.
-  const VENDORED = ["cad"]
-  // Read the first rule as text: delivery's agents carry a `model` key that the shared parser refuses.
   const DENY_ALL_FIRST = /^permissions:\n {2}- action: "\*"\n {4}resource: "\*"\n {4}effect: deny$/m
-  const shipped = readdirSync(PLUGINS)
-    .filter((name) => !VENDORED.includes(name))
-    .flatMap((plugin) =>
-      agentPaths(join(PLUGINS, plugin, "common", "agents"))
-        .filter((path) => !path.endsWith(".claude.md"))
-        .map((path) => ({
+  const shipped = readdirSync(PLUGINS).flatMap((plugin) =>
+    agentPaths(join(PLUGINS, plugin, "common", "agents"))
+      .filter((path) => !path.endsWith(".claude.md"))
+      .map((path) => ({
         id: basename(path, ".md").replace(/\.opencode$/, ""),
         denyAll: DENY_ALL_FIRST.test(readFileSync(path, "utf8")),
       })),
-    )
+  )
   const shippedIds = new Set(shipped.map((agent) => agent.id))
 
   test("every id in either set ships in a plugin, or is OpenCode's built-in explore", () => {

@@ -6,19 +6,18 @@
 | agent-coder | 0.11.1 | development | global | opencode, pi |
 | agent-efficiency | 0.14.2 | development | global | opencode |
 | agent-mechanic | 0.7.1 | development | global | opencode, omp, pi |
-| agent-researcher | 0.8.1 | development | global | opencode, pi |
-| agent-reviewer | 0.11.1 | development | global | opencode, claude, pi |
+| agent-researcher | 0.9.0 | development | global | opencode, omp, pi |
+| agent-reviewer | 0.12.0 | development | global | opencode, claude, omp, pi |
 | agent-seance | 0.8.1 | development | global | opencode |
-| architecture | 0.9.1 | development | global | opencode, claude, pi |
+| architecture | 0.10.0 | development | global | opencode, claude, omp, pi |
 | ast-grep | 1.3.1 | development | global | opencode, claude |
 | autopilot | 1.3.8 | development | global | opencode |
 | aws | 0.8.1 | development | global | opencode, claude, pi |
 | beads | 0.8.10 | development | project | opencode, claude |
-| build | 0.8.1 | development | project | opencode, pi |
-| cad | 0.9.1 | development | project | opencode |
+| build | 0.9.0 | development | project | opencode, omp, pi |
 | chezmoi | 0.6.0 | development | global | opencode, claude |
 | claude-compat | 0.5.1 | development | project | opencode |
-| code-challenge | 1.5.1 | development | global | opencode |
+| code-challenge | 2.0.0 | development | global | opencode, omp, pi |
 | debate | 0.7.1 | productivity | global | opencode, claude, omp |
 | delivery | 0.12.1 | development | global | opencode |
 | dep-update | 0.6.1 | development | global | opencode |

@@ -36,7 +36,7 @@ test("multi-semantic-release discovers every plugin and no other package", () =>
     .map((entry) => entry.name)
     .sort()
   expect(releasedPackages()).toEqual(plugins)
-  expect(plugins).toHaveLength(45)
+  expect(plugins).toHaveLength(44)
 })
 
 /** The commit-analyzer options of a release config. */
@@ -58,18 +58,9 @@ test("refactor and docs commits cut a patch, and a breaking change a major", asy
   ])
 })
 
-test("cad, below 1.0, treats a breaking change as a minor release and keeps the other rules", async () => {
-  expect((await analyzerOptions("plugins/cad/release.config.mjs"))?.releaseRules).toEqual([
-    { breaking: true, release: "minor" },
-    ...refactorAndDocs,
-  ])
-})
-
 test("no release config publishes to npm", async () => {
-  for (const file of ["release.config.mjs", "plugins/cad/release.config.mjs"]) {
-    const config = (await import(path.join(root, file))).default as { plugins: (string | [string])[] }
-    const names = config.plugins.map((plugin) => (typeof plugin === "string" ? plugin : plugin[0]))
-    expect(names).not.toContain("@semantic-release/npm")
-    expect(names).toContain("@semantic-release/github")
-  }
+  const config = (await import(path.join(root, "release.config.mjs"))).default as { plugins: (string | [string])[] }
+  const names = config.plugins.map((plugin) => (typeof plugin === "string" ? plugin : plugin[0]))
+  expect(names).not.toContain("@semantic-release/npm")
+  expect(names).toContain("@semantic-release/github")
 })

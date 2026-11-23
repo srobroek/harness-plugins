@@ -1,3 +1,9 @@
+## agent-reviewer [0.12.0](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.11.1...agent-reviewer--v0.12.0) (2026-11-23)
+
+### Features
+
+* **agent-reviewer:** ship agent-only plugins to OMP ([4651445](https://github.com/srobroek/harness-plugins/commit/4651445bd2b5ce547a1bf781c7049acf4f894019))
+
 ## agent-reviewer [0.11.1](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.11.0...agent-reviewer--v0.11.1) (2026-11-23)
 
 ### Bug Fixes

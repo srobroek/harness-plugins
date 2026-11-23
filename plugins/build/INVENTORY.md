@@ -3,13 +3,13 @@
 
 External-repository worker subagent: clone, follow the target's conventions, edit, verify, and publish only when delegated.
 
-| Kind | opencode | pi |
-| --- | --- | --- |
-| skills | - | - |
-| agents | external-repo-worker | external-repo-worker |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | - |
-| tools | - | - |
-| extensions | index | - |
-| mcp | - | - |
+| Kind | opencode | omp | pi |
+| --- | --- | --- | --- |
+| skills | - | - | - |
+| agents | external-repo-worker | external-repo-worker | external-repo-worker |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | - | - |
+| tools | - | - | - |
+| extensions | index | - | - |
+| mcp | - | - | - |
