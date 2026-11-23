@@ -5681,7 +5681,7 @@ async function withLease(lockPath, options, work) {
       }
       const code = error.code;
       if (code !== "EEXIST")
-        return { kind: "failed", reason: `the lock at ${lockPath} could not be taken (${code ?? "unknown error"})` };
+        return { kind: "failed", reason: `the lock at ${lockPath} could not be taken (${code ?? "unknown error"})`, cause: error };
       if (readBounded(lockPath).kind === "unreadable" || readBounded(c.steal).kind === "unreadable") {
         return { kind: "failed", reason: `the lock path ${lockPath} (or its steal lock) is not a small regular file, so its holder cannot be read safely` };
       }
@@ -5859,7 +5859,7 @@ function lockedWrite(commonDir, directory, options, write) {
 }
 
 // plugins/delivery/opencode/src/clone-registry.ts
-import { mkdirSync as mkdirSync6, readFileSync as readFileSync7, renameSync as renameSync3, writeFileSync as writeFileSync6 } from "fs";
+import { mkdirSync as mkdirSync6, readFileSync as readFileSync7, renameSync as renameSync3, rmSync as rmSync5, writeFileSync as writeFileSync6 } from "fs";
 import { isAbsolute as isAbsolute3, join as join8 } from "path";
 var MAX_CLONES = 32;
 var KEY = /^[0-9a-f]{16}$/;
@@ -5868,9 +5868,6 @@ function registryFile(env, sessionKey) {
   if (!KEY.test(sessionKey))
     throw new Error(`repo.key: observed ${JSON.stringify(sessionKey)}, expected 16 hex characters`);
   return join8(receiptDirectory(env), ".clones", `${sessionKey}.json`);
-}
-function parseClones(text) {
-  return entriesOf(text) ?? [];
 }
 function entriesOf(text) {
   let raw;
@@ -5921,11 +5918,19 @@ function withClone(entries, entry, pending = () => false) {
   return next.filter((known) => !drop.has(known));
 }
 function readClones(env, sessionKey) {
+  const file = registryFile(env, sessionKey);
+  let text;
   try {
-    return parseClones(readFileSync7(registryFile(env, sessionKey), "utf8"));
-  } catch {
-    return [];
+    text = readFileSync7(file, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT")
+      return [];
+    throw new Error(`the clone registry ${file} cannot be read (${error instanceof Error ? error.message : String(error)})`, { cause: error });
   }
+  const entries = entriesOf(text);
+  if (entries === null)
+    throw new Error(`the clone registry ${file} cannot be parsed as a JSON list`);
+  return entries;
 }
 function loadForUpdate(file) {
   let text;
@@ -5964,7 +5969,10 @@ async function addClone(env, sessionKey, entry, pending, options = {}) {
     renameSync3(temporary, file);
   });
   if (result.kind === "failed")
-    throw new Error(`the clone registry ${file} could not be updated: ${result.reason}`);
+    throw leaseFailure(file, result);
+}
+function leaseFailure(file, result) {
+  return new Error(`the clone registry ${file} could not be updated: ${result.reason}`, { cause: result.cause });
 }
 async function settleReceipts(env, sessionKey, key, ids, options = {}) {
   const file = registryFile(env, sessionKey);
@@ -5979,7 +5987,7 @@ async function settleReceipts(env, sessionKey, key, ids, options = {}) {
     renameSync3(temporary, file);
   });
   if (result.kind === "failed")
-    throw new Error(`the clone registry ${file} could not be updated: ${result.reason}`);
+    throw leaseFailure(file, result);
 }
 
 // lib/src/session-lanes.ts
@@ -6255,6 +6263,8 @@ function createPendingCleanup(deps) {
   const retriedAt = new Map;
   const attemptedAt = new Map;
   const registered = new Map;
+  let discoveryFailure;
+  const holdsUnknown = new Map;
   const timers = new Map;
   const pendingIdle = new Set;
   let disposed = false;
@@ -6339,6 +6349,16 @@ function createPendingCleanup(deps) {
     }
     return pendingReceipts(receipts).length > 0;
   };
+  const registryEntries = (sessionKey) => {
+    try {
+      const listed = readClones(env, sessionKey);
+      discoveryFailure = undefined;
+      return listed;
+    } catch (error) {
+      discoveryFailure = `the clones this session landed in could not be listed (${error instanceof Error ? error.message : String(error)}); the clone registry is unreadable`;
+      throw error;
+    }
+  };
   const cloneEntryFor = (receipt, commonDir) => ({
     key: receipt.repo.key,
     root: receipt.repo.canonicalRoot,
@@ -6358,7 +6378,7 @@ function createPendingCleanup(deps) {
     }
   };
   const cloneEntries = (sessionKey) => {
-    const entries = new Map(readClones(env, sessionKey).map((entry) => [entry.key, entry]));
+    const entries = new Map(registryEntries(sessionKey).map((entry) => [entry.key, entry]));
     for (const [key, entry] of registered)
       entries.set(key, mergeClone(entries.get(key), entry));
     return [...entries.values()].filter((entry) => entry.key !== sessionKey && mayHavePending(entry.key));
@@ -6552,6 +6572,11 @@ function createPendingCleanup(deps) {
       return owned;
     if (common === null)
       return "the git common directory could not be resolved";
+    if (repo.foreign && discoveryFailure !== undefined)
+      return discoveryFailure;
+    const unknownHolds = holdsUnknown.get(canonicalDirectory(repo.cwd));
+    if (unknownHolds !== undefined)
+      return unknownHolds;
     const failed = unsafe.get(canonicalDirectory(path));
     if (failed !== undefined)
       return failed;
@@ -6716,7 +6741,14 @@ function createPendingCleanup(deps) {
     const mine = own.veto() ?? await own.observe();
     if (mine === null)
       return;
-    const entries = new Map(readClones(env, mine.key).map((entry) => [entry.key, entry]));
+    let listed;
+    try {
+      listed = registryEntries(mine.key);
+    } catch (error) {
+      console.error("delivery: the clone registry could not be read; no clone is settled", error);
+      return;
+    }
+    const entries = new Map(listed.map((entry) => [entry.key, entry]));
     for (const [key, entry] of registered)
       entries.set(key, mergeClone(entries.get(key), entry));
     for (const entry of entries.values())
@@ -6724,7 +6756,12 @@ function createPendingCleanup(deps) {
         await settleClone(mine.key, entry);
   };
   const gc = async (receipt) => {
-    const repos = [own, ...await clones()];
+    const repos = [own];
+    try {
+      repos.push(...await clones());
+    } catch (error) {
+      console.error("delivery: the clones could not be listed", error);
+    }
     const named = receipt === undefined ? null : await repositoryOf(receipt);
     if (named?.foreign === true && !repos.some((repo) => repo.cwd === named.cwd))
       repos.push(named);
@@ -6822,7 +6859,13 @@ function createPendingCleanup(deps) {
     await runIn(own, sessionID, idle);
     const mine = own.veto() ?? await own.observe();
     if (mine !== null) {
-      for (const entry of cloneEntries(mine.key)) {
+      let entries = [];
+      try {
+        entries = cloneEntries(mine.key);
+      } catch (error) {
+        console.error("delivery: the clones could not be listed; none is cleaned", error);
+      }
+      for (const entry of entries) {
         if (disposed)
           return;
         const repo = await cloneAt(entry);
@@ -6890,24 +6933,49 @@ function createPendingCleanup(deps) {
       const mine = own.veto() ?? await own.observe();
       if (mine === null)
         return;
-      await Promise.all(cloneEntries(mine.key).map(async (entry) => {
-        const repo = await cloneAt(entry);
-        if (repo !== null)
-          await writeHoldsIn(repo, sessionID, background, locationOf);
+      let entries;
+      try {
+        entries = cloneEntries(mine.key);
+      } catch (error) {
+        console.error("delivery: the clones could not be listed to record holds", error);
+        return;
+      }
+      await Promise.all(entries.map(async (entry) => {
+        const repo = await cloneAt(entry).catch(() => null);
+        if (repo === null) {
+          holdsUnknown.set(canonicalDirectory(entry.root), `the clone ${entry.root} could not be resolved to record its running work`);
+          return;
+        }
+        await writeHoldsIn(repo, sessionID, background, locationOf);
       }));
     };
     await Promise.all([writeHoldsIn(own, sessionID, background, locationOf), inClones()]);
   };
   const writeHoldsIn = async (repo, sessionID, background, locationOf) => {
+    const guard = canonicalDirectory(repo.cwd);
+    try {
+      await establishHolds(repo, sessionID, background, locationOf);
+      holdsUnknown.delete(guard);
+    } catch (error) {
+      const why = error instanceof Error ? error.message : String(error);
+      holdsUnknown.set(guard, `its running work could not be recorded (${why})`);
+      console.error(`delivery: could not record holds in ${repo.cwd}: ${why}`);
+    }
+  };
+  const establishHolds = async (repo, sessionID, background, locationOf) => {
     const location = repo.veto() ?? await repo.observe();
     if (location === null)
-      return;
+      throw new Error(`the repository at ${repo.cwd} could not be resolved`);
     const { commonDir: common, key } = location;
     let pending;
+    const directory = resolve7(receiptDirectory(env, key));
     try {
-      pending = pendingReceipts(listReceipts(resolve7(receiptDirectory(env, key)))).slice(0, 100);
-    } catch {
-      return;
+      readdirSync4(directory);
+      pending = pendingReceipts(listReceipts(directory)).slice(0, 100);
+    } catch (error) {
+      if (error.code === "ENOENT")
+        return;
+      throw new Error(`its receipts could not be listed (${error instanceof Error ? error.message : String(error)})`, { cause: error });
     }
     for (const receipt of pending) {
       const path = receipt.worktree.path;

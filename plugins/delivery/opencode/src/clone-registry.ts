@@ -18,7 +18,7 @@
  * pending receipts is never dropped to stay under {@link MAX_CLONES}. An update refuses, and leaves
  * the file as it is, when the file exists but cannot be read or parsed.
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { isAbsolute, join } from "node:path"
 import { withLease } from "@srobroek/opencode-lib/lease-lock"
 import { receiptDirectory } from "./landing-receipt.ts"
@@ -111,13 +111,23 @@ export function withClone(entries: readonly CloneEntry[], entry: CloneEntry, pen
   return next.filter((known) => !drop.has(known))
 }
 
-/** The registry's entries for discovery: one that is absent, unreadable or unparseable gives none. */
+/**
+ * The registry's entries for discovery. An absent file is the empty list; any other read failure, or
+ * text that is not a JSON list, throws (the read failure as `cause`), so a caller never mistakes an
+ * unreadable registry for one with no clones.
+ */
 export function readClones(env: NodeJS.ProcessEnv, sessionKey: string): CloneEntry[] {
+  const file = registryFile(env, sessionKey)
+  let text: string
   try {
-    return parseClones(readFileSync(registryFile(env, sessionKey), "utf8"))
-  } catch {
-    return []
+    text = readFileSync(file, "utf8")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return []
+    throw new Error(`the clone registry ${file} cannot be read (${error instanceof Error ? error.message : String(error)})`, { cause: error })
   }
+  const entries = entriesOf(text)
+  if (entries === null) throw new Error(`the clone registry ${file} cannot be parsed as a JSON list`)
+  return entries
 }
 
 /**
@@ -165,7 +175,30 @@ export async function addClone(
     writeFileSync(temporary, `${JSON.stringify(withClone(current, entry, pending))}\n`, { mode: 0o600 })
     renameSync(temporary, file)
   })
-  if (result.kind === "failed") throw new Error(`the clone registry ${file} could not be updated: ${result.reason}`)
+  if (result.kind === "failed") throw leaseFailure(file, result)
+}
+
+/** The error for a lease that could not be taken. */
+function leaseFailure(file: string, result: { reason: string; cause?: unknown }): Error {
+  return new Error(`the clone registry ${file} could not be updated: ${result.reason}`, { cause: result.cause })
+}
+
+/** Drop the entry for `key` under the registry's lock; the file is deleted when it was the last. Throws as {@link addClone} does. */
+export async function removeClone(env: NodeJS.ProcessEnv, sessionKey: string, key: string, options: { waitMs?: number } = {}): Promise<void> {
+  const file = registryFile(env, sessionKey)
+  const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: options.waitMs ?? LOCK_WAIT_MS }, () => {
+    const current = loadForUpdate(file)
+    if (!current.some((entry) => entry.key === key)) return
+    const next = current.filter((entry) => entry.key !== key)
+    if (next.length === 0) {
+      rmSync(file, { force: true })
+      return
+    }
+    const temporary = `${file}.${process.pid}.${Date.now()}.tmp`
+    writeFileSync(temporary, `${JSON.stringify(next)}\n`, { mode: 0o600 })
+    renameSync(temporary, file)
+  })
+  if (result.kind === "failed") throw leaseFailure(file, result)
 }
 
 /**
@@ -188,5 +221,5 @@ export async function settleReceipts(
     writeFileSync(temporary, `${JSON.stringify(next)}\n`, { mode: 0o600 })
     renameSync(temporary, file)
   })
-  if (result.kind === "failed") throw new Error(`the clone registry ${file} could not be updated: ${result.reason}`)
+  if (result.kind === "failed") throw leaseFailure(file, result)
 }

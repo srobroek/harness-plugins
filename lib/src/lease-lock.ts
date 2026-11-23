@@ -93,7 +93,7 @@ export type LeaseOptions = {
   seams?: { afterJudged?: () => void }
 }
 
-export type LeaseResult<T> = { kind: "done"; value: T } | { kind: "failed"; reason: string; busy?: true }
+export type LeaseResult<T> = { kind: "done"; value: T } | { kind: "failed"; reason: string; busy?: true; cause?: unknown }
 
 const insideLock = new AsyncLocalStorage<ReadonlySet<string>>()
 
@@ -266,7 +266,7 @@ export async function withLease<T>(lockPath: string, options: LeaseOptions, work
         fd = undefined
       }
       const code = (error as NodeJS.ErrnoException).code
-      if (code !== "EEXIST") return { kind: "failed", reason: `the lock at ${lockPath} could not be taken (${code ?? "unknown error"})` }
+      if (code !== "EEXIST") return { kind: "failed", reason: `the lock at ${lockPath} could not be taken (${code ?? "unknown error"})`, cause: error }
       if (readBounded(lockPath).kind === "unreadable" || readBounded(c.steal).kind === "unreadable") {
         return { kind: "failed", reason: `the lock path ${lockPath} (or its steal lock) is not a small regular file, so its holder cannot be read safely` }
       }
