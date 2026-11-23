@@ -1,38 +1,30 @@
-import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "@earendil-works/pi-coding-agent"
+import type { Spawn } from "../shared/guard.ts"
 
 const loadBundledExtension = async () => {
   const module = await import(new URL("../pi/extensions/chezmoi.js", import.meta.url).href)
   return module.createExtension as typeof import("./chezmoi.ts").createExtension
 }
 
-// Isolated chezmoi CLI calls complete in under a second on the local fixture.
-setDefaultTimeout(30_000)
-
 let tempRoot: string
 let home: string
 let source: string
-let state: string
 let managedTarget: string
 let sourcePath: string
 let writeHandler: ((event: ToolCallEvent, context: ExtensionContext) => unknown) | undefined
 let handler: (event: ToolCallEvent, context: ExtensionContext) => unknown
 
-async function chezmoi(args: string[]): Promise<string> {
-  const proc = Bun.spawn(["chezmoi", "--source", source, "--destination", home, "--persistent-state", state, ...args], {
-    stdout: "pipe",
-    stderr: "pipe",
-  })
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
-  ])
-  if (exitCode !== 0) throw new Error(`chezmoi ${args.join(" ")} failed (${exitCode}): ${stderr}`)
-  return stdout
+function fakeChezmoi(): Spawn {
+  return async (args) => {
+    if (args[0] === "managed") return `${managedTarget}\n`
+    if (args[0] === "source-path" && args[1] === managedTarget) return `${sourcePath}\n`
+    if (args[0] === "source-path") return `${source}\n`
+    return null
+  }
 }
 
 describe("chezmoi pi tool_call guard", () => {
@@ -40,13 +32,8 @@ describe("chezmoi pi tool_call guard", () => {
     tempRoot = mkdtempSync(join(homedir(), "chezmoi-pi-guard-"))
     home = join(tempRoot, "home")
     source = join(tempRoot, "source")
-    state = join(tempRoot, "state.json")
     managedTarget = join(home, ".config", "chezmoi-guard", "managed.txt")
-    mkdirSync(join(home, ".config", "chezmoi-guard"), { recursive: true })
-    mkdirSync(source, { recursive: true })
-    writeFileSync(managedTarget, "managed\n")
-    await chezmoi(["add", managedTarget])
-    sourcePath = (await chezmoi(["source-path", managedTarget])).trim()
+    sourcePath = join(source, "dot_config", "chezmoi-guard", "dot_managed.txt")
 
     const callbacks = new Map<string, (event: ToolCallEvent, context: ExtensionContext) => unknown>()
     const pi = {
@@ -55,10 +42,7 @@ describe("chezmoi pi tool_call guard", () => {
       },
     } as unknown as ExtensionAPI
     const createExtension = await loadBundledExtension()
-    createExtension(pi, {
-      home,
-      globalArgs: ["--source", source, "--destination", home, "--persistent-state", state],
-    })
+    createExtension(pi, { home, spawn: fakeChezmoi() })
     writeHandler = callbacks.get("tool_call")
     if (!writeHandler) throw new Error("Extension did not register tool_call")
     handler = writeHandler
