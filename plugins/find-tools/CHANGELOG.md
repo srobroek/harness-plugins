@@ -1,3 +1,13 @@
+## find-tools [0.5.0](https://github.com/srobroek/harness-plugins/compare/find-tools--v0.4.0...find-tools--v0.5.0) (2026-11-23)
+
+### Features
+
+* **find-tools:** port discovery scan to Pi ([9092a08](https://github.com/srobroek/harness-plugins/commit/9092a0857a9fe1b94f77c83dbf24c47cbbc59323))
+
+### Bug Fixes
+
+* **find-tools:** document Pi package loading ([923cab9](https://github.com/srobroek/harness-plugins/commit/923cab9979e1e8a6d8940890eab48c1447e6ce24))
+
 # Changelog
 
 ## [0.4.0](https://github.com/srobroek/opencode-plugins/compare/find-tools--v0.3.0...find-tools--v0.4.0) (2026-11-20)
