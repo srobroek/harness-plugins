@@ -1,3 +1,15 @@
+## quality [0.15.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.14.1...quality--v0.15.0) (2026-11-23)
+
+### Features
+
+* **quality:** add pi test audit tools ([57e334b](https://github.com/srobroek/harness-plugins/commit/57e334ba19730f79cd9e4307447322a42abc895a))
+
+### Bug Fixes
+
+* **agent-reviewer:** align duplicate harness agents ([b5bf82a](https://github.com/srobroek/harness-plugins/commit/b5bf82a275d3127e73518336c5b1a9228c4f6a71))
+* **quality:** name the pi bundle quality.js ([2797720](https://github.com/srobroek/harness-plugins/commit/2797720631f7c3088254fffca69eae8db5d53a41))
+* **quality:** restore the adversarial-challenger description ([90dab4b](https://github.com/srobroek/harness-plugins/commit/90dab4b3cf7bcd916e0837882b1c867a9ff1c611))
+
 ## quality [0.14.1](https://github.com/srobroek/harness-plugins/compare/quality--v0.14.0...quality--v0.14.1) (2026-11-23)
 
 ### Bug Fixes
