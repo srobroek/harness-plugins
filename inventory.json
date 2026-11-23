@@ -1715,6 +1715,18 @@
             "index"
           ],
           "mcp": []
+        },
+        "pi": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "safety"
+          ],
+          "mcp": []
         }
       },
       "scope": "global"

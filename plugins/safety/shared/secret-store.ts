@@ -9,11 +9,12 @@
  * so a 1Password approval that fails or times out stops the call.
  */
 
+import { realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, isAbsolute, resolve } from "node:path"
 import { EXIT_GRACE_MS, killChild, supervise } from "@srobroek/opencode-lib/subprocess"
-import { type ExternalDirectory, externalDirectories } from "./flag-directories.ts"
-import type { ConfigSnapshot } from "./fnox-config.ts"
+import { type ExternalDirectory, externalDirectories, sessionRoots } from "./flag-directories.ts"
+import { type ConfigSnapshot, readConfigSnapshot } from "./fnox-config.ts"
 import { VALUE_STORE_TYPES } from "./op-guard.ts"
 
 export const STORE_ACTION = "safety_secret_store"
@@ -457,6 +458,109 @@ export type StoreDeps = {
 }
 
 export type StoreResult = { name: string; reference: string; stored: true } | { name: string; provider: string; stored: true }
+
+/** What the model reads about `safety_secret_store`; every host registers the tool with this text. */
+export const SECRET_STORE_DESCRIPTION =
+  "Store a new secret in 1Password or a fnox store without a shell: generated, or the stdout of a command you name.\n" +
+  "The value never reaches a command line, an environment, a log, an error or this result. `generate` draws from a " +
+  "CSPRNG. `command` runs argv with no shell after the user allows that run; its stdout, one trailing newline trimmed " +
+  "and at most 64 KiB, is the value. Target `1password` pipes the item JSON to `op item create --vault <vault> -`, then " +
+  "records `fnox set NAME '<item>/<field>'` with the config's 1Password provider. Target `fnox-store` pipes the value " +
+  "to `fnox set NAME --provider <p>` for a value-store provider and replaces an existing value. A failure gives the " +
+  "stage and exit code only and is not retried."
+
+/** The model-facing schema of `safety_secret_store`; `parseRequest` checks every field again. */
+export const SECRET_STORE_INPUT = {
+  type: "object",
+  properties: {
+    name: { type: "string", pattern: "^[A-Z][A-Z0-9_]*$", description: "fnox secret name" },
+    target: {
+      type: "object",
+      description:
+        '{kind:"1password", vault, item, field?="credential", tags?, provider?} or {kind:"fnox-store", provider} (a value-store provider such as host)',
+      properties: {
+        kind: { type: "string", enum: ["1password", "fnox-store"] },
+        vault: { type: "string" },
+        item: { type: "string", description: "1Password item title; no '/'" },
+        field: { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
+        provider: { type: "string", description: "fnox provider; for 1password, default the only 1Password provider" },
+      },
+      required: ["kind"],
+    },
+    generate: {
+      type: "object",
+      description: "A CSPRNG value of at least 128 bits: one of bytes (entropy) or length (characters)",
+      properties: {
+        charset: { type: "string", enum: ["hex", "base64url", "alnum", "ascii-printable"] },
+        bytes: { type: "integer" },
+        length: { type: "integer" },
+      },
+      required: ["charset"],
+    },
+    command: {
+      type: "object",
+      description: "Run argv with no shell after asking the user; runs with your permission; approve only commands you trust. Its stdout is the value",
+      properties: { argv: { type: "array", items: { type: "string" }, minItems: 1 }, cwd: { type: "string" } },
+      required: ["argv"],
+    },
+    config: { type: "string", description: "Existing fnox config file fnox gets as --config (default fnox.toml); outside the project asks first" },
+    description: { type: "string", description: "fnox secret description" },
+  },
+  required: ["name", "target"],
+  additionalProperties: false,
+} as const
+
+/** The question every command run asks, whatever the host's permission rules say. */
+export const COMMAND_QUESTION = `Run this command for ${STORE_ACTION}? Its stdout becomes the secret and is never shown.`
+
+/** The store prompt's resource: the secret name, where its value goes and the config fnox writes. */
+export function storeResource(request: StoreRequest, destination: Destination): string {
+  const target = request.target
+  const where =
+    target.kind === "1password"
+      ? `1password ${target.vault}/${target.item}/${target.field} (fnox provider ${destination.provider})`
+      : `fnox provider ${destination.provider}`
+  return `${request.name} -> ${where} in ${destination.file}`
+}
+
+/** argv as one shell-quoted line, for the command prompt. */
+export function displayArgv(argv: readonly string[]): string {
+  return argv.map((word) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`)).join(" ")
+}
+
+/** The process environment with unset entries dropped, as a child's environment. */
+export function stringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
+}
+
+/** The canonical path of an existing file or directory, symlinks resolved; `undefined` when missing. */
+function canonical(path: string): string | undefined {
+  try {
+    return realpathSync(path)
+  } catch {
+    return undefined
+  }
+}
+
+/** The machine-facing dependencies for a session in `directory`; each host adds its own prompts and signal. */
+export function localStoreDeps(
+  directory: string,
+  env: Record<string, string>,
+  home: string,
+): Pick<StoreDeps, "directory" | "roots" | "env" | "home" | "which" | "realpath" | "snapshot" | "run"> {
+  return {
+    directory,
+    roots: sessionRoots(directory).map((root) => canonical(root) ?? root),
+    env,
+    home,
+    which: (bin, cwd) => Bun.which(bin, { PATH: env.PATH ?? "", cwd }),
+    realpath: canonical,
+    // A fresh read every time: the tool compares the config before and after the value is obtained.
+    snapshot: (path) => readConfigSnapshot(directory, path, home),
+    run: runChild,
+  }
+}
 
 function onPath(deps: StoreDeps, bin: string, cwd: string): string {
   return deps.which(bin, cwd) ?? fail(`${bin} is not on PATH`)
