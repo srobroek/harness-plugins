@@ -1,3 +1,13 @@
+## code-challenge [2.0.0](https://github.com/srobroek/harness-plugins/compare/code-challenge--v1.5.1...code-challenge--v2.0.0) (2026-11-23)
+
+### ⚠ BREAKING CHANGES
+
+* **code-challenge:** challenge_scan's staticOnly input is removed. Scans are static-only by default; pass allowCode: true to run analyzers that execute repository or downloaded code. The scan never prompts for consent.
+
+### Features
+
+* **code-challenge:** ship to OMP as an extension over its TypeScript ([#146](https://github.com/srobroek/harness-plugins/issues/146)) ([a1cfd1f](https://github.com/srobroek/harness-plugins/commit/a1cfd1f1064a7ca44a2b45a3fe1d762f0af3ea92))
+
 ## code-challenge [1.5.1](https://github.com/srobroek/harness-plugins/compare/code-challenge--v1.5.0...code-challenge--v1.5.1) (2026-11-23)
 
 ### Bug Fixes
