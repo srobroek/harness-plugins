@@ -41,7 +41,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: steps.head.outputs.regenerate == 'true'
         with:
-          node-version: "24"
+          node-version: "26"
           package-manager-cache: false
       # bun and just at the versions in .mise.toml. No cache: this job runs the PR's code.
       - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
