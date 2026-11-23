@@ -522,7 +522,7 @@
     },
     {
       "name": "build",
-      "version": "0.10.0",
+      "version": "0.10.1",
       "description": "External-repository worker subagent: clone, follow the target's conventions, edit, verify, and publish only when delegated.",
       "category": "development",
       "harnesses": {
