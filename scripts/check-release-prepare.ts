@@ -6,9 +6,8 @@
 // worktree under the system temp directory, removed whether the probe passes or fails; the real checkout is not touched,
 // and the script fails if its `git status` or index changes. It checks committed files: commit first.
 
-//   bun scripts/check-release-prepare.ts [plugin...]   default: delivery (embeds its version), cad, and eli5 (OMP)
+//   bun scripts/check-release-prepare.ts [plugin...]   default: delivery and eli5 (OMP)
 //
-
 import { spawnSync } from "node:child_process"
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -16,7 +15,7 @@ import path from "node:path"
 
 const VERSION = "99.0.0"
 const root = path.resolve(import.meta.dir, "..")
-const plugins = process.argv.slice(2).length > 0 ? process.argv.slice(2) : ["delivery", "cad", "eli5"]
+const plugins = process.argv.slice(2).length > 0 ? process.argv.slice(2) : ["delivery", "eli5"]
 
 /** Runs a command and throws, keeping spawn's own error (a missing executable) as the cause. */
 function exec(command: string, args: string[], options: { cwd: string; inherit?: boolean; env?: NodeJS.ProcessEnv }): string {

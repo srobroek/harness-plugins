@@ -82,18 +82,5 @@
       "depNameTemplate": "repomix",
       "datasourceTemplate": "npm"
     }
-  ],
-  "packageRules": [
-    {
-      "description": "cad common and opencode/examples are vendored from the cad-agent tag; never edit them (AGENTS.md)",
-      "matchManagers": [
-        "custom.regex"
-      ],
-      "matchFileNames": [
-        "plugins/cad/common/**",
-        "plugins/cad/opencode/**"
-      ],
-      "enabled": false
-    }
   ]
 }

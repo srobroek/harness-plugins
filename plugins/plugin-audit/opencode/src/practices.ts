@@ -2,8 +2,6 @@
 
 import { type Finding, objectAt, type PluginSnapshot } from "./model.ts"
 
-/** Vendored from the cad-agent tag: its pins and files are not ours to change. */
-const VENDORED = new Set(["cad"])
 /** A model id from an older generation than the newest the repo ships. */
 const STALE_MODELS = ["-4-5", "claude-3", "claude-4", "gpt-4", "gpt-5"]
 const EXACT_PIN = /==\s?\d+\.\d+\.\d+|\b[\w.-]+@\d+\.\d+\.\d+\b/
@@ -77,10 +75,8 @@ export function checkPractices(plugin: PluginSnapshot): Finding[] {
     }
   }
 
-  if (!VENDORED.has(name)) {
-    for (const file of plugin.skills) {
-      if (EXACT_PIN.test(file.text)) warn("exact-pin", "exact version pin in a skill; state the minimum or the command without one", file.path)
-    }
+  for (const file of plugin.skills) {
+    if (EXACT_PIN.test(file.text)) warn("exact-pin", "exact version pin in a skill; state the minimum or the command without one", file.path)
   }
 
   for (const agent of plugin.agents) {
