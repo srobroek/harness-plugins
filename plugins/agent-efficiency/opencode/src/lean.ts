@@ -38,6 +38,8 @@ export const DEFAULT_LEAN_AGENTS: ReadonlyArray<string> = [
   "researcher",
   "architect",
   "speckit-sync",
+  "whats-new",
+
 ]
 
 const IDENTITY = "# Your Model\n- Name: "

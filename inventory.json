@@ -2089,7 +2089,25 @@
           "skills": [
             "whats-new"
           ],
-          "agents": [],
+          "agents": [
+            "whats-new"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "whats-new"
+          ],
+          "agents": [
+            "whats-new"
+          ],
           "commands": [],
           "rules": [],
           "hooks": [],

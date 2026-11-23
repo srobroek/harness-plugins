@@ -1,10 +1,8 @@
 # whats-new
 
-Researches what changed between the version of a dependency, tool or service a
+Research what changed between the version of a dependency, tool or service a
 project uses and the latest one: breaking changes, deprecations, new features and
 notable fixes. It reports and changes nothing.
-
-Ported from the omp-plugins `whats-new` plugin.
 
 ## Install
 
@@ -12,50 +10,48 @@ Ported from the omp-plugins `whats-new` plugin.
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/whats-new/opencode'
 ```
 
-The plugin is OpenCode-only and is not exported to Claude Code: its skill depends on the `version_gap_scan` tool and the report-only `whats-new` agent.
+The plugin has OpenCode and pi extensions. It is not exported to Claude Code. The
+Pi package declares `version_gap_scan` and the report-only `whats-new` agent.
 
 ## Agent
 
-The plugin adds a `whats-new` agent as a subagent, so it stays out of the
-primary-agent cycle (shift+tab). Ask for it by name, for example "use the whats-new
-agent", and the session delegates to it; the `whats-new` skill also works in any
-session. An agent you configure with the id `whats-new` keeps its own mode.
-Report-only mode is this agent's permissions. They are added
-after any rules you configure for an agent with the same id:
+The `whats-new` agent is a subagent. Ask Pi to use it by name. The `whats-new` skill
+also works in any session.
 
-- `edit` is denied for dependency manifests and lockfiles at any depth:
-  `package.json`, `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`,
-  `bun.lockb`, `*.lock`, `Cargo.toml`, `pyproject.toml`, `requirements.txt`,
-  `Pipfile`, `go.mod`, `go.sum`, `Gemfile` and `composer.json`.
-- `shell` is denied for the install and upgrade commands of npm, pnpm, bun, yarn,
-  pip, uv, poetry, cargo, go, bundler, gem and composer, for example `npm install *`,
-  `uv sync *` and `go get *`.
-- `dep_apply` is denied.
+Report-only policy denies dependency manifest and lockfile edits, installers and
+upgrade commands, and `dep_apply`. OpenCode installs an evaluation hook for this
+agent. It denies wrapped installers such as `sudo npm i`, commands inside
+`bash -c` or substitutions, and manifest paths in any letter case.
 
-Static rules match whole commands, so the plugin also registers a
-`permission.hook("evaluate")` for this agent only. It denies installers behind
-wrappers (`sudo`, `env`, `timeout`, `npx`, `pnpm dlx`), inside `bash -c` or
-`$( … )`, and manifest paths in any letter case. The policy reads commands
-statically: it does not see writes made through `eval` or a script, and it is not a
-sandbox.
+The Pi extension registers a `tool_call` gate. pi-subagents prefixes native child
+system prompts with `<active_agent name="whats-new"/>` and names child sessions from
+the agent. The gate checks that prompt marker and, when Pi identifies a child by its
+`parentSession` header, its session name. This limits the gate to the whats-new
+researcher without disabling writes in parent sessions or other agents.
 
-Other agents are unaffected. To apply an upgrade, use the dep-update plugin from
-another agent.
+Pi foreground children do not load ambient parent extensions. Add the extension
+path to pi-subagents `subagents.defaultSubagentOnlyExtensions`, or set
+`subagentOnlyExtensions` on the `whats-new` agent definition, to load the gate in
+child sessions.
+
+The gate blocks `write` and `edit` calls for dependency manifests and lockfiles,
+and installer or upgrade commands sent through `bash`. Other tools and research
+commands are unaffected. Static inspection does not catch writes hidden in scripts,
+`eval`, or other tools; it is not a sandbox.
 
 ## Tools
 
-`version_gap_scan` lists a project's root dependencies, offline and read-only. It
-prints one tab-separated row per dependency: ecosystem, name, declared spec,
-resolved lockfile version (`?` when unlocked), and `direct` or `transitive`.
+`version_gap_scan` lists root dependencies, offline and read-only. It prints one
+tab-separated row per dependency: ecosystem, name, declared spec, resolved lockfile
+version (`?` when unlocked), and `direct` or `transitive`.
 
-The scanner reads the root language manifests, plus `package-lock.json`, `uv.lock`
+The scanner reads root language manifests and reads `package-lock.json`, `uv.lock`
 and `poetry.lock` for resolved versions. It does not read other Node lockfiles,
 `Cargo.lock`, `go.sum`, `Pipfile.lock`, Ruby or PHP lockfiles, or workspace child
-manifests. When it reports a declaration range, resolve the installed version
-separately.
+manifests. Resolve a declaration range separately when needed.
 
 ## Skill
 
-The plugin registers the `whats-new` skill from `skills/whats-new/SKILL.md`, unless a
-skill with that id already exists. The skill links to recipes for registry, git and
-service-feed endpoints, and to a report template.
+The plugin registers the `whats-new` skill, unless one with that id already exists.
+The skill links to recipes for registry, git and service-feed endpoints, and to a
+report template.
