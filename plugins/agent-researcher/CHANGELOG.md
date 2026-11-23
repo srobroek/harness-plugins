@@ -1,3 +1,9 @@
+## agent-researcher [0.10.1](https://github.com/srobroek/harness-plugins/compare/agent-researcher--v0.10.0...agent-researcher--v0.10.1) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
 ## agent-researcher [0.10.0](https://github.com/srobroek/harness-plugins/compare/agent-researcher--v0.9.0...agent-researcher--v0.10.0) (2026-11-23)
 
 ### Features
