@@ -175,6 +175,10 @@
       "name": "project",
       "version": "0.12.1",
     },
+    "plugins/project-secrets": {
+      "name": "project-secrets",
+      "version": "0.1.0",
+    },
     "plugins/quality": {
       "name": "quality",
       "version": "0.15.1",
@@ -1373,6 +1377,8 @@
     "proggy": ["proggy@4.0.0", "", {}, "sha512-MbA4R+WQT76ZBm/5JUpV9yqcJt92175+Y0Bodg3HgiXzrmKu7Ggq+bpn6y6wHH+gN9NcyKn3yg1+d47VaKwNAQ=="],
 
     "project": ["project@workspace:plugins/project"],
+
+    "project-secrets": ["project-secrets@workspace:plugins/project-secrets"],
 
     "promise-all-reject-late": ["promise-all-reject-late@1.0.1", "", {}, "sha512-vuf0Lf0lOxyQREH7GDIOUMLS7kz+gs8i6B+Yi8dC68a2sychGrHTJYghMBD6k7eUcH0H5P73EckCA48xijWqXw=="],
 
