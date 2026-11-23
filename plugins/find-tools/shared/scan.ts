@@ -5,8 +5,8 @@
  * one failing source never fails the scan: it becomes a status and a gap.
  */
 
-import { keyTerms, NPM_TEXT_MAX, npmSearchText, queryTerms, relevance } from "./query.ts"
-import { defaultRun, type Run } from "./run.ts"
+import { keyTerms, NPM_TEXT_MAX, npmSearchText, queryTerms, relevance } from "./query.js"
+import { defaultRun, type Run } from "./run.js"
 
 export const SOURCES = [
   "local",
@@ -70,11 +70,12 @@ export type LocalPlugin = {
 export type LocalSkill = { id?: string; name?: string; description?: string }
 export type LocalMcp = { status?: { status?: string } }
 
-/** The host inventory, from `ctx.plugin.list`, `ctx.skill.list` and `ctx.mcp.list`: a `{ data }` envelope or an array. */
+/** Read-only local inventories exposed by the host adapter. */
 export type LocalInventory = {
-  plugins: () => Promise<unknown>
-  skills: () => Promise<unknown>
-  mcp: () => Promise<unknown>
+  plugins?: () => Promise<unknown>
+  skills?: () => Promise<unknown>
+  mcp?: () => Promise<unknown>
+  pi?: () => Promise<{ packages?: unknown; skills?: unknown; mcp?: unknown }>
 }
 
 export type ScanDeps = {
@@ -188,7 +189,33 @@ export function mcpCounts(servers: readonly LocalMcp[]): Record<string, number> 
 
 async function scanLocal(local: LocalInventory | undefined): Promise<SourceResult> {
   if (!local) return { source: "local", ok: true, skipped: true, reason: "host inventory unavailable", hits: [] }
-  const [plugins, skills, mcp] = await Promise.allSettled([local.plugins(), local.skills(), local.mcp()])
+  if (local.pi) {
+    const inventory = await local.pi()
+    const hits: Hit[] = []
+    for (const item of listOf<unknown>(inventory.packages)) {
+      const source = typeof item === "string" ? item : record(item)?.source
+      if (typeof source === "string" && /^(?:npm:|git:|https?:|builtin:)/u.test(source)) {
+        const packageName = source.startsWith("npm:") ? source.slice(4).replace(/@[^/@]+$/u, "") : source
+        hits.push({ name: `pi-package:${packageName}` })
+      }
+    }
+    for (const value of listOf<unknown>(inventory.skills)) {
+      const skill = record(value)
+      const name = str(skill?.name) ?? str(skill?.id)
+      if (name) hits.push({ name: `pi-skill:${name}`, ...(str(skill?.description) ? { detail: str(skill?.description) } : {}) })
+    }
+    if (inventory.mcp !== undefined) {
+      const servers = record(inventory.mcp)
+      const entries = servers ? Object.values(servers) : listOf<unknown>(inventory.mcp)
+      hits.push({ name: "pi-mcp", detail: JSON.stringify({ configured: entries.length }) })
+    }
+    return { source: "local", ok: true, hits }
+  }
+  const [plugins, skills, mcp] = await Promise.allSettled([
+    local.plugins?.() ?? Promise.reject(new Error("plugin inventory unavailable")),
+    local.skills?.() ?? Promise.reject(new Error("skill inventory unavailable")),
+    local.mcp?.() ?? Promise.reject(new Error("MCP inventory unavailable")),
+  ])
   const hits: Hit[] = []
   const failures: string[] = []
   if (plugins.status === "fulfilled") hits.push(...listOf<LocalPlugin>(plugins.value).map(pluginHit))
@@ -199,7 +226,6 @@ async function scanLocal(local: LocalInventory | undefined): Promise<SourceResul
       if (name) hits.push(skill.description ? { name: `skill:${name}`, detail: skill.description } : { name: `skill:${name}` })
     }
   } else failures.push(`skill list failed: ${message(skills.reason).slice(0, 200)}`)
-  // The client's error text can quote a server name or URL; report the failure only.
   if (mcp.status === "fulfilled") hits.push({ name: "mcp", detail: JSON.stringify(mcpCounts(listOf<LocalMcp>(mcp.value))) })
   else failures.push("mcp list failed")
   if (failures.length === 3) return failed("local", failures.join("; "), { failures })

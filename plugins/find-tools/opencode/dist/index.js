@@ -421,7 +421,7 @@ function stripWrappers(input) {
   return { argv: words.slice(i), directories, wrappers };
 }
 
-// plugins/find-tools/opencode/src/install-gate.ts
+// plugins/find-tools/shared/install-gate.ts
 var SEPARATORS2 = new Set([";", "&", "|", `
 `, "(", ")", "$("]);
 var SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "fish"]);
@@ -612,7 +612,7 @@ function guardInstall(evaluation) {
   evaluation.message = MESSAGES[kind];
 }
 
-// plugins/find-tools/opencode/src/query.ts
+// plugins/find-tools/shared/query.ts
 var STOPWORDS = new Set([
   "a",
   "an",
@@ -698,7 +698,7 @@ function npmSearchText(keyword, query) {
   return { text: joined, dropped: terms.length - used };
 }
 
-// plugins/find-tools/opencode/src/run.ts
+// plugins/find-tools/shared/run.ts
 import { spawn } from "child_process";
 
 // lib/src/subprocess.ts
@@ -728,7 +728,7 @@ function processAlive(pid) {
   }
 }
 
-// plugins/find-tools/opencode/src/run.ts
+// plugins/find-tools/shared/run.ts
 var DEFAULT_MS = 1e4;
 var OUTPUT_LIMIT = 1048576;
 function defaultRun(argv, timeoutMs, signal) {
@@ -820,7 +820,7 @@ function defaultRun(argv, timeoutMs, signal) {
   });
 }
 
-// plugins/find-tools/opencode/src/scan.ts
+// plugins/find-tools/shared/scan.ts
 var SOURCES = [
   "local",
   "catalog",
@@ -907,7 +907,34 @@ function mcpCounts(servers) {
 async function scanLocal(local) {
   if (!local)
     return { source: "local", ok: true, skipped: true, reason: "host inventory unavailable", hits: [] };
-  const [plugins, skills, mcp] = await Promise.allSettled([local.plugins(), local.skills(), local.mcp()]);
+  if (local.pi) {
+    const inventory = await local.pi();
+    const hits = [];
+    for (const item of listOf(inventory.packages)) {
+      const source = typeof item === "string" ? item : record(item)?.source;
+      if (typeof source === "string" && /^(?:npm:|git:|https?:|builtin:)/u.test(source)) {
+        const packageName = source.startsWith("npm:") ? source.slice(4).replace(/@[^/@]+$/u, "") : source;
+        hits.push({ name: `pi-package:${packageName}` });
+      }
+    }
+    for (const value of listOf(inventory.skills)) {
+      const skill = record(value);
+      const name = str(skill?.name) ?? str(skill?.id);
+      if (name)
+        hits.push({ name: `pi-skill:${name}`, ...str(skill?.description) ? { detail: str(skill?.description) } : {} });
+    }
+    if (inventory.mcp !== undefined) {
+      const servers = record(inventory.mcp);
+      const entries = servers ? Object.values(servers) : listOf(inventory.mcp);
+      hits.push({ name: "pi-mcp", detail: JSON.stringify({ configured: entries.length }) });
+    }
+    return { source: "local", ok: true, hits };
+  }
+  const [plugins, skills, mcp] = await Promise.allSettled([
+    local.plugins?.() ?? Promise.reject(new Error("plugin inventory unavailable")),
+    local.skills?.() ?? Promise.reject(new Error("skill inventory unavailable")),
+    local.mcp?.() ?? Promise.reject(new Error("MCP inventory unavailable"))
+  ]);
   const hits = [];
   const failures = [];
   if (plugins.status === "fulfilled")
@@ -1459,7 +1486,11 @@ function localInventory(ctx) {
       throw new Error(`${name}.list unavailable`);
     return list.call(api);
   };
-  return { plugins: call(ctx.plugin, "plugin"), skills: call(ctx.skill, "skill"), mcp: call(ctx.mcp, "mcp") };
+  return {
+    plugins: call(ctx.plugin, "plugin"),
+    skills: call(ctx.skill, "skill"),
+    mcp: call(ctx.mcp, "mcp")
+  };
 }
 var src_default = Plugin.define({
   id: "srobroek.find-tools",
