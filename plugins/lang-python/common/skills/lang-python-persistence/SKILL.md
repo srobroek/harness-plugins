@@ -74,8 +74,7 @@ line:
 - Write a `downgrade()` that works, or one that raises with a reason; never leave a
   silent `pass`.
 
-In OpenCode the safety plugin refuses edits to a revision in `versions/` that has
-already shipped; in other harnesses, never edit shipped revisions either.
+Never edit a revision in `versions/` that has already shipped; add a new revision instead.
 
 ## CI checks
 

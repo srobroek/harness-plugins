@@ -16,6 +16,9 @@
     "entries": {
       "index": "index"
     },
+    "piEntries": {
+      "repomix": "repomix"
+    },
     "claude": {
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/repomix"
     }
