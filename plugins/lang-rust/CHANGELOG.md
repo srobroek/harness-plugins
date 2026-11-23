@@ -1,3 +1,9 @@
+## lang-rust [0.8.0](https://github.com/srobroek/harness-plugins/compare/lang-rust--v0.7.0...lang-rust--v0.8.0) (2026-11-23)
+
+### Features
+
+* ship seven skills plugins to OMP ([6658a5f](https://github.com/srobroek/harness-plugins/commit/6658a5fe470ab0f1eea0e41803af29b98e7e3a27))
+
 ## lang-rust [0.7.0](https://github.com/srobroek/harness-plugins/compare/lang-rust--v0.6.1...lang-rust--v0.7.0) (2026-11-22)
 
 ### Features

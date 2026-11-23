@@ -29,7 +29,7 @@
 | journeys | 0.5.0 | development | project | opencode, claude |
 | lang-go | 0.8.0 | development | global | opencode, claude, omp |
 | lang-python | 0.8.0 | development | global | opencode, claude, omp |
-| lang-rust | 0.7.0 | development | global | opencode, claude, omp |
+| lang-rust | 0.8.0 | development | global | opencode, claude, omp |
 | lang-typescript | 0.8.0 | development | global | opencode, claude, omp |
 | lsp | 0.5.0 | development | project | opencode |
 | model-roles | 0.11.0 | development | global | opencode |
