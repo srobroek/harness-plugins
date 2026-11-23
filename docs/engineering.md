@@ -30,6 +30,8 @@ The build leaves these modules external (`HOST_MODULES` in `scripts/build.ts`): 
 
 `agent-plugins.piEntries` maps names to TypeScript sources in `plugins/<name>/pi-src/`. The build writes each bundle to `plugins/<name>/pi/extensions/<name>.js`. Pi's package manifest lists only these generated extensions.
 
+OMP loads Pi extensions unchanged. When a plugin lists the `omp` harness, the build also copies each bundle to `plugins/<name>/omp/extensions/<name>.js`. harness-kit lists that directory under `omp.extensions` in the generated `omp/package.json`. A bundle that imports a Pi host module at runtime must also work in OMP; `plugins/code-challenge/pi-src/` imports only types.
+
 Pi's compiled runtime accepts Bun-targeted extension bundles. Pi resolves its host modules from its own copies:
 `@earendil-works/pi-coding-agent`, `@earendil-works/pi-agent-core`, `@earendil-works/pi-ai`, `@earendil-works/pi-tui`, and `typebox`, including subpaths.
 The builder inlines private `@srobroek/opencode-lib/*` imports.

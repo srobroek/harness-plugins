@@ -8,10 +8,14 @@
     "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
     "category": "development",
     "harnesses": [
-      "opencode"
+      "opencode",
+      "omp"
     ],
     "scope": "global",
     "entries": {
+      "index": "index"
+    },
+    "piEntries": {
       "index": "index"
     }
   }

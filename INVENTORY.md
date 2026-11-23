@@ -17,7 +17,7 @@
 | build | 0.8.1 | development | project | opencode |
 | chezmoi | 0.6.0 | development | global | opencode, claude |
 | claude-compat | 0.5.1 | development | project | opencode |
-| code-challenge | 1.5.1 | development | global | opencode |
+| code-challenge | 1.5.1 | development | global | opencode, omp |
 | debate | 0.7.1 | productivity | global | opencode, claude, omp |
 | delivery | 0.12.1 | development | global | opencode |
 | dep-update | 0.6.1 | development | global | opencode |

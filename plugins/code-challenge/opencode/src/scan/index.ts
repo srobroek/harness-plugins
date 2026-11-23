@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import { sessionDirectory } from "../session-directory.ts"
+import type { ToolCall, ToolOutcome } from "../tool-call.ts"
 import { consentRisks, type Risk, runScan, type ScanDeps, validRunId } from "./run.ts"
 import { DEPTHS, LANGUAGES, LENSES, type ScanInput, type ScanReport } from "./types.ts"
 
@@ -95,6 +96,22 @@ export function planResource(root: string, risks: readonly Risk[]): string {
   return `${root} [${risks.map((r) => r.recipe).sort().join(", ")}]`
 }
 
+/** What the user is asked to approve: a scan of `root` that would run the listed risky recipes. */
+export type ScanConsent = { root: string; depth: string; risks: Risk[]; resource: string }
+
+/** A host's consent prompt; it returns once the user approved and throws to refuse. */
+export type AskConsent = (consent: ScanConsent) => Promise<void>
+
+/** The consent prompt text: where the scan runs, that nothing is sandboxed, and each risky recipe with its reasons. */
+export function consentMessage(root: string, recipes: readonly Risk[]): string {
+  return (
+    `challenge_scan in ${root} will run code that is not static analysis. ` +
+    "There is no sandbox: these recipes run with your user's permissions. Approving covers exactly these recipes; " +
+    "pass staticOnly to scan without them.\n" +
+    recipes.map((r) => `- ${r.recipe}: ${r.reasons.join("; ")}`).join("\n")
+  )
+}
+
 /**
  * Turn an allowed scan that would run repository or downloaded code into a prompt. The default
  * policy allows every action, so without this the consent would never be asked.
@@ -104,11 +121,43 @@ export function confirmScan(evaluation: Evaluation): void {
   const recipes = (evaluation.metadata?.recipes ?? []) as Risk[]
   if (!Array.isArray(recipes) || recipes.length === 0) return
   evaluation.effect = "ask"
-  evaluation.message =
-    `challenge_scan in ${String(evaluation.metadata?.root ?? evaluation.resources.join(", "))} will run code that is not static analysis. ` +
-    "There is no sandbox: these recipes run with your user's permissions. Approving covers exactly these recipes; " +
-    "pass staticOnly to scan without them.\n" +
-    recipes.map((r) => `- ${r.recipe}: ${r.reasons.join("; ")}`).join("\n")
+  evaluation.message = consentMessage(String(evaluation.metadata?.root ?? evaluation.resources.join(", ")), recipes)
+}
+
+/**
+ * `challenge_scan` for any host. A scan whose plan holds a risky recipe runs only after `consent`
+ * returns, and then with exactly those recipes approved; staticOnly plans none and asks nothing.
+ */
+export async function runScanTool(raw: unknown, call: ToolCall & { consent: AskConsent }, deps: ScanDeps = {}): Promise<ToolOutcome> {
+  // The session's directory, not the plugin's: a default or relative root means the project being worked on.
+  const base = await call.directory()
+  const parsed = readScanInput(raw, base)
+  if (typeof parsed === "string") return { content: `${SCAN_TOOL}: ${parsed}`, metadata: { ok: false } }
+  let input: ScanInput
+  let risks: Risk[]
+  try {
+    // Consent is per canonical root, so a symlink or a relative path cannot dodge or widen it.
+    input = { ...parsed, root: realpathSync(parsed.root ?? base) }
+    risks = parsed.staticOnly ? [] : await consentRisks(input, deps, call.signal)
+  } catch (error) {
+    return { content: `${SCAN_TOOL}: ${(error as Error).message}`, metadata: { ok: false } }
+  }
+  // The approved set is exactly the recipes that were listed. Nothing is approved for a plan
+  // with no risk, so a recipe that turns risky before the run is a gap, not a free pass.
+  let approved = deps.approved ?? new Set<string>()
+  if (risks.length > 0 && deps.approved === undefined) {
+    const root = input.root ?? base
+    // A refusal propagates as the host defines it; a user who wants the scan without these
+    // recipes passes staticOnly instead.
+    await call.consent({ root, depth: input.depth ?? "standard", risks, resource: planResource(root, risks) })
+    approved = new Set(risks.map((r) => r.recipe))
+  }
+  try {
+    const report = await runScan(input, { ...deps, approved }, call.signal)
+    return { content: formatScan(report), metadata: { ok: true, candidates: report.candidates.length, coverage: report.coverage } }
+  } catch (error) {
+    return { content: `${SCAN_TOOL}: ${(error as Error).message}`, metadata: { ok: false } }
+  }
 }
 
 /** Register `challenge_scan`; the returned function disposes the registrations. */
@@ -124,45 +173,26 @@ export async function registerScanTool(ctx: Context, deps: ScanDeps = {}): Promi
           name: SCAN_TOOL,
           description: SCAN_DESCRIPTION,
           input: SCAN_INPUT as never,
-          execute: async (raw, context) => {
-            // The session's directory, not the plugin's: a default or relative root means the project being worked on.
-            const base = await sessionDirectory(ctx, context.sessionID, SCAN_TOOL)
-            const parsed = readScanInput(raw, base)
-            if (typeof parsed === "string") return { content: `${SCAN_TOOL}: ${parsed}`, metadata: { ok: false } }
-            let input: ScanInput
-            let risks: Risk[]
-            try {
-              // Consent is per canonical root, so a symlink or a relative path cannot dodge or widen it.
-              input = { ...parsed, root: realpathSync(parsed.root ?? base) }
-              risks = parsed.staticOnly ? [] : await consentRisks(input, deps, context.signal)
-            } catch (error) {
-              return { content: `${SCAN_TOOL}: ${(error as Error).message}`, metadata: { ok: false } }
-            }
-            // The approved set is exactly the recipes that were listed. Nothing is approved for a plan
-            // with no risk, so a recipe that turns risky before the run is a gap, not a free pass.
-            let approved = deps.approved ?? new Set<string>()
-            if (risks.length > 0 && deps.approved === undefined) {
-              const root = input.root ?? base
-              // A rejection (a deny rule, feedback, an interruption) propagates as the host defines it;
-              // a user who wants the scan without these recipes passes staticOnly instead.
-              await ctx.permission.assert({
-                sessionID: context.sessionID,
-                agent: context.agent,
-                source: { type: "tool", messageID: context.messageID, id: context.id },
-                action: SCAN_TOOL,
-                resources: [planResource(root, risks)],
-                save: [planResource(root, risks)],
-                metadata: { root, depth: input.depth ?? "standard", recipes: risks },
-              } as never)
-              approved = new Set(risks.map((r) => r.recipe))
-            }
-            try {
-              const report = await runScan(input, { ...deps, approved }, context.signal)
-              return { content: formatScan(report), metadata: { ok: true, candidates: report.candidates.length, coverage: report.coverage } }
-            } catch (error) {
-              return { content: `${SCAN_TOOL}: ${(error as Error).message}`, metadata: { ok: false } }
-            }
-          },
+          execute: (raw, context) =>
+            runScanTool(
+              raw,
+              {
+                directory: () => sessionDirectory(ctx, context.sessionID, SCAN_TOOL),
+                signal: context.signal,
+                consent: async ({ root, depth, risks, resource }) => {
+                  await ctx.permission.assert({
+                    sessionID: context.sessionID,
+                    agent: context.agent,
+                    source: { type: "tool", messageID: context.messageID, id: context.id },
+                    action: SCAN_TOOL,
+                    resources: [resource],
+                    save: [resource],
+                    metadata: { root, depth, recipes: risks },
+                  } as never)
+                },
+              },
+              deps,
+            ),
         })
       }),
     )
