@@ -3,13 +3,13 @@
 
 Author, validate and maintain user journeys: seven skills, the journeys.py helper, and the journey-scribe and journey-validator subagents.
 
-| Kind | opencode | claude |
-| --- | --- | --- |
-| skills | journey-campaign, journey-consolidate, journey-init, journey-verify, journey-verify-changed, journey-write, journeys-guide | journey-campaign, journey-consolidate, journey-init, journey-verify, journey-verify-changed, journey-write, journeys-guide |
-| agents | journey-scribe, journey-validator | journey-scribe, journey-validator |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | PreToolUse |
-| tools | - | - |
-| extensions | index | - |
-| mcp | - | - |
+| Kind | opencode | claude | pi |
+| --- | --- | --- | --- |
+| skills | journey-campaign, journey-consolidate, journey-init, journey-verify, journey-verify-changed, journey-write, journeys-guide | journey-campaign, journey-consolidate, journey-init, journey-verify, journey-verify-changed, journey-write, journeys-guide | journey-campaign, journey-consolidate, journey-init, journey-verify, journey-verify-changed, journey-write, journeys-guide |
+| agents | journey-scribe, journey-validator | journey-scribe, journey-validator | journey-scribe, journey-validator |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | PreToolUse | - |
+| tools | - | - | - |
+| extensions | index | - | journeys |
+| mcp | - | - | - |

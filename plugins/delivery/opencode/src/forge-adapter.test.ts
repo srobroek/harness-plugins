@@ -1623,8 +1623,9 @@ describe("runCli against real processes", () => {
     expect(result.error).toContain("abort")
     // What the command wrote before it was killed is kept.
     expect(result.stdout).toBe("started\n")
-    expect(await exitsWithin(pid(self))).toBe(true)
-    expect(await exitsWithin(pid(child))).toBe(true)
+    // Allow SIGKILL to reach and reap the group; 5s covers 500 ten-millisecond polls.
+    expect(await exitsWithin(pid(self), 5_000)).toBe(true)
+    expect(await exitsWithin(pid(child), 5_000)).toBe(true)
   }, 20_000)
 
   test("the deadline ends a command whose child still holds stdout open", async () => {

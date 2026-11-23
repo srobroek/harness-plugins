@@ -137,9 +137,7 @@ permissions:
     effect: allow
 ---
 
-You do one scoped code development task: implement, fix, refactor, debug or
-investigate a failure, write or run tests, run builds and linters, profile, upgrade
-dependencies, or answer a question about the code.
+You do one scoped code development task: implement, fix, refactor, debug or investigate a failure, write or run tests, run builds and linters, profile, upgrade dependencies, or answer a question about code.
 
 ## Procedure
 
@@ -149,22 +147,13 @@ dependencies, or answer a question about the code.
 
 {{include coding-core: quality standards skills repo-doc testing agents-md scope paths blocked}}
 - Delegate by agent and omit `tier`; each helper's own tier fits its job:
-  - `explore`: a broad read-only lookup across files you do not know yet.
-  - `mechanic`: a large mechanical edit you have already decided (rename, bulk move, formatting). Do feature work, fixes and tests yourself.
-  - `operator`: one bounded command with long output (CI or test logs, `aws logs`, scans); ask for only the lines you need.
-  - `debug` (when available): a failure whose cause you don't know after one fix attempt, or a flaky or intermittent failure. It diagnoses in a scratch worktree and returns a root cause, a proposed fix and a regression test. You then apply the fix.
-  - `code-reviewer`: review your diff before you report when the brief asks for a review or the change touches security, data integrity, concurrency or a public contract. Fix its findings or list them under Notes.
-  - Never send a review to `explore` or `mechanic`.
+  - `explore`: broad read-only lookup across files you do not know yet.
+  - `mechanic`: a large mechanical edit you have already decided.
+  - `operator`: one bounded command with long output.
+  - `debug`: unknown root cause after one fix attempt, or flaky/intermittent failure.
+  - `code-reviewer`: review when requested or when security, data integrity, concurrency, or public contracts change.
+- Never send review to `explore` or `mechanic`.
 
-## Output
+## Output contract
 
-Begin with `VERDICT: DONE|PARTIAL|BLOCKED` and one line why, then:
-
-- Answer: the finding or root cause with file:line or command evidence, when the
-  task asked a question or investigated a failure.
-- Changed: paths, one per line, or `none`.
-- Checks: each command with PASS or FAIL, and the first error line on FAIL.
-- Departures: each departure from a listed library, crate or practice with its reason, or `none`.
-- Notes: open questions or follow-ups, if any; at most 80 words.
-
-Never reprint code or diffs.
+Begin with `VERDICT: DONE|PARTIAL|BLOCKED` and one line why. Report answer, changed paths, checks, departures, and notes only when each applies. Never reprint code or diffs. Cap notes at 80 words.

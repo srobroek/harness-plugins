@@ -1,16 +1,26 @@
 # @srobroek/opencode-modes
 
-Three agents for work that is not "build the feature": finding a root cause, restructuring code without changing behavior, and deciding what to build. Each comes with a mode reminder, so the model keeps the mode's limits in mind after a compaction or an agent switch.
+This OpenCode plugin provides agents for work beyond building a feature: finding a root cause, restructuring code without behavior changes, and deciding what to build. OMP packages the same three agents as task agents; native `/plan`, plan review, `/goal`, and `/vibe` replace OpenCode mode switching and reminders. OMP cannot enforce agent-specific file-path limits, so those boundaries are prompt instructions rather than technical guards.
 
 ## Agents
 
-| Agent | Mode | Tier | Does |
+| Agent | OpenCode mode | Model | Does |
 | --- | --- | --- | --- |
-| `debug` | `all` | strong | Diagnoses a failure to a confirmed root cause. Experiments in a scratch git worktree and never edits your checkout. Returns the root cause, a proposed fix and a failing regression test. |
-| `refactor` | `primary` | standard | Behavior-preserving refactoring in small verified steps. It cannot edit tests, fixtures or snapshots. |
-| `concept` | `primary` | strong | Frames a problem, explores options, prototypes the riskiest, records a decision. Edits only `docs/design/`, `docs/adr/`, `docs/decisions/` and `~/.opencode/concept/`. |
+| `debug` | `all` | strong | Diagnoses a failure to a confirmed root cause. Experiments in a scratch git worktree; never edits your checkout. Returns the root cause, a proposed fix and a failing regression test. |
+| `refactor` | `primary` | standard | Behaviour-preserving refactoring in small verified steps. Cannot edit tests, fixtures or snapshots. |
+| `concept` | `primary` | `@architect`, then `@slow` | Frames a problem, explores options, prototypes the riskiest, records a decision. Edits only design docs and scratch. |
 
 `debug` has `mode: all`, so it is both a primary agent and a subagent other agents can spawn.
+
+## OMP agents
+
+OMP packages these as task agents. Native `/plan`, plan review, `/goal` and `/vibe` replace OpenCode's mode reminders and switching. Its package includes only the agents; skills remain those installed in the host. OMP does not enforce agent-specific file paths, so the prompt must be treated as the limit rather than a technical guard.
+
+- `debug` must experiment only in a scratch worktree and must never write to the user's checkout. It retains `bash` and `eval` to run experiments; OMP cannot sandbox those tools to the scratch worktree.
+- `refactor` must leave tests, fixtures and snapshots unchanged. OMP cannot enforce this restriction.
+- `concept` may edit only `docs/design/`, `docs/adr/`, `docs/decisions/` and scratch paths. OMP cannot enforce this restriction.
+
+The following mode-switching and guard sections describe OpenCode-only behavior, not the OMP package.
 
 ### What makes an agent top level
 

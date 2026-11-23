@@ -30,8 +30,8 @@ const routed = formulas.flatMap(({ plugin, file, steps }) =>
 )
 
 describe("beads routing (FO-5) of formula steps", () => {
-  test("cad, code-challenge, design and speckit formulas route steps to subagents", () => {
-    expect(new Set(routed.map(({ plugin }) => plugin))).toEqual(new Set(["cad", "code-challenge", "design", "speckit"]))
+  test("formula routing includes the plugins that define delegated workflow steps", () => {
+    expect(new Set(routed.map(({ plugin }) => plugin))).toEqual(new Set(["code-challenge", "design", "speckit"]))
   })
 
   for (const { plugin, file, step, type } of routed) {

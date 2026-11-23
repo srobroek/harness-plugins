@@ -252,7 +252,7 @@ reads everything fresh. The lane is kept unless all of these hold:
 
 Then the lane is recorded as `removing`, and liveness and the tree are read once more. HEAD must
 still be the proven commit and the tree must still be clean. A merged proof is proven again too: the
-merge target must still contain HEAD, before and after the other sessions are evicted. A start that
+merge target must still contain HEAD, before and after the liveness checks. A start that
 finishes a removal a crash left half done proves it again as well; if the target no longer contains
 HEAD, the lane goes back to active. Then the worktree is removed. The local
 branch is deleted only when the worktree was on it and it still points at the proven commit
@@ -424,7 +424,7 @@ session lookups and the read-only agent check are adapted from
 ## Caveats
 
 - A lane whose worktree directory was deleted outside the plugin (`rm -rf`) stays `active`. The sweep reports it as needing a person and neither retires it nor moves its sessions; the host cannot look up its child either. A removal the plugin started and did not finish is different: the lane is `removing`, and `sweep` in `prune` mode (or any trigger for the lane) finishes it.
-- Only the lane's child and its descendants are protected. Any other session that ends up in a lane's worktree (for example a sibling that `subagent(worktree: ...)` places there, or one opened there by hand) is not checked before the removal and may be moved out or stranded.
+- Only the lane's child and its descendants are protected and moved home. Any other session in the lane's worktree (a sibling that `subagent(worktree: ...)` places there, or one opened there by hand) is not checked or moved by the removal, and after it may fail with `Location not found`.
 - The plugin asserts the `subagent` permission before it creates the worktree, and the built-in
   tool asserts it again. A rule that asks every time prompts twice; "always" approves both.
 - A failure after the worktree exists removes the worktree and the child session.

@@ -33,5 +33,10 @@ tier picks its model. Without it the agent inherits the caller's model; set
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/build/opencode'
 ```
+OMP installs the agent from the generated OMP directory:
+
+```sh
+omp plugin install /path/to/harness-plugins/plugins/build/omp
+```
 
 This plugin ships no skills, so it is not in the Claude Code marketplace.

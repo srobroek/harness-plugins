@@ -21,7 +21,7 @@ import {
   resolveTarget,
   runPack,
   targetResource,
-} from "./pack.ts"
+} from "../../shared/pack.ts"
 
 const exited = (exitCode: number, stdout: string, stderr = ""): SupervisedRun => ({
   kind: "exited",

@@ -14,9 +14,6 @@ const agents = [
   "code-challenge/common/agents/refactor-challenger.md",
   "design/common/agents/design-critic.opencode.md",
   "agent-seance/common/agents/seance.md",
-  "cad/common/agents/cad-dfm-reviewer.md",
-  "cad/common/agents/cad-mech-reviewer.md",
-  "cad/common/agents/cad-sourcing-researcher.md",
 ]
 const rules = [...READ_ONLY_SHELL_RULES]
 

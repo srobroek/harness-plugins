@@ -31,7 +31,7 @@ test("project-secrets links every reference it names", async () => {
   const fake = createFakeContext()
   const cleanup = await plugin.setup(fake.context)
   const skill = fake.skills.get("project-secrets") as unknown as { path: string }
-  for (const name of ["fnox-config", "ci-github", "aws-leases", "mcp"])
+  for (const name of ["fnox-config", "ci-github", "mcp"])
     expect(existsSync(join(dirname(skill.path), "references", `${name}.md`))).toBe(true)
   await cleanup?.()
 })
