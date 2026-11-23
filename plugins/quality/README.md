@@ -19,7 +19,7 @@ to it.
 
 ## Engineering standards in the system prompt
 
-Every primary session, and the child sessions of `general` and `security-reviewer`, get three static blocks at the end of its system
+Every primary session, and the child sessions of `general` and `security-auditor`, get three static blocks at the end of its system
 prompt, from the shared coding core (`plugins/lib/src/coding-core.md`):
 
 - `# Engineering standards`, the `standards` part. It tells the agent to research current
@@ -38,13 +38,13 @@ prompt, from the shared coding core (`plugins/lib/src/coding-core.md`):
 
 The `coder`, `implementer`, `implementer-high`, `ui-implementer`, `code-reviewer` and both
 `pr-reviewer` agents carry the same parts in their composed prompts, so they are not given them
-twice. `security-reviewer` carries only the review rules, so it gets the blocks. Each block is under
+twice. `security-auditor` carries only the review rules, so it gets the blocks. Each block is under
 1000 characters and never changes between requests, so the provider's prompt cache holds.
 
 | Option | Default | Effect |
 | --- | --- | --- |
 | `standards` | `true` | `false` turns both blocks off |
-| `standardsSubagents` | `["general", "security-reviewer"]` | Subagent ids whose child sessions also get the blocks; primary sessions always do |
+| `standardsSubagents` | `["general", "security-auditor"]` | Subagent ids whose child sessions also get the blocks; primary sessions always do |
 
 ```jsonc
 {

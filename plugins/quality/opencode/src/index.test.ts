@@ -83,10 +83,10 @@ describe("engineering standards", () => {
     expect(fake.active()).toBe(0)
   })
 
-  test("security-reviewer, which carries only review-standards, gets the block; agents with coding-core and explore get nothing", async () => {
+  test("security-auditor, which carries only review-standards, gets the block; agents with coding-core and explore get nothing", async () => {
     const fake = createFakeContext({ sessions })
     await plugin.setup(fake.context)
-    expect((await fire(fake, "ses_coder", "security-reviewer")).system).toEqual(block)
+    expect((await fire(fake, "ses_coder", "security-auditor")).system).toEqual(block)
     // coder, the implementers and the two reviewers carry the same parts in their prompts, so they would get them twice.
     for (const agent of ["code-reviewer", "pr-reviewer"]) expect((await fire(fake, "ses_coder", agent)).system).toEqual([])
     expect((await fire(fake, "ses_coder", "coder")).system).toEqual([])

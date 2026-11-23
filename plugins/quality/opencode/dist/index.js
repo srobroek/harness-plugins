@@ -28,7 +28,7 @@ var MCP_TOOL_AGENTS = new Set([
   "refactor",
   "refactor-challenger",
   "researcher",
-  "security-reviewer",
+  "security-auditor",
   "spec",
   "ui-implementer"
 ]);
@@ -612,7 +612,7 @@ var REPO_DOC_TEXT = `# Repository engineering doc
 
 ${REPO_DOC}`;
 var STANDARDS_BLOCKS = [STANDARDS_TEXT, REPO_DOC_TEXT, TESTING_TEXT];
-var DEFAULT_STANDARDS_SUBAGENTS = ["general", "security-reviewer"];
+var DEFAULT_STANDARDS_SUBAGENTS = ["general", "security-auditor"];
 function parseStandardsOptions(options) {
   if (options.standards === false)
     return;
