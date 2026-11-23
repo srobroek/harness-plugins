@@ -74,6 +74,16 @@ earlier plugin already registered the id. If a fallback copy registers first any
 this plugin replaces it, so every load order leaves one agent with these fields. Tests
 here keep the copies in sync.
 
+OMP installs the agents from the generated OMP directory:
+
+```sh
+omp plugin install /path/to/harness-plugins/plugins/agent-reviewer/omp
+```
+
+The `pr-reviewer` agent uses OMP's `github` tool. OMP disables that tool by
+default; enable `github` under **Settings → Tools** before asking it to review a
+pull request. Other reviewers do not require that tool.
+
 ## Install
 
 ```sh

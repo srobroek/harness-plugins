@@ -3,13 +3,13 @@
 
 coder subagent for any code development task (implement, fix, debug, test, build, profile, upgrade deps) with only coding tools and skills.
 
-| Kind | opencode |
-| --- | --- |
-| skills | - |
-| agents | coder |
-| commands | - |
-| rules | - |
-| hooks | - |
-| tools | - |
-| extensions | index |
-| mcp | - |
+| Kind | opencode | pi |
+| --- | --- | --- |
+| skills | - | - |
+| agents | coder | coder |
+| commands | - | - |
+| rules | - | - |
+| hooks | - | - |
+| tools | - | - |
+| extensions | index | - |
+| mcp | - | - |

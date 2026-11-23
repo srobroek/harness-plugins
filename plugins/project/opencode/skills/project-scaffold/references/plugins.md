@@ -1,4 +1,4 @@
-# Choosing OpenCode plugins
+<!-- OpenCode-only reference; the Pi variant is `plugins.pi.md`. -->
 
 All srobroek plugins live in https://github.com/srobroek/opencode-plugins (public).
 Pick per project; do not re-add what the host already has globally.
@@ -93,7 +93,6 @@ Add one when any of its signals holds in the repository.
 | --- | --- | --- |
 | beads | .beads/ (skip under ~/pace, which inherits it, and with .beads/RETIRED); every repository | none |
 | build | work in a repository outside the current project | none |
-| cad | *.step, *.stp, *.FCStd or *.scad design files | none |
 | claude-compat | Claude Code plugins to load from a repository | none |
 | design | a frontend project: package.json depends on react, vue, svelte, astro, next, nuxt, solid-js or another UI framework, or .storybook/, DESIGN.md, index.html or a Tailwind config; a web or desktop UI | none |
 | journeys | journeys/ | none |

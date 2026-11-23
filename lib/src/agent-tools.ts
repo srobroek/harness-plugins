@@ -89,7 +89,6 @@ const BUILT_IN_ACTIONS: readonly string[] = [
  */
 export const RESERVED_TOOL_PREFIXES: readonly string[] = [
   "autopilot_",
-  "cad_",
   "challenge_",
   "claude_",
   "dep_",

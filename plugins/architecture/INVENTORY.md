@@ -3,13 +3,13 @@
 
 Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.
 
-| Kind | opencode | claude |
-| --- | --- | --- |
-| skills | architecture-docs-files, architecture-guide, architecture-ownership, architecture-repositories, architecture-top-level | architecture-docs-files, architecture-guide, architecture-ownership, architecture-repositories, architecture-top-level |
-| agents | architect | architect |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | PreToolUse |
-| tools | - | - |
-| extensions | index | - |
-| mcp | - | - |
+| Kind | opencode | claude | omp | pi |
+| --- | --- | --- | --- | --- |
+| skills | architecture-docs-files, architecture-guide, architecture-ownership, architecture-repositories, architecture-top-level | architecture-docs-files, architecture-guide, architecture-ownership, architecture-repositories, architecture-top-level | architecture-docs-files, architecture-guide, architecture-ownership, architecture-repositories, architecture-top-level | architecture-docs-files, architecture-guide, architecture-ownership, architecture-repositories, architecture-top-level |
+| agents | architect | architect | architect | architect |
+| commands | - | - | - | - |
+| rules | - | - | - | - |
+| hooks | - | PreToolUse | - | - |
+| tools | - | - | - | - |
+| extensions | index | - | - | - |
+| mcp | - | - | - | - |

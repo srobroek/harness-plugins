@@ -138,7 +138,7 @@ function contentPaths(moduleUrl) {
   };
 }
 
-// plugins/repomix/opencode/src/pack.ts
+// plugins/repomix/shared/pack.ts
 import { mkdirSync, mkdtempSync, readdirSync as readdirSync3, rmSync, statSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { basename as basename2, isAbsolute, join as join3, resolve } from "path";
@@ -285,7 +285,7 @@ function signalName(code) {
   return Object.entries(constants.signals).find(([, n]) => n === code)?.[0] ?? String(code);
 }
 
-// plugins/repomix/opencode/src/pack.ts
+// plugins/repomix/shared/pack.ts
 var PACK_TOOL = "repomix_pack";
 var REPOMIX_VERSION = "1.19.0";
 var DEFAULT_TIMEOUT_SECONDS = 300;
@@ -297,7 +297,7 @@ var MAX_ERROR_CHARS = 4000;
 var STYLES = { xml: "xml", markdown: "md", plain: "txt" };
 var ANCHORS = { xml: '<file path="', markdown: "## File: ", plain: "File: " };
 var PACK_DESCRIPTION = `Pack a local directory or a remote repo at a ref into one file; returns its path, token counts and top files.
-` + "Runs repomix (PATH, else npx --yes repomix@" + REPOMIX_VERSION + "; your permission config controls the run, and the boolean option confirmPack: true makes the npx fallback ask first). The pack is written under the OpenCode temp dir and never returned: grep it for the " + "file anchors and read slices. The target's repomix.config.* is never loaded and the secret scan always runs. " + "Use for bulk context over many files; for a single lookup use grep/read.";
+` + "Runs repomix (PATH, else npx --yes repomix@" + REPOMIX_VERSION + "; the harness permission policy controls the run, and the confirmPack option can ask first). The pack is written under a temporary directory and never returned: grep it for the " + "file anchors and read slices. The target's repomix.config.* is never loaded and the secret scan always runs. " + "Use for bulk context over many files; for a single lookup use grep/read.";
 var PACK_INPUT = {
   type: "object",
   properties: {
@@ -522,9 +522,8 @@ var spawnRepomix = async (argv, { cwd, timeoutMs, signal }) => {
     return { kind: "exited", exitCode: 127, signalCode: null, stdout: "", stderr: String(error) };
   }
 };
-var defaultPackRoot = () => join3(tmpdir(), "opencode", "repomix");
 async function runPack(params, target, runner, signal, deps = {}) {
-  const root = deps.root ?? defaultPackRoot();
+  const root = deps.root ?? join3(tmpdir(), "srobroek", "repomix");
   const now = deps.now?.() ?? Date.now();
   mkdirSync(root, { recursive: true });
   prunePacks(root, now);

@@ -1,3 +1,9 @@
+## agent-coder [0.12.0](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.11.1...agent-coder--v0.12.0) (2026-11-23)
+
+### Features
+
+* **agent-plugins:** complete pi agent prompts ([bd49ec4](https://github.com/srobroek/harness-plugins/commit/bd49ec4a310c315702f2ce63789cda4cf345760d))
+
 ## agent-coder [0.11.1](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.11.0...agent-coder--v0.11.1) (2026-11-23)
 
 ### Bug Fixes

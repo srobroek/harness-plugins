@@ -2,11 +2,13 @@
 
 const CLAUDE_SUFFIX = ".claude.md"
 const OMP_SUFFIX = ".omp.md"
+const PI_SUFFIX = ".pi.md"
 
-/** Suffixes of the files scripts/build.ts translates from an OpenCode agent, one per harness that needs its own form. */
-export const TRANSLATED_AGENT_SUFFIXES = [CLAUDE_SUFFIX, OMP_SUFFIX] as const
+/** Suffixes for translated files and per-harness variants that must not be compiled as OpenCode source. */
+export const TRANSLATED_AGENT_SUFFIXES = [CLAUDE_SUFFIX, OMP_SUFFIX, PI_SUFFIX] as const
 
-/** The file holding an agent's OMP form; harness-kit copies it to `omp/agents/<id>.md`. */
+/** The file holding an agent's Pi form; harness-kit copies it without translation. */
+export const piAgentFile = (id: string) => `${id}${PI_SUFFIX}`
 export const ompAgentFile = (id: string) => `${id}${OMP_SUFFIX}`
 
 /** Whether a `common/agents/` file name is a translation rather than an OpenCode agent. */

@@ -74,234 +74,33 @@ async function registerSkills(skill, paths) {
   });
 }
 
-// plugins/journeys/opencode/src/agents.ts
-import { readFileSync as readFileSync2 } from "fs";
-import { fileURLToPath } from "url";
-var AGENT_IDS = ["journey-scribe", "journey-validator"];
-var AGENT_PATHS = AGENT_IDS.map((id) => fileURLToPath(new URL(`../agents/${id}.md`, import.meta.url)));
-var FRONTMATTER2 = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
-function parseAgentFile(id, text) {
-  const match = FRONTMATTER2.exec(text);
-  if (!match)
-    throw new Error(`${id}: agent file has no frontmatter`);
-  const data = Bun.YAML.parse(match[1] ?? "") ?? {};
-  const mode = data.mode === "primary" || data.mode === "all" ? data.mode : "subagent";
-  const agent = {
-    id,
-    mode,
-    permissions: Array.isArray(data.permissions) ? data.permissions : [],
-    system: text.slice(match[0].length).trim()
-  };
-  if (typeof data.description === "string")
-    agent.description = data.description;
-  if (typeof data.hidden === "boolean")
-    agent.hidden = data.hidden;
-  if (typeof data.steps === "number")
-    agent.steps = data.steps;
-  if (data.request && typeof data.request === "object")
-    agent.request = data.request;
-  return agent;
-}
-function loadAgents(paths = AGENT_PATHS) {
-  return paths.map((path, at) => parseAgentFile(AGENT_IDS[at] ?? path, readFileSync2(path, "utf8")));
-}
-function shapeAgent(agent, file, created) {
-  agent.name ??= file.id;
-  if (file.description !== undefined)
-    agent.description ??= file.description;
-  if (created || agent.mode === undefined)
-    agent.mode = file.mode;
-  agent.system ??= file.system;
-  if (file.hidden !== undefined && (created || agent.hidden === undefined))
-    agent.hidden = file.hidden;
-  if (file.steps !== undefined)
-    agent.steps ??= file.steps;
-  if (file.request?.headers)
-    agent.request = { ...agent.request, headers: { ...file.request.headers, ...agent.request?.headers } };
-  agent.permissions = created ? [...agent.permissions ?? [], ...file.permissions] : [...file.permissions, ...agent.permissions ?? []];
-}
-
-// plugins/journeys/opencode/src/journeys-tool.ts
+// plugins/journeys/shared/journeys-tool.ts
 import { execFile } from "child_process";
-import { copyFileSync, existsSync as existsSync2, lstatSync, mkdirSync, readdirSync as readdirSync2, readFileSync as readFileSync3, realpathSync } from "fs";
+import { copyFileSync, existsSync as existsSync2, lstatSync, mkdirSync, readdirSync as readdirSync2, readFileSync as readFileSync2, realpathSync } from "fs";
 import { basename, isAbsolute, join, relative, resolve, sep } from "path";
-import { fileURLToPath as fileURLToPath2 } from "url";
+import { fileURLToPath } from "url";
 import { promisify } from "util";
 var execFileAsync = promisify(execFile);
 var TIMEOUT_MS = 600000;
 var MAX_BUFFER = 10 * 1024 * 1024;
-var JOURNEYS_SCRIPT = fileURLToPath2(new URL("../skills/journey-init/scripts/journeys.py", import.meta.url));
-var FORMULAS_DIR = fileURLToPath2(new URL("../skills/journey-verify/formulas/", import.meta.url));
+function pluginAsset(path) {
+  const candidates = [
+    fileURLToPath(new URL(`../skills/${path}`, import.meta.url)),
+    fileURLToPath(new URL(`../common/skills/${path}`, import.meta.url)),
+    fileURLToPath(new URL(`../../common/skills/${path}`, import.meta.url))
+  ];
+  const asset = candidates.find(existsSync2);
+  if (asset === undefined)
+    throw new Error(`journeys plugin asset not found: ${path}`);
+  return asset;
+}
+var JOURNEYS_SCRIPT = pluginAsset("journey-init/scripts/journeys.py");
+var FORMULAS_DIR = pluginAsset("journey-verify/formulas/");
 var REQUIRED_FORMULAS = ["journey-step-agentic-verification", "journey-step-human-verification"];
 var exec = async (file, args, options) => {
   const result = await execFileAsync(file, args, options);
   return { stdout: result.stdout, stderr: result.stderr };
 };
-function journeysWrites(params) {
-  if (params.command === "lint")
-    return false;
-  if (params.command === "prune")
-    return params.yes === true;
-  return true;
-}
-function journeysArgs(params, script = JOURNEYS_SCRIPT) {
-  const args = [script, params.command, params.journeysDir];
-  if (params.command !== "prune")
-    return args;
-  if (params.keep !== undefined)
-    args.push("--keep", String(params.keep));
-  if (params.journey !== undefined)
-    args.push("--journey", params.journey);
-  if (params.yes)
-    args.push("--yes");
-  return args;
-}
-async function runJourneys(cwd, params, signal, runner = exec, timeoutMs = TIMEOUT_MS) {
-  try {
-    const result = await runner("python3", journeysArgs(params), {
-      cwd,
-      shell: false,
-      timeout: timeoutMs,
-      maxBuffer: MAX_BUFFER,
-      signal
-    });
-    return { stdout: result.stdout, stderr: result.stderr, exitCode: 0 };
-  } catch (error) {
-    const failure = typeof error === "object" && error !== null ? error : {};
-    const stdout = typeof failure.stdout === "string" ? failure.stdout : "";
-    const stderr = typeof failure.stderr === "string" ? failure.stderr : typeof failure.message === "string" ? failure.message : "";
-    if (signal?.aborted)
-      return { stdout, stderr, unrun: "cancelled" };
-    if (failure.killed === true && failure.code === null)
-      return { stdout, stderr, unrun: `timed out after ${timeoutMs / 1000} s` };
-    return { stdout, stderr, exitCode: typeof failure.code === "number" ? failure.code : 1 };
-  }
-}
-function localPath(raw) {
-  if (!raw.includes("://") && !raw.startsWith("file:"))
-    return raw;
-  if (!raw.startsWith("file:"))
-    return null;
-  try {
-    return fileURLToPath2(raw);
-  } catch {
-    return null;
-  }
-}
-function managedRoot(dir, base) {
-  const local = localPath(dir);
-  if (local === null)
-    return null;
-  if (local.split(sep === "\\" ? /[\\/]/ : "/").includes(".."))
-    return null;
-  try {
-    return realpathSync(resolve(base, local));
-  } catch {
-    return null;
-  }
-}
-function safePath(path, base) {
-  const absolute = resolve(isAbsolute(path) ? path : join(base, path));
-  const inside = relative(base, absolute);
-  if (inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
-    throw new Error(`outside the managed root: ${absolute}`);
-  }
-  let current = base;
-  if (lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink())
-    throw new Error(`unsafe symlink: ${current}`);
-  for (const part of inside.split(sep === "\\" ? /[\\/]/ : "/").filter(Boolean)) {
-    current = join(current, part);
-    if (lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink())
-      throw new Error(`unsafe symlink: ${current}`);
-  }
-}
-function formulaSources(dir = FORMULAS_DIR) {
-  if (!existsSync2(dir))
-    return [];
-  return readdirSync2(dir).filter((name) => name.endsWith(".formula.toml")).sort().map((name) => join(dir, name));
-}
-function installFormulas(rawRepoRoot, force, base, rawSourcesDir = FORMULAS_DIR) {
-  const repoRoot = managedRoot(rawRepoRoot, base);
-  const sourcesDir = managedRoot(rawSourcesDir, base);
-  if (repoRoot === null)
-    return { ok: false, text: `ERROR not a Beads workspace: ${rawRepoRoot}` };
-  if (sourcesDir === null)
-    return { ok: false, text: `ERROR no formula sources: ${rawSourcesDir}` };
-  try {
-    safePath(repoRoot, repoRoot);
-    safePath(sourcesDir, sourcesDir);
-    safePath(join(repoRoot, ".beads", "formulas"), repoRoot);
-  } catch (error) {
-    return { ok: false, text: `ERROR ${error instanceof Error ? error.message : String(error)}` };
-  }
-  const beadsDir = join(repoRoot, ".beads");
-  if (!lstatSync(beadsDir, { throwIfNoEntry: false })?.isDirectory()) {
-    return { ok: false, text: `ERROR not a Beads workspace: ${repoRoot}` };
-  }
-  const destinationDir = join(beadsDir, "formulas");
-  const destinationStat = lstatSync(destinationDir, { throwIfNoEntry: false });
-  if (destinationStat && (destinationStat.isSymbolicLink() || !destinationStat.isDirectory())) {
-    return { ok: false, text: `ERROR unsafe formula destination: ${destinationDir}` };
-  }
-  for (const name of REQUIRED_FORMULAS) {
-    const source = join(sourcesDir, `${name}.formula.toml`);
-    const st = lstatSync(source, { throwIfNoEntry: false });
-    if (!st?.isFile() || st.isSymbolicLink()) {
-      return { ok: false, text: `ERROR required formula missing or unsafe: ${source}` };
-    }
-  }
-  const sources = formulaSources(sourcesDir);
-  const unchanged = new Set;
-  const unsafe = [];
-  const conflicts = [];
-  for (const source of sources) {
-    const sourceStat = lstatSync(source);
-    if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) {
-      return { ok: false, text: `ERROR unsafe formula source: ${source}` };
-    }
-    const destination = join(destinationDir, basename(source));
-    const st = lstatSync(destination, { throwIfNoEntry: false });
-    if (!st)
-      continue;
-    if (st.isSymbolicLink() || !st.isFile())
-      unsafe.push(destination);
-    else if (readFileSync3(destination).equals(readFileSync3(source)))
-      unchanged.add(source);
-    else
-      conflicts.push(destination);
-  }
-  if (unsafe.length)
-    return { ok: false, text: `ERROR unsafe formula destinations: ${unsafe.join(", ")}` };
-  if (conflicts.length && !force) {
-    return { ok: false, text: `ERROR refusing to overwrite divergent formula files: ${conflicts.join(", ")}` };
-  }
-  mkdirSync(destinationDir, { recursive: true });
-  let copied = 0;
-  for (const source of sources) {
-    if (unchanged.has(source))
-      continue;
-    copyFileSync(source, join(destinationDir, basename(source)));
-    copied += 1;
-  }
-  return {
-    ok: true,
-    text: `formulas: ${copied} copied, ${unchanged.size} unchanged`,
-    copied,
-    unchanged: unchanged.size
-  };
-}
-
-// plugins/journeys/opencode/src/index.ts
-var SKILL_NAMES = [
-  "journey-init",
-  "journey-write",
-  "journey-verify",
-  "journey-verify-changed",
-  "journey-campaign",
-  "journey-consolidate",
-  "journeys-guide"
-];
-var SKILL_PATHS = SKILL_NAMES.map((name) => fileURLToPath3(new URL(`../skills/${name}/SKILL.md`, import.meta.url)));
 var COMMANDS = ["index", "lint", "prune"];
 function readIndexParams(input) {
   const value = input ?? {};
@@ -330,6 +129,208 @@ function indexResource(params) {
     return `${params.command} ${params.journeysDir}`;
   return `prune ${params.journeysDir} ${params.journey ?? "*all*"}`;
 }
+function journeysWrites(params) {
+  if (params.command === "lint")
+    return false;
+  if (params.command === "prune")
+    return params.yes === true;
+  return true;
+}
+function journeysArgs(params, script = JOURNEYS_SCRIPT) {
+  const args = [script, params.command, params.journeysDir];
+  if (params.command !== "prune")
+    return args;
+  if (params.keep !== undefined)
+    args.push("--keep", String(params.keep));
+  if (params.journey !== undefined)
+    args.push("--journey", params.journey);
+  if (params.yes)
+    args.push("--yes");
+  return args;
+}
+async function runJourneys(cwd, params, signal, runner = exec, timeoutMs = TIMEOUT_MS, script = JOURNEYS_SCRIPT) {
+  try {
+    const result = await runner("python3", journeysArgs(params, script), {
+      cwd,
+      shell: false,
+      timeout: timeoutMs,
+      maxBuffer: MAX_BUFFER,
+      signal
+    });
+    return { stdout: result.stdout, stderr: result.stderr, exitCode: 0 };
+  } catch (error) {
+    const failure = typeof error === "object" && error !== null ? error : {};
+    const stdout = typeof failure.stdout === "string" ? failure.stdout : "";
+    const stderr = typeof failure.stderr === "string" ? failure.stderr : typeof failure.message === "string" ? failure.message : "";
+    if (signal?.aborted)
+      return { stdout, stderr, unrun: "cancelled" };
+    if (failure.killed === true && failure.code === null)
+      return { stdout, stderr, unrun: `timed out after ${timeoutMs / 1000} s` };
+    return { stdout, stderr, exitCode: typeof failure.code === "number" ? failure.code : 1 };
+  }
+}
+function localPath(raw) {
+  if (!raw.includes("://") && !raw.startsWith("file:"))
+    return raw;
+  if (!raw.startsWith("file:"))
+    return null;
+  try {
+    return fileURLToPath(raw);
+  } catch {
+    return null;
+  }
+}
+function managedRoot(dir, base) {
+  const local = localPath(dir);
+  if (local === null)
+    return null;
+  if (local.split(sep === "\\" ? /[\\/]/ : "/").includes(".."))
+    return null;
+  try {
+    return realpathSync(resolve(base, local));
+  } catch {
+    return null;
+  }
+}
+function safePath(path, base) {
+  const absolute = resolve(isAbsolute(path) ? path : join(base, path));
+  const inside = relative(base, absolute);
+  if (inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside))
+    throw new Error(`outside the managed root: ${absolute}`);
+  let current = base;
+  if (lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink())
+    throw new Error(`unsafe symlink: ${current}`);
+  for (const part of inside.split(sep === "\\" ? /[\\/]/ : "/").filter(Boolean)) {
+    current = join(current, part);
+    if (lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink())
+      throw new Error(`unsafe symlink: ${current}`);
+  }
+}
+function formulaSources(dir) {
+  if (!existsSync2(dir))
+    return [];
+  return readdirSync2(dir).filter((name) => name.endsWith(".formula.toml")).sort().map((name) => join(dir, name));
+}
+function installFormulas(rawRepoRoot, force, base, rawSourcesDir = FORMULAS_DIR) {
+  const repoRoot = managedRoot(rawRepoRoot, base);
+  const sourcesDir = managedRoot(rawSourcesDir, base);
+  if (repoRoot === null)
+    return { ok: false, text: `ERROR not a Beads workspace: ${rawRepoRoot}` };
+  if (sourcesDir === null)
+    return { ok: false, text: `ERROR no formula sources: ${rawSourcesDir}` };
+  try {
+    safePath(repoRoot, repoRoot);
+    safePath(sourcesDir, sourcesDir);
+    safePath(join(repoRoot, ".beads", "formulas"), repoRoot);
+  } catch (error) {
+    return { ok: false, text: `ERROR ${error instanceof Error ? error.message : String(error)}` };
+  }
+  const beadsDir = join(repoRoot, ".beads");
+  if (!lstatSync(beadsDir, { throwIfNoEntry: false })?.isDirectory())
+    return { ok: false, text: `ERROR not a Beads workspace: ${repoRoot}` };
+  const destinationDir = join(beadsDir, "formulas");
+  const destinationStat = lstatSync(destinationDir, { throwIfNoEntry: false });
+  if (destinationStat && (destinationStat.isSymbolicLink() || !destinationStat.isDirectory()))
+    return { ok: false, text: `ERROR unsafe formula destination: ${destinationDir}` };
+  for (const name of REQUIRED_FORMULAS) {
+    const source = join(sourcesDir, `${name}.formula.toml`);
+    const st = lstatSync(source, { throwIfNoEntry: false });
+    if (!st?.isFile() || st.isSymbolicLink())
+      return { ok: false, text: `ERROR required formula missing or unsafe: ${source}` };
+  }
+  const sources = formulaSources(sourcesDir);
+  const unchanged = new Set;
+  const unsafe = [];
+  const conflicts = [];
+  for (const source of sources) {
+    const sourceStat = lstatSync(source);
+    if (!sourceStat.isFile() || sourceStat.isSymbolicLink())
+      return { ok: false, text: `ERROR unsafe formula source: ${source}` };
+    const destination = join(destinationDir, basename(source));
+    const st = lstatSync(destination, { throwIfNoEntry: false });
+    if (!st)
+      continue;
+    if (st.isSymbolicLink() || !st.isFile())
+      unsafe.push(destination);
+    else if (readFileSync2(destination).equals(readFileSync2(source)))
+      unchanged.add(source);
+    else
+      conflicts.push(destination);
+  }
+  if (unsafe.length)
+    return { ok: false, text: `ERROR unsafe formula destinations: ${unsafe.join(", ")}` };
+  if (conflicts.length && !force)
+    return { ok: false, text: `ERROR refusing to overwrite divergent formula files: ${conflicts.join(", ")}` };
+  mkdirSync(destinationDir, { recursive: true });
+  let copied = 0;
+  for (const source of sources) {
+    if (unchanged.has(source))
+      continue;
+    copyFileSync(source, join(destinationDir, basename(source)));
+    copied += 1;
+  }
+  return { ok: true, text: `formulas: ${copied} copied, ${unchanged.size} unchanged`, copied, unchanged: unchanged.size };
+}
+
+// plugins/journeys/opencode/src/agents.ts
+import { readFileSync as readFileSync3 } from "fs";
+import { fileURLToPath as fileURLToPath2 } from "url";
+var AGENT_IDS = ["journey-scribe", "journey-validator"];
+var AGENT_PATHS = AGENT_IDS.map((id) => fileURLToPath2(new URL(`../agents/${id}.md`, import.meta.url)));
+var FRONTMATTER2 = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+function parseAgentFile(id, text) {
+  const match = FRONTMATTER2.exec(text);
+  if (!match)
+    throw new Error(`${id}: agent file has no frontmatter`);
+  const data = Bun.YAML.parse(match[1] ?? "") ?? {};
+  const mode = data.mode === "primary" || data.mode === "all" ? data.mode : "subagent";
+  const agent = {
+    id,
+    mode,
+    permissions: Array.isArray(data.permissions) ? data.permissions : [],
+    system: text.slice(match[0].length).trim()
+  };
+  if (typeof data.description === "string")
+    agent.description = data.description;
+  if (typeof data.hidden === "boolean")
+    agent.hidden = data.hidden;
+  if (typeof data.steps === "number")
+    agent.steps = data.steps;
+  if (data.request && typeof data.request === "object")
+    agent.request = data.request;
+  return agent;
+}
+function loadAgents(paths = AGENT_PATHS) {
+  return paths.map((path, at) => parseAgentFile(AGENT_IDS[at] ?? path, readFileSync3(path, "utf8")));
+}
+function shapeAgent(agent, file, created) {
+  agent.name ??= file.id;
+  if (file.description !== undefined)
+    agent.description ??= file.description;
+  if (created || agent.mode === undefined)
+    agent.mode = file.mode;
+  agent.system ??= file.system;
+  if (file.hidden !== undefined && (created || agent.hidden === undefined))
+    agent.hidden = file.hidden;
+  if (file.steps !== undefined)
+    agent.steps ??= file.steps;
+  if (file.request?.headers)
+    agent.request = { ...agent.request, headers: { ...file.request.headers, ...agent.request?.headers } };
+  agent.permissions = created ? [...agent.permissions ?? [], ...file.permissions] : [...file.permissions, ...agent.permissions ?? []];
+}
+
+// plugins/journeys/opencode/src/index.ts
+var SKILL_NAMES = [
+  "journey-init",
+  "journey-write",
+  "journey-verify",
+  "journey-verify-changed",
+  "journey-campaign",
+  "journey-consolidate",
+  "journeys-guide"
+];
+var SKILL_PATHS = SKILL_NAMES.map((name) => fileURLToPath3(new URL(`../skills/${name}/SKILL.md`, import.meta.url)));
+var COMMANDS2 = ["index", "lint", "prune"];
 function createPlugin(overrides = {}) {
   return Plugin.define({
     id: "srobroek.journeys",
@@ -344,7 +345,7 @@ function createPlugin(overrides = {}) {
           input: {
             type: "object",
             properties: {
-              command: { type: "string", enum: [...COMMANDS] },
+              command: { type: "string", enum: [...COMMANDS2] },
               journeysDir: { type: "string", description: "Path to the journeys directory" },
               keep: { type: "integer", minimum: 0, description: "prune: keep the newest N runs (default 20)" },
               yes: { type: "boolean", description: "prune: actually delete (default dry run)" },

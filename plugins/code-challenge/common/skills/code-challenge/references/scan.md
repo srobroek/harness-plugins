@@ -12,11 +12,11 @@ Input (all optional):
 - `depth`: `quick`, `standard` (default) or `deep`.
 - `timeoutSeconds`: per analyzer, default 120, at most 900.
 - `runId`: raw tool output goes to `<git-dir>/code-challenge/<runId>/scan/`.
-- `staticOnly`: run only recipes that execute no repository or downloaded code. Nothing is asked; the others are gaps.
+- `allowCode`: also run recipes that execute repository or downloaded code. Off by default.
 
 Output (JSON text): `root`, `languages`, `depth`, `candidates`, `candidateCount`, `truncated` (inline list capped at 500), `coverage`, `timings` and `rawDir`. A candidate is `{lens, tool, rule, file, line, message, ruleEnabledInRepo}`. `file` and `line` are `null` when the tool gave none (for example an import-linter module with no file). `ruleEnabledInRepo` is `true` or `false` where the scan could tell (ruff, golangci-lint) and `null` otherwise. A coverage entry is `{recipe, tool, language, status, reason?}` with status `ran`, `skipped` or `gap`.
 
-Consent: recipes that execute repository or downloaded code (clippy, golangci-lint, deadcode, knip, import-linter, and every one-off `bunx`, `uvx` or `go run`) are listed in one prompt, bound to the root and exactly those recipes. Approval runs only that set; a recipe that turns risky later is a gap ("not approved for this run"). A plan with no such recipe asks nothing. Rejecting the prompt ends the step; to scan without those recipes, pass `staticOnly`.
+Code-running recipes: clippy, golangci-lint, deadcode, knip, import-linter and every one-off `bunx`, `uvx` or `go run` execute repository or downloaded code. Without `allowCode` the scan skips them and lists each as a gap, "not run without allowCode: <what it runs and writes>; pass allowCode: true to run it". The tool never asks. Pass `allowCode: true` only for a repository the user trusts: one they said they wrote or trust, or after asking them. In autonomous mode, without that word from the user, scan without it and report the gaps.
 
 | Language | Analyzers | Needs a build |
 |---|---|---|

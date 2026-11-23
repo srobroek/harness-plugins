@@ -14,7 +14,7 @@ import {
   resolveTarget,
   runPack,
   targetResource,
-} from "./pack.ts"
+} from "../../shared/pack.ts"
 
 export {
   chooseRunner,
@@ -29,7 +29,8 @@ export {
   readPackParams,
   resolveTarget,
   targetResource,
-} from "./pack.ts"
+} from "../../shared/pack.ts"
+
 
 export type RepomixOptions = { confirmPack: boolean }
 

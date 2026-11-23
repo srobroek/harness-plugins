@@ -1,3 +1,15 @@
+## agent-researcher [0.10.0](https://github.com/srobroek/harness-plugins/compare/agent-researcher--v0.9.0...agent-researcher--v0.10.0) (2026-11-23)
+
+### Features
+
+* **agent-plugins:** complete pi agent prompts ([bd49ec4](https://github.com/srobroek/harness-plugins/commit/bd49ec4a310c315702f2ce63789cda4cf345760d))
+
+## agent-researcher [0.9.0](https://github.com/srobroek/harness-plugins/compare/agent-researcher--v0.8.1...agent-researcher--v0.9.0) (2026-11-23)
+
+### Features
+
+* **agent-reviewer:** ship agent-only plugins to OMP ([4651445](https://github.com/srobroek/harness-plugins/commit/4651445bd2b5ce547a1bf781c7049acf4f894019))
+
 ## agent-researcher [0.8.1](https://github.com/srobroek/harness-plugins/compare/agent-researcher--v0.8.0...agent-researcher--v0.8.1) (2026-11-23)
 
 ### Bug Fixes

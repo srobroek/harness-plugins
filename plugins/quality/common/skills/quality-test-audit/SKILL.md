@@ -26,12 +26,12 @@ skill's `references/practice.md`.
    - List every runner that executes tests in the scope, including files outside the
      main runner such as `node --test` scripts or a browser suite, so none is skipped
      silently.
-   - Keep reports and scratch files in the OpenCode temp directory, not the repository.
+   - Keep reports and scratch files in the system temporary directory, not the repository.
 2. **Baseline.** Measure the scope before you judge it ([evidence.md](references/evidence.md)):
    - Run the scope once from a clean checkout without the project's build step, to find
      hidden prerequisites. A conditional skip (`skipIf`) that hides a failure is a finding.
-   - Repeat the scoped run through the shell with one JUnit report per run in the OpenCode
-     temp directory: 3 runs of each kind of random order (file order and test order within
+   - Repeat the scoped run through the shell with one JUnit report per run in the system temporary
+     directory: 3 runs of each kind of random order (file order and test order within
      a file, which catch different dependences) plus 3 in default order. Pass the report
      paths, the exit codes and the `modes` to `quality_test_summarize`, which separates
      order-dependent tests (fail only in shuffled runs) from flaky ones. Use 20 runs for a
@@ -46,8 +46,8 @@ skill's `references/practice.md`.
    - Run mutation testing on the files under audit, and keep the report as the
      baseline. When it cannot run on the scope (a runner pool requirement, a bundler step
      that breaks the mutation tool), use hand-made forced faults as the evidence,
-     injected only into a disposable copy of the repository in the OpenCode temp
-     directory (never the working tree), discarded afterwards. Record that.
+     injected only into a disposable copy of the repository in the system temporary directory
+     (never the working tree), discarded afterwards. Record that.
    - Read the output as evidence: thousands of identical stderr lines, a huge JUnit file
      or connection-refused lines are findings (the summary flags noisy runs).
    Record the gaps: a runner without JUnit output, no mutation tool, a scope too slow

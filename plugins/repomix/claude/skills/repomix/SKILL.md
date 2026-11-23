@@ -20,9 +20,7 @@ instead: they cost less.
 
 ## Keep the pack out of your context
 
-1. `repomix_pack` writes the pack to a file under the temp dir and returns only its path,
-   file and token totals, the top files by tokens, and any files the secret scan left out.
-   It never returns the pack itself.
+1. `repomix_pack` writes the pack to a temporary file and returns its path, file and token totals, top files, and any files the secret scan left out. It never returns the pack itself.
 2. Never read the whole pack. Grep it for the file anchor (`<file path="` for xml,
    `## File: ` for markdown, `File: ` for plain) to list the files with their line numbers,
    then read one file's slice with offset and limit.
@@ -53,9 +51,7 @@ TypeScript). Don't compress:
 
 ## Without the tool
 
-Where `repomix_pack` is not available, run the CLI with the same rules. Write to a temp
-file, never to stdout. Point `--config` at an empty JSON file so no config is loaded, and
-never pass `--no-security-check` or `--remote-trust-config`:
+Where the `repomix_pack` tool is not available, run the CLI with the same rules. Write to a temp file, never to stdout. Point `--config` at an empty JSON file so no config is loaded, and never pass `--no-security-check` or `--remote-trust-config`:
 
 ```sh
 dir=$(mktemp -d) && echo '{}' > "$dir/empty.json"
@@ -67,3 +63,17 @@ grep -n '<file path="' "$dir/pack.xml"
 
 Without `--no-git-sort-by-changes`, repomix orders files by git churn, so two packs of
 different versions diff noisily. Delete the temp directory when you are done.
+## Optional Pi MCP server
+
+Pi can run repomix's MCP server by adding `repomix` with `--mcp` to Pi's MCP configuration. `--sandbox` confines file access to the working directory but disables remote packing. Without `--sandbox`, the server can access any path available to the process.
+
+```json
+{
+  "mcpServers": {
+    "repomix": {
+      "command": "repomix",
+      "args": ["--mcp", "--sandbox"]
+    }
+  }
+}
+```

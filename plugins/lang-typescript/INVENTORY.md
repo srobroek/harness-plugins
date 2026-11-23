@@ -3,13 +3,13 @@
 
 TypeScript and JavaScript skills: install, lint, tsc and test checks, testing, monorepo packaging, type safety and zod, and Bun and Node profiling.
 
-| Kind | opencode | claude | omp |
-| --- | --- | --- | --- |
-| skills | lang-typescript, lang-typescript-libraries, lang-typescript-packaging, lang-typescript-profiling, lang-typescript-quality, lang-typescript-testing, lang-typescript-types | lang-typescript, lang-typescript-libraries, lang-typescript-packaging, lang-typescript-profiling, lang-typescript-quality, lang-typescript-testing, lang-typescript-types | lang-typescript, lang-typescript-libraries, lang-typescript-packaging, lang-typescript-profiling, lang-typescript-quality, lang-typescript-testing, lang-typescript-types |
-| agents | - | - | - |
-| commands | - | - | - |
-| rules | - | - | - |
-| hooks | - | - | - |
-| tools | - | - | - |
-| extensions | index | - | - |
-| mcp | - | - | - |
+| Kind | opencode | claude | omp | pi |
+| --- | --- | --- | --- | --- |
+| skills | lang-typescript, lang-typescript-libraries, lang-typescript-packaging, lang-typescript-profiling, lang-typescript-quality, lang-typescript-testing, lang-typescript-types | lang-typescript, lang-typescript-libraries, lang-typescript-packaging, lang-typescript-profiling, lang-typescript-quality, lang-typescript-testing, lang-typescript-types | lang-typescript, lang-typescript-libraries, lang-typescript-packaging, lang-typescript-profiling, lang-typescript-quality, lang-typescript-testing, lang-typescript-types | lang-typescript, lang-typescript-libraries, lang-typescript-packaging, lang-typescript-profiling, lang-typescript-quality, lang-typescript-testing, lang-typescript-types |
+| agents | - | - | - | - |
+| commands | - | - | - | - |
+| rules | - | - | - | - |
+| hooks | - | - | - | - |
+| tools | - | - | - | - |
+| extensions | index | - | - | - |
+| mcp | - | - | - | - |
