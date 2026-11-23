@@ -767,6 +767,20 @@
             "index"
           ],
           "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "dep-update"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
         }
       },
       "scope": "global"
