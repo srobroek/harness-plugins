@@ -29,6 +29,7 @@
 import { existsSync, readdirSync } from "node:fs"
 import { join, resolve } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
+import { type EventWatchDeps, watchEvents } from "@srobroek/opencode-lib/event-watch"
 import { canonicalCheckout } from "@srobroek/opencode-lib/session-eviction"
 import {
   canonicalDirectory,
@@ -251,6 +252,8 @@ export type PendingDeps = {
   lock?: Partial<LockOptions>
   /** How long the idle hook waits for one session's location; a lookup that takes longer may match any worktree. */
   sessionLookupMs?: number
+  /** Test seam: the backoff clock of the event watch. */
+  watch?: Pick<EventWatchDeps, "delaysMs" | "sleep">
 }
 
 /** A session location the host did not report within {@link SESSION_LOOKUP_MS}. */
@@ -1176,26 +1179,20 @@ export function createPendingCleanup(deps: PendingDeps) {
     }
   }
 
-  const abort = new AbortController()
   const registrations: Array<{ dispose: () => Promise<void> }> = []
-  let iterator: AsyncIterator<unknown> | undefined
+  let watching: { stop: () => void } | undefined
 
   const start = async () => {
-    iterator = ctx.event
-      .subscribe({ types: ["session.execution.succeeded", "session.execution.failed", "session.idle"], signal: abort.signal } as never)
-      [Symbol.asyncIterator]()
-    const events = iterator
-    void (async () => {
-      for (;;) {
-        const next = await events.next().catch(() => ({ done: true as const, value: undefined }))
-        if (next.done) return
-        try {
-          handleEvent(next.value)
-        } catch (error) {
-          console.error("delivery: pending cleanup event failed", error)
-        }
-      }
-    })()
+    watching = watchEvents<unknown>({
+      subscribe: (signal) =>
+        ctx.event
+          .subscribe({ types: ["session.execution.succeeded", "session.execution.failed", "session.idle"], signal } as never)
+          [Symbol.asyncIterator](),
+      handle: handleEvent,
+      warn: (message, fields) => console.warn(`delivery: ${message}`, fields),
+      label: "pending cleanup",
+      ...deps.watch,
+    })
     try {
       registrations.push(
         await ctx.session.hook(
@@ -1218,8 +1215,7 @@ export function createPendingCleanup(deps: PendingDeps) {
 
   const dispose = async () => {
     disposed = true
-    abort.abort()
-    await iterator?.return?.()
+    watching?.stop()
     for (const timer of timers.values()) clearTimeout(timer)
     timers.clear()
     for (const registration of registrations.reverse()) await registration.dispose()
