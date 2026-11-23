@@ -496,6 +496,26 @@
           "tools": [],
           "extensions": [],
           "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "beads-contention-retry",
+            "beads-evidence",
+            "beads-guide",
+            "beads-ledger",
+            "beads-preflight",
+            "beads-setup"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "bd-embedded-write-runner",
+            "beads"
+          ],
+          "mcp": []
         }
       },
       "scope": "project"
