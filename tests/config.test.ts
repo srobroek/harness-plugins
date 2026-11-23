@@ -64,3 +64,11 @@ test("no release config publishes to npm", async () => {
   expect(names).not.toContain("@semantic-release/npm")
   expect(names).toContain("@semantic-release/github")
 })
+
+// harness-kit stamp rewrites every harness tree's manifest with the new version; a tree missing here is left one
+// version behind on main after each release, and the next harness-kit check fails.
+test("the release commit carries every harness tree", async () => {
+  const config = (await import(path.join(root, "release.config.mjs"))).default as { plugins: [string, Record<string, unknown>][] }
+  const [, options] = config.plugins.find(([name]) => name === "@semantic-release/git") ?? []
+  expect(options?.assets).toEqual(expect.arrayContaining(["opencode/**", "claude/**", "omp/**", "pi/**"]))
+})
