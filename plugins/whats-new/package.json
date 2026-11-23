@@ -8,7 +8,8 @@
     "description": "Research breaking changes, deprecations and new features between two versions, report-only.",
     "category": "development",
     "harnesses": [
-      "opencode"
+      "opencode",
+      "pi"
     ],
     "scope": "global",
     "entries": {

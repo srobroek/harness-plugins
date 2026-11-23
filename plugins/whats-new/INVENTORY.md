@@ -3,13 +3,13 @@
 
 Research breaking changes, deprecations and new features between two versions, report-only.
 
-| Kind | opencode |
-| --- | --- |
-| skills | whats-new |
-| agents | whats-new, whats-new.pi |
-| commands | - |
-| rules | - |
-| hooks | - |
-| tools | - |
-| extensions | index |
-| mcp | - |
+| Kind | opencode | pi |
+| --- | --- | --- |
+| skills | whats-new | whats-new |
+| agents | whats-new | whats-new |
+| commands | - | - |
+| rules | - | - |
+| hooks | - | - |
+| tools | - | - |
+| extensions | index | index |
+| mcp | - | - |
