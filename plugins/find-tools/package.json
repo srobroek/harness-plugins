@@ -8,7 +8,8 @@
     "description": "Discover and vet plugins, skills and MCP servers across local inventory, catalogs and public registries, without installing anything.",
     "category": "development",
     "harnesses": [
-      "opencode"
+      "opencode",
+      "pi"
     ],
     "scope": "global",
     "entries": {
