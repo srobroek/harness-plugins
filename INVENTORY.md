@@ -11,7 +11,7 @@
 | agent-seance | 0.8.1 | development | global | opencode |
 | architecture | 0.9.1 | development | global | opencode, claude, pi |
 | ast-grep | 1.3.1 | development | global | opencode, claude |
-| autopilot | 1.3.7 | development | global | opencode |
+| autopilot | 1.3.8 | development | global | opencode |
 | aws | 0.8.1 | development | global | opencode, claude, pi |
 | beads | 0.8.10 | development | project | opencode, claude |
 | build | 0.8.1 | development | project | opencode, pi |
@@ -43,7 +43,7 @@
 | session | 0.4.1 | development | global | opencode |
 | speckit | 0.11.1 | development | project | opencode, claude |
 | statusline | 0.4.0 | development | global | opencode |
-| subagent-worktree | 0.9.1 | development | global | opencode |
+| subagent-worktree | 0.9.2 | development | global | opencode |
 | toolchain | 0.9.1 | development | global | opencode, claude, omp, pi |
 | trunk-dev | 0.11.0 | development | global | opencode, claude, pi |
 | whats-new | 0.4.0 | development | global | opencode |
