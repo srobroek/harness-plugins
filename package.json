@@ -3,13 +3,6 @@
   "private": true,
   "description": "Public agent plugins for OpenCode, Claude Code, OMP and pi. Plugins live in plugins/.",
   "license": "Apache-2.0",
-  "keywords": ["pi-package"],
-  "pi": {
-    "extensions": ["./plugins/*/pi/extensions/*.{ts,js}", "./plugins/*/pi/_kit/rules.ts"],
-    "skills": ["./plugins/*/pi/skills"],
-    "prompts": ["./plugins/*/pi/commands"],
-    "subagents": { "agents": ["./plugins/*/pi/agents"] }
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/srobroek/harness-plugins.git"
