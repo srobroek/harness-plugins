@@ -27,7 +27,7 @@ var MCP_TOOL_AGENTS = new Set([
   "refactor",
   "refactor-challenger",
   "researcher",
-  "security-reviewer",
+  "security-auditor",
   "spec",
   "ui-implementer"
 ]);

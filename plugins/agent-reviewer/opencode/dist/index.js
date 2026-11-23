@@ -25,7 +25,7 @@ var MCP_TOOL_AGENTS = new Set([
   "refactor",
   "refactor-challenger",
   "researcher",
-  "security-reviewer",
+  "security-auditor",
   "spec",
   "ui-implementer"
 ]);
@@ -384,7 +384,7 @@ async function registerSkills(skill, paths) {
 // plugins/agent-reviewer/opencode/src/index.ts
 var AGENTS_DIR = fileURLToPath(new URL("../agents", import.meta.url));
 var SKILLS_DIR = fileURLToPath(new URL("../skills", import.meta.url));
-var REVIEWERS = ["adversarial-challenger", "code-reviewer", "pr-reviewer", "security-reviewer"];
+var REVIEWERS = ["adversarial-challenger", "code-reviewer", "pr-reviewer", "security-auditor"];
 var src_default = Plugin.define({
   id: "srobroek.agent-reviewer",
   async setup(ctx) {

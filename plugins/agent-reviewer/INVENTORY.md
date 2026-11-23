@@ -6,7 +6,7 @@ A security review skill: trace untrusted input to sinks, tag CWE ids and check c
 | Kind | opencode | claude |
 | --- | --- | --- |
 | skills | review-security | review-security |
-| agents | adversarial-challenger, code-reviewer, pr-reviewer, security-reviewer | adversarial-challenger, code-reviewer, security-reviewer |
+| agents | adversarial-challenger, code-reviewer, pr-reviewer, security-auditor | adversarial-challenger, code-reviewer, security-auditor |
 | commands | - | - |
 | rules | - | - |
 | hooks | - | PreToolUse |

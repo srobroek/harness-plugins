@@ -18,7 +18,7 @@ const reviewers = [
   { plugin: "agent-reviewer", agent: "code-reviewer", checklist: true },
   { plugin: "agent-reviewer", agent: "pr-reviewer", checklist: true },
   { plugin: "delivery", agent: "pr-reviewer", checklist: true },
-  { plugin: "agent-reviewer", agent: "security-reviewer", checklist: false },
+  { plugin: "agent-reviewer", agent: "security-auditor", checklist: false },
 ]
 
 describe("shipped reviewer prompts carry the standards instructions", () => {

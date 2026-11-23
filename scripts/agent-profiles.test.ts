@@ -26,7 +26,7 @@ const PROFILES: Readonly<Record<string, Profile>> = {
   "refactor-challenger": { hidden: false, codeMode: ["challenge_scan", "challenge_lib_facts"], web: true },
   "code-reviewer": { hidden: false, codeMode: [], web: false },
   "pr-reviewer": { hidden: true, codeMode: [], web: false },
-  "security-reviewer": { hidden: false, codeMode: [], web: false },
+  "security-auditor": { hidden: false, codeMode: [], web: false },
   seance: { hidden: false, codeMode: ["seance_read"], web: false },
   architect: { hidden: false, codeMode: [], web: true },
   "external-repo-worker": { hidden: false, codeMode: ["repomix_pack"], web: true },
