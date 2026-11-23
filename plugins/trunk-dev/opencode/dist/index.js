@@ -1346,161 +1346,12 @@ function shellCall(tool, input) {
     call.background = value.background;
   return call;
 }
-// plugins/trunk-dev/shared/shell.ts
-import { resolve } from "path";
-var ASSIGNMENT2 = /^[A-Za-z_][A-Za-z0-9_]*=/;
-var RESERVED = new Set(["!", "if", "then", "elif", "else", "while", "until", "do"]);
-function base(word) {
-  return word.slice(word.lastIndexOf("/") + 1);
-}
-function invocations(command, cwd) {
-  const scan = scanShell(command);
-  if (!scan.complete)
-    return [];
-  const out = [];
-  const stack = [];
-  let dir = cwd;
-  for (const item of scan.items) {
-    if (item.kind === "operator") {
-      if (item.operator === "(")
-        stack.push(dir);
-      else if (item.operator === ")")
-        dir = stack.pop() ?? dir;
-      continue;
-    }
-    let start = 0;
-    while (start < item.words.length && !item.words[start]?.quoted && RESERVED.has(item.words[start]?.value ?? ""))
-      start++;
-    const words = item.words.slice(start);
-    const values = words.map((word) => word.value);
-    const { argv, directories } = commandWords(values);
-    if (argv.length === 0)
-      continue;
-    const offset = values.length - argv.length;
-    const aligned = argv.every((value, i) => values[offset + i] === value);
-    const expands = argv.map((_, i) => !aligned || words[offset + i]?.expands === true);
-    if (expands[0])
-      continue;
-    const environment = new Map;
-    for (const value of values.slice(0, aligned ? offset : values.length)) {
-      if (!ASSIGNMENT2.test(value))
-        continue;
-      const eq = value.indexOf("=");
-      environment.set(value.slice(0, eq), value.slice(eq + 1));
-    }
-    let here = dir;
-    for (const directory of directories)
-      here = resolve(here, directory);
-    argv[0] = base(argv[0]);
-    if (argv[0] === "cd") {
-      const target = argv[1];
-      if (argv.length === 2 && target !== undefined && target !== "-" && !expands[1])
-        dir = resolve(dir, target);
-      continue;
-    }
-    out.push({ argv, expands, cwd: here, environment, hereDocuments: item.hereDocuments });
-  }
-  return out;
-}
-var GIT_VALUED = new Set(["-C", "-c", "--config-env", "--git-dir", "--work-tree"]);
-var GIT_FLAGS = new Set([
-  "--no-pager",
-  "--paginate",
-  "--no-optional-locks",
-  "--no-replace-objects",
-  "--literal-pathspecs",
-  "--glob-pathspecs",
-  "--noglob-pathspecs",
-  "--icase-pathspecs",
-  "--no-advice",
-  "--bare"
-]);
-function gitInvocation(invocation) {
-  const { argv, expands } = invocation;
-  if (argv[0] !== "git" && argv[0] !== "dgit")
-    return;
-  let cwd = invocation.cwd;
-  for (let i = 1;i < argv.length; i++) {
-    const value = argv[i];
-    if (expands[i])
-      return;
-    if (GIT_VALUED.has(value)) {
-      const operand = argv[i + 1];
-      if (operand === undefined || expands[i + 1])
-        return;
-      if (value === "-C")
-        cwd = resolve(cwd, operand);
-      i++;
-      continue;
-    }
-    if (value.startsWith("-C") && value.length > 2) {
-      cwd = resolve(cwd, value.slice(2));
-      continue;
-    }
-    if (GIT_FLAGS.has(value))
-      continue;
-    if (value.startsWith("-"))
-      return;
-    return {
-      ...invocation,
-      cwd,
-      subcommand: value,
-      args: argv.slice(i + 1),
-      argExpands: expands.slice(i + 1)
-    };
-  }
-  return;
-}
-function overridden(invocation, name, processEnv) {
-  return processEnv[name] === "1" || invocation.environment.get(name) === "1";
-}
-
-// plugins/trunk-dev/shared/skip-ci.ts
-var MARKER = /\[(?:skip\s+ci|ci\s+skip|no\s+ci|skip\s+actions)\]/i;
-var SKIP_CI_ADVISORY = "trunk-dev: this command's commit/MR/PR text contains a skip-CI marker ([skip ci], [ci skip], [no ci] or [skip actions]). GitLab and GitHub skip the pipeline for it even when the marker is quoted as prose; remove the marker when CI must run.";
-function forgeText(argv) {
-  const [head, second] = argv;
-  if (head === "glab" && second === "mr")
-    return argv.slice(2);
-  if (head === "gh" && second === "pr")
-    return argv.slice(2);
-  if (head !== "git" && head !== "dgit")
-    return;
-  for (let i = 1;i < argv.length; i++) {
-    const word = argv[i];
-    if (word === "-C" || word === "-c") {
-      i++;
-      continue;
-    }
-    if (word.startsWith("-"))
-      continue;
-    return word === "commit" ? argv.slice(i + 1) : undefined;
-  }
-  return;
-}
-function skipCiAdvisory(command, cwd = "/") {
-  try {
-    for (const invocation of invocations(command, cwd)) {
-      const words = forgeText(invocation.argv);
-      if (words === undefined)
-        continue;
-      if (words.some((word) => MARKER.test(word)))
-        return SKIP_CI_ADVISORY;
-      if (invocation.hereDocuments.some((document) => MARKER.test(document.body)))
-        return SKIP_CI_ADVISORY;
-    }
-    return;
-  } catch {
-    return;
-  }
-}
-
-// plugins/trunk-dev/opencode/src/commit-gate.ts
+// plugins/trunk-dev/shared/commit-gate.ts
 import { resolve as resolve3 } from "path";
 
-// plugins/trunk-dev/opencode/src/release-repo.ts
+// plugins/trunk-dev/shared/release-repo.ts
 import { existsSync as existsSync2, readdirSync as readdirSync2, readFileSync as readFileSync2 } from "fs";
-import { resolve as resolve2 } from "path";
+import { resolve } from "path";
 var GIT_TIMEOUT_MS = 2000;
 function runGit(args, cwd) {
   try {
@@ -1544,26 +1395,135 @@ function isReleaseRepository(cwd, options) {
     const rootText = options.git(["rev-parse", "--show-toplevel"], cwd)?.trim();
     if (!rootText)
       return false;
-    const root = resolve2(rootText);
+    const root = resolve(rootText);
     const exists = options.exists ?? diskExists;
     const read = options.readFile ?? readText;
     for (const marker of RELEASE_MARKERS)
-      if (exists(resolve2(root, marker)))
+      if (exists(resolve(root, marker)))
         return true;
-    const packageJson = resolve2(root, "package.json");
+    const packageJson = resolve(root, "package.json");
     if (exists(packageJson)) {
       const parsed = JSON.parse(read(packageJson) ?? "");
       if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) && "release" in parsed)
         return true;
     }
     const list = options.list ?? ((path) => readdirSync2(path));
-    return list(root).some((name) => COMMITLINT.test(name) && exists(resolve2(root, name)));
+    return list(root).some((name) => COMMITLINT.test(name) && exists(resolve(root, name)));
   } catch {
     return false;
   }
 }
 
-// plugins/trunk-dev/opencode/src/commit-gate.ts
+// plugins/trunk-dev/shared/shell.ts
+import { resolve as resolve2 } from "path";
+var ASSIGNMENT2 = /^[A-Za-z_][A-Za-z0-9_]*=/;
+var RESERVED = new Set(["!", "if", "then", "elif", "else", "while", "until", "do"]);
+function base(word) {
+  return word.slice(word.lastIndexOf("/") + 1);
+}
+function invocations(command, cwd) {
+  const scan = scanShell(command);
+  if (!scan.complete)
+    return [];
+  const out = [];
+  const stack = [];
+  let dir = cwd;
+  for (const item of scan.items) {
+    if (item.kind === "operator") {
+      if (item.operator === "(")
+        stack.push(dir);
+      else if (item.operator === ")")
+        dir = stack.pop() ?? dir;
+      continue;
+    }
+    let start = 0;
+    while (start < item.words.length && !item.words[start]?.quoted && RESERVED.has(item.words[start]?.value ?? ""))
+      start++;
+    const words = item.words.slice(start);
+    const values = words.map((word) => word.value);
+    const { argv, directories } = commandWords(values);
+    if (argv.length === 0)
+      continue;
+    const offset = values.length - argv.length;
+    const aligned = argv.every((value, i) => values[offset + i] === value);
+    const expands = argv.map((_, i) => !aligned || words[offset + i]?.expands === true);
+    if (expands[0])
+      continue;
+    const environment = new Map;
+    for (const value of values.slice(0, aligned ? offset : values.length)) {
+      if (!ASSIGNMENT2.test(value))
+        continue;
+      const eq = value.indexOf("=");
+      environment.set(value.slice(0, eq), value.slice(eq + 1));
+    }
+    let here = dir;
+    for (const directory of directories)
+      here = resolve2(here, directory);
+    argv[0] = base(argv[0]);
+    if (argv[0] === "cd") {
+      const target = argv[1];
+      if (argv.length === 2 && target !== undefined && target !== "-" && !expands[1])
+        dir = resolve2(dir, target);
+      continue;
+    }
+    out.push({ argv, expands, cwd: here, environment, hereDocuments: item.hereDocuments });
+  }
+  return out;
+}
+var GIT_VALUED = new Set(["-C", "-c", "--config-env", "--git-dir", "--work-tree"]);
+var GIT_FLAGS = new Set([
+  "--no-pager",
+  "--paginate",
+  "--no-optional-locks",
+  "--no-replace-objects",
+  "--literal-pathspecs",
+  "--glob-pathspecs",
+  "--noglob-pathspecs",
+  "--icase-pathspecs",
+  "--no-advice",
+  "--bare"
+]);
+function gitInvocation(invocation) {
+  const { argv, expands } = invocation;
+  if (argv[0] !== "git" && argv[0] !== "dgit")
+    return;
+  let cwd = invocation.cwd;
+  for (let i = 1;i < argv.length; i++) {
+    const value = argv[i];
+    if (expands[i])
+      return;
+    if (GIT_VALUED.has(value)) {
+      const operand = argv[i + 1];
+      if (operand === undefined || expands[i + 1])
+        return;
+      if (value === "-C")
+        cwd = resolve2(cwd, operand);
+      i++;
+      continue;
+    }
+    if (value.startsWith("-C") && value.length > 2) {
+      cwd = resolve2(cwd, value.slice(2));
+      continue;
+    }
+    if (GIT_FLAGS.has(value))
+      continue;
+    if (value.startsWith("-"))
+      return;
+    return {
+      ...invocation,
+      cwd,
+      subcommand: value,
+      args: argv.slice(i + 1),
+      argExpands: expands.slice(i + 1)
+    };
+  }
+  return;
+}
+function overridden(invocation, name, processEnv) {
+  return processEnv[name] === "1" || invocation.environment.get(name) === "1";
+}
+
+// plugins/trunk-dev/shared/commit-gate.ts
 var COMMIT_OVERRIDE = "TRUNK_DEV_ALLOW_NONCONVENTIONAL_COMMIT";
 var PUSH_OVERRIDE = "TRUNK_DEV_ALLOW_MAIN_PUSH";
 var MESSAGES = {
@@ -1800,7 +1760,7 @@ function decideCommitGate(command, cwd, options = {}) {
   }
 }
 
-// plugins/trunk-dev/opencode/src/flag-cleanup.ts
+// plugins/trunk-dev/shared/flag-cleanup.ts
 import { existsSync as existsSync3, readdirSync as readdirSync3, realpathSync, statSync } from "fs";
 import { basename, dirname, join, resolve as resolve4 } from "path";
 var READ_TIMEOUT_MS = 5000;
@@ -2076,8 +2036,8 @@ function findRunner(here = import.meta.dir, env = process.env) {
   return interpreter === undefined ? undefined : { interpreter, script: resolve4(script) };
 }
 var productionRuntime = { findRunner: () => findRunner(), run: runCommand };
-function actorOf(env) {
-  return env.BEADS_ACTOR?.trim() || env.BD_ACTOR?.trim() || DEFAULT_ACTOR;
+function actorOf(env, defaultActor) {
+  return env.BEADS_ACTOR?.trim() || env.BD_ACTOR?.trim() || defaultActor;
 }
 function followUp(decision) {
   return `trunk-dev: create the feature-flag cleanup chore (required) through the shell tool: ${decision.command}`;
@@ -2096,8 +2056,8 @@ function cleanupId(stdout) {
   }
   return;
 }
-async function createCleanup(decision, store, cwd, env, runtime = productionRuntime) {
-  const actor = actorOf(env);
+async function createCleanup(decision, store, cwd, env, runtime = productionRuntime, defaultActor = DEFAULT_ACTOR) {
+  const actor = actorOf(env, defaultActor);
   const runner = runtime.findRunner();
   if (runner === undefined)
     return followUp(decision);
@@ -2123,7 +2083,7 @@ async function createCleanup(decision, store, cwd, env, runtime = productionRunt
   const id = cleanupId(result.stdout);
   return id === undefined ? `trunk-dev: cleanup chore creation completed for flag ${decision.flag}, but bd returned no readable id.` : `trunk-dev: created cleanup bead ${id} for flag ${decision.flag}, due on its removal date; close it with the flag-removal PR.`;
 }
-async function flagCleanupFollowUp(merges, env, runtime = productionRuntime) {
+async function flagCleanupFollowUp(merges, env, runtime = productionRuntime, defaultActor = DEFAULT_ACTOR) {
   const notes = [];
   for (const merge of merges) {
     const repo = await repository(merge.cwd, env, runtime.run);
@@ -2148,13 +2108,13 @@ async function flagCleanupFollowUp(merges, env, runtime = productionRuntime) {
     });
     if (decision === undefined)
       continue;
-    notes.push(await createCleanup(decision, repo.store, merge.cwd, env, runtime));
+    notes.push(await createCleanup(decision, repo.store, merge.cwd, env, runtime, defaultActor));
   }
   return notes.length === 0 ? undefined : notes.join(`
 `);
 }
 
-// plugins/trunk-dev/opencode/src/mr-advisory.ts
+// plugins/trunk-dev/shared/mr-advisory.ts
 var CONVENTIONAL_TITLE = /^[a-z]+(?:\([^)\r\n]+\))?!?: .+$/;
 var FLAG_LINE = /^Flag:\s*\S/m;
 var NO_FLAG_LINE = /^Flag:[ \t]*none\b([^\r\n]*)/im;
@@ -2309,6 +2269,46 @@ function decideMrAdvisory(command, cwd, options = {}) {
     return [...new Set(advisories)];
   } catch {
     return [];
+  }
+}
+
+// plugins/trunk-dev/shared/skip-ci.ts
+var MARKER = /\[(?:skip\s+ci|ci\s+skip|no\s+ci|skip\s+actions)\]/i;
+var SKIP_CI_ADVISORY = "trunk-dev: this command's commit/MR/PR text contains a skip-CI marker ([skip ci], [ci skip], [no ci] or [skip actions]). GitLab and GitHub skip the pipeline for it even when the marker is quoted as prose; remove the marker when CI must run.";
+function forgeText(argv) {
+  const [head, second] = argv;
+  if (head === "glab" && second === "mr")
+    return argv.slice(2);
+  if (head === "gh" && second === "pr")
+    return argv.slice(2);
+  if (head !== "git" && head !== "dgit")
+    return;
+  for (let i = 1;i < argv.length; i++) {
+    const word = argv[i];
+    if (word === "-C" || word === "-c") {
+      i++;
+      continue;
+    }
+    if (word.startsWith("-"))
+      continue;
+    return word === "commit" ? argv.slice(i + 1) : undefined;
+  }
+  return;
+}
+function skipCiAdvisory(command, cwd = "/") {
+  try {
+    for (const invocation of invocations(command, cwd)) {
+      const words = forgeText(invocation.argv);
+      if (words === undefined)
+        continue;
+      if (words.some((word) => MARKER.test(word)))
+        return SKIP_CI_ADVISORY;
+      if (invocation.hereDocuments.some((document) => MARKER.test(document.body)))
+        return SKIP_CI_ADVISORY;
+    }
+    return;
+  } catch {
+    return;
   }
 }
 

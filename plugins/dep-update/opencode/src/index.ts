@@ -1,7 +1,11 @@
+import { formatScan } from "../../shared/scan.ts"
+
+export { formatScan, type ScanSummary } from "../../shared/scan.ts"
+
 import { isAbsolute, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Plugin } from "@opencode/plugin"
-import { applyBump, type BumpRecord, researchProject, validOperands } from "@srobroek/opencode-lib/dep-bump"
+import { applyBump, researchProject, validOperands } from "@srobroek/opencode-lib/dep-bump"
 import { appendResultText } from "@srobroek/opencode-lib/shell-result"
 import { registerSkills } from "@srobroek/opencode-lib/skill-files"
 import { shellCommand } from "@srobroek/opencode-lib/tool-targets"
@@ -22,31 +26,6 @@ export { persistentScannerInstall } from "./scanner-install.ts"
 export const APPLY_ACTION = "dep_apply"
 export const SKILL_PATH = fileURLToPath(new URL("../skills/dep-update/SKILL.md", import.meta.url))
 
-const CLASS_ORDER = ["PATCH-SAFE", "MINOR-CHECK", "MAJOR-ADVISORY"]
-const REPORTED = new Set(["UNRESOLVABLE", "DISCONFIRMED", "UNCHECKED"])
-
-export type ScanSummary = { upgradable: number; skipped: number; unchecked: number }
-
-/** The dep_scan report: upgradable bumps by class and name, then everything not classified. */
-export function formatScan(records: readonly BumpRecord[], stderr: string): { text: string; summary: ScanSummary } {
-  const upgradable = records.filter((r) => r.status === "OK")
-  const lines: string[] = []
-  for (const cls of CLASS_ORDER) {
-    const bucket = upgradable.filter((r) => r.class === cls).sort((a, b) => a.name.localeCompare(b.name))
-    for (const r of bucket) lines.push(`${cls.padEnd(15)} ${r.name}  ${r.installed} -> ${r.latest}  (${r.ecosystem})`)
-  }
-  for (const r of records) {
-    if (!REPORTED.has(r.status)) continue
-    lines.push(
-      `${r.status.padEnd(15)} ${r.name}  ${r.installed} -> ${r.latest ?? "unknown"}  (${r.ecosystem}): ${r.reason ?? "not classified"}`,
-    )
-  }
-  const unchecked = records.filter((r) => r.status === "UNCHECKED").length
-  const skipped = records.length - upgradable.length - unchecked
-  lines.push(`-- ${upgradable.length} upgradable, ${skipped} current/unresolvable, ${unchecked} unchecked --`)
-  if (stderr.trim()) lines.push(stderr.trim())
-  return { text: lines.join("\n"), summary: { upgradable: upgradable.length, skipped, unchecked } }
-}
 
 /** The permission resource naming one bump. */
 export function bumpResource(name: string, version: string): string {

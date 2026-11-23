@@ -9,13 +9,13 @@ Run this skill from the repository directory before starting work, running focus
 
 ## Invocation
 
-Run `preflight.py` from this skill's base directory, with the repository as the shell tool's `workdir`:
+Use the `worktrunk_preflight` tool when available (pi), with the repository as its `path`; it runs the same checks and returns the same JSON report. Otherwise run `preflight.py` from this skill's base directory, with the repository as the shell tool's `workdir`:
 
 ```sh
 python3 <skill base directory>/preflight.py --json
 ```
 
-The script is read-only unless `--apply` is passed. `--apply` approves pending hooks when `hook-approvals` fails, then appends missing provisioning hooks to `.config/wt.toml` and rechecks both paths. `--only <id>[,<id>]` runs selected checks and treats any non-pass as a failure.
+The script is read-only unless `--apply` is passed (the tool's `apply: true`). `--apply` approves pending hooks when `hook-approvals` fails, then appends missing provisioning hooks to `.config/wt.toml` and rechecks both paths. `--only <id>[,<id>]` (the tool's `only` list) runs selected checks and treats any non-pass as a failure.
 
 ## Checks and remedies
 
@@ -31,4 +31,4 @@ The script is read-only unless `--apply` is passed. `--apply` approves pending h
 - `node-modules-integrity`: WARN means `node_modules` is partial or has a skeleton `@types/bun`; run `bun install --frozen-lockfile` and rerun the preflight.
 - `commit-generation`: WARN means generated commits make `wt merge` squash history; for worker-to-epic merges, pass `wt merge --no-squash --no-ff --stage tracked` when preserving per-commit history.
 
-Exit status is zero when no check fails. JSON output contains `ok`, a status summary, and each check's `id`, `status`, `detail`, and `fix`.
+Exit status is zero when no check fails; the tool reports the same verdict as `ok`. JSON output contains `ok`, a status summary, and each check's `id`, `status`, `detail`, and `fix`.

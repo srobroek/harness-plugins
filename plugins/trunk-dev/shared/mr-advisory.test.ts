@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { SKIP_CI_ADVISORY, skipCiAdvisory } from "../../shared/skip-ci.js";
 import { decideMrAdvisory } from "./mr-advisory.ts";
+import { SKIP_CI_ADVISORY, skipCiAdvisory } from "./skip-ci.ts";
 
 const cwd = "/repo"
 const releaseGit = (args: readonly string[]) => {
