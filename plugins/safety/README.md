@@ -160,6 +160,163 @@ A failure names the stage and the exit code, never child output. The tool retrie
 refused or timed-out 1Password approval stops the call. After the store, the tool zeroes its value
 buffers. Copies inside the runtime's pipe buffers stay out of its reach.
 
+## pi
+
+`pi/extensions/safety.js`, built from `pi-src/safety.ts`, runs these checks on pi with the modules
+in `shared/`, which the OpenCode plugin also uses. It runs after
+[cc-safety-net](https://github.com/kenryu42/cc-safety-net) 2.8.2, which blocks generic destructive
+commands and secret paths, and adds the checks cc-safety-net cannot express.
+
+Where the two overlap, both stay on. When both block a call, the first block wins and nothing breaks.
+A guard here stays on when cc-safety-net 2.8.2, at its default `standard` level, let a case of that
+guard's test corpus through. Measured against each corpus:
+
+- `indirection`: cc-safety-net let 24 of 29 through.
+- `remote-exec`: 2 of 11.
+- `force-push`: 1 of 7.
+- `sudo-destructive`: 2 of 2.
+
+### Load order
+
+pi runs `tool_call` handlers in extension load order, and the first block wins. Put cc-safety-net
+first in `packages` in `~/.pi/agent/settings.json`, and load this extension after it:
+
+```json
+{
+  "packages": ["npm:cc-safety-net@2.8.2"]
+}
+```
+
+cc-safety-net then sees each command before the close-keyword rewrite, and its blocks win over this
+extension's asks.
+
+### What each one covers
+
+| Command or data | cc-safety-net 2.8.2 | This extension |
+| --- | --- | --- |
+| `rm -rf` on root, home, the working directory or outside it, `find -delete`, `xargs`/`parallel rm -rf`, `dd`/`mkfs` on a device, `shred` | Blocks | None |
+| A destructive command on an unexpanded variable or substitution (`rm -rf "$TARGET"`) | Blocks only at the `strict` level | Blocks (`indirection`) |
+| A download piped into a shell (`curl … \| sh`) | Blocks | Blocks (`remote-exec`) |
+| A netcat exec flag (`nc -e`, `ncat --exec`) | None | Blocks (`remote-exec`) |
+| A force push without `--force-with-lease` | Blocks | Blocks (`force-push`) |
+| Mirror push, `push --delete` | Blocks | None |
+| Destructive commands under `sudo` | Unwraps `sudo` and applies its rules; `sudo chmod -R` and a temp-path `sudo rm -rf` pass | Asks (`sudo-destructive`) |
+| Secret files (`.env`, `~/.ssh`, `~/.aws`, CLI credentials), from the shell and the file tools | Blocks | None |
+| `git checkout`/`restore`/`switch` discards, `rebase --abort`, `merge --abort`, `tag -d`, `reflog delete` | Blocks | None |
+| Branch force-delete, forced worktree removal, `reset --hard`, `stash drop`, `stash clear`, `clean -f` | Blocks outright, until the six rules below are off | Asks with what git shows would be lost, or passes when git proves nothing is lost |
+| `git reflog expire`, `wt remove --force` | None | Asks the same way |
+| AI attribution in a commit message | None | Blocks (`attribution`) |
+| A worktree under `/tmp` | None | Blocks (`worktree-tmp`) |
+| The Git Defender CLI | None | Blocks (`git-defender`) |
+| `aws route53 delete-hosted-zone` without `DNS_PARENT_CHECKED=1` | None | Blocks (`dns-delegation`) |
+| History rewrites in place | None | Blocks (`history-rewrite`) |
+| Direct `op` calls and value-carrying `fnox` commands | None | Blocks (`op-guard`) |
+| A plain `git push` to a host that needs a wrapper | None | Blocks when `pushVia` is set (`push-via`) |
+| A write to a shipped migration through `edit`, `write` or a shell redirect | None | Blocks (`migration-edit`) |
+| A directory flag outside the session (`git -C`, `--prefix`, …) | None | Asks (`external-directory`) |
+| A close-keyword list in `gh pr create\|edit --body` | None | Rewrites it in `event.input.command` (`close-keywords`) |
+| A package add or install | None | Appends the vetting advisory to the result (`package-investigate`) |
+| Secret environment values in any tool result | None | Redacts them in `tool_result` |
+| Storing a secret without a shell | None | The `safety_secret_store` tool |
+
+### Asks
+
+When a check asks, pi opens `ctx.ui.confirm` with the evidence, and declining blocks the call. Some
+sessions cannot show a dialog (`ctx.hasUI` is false):
+
+- print mode
+- JSON mode
+- a child session without a UI
+
+There the call is blocked with the reason instead.
+
+`safety_secret_store` confirms three kinds of step: a config outside the session, the store, and
+each command run. It stops when a step is declined or cannot be confirmed.
+
+A check that fails internally lets the call through, as on OpenCode, with two exceptions. The
+op-guard refuses. A destruction review that fails asks, because pi has no permission rules to defer
+to.
+
+### Hand the six asks to this extension
+
+While cc-safety-net blocks these commands, its block wins and the evidence-based ask never runs. Turn
+the six rules off in the cc-safety-net user policy, `~/.cc-safety-net/policy.json` (or
+`$CC_SAFETY_NET_HOME/policy.json`). Merge the `overrides` into an existing policy:
+
+```json
+{
+  "version": 1,
+  "destructive_command_protection": {
+    "overrides": {
+      "git.branch-force-delete": "off",
+      "git.stash-drop": "off",
+      "git.stash-clear": "off",
+      "git.worktree-remove-force": "off",
+      "git.reset-hard": "off",
+      "git.clean-force": "off"
+    }
+  }
+}
+```
+
+`npx -y cc-safety-net@2.8.2 status` shows the policy cc-safety-net enforces.
+
+### Options on pi
+
+pi passes no options to an extension, so this one reads `safety.json` in pi's agent directory
+(`~/.pi/agent/safety.json`, or the same file under `PI_CODING_AGENT_DIR`). It takes the OpenCode keys
+that apply on pi:
+
+```json
+{
+  "disable": ["package-investigate"],
+  "opAllow": ["vault list"],
+  "pushVia": { "host": "github.com", "command": "dgit" },
+  "redactSecrets": true,
+  "redactNames": [],
+  "redactExclude": []
+}
+```
+
+`disable` takes these ids:
+
+- every hard-gate id in [Hard gates](#hard-gates)
+- `force-push`, `sudo-destructive` and `worktree-destruction`
+- `migration-edit` and `external-directory`
+- `close-keywords` and `package-investigate`
+
+Without the file, every check runs and `push-via` is off. An unreadable or malformed file gives the
+same defaults and a warning at session start.
+
+pi has no `external_directory` permission, so the OpenCode features that tune it have no pi
+counterpart. Their ids are not accepted on pi:
+
+- `scratch-shell`, `steering-dirs` and `skill-references`
+- `repo-worktrees`, `subagent-external-reads` and `root-external-reads`
+- `subagent-prompts`
+
+### Subagent children
+
+pi-subagents' foreground children load no ambient extensions, so a child runs without cc-safety-net
+and without this extension unless both are listed as required child extensions. Hosts register those
+through an API ([Required host extensions](https://github.com/nicobailon/pi-subagents/blob/main/docs/agents.md#required-host-extensions));
+as a user, list them in the pi-subagents setting `subagents.defaultSubagentOnlyExtensions` in
+`~/.pi/agent/settings.json`, by absolute path:
+
+```json
+{
+  "subagents": {
+    "defaultSubagentOnlyExtensions": [
+      "/Users/me/.pi/agent/npm/node_modules/cc-safety-net/dist/pi/index.js",
+      "/Users/me/src/harness-plugins/plugins/safety/pi/extensions/safety.js"
+    ]
+  }
+}
+```
+
+An agent whose frontmatter sets its own `subagentOnlyExtensions` replaces this default, so it must
+list both files itself.
+
 ## Limits
 
 If the permission review itself fails (an unexpected exception, not a handled probe timeout), safety
