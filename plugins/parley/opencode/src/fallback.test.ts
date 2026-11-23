@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import type { Question } from "../../shared/questions.ts"
 import { fromQuestionTool, RECOMMENDED_SUFFIX, toPrompt, toSubmitted, unsupported } from "./fallback.ts"
-import type { Question } from "./questions.ts"
 
 const options = [
   { id: "a", label: "Alpha", description: "first", pros: ["fast"], cons: ["lock-in"] },

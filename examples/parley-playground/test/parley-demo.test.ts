@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import path from "node:path"
-import { MAX_QUESTIONS, KINDS as PARLEY_KINDS, validateQuestions } from "../../../plugins/parley/opencode/src/questions.ts"
+import { MAX_QUESTIONS, KINDS as PARLEY_KINDS, validateQuestions } from "../../../plugins/parley/shared/questions.ts"
 import { describeError, describeResult, KINDS, kindQuestions, plan, type Samples, sections, stillOpen } from "../.opencode/plugins/parley-demo/rounds.ts"
 
 const dir = path.resolve(import.meta.dirname, "../samples")

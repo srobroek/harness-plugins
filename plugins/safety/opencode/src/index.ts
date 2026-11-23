@@ -1,42 +1,45 @@
-import { realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, resolve } from "node:path"
 import { Plugin } from "@opencode/plugin"
 import { Tool } from "@opencode/plugin/effect"
 import { appendResultText, isShellTool, leadingCdCwd, shellCall, WRITE_TOOLS } from "@srobroek/opencode-lib"
 import { hostWarn, type Warn } from "@srobroek/opencode-lib/host-log"
-import { type AskedWatchDeps, watchAsked } from "./asked-watch.ts"
-import { rewriteCloseKeywords } from "./close-keywords.ts"
-import { externalDirectories, sessionRoots, shellFlagDirectories } from "./flag-directories.ts"
-import { readConfigSnapshot, readProviderTypes } from "./fnox-config.ts"
-import { GUARD_IDS, type GuardID, type GuardOptions, hardGate } from "./guards.ts"
-import { decideToolCall, type MigrationOptions, migrationOverride } from "./migrations.ts"
-import { createPackageAdvisor } from "./package-investigate.ts"
-import { type Decision, type DecisionID, type ReviewOptions, reviewPermission } from "./permission.ts"
-import { type PushViaConfig, readPushVia } from "./push-via.ts"
-import { createRedactor, type RedactOptions, readRedactOptions } from "./redact.ts"
-import { allowWorktreeReads, createWorktreeLister, type GitRun } from "./repo-worktrees.ts"
-import { allowScratch, realRoots, scratchRoots } from "./scratch-dirs.ts"
+import { rewriteCloseKeywords } from "../../shared/close-keywords.ts"
+import { externalDirectories, sessionRoots, shellFlagDirectories } from "../../shared/flag-directories.ts"
+import { readProviderTypes } from "../../shared/fnox-config.ts"
+import { GUARD_IDS, type GuardID, type GuardOptions, hardGate } from "../../shared/guards.ts"
+import { decideToolCall, type MigrationOptions, migrationOverride } from "../../shared/migrations.ts"
+import { createPackageAdvisor } from "../../shared/package-investigate.ts"
+import { type Decision, type DecisionID, type ReviewOptions, reviewPermission } from "../../shared/permission.ts"
+import { type PushViaConfig, readPushVia } from "../../shared/push-via.ts"
+import { createRedactor, type RedactOptions, readRedactOptions } from "../../shared/redact.ts"
 import {
   COMMAND_ACTION,
-  type Destination,
-  runChild,
+  COMMAND_QUESTION,
+  displayArgv,
+  localStoreDeps,
+  SECRET_STORE_DESCRIPTION,
+  SECRET_STORE_INPUT,
   STORE_ACTION,
   type StoreDeps,
-  type StoreRequest,
+  storeResource,
   storeSecret,
-} from "./secret-store.ts"
+  stringEnv,
+} from "../../shared/secret-store.ts"
+import { type AskedWatchDeps, watchAsked } from "./asked-watch.ts"
+import { allowWorktreeReads, createWorktreeLister, type GitRun } from "./repo-worktrees.ts"
+import { allowScratch, realRoots, scratchRoots } from "./scratch-dirs.ts"
 import { allowSkillReads, listedSkills, READ_ONLY_TOOLS, skillDirectories } from "./skill-references.ts"
 import { allowSteeringReads, readSteeringDirs, steeringRoots } from "./steering-dirs.ts"
 import { denyUnanswerable, type SessionInfo, unanswerableDenial } from "./subagent-prompts.ts"
 import { allowRootReads, allowSubagentReads } from "./subagent-reads.ts"
 
-export { normalize as normalizeCloseKeywords, rewriteCloseKeywords } from "./close-keywords.ts"
-export { externalDirectories, flagDirectories, shellFlagDirectories } from "./flag-directories.ts"
-export { hardGate, MESSAGES } from "./guards.ts"
-export { decidePath as decideMigrationPath, latestMigration, migrationTarget } from "./migrations.ts"
-export { INVESTIGATE_NOTICE, packagesToInvestigate } from "./package-investigate.ts"
-export { reviewPermission } from "./permission.ts"
+export { normalize as normalizeCloseKeywords, rewriteCloseKeywords } from "../../shared/close-keywords.ts"
+export { externalDirectories, flagDirectories, shellFlagDirectories } from "../../shared/flag-directories.ts"
+export { hardGate, MESSAGES } from "../../shared/guards.ts"
+export { decidePath as decideMigrationPath, latestMigration, migrationTarget } from "../../shared/migrations.ts"
+export { INVESTIGATE_NOTICE, packagesToInvestigate } from "../../shared/package-investigate.ts"
+export { reviewPermission } from "../../shared/permission.ts"
 export {
   collectSecrets,
   createRedactor,
@@ -45,7 +48,7 @@ export {
   readRedactOptions,
   redactText,
   redactValue,
-} from "./redact.ts"
+} from "../../shared/redact.ts"
 export { allowSkillReads, skillDirectories } from "./skill-references.ts"
 export { denyUnanswerable, unanswerableMessage } from "./subagent-prompts.ts"
 export { allowRootReads, allowSubagentReads, isSecretResource, SECRET_LOCATIONS } from "./subagent-reads.ts"
@@ -96,7 +99,7 @@ export type SafetyOptions = {
 }
 
 /**
- * `{ disable: ["git-defender", …] }` turns features off; unknown ids are ignored.
+ * `{ disable: ["worktree-tmp", …] }` turns features off; unknown ids are ignored.
  * `opAllow` lists extra `op` subcommand prefixes the op-guard allows.
  * `scratchDirs: false` stops allowing the OpenCode temp folder, the project's worktree, shell-output and tool-output folders, and the session's own directory.
  * `steeringDirs` lists the directories whose files the read-only tools may read without a prompt (default
@@ -219,82 +222,11 @@ export type Overrides = {
   watch?: Pick<AskedWatchDeps, "delaysMs" | "sleep">
 }
 
-/** The model-facing schema of `safety_secret_store`; `parseRequest` checks every field again. */
-export const SECRET_STORE_INPUT = {
-  type: "object",
-  properties: {
-    name: { type: "string", pattern: "^[A-Z][A-Z0-9_]*$", description: "fnox secret name" },
-    target: {
-      type: "object",
-      description:
-        '{kind:"1password", vault, item, field?="credential", tags?, provider?} or {kind:"fnox-store", provider} (a value-store provider such as host)',
-      properties: {
-        kind: { type: "string", enum: ["1password", "fnox-store"] },
-        vault: { type: "string" },
-        item: { type: "string", description: "1Password item title; no '/'" },
-        field: { type: "string" },
-        tags: { type: "array", items: { type: "string" } },
-        provider: { type: "string", description: "fnox provider; for 1password, default the only 1Password provider" },
-      },
-      required: ["kind"],
-    },
-    generate: {
-      type: "object",
-      description: "A CSPRNG value of at least 128 bits: one of bytes (entropy) or length (characters)",
-      properties: {
-        charset: { type: "string", enum: ["hex", "base64url", "alnum", "ascii-printable"] },
-        bytes: { type: "integer" },
-        length: { type: "integer" },
-      },
-      required: ["charset"],
-    },
-    command: {
-      type: "object",
-      description: "Run argv with no shell after asking the user; runs with your permission; approve only commands you trust. Its stdout is the value",
-      properties: { argv: { type: "array", items: { type: "string" }, minItems: 1 }, cwd: { type: "string" } },
-      required: ["argv"],
-    },
-    config: { type: "string", description: "Existing fnox config file fnox gets as --config (default fnox.toml); outside the project asks first" },
-    description: { type: "string", description: "fnox secret description" },
-  },
-  required: ["name", "target"],
-  additionalProperties: false,
-} as const
-
 /** Turn an allowed secret command run into a prompt, so every run asks; a configured deny stays a deny. */
 export function confirmSecretCommand(evaluation: Evaluation): void {
   if (evaluation.action !== COMMAND_ACTION || evaluation.effect !== "allow") return
   evaluation.effect = "ask"
-  evaluation.message = `Run this command for ${STORE_ACTION}? Its stdout becomes the secret and is never shown.`
-}
-
-/** The canonical path of an existing file or directory, symlinks resolved; `undefined` when missing. */
-function canonical(path: string): string | undefined {
-  try {
-    return realpathSync(path)
-  } catch {
-    return undefined
-  }
-}
-
-/** The store permission's resource: the secret name, where its value goes and the config fnox writes. */
-export function storeResource(request: StoreRequest, destination: Destination): string {
-  const target = request.target
-  const where =
-    target.kind === "1password"
-      ? `1password ${target.vault}/${target.item}/${target.field} (fnox provider ${destination.provider})`
-      : `fnox provider ${destination.provider}`
-  return `${request.name} -> ${where} in ${destination.file}`
-}
-
-/** argv as one shell-quoted line, for the permission prompt. */
-export function displayArgv(argv: readonly string[]): string {
-  return argv.map((word) => (/^[A-Za-z0-9_@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", "'\\''")}'`)).join(" ")
-}
-
-/** The process environment with unset entries dropped, as a child's environment. */
-function stringEnv(env: NodeJS.ProcessEnv): Record<string, string> {
-  return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
+  evaluation.message = COMMAND_QUESTION
 }
 
 export function createPlugin(overrides: Overrides = {}) {
@@ -494,14 +426,7 @@ export function createPlugin(overrides: Overrides = {}) {
       const secretTool = await ctx.tool.transform((editor) => {
         editor.add({
           name: STORE_ACTION,
-          description:
-            "Store a new secret in 1Password or a fnox store without a shell: generated, or the stdout of a command you name.\n" +
-            "The value never reaches a command line, an environment, a log, an error or this result. `generate` draws from a " +
-            "CSPRNG. `command` runs argv with no shell after the user allows that run; its stdout, one trailing newline trimmed " +
-            "and at most 64 KiB, is the value. Target `1password` pipes the item JSON to `op item create --vault <vault> -`, then " +
-            "records `fnox set NAME '<item>/<field>'` with the config's 1Password provider. Target `fnox-store` pipes the value " +
-            "to `fnox set NAME --provider <p>` for a value-store provider and replaces an existing value. A failure gives the " +
-            "stage and exit code only and is not retried.",
+          description: SECRET_STORE_DESCRIPTION,
           input: SECRET_STORE_INPUT,
           execute: async (input, context) => {
             // `signal` is undefined on hosts older than OpenCode 2.3.
@@ -511,15 +436,7 @@ export function createPlugin(overrides: Overrides = {}) {
             const env = overrides.secretStore?.env ?? stringEnv(process.env)
             const home = overrides.secretStore?.home ?? homedir()
             const deps: StoreDeps = {
-              directory,
-              roots: sessionRoots(directory).map((root) => canonical(root) ?? root),
-              env,
-              home,
-              which: (bin, cwd) => Bun.which(bin, { PATH: env.PATH ?? "", cwd }),
-              realpath: canonical,
-              // A fresh read every time: the tool compares the config before and after the value is obtained.
-              snapshot: (path) => readConfigSnapshot(directory, path, home),
-              run: runChild,
+              ...localStoreDeps(directory, env, home),
               ...overrides.secretStore,
               ...(context.signal ? { signal: context.signal } : {}),
               askExternal: (external) =>

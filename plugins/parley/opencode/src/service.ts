@@ -1,29 +1,28 @@
-import { type Answer, type FileValue, normaliseAnswer, publicAnswer, type SubmittedAnswer } from "./answers.ts"
-import { visibleQuestions } from "./conditions.ts"
-import { FALLBACK_KINDS, fromQuestionTool, type Prompt, toPrompt, unsupported } from "./fallback.ts"
-import { baseMime, fileNote, summarise } from "./format.ts"
-import { fromOutbox, MAX_ATTEMPTS, messageID, type OutboxEntry, type RoundDelivery, SENT_TTL_MS } from "./outbox.ts"
-import { fromStored, type StoredRound, stale, toStored } from "./persist.ts"
-import { Presence } from "./presence.ts"
-import { coerceQuestion, type Question, validateQuestions } from "./questions.ts"
+import { type Answer, type FileValue, normaliseAnswer, publicAnswer, type SubmittedAnswer } from "../../shared/answers.ts"
+import { visibleQuestions } from "../../shared/conditions.ts"
+import { baseMime, fileNote, summarise } from "../../shared/format.ts"
+import { fromOutbox, MAX_ATTEMPTS, messageID, type OutboxEntry, type RoundDelivery, SENT_TTL_MS } from "../../shared/outbox.ts"
+import { CLOSED_TTL_MS, fromStored, type StoredRound, stale, toStored } from "../../shared/persist.ts"
+import { coerceQuestion, type Question, validateQuestions } from "../../shared/questions.ts"
 import {
   collect,
+  holdsDeadline,
   RELOADED_REASON,
   type Round,
   type RoundResult,
   Rounds,
+  rekey,
+  sameQuestions,
   TIMEOUT,
+  timeoutSeconds,
   view,
   type WaitMode,
   waitFor,
-} from "./rounds.ts"
+} from "../../shared/rounds.ts"
+import { FALLBACK_KINDS, fromQuestionTool, type Prompt, toPrompt, unsupported } from "./fallback.ts"
+import { Presence } from "./presence.ts"
 import type { RoundEvent } from "./rpc.ts"
 import { BUILTIN, fromPrompts, nativeResult, shouldTakeOver } from "./takeover.ts"
-
-export const DEFAULT_TIMEOUT_S = 1800
-export const CLOSED_TTL_MS = 30 * 60_000
-/** Timer jitter tolerated when deciding whether a timed-out call holds the round's deadline. */
-const DEADLINE_SLACK_MS = 250
 
 export interface Settings {
   /** `"question"` falls back to the built-in question tool when no TUI is attached. */
@@ -122,12 +121,6 @@ export interface WaitInput {
   readonly wait?: "all" | "any"
   readonly ids?: readonly string[]
   readonly timeout_s?: number
-}
-
-/** `timeout_s` as seconds: the default when missing, numbers sent as strings repaired, 0 for no limit. */
-export function timeoutSeconds(value: unknown): number {
-  const seconds = typeof value === "string" && value.trim() !== "" ? Number(value) : value
-  return typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds : DEFAULT_TIMEOUT_S
 }
 
 const unavailable = (reason: string): Result => ({ status: "unavailable", reason, answers: [], pending: [] })
@@ -1011,7 +1004,7 @@ export class Parley {
         }
       // A timeout closes the round like a dismissal, so the TUI takes it down and the model moves on.
       // Only the call with the latest deadline closes it; one that gave up earlier leaves it to that call.
-      const last = round.deadline === undefined || this.#now() >= round.deadline - DEADLINE_SLACK_MS
+      const last = holdsDeadline(round, this.#now())
       const closing = outcome === "aborted" ? "aborted" : outcome === "timeout" && last ? TIMEOUT : undefined
       if (closing && this.rounds.cancel(round.id, closing, this.#now()))
         await this.deps.emit({
@@ -1108,26 +1101,4 @@ export class Parley {
     }
   }
 
-}
-
-/** Whether every asked question is one the round already holds: same id, kind, title and body. */
-export function sameQuestions(held: readonly Question[], asked: readonly Question[]): boolean {
-  return asked.every((question) => {
-    const known = held.find((candidate) => candidate.id === question.id)
-    return known !== undefined && known.kind === question.kind && known.title === question.title && known.body === question.body
-  })
-}
-
-/** New ids (`q1` → `q1-2`, the next free suffix) for asked questions whose id the round already uses. */
-export function rekey(held: readonly Question[], asked: readonly Question[]): Map<string, string> {
-  const taken = new Set([...held, ...asked].map((question) => question.id))
-  const keys = new Map<string, string>()
-  for (const { id } of asked) {
-    if (!held.some((question) => question.id === id)) continue
-    let n = 2
-    while (taken.has(`${id}-${n}`)) n++
-    keys.set(id, `${id}-${n}`)
-    taken.add(`${id}-${n}`)
-  }
-  return keys
 }

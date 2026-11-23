@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test"
-import { visibleQuestions } from "./conditions.ts"
-import type { Question } from "./questions.ts"
-import { collect, Rounds, settled } from "./rounds.ts"
+import { visibleQuestions } from "../../shared/conditions.ts"
+import type { Question } from "../../shared/questions.ts"
+import { collect, Rounds, settled } from "../../shared/rounds.ts"
+import { inlineEligible } from "../../shared/tui-state.ts"
 import { Parley } from "./service.ts"
-import { inlineEligible } from "./tui-state.ts"
 
 const questions: Question[] = [
   { id: "gate", title: "Enable?", kind: "confirm" },

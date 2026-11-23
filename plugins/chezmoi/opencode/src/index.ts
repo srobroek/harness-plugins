@@ -2,9 +2,9 @@ import { fileURLToPath } from "node:url"
 import { Plugin } from "@opencode/plugin"
 import { registerSkills } from "@srobroek/opencode-lib/skill-files"
 import { isShellTool, WRITE_TOOLS } from "@srobroek/opencode-lib/tool-targets"
-import { createGuard, type GuardOptions } from "./guard.ts"
+import { createGuard, type GuardOptions } from "../../shared/guard.ts"
 
-export { createGuard, MANAGED_TTL_MS, refusal } from "./guard.ts"
+export { createGuard, MANAGED_TTL_MS, refusal } from "../../shared/guard.ts"
 
 export const SKILL_PATH = fileURLToPath(new URL("../skills/chezmoi-editor/SKILL.md", import.meta.url))
 
