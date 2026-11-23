@@ -1,3 +1,9 @@
+## ast-grep [1.3.2](https://github.com/srobroek/harness-plugins/compare/ast-grep--v1.3.1...ast-grep--v1.3.2) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
 ## ast-grep [1.3.1](https://github.com/srobroek/harness-plugins/compare/ast-grep--v1.3.0...ast-grep--v1.3.1) (2026-11-23)
 
 ### Bug Fixes

@@ -4,13 +4,13 @@
 | Plugin | Version | Category | Scope | Harnesses |
 | --- | --- | --- | --- | --- |
 | agent-coder | 0.12.1 | development | global | opencode, pi |
-| agent-efficiency | 0.14.2 | development | global | opencode |
-| agent-mechanic | 0.8.0 | development | global | opencode, omp, pi |
-| agent-researcher | 0.10.0 | development | global | opencode, omp, pi |
-| agent-reviewer | 0.13.0 | development | global | opencode, claude, omp, pi |
-| agent-seance | 0.8.1 | development | global | opencode |
-| architecture | 0.11.0 | development | global | opencode, claude, omp, pi |
-| ast-grep | 1.3.1 | development | global | opencode, claude |
+| agent-efficiency | 0.14.3 | development | global | opencode |
+| agent-mechanic | 0.8.1 | development | global | opencode, omp, pi |
+| agent-researcher | 0.10.1 | development | global | opencode, omp, pi |
+| agent-reviewer | 0.13.1 | development | global | opencode, claude, omp, pi |
+| agent-seance | 0.8.2 | development | global | opencode |
+| architecture | 0.11.1 | development | global | opencode, claude, omp, pi |
+| ast-grep | 1.3.2 | development | global | opencode, claude |
 | autopilot | 1.3.8 | development | global | opencode |
 | aws | 0.9.0 | development | global | opencode, claude, pi |
 | beads | 0.9.0 | development | project | opencode, claude, pi |

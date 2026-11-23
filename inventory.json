@@ -37,7 +37,7 @@
     },
     {
       "name": "agent-efficiency",
-      "version": "0.14.2",
+      "version": "0.14.3",
       "description": "Cut agent tokens: run bash calls as the built-in shell tool, narrow explore to search and web tools, and trim read-only subagent prompts.",
       "category": "development",
       "harnesses": {
@@ -58,7 +58,7 @@
     },
     {
       "name": "agent-mechanic",
-      "version": "0.8.0",
+      "version": "0.8.1",
       "description": "mechanic subagent: cheap, exact mechanical edits (renames, bulk edits, formatting, moving code) that run the given check.",
       "category": "development",
       "harnesses": {
@@ -105,7 +105,7 @@
     },
     {
       "name": "agent-researcher",
-      "version": "0.10.0",
+      "version": "0.10.1",
       "description": "The researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one.",
       "category": "development",
       "harnesses": {
@@ -152,7 +152,7 @@
     },
     {
       "name": "agent-reviewer",
-      "version": "0.13.0",
+      "version": "0.13.1",
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "category": "development",
       "harnesses": {
@@ -232,7 +232,7 @@
     },
     {
       "name": "agent-seance",
-      "version": "0.8.1",
+      "version": "0.8.2",
       "description": "seance subagent and read-only seance_read tool: answer a question from a past session and its subagent transcripts.",
       "category": "development",
       "harnesses": {
@@ -255,7 +255,7 @@
     },
     {
       "name": "architecture",
-      "version": "0.11.0",
+      "version": "0.11.1",
       "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
       "category": "development",
       "harnesses": {
@@ -340,7 +340,7 @@
     },
     {
       "name": "ast-grep",
-      "version": "1.3.1",
+      "version": "1.3.2",
       "description": "Structural code search with the ast-grep CLI, plus when to use Semgrep or rust-analyzer instead.",
       "category": "development",
       "harnesses": {
