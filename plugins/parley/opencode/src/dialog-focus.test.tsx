@@ -5,9 +5,9 @@ import { type CliRenderer, EditBufferRenderable, InputRenderable, type KeyEvent,
 import { createTestRenderer, type MockInput } from "@opentui/core/testing"
 import { render } from "@opentui/solid"
 import { createMemo, createRoot, createSignal, getOwner, onCleanup, Show } from "solid-js"
+import type { RoundView } from "../../shared/rounds.ts"
 import { BASE_MODE, INPUT_MODE } from "./focus.ts"
 import { createRoundStore, InlineCard, RoundPanel } from "./panel.tsx"
-import type { RoundView } from "./rounds.ts"
 
 type Command = { readonly bind?: string | false; readonly enabled?: boolean | (() => boolean); readonly run: (input?: string, event?: KeyEvent) => unknown }
 type Layer = {

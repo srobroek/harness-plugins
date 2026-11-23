@@ -79,6 +79,42 @@ export const TIMEOUT = "timeout"
 /** Reason of the `unavailable` result a waiting call gets when the plugin reloads under it. */
 export const RELOADED_REASON = "parley reloaded; the round stays open and its answers will arrive as a message"
 
+export const DEFAULT_TIMEOUT_S = 1800
+
+/** `timeout_s` as seconds: the default when missing, numbers sent as strings repaired, 0 for no limit. */
+export function timeoutSeconds(value: unknown): number {
+  const seconds = typeof value === "string" && value.trim() !== "" ? Number(value) : value
+  return typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 0 ? seconds : DEFAULT_TIMEOUT_S
+}
+
+/** Timer jitter tolerated when deciding whether a timed-out call holds the round's deadline. */
+const DEADLINE_SLACK_MS = 250
+
+/** Whether a call that timed out now held the round's latest deadline, so its timeout closes the round. */
+export const holdsDeadline = (round: Round, now: number) => round.deadline === undefined || now >= round.deadline - DEADLINE_SLACK_MS
+
+/** Whether every asked question is one the round already holds: same id, kind, title and body. */
+export function sameQuestions(held: readonly Question[], asked: readonly Question[]): boolean {
+  return asked.every((question) => {
+    const known = held.find((candidate) => candidate.id === question.id)
+    return known !== undefined && known.kind === question.kind && known.title === question.title && known.body === question.body
+  })
+}
+
+/** New ids (`q1` → `q1-2`, the next free suffix) for asked questions whose id the round already uses. */
+export function rekey(held: readonly Question[], asked: readonly Question[]): Map<string, string> {
+  const taken = new Set([...held, ...asked].map((question) => question.id))
+  const keys = new Map<string, string>()
+  for (const { id } of asked) {
+    if (!held.some((question) => question.id === id)) continue
+    let n = 2
+    while (taken.has(`${id}-${n}`)) n++
+    keys.set(id, `${id}-${n}`)
+    taken.add(`${id}-${n}`)
+  }
+  return keys
+}
+
 /** In-memory rounds for one plugin instance, keyed by session. One open round per session. */
 export class Rounds {
   readonly #rounds = new Map<string, Round>()

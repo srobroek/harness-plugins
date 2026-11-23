@@ -8,6 +8,8 @@ import { awaitsDelivery, type Round } from "./rounds.ts"
 export const ROUND_KEY_PREFIX = "round:"
 /** Open rounds older than this are dropped at restore (their session has moved on). */
 export const OPEN_TTL_MS = 24 * 60 * 60_000
+/** Closed rounds are kept this long, so a later parley_wait still gets their last answers. */
+export const CLOSED_TTL_MS = 30 * 60_000
 
 export const roundKey = (roundID: string) => `${ROUND_KEY_PREFIX}${roundID}`
 

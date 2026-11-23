@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test"
+import type { Question } from "../../shared/questions.ts"
+import { initialDraft, keyHints, setText } from "../../shared/tui-state.ts"
 import { clipboardCommands, copyText } from "./clipboard.ts"
 import { cardText } from "./copy-text.ts"
-import type { Question } from "./questions.ts"
-import { initialDraft, keyHints, setText } from "./tui-state.ts"
 
 test("copies the current edited code, body and note as plain text", () => {
   const question: Question = { id: "code", title: "Snippet", kind: "ask_code", body: "Write it", recommended: "old()" }

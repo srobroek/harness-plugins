@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
+import type { RoundView } from "../../shared/rounds.ts"
 import { instanceChanged, reconcileRounds } from "./reconcile.ts"
-import type { RoundView } from "./rounds.ts"
 
 const view = (roundID: string): RoundView => ({ roundID, sessionID: `s_${roundID}`, number: 1, status: "open", questions: [], answers: [] })
 const entry = (roundID: string) => ({ view: view(roundID) })

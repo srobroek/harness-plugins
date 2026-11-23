@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import type { Plugin } from "@opencode/plugin"
+import type { StoredRound } from "../../shared/persist.ts"
 import plugin from "./index.ts"
-import type { StoredRound } from "./persist.ts"
 
 const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms))
 

@@ -1,8 +1,8 @@
 import { type Answer, describeAnswer, type FileValue, publicAnswer } from "./answers.ts"
+import { nativeSummary } from "./native.ts"
 import { NOTES_HINT } from "./notes.ts"
 import type { Question } from "./questions.ts"
 import { type AsMessage, RELOADED_REASON, type RoundResult } from "./rounds.ts"
-import { nativeSummary } from "./takeover.ts"
 
 export interface ToolResult extends RoundResult {
   readonly channel?: "tui" | "question"
