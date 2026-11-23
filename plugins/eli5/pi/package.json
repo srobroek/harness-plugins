@@ -1,10 +1,26 @@
 {
-  "name": "@srobroek/eli5",
+  "name": "@srobroek/pi-eli5",
   "version": "0.7.2",
   "description": "Explain a topic at five depth levels, from metaphor to frontier.",
   "keywords": [
     "pi-package"
   ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/eli5/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "skills"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "pi": {
     "skills": [
       "./skills"

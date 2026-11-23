@@ -1,10 +1,32 @@
 {
-  "name": "@srobroek/worktrunk",
+  "name": "@srobroek/pi-worktrunk-merge-policy",
   "version": "0.7.0",
   "description": "Worktrunk (wt) skills: work in linked worktrees and run deterministic preflight checks before an agent run or merge.",
   "keywords": [
     "pi-package"
   ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/worktrunk/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "extensions",
+    "skills"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
   "pi": {
     "extensions": [
       "./extensions/worktrunk.js"

@@ -1,10 +1,31 @@
 {
-  "name": "@srobroek/whats-new",
+  "name": "@srobroek/pi-whats-new",
   "version": "0.5.0",
   "description": "Research breaking changes, deprecations and new features between two versions, report-only.",
   "keywords": [
     "pi-package"
   ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/whats-new/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "agents",
+    "extensions",
+    "skills"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "peerDependencies": {
+    "typebox": "*"
+  },
   "pi": {
     "extensions": [
       "./extensions/index.js"

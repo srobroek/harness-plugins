@@ -1,0 +1,92 @@
+## aws [0.9.1](https://github.com/srobroek/harness-plugins/compare/aws--v0.9.0...aws--v0.9.1) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## aws [0.9.0](https://github.com/srobroek/harness-plugins/compare/aws--v0.8.1...aws--v0.9.0) (2026-11-23)
+
+### Features
+
+* **project:** port content plugins to Pi ([5b0d32a](https://github.com/srobroek/harness-plugins/commit/5b0d32abbe2faf67934ca1d8e3b53f9eca0cee01))
+
+## aws [0.8.1](https://github.com/srobroek/harness-plugins/compare/aws--v0.8.0...aws--v0.8.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
+## aws [0.8.0](https://github.com/srobroek/harness-plugins/compare/aws--v0.7.1...aws--v0.8.0) (2026-11-22)
+
+### Features
+
+* **delivery:** ship the orchestrator agent ([#121](https://github.com/srobroek/harness-plugins/issues/121)) ([53f33c0](https://github.com/srobroek/harness-plugins/commit/53f33c016315732220a7c87066267931ee87f514))
+
+## aws [0.7.1](https://github.com/srobroek/harness-plugins/compare/aws--v0.7.0...aws--v0.7.1) (2026-11-21)
+
+### Bug Fixes
+
+* **code-challenge:** close dogfood friction in skill, schema and validation ([043a8b3](https://github.com/srobroek/harness-plugins/commit/043a8b39057ec8fca54d09adebb0532c2154e330))
+
+# Changelog
+
+## [0.7.0](https://github.com/srobroek/opencode-plugins/compare/aws--v0.6.0...aws--v0.7.0) (2026-11-20)
+
+
+### Features
+
+* plugin scan fixes, wider agent access and the plugin-audit plugin ([9c71525](https://github.com/srobroek/opencode-plugins/commit/9c7152559776aaf80cfed9626d78bafdd845fa9a))
+
+
+### Bug Fixes
+
+* **aws:** route repository secrets to project-secrets ([d3f2e51](https://github.com/srobroek/opencode-plugins/commit/d3f2e5171218cc9bd674f16d5fbfb5db6349f9f0))
+
+
+### Refactors
+
+* **lib:** one MCP tool grant table for the tools option ([f8cc1d8](https://github.com/srobroek/opencode-plugins/commit/f8cc1d817d62b211b712d1889200f7c91f049c89))
+
+## [0.6.0](https://github.com/srobroek/opencode-plugins/compare/aws--v0.5.0...aws--v0.6.0) (2026-11-19)
+
+
+### Features
+
+* **toolchain:** prescriptive testing and quality concerns for every language ([2cbcb66](https://github.com/srobroek/opencode-plugins/commit/2cbcb66c2e4589eccf2553d324d83680744cd6d7))
+
+## [0.5.0](https://github.com/srobroek/opencode-plugins/compare/aws--v0.4.0...aws--v0.5.0) (2026-11-12)
+
+
+### Features
+
+* **quality:** OpenFeature flags with a flags.yaml, SSM or AppConfig provider; code and storage guidance ([20baffa](https://github.com/srobroek/opencode-plugins/commit/20baffae842836d814f1f5c3e2cd410c5bde0dd4))
+* **quality:** research-first engineering standards and per-language library standards for every coding agent ([09e8d46](https://github.com/srobroek/opencode-plugins/commit/09e8d461bb2b7654788a588ef6932929ff564d28))
+
+## [0.4.0](https://github.com/srobroek/opencode-plugins/compare/aws--v0.3.0...aws--v0.4.0) (2026-11-10)
+
+
+### Features
+
+* **aws:** pool the aws-pricing MCP server across directories ([64f77a0](https://github.com/srobroek/opencode-plugins/commit/64f77a05bb15c93ca0672474ed048a0a499b7564))
+
+## [0.3.0](https://github.com/srobroek/opencode-plugins/compare/aws--v0.2.0...aws--v0.3.0) (2026-10-27)
+
+
+### Features
+
+* **aws:** add the pinned AWS MCP servers in AWS projects ([5c1f8cb](https://github.com/srobroek/opencode-plugins/commit/5c1f8cb20d7a7e8668a8f3412169973d058c92e2))
+
+## [0.2.0](https://github.com/srobroek/opencode-plugins/compare/aws--v0.1.0...aws--v0.2.0) (2026-10-27)
+
+
+### Features
+
+* **aws:** add aws-guidance skill and document the AWS MCP servers ([e64c183](https://github.com/srobroek/opencode-plugins/commit/e64c183f33d4395d72222ae79cedfec3afde9a2b))
+* **lib:** carry steps and the model-role header from shipped agent files ([7538ab1](https://github.com/srobroek/opencode-plugins/commit/7538ab1a05b3071564defb2ab11ce356245c3890))
+* **lib:** honour metadata opencode/autoinvoke in shipped SKILL.md files ([881e7df](https://github.com/srobroek/opencode-plugins/commit/881e7df220095d0155b07437e733fdb795d9279b))
+* **lib:** shared review core composed into agents at build time ([d79c79b](https://github.com/srobroek/opencode-plugins/commit/d79c79b48ba09d5770c7586799f856237f3b00af))
+
+
+### Performance
+
+* shorten skill descriptions and hide pure reference skills from the listing ([51841bd](https://github.com/srobroek/opencode-plugins/commit/51841bd68ae7fe809711430fe3430b75b63e81c0))

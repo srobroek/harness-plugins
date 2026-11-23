@@ -1,0 +1,58 @@
+## dep-update [0.7.0](https://github.com/srobroek/harness-plugins/compare/dep-update--v0.6.1...dep-update--v0.7.0) (2026-11-23)
+
+### Features
+
+* **dep-update:** add pi-native dependency tools ([9f80e5d](https://github.com/srobroek/harness-plugins/commit/9f80e5dd092c045790952c47d0ca422149caf1ab))
+
+## dep-update [0.6.1](https://github.com/srobroek/harness-plugins/compare/dep-update--v0.6.0...dep-update--v0.6.1) (2026-11-21)
+
+### Bug Fixes
+
+* stop forcing confirmation prompts in delivery, dep-update, design and repomix ([fe59fa1](https://github.com/srobroek/harness-plugins/commit/fe59fa10692bc61a3d7b2b7c8eb728ee6a0050b5))
+
+# Changelog
+
+## [0.6.0](https://github.com/srobroek/opencode-plugins/compare/dep-update--v0.5.0...dep-update--v0.6.0) (2026-11-20)
+
+
+### Features
+
+* plugin scan fixes, wider agent access and the plugin-audit plugin ([9c71525](https://github.com/srobroek/opencode-plugins/commit/9c7152559776aaf80cfed9626d78bafdd845fa9a))
+
+## [0.5.0](https://github.com/srobroek/opencode-plugins/compare/dep-update--v0.4.0...dep-update--v0.5.0) (2026-11-19)
+
+
+### Features
+
+* stop long tools and their processes on ToolContext.signal ([94c0ac5](https://github.com/srobroek/opencode-plugins/commit/94c0ac59e12df53eee73d3152da8523f10148bb0))
+
+## [0.4.0](https://github.com/srobroek/opencode-plugins/compare/dep-update--v0.3.0...dep-update--v0.4.0) (2026-11-12)
+
+
+### Features
+
+* **quality:** research-first engineering standards and per-language library standards for every coding agent ([09e8d46](https://github.com/srobroek/opencode-plugins/commit/09e8d461bb2b7654788a588ef6932929ff564d28))
+
+## [0.3.0](https://github.com/srobroek/opencode-plugins/compare/dep-update--v0.2.0...dep-update--v0.3.0) (2026-11-12)
+
+
+### Features
+
+* **safety:** refuse direct 1Password reads and literal secrets in commands, pointing to fnox ([#131](https://github.com/srobroek/opencode-plugins/issues/131)) ([36cd391](https://github.com/srobroek/opencode-plugins/commit/36cd3912e954c1078b808802b069d7010d8f319f))
+
+## [0.2.0](https://github.com/srobroek/opencode-plugins/compare/dep-update--v0.1.0...dep-update--v0.2.0) (2026-10-27)
+
+
+### Features
+
+* **agent-efficiency:** run bash tool calls as the built-in shell tool ([bdca7d7](https://github.com/srobroek/opencode-plugins/commit/bdca7d779c47d9cd2cdc6db8d8a8d5f78a3ba8cc))
+* **dep-update:** port dep_scan and dep_apply from omp-plugins ([9357b9b](https://github.com/srobroek/opencode-plugins/commit/9357b9b32329d0f2b3423c5074e335eed63c2193))
+* generate Claude Code and Codex marketplaces ([59ae2a2](https://github.com/srobroek/opencode-plugins/commit/59ae2a2775ec41c30b57570f84ce7f7052a49f7f))
+* **lib:** honour metadata opencode/autoinvoke in shipped SKILL.md files ([881e7df](https://github.com/srobroek/opencode-plugins/commit/881e7df220095d0155b07437e733fdb795d9279b))
+* **lib:** register shipped agent files and content-only plugins ([df7fa53](https://github.com/srobroek/opencode-plugins/commit/df7fa53ac93f0327a1735fcf1e5c6017d0216754))
+
+
+### Performance
+
+* lead every tool description with a first line under 120 characters ([74b65d9](https://github.com/srobroek/opencode-plugins/commit/74b65d9f446fcc535320b7c320ccaf8482d594df))
+* shorten skill descriptions and hide pure reference skills from the listing ([51841bd](https://github.com/srobroek/opencode-plugins/commit/51841bd68ae7fe809711430fe3430b75b63e81c0))

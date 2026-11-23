@@ -1,10 +1,30 @@
 {
-  "name": "@srobroek/trunk-dev",
+  "name": "@srobroek/pi-trunk-dev-policy",
   "version": "0.12.1",
   "description": "Trunk-based delivery for OpenCode, Claude Code, and pi: Conventional Commit and main-push gates, skip-CI and MR/PR advisories, feature-flag cleanup beads, and release-setup skills.",
   "keywords": [
     "pi-package"
   ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/trunk-dev/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "extensions",
+    "skills"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
   "pi": {
     "extensions": [
       "./extensions/trunk-dev.js"

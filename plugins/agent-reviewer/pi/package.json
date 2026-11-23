@@ -1,10 +1,27 @@
 {
-  "name": "@srobroek/agent-reviewer",
+  "name": "@srobroek/pi-agent-reviewer",
   "version": "0.13.1",
   "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
   "keywords": [
     "pi-package"
   ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/agent-reviewer/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "agents",
+    "skills"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "pi": {
     "skills": [
       "./skills"

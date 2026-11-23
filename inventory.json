@@ -450,7 +450,8 @@
           ]
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "piName": "pi-aws-guidance"
     },
     {
       "name": "beads",
@@ -518,7 +519,8 @@
           "mcp": []
         }
       },
-      "scope": "project"
+      "scope": "project",
+      "piName": "pi-beads-enforcer"
     },
     {
       "name": "build",
@@ -565,7 +567,8 @@
           "mcp": []
         }
       },
-      "scope": "project"
+      "scope": "project",
+      "piName": "pi-external-repo-worker"
     },
     {
       "name": "chezmoi",
@@ -614,7 +617,8 @@
           "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "piName": "pi-chezmoi-editor"
     },
     {
       "name": "claude-compat",
@@ -1091,7 +1095,8 @@
           "mcp": []
         }
       },
-      "scope": "project"
+      "scope": "project",
+      "piName": "pi-user-journeys"
     },
     {
       "name": "lang-go",
@@ -1513,7 +1518,8 @@
           "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "piName": "pi-agent-modes"
     },
     {
       "name": "parley",
@@ -1547,7 +1553,8 @@
           "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "piName": "pi-parley-rounds"
     },
     {
       "name": "plugin-audit",
@@ -1707,7 +1714,8 @@
           "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "piName": "pi-code-quality"
     },
     {
       "name": "repomix",
@@ -2077,7 +2085,8 @@
           "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "piName": "pi-trunk-dev-policy"
     },
     {
       "name": "whats-new",
@@ -2170,7 +2179,8 @@
           "mcp": []
         }
       },
-      "scope": "project"
+      "scope": "project",
+      "piName": "pi-worktrunk-merge-policy"
     }
   ]
 }

@@ -13,6 +13,7 @@
       "pi"
     ],
     "scope": "global",
+    "piName": "pi-aws-guidance",
     "entries": {
       "index": "index"
     },

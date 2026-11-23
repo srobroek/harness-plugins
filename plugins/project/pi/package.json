@@ -1,10 +1,27 @@
 {
-  "name": "@srobroek/project",
+  "name": "@srobroek/pi-project",
   "version": "0.12.1",
   "description": "Project lifecycle: scaffold a project with /new-project, set up fnox and 1Password secrets, and pick an OSI-approved license.",
   "keywords": [
     "pi-package"
   ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/project/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "commands",
+    "skills"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "pi": {
     "skills": [
       "./skills"

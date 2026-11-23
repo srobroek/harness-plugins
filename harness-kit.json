@@ -12,6 +12,10 @@
     "formulas"
   ],
   "piScope": "@srobroek",
+  "piPrefix": "pi-",
+  "pi": {
+    "publish": true
+  },
   "harnesses": [
     "opencode",
     "claude",
