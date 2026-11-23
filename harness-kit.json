@@ -13,7 +13,8 @@
   ],
   "harnesses": [
     "opencode",
-    "claude"
+    "claude",
+    "omp"
   ],
   "claude": {
     "strict": true,

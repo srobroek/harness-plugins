@@ -729,6 +729,18 @@
           "tools": [],
           "extensions": [],
           "mcp": []
+        },
+        "omp": {
+          "skills": [
+            "eli5"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
         }
       },
       "scope": "global"

@@ -3,13 +3,13 @@
 
 Explain a topic at five depth levels, from metaphor to frontier.
 
-| Kind | opencode | claude |
-| --- | --- | --- |
-| skills | eli5 | eli5 |
-| agents | - | - |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | - |
-| tools | - | - |
-| extensions | index | - |
-| mcp | - | - |
+| Kind | opencode | claude | omp |
+| --- | --- | --- | --- |
+| skills | eli5 | eli5 | eli5 |
+| agents | - | - | - |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | - | - |
+| tools | - | - | - |
+| extensions | index | - | - |
+| mcp | - | - | - |
