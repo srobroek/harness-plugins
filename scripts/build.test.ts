@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
+import { isTranslatedAgentFile } from "./agent-files.ts"
 import { agentTexts, buildPlugin, composeAgents, mcpCopies, ompAgents, ompExtensionCopies, orphanAgents, readBuild, selectPlugins, stale, staleOmpAgents } from "./build.ts"
 
 const plugins = path.resolve(import.meta.dir, "../plugins")
@@ -208,6 +209,22 @@ describe("composeAgents", () => {
     const dir = plugin()
     try {
       expect(composeAgents(dir, true, read).map((output) => path.basename(output.file))).toEqual(["rev.opencode.md"])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("a pi agent variant is not treated as an OpenCode or OMP agent", () => {
+    const dir = plugin()
+    try {
+      const agents = path.join(dir, "common", "agents")
+      writeFileSync(path.join(dir, "agents.src", "rev.md"), '---\ndescription: "Reviewer"\nmode: subagent\n---\nIntro.\n{{include core}}\n')
+      writeFileSync(path.join(agents, "rev.pi.md"), "---\ntools: read\n---\nPi only")
+      expect(orphanAgents(dir, [])).toEqual([])
+      const composed = composeAgents(dir, false, read)
+      const texts = agentTexts(dir, false, composed)
+      expect([...texts.keys()]).toEqual(["rev"])
+      expect(ompAgents(dir, false, texts, composed).map((agent) => agent.id)).toEqual(["rev"])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

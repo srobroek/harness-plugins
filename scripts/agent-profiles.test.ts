@@ -94,6 +94,13 @@ for (const file of skillFiles()) {
 
 const allows = (agent: Agent, action: string, resource = "*") => permissionEffect(agent.rules, action, resource) === "allow"
 
+test("pi agent variants are excluded from OpenCode agent discovery", () => {
+  expect(isTranslatedAgentFile("agent.pi.md")).toBe(true)
+  expect(isTranslatedAgentFile("agent.omp.md")).toBe(true)
+  expect(isTranslatedAgentFile("agent.claude.md")).toBe(true)
+  expect(isTranslatedAgentFile("agent.md")).toBe(false)
+})
+
 test("the upstream table and the routers parse", () => {
   expect(upstream.has("impeccable")).toBe(true)
   expect(upstream.has("accessibility")).toBe(true)

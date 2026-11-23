@@ -1,4 +1,4 @@
-# Choosing OpenCode plugins
+<!-- OpenCode-only reference; the Pi variant is `plugins.pi.md`. -->
 
 All srobroek plugins live in https://github.com/srobroek/opencode-plugins (public).
 Pick per project; do not re-add what the host already has globally.

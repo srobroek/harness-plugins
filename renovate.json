@@ -74,7 +74,7 @@
       "description": "The repomix runner pin in the plugin source",
       "customType": "regex",
       "managerFilePatterns": [
-        "/^plugins\\/repomix\\/opencode\\/src\\/pack\\.ts$/"
+        "/^plugins\\/repomix\\/shared\\/pack\\.ts$/"
       ],
       "matchStrings": [
         "REPOMIX_VERSION = \\\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\\\""

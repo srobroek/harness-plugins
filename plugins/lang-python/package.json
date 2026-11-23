@@ -10,7 +10,8 @@
     "harnesses": [
       "opencode",
       "claude",
-      "omp"
+      "omp",
+      "pi"
     ],
     "scope": "global",
     "entries": {

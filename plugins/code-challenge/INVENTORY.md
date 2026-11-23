@@ -3,13 +3,13 @@
 
 Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.
 
-| Kind | opencode | omp |
-| --- | --- | --- |
-| skills | code-challenge | code-challenge |
-| agents | code-challenger, refactor-challenger | code-challenger, refactor-challenger |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | - |
-| tools | - | - |
-| extensions | index | index |
-| mcp | - | - |
+| Kind | opencode | omp | pi |
+| --- | --- | --- | --- |
+| skills | code-challenge | code-challenge | code-challenge |
+| agents | code-challenger, refactor-challenger | code-challenger, refactor-challenger | code-challenger, refactor-challenger |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | - | - |
+| tools | - | - | - |
+| extensions | index | index | index |
+| mcp | - | - | - |

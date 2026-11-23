@@ -6,16 +6,17 @@ import { MCP_EXCLUDED_AGENTS, MCP_TOOL_AGENTS, refusedTool } from "./agent-tools
 import { createFakeContext } from "./testing.ts"
 
 const PLUGINS = join(import.meta.dir, "../../plugins")
-const sources = (plugin: string) => {
-  const dir = join(PLUGINS, plugin, "opencode", "src")
-  try {
-    return readdirSync(dir)
-      .filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file))
-      .map((file) => readFileSync(join(dir, file), "utf8"))
-  } catch {
-    return []
-  }
-}
+/** A plugin's OpenCode sources: `opencode/src` plus the `shared/` modules its OpenCode and pi adapters both import. */
+const sources = (plugin: string) =>
+  [join(PLUGINS, plugin, "opencode", "src"), join(PLUGINS, plugin, "shared")].flatMap((dir) => {
+    try {
+      return readdirSync(dir)
+        .filter((file) => /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file))
+        .map((file) => readFileSync(join(dir, file), "utf8"))
+    } catch {
+      return []
+    }
+  })
 
 /** Tool names a plugin's source names: `*_TOOL`/`*_ACTION` constants and `name: "x_y"` literals. */
 function sourceToolNames(text: string): string[] {

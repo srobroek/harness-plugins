@@ -23,7 +23,7 @@ ASK Passing `allowCode` to `challenge_scan`, unless the user said they trust the
 
 ## Modes and depth
 
-Mode: **interactive** (default) asks through `parley_ask`, falling back to the `question` tool, at INTAKE and DECIDE. **Autonomous** (`auto`) asks only at INTAKE, and only what the arguments and the repository cannot answer; it decides by the rule in [references/decide.md](references/decide.md) and logs every choice.
+Mode: **interactive** (default) asks through `parley_ask` when it is available, otherwise through the host's question tool, otherwise as one numbered batch of questions in chat, at INTAKE and DECIDE. **Autonomous** (`auto`) asks only at INTAKE, and only what the arguments and the repository cannot answer; it decides by the rule in [references/decide.md](references/decide.md) and logs every choice.
 
 | Depth | Phases | Rules |
 |---|---|---|

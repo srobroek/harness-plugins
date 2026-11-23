@@ -9,12 +9,16 @@
     "category": "development",
     "harnesses": [
       "opencode",
-      "claude"
+      "claude",
+      "pi"
     ],
     "scope": "global",
     "claudeAgents": [],
     "entries": {
       "index": "index"
+    },
+    "piEntries": {
+      "quality": "quality"
     },
     "claude": {
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/quality"
