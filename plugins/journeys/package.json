@@ -1,6 +1,6 @@
 {
   "name": "journeys",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Author, validate and maintain user journeys: journeys.py tools, six skills and the journey-scribe and journey-validator subagents.",
   "private": true,
   "type": "module",

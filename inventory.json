@@ -58,7 +58,7 @@
     },
     {
       "name": "agent-mechanic",
-      "version": "0.7.1",
+      "version": "0.8.0",
       "description": "mechanic subagent: cheap, exact mechanical edits (renames, bulk edits, formatting, moving code) that run the given check.",
       "category": "development",
       "harnesses": {
@@ -105,7 +105,7 @@
     },
     {
       "name": "agent-researcher",
-      "version": "0.9.0",
+      "version": "0.10.0",
       "description": "The researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one.",
       "category": "development",
       "harnesses": {
@@ -152,7 +152,7 @@
     },
     {
       "name": "agent-reviewer",
-      "version": "0.12.0",
+      "version": "0.13.0",
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "category": "development",
       "harnesses": {
@@ -255,7 +255,7 @@
     },
     {
       "name": "architecture",
-      "version": "0.10.0",
+      "version": "0.11.0",
       "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
       "category": "development",
       "harnesses": {
@@ -398,7 +398,7 @@
     },
     {
       "name": "aws",
-      "version": "0.8.1",
+      "version": "0.9.0",
       "description": "AWS working guidance: route AWS tasks through the AWS MCP Server's guided skills, verify against AWS documentation, and price with the AWS Pricing MCP server.",
       "category": "development",
       "harnesses": {
@@ -502,7 +502,7 @@
     },
     {
       "name": "build",
-      "version": "0.9.0",
+      "version": "0.10.0",
       "description": "External-repository worker subagent: clone, follow the target's conventions, edit, verify, and publish only when delegated.",
       "category": "development",
       "harnesses": {
@@ -955,7 +955,7 @@
     },
     {
       "name": "journeys",
-      "version": "0.5.1",
+      "version": "0.6.0",
       "description": "Author, validate and maintain user journeys: seven skills, the journeys.py helper, and the journey-scribe and journey-validator subagents.",
       "category": "development",
       "harnesses": {
@@ -1033,7 +1033,7 @@
     },
     {
       "name": "lang-go",
-      "version": "0.8.1",
+      "version": "0.9.0",
       "description": "Go skills: build, lint, go test -race, tidy and govulncheck checks, testing and fuzzing, module and package layout, and pprof profiling.",
       "category": "development",
       "harnesses": {
@@ -1112,7 +1112,7 @@
     },
     {
       "name": "lang-python",
-      "version": "0.8.1",
+      "version": "0.9.0",
       "description": "Python skills: uv, ruff, mypy or pyright and pytest checks, testing, packaging, typing and pydantic, SQLAlchemy and Alembic, and profiling.",
       "category": "development",
       "harnesses": {
@@ -1199,7 +1199,7 @@
     },
     {
       "name": "lang-rust",
-      "version": "0.8.1",
+      "version": "0.9.0",
       "description": "Rust skills: fmt, clippy and test checks, testing with nextest, proptest and insta, crates and workspaces, CI, sqlx persistence, Tauri and profiling.",
       "category": "development",
       "harnesses": {
@@ -1290,7 +1290,7 @@
     },
     {
       "name": "lang-typescript",
-      "version": "0.9.1",
+      "version": "0.10.0",
       "description": "TypeScript and JavaScript skills: install, lint, tsc and test checks, testing, monorepo packaging, type safety and zod, and Bun and Node profiling.",
       "category": "development",
       "harnesses": {
@@ -1500,7 +1500,7 @@
     },
     {
       "name": "project",
-      "version": "0.11.1",
+      "version": "0.12.0",
       "description": "Project lifecycle: scaffold a project with /new-project, set up fnox and 1Password secrets, and pick an OSI-approved license.",
       "category": "productivity",
       "harnesses": {
@@ -1569,7 +1569,7 @@
     },
     {
       "name": "quality",
-      "version": "0.14.1",
+      "version": "0.15.0",
       "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
       "category": "development",
       "harnesses": {
@@ -1637,7 +1637,7 @@
     },
     {
       "name": "repomix",
-      "version": "0.5.1",
+      "version": "0.6.0",
       "description": "Pack a local or remote repo into one file with repomix for bulk context: external repos, module packs and version diffs.",
       "category": "development",
       "harnesses": {
@@ -1818,7 +1818,7 @@
     },
     {
       "name": "toolchain",
-      "version": "0.9.1",
+      "version": "0.10.0",
       "description": "Toolchain defaults as skills: stack, frontend, infrastructure, languages, observability, shell, Terraform, caches, background jobs and worktree coexistence.",
       "category": "development",
       "harnesses": {

@@ -1,3 +1,16 @@
+## journeys [0.6.0](https://github.com/srobroek/harness-plugins/compare/journeys--v0.5.1...journeys--v0.6.0) (2026-11-23)
+
+### Features
+
+* **journeys:** finish Pi tool adapter ([1ed7e5e](https://github.com/srobroek/harness-plugins/commit/1ed7e5ebf8b66036762dc28d62eaf29fc1a79aed))
+
+### Bug Fixes
+
+* **journeys:** keep validator hidden in generated agents ([3b2dced](https://github.com/srobroek/harness-plugins/commit/3b2dcedc238f49a5e4ce3eb1449419124e8c0779))
+* **journeys:** package Pi extension assets ([62ad390](https://github.com/srobroek/harness-plugins/commit/62ad3909c8d7f81029479154a4be35738f384c49))
+* **journeys:** resolve bundled Pi assets ([0e43d23](https://github.com/srobroek/harness-plugins/commit/0e43d23a3cf079d3db8bd6f9528377719e836f5c))
+* **journeys:** restore source agent descriptions ([4121f30](https://github.com/srobroek/harness-plugins/commit/4121f30f3c3c5810f04f85dd24631ea5ecda2c32))
+
 ## journeys [0.5.1](https://github.com/srobroek/harness-plugins/compare/journeys--v0.5.0...journeys--v0.5.1) (2026-11-23)
 
 ### Bug Fixes

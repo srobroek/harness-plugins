@@ -1,6 +1,6 @@
 {
   "name": "build",
   "description": "External-repository worker subagent: clone, follow the target's conventions, edit, verify, and publish only when delegated.",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "category": "development"
 }

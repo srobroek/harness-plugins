@@ -1,3 +1,9 @@
+## agent-mechanic [0.8.0](https://github.com/srobroek/harness-plugins/compare/agent-mechanic--v0.7.1...agent-mechanic--v0.8.0) (2026-11-23)
+
+### Features
+
+* **agent-plugins:** complete pi agent prompts ([bd49ec4](https://github.com/srobroek/harness-plugins/commit/bd49ec4a310c315702f2ce63789cda4cf345760d))
+
 ## agent-mechanic [0.7.1](https://github.com/srobroek/harness-plugins/compare/agent-mechanic--v0.7.0...agent-mechanic--v0.7.1) (2026-11-23)
 
 ### Bug Fixes

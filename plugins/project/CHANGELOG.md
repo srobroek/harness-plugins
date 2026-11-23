@@ -1,3 +1,9 @@
+## project [0.12.0](https://github.com/srobroek/harness-plugins/compare/project--v0.11.1...project--v0.12.0) (2026-11-23)
+
+### Features
+
+* **project:** port content plugins to Pi ([5b0d32a](https://github.com/srobroek/harness-plugins/commit/5b0d32abbe2faf67934ca1d8e3b53f9eca0cee01))
+
 ## project [0.11.1](https://github.com/srobroek/harness-plugins/compare/project--v0.11.0...project--v0.11.1) (2026-11-23)
 
 ### Bug Fixes

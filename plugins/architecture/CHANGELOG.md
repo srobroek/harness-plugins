@@ -1,3 +1,9 @@
+## architecture [0.11.0](https://github.com/srobroek/harness-plugins/compare/architecture--v0.10.0...architecture--v0.11.0) (2026-11-23)
+
+### Features
+
+* **agent-plugins:** complete pi agent prompts ([bd49ec4](https://github.com/srobroek/harness-plugins/commit/bd49ec4a310c315702f2ce63789cda4cf345760d))
+
 ## architecture [0.10.0](https://github.com/srobroek/harness-plugins/compare/architecture--v0.9.1...architecture--v0.10.0) (2026-11-23)
 
 ### Features
