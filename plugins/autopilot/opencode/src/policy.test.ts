@@ -231,7 +231,7 @@ describe("recordableLane", () => {
   test("a writer in a listed, linked, non-primary worktree is recorded", () => {
     expect(recordableLane(base)).toBe(true)
   })
-  test.each(["explore", "researcher", "code-reviewer", "pr-reviewer", "security-reviewer", "debug", "operator", "plan"])("a %s lane is not recorded", (agent) => {
+  test.each(["explore", "researcher", "code-reviewer", "pr-reviewer", "security-auditor", "debug", "operator", "plan"])("a %s lane is not recorded", (agent) => {
     expect(recordableLane({ ...base, agent })).toBe(false)
   })
   test("the primary checkout is not recorded, even though the project lists it", () => {
