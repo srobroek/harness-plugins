@@ -1,11 +1,11 @@
 {
   "name": "safety",
   "version": "0.14.1",
-  "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help, redaction of secret environment values from tool output, and a tool that stores a secret without a shell.",
+  "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help and redaction of secret environment values from tool output.",
   "private": true,
   "type": "module",
   "agent-plugins": {
-    "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help, redaction of secret environment values from tool output, and a tool that stores a secret without a shell.",
+    "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help and redaction of secret environment values from tool output.",
     "category": "development",
     "harnesses": [
       "opencode",
@@ -18,6 +18,12 @@
     },
     "piEntries": {
       "safety": "safety"
-    }
+    },
+    "companions": [
+      {
+        "package": "@srobroek/pi-secret-store",
+        "for": "the safety_secret_store tool that the op-guard's value refusals point to"
+      }
+    ]
   }
 }

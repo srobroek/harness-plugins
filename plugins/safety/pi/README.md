@@ -105,58 +105,11 @@ that whole repository.
 
 ## Secret-store tool
 
-`safety_secret_store({ name, target, generate | command, config?, description? })` stores a new secret
-without a shell. The value stays out of:
-
-- every command line and environment
-- logs and error messages
-- the tool result and the transcript
-
-The inputs:
-
-- `name` is the fnox secret name, `^[A-Z][A-Z0-9_]*$`.
-- `generate: { charset, bytes | length }` draws from the CSPRNG. `ascii-printable` runs from `!` to
-  `~`, with no space; the other charsets are `hex`, `base64url` and `alnum`. `bytes` asks for that much
-  entropy, and `length` asks for that many characters. A request under 128 bits fails.
-- `command: { argv, cwd? }` runs argv with no shell. Every run asks for the `safety_secret_command`
-  permission and shows argv and cwd, never output. An `allow` rule becomes an `ask`, and a `deny`
-  still refuses. The value is stdout with one trailing newline trimmed. More than 64 KiB stops the
-  command. A non-zero exit fails with the exit code only. The tool discards stderr.
-- `target: { kind: "1password", vault, item, field?, tags?, provider? }` pipes the item JSON on stdin
-  to `op item create --vault=<vault> -`. The item is an API Credential with a concealed `credential`
-  field. Next the tool runs `fnox set --provider=<p> -- NAME '<item>/<field>'`. The provider is the
-  named one, or the only provider that the config file and the global config define as `1password`.
-  When the provider is
-  uncertain, the tool fails before it runs anything. When the provider's configured vault is not
-  `vault`, or is uncertain, the reference is the full `op://<vault>/<item>/<field>`.
-- `target: { kind: "fnox-store", provider }` pipes the value on stdin to `fnox set --provider=<p> -- NAME`.
-  fnox reads a piped value when it gets no VALUE argument. The tool accepts only a provider that the
-  op-guard rule counts as a value store. It refuses a value with whitespace at either end, since fnox
-  trims it. This target replaces an existing value.
-- `config` names the fnox config file, `fnox.toml` in the session directory by default. The file must
-  exist. The tool resolves it with symlinks followed and passes the canonical path as
-  `fnox --config=<path>`, so fnox loads only that file and the global config.
-
-The config file pins where the value goes:
-
-1. A file outside the session directory and its repository asks for the `external_directory`
-   permission, the same way the host's file tools ask. A symlink inside the project that points
-   outside counts as outside.
-2. The tool reads the config file and the global config once and checks the provider against those
-   bytes.
-3. It asks for the `safety_secret_store` permission. The resource and the metadata name the secret,
-   the target, the provider and the canonical config path.
-4. It obtains the value. A command's process group is killed once the command exits.
-5. It reads the config again with no cached data. When the digest of the files (paths, symlink
-   targets, contents) differs, or the provider fails the check, the call stops and writes nothing.
-
-`op` and `fnox` must be on `PATH`. A set `FNOX_CONFIG_DIR` or `FNOX_CONFIG`, or an `XDG_CONFIG_HOME`
-other than `~/.config`, stops the call: fnox could then read a config the tool did not check. The result is `{ name, reference, stored: true }` or `{ name, provider, stored: true }`, with no
-value or length.
-
-A failure names the stage and the exit code, never child output. The tool retries nothing, so a
-refused or timed-out 1Password approval stops the call. After the store, the tool zeroes its value
-buffers. Copies inside the runtime's pipe buffers stay out of its reach.
+The op-guard refuses every shell command that carries a secret value into `op item create|edit` or
+`fnox set`, and points to the `safety_secret_store` tool instead. That tool ships in the
+[secret-store](https://github.com/srobroek/harness-plugins/tree/main/plugins/secret-store) plugin, so
+install it next to safety. Without it, a refusal names a tool the session does not have. On pi, the
+start-up check of this package names `@srobroek/pi-secret-store` while it is not installed.
 
 ## pi
 
@@ -213,7 +166,6 @@ extension's asks.
 | A close-keyword list in `gh pr create\|edit --body` | None | Rewrites it in `event.input.command` (`close-keywords`) |
 | A package add or install | None | Appends the vetting advisory to the result (`package-investigate`) |
 | Secret environment values in any tool result | None | Redacts them in `tool_result` |
-| Storing a secret without a shell | None | The `safety_secret_store` tool |
 | A redirect, `tee`, `cp`, `sed -i` or `truncate` write to `~/.zshrc`, `~/.bashrc`, `~/.profile`, `~/.zprofile` or `~/.bash_profile`, also inside `bash -c` | None | Blocks (`shell-profile`); reads pass, and a profile chezmoi manages (`chezmoi source-path` exits 0) is left to the chezmoi guard |
 | A recursive `chmod`, `chown` or `chgrp` without `sudo` on `/`, `/Users`, `/Volumes` or anything under `/System`, `/Library`, `/usr` (including `/usr/local`), `/bin`, `/sbin`, `/etc`, `/opt`, `/Applications`, `/var`, `/private` or `/cores`, outside the temp folders | Blocks only the literal top-level directories, through a local rulebook | Blocks (`system-permissions`) |
 | A fork bomb: a function that starts itself through a pipe, or twice with one in the background | Blocks only at the `strict` level | Blocks (`fork-bomb`) |
@@ -230,9 +182,6 @@ sessions cannot show a dialog (`ctx.hasUI` is false):
 - a child session without a UI
 
 There the call is blocked with the reason instead.
-
-`safety_secret_store` confirms three kinds of step: a config outside the session, the store, and
-each command run. It stops when a step is declined or cannot be confirmed.
 
 A check that fails internally lets the call through, as on OpenCode, with two exceptions. The
 op-guard refuses. A destruction review that fails asks, because pi has no permission rules to defer
@@ -330,15 +279,12 @@ prompt, which a subagent cannot answer. A probe timeout that the review handles 
 The guard catches honest mistakes in the common forms of a command and refuses the forms it cannot
 follow. It is not a sandbox against a command built to evade it. For that reason it refuses every
 value-carrying `op item create|edit` and `fnox set` from the shell. The
-[`safety_secret_store`](#secret-store-tool) tool does that work without a shell. It checks the fnox
-config again after the value is obtained, but fnox reads the file itself.
+[`safety_secret_store`](#secret-store-tool) tool does that work without a shell.
 
-The tool does not close one gap in the `command` source:
+## Works with
 
-- What can happen: the command can start a detached process (for example with `setsid`) that leaves
-  its process group. That process can change the fnox config after the recheck and before fnox reads
-  it, so fnox can use another provider.
-- Why it is accepted: the command prints the value, so it already has the value. The gap gives it
-  nothing new. Only the `command` source has this gap, since `generate` runs no command.
-- What to do: approve only commands you trust. When the secret does not come from a service, use
-  `generate`.
+This package works with these pi packages. Install them next to it.
+
+| Package | Required | For | Install |
+| --- | --- | --- | --- |
+| `@srobroek/pi-secret-store` | no | the safety_secret_store tool that the op-guard's value refusals point to | `pi install npm:@srobroek/pi-secret-store` |

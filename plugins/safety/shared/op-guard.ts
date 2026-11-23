@@ -2,12 +2,14 @@
  * The `op-guard` gate: the 1Password CLI `op` called directly, fnox commands that print secret
  * values, and shell commands that carry a secret value into `op item create|edit` or `fnox set`.
  * fnox reads 1Password through its daemon cache; a direct `op` call opens a new 1Password session
- * and prompts the user. A value goes through the `safety_secret_store` tool, which needs no shell.
+ * and prompts the user. A value goes through the secret-store plugin's `safety_secret_store` tool,
+ * which needs no shell.
  */
 
 import { homedir } from "node:os"
 import { join } from "node:path"
 import type { HereDocument, ShellWord } from "@srobroek/opencode-lib"
+import { type ProviderTypes, VALUE_STORE_TYPES } from "@srobroek/opencode-lib/fnox-config"
 import { base, type Command, hasFlag, positionals, SHELLS, walkShell, wordText } from "./shell.ts"
 
 export const OP_MESSAGE =
@@ -16,10 +18,10 @@ export const OP_MESSAGE =
 export const FNOX_DUMP_MESSAGE =
   "safety op-guard: this fnox command prints secret values into the transcript. Use `fnox check` or `fnox list` to inspect, and `fnox exec -- <cmd>` to use a value."
 
-/** The tool that stores a secret without a shell; every value-carrying refusal points to it. */
+/** The secret-store plugin's tool that stores a secret without a shell; every value-carrying refusal points to it. */
 export const SECRET_STORE_TOOL = "safety_secret_store"
 
-const USE_TOOL = `Store the secret with the \`${SECRET_STORE_TOOL}\` tool: it generates the value, or runs your command without a shell, and writes it to 1Password or a fnox store with no value in a command line, the environment or the transcript.`
+const USE_TOOL = `Store the secret with the \`${SECRET_STORE_TOOL}\` tool of the secret-store plugin: it generates the value, or runs your command without a shell, and writes it to 1Password or a fnox store with no value in a command line, the environment or the transcript.`
 
 export const LITERAL_MESSAGE = `safety op-guard: a literal secret in the command lands in the transcript. ${USE_TOOL}`
 
@@ -313,34 +315,6 @@ const SET_VALUED: ReadonlySet<string> = new Set([
   "--profile",
 ])
 
-/**
- * fnox provider types that keep a value they are given: encryption in the config (the `*-kms` types,
- * age, FIDO2, YubiKey), a local store (keychain, KeePass, password-store, gopass) or a remote store the
- * fnox docs list as written by `fnox set` (AWS Secrets Manager and Parameter Store, Azure Key Vault
- * Secrets, Google Secret Manager, Bitwarden Secrets Manager, FOKS, HashiCorp Vault). `plain` is left out (it writes the value to fnox.toml in clear text), as are the read-only types (1password and
- * the rest, where `fnox set` records the value as the item reference) and `lua`.
- */
-export const VALUE_STORE_TYPES: ReadonlySet<string> = new Set([
-  "age",
-  "fido2",
-  "yubikey",
-  "aws-kms",
-  "azure-kms",
-  "gcp-kms",
-  "keychain",
-  "keepass",
-  "password-store",
-  "gopass",
-  // Remote stores `fnox set` writes the value to; fnox.toml keeps only a reference.
-  "aws-sm",
-  "aws-ps",
-  "azure-sm",
-  "gcp-sm",
-  "bitwarden-sm",
-  "foks",
-  "vault",
-])
-
 const DIRECTORY_COMMANDS: ReadonlySet<string> = new Set(["cd", "pushd", "popd", "chdir"])
 /** Wrappers that take a directory option the walk drops from `argv`. */
 const DIRECTORY_WRAPPERS: ReadonlySet<string> = new Set(["env", "sudo", "doas", "chroot", "su", "runuser", "setpriv"])
@@ -361,9 +335,6 @@ export function changesDirectory(commands: readonly Command[]): boolean {
           command.argv.some((word) => DIRECTORY_FLAG.test(word)))),
   )
 }
-
-/** The `type` of the fnox provider `name` in the configuration that applies (or in the explicit file `config`), or `undefined` when unknown. */
-export type ProviderTypes = (name: string, config?: string) => string | undefined
 
 /** Whether a word holds an expansion, backticks or a process substitution: its value is not known from the text. */
 function expands(command: Command, at: number): boolean {

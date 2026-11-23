@@ -78,7 +78,8 @@ Loaded in every project by the global configuration. Do not add them per project
 | project-secrets | Per-project secrets with fnox and 1Password: store, use, inspect and rotate them with no value in the transcript |
 | quality | Code design and review guidance, a code-quality policy, testing standards with a test audit and its two tools, performance profiling, logic prototyping, and a read-only adversarial-challenger subagent |
 | repomix | Pack a local or remote repo into one file for bulk context with repomix: a repomix_pack tool that returns only the path and metrics, and a recipes skill |
-| safety | Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help, redaction of secret environment values from tool output, and a tool that stores a secret without a shell |
+| safety | Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help and redaction of secret environment values from tool output |
+| secret-store | A tool that stores a new secret in 1Password or a fnox store without a shell, so the value stays out of commands, logs and the transcript |
 | session | Read-only handoff from an earlier session: session_resume tool and resume-session skill |
 | statusline | omp-style status line above the OpenCode session composer |
 | subagent-worktree | Runs opted-in subagents in their own git worktree and merges their branch back with wt merge |

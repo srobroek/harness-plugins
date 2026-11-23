@@ -8,7 +8,6 @@ import { OP_MESSAGE } from "../shared/op-guard.ts"
 import { INVESTIGATE_NOTICE } from "../shared/package-investigate.ts"
 import { FORCE_PUSH_MESSAGE, SUDO_MESSAGE } from "../shared/permission.ts"
 import { createRedactor } from "../shared/redact.ts"
-import { SECRET_STORE_INPUT, STORE_ACTION } from "../shared/secret-store.ts"
 import {
   type Asker,
   createSafetyExtension,
@@ -20,7 +19,6 @@ import {
   loadPiOptions,
   NO_UI_REFUSAL,
   type PiFeatureID,
-  piStoreDeps,
   readPiOptions,
   resultPatch,
   settle,
@@ -337,25 +335,7 @@ describe("the extension", () => {
     expect(ctx.ui.notify.mock.calls[0]?.[0]).toContain("is not valid JSON")
   })
 
-  test("registers safety_secret_store, which fails closed without a dialog and runs nothing", async () => {
-    const project = join(root, "store")
-    mkdirSync(project)
-    writeFileSync(join(project, "fnox.toml"), '[providers.host]\ntype = "age"\n')
-    const run = mock(async () => ({ kind: "exited" as const, exitCode: 0 }))
-    const { tools } = load({ secretStore: { env: { PATH: "/bin" }, home: join(root, "home"), which: (bin) => `/bin/${bin}`, run } })
-    const tool = tools.get(STORE_ACTION)
-    expect(tool?.parameters).toBe(SECRET_STORE_INPUT)
-    const input = { name: "A", target: { kind: "fnox-store", provider: "host" }, generate: { charset: "hex", bytes: 16 } }
-    const outcome = await tool?.execute("t1", input, undefined, undefined, context(false, project)).catch((error: Error) => error)
-    expect(String(outcome)).toContain("cannot show a dialog; nothing was stored")
-    expect(run).not.toHaveBeenCalled()
-  })
-})
-
-describe("piStoreDeps", () => {
-  test("a declined command run throws and names the step", async () => {
-    const asker: Asker = { hasUI: true, ui: { confirm: async () => false } }
-    const deps = piStoreDeps(plain, asker, { env: {}, home: root })
-    expect(deps.askCommand(["gh", "auth", "token"], plain)).rejects.toThrow("the user declined")
+  test("registers no tool: the secret-store plugin ships safety_secret_store", () => {
+    expect(load().tools.size).toBe(0)
   })
 })

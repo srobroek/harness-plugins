@@ -1838,7 +1838,7 @@
     {
       "name": "safety",
       "version": "0.14.1",
-      "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help, redaction of secret environment values from tool output, and a tool that stores a secret without a shell.",
+      "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help and redaction of secret environment values from tool output.",
       "category": "development",
       "harnesses": {
         "opencode": {
@@ -1862,6 +1862,46 @@
           "tools": [],
           "extensions": [
             "safety"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global",
+      "companions": [
+        {
+          "package": "@srobroek/pi-secret-store",
+          "for": "the safety_secret_store tool that the op-guard's value refusals point to",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "secret-store",
+      "version": "0.1.0",
+      "description": "A tool that stores a new secret in 1Password or a fnox store without a shell, so the value stays out of commands, logs and the transcript.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "secret-store"
           ],
           "mcp": []
         }

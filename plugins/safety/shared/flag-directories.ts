@@ -6,10 +6,8 @@
  * same question.
  */
 
-import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, isAbsolute, join, resolve } from "node:path"
-import { under } from "@srobroek/opencode-lib"
 import { base, type Command, walkShell } from "./shell.ts"
 
 /** `$HOME`/`~` expand; any other expansion cannot be read statically and yields `undefined`. */
@@ -110,31 +108,4 @@ export function shellFlagDirectories(source: string, cwd: string): string[] {
   const out = new Set<string>()
   for (const command of walkShell(source).commands) for (const dir of flagDirectories(command, cwd)) out.add(dir)
   return [...out]
-}
-
-/** The nearest ancestor of `dir` (or `dir` itself) holding `.git`, or `undefined`. */
-export function repositoryRoot(dir: string): string | undefined {
-  for (let at = dir; ; at = dirname(at)) {
-    if (existsSync(join(at, ".git"))) return at
-    if (dirname(at) === at) return undefined
-  }
-}
-
-/** The directories inside which a flag directory needs no approval: the session's and its repository's. */
-export function sessionRoots(sessionDirectory: string): string[] {
-  const root = repositoryRoot(sessionDirectory)
-  return root === undefined || root === dirname(root) ? [sessionDirectory] : [sessionDirectory, root]
-}
-
-export type ExternalDirectory = { resource: string; save: string }
-
-/** The `external_directory` resources for the flag directories outside `roots`, the way OpenCode builds them for `cd`. */
-export function externalDirectories(dirs: readonly string[], roots: readonly string[]): ExternalDirectory[] {
-  const out = new Map<string, ExternalDirectory>()
-  for (const dir of dirs) {
-    if (roots.some((root) => under(dir, root))) continue
-    const resource = join(dir, "*")
-    out.set(resource, { resource, save: join(repositoryRoot(dir) ?? dir, "*") })
-  }
-  return [...out.values()]
 }

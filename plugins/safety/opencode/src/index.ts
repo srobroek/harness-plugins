@@ -1,31 +1,18 @@
-import { homedir } from "node:os"
 import { isAbsolute, resolve } from "node:path"
 import { Plugin } from "@opencode/plugin"
 import { Tool } from "@opencode/plugin/effect"
 import { appendResultText, isShellTool, leadingCdCwd, shellCall, WRITE_TOOLS } from "@srobroek/opencode-lib"
+import { externalDirectories, sessionRoots } from "@srobroek/opencode-lib/external-directories"
+import { readProviderTypes } from "@srobroek/opencode-lib/fnox-config"
 import { hostWarn, type Warn } from "@srobroek/opencode-lib/host-log"
 import { rewriteCloseKeywords } from "../../shared/close-keywords.ts"
-import { externalDirectories, sessionRoots, shellFlagDirectories } from "../../shared/flag-directories.ts"
-import { readProviderTypes } from "../../shared/fnox-config.ts"
+import { shellFlagDirectories } from "../../shared/flag-directories.ts"
 import { GUARD_IDS, type GuardID, type GuardOptions, hardGate } from "../../shared/guards.ts"
 import { decideToolCall, type MigrationOptions, migrationOverride } from "../../shared/migrations.ts"
 import { createPackageAdvisor } from "../../shared/package-investigate.ts"
 import { type Decision, type DecisionID, type ReviewOptions, reviewPermission } from "../../shared/permission.ts"
 import { type PushViaConfig, readPushVia } from "../../shared/push-via.ts"
 import { createRedactor, type RedactOptions, readRedactOptions } from "../../shared/redact.ts"
-import {
-  COMMAND_ACTION,
-  COMMAND_QUESTION,
-  displayArgv,
-  localStoreDeps,
-  SECRET_STORE_DESCRIPTION,
-  SECRET_STORE_INPUT,
-  STORE_ACTION,
-  type StoreDeps,
-  storeResource,
-  storeSecret,
-  stringEnv,
-} from "../../shared/secret-store.ts"
 import { type AskedWatchDeps, watchAsked } from "./asked-watch.ts"
 import { allowWorktreeReads, createWorktreeLister, type GitRun } from "./repo-worktrees.ts"
 import { allowScratch, realRoots, scratchRoots } from "./scratch-dirs.ts"
@@ -34,8 +21,9 @@ import { allowSteeringReads, readSteeringDirs, steeringRoots } from "./steering-
 import { denyUnanswerable, type SessionInfo, unanswerableDenial } from "./subagent-prompts.ts"
 import { allowRootReads, allowSubagentReads } from "./subagent-reads.ts"
 
+export { externalDirectories } from "@srobroek/opencode-lib/external-directories"
 export { normalize as normalizeCloseKeywords, rewriteCloseKeywords } from "../../shared/close-keywords.ts"
-export { externalDirectories, flagDirectories, shellFlagDirectories } from "../../shared/flag-directories.ts"
+export { flagDirectories, shellFlagDirectories } from "../../shared/flag-directories.ts"
 export { hardGate, MESSAGES } from "../../shared/guards.ts"
 export { decidePath as decideMigrationPath, latestMigration, migrationTarget } from "../../shared/migrations.ts"
 export { INVESTIGATE_NOTICE, packagesToInvestigate } from "../../shared/package-investigate.ts"
@@ -216,17 +204,9 @@ export type Overrides = {
   scratch?: { roots?: readonly string[] }
   steering?: { home?: string }
   worktrees?: { run?: GitRun; ttlMs?: number }
-  secretStore?: Partial<Pick<StoreDeps, "run" | "which" | "env" | "home">>
   warn?: Warn
   /** Backoff clock of the prompt watch. */
   watch?: Pick<AskedWatchDeps, "delaysMs" | "sleep">
-}
-
-/** Turn an allowed secret command run into a prompt, so every run asks; a configured deny stays a deny. */
-export function confirmSecretCommand(evaluation: Evaluation): void {
-  if (evaluation.action !== COMMAND_ACTION || evaluation.effect !== "allow") return
-  evaluation.effect = "ask"
-  evaluation.message = COMMAND_QUESTION
 }
 
 export function createPlugin(overrides: Overrides = {}) {
@@ -423,67 +403,6 @@ export function createPlugin(overrides: Overrides = {}) {
         if (notice !== undefined) event.result = appendResultText(event.result, notice)
       })
 
-      const secretTool = await ctx.tool.transform((editor) => {
-        editor.add({
-          name: STORE_ACTION,
-          description: SECRET_STORE_DESCRIPTION,
-          input: SECRET_STORE_INPUT,
-          execute: async (input, context) => {
-            // `signal` is undefined on hosts older than OpenCode 2.3.
-            if (context.signal?.aborted === true) return { content: "safety_secret_store stopped before it started; nothing was stored." }
-            const directory = await sessionDirectory(context.sessionID)
-            const source = { type: "tool" as const, messageID: context.messageID, id: context.id }
-            const env = overrides.secretStore?.env ?? stringEnv(process.env)
-            const home = overrides.secretStore?.home ?? homedir()
-            const deps: StoreDeps = {
-              ...localStoreDeps(directory, env, home),
-              ...overrides.secretStore,
-              ...(context.signal ? { signal: context.signal } : {}),
-              askExternal: (external) =>
-                ctx.permission.assert({
-                  sessionID: context.sessionID,
-                  agent: context.agent,
-                  source,
-                  action: "external_directory",
-                  resources: external.map((item) => item.resource),
-                  save: external.map((item) => item.save),
-                } as never),
-              askStore: (request, destination) => {
-                const resource = storeResource(request, destination)
-                return ctx.permission.assert({
-                  sessionID: context.sessionID,
-                  agent: context.agent,
-                  source,
-                  action: STORE_ACTION,
-                  resources: [resource],
-                  save: [resource],
-                  metadata: {
-                    name: request.name,
-                    target: request.target,
-                    provider: destination.provider,
-                    config: destination.file,
-                    source: request.source.kind,
-                  },
-                } as never)
-              },
-              askCommand: (argv, cwd) =>
-                ctx.permission.assert({
-                  sessionID: context.sessionID,
-                  agent: context.agent,
-                  source,
-                  action: COMMAND_ACTION,
-                  resources: [`${displayArgv(argv)}  (in ${cwd})`],
-                  metadata: { argv, cwd },
-                } as never),
-            }
-            const result = await storeSecret(input, deps)
-            const where = "reference" in result ? `reference ${result.reference}` : `provider ${result.provider}`
-            return { content: `Stored ${result.name} (${where}).`, metadata: result }
-          },
-        })
-      })
-      const confirmCommand = await ctx.permission.hook("evaluate", (evaluation) => confirmSecretCommand(evaluation as Evaluation))
-
       // Registered after this plugin's other evaluate hooks, so it sees the asks they leave or add.
       const sessionInfo = (sessionID: string): Promise<SessionInfo | undefined> =>
         ctx.session
@@ -596,8 +515,6 @@ export function createPlugin(overrides: Overrides = {}) {
         watching.abort()
         // Ending the iterator ends the loop above; it is not awaited, since a pending read may never settle.
         watch?.stop()
-        await confirmCommand.dispose()
-        await secretTool.dispose()
         await after.dispose()
         await repoWorktrees?.dispose()
         await steering?.dispose()

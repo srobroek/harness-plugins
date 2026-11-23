@@ -1,0 +1,11 @@
+{
+  "plugin": "safety",
+  "prerequisites": [],
+  "companions": [
+    {
+      "package": "@srobroek/pi-secret-store",
+      "for": "the safety_secret_store tool that the op-guard's value refusals point to",
+      "required": false
+    }
+  ]
+}
