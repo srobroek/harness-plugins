@@ -2,8 +2,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { createHostClipboard } from "@opentui/core"
-import type { FileValue } from "./answers.ts"
-import { mimeFor } from "./tui-state.ts"
+import type { FileValue } from "../../shared/answers.ts"
+import { mimeFor } from "../../shared/tui-state.ts"
 
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/tiff"] as const
 

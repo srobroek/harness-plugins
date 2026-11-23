@@ -3,13 +3,13 @@
 
 Ask the user rounds of typed questions in a TUI panel, with recommended answers, notes and deferrals.
 
-| Kind | opencode |
-| --- | --- |
-| skills | - |
-| agents | - |
-| commands | - |
-| rules | - |
-| hooks | - |
-| tools | - |
-| extensions | index, tui |
-| mcp | - |
+| Kind | opencode | pi |
+| --- | --- | --- |
+| skills | - | - |
+| agents | - | - |
+| commands | - | - |
+| rules | - | - |
+| hooks | - | - |
+| tools | - | - |
+| extensions | index, tui | parley |
+| mcp | - | - |

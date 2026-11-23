@@ -33,7 +33,7 @@
 | lsp | 0.5.0 | development | project | opencode |
 | model-roles | 0.11.1 | development | global | opencode |
 | modes | 1.3.0 | development | global | opencode, omp |
-| parley | 0.4.2 | development | global | opencode |
+| parley | 0.4.2 | development | global | opencode, pi |
 | plugin-audit | 0.2.0 | development | project | opencode |
 | project | 0.12.0 | productivity | global | opencode, claude, omp, pi |
 | quality | 0.15.0 | development | global | opencode, claude, pi |

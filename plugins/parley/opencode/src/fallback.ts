@@ -1,5 +1,5 @@
-import { type Answer, normaliseAnswer, type SubmittedAnswer } from "./answers.ts"
-import type { Option, Question } from "./questions.ts"
+import { type Answer, normaliseAnswer, type SubmittedAnswer } from "../../shared/answers.ts"
+import type { Option, Question } from "../../shared/questions.ts"
 
 /** Kinds the built-in `question` tool can carry without losing meaning. */
 export const FALLBACK_KINDS: ReadonlySet<string> = new Set(["pick_one", "show_options", "pick_many", "confirm", "ask_text"])

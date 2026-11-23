@@ -1,4 +1,4 @@
-import type { RoundView } from "./rounds.ts"
+import type { RoundView } from "../../shared/rounds.ts"
 
 /**
  * Merges the server's open rounds for one location into the TUI's entries. A round the server no

@@ -479,7 +479,8 @@ const PANEL_KEYS: Partial<Record<Question["kind"], string>> = {
   ask_file: "e type paths (tab completes) · ctrl+v paste",
 }
 
-function kindKeys(question: Question): string {
+/** A card's own keys, for the hint line under a round. */
+export function kindKeys(question: Question): string {
   if (isStructured(question)) return structuredKeys(question)
   if (question.kind === "slider")
     return `←/→ adjust · e type a number${question.allow_other === true ? " or your own answer" : ""}`

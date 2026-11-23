@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { describeValue, normaliseAnswer, validateValue } from "./answers.ts"
-import { type Question, recommendedValue, validateQuestions } from "./questions.ts"
+import { describeValue, normaliseAnswer, validateValue } from "../../shared/answers.ts"
+import { type Question, recommendedValue, validateQuestions } from "../../shared/questions.ts"
 import {
   canonicalHex,
   isStructured,
@@ -10,7 +10,7 @@ import {
   validateStructuredQuestion,
   validateStructuredValue,
   validTemporal,
-} from "./structured.ts"
+} from "../../shared/structured.ts"
 import { nativeAnswer } from "./takeover.ts"
 
 const items = [

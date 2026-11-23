@@ -4,14 +4,14 @@ import type { LocationRef } from "@opencode/client"
 import { Plugin } from "@opencode/plugin/tui"
 import { SyntaxStyle } from "@opentui/core"
 import { createEffect, createSignal, Show } from "solid-js"
-import type { SubmittedAnswer } from "./answers.ts"
+import type { SubmittedAnswer } from "../../shared/answers.ts"
+import type { RoundView } from "../../shared/rounds.ts"
+import { draftFromAnswer, inlineEligible } from "../../shared/tui-state.ts"
 import { createRoundStore, InlineCard, PANEL, RoundPanel } from "./panel.tsx"
 import { canAutoPresent, canCloseRoundPanel } from "./presentation.ts"
 import { instanceChanged, reconcileRounds } from "./reconcile.ts"
-import type { RoundView } from "./rounds.ts"
 import { ParleyRpc, type RoundEvent } from "./rpc.ts"
 import { type Outcome, submitRound } from "./submit.ts"
-import { draftFromAnswer, inlineEligible } from "./tui-state.ts"
 
 const HEARTBEAT_MS = 10_000
 /** When to look for the built-in form of a call handed to the built-in tool (ms since the last look). */
