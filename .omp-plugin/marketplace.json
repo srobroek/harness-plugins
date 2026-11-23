@@ -12,7 +12,7 @@
       "name": "eli5",
       "description": "Explain a topic at five depth levels, from metaphor to frontier.",
       "source": "./plugins/eli5/omp",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "category": "productivity"
     }
   ]

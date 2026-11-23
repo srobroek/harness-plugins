@@ -1,3 +1,9 @@
+## eli5 [0.7.0](https://github.com/srobroek/harness-plugins/compare/eli5--v0.6.0...eli5--v0.7.0) (2026-11-23)
+
+### Features
+
+* **eli5:** publish OMP marketplace output ([f8580b0](https://github.com/srobroek/harness-plugins/commit/f8580b002df56b70f99e2ce8159a1225c70a4de4))
+
 ## eli5 [0.6.0](https://github.com/srobroek/harness-plugins/compare/eli5--v0.5.1...eli5--v0.6.0) (2026-11-22)
 
 ### Features
