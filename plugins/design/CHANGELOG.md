@@ -1,3 +1,9 @@
+## design [0.10.1](https://github.com/srobroek/harness-plugins/compare/design--v0.10.0...design--v0.10.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## design [0.10.0](https://github.com/srobroek/harness-plugins/compare/design--v0.9.1...design--v0.10.0) (2026-11-22)
 
 ### Features
