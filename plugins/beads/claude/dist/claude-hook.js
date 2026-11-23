@@ -5276,6 +5276,11 @@ function selectStore(cwd, base, pinFor = sessionPinFor) {
 function pinnedEnvironment(cwd, base, pinFor = sessionPinFor) {
   return selectStore(cwd, base, pinFor).env;
 }
+var shellQuote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+function selectionExports(selection) {
+  const unset = selection.unset.length === 0 ? [] : [`unset ${selection.unset.join(" ")}`];
+  return [...unset, ...Object.entries(selection.set).map(([name, value]) => `export ${name}=${shellQuote(value)}`)];
+}
 
 // plugins/beads/opencode/src/claude-hook.ts
 var CONTEXT_CAP = 1e4;
@@ -5346,14 +5351,6 @@ function sessionContext(prime, advisories, cap = CONTEXT_CAP) {
     kept.pop();
   const joined = text(kept);
   return joined.length <= cap ? joined : `${joined.slice(0, cap - TRUNCATED.length)}${TRUNCATED}`;
-}
-var shellQuote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
-function pinExports(cwd, env, pinFor) {
-  return selectionExports(selectStore(cwd, env, pinFor));
-}
-function selectionExports(selection) {
-  const unset = selection.unset.length === 0 ? [] : [`unset ${selection.unset.join(" ")}`];
-  return [...unset, ...Object.entries(selection.set).map(([name, value]) => `export ${name}=${shellQuote(value)}`)];
 }
 async function sessionStart(input, deps) {
   const cwd = input.cwd ?? process.cwd();
@@ -5447,7 +5444,6 @@ export {
   claude_hook_default as default,
   hookAdmitter,
   hookBudgetMs,
-  pinExports,
   sessionContext,
   sessionStart
 };
