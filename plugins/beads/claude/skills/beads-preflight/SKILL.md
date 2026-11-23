@@ -14,7 +14,9 @@ TRIGGER
 
 ## Workflow
 
-1. Before ledger work starts in the session, run `preflight.py` from this skill's base directory, with the repository as the shell tool's `workdir`:
+1. Before ledger work starts in the session, use the `beads_preflight` tool when it is available (pi).
+   Its `only`, `include_slow`, `timeout` and `apply` parameters match the flags below.
+   Otherwise run `preflight.py` from this skill's base directory, with the repository as the shell tool's `workdir`:
    `python3 <skill base directory>/preflight.py --json`
 2. Read the JSON object. `ok` is `true` when no check has `status: "fail"`.
 3. `warn` and `skip` do not clear `ok`.
