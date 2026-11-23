@@ -3058,6 +3058,7 @@ describe("pending cleanup: one remover per worktree", () => {
       env: f.env,
       host: () => undefined,
       debounceMs: 1,
+      watch: { sleep: async () => {} },
       ...(over.maxPerPass === undefined ? {} : { maxPerPass: over.maxPerPass }),
       cleanup: { run: stripped(scripted.run), now: () => NOW + 10, bounds: over.bounds ?? HEAVY_FIXTURE_BOUNDS },
       now: () => clock,
@@ -3313,6 +3314,20 @@ describe("pending cleanup: one remover per worktree", () => {
     await h.pending.record(h.f.receipt, "ses_lead")
     await h.pending.start()
     expect(h.fake.hooks("session")).not.toContain("experimental.idle")
+    h.fake.emit({ type: "session.execution.succeeded", data: { sessionID: "ses_lead" } })
+    await h.pending.settle()
+    expect(removed(h)).toBe(true)
+    await h.finish()
+  })
+
+  test("a closed event stream is resubscribed and the next event still retries", async () => {
+    const h = await harness("pending-resubscribe", { hook: false })
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    const subscriptions = () => h.fake.calls.filter((entry) => entry.method === "event.subscribe").length
+    expect(subscriptions()).toBe(1)
+    h.fake.closeEvents()
+    while (subscriptions() < 2) await new Promise((done) => setTimeout(done, 0))
     h.fake.emit({ type: "session.execution.succeeded", data: { sessionID: "ses_lead" } })
     await h.pending.settle()
     expect(removed(h)).toBe(true)
