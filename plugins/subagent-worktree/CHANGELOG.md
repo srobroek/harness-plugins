@@ -1,3 +1,9 @@
+## subagent-worktree [0.8.3](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.8.2...subagent-worktree--v0.8.3) (2026-11-22)
+
+### Bug Fixes
+
+* **subagent-worktree:** drain dispose fully and prove local merges later ([#115](https://github.com/srobroek/harness-plugins/issues/115)) ([1d31647](https://github.com/srobroek/harness-plugins/commit/1d3164769e9c50d6622a36fc810c8d7f6ef1e7cc))
+
 ## subagent-worktree [0.8.2](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.8.1...subagent-worktree--v0.8.2) (2026-11-22)
 
 ### Bug Fixes

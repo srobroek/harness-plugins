@@ -1,3 +1,9 @@
+## model-roles [0.11.0](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.10.0...model-roles--v0.11.0) (2026-11-22)
+
+### Features
+
+* **delivery:** ship the orchestrator agent ([#121](https://github.com/srobroek/harness-plugins/issues/121)) ([53f33c0](https://github.com/srobroek/harness-plugins/commit/53f33c016315732220a7c87066267931ee87f514))
+
 ## model-roles [0.10.0](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.9.1...model-roles--v0.10.0) (2026-11-21)
 
 ### Features

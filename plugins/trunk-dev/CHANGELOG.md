@@ -1,3 +1,9 @@
+## trunk-dev [0.10.0](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.9.0...trunk-dev--v0.10.0) (2026-11-22)
+
+### Features
+
+* **delivery:** ship the orchestrator agent ([#121](https://github.com/srobroek/harness-plugins/issues/121)) ([53f33c0](https://github.com/srobroek/harness-plugins/commit/53f33c016315732220a7c87066267931ee87f514))
+
 # Changelog
 
 ## [0.9.0](https://github.com/srobroek/opencode-plugins/compare/trunk-dev--v0.8.1...trunk-dev--v0.9.0) (2026-11-20)

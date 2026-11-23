@@ -1,3 +1,9 @@
+## toolchain [0.8.0](https://github.com/srobroek/harness-plugins/compare/toolchain--v0.7.2...toolchain--v0.8.0) (2026-11-22)
+
+### Features
+
+* **delivery:** ship the orchestrator agent ([#121](https://github.com/srobroek/harness-plugins/issues/121)) ([53f33c0](https://github.com/srobroek/harness-plugins/commit/53f33c016315732220a7c87066267931ee87f514))
+
 ## toolchain [0.7.2](https://github.com/srobroek/harness-plugins/compare/toolchain--v0.7.1...toolchain--v0.7.2) (2026-11-21)
 
 ### Bug Fixes
