@@ -1,7 +1,6 @@
 ---
-description: "Design iteration: frames the problem, explores options, prototypes the riskiest, records a decision. Edits only design docs and scratch."
+description: "Design iteration: frames the problem, explores options, prototypes the riskiest, records a decision. Edits only design docs and scratch; OMP cannot enforce this path restriction."
 x-omp-model: "@architect, @slow"
-mode: primary
 steps: 120
 hidden: false
 color: "#8e4ec6"
