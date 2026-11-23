@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { MODEL_TIER_ALIASES, MODEL_TIERS } from "../lib/src/model-roles.ts"
 import { parseFrontmatter } from "./convert-agent.ts"
-import { droppedComment, OMP_ROLES, ompModel, ompTools, translateOmpAgent } from "./omp-agents.ts"
+import { droppedComment, OMP_ROLES, ompModel, ompNameConflicts, ompTools, readOnlyShell, splitOmpHints, translateOmpAgent } from "./omp-agents.ts"
 import type { Rule } from "./opencode-permissions.ts"
 
 const rule = (action: string, resource: string, effect: Rule["effect"]): Rule => ({ action, resource, effect })
@@ -66,8 +66,12 @@ describe("ompTools", () => {
     expect(ompTools([])).toEqual({ dropped: [] })
   })
 
-  test("a list without a deny-all rule throws, since OMP has no tool denylist", () => {
-    expect(() => ompTools([rule("shell", "*", "deny")], "agents/x.md")).toThrow("agents/x.md: OMP tools is an allowlist")
+  test("a list without a deny-all rule starts from OpenCode's allow-everything default", () => {
+    expect(ompTools([rule("websearch", "*", "deny"), rule("subagent", "*", "deny"), rule("skill", "*", "deny")])).toEqual({
+      tools: ["read", "grep", "ast_grep", "glob", "lsp", "edit", "write", "ast_edit", "bash", "eval"],
+      dropped: [],
+    })
+    expect(ompTools([rule("read", "*", "allow")]).spawns).toBe("*")
   })
 
   test("keeps a tool whose per-resource rules OMP cannot hold, and leaves out one only they allow", () => {
@@ -184,5 +188,107 @@ describe("translateOmpAgent", () => {
 
   test("a missing description throws", () => {
     expect(() => translateOmpAgent("x", "---\nmode: subagent\n---\nBody.\n", "agents/x.md")).toThrow("agents/x.md: description is required")
+  })
+})
+
+describe("translateOmpAgent with hints", () => {
+  const reviewer = agent([denyAll, rule("read", "*", "allow"), rule("shell", "*", "allow"), rule("shell", "git push *", "deny")], "\nReview.\n", "reviewer")
+
+  test("x-omp-model replaces the tier's roles", () => {
+    const out = translateOmpAgent("arch", reviewer, "agents/arch.md", { model: "@architect, @slow", shell: "it reads git log" })
+    expect(parseFrontmatter(out.contents).data.model).toBe("@architect, @slow")
+  })
+
+  test("a read-only agent loses bash unless x-omp-shell says why, and the comment records either way", () => {
+    const dropped = translateOmpAgent("rev", reviewer, "agents/rev.md")
+    expect(parseFrontmatter(dropped.contents).data.tools).toBe("read")
+    expect(dropped.contents.split("\n")[2]).toBe("# Read-only: bash is left out: OMP cannot limit it to read-only commands.")
+    const kept = translateOmpAgent("rev", reviewer, "agents/rev.md", { shell: "it reads the patch with git diff" })
+    expect(parseFrontmatter(kept.contents).data.tools).toBe("read, bash")
+    expect(kept.contents.split("\n")[2]).toBe("# Read-only, but keeps bash: it reads the patch with git diff")
+  })
+
+  test("x-omp-tools adds OMP tools no permission names", () => {
+    const out = translateOmpAgent("pr", agent([denyAll, rule("shell", "gh pr diff *", "allow")]), "agents/pr.md", { tools: ["github"] })
+    expect(parseFrontmatter(out.contents).data.tools).toBe("github")
+  })
+
+  test("hints that do not fit the agent throw", () => {
+    const noRules = "---\ndescription: d\n---\nBody.\n"
+    expect(() => translateOmpAgent("x", noRules, "agents/x.md", { tools: ["github"] })).toThrow("agents/x.md: x-omp-tools and x-omp-shell need a permissions list")
+    expect(() => translateOmpAgent("x", reviewer, "agents/x.md", { tools: ["read"] })).toThrow("agents/x.md: x-omp-tools repeats read")
+  })
+})
+
+describe("splitOmpHints", () => {
+  test("takes the x-omp-* lines out of the frontmatter and leaves the rest byte for byte", () => {
+    const source = '---\ndescription: d\nx-omp-model: "@plan, @slow"\nx-omp-shell: "it runs bd"\nx-omp-tools: github, todo\nmode: subagent\n---\nx-omp-model: body text stays\n'
+    expect(splitOmpHints(source, "agents.src/a.md")).toEqual({
+      source: "---\ndescription: d\nmode: subagent\n---\nx-omp-model: body text stays\n",
+      hints: { model: "@plan, @slow", shell: "it runs bd", tools: ["github", "todo"] },
+    })
+  })
+
+  test("a source without hints or frontmatter comes back unchanged", () => {
+    for (const source of ["---\ndescription: d\n---\nBody.\n", "Body only.\n"]) expect(splitOmpHints(source, "a.md")).toEqual({ source, hints: {} })
+  })
+
+  test("an unknown key, a repeat or a malformed value throws", () => {
+    const head = (lines: string) => `---\n${lines}\n---\n`
+    expect(() => splitOmpHints(head("x-omp-modle: x"), "a.md")).toThrow("a.md: unknown key x-omp-modle")
+    expect(() => splitOmpHints(head("x-omp-shell: a\nx-omp-shell: b"), "a.md")).toThrow("a.md: x-omp-shell is set twice")
+    expect(() => splitOmpHints(head('x-omp-model: "architect"'), "a.md")).toThrow('a.md: x-omp-model must list OMP roles on one line, as "@role, @role"')
+    expect(() => splitOmpHints(head("x-omp-tools:\n  - github"), "a.md")).toThrow("a.md: x-omp-tools must list distinct OMP tool names")
+    expect(() => splitOmpHints(head("x-omp-tools: github, github"), "a.md")).toThrow("a.md: x-omp-tools must list distinct OMP tool names")
+    expect(() => splitOmpHints(head("x-omp-shell: "), "a.md")).toThrow("a.md: x-omp-shell must give the reason on one line")
+  })
+})
+
+describe("readOnlyShell", () => {
+  test("leaves bash and eval out of an agent without an edit tool", () => {
+    expect(readOnlyShell(["read", "bash", "eval", "task"], undefined)).toEqual({
+      tools: ["read", "task"],
+      comment: ["# Read-only: bash and eval are left out: OMP cannot limit them to read-only commands."],
+    })
+  })
+
+  test("a reason keeps them and is recorded", () => {
+    expect(readOnlyShell(["read", "eval"], "it drives the browser")).toEqual({
+      tools: ["read", "eval"],
+      comment: ["# Read-only, but keeps eval: it drives the browser"],
+    })
+  })
+
+  test("an agent that edits, or has no shell, is untouched, and a reason on it throws", () => {
+    expect(readOnlyShell(["read", "edit", "write", "bash"], undefined)).toEqual({ tools: ["read", "edit", "write", "bash"], comment: [] })
+    expect(readOnlyShell(["read"], undefined)).toEqual({ tools: ["read"], comment: [] })
+    expect(() => readOnlyShell(["read", "edit", "bash"], "why", "agents/x.md")).toThrow("agents/x.md: x-omp-shell applies only to a read-only agent")
+    expect(() => readOnlyShell(["read"], "why", "agents/x.md")).toThrow("agents/x.md: x-omp-shell applies only to a read-only agent")
+  })
+})
+
+describe("ompNameConflicts", () => {
+  const file = (where: string, tools = "read") => `---\n# Generated by scripts/build.ts from ${where}. Do not edit.\nname: researcher\ntools: ${tools}\n---\nBody.\n`
+
+  test("copies of one agent that differ only in their source comment pass", () => {
+    expect(
+      ompNameConflicts([
+        { plugin: "agent-researcher", id: "researcher", contents: file("plugins/agent-researcher/common/agents/researcher.md") },
+        { plugin: "delivery", id: "researcher", contents: file("plugins/delivery/common/agents/researcher.md") },
+      ]),
+    ).toEqual([])
+  })
+
+  test("copies that differ otherwise, and a bundled OMP agent name, are reported", () => {
+    expect(
+      ompNameConflicts([
+        { plugin: "agent-researcher", id: "researcher", contents: file("a") },
+        { plugin: "delivery", id: "researcher", contents: file("b", "read, bash") },
+        { plugin: "agent-reviewer", id: "security-reviewer", contents: file("c") },
+      ]),
+    ).toEqual([
+      "agent-reviewer: agent security-reviewer would replace OMP's bundled security-reviewer; rename it",
+      "agent researcher: the OMP files of agent-researcher and delivery differ, and OMP loads only the first; make them match",
+    ])
   })
 })

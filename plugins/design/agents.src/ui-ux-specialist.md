@@ -1,5 +1,6 @@
 ---
 description: "Leads multi-component UI and UX work through six design phases, delegating critique; not for architecture or routine builds."
+x-omp-model: "@designer, @slow"
 mode: subagent
 steps: 150
 request:

@@ -1,5 +1,6 @@
 ---
 description: "Read-only critique of rendered surfaces for hierarchy, rhythm and generated-UI tells; spawned at CRITIQUE beside a11y-auditor."
+x-omp-shell: "it inspects the rendered surface through the eval browser"
 mode: subagent
 steps: 60
 request:

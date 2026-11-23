@@ -5,7 +5,7 @@
 #   OMP has no per-agent skill filter: allow skill(quality-*), allow skill(lang-*), allow skill(review-*)
 name: pr-reviewer
 description: "Reviews a GitHub pull request diff for code quality, security, correctness, and coverage. Read-only; returns a verdict. Not for Beads run nodes."
-tools: []
+tools: github
 model: "@challenger, @slow"
 ---
 

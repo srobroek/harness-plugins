@@ -197,6 +197,14 @@ describe("readTree, writeTree and drift", () => {
     expect(drift(tree, readTree(dir))).toEqual([])
   })
 
+  test("the build's agent translations next to the vendored agents are not drift", () => {
+    const dir = tmp()
+    const tree: Tree = new Map([["agents/cad-analyst.md", file("agent")]])
+    writeTree(dir, tree)
+    writeFileSync(path.join(dir, "common/agents/cad-analyst.omp.md"), "translated")
+    expect(drift(tree, readTree(dir))).toEqual([])
+  })
+
   test("writeTree replaces the owned directories and leaves the rest", () => {
     const dir = tmp()
     mkdirSync(path.join(dir, "common/skills/cad-old"), { recursive: true })

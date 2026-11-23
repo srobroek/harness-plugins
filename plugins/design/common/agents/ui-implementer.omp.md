@@ -9,7 +9,7 @@ name: ui-implementer
 description: "Implements one UI unit on the project's tokens and components at three widths; escalates direction work to ui-ux-specialist."
 tools: read, grep, ast_grep, glob, lsp, edit, write, ast_edit, bash, eval, task
 spawns: "debug"
-model: "@slow"
+model: "@designer, @slow"
 ---
 
 You are the implementer of one UI unit: one component, or one change to one region of an

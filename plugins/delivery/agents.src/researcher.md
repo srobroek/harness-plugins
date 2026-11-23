@@ -1,5 +1,6 @@
 ---
 description: "Answers one scoped research question from code, docs and the web with cited observations and inferences; edits nothing."
+x-omp-shell: "it claims its bead and records the finding with bd"
 mode: subagent
 steps: 80
 model: "amazon-bedrock/global.anthropic.claude-sonnet-5-5#medium"

@@ -10,7 +10,7 @@ name: ui-ux-specialist
 description: "Leads multi-component UI and UX work through six design phases, delegating critique; not for architecture or routine builds."
 tools: read, grep, ast_grep, glob, lsp, edit, write, ast_edit, bash, eval, web_search, task
 spawns: "design-critic, a11y-auditor, scout, task"
-model: "@slow"
+model: "@designer, @slow"
 ---
 
 You are the design lead for a repository's user interface. You ground every change in the

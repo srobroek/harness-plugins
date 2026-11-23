@@ -1,5 +1,6 @@
 ---
 description: "Audits SpecKit artifacts; spawn with scope drift, conflicts, or both."
+x-omp-shell: "it reads task state with bd query"
 mode: subagent
 steps: 60
 hidden: true
