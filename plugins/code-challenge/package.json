@@ -1,6 +1,6 @@
 {
   "name": "code-challenge",
-  "version": "1.5.0",
+  "version": "2.0.0",
   "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure: one skill, a /code-challenge command, phase formulas and two read-only challenger agents.",
   "private": true,
   "type": "module",
@@ -8,10 +8,15 @@
     "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
     "category": "development",
     "harnesses": [
-      "opencode"
+      "opencode",
+      "omp",
+      "pi"
     ],
     "scope": "global",
     "entries": {
+      "index": "index"
+    },
+    "piEntries": {
       "index": "index"
     }
   }

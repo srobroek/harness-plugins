@@ -43,6 +43,11 @@ set `agent.architect.model` in your config to pin one.
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/architecture/opencode'
 ```
+OMP installs the agent and skills from the generated OMP directory:
+
+```sh
+omp plugin install /path/to/harness-plugins/plugins/architecture/omp
+```
 
 Claude Code install the skills, not the agent, from this repository's
 marketplace:

@@ -37,7 +37,7 @@ const files = [...new Bun.Glob("{docs,lib,plugins}/**").scanSync({ cwd: root, do
 )
 
 /** Files that a disabling packageRule removes from every custom manager. */
-const disabled = (config.packageRules as { enabled: boolean; matchFileNames: string[] }[])
+const disabled = ((config.packageRules ?? []) as { enabled: boolean; matchFileNames: string[] }[])
   .filter((rule) => rule.enabled === false)
   .flatMap((rule) => rule.matchFileNames.map((glob) => new Bun.Glob(glob)))
 
@@ -53,7 +53,6 @@ test("custom managers select sources only, never generated copies", () => {
     for (const file of selected(manager)) {
       expect(file).not.toMatch(/^plugins\/[^/]+\/claude\//)
       expect(file).not.toMatch(/^plugins\/[^/]+\/opencode\/(skills|agents|formulas|dist)\//)
-      expect(file).not.toMatch(/^plugins\/cad\/(common|opencode\/examples)\//)
       expect(file).not.toMatch(/INVENTORY\.md$/)
       expect(file).not.toMatch(/^plugins\/[^/]+\/opencode\/\.mcp\.json$/)
     }

@@ -1,20 +1,19 @@
-import { describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
-import { createFakeContext } from "@srobroek/opencode-lib/testing"
-import { compactRanges, opencodeTempDir, PathError, readReportFile } from "./audit-util.ts"
-import { compareCoverage, detectCoverageFormat, formatCoverage, parseCoverage } from "./coverage.ts"
-import plugin from "./index.ts"
-import { parseJunit, parseJunitReport } from "./junit.ts"
-import { compareMutation, detectMutationFormat, formatMutation, parseMutation } from "./mutation.ts"
-import { BUN, GOTESTSUM, NEXTEST, PYTEST, TIMEOUTS, VITEST } from "./test-audit.fixtures.ts"
-import { compareReports, parseSummarizeInput, parseTestAuditOptions, summarizeReports } from "./test-audit.ts"
-import { formatSummary, NOISY_STDERR_LINES, type RunRecord, summarizeRuns } from "./test-repeat.ts"
+import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createFakeContext } from "@srobroek/opencode-lib/testing";
+import { compactRanges, opencodeTempDir, PathError, readReportFile } from "../../shared/audit-util.ts";
+import { compareCoverage, detectCoverageFormat, formatCoverage, parseCoverage } from "../../shared/coverage.ts";
+import { parseJunit, parseJunitReport } from "../../shared/junit.ts";
+import { compareMutation, detectMutationFormat, formatMutation, parseMutation } from "../../shared/mutation.ts";
+import { compareReports, parseSummarizeInput, parseTestAuditOptions, summarizeReports } from "../../shared/test-audit.ts";
+import { formatSummary, NOISY_STDERR_LINES, type RunRecord, summarizeRuns } from "../../shared/test-repeat.ts";
+import plugin from "./index.ts";
+import { BUN, GOTESTSUM, NEXTEST, PYTEST, TIMEOUTS, VITEST } from "./test-audit.fixtures.ts";
 
 /** A directory inside the OpenCode temp directory. */
 function scratch(): string {
-  mkdirSync(opencodeTempDir(), { recursive: true })
   return mkdtempSync(join(opencodeTempDir(), "quality-audit-"))
 }
 

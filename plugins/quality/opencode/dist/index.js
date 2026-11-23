@@ -70,7 +70,6 @@ var BUILT_IN_ACTIONS = [
 ];
 var RESERVED_TOOL_PREFIXES = [
   "autopilot_",
-  "cad_",
   "challenge_",
   "claude_",
   "dep_",
@@ -657,11 +656,14 @@ async function setupStandards(ctx, options) {
   };
 }
 
-// plugins/quality/opencode/src/audit-util.ts
+// plugins/quality/shared/audit-util.ts
 import { readFileSync as readFileSync3, realpathSync as realpathSync2, statSync } from "fs";
 import { tmpdir } from "os";
 import { isAbsolute, join as join3, relative, resolve, sep } from "path";
 var TEXT_CAP = 4000;
+function opencodeTempDir() {
+  return join3(realpathSync2(tmpdir()), "opencode");
+}
 function capText(lines, cap = TEXT_CAP) {
   const text = lines.join(`
 `);
@@ -703,10 +705,7 @@ function inside(root, target) {
 
 class PathError extends Error {
 }
-function opencodeTempDir() {
-  return join3(realpathSync2(tmpdir()), "opencode");
-}
-function reportRoots(sessionDirectory) {
+function reportRoots(sessionDirectory, temporaryDirectory = opencodeTempDir()) {
   const real = (path) => {
     try {
       return realpathSync2(path);
@@ -714,7 +713,7 @@ function reportRoots(sessionDirectory) {
       return resolve(path);
     }
   };
-  return [real(sessionDirectory), opencodeTempDir()];
+  return [real(sessionDirectory), real(temporaryDirectory)];
 }
 var MAX_REPORT_BYTES = 200 * 1024 * 1024;
 function readReportFile(sessionDirectory, path, roots = reportRoots(sessionDirectory)) {
@@ -723,13 +722,12 @@ function readReportFile(sessionDirectory, path, roots = reportRoots(sessionDirec
   try {
     real = realpathSync2(target);
   } catch {
-    const lexical = [...roots, resolve(sessionDirectory), join3(tmpdir(), "opencode")];
-    if (!lexical.some((root) => inside(root, resolve(target))))
-      throw new PathError(`${path} is outside the session and OpenCode temp directories`);
+    if (!roots.some((root) => inside(root, resolve(target))))
+      throw new PathError(`${path} is outside the session and allowed report directories`);
     throw new Error(`${path} does not exist`);
   }
   if (!roots.some((root) => inside(root, real)))
-    throw new PathError(`${path} is outside the session and OpenCode temp directories`);
+    throw new PathError(`${path} is outside the session and allowed report directories`);
   if (statSync(real).size > MAX_REPORT_BYTES)
     throw new Error(`${path} is larger than ${MAX_REPORT_BYTES / 1024 / 1024} MB`);
   return readFileSync3(real, "utf8");
@@ -4383,7 +4381,7 @@ var XMLValidator = {
   validate
 };
 
-// plugins/quality/opencode/src/coverage.ts
+// plugins/quality/shared/coverage.ts
 var normalizePath = (path, root) => {
   let p = path.trim().replaceAll("\\", "/");
   if (root !== undefined) {
@@ -4621,7 +4619,7 @@ function formatCoverage(c, maxFiles = 15) {
   return capText(lines);
 }
 
-// plugins/quality/opencode/src/junit.ts
+// plugins/quality/shared/junit.ts
 var parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "@_",
@@ -4732,7 +4730,7 @@ function parseJunitReport(xml) {
   return out;
 }
 
-// plugins/quality/opencode/src/mutation.ts
+// plugins/quality/shared/mutation.ts
 var isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 function detectMutationFormat(data) {
   if (!isObj(data))
@@ -4903,7 +4901,7 @@ function formatMutation(c) {
   return capText(lines);
 }
 
-// plugins/quality/opencode/src/test-repeat.ts
+// plugins/quality/shared/test-repeat.ts
 var NOISY_STDERR_LINES = 1000;
 var NOISY_FILE_BYTES = 5000000;
 var isShuffledMode = (mode) => mode !== undefined && /shuffle|random/i.test(mode);
@@ -5088,7 +5086,7 @@ function formatSummary(summary) {
   return capText(lines);
 }
 
-// plugins/quality/opencode/src/test-audit.ts
+// plugins/quality/shared/test-audit.ts
 var TEST_SUMMARIZE_TOOL = "quality_test_summarize";
 var TEST_COMPARE_TOOL = "quality_test_compare";
 var MAX_REPORTS = 50;
@@ -5120,12 +5118,12 @@ function parseSummarizeInput(input) {
     noisyFileBytes
   };
 }
-function summarizeReports(root, raw) {
+function summarizeReports(root, raw, temporaryDirectory = opencodeTempDir()) {
   const fail = (message) => ({ content: `${TEST_SUMMARIZE_TOOL}: ${message}`, metadata: { error: message } });
   const input = parseSummarizeInput(raw);
   if (typeof input === "string")
     return fail(input);
-  const roots = reportRoots(root);
+  const roots = reportRoots(root, temporaryDirectory);
   const records = [];
   for (const [i, path] of input.reports.entries()) {
     const record = { run: i + 1, exitCode: input.exitCodes?.[i], mode: input.modes?.[i], report: "unreadable", cases: [] };
@@ -5148,7 +5146,7 @@ function summarizeReports(root, raw) {
 }
 var COVERAGE_FORMATS = ["lcov", "cobertura", "gocover"];
 var MUTATION_FORMATS = ["mutation-testing", "cargo-mutants", "gremlins"];
-function compareReports(root, input) {
+function compareReports(root, input, temporaryDirectory = opencodeTempDir()) {
   const fail = (message) => ({ content: `${TEST_COMPARE_TOOL}: ${message}`, metadata: { error: message } });
   if (input.kind !== "coverage" && input.kind !== "mutation")
     return fail("kind must be coverage or mutation");
@@ -5158,7 +5156,7 @@ function compareReports(root, input) {
   if (input.format !== undefined && !allowed.includes(input.format))
     return fail(`format for ${input.kind} must be one of ${allowed.join(", ")}`);
   try {
-    const roots = reportRoots(root);
+    const roots = reportRoots(root, temporaryDirectory);
     const baseText = readReportFile(root, input.baseline, roots);
     const candText = readReportFile(root, input.candidate, roots);
     if (input.kind === "coverage") {
@@ -5186,6 +5184,10 @@ function compareReports(root, input) {
     return fail(error instanceof Error ? error.message : String(error));
   }
 }
+
+// plugins/quality/opencode/src/test-audit.ts
+var COVERAGE_FORMATS2 = ["lcov", "cobertura", "gocover"];
+var MUTATION_FORMATS2 = ["mutation-testing", "cargo-mutants", "gremlins"];
 async function setupTestAudit(ctx, options) {
   if (options === undefined)
     return async () => {};
@@ -5235,7 +5237,7 @@ async function setupTestAudit(ctx, options) {
           candidate: { type: "string", description: "Report after the change; same rules" },
           format: {
             type: "string",
-            enum: [...COVERAGE_FORMATS, ...MUTATION_FORMATS],
+            enum: [...COVERAGE_FORMATS2, ...MUTATION_FORMATS2],
             description: "Report format; detected when omitted"
           }
         },

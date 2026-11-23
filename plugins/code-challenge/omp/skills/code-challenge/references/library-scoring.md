@@ -1,0 +1,54 @@
+# Library scoring
+
+Phase RESEARCH, for the two library lenses: hand-rolled code that a library replaces, and the reverse (a dependency that native code or a lighter library replaces).
+
+Collect facts with `challenge_lib_facts` and `context7` for API coverage. Never score from memory.
+
+## The facts tool
+
+Input: `{ ecosystem: "npm" | "pypi" | "crates" | "go", packages: [{ name, version? }] }`, 1 to 6 packages. Pass `version` to get the OSV advisories of the version the repository uses. Output: `{ ecosystem, fetchedAt, packages[] }`, facts only and no verdict. Each package has:
+
+- `latest {version, publishedAt}`, `releases {last12Months, last24Months, monthsSinceLast}`, `deprecated`, `yanked`
+- `licence` (SPDX ids), `downloads {lastWeek, lastMonth, last90Days}`, `dependents`, `dependencies {direct, transitive}`, `size {unpackedBytes, downloadBytes}`, `types`, `modules` (npm: `esm`, `cjs` or `dual`)
+- `repo {url, stars, openIssues, openPullRequests, lastCommit, contributors, archived}`
+- `vulnerabilities {latest[], requested[]}`: OSV ids, fetched fresh on every call
+- `gates {unpatchedCve, licenceNotAllowed, failed[]}`: the two hard gates below, from the latest version's advisories and the licence allowlist
+- `missing[]`: each source that failed, as `<source>: <reason>`
+
+A field is `null` when no source gave it, and a gate is `null` when its data is missing. Treat a `null` gate as unknown, not as a pass: read the registry page or the OSV record by passing its URL to the `read` tool and cite the URL. Everything except OSV is cached for 7 days. `gates.unpatchedCve` means the latest version still carries an advisory; for the version the repository uses, compare `vulnerabilities.requested` with `vulnerabilities.latest` to see whether upgrading fixes it.
+
+Pick 2 to 4 candidates, including "keep the hand-rolled code" as a candidate. Evaluate partial adoption plus an extension over a full swap when the library covers most of the need.
+
+## Gates
+
+A candidate that trips a gate scores nothing and is listed as rejected with the reason. Only two gates exist:
+1. An unpatched CVE in the version range the repository would use (OSV record with no fixed release).
+2. A licence incompatible with the repository's own.
+
+Maintenance is a weighted signal, never a gate.
+
+## Weights
+
+Total 100, ranked fit > compat > stability > maintained > popularity > footprint > migration.
+
+| Criterion | Weight | Scores 0 to 1 by |
+|---|---|---|
+| fit | 30 | share of the needed behaviour covered, edge cases included (read the docs and issues, not the README) |
+| compat | 20 | works with the repo's runtime, language version, framework and existing dependencies |
+| stability | 15 | semver discipline, changelog quality, breaking-change history, 1.0 or later |
+| maintained | 12 | last release inside 12 months scores at least 0.5; 12 months without a release and with open unanswered security issues scores 0 |
+| popularity | 8 | downloads and dependents, relative to alternatives |
+| footprint | 8 | install size, transitive dependencies, build cost |
+| migration | 7 | call sites to change, test protection of those sites, API shape difference |
+
+`score = sum(weight * value)`. Report the per-criterion values, not only the total. A candidate beats "keep" only with a margin of at least 10 points over the existing option's score and a fit of at least 0.7. Both numbers are tunable defaults: a repository or the user may set another margin or fit floor at INTAKE, and the report then states the values it used.
+
+## Reverse direction
+
+For each direct dependency used for one or two functions, ask whether the standard library or framework now covers it, or a lighter library does. For JavaScript, check the e18e replacement lists (`@e18e/depend` reads them). Score the same way, with "keep the dependency" as the baseline.
+
+## Evidence
+
+A swap claim is `measured` only when the benchmark or install-size output is in the report. A claim from registry data is `proven` for the fact (version, licence, CVE) and `hypothesis` for the fit until the call sites were read.
+
+See `lang-*-libraries` for the repository's preferred libraries per language, and `quality-code-policy` for the rule that a dependency the user did not name needs approval.
