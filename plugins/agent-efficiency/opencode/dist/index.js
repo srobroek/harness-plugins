@@ -1778,7 +1778,8 @@ var DEFAULT_LEAN_AGENTS = [
   "code-reviewer",
   "researcher",
   "architect",
-  "speckit-sync"
+  "speckit-sync",
+  "whats-new"
 ];
 var IDENTITY = `# Your Model
 - Name: `;

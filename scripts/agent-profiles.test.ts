@@ -50,7 +50,8 @@ const PROFILES: Readonly<Record<string, Profile>> = {
   spec: { hidden: false, codeMode: ["parley", "speckit_setup", "speckit_start"], web: false },
   debug: { hidden: false, codeMode: ["worktree_create", "worktree_remove"], web: true },
   refactor: { hidden: false, codeMode: [], web: true },
-  concept: { hidden: false, codeMode: ["parley", "wire-dsl_*", "browser"], web: true },
+  concept: { hidden: false, codeMode: ["parley", "wire-dsl_*"], web: true },
+  "whats-new": { hidden: false, codeMode: [], web: true },
 }
 
 /** Agents that keep a denylist: journey-validator drives the product through MCP tools named per project. */
