@@ -86,7 +86,8 @@ var MAX_BUFFER = 10 * 1024 * 1024;
 function pluginAsset(path) {
   const candidates = [
     fileURLToPath(new URL(`../skills/${path}`, import.meta.url)),
-    fileURLToPath(new URL(`../common/skills/${path}`, import.meta.url))
+    fileURLToPath(new URL(`../common/skills/${path}`, import.meta.url)),
+    fileURLToPath(new URL(`../../common/skills/${path}`, import.meta.url))
   ];
   const asset = candidates.find(existsSync2);
   if (asset === undefined)
@@ -147,9 +148,9 @@ function journeysArgs(params, script = JOURNEYS_SCRIPT) {
     args.push("--yes");
   return args;
 }
-async function runJourneys(cwd, params, signal, runner = exec, timeoutMs = TIMEOUT_MS) {
+async function runJourneys(cwd, params, signal, runner = exec, timeoutMs = TIMEOUT_MS, script = JOURNEYS_SCRIPT) {
   try {
-    const result = await runner("python3", journeysArgs(params), {
+    const result = await runner("python3", journeysArgs(params, script), {
       cwd,
       shell: false,
       timeout: timeoutMs,
