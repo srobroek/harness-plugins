@@ -4620,6 +4620,165 @@ describe("cleanup of another repository's landing runs against that repository",
     await h.finish()
   })
 
+  /** The target's receipt directory made unreadable while `work` runs. */
+  const unreadableTarget = async (h: { f: Fixture }, work: () => Promise<unknown>) => {
+    const directory = receiptDirectory(h.f.env, h.f.receipt.repo.key)
+    chmodSync(directory, 0o000) // check-test-executables: directory permission, not a script
+    try {
+      await work()
+    } finally {
+      chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
+    }
+  }
+  /** A report of `sessionID` with a shell in the target worktree. */
+  const shellReport = (h: { f: Fixture; fake: ReturnType<typeof createFakeContext> }, sessionID: string) =>
+    h.fake.fire.session("experimental.idle", {
+      sessionID,
+      background: [{ kind: "shell", sessionID, shellID: "sh_1", command: `cd '${h.f.linked}' && make` }],
+    } as never)
+  /** Take the target worktree's disk lock as another writer; it stays held until `release`. */
+  const holdTargetLock = async (h: { f: Fixture; targetCommon: string }) => {
+    let release: () => void = () => {}
+    let acquired: () => void = () => {}
+    const taken = new Promise<void>((done) => {
+      acquired = done
+    })
+    const held = withDiskLock(h.targetCommon, h.f.linked, { sessionID: "other writer", now: () => NOW + 10 }, () =>
+      new Promise<void>((done) => {
+        release = done
+        acquired()
+      }))
+    await taken
+    return { release: () => release(), held }
+  }
+  /** Wait until `check` holds, or give up after about two seconds. */
+  const until = async (check: () => boolean) => {
+    for (let tries = 0; tries < 200 && !check(); tries++) await new Promise((done) => setTimeout(done, 10))
+    return check()
+  }
+
+  test("an older empty report that resumes after a newer report's veto leaves that veto and its hold", async () => {
+    if (process.getuid?.() === 0) return // root reads any directory
+    const h = await foreignHarness("foreign-ordered-clear", { lock: { waitMs: 30_000 } })
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    // The older report is empty and waits for the target worktree's lock to write its (empty) hold.
+    let older: Promise<unknown> | undefined
+    const { release, held } = await holdTargetLock(h)
+    try {
+      older = outsideLocks(() => h.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [] } as never))
+      expect(await until(() => h.pending.trackedReports() === 1)).toBe(true)
+      // The newer report of the same session cannot list the receipts: a veto on the target.
+      await unreadableTarget(h, () => shellReport(h, "ses_a"))
+    } finally {
+      release()
+      await held
+      await older
+    }
+    // The older empty report finished last; the newer veto still holds the target.
+    await h.idle()
+    expect(existsSync(h.f.linked)).toBe(true)
+    expect(h.pending.trackedReports()).toBe(0)
+    await h.finish()
+  })
+
+  test("an older report of running work that resumes after a newer empty report leaves no hold", async () => {
+    const h = await foreignHarness("foreign-ordered-hold", { lock: { waitMs: 30_000 } })
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    let older: Promise<unknown> | undefined
+    const { release, held } = await holdTargetLock(h)
+    let empty: Promise<unknown> | undefined
+    try {
+      // The older report has a shell in the worktree and waits for the lock to write its hold.
+      older = outsideLocks(() => shellReport(h, "ses_a"))
+      expect(await until(() => h.pending.trackedReports() === 1)).toBe(true)
+      // The session then reports nothing running; its empty write queues behind the same lock.
+      empty = outsideLocks(() => h.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [] } as never))
+    } finally {
+      release()
+      await held
+      await older
+      await empty
+    }
+    expect(readHolds(h.targetCommon, h.f.linked).holds.filter((hold) => hold.jobs.length > 0)).toEqual([])
+    await h.idle()
+    expect(existsSync(h.f.linked)).toBe(false)
+    await h.finish()
+  })
+
+  test("a deleted session's report that resumes after the deletion writes no hold and marks no worktree unsafe", async () => {
+    const h = await foreignHarness("foreign-deleted-hold", { lock: { waitMs: 30_000 } })
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    let report: Promise<unknown> | undefined
+    const { release, held } = await holdTargetLock(h)
+    try {
+      report = outsideLocks(() => shellReport(h, "ses_a"))
+      expect(await until(() => h.pending.trackedReports() === 1)).toBe(true)
+      await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
+    } finally {
+      release()
+      await held
+      await report
+    }
+    expect(readHolds(h.targetCommon, h.f.linked).holds.filter((hold) => hold.jobs.length > 0)).toEqual([])
+    expect(h.pending.trackedReports()).toBe(0)
+    await h.idle()
+    expect(existsSync(h.f.linked)).toBe(false)
+    await h.finish()
+  })
+
+  test("a deleted session's stale report whose hold write fails marks no worktree unsafe", async () => {
+    if (process.getuid?.() === 0) return // root writes anywhere
+    const h = await foreignHarness("foreign-deleted-unsafe", { lock: { waitMs: 30_000 } })
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    // An expired entry makes the worktree's holds directory exist; it is made read-only below.
+    setHold(h.targetCommon, h.f.linked, "ses_old", [{ kind: "shell", id: "old" }], NOW - 25 * 3_600_000)
+    const holdsRoot = join(h.targetCommon, "opencode", "holds")
+    const holds = join(holdsRoot, readdirSync(holdsRoot)[0] as string)
+    let report: Promise<unknown> | undefined
+    const { release, held } = await holdTargetLock(h)
+    try {
+      report = outsideLocks(() => shellReport(h, "ses_a"))
+      expect(await until(() => h.pending.trackedReports() === 1)).toBe(true)
+      await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
+      // Its hold write fails once the lock is free.
+      chmodSync(holds, 0o555) // check-test-executables: directory permission, not a script
+    } finally {
+      release()
+      await held
+      await report
+      chmodSync(holds, 0o755) // check-test-executables: directory permission, not a script
+    }
+    await h.idle()
+    expect(existsSync(h.f.linked)).toBe(false)
+    await h.finish()
+  })
+
+  test("report state is kept only while reports are in flight: none after a deletion of a session that never reported, none after a deleted session's report settles", async () => {
+    const h = await foreignHarness("foreign-report-state")
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_never" } })
+    expect(h.pending.trackedReports()).toBe(0)
+    let report: Promise<unknown> | undefined
+    const { release, held } = await holdTargetLock(h)
+    try {
+      report = outsideLocks(() => shellReport(h, "ses_a"))
+      expect(await until(() => h.pending.trackedReports() === 1)).toBe(true)
+      await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
+      expect(h.pending.trackedReports()).toBe(1)
+    } finally {
+      release()
+      await held
+      await report
+    }
+    expect(h.pending.trackedReports()).toBe(0)
+    await h.finish()
+  })
+
   test("a repository whose receipts cannot be listed while running work is recorded refuses removal until holds are recorded", async () => {
     const h = await foreignHarness("foreign-holds-unknown")
     await h.pending.record(h.f.receipt, "ses_lead")
