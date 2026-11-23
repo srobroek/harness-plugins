@@ -12,7 +12,7 @@
 | architecture | 0.11.0 | development | global | opencode, claude, omp, pi |
 | ast-grep | 1.3.1 | development | global | opencode, claude |
 | autopilot | 1.3.8 | development | global | opencode |
-| aws | 0.8.1 | development | global | opencode, claude, pi |
+| aws | 0.9.0 | development | global | opencode, claude, pi |
 | beads | 0.8.10 | development | project | opencode, claude |
 | build | 0.9.0 | development | project | opencode, omp, pi |
 | chezmoi | 0.6.0 | development | global | opencode, claude |
