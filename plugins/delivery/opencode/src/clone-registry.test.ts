@@ -195,17 +195,36 @@ describe("readClones", () => {
     }
   })
 
-  test("a registry that is not a JSON list is an error, never an empty list", () => {
+  test("a registry that is not JSON is an error with the parse failure as its cause, never an empty list", () => {
     const receipts = store()
     const file = registryFile(receipts, SESSION)
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, "{not json")
     expect(() => readClones(receipts, SESSION)).toThrow(/cannot be parsed/)
+    let failure: unknown
+    try {
+      readClones(receipts, SESSION)
+    } catch (error) {
+      failure = error
+    }
+    expect((failure as Error).cause).toBeInstanceOf(SyntaxError)
+  })
+
+  test("a registry that is JSON but not a list is an error, never an empty list", () => {
+    const receipts = store()
+    const file = registryFile(receipts, SESSION)
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, "{}")
+    expect(() => readClones(receipts, SESSION)).toThrow(/cannot be parsed as a JSON list/)
   })
 })
 
-describe("addClone lock failure", () => {
-  test("keeps the original failure as the cause", async () => {
+describe("registry lock failure", () => {
+  const updates = [
+    ["addClone", (receipts: NodeJS.ProcessEnv, session: string) => addClone(receipts, session, A, () => false)],
+    ["settleReceipts", (receipts: NodeJS.ProcessEnv, session: string) => settleReceipts(receipts, session, A.key, new Set(["r1"]))],
+  ] as const
+  test.each(updates)("%s keeps the original failure as the cause", async (_name, update) => {
     const root = mkdtempSync(join(tmpdir(), "delivery-clones-lock-"))
     const receipts = { DELIVERY_RECEIPTS_DIR: join(root, "receipts") }
     const session = "c".repeat(16)
@@ -213,7 +232,7 @@ describe("addClone lock failure", () => {
     mkdirSync(directory, { recursive: true })
     chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
     try {
-      const failure = await addClone(receipts, session, A, () => false).then(
+      const failure = await update(receipts, session).then(
         () => undefined,
         (error: unknown) => error,
       )

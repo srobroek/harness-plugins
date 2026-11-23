@@ -113,7 +113,7 @@ export function withClone(entries: readonly CloneEntry[], entry: CloneEntry, pen
 
 /**
  * The registry's entries for discovery. An absent file is the empty list; any other read failure, or
- * text that is not a JSON list, throws (the read failure as `cause`), so a caller never mistakes an
+ * text that is not a JSON list, throws (the read or parse failure as `cause`), so a caller never mistakes an
  * unreadable registry for one with no clones.
  */
 export function readClones(env: NodeJS.ProcessEnv, sessionKey: string): CloneEntry[] {
@@ -127,9 +127,7 @@ export function readClones(env: NodeJS.ProcessEnv, sessionKey: string): CloneEnt
     if (code === "ENOENT" || code === "ENOTDIR") return []
     throw new Error(`the clone registry ${file} cannot be read (${error instanceof Error ? error.message : String(error)})`, { cause: error })
   }
-  const entries = entriesOf(text)
-  if (entries === null) throw new Error(`the clone registry ${file} cannot be parsed as a JSON list`)
-  return entries
+  return entriesIn(file, text, "")
 }
 
 /**
@@ -147,15 +145,23 @@ function loadForUpdate(file: string): CloneEntry[] {
       cause: error,
     })
   }
+  return entriesIn(file, text, "; it was left unchanged")
+}
+
+/**
+ * The entries of the registry `file`'s `text`: text that is not JSON throws with the parse error as
+ * `cause`, and JSON that is not a list throws too. `note` ends each message.
+ */
+function entriesIn(file: string, text: string, note: string): CloneEntry[] {
   try {
     JSON.parse(text)
   } catch (error) {
-    throw new Error(`the clone registry ${file} cannot be parsed (${error instanceof Error ? error.message : String(error)}); it was left unchanged`, {
+    throw new Error(`the clone registry ${file} cannot be parsed (${error instanceof Error ? error.message : String(error)})${note}`, {
       cause: error,
     })
   }
   const entries = entriesOf(text)
-  if (entries === null) throw new Error(`the clone registry ${file} cannot be parsed as a JSON list; it was left unchanged`)
+  if (entries === null) throw new Error(`the clone registry ${file} cannot be parsed as a JSON list${note}`)
   return entries
 }
 
