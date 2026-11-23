@@ -1,3 +1,9 @@
+## code-challenge [2.0.1](https://github.com/srobroek/harness-plugins/compare/code-challenge--v2.0.0...code-challenge--v2.0.1) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
 ## code-challenge [2.0.0](https://github.com/srobroek/harness-plugins/compare/code-challenge--v1.5.1...code-challenge--v2.0.0) (2026-11-23)
 
 ### ⚠ BREAKING CHANGES

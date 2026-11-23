@@ -639,7 +639,7 @@
     },
     {
       "name": "code-challenge",
-      "version": "2.0.0",
+      "version": "2.0.1",
       "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
       "category": "development",
       "harnesses": {
