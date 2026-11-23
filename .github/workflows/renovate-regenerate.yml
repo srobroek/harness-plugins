@@ -96,6 +96,8 @@ jobs:
                   return True
               if re.fullmatch(r"plugins/[^/]+/omp/.+", name):
                   return True
+              if re.fullmatch(r"plugins/[^/]+/pi/.+", name):
+                  return True
               if re.fullmatch(r"plugins/[^/]+/(opencode|claude)/(package\.json|options\.json|\.mcp\.json)", name):
                   return True
               if re.fullmatch(r"plugins/[^/]+/claude/(\.claude-plugin/plugin\.json|hooks/(hooks\.json|agent-guard\.mjs|agent-guards\.json))", name):
