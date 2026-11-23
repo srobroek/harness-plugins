@@ -203,7 +203,7 @@ Author each TypeScript extension once in `plugins/<name>/pi-src/`; OMP 19.1.1 lo
 Keep only `pace_init.py`, the Beads and Worktrunk `preflight.py` scripts, and `journeys.py` as scripts. Keep the quality, Repomix and Journeys TypeScript tools as extension tools.
 
 - **`harness-plugins`:** Add Pi to the root `harness-kit.json` and selected plugin metadata. Build package artifacts from `pi-src/`; Pi and OMP 19.1.1 consume the same extension bundle. Generate prerequisite checks into `_kit/prereqs.ts`.
-- **Other plugin repositories:** Use the same `pi-src/` convention and per-plugin Apache-2.0 npm publishing under `@srobroek`. Declare prerequisites and companion packages in plugin metadata. Do not add `omp-src/`, OMP-only extensions or lifecycle scripts.
+- **Other plugin repositories:** Use the same `pi-src/` convention and declare prerequisites and companion packages in plugin metadata. Leave `pi.publish` off: only this repository publishes to npm, and other repositories install their pi packages from a local path. Do not add `omp-src/`, OMP-only extensions or lifecycle scripts.
 
 Discovery:
 
