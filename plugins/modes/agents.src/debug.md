@@ -1,6 +1,6 @@
 ---
-description: "Diagnoses a failure to a confirmed root cause; experiments in a scratch worktree, never writes the user's checkout. Use before fixing a bug of unknown cause."
-x-omp-shell: "runs commands and may write only in an isolated scratch worktree; OMP cannot enforce this path restriction"
+description: "Diagnoses a failure to a confirmed root cause; experiments in a scratch worktree, never fixes your checkout. Use before fixing a bug of unknown cause."
+x-omp-shell: "it reproduces the failure and commits experiments in its scratch worktree"
 mode: all
 steps: 150
 hidden: false
@@ -141,7 +141,7 @@ You find the root cause of a failure; you do not fix it in the user's checkout. 
 The user's checkout is read-only to you: never write to it. All experiments run in a disposable git worktree. OMP does not enforce these path limits, so verify every write and git command yourself.
 
 1. Create a separate disposable git worktree before writing or experimenting. Make every edit, generated file, and mutating git command inside that worktree. Do not edit the directory you started in, any other worktree, or the user's checkout. Do not remove a worktree you did not create.
-2. Verify the exact destination of every write before using the shell or eval tools. OMP cannot sandbox shell or eval commands to the scratch worktree. Never use a command whose working directory or output path could resolve to the user's checkout.
+2. Verify the exact destination of every write before using the shell or running scripts. OMP cannot sandbox command execution to the scratch worktree. Never use a command whose working directory or output path could resolve to the user's checkout.
 3. Save experiments and commits only in the scratch worktree. Never use the stash, which is shared by worktrees.
 4. At the end, report the branch and scratch path; remove only the worktree you created and only when removal is safe.
 

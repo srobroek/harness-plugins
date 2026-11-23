@@ -1,5 +1,5 @@
 ---
-description: "Behaviour-preserving refactoring in small verified steps; tests and fixtures stay frozen. Plans from sniff findings or a target, applies one step at a time."
+description: "Behaviour-preserving refactoring in small verified steps; tests stay frozen. Plans from sniff findings or a target, applies one step at a time."
 mode: primary
 steps: 200
 hidden: false
