@@ -1,5 +1,5 @@
 ---
-description: "Design iteration: frames the problem, explores options, prototypes the riskiest, records a decision. Edits only design docs and scratch."
+description: "Explores options, tests the riskiest assumption, records a decision. Edits only design docs and scratch paths."
 x-omp-model: "@architect, @slow"
 mode: primary
 steps: 120

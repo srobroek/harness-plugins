@@ -140,8 +140,8 @@ or automatically update in CI. Review every update as a changed expectation.
 
 Do target `mutmut` at critical changed pure logic; use its incremental results and
 test selection for feedback, then periodically rerun without stale results. It needs
-`fork` (POSIX or WSL) and exports no schema, so `quality_test_compare` cannot read it;
-use `cosmic-ray` on Windows or when a Stryker-schema report must be compared. Run
+`fork` (POSIX or WSL) and exports no schema, so the `quality_test_compare` tool, when
+available, cannot read it; use cosmic-ray on Windows or when comparing Stryker-schema reports.
 mutation on the diff in each pull request (blocking only on critical paths) and on a schedule.
 Investigate meaningful surviving mutants, not a universal score.
 Use `Atheris` for hostile byte parsers and native-extension crash risks: bound the CI

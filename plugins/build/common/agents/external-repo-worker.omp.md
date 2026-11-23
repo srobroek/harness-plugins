@@ -7,7 +7,7 @@
 #   OMP fetches URLs with read: allow webfetch
 #   no OMP built-in tool; tools filters built-ins only: allow repomix_pack
 name: external-repo-worker
-description: "Works in an external repo outside the caller project: clones, follows its conventions, edits, verifies, optionally publishes."
+description: "Works in an external repository: clones, follows its conventions, edits, verifies, and publishes only when delegated."
 tools: read, grep, ast_grep, glob, lsp, edit, write, ast_edit, bash, eval, web_search
 model: "@task"
 ---

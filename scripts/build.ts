@@ -11,7 +11,8 @@
 // Per plugin, from the `agent-plugins` key of its package.json:
 //   entries         { "<shim>": "<opencode/src file>" }  bundled to opencode/dist and opencode/<shim>.js
 //   claudeEntries   { "<name>": "<opencode/src file>" }  bundled to claude/dist/<name>.js
-//   piEntries       { "<name>": "<pi-src file>" }  bundled to pi/extensions/<name>.js
+//   piEntries       { "<name>": "<pi-src file>" }  bundled to pi/extensions/<name>.js, and copied to
+//                   omp/extensions/<name>.js when the plugin lists the omp harness (OMP loads Pi extensions)
 //
 // It also composes each `agents.src/<id>.md` into `common/agents/<id>.md` (`<id>.opencode.md`
 // when the plugin also ships to Claude Code), inlining `{{include <fragment>}}` lines from
@@ -70,7 +71,7 @@ export type PluginBuild = {
   entries: Record<string, string>
   /** `{ output name: source name }` for the Claude Code tree. */
   claudeEntries: Record<string, string>
-  /** `{ extension name: pi-src source name }` for the pi tree. */
+  /** `{ extension name: pi-src source name }` for the pi tree, and the OMP tree when the plugin lists `omp`. */
   piEntries: Record<string, string>
   /** Agents translated for Claude Code; every non-primary one when absent. */
   claudeAgents?: string[]
@@ -157,7 +158,17 @@ async function bundlePi(dir: string, items: readonly Entry[]): Promise<Output[]>
   return outputs
 }
 
-/** The bundles of the OpenCode, Claude Code and pi trees. */
+/**
+ * OMP loads Pi extensions unchanged, so a plugin that lists the `omp` harness ships each pi bundle
+ * as `omp/extensions/<name>.js` too; harness-kit lists that directory in the OMP manifest.
+ */
+export function ompExtensionCopies(dir: string, harnesses: readonly string[], piBundles: readonly Output[]): Output[] {
+  if (!harnesses.includes("omp")) return []
+  const extensions = path.join(dir, "pi", "extensions")
+  return piBundles.map((bundle) => ({ file: path.join(dir, "omp", "extensions", path.relative(extensions, bundle.file)), contents: bundle.contents }))
+}
+
+/** The bundles of the OpenCode, Claude Code and pi trees, and the OMP tree's copies of the pi bundles. */
 export async function buildPlugin(dir: string, build = readBuild(dir)): Promise<Output[]> {
   if (build === undefined) return []
   const opencode = Object.entries(build.entries).map(([shim, name]): Entry => ({
@@ -173,10 +184,12 @@ export async function buildPlugin(dir: string, build = readBuild(dir)): Promise<
     dist: `extensions/${out}.js`,
     source: sourceOf(dir, name, out, "pi-src"),
   }))
+  const piBundles = await bundlePi(dir, pi)
   const outputs = [
     ...(await bundle(dir, opencode, "opencode")),
     ...(await bundle(dir, claude, "claude")),
-    ...(await bundlePi(dir, pi)),
+    ...piBundles,
+    ...ompExtensionCopies(dir, build.harnesses, piBundles),
   ]
   for (const item of opencode) {
     outputs.push({
@@ -305,13 +318,14 @@ const differs = (output: Output) => !existsSync(output.file) || readFileSync(out
 export function stale(dir: string, outputs: readonly Output[]): string[] {
   const expected = new Set(outputs.map((output) => output.file))
   const extra = ["opencode", "claude"].flatMap((tree) => listFiles(path.join(dir, tree, "dist"))).filter((file) => !expected.has(file))
-  const piExtra = listFiles(path.join(dir, "pi", "extensions"))
+  const extensionExtra = ["pi", "omp"]
+    .flatMap((tree) => listFiles(path.join(dir, tree, "extensions")))
     .filter((file) => {
       if (expected.has(file)) return false
       const contents = readFileSync(file, "utf8")
       return contents.startsWith(HEADER) || contents.startsWith(`// @bun\n${HEADER}`)
     })
-  return [...outputs.filter(differs).map((output) => output.file), ...extra, ...piExtra]
+  return [...outputs.filter(differs).map((output) => output.file), ...extra, ...extensionExtra]
 }
 
 /** The plugin directories named in `only`, or all of them when it is empty; an unknown name throws. */

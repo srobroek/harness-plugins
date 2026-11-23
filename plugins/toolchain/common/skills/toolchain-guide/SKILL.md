@@ -17,7 +17,7 @@ skill, not from this table.
 | Choosing a frontend framework, UI kit, or client or server state library | `toolchain-frontend` |
 | Choosing Terraform, OpenTofu, CDK, Kubernetes or Helm | `toolchain-infrastructure` |
 | Adding logging, tracing, metrics, or quality and security scanners to a service, worker or CI | `toolchain-quality-observability` |
-| Adding or changing agentic assets: where OpenCode config, plugins, skills and agents live | `toolchain-asset-ownership` |
+| Adding or changing agentic assets: where harness configuration, packages, skills and agents live | `toolchain-asset-ownership` |
 | Writing or changing GitHub Actions workflows: required checks, matrices, caches, action pinning, attestation | `ci-github-actions` |
 | Configuring toolchain download or compiler caches, worktree build output, cache roots and sizes | `ops-toolchain-cache-policy` |
 | Cargo, shell, mise or CI config would set `CARGO_TARGET_DIR` or `build.target-dir` machine-wide | `ops-no-global-cargo-target` |

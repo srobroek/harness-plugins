@@ -85,7 +85,7 @@ export type Recipe = {
   outputFile?: string
   /**
    * Set when the tool executes repository code or writes build output: what it runs and writes.
-   * Such a recipe only runs after the caller consented for the root.
+   * Such a recipe only runs when the scan input sets allowCode.
    */
   executes?: string
   /**
@@ -117,8 +117,8 @@ export type ScanInput = {
   depth?: Depth
   timeoutSeconds?: number
   runId?: string
-  /** Run only recipes that execute no repository or downloaded code; the rest are gaps and nothing is asked. */
-  staticOnly?: boolean
+  /** Also run recipes that execute repository or downloaded code; without it they are coverage gaps. */
+  allowCode?: boolean
 }
 
 export type ScanReport = {

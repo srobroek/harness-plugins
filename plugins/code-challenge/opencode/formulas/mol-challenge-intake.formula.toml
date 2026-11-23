@@ -41,8 +41,8 @@ type = "task"
 labels = ["code-challenge", "sub:intake", "phase:intake"]
 description = """
 Run the code-challenge skill, phase INTAKE, in {{mode}} mode at depth {{depth}}. Interactive:
-ask the batch in references/intake-questions.md through parley_ask, falling back to the question
-tool, each question with a recommended answer. Autonomous: infer every answer from the arguments
+ask the batch in references/intake-questions.md through parley_ask, falling back to the host's ask
+tool (`question` in OpenCode), each question with a recommended answer. Autonomous: infer every answer from the arguments
 and the repository, and ask only for a missing target or depth.
 
 Question 4 (is pluggability expected) decides how the structure and over-engineering lenses

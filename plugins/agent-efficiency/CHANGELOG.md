@@ -1,3 +1,9 @@
+## agent-efficiency [0.14.2](https://github.com/srobroek/harness-plugins/compare/agent-efficiency--v0.14.1...agent-efficiency--v0.14.2) (2026-11-23)
+
+### Bug Fixes
+
+* **subagent-worktree:** drop project-wide session eviction from finalize ([398ba17](https://github.com/srobroek/harness-plugins/commit/398ba1791911536abc585fd37a129e83347e1e9b))
+
 ## agent-efficiency [0.14.1](https://github.com/srobroek/harness-plugins/compare/agent-efficiency--v0.14.0...agent-efficiency--v0.14.1) (2026-11-23)
 
 ### Bug Fixes

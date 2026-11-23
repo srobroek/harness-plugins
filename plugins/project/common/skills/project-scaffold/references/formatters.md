@@ -1,4 +1,4 @@
-# Formatter config
+<!-- OpenCode-specific formatter integration; use the harness-neutral language quality skill for formatting checks. -->
 
 The global OpenCode config disables the built-in formatters that run without project opt-in
 (`uv`, `shfmt`, `rubocop` and the like). The config-gated built-ins run only when the project
