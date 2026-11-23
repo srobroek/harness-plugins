@@ -578,6 +578,20 @@
           "tools": [],
           "extensions": [],
           "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "chezmoi-editor"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "chezmoi"
+          ],
+          "mcp": []
         }
       },
       "scope": "global"
