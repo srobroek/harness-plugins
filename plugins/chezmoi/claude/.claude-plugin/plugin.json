@@ -1,7 +1,7 @@
 {
   "name": "chezmoi",
   "description": "Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "author": {
     "name": "Sjors Robroek",
     "url": "https://github.com/srobroek"
