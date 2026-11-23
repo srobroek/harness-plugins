@@ -16,7 +16,6 @@ function hasAttribution(text) {
 var MARKER = "srobroek.safety commit-msg hook";
 var CHECKER_NAME = "safety-commit-msg.js";
 var CHAINED_NAME = "commit-msg.chained";
-var DELEGATING_HOOKS_PATHS = ["/usr/local/amazon/var/git-defender/hooks"];
 var REJECTION = "safety commit-msg: this commit message carries AI-assistant attribution (a Co-authored-by trailer naming an assistant, a 'Generated with' line, or an assistant noreply address). Remove it so the commit names only the human author, or bypass the hook once with `git commit --no-verify`.";
 var SCISSORS = / -{24} >8 -{24}$/;
 function messageBody(text, commentChar = "#") {
@@ -90,7 +89,7 @@ function planInstall(state) {
   const hook = join(state.localHooks, "commit-msg");
   if (resolve(state.effectiveHooks) !== resolve(state.localHooks)) {
     const where = state.hooksPath ? `core.hooksPath (${state.hooksPath.scope}: ${state.hooksPath.value})` : "core.hooksPath";
-    const delegating = (state.delegating ?? DELEGATING_HOOKS_PATHS).includes(resolve(state.effectiveHooks));
+    const delegating = (state.delegating ?? []).includes(resolve(state.effectiveHooks));
     if (!delegating && !state.behindHooksPath)
       return {
         action: "refuse",
@@ -234,7 +233,6 @@ var commit_msg_default = main;
 export {
   CHAINED_NAME,
   CHECKER_NAME,
-  DELEGATING_HOOKS_PATHS,
   MARKER,
   REJECTION,
   checkMessage,

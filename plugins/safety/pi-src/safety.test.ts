@@ -114,11 +114,7 @@ describe("gateBash hard gates", () => {
     )
   })
 
-  test("Git Defender, a Route 53 zone delete without the marker and filter-repo --force are refused", async () => {
-    expect(await gateBash("git defender status", plain, config())).toEqual(block(MESSAGES["git-defender"]))
-    const zone = "aws route53 delete-hosted-zone --id Z1"
-    expect(await gateBash(zone, plain, config())).toEqual(block(MESSAGES["dns-delegation"]))
-    expect(await gateBash(`DNS_PARENT_CHECKED=1 ${zone}`, plain, config())).toEqual({ kind: "run" })
+  test("filter-repo --force is refused", async () => {
     expect((await gateBash("git filter-repo --force --path a", plain, config())).kind).toBe("block")
   })
 
@@ -145,6 +141,10 @@ describe("gateBash hard gates", () => {
       ["echo ok && sudo chmod -R 777 /srv/app", "sudo-destructive", { kind: "ask", message: SUDO_MESSAGE }],
     ]
     for (const [command, id, verdict] of cases) {
+      expect(await gateBash(command, plain, config())).toEqual(verdict)
+      expect(await gateBash(command, plain, config({ disable: [id] }))).toEqual({ kind: "run" })
+    }
+  })
 
   test("the system gates run after the shared ones, and each can be disabled", async () => {
     const unmanaged = { managed: async () => false }
@@ -158,10 +158,6 @@ describe("gateBash hard gates", () => {
     for (const [command, id] of cases) {
       expect(await gateBash(command, plain, { ...config(), system: unmanaged })).toEqual(block(SYSTEM_MESSAGES[id]))
       expect(await gateBash(command, plain, { ...config({ disable: [id] }), system: unmanaged })).toEqual({ kind: "run" })
-    }
-  })
-      expect(await gateBash(command, plain, config())).toEqual(verdict)
-      expect(await gateBash(command, plain, config({ disable: [id] }))).toEqual({ kind: "run" })
     }
   })
 })

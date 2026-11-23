@@ -4665,9 +4665,7 @@ var GUARD_IDS = [
   "remote-exec",
   "attribution",
   "worktree-tmp",
-  "git-defender",
   "op-guard",
-  "dns-delegation",
   "history-rewrite",
   "push-via"
 ];
@@ -4679,11 +4677,9 @@ var MESSAGES2 = {
   "remote-exec": "Blocked by safety (remote-exec-guard): this command would execute content fetched from the network without review: a download piped into a shell, a shell or `eval` running a fetch's output, or a netcat invocation with an exec flag. Download to a file, inspect it, and run only an explicitly reviewed script.",
   attribution: "Blocked by safety (attribution-guard): this commit message carries AI-assistant attribution (a Co-authored-by trailer naming an assistant, a 'Generated with' line, or an assistant noreply address). Rewrite the `-m`/`--message` text, the `--trailer`, or the file supplied to `-F`/`--file`, so the commit names only the human author.",
   "worktree-tmp": "Blocked by safety (worktree-tmp-guard): do not create a worktree under /tmp or /private/tmp, where a container bind mount cannot see it. Use a path under $HOME, such as ~/tmp/worktrees/<repo>/<branch>.",
-  "git-defender": "Blocked by safety (git-defender-user-only): only the user runs the Git Defender CLI. It acts under the user's corporate identity, so every subcommand is refused, read-looking ones included. Name the exact command you would have run and why, hand it to the user to run in their own terminal, and report the outcome you needed as unknown. Do not retry through eval, a wrapper, a script or a subagent.",
   "history-rewrite": "Blocked by safety (history-rewrite-guard): history-rewriting commands (`git filter-repo`, `git filter-branch`, `git replace`, `git update-ref -d` on a branch) must not run in place in a canonical checkout, and `filter-repo --force` must not run at all. Clone the repository into a temp directory and run the command there with the tool's workdir set to the clone.",
   "push-via": (host, command, dir) => `Blocked by safety (push-via-guard): a plain \`git push\` to ${host} cannot work on this host. Push with \`${command} -C ${shellPath(dir)} push\` instead (same arguments), and push WIP often so commits are not lost.`,
-  "op-guard": OP_MESSAGE,
-  "dns-delegation": "Blocked by safety (dns-delegation-guard): deleting a Route 53 hosted zone leaves any parent zone delegating to the deleted nameservers, a subdomain-takeover risk. Read ~/.config/opencode/steering/dns-delegation-cleanup.md, find the parent zone, then re-run with `DNS_PARENT_CHECKED=1` in front of the command to confirm you will delete the parent's NS (and DS) record set for the child and verify it. Do not report the zone as torn down until the parent delegation is gone."
+  "op-guard": OP_MESSAGE
 };
 var DESTRUCTIVE = new Set(["rm", "rmdir", "dd", "shred", "truncate", "unlink", "wipefs"]);
 function destructive(name) {
@@ -4888,27 +4884,6 @@ function worktreeTmp(command, cwd) {
   }
   return false;
 }
-function gitDefender(command) {
-  const name = base(command.argv[0]);
-  if (name === "git-defender")
-    return true;
-  return gitInvocation(command.argv)?.subcommand === "defender";
-}
-var DNS_MARKER = "DNS_PARENT_CHECKED=1";
-function dnsDelegation(commands) {
-  for (const command of commands) {
-    if (base(command.argv[0]) !== "aws")
-      continue;
-    const service = command.argv.indexOf("route53");
-    if (service < 0 || command.argv.indexOf("delete-hosted-zone", service) < 0)
-      continue;
-    const marked = (other) => other.assignments.includes(DNS_MARKER);
-    const exported = commands.some((other) => other.source === command.source && other.index < command.index && other.argv[0] === "export" && other.argv.includes(DNS_MARKER));
-    if (!marked(command) && !exported && !command.argv.includes(DNS_MARKER))
-      return true;
-  }
-  return false;
-}
 function hardGate(source, cwd, options = {}) {
   const on = (guard) => options.disabled?.has(guard) !== true;
   const refuse = (guard) => ({ guard, reason: MESSAGES2[guard] });
@@ -4916,9 +4891,7 @@ function hardGate(source, cwd, options = {}) {
   let refusal;
   try {
     const { commands } = walkShell(source);
-    if (on("git-defender") && commands.some(gitDefender))
-      refusal = refuse("git-defender");
-    else if (on("remote-exec") && remoteExec(commands))
+    if (on("remote-exec") && remoteExec(commands))
       refusal = refuse("remote-exec");
     else if (on("indirection") && commands.some(indirection))
       refusal = refuse("indirection");
@@ -4926,8 +4899,6 @@ function hardGate(source, cwd, options = {}) {
       refusal = refuse("attribution");
     else if (on("worktree-tmp") && commands.some((command) => worktreeTmp(command, cwd)))
       refusal = refuse("worktree-tmp");
-    else if (on("dns-delegation") && dnsDelegation(commands))
-      refusal = refuse("dns-delegation");
     else if (on("history-rewrite")) {
       const reason = historyRewrite(commands, cwd, options.tempRoots, options.env);
       if (reason !== undefined)

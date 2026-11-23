@@ -103,8 +103,6 @@ describe("hard gates", () => {
       /attribution-guard/,
     )
     await expect(before("c4", "git worktree add /tmp/x")).rejects.toThrow(/worktree-tmp-guard/)
-    await expect(before("c5", "git defender status")).rejects.toThrow(/git-defender-user-only/)
-    await expect(before("c6", "aws route53 delete-hosted-zone --id Z1")).rejects.toThrow(/dns-delegation-guard/)
     await expect(before("c7", "uvx git-filter-repo --force --subdirectory-filter X")).rejects.toThrow(/history-rewrite-guard/)
   })
 
@@ -131,8 +129,8 @@ describe("hard gates", () => {
   })
 
   test("a disabled guard lets the command through", async () => {
-    const { before } = await load({ disable: ["git-defender"] })
-    await before("c1", "git defender status")
+    const { before } = await load({ disable: ["worktree-tmp"] })
+    await before("c1", "git worktree add /tmp/x")
   })
 
   test("a bash call is gated as the shell call it is routed to", async () => {
@@ -684,7 +682,7 @@ describe("steering directories and same-repo worktrees", () => {
     const { fake } = await load({ steeringDirs: [steering] }, { scratchRoots: [] })
     for (const tool of ["read", "glob", "grep", "list"]) {
       await start(fake, `st-${tool}`, tool)
-      expect((await ask(fake, [`${steering}/git-defender.md`], `st-${tool}`)).effect).toBe("allow")
+      expect((await ask(fake, [`${steering}/release-checklist.md`], `st-${tool}`)).effect).toBe("allow")
     }
     for (const tool of ["write", "edit", "shell"]) {
       await start(fake, `st-${tool}`, tool)
@@ -735,7 +733,7 @@ describe("steering directories and same-repo worktrees", () => {
     test("steering reads are allowed before the unanswerable deny; an outside path is denied", async () => {
       const { fake } = await load({ steeringDirs: [steering], disable: [ISOLATE] }, { scratchRoots: [], sessions: [child(ELSEWHERE)] })
       await start(fake, "c1", "read")
-      expect((await ask(fake, [`${steering}/git-defender.md`], "c1", "ask", "ses_child")).effect).toBe("allow")
+      expect((await ask(fake, [`${steering}/release-checklist.md`], "c1", "ask", "ses_child")).effect).toBe("allow")
       const denied = await ask(fake, [`${outside}/x`], "c1", "ask", "ses_child")
       expect(denied.effect).toBe("deny")
       expect(denied.message).toContain("subagent sessions cannot answer permission prompts")
@@ -801,7 +799,7 @@ describe("steering directories and same-repo worktrees", () => {
 
 describe("helpers", () => {
   test("readOptions keeps known feature ids only", () => {
-    expect([...readOptions({ disable: ["git-defender", "nope", 3] }).disabled]).toEqual(["git-defender"])
+    expect([...readOptions({ disable: ["worktree-tmp", "nope", 3] }).disabled]).toEqual(["worktree-tmp"])
     expect(readOptions(undefined).disabled.size).toBe(0)
   })
 

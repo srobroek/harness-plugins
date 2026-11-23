@@ -99,7 +99,7 @@ export type SafetyOptions = {
 }
 
 /**
- * `{ disable: ["git-defender", …] }` turns features off; unknown ids are ignored.
+ * `{ disable: ["worktree-tmp", …] }` turns features off; unknown ids are ignored.
  * `opAllow` lists extra `op` subcommand prefixes the op-guard allows.
  * `scratchDirs: false` stops allowing the OpenCode temp folder, the project's worktree, shell-output and tool-output folders, and the session's own directory.
  * `steeringDirs` lists the directories whose files the read-only tools may read without a prompt (default
