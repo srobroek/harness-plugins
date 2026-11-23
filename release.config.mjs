@@ -12,5 +12,5 @@ const releaseRules = [
 export default repoRelease({
   forge: "@semantic-release/github",
   releaseRules,
-  assets: ["CHANGELOG.md", "package.json", "INVENTORY.md", "opencode/**", "claude/**", "omp/**"],
+  assets: ["CHANGELOG.md", "package.json", "INVENTORY.md", "opencode/**", "claude/**", "omp/**", "pi/**"],
 })
