@@ -189,8 +189,7 @@ function listLandings(commonDir) {
   try {
     statSync(directory);
   } catch (error) {
-    const code = error.code;
-    return { records: [], unreadable: !(code === "ENOENT" || code === "ENOTDIR") };
+    return { records: [], unreadable: error.code !== "ENOENT" };
   }
   let names;
   try {
