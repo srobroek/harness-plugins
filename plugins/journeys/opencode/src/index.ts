@@ -2,18 +2,19 @@ import { isAbsolute, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { Plugin } from "@opencode/plugin"
 import { registerSkills } from "@srobroek/opencode-lib/skill-files"
+import { type Exec, indexResource, installFormulas, journeysWrites, readIndexParams, runJourneys } from "../../shared/journeys-tool.ts"
 import { type AgentFields, loadAgents, shapeAgent } from "./agents.ts"
-import {
-  type Exec,
-  installFormulas,
-  type JourneysCommand,
-  type JourneysIndexParams,
-  journeysWrites,
-  runJourneys,
-} from "./journeys-tool.ts"
 
+export {
+  indexResource,
+  installFormulas,
+  JOURNEYS_SCRIPT,
+  journeysArgs,
+  journeysWrites,
+  readIndexParams,
+  runJourneys,
+} from "../../shared/journeys-tool.ts"
 export { AGENT_IDS, parseAgentFile, shapeAgent } from "./agents.ts"
-export { installFormulas, JOURNEYS_SCRIPT, journeysArgs, journeysWrites, runJourneys } from "./journeys-tool.ts"
 
 export const SKILL_NAMES = [
   "journey-init",
@@ -29,34 +30,7 @@ export const SKILL_PATHS = SKILL_NAMES.map((name) =>
   fileURLToPath(new URL(`../skills/${name}/SKILL.md`, import.meta.url)),
 )
 
-const COMMANDS: readonly JourneysCommand[] = ["index", "lint", "prune"]
-
-/** Validate `journeys_index` input, or return why it is unusable. */
-export function readIndexParams(input: unknown): JourneysIndexParams | string {
-  const value = (input ?? {}) as Record<string, unknown>
-  const command = value.command as JourneysCommand
-  if (!COMMANDS.includes(command)) return "command must be index, lint or prune"
-  if (typeof value.journeysDir !== "string" || value.journeysDir === "") return "journeysDir is required"
-  const params: JourneysIndexParams = { command, journeysDir: value.journeysDir }
-  if (value.keep !== undefined) {
-    if (typeof value.keep !== "number" || !Number.isSafeInteger(value.keep) || value.keep < 0)
-      return "keep must be a nonnegative safe integer"
-    params.keep = value.keep
-  }
-  if (value.yes !== undefined) params.yes = value.yes === true
-  if (value.journey !== undefined) {
-    if (typeof value.journey !== "string" || value.journey === "") return "journey must be a non-empty string"
-    params.journey = value.journey
-  }
-  return params
-}
-
-/** The permission resource for a writing `journeys_index` call. */
-export function indexResource(params: JourneysIndexParams): string {
-  if (params.command !== "prune") return `${params.command} ${params.journeysDir}`
-  return `prune ${params.journeysDir} ${params.journey ?? "*all*"}`
-}
-
+const COMMANDS = ["index", "lint", "prune"] as const
 /** Test seam; the host never passes it. */
 export type Overrides = { exec?: Exec }
 

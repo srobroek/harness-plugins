@@ -1,7 +1,7 @@
 ---
 name: journey-validator
 description: "Validates one user journey against the running product, recording evidence, intent-gated triage, and run results. Never edits product code."
-tools: read, grep, find, ls, bash
+tools: read, grep, find, ls, bash, journeys_index, journey_install_formulas
 skills: journey-verify, journeys-guide
 inheritProjectContext: true
 inheritSkills: true

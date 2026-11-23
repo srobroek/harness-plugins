@@ -1,7 +1,7 @@
 ---
 name: journey-scribe
 description: "Authors and amends user journeys with evidence-gated changes and stable IDs. Never drives the product or edits product code."
-tools: read, grep, find, ls, edit, bash
+tools: read, grep, find, ls, edit, bash, journeys_index, journey_install_formulas
 skills: journey-init, journey-write, journey-verify, journey-consolidate, journeys-guide
 inheritProjectContext: true
 inheritSkills: true
