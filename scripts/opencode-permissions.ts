@@ -1,8 +1,10 @@
 // The OpenCode V2 `permissions:` list as the agent translators read it: rules matched by action
 // glob, last match wins, `*` as the resource meaning every resource.
 
-export type Effect = "allow" | "deny" | "ask"
-export type Rule = { action: string; resource: string; effect: Effect }
+import type { AgentPermission } from "../lib/src/agent-files.ts"
+
+export type Rule = AgentPermission
+export type Effect = Rule["effect"]
 
 /** The action or resource that matches everything. */
 export const ANY = "*"

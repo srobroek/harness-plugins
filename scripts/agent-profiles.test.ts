@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { type AgentPermission, permissionEffect } from "../lib/src/agent-files.ts"
 import { DEFAULT_LEAN_AGENTS } from "../plugins/agent-efficiency/opencode/src/lean.ts"
+import { isTranslatedAgentFile } from "./agent-files.ts"
 
 const PLUGINS = path.join(import.meta.dir, "..", "plugins")
 const ROUTER_ROW = /^\|.*\|\s*`([\w-]+)`\s*\|\s*$/
@@ -67,7 +68,7 @@ const WRITERS = new Set(["shepherd"])
 type Agent = { plugin: string; id: string; hidden: boolean; rules: AgentPermission[] }
 
 function agents(): Agent[] {
-  return [...new Bun.Glob("*/common/agents/*.md").scanSync(PLUGINS)].filter((file) => !file.endsWith(".claude.md")).sort().map((file) => {
+  return [...new Bun.Glob("*/common/agents/*.md").scanSync(PLUGINS)].filter((file) => !isTranslatedAgentFile(file)).sort().map((file) => {
     const text = readFileSync(path.join(PLUGINS, file), "utf8")
     const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text)?.[1] ?? ""
     const data = (Bun.YAML.parse(front) ?? {}) as { hidden?: boolean; permissions?: AgentPermission[] }
