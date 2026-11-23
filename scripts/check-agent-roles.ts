@@ -13,6 +13,7 @@
 import { readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
 import { isModelRole, MODEL_ROLE_HEADER, MODEL_TIERS } from "../lib/src/model-roles.ts"
+import { isTranslatedAgentFile } from "./agent-files.ts"
 
 export type Finding = { file: string; reason: string }
 
@@ -103,12 +104,12 @@ function entriesIfPresent(dir: string): string[] {
   }
 }
 
-/** Every OpenCode agent file in `plugins/<name>/common/agents/`, sorted. The translated `*.claude.md` files have no model tier. */
+/** Every OpenCode agent file in `plugins/<name>/common/agents/`, sorted. The translated `*.claude.md` and `*.omp.md` files have no model tier header. */
 export function shippedAgents(pluginsDir: string): string[] {
   const files: string[] = []
   for (const plugin of readdirSync(pluginsDir).sort()) {
     const dir = path.join(pluginsDir, plugin, "common", "agents")
-    for (const entry of entriesIfPresent(dir).sort()) if (entry.endsWith(".md") && !entry.endsWith(".claude.md")) files.push(path.join(dir, entry))
+    for (const entry of entriesIfPresent(dir).sort()) if (entry.endsWith(".md") && !isTranslatedAgentFile(entry)) files.push(path.join(dir, entry))
   }
   return files
 }

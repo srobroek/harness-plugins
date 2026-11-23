@@ -27,4 +27,16 @@ its model; without it the agent inherits the caller's model.
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-mechanic/opencode'
 ```
 
+OMP installs the same agent from this repository's marketplace:
+
+```sh
+omp plugin marketplace add srobroek/harness-plugins
+omp plugin install agent-mechanic@harness-plugins
+```
+
+In OMP the agent runs on the `@smol` role and has the `read`, `grep`, `ast_grep`,
+`glob`, `edit`, `write`, `ast_edit` and `bash` tools. OMP has no per-path ask, so `.env`
+reads and `external_directory` do not ask there. The generated agent file lists what
+its translation drops.
+
 This plugin ships no skills, so it is not in the Claude Code marketplace.

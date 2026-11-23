@@ -5,7 +5,9 @@
  * omp CLI and config paths. Shipped markdown is every `*.md` under a plugin's `skills/`
  * or `agents/` directory. A `SKILL.md` must also open with YAML frontmatter that parses
  * and carries a `name` and a `description`: Claude Code and Codex read it strictly. Every
- * relative markdown link must name a file that exists.
+ * relative markdown link must name a file that exists. An OMP variant (`<name>.omp.md`,
+ * which harness-kit ships to OMP alone) may name OMP tools, so only its frontmatter and
+ * links are checked.
  *
  *   bun scripts/check-steering.ts           check plugins/*
  *   bun scripts/check-steering.ts <files>   check the named files
@@ -118,6 +120,9 @@ export function shippedMarkdown(pluginsDir: string): string[] {
   return files
 }
 
+/** A harness-kit variant that only the OMP tree receives. */
+const OMP_VARIANT = /\.omp\.md$/
+
 function main(argv: string[]): number {
   const root = path.resolve(import.meta.dir, "..")
   const files = argv.length > 0 ? argv : shippedMarkdown(path.join(root, "plugins"))
@@ -126,7 +131,7 @@ function main(argv: string[]): number {
     const text = readFileSync(file, "utf8")
     return [
       ...(path.basename(file) === "SKILL.md" ? checkSkillFrontmatter(name, text) : []),
-      ...checkText(name, text),
+      ...(OMP_VARIANT.test(file) ? [] : checkText(name, text)),
       ...checkLocalLinks(file, text, existsSync).map((finding) => ({ ...finding, file: name })),
     ]
   })

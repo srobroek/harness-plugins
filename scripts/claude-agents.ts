@@ -22,9 +22,7 @@
 // the tools the translated agent does not have, so its prompt does not send it to them.
 
 import { parseFrontmatter } from "./convert-agent.ts"
-
-type Effect = "allow" | "deny" | "ask"
-type Rule = { action: string; resource: string; effect: Effect }
+import { ANY, actionMatches, describeRule, groupRules, type Rule, readRules } from "./opencode-permissions.ts"
 
 /** OpenCode permission actions and the Claude Code tools they stand for, in output order. */
 const TOOL_GROUPS: ReadonlyArray<{ actions: readonly string[]; tools: readonly string[] }> = [
@@ -40,8 +38,6 @@ const TOOL_GROUPS: ReadonlyArray<{ actions: readonly string[]; tools: readonly s
   { actions: ["skill"], tools: ["Skill"] },
 ]
 
-const ANY = "*"
-
 /** A rule the translation could not carry over, and why. */
 export type Dropped = { rule: string; reason: string }
 
@@ -49,25 +45,6 @@ export type Dropped = { rule: string; reason: string }
 export type Guard = { tools: string[]; rules: Array<{ resource: string; effect: "allow" | "ask" }> }
 
 export type ClaudeAgent = { id: string; contents: string; dropped: Dropped[]; guards: Guard[] }
-
-function glob(pattern: string): RegExp {
-  return new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*")}$`)
-}
-
-function readRules(where: string, value: unknown): Rule[] {
-  if (value === undefined) return []
-  if (!Array.isArray(value)) throw new Error(`${where}: permissions must be a list`)
-  return value.map((entry, index) => {
-    const rule = entry as Record<string, unknown>
-    const { action, resource, effect } = rule ?? {}
-    if (typeof action !== "string" || typeof resource !== "string" || !["allow", "deny", "ask"].includes(String(effect)))
-      throw new Error(`${where}: permissions[${index}] needs a string action and resource and an allow, deny or ask effect`)
-    return { action, resource, effect: effect as Effect }
-  })
-}
-
-const describeRule = (rule: Rule) =>
-  rule.resource === ANY ? `${rule.effect} ${rule.action}` : `${rule.effect} ${rule.action}(${rule.resource})`
 
 /**
  * Whether the rules leave a tool group usable, by OpenCode's last-match-wins order:
@@ -78,13 +55,11 @@ function groupVerdict(
   actions: readonly string[],
   dropped: Dropped[],
 ): { verdict: "allow" | "deny" | "unset"; guard?: Guard["rules"] } {
-  const matching = rules.filter((rule) => actions.some((action) => glob(rule.action).test(action)))
-  const baseIndex = matching.findLastIndex((rule) => rule.resource === ANY)
-  const base = baseIndex === -1 ? undefined : matching[baseIndex]
+  const { base, after } = groupRules(rules, actions)
   let verdict: "allow" | "deny" | "unset" = base === undefined ? "unset" : base.effect === "allow" ? "allow" : "deny"
   if (base?.effect === "ask") dropped.push({ rule: describeRule(base), reason: "no per-subagent ask; denied" })
   const carried: Guard["rules"] = []
-  for (const rule of matching.slice(baseIndex + 1)) {
+  for (const rule of after) {
     if (rule.effect === "allow" && verdict !== "allow")
       dropped.push({ rule: describeRule(rule), reason: "resource-restricted allow; dropped" })
     else if (rule.effect === "ask" && verdict !== "deny") carried.push({ resource: rule.resource, effect: "ask" })
@@ -152,7 +127,7 @@ export function translateAgent(id: string, text: string, where = `agents/${id}.m
     (rule) =>
       rule.action !== ANY &&
       rule.effect !== "deny" &&
-      !TOOL_GROUPS.some((group) => group.actions.some((action) => glob(rule.action).test(action))),
+      !TOOL_GROUPS.some((group) => group.actions.some((action) => actionMatches(rule.action, action))),
   )
   for (const rule of unmapped) dropped.push({ rule: describeRule(rule), reason: "no Claude Code tool; dropped" })
   if (exclusive && allowed.length === 0) throw new Error(`${where}: no Claude Code tool survives the translation`)

@@ -8,7 +8,8 @@
     "description": "mechanic subagent: cheap, exact mechanical edits (renames, bulk edits, formatting, moving code) that run the given check.",
     "category": "development",
     "harnesses": [
-      "opencode"
+      "opencode",
+      "omp"
     ],
     "scope": "global",
     "entries": {

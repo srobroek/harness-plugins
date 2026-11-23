@@ -63,6 +63,18 @@
             "index"
           ],
           "mcp": []
+        },
+        "omp": {
+          "skills": [],
+          "agents": [
+            "mechanic"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
         }
       },
       "scope": "global"

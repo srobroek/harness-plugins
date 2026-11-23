@@ -24,6 +24,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { parseSkillFile } from "../lib/src/skill-files.ts"
 import { createFakeContext } from "../lib/src/testing.ts"
+import { isTranslatedAgentFile } from "./agent-files.ts"
 
 export const TOOL_FIRST_LINE = 120
 const SCHEMA = 1500
@@ -169,7 +170,7 @@ export async function checkPlugins(root: string): Promise<Finding[]> {
         const file = path.join(skill, "SKILL.md")
         if (existsSync(file)) findings.push(...checkSkill(file, readFileSync(file, "utf8")))
       }
-      for (const file of files(path.join(root, plugin, "common", "agents"), (name) => name.endsWith(".md") && !name.endsWith(".claude.md")))
+      for (const file of files(path.join(root, plugin, "common", "agents"), (name) => name.endsWith(".md") && !isTranslatedAgentFile(name)))
         findings.push(...checkAgent(file, readFileSync(file, "utf8")))
       for (const file of files(path.join(root, plugin, "opencode", "instructions"), (name) => name.endsWith(".md")))
         findings.push(...checkBlock(plugin, path.basename(file), readFileSync(file, "utf8")))
