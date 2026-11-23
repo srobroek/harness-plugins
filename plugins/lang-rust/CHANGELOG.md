@@ -1,3 +1,9 @@
+## lang-rust [0.9.0](https://github.com/srobroek/harness-plugins/compare/lang-rust--v0.8.1...lang-rust--v0.9.0) (2026-11-23)
+
+### Features
+
+* **project:** port content plugins to Pi ([5b0d32a](https://github.com/srobroek/harness-plugins/commit/5b0d32abbe2faf67934ca1d8e3b53f9eca0cee01))
+
 ## lang-rust [0.8.1](https://github.com/srobroek/harness-plugins/compare/lang-rust--v0.8.0...lang-rust--v0.8.1) (2026-11-23)
 
 ### Bug Fixes
