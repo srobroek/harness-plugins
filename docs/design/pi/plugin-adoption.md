@@ -6,11 +6,13 @@ Status: review, 2026-11-23. For each plugin in this repository: keep, drop or me
 
 | Outcome | Count | Plugins |
 |---|---|---|
-| Drop: an adopted package or Pi covers it | 8 | lsp (pi-lens), statusline (pi-statusline), docs (Pi `mcp.json`), subagent-worktree (pi-subagents worktrees), ast-grep (pi-lens), session and agent-seance (pi-sessions), claude-compat |
+| Drop: an adopted package or Pi covers it | 9 | lsp (pi-lens), statusline (pi-statusline), docs (Pi `mcp.json`), subagent-worktree (pi-subagents worktrees), ast-grep (pi-lens), session and agent-seance (pi-sessions), model-roles (pi-subagents per-agent models), claude-compat |
+| Move to repository tooling | 1 | plugin-audit |
 | Skills, agent files or config only, each its own package | 15 | agent-coder, agent-mechanic, agent-researcher, agent-reviewer, build, lang-go, lang-python, lang-rust, lang-typescript, toolchain, eli5, aws, debate, project, architecture |
 | Needs a Pi extension, large | 9 | safety, beads, parley, delivery, autopilot, speckit, code-challenge, design, modes |
-| Needs a Pi extension, medium | 11 | trunk-dev, worktrunk, chezmoi, agent-efficiency, dep-update, find-tools, plugin-audit, whats-new, quality, repomix, journeys |
-The 43 decisions comprise 8 dropped/adopted packages, 1 move to repository tooling, 15 content/config packages and 19 Pi extensions. Quality, Repomix and Journeys retain `quality_test_summarize`, `quality_test_compare`, `repomix_pack`, `journeys_index`, and `journey_install_formulas`.
+| Needs a Pi extension, medium | 10 | trunk-dev, worktrunk, chezmoi, agent-efficiency, dep-update, find-tools, whats-new, quality, repomix, journeys |
+
+The 44 decisions comprise 9 dropped packages, 1 move to repository tooling, 15 content/config packages and 19 Pi extensions. Quality, Repomix and Journeys retain `quality_test_summarize`, `quality_test_compare`, `repomix_pack`, `journeys_index`, and `journey_install_formulas`.
 
 
 ## Agents and orchestration plugins
