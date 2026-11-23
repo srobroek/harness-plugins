@@ -2326,7 +2326,7 @@ function hostWarn(source) {
   };
 }
 
-// plugins/safety/opencode/src/asked-watch.ts
+// lib/src/event-watch.ts
 function abortableSleep(ms, signal, timers = globalThis) {
   return new Promise((resolve) => {
     if (signal.aborted)
@@ -2343,7 +2343,7 @@ function abortableSleep(ms, signal, timers = globalThis) {
 }
 var DEFAULT_RESUBSCRIBE_DELAYS_MS = [1000, 5000, 15000];
 var errorName = (error) => error instanceof Error ? error.name : typeof error;
-function watchAsked(deps) {
+function watchStream(deps) {
   const { signal } = deps;
   const sleep = deps.sleep ?? abortableSleep;
   const delays = deps.delaysMs ?? DEFAULT_RESUBSCRIBE_DELAYS_MS;
@@ -2365,7 +2365,13 @@ function watchAsked(deps) {
         return;
       if (next.done)
         return "stream ended";
-      await deps.handle(next.value);
+      try {
+        await deps.handle(next.value);
+      } catch (error) {
+        try {
+          deps.onHandlerError?.(error);
+        } catch {}
+      }
     }
   };
   const run = async () => {
@@ -2393,6 +2399,9 @@ function watchAsked(deps) {
     }
   };
 }
+
+// plugins/safety/opencode/src/asked-watch.ts
+var watchAsked = (deps) => watchStream(deps);
 
 // plugins/safety/opencode/src/close-keywords.ts
 var KEYWORDS = new Set(["close", "closes", "closed", "fix", "fixes", "fixed", "resolve", "resolves", "resolved"]);
