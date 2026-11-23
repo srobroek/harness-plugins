@@ -1,0 +1,70 @@
+# mol-challenge-deliver -- the DELIVER phase of a code-challenge run, runnable alone
+#
+# Install: run the challenge_setup tool, which copies every code-challenge formula into
+# <repo>/.beads/formulas/, or copy this file there (or into ~/.beads/formulas/).
+# Pour one phase:
+#   bd mol pour mol-challenge-deliver --var target=<paths> --var run_id=<run-id> --var depth=<depth> --var mode=<mode>
+#
+# The phase needs the earlier phases' files in the run directory; each file is named in the
+# code-challenge skill's references/run-storage.md. The vars have no defaults because bd mol bond
+# does not apply them.
+#
+# PRECONDITION: the skills and agents named here ship in the code-challenge plugin
+# (srobroek.code-challenge). Install it first.
+#
+# Evidence rule: every finding carries a tier -- proven, measured or hypothesis -- and a
+# path:line locator. A speed claim without a measurement is a hypothesis.
+formula = "mol-challenge-deliver"
+description = "Run the DELIVER phase for {{target}}: report, decisions log, beads for accepted findings, a drafted comment"
+type = "workflow"
+
+[vars.target]
+required = true
+description = "paths, packages or diff range under challenge"
+
+[vars.run_id]
+required = true
+description = "run id; the run directory is <git-dir>/code-challenge/<run-id>/"
+
+[vars.depth]
+required = true
+description = "quick, standard or deep"
+
+[vars.mode]
+required = true
+description = "interactive or autonomous"
+
+[[steps]]
+id = "write-report"
+title = "WRITE report.json and report.md"
+type = "task"
+labels = ["code-challenge", "sub:deliver", "phase:deliver"]
+description = """
+Run the code-challenge skill, phase DELIVER, from run {{run_id}}. Write report.json and validate it
+against references/report.schema.json; validate every decisions.jsonl line against
+references/decisions.schema.json. Print report.md in chat with the run directory path. List every
+gap: missing analyzers, benchmarks not run, areas not read.
+"""
+
+[[steps]]
+id = "file-beads"
+title = "FILE the epic and one child bead per accepted finding"
+type = "task"
+needs = ["write-report"]
+labels = ["code-challenge", "sub:deliver", "phase:deliver"]
+description = """
+At depth standard and deep, create one epic bead for run {{run_id}} and one child per accepted
+finding with its evidence, proposal and test protection. Without bd, say so in the report gaps.
+This skill changes no source file: the coder takes the beads after approval.
+"""
+
+[[steps]]
+id = "draft-comment"
+title = "DRAFT the PR or MR comment"
+type = "task"
+needs = ["file-beads"]
+labels = ["code-challenge", "sub:deliver", "phase:deliver"]
+description = """
+Draft the comment when the target is a branch with an open PR. Post it only after the user
+confirms. Autonomous mode never posts: leave the draft in report.json.
+"""

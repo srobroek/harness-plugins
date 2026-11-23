@@ -6,7 +6,7 @@
 #   OMP has no per-agent skill filter: 8 skill rules
 #   OMP has no per-agent directory rule: ask external_directory
 name: security-auditor
-description: "Read-only security review of a repository scope or the files a change touches: traces untrusted input to sinks, returns CWE-tagged findings."
+description: "Read-only security review of a repository scope or the files a change touches: traces untrusted input to sinks and returns CWE-tagged findings."
 tools: read, grep, ast_grep, glob, lsp
 model: "@challenger, @slow"
 ---

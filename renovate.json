@@ -74,26 +74,13 @@
       "description": "The repomix runner pin in the plugin source",
       "customType": "regex",
       "managerFilePatterns": [
-        "/^plugins\\/repomix\\/opencode\\/src\\/pack\\.ts$/"
+        "/^plugins\\/repomix\\/shared\\/pack\\.ts$/"
       ],
       "matchStrings": [
         "REPOMIX_VERSION = \\\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\\\""
       ],
       "depNameTemplate": "repomix",
       "datasourceTemplate": "npm"
-    }
-  ],
-  "packageRules": [
-    {
-      "description": "cad common and opencode/examples are vendored from the cad-agent tag; never edit them (AGENTS.md)",
-      "matchManagers": [
-        "custom.regex"
-      ],
-      "matchFileNames": [
-        "plugins/cad/common/**",
-        "plugins/cad/opencode/**"
-      ],
-      "enabled": false
     }
   ]
 }

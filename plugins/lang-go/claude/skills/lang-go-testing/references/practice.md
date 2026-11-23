@@ -151,7 +151,7 @@ no-panic/round-trip invariants. Bound campaigns with `-fuzztime`; ordinary `go t
 replays seeds and committed failures in `testdata/fuzz/<FuzzName>`.
 Run `gremlins` (`gremlins unleash --diff <ref> --output=<json>`) on important pure-logic
 packages and on changed code in PRs; `go-mutesting` v2 is the fallback. Neither emits
-the Stryker schema; `quality_test_compare` reads the Gremlins JSON.
+the Stryker schema; the `quality_test_compare` tool (when available) reads Gremlins JSON.
 Continuous fuzzing uses OSS-Fuzz or ClusterFuzzLite (`compile_native_go_fuzzer`).
 
 Read `-coverprofile` and changed-code gaps as prompts for missing behaviors.

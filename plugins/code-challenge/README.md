@@ -2,7 +2,7 @@
 
 Challenge existing code for simplification, performance, stability, hand-rolled code and structure. Every finding carries a locator and an evidence tier (`proven`, `measured` or `hypothesis`). The plugin plans; it never edits source.
 
-OpenCode only: the skill depends on OpenCode tools (`parley_ask`, `challenge_*`, subagents). The plugin sets `harnesses: ["opencode"]` in its `agent-plugins` key, so the build ships no Claude Code tree.
+The plugin ships to OpenCode and OMP (`harnesses: ["opencode", "omp"]`). It has no Claude Code tree: the skill needs the `challenge_*` tools and subagents.
 
 ## Use
 
@@ -38,7 +38,28 @@ Both are composed by `bun run build` from `agents.src/` and the shared review co
 | `/code-challenge` | command | Load the skill with the mode, depth and target |
 | `challenge_setup` | tool | Copy the formulas into a beads workspace's `.beads/formulas/` |
 | `challenge_lib_facts` | tool | Registry, OSV and GitHub facts for 1 to 6 packages (npm, pypi, crates, go); facts only |
-| `challenge_scan` | tool | Planned, ships in a later PR. The skill falls back to the shell until then |
+| `challenge_validate` | tool | Check a run's `report.json` and `decisions.jsonl` against the shipped JSON Schemas |
+| `challenge_scan` | tool | Run the SCAN analyzers and return normalised candidates. Recipes that run repository or downloaded code run only with `allowCode: true` |
+
+## OMP
+
+The OMP tree has the same skill, agents and formulas. Its extension registers the four tools and `/code-challenge`. The tools take the same parameters as the OpenCode ones and return the same text, with the OpenCode metadata as `details`.
+
+- Source: `pi-src/index.ts`, written against Pi's extension API. It calls the same handlers as the OpenCode plugin.
+- Build: `scripts/build.ts` bundles it to `pi/extensions/index.js` and copies that bundle to `omp/extensions/index.js`. OMP loads Pi extensions unchanged.
+- Skill text: the `*.omp.md` files name OMP's `ask` and `read` tools instead of OpenCode's `question` tool and `webfetch`. The CHALLENGE brief names each lens reference by its `skill://code-challenge/references/` URI.
+
+## Code-running analyzers
+
+Some recipes execute repository or downloaded code: clippy, golangci-lint, deadcode, knip, import-linter and the one-off `bunx`, `uvx` and `go run` runs.
+
+- By default `challenge_scan` skips them. Each one is a coverage gap that names what it would run and says to pass `allowCode: true`.
+- With `allowCode: true`, every planned recipe runs.
+- The tool shows no dialog, so it behaves the same with and without an interactive UI, in OpenCode and in OMP.
+- The skill passes `allowCode` only for a repository the user trusts, or after asking them.
+- In OMP the tool declares the `exec` approval tier, so OMP's approval mode governs each call, and a `tools.approval.challenge_scan: deny` entry blocks it.
+
+`allowCode` replaced `staticOnly` in 2.0.0. The default now runs static recipes only, and no call asks for consent.
 
 ## Beads formulas
 

@@ -41,8 +41,8 @@ describe("selecting a lens a recipe cannot produce", () => {
     writeFileSync(join(root, "Cargo.toml"), '[package]\nname="x"\nversion="0.1.0"\n')
     const calls: Parameters<typeof fakeExec>[1] = []
     const report = await runScan(
-      { root, languages: ["rust"], lenses: ["stability"] },
-      { exec: fakeExec({}, calls), which: withTools("cargo"), approved: new Set(["clippy:lenses"]) },
+      { root, languages: ["rust"], lenses: ["stability"], allowCode: true },
+      { exec: fakeExec({}, calls), which: withTools("cargo") },
     )
     expect(status(report, "clippy:lenses")).toMatchObject({ status: "skipped", reason: "serves none of the requested lenses" })
     expect(calls.some((c) => c.argv.includes("clippy"))).toBe(false)

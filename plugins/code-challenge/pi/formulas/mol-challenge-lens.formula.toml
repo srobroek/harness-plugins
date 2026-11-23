@@ -1,0 +1,59 @@
+# mol-challenge-lens -- one lens of the CHALLENGE phase, bonded once per lens by mol-challenge-challenge
+#
+# Install: run the challenge_setup tool, which copies every code-challenge formula into
+# <repo>/.beads/formulas/, or copy this file there (or into ~/.beads/formulas/).
+# Pour one phase:
+#   bd mol pour mol-challenge-lens --var lens=<lens> --var target=<paths> --var run_id=<run-id>
+#
+# The phase needs the earlier phases' files in the run directory; each file is named in the
+# code-challenge skill's references/run-storage.md. The vars have no defaults because bd mol bond
+# does not apply them.
+#
+# PRECONDITION: the skills and agents named here ship in the code-challenge plugin
+# (srobroek.code-challenge). Install it first.
+#
+# Evidence rule: every finding carries a tier -- proven, measured or hypothesis -- and a
+# path:line locator. A speed claim without a measurement is a hypothesis.
+formula = "mol-challenge-lens"
+description = "Analyse {{target}} through the {{lens}} lens for run {{run_id}}: a read-only scout replies with findings, the lead records them"
+type = "workflow"
+
+[vars.lens]
+required = true
+description = "one lens id, for example simplification or hand-rolled-library, or a comma-separated group of lens ids when scouts are grouped"
+
+[vars.target]
+required = true
+description = "paths, packages or diff range under challenge"
+
+[vars.run_id]
+required = true
+description = "run id; the run directory is <git-dir>/code-challenge/<run-id>/"
+
+[[steps]]
+id = "analyse-lens"
+title = "ANALYSE {{target}} through the {{lens}} lens"
+type = "task"
+labels = ["code-challenge", "sub:challenge", "phase:challenge"]
+description = """
+Read the references/lens-<lens>.md file of the code-challenge skill for each lens in {{lens}}, and the steering skills each
+names. Read the target {{target}} and the scan hits in this bead. Reply with findings, one per root
+cause: lens, path:line, claim, evidence tier and detail, impact, blast radius and test protection.
+End the reply with a `References read:` line listing the absolute paths you read first. Read only: return the findings in your reply and leave recording them to the lead.
+"""
+
+[steps.metadata]
+execution_agent_type = "code-challenger"
+execution_mode = "subagent"
+requires_actions = "read, grep, glob, skill:code-challenge, skill:quality-code-policy"
+
+[[steps]]
+id = "record-findings"
+title = "RECORD the {{lens}} findings"
+type = "task"
+needs = ["analyse-lens"]
+labels = ["code-challenge", "sub:challenge", "phase:challenge"]
+description = """
+You (the lead) append the scout's findings for {{lens}} to the CHALLENGE working set, and log a
+decisions.jsonl line for every ambiguity the scout reported.
+"""

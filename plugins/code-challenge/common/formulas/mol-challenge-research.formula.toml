@@ -43,7 +43,7 @@ description = """
 Run the code-challenge skill, phase RESEARCH, from run {{run_id}}. For every hand-rolled-library
 finding, and at depth deep for every direct dependency used for one or two functions, pick 2 to 4
 candidates plus "keep what exists". Collect facts with challenge_lib_facts when it is in the tool
-list (it ships in a later PR); otherwise read the registry page and the OSV record with webfetch and
+list (it ships in a later PR); otherwise fetch the registry page and the OSV record (`read` in OMP) and
 cite each URL. Use context7 for API coverage. Skip this phase at depth quick.
 """
 

@@ -1,3 +1,15 @@
+## repomix [0.6.0](https://github.com/srobroek/harness-plugins/compare/repomix--v0.5.1...repomix--v0.6.0) (2026-11-23)
+
+### Features
+
+* **project:** port content plugins to Pi ([5b0d32a](https://github.com/srobroek/harness-plugins/commit/5b0d32abbe2faf67934ca1d8e3b53f9eca0cee01))
+
+## repomix [0.5.1](https://github.com/srobroek/harness-plugins/compare/repomix--v0.5.0...repomix--v0.5.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## repomix [0.5.0](https://github.com/srobroek/harness-plugins/compare/repomix--v0.4.1...repomix--v0.5.0) (2026-11-22)
 
 ### Features

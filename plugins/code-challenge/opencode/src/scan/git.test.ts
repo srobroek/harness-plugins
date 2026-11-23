@@ -6,7 +6,7 @@ import type { Exec } from "./exec.ts"
 import { spawnTool } from "./exec.ts"
 import { cleanup, exited, fakeExec, temp, withTools } from "./fixtures.ts"
 import { gitListing, gitState } from "./git.ts"
-import { consentRisks, MAX_ARGV_BYTES, runScan } from "./run.ts"
+import { MAX_ARGV_BYTES, runScan } from "./run.ts"
 
 // Real git processes: each call takes about 10 ms alone; 30 s leaves headroom for a loaded machine (AGENTS.md, Commands).
 setDefaultTimeout(30_000)
@@ -28,7 +28,7 @@ function repo(files: Record<string, string> = {}): string {
   return root
 }
 
-describe("no repository code runs before consent", () => {
+describe("no repository code runs without allowCode", () => {
   test("a configured fsmonitor command is not run by the scan's git calls", async () => {
     const root = repo({ "a.py": "x = 1\n" })
     git(root, "add", "a.py")
@@ -43,7 +43,6 @@ describe("no repository code runs before consent", () => {
     expect(await Bun.file(marker).exists()).toBe(true)
     Bun.spawnSync(["rm", marker])
 
-    await consentRisks({ root, languages: ["python"], files: ["a.py"] }, { which })
     await runScan({ root, languages: ["python"], files: ["a.py"] }, { which })
     expect(await Bun.file(marker).exists()).toBe(false)
   })

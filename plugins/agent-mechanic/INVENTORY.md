@@ -3,13 +3,13 @@
 
 mechanic subagent: cheap, exact mechanical edits (renames, bulk edits, formatting, moving code) that run the given check.
 
-| Kind | opencode | omp |
-| --- | --- | --- |
-| skills | - | - |
-| agents | mechanic | mechanic |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | - |
-| tools | - | - |
-| extensions | index | - |
-| mcp | - | - |
+| Kind | opencode | omp | pi |
+| --- | --- | --- | --- |
+| skills | - | - | - |
+| agents | mechanic | mechanic | mechanic |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | - | - |
+| tools | - | - | - |
+| extensions | index | - | - |
+| mcp | - | - | - |
