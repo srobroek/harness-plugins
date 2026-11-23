@@ -6,6 +6,7 @@ import { Plugin } from "@opencode/plugin"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import { withEmbeddedWriteLock } from "@srobroek/opencode-lib/bd-embedded-write-lock"
 import { readBoundedBytes } from "@srobroek/opencode-lib/bounded-read"
+import { type EventWatchDeps, watchEvents } from "@srobroek/opencode-lib/event-watch"
 import { hostWarn, type Warn } from "@srobroek/opencode-lib/host-log"
 import { withLease } from "@srobroek/opencode-lib/lease-lock"
 import { SAFE_GIT_ARGS } from "@srobroek/opencode-lib/safe-git"
@@ -218,7 +219,7 @@ export type WriteLock = <T>(cwd: string, owner: string, write: () => Promise<T>,
 
 const embeddedLock: WriteLock = (cwd, owner, write, env) => withEmbeddedWriteLock(cwd, owner, write, env)
 
-export type Deps = { run?: Run; now?: () => number; ticks?: Ticks; lock?: WriteLock; warn?: Warn; ledger?: LedgerHost; readPauseMs?: number }
+export type Deps = { run?: Run; now?: () => number; ticks?: Ticks; lock?: WriteLock; warn?: Warn; ledger?: LedgerHost; readPauseMs?: number; watch?: Pick<EventWatchDeps, "delaysMs" | "sleep"> }
 
 /** How long a state transition waits for another instance's hold on the run lock. */
 const RUN_LOCK_WAIT_MS = 60_000
@@ -1472,20 +1473,19 @@ export async function setupAutopilot(ctx: Context, deps: Deps = {}): Promise<() 
   registrations.push(await ctx.permission.hook("evaluate", (event) => pilot.evaluate(event).catch(report("permission hook"))))
   registrations.push(await ctx.session.hook("experimental.idle", (event) => pilot.idle(event.sessionID).catch(report("idle hook"))))
   registrations.push(await registerSkills(ctx.skill, [SKILL_FILE]))
-  const abort = new AbortController()
-  const iterator = ctx.event.subscribe({ signal: abort.signal })[Symbol.asyncIterator]()
-  void (async () => {
-    for (;;) {
-      const next = await iterator.next().catch(() => ({ done: true as const, value: undefined }))
-      if (next.done) return
-      pilot.activity.observe(next.value)
-      const event = next.value as { type?: string; data?: { sessionID?: string } }
+  const watching = watchEvents<unknown>({
+    subscribe: (signal) => ctx.event.subscribe({ signal })[Symbol.asyncIterator](),
+    handle: (value) => {
+      pilot.activity.observe(value)
+      const event = value as { type?: string; data?: { sessionID?: string } }
       if (event.type === "session.compaction.ended" && typeof event.data?.sessionID === "string") void pilot.compacted(event.data.sessionID).catch(report("compaction recovery"))
-    }
-  })()
+    },
+    warn,
+    label: "autopilot event",
+    ...deps.watch,
+  })
   return async () => {
-    abort.abort()
-    await iterator.return?.()
+    watching.stop()
     pilot.dispose()
     for (const registration of registrations.reverse()) await registration.dispose()
   }
