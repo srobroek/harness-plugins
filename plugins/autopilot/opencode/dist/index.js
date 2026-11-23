@@ -2289,11 +2289,21 @@ class Activity {
 
 // plugins/autopilot/opencode/src/review-claim.ts
 import { randomUUID as randomUUID2 } from "crypto";
-import { closeSync as closeSync4, linkSync, mkdirSync, openSync as openSync4, rmSync, writeFileSync } from "fs";
+import { closeSync as closeSync4, linkSync, mkdirSync, openSync as openSync4, rmSync, writeSync as writeSync3 } from "fs";
 import { join as join3 } from "path";
 var CLAIM_DIR = "review-claims";
 var claimNames = (pr, sha) => [`pr-${pr}@${sha}`, `head-${sha}`];
-var realFs = { closeSync: closeSync4, linkSync, mkdirSync, openSync: openSync4, rmSync, writeFileSync };
+var realFs = { closeSync: closeSync4, linkSync, mkdirSync, openSync: openSync4, rmSync, writeSync: (fd, buffer, offset, length) => writeSync3(fd, buffer, offset, length) };
+function writeAll(fs, fd, data) {
+  const bytes = Buffer.from(data);
+  let offset = 0;
+  while (offset < bytes.length) {
+    const written = fs.writeSync(fd, bytes, offset, bytes.length - offset);
+    if (!(written > 0))
+      throw new Error(`claim write made no progress at byte ${offset} of ${bytes.length}`);
+    offset += written;
+  }
+}
 var messageOf = (error) => error instanceof Error ? error.message : String(error);
 function describeClaimFailure(result) {
   return [messageOf(result.error), ...result.cleanup.map((failure) => `${failure.target}: ${messageOf(failure.error)}`)].join("; ");
@@ -2322,7 +2332,7 @@ function takeClaims(root, names, owner, fs = realFs) {
       const fd = fs.openSync(temporary, "wx");
       created = true;
       try {
-        fs.writeFileSync(fd, JSON.stringify({ owner, at: Date.now() }));
+        writeAll(fs, fd, JSON.stringify({ owner, at: Date.now() }));
       } catch (error) {
         failure = { error };
       }
@@ -2364,7 +2374,7 @@ function releaseClaims(root, names) {
 
 // plugins/autopilot/opencode/src/review-export.ts
 import { createHash, randomUUID as randomUUID3 } from "crypto";
-import { lstatSync as lstatSync3, mkdirSync as mkdirSync2, readdirSync as readdirSync2, renameSync, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "fs";
+import { lstatSync as lstatSync3, mkdirSync as mkdirSync2, readdirSync as readdirSync2, renameSync, rmSync as rmSync2, writeFileSync } from "fs";
 import { basename as basename3, dirname as dirname4, join as join4, sep } from "path";
 var REVIEW_DIR = "review";
 var MANIFEST = "manifest.json";
@@ -2543,9 +2553,9 @@ function publish(reviewRoot, head, manifestHash, parts) {
   const temporary = join4(headDir, `.tmp-${randomUUID3()}`);
   mkdirSync2(temporary);
   try {
-    writeFileSync2(join4(temporary, MANIFEST), parts.manifestText, { flag: "wx" });
-    writeFileSync2(join4(temporary, "round.diff"), parts.diff, { flag: "wx" });
-    writeFileSync2(join4(temporary, "diffstat.txt"), parts.stat, { flag: "wx" });
+    writeFileSync(join4(temporary, MANIFEST), parts.manifestText, { flag: "wx" });
+    writeFileSync(join4(temporary, "round.diff"), parts.diff, { flag: "wx" });
+    writeFileSync(join4(temporary, "diffstat.txt"), parts.stat, { flag: "wx" });
     const filesDir = join4(temporary, "files");
     mkdirSync2(filesDir);
     for (const file of parts.contents) {
@@ -2553,7 +2563,7 @@ function publish(reviewRoot, head, manifestHash, parts) {
       if (!path.startsWith(`${filesDir}${sep}`))
         throw new Error(`${file.path} would leave the export directory`);
       mkdirSync2(dirname4(path), { recursive: true });
-      writeFileSync2(path, file.text, { flag: "wx" });
+      writeFileSync(path, file.text, { flag: "wx" });
     }
     if (lstatOrUndefined(target) !== undefined) {
       if (verifyExport(target, manifestHash).ok) {
@@ -2883,8 +2893,8 @@ import {
   rmSync as rmSync3,
   statSync as statSync5,
   symlinkSync,
-  writeFileSync as writeFileSync3,
-  writeSync as writeSync3
+  writeFileSync as writeFileSync2,
+  writeSync as writeSync4
 } from "fs";
 import { isAbsolute as isAbsolute4, join as join5, resolve as resolve4 } from "path";
 
@@ -3019,7 +3029,7 @@ class RunDir {
   create() {
     mkdirSync3(this.path, { recursive: true });
     if (!existsSync3(this.journalPath))
-      writeFileSync3(this.journalPath, "");
+      writeFileSync2(this.journalPath, "");
     const link = join5(this.root, "latest");
     rmSync3(link, { force: true });
     symlinkSync(this.runId, link);
@@ -3068,7 +3078,7 @@ class RunDir {
     const temporary = `${target}.tmp-${randomUUID4()}`;
     try {
       try {
-        writeFileSync3(temporary, `${JSON.stringify(written, null, 2)}
+        writeFileSync2(temporary, `${JSON.stringify(written, null, 2)}
 `, { flag: "wx" });
       } catch (error) {
         throw new RunFileError("io", target, describe(error), error);
@@ -3139,7 +3149,7 @@ class RunDir {
         if (last[0] !== 10)
           ftruncateSync(fd, this.#lastLineEnd(fd, size));
       }
-      writeSync3(fd, `${JSON.stringify(entry)}
+      writeSync4(fd, `${JSON.stringify(entry)}
 `);
     } catch (error) {
       throw error instanceof RunFileError ? error : new RunFileError("io", this.journalPath, describe(error), error);
@@ -3166,7 +3176,7 @@ class RunDir {
   }
   writeSummary(text) {
     try {
-      writeFileSync3(this.summaryPath, text);
+      writeFileSync2(this.summaryPath, text);
     } catch (error) {
       throw new RunFileError("io", this.summaryPath, describe(error), error);
     }

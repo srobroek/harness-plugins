@@ -8,7 +8,7 @@
  */
 
 import { randomUUID } from "node:crypto"
-import { closeSync, linkSync, mkdirSync, openSync, rmSync, writeFileSync } from "node:fs"
+import { closeSync, linkSync, mkdirSync, openSync, rmSync, writeSync } from "node:fs"
 import { join } from "node:path"
 
 export const CLAIM_DIR = "review-claims"
@@ -31,10 +31,21 @@ export interface ClaimFs {
   mkdirSync: typeof mkdirSync
   openSync: typeof openSync
   rmSync: typeof rmSync
-  writeFileSync: typeof writeFileSync
+  writeSync: (fd: number, buffer: Uint8Array, offset: number, length: number) => number
 }
 
-const realFs: ClaimFs = { closeSync, linkSync, mkdirSync, openSync, rmSync, writeFileSync }
+const realFs: ClaimFs = { closeSync, linkSync, mkdirSync, openSync, rmSync, writeSync: (fd, buffer, offset, length) => writeSync(fd, buffer, offset, length) }
+
+/** Write all of `data`, looping over short writes; a write that makes no progress is an error. */
+function writeAll(fs: ClaimFs, fd: number, data: string): void {
+  const bytes = Buffer.from(data)
+  let offset = 0
+  while (offset < bytes.length) {
+    const written = fs.writeSync(fd, bytes, offset, bytes.length - offset)
+    if (!(written > 0)) throw new Error(`claim write made no progress at byte ${offset} of ${bytes.length}`)
+    offset += written
+  }
+}
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
@@ -74,7 +85,7 @@ export function takeClaims(root: string, names: readonly string[], owner: string
       const fd = fs.openSync(temporary, "wx")
       created = true
       try {
-        fs.writeFileSync(fd, JSON.stringify({ owner, at: Date.now() }))
+        writeAll(fs, fd, JSON.stringify({ owner, at: Date.now() }))
       } catch (error) {
         failure = { error }
       }

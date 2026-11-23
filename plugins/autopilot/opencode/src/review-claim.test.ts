@@ -12,7 +12,7 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }))
 
 const files = () => (existsSync(join(root, CLAIM_DIR)) ? readdirSync(join(root, CLAIM_DIR)).sort() : [])
-const withFs = (over: Partial<ClaimFs>): ClaimFs => ({ closeSync: real.closeSync, linkSync: real.linkSync, mkdirSync: real.mkdirSync, openSync: real.openSync, rmSync: real.rmSync, writeFileSync: real.writeFileSync, ...over })
+const withFs = (over: Partial<ClaimFs>): ClaimFs => ({ closeSync: real.closeSync, linkSync: real.linkSync, mkdirSync: real.mkdirSync, openSync: real.openSync, rmSync: real.rmSync, writeSync: (fd, buffer, offset, length) => real.writeSync(fd, buffer, offset, length), ...over })
 const errno = (code: string) => Object.assign(new Error(code), { code })
 const failed = (result: ReturnType<typeof takeClaims>) => {
   if (result.ok || "taken" in result) throw new Error("expected an error result")
@@ -36,14 +36,29 @@ describe("takeClaims", () => {
   test("a write that fails partway removes the temporary file this attempt created", () => {
     const boom = errno("ENOSPC")
     const fs = withFs({
-      writeFileSync: ((fd: number) => {
-        real.writeFileSync(fd, "partial")
+      writeSync: ((fd: number, buffer: Uint8Array, offset: number) => {
+        real.writeSync(fd, buffer, offset, 3)
         throw boom
-      }) as ClaimFs["writeFileSync"],
+      }) as ClaimFs["writeSync"],
     })
     const result = failed(takeClaims(root, ["a"], "me", fs))
     expect(result.error).toBe(boom)
     expect(result.cleanup).toEqual([])
+    expect(files()).toEqual([])
+  })
+
+  test("a successful short write is continued, so the published claim is never truncated", () => {
+    const fs = withFs({
+      writeSync: ((fd: number, buffer: Uint8Array, offset: number, length: number) => real.writeSync(fd, buffer, offset, Math.min(length, 5))) as ClaimFs["writeSync"],
+    })
+    expect(takeClaims(root, ["a"], "me", fs)).toEqual({ ok: true })
+    expect(JSON.parse(readFileSync(join(root, CLAIM_DIR, "a"), "utf8"))).toMatchObject({ owner: "me" })
+  })
+
+  test("a write that makes no progress is refused and publishes nothing", () => {
+    const fs = withFs({ writeSync: (() => 0) as ClaimFs["writeSync"] })
+    const result = failed(takeClaims(root, ["a"], "me", fs))
+    expect(String(result.error)).toContain("no progress")
     expect(files()).toEqual([])
   })
 
@@ -66,9 +81,9 @@ describe("takeClaims", () => {
     const boom = errno("ENOSPC")
     const busy = errno("EIO")
     const fs = withFs({
-      writeFileSync: (() => {
+      writeSync: (() => {
         throw boom
-      }) as ClaimFs["writeFileSync"],
+      }) as ClaimFs["writeSync"],
       closeSync: ((fd: number) => {
         real.closeSync(fd)
         throw busy
