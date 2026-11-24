@@ -1311,7 +1311,7 @@
     },
     {
       "name": "lang-rust",
-      "version": "0.9.1",
+      "version": "0.9.2",
       "description": "Rust skills: fmt, clippy and test checks, testing with nextest, proptest and insta, crates and workspaces, CI, sqlx persistence, Tauri and profiling.",
       "category": "development",
       "harnesses": {
