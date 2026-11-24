@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/pi-secret-store",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "A tool that stores a new secret in 1Password or a fnox store without a shell, so the value stays out of commands, logs and the transcript.",
   "keywords": [
     "pi-package"
@@ -12,6 +12,7 @@
     "directory": "plugins/secret-store/pi"
   },
   "files": [
+    "CHANGELOG.md",
     "LICENSE",
     "README.md",
     "extensions"
