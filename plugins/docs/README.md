@@ -1,25 +1,25 @@
 # docs
 
-Documentation MCP servers for OpenCode, added by the plugin so you do not have to
-configure them:
+Documentation MCP servers for OpenCode, OMP and Pi, with the OpenAI developer
+docs server available on request. The shared source is
+[`common/.mcp.json`](common/.mcp.json); harness-kit generates the OMP, Claude and
+Pi MCP declarations from it. Context7 is enabled without a key; when
+`CONTEXT7_API_KEY` is set, OpenCode and Pi send it as the `CONTEXT7_API_KEY`
+header. OMP omits servers that require missing credentials.
 
 | Server | Default | What it serves |
 | --- | --- | --- |
 | `context7` | on | Current library and framework docs and code examples from [Context7](https://context7.com) (`https://mcp.context7.com/mcp`) |
 | `openaiDeveloperDocs` | off | The OpenAI developer documentation (`https://developers.openai.com/mcp`) |
 
-Both are remote servers that answer without signing in, so the plugin sets
-`oauth: false` and no sign-in step is needed. Context7 has a lower rate limit
-without an API key: set `CONTEXT7_API_KEY` in the environment OpenCode starts in
-and the plugin sends it as the `CONTEXT7_API_KEY` header. OpenCode does not expand
-`{env:...}` in configs a plugin sets, so the plugin reads the variable itself when
-it loads.
+In OpenCode, both servers answer without signing in, so the plugin disables OAuth.
+It reads `CONTEXT7_API_KEY` itself because OpenCode does not expand environment
+variables in plugin configs. Both speak MCP 2026-07-28, so OpenCode shares one
+connection across locations with `pool: true`.
 
-Both speak MCP 2026-07-28, so the plugin sets `pool: true`: on OpenCode 2.2.6 and later
-every directory shares one connection to each.
-
-Both servers run in Code Mode: their tools are listed in the Code Mode catalog and
-called through `execute`, instead of each tool schema going into every request.
+Both servers run in Code Mode in OpenCode: their tools are listed in the Code Mode
+catalog and called through `execute`, instead of each tool schema going into every
+request.
 
 ## Options
 
@@ -50,5 +50,3 @@ to `false` in `mcpServers`.
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/docs/opencode'
 ```
 
-The plugin is OpenCode-only and not in the Claude Code marketplace; Context7
-ships its own plugins for those.
