@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import { guardDecision } from "../scripts/claude-agent-guard"
 import { permissionEffect, readAgentFile } from "@srobroek/opencode-lib/agent-files"
 import { READ_ONLY_SHELL_RULES } from "@srobroek/opencode-lib/read-only-shell"
 
@@ -27,56 +29,48 @@ describe("read-only agents", () => {
 })
 
 describe("code-reviewer", () => {
-  // It runs in background sessions where nobody can answer a prompt, so its shell is an allowlist and nothing asks.
-  const file = readAgentFile(join(plugins, "agent-reviewer/common/agents/code-reviewer.opencode.md"))
-  const shell = (command: string) => permissionEffect(file.permissions, "shell", command)
+  // It runs in background sessions where nobody can answer a prompt, so nothing asks; it has no shell, and the caller
+  // supplies the patch.
+  const reviewer = join(plugins, "agent-reviewer")
+  const opencode = ["common/agents/code-reviewer.opencode.md", "opencode/agents/code-reviewer.md"]
+  const claude = ["common/agents/code-reviewer.claude.md", "claude/agents/code-reviewer.md"]
+  const omp = ["common/agents/code-reviewer.omp.md", "omp/agents/code-reviewer.md"]
+  const frontmatterTools = (path: string) =>
+    (readFileSync(join(reviewer, path), "utf8").match(/^tools: (.*)$/m)?.[1] ?? "").split(", ")
 
-  test("has no rule that asks", () => {
-    expect(file.permissions.filter((rule) => rule.effect === "ask")).toEqual([])
-    expect(permissionEffect(file.permissions, "external_directory", "/tmp/x/y")).toBe("allow")
-    expect(permissionEffect(file.permissions, "read", "/p/.env")).toBe("deny")
+  test.each(opencode)("%s has no shell grant and no rule that asks", (path) => {
+    const { permissions } = readAgentFile(join(reviewer, path))
+    expect(permissions.filter((rule) => rule.effect === "ask")).toEqual([])
+    expect(permissions.filter((rule) => rule.action === "shell" && rule.effect !== "deny")).toEqual([])
+    expect(permissionEffect(permissions, "shell", "git diff")).toBe("deny")
+    expect(permissionEffect(permissions, "external_directory", "/tmp/x/y")).toBe("allow")
+  })
+
+  test.each(opencode.flatMap((path) => [
+    [path, "/p/.env", "deny"],
+    [path, "/p/.env.local", "deny"],
+    [path, "/p/.env.example", "allow"],
+    [path, "/p/src/main.ts", "allow"],
+  ]))("%s reads %s: %s", (path, file, effect) => {
+    expect(permissionEffect(readAgentFile(join(reviewer, path)).permissions, "read", file)).toBe(effect)
+  })
+
+  test.each(claude)("%s keeps Read and has no Bash", (path) => {
+    const tools = frontmatterTools(path)
+    expect(tools).toContain("Read")
+    expect(tools).not.toContain("Bash")
   })
 
   test.each([
-    "git diff main...HEAD",
-    "git log --oneline -5",
-    "git show abc123",
-    "git status --short",
-    "gh pr view 12",
-    "gh pr diff 12",
-    "gh pr checks 12",
-    "gh api repos/o/r/pulls/1",
-    "gh api repos/o/my-fork/pulls",
-    "rg TODO src",
-    "ls -la",
-    "cat README.md",
-    "head -n 5 a.txt",
-    "tail -n 5 a.txt",
-    "wc -l a.txt",
-  ])("allows %s", (command) => expect(shell(command)).toBe("allow"))
+    ["/p/.env", "deny"],
+    ["/p/.env.local", "deny"],
+    ["/p/.env.example", undefined],
+    ["/p/src/main.ts", undefined],
+  ])("the shipped Claude guard answers Read of %s with %s", (file, decision) => {
+    const config = JSON.parse(readFileSync(join(reviewer, "claude/hooks/agent-guards.json"), "utf8"))
+    const input = { agent_type: "agent-reviewer:code-reviewer", tool_name: "Read", tool_input: { file_path: file } }
+    expect(guardDecision(input, config)?.hookSpecificOutput.permissionDecision).toBe(decision)
+  })
 
-  test.each([
-    "git push origin main",
-    "git commit -m x",
-    "git diff --output=out.patch",
-    "gh pr merge 12",
-    "gh api -X POST repos/o/r/issues",
-    "gh api -X GET repos/o/r/issues",
-    "gh api repos/o/r/issues -X GET -X DELETE",
-    "gh api repos/o/r/issues --method DELETE",
-    "gh api repos/o/r/issues --method=DELETE",
-    "gh api repos/o/r/issues -XDELETE",
-    "gh api repos/o/r/issues --input body.json",
-    "gh api repos/o/r/issues -ftitle=x",
-    "gh api repos/o/r/issues -f title=x",
-    "rg --pre sh foo",
-    "rm -rf x",
-    "git diff; rm x",
-    "git log && touch x",
-    "cat a | sh",
-    "cat a > b",
-    "git status $(touch x)",
-    "bd close x",
-    "python3 -c 1",
-  ])("denies %s", (command) => expect(shell(command)).toBe("deny"))
+  test.each(omp)("%s has no bash", (path) => expect(frontmatterTools(path)).not.toContain("bash"))
 })
