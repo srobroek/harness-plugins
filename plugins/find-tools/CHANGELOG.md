@@ -1,3 +1,11 @@
+# Changelog
+
+## find-tools [0.6.0](https://github.com/srobroek/harness-plugins/compare/find-tools--v0.5.0...find-tools--v0.6.0) (unreleased)
+
+### Features
+
+* **find-tools:** use host marketplaces and inventory, including OMP
+
 ## find-tools [0.5.0](https://github.com/srobroek/harness-plugins/compare/find-tools--v0.4.0...find-tools--v0.5.0) (2026-11-23)
 
 ### Features

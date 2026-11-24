@@ -10,12 +10,17 @@ export { defaultRun } from "../../shared/run.js"
 export {
   awesomeEntries,
   catalogEntries,
+  catalogHits,
   catalogIndexUrl,
+  catalogUrlFor,
+  CATALOG_URLS,
   classify,
   githubSearches,
+  installHint,
   mcpCounts,
   registryInstall,
   renderScan,
+  REPO_SPEC,
   SOURCES,
   scanSources,
 } from "../../shared/scan.js"
@@ -63,8 +68,8 @@ export default Plugin.define({
         name: "find_tools_scan",
         description:
           "Read-only discovery of plugins, skills and MCP servers for a capability.\nSources run in parallel, " +
-          "10 s each: local (installed plugins and skills; MCP as counts only), catalog (srobroek/opencode-plugins " +
-          "marketplace and configured skill catalogs), mcp_registry, npm, github (gh api), awesome_opencode " +
+          "10 s each: local (installed plugins and skills; MCP as counts only), catalog (the " +
+          "harness-plugins marketplace and configured skill catalogs), mcp_registry, npm, github (gh api), awesome_opencode " +
           "(unvetted), smithery (needs SMITHERY_API_KEY), skills_cli (reported gap, never run). Each source " +
           "reports ok, empty, partial, skipped or failed, with gaps and coverage. Install hints are shown, never run.",
         input: {

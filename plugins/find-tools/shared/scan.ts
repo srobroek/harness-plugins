@@ -85,7 +85,9 @@ export type ScanDeps = {
   env?: Record<string, string | undefined>
   signal?: AbortSignal
   local?: LocalInventory
-  /** This repository's Claude Code marketplace; overridable for tests and forks. */
+  /** Host whose catalog and install command are used. */
+  harness?: Harness
+  /** Explicit catalog override (primarily useful for forks and tests). */
   catalogUrl?: string
   /** Extra skill catalogs from the plugin options. */
   skillCatalogs?: readonly string[]
@@ -93,12 +95,39 @@ export type ScanDeps = {
   timeoutMs?: number
 }
 
+export type Harness = "claude" | "opencode" | "omp" | "pi"
+
 export type ScanParams = { query: string; sources?: string[] }
 
 export const SOURCE_TIMEOUT_MS = 10_000
-export const REPO_SPEC = "github:srobroek/opencode-plugins::path:plugins"
-export const DEFAULT_CATALOG_URL =
-  "https://raw.githubusercontent.com/srobroek/opencode-plugins/main/.claude-plugin/marketplace.json"
+export const REPOSITORY = "srobroek/harness-plugins"
+export const REPO_SPEC = `github:${REPOSITORY}::path:plugins`
+export const CATALOG_URLS: Record<Harness, string> = {
+  claude: `https://raw.githubusercontent.com/${REPOSITORY}/main/.claude-plugin/marketplace.json`,
+  opencode: `https://raw.githubusercontent.com/${REPOSITORY}/main/.claude-plugin/marketplace.json`,
+  omp: `https://raw.githubusercontent.com/${REPOSITORY}/main/.omp-plugin/marketplace.json`,
+  pi: `https://raw.githubusercontent.com/${REPOSITORY}/main/.claude-plugin/marketplace.json`,
+}
+export const DEFAULT_CATALOG_URL = CATALOG_URLS.opencode
+
+export function catalogUrlFor(harness: Harness): string {
+  return CATALOG_URLS[harness]
+}
+
+export function installHint(harness: Harness, name: string): string {
+  switch (harness) {
+    case "claude":
+      return `/plugin install ${name}@harness-plugins`
+    case "omp":
+      return `omp plugin install ${name}@harness-plugins`
+    case "pi": {
+      const packageName: Record<string, string> = { aws: "aws-guidance", beads: "beads-enforcer", build: "external-repo-worker", chezmoi: "chezmoi-editor", "code-challenge": "code-challenge", journeys: "user-journeys", parley: "parley-rounds", quality: "code-quality", "trunk-dev": "trunk-dev-policy", worktrunk: "worktrunk-merge-policy" }
+      return `pi install npm:@srobroek/pi-${packageName[name] ?? name}`
+    }
+    case "opencode":
+      return `opencode plugin add 'github:${REPOSITORY}::path:plugins/${name}/opencode'`
+  }
+}
 export const AWESOME_OPENCODE_URL = "https://raw.githubusercontent.com/awesome-opencode/awesome-opencode/main/README.md"
 export const MCP_REGISTRY_URL = "https://registry.modelcontextprotocol.io/v0.1/servers"
 export const NPM_SEARCH_URL = "https://registry.npmjs.org/-/v1/search"
@@ -212,13 +241,16 @@ async function scanLocal(local: LocalInventory | undefined): Promise<SourceResul
     return { source: "local", ok: true, hits }
   }
   const [plugins, skills, mcp] = await Promise.allSettled([
-    local.plugins?.() ?? Promise.reject(new Error("plugin inventory unavailable")),
-    local.skills?.() ?? Promise.reject(new Error("skill inventory unavailable")),
-    local.mcp?.() ?? Promise.reject(new Error("MCP inventory unavailable")),
+    local.plugins?.() ?? Promise.resolve([]),
+    local.skills?.() ?? Promise.resolve([]),
+    local.mcp?.() ?? Promise.resolve([]),
   ])
   const hits: Hit[] = []
   const failures: string[] = []
-  if (plugins.status === "fulfilled") hits.push(...listOf<LocalPlugin>(plugins.value).map(pluginHit))
+  if (plugins.status === "fulfilled") {
+    const entries = listOf<LocalPlugin>(plugins.value)
+    hits.push(...entries.map((plugin) => pluginHit(plugin)))
+  }
   else failures.push(`plugin list failed: ${message(plugins.reason).slice(0, 200)}`)
   if (skills.status === "fulfilled") {
     for (const skill of listOf<LocalSkill>(skills.value)) {
@@ -259,7 +291,7 @@ export function catalogIndexUrl(url: string): string {
   return url.endsWith("/") ? `${url}index.json` : url
 }
 
-function catalogHits(url: string, own: boolean, json: unknown, terms: readonly string[]): Hit[] | undefined {
+export function catalogHits(url: string, own: boolean, json: unknown, terms: readonly string[], harness: Harness = "opencode"): Hit[] | undefined {
   const parsed = catalogEntries(json)
   if (!parsed) return undefined
   const ranked = parsed.entries
@@ -268,20 +300,17 @@ function catalogHits(url: string, own: boolean, json: unknown, terms: readonly s
     .sort((a, b) => b.score - a.score)
     .slice(0, SEARCH_CAP)
   return ranked.map(({ entry }): Hit => {
-    let install: string
-    if (own) {
-      const spec = `${REPO_SPEC}/${entry.name}`
-      install = `project: add "${spec}" to "plugins" in opencode.json; user-wide: opencode plugin add '${spec}'`
-    } else if (parsed.kind === "skills") {
-      install = `project: add "${url}" to "skills" in opencode.json`
-    } else {
-      install = `Claude Code marketplace entry${entry.source ? ` (source ${entry.source})` : ""}; inspect it before adapting`
-    }
+    const install = own
+      ? installHint(harness, entry.name)
+      : parsed.kind === "skills"
+        ? `project: add "${url}" to "skills" in opencode.json`
+        : `Claude Code marketplace entry${entry.source ? ` (source ${entry.source})` : ""}; inspect it before adapting`
+    const piPackageName: Record<string, string> = { aws: "aws-guidance", beads: "beads-enforcer", build: "external-repo-worker", chezmoi: "chezmoi-editor", "code-challenge": "code-challenge", journeys: "user-journeys", parley: "parley-rounds", project: "project", quality: "code-quality", "trunk-dev": "trunk-dev-policy", worktrunk: "worktrunk-merge-policy" }
     return {
       name: own ? entry.name : `${entry.name} (${new URL(url).host})`,
       ...(entry.description ? { detail: entry.description } : {}),
-      url: own ? `https://github.com/srobroek/opencode-plugins/tree/main/plugins/${entry.name}` : url,
-      install,
+      url: own ? `https://github.com/${REPOSITORY}/tree/main/plugins/${entry.name}/${harness === "opencode" ? "opencode" : harness === "claude" ? "claude" : harness}` : url,
+      install: own && harness === "pi" ? `pi install npm:@srobroek/pi-${piPackageName[entry.name] ?? entry.name}` : install,
     }
   })
 }
@@ -292,6 +321,7 @@ async function scanCatalog(
   query: string,
   catalogUrl: string,
   extra: readonly string[],
+  harness: Harness,
 ): Promise<SourceResult> {
   const terms = queryTerms(query)
   const urls = [catalogUrl, ...extra.filter((u) => u !== catalogUrl)]
@@ -306,7 +336,7 @@ async function scanCatalog(
       if (!/^https?:$/.test(new URL(target).protocol)) return { url, error: "not an http(s) URL" }
       const res = await getText(fetchFn, target, signal)
       if (!res.ok) return { url, error: httpReason(res) }
-      const hits = catalogHits(url, index === 0 && url === catalogUrl, parseJson(res.text), terms)
+      const hits = catalogHits(url, index === 0 && url === catalogUrl, parseJson(res.text), terms, harness)
       return hits ? { url, hits } : { url, error: "not a recognised catalog" }
     }),
   )
@@ -774,7 +804,7 @@ export async function scanSources(params: ScanParams, deps: ScanDeps = {}): Prom
   const selected = requested.length > 0 ? new Set(requested) : null
   const jobs: Record<SourceName, (signal: AbortSignal) => Promise<SourceResult>> = {
     local: () => scanLocal(deps.local),
-    catalog: (signal) => scanCatalog(fetchFn, signal, query, deps.catalogUrl ?? DEFAULT_CATALOG_URL, deps.skillCatalogs ?? []),
+    catalog: (signal) => scanCatalog(fetchFn, signal, query, deps.catalogUrl ?? catalogUrlFor(deps.harness ?? "opencode"), deps.skillCatalogs ?? [], deps.harness ?? "opencode"),
     mcp_registry: (signal) => scanMcpRegistry(fetchFn, signal, query),
     npm: (signal) => scanNpm(fetchFn, signal, query),
     github: (signal) => scanGithub(run, which, signal, ms, query),

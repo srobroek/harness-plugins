@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { npmSearchText } from "../../shared/query.js"
 import {
-  AWESOME_OPENCODE_URL,
+  CATALOG_URLS,
+  catalogUrlFor,
   awesomeEntries,
+  catalogHits,
   catalogIndexUrl,
   DEFAULT_CATALOG_URL,
-  type LocalInventory,
   mcpCounts,
   registryInstall,
   renderScan,
@@ -442,6 +443,21 @@ describe("catalog", () => {
     ],
   }
 
+  test("selects each harness's installed marketplace URL", () => {
+    expect(catalogUrlFor("claude")).toBe("https://raw.githubusercontent.com/srobroek/harness-plugins/main/.claude-plugin/marketplace.json")
+    expect(catalogUrlFor("opencode")).toBe(catalogUrlFor("claude"))
+    expect(catalogUrlFor("omp")).toBe("https://raw.githubusercontent.com/srobroek/harness-plugins/main/.omp-plugin/marketplace.json")
+    expect(catalogUrlFor("pi")).toBe(catalogUrlFor("claude"))
+    expect(CATALOG_URLS).toEqual({ claude: catalogUrlFor("claude"), opencode: catalogUrlFor("opencode"), omp: catalogUrlFor("omp"), pi: catalogUrlFor("pi") })
+  })
+
+  test("keeps install hints aligned with each host", () => {
+    expect(catalogHits("catalog", true, { plugins: [{ name: "beads" }] }, [], "claude")?.[0]?.install).toBe("/plugin install beads@harness-plugins")
+    expect(catalogHits("catalog", true, { plugins: [{ name: "beads" }] }, [], "opencode")?.[0]?.install).toBe("opencode plugin add 'github:srobroek/harness-plugins::path:plugins/beads/opencode'")
+    expect(catalogHits("catalog", true, { plugins: [{ name: "beads" }] }, [], "omp")?.[0]?.install).toBe("omp plugin install beads@harness-plugins")
+    expect(catalogHits("catalog", true, { plugins: [{ name: "beads" }] }, [], "pi")?.[0]?.install).toBe("pi install npm:@srobroek/pi-beads-enforcer")
+  })
+
   test("matches this repository's marketplace and suggests the project-scope spec", async () => {
     const report = await scanSources(
       { query: "worktree", sources: ["catalog"] },
@@ -449,10 +465,25 @@ describe("catalog", () => {
     )
     const hits = result(report, "catalog")?.hits ?? []
     expect(hits.map((h) => h.name)).toEqual(["worktrunk"])
-    expect(hits[0]?.install).toBe(
-      `project: add "github:srobroek/opencode-plugins::path:plugins/worktrunk" to "plugins" in opencode.json; user-wide: opencode plugin add 'github:srobroek/opencode-plugins::path:plugins/worktrunk'`,
-    )
+    expect(hits[0]?.install).toBe("opencode plugin add 'github:srobroek/harness-plugins::path:plugins/worktrunk/opencode'")
   })
+  test("loads the OMP marketplace when scanning on OMP", async () => {
+    const requested: string[] = []
+    const report = await scanSources(
+      { query: "worktree", sources: ["catalog"] },
+      deps({
+        harness: "omp",
+        fetchFn: fetcher((url) => {
+          requested.push(url.href)
+          return json(marketplace)
+        }),
+      }),
+    )
+    expect(requested).toEqual([catalogUrlFor("omp")])
+    expect(result(report, "catalog")?.hits.map((hit) => hit.name)).toEqual(["worktrunk"])
+    expect(result(report, "catalog")?.hits[0]?.install).toBe("omp plugin install worktrunk@harness-plugins")
+  })
+
 
   test("reads configured skill catalogs and keeps a broken one as a partial gap", async () => {
     const report = await scanSources(

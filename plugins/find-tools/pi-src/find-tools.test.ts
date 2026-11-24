@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import extension, { readPiInventory } from "./find-tools.js"
+import extension, { isOmpHost, ompInventory, readOmpInventory, readPiInventory } from "./find-tools.js"
 
 type ScanTool = {
   execute: (
@@ -76,5 +76,34 @@ describe("Pi extension", () => {
       else process.env.PI_CODING_AGENT_DIR = previousAgentDir
       await rm(dir, { recursive: true, force: true })
     }
+  })
+  test("selects OMP inventory only when the host API provides runtime", () => {
+    expect(isOmpHost({ runtime: {} } as never)).toBe(true)
+    expect(isOmpHost({} as never)).toBe(false)
+  })
+
+  test("uses the OMP runtime capability and lists installed OMP plugins without paths", async () => {
+    expect(isOmpHost({ runtime: {} })).toBe(true)
+    expect(isOmpHost({})).toBe(false)
+    const exec = async (command: string, args: string[]) => {
+      expect(command).toBe("omp")
+      expect(args).toEqual(["plugin", "list", "--json"])
+      return {
+        code: 0,
+        stdout: JSON.stringify({
+          marketplace: [{ id: "project@harness-plugins", enabled: true, entries: [{ installPath: "/private/plugin/path" }] }],
+          npm: [{ name: "tool", enabled: true, path: "/private/npm/path" }],
+        }),
+      }
+    }
+    const inventory = await readOmpInventory(exec)
+    expect(inventory.plugins).toEqual([{ id: "project@harness-plugins" }, { id: "tool" }])
+    expect(JSON.stringify(inventory)).not.toContain("/private/")
+    const tool = ompInventory(exec)
+    expect(await tool.plugins?.()).toEqual(inventory.plugins)
+  })
+
+  test("fails closed when OMP plugin listing fails", async () => {
+    await expect(readOmpInventory(async () => ({ stdout: "", code: 1 }))).rejects.toThrow("omp plugin list failed")
   })
 })

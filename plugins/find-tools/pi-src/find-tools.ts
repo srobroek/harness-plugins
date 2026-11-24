@@ -59,6 +59,33 @@ export async function readPiInventory(agentDirOverride?: string): Promise<{ pack
   return { packages, skills, mcp }
 }
 
+export async function readOmpInventory(exec: (command: string, args: string[]) => Promise<{ stdout: string; code: number }>): Promise<{ plugins: unknown[] }> {
+  const result = await exec("omp", ["plugin", "list", "--json"])
+  if (result.code !== 0) throw new Error("omp plugin list failed")
+  const data = JSON.parse(result.stdout) as { marketplace?: unknown; npm?: unknown }
+  const marketplace = Array.isArray(data.marketplace) ? data.marketplace.flatMap((group) => {
+    if (!group || typeof group !== "object") return []
+    const value = group as { id?: unknown; entries?: unknown }
+    const entries = Array.isArray(value.entries) ? value.entries : []
+    const active = entries.some((entry) => entry && typeof entry === "object" && (entry as { enabled?: unknown }).enabled !== false)
+    return active && typeof value.id === "string" ? [{ id: value.id }] : []
+  }) : []
+  const npm = Array.isArray(data.npm) ? data.npm.flatMap((item) => {
+    if (!item || typeof item !== "object") return []
+    const plugin = item as { name?: unknown; enabled?: unknown }
+    return plugin.enabled !== false && typeof plugin.name === "string" ? [{ id: plugin.name }] : []
+  }) : []
+  return { plugins: [...marketplace, ...npm] }
+}
+
+export function isOmpHost(pi: ExtensionAPI): boolean {
+  return (pi as ExtensionAPI & { runtime?: unknown }).runtime !== undefined
+}
+
+export function ompInventory(exec: (command: string, args: string[]) => Promise<{ stdout: string; code: number }>): LocalInventory {
+  return { plugins: async () => (await readOmpInventory(exec)).plugins }
+}
+
 const piInventory = (agentDir: string): LocalInventory => ({
   pi: () => readPiInventory(agentDir),
 })
@@ -68,7 +95,7 @@ export default function (pi: ExtensionAPI): void {
     name: "find_tools_scan",
     label: "Find tools",
     description:
-      "Read-only discovery of plugins, skills and MCP servers for a capability. Sources run in parallel, 10 s each: local (installed Pi packages and skills; MCP as counts only), catalog (srobroek/opencode-plugins marketplace and configured skill catalogs), mcp_registry, npm, github (gh api), awesome_opencode (unvetted), smithery (needs SMITHERY_API_KEY), skills_cli (reported gap, never run). Each source reports ok, empty, partial, skipped or failed, with gaps and coverage. Install hints are shown, never run.",
+      "Read-only discovery of plugins, skills and MCP servers for a capability. Sources run in parallel, 10 s each: local (installed host plugins and skills; MCP as counts only), catalog (harness-plugins marketplace and configured skill catalogs), mcp_registry, npm, github (gh api), awesome_opencode (unvetted), smithery (needs SMITHERY_API_KEY), skills_cli (reported gap, never run). Each source reports ok, empty, partial, skipped or failed, with gaps and coverage. Install hints are shown, never run.",
     parameters: Type.Object(
       {
         query: Type.String({ description: "The capability to find, in a few words" }),
@@ -82,7 +109,15 @@ export default function (pi: ExtensionAPI): void {
     ),
     async execute(_toolCallId, params, signal) {
       try {
-        const report = await scanSources(params, { signal, local: piInventory(getAgentDir()) })
+        const ompHost = isOmpHost(pi)
+        const inventory = ompHost
+          ? ompInventory(async (command, args) => pi.exec(command, args, { signal, timeout: 10_000, maxBuffer: 1_000_000 }))
+          : piInventory(getAgentDir())
+        const report = await scanSources(params, {
+          signal,
+          local: inventory,
+          harness: ompHost ? "omp" : "pi",
+        })
         return { content: [{ type: "text", text: renderScan(report) }], details: report }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
