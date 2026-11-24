@@ -49,3 +49,9 @@ to `false` in `mcpServers`.
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/docs/opencode'
 ```
 
+Install the pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-docs
+```
+
