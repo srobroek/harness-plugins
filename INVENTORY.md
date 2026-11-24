@@ -22,7 +22,7 @@
 | delivery | 0.12.4 | development | global | opencode |
 | dep-update | 0.7.0 | development | global | opencode, pi |
 | design | 0.10.3 | development | project | opencode, claude |
-| docs | 0.4.0 | development | global | opencode, omp, pi |
+| docs | 0.5.0 | development | global | opencode, omp, pi |
 | eli5 | 0.7.3 | productivity | global | opencode, claude, omp, pi |
 | find-tools | 0.6.0 | development | global | opencode, omp, pi |
 | journeys | 0.6.0 | development | project | opencode, claude, pi |

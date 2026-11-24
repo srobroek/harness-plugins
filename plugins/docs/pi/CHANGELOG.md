@@ -1,3 +1,9 @@
+## docs [0.5.0](https://github.com/srobroek/harness-plugins/compare/docs--v0.4.0...docs--v0.5.0) (2026-11-24)
+
+### Features
+
+* **docs:** publish docs and aws MCP for OMP ([5549b38](https://github.com/srobroek/harness-plugins/commit/5549b38ffcba92bb681b6db5a91c74535810d8cb))
+
 # Changelog
 
 ## [0.4.0](https://github.com/srobroek/opencode-plugins/compare/docs--v0.3.0...docs--v0.4.0) (2026-11-20)
