@@ -1,3 +1,10 @@
+## build [0.11.0](https://github.com/srobroek/harness-plugins/compare/build--v0.10.3...build--v0.11.0) (2026-11-24)
+
+### Features
+
+* **agent-coder:** grant pi subagents code-intelligence and helper tools ([89d8d54](https://github.com/srobroek/harness-plugins/commit/89d8d54af33d144801baf1ea2af5496b78887ced))
+* **build:** grant pi subagents code-intelligence and helper tools ([a80bd94](https://github.com/srobroek/harness-plugins/commit/a80bd94eb98667edd124f7835a3a94da2c585819))
+
 ## build [0.10.3](https://github.com/srobroek/harness-plugins/compare/build--v0.10.2...build--v0.10.3) (2026-11-24)
 
 ## build [0.10.2](https://github.com/srobroek/harness-plugins/compare/build--v0.10.1...build--v0.10.2) (2026-11-24)
