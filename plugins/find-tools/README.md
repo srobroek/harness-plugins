@@ -8,6 +8,11 @@ Ported from the omp-plugins `find-tools` plugin, without its omp sources and
 without `setup-tools`.
 
 ## Install
+Install with Pi:
+
+```sh
+pi install npm:@srobroek/pi-find-tools
+```
 
 The plugin directory is a Pi package. Add its repository path to `packages` in `~/.pi/agent/settings.json`:
 
