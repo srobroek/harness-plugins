@@ -104,6 +104,19 @@ The agent pins no model. It declares the `standard` tier through the
 picks its model; without it the agent inherits the caller's model. Set
 `agent.coder.model` to pin one.
 
+## Pi tools
+
+Pi `coder` is allowlisted for the following tools:
+
+- Code intelligence (`pi-lens`): `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `ast_grep_replace`, and `lsp_navigation`.
+- Test reports (`@srobroek/pi-code-quality`): `quality_test_summarize` and `quality_test_compare`.
+- Dependency research (`@srobroek/pi-dep-update` and `@srobroek/pi-whats-new`): `dep_scan` and `version_gap_scan`.
+- MCP (`context7`): tools selected by `mcp:context7` in the user's Pi MCP configuration.
+
+Required companion packages: `pi-subagents`, `pi-lens`, `@srobroek/pi-code-quality`, `@srobroek/pi-dep-update`, and `@srobroek/pi-whats-new`. `context7` must be configured as a Pi MCP server in `~/.pi/agent/mcp.json`.
+
+pi-lens keeps `ast_grep_*` tools inactive until `pi_lens_activate_tools` runs; they are available starting the next turn. Call `lsp_navigation` rename, rename_file and codeAction with `apply: false` to get the planned edits, check every target path is inside your working directory, then apply them with the edit/write tools.
+
 ## Install
 Install the Pi package from npm:
 
@@ -116,3 +129,15 @@ opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-coder/o
 ```
 
 This plugin ships no skills, so it is not in the Claude Code marketplace.
+
+## Works with
+
+This package works with these pi packages. Install them next to it.
+
+| Package | Required | For | Install |
+| --- | --- | --- | --- |
+| `pi-subagents` | yes | the subagent tool | `pi install npm:pi-subagents` |
+| `pi-lens` | yes | code-intelligence tools for the subagent | `pi install npm:pi-lens` |
+| `@srobroek/pi-code-quality` | yes | read-only test report analysis tools | `pi install npm:@srobroek/pi-code-quality` |
+| `@srobroek/pi-dep-update` | yes | dependency scan tool | `pi install npm:@srobroek/pi-dep-update` |
+| `@srobroek/pi-whats-new` | yes | version gap scan tool | `pi install npm:@srobroek/pi-whats-new` |

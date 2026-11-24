@@ -33,7 +33,34 @@
           "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "companions": [
+        {
+          "package": "pi-subagents",
+          "for": "the subagent tool",
+          "required": true
+        },
+        {
+          "package": "pi-lens",
+          "for": "code-intelligence tools for the subagent",
+          "required": true
+        },
+        {
+          "package": "@srobroek/pi-code-quality",
+          "for": "read-only test report analysis tools",
+          "required": true
+        },
+        {
+          "package": "@srobroek/pi-dep-update",
+          "for": "dependency scan tool",
+          "required": true
+        },
+        {
+          "package": "@srobroek/pi-whats-new",
+          "for": "version gap scan tool",
+          "required": true
+        }
+      ]
     },
     {
       "name": "agent-efficiency",
@@ -101,7 +128,19 @@
           "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "companions": [
+        {
+          "package": "pi-subagents",
+          "for": "the subagent tool",
+          "required": true
+        },
+        {
+          "package": "pi-lens",
+          "for": "code-intelligence and structural-edit tools for the subagent",
+          "required": true
+        }
+      ]
     },
     {
       "name": "agent-researcher",
@@ -148,7 +187,29 @@
           "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "companions": [
+        {
+          "package": "pi-subagents",
+          "for": "the subagent tool",
+          "required": true
+        },
+        {
+          "package": "pi-lens",
+          "for": "code-intelligence tools for the subagent",
+          "required": true
+        },
+        {
+          "package": "@srobroek/pi-repomix",
+          "for": "the repomix_pack tool",
+          "required": true
+        },
+        {
+          "package": "pi-web-access",
+          "for": "web research tools",
+          "required": true
+        }
+      ]
     },
     {
       "name": "agent-reviewer",
@@ -673,7 +734,19 @@
         }
       },
       "scope": "project",
-      "piName": "pi-external-repo-worker"
+      "piName": "pi-external-repo-worker",
+      "companions": [
+        {
+          "package": "pi-subagents",
+          "for": "the subagent tool",
+          "required": true
+        },
+        {
+          "package": "pi-lens",
+          "for": "code-intelligence tools for the subagent",
+          "required": true
+        }
+      ]
     },
     {
       "name": "chezmoi",
