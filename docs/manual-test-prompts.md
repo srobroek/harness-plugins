@@ -346,7 +346,7 @@ Use the researcher agent to answer: what is the default merge method of `gh pr m
 ```
 
 **Expect:** starts with `VERDICT: DONE|BLOCKED`, each claim marked observation or inference with a URL, and a fenced `json` block (`verdict`, `answer`) at the end.
-**If not:** `plugins/agent-researcher/common/agents/researcher.md`. With delivery installed, make sure only one `researcher` registered (`plugins/lib/src/agent-fallback.ts`).
+**If not:** `plugins/agent-researcher/common/agents/code-researcher.md`. With delivery installed, make sure only one `code-researcher` registered (`plugins/lib/src/agent-fallback.ts`).
 
 ## agent-reviewer
 

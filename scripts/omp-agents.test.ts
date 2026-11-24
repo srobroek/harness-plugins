@@ -273,8 +273,8 @@ describe("ompNameConflicts", () => {
   test("copies of one agent that differ only in their source comment pass", () => {
     expect(
       ompNameConflicts([
-        { plugin: "agent-researcher", id: "researcher", contents: file("plugins/agent-researcher/common/agents/researcher.md") },
-        { plugin: "delivery", id: "researcher", contents: file("plugins/delivery/common/agents/researcher.md") },
+        { plugin: "agent-researcher", id: "code-researcher", contents: file("plugins/agent-researcher/common/agents/code-researcher.md") },
+        { plugin: "delivery", id: "code-researcher", contents: file("plugins/delivery/common/agents/code-researcher.md") },
       ]),
     ).toEqual([])
   })

@@ -267,7 +267,7 @@ export function interpretPack(
     `Never read the whole pack: grep it for '${ANCHORS[style]}' to list files, then read slices with offset and limit.`,
   ]
   if (summary.tokens !== null && summary.tokens > LARGE_PACK_TOKENS)
-    lines.push(`Over ${fmt(LARGE_PACK_TOKENS)} tokens: hand the path to a researcher subagent rather than reading it here.`)
+-    lines.push(`Over ${fmt(LARGE_PACK_TOKENS)} tokens: hand the path to a code-researcher subagent rather than reading it here.`)
   if (summary.topFiles.length > 0)
     lines.push("Top files by tokens:", ...summary.topFiles.map((file) => `  ${fmt(file.tokens)}\t${file.path}`))
   if (summary.suspiciousExcluded.length > 0)

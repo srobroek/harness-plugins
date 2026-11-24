@@ -411,15 +411,15 @@ families (`lang-*`, `quality-*`, `toolchain-*`, `architecture-*`, `trunk-dev-*`,
 `worktrunk-*`, `aws-guidance` and a few toolchain skills by id); their prompts carry the
 coding core's `standards` part (research first, compare with the `lang-<language>-libraries`
 standards, middleware, Powertools, OpenTelemetry); `operator` read, grep, glob, edit and
-shell, no skills; `researcher` read-only tools, shell, the `repomix` skill, Code Mode for
+shell, no skills; `code-researcher` read-only tools, shell, the `repomix` skill, Code Mode for
 `repomix_pack`, webfetch and websearch; `shepherd` read-only tools, shell, the
 `delivery-*` skills and Code Mode for `delivery_land` / `delivery_cleanup`;
 `pr-reviewer` the `quality-*` and `review-*` skills and its two `gh pr` commands. Only
-`researcher` and `shepherd` call Code Mode tools, so only they get `execute`.
+`code-researcher` and `shepherd` call Code Mode tools, so only they get `execute`.
 
 `implementer`, `implementer-high`, `operator`, `shepherd` and `pr-reviewer` are hidden
 from the subagent catalog: the fan-out and git-workflow skills and the Beads routing
-name them, so the parent spawns them by id. `researcher` stays listed. Reads
+name them, so the parent spawns them by id. `code-researcher` stays listed. Reads
 outside the workspace (`external_directory`) still ask, and your own rules still
 apply after the agent's.
 
@@ -438,7 +438,7 @@ tool results, so the hook does not see them.
 
 ## MCP tools
 
-`implementer`, `implementer-high` and the fallback `researcher` cannot call MCP tools unless a rule allows them. The `tools` option adds allow rules for MCP tool patterns after the agent's own rules. OpenCode names an MCP tool's permission action `<server>_<tool>`, so `context7_*` allows every tool of the `context7` server and `context7_query-docs` allows one. Characters outside letters, digits, `_` and `-` become `_`.
+`implementer`, `implementer-high` and the fallback `code-researcher` cannot call MCP tools unless a rule allows them. The `tools` option adds allow rules for MCP tool patterns after the agent's own rules. OpenCode names an MCP tool's permission action `<server>_<tool>`, so `context7_*` allows every tool of the `context7` server and `context7_query-docs` allows one. Characters outside letters, digits, `_` and `-` become `_`.
 
 | Option | Default | Effect |
 | --- | --- | --- |

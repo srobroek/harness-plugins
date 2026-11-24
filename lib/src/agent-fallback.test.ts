@@ -54,15 +54,15 @@ describe("listsPlugin", () => {
 
 describe("fallback side", () => {
   test("ownedElsewhere names the fallbacks whose owner is installed", () => {
-    expect([...ownedElsewhere({ data: [{ id: "srobroek.agent-researcher" }] }, owners)]).toEqual(["researcher"])
+    expect([...ownedElsewhere({ data: [{ id: "srobroek.agent-researcher" }] }, owners)]).toEqual(["code-researcher"])
     expect(ownedElsewhere([], owners).size).toBe(0)
   })
 
   test("keepFallback registers unowned agents always and a fallback only when nothing else did", () => {
     expect(keepFallback("implementer", owners, new Set(["implementer"]), true)).toBe(true)
-    expect(keepFallback("researcher", owners, new Set(), false)).toBe(true)
-    expect(keepFallback("researcher", owners, new Set(["researcher"]), false)).toBe(false)
-    expect(keepFallback("researcher", owners, new Set(), true)).toBe(false)
+    expect(keepFallback("code-researcher", owners, new Set(), false)).toBe(true)
+    expect(keepFallback("code-researcher", owners, new Set(["code-researcher"]), false)).toBe(false)
+    expect(keepFallback("code-researcher", owners, new Set(), true)).toBe(false)
   })
 })
 
@@ -95,7 +95,7 @@ describe("owner side", () => {
 describe("registerFallbackAgents", () => {
   const withAgents = <T>(run: (paths: string[]) => Promise<T>) => {
     const dir = mkdtempSync(join(tmpdir(), "fallback-agents-"))
-    const paths = ["researcher", "helper"].map((id) => {
+    const paths = ["code-researcher", "helper"].map((id) => {
       const path = join(dir, `${id}.md`)
       writeFileSync(path, `---\nmode: subagent\npermissions: []\n---\n${id} prompt`)
       return path
@@ -120,10 +120,10 @@ describe("registerFallbackAgents", () => {
     withAgents(async (paths) => {
       const fake = listing(createFakeContext(), async () => ({ data: [] }))
       await registerFallbackAgents(fake.context, paths, owners)
-      expect(fake.agents.get("researcher")?.system).toBe("researcher prompt")
-      const taken = listing(createFakeContext({ agents: [{ id: "researcher", system: "owner" }] }), async () => [])
+      expect(fake.agents.get("code-researcher")?.system).toBe("code-researcher prompt")
+      const taken = listing(createFakeContext({ agents: [{ id: "code-researcher", system: "owner" }] }), async () => [])
       await registerFallbackAgents(taken.context, paths, owners)
-      expect(taken.agents.get("researcher")?.system).toBe("owner")
+      expect(taken.agents.get("code-researcher")?.system).toBe("owner")
     }))
 
   test("listPlugins treats a failing or slow plugin.list as nothing installed", async () => {

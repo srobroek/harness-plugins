@@ -24,7 +24,7 @@ instead: they cost less.
 2. Never read the whole pack. Grep it for the file anchor (`<file path="` for xml,
    `## File: ` for markdown, `File: ` for plain) to list the files with their line numbers,
    then read one file's slice with offset and limit.
-3. If a pack is over about 50k tokens, give its path to a researcher subagent with the
+3. If a pack is over about 50k tokens, give its path to a code-researcher subagent with the
    question, and work from its answer.
 4. Narrow with `include` before you compress. A pack of `src/**` is often a tenth of the
    whole repo.

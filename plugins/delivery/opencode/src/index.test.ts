@@ -336,13 +336,13 @@ describe("agents", () => {
     expect(hasModelRoles(undefined)).toBe(false)
   })
 
-  test("the researcher fallback is skipped when the researcher plugin is listed or the agent exists", async () => {
+  test("the code-researcher fallback is skipped when its plugin is listed or the agent exists", async () => {
     const listed = withHost(createFakeContext(), [{ source: { target: "github:srobroek/opencode-plugins#main::path:plugins/agent-researcher" } }])
     await plugin.setup(listed.context)
-    expect(listed.agents.has("researcher")).toBe(false)
+    expect(listed.agents.has("code-researcher")).toBe(false)
     expect(listed.agents.has("implementer")).toBe(true)
-    const { fake } = await load({ agents: [{ id: "researcher", system: "theirs", permissions: [] }] })
-    expect(fake.agents.get("researcher")).toEqual({ id: "researcher", system: "theirs", permissions: [] })
+    const { fake } = await load({ agents: [{ id: "code-researcher", system: "theirs", permissions: [] }] })
+    expect(fake.agents.get("code-researcher")).toEqual({ id: "code-researcher", system: "theirs", permissions: [] })
   })
 
   test("an existing agent keeps its own fields and gains the delivery permissions after its own", async () => {

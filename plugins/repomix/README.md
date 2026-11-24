@@ -49,7 +49,7 @@ it, set the plugin option `confirmPack` to `true` (default `false`):
 }
 ```
 
-The `researcher` agent (agent-researcher, and delivery's fallback copy) and build's
+The `code-researcher` agent (agent-researcher and delivery's fallback copy) and build's
 `external-repo-worker` allow `repomix_pack`. Other agents keep your default for it, which
 is a prompt unless you configure otherwise. The shipped allowlist agents deny it.
 

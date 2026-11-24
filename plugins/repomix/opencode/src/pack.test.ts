@@ -225,13 +225,13 @@ describe("interpretPack", () => {
     expect(result.text).toContain(`grep it for '<file path="'`)
     expect(result.text).toContain("src/mcp/tools/mcpToolRuntime.ts")
     expect(result.text).toContain("Left out by the secret scan (1): src/creds.ts")
-    expect(result.text).not.toContain("researcher")
+    expect(result.text).not.toContain("code-researcher")
     expect(interpretPack(exited(0, SUMMARY), "/t/o.md", "markdown", 1, yes).text).toContain("'## File: '")
   })
 
   test("a large pack advises a subagent", () => {
     const big = SUMMARY.replace("4,875 tokens", `${LARGE_PACK_TOKENS + 1} tokens`)
-    expect(interpretPack(exited(0, big), "/o", "xml", 1, yes).text).toContain("researcher subagent")
+    expect(interpretPack(exited(0, big), "/o", "xml", 1, yes).text).toContain("code-researcher subagent")
   })
 
   test("a failure, a missing pack and a run without exit carry the reason", () => {

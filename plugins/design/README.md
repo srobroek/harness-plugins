@@ -199,8 +199,8 @@ what you do not use in that harness's MCP settings. Add `storybook` there yourse
   instead of `omp plugin install`. `a11y-auditor` reports a missing upstream instead
   of installing it.
 - The agents' `autoloadSkills` became a "load these skills" line; `scout` became
-  `explore`; the delivery `researcher` and `operator` children became a web search and
-  the built-in `general` agent.
+- `explore`; the delivery `code-researcher` and `operator` children became a web search and
+- the built-in `general` agent.
 - The beads formulas name skills instead of `skill://` and `rule://` URIs, the browser
   tools or a desktop accessibility inspector instead of `browser` and `computer`, an
   LSP rename instead of the `lsp` tool, and Playwright's `page.emulateMedia` instead of
