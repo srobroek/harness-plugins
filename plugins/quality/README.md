@@ -121,7 +121,6 @@ References to other skills name the skill (`toolchain-languages`, `sniff`,
 `tune-model-prompt`, `design-prototype`); reference links inside a skill are
 relative paths; "Scouts" became read-only explore subagents; the review mode
 reports in the format the role or brief defines instead of an omp output schema.
-These are the authoritative copies; earlier ones under `~/.claude/skills` are gone.
 
 ## Attribution
 
