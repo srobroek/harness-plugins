@@ -1,6 +1,7 @@
 ---
 description: "Read-only review of a local diff (working tree, branch or commits) for bugs the author wants fixed before merge; returns a verdict."
 x-omp-shell: "it reads the patch with git diff, git log and git show"
+x-omp-tools: bash
 mode: subagent
 steps: 80
 request:
@@ -15,10 +16,10 @@ permissions:
     effect: allow
   - action: read
     resource: "*.env"
-    effect: ask
+    effect: deny
   - action: read
     resource: "*.env.*"
-    effect: ask
+    effect: deny
   - action: read
     resource: "*.env.example"
     effect: allow
@@ -52,10 +53,119 @@ permissions:
   - action: skill
     resource: toolchain-guide
     effect: allow
-  # {{rules read-only-shell}}
+  # Non-interactive: nobody can answer a prompt in a background session, so every rule allows or denies.
+  # Last match wins: deny all, allow the read commands, then deny the write forms and command chaining.
+  - action: shell
+    resource: "*"
+    effect: deny
+  - action: shell
+    resource: "git diff*"
+    effect: allow
+  - action: shell
+    resource: "git log*"
+    effect: allow
+  - action: shell
+    resource: "git show*"
+    effect: allow
+  - action: shell
+    resource: "git status*"
+    effect: allow
+  - action: shell
+    resource: "gh pr view*"
+    effect: allow
+  - action: shell
+    resource: "gh pr diff*"
+    effect: allow
+  - action: shell
+    resource: "gh pr checks*"
+    effect: allow
+  - action: shell
+    resource: "gh api *"
+    effect: allow
+  - action: shell
+    resource: "rg *"
+    effect: allow
+  - action: shell
+    resource: "ls*"
+    effect: allow
+  - action: shell
+    resource: "cat *"
+    effect: allow
+  - action: shell
+    resource: "head *"
+    effect: allow
+  - action: shell
+    resource: "tail *"
+    effect: allow
+  - action: shell
+    resource: "wc *"
+    effect: allow
+  - action: shell
+    resource: "git * --output*"
+    effect: deny
+  - action: shell
+    resource: "gh api *-f *"
+    effect: deny
+  - action: shell
+    resource: "gh api *-F *"
+    effect: deny
+  - action: shell
+    resource: "gh api *--field*"
+    effect: deny
+  - action: shell
+    resource: "gh api *--raw-field*"
+    effect: deny
+  - action: shell
+    resource: "gh api *--input*"
+    effect: deny
+  - action: shell
+    resource: "gh api *-X*"
+    effect: deny
+  - action: shell
+    resource: "gh api *--method*"
+    effect: deny
+  - action: shell
+    resource: "gh api *graphql*"
+    effect: deny
+  - action: shell
+    resource: "rg *--pre*"
+    effect: deny
+  - action: shell
+    resource: "gh api *-X GET*"
+    effect: allow
+  - action: shell
+    resource: "gh api *--method GET*"
+    effect: allow
+  - action: shell
+    resource: "*;*"
+    effect: deny
+  - action: shell
+    resource: "*&&*"
+    effect: deny
+  - action: shell
+    resource: "*||*"
+    effect: deny
+  - action: shell
+    resource: "*|*"
+    effect: deny
+  - action: shell
+    resource: "*>*"
+    effect: deny
+  - action: shell
+    resource: "*<*"
+    effect: deny
+  - action: shell
+    resource: "*$(*"
+    effect: deny
+  - action: shell
+    resource: "*`*"
+    effect: deny
+  - action: shell
+    resource: "*&"
+    effect: deny
   - action: external_directory
     resource: "*"
-    effect: ask
+    effect: allow
 ---
 
 You review one local change and find the bugs its author would want fixed before merge.
