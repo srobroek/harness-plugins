@@ -1,3 +1,5 @@
+## build [0.10.3](https://github.com/srobroek/harness-plugins/compare/build--v0.10.2...build--v0.10.3) (2026-11-24)
+
 ## build [0.10.2](https://github.com/srobroek/harness-plugins/compare/build--v0.10.1...build--v0.10.2) (2026-11-24)
 
 ### Bug Fixes
