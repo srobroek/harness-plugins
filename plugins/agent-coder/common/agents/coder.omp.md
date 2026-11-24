@@ -7,7 +7,7 @@
 #   OMP has no per-agent directory rule: ask external_directory
 #   OMP has no per-agent skill filter: 21 skill rules
 name: coder
-description: "Use for any code development (implement, fix, refactor, debug, test, build, profile, upgrade deps, code questions); general only for non-code work."
+description: "Use for scoped code work: implement, fix, debug, test or answer code questions; follows quality-code-design, delegates reviews, verifies changes."
 tools: read, grep, ast_grep, glob, lsp, edit, write, ast_edit, bash, eval, web_search, task
 spawns: "scout, mechanic, code-reviewer, operator, debug"
 model: "@task"
