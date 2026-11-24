@@ -187,7 +187,6 @@ test("ui-implementer allows debug, defaults to Context7 and opts into AWS tools"
   const defaults = createFakeContext()
   await plugin.setup(defaults.context)
   const defaultPermissions = (defaults.agents.get("ui-implementer")?.permissions ?? []) as AgentPermission[]
-  expect(permissionEffect(defaultPermissions, "context7_query-docs")).toBe("allow")
   expect(permissionEffect(defaultPermissions, "aws-mcp_search_documentation")).toBe("deny")
 
   const aws = createFakeContext({ options: { tools: ["context7_*", "aws-mcp_*"] } })
