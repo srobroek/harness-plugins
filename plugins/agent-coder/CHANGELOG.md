@@ -1,3 +1,9 @@
+## agent-coder [0.13.0](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.4...agent-coder--v0.13.0) (2026-11-24)
+
+### Features
+
+* **agent-researcher:** match pi-subagents' built-in researcher contract on pi ([e3fa574](https://github.com/srobroek/harness-plugins/commit/e3fa57424c3e58eea0860c0e7529d4ac09288448))
+
 ## agent-coder [0.12.4](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.3...agent-coder--v0.12.4) (2026-11-24)
 
 ## agent-coder [0.12.3](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.2...agent-coder--v0.12.3) (2026-11-24)

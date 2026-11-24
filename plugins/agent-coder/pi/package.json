@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/pi-agent-coder",
-  "version": "0.12.4",
+  "version": "0.13.0",
   "description": "coder subagent for any code development task (implement, fix, debug, test, build, profile, upgrade deps) with only coding tools and skills.",
   "keywords": [
     "pi-package"
