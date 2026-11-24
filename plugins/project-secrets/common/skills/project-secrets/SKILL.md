@@ -5,24 +5,27 @@ description: "Use for secrets, credentials, API keys, fnox, 1Password, .env, vau
 
 # Project secrets
 
-Manage project secrets with fnox (https://fnox.jdx.dev/, written against 1.47). A committed
-`fnox.toml` holds references only. Values stay in 1Password (or age ciphertext) and reach
-commands through `fnox exec`. Do the smallest setup that fits. The agent writes values it generates or
-a tool hands it. It asks the user for values only the user has (`references/store.md`).
+Use this skill when the project uses or chooses fnox for secret management. If the
+project already uses another secret manager, follow that project's existing
+workflow instead of introducing fnox or 1Password. The fnox guidance here (written
+against 1.47) keeps references, not values, in committed `fnox.toml`; configured
+providers supply values to commands through `fnox exec`. Do the smallest setup that
+fits. The agent writes values it generates or a tool provides; it asks the user only
+for values the user has (`references/store.md`).
 
 ## Never
 
 - Put a value in the transcript. These commands print values, so never run them:
   - `fnox get`, `fnox export`, `fnox env`, `fnox list --values`
   - `op read`, `cat .env`, `echo $KEY`
-- Run `op` directly, except the forms in `references/store.md` and an approved
-  `op vault create`. The op-guard refuses the rest:
+- Run `op` directly, except the forms in
+  `references/store.md` and an approved `op vault create`. The op-guard refuses the rest:
   - `--reveal`
   - `op item get`
   - `op read`
   - `op inject`
   - `op run`
-  Use `fnox exec` and `fnox provider discover` instead.
+  When using fnox, use `fnox exec` and `fnox provider discover` instead.
 - Write a value literally in a command or a file. Never let it reach tool output.
 - Commit any of these:
   - values and `.env`
@@ -32,11 +35,12 @@ a tool hands it. It asks the user for values only the user has (`references/stor
 
 ## Hosts
 
-Configure the host's secret provider through its supported fnox configuration. Keep values out of this plugin; confirm provider availability with `fnox provider list` and `fnox config-files`.
+When the project uses fnox, configure its chosen host provider through the supported fnox configuration. Keep values out of this plugin; confirm provider availability with `fnox provider list` and `fnox config-files`.
 
 ## Fewer approvals
 
-Each new 1Password session asks the user again. Keep it to one per session:
+Each new 1Password session asks the user again. When the project uses a 1Password-backed
+fnox provider, keep approvals to one per session:
 
 1. Consume only with `fnox exec`, never `op` directly. Each direct `op` call opens a
    new session.

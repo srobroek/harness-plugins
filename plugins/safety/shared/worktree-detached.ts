@@ -12,6 +12,7 @@
 
 import { realpathSync } from "node:fs"
 import { isAbsolute, join, resolve } from "node:path"
+import { DEFAULT_GIT_WRAPPERS } from "@srobroek/opencode-lib/git-wrappers"
 import { type Bounds, budget, gitOut, ProbeTimeout } from "./probes.ts"
 import { base, gitInvocation, hasFlag, positionals, walkShell, wtInvocation } from "./shell.ts"
 
@@ -49,8 +50,8 @@ function joinChdirs(chdirs: readonly string[]): string | null {
   return chdirs.reduce((at, next) => (isAbsolute(next) ? next : join(at, next)))
 }
 
-/** Recognise worktree removals in a command. */
-export function removals(command: string): Removal[] {
+/** Recognise worktree removals in a command; `gitWrappers` name the commands read as git. */
+export function removals(command: string, gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS): Removal[] {
   const found: Removal[] = []
   const walk = walkShell(command)
   for (const item of walk.commands) {
@@ -58,7 +59,7 @@ export function removals(command: string): Removal[] {
       found.push({ tool: "wt", chdir: null, targets: [], force: false, literal: false })
       continue
     }
-    const git = gitInvocation(item.argv)
+    const git = gitInvocation(item.argv, gitWrappers)
     const wt = git ? undefined : wtInvocation(item.argv)
     const isGit = git?.subcommand === "worktree" && (git.args[0] === "remove" || git.args[0] === "rm")
     const isWt = wt !== undefined && (wt.subcommand === "remove" || wt.subcommand === "rm")

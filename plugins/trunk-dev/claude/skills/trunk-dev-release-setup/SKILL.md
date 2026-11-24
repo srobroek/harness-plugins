@@ -1,20 +1,20 @@
 ---
 name: trunk-dev-release-setup
-description: Use to set up semantic-release on GitHub or GitLab with Conventional Commits, synced manifests and a stale-branch job.
+description: Use to configure release automation with the tool chosen by the project, including semantic-release or release-please where available.
 metadata:
   opencode/autoinvoke: false
 ---
 
-# Set up semantic-release
+# Set up release automation
 
 TRIGGER
-+ Configure automated releases from Conventional Commits on GitLab or GitHub.
-+ Add or debug semantic-release, release-note generation, multi-manifest version synchronization, or its CI credentials.
++ Configure automated releases from the project's chosen release tool.
++ Add or debug semantic-release, release-please, release-note generation, multi-manifest version synchronization, or its CI credentials.
 + Set up or review CI in a repository with a Beads ledger (`.beads/`), including its daily stale-branch job.
-- GitLab does not support release-please; use semantic-release for GitLab release automation.
+- GitLab does not support release-please; choose a release tool supported by the project's forge and CI.
 - On GitHub, release-please is an alternative that opens a release PR rather than releasing directly from each qualifying merge.
 
-Keep release execution on the protected default branch. Follow the repository's existing package manager, CI conventions, and version files; do not replace unrelated release policy.
+Keep release execution on the protected default branch. Follow the repository's existing package manager, CI conventions, version files and release policy, and do not replace unrelated choices. The sections below use semantic-release as the example tool.
 
 ## 1. Check the release contract
 
@@ -105,4 +105,8 @@ The job exits non-zero when any branch is stale. That failure is the alert: GitL
 
 ## Alternatives
 
-On GitHub, release-please is an alternative for maintainers who prefer a reviewed release PR with version and changelog updates. Merging that PR creates the release. GitLab does not support release-please. For its App token, variables, first-release changelog fold and pre-release checks, read [references/release-please.md](references/release-please.md).
+If the project already uses release-please or another release tool, continue with it
+instead of introducing semantic-release. Apply the version synchronization,
+protected-branch and credential principles above to the selected tool.
+
+On GitHub, release-please is an alternative for maintainers who prefer a reviewed release PR with version and changelog updates. Merging that PR creates the release. GitLab does not support release-please; choose a tool that the forge and the project's CI support. For release-please's App token, variables, first-release changelog fold and pre-release checks, read [references/release-please.md](references/release-please.md).

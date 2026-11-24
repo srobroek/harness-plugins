@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { decideMrAdvisory } from "./mr-advisory.ts";
+import { ADVICE, decideMrAdvisory } from "./mr-advisory.ts";
 import { SKIP_CI_ADVISORY, skipCiAdvisory } from "./skip-ci.ts";
 
 const cwd = "/repo"
@@ -19,6 +19,7 @@ const options = {
   list: () => [],
   now: 1000 * 1000 + 3 * 24 * 60 * 60 * 1000,
 }
+const WRAPPERS = ["git", "dgit"]
 
 function advise(command: string, opts: Parameters<typeof decideMrAdvisory>[2] = options) {
   return decideMrAdvisory(command, cwd, opts)
@@ -30,6 +31,14 @@ describe("decideMrAdvisory create and merge hints", () => {
     expect(advise("glab mr create -t 'feat(api): add API' -d 'Description'").join(" ")).toContain("Flag:")
     expect(advise("gh pr create -t 'fix!: break API' -b 'Flag: none — incompatible change'")).toEqual([])
     expect(advise("gh pr create -t 'fix: bug' -b 'body'")).toEqual([])
+  })
+
+  test("Conventional Commit title advice defaults on and can be disabled independently", () => {
+    const off = { ...options, conventionalTitle: false }
+    expect(advise("gh pr create --title 'Add feature' --body 'body'")).toContain(ADVICE.title)
+    expect(advise("gh pr create --title 'Add feature' --body 'body'", off)).toEqual([])
+    expect(advise("glab mr create --title 'Add feature' --body 'body'", off)).toEqual([])
+    expect(advise("gh pr create --title 'feat: add feature' --body 'body'", off).join(" ")).toContain("Flag:")
   })
 
   test("does not judge descriptions supplied from file, editor or an expansion", () => {
@@ -74,13 +83,14 @@ describe("decideMrAdvisory create and merge hints", () => {
     expect(advise("git push origin topic", { ...options, now: 1000 * 1000 + 1_000 })).toEqual([])
   })
 
-  test("handles quoting, chains, assignment prefixes, dgit and -C", () => {
+  test("handles quoting, chains, assignment prefixes, gitWrappers and -C", () => {
     expect(advise("echo 'gh pr create --title bad' && gh pr create -t 'Bad title'; true").join(" ")).toContain(
       "Conventional Commits",
     )
     expect(advise("echo 'gh pr create --title bad'")).toEqual([])
     expect(advise("MODE=x gh pr merge 1").join(" ")).toContain("squash-merge")
-    expect(advise("dgit push origin topic").join(" ")).toContain("short-lived")
+    expect(advise("dgit push origin topic")).toEqual([])
+    expect(advise("dgit push origin topic", { ...options, gitWrappers: WRAPPERS }).join(" ")).toContain("short-lived")
     expect(advise("git -C /repo push origin topic").join(" ")).toContain("short-lived")
   })
 
@@ -105,7 +115,7 @@ describe("skipCiAdvisory", () => {
     'gh pr merge 12 --body "quoted marker [No CI]"',
     'echo ready && git commit -m "chore: explain [skip ci]"',
     "git -C /repo commit -m 'fix: x [skip  ci]'",
-    "dgit commit -m 'fix: x [ci skip]'",
+    "git commit -m 'fix: x [ci skip]'",
     `git commit -m "$(cat <<'EOF'\nfix: x\n\n[skip ci]\nEOF\n)"`,
     "git commit -F - <<'EOF'\nfix: x [skip ci]\nEOF",
   ]
@@ -125,4 +135,10 @@ describe("skipCiAdvisory", () => {
   for (const command of NON_MATCHES) {
     test(`stays quiet: ${JSON.stringify(command)}`, () => expect(skipCiAdvisory(command)).toBeUndefined())
   }
+
+  test("reads a wrapper listed in gitWrappers as git", () => {
+    expect(skipCiAdvisory("dgit commit -m 'fix: x [ci skip]'")).toBeUndefined()
+    expect(skipCiAdvisory("dgit commit -m 'fix: x [ci skip]'", cwd, WRAPPERS)).toBe(SKIP_CI_ADVISORY)
+    expect(skipCiAdvisory("/opt/bin/dgit -C /r commit -m 'fix: x [ci skip]'", cwd, WRAPPERS)).toBe(SKIP_CI_ADVISORY)
+  })
 })

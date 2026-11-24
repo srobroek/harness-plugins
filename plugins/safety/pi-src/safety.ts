@@ -14,7 +14,6 @@
  * A check that asks opens `ctx.ui.confirm`; a session without dialogs (print, JSON, a subagent child) blocks the call.
  */
 
-import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import {
   type ExtensionAPI,
@@ -27,6 +26,8 @@ import {
 import { leadingCdCwd } from "@srobroek/opencode-lib"
 import { type ExternalDirectory, externalDirectories, sessionRoots } from "@srobroek/opencode-lib/external-directories"
 import { type ProviderTypes, readProviderTypes } from "@srobroek/opencode-lib/fnox-config"
+import { readGitWrappers } from "@srobroek/opencode-lib/git-wrappers"
+import { loadPiOptionsFile } from "@srobroek/opencode-lib/pi-options"
 import { rewriteCloseKeywords } from "../shared/close-keywords.ts"
 import { shellFlagDirectories } from "../shared/flag-directories.ts"
 import { GUARD_IDS, type GuardID, type GuardOptions, hardGate } from "../shared/guards.ts"
@@ -64,12 +65,14 @@ export type PiOptions = {
   opAllow: readonly string[]
   pushVia: PushViaConfig | undefined
   redact: RedactOptions
+  /** Command names the gates read as git; only `git` by default. */
+  gitWrappers: readonly string[]
 }
 
 /** The options file in pi's agent directory. */
 export const OPTIONS_FILE = "safety.json"
 
-/** `{ disable, opAllow, pushVia, redactSecrets, redactNames, redactExclude }`, read as the OpenCode options are. */
+/** `{ disable, opAllow, pushVia, gitWrappers, redactSecrets, redactNames, redactExclude }`, read as the OpenCode options are. */
 export function readPiOptions(raw: unknown): PiOptions {
   const options = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
   const disable: unknown[] = Array.isArray(options.disable) ? options.disable : []
@@ -79,23 +82,15 @@ export function readPiOptions(raw: unknown): PiOptions {
     opAllow: allow.filter((entry): entry is string => typeof entry === "string"),
     pushVia: readPushVia(options),
     redact: readRedactOptions(options),
+    gitWrappers: readGitWrappers(options),
   }
 }
 
 /** The options at `path`: a missing file gives the defaults, an unreadable or malformed one the defaults and a warning. */
 export function loadPiOptions(path: string): { options: PiOptions; warning?: string } {
-  let text: string
-  try {
-    text = readFileSync(path, "utf8")
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { options: readPiOptions({}) }
-    return { options: readPiOptions({}), warning: `safety: ${path} could not be read; every check runs and push-via is off.` }
-  }
-  try {
-    return { options: readPiOptions(JSON.parse(text)) }
-  } catch {
-    return { options: readPiOptions({}), warning: `safety: ${path} is not valid JSON; every check runs and push-via is off.` }
-  }
+  const loaded = loadPiOptionsFile(path, "safety", "every check runs and push-via is off")
+  const options = readPiOptions(loaded.options)
+  return loaded.warning === undefined ? { options } : { options, warning: loaded.warning }
 }
 
 export type Verdict = { kind: "run" } | { kind: "block"; reason: string } | { kind: "ask"; message: string }
@@ -156,6 +151,7 @@ export async function gateBash(command: string, cwd: string, config: GateConfig)
       disabled: disabled as ReadonlySet<GuardID>,
       opAllow: config.options.opAllow,
       ...(config.options.pushVia ? { pushVia: config.options.pushVia } : {}),
+      gitWrappers: config.options.gitWrappers,
       providerTypes,
     }),
   )
@@ -171,6 +167,7 @@ export async function gateBash(command: string, cwd: string, config: GateConfig)
     const decision = await reviewPermission(command, cwd, {
       ...config.review,
       disabled: disabled as ReadonlySet<DecisionID>,
+      gitWrappers: config.options.gitWrappers,
     })
     if (decision?.effect === "deny") return { kind: "block", reason: decision.message }
     if (decision?.effect === "ask") asks.push(decision.message)
@@ -179,7 +176,10 @@ export async function gateBash(command: string, cwd: string, config: GateConfig)
     asks.push(REVIEW_FAILED)
   }
   if (!disabled.has("external-directory")) {
-    const external = attempt(() => externalDirectories(shellFlagDirectories(command, gateCwd), sessionRoots(cwd))) ?? []
+    const external =
+      attempt(() =>
+        externalDirectories(shellFlagDirectories(command, gateCwd, config.options.gitWrappers), sessionRoots(cwd)),
+      ) ?? []
     if (external.length > 0) asks.push(externalMessage(external))
   }
   return asks.length === 0 ? RUN : { kind: "ask", message: asks.join("\n\n") }
