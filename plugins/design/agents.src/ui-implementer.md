@@ -52,9 +52,6 @@ permissions:
   - action: skill
     resource: "toolchain-*"
     effect: allow
-  - action: skill
-    resource: aws-guidance
-    effect: allow
   - action: execute
     resource: "*"
     effect: allow
@@ -120,7 +117,6 @@ NOT Spawn agents or write a critique verdict, except `debug` (when available): w
   `ui-ux-specialist`.
 NOT Report a state as handled when no interaction rendered it.
 {{include coding-core: standards repo-doc testing}}
-
 ## Output
 
 Begin your reply with `VERDICT:`.
