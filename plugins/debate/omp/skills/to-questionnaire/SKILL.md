@@ -31,10 +31,8 @@ no recommendation unless the conversation suggests one. Both answers are needed 
 2. **What do you need back?** Ask for the specific decisions or facts the user needs from this
    person. The answer defines what the questionnaire must cover.
 3. **Write the questionnaire.** Draft questions aimed at the gap from steps 1-2, following the
-   structure below. Write to the path the user names; with no path, use
-   `~/tmp/to-questionnaire-{slug}.md` (slug from the topic). If using parley, show the draft as
-   one review question before writing, apply any revisions, then call `parley_end`. Report the
-   absolute path.
+   document structure below. Write it to the path the user names; otherwise use the system
+   temp directory, never the current directory. If using parley, show the draft as one review question before writing, apply any revisions, then call `parley_end`. Report the absolute path.
 
 ## Document structure
 
