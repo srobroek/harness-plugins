@@ -2,7 +2,7 @@ import { realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import { isAbsolute, resolve } from "node:path"
 import { Plugin } from "@opencode/plugin"
-import { Tool } from "@opencode/plugin/effect"
+import type { Tool } from "@opencode/plugin/effect"
 import { appendResultText, isShellTool, leadingCdCwd, shellCall, WRITE_TOOLS } from "@srobroek/opencode-lib"
 import { hostWarn, type Warn } from "@srobroek/opencode-lib/host-log"
 import { type AskedWatchDeps, watchAsked } from "./asked-watch.ts"
@@ -663,7 +663,10 @@ export function createPlugin(overrides: Overrides = {}) {
               const { message, error, metadata } = event.error
               const clean = { message: redactor.text(message), error: redactor.value(error), metadata: redactor.value(metadata) }
               if (clean.message === message && clean.error === error && clean.metadata === metadata) return
-              event.error = new Tool.Error({
+              // Build the replacement from the event's own class: the host's `@opencode/plugin/effect` does not export
+              // `Tool` before 2.3, and a value import of it makes the whole plugin fail to load there.
+              const ToolError = event.error.constructor as typeof Tool.Error
+              event.error = new ToolError({
                 message: clean.message,
                 ...(clean.error === undefined ? {} : { error: clean.error }),
                 ...(clean.metadata === undefined ? {} : { metadata: clean.metadata }),
