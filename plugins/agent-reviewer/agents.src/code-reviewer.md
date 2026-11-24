@@ -54,6 +54,7 @@ permissions:
     resource: toolchain-guide
     effect: allow
   # Non-interactive: nobody can answer a prompt in a background session, so every rule allows or denies.
+  # gh api is GET by default, so any -X/--method (even GET) or field/input flag is denied wherever it appears.
   # Last match wins: deny all, allow the read commands, then deny the write forms and command chaining.
   - action: shell
     resource: "*"
@@ -104,25 +105,25 @@ permissions:
     resource: "git * --output*"
     effect: deny
   - action: shell
-    resource: "gh api *-f *"
+    resource: "gh api* -f*"
     effect: deny
   - action: shell
-    resource: "gh api *-F *"
+    resource: "gh api* -F*"
     effect: deny
   - action: shell
-    resource: "gh api *--field*"
+    resource: "gh api* --field*"
     effect: deny
   - action: shell
-    resource: "gh api *--raw-field*"
+    resource: "gh api* --raw-field*"
     effect: deny
   - action: shell
-    resource: "gh api *--input*"
+    resource: "gh api* --input*"
     effect: deny
   - action: shell
-    resource: "gh api *-X*"
+    resource: "gh api* -X*"
     effect: deny
   - action: shell
-    resource: "gh api *--method*"
+    resource: "gh api* --method*"
     effect: deny
   - action: shell
     resource: "gh api *graphql*"
@@ -130,12 +131,6 @@ permissions:
   - action: shell
     resource: "rg *--pre*"
     effect: deny
-  - action: shell
-    resource: "gh api *-X GET*"
-    effect: allow
-  - action: shell
-    resource: "gh api *--method GET*"
-    effect: allow
   - action: shell
     resource: "*;*"
     effect: deny
