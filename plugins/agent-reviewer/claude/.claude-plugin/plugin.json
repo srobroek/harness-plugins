@@ -1,7 +1,7 @@
 {
   "name": "agent-reviewer",
   "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "author": {
     "name": "Sjors Robroek",
     "url": "https://github.com/srobroek"

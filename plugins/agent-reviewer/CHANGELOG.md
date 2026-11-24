@@ -1,3 +1,9 @@
+## agent-reviewer [0.15.0](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.14.0...agent-reviewer--v0.15.0) (2026-11-24)
+
+### Features
+
+* **agent-reviewer:** grant Pi subagents tools ([159ad02](https://github.com/srobroek/harness-plugins/commit/159ad02eac3b9ba206d568a93877c2dedd5e9036))
+
 ## agent-reviewer [0.14.0](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.13.4...agent-reviewer--v0.14.0) (2026-11-24)
 
 ### Features

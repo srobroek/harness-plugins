@@ -7,7 +7,7 @@
 | agent-efficiency | 0.14.5 | development | global | opencode |
 | agent-mechanic | 0.9.0 | development | global | opencode, omp, pi |
 | agent-researcher | 0.12.0 | development | global | opencode, omp, pi |
-| agent-reviewer | 0.14.0 | development | global | opencode, claude, omp, pi |
+| agent-reviewer | 0.15.0 | development | global | opencode, claude, omp, pi |
 | agent-seance | 0.8.2 | development | global | opencode |
 | architecture | 0.11.4 | development | global | opencode, claude, omp, pi |
 | ast-grep | 1.3.2 | development | global | opencode, claude |
