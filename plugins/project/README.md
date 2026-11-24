@@ -40,10 +40,6 @@ commercial goals, recommends an OSI-approved license from its decision matrix,
 checks it against ecosystem norms, and offers to write the LICENSE file, manifest
 field and headers. Its references live beside it in `references/`.
 
-Ported from the omp-plugins `project` plugin; reference links are now relative
-paths. The omp `project-managed-asset-promotion` rule is not ported: it governs
-promoting machine-local omp skills and rules. This is the authoritative copy; the
-earlier one under `~/.claude/skills` is gone.
 
 ## Install
 
