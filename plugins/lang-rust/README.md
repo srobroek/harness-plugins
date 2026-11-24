@@ -18,6 +18,11 @@ per-worktree advice contradicted its repository-scoped target). The migration-ed
 [safety](../safety/README.md#migration-edit) plugin.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-lang-rust
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/lang-rust/opencode'
