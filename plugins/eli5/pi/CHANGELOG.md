@@ -1,3 +1,5 @@
+## eli5 [0.7.4](https://github.com/srobroek/harness-plugins/compare/eli5--v0.7.3...eli5--v0.7.4) (2026-11-24)
+
 ## eli5 [0.7.3](https://github.com/srobroek/harness-plugins/compare/eli5--v0.7.2...eli5--v0.7.3) (2026-11-24)
 
 ### Bug Fixes

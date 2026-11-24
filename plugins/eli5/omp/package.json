@@ -1,6 +1,6 @@
 {
   "name": "@agent-plugins/eli5",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "Explain a topic at five depth levels, from metaphor to frontier.",
   "private": true,
   "omp": {}
