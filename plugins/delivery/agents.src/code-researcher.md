@@ -76,4 +76,4 @@ permissions:
     effect: allow
 ---
 
-{{include shared/code-researcher}}
+{{include shared/researcher}}
