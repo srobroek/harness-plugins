@@ -1,3 +1,9 @@
+## safety [0.14.3](https://github.com/srobroek/harness-plugins/compare/safety--v0.14.2...safety--v0.14.3) (2026-11-24)
+
+### Bug Fixes
+
+* **safety:** read git wrappers from the gitWrappers option ([4da3a61](https://github.com/srobroek/harness-plugins/commit/4da3a6175ea0890c3492b820b01488514cf1a4b4))
+
 ## safety [0.14.2](https://github.com/srobroek/harness-plugins/compare/safety--v0.14.1...safety--v0.14.2) (2026-11-24)
 
 ## safety [0.14.1](https://github.com/srobroek/harness-plugins/compare/safety--v0.14.0...safety--v0.14.1) (2026-11-23)
