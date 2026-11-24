@@ -48,6 +48,13 @@ export type AutopilotPiDeps = Deps & {
 const sessionOf = (ctx: ExtensionContext) => ctx.sessionManager.getSessionId()
 
 /**
+ * Send `text` as a user prompt. Always as a follow-up: pi counts a session as processing while a
+ * command or another prompt is being handled even when `isIdle()` says idle, and rejects a plain
+ * send then; an idle session takes a follow-up at once.
+ */
+const sendPrompt = (pi: ExtensionAPI, text: string) => pi.sendUserMessage(text, { deliverAs: "followUp" })
+
+/**
  * The host over the current pi session. `current` is the context of the latest event in this
  * runtime; `authorize` is the plugin's own permission check, since pi has no permission rules.
  */
@@ -105,8 +112,7 @@ export function piHost(input: {
     prompt: async (sessionID, text) => {
       const ctx = own(sessionID)
       if (ctx === undefined) throw elsewhere(sessionID)
-      if (ctx.isIdle()) pi.sendUserMessage(text)
-      else pi.sendUserMessage(text, { deliverAs: "followUp" })
+      sendPrompt(pi, text)
     },
     notify: async ({ sessionID, text, delivery, metadata }) => {
       if (own(sessionID) === undefined) throw elsewhere(sessionID)
@@ -221,8 +227,7 @@ export function setupAutopilotPi(pi: ExtensionAPI, deps: AutopilotPiDeps = {}): 
     handler: async (args, ctx) => {
       track(ctx)
       const text = await pilot.command(sessionOf(ctx), args)
-      if (ctx.isIdle()) pi.sendUserMessage(text)
-      else pi.sendUserMessage(text, { deliverAs: "followUp" })
+      sendPrompt(pi, text)
     },
   })
 

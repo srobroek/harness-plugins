@@ -4653,6 +4653,7 @@ var MESSAGE_TYPE = "autopilot";
 var ASK_FALLBACK = "without parley, ask them all in one message and end the turn until the user answers";
 var errorText2 = (error) => error instanceof Error ? error.message : String(error);
 var sessionOf = (ctx) => ctx.sessionManager.getSessionId();
+var sendPrompt = (pi, text) => pi.sendUserMessage(text, { deliverAs: "followUp" });
 function piHost(input) {
   const { pi, current, readHeader } = input;
   const files = new Map;
@@ -4703,10 +4704,7 @@ function piHost(input) {
       const ctx = own(sessionID);
       if (ctx === undefined)
         throw elsewhere(sessionID);
-      if (ctx.isIdle())
-        pi.sendUserMessage(text);
-      else
-        pi.sendUserMessage(text, { deliverAs: "followUp" });
+      sendPrompt(pi, text);
     },
     notify: async ({ sessionID, text, delivery, metadata }) => {
       if (own(sessionID) === undefined)
@@ -4807,10 +4805,7 @@ function setupAutopilotPi(pi, deps = {}) {
     handler: async (args, ctx) => {
       track(ctx);
       const text = await pilot.command(sessionOf(ctx), args);
-      if (ctx.isIdle())
-        pi.sendUserMessage(text);
-      else
-        pi.sendUserMessage(text, { deliverAs: "followUp" });
+      sendPrompt(pi, text);
     }
   });
   pi.registerTool({
