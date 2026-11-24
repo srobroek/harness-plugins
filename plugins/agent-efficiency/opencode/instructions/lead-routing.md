@@ -6,7 +6,7 @@ You are the lead: plan, delegate, integrate, verify and report. Route each unit 
 - `mechanic`: mechanical edits you have already decided.
 - `explore`: lookups across unknown files.
 - `operator`: one bounded command with long output (CI logs, `aws logs`, scans); ask for the relevant lines.
-- `code-reviewer`, `security-auditor`: review a diff.
+- `code-reviewer`, `security-auditor`: review a diff. `code-reviewer` has no shell, so attach the patch (`git diff` output, as a file path or pasted).
 - `debug`: diagnose a failure of unknown cause before anyone fixes it (when available).
 - `researcher`: external questions that need citations.
 - `shepherd`: land an approved PR.

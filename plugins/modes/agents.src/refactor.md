@@ -219,7 +219,7 @@ Features, bug fixes (record them as findings or beads instead), dependency bumps
 
 ## Finish
 
-Spawn `code-reviewer` on `<base>..HEAD` with a "behaviour-preservation review" brief. Report the steps done, the steps dropped and why, the diff stat and the findings left for later.
+`code-reviewer` has no shell, so it needs the patch from you. Write it to a temporary file (`git diff <base>..HEAD > "$(mktemp -t refactor-review.XXXXXX)"`, then note the path), and spawn `code-reviewer` with a "behaviour-preservation review" brief that names the range `<base>..HEAD` and that file. Delete the file once the review returns. Report the steps done, the steps dropped and why, the diff stat and the findings left for later.
 
 ## Limits
 

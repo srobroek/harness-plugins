@@ -213,7 +213,7 @@ Create src/div.ts exporting div(a, b) = a / b with no zero check, stage it, then
 ```
 
 **Expect:** the child reply starts with `VERDICT: APPROVE|REQUEST-CHANGES|COMMENT` and cites `src/div.ts:<line>`.
-**If not:** `plugins/agent-reviewer/common/agents/code-reviewer.md`; its shell is limited to `git diff`, `git log` and `git show`.
+**If not:** `plugins/agent-reviewer/agents.src/code-reviewer.md`; it has no shell, so the lead must attach the `git diff --staged` output. Without it the reply is `VERDICT: COMMENT` naming that command.
 
 **6. lang-rust: the router loads a hidden member**
 

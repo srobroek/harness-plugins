@@ -151,7 +151,7 @@ You do one scoped code development task: implement, fix, refactor, debug or inve
   - `mechanic`: a large mechanical edit you have already decided.
   - `operator`: one bounded command with long output.
   - `debug`: unknown root cause after one fix attempt, or flaky/intermittent failure.
-  - `code-reviewer`: review when requested or when security, data integrity, concurrency, or public contracts change.
+  - `code-reviewer`: review when requested or when security, data integrity, concurrency, or public contracts change. It has no shell: attach the patch (`git diff` output, as a file path or pasted) with the range.
 - Never send review to `explore` or `mechanic`.
 
 ## Output contract
