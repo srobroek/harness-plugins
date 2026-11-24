@@ -1,3 +1,5 @@
+## worktrunk [0.7.2](https://github.com/srobroek/harness-plugins/compare/worktrunk--v0.7.1...worktrunk--v0.7.2) (2026-11-24)
+
 ## worktrunk [0.7.1](https://github.com/srobroek/harness-plugins/compare/worktrunk--v0.7.0...worktrunk--v0.7.1) (2026-11-23)
 
 ### Bug Fixes
