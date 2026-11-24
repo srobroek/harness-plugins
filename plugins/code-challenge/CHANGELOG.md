@@ -1,3 +1,5 @@
+## code-challenge [2.0.3](https://github.com/srobroek/harness-plugins/compare/code-challenge--v2.0.2...code-challenge--v2.0.3) (2026-11-24)
+
 ## code-challenge [2.0.2](https://github.com/srobroek/harness-plugins/compare/code-challenge--v2.0.1...code-challenge--v2.0.2) (2026-11-24)
 
 ### Bug Fixes

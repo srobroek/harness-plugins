@@ -1,6 +1,6 @@
 {
   "name": "@agent-plugins/code-challenge",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
   "private": true,
   "omp": {
