@@ -1,3 +1,5 @@
+## quality [0.15.3](https://github.com/srobroek/harness-plugins/compare/quality--v0.15.2...quality--v0.15.3) (2026-11-24)
+
 ## quality [0.15.2](https://github.com/srobroek/harness-plugins/compare/quality--v0.15.1...quality--v0.15.2) (2026-11-24)
 
 ### Bug Fixes

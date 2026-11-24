@@ -1,7 +1,7 @@
 {
   "name": "quality",
   "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
-  "version": "0.15.2",
+  "version": "0.15.3",
   "author": {
     "name": "Sjors Robroek",
     "url": "https://github.com/srobroek"
