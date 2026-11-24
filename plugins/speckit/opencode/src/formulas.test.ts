@@ -105,7 +105,7 @@ test("the spec agent edits only specs/ and .specify/ and runs only the SpecKit c
   for (const skill of ["speckit-specify", "speckit-critique-run", "quality-code-design", "beads-ledger", "beads-guide"])
     expect({ skill, effect: permissionEffect(rules, "skill", skill) }).toEqual({ skill, effect: "allow" })
   expect(permissionEffect(rules, "skill", "delivery-git-workflow")).toBe("deny")
-  for (const agent of ["explore", "researcher", "architect", "speckit-verify", "speckit-sync"])
+  for (const agent of ["explore", "code-researcher", "architect", "speckit-verify", "speckit-sync"])
     expect({ agent, effect: permissionEffect(rules, "subagent", agent) }).toEqual({ agent, effect: "allow" })
   for (const agent of ["implementer", "general", "build"])
     expect({ agent, effect: permissionEffect(rules, "subagent", agent) }).toEqual({ agent, effect: "deny" })
