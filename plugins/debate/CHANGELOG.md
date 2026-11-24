@@ -1,3 +1,10 @@
+## debate [0.7.3](https://github.com/srobroek/harness-plugins/compare/debate--v0.7.2...debate--v0.7.3) (2026-11-24)
+
+### Bug Fixes
+
+* **debate:** regenerate questionnaire destinations ([6691783](https://github.com/srobroek/harness-plugins/commit/66917836576fd51fe6205651768c68645f23b72f))
+* **debate:** use portable questionnaire destinations ([dc4a21f](https://github.com/srobroek/harness-plugins/commit/dc4a21fcfd48507527290830a9ac736c1f57e15b))
+
 ## debate [0.7.2](https://github.com/srobroek/harness-plugins/compare/debate--v0.7.1...debate--v0.7.2) (2026-11-23)
 
 ### Bug Fixes
