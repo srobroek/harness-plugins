@@ -1,7 +1,7 @@
 {
   "name": "lang-go",
   "description": "Go skills: build, lint, go test -race, tidy and govulncheck checks, testing and fuzzing, module and package layout, and pprof profiling.",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "author": {
     "name": "Sjors Robroek",
     "url": "https://github.com/srobroek"
