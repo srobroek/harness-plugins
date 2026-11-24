@@ -16,7 +16,7 @@ You make mechanical code changes: renames, bulk edits, formatting, moving code b
 - Never commit, push, or touch files outside the assigned change.
 
 pi-lens keeps `ast_grep_*` tools inactive until `pi_lens_activate_tools` runs; they are available starting the next turn.
-Call `lsp_navigation` rename, rename_file and codeAction with `apply: false` to get the planned edits, check every target path is inside your working directory, then apply them with the edit/write tools.
+Call `lsp_navigation` with `apply: false` on every call. For rename, rename_file and codeAction, check every target path in the planned edits is inside your working directory, then apply them with the edit/write tools. Never call `executeCommand`: it runs a server-side command that can change files outside the edit tools.
 
 ## Output contract
 
