@@ -39,7 +39,7 @@
 | project-secrets | 1.0.3 | productivity | global | opencode, claude, omp, pi |
 | quality | 0.15.3 | development | global | opencode, claude, pi |
 | repomix | 0.6.3 | development | global | opencode, claude, pi |
-| safety | 0.14.3 | development | global | opencode, pi |
+| safety | 0.14.4 | development | global | opencode, pi |
 | secret-store | 1.0.1 | development | global | opencode, pi |
 | session | 0.4.2 | development | global | opencode |
 | speckit | 0.11.4 | development | project | opencode, claude |
