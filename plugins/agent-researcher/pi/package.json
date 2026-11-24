@@ -15,14 +15,37 @@
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "_kit",
     "agents"
   ],
   "publishConfig": {
     "access": "public",
     "provenance": true
   },
+  "peerDependencies": {
+    "@srobroek/pi-repomix": "*",
+    "pi-lens": "*",
+    "pi-subagents": "*",
+    "pi-web-access": "*"
+  },
+  "peerDependenciesMeta": {
+    "@srobroek/pi-repomix": {
+      "optional": true
+    },
+    "pi-lens": {
+      "optional": true
+    },
+    "pi-subagents": {
+      "optional": true
+    },
+    "pi-web-access": {
+      "optional": true
+    }
+  },
   "pi": {
-    "extensions": [],
+    "extensions": [
+      "./_kit/prereqs.ts"
+    ],
     "subagents": {
       "agents": [
         "./agents"
