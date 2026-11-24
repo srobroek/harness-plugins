@@ -16,17 +16,24 @@ Ask in rounds through Pi's built-in `question` tool. Skip what the argument or r
 
 1. Shape: purpose in one sentence and the project name; app, library, CLI, service, worker or desktop app; language(s); one package or a monorepo. Offer the closest suggested shape from `references/shapes.md` (minimal, py-lib, rust-cli, go-service, ts-service, api-service, gitlab-service, polyglot-service, desktop-rust-ts, monorepo, web-app, fullstack-web) and customise from there.
 2. Governance and forge (`references/governance.md`): CODEOWNERS owner, security contact, conduct contact (omit the file without one), license, public or private, GitHub or GitLab, self-hosted hostname, default branch `main`.
-3. Capabilities (`references/capabilities.md`), only those that apply: HTTP API contract, i18n locales, accessibility-scanned routes, infrastructure (AWS CDK).
-4. Delivery: CI and hook options and release flow (`references/ci-hooks.md`; none, release-please, or semantic-release per `trunk-dev-release-setup`), Renovate or Dependabot.
-5. Workflow: beads, speckit, journeys, parallel agents with worktrees (`references/worktrees.md`), secrets needed?
-6. Defaults gate: take current pins and defaults (job timeout 15 min, large-file limit 512 KB, README install `mise install && just setup`, dev command `just dev`) or customise. Ask once; do not interrogate each value.
+3. Capabilities (`references/capabilities.md`), only those that apply: HTTP API contract, i18n,
+   accessibility, and infrastructure (AWS CDK only for AWS projects).
+4. Delivery: CI and hook options and release flow (`references/ci-hooks.md`); ask which forge
+   and release tooling apply (for example GitHub Actions or GitLab CI), then offer Renovate or
+   Dependabot.
+5. Workflow: ask whether the project needs Beads, SpecKit, journeys, or parallel agents with
+   worktrees (`references/worktrees.md`); ask whether secrets are needed.
+6. Defaults gate: offer documented defaults when they fit; otherwise match existing tooling or
+   ask. Ask once; do not interrogate each value.
 
 Read the plan back (name, shape, languages, layout, tools and pinned versions, capabilities, files you will create) and wait for approval before writing anything. Where an answer is unknown and not essential, leave a visible placeholder (for example `@TODO-owner`) and list it in the final report instead of inventing a value.
 
 ## 2. Create the repository
 
-1. Directory and `git init -b main`. Add a `.gitignore` for the languages (the language's own init usually writes one; extend it, do not replace it).
-2. Pin tools with mise: `mise use <tool>@<version>` writes `mise.toml`. Ask the user for versions or take current stable and say which. mise pins runtimes and CLI tools; the language's own file pins the rest (`rust-toolchain.toml`, `go.mod`, `requires-python`, `package.json` `packageManager`).
+1. Create the repository and `.gitignore` with the language's documented tools; extend generated
+   files rather than replacing them.
+2. Preserve an existing toolchain manager. For a new project, offer mise, npm, Homebrew and pipx
+   as applicable, then use the manager the user selects. Pin runtimes in their language files.
 3. Add a `justfile` with the quality gate as one `just check` recipe (the commands from the language reference) and `just fmt` / `just test`. `check` runs no formatter in write mode; the hygiene hooks may rewrite files, so rerun it (`references/justfile.md`). Task runner choice is `toolchain-stack-defaults`; a larger monorepo may want `moon` (ask).
 4. Run the language setup from `references/<lang>.md`: `rust.md`, `python.md`, `go.md`, `typescript.md`. Several languages or packages: `references/monorepo.md`.
 5. Formatter config: commit an explicit formatter config for each language (`formatters.md`; its Pi-specific variant documents Pi's setup). Prefer the language's native config, such as Ruff in `pyproject.toml`, `biome.json` or `.oxfmtrc.json`, and use one formatter per file type.
@@ -41,11 +48,9 @@ Follow `new-project` for Pi project packages, skills, prompt templates, and MCP 
 
 ## 4. Tracking and workflow (if chosen)
 
-- Beads: load `beads-setup` (it needs a git `origin` first; use `bd init --skip-hooks` on the work laptop, see the steering file linked from the global AGENTS.md).
+- Beads: load `beads-setup` after confirming the repository does not already use another tracker. If its git hooks are managed by another tool, use `bd init --skip-hooks`.
 - SpecKit: `speckit-setup` (needs `bd`). Journeys: `journey-init`.
-- Release: `trunk-dev-release-setup`; release-please is the GitHub alternative.
-- CI on GitHub: `ci-github-actions` (one `ci-gate` job, pinned actions, least permissions) plus the language's CI notes in its plugin skills.
-- Branch protection, the merge queue and the CI lanes on GitHub: load `delivery-git-workflow` and read its `repo-setup-parallel-agents.md` reference.
+- For GitHub-specific branch protection, merge queues and CI lanes, load `delivery-git-workflow` and read its `repo-setup-parallel-agents.md` reference.
 - Worktrees: `references/worktrees.md` (the `worktrunk` plugin). For Rust, never set a global `CARGO_TARGET_DIR` (`ops-no-global-cargo-target`); caches follow `ops-toolchain-cache-policy`.
 - Hooks, CI jobs, release-please and Renovate defaults to offer: `references/ci-hooks.md`. Wire hooks into `just check` so CI and local agree.
 

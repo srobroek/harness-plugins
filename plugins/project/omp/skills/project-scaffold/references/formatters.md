@@ -40,8 +40,9 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "TC", "ANN", "RUF", "PERF",
 Pick one formatter per file type. Never configure two formatters for the same files: the check
 and agent must not disagree.
 
-- Biome (default): one tool for lint and format, and it covers JSON, CSS and GraphQL. Add
-  `@biomejs/biome` as a dev dependency and commit `biome.json`:
+- Biome is one default option for lint and format, including JSON, CSS and GraphQL. Check the
+  existing project first; otherwise ask whether to choose Biome or oxfmt, and add Biome only if
+  selected.
 
   ```json
   {

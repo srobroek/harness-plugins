@@ -18,7 +18,7 @@ vendored SKILL.md records its provenance and its modifications in a comment bloc
 its frontmatter.
 
 Modifications:
-  1. The questionnaire goes to a user-named path or ~/tmp, never the current directory.
+  1. The questionnaire goes to a user-named path or the system temp directory, never the current directory.
   2. Template placeholders use {braces} inside a fenced block.
   3. The frontmatter description follows this repository's authoring contract.
   4. References to other skills name the skill instead of an Oh My Pi skill URI.
