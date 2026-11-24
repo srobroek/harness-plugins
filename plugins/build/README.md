@@ -29,6 +29,11 @@ tier picks its model. Without it the agent inherits the caller's model; set
 `agent.external-repo-worker.model` to pin one.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-external-repo-worker
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/build/opencode'

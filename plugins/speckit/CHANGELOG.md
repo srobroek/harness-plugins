@@ -1,3 +1,9 @@
+## speckit [0.11.4](https://github.com/srobroek/harness-plugins/compare/speckit--v0.11.3...speckit--v0.11.4) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
 ## speckit [0.11.3](https://github.com/srobroek/harness-plugins/compare/speckit--v0.11.2...speckit--v0.11.3) (2026-11-24)
 
 ### Bug Fixes

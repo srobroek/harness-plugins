@@ -1,6 +1,6 @@
 {
   "name": "debate",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
   "private": true,
   "type": "module",

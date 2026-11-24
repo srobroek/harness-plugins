@@ -1,6 +1,6 @@
 {
   "name": "agent-mechanic",
   "description": "mechanic subagent: cheap, exact mechanical edits (renames, bulk edits, formatting, moving code) that run the given check.",
-  "version": "0.8.1",
+  "version": "0.8.3",
   "category": "development"
 }

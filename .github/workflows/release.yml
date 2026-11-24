@@ -21,7 +21,10 @@ permissions:
 jobs:
   release:
     uses: srobroek/harness-kit/.github/workflows/release.yml@v1.10.1
+    with:
+      npm-publish: true
     permissions:
       contents: write
       issues: write
       pull-requests: write
+      id-token: write

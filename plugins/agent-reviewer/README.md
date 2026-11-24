@@ -34,7 +34,7 @@ inherits the caller's.
 
 | Option | Default | Effect |
 | --- | --- | --- |
-| `tools` | `["context7_*", "aws-mcp_*"]` | An array of patterns replaces the defaults. `false` or `[]` adds no rules; the agent keeps its fixed allowlist. |
+| `tools` | `["context7_*"]` | Context7 is allowed by default. Add MCP patterns such as `aws-mcp_*` for AWS projects; an array replaces the default. `false` or `[]` adds no rules; the agents keep their fixed allowlists. |
 
 ```jsonc
 "options": { "tools": ["context7_*", "<server>_<tool>"] }
@@ -79,6 +79,11 @@ omp plugin install /path/to/harness-plugins/plugins/agent-reviewer/omp
 The `pr-reviewer` agent uses OMP's `github` tool. OMP disables that tool by default; enable `github` under **Settings → Tools** before asking it to review a GitHub pull request. OMP does not expose the restricted shell reads needed for GitLab merge requests, so use OpenCode for GitLab MR reviews.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-agent-reviewer
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-reviewer/opencode'

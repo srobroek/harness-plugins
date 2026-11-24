@@ -63,7 +63,7 @@ tools is not development work.
 
 | Option | Default | Effect |
 | --- | --- | --- |
-| `tools` | `["context7_*", "aws-mcp_*"]` | An array of patterns replaces the defaults. `false` or `[]` adds no rules; the agent keeps its fixed allowlist. |
+| `tools` | `["context7_*"]` | Context7 is allowed by default. Add MCP patterns such as `aws-mcp_*` for AWS projects; an array replaces the default. `false` or `[]` adds no rules; the agent keeps its fixed allowlist. |
 
 ```jsonc
 "options": { "tools": ["context7_*", "<server>_<tool>"] }
@@ -105,6 +105,11 @@ picks its model; without it the agent inherits the caller's model. Set
 `agent.coder.model` to pin one.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-agent-coder
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-coder/opencode'

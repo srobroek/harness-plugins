@@ -1,3 +1,11 @@
+## project-secrets [1.0.3](https://github.com/srobroek/harness-plugins/compare/project-secrets--v1.0.2...project-secrets--v1.0.3) (2026-11-24)
+
+## project-secrets [1.0.2](https://github.com/srobroek/harness-plugins/compare/project-secrets--v1.0.1...project-secrets--v1.0.2) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
 ## project-secrets [1.0.1](https://github.com/srobroek/harness-plugins/compare/project-secrets--v1.0.0...project-secrets--v1.0.1) (2026-11-24)
 
 ### Bug Fixes

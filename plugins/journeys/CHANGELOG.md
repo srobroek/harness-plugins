@@ -1,3 +1,5 @@
+## journeys [0.6.1](https://github.com/srobroek/harness-plugins/compare/journeys--v0.6.0...journeys--v0.6.1) (2026-11-24)
+
 ## journeys [0.6.0](https://github.com/srobroek/harness-plugins/compare/journeys--v0.5.1...journeys--v0.6.0) (2026-11-23)
 
 ### Features

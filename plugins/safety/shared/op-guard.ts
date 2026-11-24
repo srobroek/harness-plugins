@@ -500,7 +500,7 @@ function sameFile(written: string, target: string): boolean {
 
 /** Whether `path` is an fnox config file: `fnox*.toml`, `.fnox*.toml`, or anything in `~/.config/fnox`. */
 export function fnoxConfigPath(path: string, home: string = homedir()): boolean {
-  return CONFIG_FILE.test(base(path)) || path === join(home, ".config", "fnox") || path.startsWith(join(home, ".config", "fnox") + "/")
+  return CONFIG_FILE.test(base(path)) || path === join(home, ".config", "fnox") || path.startsWith(`${join(home, ".config", "fnox")}/`)
 }
 
 /**

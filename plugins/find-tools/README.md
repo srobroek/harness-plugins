@@ -9,6 +9,11 @@ reads installed plugins from `omp plugin list --json` rather than Pi package
 settings.
 
 ## Install
+Install with Pi:
+
+```sh
+pi install npm:@srobroek/pi-find-tools
+```
 
 The OpenCode plugin and Pi package are available separately. For local Pi development, add the repository path to `packages` in `~/.pi/agent/settings.json`:
 

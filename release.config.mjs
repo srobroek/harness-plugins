@@ -14,5 +14,6 @@ export default repoRelease({
   // that lookup for a pull request that regenerates every bundle ("too many files changed"), failing the whole run.
   forge: ["@semantic-release/github", { successCommentCondition: false }],
   releaseRules,
+  publishPi: true,
   assets: ["CHANGELOG.md", "package.json", "INVENTORY.md", "opencode/**", "claude/**", "omp/**", "pi/**"],
 })

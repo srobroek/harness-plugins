@@ -2,7 +2,7 @@
   "plugins": [
     {
       "name": "agent-coder",
-      "version": "0.12.2",
+      "version": "0.12.4",
       "description": "coder subagent for any code development task (implement, fix, debug, test, build, profile, upgrade deps) with only coding tools and skills.",
       "category": "development",
       "harnesses": {
@@ -37,7 +37,7 @@
     },
     {
       "name": "agent-efficiency",
-      "version": "0.14.4",
+      "version": "0.14.5",
       "description": "Cut agent tokens: run bash calls as the built-in shell tool, narrow explore to search and web tools, and trim read-only subagent prompts.",
       "category": "development",
       "harnesses": {
@@ -58,7 +58,7 @@
     },
     {
       "name": "agent-mechanic",
-      "version": "0.8.1",
+      "version": "0.8.3",
       "description": "mechanic subagent: cheap, exact mechanical edits (renames, bulk edits, formatting, moving code) that run the given check.",
       "category": "development",
       "harnesses": {
@@ -105,7 +105,7 @@
     },
     {
       "name": "agent-researcher",
-      "version": "0.10.2",
+      "version": "0.10.4",
       "description": "The code-researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one.",
       "category": "development",
       "harnesses": {
@@ -152,7 +152,7 @@
     },
     {
       "name": "agent-reviewer",
-      "version": "0.13.2",
+      "version": "0.13.4",
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "category": "development",
       "harnesses": {
@@ -255,7 +255,7 @@
     },
     {
       "name": "architecture",
-      "version": "0.11.2",
+      "version": "0.11.4",
       "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
       "category": "development",
       "harnesses": {
@@ -375,7 +375,7 @@
     },
     {
       "name": "autopilot",
-      "version": "1.4.0",
+      "version": "1.4.1",
       "description": "Unattended runs: /autopilot arms a no-questions session with a journal, a 4-minute tick and stop conditions.",
       "category": "development",
       "harnesses": {
@@ -429,7 +429,7 @@
     },
     {
       "name": "aws",
-      "version": "0.9.1",
+      "version": "0.10.1",
       "description": "AWS working guidance: route AWS tasks through the AWS MCP Server's guided skills, verify against AWS documentation, and price with the AWS Pricing MCP server.",
       "category": "development",
       "harnesses": {
@@ -465,6 +465,21 @@
             "aws-pricing"
           ]
         },
+        "omp": {
+          "skills": [
+            "aws-guidance"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": [
+            "aws-mcp",
+            "aws-pricing"
+          ]
+        },
         "pi": {
           "skills": [
             "aws-guidance"
@@ -486,7 +501,7 @@
     },
     {
       "name": "beads",
-      "version": "0.9.2",
+      "version": "0.9.3",
       "description": "Beads issue tracking: bd prime session context, shell gates on bd, git and gh commands, store pinning and the Beads skills.",
       "category": "development",
       "harnesses": {
@@ -555,7 +570,7 @@
     },
     {
       "name": "build",
-      "version": "0.10.1",
+      "version": "0.10.3",
       "description": "External-repository worker subagent: clone, follow the target's conventions, edit, verify, and publish only when delegated.",
       "category": "development",
       "harnesses": {
@@ -603,7 +618,7 @@
     },
     {
       "name": "chezmoi",
-      "version": "0.7.1",
+      "version": "0.7.2",
       "description": "Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill.",
       "category": "development",
       "harnesses": {
@@ -674,7 +689,7 @@
     },
     {
       "name": "code-challenge",
-      "version": "2.0.1",
+      "version": "2.0.3",
       "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
       "category": "development",
       "harnesses": {
@@ -734,7 +749,7 @@
     },
     {
       "name": "debate",
-      "version": "0.7.3",
+      "version": "0.7.4",
       "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
       "category": "productivity",
       "harnesses": {
@@ -787,7 +802,7 @@
     },
     {
       "name": "delivery",
-      "version": "0.12.3",
+      "version": "0.12.4",
       "description": "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
       "category": "development",
       "harnesses": {
@@ -819,7 +834,7 @@
     },
     {
       "name": "dep-update",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "description": "Classify dependency updates by semver safety and apply confirmed patch and minor bumps.",
       "category": "development",
       "harnesses": {
@@ -856,7 +871,7 @@
     },
     {
       "name": "design",
-      "version": "0.10.2",
+      "version": "0.10.3",
       "description": "UI and UX design skills: design-system audit, DESIGN.md, rendered-surface review, accessibility audit, motion, microcopy, prototypes, and wireframes.",
       "category": "development",
       "harnesses": {
@@ -935,7 +950,7 @@
     },
     {
       "name": "docs",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "description": "Library and API documentation MCP servers for OpenCode: Context7, plus the OpenAI developer docs server on request.",
       "category": "development",
       "harnesses": {
@@ -949,14 +964,43 @@
           "extensions": [
             "index"
           ],
-          "mcp": []
+          "mcp": [
+            "context7",
+            "openaiDeveloperDocs"
+          ]
+        },
+        "omp": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": [
+            "context7",
+            "openaiDeveloperDocs"
+          ]
+        },
+        "pi": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": [
+            "context7",
+            "openaiDeveloperDocs"
+          ]
         }
       },
       "scope": "global"
     },
     {
       "name": "eli5",
-      "version": "0.7.2",
+      "version": "0.7.4",
       "description": "Explain a topic at five depth levels, from metaphor to frontier.",
       "category": "productivity",
       "harnesses": {
@@ -1015,7 +1059,7 @@
     },
     {
       "name": "find-tools",
-      "version": "0.6.0",
+      "version": "0.6.1",
       "description": "Discover and vet plugins, skills and MCP servers across local inventory, catalogs and public registries, without installing anything.",
       "category": "development",
       "harnesses": {
@@ -1066,7 +1110,7 @@
     },
     {
       "name": "journeys",
-      "version": "0.6.0",
+      "version": "0.6.1",
       "description": "Author, validate and maintain user journeys: seven skills, the journeys.py helper, and the journey-scribe and journey-validator subagents.",
       "category": "development",
       "harnesses": {
@@ -1145,7 +1189,7 @@
     },
     {
       "name": "lang-go",
-      "version": "0.9.1",
+      "version": "0.9.3",
       "description": "Go skills: build, lint, go test -race, tidy and govulncheck checks, testing and fuzzing, module and package layout, and pprof profiling.",
       "category": "development",
       "harnesses": {
@@ -1224,7 +1268,7 @@
     },
     {
       "name": "lang-python",
-      "version": "0.9.1",
+      "version": "0.9.3",
       "description": "Python skills: uv, ruff, mypy or pyright and pytest checks, testing, packaging, typing and pydantic, SQLAlchemy and Alembic, and profiling.",
       "category": "development",
       "harnesses": {
@@ -1311,7 +1355,7 @@
     },
     {
       "name": "lang-rust",
-      "version": "0.9.1",
+      "version": "0.9.3",
       "description": "Rust skills: fmt, clippy and test checks, testing with nextest, proptest and insta, crates and workspaces, CI, sqlx persistence, Tauri and profiling.",
       "category": "development",
       "harnesses": {
@@ -1402,7 +1446,7 @@
     },
     {
       "name": "lang-typescript",
-      "version": "0.10.1",
+      "version": "0.10.3",
       "description": "TypeScript and JavaScript skills: install, lint, tsc and test checks, testing, monorepo packaging, type safety and zod, and Bun and Node profiling.",
       "category": "development",
       "harnesses": {
@@ -1528,7 +1572,7 @@
     },
     {
       "name": "modes",
-      "version": "1.3.1",
+      "version": "1.3.2",
       "description": "Debug, refactor and concept agents with plan-style mode reminders: root-cause diagnosis in a scratch worktree, behaviour-preserving refactoring, and design iteration.",
       "category": "development",
       "harnesses": {
@@ -1568,7 +1612,7 @@
     },
     {
       "name": "parley",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "description": "Ask the user rounds of typed questions in a TUI panel, with recommended answers, notes and deferrals.",
       "category": "development",
       "harnesses": {
@@ -1626,7 +1670,7 @@
     },
     {
       "name": "project",
-      "version": "0.12.3",
+      "version": "0.12.5",
       "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
       "category": "productivity",
       "harnesses": {
@@ -1698,7 +1742,7 @@
     },
     {
       "name": "project-secrets",
-      "version": "1.0.1",
+      "version": "1.0.3",
       "description": "Per-project secrets with fnox and 1Password: store, use, inspect and rotate them with no value in the transcript.",
       "category": "productivity",
       "harnesses": {
@@ -1764,7 +1808,7 @@
     },
     {
       "name": "quality",
-      "version": "0.15.1",
+      "version": "0.15.3",
       "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
       "category": "development",
       "harnesses": {
@@ -1833,7 +1877,7 @@
     },
     {
       "name": "repomix",
-      "version": "0.6.1",
+      "version": "0.6.3",
       "description": "Pack a local or remote repo into one file with repomix for bulk context: external repos, module packs and version diffs.",
       "category": "development",
       "harnesses": {
@@ -1882,7 +1926,7 @@
     },
     {
       "name": "safety",
-      "version": "0.14.3",
+      "version": "0.14.4",
       "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help and redaction of secret environment values from tool output.",
       "category": "development",
       "harnesses": {
@@ -1922,7 +1966,7 @@
     },
     {
       "name": "secret-store",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "A tool that stores a new secret in 1Password or a fnox store without a shell, so the value stays out of commands, logs and the transcript.",
       "category": "development",
       "harnesses": {
@@ -1978,7 +2022,7 @@
     },
     {
       "name": "speckit",
-      "version": "0.11.3",
+      "version": "0.11.4",
       "description": "SpecKit on beads: a tasks.md guard, setup and bugfix skills, formulas, and the speckit-sync and speckit-verify subagents.",
       "category": "development",
       "harnesses": {
@@ -2066,7 +2110,7 @@
     },
     {
       "name": "toolchain",
-      "version": "0.10.2",
+      "version": "0.10.4",
       "description": "Toolchain defaults as skills: stack, frontend, infrastructure, languages, observability, shell, Terraform, caches, background jobs and worktree coexistence.",
       "category": "development",
       "harnesses": {
@@ -2185,7 +2229,7 @@
     },
     {
       "name": "trunk-dev",
-      "version": "0.12.2",
+      "version": "0.12.3",
       "description": "Trunk-based delivery for OpenCode, Claude Code, and pi: Conventional Commit and main-push gates, skip-CI and MR/PR advisories, feature-flag cleanup beads, and release-setup skills.",
       "category": "development",
       "harnesses": {
@@ -2244,7 +2288,7 @@
     },
     {
       "name": "whats-new",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "description": "Research breaking changes, deprecations and new features between two versions, report-only.",
       "category": "development",
       "harnesses": {
@@ -2285,7 +2329,7 @@
     },
     {
       "name": "worktrunk",
-      "version": "0.7.1",
+      "version": "0.7.2",
       "description": "Worktrunk (wt) skills: work in linked worktrees and run deterministic preflight checks before an agent run or merge.",
       "category": "development",
       "harnesses": {

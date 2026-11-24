@@ -1,3 +1,11 @@
+## eli5 [0.7.4](https://github.com/srobroek/harness-plugins/compare/eli5--v0.7.3...eli5--v0.7.4) (2026-11-24)
+
+## eli5 [0.7.3](https://github.com/srobroek/harness-plugins/compare/eli5--v0.7.2...eli5--v0.7.3) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
 ## eli5 [0.7.2](https://github.com/srobroek/harness-plugins/compare/eli5--v0.7.1...eli5--v0.7.2) (2026-11-23)
 
 ### Bug Fixes

@@ -42,6 +42,11 @@ field and headers. Its references live beside it in `references/`.
 
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-project
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/project/opencode'

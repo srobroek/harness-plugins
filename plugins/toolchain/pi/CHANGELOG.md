@@ -1,3 +1,11 @@
+## toolchain [0.10.4](https://github.com/srobroek/harness-plugins/compare/toolchain--v0.10.3...toolchain--v0.10.4) (2026-11-24)
+
+## toolchain [0.10.3](https://github.com/srobroek/harness-plugins/compare/toolchain--v0.10.2...toolchain--v0.10.3) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
 ## toolchain [0.10.2](https://github.com/srobroek/harness-plugins/compare/toolchain--v0.10.1...toolchain--v0.10.2) (2026-11-24)
 
 ## toolchain [0.10.1](https://github.com/srobroek/harness-plugins/compare/toolchain--v0.10.0...toolchain--v0.10.1) (2026-11-23)

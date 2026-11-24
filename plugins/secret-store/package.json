@@ -1,6 +1,6 @@
 {
   "name": "secret-store",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "A tool that stores a new secret in 1Password or a fnox store without a shell, so the value stays out of commands, logs and the transcript.",
   "private": true,
   "type": "module",

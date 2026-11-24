@@ -4192,7 +4192,7 @@ function sameFile(written, target) {
   return written === clean || written.endsWith(`/${clean}`);
 }
 function fnoxConfigPath(path, home = homedir4()) {
-  return CONFIG_FILE.test(base(path)) || path === join6(home, ".config", "fnox") || path.startsWith(join6(home, ".config", "fnox") + "/");
+  return CONFIG_FILE.test(base(path)) || path === join6(home, ".config", "fnox") || path.startsWith(`${join6(home, ".config", "fnox")}/`);
 }
 function configWriteBesideSet(commands, writes) {
   if (!commands.some(setsWithValueSource))

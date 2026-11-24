@@ -1,3 +1,17 @@
+## aws [0.10.1](https://github.com/srobroek/harness-plugins/compare/aws--v0.10.0...aws--v0.10.1) (2026-11-24)
+
+## aws [0.10.0](https://github.com/srobroek/harness-plugins/compare/aws--v0.9.2...aws--v0.10.0) (2026-11-24)
+
+### Features
+
+* **docs:** publish docs and aws MCP for OMP ([5549b38](https://github.com/srobroek/harness-plugins/commit/5549b38ffcba92bb681b6db5a91c74535810d8cb))
+
+## aws [0.9.2](https://github.com/srobroek/harness-plugins/compare/aws--v0.9.1...aws--v0.9.2) (2026-11-24)
+
+### Bug Fixes
+
+* **design:** make MCP servers opt-in ([1ecb493](https://github.com/srobroek/harness-plugins/commit/1ecb493f35ebfe9112f9e4661fa1b2e5ec457fc4))
+
 ## aws [0.9.1](https://github.com/srobroek/harness-plugins/compare/aws--v0.9.0...aws--v0.9.1) (2026-11-23)
 
 ### Bug Fixes

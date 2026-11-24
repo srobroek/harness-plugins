@@ -11,6 +11,11 @@ omp-plugins `typescript` plugin. Its `typescript_quality` tool is not ported, an
 part of `lang-typescript-types`.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-lang-typescript
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/lang-typescript/opencode'
@@ -35,11 +40,12 @@ already exists:
 - `lang-typescript`: the router.
 - `lang-typescript-libraries`: compare Node and Bun library defaults before writing
   code; web, data, messaging, AWS, telemetry, AI, CLI, testing and security references.
-- `lang-typescript-quality`: frozen-lockfile install, Biome or ESLint, `tsc -b` or
-  `tsc --noEmit`, the test script, in that order; workspace filters and CI.
-- `lang-typescript-testing`: bun test and vitest, module mocks, snapshots, msw, fake
-  timers, fast-check; `references/practice.md` has tool choices, bad tests with fixes,
-  and defaults by use case.
+- `lang-typescript-quality`: frozen-lockfile install, the configured formatter/linter
+  (Biome default for unconfigured projects; ESLint for a named gap), `tsc -b` or
+  `tsc --noEmit`, and the configured test script, in that order; workspace filters and CI.
+- `lang-typescript-testing`: use the project's configured test runner (Bun test for
+  Bun projects; Vitest is an alternative), module mocks, snapshots, msw, fake timers,
+  fast-check; `references/practice.md` has tool choices, bad tests with fixes, and defaults by use case.
 - `lang-typescript-packaging`: project references and `tsc -b`, `exports` maps, barrel
   files, catalogs, `--define` dead-code removal.
 - `lang-typescript-types`: strict tsconfig flags, union and `satisfies` patterns, zod at

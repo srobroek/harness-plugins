@@ -6,14 +6,13 @@ const quiet = () => {}
 
 describe("parseToolsOption", () => {
   test("absent means the public read-only defaults", () => {
-    expect(parseToolsOption(undefined)).toEqual(["context7_*", "aws-mcp_*"])
-    expect(DEFAULT_MCP_TOOLS).toEqual(["context7_*", "aws-mcp_*"])
+    expect(parseToolsOption(undefined)).toEqual(["context7_*"])
+    expect(DEFAULT_MCP_TOOLS).toEqual(["context7_*"])
   })
 
   test("a list replaces the defaults and drops duplicates", () => {
     expect(parseToolsOption(["demo_search", " demo_search ", "docs-*"], quiet)).toEqual(["demo_search", "docs-*"])
   })
-
   test.each([[false], [[]]])("%p disables the defaults", (value) => {
     expect(parseToolsOption(value)).toEqual([])
   })

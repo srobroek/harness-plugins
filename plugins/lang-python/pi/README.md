@@ -10,6 +10,11 @@ Replaces the Python half of the former `languages` plugin, which ported the omp-
 `python` plugin (its `python_quality` tool is not ported).
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-lang-python
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/lang-python/opencode'
@@ -34,8 +39,8 @@ already exists:
 - `lang-python`: the router.
 - `lang-python-libraries`: compare library defaults before writing code for services,
   data, messaging, AWS, MCP, telemetry, CLI, testing and security.
-- `lang-python-quality`: `uv lock --check`, `ruff check`, `ruff format --check`, mypy or
-  pyright strict, `pytest -x`, in that order; uv workspace narrowing and CI.
+- `lang-python-quality`: lockfile checks, configured lint and format tools (Ruff defaults), mypy or
+  pyright strict, and the configured test runner (pytest default), in that order; uv workspace narrowing and CI.
 - `lang-python-testing`: pytest fixtures, parametrize, monkeypatch, Hypothesis, coverage;
   `references/practice.md` has tool choices, bad tests with fixes, and defaults by use case.
 - `lang-python-packaging`: src layout, `__init__` facades and `__all__`, import-linter,

@@ -344,8 +344,13 @@ also runs. The run directory, the journal, the state files, the stop
 conditions and the handoff bead are the same, so `/autopilot review` reads a
 run that either host wrote.
 
-Install it with `pi install npm:@srobroek/pi-autopilot`, or load the file
-with `pi -e plugins/autopilot/pi/extensions/autopilot.js`. It needs
+Install the pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-autopilot
+```
+
+Or load the file with `pi -e plugins/autopilot/pi/extensions/autopilot.js`. It needs
 [pi-subagents](https://www.npmjs.com/package/pi-subagents): the run's write
 lanes and reviewers are its `subagent` children. parley's pi package
 (`npm:@srobroek/pi-parley-rounds`) asks the setup round in one panel, and the

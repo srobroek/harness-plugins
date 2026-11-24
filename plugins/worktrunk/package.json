@@ -1,6 +1,6 @@
 {
   "name": "worktrunk",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Worktrunk (wt) worktree strategy, wt merge policy gate and Worktrunk skills for OpenCode V2.",
   "private": true,
   "type": "module",

@@ -2,8 +2,8 @@
 
 UI and UX design for OpenCode: eight workflow skills, five design rules as skills,
 four design subagents, nine beads formulas with a `design_setup` tool that installs
-them, a `design_impeccable_scan` tool that runs impeccable's detector, and the
-design MCP servers in frontend projects.
+them, a `design_impeccable_scan` tool that runs impeccable's detector, and optional
+accessibility, wireframing and Storybook MCP integrations.
 
 ## Skills
 
@@ -140,46 +140,38 @@ admits a spawn of that agent and blocks a spawn of any other.
 
 ## MCP servers
 
-The plugin adds the servers in [`.mcp.json`](.mcp.json), with pinned versions, in
-Code Mode:
+The plugin ships the pinned accessibility and wireframe servers in [`.mcp.json`](.mcp.json).
+In OpenCode they are off by default; enable only the integrations a frontend project
+uses. The optional `storybook` server is OpenCode-only and off by default.
 
 | Server | Default | Command | Used by |
 | --- | --- | --- | --- |
-| `accessibility-scanner` | on | `npx -y accessibility-scanner-mcp@0.3.1` | The primary measurement route of `accessibility-audit` and `a11y-auditor`. Needs a local Google Chrome or `CHROME_PATH` |
-| `wire-dsl` | on | `npx -y @wire-dsl/mcp-server@0.1.3` | Vector wireframes for `design-prototype` |
+| `accessibility-scanner` | off | `npx -y accessibility-scanner-mcp@0.3.1` | Automated measurement route of `accessibility-audit` and `a11y-auditor`; needs a local Google Chrome or `CHROME_PATH` |
+| `wire-dsl` | off | `npx -y @wire-dsl/mcp-server@0.1.3` | Vector wireframes for `design-prototype` |
 | `storybook` | off | remote `http://localhost:6006/mcp` | Component documentation for `design-component-truth` and `ui-review`, served while `storybook dev` runs with `@storybook/addon-mcp` |
 
 `storybook` is off because it answers only while Storybook runs; turn it on with
 `mcpServers` in a project that runs it. OpenCode connects without OAuth. It is
 OpenCode-only and not in `.mcp.json`.
 
-By default (`mcp: "auto"`) the servers are added only where the session's directory or
-its project root is a frontend project, so a globally installed plugin does not start
-two `npx` processes in every project. A frontend project has `.storybook/`, `DESIGN.md`,
-`index.html`, `components.json` or a Tailwind config, or a `package.json` depending on
-React, Vue, Svelte, SvelteKit, Solid, Preact, Angular, Next, Nuxt, Astro, Lit, Remix,
-Qwik, Ember, Storybook, Tailwind, React Native or Expo. Workspace packages one level
-below `apps/`, `packages/` and `web/` count too. The check runs when the plugin loads
-for a directory; run `/reload` after adding the first marker.
+`mcp: "auto"` (default) adds enabled servers only in frontend projects; `"always"`
+adds them in any project and `"off"` disables all plugin servers. Each server is
+independently controlled by `mcpServers`; opt in by name:
 
 ```jsonc
 {
   "plugins": [{
     "package": "github:srobroek/harness-plugins::path:plugins/design/opencode",
     "options": {
-      "mcp": "auto",                           // "auto" (default), "always", or "off" for no servers
-      "mcpServers": { "storybook": true, "wire-dsl": false }
+      "mcp": "auto",                           // "auto" (default), "always", or "off" for all plugin servers
+      "mcpServers": { "accessibility-scanner": true, "wire-dsl": true, "storybook": true }
     }
   }]
 }
 ```
-
-A server under the same name in your `opencode.json` wins: the plugin leaves it as you
-configured it, so use that to change a version, a port or flags.
-
-Claude Code get the same `.mcp.json` from the marketplace, which there starts
-`accessibility-scanner` and `wire-dsl` in every project, with no project check; disable
-what you do not use in that harness's MCP settings. Add `storybook` there yourself.
+Claude Code gets the same `.mcp.json` from the marketplace. Those servers start in
+every project in that harness unless disabled in its MCP settings; enable them only
+for projects that use them. Add `storybook` there yourself.
 
 ## Changes from omp
 

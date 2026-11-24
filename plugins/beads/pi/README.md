@@ -280,6 +280,11 @@ read, and a location without a store are all allowed. Gate name:
 `bead-agent-routing`.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-beads-enforcer
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/beads/opencode'

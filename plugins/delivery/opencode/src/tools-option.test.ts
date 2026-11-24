@@ -12,11 +12,13 @@ const rulesOf = async (options?: Record<string, unknown>) => {
 }
 
 describe("tools option", () => {
-  test.each(IDS)("%s allows the context7 tools by default, after its own rules", async (id) => {
+  test.each(IDS)("%s allows Context7 by default and opts into AWS tools", async (id) => {
     const rules = (await rulesOf())(id)
     expect(rules.slice(-1)).toEqual([{ action: "context7_*", resource: "*", effect: "allow" }])
     expect(permissionEffect(rules, "context7_query-docs")).toBe("allow")
     expect(permissionEffect(rules, "aws-mcp_search_documentation")).toBe("deny")
+    const awsRules = (await rulesOf({ tools: ["aws-mcp_*"] }))(id)
+    expect(permissionEffect(awsRules, "aws-mcp_search_documentation")).toBe("allow")
     expect(permissionEffect(rules, "other_tool")).toBe("deny")
   })
 

@@ -20,15 +20,15 @@ const exploreRules = async (options?: Record<string, unknown>) => {
 }
 
 describe("explore tools option", () => {
-  test("allows context7 and aws-mcp tools by default, after the narrowed rules", async () => {
+  test("allows Context7 by default and opts into AWS tools", async () => {
     const rules = await exploreRules()
-    expect(rules.slice(-2)).toEqual([
-      { action: "context7_*", resource: "*", effect: "allow" },
-      { action: "aws-mcp_*", resource: "*", effect: "allow" },
-    ])
+    expect(rules.at(-1)).toEqual({ action: "context7_*", resource: "*", effect: "allow" })
     expect(permissionEffect(rules, "context7_query-docs")).toBe("allow")
+    expect(permissionEffect(rules, "aws-mcp_search_documentation")).toBe("deny")
     expect(permissionEffect(rules, "other_tool")).toBe("deny")
     expect(permissionEffect(rules, "edit")).toBe("deny")
+    const awsRules = await exploreRules({ tools: ["aws-mcp_*"] })
+    expect(permissionEffect(awsRules, "aws-mcp_search_documentation")).toBe("allow")
   })
 
   test("takes a custom list instead of the defaults", async () => {

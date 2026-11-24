@@ -11,6 +11,11 @@ written to a file, a `bun -e` fixture) never trips a check. One run through `sud
 `timeout`, `bash -c`, `eval`, `xargs`, a here-document fed to a shell, or a command substitution does.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-safety
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/safety/opencode'

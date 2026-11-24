@@ -58,7 +58,13 @@ test("refactor and docs commits cut a patch, and a breaking change a major", asy
   ])
 })
 
-test("no release config publishes to npm", async () => {
+test("the release config publishes pi packages", async () => {
+  const config = (await import(path.join(root, "release.config.mjs"))).default as { plugins: [string, Record<string, unknown>][] }
+  const [, options] = config.plugins.find(([name]) => name === "@semantic-release/exec") ?? []
+  expect(options?.publishCmd).toContain("npm publish ./pi --provenance --access public")
+})
+
+test("release config publishes only the intended npm packages via its preset", async () => {
   const config = (await import(path.join(root, "release.config.mjs"))).default as { plugins: (string | [string])[] }
   const names = config.plugins.map((plugin) => (typeof plugin === "string" ? plugin : plugin[0]))
   expect(names).not.toContain("@semantic-release/npm")

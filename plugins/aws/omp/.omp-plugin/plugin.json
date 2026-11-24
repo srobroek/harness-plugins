@@ -1,0 +1,6 @@
+{
+  "name": "aws",
+  "description": "AWS working guidance: route AWS tasks through the AWS MCP Server's guided skills, verify against AWS documentation, and price with the AWS Pricing MCP server.",
+  "version": "0.10.1",
+  "category": "development"
+}

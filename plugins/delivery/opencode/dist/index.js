@@ -6,7 +6,7 @@ import { fileURLToPath as fileURLToPath2 } from "url";
 import { Plugin } from "@opencode/plugin";
 
 // lib/src/agent-tools.ts
-var DEFAULT_MCP_TOOLS = ["context7_*", "aws-mcp_*"];
+var DEFAULT_MCP_TOOLS = ["context7_*"];
 var MCP_TOOL_AGENTS = new Set([
   "adversarial-challenger",
   "architect",
@@ -629,7 +629,7 @@ function stashesOnBranch(subjects, branch) {
 // plugins/delivery/package.json
 var package_default = {
   name: "delivery",
-  version: "0.12.3",
+  version: "0.12.4",
   description: "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
   private: true,
   type: "module",

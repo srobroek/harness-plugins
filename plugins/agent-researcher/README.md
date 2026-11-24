@@ -46,7 +46,7 @@ agent.
 
 | Option | Default | Effect |
 | --- | --- | --- |
-| `tools` | `["context7_*", "aws-mcp_*"]` | An array of patterns replaces the defaults. `false` or `[]` adds no rules; the agent keeps its fixed allowlist. |
+| `tools` | `["context7_*"]` | Context7 is allowed by default. Add MCP patterns such as `aws-mcp_*` for AWS projects; an array replaces the default. `false` or `[]` adds no rules; the agent keeps its fixed allowlist. |
 
 ```jsonc
 "options": { "tools": ["context7_*", "<server>_<tool>"] }
@@ -57,6 +57,11 @@ Patterns must name MCP server tools only (`<server>_<tool>`). The option refuses
 This agent allows `execute`, so it reaches MCP tools through Code Mode; each nested call is checked against the same rules (`packages/core/src/tool.ts:337-339`, OpenCode v2.2.6).
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-agent-researcher
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-researcher/opencode'

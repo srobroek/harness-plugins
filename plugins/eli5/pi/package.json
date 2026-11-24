@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/pi-eli5",
-  "version": "0.7.2",
+  "version": "0.7.4",
   "description": "Explain a topic at five depth levels, from metaphor to frontier.",
   "keywords": [
     "pi-package"

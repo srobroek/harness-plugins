@@ -9,10 +9,14 @@ metaphor, concept, mechanism, tradeoffs and frontier.
 
 Ported from the omp-plugins `eli5` plugin. The only text change: research goes
 through reading the source or a web search instead of omp tool names, and changes
-since a baseline go to the `whats-new` skill. This is the authoritative copy; the
-earlier one under `~/.claude/skills` is gone.
+since a baseline go to the `whats-new` skill.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-eli5
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/eli5/opencode'

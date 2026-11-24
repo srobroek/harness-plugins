@@ -1,6 +1,6 @@
 {
   "name": "@agent-plugins/build",
-  "version": "0.10.1",
+  "version": "0.10.3",
   "description": "External-repository worker subagent: clone, follow the target's conventions, edit, verify, and publish only when delegated.",
   "private": true,
   "omp": {}

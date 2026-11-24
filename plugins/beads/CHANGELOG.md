@@ -1,3 +1,5 @@
+## beads [0.9.3](https://github.com/srobroek/harness-plugins/compare/beads--v0.9.2...beads--v0.9.3) (2026-11-24)
+
 ## beads [0.9.2](https://github.com/srobroek/harness-plugins/compare/beads--v0.9.1...beads--v0.9.2) (2026-11-24)
 
 ## beads [0.9.1](https://github.com/srobroek/harness-plugins/compare/beads--v0.9.0...beads--v0.9.1) (2026-11-24)

@@ -1,6 +1,6 @@
 {
   "name": "agent-researcher",
-  "version": "0.10.2",
+  "version": "0.10.4",
   "description": "The code-researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one.",
   "private": true,
   "type": "module",
