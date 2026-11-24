@@ -49,7 +49,6 @@ function main() {
   } catch (error) {
     output = ask(`agent guard failed (${error instanceof Error ? error.message : String(error)}); asking instead`);
   }
-  if (output !== undefined)
-    process.stdout.write(JSON.stringify(output));
+  process.stdout.write(JSON.stringify(output ?? {}));
 }
 main();

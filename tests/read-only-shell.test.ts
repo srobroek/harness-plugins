@@ -1,9 +1,14 @@
-import { describe, expect, test } from "bun:test"
-import { readFileSync } from "node:fs"
+import { afterAll, describe, expect, test } from "bun:test"
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { permissionEffect, readAgentFile } from "@srobroek/opencode-lib/agent-files"
+import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
 import { READ_ONLY_SHELL_RULES } from "@srobroek/opencode-lib/read-only-shell"
 import { guardDecision } from "../scripts/claude-agent-guard"
+
+/** The hook tests start /bin/sh, and some start a stub runtime; about 0.1 s each alone, so 30 s leaves room under load. */
+const SPAWN_MS = 30_000
 
 const plugins = join(import.meta.dir, "../plugins")
 const agents = [
@@ -73,4 +78,40 @@ describe("code-reviewer", () => {
   })
 
   test.each(omp)("%s has no bash", (path) => expect(frontmatterTools(path)).not.toContain("bash"))
+
+  describe("the shipped Claude hook command", () => {
+    const root = join(reviewer, "claude")
+    const hooks = JSON.parse(readFileSync(join(root, "hooks/hooks.json"), "utf8"))
+    const command: string = hooks.hooks.PreToolUse[0].hooks[0].command
+    const bin = mkdtempSync(join(tmpdir(), "guard-hook-"))
+    afterAll(() => rmSync(bin, { recursive: true, force: true }))
+    // The command needs cat and grep; every other tool on PATH comes from the case.
+    for (const tool of ["cat", "grep"]) symlinkSync(Bun.which(tool) as string, join(bin, tool))
+    const runtimes = {
+      "no runtime": () => {},
+      "a runtime that fails before it answers": () => writeExecutable(join(bin, "node"), "exit 3\n"),
+      "a runtime that exits 0 without an answer": () => writeExecutable(join(bin, "node"), "exit 0\n"),
+    }
+    const run = async (runtime: keyof typeof runtimes, agent: string) => {
+      rmSync(join(bin, "node"), { force: true })
+      runtimes[runtime]()
+      const input = { agent_type: agent, tool_name: "Read", tool_input: { file_path: "/p/src/main.ts" } }
+      const proc = Bun.spawn(["/bin/sh", "-c", command], {
+        stdin: new TextEncoder().encode(JSON.stringify(input)),
+        stdout: "pipe",
+        env: { PATH: bin, CLAUDE_PLUGIN_ROOT: root },
+      })
+      const [out, code] = [await new Response(proc.stdout).text(), await proc.exited]
+      return { code, decision: JSON.parse(out).hookSpecificOutput?.permissionDecision }
+    }
+
+    test.each(
+      (Object.keys(runtimes) as (keyof typeof runtimes)[]).flatMap((runtime) => [
+        [runtime, "agent-reviewer:code-reviewer", "deny"],
+        [runtime, "agent-reviewer:security-auditor", "ask"],
+      ]),
+    )("with %s, a Read by %s gets %s", async (runtime, agent, decision) => {
+      expect(await run(runtime as keyof typeof runtimes, agent)).toEqual({ code: 0, decision })
+    }, SPAWN_MS)
+  })
 })

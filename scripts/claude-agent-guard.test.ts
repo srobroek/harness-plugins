@@ -86,8 +86,8 @@ describe("claude-agent-guard executable", () => {
     expect(JSON.parse(out).hookSpecificOutput).toMatchObject({ hookEventName: "PreToolUse", permissionDecision: "ask" })
   }, SPAWN_MS)
 
-  test("prints nothing for an allowed read", async () => {
-    expect(await run(JSON.stringify(call("/r/a.ts")))).toEqual({ code: 0, out: "" })
+  test("prints an empty decision for an allowed read", async () => {
+    expect(await run(JSON.stringify(call("/r/a.ts")))).toEqual({ code: 0, out: "{}" })
   }, SPAWN_MS)
 
   test.each([

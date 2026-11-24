@@ -4,7 +4,8 @@
 // ships this file with each plugin that exports a guarded agent, transpiled to JavaScript and
 // with no imports beyond node:* and an unconditional entry point, next to `agent-guards.json` (agent id -> guards from
 // scripts/claude-agents.ts). It runs for every matched tool call and answers only for a call
-// made by a guarded subagent. It fails closed: input or config it cannot read gets an `ask`.
+// made by a guarded subagent. It fails closed: input or config it cannot read gets an `ask`, and the hook
+// command (scripts/build-claude.ts) answers when this script cannot run at all.
 
 import { readFileSync } from "node:fs"
 import path from "node:path"
@@ -64,7 +65,9 @@ function main(): void {
   } catch (error) {
     output = ask(`agent guard failed (${error instanceof Error ? error.message : String(error)}); asking instead`)
   }
-  if (output !== undefined) process.stdout.write(JSON.stringify(output))
+  // `{}` leaves the call to Claude Code. Printing it every time lets the hook command tell a guard that answered
+  // from one that died first.
+  process.stdout.write(JSON.stringify(output ?? {}))
 }
 
 // Bun runs this source directly. The generated hook script, which is only ever executed, has this

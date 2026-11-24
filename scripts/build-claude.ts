@@ -30,13 +30,30 @@ const GUARD_SOURCE = path.join(import.meta.dir, "claude-agent-guard.ts")
 /** The source's Bun-only entry check; the shipped script calls `main()` unconditionally instead. */
 const GUARD_ENTRY = "if (import.meta.main) main()"
 
-/** The command of the guard hook: node or bun runs it, and with neither every guarded call asks. */
-const GUARD_FALLBACK =
-  '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"agent guard needs node or bun; asking instead"}}'
-const GUARD_COMMAND =
-  `R="\${CLAUDE_PLUGIN_ROOT}/hooks/${GUARD_SCRIPT}"; ` +
-  `if command -v node >/dev/null 2>&1; then node "$R"; elif command -v bun >/dev/null 2>&1; then bun "$R"; ` +
-  `else printf '%s' '${GUARD_FALLBACK}'; fi; exit 0`
+const fallback = (decision: "ask" | "deny", verb: string) =>
+  JSON.stringify({
+    hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: decision, permissionDecisionReason: `agent guard could not run; ${verb} instead` },
+  })
+
+/**
+ * The command of the guard hook. Node or Bun runs the guard, which always prints a decision object. When neither
+ * runtime exists, or the runtime fails or prints nothing, the guard did not run: a call by an agent in `denyAgents`
+ * (an agent with a deny guard) is denied, and every other call asks.
+ */
+export function guardCommand(denyAgents: readonly string[]): string {
+  for (const id of denyAgents) if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) throw new Error(`agent id "${id}" cannot appear in the guard hook command`)
+  const ask = `printf '%s' '${fallback("ask", "asking")}'`
+  const deny = `printf '%s' '${fallback("deny", "denying")}'`
+  const failed =
+    denyAgents.length === 0
+      ? ask
+      : `if printf '%s' "$I" | grep -Eq '"agent_type"[[:space:]]*:[[:space:]]*"([^"]*:)?(${denyAgents.join("|")})"'; then ${deny}; else ${ask}; fi`
+  return (
+    `R="\${CLAUDE_PLUGIN_ROOT}/hooks/${GUARD_SCRIPT}"; I=$(cat); X=; ` +
+    `if command -v node >/dev/null 2>&1; then X=node; elif command -v bun >/dev/null 2>&1; then X=bun; fi; ` +
+    `if [ -n "$X" ] && O=$(printf '%s' "$I" | "$X" "$R") && [ -n "$O" ]; then printf '%s' "$O"; else ${failed}; fi; exit 0`
+  )
+}
 
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`
 
@@ -67,6 +84,9 @@ export function claudeAgentIds(where: string, agents: ReadonlyMap<string, string
 /** The hook, its script and the guard rules for the agents of one plugin. */
 function guardOutputs(claudeDir: string, guards: Record<string, Guard[]>) {
   const tools = [...new Set(Object.values(guards).flatMap((list) => list.flatMap((guard) => guard.tools)))]
+  const denyAgents = Object.keys(guards)
+    .filter((id) => guards[id]?.some((guard) => guard.rules.some((rule) => rule.effect === "deny")))
+    .sort()
   const source = readFileSync(GUARD_SOURCE, "utf8")
   if (source.split(GUARD_ENTRY).length !== 2) throw new Error(`${GUARD_SOURCE}: needs exactly one "${GUARD_ENTRY}" line`)
   const script = new Bun.Transpiler({ loader: "ts" }).transformSync(source.replace(GUARD_ENTRY, "main()"))
@@ -77,7 +97,7 @@ function guardOutputs(claudeDir: string, guards: Record<string, Guard[]>) {
     ],
     hooks: {
       description: "Asks before a subagent touches a resource its OpenCode rules ask about; Claude Code ignores subagent hooks of plugins.",
-      hooks: { PreToolUse: [{ matcher: tools.join("|"), hooks: [{ type: "command", command: GUARD_COMMAND, timeout: 10 }] }] },
+      hooks: { PreToolUse: [{ matcher: tools.join("|"), hooks: [{ type: "command", command: guardCommand(denyAgents), timeout: 10 }] }] },
     },
   }
 }
