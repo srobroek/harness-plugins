@@ -1,3 +1,10 @@
+## lang-python [0.9.2](https://github.com/srobroek/harness-plugins/compare/lang-python--v0.9.1...lang-python--v0.9.2) (2026-11-24)
+
+### Bug Fixes
+
+* **design:** make MCP servers opt-in ([1ecb493](https://github.com/srobroek/harness-plugins/commit/1ecb493f35ebfe9112f9e4661fa1b2e5ec457fc4))
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
 ## lang-python [0.9.1](https://github.com/srobroek/harness-plugins/compare/lang-python--v0.9.0...lang-python--v0.9.1) (2026-11-23)
 
 ### Bug Fixes
