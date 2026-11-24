@@ -3,13 +3,13 @@
 
 Unattended runs: /autopilot arms a no-questions session with a journal, a 4-minute tick and stop conditions.
 
-| Kind | opencode |
-| --- | --- |
-| skills | autopilot |
-| agents | - |
-| commands | - |
-| rules | - |
-| hooks | - |
-| tools | - |
-| extensions | index |
-| mcp | - |
+| Kind | opencode | pi |
+| --- | --- | --- |
+| skills | autopilot | autopilot |
+| agents | - | - |
+| commands | - | - |
+| rules | - | - |
+| hooks | - | - |
+| tools | - | - |
+| extensions | index | autopilot |
+| mcp | - | - |

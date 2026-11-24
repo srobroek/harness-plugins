@@ -6,11 +6,8 @@ Stress-test a decision before committing to it. Three skills:
 | --- | --- |
 | `debate` | Two-sided analysis of an architectural decision, technology choice or feature proposal, with a conditional verdict |
 | `grilling` | Interview the user in numbered frontier rounds until every branch of a plan is settled; `debate` routes deeper interviews here |
-| `to-questionnaire` | User-invoked only: turn a decision the user cannot answer alone into a questionnaire for one other person, written to a named path or `~/tmp` |
+| `to-questionnaire` | User-invoked only: turn a decision the user cannot answer alone into a questionnaire for one other person, written to a path the user names or the system temp directory |
 
-Ported from the omp-plugins `debate` plugin. References to other skills now name the
-skill, and question rounds go through parley or the host's question tool (below).
-These are the authoritative copies; earlier copies under `~/.claude/skills` are gone.
 
 `grilling` and `to-questionnaire` are vendored in modified form from
 [mattpocock/skills](https://github.com/mattpocock/skills) under the MIT licence. Each

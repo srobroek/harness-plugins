@@ -1,3 +1,9 @@
+## secret-store [1.0.1](https://github.com/srobroek/harness-plugins/compare/secret-store--v1.0.0...secret-store--v1.0.1) (2026-11-24)
+
+### Bug Fixes
+
+* **secret-store:** describe 1Password and fnox as the supported backends ([fa4518c](https://github.com/srobroek/harness-plugins/commit/fa4518cd14a69ebce1320556fbf1a27ab51bd176))
+
 ## secret-store 1.0.0 (2026-11-24)
 
 ### Features

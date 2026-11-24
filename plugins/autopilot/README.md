@@ -1,10 +1,11 @@
 # autopilot
 
-Runs an OpenCode session unattended. `/autopilot` asks its setup questions in
-one round and then arms the session. After that, the session asks no more
-questions. The session records decisions and blockers in a journal. A 4-minute
-tick keeps the session moving. The run stops on an explicit or an implicit
-condition and leaves a debrief and a handoff bead.
+Runs an OpenCode or pi session unattended. `/autopilot` asks its setup
+questions in one round and then arms the session. After that, the session asks
+no more questions. The session records decisions and blockers in a journal. A
+4-minute tick keeps the session moving. The run stops on an explicit or an
+implicit condition and leaves a debrief and a handoff bead. The sections below
+describe OpenCode; [pi](#pi) lists what differs there.
 
 ## Commands
 
@@ -334,3 +335,71 @@ Some failures park an item and the run goes on:
 bead with the label `autopilot-handoff`. That bead links the run directory and
 lists the items that need input. The plugin's own `bd` writes take the embedded
 store's write lock, as the beads plugin's writes do.
+
+## pi
+
+`pi/extensions/autopilot.js` is the same run as a pi extension, built from
+`pi-src/autopilot.ts` over the run code in `shared/`, which the OpenCode plugin
+also runs. The run directory, the journal, the state files, the stop
+conditions and the handoff bead are the same, so `/autopilot review` reads a
+run that either host wrote.
+
+Install it with `pi install npm:@srobroek/pi-autopilot`, or load the file
+with `pi -e plugins/autopilot/pi/extensions/autopilot.js`. It needs
+[pi-subagents](https://www.npmjs.com/package/pi-subagents): the run's write
+lanes and reviewers are its `subagent` children. parley's pi package
+(`npm:@srobroek/pi-parley-rounds`) asks the setup round in one panel, and the
+beads pi package (`npm:@srobroek/pi-beads-enforcer`) gates the lanes' `bd`
+calls. Both are optional.
+
+A foreground pi-subagents child loads none of the parent's extensions. For the
+gates to cover the lanes, list this extension for every child in pi's
+`settings.json`:
+
+```json
+{
+  "subagents": {
+    "defaultSubagentOnlyExtensions": ["/absolute/path/to/autopilot/pi/extensions/autopilot.js"]
+  }
+}
+```
+
+### What pi has and what it lacks
+
+| OpenCode | pi |
+| --- | --- |
+| `autopilot_status`, `autopilot_log`, `autopilot_merge`, `autopilot_export_review` | Ported with the same names and input schemas. |
+| `autopilot_review` and `--allow self-review` | Not ported. See below. |
+| `/autopilot [scope] [flags] \| resume \| review \| stop` | Ported. The command sends its prompt as a user message. |
+| `question` and `parley_*` denied while armed | Ported as a `tool_call` block, for the lead and for each child that loads the extension. |
+| Every permission `ask` denied and journaled | pi has no permission rules. A dialog that another extension opens while a run is armed is journaled as a blocker. The plugin cannot answer or close it. |
+| `external_directory` allowed for lane worktrees and the review export | Not needed: pi has no directory permission. |
+| `autopilot_merge` checked by the permission hook | The plugin decides as the hook decides an `ask`. In a running run, `--allow merge` allows the merge, and without it the merge is denied and journaled. Outside a run, the user confirms in a dialog. A session that cannot show one is refused. |
+| Re-prompt after a turn that ends in a question | Ported on `agent_settled`, as a plugin message that starts a turn. A turn the user aborted is not re-prompted. |
+| Notice after compaction | Ported on `session_compact`, delivered after the current turn. |
+| Tick automation | pi has no automations. Arming and `/autopilot resume` start the plugin's in-process timer for the lead session. It ticks every 4 minutes and skips while the session is busy. `pi -p` exits after its prompt, so a print-mode run gets no ticks. |
+| Child sessions in the tick | pi lists no child sessions to an extension. The ping counts 0 busy lanes. The stall ladder (nudge, restart, park) and "a finished subagent" as progress do not apply. "Everything left is blocked or parked" never stops a run. The other stop conditions apply. |
+| Plugin storage | One JSON file per key under `$PI_CODING_AGENT_DIR/autopilot/storage/` (default `~/.pi/agent`), which every pi process reads. |
+
+Every pi session runs in its own extension runtime. A subagent child finds its
+run through its session headers: each child's `parentSession` names its
+parent's session file, up to the armed lead. Each `question` or `parley_*` call
+reads the armed runs from storage again, so a child sees a run that its lead
+armed after the child started. The gate fails closed in two cases:
+
+- A parent header that cannot be read counts as an unknown lineage. Its asks
+  are blocked while any run is armed.
+- Storage that cannot be read blocks every ask.
+
+`autopilot_review` is not ported. On OpenCode, the verdict that a merge rests
+on comes from a reviewer session that the host keeps. The plugin creates that
+session with fixed permissions and re-reads its record on every status call:
+parent, agent, metadata, a single prompt with a known hash, and the outcome.
+It also interrupts a reviewer that runs past its deadline. pi has no host
+session API for any of that. A pi-subagents reviewer's answer would live only
+in the extension's memory and in files that the model can write. On pi,
+`/autopilot --allow self-review` and an arm with `self-review` are refused, and
+every merge needs a GitHub approval.
+
+The pi tree ships `SKILL.pi.md` as its skill. It describes the timer tick, the
+missing child view and the merge rules above.

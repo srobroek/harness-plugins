@@ -1,6 +1,6 @@
 {
   "name": "beads",
-  "version": "0.9.0",
+  "version": "0.9.2",
   "description": "Beads issue tracking for OpenCode: shell gates, store pinning, subagent actors, claim tracking, stop nudge and guarded claim release, lease heartbeats, bd prime context and Beads skills.",
   "private": true,
   "type": "module",
@@ -15,7 +15,7 @@
     "scope": "project",
     "piName": "pi-beads-enforcer",
     "signals": [
-      ".beads/ (skip under ~/pace, which inherits it, and with .beads/RETIRED)",
+      ".beads/ (skip when .beads/RETIRED exists; otherwise add only when the user chooses Beads)",
       "every repository"
     ],
     "entries": {

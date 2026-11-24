@@ -4,6 +4,7 @@ import { Tool } from "@opencode/plugin/effect"
 import { appendResultText, isShellTool, leadingCdCwd, shellCall, WRITE_TOOLS } from "@srobroek/opencode-lib"
 import { externalDirectories, sessionRoots } from "@srobroek/opencode-lib/external-directories"
 import { readProviderTypes } from "@srobroek/opencode-lib/fnox-config"
+import { readGitWrappers } from "@srobroek/opencode-lib/git-wrappers"
 import { hostWarn, type Warn } from "@srobroek/opencode-lib/host-log"
 import { rewriteCloseKeywords } from "../../shared/close-keywords.ts"
 import { shellFlagDirectories } from "../../shared/flag-directories.ts"
@@ -84,6 +85,8 @@ export type SafetyOptions = {
   secretPaths: string[]
   /** Host whose plain `git push` is refused in favour of a wrapper command; off when absent. */
   pushVia: PushViaConfig | undefined
+  /** Command names the gates read as git; only `git` by default. */
+  gitWrappers: readonly string[]
 }
 
 /**
@@ -101,6 +104,7 @@ export type SafetyOptions = {
  * `disable: ["subagent-prompts"]` lets a subagent session's asks prompt instead of failing at once.
  * `pushVia: { host, command }` refuses a plain `git push` whose remote resolves to `host` and names `command -C <dir> push`; off by default.
  * `redactSecrets`, `redactNames` and `redactExclude` configure secret redaction.
+ * `gitWrappers` lists the command names the gates read as git, matched on the basename (default `["git"]`).
  */
 export function readOptions(options: Readonly<Record<string, unknown>> | undefined): SafetyOptions {
   const raw = options?.disable
@@ -117,6 +121,7 @@ export function readOptions(options: Readonly<Record<string, unknown>> | undefin
     steeringDirs: readSteeringDirs(options?.steeringDirs),
     secretPaths,
     pushVia: readPushVia(options),
+    gitWrappers: readGitWrappers(options),
   }
 }
 
@@ -215,7 +220,7 @@ export function createPlugin(overrides: Overrides = {}) {
     async setup(ctx) {
       // Bound before the first await, while the fiber still carries the host's logger.
       const warn = overrides.warn ?? hostWarn("srobroek.safety")
-      const { disabled, redact, opAllow, scratchDirs, steeringDirs, secretPaths, pushVia } = readOptions(ctx.options)
+      const { disabled, redact, opAllow, scratchDirs, steeringDirs, secretPaths, pushVia, gitWrappers } = readOptions(ctx.options)
       const on = (id: FeatureID) => !disabled.has(id)
       const guardOptions = {
         env: overrides.env ?? process.env,
@@ -223,8 +228,9 @@ export function createPlugin(overrides: Overrides = {}) {
         disabled: disabled as ReadonlySet<GuardID>,
         opAllow,
         pushVia,
+        gitWrappers,
       }
-      const reviewOptions: ReviewOptions = { ...overrides.review, disabled: disabled as ReadonlySet<DecisionID> }
+      const reviewOptions: ReviewOptions = { ...overrides.review, disabled: disabled as ReadonlySet<DecisionID>, gitWrappers }
       const pending = new Map<string, Pending>()
       const advisor = createPackageAdvisor()
 
@@ -285,7 +291,7 @@ export function createPlugin(overrides: Overrides = {}) {
           const sessionDir = await sessionDirectory(event.sessionID)
           const external =
             safely(() =>
-              externalDirectories(shellFlagDirectories(command, leadingCdCwd(command, cwd)), sessionRoots(sessionDir)),
+              externalDirectories(shellFlagDirectories(command, leadingCdCwd(command, cwd), gitWrappers), sessionRoots(sessionDir)),
             ) ?? []
           if (external.length > 0)
             await ctx.permission.assert({

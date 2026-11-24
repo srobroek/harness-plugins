@@ -70,3 +70,31 @@ test.each(managers.map((manager) => [manager.description, manager] as const))(
     expect(hits.length).toBeGreaterThan(0)
   },
 )
+
+/** The pins one manager captures from a text, as `name@version`. */
+function pins(description: string, text: string): string[] {
+  const manager = managers.find((candidate) => candidate.description === description)
+  if (!manager) throw new Error(`no custom manager "${description}"`)
+  return manager.matchStrings.flatMap((source) =>
+    [...text.matchAll(new RegExp(source, "g"))].map((hit) => `${hit.groups?.depName}@${hit.groups?.currentValue}`),
+  )
+}
+
+// A formatter may split `args` across lines, and an argument may itself contain `]`
+// (botocore[crt]); every pin must still be captured, not just one per file.
+test("the .mcp.json managers capture every uvx and npx pin, on one line or across lines", () => {
+  const uvx = "Exact PyPI pins in .mcp.json sources: uvx servers"
+  const npx = "Exact npm pins in .mcp.json sources: npx servers"
+  const servers = {
+    mcpServers: {
+      proxy: { command: "uvx", args: ["mcp-proxy-for-aws-cli@2.0.0", "https://example.com/mcp", "--read-only"] },
+      pricing: { command: "uvx", args: ["--with", "botocore[crt]", "awslabs.aws-pricing-mcp-server@1.1.2"] },
+      scanner: { command: "npx", args: ["-y", "accessibility-scanner-mcp@0.3.1"] },
+      scoped: { command: "npx", args: ["-y", "@wire-dsl/mcp-server@0.1.3"] },
+    },
+  }
+  for (const text of [JSON.stringify(servers), JSON.stringify(servers, null, 2)]) {
+    expect(pins(uvx, text)).toEqual(["mcp-proxy-for-aws-cli@2.0.0", "awslabs.aws-pricing-mcp-server@1.1.2"])
+    expect(pins(npx, text)).toEqual(["accessibility-scanner-mcp@0.3.1", "@wire-dsl/mcp-server@0.1.3"])
+  }
+})

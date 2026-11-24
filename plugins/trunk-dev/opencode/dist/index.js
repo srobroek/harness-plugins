@@ -1347,6 +1347,21 @@ function shellCall(tool, input) {
     call.background = value.background;
   return call;
 }
+// lib/src/git-wrappers.ts
+var DEFAULT_GIT_WRAPPERS = Object.freeze(["git"]);
+function readGitWrappers(options) {
+  const raw = options?.gitWrappers;
+  if (!Array.isArray(raw))
+    return DEFAULT_GIT_WRAPPERS;
+  const names = raw.filter((name) => typeof name === "string" && name !== "");
+  return names.length === 0 ? DEFAULT_GIT_WRAPPERS : names;
+}
+function isGitCommand(argv0, wrappers = DEFAULT_GIT_WRAPPERS) {
+  if (argv0 === undefined)
+    return false;
+  return wrappers.includes(argv0.slice(argv0.lastIndexOf("/") + 1));
+}
+
 // plugins/trunk-dev/shared/commit-gate.ts
 import { resolve as resolve3 } from "path";
 
@@ -1484,9 +1499,9 @@ var GIT_FLAGS = new Set([
   "--no-advice",
   "--bare"
 ]);
-function gitInvocation(invocation) {
+function gitInvocation(invocation, wrappers = DEFAULT_GIT_WRAPPERS) {
   const { argv, expands } = invocation;
-  if (argv[0] !== "git" && argv[0] !== "dgit")
+  if (!isGitCommand(argv[0], wrappers))
     return;
   let cwd = invocation.cwd;
   for (let i = 1;i < argv.length; i++) {
@@ -1743,7 +1758,7 @@ function decideCommitGate(command, cwd, options = {}) {
     const read = options.readFile ?? readText;
     const env = options.processEnv ?? process.env;
     for (const invocation of invocations(command, cwd)) {
-      const parsed = gitInvocation(invocation);
+      const parsed = gitInvocation(invocation, options.gitWrappers);
       if (parsed === undefined || parsed.subcommand !== "commit" && parsed.subcommand !== "push")
         continue;
       const override = overridden(invocation, parsed.subcommand === "commit" ? COMMIT_OVERRIDE : PUSH_OVERRIDE, env);
@@ -2224,12 +2239,12 @@ function pushHasBranchRef(args) {
   return false;
 }
 var NO_AGE_PUSH = new Set(["--dry-run", "-n", "--delete", "-d", "--tags", "--all", "--mirror"]);
-function createAdvice(forge) {
+function createAdvice(forge, conventionalTitle) {
   const out = [];
   const title = optionValue(forge.args, forge.expands, new Set(["--title", "-t"]));
   if (title.value === undefined || title.uncertain)
     return out;
-  if (!CONVENTIONAL_TITLE.test(title.value))
+  if (conventionalTitle && !CONVENTIONAL_TITLE.test(title.value))
     out.push(ADVICE.title);
   const parts = titleParts(title.value);
   if (parts === undefined || parts.type !== "feat" && !parts.breaking)
@@ -2253,12 +2268,12 @@ function decideMrAdvisory(command, cwd, options = {}) {
     for (const invocation of invocations(command, cwd)) {
       const forge = forgeCommand(invocation);
       if (forge?.kind === "create")
-        advisories.push(...createAdvice(forge));
+        advisories.push(...createAdvice(forge, options.conventionalTitle !== false));
       if (forge?.kind === "merge" && !forge.args.some((arg) => arg === "--squash" || arg === "-s")) {
         if (isReleaseRepository(forge.cwd, { git, exists: options.exists, readFile: read, list: options.list }))
           advisories.push(ADVICE.squash);
       }
-      const push = gitInvocation(invocation);
+      const push = gitInvocation(invocation, options.gitWrappers);
       if (push?.subcommand !== "push" || push.args.some((arg) => NO_AGE_PUSH.has(arg)))
         continue;
       if (pushHasBranchRef(push.args)) {
@@ -2276,13 +2291,13 @@ function decideMrAdvisory(command, cwd, options = {}) {
 // plugins/trunk-dev/shared/skip-ci.ts
 var MARKER = /\[(?:skip\s+ci|ci\s+skip|no\s+ci|skip\s+actions)\]/i;
 var SKIP_CI_ADVISORY = "trunk-dev: this command's commit/MR/PR text contains a skip-CI marker ([skip ci], [ci skip], [no ci] or [skip actions]). GitLab and GitHub skip the pipeline for it even when the marker is quoted as prose; remove the marker when CI must run.";
-function forgeText(argv) {
+function forgeText(argv, gitWrappers) {
   const [head, second] = argv;
   if (head === "glab" && second === "mr")
     return argv.slice(2);
   if (head === "gh" && second === "pr")
     return argv.slice(2);
-  if (head !== "git" && head !== "dgit")
+  if (!isGitCommand(head, gitWrappers))
     return;
   for (let i = 1;i < argv.length; i++) {
     const word = argv[i];
@@ -2296,10 +2311,10 @@ function forgeText(argv) {
   }
   return;
 }
-function skipCiAdvisory(command, cwd = "/") {
+function skipCiAdvisory(command, cwd = "/", gitWrappers = DEFAULT_GIT_WRAPPERS) {
   try {
     for (const invocation of invocations(command, cwd)) {
-      const words = forgeText(invocation.argv);
+      const words = forgeText(invocation.argv, gitWrappers);
       if (words === undefined)
         continue;
       if (words.some((word) => MARKER.test(word)))
@@ -2417,7 +2432,7 @@ async function sessionReminder(cwd, env = process.env, run = read) {
 var LAND_TOOL = "delivery_land";
 var SKILL_NAMES = ["trunk-dev-workflow", "trunk-dev-feature-flags", "trunk-dev-release-setup", "trunk-dev-guide"];
 var SKILL_PATHS = SKILL_NAMES.map((name) => fileURLToPath(new URL(`../skills/${name}/SKILL.md`, import.meta.url)));
-var FEATURE_IDS = ["commit-gate", "skip-ci", "mr-advisory", "flag-cleanup", "session-reminders"];
+var FEATURE_IDS = ["commit-gate", "skip-ci", "mr-advisory", "mr-title", "flag-cleanup", "session-reminders"];
 function readOptions(options) {
   const raw = options?.disable;
   const list = Array.isArray(raw) ? raw.filter((id) => FEATURE_IDS.includes(id)) : [];
@@ -2428,15 +2443,17 @@ function shellCwd(workdir, sessionDirectory) {
     return sessionDirectory;
   return isAbsolute(workdir) ? workdir : resolve5(sessionDirectory, workdir);
 }
-function shellAdvisories(command, cwd, disabled, advise = decideMrAdvisory) {
+function shellAdvisories(command, cwd, disabled, gitWrappers = DEFAULT_GIT_WRAPPERS, advise) {
   const out = [];
   if (!disabled.has("skip-ci")) {
-    const skip = skipCiAdvisory(command, cwd);
+    const skip = skipCiAdvisory(command, cwd, gitWrappers);
     if (skip !== undefined)
       out.push(skip);
   }
-  if (!disabled.has("mr-advisory"))
-    out.push(...advise(command, cwd));
+  if (!disabled.has("mr-advisory")) {
+    const defaultAdvice = (text, directory) => decideMrAdvisory(text, directory, { conventionalTitle: !disabled.has("mr-title"), gitWrappers });
+    out.push(...(advise ?? defaultAdvice)(command, cwd));
+  }
   return out;
 }
 function createPlugin(overrides = {}) {
@@ -2444,7 +2461,8 @@ function createPlugin(overrides = {}) {
     id: "srobroek.trunk-dev",
     async setup(ctx) {
       const disabled = readOptions(ctx.options);
-      const gate = overrides.commitGate ?? ((command, cwd) => decideCommitGate(command, cwd));
+      const gitWrappers = readGitWrappers(ctx.options);
+      const gate = overrides.commitGate ?? ((command, cwd) => decideCommitGate(command, cwd, { gitWrappers }));
       const followUp = overrides.followUp ?? ((merges) => flagCleanupFollowUp(merges, process.env));
       const reminded = new Set;
       const sessionInfo = (sessionID) => ctx.session.get({ sessionID }).then((found) => {
@@ -2499,7 +2517,7 @@ function createPlugin(overrides = {}) {
 `));
               return;
             }
-            notes.push(...shellAdvisories(call.command, cwd, disabled, overrides.advise));
+            notes.push(...shellAdvisories(call.command, cwd, disabled, gitWrappers, overrides.advise));
             if (exit === 0)
               merges = shellMerges(call.command, cwd);
           }

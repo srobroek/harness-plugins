@@ -1,3 +1,10 @@
+## speckit [0.11.3](https://github.com/srobroek/harness-plugins/compare/speckit--v0.11.2...speckit--v0.11.3) (2026-11-24)
+
+### Bug Fixes
+
+* **beads:** rename the store-pin env marker to HARNESS_BEADS_PIN ([f111b05](https://github.com/srobroek/harness-plugins/commit/f111b051e312b4fd6155486e45e145a9a199bc95))
+* **speckit:** remove personal hook diagnostic prefix ([f8280b4](https://github.com/srobroek/harness-plugins/commit/f8280b4e477154be6ec599f320a2ec700b590722))
+
 ## speckit [0.11.2](https://github.com/srobroek/harness-plugins/compare/speckit--v0.11.1...speckit--v0.11.2) (2026-11-23)
 
 ### Bug Fixes

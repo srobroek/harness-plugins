@@ -31,12 +31,17 @@ Thirteen lenses, one reference each: scope (the code against its design and docs
 | --- | --- | --- |
 | `code-challenger` (steps 60) | reviewer | Read-only and advisory. Always autonomous: skips INTAKE and takes its target and lens from the brief. Never a blocking verdict. One per lens at CHALLENGE. |
 | `refactor-challenger` (steps 60) | reviewer | Read-only critic at REFUTE. Accepts the sniff brief and the code-challenge brief. Attacks library swaps (maintenance, edge-case coverage, migration cost), performance claims without a measurement, simplifications that drop behaviour, and changes to code no test protects. |
+## Developing this plugin
 
-Both are composed by `bun run build` from `agents.src/` and the shared review core.
+Maintainers build the composed agents with `bun run build` from `agents.src/` and
+the shared review core. The Pi source is `pi-src/index.ts`; the maintainer build
+bundles it to `pi/extensions/index.js` and copies it to `omp/extensions/index.js`.
+OMP loads Pi extensions unchanged. Both agents are composed from `agents.src/` and
+the shared review core; `refactor-challenger` also ships in `sniff` until the
+change dropping its copy is released. Do not release this plugin before that
+sniff release. Bun is used for maintainer builds, not required at plugin runtime.
 
-`refactor-challenger` also ships in the `sniff` plugin until the sniff change that drops its copy is released. An agent id belongs to one plugin, so do not release this plugin before that sniff release.
-
-## Tools and command
+## Tools
 
 | Name | Kind | Purpose |
 | --- | --- | --- |
@@ -50,9 +55,7 @@ Both are composed by `bun run build` from `agents.src/` and the shared review co
 
 The OMP tree has the same skill, agents and formulas. Its extension registers the four tools and `/code-challenge`. The tools take the same parameters as the OpenCode ones and return the same text, with the OpenCode metadata as `details`.
 
-- Source: `pi-src/index.ts`, written against Pi's extension API. It calls the same handlers as the OpenCode plugin.
-- Build: `scripts/build.ts` bundles it to `pi/extensions/index.js` and copies that bundle to `omp/extensions/index.js`. OMP loads Pi extensions unchanged.
-- Skill text: the `*.omp.md` files name OMP's `ask` and `read` tools instead of OpenCode's `question` tool and `webfetch`. The CHALLENGE brief names each lens reference by its `skill://code-challenge/references/` URI.
+Skill text: the `*.omp.md` files name OMP's `ask` and `read` tools instead of OpenCode's `question` tool and `webfetch`. The CHALLENGE brief names each lens reference by its `skill://code-challenge/references/` URI.
 
 ## Code-running analyzers
 

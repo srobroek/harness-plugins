@@ -1,3 +1,9 @@
+## trunk-dev [0.12.2](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.12.1...trunk-dev--v0.12.2) (2026-11-24)
+
+### Bug Fixes
+
+* **trunk-dev:** read git wrappers from the gitWrappers option ([c1ace8c](https://github.com/srobroek/harness-plugins/commit/c1ace8c28b005c2188a2f3ac1e504da1901be707))
+
 ## trunk-dev [0.12.1](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.12.0...trunk-dev--v0.12.1) (2026-11-23)
 
 ### Bug Fixes

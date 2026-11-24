@@ -10,7 +10,7 @@
 
 export type BranchTier = "switched" | "status" | "created" | "mentioned"
 
-/** `git` tolerates global options before the subcommand (`git -C dir …`, `dgit push …`). */
+/** `git`, or a git wrapper whose name ends in `git`, tolerates global options before the subcommand (`git -C dir …`). */
 const GIT = String.raw`\b[a-z]*git(?:\s+-{1,2}[\w-]+(?:[= ]\S+)?)*\s+`
 
 const BRANCH_PATTERNS: Record<BranchTier, RegExp[]> = {

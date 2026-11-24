@@ -2440,6 +2440,24 @@ function readProviderTypes(cwd, home = homedir2()) {
   };
 }
 
+// lib/src/git-wrappers.ts
+var DEFAULT_GIT_WRAPPERS = Object.freeze(["git"]);
+function readGitWrappers(options) {
+  const raw = options?.gitWrappers;
+  if (!Array.isArray(raw))
+    return DEFAULT_GIT_WRAPPERS;
+  const names = raw.filter((name) => typeof name === "string" && name !== "");
+  return names.length === 0 ? DEFAULT_GIT_WRAPPERS : names;
+}
+function isGitCommand(argv0, wrappers = DEFAULT_GIT_WRAPPERS) {
+  if (argv0 === undefined)
+    return false;
+  return wrappers.includes(argv0.slice(argv0.lastIndexOf("/") + 1));
+}
+function gitWrapperPattern(wrappers = DEFAULT_GIT_WRAPPERS) {
+  return wrappers.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+}
+
 // lib/src/host-log.ts
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -2842,9 +2860,8 @@ var GIT_FLAGS = new Set([
   "--no-advice",
   "--bare"
 ]);
-function gitInvocation(argv) {
-  const name = base(argv[0]);
-  if (name !== "git" && name !== "dgit")
+function gitInvocation(argv, wrappers = DEFAULT_GIT_WRAPPERS) {
+  if (!isGitCommand(argv[0], wrappers))
     return;
   const chdirs = [];
   let overridden = false;
@@ -3015,16 +3032,15 @@ function toolDirectories(name, argv, cwd) {
   }
   return out;
 }
-function flagDirectories(command, cwd) {
-  const name = base(command.argv[0]);
-  if (name === "git" || name === "dgit")
+function flagDirectories(command, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS) {
+  if (isGitCommand(command.argv[0], gitWrappers))
     return gitDirectories(command, cwd);
-  return toolDirectories(name, command.argv, cwd);
+  return toolDirectories(base(command.argv[0]), command.argv, cwd);
 }
-function shellFlagDirectories(source, cwd) {
+function shellFlagDirectories(source, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS) {
   const out = new Set;
   for (const command of walkShell(source).commands)
-    for (const dir of flagDirectories(command, cwd))
+    for (const dir of flagDirectories(command, cwd, gitWrappers))
       out.add(dir);
   return [...out];
 }
@@ -3160,7 +3176,7 @@ var quotedProgram = (command) => {
   return word === undefined ? command.argv[0]?.includes("\\") === true || /\$['"]/.test(command.source) : /\$['"]/.test(command.source.slice(word.start, word.end));
 };
 var LOCALE_REASON = 'a `$"\u2026"` locale string is translated by bash when a message catalog is active, so a directory operand written that way cannot be verified, wherever it points';
-var gitOrLauncher = (command) => quotedProgram(command) || FILTER_REPO_NAME.test(base(command.argv[0])) || gitInvocation(command.argv) !== undefined || launched(command.argv) !== undefined;
+var gitOrLauncher = (command, wrappers) => quotedProgram(command) || FILTER_REPO_NAME.test(base(command.argv[0])) || gitInvocation(command.argv, wrappers) !== undefined || launched(command.argv) !== undefined;
 function skipOptions(argv, at, valued) {
   let i = at;
   while (i < argv.length && argv[i].startsWith("-"))
@@ -3236,11 +3252,11 @@ function launched(argv) {
   }
   return "unparsed";
 }
-function filterRepo(command) {
+function filterRepo(command, wrappers) {
   const name = base(command.argv[0]);
   if (FILTER_REPO_NAME.test(name))
     return { args: command.argv.slice(1), chdirs: [], projects: [] };
-  const git = gitInvocation(command.argv);
+  const git = gitInvocation(command.argv, wrappers);
   if (git?.subcommand === "filter-repo")
     return { args: git.args, chdirs: git.chdirs, projects: [] };
   const run = launched(command.argv);
@@ -3439,7 +3455,7 @@ function updateRefRewrite(command, git) {
   return isBranchRef(ref) ? `\`git update-ref\` deleting ${ref}` : undefined;
 }
 var escapedSpelling = (words) => words.some((word) => word.startsWith("-") && word.includes("\\"));
-function directoryConstruct(commands, runnerOk = false) {
+function directoryConstruct(commands, runnerOk, wrappers) {
   const sources = new Set;
   for (const command of commands) {
     const name = base(command.argv[0]);
@@ -3452,7 +3468,7 @@ function directoryConstruct(commands, runnerOk = false) {
       return `\`${wrapper}\``;
     if (command.directories.length > 0)
       return "a wrapper's directory option (`env -C`, `sudo -D`)";
-    const git = gitInvocation(command.argv);
+    const git = gitInvocation(command.argv, wrappers);
     if (git !== undefined && command.argv.slice(1, git.offset - 1).some((word) => word.startsWith("--exec-path")))
       return "`git --exec-path`";
     sources.add(command.source);
@@ -3495,11 +3511,10 @@ var REF_MUTATING_SUBCOMMANDS = new Set([
   "clone",
   "init"
 ]);
-var isGitWord = (argv) => ["git", "dgit"].includes(base(argv[0]));
-function runnerCommand(command) {
+function runnerCommand(command, wrappers) {
   const classify = (argv) => {
-    if (isGitWord(argv)) {
-      const visible = gitInvocation(argv);
+    if (isGitCommand(argv[0], wrappers)) {
+      const visible = gitInvocation(argv, wrappers);
       if (visible === undefined)
         return { started: [...argv], hidden: true };
       if (/^(?::+|-|.*[{}])/.test(visible.subcommand))
@@ -3555,7 +3570,7 @@ function runnerCommand(command) {
       const end = rest.findIndex((word) => /^::::?$/.test(word));
       return completable(end === -1 ? rest : rest.slice(0, end));
     }
-    const tool = rest.some((word) => isGitWord([word]) || FILTER_REPO_NAME.test(base(word)) || launched([word]) !== undefined || commandWrappers([word, "x"]).length > 0);
+    const tool = rest.some((word) => isGitCommand(word, wrappers) || FILTER_REPO_NAME.test(base(word)) || launched([word]) !== undefined || commandWrappers([word, "x"]).length > 0);
     return tool ? { started: [...words], hidden: true } : undefined;
   }
   return;
@@ -3579,7 +3594,7 @@ var GIT_DATA_SUBCOMMANDS = new Set(["log", "commit", "show", "diff", "grep", "st
 var DESCENDED = new Set(["eval", "xargs"]);
 var REWRITE_FORM = /(?<![\w-])git[-_]filter[-_]repo(?![\w-])/;
 var REWRITE_WORD = /(?<![\w/.-])(?:filter-repo|filter-branch|update-ref|replace)(?![\w/-]|\.\w)/;
-var GIT_WORD = /(?<![\w/.-])d?git(?![\w-])/;
+var gitWord = (wrappers) => new RegExp(`(?<![\\w/.-])(?:${gitWrapperPattern(wrappers)})(?![\\w-])`);
 var EXECUTABLE_OPTION = /^(?:-O|--(?:open-files-in-pager|ext-diff|textconv|exec|exec-path|pager|config-env|upload-pack|receive-pack|pre|pre-glob|hostname-bin)(?![\w-]))/;
 var DATA_OPTION = /^(?:--grep|--message|--regexp|--pattern|--glob|--iglob|--include|--exclude|--include-dir|--exclude-dir|--type-add)$/;
 var mentioned = (word) => REWRITE_FORM.test(word) || REWRITE_WORD.test(word);
@@ -3636,9 +3651,9 @@ function mentionsOnlyAsData(args) {
 function launcherJudged(argv) {
   return launched(argv) === "not-run" && !base(argv[0]).startsWith("python");
 }
-function unaccountedMention(command, git) {
+function unaccountedMention(command, git, gitText) {
   const text = command.argv.join(" ");
-  const found = REWRITE_FORM.exec(text) ?? (GIT_WORD.test(text) ? REWRITE_WORD.exec(text) : null);
+  const found = REWRITE_FORM.exec(text) ?? (gitText.test(text) ? REWRITE_WORD.exec(text) : null);
   if (found === null)
     return;
   const name = base(command.argv[0]);
@@ -3657,12 +3672,13 @@ function unaccountedMention(command, git) {
   }
   return found[0];
 }
-function historyRewrite(commands, cwd, tempRoots = defaultTempRoots(), env = process.env) {
+function historyRewrite(commands, cwd, tempRoots = defaultTempRoots(), env = process.env, wrappers = DEFAULT_GIT_WRAPPERS) {
+  const gitText = gitWord(wrappers);
   const judge = (what, moves, git, fileLast = false, runnerOk = false) => {
     const selection = repositorySelection(commands);
     if (selection !== undefined)
       return withSelection(what, selection);
-    const construct = directoryConstruct(commands, runnerOk);
+    const construct = directoryConstruct(commands, runnerOk, wrappers);
     if (construct !== undefined)
       return withConstruct(what, construct);
     const inherited = INHERITED_SELECTION.find((name) => env[name] !== undefined);
@@ -3693,11 +3709,11 @@ function historyRewrite(commands, cwd, tempRoots = defaultTempRoots(), env = pro
   for (const command of commands)
     if (quotedProgram(command))
       return unverifiable(`\`${command.argv.slice(0, 4).join(" ")}\``);
-  if (commands.some(ansiQuoted) && commands.some(gitOrLauncher)) {
+  if (commands.some(ansiQuoted) && commands.some((command) => gitOrLauncher(command, wrappers))) {
     for (const command of commands) {
-      if (!gitOrLauncher(command))
+      if (!gitOrLauncher(command, wrappers))
         continue;
-      const git = gitInvocation(command.argv);
+      const git = gitInvocation(command.argv, wrappers);
       const text = `\`${command.argv.slice(0, 4).join(" ")}\``;
       if (command.argv.some((word, at) => word.includes("\\") && at !== (git?.offset ?? 0) - 1))
         return unverifiable(text);
@@ -3708,7 +3724,7 @@ function historyRewrite(commands, cwd, tempRoots = defaultTempRoots(), env = pro
     }
   }
   for (const command of commands) {
-    const found = runnerCommand(command);
+    const found = runnerCommand(command, wrappers);
     if (found === undefined)
       continue;
     const { started, hidden } = found;
@@ -3716,7 +3732,7 @@ function historyRewrite(commands, cwd, tempRoots = defaultTempRoots(), env = pro
       return withConstruct(`\`${started.slice(0, 4).join(" ")}\` run by \`${command.argv[0]}\``, found.wrapper);
     if (hidden)
       return `${PREFIX}: refused \`${started.slice(0, 4).join(" ")}\` run by \`${command.argv[0]}\`: its subcommand, \`-C\`, \`--git-dir\` or \`--target\` can come from stdin, which the guard cannot read, so it cannot tell where it runs. Write the arguments out in the command. ${GUIDANCE}`;
-    const startedGit = gitInvocation(started) ?? (isGitWord(started) ? gitInvocation([...started, "x"]) : undefined);
+    const startedGit = gitInvocation(started, wrappers) ?? (isGitCommand(started[0], wrappers) ? gitInvocation([...started, "x"], wrappers) : undefined);
     const target = FILTER_REPO_NAME.test(base(started[0])) || startedGit?.subcommand === "filter-repo" ? optionValue(startedGit?.args ?? started.slice(1), "--target") : undefined;
     const uv = base(started[0]).startsWith("uv") ? uvDirectories(started, 1, started.length) : { chdirs: [], projects: [] };
     const moves = [...startedGit?.chdirs ?? [], ...uv.chdirs, ...target === undefined ? [] : [target]];
@@ -3728,9 +3744,9 @@ function historyRewrite(commands, cwd, tempRoots = defaultTempRoots(), env = pro
     }
   }
   for (const [position, command] of commands.entries()) {
-    const git = gitInvocation(command.argv);
+    const git = gitInvocation(command.argv, wrappers);
     const text = `\`${command.argv.slice(0, 4).join(" ")}\``;
-    const rewrite = filterRepo(command);
+    const rewrite = filterRepo(command, wrappers);
     if (rewrite === "uncertain")
       return uncertain(text, "the launcher's command line could not be read");
     if (rewrite !== undefined) {
@@ -3761,7 +3777,7 @@ function historyRewrite(commands, cwd, tempRoots = defaultTempRoots(), env = pro
       }
       continue;
     }
-    const mention = unaccountedMention(command, git);
+    const mention = unaccountedMention(command, git, gitText);
     if (mention !== undefined)
       return uncertain(text, `the command text mentions \`${mention}\` where the guard could not parse a rewrite`);
     if (git === undefined)
@@ -3794,7 +3810,7 @@ import { join as join6 } from "path";
 var OP_MESSAGE = "safety op-guard: do not call the 1Password CLI directly; each call opens a new 1Password session and asks the user to approve. Run the command through fnox, which reuses its cached session: `fnox exec -- <cmd>`, or `fnox exec --only NAME -- <cmd>`. If the secret is not declared, load the `project-secrets` skill and declare it; if it does not exist yet, ask the user to create it. To find items, run `fnox provider discover <provider> --tags project/<name>`.";
 var FNOX_DUMP_MESSAGE = "safety op-guard: this fnox command prints secret values into the transcript. Use `fnox check` or `fnox list` to inspect, and `fnox exec -- <cmd>` to use a value.";
 var SECRET_STORE_TOOL = "safety_secret_store";
-var USE_TOOL = `Store the secret with the \`${SECRET_STORE_TOOL}\` tool of the secret-store plugin: it generates the value, or runs your command without a shell, and writes it to 1Password or a fnox store with no value in a command line, the environment or the transcript.`;
+var USE_TOOL = `Store the secret with the \`${SECRET_STORE_TOOL}\` tool of the secret-store plugin: it generates the value, or runs your command without a shell, and writes it to one of the backends it supports (1Password or a fnox store) with no value in a command line, the environment or the transcript.`;
 var LITERAL_MESSAGE = `safety op-guard: a literal secret in the command lands in the transcript. ${USE_TOOL}`;
 var FNOX_SET_MESSAGE = `safety op-guard: a literal value in \`fnox set\` lands in the transcript. ${USE_TOOL}`;
 var FNOX_STORE_MESSAGE = `safety op-guard: this fnox provider cannot store a value; \`fnox set\` would write a piped, generated or expanded value into fnox.toml as the item reference. ${USE_TOOL} A literal reference, \`fnox set NAME '<item>/<field>' --provider <op-provider>\`, still works.`;
@@ -4176,7 +4192,7 @@ function sameFile(written, target) {
   return written === clean || written.endsWith(`/${clean}`);
 }
 function fnoxConfigPath(path, home = homedir4()) {
-  return CONFIG_FILE.test(base(path)) || path === join6(home, ".config", "fnox") || path.startsWith(join6(home, ".config", "fnox") + "/");
+  return CONFIG_FILE.test(base(path)) || path === join6(home, ".config", "fnox") || path.startsWith(`${join6(home, ".config", "fnox")}/`);
 }
 function configWriteBesideSet(commands, writes) {
   if (!commands.some(setsWithValueSource))
@@ -4616,7 +4632,7 @@ var MESSAGES2 = {
   indirection: "Blocked by safety (bash-indirection-guard): this destructive command targets an unexpanded variable, command substitution, or backtick expression, so its path cannot be verified. Resolve the target and re-issue a literal command; a quoted variable is accepted only after a bare `--` end-of-options marker.",
   "remote-exec": "Blocked by safety (remote-exec-guard): this command would execute content fetched from the network without review: a download piped into a shell, a shell or `eval` running a fetch's output, or a netcat invocation with an exec flag. Download to a file, inspect it, and run only an explicitly reviewed script.",
   attribution: "Blocked by safety (attribution-guard): this commit message carries AI-assistant attribution (a Co-authored-by trailer naming an assistant, a 'Generated with' line, or an assistant noreply address). Rewrite the `-m`/`--message` text, the `--trailer`, or the file supplied to `-F`/`--file`, so the commit names only the human author.",
-  "worktree-tmp": "Blocked by safety (worktree-tmp-guard): do not create a worktree under /tmp or /private/tmp, where a container bind mount cannot see it. Use a path under $HOME, such as ~/tmp/worktrees/<repo>/<branch>.",
+  "worktree-tmp": "Blocked by safety (worktree-tmp-guard): do not create a worktree under /tmp or /private/tmp, where a container bind mount cannot see it. Use a persistent directory outside the system temp dir (for example one your worktree tool manages).",
   "history-rewrite": "Blocked by safety (history-rewrite-guard): history-rewriting commands (`git filter-repo`, `git filter-branch`, `git replace`, `git update-ref -d` on a branch) must not run in place in a canonical checkout, and `filter-repo --force` must not run at all. Clone the repository into a temp directory and run the command there with the tool's workdir set to the clone.",
   "push-via": (host, command, dir) => `Blocked by safety (push-via-guard): a plain \`git push\` to ${host} cannot work on this host. Push with \`${command} -C ${shellPath(dir)} push\` instead (same arguments), and push WIP often so commits are not lost.`,
   "op-guard": OP_MESSAGE
@@ -4775,9 +4791,9 @@ function writtenInto(commands, before, path, cwd) {
   }
   return out;
 }
-function attribution(commands, cwd, read = readText) {
+function attribution(commands, cwd, read = readText, gitWrappers = DEFAULT_GIT_WRAPPERS) {
   for (const command of commands) {
-    const git = gitInvocation(command.argv);
+    const git = gitInvocation(command.argv, gitWrappers);
     if (git?.subcommand !== "commit")
       continue;
     const { texts, files } = commitMessage(git.args);
@@ -4809,8 +4825,8 @@ function underTmp(path) {
   return /^(?:\/private)?\/tmp(?:\/|$)/.test(path);
 }
 var WORKTREE_ADD_VALUED = new Set(["-b", "-B", "--reason"]);
-function worktreeTmp(command, cwd) {
-  const git = gitInvocation(command.argv);
+function worktreeTmp(command, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS) {
+  const git = gitInvocation(command.argv, gitWrappers);
   if (git?.subcommand === "worktree" && git.args[0] === "add") {
     const dir = git.chdirs.reduce((at, chdir) => resolve7(at, chdir), cwd);
     const path = positionals(git.args.slice(1), WORKTREE_ADD_VALUED)[0];
@@ -4835,12 +4851,12 @@ function hardGate(source, cwd, options = {}) {
       refusal = refuse("remote-exec");
     else if (on("indirection") && commands.some(indirection))
       refusal = refuse("indirection");
-    else if (on("attribution") && attribution(commands, cwd, options.read))
+    else if (on("attribution") && attribution(commands, cwd, options.read, options.gitWrappers))
       refusal = refuse("attribution");
-    else if (on("worktree-tmp") && commands.some((command) => worktreeTmp(command, cwd)))
+    else if (on("worktree-tmp") && commands.some((command) => worktreeTmp(command, cwd, options.gitWrappers)))
       refusal = refuse("worktree-tmp");
     else if (on("history-rewrite")) {
-      const reason = historyRewrite(commands, cwd, options.tempRoots, options.env);
+      const reason = historyRewrite(commands, cwd, options.tempRoots, options.env, options.gitWrappers);
       if (reason !== undefined)
         refusal = { guard: "history-rewrite", reason };
     }
@@ -5111,7 +5127,7 @@ function joinChdirs(chdirs) {
     return null;
   return chdirs.reduce((at, next) => isAbsolute6(next) ? next : join8(at, next));
 }
-function removals(command) {
+function removals(command, gitWrappers = DEFAULT_GIT_WRAPPERS) {
   const found = [];
   const walk = walkShell(command);
   for (const item of walk.commands) {
@@ -5119,7 +5135,7 @@ function removals(command) {
       found.push({ tool: "wt", chdir: null, targets: [], force: false, literal: false });
       continue;
     }
-    const git = gitInvocation(item.argv);
+    const git = gitInvocation(item.argv, gitWrappers);
     const wt = git ? undefined : wtInvocation(item.argv);
     const isGit = git?.subcommand === "worktree" && (git.args[0] === "remove" || git.args[0] === "rm");
     const isWt = wt !== undefined && (wt.subcommand === "remove" || wt.subcommand === "rm");
@@ -5973,8 +5989,8 @@ async function reviewBranchDeletes(command, cwd, options = {}) {
 var FORCE_PUSH_MESSAGE = "Denied by safety (force-push): this push uses `--force`, `-f` or a `+refspec` rather than `--force-with-lease`. A plain force push overwrites the remote ref unconditionally; if anyone pushed since your last fetch, their commits are discarded and only the reflog can recover them. Re-run it with `--force-with-lease` (optionally `--force-if-includes`), which fails when the remote moved.";
 var SUDO_MESSAGE = "safety (sudo-destructive): a destructive command runs under sudo. Elevated commands ignore workspace boundaries; confirm the target is literal and inside the intended tree.";
 var DESTRUCTION_HEADER = "safety (worktree-destruction-guard): this call destroys work that may exist nowhere else. Approve only if you asked for this exact target in this session.";
-function forcePush(command) {
-  const git = gitInvocation(command.argv);
+function forcePush(command, gitWrappers = DEFAULT_GIT_WRAPPERS) {
+  const git = gitInvocation(command.argv, gitWrappers);
   if (git?.subcommand !== "push")
     return false;
   for (const arg of git.args) {
@@ -5997,10 +6013,10 @@ function sudoDestructive(command) {
   return false;
 }
 var RESET_VALUED = new Set(["--pathspec-from-file"]);
-function destructions(commands, cwd) {
+function destructions(commands, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS) {
   const found = [];
   for (const command of commands) {
-    const git = gitInvocation(command.argv);
+    const git = gitInvocation(command.argv, gitWrappers);
     if (!git)
       continue;
     const literal = command.context === "top" && command.words !== undefined && !git.overridden;
@@ -6050,11 +6066,11 @@ ${changed.slice(0, 10).map((line) => `    ${line}`).join(`
   return notes.join(`
   `);
 }
-async function stashNote(run, destruction) {
+async function stashNote(run, destruction, gitWrappers) {
   if (destruction.dir === undefined)
     return "";
   if (destruction.kind === "stash-drop") {
-    const git = gitInvocation(destruction.command.argv);
+    const git = gitInvocation(destruction.command.argv, gitWrappers);
     const ref = git ? positionals(git.args.slice(1))[0] ?? "stash@{0}" : "stash@{0}";
     const sha = (await gitOut(run, ["rev-parse", "--verify", "--quiet", ref], destruction.dir))?.trim();
     return sha ? `
@@ -6093,7 +6109,8 @@ async function reviewPermission(source, cwd, options = {}) {
   const on = (id) => options.disabled?.has(id) !== true;
   const walk = walkShell(source);
   const { commands } = walk;
-  if (on("force-push") && commands.some(forcePush))
+  const { gitWrappers } = options;
+  if (on("force-push") && commands.some((command) => forcePush(command, gitWrappers)))
     return { effect: "deny", message: FORCE_PUSH_MESSAGE };
   const asks = [];
   if (on("sudo-destructive") && commands.some(sudoDestructive))
@@ -6109,11 +6126,11 @@ async function reviewPermission(source, cwd, options = {}) {
     } else if (branches.action === "confirm")
       destructive.push(`${branches.title}
 ${branches.message}`);
-    const removals = await reviewRemovals(source, dir ?? cwd, options.worktreeProbe ?? defaultProbe(options));
-    if (removals.refuse)
-      return { effect: "deny", message: removals.refuse };
-    destructive.push(...removals.ask);
-    const found = destructions(commands, dir);
+    const removals2 = await reviewRemovals(source, dir ?? cwd, options.worktreeProbe ?? defaultProbe(options), (text) => removals(text, gitWrappers));
+    if (removals2.refuse)
+      return { effect: "deny", message: removals2.refuse };
+    destructive.push(...removals2.ask);
+    const found = destructions(commands, dir, gitWrappers);
     if (found.length > 0) {
       const run = budget(options).run;
       for (const destruction of found) {
@@ -6125,7 +6142,7 @@ ${branches.message}`);
               destructive.push(`\`${text}\` ${LABELS[destruction.kind]}: ${risk}`);
             continue;
           }
-          destructive.push(`\`${text}\` ${LABELS[destruction.kind]}.${await stashNote(run, destruction)}`);
+          destructive.push(`\`${text}\` ${LABELS[destruction.kind]}.${await stashNote(run, destruction, gitWrappers)}`);
         } catch (error) {
           if (!(error instanceof ProbeTimeout))
             throw error;
@@ -6788,7 +6805,8 @@ function readOptions(options) {
     scratchDirs: options?.scratchDirs !== false,
     steeringDirs: readSteeringDirs(options?.steeringDirs),
     secretPaths,
-    pushVia: readPushVia(options)
+    pushVia: readPushVia(options),
+    gitWrappers: readGitWrappers(options)
   };
 }
 function shellCwd(workdir, sessionDirectory) {
@@ -6834,16 +6852,17 @@ function createPlugin(overrides = {}) {
     id: "srobroek.safety",
     async setup(ctx) {
       const warn = overrides.warn ?? hostWarn("srobroek.safety");
-      const { disabled, redact, opAllow, scratchDirs, steeringDirs, secretPaths, pushVia } = readOptions(ctx.options);
+      const { disabled, redact, opAllow, scratchDirs, steeringDirs, secretPaths, pushVia, gitWrappers } = readOptions(ctx.options);
       const on = (id) => !disabled.has(id);
       const guardOptions = {
         env: overrides.env ?? process.env,
         ...overrides.guard,
         disabled,
         opAllow,
-        pushVia
+        pushVia,
+        gitWrappers
       };
-      const reviewOptions = { ...overrides.review, disabled };
+      const reviewOptions = { ...overrides.review, disabled, gitWrappers };
       const pending = new Map;
       const advisor = createPackageAdvisor();
       const sessionDirectory = (sessionID) => ctx.session.get({ sessionID }).then((session) => session.location.directory).catch(() => ctx.location.directory);
@@ -6889,7 +6908,7 @@ function createPlugin(overrides = {}) {
           throw new Error(refusal.reason);
         if (on("external-directory")) {
           const sessionDir = await sessionDirectory(event.sessionID);
-          const external = safely(() => externalDirectories(shellFlagDirectories(command, leadingCdCwd(command, cwd)), sessionRoots(sessionDir))) ?? [];
+          const external = safely(() => externalDirectories(shellFlagDirectories(command, leadingCdCwd(command, cwd), gitWrappers), sessionRoots(sessionDir))) ?? [];
           if (external.length > 0)
             await ctx.permission.assert({
               sessionID: event.sessionID,

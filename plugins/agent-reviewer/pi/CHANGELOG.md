@@ -1,3 +1,15 @@
+## agent-reviewer [0.13.3](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.13.2...agent-reviewer--v0.13.3) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## agent-reviewer [0.13.2](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.13.1...agent-reviewer--v0.13.2) (2026-11-24)
+
+### Bug Fixes
+
+* **agent-reviewer:** support GitLab merge request reads ([e199086](https://github.com/srobroek/harness-plugins/commit/e1990861ee8b3d10b3adad7294de159c47f4e23b))
+
 ## agent-reviewer [0.13.1](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.13.0...agent-reviewer--v0.13.1) (2026-11-23)
 
 ### Bug Fixes

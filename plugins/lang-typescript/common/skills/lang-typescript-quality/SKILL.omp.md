@@ -13,9 +13,9 @@ defines them; otherwise:
 | Step | Command |
 |---|---|
 | Install | `bun install --frozen-lockfile`, `pnpm install --frozen-lockfile`, `npm ci`, or `yarn install --immutable` |
-| Lint and format check | `biome check .`; use `eslint .` or `prettier --check .` only for a named gap such as type-aware rules Biome lacks, Vue or Angular templates |
+| Lint and format check | The project's configured linter and formatter; Biome (`biome check .`) is the default for an unconfigured project. Use `eslint .` or `prettier --check .` only for a named gap such as type-aware rules Biome lacks, Vue or Angular templates |
 | Type check | `tsc -b` when `tsconfig.json` has `references`, otherwise `tsc --noEmit` |
-| Test | Project test script (`bun test`, `vitest run`, `npm test`, …) |
+| Test | The project's configured test script; Bun test by default for Bun projects, with Vitest as an alternative |
 | Coverage | `vitest run --coverage` (`v8`), or `bun test --coverage --coverage-reporter=lcov` (lines and functions only) |
 | Fix | `biome check --write PATHS`, or `eslint --fix PATHS` and `prettier --write PATHS` when requested |
 

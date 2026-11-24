@@ -21,7 +21,7 @@ export const FNOX_DUMP_MESSAGE =
 /** The secret-store plugin's tool that stores a secret without a shell; every value-carrying refusal points to it. */
 export const SECRET_STORE_TOOL = "safety_secret_store"
 
-const USE_TOOL = `Store the secret with the \`${SECRET_STORE_TOOL}\` tool of the secret-store plugin: it generates the value, or runs your command without a shell, and writes it to 1Password or a fnox store with no value in a command line, the environment or the transcript.`
+const USE_TOOL = `Store the secret with the \`${SECRET_STORE_TOOL}\` tool of the secret-store plugin: it generates the value, or runs your command without a shell, and writes it to one of the backends it supports (1Password or a fnox store) with no value in a command line, the environment or the transcript.`
 
 export const LITERAL_MESSAGE = `safety op-guard: a literal secret in the command lands in the transcript. ${USE_TOOL}`
 
@@ -500,7 +500,7 @@ function sameFile(written: string, target: string): boolean {
 
 /** Whether `path` is an fnox config file: `fnox*.toml`, `.fnox*.toml`, or anything in `~/.config/fnox`. */
 export function fnoxConfigPath(path: string, home: string = homedir()): boolean {
-  return CONFIG_FILE.test(base(path)) || path === join(home, ".config", "fnox") || path.startsWith(join(home, ".config", "fnox") + "/")
+  return CONFIG_FILE.test(base(path)) || path === join(home, ".config", "fnox") || path.startsWith(`${join(home, ".config", "fnox")}/`)
 }
 
 /**

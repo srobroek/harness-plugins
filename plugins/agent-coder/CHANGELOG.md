@@ -1,3 +1,10 @@
+## agent-coder [0.12.3](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.2...agent-coder--v0.12.3) (2026-11-24)
+
+### Bug Fixes
+
+* **content:** refresh portable guidance outputs ([744c177](https://github.com/srobroek/harness-plugins/commit/744c177df26bbc1c5a3e8594b56b5a6c1c5a2595))
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
 ## agent-coder [0.12.2](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.1...agent-coder--v0.12.2) (2026-11-23)
 
 ### Bug Fixes

@@ -21,11 +21,13 @@ Adapted from the omp-plugins find-tools adoption policy for OpenCode V2.
 | Artifact | Project scope (default) | User-wide (ask separately) |
 | --- | --- | --- |
 | OpenCode plugin | add the spec to `plugins` in the project's `opencode.json` | `opencode plugin add <spec>` (global config) |
+| Claude Code plugin | `/plugin install <name>@harness-plugins` | the same command |
+| OMP plugin | install `<name>@harness-plugins` with the host package manager | the same command |
+| Pi package | add `npm:@srobroek/pi-<name>` to `packages` in Pi settings | `pi install npm:@srobroek/pi-<name>` |
 | MCP server | `opencode mcp add <name> --url …` or `-- <command>` | the same with `--global` |
 | Skill | copy the skill directory to `.opencode/skills/<name>/`, or add a catalog URL to `skills` | `~/.config/opencode/skills/<name>/` |
 
-A plugin from this repository installs with the spec
-`github:srobroek/opencode-plugins::path:plugins/<name>`.
+A plugin from this repository uses the spec `github:srobroek/harness-plugins::path:plugins/<name>`.
 
 A V1 plugin (`@opencode-ai/plugin`) does not run on OpenCode V2. Check the
 entry point imports `@opencode/plugin` before adopting a plugin.

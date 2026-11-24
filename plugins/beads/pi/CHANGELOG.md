@@ -1,3 +1,14 @@
+## beads [0.9.2](https://github.com/srobroek/harness-plugins/compare/beads--v0.9.1...beads--v0.9.2) (2026-11-24)
+
+## beads [0.9.1](https://github.com/srobroek/harness-plugins/compare/beads--v0.9.0...beads--v0.9.1) (2026-11-24)
+
+### Bug Fixes
+
+* **beads:** build close-evidence git commands from gitWrappers ([0caae40](https://github.com/srobroek/harness-plugins/commit/0caae40e06d63279d631d9914bfad9e3ce7473da))
+* **beads:** make project plugin signal opt in ([e31958d](https://github.com/srobroek/harness-plugins/commit/e31958dd50cad74c832b01da3380626065a26cbc))
+* **beads:** rename the store-pin env marker to HARNESS_BEADS_PIN ([f111b05](https://github.com/srobroek/harness-plugins/commit/f111b051e312b4fd6155486e45e145a9a199bc95))
+* **beads:** use retired marker for opt-out ([7b31f27](https://github.com/srobroek/harness-plugins/commit/7b31f2702b245c5c40bcb4e791d5c426d6a77276))
+
 ## beads [0.9.0](https://github.com/srobroek/harness-plugins/compare/beads--v0.8.10...beads--v0.9.0) (2026-11-23)
 
 ### Features

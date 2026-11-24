@@ -2,7 +2,7 @@
   "plugins": [
     {
       "name": "agent-coder",
-      "version": "0.12.2",
+      "version": "0.12.3",
       "description": "coder subagent for any code development task (implement, fix, debug, test, build, profile, upgrade deps) with only coding tools and skills.",
       "category": "development",
       "harnesses": {
@@ -37,7 +37,7 @@
     },
     {
       "name": "agent-efficiency",
-      "version": "0.14.3",
+      "version": "0.14.5",
       "description": "Cut agent tokens: run bash calls as the built-in shell tool, narrow explore to search and web tools, and trim read-only subagent prompts.",
       "category": "development",
       "harnesses": {
@@ -58,7 +58,7 @@
     },
     {
       "name": "agent-mechanic",
-      "version": "0.8.1",
+      "version": "0.8.2",
       "description": "mechanic subagent: cheap, exact mechanical edits (renames, bulk edits, formatting, moving code) that run the given check.",
       "category": "development",
       "harnesses": {
@@ -105,7 +105,7 @@
     },
     {
       "name": "agent-researcher",
-      "version": "0.10.1",
+      "version": "0.10.3",
       "description": "The researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one.",
       "category": "development",
       "harnesses": {
@@ -152,7 +152,7 @@
     },
     {
       "name": "agent-reviewer",
-      "version": "0.13.1",
+      "version": "0.13.3",
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "category": "development",
       "harnesses": {
@@ -255,7 +255,7 @@
     },
     {
       "name": "architecture",
-      "version": "0.11.1",
+      "version": "0.11.3",
       "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
       "category": "development",
       "harnesses": {
@@ -375,7 +375,7 @@
     },
     {
       "name": "autopilot",
-      "version": "1.3.8",
+      "version": "1.4.0",
       "description": "Unattended runs: /autopilot arms a no-questions session with a journal, a 4-minute tick and stop conditions.",
       "category": "development",
       "harnesses": {
@@ -392,9 +392,40 @@
             "index"
           ],
           "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "autopilot"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "autopilot"
+          ],
+          "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "companions": [
+        {
+          "package": "pi-subagents",
+          "for": "the subagent tool that runs the run's write lanes and reviewers",
+          "required": true
+        },
+        {
+          "package": "@srobroek/pi-parley-rounds",
+          "for": "parley_ask, which asks the setup round's questions in one panel",
+          "required": false
+        },
+        {
+          "package": "@srobroek/pi-beads-enforcer",
+          "for": "the bd gates and per-session actors the lanes' bead claims rely on",
+          "required": false
+        }
+      ]
     },
     {
       "name": "aws",
@@ -455,7 +486,7 @@
     },
     {
       "name": "beads",
-      "version": "0.9.0",
+      "version": "0.9.2",
       "description": "Beads issue tracking: bd prime session context, shell gates on bd, git and gh commands, store pinning and the Beads skills.",
       "category": "development",
       "harnesses": {
@@ -572,7 +603,7 @@
     },
     {
       "name": "chezmoi",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "description": "Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill.",
       "category": "development",
       "harnesses": {
@@ -622,7 +653,7 @@
     },
     {
       "name": "claude-compat",
-      "version": "0.5.2",
+      "version": "0.5.3",
       "description": "Load Claude Code plugin repos at runtime: skills, agents, commands, MCP servers and command hooks, per project.",
       "category": "development",
       "harnesses": {
@@ -703,7 +734,7 @@
     },
     {
       "name": "debate",
-      "version": "0.7.2",
+      "version": "0.7.3",
       "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
       "category": "productivity",
       "harnesses": {
@@ -756,7 +787,7 @@
     },
     {
       "name": "delivery",
-      "version": "0.12.2",
+      "version": "0.12.3",
       "description": "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
       "category": "development",
       "harnesses": {
@@ -984,7 +1015,7 @@
     },
     {
       "name": "find-tools",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "description": "Discover and vet plugins, skills and MCP servers across local inventory, catalogs and public registries, without installing anything.",
       "category": "development",
       "harnesses": {
@@ -999,6 +1030,20 @@
           "tools": [],
           "extensions": [
             "index"
+          ],
+          "mcp": []
+        },
+        "omp": {
+          "skills": [
+            "find-tools"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "find-tools"
           ],
           "mcp": []
         },
@@ -1581,7 +1626,7 @@
     },
     {
       "name": "project",
-      "version": "0.12.2",
+      "version": "0.12.3",
       "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
       "category": "productivity",
       "harnesses": {
@@ -1653,7 +1698,7 @@
     },
     {
       "name": "project-secrets",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Per-project secrets with fnox and 1Password: store, use, inspect and rotate them with no value in the transcript.",
       "category": "productivity",
       "harnesses": {
@@ -1837,7 +1882,7 @@
     },
     {
       "name": "safety",
-      "version": "0.14.2",
+      "version": "0.14.3",
       "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help and redaction of secret environment values from tool output.",
       "category": "development",
       "harnesses": {
@@ -1877,7 +1922,7 @@
     },
     {
       "name": "secret-store",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "A tool that stores a new secret in 1Password or a fnox store without a shell, so the value stays out of commands, logs and the transcript.",
       "category": "development",
       "harnesses": {
@@ -1910,7 +1955,7 @@
     },
     {
       "name": "session",
-      "version": "0.4.1",
+      "version": "0.4.2",
       "description": "Read-only handoff from an earlier session: session_resume tool and resume-session skill.",
       "category": "development",
       "harnesses": {
@@ -1933,7 +1978,7 @@
     },
     {
       "name": "speckit",
-      "version": "0.11.2",
+      "version": "0.11.3",
       "description": "SpecKit on beads: a tasks.md guard, setup and bugfix skills, formulas, and the speckit-sync and speckit-verify subagents.",
       "category": "development",
       "harnesses": {
@@ -2140,7 +2185,7 @@
     },
     {
       "name": "trunk-dev",
-      "version": "0.12.1",
+      "version": "0.12.2",
       "description": "Trunk-based delivery for OpenCode, Claude Code, and pi: Conventional Commit and main-push gates, skip-CI and MR/PR advisories, feature-flag cleanup beads, and release-setup skills.",
       "category": "development",
       "harnesses": {

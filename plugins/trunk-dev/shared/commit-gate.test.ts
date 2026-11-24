@@ -8,6 +8,7 @@ const releaseOptions = {
   exists: (path: string) => path === "/repo/.releaserc",
   list: () => [],
 }
+const WRAPPERS = ["git", "dgit"]
 
 function gate(command: string, options: Parameters<typeof decideCommitGate>[2] = releaseOptions) {
   return decideCommitGate(command, cwd, { processEnv: {}, ...options })
@@ -62,16 +63,24 @@ describe("decideCommitGate commit subjects", () => {
     expect(gate(`git commit -m "$(cat <<'EOF'\nbad\nEOF\n)"`)).toBeUndefined()
   })
 
-  test("recognizes quoting, assignment and env prefixes, command chains, dgit, -C and cd", () => {
+  test("recognizes quoting, assignment and env prefixes, command chains, -C and cd", () => {
     expect(gate("echo 'git commit -m bad' && git commit -m 'wrong'; git status")).toBeDefined()
     expect(gate("echo 'git commit -m bad'")).toBeUndefined()
     expect(gate("TRUNK_DEV_ALLOW_NONCONVENTIONAL_COMMIT=1 git commit -m bad")).toBeUndefined()
-    expect(gate("env TRUNK_DEV_ALLOW_NONCONVENTIONAL_COMMIT=1 dgit commit -m bad")).toBeUndefined()
-    expect(gate("dgit commit -m bad")).toBeDefined()
+    expect(gate("env TRUNK_DEV_ALLOW_NONCONVENTIONAL_COMMIT=1 git commit -m bad")).toBeUndefined()
     expect(gate("git -C /repo commit -m bad")).toBeDefined()
     expect(gate("git -C /elsewhere commit -m bad")).toBeUndefined()
     expect(gate("cd /elsewhere && git commit -m bad")).toBeUndefined()
     expect(gate("(cd /elsewhere && true) && git commit -m bad")).toBeDefined()
+  })
+
+  test("reads a wrapper listed in gitWrappers as git, and only then", () => {
+    const wrapped = { ...releaseOptions, gitWrappers: WRAPPERS }
+    expect(gate("dgit commit -m bad")).toBeUndefined()
+    expect(gate("dgit commit -m bad", wrapped)).toBeDefined()
+    expect(gate("/opt/bin/dgit commit -m bad", wrapped)).toBeDefined()
+    expect(gate("env TRUNK_DEV_ALLOW_NONCONVENTIONAL_COMMIT=1 dgit commit -m bad", wrapped)).toBeUndefined()
+    expect(gate("git commit -m bad", { ...releaseOptions, gitWrappers: ["dgit"] })).toBeUndefined()
   })
 
   test("non-release repositories remain silent and process overrides are honored", () => {
@@ -138,7 +147,13 @@ describe("decideCommitGate push destinations", () => {
 
   test("resolves bare HEAD and @ refspecs to the current branch", () => {
     expect(push("git push origin HEAD", "main")).toBeDefined()
-    expect(push("dgit push -u origin @", "master")).toBeDefined()
+    expect(push("git push -u origin @", "master")).toBeDefined()
+    const master = {
+      ...releaseOptions,
+      git: (args: readonly string[], dir: string) => (args[0] === "branch" ? "master" : releaseOptions.git(args, dir)),
+    }
+    expect(gate("dgit push -u origin @", master)).toBeUndefined()
+    expect(gate("dgit push -u origin @", { ...master, gitWrappers: WRAPPERS })).toBeDefined()
     expect(push("git push origin HEAD", "topic")).toBeUndefined()
     expect(push("git push origin HEAD", "")).toBeUndefined()
   })

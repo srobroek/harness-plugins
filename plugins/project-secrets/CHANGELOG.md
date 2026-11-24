@@ -1,3 +1,9 @@
+## project-secrets [1.0.1](https://github.com/srobroek/harness-plugins/compare/project-secrets--v1.0.0...project-secrets--v1.0.1) (2026-11-24)
+
+### Bug Fixes
+
+* **project-secrets:** word fnox and 1Password as supported providers ([d6b2049](https://github.com/srobroek/harness-plugins/commit/d6b20499ad4f66059a1874d0c1e4a43aac2c163c))
+
 ## project-secrets 1.0.0 (2026-11-24)
 
 ### Features

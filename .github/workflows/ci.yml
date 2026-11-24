@@ -12,7 +12,7 @@ permissions:
 jobs:
   check:
     # Same version as @srobroek/harness-kit in package.json; `harness-kit check` warns when they differ.
-    uses: srobroek/harness-kit/.github/workflows/check.yml@v1.9.0
+    uses: srobroek/harness-kit/.github/workflows/check.yml@v1.10.1
 
   # The gates the reusable workflow does not run: lint, bundles, and the repository's content checks.
   repo-checks:
@@ -27,7 +27,7 @@ jobs:
       # bun and just at the versions in .mise.toml.
       - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5.3.0
         with:
-          version: 2026.11.12
+          version: 2026.11.13
           # Only pushes to main write the cache; pull request and dispatched runs restore it.
           cache_save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - run: just install

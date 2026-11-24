@@ -24,6 +24,8 @@ tool output.
 ## With the `safety_secret_store` tool
 
 With the secret-store plugin, store every agent-written value with `safety_secret_store`. The tool
+supports two backends: a 1Password item that fnox references, and an fnox provider that stores
+values. A project on another secret manager follows that manager's own workflow instead. The tool
 generates the value or runs a command without a shell. It writes the value only through a child's
 stdin, so no command line, environment, log, error or tool result holds it. The safety op-guard
 refuses the shell steps under "Without the tool": any `op item create|edit` or `fnox set` that takes
@@ -32,7 +34,8 @@ its value from the shell.
 - Value: `generate: { charset: "hex" | "base64url" | "alnum" | "ascii-printable", bytes | length }`
   (at least 128 bits), or `command: { argv: ["gh", "auth", "token"], cwd? }`. The user approves
   each command run. Its stdout, one trailing newline trimmed and at most 64 KiB, is the value.
-- 1Password: `target: { kind: "1password", vault, item: "<project> <purpose>", tags: ["project/<project>"] }`.
+- 1Password, when the project's fnox config has a 1Password provider:
+  `target: { kind: "1password", vault, item: "<project> <purpose>", tags: ["project/<project>"] }`.
   The tool creates the item with a concealed `credential` field. Next it records
   `fnox set NAME '<item>/credential'` with the config's only 1Password provider. If the config
   has two or more, name one with `provider`. When `vault` is not that provider's vault, the
@@ -53,7 +56,8 @@ A failure gives the stage and exit code only and is not retried. After a failed 
 
 Use these steps only when the secret-store plugin is not installed, for example in Claude Code or
 Codex. The safety op-guard refuses them, so with safety installed, install secret-store too.
-Produce the value inside the command with `$(...)` or a pipe.
+They cover fnox with the providers in the table. A project on another secret manager follows that
+manager's own documented workflow. Produce the value inside the command with `$(...)` or a pipe.
 
 | Provider | Steps |
 | --- | --- |

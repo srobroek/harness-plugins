@@ -31,14 +31,15 @@ Ask in rounds through the host's user-interaction tool when available; otherwise
    conduct contact (omit the file without one), license, public or private, GitHub or
    GitLab, self-hosted hostname, default branch `main`.
 3. Capabilities (`references/capabilities.md`), only those that apply: HTTP API contract,
-   i18n locales, accessibility-scanned routes, infrastructure (AWS CDK).
-4. Delivery: CI and hook options and release flow (`references/ci-hooks.md`; none,
-   release-please, or semantic-release per `trunk-dev-release-setup`), Renovate or Dependabot.
-5. Workflow: beads, speckit, journeys, parallel agents with worktrees
-   (`references/worktrees.md`), secrets needed?
-6. Defaults gate: take current pins and defaults (job timeout 15 min, large-file limit
-   512 KB, README install `mise install && just setup`, dev command `just dev`) or customise.
-   Ask once; do not interrogate each value.
+   i18n locales, accessibility-scanned routes, infrastructure (AWS CDK only for AWS projects).
+4. Delivery: CI and hook options and release flow (`references/ci-hooks.md`); ask which forge
+   and release tooling apply (for example GitHub Actions or GitLab CI), then offer Renovate or
+   Dependabot.
+5. Workflow: ask whether the project needs Beads, SpecKit, journeys, or parallel agents with
+   worktrees (`references/worktrees.md`); ask whether secrets are needed.
+6. Defaults gate: offer the documented defaults (job timeout 15 min, large-file limit 512 KB,
+   `mise install && just setup`, `just dev`) when they fit; otherwise match the project's
+   existing tooling or ask. Ask once; do not interrogate each value.
 
 Read the plan back (name, shape, languages, layout, tools and pinned versions, capabilities,
 files you will create) and wait for approval before writing anything. Where an answer is
@@ -49,9 +50,9 @@ in the final report instead of inventing a value.
 
 1. Directory and `git init -b main`. Add a `.gitignore` for the languages (the
    language's own init usually writes one; extend it, do not replace it).
-2. Pin tools with mise: `mise use <tool>@<version>` writes `mise.toml`. Ask the user
-   for versions or take current stable and say which. mise pins runtimes and CLI
-   tools; the language's own file pins the rest (`rust-toolchain.toml`, `go.mod`,
+2. Pin tools with the project's existing toolchain manager. For a new project, offer mise,
+   npm, Homebrew, and pipx as installation options where they apply; ask before choosing.
+   The language's own file pins runtime versions (`rust-toolchain.toml`, `go.mod`,
    `requires-python`, `package.json` `packageManager`).
 3. Add a `justfile` with the quality gate as one `just check` recipe (the commands
    from the language reference) and `just fmt` / `just test`. `check` runs no formatter in
@@ -91,13 +92,13 @@ Follow `new-project` for harness configuration, project-local plugins or package
 
 ## 5. Tracking and workflow (if chosen)
 
-- Beads: load `beads-setup` (it needs a git `origin` first; use `bd init --skip-hooks`
-  on the work laptop, see the steering file linked from the global AGENTS.md).
+- Beads: load `beads-setup` after confirming the repository does not already use another tracker.
+  If the repository's git hooks are managed by another tool, use `bd init --skip-hooks`.
 - SpecKit: `speckit-setup` (needs `bd`). Journeys: `journey-init`.
 - Release: `trunk-dev-release-setup`; release-please is the GitHub alternative.
-- CI on GitHub: `ci-github-actions` (one `ci-gate` job, pinned actions, least
-  permissions) plus the language's CI notes in its plugin skills.
-- Branch protection, the merge queue and the CI lanes on GitHub: load `delivery-git-workflow`
+- CI on the selected forge: use GitHub Actions or GitLab CI and the language's CI notes in its
+  plugin skills.
+- For GitHub-specific branch protection, merge queues and CI lanes, load `delivery-git-workflow`
   and read its `repo-setup-parallel-agents.md` reference.
 - Worktrees: `references/worktrees.md` (the `worktrunk` plugin). For Rust, never set a global
   `CARGO_TARGET_DIR` (`ops-no-global-cargo-target`); caches follow `ops-toolchain-cache-policy`.

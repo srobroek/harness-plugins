@@ -1,6 +1,7 @@
 # project-secrets
 
-Per-project secrets with [fnox](https://fnox.jdx.dev/) and 1Password, as one skill.
+Per-project secrets with [fnox](https://fnox.jdx.dev/) and its configured providers, 1Password among
+them, as one skill. A project on another secret manager follows that manager's own workflow.
 
 | Skill | When |
 | --- | --- |
@@ -8,15 +9,14 @@ Per-project secrets with [fnox](https://fnox.jdx.dev/) and 1Password, as one ski
 
 The skill gives guidance and the questions to ask the user. It covers:
 
-- a committed `fnox.toml` of references, never values
-- where a secret lives: Private, a shared `dev-shared` vault, or a `proj-<name>` vault only when
-  access differs
+- a committed `fnox.toml` of references, never values, when the project uses fnox
+- where secrets live according to the project's configured provider and access policy
 - the gitignored `fnox.local.toml` sync cache
 - running commands through `fnox exec` and mise tasks
 - the rules that keep values out of the transcript
 
-It assumes the host's global fnox config (the `op` and `age` providers, shared machine keys) and
-does not declare it again. Commands were checked against fnox 1.47.
+It assumes the host's global fnox config (for example `op` and `age` providers and shared
+machine keys) and does not declare it again. Commands were checked against fnox 1.47.
 
 Each task has its own reference in `references/`:
 
@@ -34,10 +34,10 @@ Each task has its own reference in `references/`:
 
 `store.md` writes a value the agent generates, or one a command prints, through the
 `safety_secret_store` tool of the
-[secret-store](https://github.com/srobroek/harness-plugins/tree/main/plugins/secret-store) plugin.
-Without that plugin it gives shell steps instead. The
-[safety](https://github.com/srobroek/harness-plugins/tree/main/plugins/safety) plugin's op-guard
-refuses those steps, so install secret-store next to safety.
+[secret-store](https://github.com/srobroek/harness-plugins/tree/main/plugins/secret-store) plugin,
+which supports 1Password items and fnox value stores. Without that plugin it gives shell steps
+instead. The [safety](https://github.com/srobroek/harness-plugins/tree/main/plugins/safety)
+plugin's op-guard refuses those steps, so install secret-store next to safety.
 
 The [project](https://github.com/srobroek/harness-plugins/tree/main/plugins/project) plugin's
 `project-scaffold` skill loads this skill for its secrets step.
