@@ -7,7 +7,7 @@ import plugin, { COMMAND, scaffoldPrompt } from "./index.ts"
 test("registers the skills with their references beside them", async () => {
   const fake = createFakeContext()
   const cleanup = await plugin.setup(fake.context)
-  expect([...fake.skills.keys()].sort()).toEqual(["license-picker", "project-scaffold", "project-secrets"])
+  expect([...fake.skills.keys()].sort()).toEqual(["license-picker", "project-scaffold"])
   for (const id of fake.skills.keys()) {
     const skill = fake.skills.get(id) as unknown as { path: string; content: string }
     for (const reference of skill.content.matchAll(/`(references\/[\w-]+\.md)`/g))
@@ -23,15 +23,6 @@ test("project-scaffold links every reference it names", async () => {
   const cleanup = await plugin.setup(fake.context)
   const skill = fake.skills.get("project-scaffold") as unknown as { path: string }
   for (const name of ["rust", "python", "go", "typescript", "monorepo", "plugins", "layout", "shapes", "governance", "capabilities", "justfile", "ci-hooks", "worktrees", "brownfield"])
-    expect(existsSync(join(dirname(skill.path), "references", `${name}.md`))).toBe(true)
-  await cleanup?.()
-})
-
-test("project-secrets links every reference it names", async () => {
-  const fake = createFakeContext()
-  const cleanup = await plugin.setup(fake.context)
-  const skill = fake.skills.get("project-secrets") as unknown as { path: string }
-  for (const name of ["fnox-config", "ci-github", "mcp"])
     expect(existsSync(join(dirname(skill.path), "references", `${name}.md`))).toBe(true)
   await cleanup?.()
 })

@@ -1,0 +1,11 @@
+{
+  "plugin": "project-secrets",
+  "prerequisites": [],
+  "companions": [
+    {
+      "package": "@srobroek/pi-secret-store",
+      "for": "the safety_secret_store tool that references/store.md uses to write a value without a shell",
+      "required": false
+    }
+  ]
+}

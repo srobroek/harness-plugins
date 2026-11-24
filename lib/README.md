@@ -18,6 +18,8 @@ everything except the test helpers from `@srobroek/opencode-lib`.
 | `shell-result` | `shellExit`, `shellOutput` and `appendResultText` for `execute.after` results. |
 | `patterns` | OpenCode-style wildcard rules for `permission.hook("evaluate")` gates. |
 | `skill-files` | Registers `SKILL.md` files shipped in a plugin package through `ctx.skill.transform`. |
+| `external-directories` | `external_directory` resources for directories outside the session and its repository, built as OpenCode builds them for `cd`. |
+| `fnox-config` | fnox provider types and a digest-checked config snapshot, read from every config file that applies to a directory. |
 | `testing` | `createFakeContext()`, an in-memory plugin context for `bun:test`. |
 
 The shell modules and `dep-detect` are ported from

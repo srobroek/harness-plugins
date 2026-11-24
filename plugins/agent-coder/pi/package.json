@@ -1,11 +1,28 @@
 {
-  "name": "@srobroek/agent-coder",
+  "name": "@srobroek/pi-agent-coder",
   "version": "0.12.2",
   "description": "coder subagent for any code development task (implement, fix, debug, test, build, profile, upgrade deps) with only coding tools and skills.",
   "keywords": [
     "pi-package"
   ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/agent-coder/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "agents"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "pi": {
+    "extensions": [],
     "subagents": {
       "agents": [
         "./agents"

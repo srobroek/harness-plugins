@@ -450,7 +450,8 @@
           ]
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "piName": "pi-aws-guidance"
     },
     {
       "name": "beads",
@@ -518,7 +519,8 @@
           "mcp": []
         }
       },
-      "scope": "project"
+      "scope": "project",
+      "piName": "pi-beads-enforcer"
     },
     {
       "name": "build",
@@ -565,7 +567,8 @@
           "mcp": []
         }
       },
-      "scope": "project"
+      "scope": "project",
+      "piName": "pi-external-repo-worker"
     },
     {
       "name": "chezmoi",
@@ -614,7 +617,8 @@
           "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "piName": "pi-chezmoi-editor"
     },
     {
       "name": "claude-compat",
@@ -1091,7 +1095,8 @@
           "mcp": []
         }
       },
-      "scope": "project"
+      "scope": "project",
+      "piName": "pi-user-journeys"
     },
     {
       "name": "lang-go",
@@ -1513,7 +1518,8 @@
           "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "piName": "pi-agent-modes"
     },
     {
       "name": "parley",
@@ -1547,7 +1553,8 @@
           "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "piName": "pi-parley-rounds"
     },
     {
       "name": "plugin-audit",
@@ -1575,14 +1582,13 @@
     {
       "name": "project",
       "version": "0.12.1",
-      "description": "Project lifecycle: scaffold a project with /new-project, set up fnox and 1Password secrets, and pick an OSI-approved license.",
+      "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
       "category": "productivity",
       "harnesses": {
         "opencode": {
           "skills": [
             "license-picker",
-            "project-scaffold",
-            "project-secrets"
+            "project-scaffold"
           ],
           "agents": [],
           "commands": [],
@@ -1597,8 +1603,7 @@
         "claude": {
           "skills": [
             "license-picker",
-            "project-scaffold",
-            "project-secrets"
+            "project-scaffold"
           ],
           "agents": [],
           "commands": [],
@@ -1611,8 +1616,7 @@
         "omp": {
           "skills": [
             "license-picker",
-            "project-scaffold",
-            "project-secrets"
+            "project-scaffold"
           ],
           "agents": [],
           "commands": [],
@@ -1625,8 +1629,7 @@
         "pi": {
           "skills": [
             "license-picker",
-            "project-scaffold",
-            "project-secrets"
+            "project-scaffold"
           ],
           "agents": [],
           "commands": [
@@ -1639,7 +1642,80 @@
           "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "companions": [
+        {
+          "package": "@srobroek/pi-project-secrets",
+          "for": "the project-secrets skill that the scaffold's secrets step loads",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "project-secrets",
+      "version": "0.1.0",
+      "description": "Per-project secrets with fnox and 1Password: store, use, inspect and rotate them with no value in the transcript.",
+      "category": "productivity",
+      "harnesses": {
+        "opencode": {
+          "skills": [
+            "project-secrets"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "claude": {
+          "skills": [
+            "project-secrets"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "omp": {
+          "skills": [
+            "project-secrets"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "project-secrets"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
+        }
+      },
+      "scope": "global",
+      "companions": [
+        {
+          "package": "@srobroek/pi-secret-store",
+          "for": "the safety_secret_store tool that references/store.md uses to write a value without a shell",
+          "required": false
+        }
+      ]
     },
     {
       "name": "quality",
@@ -1707,7 +1783,8 @@
           "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "piName": "pi-code-quality"
     },
     {
       "name": "repomix",
@@ -1761,7 +1838,7 @@
     {
       "name": "safety",
       "version": "0.14.1",
-      "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help, redaction of secret environment values from tool output, and a tool that stores a secret without a shell.",
+      "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help and redaction of secret environment values from tool output.",
       "category": "development",
       "harnesses": {
         "opencode": {
@@ -1785,6 +1862,46 @@
           "tools": [],
           "extensions": [
             "safety"
+          ],
+          "mcp": []
+        }
+      },
+      "scope": "global",
+      "companions": [
+        {
+          "package": "@srobroek/pi-secret-store",
+          "for": "the safety_secret_store tool that the op-guard's value refusals point to",
+          "required": false
+        }
+      ]
+    },
+    {
+      "name": "secret-store",
+      "version": "0.1.0",
+      "description": "A tool that stores a new secret in 1Password or a fnox store without a shell, so the value stays out of commands, logs and the transcript.",
+      "category": "development",
+      "harnesses": {
+        "opencode": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "index"
+          ],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "secret-store"
           ],
           "mcp": []
         }
@@ -2077,7 +2194,8 @@
           "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "piName": "pi-trunk-dev-policy"
     },
     {
       "name": "whats-new",
@@ -2170,7 +2288,8 @@
           "mcp": []
         }
       },
-      "scope": "project"
+      "scope": "project",
+      "piName": "pi-worktrunk-merge-policy"
     }
   ]
 }

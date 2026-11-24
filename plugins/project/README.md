@@ -5,7 +5,6 @@ picking a license.
 
 | Skill | When |
 | --- | --- |
-| `project-secrets` | Secrets, API keys, `.env`, fnox, 1Password, CI secrets or AWS credentials for a project |
 | `project-scaffold` | A new project, "scaffold", "bootstrap", "init repo"; also run by `/new-project` |
 | `license-picker` | "What license should I use", a new repository without one, relicensing, or a quick question about license mechanics, per-file headers or CLAs |
 
@@ -30,19 +29,11 @@ them, and asks where those are silent. It also covers mise pinning, a `just chec
 `docs/` and `AGENTS.md`, project `opencode.jsonc`, hooks, a first commit and a
 verification checklist. `references/plugins.md` shows how to list every plugin in this
 repository (`find_tools_scan`, the GitHub API, the marketplace file) and add the relevant
-ones to the project. The secrets step loads `project-secrets`.
+ones to the project. The secrets step loads the `project-secrets` skill, which ships in its own
+[project-secrets](https://github.com/srobroek/harness-plugins/tree/main/plugins/project-secrets)
+plugin. Install that plugin next to this one for the step to find it.
 
-## `project-secrets`
-
-Per-project secrets with [fnox](https://fnox.jdx.dev/) and 1Password. Guidance and the
-questions to ask, not a script: a committed `fnox.toml` of references, vault placement
-(Private, a shared `dev-shared` vault, or a `proj-<name>` vault only when access differs),
-the gitignored `fnox.local.toml` sync cache, `fnox exec` and mise tasks to consume, and the
-rules that keep values out of the transcript. It assumes the host's global fnox config
-(providers `op` and `age`, shared machine keys) and does not redeclare it. References:
-`fnox-config.md`, `ci-github.md` (service account or `fnox push`), `aws-leases.md` (Identity
-Center, `aws-sts` and `command` leases for personal AWS accounts) and `mcp.md` (`fnox mcp`,
-off by default). Commands were checked against fnox 1.47.
+## `license-picker`
 
 `license-picker` asks structured questions about the project, the threat model and
 commercial goals, recommends an OSI-approved license from its decision matrix,

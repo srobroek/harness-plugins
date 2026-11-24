@@ -1,10 +1,29 @@
 {
-  "name": "@srobroek/code-challenge",
+  "name": "@srobroek/pi-code-challenge",
   "version": "2.0.1",
   "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
   "keywords": [
     "pi-package"
   ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/code-challenge/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "agents",
+    "extensions",
+    "formulas",
+    "skills"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "pi": {
     "extensions": [
       "./extensions/index.js"

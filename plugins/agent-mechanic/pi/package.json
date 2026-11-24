@@ -1,11 +1,28 @@
 {
-  "name": "@srobroek/agent-mechanic",
+  "name": "@srobroek/pi-agent-mechanic",
   "version": "0.8.1",
   "description": "mechanic subagent: cheap, exact mechanical edits (renames, bulk edits, formatting, moving code) that run the given check.",
   "keywords": [
     "pi-package"
   ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/agent-mechanic/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "agents"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "pi": {
+    "extensions": [],
     "subagents": {
       "agents": [
         "./agents"

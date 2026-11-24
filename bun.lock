@@ -18,7 +18,7 @@
         "@semantic-release/exec": "7.1.0",
         "@semantic-release/git": "11.0.1",
         "@semantic-release/github": "12.0.11",
-        "@srobroek/harness-kit": "1.8.0",
+        "@srobroek/harness-kit": "1.9.0",
         "@types/bun": "1.4.5",
         "@types/spdx-expression-parse": "4.0.0",
         "@visulima/yaml": "2.0.0",
@@ -45,35 +45,35 @@
     },
     "plugins/agent-coder": {
       "name": "agent-coder",
-      "version": "0.11.1",
+      "version": "0.12.1",
     },
     "plugins/agent-efficiency": {
       "name": "agent-efficiency",
-      "version": "0.14.2",
+      "version": "0.14.3",
     },
     "plugins/agent-mechanic": {
       "name": "agent-mechanic",
-      "version": "0.7.1",
+      "version": "0.8.1",
     },
     "plugins/agent-researcher": {
       "name": "agent-researcher",
-      "version": "0.9.0",
+      "version": "0.10.1",
     },
     "plugins/agent-reviewer": {
       "name": "agent-reviewer",
-      "version": "0.12.0",
+      "version": "0.13.1",
     },
     "plugins/agent-seance": {
       "name": "agent-seance",
-      "version": "0.8.1",
+      "version": "0.8.2",
     },
     "plugins/architecture": {
       "name": "architecture",
-      "version": "0.10.0",
+      "version": "0.11.1",
     },
     "plugins/ast-grep": {
       "name": "ast-grep",
-      "version": "1.3.1",
+      "version": "1.3.2",
     },
     "plugins/autopilot": {
       "name": "autopilot",
@@ -81,43 +81,43 @@
     },
     "plugins/aws": {
       "name": "aws",
-      "version": "0.8.1",
+      "version": "0.9.1",
     },
     "plugins/beads": {
       "name": "beads",
-      "version": "0.8.10",
+      "version": "0.9.0",
     },
     "plugins/build": {
       "name": "build",
-      "version": "0.9.0",
+      "version": "0.10.1",
     },
     "plugins/chezmoi": {
       "name": "chezmoi",
-      "version": "0.6.0",
+      "version": "0.7.0",
     },
     "plugins/claude-compat": {
       "name": "claude-compat",
-      "version": "0.5.1",
+      "version": "0.5.2",
     },
     "plugins/code-challenge": {
       "name": "code-challenge",
-      "version": "2.0.0",
+      "version": "2.0.1",
     },
     "plugins/debate": {
       "name": "debate",
-      "version": "0.7.1",
+      "version": "0.7.2",
     },
     "plugins/delivery": {
       "name": "delivery",
-      "version": "0.12.1",
+      "version": "0.12.2",
     },
     "plugins/dep-update": {
       "name": "dep-update",
-      "version": "0.6.1",
+      "version": "0.7.0",
     },
     "plugins/design": {
       "name": "design",
-      "version": "0.10.1",
+      "version": "0.10.2",
     },
     "plugins/docs": {
       "name": "docs",
@@ -125,31 +125,31 @@
     },
     "plugins/eli5": {
       "name": "eli5",
-      "version": "0.7.1",
+      "version": "0.7.2",
     },
     "plugins/find-tools": {
       "name": "find-tools",
-      "version": "0.4.0",
+      "version": "0.5.0",
     },
     "plugins/journeys": {
       "name": "journeys",
-      "version": "0.5.1",
+      "version": "0.6.0",
     },
     "plugins/lang-go": {
       "name": "lang-go",
-      "version": "0.8.1",
+      "version": "0.9.1",
     },
     "plugins/lang-python": {
       "name": "lang-python",
-      "version": "0.8.1",
+      "version": "0.9.1",
     },
     "plugins/lang-rust": {
       "name": "lang-rust",
-      "version": "0.8.1",
+      "version": "0.9.1",
     },
     "plugins/lang-typescript": {
       "name": "lang-typescript",
-      "version": "0.9.1",
+      "version": "0.10.1",
     },
     "plugins/lsp": {
       "name": "lsp",
@@ -157,15 +157,15 @@
     },
     "plugins/model-roles": {
       "name": "model-roles",
-      "version": "0.11.1",
+      "version": "0.11.2",
     },
     "plugins/modes": {
       "name": "modes",
-      "version": "1.2.1",
+      "version": "1.3.1",
     },
     "plugins/parley": {
       "name": "parley",
-      "version": "0.4.2",
+      "version": "0.5.0",
     },
     "plugins/plugin-audit": {
       "name": "plugin-audit",
@@ -173,19 +173,27 @@
     },
     "plugins/project": {
       "name": "project",
-      "version": "0.11.1",
+      "version": "0.12.1",
+    },
+    "plugins/project-secrets": {
+      "name": "project-secrets",
+      "version": "0.1.0",
     },
     "plugins/quality": {
       "name": "quality",
-      "version": "0.14.1",
+      "version": "0.15.1",
     },
     "plugins/repomix": {
       "name": "repomix",
-      "version": "0.5.1",
+      "version": "0.6.1",
     },
     "plugins/safety": {
       "name": "safety",
-      "version": "0.13.1",
+      "version": "0.14.1",
+    },
+    "plugins/secret-store": {
+      "name": "secret-store",
+      "version": "0.1.0",
     },
     "plugins/session": {
       "name": "session",
@@ -193,7 +201,7 @@
     },
     "plugins/speckit": {
       "name": "speckit",
-      "version": "0.11.1",
+      "version": "0.11.2",
     },
     "plugins/statusline": {
       "name": "statusline",
@@ -205,19 +213,19 @@
     },
     "plugins/toolchain": {
       "name": "toolchain",
-      "version": "0.9.1",
+      "version": "0.10.1",
     },
     "plugins/trunk-dev": {
       "name": "trunk-dev",
-      "version": "0.11.0",
+      "version": "0.12.1",
     },
     "plugins/whats-new": {
       "name": "whats-new",
-      "version": "0.4.0",
+      "version": "0.5.0",
     },
     "plugins/worktrunk": {
       "name": "worktrunk",
-      "version": "0.6.1",
+      "version": "0.7.0",
     },
   },
   "overrides": {
@@ -680,7 +688,7 @@
 
     "@smithy/util-utf8": ["@smithy/util-utf8@4.2.2", "", { "dependencies": { "@smithy/util-buffer-from": "^4.2.2", "tslib": "^2.6.2" } }, "sha512-75MeYpjdWRe8M5E3AW0O4Cx3UadweS+cwdXjwYGBW5h/gxxnbeZ877sLPX/ZJA9GVTlL/qG0dXP29JWFCD1Ayw=="],
 
-    "@srobroek/harness-kit": ["@srobroek/harness-kit@1.8.0", "", { "peerDependencies": { "@anolilab/multi-semantic-release": "*", "@anthropic-ai/claude-code": "*", "@semantic-release/changelog": "*", "@semantic-release/exec": "*", "@semantic-release/git": "*", "@visulima/yaml": "*", "conventional-changelog-conventionalcommits": "*", "semantic-release": "*" }, "optionalPeers": ["@anolilab/multi-semantic-release", "@anthropic-ai/claude-code", "@semantic-release/changelog", "@semantic-release/exec", "@semantic-release/git", "@visulima/yaml", "conventional-changelog-conventionalcommits", "semantic-release"], "bin": { "harness-kit": "src/cli.ts" } }, "sha512-kEWcvv1tDHWnY6fYLDPc6dUjITU9gpeCucBv4UMAan3wgpCDKJuLKrVQ6OnaSM8oNHdJ5zDc8rwV3+gEn7Zjrw=="],
+    "@srobroek/harness-kit": ["@srobroek/harness-kit@1.9.0", "", { "peerDependencies": { "@anolilab/multi-semantic-release": "*", "@anthropic-ai/claude-code": "*", "@semantic-release/changelog": "*", "@semantic-release/exec": "*", "@semantic-release/git": "*", "@visulima/yaml": "*", "conventional-changelog-conventionalcommits": "*", "semantic-release": "*" }, "optionalPeers": ["@anolilab/multi-semantic-release", "@anthropic-ai/claude-code", "@semantic-release/changelog", "@semantic-release/exec", "@semantic-release/git", "@visulima/yaml", "conventional-changelog-conventionalcommits", "semantic-release"], "bin": { "harness-kit": "src/cli.ts" } }, "sha512-VYZVvm6qaRy2hkXkcIdtfbqd0vr+7oICbQ3yh3Cwgm46KFXiAbAgRF2p6i4WPKeduOK0bYyhgH7NBZQV/zhczQ=="],
 
     "@srobroek/opencode-lib": ["@srobroek/opencode-lib@workspace:lib"],
 
@@ -1374,6 +1382,8 @@
 
     "project": ["project@workspace:plugins/project"],
 
+    "project-secrets": ["project-secrets@workspace:plugins/project-secrets"],
+
     "promise-all-reject-late": ["promise-all-reject-late@1.0.1", "", {}, "sha512-vuf0Lf0lOxyQREH7GDIOUMLS7kz+gs8i6B+Yi8dC68a2sychGrHTJYghMBD6k7eUcH0H5P73EckCA48xijWqXw=="],
 
     "promise-call-limit": ["promise-call-limit@3.0.2", "", {}, "sha512-mRPQO2T1QQVw11E7+UdCJu7S61eJVWknzml9sC1heAdj1jxl0fWMBypIt9ZOcLFf8FkG995ZD7RnVk7HH72fZw=="],
@@ -1433,6 +1443,8 @@
     "safer-buffer": ["safer-buffer@2.1.2", "", {}, "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg=="],
 
     "safety": ["safety@workspace:plugins/safety"],
+
+    "secret-store": ["secret-store@workspace:plugins/secret-store"],
 
     "semantic-release": ["semantic-release@25.0.9", "", { "dependencies": { "@semantic-release/commit-analyzer": "^13.0.1", "@semantic-release/error": "^4.0.0", "@semantic-release/github": "^12.0.0", "@semantic-release/npm": "^13.1.1", "@semantic-release/release-notes-generator": "^14.1.0", "aggregate-error": "^5.0.0", "cosmiconfig": "^9.0.0", "debug": "^4.0.0", "env-ci": "^11.0.0", "execa": "^9.0.0", "figures": "^6.0.0", "find-versions": "^6.0.0", "get-stream": "^6.0.0", "git-log-parser": "^1.2.0", "hook-std": "^4.0.0", "hosted-git-info": "^9.0.0", "import-from-esm": "^2.0.0", "lodash-es": "^4.17.21", "marked": "^15.0.0", "marked-terminal": "^7.3.0", "micromatch": "^4.0.2", "p-each-series": "^3.0.0", "p-reduce": "^3.0.0", "read-package-up": "^12.0.0", "resolve-from": "^5.0.0", "semver": "^7.3.2", "signale": "^1.2.1", "yargs": "^18.0.0" }, "bin": "bin/semantic-release.js" }, "sha512-bxve7csK0/Txr++CkfrmV+X1r4jqiSOw2WsSad9E2S68R+ZfLBwDn8IceM8WfiOmKQIHgsQc1cNA8Dzg7U75pg=="],
 

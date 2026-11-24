@@ -1,0 +1,12 @@
+{
+  "name": "project-secrets",
+  "description": "Per-project secrets with fnox and 1Password: store, use, inspect and rotate them with no value in the transcript.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Sjors Robroek",
+    "url": "https://github.com/srobroek"
+  },
+  "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/project-secrets",
+  "repository": "https://github.com/srobroek/harness-plugins",
+  "license": "Apache-2.0"
+}

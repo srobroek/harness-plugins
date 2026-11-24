@@ -136,11 +136,20 @@
     },
     {
       "name": "project",
-      "description": "Project lifecycle: scaffold a project with /new-project, set up fnox and 1Password secrets, and pick an OSI-approved license.",
+      "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
       "source": "./plugins/project/claude",
       "version": "0.12.1",
       "category": "productivity",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/project",
+      "repository": "https://github.com/srobroek/harness-plugins"
+    },
+    {
+      "name": "project-secrets",
+      "description": "Per-project secrets with fnox and 1Password: store, use, inspect and rotate them with no value in the transcript.",
+      "source": "./plugins/project-secrets/claude",
+      "version": "0.1.0",
+      "category": "productivity",
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/project-secrets",
       "repository": "https://github.com/srobroek/harness-plugins"
     },
     {

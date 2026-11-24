@@ -12,6 +12,7 @@
       "omp"
     ],
     "scope": "global",
+    "piName": "pi-agent-modes",
     "entries": {
       "index": "index"
     }

@@ -1,10 +1,26 @@
 {
-  "name": "@srobroek/parley",
+  "name": "@srobroek/pi-parley-rounds",
   "version": "0.5.0",
   "description": "Ask the user rounds of typed questions in a TUI panel, with recommended answers, notes and deferrals.",
   "keywords": [
     "pi-package"
   ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/parley/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "extensions"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "pi": {
     "extensions": [
       "./extensions/parley.js"

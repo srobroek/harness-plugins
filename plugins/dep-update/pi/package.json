@@ -1,10 +1,30 @@
 {
-  "name": "@srobroek/dep-update",
+  "name": "@srobroek/pi-dep-update",
   "version": "0.7.0",
   "description": "Classify dependency updates by semver safety and apply confirmed patch and minor bumps.",
   "keywords": [
     "pi-package"
   ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/dep-update/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "extensions",
+    "skills"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "peerDependencies": {
+    "typebox": "*"
+  },
   "pi": {
     "extensions": [
       "./extensions/index.js"

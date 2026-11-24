@@ -8,9 +8,10 @@
 import { readFileSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
 import { shellWriteTargets } from "@srobroek/opencode-lib"
+import type { ProviderTypes } from "@srobroek/opencode-lib/fnox-config"
 import { hasAttribution } from "./attribution.ts"
 import { historyRewrite } from "./history-rewrite.ts"
-import { CHECK_FAILED_MESSAGE, NESTING_MESSAGE, OP_MESSAGE, opGuard, type ProviderTypes } from "./op-guard.ts"
+import { CHECK_FAILED_MESSAGE, NESTING_MESSAGE, OP_MESSAGE, opGuard } from "./op-guard.ts"
 import { gitRemoteResolver, type PushViaConfig, pushVia, type RemoteResolver, repositorySelected } from "./push-via.ts"
 import {
   base,

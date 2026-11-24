@@ -12,6 +12,7 @@
       "pi"
     ],
     "scope": "global",
+    "piName": "pi-parley-rounds",
     "entries": {
       "index": "index",
       "tui": "tui"

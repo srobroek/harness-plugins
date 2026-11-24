@@ -1,0 +1,30 @@
+{
+  "name": "project-secrets",
+  "version": "0.1.0",
+  "description": "Per-project secrets with fnox and 1Password: store, use, inspect and rotate them with no value in the transcript.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "Per-project secrets with fnox and 1Password: store, use, inspect and rotate them with no value in the transcript.",
+    "category": "productivity",
+    "harnesses": [
+      "opencode",
+      "claude",
+      "omp",
+      "pi"
+    ],
+    "scope": "global",
+    "entries": {
+      "index": "index"
+    },
+    "companions": [
+      {
+        "package": "@srobroek/pi-secret-store",
+        "for": "the safety_secret_store tool that references/store.md uses to write a value without a shell"
+      }
+    ],
+    "claude": {
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/project-secrets"
+    }
+  }
+}

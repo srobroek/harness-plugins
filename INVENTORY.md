@@ -36,9 +36,11 @@
 | parley | 0.5.0 | development | global | opencode, pi |
 | plugin-audit | 0.2.0 | development | project | opencode |
 | project | 0.12.1 | productivity | global | opencode, claude, omp, pi |
+| project-secrets | 0.1.0 | productivity | global | opencode, claude, omp, pi |
 | quality | 0.15.1 | development | global | opencode, claude, pi |
 | repomix | 0.6.1 | development | global | opencode, claude, pi |
 | safety | 0.14.1 | development | global | opencode, pi |
+| secret-store | 0.1.0 | development | global | opencode, pi |
 | session | 0.4.1 | development | global | opencode |
 | speckit | 0.11.2 | development | project | opencode, claude |
 | statusline | 0.4.0 | development | global | opencode |

@@ -13,6 +13,7 @@
       "pi"
     ],
     "scope": "project",
+    "piName": "pi-external-repo-worker",
     "signals": [
       "work in a repository outside the current project"
     ],
