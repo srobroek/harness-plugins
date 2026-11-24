@@ -152,7 +152,7 @@
     },
     {
       "name": "agent-reviewer",
-      "version": "0.13.4",
+      "version": "0.14.0",
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "category": "development",
       "harnesses": {
@@ -1899,7 +1899,7 @@
     },
     {
       "name": "quality",
-      "version": "0.15.3",
+      "version": "0.16.0",
       "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
       "category": "development",
       "harnesses": {
@@ -2017,7 +2017,7 @@
     },
     {
       "name": "safety",
-      "version": "0.14.4",
+      "version": "0.14.5",
       "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help and redaction of secret environment values from tool output.",
       "category": "development",
       "harnesses": {

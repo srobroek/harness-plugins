@@ -1,3 +1,9 @@
+## agent-reviewer [0.14.0](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.13.4...agent-reviewer--v0.14.0) (2026-11-24)
+
+### Features
+
+* **agent-reviewer:** code-reviewer and security-auditor run the project's tests ([#172](https://github.com/srobroek/harness-plugins/issues/172)) ([0d2693e](https://github.com/srobroek/harness-plugins/commit/0d2693eba31b4a1b48f4a2f6726a1170a948e503))
+
 ## agent-reviewer [0.13.4](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.13.3...agent-reviewer--v0.13.4) (2026-11-24)
 
 ## agent-reviewer [0.13.3](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.13.2...agent-reviewer--v0.13.3) (2026-11-24)
