@@ -11,7 +11,7 @@
 | agent-seance | 0.8.2 | development | global | opencode |
 | architecture | 0.11.2 | development | global | opencode, claude, omp, pi |
 | ast-grep | 1.3.2 | development | global | opencode, claude |
-| autopilot | 1.3.8 | development | global | opencode, pi |
+| autopilot | 1.4.0 | development | global | opencode, pi |
 | aws | 0.9.1 | development | global | opencode, claude, pi |
 | beads | 0.9.1 | development | project | opencode, claude, pi |
 | build | 0.10.1 | development | project | opencode, omp, pi |
