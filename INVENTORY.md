@@ -47,7 +47,7 @@
 | subagent-worktree | 0.9.2 | development | global | opencode |
 | toolchain | 0.10.4 | development | global | opencode, claude, omp, pi |
 | trunk-dev | 0.12.3 | development | global | opencode, claude, pi |
-| whats-new | 0.5.0 | development | global | opencode, pi |
+| whats-new | 0.5.1 | development | global | opencode, pi |
 | worktrunk | 0.7.1 | development | project | opencode, claude, pi |
 
 Each plugin's own `INVENTORY.md` lists what it ships per harness.
