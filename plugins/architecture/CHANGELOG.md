@@ -1,3 +1,9 @@
+## architecture [0.12.0](https://github.com/srobroek/harness-plugins/compare/architecture--v0.11.4...architecture--v0.12.0) (2026-11-24)
+
+### Features
+
+* **agent-reviewer:** grant Pi subagents tools ([159ad02](https://github.com/srobroek/harness-plugins/commit/159ad02eac3b9ba206d568a93877c2dedd5e9036))
+
 ## architecture [0.11.4](https://github.com/srobroek/harness-plugins/compare/architecture--v0.11.3...architecture--v0.11.4) (2026-11-24)
 
 ## architecture [0.11.3](https://github.com/srobroek/harness-plugins/compare/architecture--v0.11.2...architecture--v0.11.3) (2026-11-24)
