@@ -8,11 +8,30 @@
     "description": "Unattended runs: /autopilot arms a no-questions session with a journal, a 4-minute tick and stop conditions.",
     "category": "development",
     "harnesses": [
-      "opencode"
+      "opencode",
+      "pi"
     ],
     "scope": "global",
     "entries": {
       "index": "index"
-    }
+    },
+    "piEntries": {
+      "autopilot": "autopilot"
+    },
+    "companions": [
+      {
+        "package": "pi-subagents",
+        "for": "the subagent tool that runs the run's write lanes and reviewers",
+        "required": true
+      },
+      {
+        "package": "@srobroek/pi-parley-rounds",
+        "for": "parley_ask, which asks the setup round's questions in one panel"
+      },
+      {
+        "package": "@srobroek/pi-beads-enforcer",
+        "for": "the bd gates and per-session actors the lanes' bead claims rely on"
+      }
+    ]
   }
 }

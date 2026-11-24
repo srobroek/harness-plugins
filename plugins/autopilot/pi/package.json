@@ -1,0 +1,51 @@
+{
+  "name": "@srobroek/pi-autopilot",
+  "version": "1.3.8",
+  "description": "Unattended runs: /autopilot arms a no-questions session with a journal, a 4-minute tick and stop conditions.",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/autopilot/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "_kit",
+    "extensions",
+    "skills"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "peerDependencies": {
+    "@srobroek/pi-beads-enforcer": "*",
+    "@srobroek/pi-parley-rounds": "*",
+    "pi-subagents": "*"
+  },
+  "peerDependenciesMeta": {
+    "@srobroek/pi-beads-enforcer": {
+      "optional": true
+    },
+    "@srobroek/pi-parley-rounds": {
+      "optional": true
+    },
+    "pi-subagents": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/autopilot.js",
+      "./_kit/prereqs.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  }
+}

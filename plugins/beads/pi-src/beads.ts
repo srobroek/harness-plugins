@@ -15,6 +15,7 @@ import { type ExtensionAPI, type ExtensionContext, getAgentDir, type ToolCallEve
 import { isMutatingBdCommand } from "@srobroek/opencode-lib/bd-actor-gate"
 import { embeddedWriteRunner, resolveBdTargets } from "@srobroek/opencode-lib/bd-embedded-write-lock"
 import { sessionPinFor } from "@srobroek/opencode-lib/beads-store"
+import { readSessionHeader, type SessionHeaderView } from "@srobroek/opencode-lib/pi-session-header"
 import { readGitWrappers } from "@srobroek/opencode-lib/git-wrappers"
 import { loadPiOptionsFile } from "@srobroek/opencode-lib/pi-options"
 import { Type } from "typebox"
@@ -30,7 +31,7 @@ import {
   type WorkRefusal,
   writeClaimRefusal,
 } from "../shared/claim-gate.ts"
-import { isSubagentChild, piActor, readSessionHeader, type SessionHeaderView, sessionLineage } from "../shared/pi-session.ts"
+import { isSubagentChild, piActor, sessionLineage } from "../shared/pi-session.ts"
 import { APPLY_NOTE, optionsError, type PreflightDeps, runPreflight, systemDeps } from "../shared/preflight.ts"
 
 /** How long a store pin lookup (a `git rev-parse`) is reused. */
