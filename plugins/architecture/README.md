@@ -39,6 +39,11 @@ The agent pins no model. It declares the `strong` model tier through the
 set `agent.architect.model` in your config to pin one.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-architecture
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/architecture/opencode'
