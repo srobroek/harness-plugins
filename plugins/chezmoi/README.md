@@ -7,6 +7,11 @@ path to edit instead (`chezmoi source-path <target>`).
 Ported from the omp-plugins `chezmoi` plugin.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-chezmoi-editor
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/chezmoi/opencode'
