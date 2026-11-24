@@ -465,6 +465,21 @@
             "aws-pricing"
           ]
         },
+        "omp": {
+          "skills": [
+            "aws-guidance"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": [
+            "aws-mcp",
+            "aws-pricing"
+          ]
+        },
         "pi": {
           "skills": [
             "aws-guidance"
@@ -949,7 +964,36 @@
           "extensions": [
             "index"
           ],
-          "mcp": []
+          "mcp": [
+            "context7",
+            "openaiDeveloperDocs"
+          ]
+        },
+        "omp": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": [
+            "context7",
+            "openaiDeveloperDocs"
+          ]
+        },
+        "pi": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": [
+            "context7",
+            "openaiDeveloperDocs"
+          ]
         }
       },
       "scope": "global"

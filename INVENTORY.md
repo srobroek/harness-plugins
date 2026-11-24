@@ -12,7 +12,7 @@
 | architecture | 0.11.3 | development | global | opencode, claude, omp, pi |
 | ast-grep | 1.3.2 | development | global | opencode, claude |
 | autopilot | 1.4.0 | development | global | opencode, pi |
-| aws | 0.9.2 | development | global | opencode, claude, pi |
+| aws | 0.9.2 | development | global | opencode, claude, omp, pi |
 | beads | 0.9.2 | development | project | opencode, claude, pi |
 | build | 0.10.2 | development | project | opencode, omp, pi |
 | chezmoi | 0.7.1 | development | global | opencode, claude, pi |
@@ -22,7 +22,7 @@
 | delivery | 0.12.4 | development | global | opencode |
 | dep-update | 0.7.0 | development | global | opencode, pi |
 | design | 0.10.3 | development | project | opencode, claude |
-| docs | 0.4.0 | development | global | opencode |
+| docs | 0.4.0 | development | global | opencode, omp, pi |
 | eli5 | 0.7.3 | productivity | global | opencode, claude, omp, pi |
 | find-tools | 0.6.0 | development | global | opencode, omp, pi |
 | journeys | 0.6.0 | development | project | opencode, claude, pi |
