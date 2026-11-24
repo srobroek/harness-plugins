@@ -61,6 +61,11 @@ triggers are gone.
   the quality plugin; `chezmoi-editor` is not in this repository).
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-toolchain
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/toolchain/opencode'
