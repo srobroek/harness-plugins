@@ -1,3 +1,5 @@
+## project-secrets [1.0.3](https://github.com/srobroek/harness-plugins/compare/project-secrets--v1.0.2...project-secrets--v1.0.3) (2026-11-24)
+
 ## project-secrets [1.0.2](https://github.com/srobroek/harness-plugins/compare/project-secrets--v1.0.1...project-secrets--v1.0.2) (2026-11-24)
 
 ### Bug Fixes
