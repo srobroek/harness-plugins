@@ -7,6 +7,11 @@ PyPI and npm; for Rust and Go it only advises.
 Ported from the omp-plugins `dep-update` plugin.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-dep-update
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/dep-update/opencode'
