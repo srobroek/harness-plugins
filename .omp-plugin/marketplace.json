@@ -26,7 +26,7 @@
       "name": "agent-reviewer",
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "source": "./plugins/agent-reviewer/omp",
-      "version": "0.13.2",
+      "version": "0.13.3",
       "category": "development"
     },
     {
