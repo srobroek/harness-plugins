@@ -15,9 +15,10 @@ const RESOURCE_FIELD = {
   Agent: "subagent_type"
 };
 const glob = (pattern) => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*")}$`, "s");
-const ask = (reason) => ({
-  hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: reason }
+const decide = (permissionDecision, reason) => ({
+  hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision, permissionDecisionReason: reason }
 });
+const ask = (reason) => decide("ask", reason);
 export function guardDecision(input, config) {
   const agent = input.agent_type;
   if (!agent || !input.tool_name)
@@ -35,6 +36,8 @@ export function guardDecision(input, config) {
     const match = guard.rules.findLast((rule) => glob(rule.resource).test(target));
     if (match?.effect === "ask")
       return ask(`${id} must ask before ${input.tool_name} on ${target} (matches ${match.resource})`);
+    if (match?.effect === "deny")
+      return decide("deny", `${id} may not ${input.tool_name} ${target} (matches ${match.resource})`);
   }
   return;
 }

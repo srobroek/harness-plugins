@@ -37,6 +37,12 @@ describe("guardDecision", () => {
     expect(guardDecision(call(file), config)).toBeUndefined()
   })
 
+  test("denies, without asking, a path a deny rule matches", () => {
+    const deny = { "code-reviewer": [{ tools: ["Read"], rules: [{ resource: "*.env", effect: "deny" as const }, { resource: "*.env.example", effect: "allow" as const }] }] }
+    expect(guardDecision(call("/repo/.env"), deny)?.hookSpecificOutput.permissionDecision).toBe("deny")
+    expect(guardDecision(call("/repo/.env.example"), deny)).toBeUndefined()
+  })
+
   test("applies to a plugin-scoped agent type", () => {
     expect(guardDecision(call("/r/.env", "agent-reviewer:code-reviewer"), config)?.hookSpecificOutput.permissionDecision).toBe("ask")
   })

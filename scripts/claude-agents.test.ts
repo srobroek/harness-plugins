@@ -73,7 +73,7 @@ describe("translateAgent", () => {
     )
   })
 
-  test("a restricted deny after an allow removes the whole tool", () => {
+  test("a restricted shell deny after an allow still removes Bash", () => {
     const out = translateAgent(
       "a",
       agent([
@@ -84,6 +84,30 @@ describe("translateAgent", () => {
       ]),
     )
     expect(frontmatter(out.contents).tools).toBe("Read")
+    expect(out.guards).toEqual([])
+  })
+
+  test("carries a restricted deny on a kept tool as a guard instead of removing the tool", () => {
+    const out = translateAgent(
+      "a",
+      agent([
+        ["*", "*", "deny"],
+        ["read", "*", "allow"],
+        ["read", "*.env", "deny"],
+        ["read", "*.env.example", "allow"],
+      ]),
+    )
+    expect(frontmatter(out.contents).tools).toBe("Read")
+    expect(out.dropped).toEqual([])
+    expect(out.guards).toEqual([
+      {
+        tools: ["Read"],
+        rules: [
+          { resource: "*.env", effect: "deny" },
+          { resource: "*.env.example", effect: "allow" },
+        ],
+      },
+    ])
   })
 
   test("drops an unrestricted ask, unmapped actions and restricted asks off a tool the agent lacks, with a warning each", () => {

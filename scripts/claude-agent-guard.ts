@@ -1,4 +1,4 @@
-// PreToolUse hook that carries an OpenCode agent's resource-restricted `ask` rules into Claude Code.
+// PreToolUse hook that carries an OpenCode agent's resource-restricted `ask` and `deny` rules into Claude Code.
 //
 // A plugin subagent's own `hooks:` are ignored by Claude Code, so scripts/build.ts
 // ships this file with each plugin that exports a guarded agent, transpiled to JavaScript and
@@ -10,10 +10,11 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-type GuardRule = { resource: string; effect: "allow" | "ask" }
+type GuardRule = { resource: string; effect: "allow" | "ask" | "deny" }
 type GuardEntry = { tools: string[]; rules: GuardRule[] }
 type Input = { agent_type?: string; tool_name?: string; tool_input?: Record<string, unknown> }
-type Output = { hookSpecificOutput: { hookEventName: "PreToolUse"; permissionDecision: "ask"; permissionDecisionReason: string } }
+type Decision = "ask" | "deny"
+type Output = { hookSpecificOutput: { hookEventName: "PreToolUse"; permissionDecision: Decision; permissionDecisionReason: string } }
 
 /** The tool input field that names what a rule's resource pattern matches. */
 const RESOURCE_FIELD: Record<string, string> = {
@@ -32,9 +33,10 @@ const RESOURCE_FIELD: Record<string, string> = {
 
 const glob = (pattern: string) => new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*")}$`, "s")
 
-const ask = (reason: string): Output => ({
-  hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: reason },
+const decide = (permissionDecision: Decision, reason: string): Output => ({
+  hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision, permissionDecisionReason: reason },
 })
+const ask = (reason: string): Output => decide("ask", reason)
 
 /** The answer for one tool call, or `undefined` to leave it to Claude Code. */
 export function guardDecision(input: Input, config: Record<string, GuardEntry[]>): Output | undefined {
@@ -49,6 +51,7 @@ export function guardDecision(input: Input, config: Record<string, GuardEntry[]>
     if (!guard.tools.includes(input.tool_name)) continue
     const match = guard.rules.findLast((rule) => glob(rule.resource).test(target))
     if (match?.effect === "ask") return ask(`${id} must ask before ${input.tool_name} on ${target} (matches ${match.resource})`)
+    if (match?.effect === "deny") return decide("deny", `${id} may not ${input.tool_name} ${target} (matches ${match.resource})`)
   }
   return undefined
 }

@@ -20,6 +20,27 @@
       ]
     }
   ],
+  "code-reviewer": [
+    {
+      "tools": [
+        "Read"
+      ],
+      "rules": [
+        {
+          "resource": "*.env",
+          "effect": "deny"
+        },
+        {
+          "resource": "*.env.*",
+          "effect": "deny"
+        },
+        {
+          "resource": "*.env.example",
+          "effect": "allow"
+        }
+      ]
+    }
+  ],
   "security-auditor": [
     {
       "tools": [

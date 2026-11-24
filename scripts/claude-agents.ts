@@ -10,11 +10,12 @@
 //   - Any other rule list becomes a `disallowedTools:` denylist of the mapped tools its
 //     rules deny; the rest are inherited, as they are in OpenCode.
 //   - A rule restricted to some resources (a command, a path, a skill or agent name)
-//     cannot be expressed in a subagent's frontmatter. A restricted allow is dropped and a
-//     restricted deny removes the whole tool. `ask` counts as deny on an unrestricted
-//     rule. A restricted `ask` on a tool the agent keeps is returned as a guard: the rules
-//     for a PreToolUse hook (scripts/claude-agent-guard.ts) that asks before the call, since
-//     a plugin subagent's own `hooks:` are ignored by Claude Code.
+//     cannot be expressed in a subagent's frontmatter. A restricted allow is dropped. `ask`
+//     counts as deny on an unrestricted rule. A restricted `ask` or `deny` on a tool the agent
+//     keeps is returned as a guard: the rules for a PreToolUse hook (scripts/claude-agent-guard.ts)
+//     that asks or denies before the call, since a plugin subagent's own `hooks:` are ignored by
+//     Claude Code. So a `read(*.env)` deny keeps `Read` for every other file. A restricted
+//     shell deny still removes `Bash`: command text is no argument check.
 //   - Actions without a Claude Code tool (Code Mode `execute`, `question`, plugin tools,
 //     `external_directory`) are dropped.
 //
@@ -42,7 +43,7 @@ const TOOL_GROUPS: ReadonlyArray<{ actions: readonly string[]; tools: readonly s
 export type Dropped = { rule: string; reason: string }
 
 /** Resource rules, in order (last match wins), a PreToolUse hook applies to calls of `tools`. */
-export type Guard = { tools: string[]; rules: Array<{ resource: string; effect: "allow" | "ask" }> }
+export type Guard = { tools: string[]; rules: Array<{ resource: string; effect: "allow" | "ask" | "deny" }> }
 
 export type ClaudeAgent = { id: string; contents: string; dropped: Dropped[]; guards: Guard[] }
 
@@ -63,14 +64,17 @@ function groupVerdict(
     if (rule.effect === "allow" && verdict !== "allow")
       dropped.push({ rule: describeRule(rule), reason: "resource-restricted allow; dropped" })
     else if (rule.effect === "ask" && verdict !== "deny") carried.push({ resource: rule.resource, effect: "ask" })
+    else if (rule.effect === "deny" && verdict !== "deny" && !actions.includes("shell"))
+      carried.push({ resource: rule.resource, effect: "deny" })
     else if (rule.effect === "deny" && verdict === "allow") {
-      dropped.push({ rule: describeRule(rule), reason: "resource-restricted deny; whole tool denied" })
+      // Command text is not argument validation, so a shell deny list never guards a granted Bash.
+      dropped.push({ rule: describeRule(rule), reason: "resource-restricted shell deny; whole tool denied" })
       verdict = "deny"
     }
     if (rule.effect === "allow" && verdict !== "deny") carried.push({ resource: rule.resource, effect: "allow" })
   }
-  // Allows only matter as exceptions to an ask; a denied tool is gone, so nothing is guarded.
-  const guarded = verdict !== "deny" && carried.some((rule) => rule.effect === "ask")
+  // Allows only matter as exceptions to an ask or a deny; a denied tool is gone, so nothing is guarded.
+  const guarded = verdict !== "deny" && carried.some((rule) => rule.effect !== "allow")
   return { verdict, ...(guarded ? { guard: carried } : {}) }
 }
 
