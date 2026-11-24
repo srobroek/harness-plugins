@@ -1,3 +1,9 @@
+## delivery [0.12.5](https://github.com/srobroek/harness-plugins/compare/delivery--v0.12.4...delivery--v0.12.5) (2026-11-24)
+
+### Bug Fixes
+
+* **agent-reviewer:** tell OMP agents that keep a shell it is unrestricted ([#173](https://github.com/srobroek/harness-plugins/issues/173)) ([1b8386d](https://github.com/srobroek/harness-plugins/commit/1b8386dbf43fa6cb5580d4dbc03e619476ba023c))
+
 ## delivery [0.12.4](https://github.com/srobroek/harness-plugins/compare/delivery--v0.12.3...delivery--v0.12.4) (2026-11-24)
 
 ### Bug Fixes
