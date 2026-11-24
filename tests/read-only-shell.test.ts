@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { guardDecision } from "../scripts/claude-agent-guard"
 import { permissionEffect, readAgentFile } from "@srobroek/opencode-lib/agent-files"
 import { READ_ONLY_SHELL_RULES } from "@srobroek/opencode-lib/read-only-shell"
+import { guardDecision } from "../scripts/claude-agent-guard"
 
 const plugins = join(import.meta.dir, "../plugins")
 const agents = [
