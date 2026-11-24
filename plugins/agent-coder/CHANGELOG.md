@@ -1,3 +1,5 @@
+## agent-coder [0.12.4](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.3...agent-coder--v0.12.4) (2026-11-24)
+
 ## agent-coder [0.12.3](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.2...agent-coder--v0.12.3) (2026-11-24)
 
 ### Bug Fixes
