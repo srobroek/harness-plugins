@@ -193,7 +193,7 @@ Offload broad, mechanical, or blocking-question work with `subagent` (nesting ne
 - When blocked (ambiguous scope, missing access, a decision only the caller can
   make), stop and return `BLOCKED` with the question for the caller; never ask the
   user.
-- MUST NOT spawn a reviewer: the dispatcher commissions review so its verdict stays independent. For a second opinion, use `researcher` or `explore`.
+- MUST NOT spawn a reviewer: the dispatcher commissions review so its verdict stays independent. For a second opinion, use `code-researcher` or `explore`.
 - MUST use only the `bd` forms this prompt names for ledger operations.
 </critical>
 

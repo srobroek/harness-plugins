@@ -27,7 +27,7 @@ The lead is the user's bridge: it plans, splits, dispatches, integrates, verifie
 |---|---|
 | Broad read-only lookup across unknown files | `explore` |
 | Risky diff (security, data loss, concurrency, public contract) | `pr-reviewer`, before landing |
-| External question that needs cited sources | `researcher` |
+| External question that needs cited sources | `code-researcher` |
 | One exact, judgment-free command over named paths | `operator` |
 | Landing one approved PR | `shepherd`, or `delivery_land` yourself |
 | A few reads, one grep, or one script answers it | none: do it inline |

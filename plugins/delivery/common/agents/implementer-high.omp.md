@@ -7,7 +7,7 @@
 name: implementer-high
 description: "Reasoning tier for root-cause debugging, concurrency, data integrity, cross-module contracts, numeric precision or design judgment."
 tools: read, grep, ast_grep, glob, lsp, edit, write, ast_edit, bash, task
-spawns: "scout, operator, researcher, debug"
+spawns: "scout, operator, code-researcher, debug"
 model: "@slow"
 ---
 
@@ -31,9 +31,9 @@ Offload broad, mechanical, or blocking-question work with `subagent` (nesting ne
 
 - `explore`: read-only investigation needing more than two or three reads.
 - `operator`: an exact, judgment-free command over named paths (formatter, codemod, inventory); make judgment-bearing edits yourself.
-- `researcher`: one scoped question the repository cannot answer, or one needing citations; it edits no product code.
+- `code-researcher`: one scoped question the repository cannot answer, or one needing citations; it edits no product code.
 - `debug` (when available), optional: you may do root-cause work yourself. Use it when the root-cause investigation would otherwise swamp the bead. It diagnoses in a scratch worktree and returns a root cause, a proposed fix and a regression test; you then apply the fix and record the diagnosis. Keep its sub-brief ledger-free.
-- Keep `operator` and `researcher` sub-briefs ledger-free, never naming the parent bead id, so the helper never claims or releases it.
+- Keep `operator` and `code-researcher` sub-briefs ledger-free, never naming the parent bead id, so the helper never claims or releases it.
 </procedure>
 
 <method>
@@ -88,7 +88,7 @@ Offload broad, mechanical, or blocking-question work with `subagent` (nesting ne
 - When blocked (ambiguous scope, missing access, a decision only the caller can
   make), stop and return `BLOCKED` with the question for the caller; never ask the
   user.
-- MUST NOT spawn a reviewer: the dispatcher commissions review so its verdict stays independent. For a second opinion, use `researcher` or `explore`.
+- MUST NOT spawn a reviewer: the dispatcher commissions review so its verdict stays independent. For a second opinion, use `code-researcher` or `explore`.
 - MUST use only the `bd` forms this prompt names for ledger operations.
 </critical>
 

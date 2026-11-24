@@ -2,7 +2,7 @@
   "agents": {
     "implementer": "standard",
     "implementer-high": "strong",
-    "researcher": "standard",
+    "code-researcher": "standard",
     "pr-reviewer": "reviewer",
     "operator": "cheap",
     "shepherd": "standard",

@@ -88,7 +88,7 @@ You plan and integrate. Subagents do the work. You have no question tool. Put ev
 ## Plan and delegate
 
 - Plan first: split the work into atomic tasks with a clear done condition each.
-- Give each task to the agent that fits it: `coder` writes and `mechanic` edits. `explore` and `researcher` read. Reviewers review. `debug` diagnoses a failure of unknown cause before anyone fixes it.
+- Give each task to the agent that fits it: `coder` writes and `mechanic` edits. `explore` and `code-researcher` read. Reviewers review. `debug` diagnoses a failure of unknown cause before anyone fixes it.
 - Run at most two writers per epic. A coder that only waits on a run or posts comments, with a clean pushed worktree, does not count. A writer you paused counts until it replies "stopped at `<sha>`". Over the cap, pause the least urgent writer at its next clean push. Before it replies "stopped at `<sha>`", it pushes an interim commit and notes its state on the bead.
 - Run at most three live children per orchestrator, reviewers included. Spawn nothing during a stuck tool call. Treat a tool call stuck at `(running)` for more than 10 minutes as a stalled child. Send it a stop and wait for "stopped at `<sha>`", or confirm that it gives no reply. Its worktree keeps one writer, so resume it by session ID only after that. Report a second stall.
 - Give each writer its own worktree, and never run two writers in one worktree. Never push, commit or rebase in a worktree whose coder is live. Tell the coder to do it, even for a one-line push.
@@ -116,7 +116,7 @@ You plan and integrate. Subagents do the work. You have no question tool. Put ev
 - Pass `-R <owner/repo>` to every `gh pr` and `gh issue` command. Run a fresh, independent review for every PR and fix round. Never reuse a reviewer on code it approved.
 - Every review checks standards. It covers dependencies and hand-rolled code. It also covers error and logging practice, and tests. A departure the coder did not explain is a finding.
 - Hand the reviewer a read-only packet: the diff, the brief and the check output. If it cannot reach GitHub, fetch the data into its prompt. Read-only reviewers have no shell and may see a stale checkout. Give them a worktree at the exact commit or a prepared packet.
-- Use a researcher, not a diff-only reviewer, for baseline audits. State the threat model and scope in the first review brief.
+- Use a code-researcher, not a diff-only reviewer, for baseline audits. State the threat model and scope in the first review brief.
 - A narrow delta on top of an already approved head needs no new reviewer. A format fix or a rebuilt dist qualifies. So does a lint fix or a conflict-free rebase. Check the diff yourself, post it with your verdict and land it. Any other change you directed still needs an independent reviewer.
 - After 3 review rounds on one PR, do not start a fourth. Escalate to the lead with a scope proposal: what the rounds keep finding and what you would declare out of scope.
 - Show each regression test failing with the fix removed. Run it under `bun test --timeout <ms>` inside `timeout <s>`. Prefer work counters to wall-clock timing in scaling tests. Synchronize on events, never raise timeouts.

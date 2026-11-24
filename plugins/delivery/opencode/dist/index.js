@@ -21,7 +21,7 @@ var MCP_TOOL_AGENTS = new Set([
   "implementer-high",
   "refactor",
   "refactor-challenger",
-  "researcher",
+  "code-researcher",
   "security-auditor",
   "spec",
   "ui-implementer",
@@ -261,7 +261,7 @@ import { fileURLToPath } from "url";
 var AGENT_IDS = [
   "implementer",
   "implementer-high",
-  "researcher",
+  "code-researcher",
   "pr-reviewer",
   "operator",
   "shepherd",
@@ -338,7 +338,7 @@ function shapeAgent2(draft, file, model, created) {
 function hasModelRoles(listed) {
   return listsPlugin(listed, "model-roles");
 }
-var FALLBACK_AGENTS = { researcher: "agent-researcher", "pr-reviewer": "agent-reviewer" };
+var FALLBACK_AGENTS = { "code-researcher": "agent-researcher", "pr-reviewer": "agent-reviewer" };
 function fallbackModel(file, override, modelRoles, available) {
   if (override === false)
     return;
@@ -6908,12 +6908,12 @@ function createPendingCleanup(deps) {
 var AGENT_VERDICTS = {
   implementer: ["DONE", "BLOCKED", "SPLIT"],
   "implementer-high": ["DONE", "BLOCKED", "SPLIT"],
-  researcher: ["DONE", "BLOCKED"],
+  "code-researcher": ["DONE", "BLOCKED"],
   operator: ["DONE", "BLOCKED"],
   shepherd: ["COMPLETE", "BLOCKED"],
   "pr-reviewer": ["APPROVE", "REQUEST-CHANGES", "COMMENT"]
 };
-var REPORTS_JSON = new Set(["implementer", "implementer-high", "researcher", "operator", "shepherd"]);
+var REPORTS_JSON = new Set(["implementer", "implementer-high", "code-researcher", "operator", "shepherd"]);
 var VERDICT_LINE = /^VERDICT:\s*([A-Z][A-Z-]*)\b[\s:\u2014\u2013-]*(.*)$/;
 var JSON_BLOCK = /```json[ \t]*\r?\n([\s\S]*?)\r?\n```/g;
 function bare(line) {
