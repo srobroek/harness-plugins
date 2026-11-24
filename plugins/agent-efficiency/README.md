@@ -180,9 +180,9 @@ a command; its target is checked as a directory instead. With `shell: "git *"` a
 So when `cd X && git diff` fails in a subagent, X is outside the session's directory
 (often a worktree) and the agent's `external_directory` rule, usually the `* deny` it
 starts with, rejects it. Moving the call into `workdir` does not help: OpenCode checks
-`workdir` against the same rule. Allow the worktree root for that agent in your config, for example
-`external_directory: "~/tmp/worktrees/*"`, or start the subagent in the worktree. No
-`shell` pattern is needed, and none should be widened to cover `&& anything`.
+`workdir` against the same rule. Allow the worktree root for that agent in your config, or start
+the subagent in the worktree. No `shell` pattern is needed, and none should be widened to cover
+`&& anything`.
 
 ## Options
 

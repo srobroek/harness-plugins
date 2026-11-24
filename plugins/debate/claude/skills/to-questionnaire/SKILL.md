@@ -11,13 +11,12 @@ full licence text is in the LICENSE file beside this one.
 
 THIS FILE HAS BEEN MODIFIED from the original. Changes:
   1. Output location: upstream wrote the questionnaire into the current directory, which
-     is a repository edit in a canonical checkout. It now goes to a path the user names,
-     or to ~/tmp, never the current directory.
+     is a repository edit in a canonical checkout. It now goes to a user-named path or the
+     system temp directory.
   2. The template's angle-bracket placeholders became {braces} inside a fenced block,
      because this repository's validator reads angle brackets as unclosed XML tags.
   3. Rewrote the frontmatter description to this repository's authoring contract.
-  4. Ported to opencode-plugins: references to other skills name the skill instead
-     of an Oh My Pi skill URI.
+  4. References to other skills name the skill instead of a harness-specific skill URI.
   5. Steps 1-2 are asked through the channels in the grilling skill's "Asking
      questions" section (parley, the host's question tool, or chat). With parley, the
      draft is shown as a review question before it is written.
@@ -54,10 +53,10 @@ deferred answer means ask it again in chat; both are needed before step 3.
    user cannot resolve alone and needs from this person. → a concrete list of what the
    user must walk away able to do or decide.
 3. **Write the questionnaire.** Draft questions aimed at the gap from steps 1-2, following
-   the document structure below. Write it to the path the user names; with no path, write
-   `~/tmp/to-questionnaire-{slug}.md` (slug from the topic). With parley, first show the
-   draft as one `review` question (`markdown` = the draft, recommended `approve`) and
-   apply any `revise` feedback; then call `parley_end`. Report the absolute path.
+   document structure below. Write it to the path the user names; otherwise use the system temp
+   directory, never the current directory. With parley, show the draft as one `review` question
+   (`markdown` = the draft, recommended `approve`), apply any `revise` feedback, then call
+   `parley_end`. Report the absolute path.
    → the file exists and every item the user named in step 2 is covered by a question.
 
 ## Document structure

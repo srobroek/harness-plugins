@@ -87,7 +87,7 @@ function landed(
     emitter: { plugin: "@srobroek/delivery", version: pkg.version, tool: "delivery_land" },
     repo: {
       key: KEY,
-      canonicalRoot: "/Users/sjors/personal/dev/omp-plugins",
+      canonicalRoot: "/Users/example/personal/dev/omp-plugins",
       remote: "git@github.com:srobroek/omp-plugins.git",
       forge: "github",
       nameWithOwner: "srobroek/omp-plugins",
@@ -109,7 +109,7 @@ function landed(
       autoDeleteSetting: "on",
     },
     worktree: {
-      path: "/Users/sjors/tmp/worktrees/omp-plugins/omp-agent-omp-plugins-9ej3.3",
+      path: "/tmp/worktrees/omp-plugins/omp-agent-omp-plugins-9ej3.3",
       removed: true,
       localRefDeleted: true,
       absenceVerifiedAt: "2026-09-21T12:00:02.000Z",

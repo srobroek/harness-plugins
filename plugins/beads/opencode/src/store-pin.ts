@@ -9,7 +9,7 @@ import { EMBEDDED_PIN_ENV } from "./gate-admission.ts"
  * from a `BEADS_DIR` the user set, so the inheritor resolves its own store per directory
  * instead of following the repository that shell ran in.
  */
-export const PIN_MARKER_ENV = "SROBROEK_BEADS_PIN"
+export const PIN_MARKER_ENV = "HARNESS_BEADS_PIN"
 
 /** The variables that pin a child to `store`. */
 export function pinVariables(store: string): Record<string, string> {

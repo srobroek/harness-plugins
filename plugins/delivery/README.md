@@ -5,7 +5,7 @@ agents and instructions for fanning work out to subagents.
 
 Ported from the omp-plugins `delivery` plugin (1.4.3 plus the land-fetch fix).
 `delivery_hygiene_report` and the `worktree-reaper` agent were not ported: use
-`wt list` for an inventory. A receipt for a branch whose worktree still exists
+`git worktree list` for an inventory. A receipt for a branch whose worktree still exists
 means `delivery_cleanup` has not run yet (or `delivery_land` could not finish it).
 
 ## Install
@@ -238,8 +238,8 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
   sees the PR as MERGED, merges nothing, and writes the receipt.
 
 Supported forges: `github.com` (including `ssh.github.com`), `gitlab.com`
-(including `altssh.gitlab.com`) and `gitlab.aws.dev` (including
-`ssh.gitlab.aws.dev`). Any other remote is refused as `repo.forge "unknown"`.
+(`altssh.gitlab.com`) and self-hosted GitLab at `gitlab.example.com`
+(`ssh.gitlab.example.com`). Other unconfigured hosts are refused.
 
 ### delivery_cleanup
 
@@ -267,8 +267,9 @@ an `origin` for B) therefore refuses to clean B's receipt when asked for A.
 
 The receipt's beads are read with `bd show` run at the verified repository root, with
 `BEADS_DIR`, `BEADS_DB`, `BD_DB`, `BD_SOCKET`, `BEADS_DOLT_SHARED_SERVER` and
-`SROBROEK_BEADS_PIN` removed from its environment. A ledger the session pinned never
-decides whether the target's beads are closed.
+`HARNESS_BEADS_PIN` removed from its environment. Sessions started before the upgrade keep
+the old marker until restarted. A ledger the session pinned never decides whether the
+target's beads are closed.
 
 A listed worktree is also checked first: its `.git` must be a
 regular file (never a symlink or FIFO, read with bounded no-follow reads) naming a
@@ -387,6 +388,9 @@ The plugin registers these subagents from `agents/*.md` through
   config (`agents.<id>.model`) wins over the tier either way. Delivery keeps these
   fallbacks, unlike the other plugins' agents, so `operator` stays on a cheap model
   and the reviewer on a strong one for users without model-roles.
+The Bedrock IDs in the table are examples. The `models` option accepts any provider/model
+ID available to your host.
+
 - The `models` option overrides a model per agent (`"provider/model#variant"`),
   with or without model-roles; `false` means no model.
 - Your own markdown or config agent with the same id loads after the plugin and
@@ -438,12 +442,11 @@ tool results, so the hook does not see them.
 
 | Option | Default | Effect |
 | --- | --- | --- |
-| `tools` | `["context7_*"]` | Context7 is allowed by default. Add MCP patterns such as `aws-mcp_*` for AWS projects; an array replaces the default. `false` or `[]` adds no rules; the agent keeps its fixed allowlist. |
+| `tools` | `["context7_*"]` | An array of patterns replaces the defaults. Add `aws-mcp_*` only when you have that server and want to allow its tools. `false` or `[]` adds no rules; the agent keeps its fixed allowlist. |
 
 ```jsonc
 "options": { "tools": ["context7_*", "<server>_<tool>"] }
 ```
-
 Patterns must name MCP server tools only (`<server>_<tool>`). The option refuses a pattern that could match a tool from a plugin in this repository or from OpenCode itself, such as `dep_*`, `delivery_*`, `quality_*`, `lsp_*` or `opencode_*`, and a pattern that starts with a wildcard, and logs a warning. Only add read-only tools: an allowed MCP tool runs without a prompt. The option refuses a pattern that matches a built-in action (`shell`, `edit`, `write`, `patch`, `external_directory`, `subagent`, `*` and the like) and logs a warning, so it cannot widen file or shell access. `pr-reviewer`, `operator` and `shepherd` get no MCP rules.
 
 This agent denies `execute`, so OpenCode lists its allowed MCP tools directly, even for a server configured for Code Mode: with `execute` wholly denied, every tool left active becomes a direct tool (`packages/core/src/tool.ts:260-264`, OpenCode v2.2.6; an MCP tool's `codemode` flag is set at `packages/core/src/tool/mcp.ts:57`).

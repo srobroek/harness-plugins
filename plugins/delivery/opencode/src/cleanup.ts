@@ -980,7 +980,7 @@ const LEDGER_SELECTORS = [
   "BD_DB",
   "BD_SOCKET",
   "BEADS_DOLT_SHARED_SERVER",
-  "SROBROEK_BEADS_PIN",
+  "HARNESS_BEADS_PIN",
 ] as const
 
 function withoutLedgerSelectors(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

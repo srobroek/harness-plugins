@@ -4926,7 +4926,7 @@ ${command}`;
 }
 
 // plugins/beads/opencode/src/store-pin.ts
-var PIN_MARKER_ENV = "SROBROEK_BEADS_PIN";
+var PIN_MARKER_ENV = "HARNESS_BEADS_PIN";
 function pinVariables(store) {
   return { ...EMBEDDED_PIN_ENV, BEADS_DIR: store, [PIN_MARKER_ENV]: store };
 }

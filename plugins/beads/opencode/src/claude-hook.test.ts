@@ -147,7 +147,7 @@ describe("sessionStart", () => {
       exports: [
         "export BEADS_DOLT_SHARED_SERVER=''",
         `export BEADS_DIR='${root}/stores/it'\\''s'`,
-        `export SROBROEK_BEADS_PIN='${root}/stores/it'\\''s'`,
+        `export HARNESS_BEADS_PIN='${root}/stores/it'\\''s'`,
       ],
     })
   })
@@ -166,7 +166,7 @@ describe("a session started from another repository's pinned shell", () => {
   const inherited = (store: string): NodeJS.ProcessEnv => ({
     PATH: process.env.PATH,
     BEADS_DIR: store,
-    SROBROEK_BEADS_PIN: store,
+    HARNESS_BEADS_PIN: store,
   })
 
   /** `BEADS_DIR` as a later Bash call sees it, once Claude Code sources the exported lines. */

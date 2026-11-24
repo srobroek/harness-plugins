@@ -1,6 +1,6 @@
 ---
 description: "Answers one scoped research question from code, docs and the web with cited observations and inferences; edits nothing."
-x-omp-shell: "it claims its bead and records the finding with bd"
+x-omp-shell: "it claims a supplied bead and records findings when the project uses Beads"
 mode: subagent
 steps: 80
 request:

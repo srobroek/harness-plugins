@@ -9,9 +9,9 @@ language's workspace (below), not a polyglot layout. Layout and ownership rules:
 - Rust: virtual Cargo workspace, `crates/*`. See `rust.md`, `lang-rust-packaging`.
 - Python: uv workspace, `packages/*`, one root `uv.lock`. See `python.md`, `lang-python-packaging`.
 - Go: one module with `cmd/` and `internal/`; extra modules only if released separately.
-- TypeScript: bun workspaces (`packages/*`, `apps/*`) with `catalog:` versions and project
-  references; for apps use Better-T-Stack (`typescript.md`), with `turborepo` or `nx` as an
-  addon only if the user wants a task orchestrator.
+- TypeScript: use the existing workspace and package manager; for a new project, choose a
+  workspace tool such as Bun (`catalog:` versions and project references) with the user. For
+  apps, see Better-T-Stack (`typescript.md`); add `turborepo` or `nx` only if wanted.
 
 ## Several languages
 
@@ -20,9 +20,9 @@ language's workspace (below), not a polyglot layout. Layout and ownership rules:
 2. Each member is set up from its own reference, inside its directory (`cargo new`,
    `uv init`, `go mod init`, Better-T-Stack with a project directory), without nested git
    repositories (`--vcs none` / `--no-git`).
-3. Root owns: `.git`, `mise.toml` pinning every runtime, `justfile` with `just check`
-   fanning out to each member's gate, the license, `docs/`, `AGENTS.md`, CI, release
-   config, hooks. Members own their manifests and lockfiles.
+3. Root owns: `.git`, its selected toolchain and task-runner configuration, `justfile` with
+   `just check` fanning out to each member's gate, the license, `docs/`, `AGENTS.md`, CI, release
+   config and hooks. Members own their manifests and lockfiles.
 4. Orchestration: `just` for aliases; `moon` for task orchestration in a large repo
    (`toolchain-stack-defaults`); ask which. Do not add both without a reason.
 5. CI: one workflow, one `ci-gate` job, per-member jobs gated by `dorny/paths-filter`
