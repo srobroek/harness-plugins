@@ -1,6 +1,6 @@
 {
   "name": "agent-mechanic",
-  "version": "0.8.3",
+  "version": "0.9.0",
   "description": "mechanic subagent: cheap, exact mechanical edits (renames, bulk edits, formatting, moving code) that run the given check.",
   "private": true,
   "type": "module",
@@ -17,8 +17,16 @@
       "index": "index"
     },
     "companions": [
-      { "package": "pi-subagents", "for": "the subagent tool", "required": true },
-      { "package": "pi-lens", "for": "code-intelligence and structural-edit tools for the subagent", "required": true }
+      {
+        "package": "pi-subagents",
+        "for": "the subagent tool",
+        "required": true
+      },
+      {
+        "package": "pi-lens",
+        "for": "code-intelligence and structural-edit tools for the subagent",
+        "required": true
+      }
     ]
   }
 }
