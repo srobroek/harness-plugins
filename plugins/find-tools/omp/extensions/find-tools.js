@@ -760,22 +760,23 @@ var CATALOG_URLS = {
   claude: `https://raw.githubusercontent.com/${REPOSITORY}/main/.claude-plugin/marketplace.json`,
   opencode: `https://raw.githubusercontent.com/${REPOSITORY}/main/.claude-plugin/marketplace.json`,
   omp: `https://raw.githubusercontent.com/${REPOSITORY}/main/.omp-plugin/marketplace.json`,
-  pi: `https://raw.githubusercontent.com/${REPOSITORY}/main/.claude-plugin/marketplace.json`
+  pi: `https://raw.githubusercontent.com/${REPOSITORY}/main/inventory.json`
 };
 var DEFAULT_CATALOG_URL = CATALOG_URLS.opencode;
 function catalogUrlFor(harness) {
   return CATALOG_URLS[harness];
 }
-function installHint(harness, name) {
+function piPackage(name, piName) {
+  return `@srobroek/${piName ?? `pi-${name}`}`;
+}
+function installHint(harness, name, piName) {
   switch (harness) {
     case "claude":
       return `/plugin install ${name}@harness-plugins`;
     case "omp":
       return `omp plugin install --scope project ${name}@harness-plugins`;
-    case "pi": {
-      const packageName = { aws: "aws-guidance", beads: "beads-enforcer", build: "external-repo-worker", chezmoi: "chezmoi-editor", "code-challenge": "code-challenge", journeys: "user-journeys", parley: "parley-rounds", quality: "code-quality", "trunk-dev": "trunk-dev-policy", worktrunk: "worktrunk-merge-policy" };
-      return `pi install npm:@srobroek/pi-${packageName[name] ?? name}`;
-    }
+    case "pi":
+      return `pi install npm:${piPackage(name, piName)}`;
     case "opencode":
       return `opencode plugin add 'github:${REPOSITORY}::path:plugins/${name}/opencode'`;
   }
@@ -911,16 +912,20 @@ function catalogEntries(json) {
   const list = Array.isArray(json) ? json : Array.isArray(obj?.plugins) ? obj.plugins : obj?.skills;
   if (!Array.isArray(list))
     return;
-  const kind = Array.isArray(obj?.plugins) ? "marketplace" : "skills";
+  const inventory = Array.isArray(obj?.plugins) && obj.plugins.some((item) => record(record(item)?.harnesses) !== undefined);
+  const kind = inventory ? "inventory" : Array.isArray(obj?.plugins) ? "marketplace" : "skills";
   const entries = [];
   for (const item of list) {
     const entry = record(item);
     const name = str(entry?.name);
     if (!name)
       continue;
+    if (inventory && record(record(entry?.harnesses)?.pi) === undefined)
+      continue;
     const description = str(entry?.description);
     const source = str(entry?.source) ?? str(record(entry?.source)?.url) ?? str(record(entry?.source)?.repo);
-    entries.push({ name, ...description ? { description } : {}, ...source ? { source } : {} });
+    const piName = inventory ? str(entry?.piName) : undefined;
+    entries.push({ name, ...description ? { description } : {}, ...source ? { source } : {}, ...piName ? { piName } : {} });
   }
   return { kind, entries };
 }
@@ -933,13 +938,12 @@ function catalogHits(url, own, json, terms, harness = "opencode") {
     return;
   const ranked = parsed.entries.map((entry) => ({ entry, score: terms.length ? relevance(terms, entry.name, entry.description) : 1 })).filter(({ score }) => score > 0).sort((a, b) => b.score - a.score).slice(0, SEARCH_CAP);
   return ranked.map(({ entry }) => {
-    const install = own ? installHint(harness, entry.name) : parsed.kind === "skills" ? `project: add "${url}" to "skills" in opencode.json` : `Claude Code marketplace entry${entry.source ? ` (source ${entry.source})` : ""}; inspect it before adapting`;
-    const piPackageName = { aws: "aws-guidance", beads: "beads-enforcer", build: "external-repo-worker", chezmoi: "chezmoi-editor", "code-challenge": "code-challenge", journeys: "user-journeys", parley: "parley-rounds", project: "project", quality: "code-quality", "trunk-dev": "trunk-dev-policy", worktrunk: "worktrunk-merge-policy" };
+    const install = own ? installHint(harness, entry.name, entry.piName) : parsed.kind === "skills" ? `project: add "${url}" to "skills" in opencode.json` : `Claude Code marketplace entry${entry.source ? ` (source ${entry.source})` : ""}; inspect it before adapting`;
     return {
       name: own ? entry.name : `${entry.name} (${new URL(url).host})`,
       ...entry.description ? { detail: entry.description } : {},
-      url: own ? `https://github.com/${REPOSITORY}/tree/main/plugins/${entry.name}/${harness === "opencode" ? "opencode" : harness === "claude" ? "claude" : harness}` : url,
-      install: own && harness === "pi" ? `pi install npm:@srobroek/pi-${piPackageName[entry.name] ?? entry.name}` : install
+      url: own ? `https://github.com/${REPOSITORY}/tree/main/plugins/${entry.name}/${harness}` : url,
+      install
     };
   });
 }

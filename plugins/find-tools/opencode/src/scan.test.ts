@@ -449,7 +449,7 @@ describe("catalog", () => {
     expect(catalogUrlFor("claude")).toBe("https://raw.githubusercontent.com/srobroek/harness-plugins/main/.claude-plugin/marketplace.json")
     expect(catalogUrlFor("opencode")).toBe(catalogUrlFor("claude"))
     expect(catalogUrlFor("omp")).toBe("https://raw.githubusercontent.com/srobroek/harness-plugins/main/.omp-plugin/marketplace.json")
-    expect(catalogUrlFor("pi")).toBe(catalogUrlFor("claude"))
+    expect(catalogUrlFor("pi")).toBe("https://raw.githubusercontent.com/srobroek/harness-plugins/main/inventory.json")
     expect(CATALOG_URLS).toEqual({ claude: catalogUrlFor("claude"), opencode: catalogUrlFor("opencode"), omp: catalogUrlFor("omp"), pi: catalogUrlFor("pi") })
   })
 
@@ -457,7 +457,22 @@ describe("catalog", () => {
     expect(catalogHits("catalog", true, { plugins: [{ name: "beads" }] }, [], "claude")?.[0]?.install).toBe("/plugin install beads@harness-plugins")
     expect(catalogHits("catalog", true, { plugins: [{ name: "beads" }] }, [], "opencode")?.[0]?.install).toBe("opencode plugin add 'github:srobroek/harness-plugins::path:plugins/beads/opencode'")
     expect(catalogHits("catalog", true, { plugins: [{ name: "beads" }] }, [], "omp")?.[0]?.install).toBe("omp plugin install --scope project beads@harness-plugins")
-    expect(catalogHits("catalog", true, { plugins: [{ name: "beads" }] }, [], "pi")?.[0]?.install).toBe("pi install npm:@srobroek/pi-beads-enforcer")
+  })
+
+  test("on Pi, offers only plugins that ship a Pi tree, under their npm name", () => {
+    // The shape of this repository's generated inventory.json.
+    const inventory = {
+      plugins: [
+        { name: "beads", description: "Beads gates", harnesses: { opencode: {}, pi: {} }, piName: "pi-beads-enforcer" },
+        { name: "eli5", description: "Beads-free explainer", harnesses: { opencode: {}, pi: {} } },
+        { name: "ast-grep", description: "Beads ast search", harnesses: { opencode: {}, claude: {} } },
+      ],
+    }
+    const hits = catalogHits("catalog", true, inventory, [], "pi") ?? []
+    expect(hits.map((hit) => [hit.name, hit.install])).toEqual([
+      ["beads", "pi install npm:@srobroek/pi-beads-enforcer"],
+      ["eli5", "pi install npm:@srobroek/pi-eli5"],
+    ])
   })
 
   test("matches this repository's marketplace and suggests the project-scope spec", async () => {
