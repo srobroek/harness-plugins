@@ -172,7 +172,7 @@ test("design MCP servers are opt-in in frontend projects", async () => {
   }
 })
 
-test("adds no servers outside a frontend project", async () => {
+test("adds no servers outside a frontend project by default", async () => {
   const fake = createFakeContext()
   await plugin.setup(fake.context)
   expect(fake.mcp.size).toBe(0)
