@@ -4,10 +4,14 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFakeContext, type FakeContext } from "@srobroek/opencode-lib/testing"
-import { DENY_QUESTION, HANDOFF_LABEL, MAX_REPROMPTS, REPROMPT, reviewManifestKey, setupAutopilot, verifyExport, type WriteLock } from "./index.ts"
-import type { LedgerHost } from "./ledger.ts"
-import { type Run, RunDir, RunFileError, runCommand } from "./rundir.ts"
-import { type Clock, Ticks } from "./timer.ts"
+import { MAX_REPROMPTS, type WriteLock } from "../../shared/autopilot.ts"
+import type { LedgerHost } from "../../shared/ledger.ts"
+import { DENY_QUESTION, REPROMPT } from "../../shared/policy.ts"
+import { reviewManifestKey, verifyExport } from "../../shared/review-export.ts"
+import { type Run, RunDir, RunFileError, runCommand } from "../../shared/rundir.ts"
+import { HANDOFF_LABEL } from "../../shared/summary.ts"
+import { type Clock, Ticks } from "../../shared/timer.ts"
+import { setupAutopilot } from "./index.ts"
 
 const NOW = new Date(2026, 10, 20, 14, 0).getTime()
 
