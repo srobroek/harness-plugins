@@ -771,7 +771,7 @@ function installHint(harness, name) {
     case "claude":
       return `/plugin install ${name}@harness-plugins`;
     case "omp":
-      return `omp plugin install ${name}@harness-plugins`;
+      return `omp plugin install --scope project ${name}@harness-plugins`;
     case "pi": {
       const packageName = { aws: "aws-guidance", beads: "beads-enforcer", build: "external-repo-worker", chezmoi: "chezmoi-editor", "code-challenge": "code-challenge", journeys: "user-journeys", parley: "parley-rounds", quality: "code-quality", "trunk-dev": "trunk-dev-policy", worktrunk: "worktrunk-merge-policy" };
       return `pi install npm:@srobroek/pi-${packageName[name] ?? name}`;
@@ -835,6 +835,8 @@ function pluginHit(plugin) {
   let origin = source?.type ?? "unknown";
   if (source?.type === "package") {
     origin = `package ${source.target ?? "?"}${source.version ? `@${source.version}` : ""}${source.outdated ? " (outdated)" : ""}`;
+  } else if (source?.version) {
+    origin = `${source.type} ${source.version}`;
   }
   const failedState = plugin.state?.status === "failed" ? "; failed to load" : "";
   const name = plugin.id ?? (source?.type === "package" ? source.target : undefined) ?? "unnamed";
@@ -1466,14 +1468,20 @@ async function readOmpInventory(exec) {
       return [];
     const value = group;
     const entries = Array.isArray(value.entries) ? value.entries : [];
-    const active = entries.some((entry) => entry && typeof entry === "object" && entry.enabled !== false);
-    return active && typeof value.id === "string" ? [{ id: value.id }] : [];
+    const active = entries.find((entry) => entry && typeof entry === "object" && entry.enabled !== false);
+    if (!active || typeof value.id !== "string")
+      return [];
+    const version = typeof active.version === "string" ? active.version : undefined;
+    const scope = typeof active.scope === "string" ? active.scope : undefined;
+    return [{ id: value.id, source: { type: scope ? `marketplace, ${scope} scope` : "marketplace", ...version ? { version } : {} } }];
   }) : [];
   const npm = Array.isArray(data.npm) ? data.npm.flatMap((item) => {
     if (!item || typeof item !== "object")
       return [];
     const plugin = item;
-    return plugin.enabled !== false && typeof plugin.name === "string" ? [{ id: plugin.name }] : [];
+    if (plugin.enabled === false || typeof plugin.name !== "string")
+      return [];
+    return [{ id: plugin.name, source: { type: "npm", ...typeof plugin.version === "string" ? { version: plugin.version } : {} } }];
   }) : [];
   return { plugins: [...marketplace, ...npm] };
 }

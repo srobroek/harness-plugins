@@ -67,13 +67,19 @@ export async function readOmpInventory(exec: (command: string, args: string[]) =
     if (!group || typeof group !== "object") return []
     const value = group as { id?: unknown; entries?: unknown }
     const entries = Array.isArray(value.entries) ? value.entries : []
-    const active = entries.some((entry) => entry && typeof entry === "object" && (entry as { enabled?: unknown }).enabled !== false)
-    return active && typeof value.id === "string" ? [{ id: value.id }] : []
+    const active = entries.find((entry) => entry && typeof entry === "object" && (entry as { enabled?: unknown }).enabled !== false) as
+      | { version?: unknown; scope?: unknown }
+      | undefined
+    if (!active || typeof value.id !== "string") return []
+    const version = typeof active.version === "string" ? active.version : undefined
+    const scope = typeof active.scope === "string" ? active.scope : undefined
+    return [{ id: value.id, source: { type: scope ? `marketplace, ${scope} scope` : "marketplace", ...(version ? { version } : {}) } }]
   }) : []
   const npm = Array.isArray(data.npm) ? data.npm.flatMap((item) => {
     if (!item || typeof item !== "object") return []
-    const plugin = item as { name?: unknown; enabled?: unknown }
-    return plugin.enabled !== false && typeof plugin.name === "string" ? [{ id: plugin.name }] : []
+    const plugin = item as { name?: unknown; enabled?: unknown; version?: unknown }
+    if (plugin.enabled === false || typeof plugin.name !== "string") return []
+    return [{ id: plugin.name, source: { type: "npm", ...(typeof plugin.version === "string" ? { version: plugin.version } : {}) } }]
   }) : []
   return { plugins: [...marketplace, ...npm] }
 }

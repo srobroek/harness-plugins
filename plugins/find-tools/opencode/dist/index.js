@@ -849,7 +849,7 @@ function installHint(harness, name) {
     case "claude":
       return `/plugin install ${name}@harness-plugins`;
     case "omp":
-      return `omp plugin install ${name}@harness-plugins`;
+      return `omp plugin install --scope project ${name}@harness-plugins`;
     case "pi": {
       const packageName = { aws: "aws-guidance", beads: "beads-enforcer", build: "external-repo-worker", chezmoi: "chezmoi-editor", "code-challenge": "code-challenge", journeys: "user-journeys", parley: "parley-rounds", quality: "code-quality", "trunk-dev": "trunk-dev-policy", worktrunk: "worktrunk-merge-policy" };
       return `pi install npm:@srobroek/pi-${packageName[name] ?? name}`;
@@ -913,6 +913,8 @@ function pluginHit(plugin) {
   let origin = source?.type ?? "unknown";
   if (source?.type === "package") {
     origin = `package ${source.target ?? "?"}${source.version ? `@${source.version}` : ""}${source.outdated ? " (outdated)" : ""}`;
+  } else if (source?.version) {
+    origin = `${source.type} ${source.version}`;
   }
   const failedState = plugin.state?.status === "failed" ? "; failed to load" : "";
   const name = plugin.id ?? (source?.type === "package" ? source.target : undefined) ?? "unnamed";

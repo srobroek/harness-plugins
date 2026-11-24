@@ -22,7 +22,7 @@ Adapted from the omp-plugins find-tools adoption policy for OpenCode V2.
 | --- | --- | --- |
 | OpenCode plugin | add the spec to `plugins` in the project's `opencode.json` | `opencode plugin add <spec>` (global config) |
 | Claude Code plugin | `/plugin install <name>@harness-plugins` | the same command |
-| OMP plugin | `omp plugin install <name>@harness-plugins` | the same command |
+| OMP plugin | `omp plugin install --scope project <name>@harness-plugins` | `omp plugin install <name>@harness-plugins` (OMP's default scope is user) |
 | Pi package | add `npm:@srobroek/pi-<name>` to `packages` in Pi settings | `pi install npm:@srobroek/pi-<name>` |
 | MCP server | `opencode mcp add <name> --url …` or `-- <command>` | the same with `--global` |
 | Skill | copy the skill directory to `.opencode/skills/<name>/`, or add a catalog URL to `skills` | `~/.config/opencode/skills/<name>/` |

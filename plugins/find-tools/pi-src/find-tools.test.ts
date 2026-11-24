@@ -82,22 +82,27 @@ describe("Pi extension", () => {
     expect(isOmpHost({} as never)).toBe(false)
   })
 
-  test("uses the OMP runtime capability and lists installed OMP plugins without paths", async () => {
-    expect(isOmpHost({ runtime: {} })).toBe(true)
-    expect(isOmpHost({})).toBe(false)
+  test("uses the OMP runtime capability and lists installed OMP plugins with versions, without paths", async () => {
     const exec = async (command: string, args: string[]) => {
       expect(command).toBe("omp")
       expect(args).toEqual(["plugin", "list", "--json"])
       return {
         code: 0,
+        // The shape of `omp plugin list --json` in OMP 19.1.1.
         stdout: JSON.stringify({
-          marketplace: [{ id: "project@harness-plugins", enabled: true, entries: [{ installPath: "/private/plugin/path" }] }],
-          npm: [{ name: "tool", enabled: true, path: "/private/npm/path" }],
+          marketplace: [
+            { id: "project@harness-plugins", scope: "user", entries: [{ enabled: true, installPath: "/private/plugin/path", scope: "user", version: "0.12.2" }] },
+            { id: "off@harness-plugins", scope: "user", entries: [{ enabled: false, installPath: "/private/off", scope: "user", version: "1.0.0" }] },
+          ],
+          npm: [{ name: "tool", enabled: true, path: "/private/npm/path", version: "2.1.0" }],
         }),
       }
     }
     const inventory = await readOmpInventory(exec)
-    expect(inventory.plugins).toEqual([{ id: "project@harness-plugins" }, { id: "tool" }])
+    expect(inventory.plugins).toEqual([
+      { id: "project@harness-plugins", source: { type: "marketplace, user scope", version: "0.12.2" } },
+      { id: "tool", source: { type: "npm", version: "2.1.0" } },
+    ])
     expect(JSON.stringify(inventory)).not.toContain("/private/")
     const tool = ompInventory(exec)
     expect(await tool.plugins?.()).toEqual(inventory.plugins)

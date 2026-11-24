@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { npmSearchText } from "../../shared/query.js"
 import {
+  AWESOME_OPENCODE_URL,
   awesomeEntries,
   CATALOG_URLS,
   catalogHits,
   catalogIndexUrl,
   catalogUrlFor,
   DEFAULT_CATALOG_URL,
+  type LocalInventory,
   mcpCounts,
   registryInstall,
   renderScan,
@@ -454,7 +456,7 @@ describe("catalog", () => {
   test("keeps install hints aligned with each host", () => {
     expect(catalogHits("catalog", true, { plugins: [{ name: "beads" }] }, [], "claude")?.[0]?.install).toBe("/plugin install beads@harness-plugins")
     expect(catalogHits("catalog", true, { plugins: [{ name: "beads" }] }, [], "opencode")?.[0]?.install).toBe("opencode plugin add 'github:srobroek/harness-plugins::path:plugins/beads/opencode'")
-    expect(catalogHits("catalog", true, { plugins: [{ name: "beads" }] }, [], "omp")?.[0]?.install).toBe("omp plugin install beads@harness-plugins")
+    expect(catalogHits("catalog", true, { plugins: [{ name: "beads" }] }, [], "omp")?.[0]?.install).toBe("omp plugin install --scope project beads@harness-plugins")
     expect(catalogHits("catalog", true, { plugins: [{ name: "beads" }] }, [], "pi")?.[0]?.install).toBe("pi install npm:@srobroek/pi-beads-enforcer")
   })
 
@@ -481,7 +483,7 @@ describe("catalog", () => {
     )
     expect(requested).toEqual([catalogUrlFor("omp")])
     expect(result(report, "catalog")?.hits.map((hit) => hit.name)).toEqual(["worktrunk"])
-    expect(result(report, "catalog")?.hits[0]?.install).toBe("omp plugin install worktrunk@harness-plugins")
+    expect(result(report, "catalog")?.hits[0]?.install).toBe("omp plugin install --scope project worktrunk@harness-plugins")
   })
 
 
