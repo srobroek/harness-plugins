@@ -1,3 +1,5 @@
+## toolchain [0.10.4](https://github.com/srobroek/harness-plugins/compare/toolchain--v0.10.3...toolchain--v0.10.4) (2026-11-24)
+
 ## toolchain [0.10.3](https://github.com/srobroek/harness-plugins/compare/toolchain--v0.10.2...toolchain--v0.10.3) (2026-11-24)
 
 ### Bug Fixes
