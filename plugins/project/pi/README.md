@@ -46,6 +46,11 @@ promoting machine-local omp skills and rules. This is the authoritative copy; th
 earlier one under `~/.claude/skills` is gone.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-project
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/project/opencode'
