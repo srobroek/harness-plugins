@@ -1626,7 +1626,7 @@
     },
     {
       "name": "project",
-      "version": "0.12.2",
+      "version": "0.12.3",
       "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
       "category": "productivity",
       "harnesses": {

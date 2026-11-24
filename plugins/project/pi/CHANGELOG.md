@@ -1,3 +1,12 @@
+## project [0.12.3](https://github.com/srobroek/harness-plugins/compare/project--v0.12.2...project--v0.12.3) (2026-11-24)
+
+### Bug Fixes
+
+* **beads:** make project plugin signal opt in ([e31958d](https://github.com/srobroek/harness-plugins/commit/e31958dd50cad74c832b01da3380626065a26cbc))
+* **project:** make scaffold guidance portable ([c1660ff](https://github.com/srobroek/harness-plugins/commit/c1660ffa83a1d59713b8f7460296c341101c496c))
+* **project:** refresh scaffold references ([c9deb29](https://github.com/srobroek/harness-plugins/commit/c9deb29ddfc6e35421cd2d135cc4153a253bb452))
+* **project:** regenerate portable scaffold guidance ([7bad1b3](https://github.com/srobroek/harness-plugins/commit/7bad1b37fedaad57753a28f165f8c040fc0d0125))
+
 ## project [0.12.2](https://github.com/srobroek/harness-plugins/compare/project--v0.12.1...project--v0.12.2) (2026-11-24)
 
 ## project [0.12.1](https://github.com/srobroek/harness-plugins/compare/project--v0.12.0...project--v0.12.1) (2026-11-23)
