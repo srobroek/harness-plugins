@@ -78,10 +78,9 @@ You plan and integrate. Subagents do the work. You have no question tool. Put ev
 ## Dev host and scratch
 
 - Before Rust builds, check free disk space and report low space to the lead. Before you call `delivery_land` in a Rust worktree, run `cargo clean`. Run it in idle worktrees too.
-- After you push, send heavy runs to dev over SSH. Dev takes no git writes. Use a detached worktree at the exact SHA. Run one dev run per head.
-- Run them only through `slopvac-heavy <name>-<sha8> <dev-worktree> '<command>'`. The helper owns the slot. Wrap commands in `timeout` under `mise exec --`.
-- Put any chain beyond a simple command in a script file, and pass `sh <script>`. Check within a minute that the log exists. Join steps with `set -e` or `&&`. A failed step then fails the chain. Record each step's exit code. Leave TMPDIR to the helper, which gives each run its own.
-- Check that the log shows the pinned toolchain. Evidence from another toolchain does not count.
+- After you push, send heavy runs to dev over SSH. Dev takes no git writes. Use a detached worktree at the exact SHA. Run one dev run per head. If `slopvac-heavy` is installed, use it; otherwise run the bounded command directly.
+- Put any chain beyond a simple command in a script file and pass `sh <script>`. Check within a minute that the log exists. Join steps with `set -e` or `&&`; a failed step then fails the chain. Record each step's exit code. Let `slopvac-heavy` set a per-run TMPDIR when available.
+- Check that the log shows the pinned toolchain when you use `slopvac-heavy`. Evidence from another toolchain does not count.
 - Treat a dev-only clippy failure on a file identical to main as suspect, because sccache may serve stale lint output.
 - Give `MISE_DISABLE_TOOLS` full backend names. The tool ignores short names.
 - Build generated bundles on the laptop, because dev is aarch64. Let CI judge freshness.
