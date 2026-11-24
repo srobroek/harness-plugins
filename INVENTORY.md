@@ -7,7 +7,7 @@
 | agent-efficiency | 0.14.5 | development | global | opencode |
 | agent-mechanic | 0.8.3 | development | global | opencode, omp, pi |
 | agent-researcher | 0.11.0 | development | global | opencode, omp, pi |
-| agent-reviewer | 0.13.4 | development | global | opencode, claude, omp, pi |
+| agent-reviewer | 0.14.0 | development | global | opencode, claude, omp, pi |
 | agent-seance | 0.8.2 | development | global | opencode |
 | architecture | 0.11.4 | development | global | opencode, claude, omp, pi |
 | ast-grep | 1.3.2 | development | global | opencode, claude |
@@ -37,9 +37,9 @@
 | plugin-audit | 0.2.0 | development | project | opencode |
 | project | 0.12.5 | productivity | global | opencode, claude, omp, pi |
 | project-secrets | 1.0.3 | productivity | global | opencode, claude, omp, pi |
-| quality | 0.15.3 | development | global | opencode, claude, pi |
+| quality | 0.16.0 | development | global | opencode, claude, pi |
 | repomix | 0.6.3 | development | global | opencode, claude, pi |
-| safety | 0.14.4 | development | global | opencode, pi |
+| safety | 0.14.5 | development | global | opencode, pi |
 | secret-store | 1.0.2 | development | global | opencode, pi |
 | session | 0.4.2 | development | global | opencode |
 | speckit | 0.11.4 | development | project | opencode, claude |

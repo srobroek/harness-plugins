@@ -1,3 +1,9 @@
+## quality [0.16.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.15.3...quality--v0.16.0) (2026-11-24)
+
+### Features
+
+* **agent-reviewer:** code-reviewer and security-auditor run the project's tests ([#172](https://github.com/srobroek/harness-plugins/issues/172)) ([0d2693e](https://github.com/srobroek/harness-plugins/commit/0d2693eba31b4a1b48f4a2f6726a1170a948e503))
+
 ## quality [0.15.3](https://github.com/srobroek/harness-plugins/compare/quality--v0.15.2...quality--v0.15.3) (2026-11-24)
 
 ## quality [0.15.2](https://github.com/srobroek/harness-plugins/compare/quality--v0.15.1...quality--v0.15.2) (2026-11-24)

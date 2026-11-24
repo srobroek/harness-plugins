@@ -12,7 +12,7 @@
       "name": "agent-reviewer",
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "source": "./plugins/agent-reviewer/claude",
-      "version": "0.13.4",
+      "version": "0.14.0",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/agent-reviewer",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -156,7 +156,7 @@
       "name": "quality",
       "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
       "source": "./plugins/quality/claude",
-      "version": "0.15.3",
+      "version": "0.16.0",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/quality",
       "repository": "https://github.com/srobroek/harness-plugins"

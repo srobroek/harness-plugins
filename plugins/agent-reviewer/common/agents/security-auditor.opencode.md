@@ -685,12 +685,249 @@ permissions:
   - action: shell
     resource: "semgrep *-a *"
     effect: deny
+  - action: shell
+    resource: "npm install*"
+    effect: deny
+  - action: shell
+    resource: "npm i *"
+    effect: deny
+  - action: shell
+    resource: "npm i"
+    effect: deny
+  - action: shell
+    resource: "npm ci*"
+    effect: deny
+  - action: shell
+    resource: "npm add*"
+    effect: deny
+  - action: shell
+    resource: "npm update*"
+    effect: deny
+  - action: shell
+    resource: "npm uninstall*"
+    effect: deny
+  - action: shell
+    resource: "npm link*"
+    effect: deny
+  - action: shell
+    resource: "npm dedupe*"
+    effect: deny
+  - action: shell
+    resource: "npm audit fix*"
+    effect: deny
+  - action: shell
+    resource: "yarn install*"
+    effect: deny
+  - action: shell
+    resource: "yarn add*"
+    effect: deny
+  - action: shell
+    resource: "yarn remove*"
+    effect: deny
+  - action: shell
+    resource: "yarn up*"
+    effect: deny
+  - action: shell
+    resource: "yarn upgrade*"
+    effect: deny
+  - action: shell
+    resource: "pnpm install*"
+    effect: deny
+  - action: shell
+    resource: "pnpm i *"
+    effect: deny
+  - action: shell
+    resource: "pnpm i"
+    effect: deny
+  - action: shell
+    resource: "pnpm add*"
+    effect: deny
+  - action: shell
+    resource: "pnpm remove*"
+    effect: deny
+  - action: shell
+    resource: "pnpm update*"
+    effect: deny
+  - action: shell
+    resource: "pnpm up*"
+    effect: deny
+  - action: shell
+    resource: "bun install*"
+    effect: deny
+  - action: shell
+    resource: "bun i *"
+    effect: deny
+  - action: shell
+    resource: "bun i"
+    effect: deny
+  - action: shell
+    resource: "bun add*"
+    effect: deny
+  - action: shell
+    resource: "bun remove*"
+    effect: deny
+  - action: shell
+    resource: "bun update*"
+    effect: deny
+  - action: shell
+    resource: "bun link*"
+    effect: deny
+  - action: shell
+    resource: "pip install*"
+    effect: deny
+  - action: shell
+    resource: "pip uninstall*"
+    effect: deny
+  - action: shell
+    resource: "pip3 install*"
+    effect: deny
+  - action: shell
+    resource: "pip3 uninstall*"
+    effect: deny
+  - action: shell
+    resource: "python -m pip install*"
+    effect: deny
+  - action: shell
+    resource: "python -m pip uninstall*"
+    effect: deny
+  - action: shell
+    resource: "python3 -m pip install*"
+    effect: deny
+  - action: shell
+    resource: "python3 -m pip uninstall*"
+    effect: deny
+  - action: shell
+    resource: "uv add*"
+    effect: deny
+  - action: shell
+    resource: "uv remove*"
+    effect: deny
+  - action: shell
+    resource: "uv sync*"
+    effect: deny
+  - action: shell
+    resource: "uv lock*"
+    effect: deny
+  - action: shell
+    resource: "uv pip install*"
+    effect: deny
+  - action: shell
+    resource: "uv pip uninstall*"
+    effect: deny
+  - action: shell
+    resource: "uv pip sync*"
+    effect: deny
+  - action: shell
+    resource: "uv tool install*"
+    effect: deny
+  - action: shell
+    resource: "uv tool upgrade*"
+    effect: deny
+  - action: shell
+    resource: "poetry add*"
+    effect: deny
+  - action: shell
+    resource: "poetry install*"
+    effect: deny
+  - action: shell
+    resource: "poetry remove*"
+    effect: deny
+  - action: shell
+    resource: "poetry lock*"
+    effect: deny
+  - action: shell
+    resource: "poetry update*"
+    effect: deny
+  - action: shell
+    resource: "pipenv install*"
+    effect: deny
+  - action: shell
+    resource: "pipenv uninstall*"
+    effect: deny
+  - action: shell
+    resource: "pipenv lock*"
+    effect: deny
+  - action: shell
+    resource: "cargo add*"
+    effect: deny
+  - action: shell
+    resource: "cargo remove*"
+    effect: deny
+  - action: shell
+    resource: "cargo update*"
+    effect: deny
+  - action: shell
+    resource: "cargo install*"
+    effect: deny
+  - action: shell
+    resource: "cargo fetch*"
+    effect: deny
+  - action: shell
+    resource: "cargo generate-lockfile*"
+    effect: deny
+  - action: shell
+    resource: "go get*"
+    effect: deny
+  - action: shell
+    resource: "go install*"
+    effect: deny
+  - action: shell
+    resource: "go mod tidy*"
+    effect: deny
+  - action: shell
+    resource: "go mod download*"
+    effect: deny
+  - action: shell
+    resource: "go mod vendor*"
+    effect: deny
+  - action: shell
+    resource: "go work sync*"
+    effect: deny
+  - action: shell
+    resource: "bundle install*"
+    effect: deny
+  - action: shell
+    resource: "bundle add*"
+    effect: deny
+  - action: shell
+    resource: "bundle update*"
+    effect: deny
+  - action: shell
+    resource: "gem install*"
+    effect: deny
+  - action: shell
+    resource: "composer install*"
+    effect: deny
+  - action: shell
+    resource: "composer require*"
+    effect: deny
+  - action: shell
+    resource: "composer update*"
+    effect: deny
+  - action: shell
+    resource: "brew install*"
+    effect: deny
+  - action: shell
+    resource: "brew upgrade*"
+    effect: deny
+  - action: shell
+    resource: "apt install*"
+    effect: deny
+  - action: shell
+    resource: "apt-get install*"
+    effect: deny
+  - action: shell
+    resource: "dnf install*"
+    effect: deny
+  - action: shell
+    resource: "apk add*"
+    effect: deny
   - action: external_directory
     resource: "*"
     effect: ask
 ---
 
-You are a security reviewer. You find exploitable vulnerabilities in the scope your caller assigns: paths, a module, or the files a change touches. Work from the files; your shell is read-only: never modify the repository, a remote or the ledger, and never run a build or test.
+You are a security reviewer. You find exploitable vulnerabilities in the scope your caller assigns: paths, a module, or the files a change touches. Work from the files; your shell is read-only: never modify the repository, a remote or the ledger, never install dependencies or change a lockfile, and never push or commit. Run the project's existing test, lint and typecheck commands (`pytest`, `uv run pytest`, `just check`, `npm test`, `bun test`, `cargo test`, `go test`) to verify a finding. Name any other command for the caller to run instead.
 
 ## Task
 
