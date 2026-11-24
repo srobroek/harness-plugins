@@ -86,6 +86,11 @@ describe("readPiOptions and loadPiOptions", () => {
     }
   })
 
+  test("gitWrappers defaults to git and keeps a configured list", () => {
+    expect(readPiOptions({}).gitWrappers).toEqual(["git"])
+    expect(readPiOptions({ gitWrappers: ["git", "dgit"] }).gitWrappers).toEqual(["git", "dgit"])
+  })
+
   test("a missing file is the defaults without a warning; a malformed one warns", () => {
     expect(loadPiOptions(join(root, "missing.json"))).toEqual({ options: readPiOptions({}) })
     const bad = join(root, "bad.json")
@@ -128,6 +133,13 @@ describe("gateBash hard gates", () => {
       guard: { resolveRemote: () => ["https://github.com/acme/widgets.git"] },
     })
     expect(verdict).toEqual(block(MESSAGES["push-via"]("github.com", "dgit", plain)))
+  })
+
+  test("the gates read a wrapper listed in gitWrappers as git", async () => {
+    const wrapped = config({ gitWrappers: ["git", "dgit"] })
+    expect(await gateBash("dgit worktree add /tmp/feat", plain, config())).toEqual({ kind: "run" })
+    expect(await gateBash("dgit worktree add /tmp/feat", plain, wrapped)).toEqual(block(MESSAGES["worktree-tmp"]))
+    expect(await gateBash("dgit push --force origin main", plain, wrapped)).toEqual(block(FORCE_PUSH_MESSAGE))
   })
 
   // Each command is one that cc-safety-net 2.8.2 lets through at its default level.

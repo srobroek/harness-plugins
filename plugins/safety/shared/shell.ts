@@ -8,6 +8,7 @@
  */
 
 import { commandWords, commandWrappers, type HereDocument, type ShellWord, scanShell } from "@srobroek/opencode-lib"
+import { DEFAULT_GIT_WRAPPERS, isGitCommand } from "@srobroek/opencode-lib/git-wrappers"
 
 /** Where a command was found. */
 export type Context = "top" | "substitution" | "shell" | "eval" | "xargs" | "here-document"
@@ -210,9 +211,9 @@ const GIT_FLAGS: ReadonlySet<string> = new Set([
   "--bare",
 ])
 
-export function gitInvocation(argv: readonly string[]): GitInvocation | undefined {
-  const name = base(argv[0])
-  if (name !== "git" && name !== "dgit") return undefined
+/** `argv` read as git when its command word's basename is in `wrappers` (the `gitWrappers` option; only `git` by default). */
+export function gitInvocation(argv: readonly string[], wrappers: readonly string[] = DEFAULT_GIT_WRAPPERS): GitInvocation | undefined {
+  if (!isGitCommand(argv[0], wrappers)) return undefined
   const chdirs: string[] = []
   let overridden = false
   for (let i = 1; i < argv.length; i++) {
