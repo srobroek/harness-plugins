@@ -13,6 +13,11 @@ since a baseline go to the `whats-new` skill. This is the authoritative copy; th
 earlier one under `~/.claude/skills` is gone.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-eli5
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/eli5/opencode'
