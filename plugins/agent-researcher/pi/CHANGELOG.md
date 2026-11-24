@@ -1,3 +1,9 @@
+## agent-researcher [0.11.0](https://github.com/srobroek/harness-plugins/compare/agent-researcher--v0.10.4...agent-researcher--v0.11.0) (2026-11-24)
+
+### Features
+
+* **agent-researcher:** match pi-subagents' built-in researcher contract on pi ([e3fa574](https://github.com/srobroek/harness-plugins/commit/e3fa57424c3e58eea0860c0e7529d4ac09288448))
+
 ## agent-researcher [0.10.4](https://github.com/srobroek/harness-plugins/compare/agent-researcher--v0.10.3...agent-researcher--v0.10.4) (2026-11-24)
 
 ## agent-researcher [0.10.3](https://github.com/srobroek/harness-plugins/compare/agent-researcher--v0.10.2...agent-researcher--v0.10.3) (2026-11-24)
