@@ -192,7 +192,7 @@
       "name": "trunk-dev",
       "description": "Trunk-based delivery for OpenCode, Claude Code, and pi: Conventional Commit and main-push gates, skip-CI and MR/PR advisories, feature-flag cleanup beads, and release-setup skills.",
       "source": "./plugins/trunk-dev/claude",
-      "version": "0.12.2",
+      "version": "0.12.3",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/trunk-dev",
       "repository": "https://github.com/srobroek/harness-plugins"

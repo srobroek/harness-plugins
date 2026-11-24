@@ -1,3 +1,5 @@
+## trunk-dev [0.12.3](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.12.2...trunk-dev--v0.12.3) (2026-11-24)
+
 ## trunk-dev [0.12.2](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.12.1...trunk-dev--v0.12.2) (2026-11-24)
 
 ### Bug Fixes
