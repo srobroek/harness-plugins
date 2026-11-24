@@ -1,6 +1,6 @@
 ---
 name: coder
-description: "Use for any code development (implement, fix, refactor, debug, test, build, profile, upgrade deps, code questions); general only for non-code work."
+description: "Use for scoped code work: implement, fix, debug, test or answer code questions; follows quality-code-design, delegates reviews, verifies changes."
 tools: read, grep, find, ls, edit, write, bash, subagent
 allowedAgents: scout, researcher, mechanic, code-reviewer, pr-reviewer, security-auditor, adversarial-challenger, external-repo-worker
 allowNestedSubagents: true

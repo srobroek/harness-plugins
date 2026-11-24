@@ -21,7 +21,7 @@ test("registers the standard-tier coder subagent and disposes it", async () => {
   expect(fake.skills.size).toBe(0)
   expect(agent).toMatchObject({ mode: "subagent", request: { headers: { "x-opencode-model-role": "standard" } } })
   expect(agent?.model).toBeUndefined()
-  expect(agent?.description).toContain("general only for non-code work")
+  expect(agent?.description).toContain("Use for scoped code work")
   expect(agent?.system).toContain("VERDICT: DONE|PARTIAL|BLOCKED")
   expect(agent?.system).toContain("omit `tier`")
   await cleanup?.()
