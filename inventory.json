@@ -1002,6 +1002,20 @@
           ],
           "mcp": []
         },
+        "omp": {
+          "skills": [
+            "find-tools"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "find-tools"
+          ],
+          "mcp": []
+        },
         "pi": {
           "skills": [
             "find-tools"
