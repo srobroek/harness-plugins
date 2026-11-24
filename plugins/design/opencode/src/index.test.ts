@@ -170,11 +170,9 @@ test("adds no servers outside a frontend project", async () => {
   expect(fake.mcp.size).toBe(0)
 })
 
-test("ui-implementer may spawn debug and still denies every other subagent", () => {
 test("ui-implementer allows debug, defaults to Context7 and opts into AWS tools", async () => {
   const { permissions } = readAgentFile(join(import.meta.dir, "../agents/ui-implementer.md"))
   expect(permissionEffect(permissions, "subagent", "debug")).toBe("allow")
-  for (const other of ["coder", "ui-ux-specialist", "explore"]) expect(permissionEffect(permissions, "subagent", other)).toBe("deny")
   for (const other of ["coder", "ui-ux-specialist", "explore"])
     expect(permissionEffect(permissions, "subagent", other)).toBe("deny")
 

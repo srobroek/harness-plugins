@@ -177,12 +177,12 @@ install and ask before installing.
 
 ## Runner and flaky tests
 
-Do default to `cargo nextest run` locally and in CI, beside `cargo test --doc`.
-Benefits: process-per-test isolation, parallelism, retries that mark flaky tests,
-partitioning, and JUnit output. Costs: a separate binary, a separate doctest run,
-and broken assumptions about state shared across tests in one process, usually
-revealing an isolation bug. Use plain `cargo test` only if nextest cannot be installed.
-Process isolation does not isolate files, ports, databases, or external services.
+Use the repository's configured test runner. When a project adopts `cargo-nextest`, run
+`cargo nextest run` beside `cargo test --doc`, which nextest does not run. Nextest provides
+process-per-test isolation, parallelism, retries that mark flaky tests, partitioning, and JUnit
+output. Costs include a separate binary and doctest run, and possible failures from assumptions
+about shared in-process state. Process isolation does not isolate files, ports, databases, or
+external services.
 
 Do diagnose intermittent failures with repeated runs (`--stress-count N` or
 `--stress-duration`) and `--no-fail-fast`; vary concurrency and preserve output and
