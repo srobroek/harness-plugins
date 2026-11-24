@@ -1,3 +1,9 @@
+## code-challenge [2.1.0](https://github.com/srobroek/harness-plugins/compare/code-challenge--v2.0.3...code-challenge--v2.1.0) (2026-11-24)
+
+### Features
+
+* **agent-reviewer:** grant Pi subagents tools ([159ad02](https://github.com/srobroek/harness-plugins/commit/159ad02eac3b9ba206d568a93877c2dedd5e9036))
+
 ## code-challenge [2.0.3](https://github.com/srobroek/harness-plugins/compare/code-challenge--v2.0.2...code-challenge--v2.0.3) (2026-11-24)
 
 ## code-challenge [2.0.2](https://github.com/srobroek/harness-plugins/compare/code-challenge--v2.0.1...code-challenge--v2.0.2) (2026-11-24)

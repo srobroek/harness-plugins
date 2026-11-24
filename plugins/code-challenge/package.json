@@ -1,6 +1,6 @@
 {
   "name": "code-challenge",
-  "version": "2.0.3",
+  "version": "2.1.0",
   "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure: one skill, a /code-challenge command, phase formulas and two read-only challenger agents.",
   "private": true,
   "type": "module",
@@ -17,12 +17,36 @@
       "index": "index"
     },
     "companions": [
-      { "package": "pi-lens", "for": "code-intelligence and AST search tools for the challengers", "required": true },
-      { "package": "pi-web-access", "for": "web research tools for the code challenger", "required": true },
-      { "package": "@srobroek/pi-code-quality", "for": "test review tools for the code challenger and refactor challenger", "required": true },
-      { "package": "@srobroek/pi-repomix", "for": "repository packing for the challengers", "required": true },
-      { "package": "@srobroek/pi-dep-update", "for": "read-only dependency scan tools for the challengers", "required": true },
-      { "package": "@srobroek/pi-whats-new", "for": "version gap scan tools for the challengers", "required": true }
+      {
+        "package": "pi-lens",
+        "for": "code-intelligence and AST search tools for the challengers",
+        "required": true
+      },
+      {
+        "package": "pi-web-access",
+        "for": "web research tools for the code challenger",
+        "required": true
+      },
+      {
+        "package": "@srobroek/pi-code-quality",
+        "for": "test review tools for the code challenger and refactor challenger",
+        "required": true
+      },
+      {
+        "package": "@srobroek/pi-repomix",
+        "for": "repository packing for the challengers",
+        "required": true
+      },
+      {
+        "package": "@srobroek/pi-dep-update",
+        "for": "read-only dependency scan tools for the challengers",
+        "required": true
+      },
+      {
+        "package": "@srobroek/pi-whats-new",
+        "for": "version gap scan tools for the challengers",
+        "required": true
+      }
     ],
     "piEntries": {
       "index": "index"
