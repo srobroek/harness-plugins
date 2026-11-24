@@ -1508,11 +1508,11 @@ describe("delivery_land", () => {
       " https://github.com/srobroek/omp-plugins.git",
       "https://github.com/srobroek/omp-plugins.git ",
       "",
-      "https://srobroek:ghp_secrettoken@git\thub.com/srobroek/omp-plugins.git",
+      "https://test-user:ghp_secrettoken@git\thub.com/srobroek/omp-plugins.git",
       "https://github.com/srobroek/omp-plugins.git?token=ghp_secrettoken\nhttps://evil.example/x",
       " ssh://git:ghp_secrettoken@github.com/srobroek/omp-plugins.git",
     ]) {
-      const { outcome, calls, files } = await land({ remoteUrl, prView: [completed(githubPr())] })
+      const { outcome, calls, files } = await land({ remoteUrl, prView: [completed(githubPr())] }, REVIEWED)
 
       expect(outcome.ok).toBe(false)
       if (outcome.ok) throw new Error("expected a refusal")
@@ -1813,7 +1813,7 @@ describe("delivery_land", () => {
 
   test("a credential in the remote URL is not copied into the receipt", async () => {
     const { outcome } = await land({
-      remoteUrl: "https://sjors:ghp_secrettoken@github.com/srobroek/omp-plugins.git",
+      remoteUrl: "https://test-user:ghp_secrettoken@github.com/srobroek/omp-plugins.git",
       prView: [completed(mergedGithubPr())],
     })
 
@@ -2954,22 +2954,22 @@ describe("delivery_land on a GitHub SSH remote that plain ssh cannot reach", () 
   })
 })
 
-/** ssh.gitlab.aws.dev is git-over-SSH only; the API and the CLI live at gitlab.aws.dev. */
-describe("delivery_land on gitlab.aws.dev", () => {
-  test("a remote on ssh.gitlab.aws.dev lands through the gitlab.aws.dev API host", async () => {
+/** ssh.gitlab.example.com is git-over-SSH only; the API and the CLI live at gitlab.example.com. */
+describe("delivery_land on gitlab.example.com", () => {
+  test("a remote on ssh.gitlab.example.com lands through the gitlab.example.com API host", async () => {
     const { canonical, receipts } = repository()
     const { run, calls } = runner(
       {
-        remoteUrl: "git@ssh.gitlab.aws.dev:sjors/cde-builderproject.git",
+        remoteUrl: "git@ssh.gitlab.example.com:example-org/example-repo.git",
         prView: [
           completed(
             gitlabMr({
               state: "opened",
               merge_commit_sha: null,
-              web_url: "https://gitlab.aws.dev/sjors/cde-builderproject/-/merge_requests/12",
+              web_url: "https://gitlab.example.com/example-org/example-repo/-/merge_requests/12",
             }),
           ),
-          completed(gitlabMr({ web_url: "https://gitlab.aws.dev/sjors/cde-builderproject/-/merge_requests/12" })),
+          completed(gitlabMr({ web_url: "https://gitlab.example.com/example-org/example-repo/-/merge_requests/12" })),
         ],
         autoDelete: completed(JSON.stringify({ remove_source_branch_after_merge: true })),
       },
@@ -2982,22 +2982,22 @@ describe("delivery_land on gitlab.aws.dev", () => {
 
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) throw new Error(outcome.reason)
-    expect(outcome.receipt.repo).toMatchObject({ forge: "gitlab", nameWithOwner: "sjors/cde-builderproject" })
+    expect(outcome.receipt.repo).toMatchObject({ forge: "gitlab", nameWithOwner: "example-org/example-repo" })
     const glab = calls.filter((call) => call.argv[0] === "glab")
     expect(glab.length).toBeGreaterThanOrEqual(5)
     for (const call of glab) {
       if (call.argv.includes("--repo"))
-        expect(call.argv[call.argv.indexOf("--repo") + 1]).toBe("gitlab.aws.dev/sjors/cde-builderproject")
+        expect(call.argv[call.argv.indexOf("--repo") + 1]).toBe("gitlab.example.com/example-org/example-repo")
       if (call.argv.includes("--hostname"))
-        expect(call.argv[call.argv.indexOf("--hostname") + 1]).toBe("gitlab.aws.dev")
-      expect(call.argv.join(" ")).not.toContain("ssh.gitlab.aws.dev")
+        expect(call.argv[call.argv.indexOf("--hostname") + 1]).toBe("gitlab.example.com")
+      expect(call.argv.join(" ")).not.toContain("ssh.gitlab.example.com")
       expect(call.argv.join(" ")).not.toContain("gitlab.com")
-      expect(call.env?.GITLAB_HOST).toBe("gitlab.aws.dev")
-      expect(call.env?.GITLAB_API_HOST).toBe("gitlab.aws.dev")
+      expect(call.env?.GITLAB_HOST).toBe("gitlab.example.com")
+      expect(call.env?.GITLAB_API_HOST).toBe("gitlab.example.com")
     }
     expect(glab.filter((call) => call.argv[1] === "api").map((call) => call.argv.slice(0, 6))).toEqual([
-      ["glab", "api", "projects/sjors%2Fcde-builderproject", "--hostname", "gitlab.aws.dev"],
-      ["glab", "api", "-X", "PUT", "projects/sjors%2Fcde-builderproject", "--hostname"],
+      ["glab", "api", "projects/example-org%2Fexample-repo", "--hostname", "gitlab.example.com"],
+      ["glab", "api", "-X", "PUT", "projects/example-org%2Fexample-repo", "--hostname"],
     ])
   })
 })

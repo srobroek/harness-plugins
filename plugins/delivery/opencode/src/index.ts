@@ -482,7 +482,8 @@ export async function setupDelivery(
     } catch {
       modelRoles = false
     }
-    const grant = mcpGrant((ctx.options as Record<string, unknown> | undefined)?.tools, files.map((file) => file.id))
+    const requestedTools = (ctx.options as Record<string, unknown> | undefined)?.tools
+    const grant = mcpGrant(requestedTools === undefined ? ["context7_*"] : requestedTools, files.map((file) => file.id))
     const agents = await ctx.agent.transform((editor) => {
       for (const file of files) {
         const created = editor.get(file.id) === undefined
