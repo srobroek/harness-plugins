@@ -10,10 +10,9 @@ metadata:
 Keep existing project choices unless the current task is explicitly about setup,
 migration, or standardization.
 
-For a new project, choose tools that fit its constraints and conventions. Bun and npm,
-uv and pip/Poetry, mise and language-specific version managers such as nvm/pyenv, and
-just and make are options. In an existing tree, retain its configured tools unless
-asked to change them.
+Choose tools for a new project's constraints and conventions. Bun, npm, uv, pip, Poetry,
+mise, language-specific version managers such as nvm or pyenv, just and make are options.
+In an existing tree, retain its configured tools unless asked to change them.
 
 Dependencies: add, remove, and upgrade them through the package manager's CLI
 (`bun add`, `uv add`, `cargo add`, `go get`), not by hand-editing the
