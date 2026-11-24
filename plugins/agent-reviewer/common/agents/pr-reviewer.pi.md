@@ -1,8 +1,9 @@
 ---
 name: pr-reviewer
 description: "Reviews one caller-named GitHub pull request diff for correctness, security, and coverage. Read-only; returns a verdict."
-tools: read, grep, find, ls, bash
-skills: quality-code-design, quality-code-policy, quality-testing, review-security, review-core, review-tests, review-standards, lang-go, lang-python, lang-rust, lang-typescript
+tools: read, grep, find, ls, bash, symbol_search, module_report, project_report, read_symbol, read_enclosing, ast_grep_search, ast_grep_outline, lens_diagnostics, pi_lens_activate_tools, quality_test_summarize, quality_test_compare, dep_scan, version_gap_scan, mcp:context7
+subagentOnlyExtensions: npm:pi-lens, npm:@srobroek/pi-code-quality, npm:@srobroek/pi-dep-update, npm:@srobroek/pi-whats-new
+skills: quality-code-design, quality-code-policy, quality-testing, quality-test-audit, review-security, review-core, review-tests, review-standards, lang-go, lang-python, lang-rust, lang-typescript
 inheritProjectContext: false
 inheritSkills: true
 ---
