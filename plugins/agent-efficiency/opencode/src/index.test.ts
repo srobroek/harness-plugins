@@ -105,9 +105,9 @@ describe("globalConfigDirs", () => {
 })
 
 // Recorded from OpenCode 2.1.4 with Claude Haiku 4.5, one global and one project AGENTS.md;
-// home and repository paths are renamed.
+// fixture paths and host details are neutralized.
 describe("leanSystem on a recorded 2.1.4 prompt", () => {
-  const dirs = ["/Users/u/.config/opencode"]
+  const dirs = ["/home/dev/.config/opencode"]
   const instructions = (parts: ReadonlyArray<{ type: string; text: string }>) =>
     parts.filter((part) => part.text.includes("Today's date: "))
   for (const agent of ["explore", "adversarial-challenger"] as const) {
@@ -118,8 +118,8 @@ describe("leanSystem on a recorded 2.1.4 prompt", () => {
     test(`${agent}: the default drops identity and the hint, and keeps both AGENTS.md files`, () => {
       const lean = leanSystem(recorded, new Set(DEFAULT_DROP), dirs)
       expect(lean).toEqual(recorded.filter((_, index) => index === 0 || index === 2))
-      expect(lean[1]?.text).toContain("Instructions from: /Users/u/.config/opencode/AGENTS.md")
-      expect(lean[1]?.text).toContain("Instructions from: /Users/u/dev/repo/AGENTS.md")
+      expect(lean[1]?.text).toContain("Instructions from: /home/dev/.config/opencode/AGENTS.md")
+      expect(lean[1]?.text).toContain("Instructions from: /home/dev/project/AGENTS.md")
     })
 
     test(`${agent}: global-instructions drops the global file and keeps the project file`, () => {
@@ -127,19 +127,20 @@ describe("leanSystem on a recorded 2.1.4 prompt", () => {
       expect(lean).toHaveLength(2)
       expect(lean[0]?.text).toBe(prompt)
       const kept = lean[1]?.text ?? ""
-      expect(kept).not.toContain("Instructions from: /Users/u/.config/opencode/AGENTS.md")
+      expect(kept).not.toContain("Instructions from: /home/dev/.config/opencode/AGENTS.md")
       expect(kept).not.toContain("## GitHub transport")
-      expect(kept).toContain("Instructions from: /Users/u/dev/repo/AGENTS.md\n# AGENTS.md")
+      expect(kept).toContain("Instructions from: /home/dev/project/AGENTS.md\n# AGENTS.md")
       expect(kept).toContain("## Issue tracking")
-      expect(kept.length).toBe(part.length - (part.indexOf("Instructions from: /Users/u/dev/repo") - part.indexOf("Instructions from: /Users/u/.config")))
+      expect(kept.length).toBe(part.length - (part.indexOf("Instructions from: /home/dev/project") - part.indexOf("Instructions from: /home/dev/.config")))
       expect(kept.endsWith(part.slice(part.indexOf("\n\nToday's date: ")))).toBe(true)
     })
 
     test(`${agent}: project-instructions drops the project file only`, () => {
-      const [, kept] = leanSystem([recorded[0], recorded[2]] as typeof recorded, new Set(["project-instructions"] as const), dirs)
-      expect(kept?.text).toContain("## GitHub transport\n")
-      expect(kept?.text).not.toContain("Instructions from: /Users/u/dev/repo/AGENTS.md")
-      expect(kept?.text).toContain("rm -rf`.\n\n\nToday's date: ")
+      const globalIndex = recorded.findIndex((item) => item.text.includes("Instructions from: /home/dev/.config/opencode/AGENTS.md"))
+      const [, kept] = leanSystem([recorded[0], recorded[globalIndex]] as typeof recorded, new Set(["project-instructions"] as const), dirs)
+      expect(kept?.text).toContain("Instructions from: /home/dev/.config/opencode/AGENTS.md")
+      expect(kept?.text).not.toContain("Instructions from: /home/dev/project/AGENTS.md")
+      expect(kept?.text).toContain("approved temporary directory")
     })
 
     test(`${agent}: both instruction segments drop the whole block`, () => {
