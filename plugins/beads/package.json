@@ -15,7 +15,7 @@
     "scope": "project",
     "piName": "pi-beads-enforcer",
     "signals": [
-      ".beads/ (skip under ~/pace, which inherits it, and with .beads/RETIRED)",
+      ".beads/ (skip when .beads/RETIRED exists)",
       "every repository"
     ],
     "entries": {
