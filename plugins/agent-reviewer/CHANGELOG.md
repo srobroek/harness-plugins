@@ -1,3 +1,9 @@
+## agent-reviewer [0.15.1](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.15.0...agent-reviewer--v0.15.1) (2026-11-24)
+
+### Bug Fixes
+
+* **agent-reviewer:** tell OMP agents that keep a shell it is unrestricted ([#173](https://github.com/srobroek/harness-plugins/issues/173)) ([1b8386d](https://github.com/srobroek/harness-plugins/commit/1b8386dbf43fa6cb5580d4dbc03e619476ba023c))
+
 ## agent-reviewer [0.15.0](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.14.0...agent-reviewer--v0.15.0) (2026-11-24)
 
 ### Features

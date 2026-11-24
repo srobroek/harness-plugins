@@ -1,6 +1,6 @@
 {
   "name": "agent-reviewer",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "description": "Read-only reviewer subagents (pull request, local diff, security, adversarial challenge) sharing one review core, and a security review skill.",
   "private": true,
   "type": "module",
