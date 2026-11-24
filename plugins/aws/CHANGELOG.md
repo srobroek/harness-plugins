@@ -1,3 +1,5 @@
+## aws [0.10.1](https://github.com/srobroek/harness-plugins/compare/aws--v0.10.0...aws--v0.10.1) (2026-11-24)
+
 ## aws [0.10.0](https://github.com/srobroek/harness-plugins/compare/aws--v0.9.2...aws--v0.10.0) (2026-11-24)
 
 ### Features
