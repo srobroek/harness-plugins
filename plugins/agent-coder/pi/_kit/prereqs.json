@@ -1,0 +1,31 @@
+{
+  "plugin": "agent-coder",
+  "prerequisites": [],
+  "companions": [
+    {
+      "package": "pi-subagents",
+      "for": "the subagent tool",
+      "required": true
+    },
+    {
+      "package": "pi-lens",
+      "for": "code-intelligence tools for the subagent",
+      "required": true
+    },
+    {
+      "package": "@srobroek/pi-code-quality",
+      "for": "read-only test report analysis tools",
+      "required": true
+    },
+    {
+      "package": "@srobroek/pi-dep-update",
+      "for": "dependency scan tool",
+      "required": true
+    },
+    {
+      "package": "@srobroek/pi-whats-new",
+      "for": "version gap scan tool",
+      "required": true
+    }
+  ]
+}
