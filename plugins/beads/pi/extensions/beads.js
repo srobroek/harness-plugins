@@ -3109,39 +3109,6 @@ async function decideEmbeddedWrite(parsed, cwd, env, callID, deadline = Date.now
   }
 }
 
-// lib/src/pi-session-header.ts
-import { closeSync as closeSync3, lstatSync as lstatSync3, openSync as openSync3, readSync as readSync2 } from "fs";
-var HEADER_BYTES = 16 * 1024;
-function readSessionHeader(file) {
-  let fd;
-  try {
-    if (!lstatSync3(file).isFile())
-      return;
-    fd = openSync3(file, "r");
-    const buffer = Buffer.alloc(HEADER_BYTES);
-    const length = readSync2(fd, buffer, 0, HEADER_BYTES, 0);
-    const text = buffer.subarray(0, length).toString("utf8");
-    const end = text.indexOf(`
-`);
-    if (end < 0 && length === HEADER_BYTES)
-      return;
-    return headerView(JSON.parse(end < 0 ? text : text.slice(0, end)));
-  } catch {
-    return;
-  } finally {
-    if (fd !== undefined)
-      closeSync3(fd);
-  }
-}
-function headerView(value) {
-  if (value === null || typeof value !== "object")
-    return;
-  const header = value;
-  if (header.type !== "session" || typeof header.id !== "string" || header.id === "")
-    return;
-  return typeof header.parentSession === "string" && header.parentSession !== "" ? { id: header.id, parentSession: header.parentSession } : { id: header.id };
-}
-
 // lib/src/git-wrappers.ts
 var DEFAULT_GIT_WRAPPERS = Object.freeze(["git"]);
 function readGitWrappers(options) {
@@ -3173,6 +3140,39 @@ function loadPiOptionsFile(path, plugin, fallback) {
     return { options: {}, warning: `${plugin}: ${path} is not valid JSON; ${fallback}.` };
   }
   return { options: raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw : {} };
+}
+
+// lib/src/pi-session-header.ts
+import { closeSync as closeSync3, lstatSync as lstatSync3, openSync as openSync3, readSync as readSync2 } from "fs";
+var HEADER_BYTES = 16 * 1024;
+function readSessionHeader(file) {
+  let fd;
+  try {
+    if (!lstatSync3(file).isFile())
+      return;
+    fd = openSync3(file, "r");
+    const buffer = Buffer.alloc(HEADER_BYTES);
+    const length = readSync2(fd, buffer, 0, HEADER_BYTES, 0);
+    const text = buffer.subarray(0, length).toString("utf8");
+    const end = text.indexOf(`
+`);
+    if (end < 0 && length === HEADER_BYTES)
+      return;
+    return headerView(JSON.parse(end < 0 ? text : text.slice(0, end)));
+  } catch {
+    return;
+  } finally {
+    if (fd !== undefined)
+      closeSync3(fd);
+  }
+}
+function headerView(value) {
+  if (value === null || typeof value !== "object")
+    return;
+  const header = value;
+  if (header.type !== "session" || typeof header.id !== "string" || header.id === "")
+    return;
+  return typeof header.parentSession === "string" && header.parentSession !== "" ? { id: header.id, parentSession: header.parentSession } : { id: header.id };
 }
 
 // plugins/beads/pi-src/beads.ts
