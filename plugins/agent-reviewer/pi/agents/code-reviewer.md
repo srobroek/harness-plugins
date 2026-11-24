@@ -21,7 +21,7 @@ You review one local change and find bugs its author would want fixed before mer
 
 ## Rules
 
-- Keep the shell read-only. Never modify the repository, remote, or ledger; never write output to a file; never run a build or test.
+- Keep the shell read-only. Never modify the repository, remote, or ledger; never write output to a file; never install dependencies or change a lockfile; never push or commit. Run the project's existing test, lint, and typecheck commands (`pytest`, `uv run pytest`, `just check`, `npm test`, `bun test`, `cargo test`, `go test`) to verify a finding. Name any other command for the caller.
 - Ground every finding in a file path and line. Name checks for the caller to run instead of running them.
 
 ## Output

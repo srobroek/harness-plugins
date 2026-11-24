@@ -13,13 +13,15 @@
  * include `lib/src` fragments, which are expanded in turn; other fragments do not nest.
  *
  * In the frontmatter, a comment line `# {{rules read-only-shell}}` inside `permissions:` becomes
- * the shell rules of `read-only-shell.ts`, indented like the comment. The source stays valid YAML.
+ * the shell rules of `read-only-shell.ts`, indented like the comment; `# {{rules test-shell}}`
+ * becomes those of `test-shell.ts`, which also let an agent run the project's tests. The source stays valid YAML.
  */
 
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
-import { READ_ONLY_SHELL_RULES } from "./read-only-shell.ts"
+import { READ_ONLY_SHELL_RULES, type ShellRule } from "./read-only-shell.ts"
+import { TEST_SHELL_RULES } from "./test-shell.ts"
 
 export const FRAGMENTS_DIR = fileURLToPath(new URL(".", import.meta.url))
 export const SHARED_AGENTS_DIR = fileURLToPath(new URL("../../shared/agents/", import.meta.url))
@@ -27,7 +29,8 @@ const SHARED_PREFIX = "shared/"
 
 const INCLUDE = /^\{\{include ((?:shared\/)?[a-z][\w-]*)(?::([ \w-]*))?\}\}[ \t]*$/
 const PART = /^<!-- part: ([a-z][\w-]*) -->[ \t]*$/
-const RULES_LINE = /^([ \t]*)# \{\{rules read-only-shell\}\}[ \t]*$/
+const RULES_LINE = /^([ \t]*)# \{\{rules (read-only-shell|test-shell)\}\}[ \t]*$/
+const RULE_SETS: Readonly<Record<string, readonly ShellRule[]>> = { "read-only-shell": READ_ONLY_SHELL_RULES, "test-shell": TEST_SHELL_RULES }
 const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---\r?\n/
 
 /** The parts of a fragment file, in file order. Throws on a fragment without parts or with a repeated part. */
@@ -64,7 +67,7 @@ export function composeAgent(source: string, read: (name: string) => string = (n
   return expandRules(head) + composeBody(source.slice(head.length), read, true)
 }
 
-/** Replace a `# {{rules read-only-shell}}` frontmatter line with the shared shell permission entries. */
+/** Replace a `# {{rules <set>}}` frontmatter line with the shell permission entries of that set. */
 function expandRules(head: string): string {
   return head
     .split("\n")
@@ -72,7 +75,7 @@ function expandRules(head: string): string {
       const match = RULES_LINE.exec(line.replace(/\r$/, ""))
       if (!match) return line
       const indent = match[1] as string
-      return READ_ONLY_SHELL_RULES.map(
+      return (RULE_SETS[match[2] as string] as readonly ShellRule[]).map(
         (rule) => `${indent}- action: ${rule.action}\n${indent}  resource: ${JSON.stringify(rule.resource)}\n${indent}  effect: ${rule.effect}`,
       ).join("\n")
     })

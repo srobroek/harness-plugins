@@ -570,6 +570,13 @@ var READ_ONLY_SHELL_RULES = [
   ...deny("ast-grep * -U*", "ast-grep *--update-all*", "ast-grep * -i*", "ast-grep *--interactive*", "semgrep *--autofix*", "semgrep *-a *")
 ];
 
+// lib/src/test-shell.ts
+var deny2 = (...resources) => resources.map((resource) => ({ action: "shell", resource, effect: "deny" }));
+var TEST_SHELL_RULES = [
+  ...READ_ONLY_SHELL_RULES,
+  ...deny2("npm install*", "npm i *", "npm i", "npm ci*", "npm add*", "npm update*", "npm uninstall*", "npm link*", "npm dedupe*", "npm audit fix*", "yarn install*", "yarn add*", "yarn remove*", "yarn up*", "yarn upgrade*", "pnpm install*", "pnpm i *", "pnpm i", "pnpm add*", "pnpm remove*", "pnpm update*", "pnpm up*", "bun install*", "bun i *", "bun i", "bun add*", "bun remove*", "bun update*", "bun link*", "pip install*", "pip uninstall*", "pip3 install*", "pip3 uninstall*", "python -m pip install*", "python -m pip uninstall*", "python3 -m pip install*", "python3 -m pip uninstall*", "uv add*", "uv remove*", "uv sync*", "uv lock*", "uv pip install*", "uv pip uninstall*", "uv pip sync*", "uv tool install*", "uv tool upgrade*", "poetry add*", "poetry install*", "poetry remove*", "poetry lock*", "poetry update*", "pipenv install*", "pipenv uninstall*", "pipenv lock*", "cargo add*", "cargo remove*", "cargo update*", "cargo install*", "cargo fetch*", "cargo generate-lockfile*", "go get*", "go install*", "go mod tidy*", "go mod download*", "go mod vendor*", "go work sync*", "bundle install*", "bundle add*", "bundle update*", "gem install*", "composer install*", "composer require*", "composer update*", "brew install*", "brew upgrade*", "apt install*", "apt-get install*", "dnf install*", "apk add*")
+];
+
 // lib/src/fragments.ts
 var FRAGMENTS_DIR = fileURLToPath2(new URL(".", import.meta.url));
 var SHARED_AGENTS_DIR = fileURLToPath2(new URL("../../shared/agents/", import.meta.url));
