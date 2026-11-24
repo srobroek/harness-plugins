@@ -12,7 +12,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from "fs";
 import { basename, join } from "path";
 
 // lib/src/agent-tools.ts
-var DEFAULT_MCP_TOOLS = ["context7_*"];
+var DEFAULT_MCP_TOOLS = ["context7_*", "aws-mcp_*"];
 var MCP_TOOL_AGENTS = new Set([
   "adversarial-challenger",
   "architect",

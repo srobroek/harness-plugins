@@ -62,15 +62,14 @@ MUST Treat as non-blocking: tests or fixtures left for removed behavior; tests o
   only for knowledge that changes together; a dependency the brief did not name needs approval;
   refactor only within the change and report existing ones. Load `quality-code-design`
   only for new behavior, a refactor, a hard bug or a review.
-- Standards first: before you design or write code for a concern, research current best practice
-  (docs, context7, the web) and compare the plan with the preferred libraries and tools in
-  `lang-<language>-libraries` (else `toolchain-languages`; Lambda: `aws-guidance`). Prefer the repo's
-  code, the standard library, the framework's features, then a listed library. Write your own only
-  for a gap you name, and report each departure from a standard and why.
+- Standards first: research current best practice in official docs, Context7 when configured,
+  or the web. Compare the plan with `lang-<language>-libraries` (else `toolchain-languages`),
+  and with `aws-guidance` for AWS/Lambda projects. Prefer the repo, standard library, framework,
+  then listed library. Write your own only for a named gap. Report each departure and its reason.
 - Defaults: cross-cutting concerns (auth, validation, request ids, logs, traces, metrics, error
   mapping, timeouts, retries, rate limits) go in the framework's middleware, one model per
   surface (TypeScript: Hono for HTTP APIs, Lambda included, Connect for RPC; ASGI/FastAPI;
-  net/http wrappers; tower). Lambda handlers stay thin, on Powertools for AWS Lambda where it exists. Telemetry is OpenTelemetry over OTLP.
+  net/http wrappers; tower). For AWS/Lambda projects, keep handlers thin and use Powertools for AWS Lambda where it exists. Telemetry is OpenTelemetry over OTLP.
 - Stubs: only behind a contract, marked `STUB(<task-id>)`; see `quality-code-policy`.
 - Tests (`quality-testing`; idioms in `lang-<language>-testing`): list the behaviors the change
   adds, changes or removes, and search the existing tests for each. Work test-first where the
