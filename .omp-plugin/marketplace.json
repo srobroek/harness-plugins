@@ -40,7 +40,7 @@
       "name": "aws",
       "description": "AWS working guidance: route AWS tasks through the AWS MCP Server's guided skills, verify against AWS documentation, and price with the AWS Pricing MCP server.",
       "source": "./plugins/aws/omp",
-      "version": "0.9.2",
+      "version": "0.10.0",
       "category": "development"
     },
     {
