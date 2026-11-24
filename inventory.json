@@ -392,9 +392,40 @@
             "index"
           ],
           "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "autopilot"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "autopilot"
+          ],
+          "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "companions": [
+        {
+          "package": "pi-subagents",
+          "for": "the subagent tool that runs the run's write lanes and reviewers",
+          "required": true
+        },
+        {
+          "package": "@srobroek/pi-parley-rounds",
+          "for": "parley_ask, which asks the setup round's questions in one panel",
+          "required": false
+        },
+        {
+          "package": "@srobroek/pi-beads-enforcer",
+          "for": "the bd gates and per-session actors the lanes' bead claims rely on",
+          "required": false
+        }
+      ]
     },
     {
       "name": "aws",
