@@ -206,6 +206,10 @@ describe("translateOmpAgent with hints", () => {
     const kept = translateOmpAgent("rev", reviewer, "agents/rev.md", { shell: "it reads the patch with git diff" })
     expect(parseFrontmatter(kept.contents).data.tools).toBe("read, bash")
     expect(kept.contents.split("\n")[2]).toBe("# Read-only, but keeps bash: it reads the patch with git diff")
+    expect(parseFrontmatter(kept.contents).body).toBe(
+      "\nYour bash is not limited to read-only commands here: only the session's approval mode gates it, and nothing enforces the limits in these instructions. You MUST keep to them yourself, and run only the commands they call for.\n\nReview.\n",
+    )
+    expect(parseFrontmatter(dropped.contents).body).toBe("\nReview.\n")
   })
 
   test("x-omp-tools adds OMP tools no permission names", () => {
@@ -252,11 +256,14 @@ describe("readOnlyShell", () => {
     })
   })
 
-  test("a reason keeps them and is recorded", () => {
+  test("a reason keeps them, is recorded, and tells the agent nothing enforces its limits", () => {
     expect(readOnlyShell(["read", "eval"], "it drives the browser")).toEqual({
       tools: ["read", "eval"],
       comment: ["# Read-only, but keeps eval: it drives the browser"],
+      notice:
+        "Your eval is not limited to read-only commands here: only the session's approval mode gates it, and nothing enforces the limits in these instructions. You MUST keep to them yourself, and run only the commands they call for.",
     })
+    expect(readOnlyShell(["read", "bash", "eval"], "it runs bd").notice).toStartWith("Your bash and eval are not limited to read-only commands here: only the session's approval mode gates them")
   })
 
   test("an agent that edits, or has no shell, is untouched, and a reason on it throws", () => {
