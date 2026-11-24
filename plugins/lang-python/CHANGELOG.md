@@ -1,3 +1,5 @@
+## lang-python [0.9.3](https://github.com/srobroek/harness-plugins/compare/lang-python--v0.9.2...lang-python--v0.9.3) (2026-11-24)
+
 ## lang-python [0.9.2](https://github.com/srobroek/harness-plugins/compare/lang-python--v0.9.1...lang-python--v0.9.2) (2026-11-24)
 
 ### Bug Fixes

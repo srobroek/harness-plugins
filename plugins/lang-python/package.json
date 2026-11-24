@@ -1,6 +1,6 @@
 {
   "name": "lang-python",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Python skills: uv, ruff, mypy or pyright and pytest checks, testing, packaging, typing and pydantic, SQLAlchemy and Alembic, and profiling.",
   "private": true,
   "type": "module",
