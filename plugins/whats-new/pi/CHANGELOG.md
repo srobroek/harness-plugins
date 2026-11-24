@@ -1,3 +1,9 @@
+## whats-new [0.5.2](https://github.com/srobroek/harness-plugins/compare/whats-new--v0.5.1...whats-new--v0.5.2) (2026-11-24)
+
+### Bug Fixes
+
+* **agent-reviewer:** tell OMP agents that keep a shell it is unrestricted ([#173](https://github.com/srobroek/harness-plugins/issues/173)) ([1b8386d](https://github.com/srobroek/harness-plugins/commit/1b8386dbf43fa6cb5580d4dbc03e619476ba023c))
+
 ## whats-new [0.5.1](https://github.com/srobroek/harness-plugins/compare/whats-new--v0.5.0...whats-new--v0.5.1) (2026-11-24)
 
 ## whats-new [0.5.0](https://github.com/srobroek/harness-plugins/compare/whats-new--v0.4.0...whats-new--v0.5.0) (2026-11-23)
