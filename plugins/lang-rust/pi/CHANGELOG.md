@@ -1,3 +1,5 @@
+## lang-rust [0.9.3](https://github.com/srobroek/harness-plugins/compare/lang-rust--v0.9.2...lang-rust--v0.9.3) (2026-11-24)
+
 ## lang-rust [0.9.2](https://github.com/srobroek/harness-plugins/compare/lang-rust--v0.9.1...lang-rust--v0.9.2) (2026-11-24)
 
 ### Bug Fixes
