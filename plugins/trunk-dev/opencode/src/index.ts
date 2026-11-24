@@ -2,6 +2,7 @@ import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Plugin } from "@opencode/plugin";
 import { appendResultText, shellCall, shellExit } from "@srobroek/opencode-lib";
+import { DEFAULT_GIT_WRAPPERS, readGitWrappers } from "@srobroek/opencode-lib/git-wrappers";
 import { registerSkills } from "@srobroek/opencode-lib/skill-files";
 import { decideCommitGate } from "../../shared/commit-gate.js";
 import { flagCleanupFollowUp, landedMerge, type MergeRequest, shellMerges } from "../../shared/flag-cleanup.js";
@@ -29,7 +30,7 @@ export const SKILL_PATHS = SKILL_NAMES.map((name) =>
   fileURLToPath(new URL(`../skills/${name}/SKILL.md`, import.meta.url)),
 )
 
-export const FEATURE_IDS = ["commit-gate", "skip-ci", "mr-advisory", "flag-cleanup", "session-reminders"] as const
+export const FEATURE_IDS = ["commit-gate", "skip-ci", "mr-advisory", "mr-title", "flag-cleanup", "session-reminders"] as const
 export type FeatureID = (typeof FEATURE_IDS)[number]
 
 /** `{ disable: ["commit-gate", …] }` turns features off; unknown ids are ignored. */
@@ -45,19 +46,24 @@ export function shellCwd(workdir: string | undefined, sessionDirectory: string):
   return isAbsolute(workdir) ? workdir : resolve(sessionDirectory, workdir)
 }
 
-/** The advisories for one completed shell call, skip-CI first. */
+/** The advisories for one completed shell call, skip-CI first; `gitWrappers` name the commands read as git. */
 export function shellAdvisories(
   command: string,
   cwd: string,
   disabled: ReadonlySet<FeatureID>,
-  advise: (command: string, cwd: string) => string[] = decideMrAdvisory,
+  gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS,
+  advise?: (command: string, cwd: string) => string[],
 ): string[] {
   const out: string[] = []
   if (!disabled.has("skip-ci")) {
-    const skip = skipCiAdvisory(command, cwd)
+    const skip = skipCiAdvisory(command, cwd, gitWrappers)
     if (skip !== undefined) out.push(skip)
   }
-  if (!disabled.has("mr-advisory")) out.push(...advise(command, cwd))
+  if (!disabled.has("mr-advisory")) {
+    const defaultAdvice = (text: string, directory: string) =>
+      decideMrAdvisory(text, directory, { conventionalTitle: !disabled.has("mr-title"), gitWrappers })
+    out.push(...(advise ?? defaultAdvice)(command, cwd))
+  }
   return out
 }
 
@@ -74,7 +80,8 @@ export function createPlugin(overrides: Overrides = {}) {
     id: "srobroek.trunk-dev",
     async setup(ctx) {
       const disabled = readOptions(ctx.options as Record<string, unknown> | undefined)
-      const gate = overrides.commitGate ?? ((command: string, cwd: string) => decideCommitGate(command, cwd))
+      const gitWrappers = readGitWrappers(ctx.options as Record<string, unknown> | undefined)
+      const gate = overrides.commitGate ?? ((command: string, cwd: string) => decideCommitGate(command, cwd, { gitWrappers }))
       const followUp = overrides.followUp ?? ((merges) => flagCleanupFollowUp(merges, process.env))
       const reminded = new Set<string>()
       /** One lookup: the session's directory, and whether it is a child (`undefined` when the lookup failed). */
@@ -125,7 +132,7 @@ export function createPlugin(overrides: Overrides = {}) {
               if (notes.length) event.result = appendResultText(event.result, notes.join("\n"))
               return
             }
-            notes.push(...shellAdvisories(call.command, cwd, disabled, overrides.advise))
+            notes.push(...shellAdvisories(call.command, cwd, disabled, gitWrappers, overrides.advise))
             if (exit === 0) merges = shellMerges(call.command, cwd)
           }
           if (!disabled.has("flag-cleanup") && merges.length > 0) {
