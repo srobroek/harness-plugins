@@ -25,6 +25,19 @@ A run stores its files in `<git-dir>/code-challenge/<run-id>/`: `intake.json`, `
 
 Thirteen lenses, one reference each: scope (the code against its design and docs: missing requirements, drift, unrequested features and features built beyond the design), simplification, over-engineering, optimisation, performance, efficiency, stability, hand-rolled code (standard library or framework), hand-rolled code (third-party library), dead code, observability, structure and tests. Each reference lists what to look for, the evidence it needs and the steering skills to load (`quality-profiling`, `lang-*-profiling`, `lang-*-libraries`, `lang-*-quality`, `toolchain-quality-observability`, `quality-code-policy`, `quality-test-audit`).
 
+## Pi subagent tools
+
+`code-challenger` adds `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `web_search`, `fetch_content`, `get_search_content`, `source_check`, `quality_test_summarize`, `quality_test_compare`, `repomix_pack`, `dep_scan`, `version_gap_scan`, and `mcp:context7` to its existing tools.
+
+`refactor-challenger` adds `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `quality_test_summarize`, `quality_test_compare`, `repomix_pack`, `dep_scan`, `version_gap_scan`, and `mcp:context7` to its existing tools.
+
+`code-challenger` can use `quality-test-audit` from the Pi skills catalog loaded by `@srobroek/pi-code-quality`.
+
+
+Pi-lens keeps `ast_grep_search` and `ast_grep_outline` inactive until `pi_lens_activate_tools` runs; activation takes effect on the next turn. `lsp_navigation` and `ast_grep_replace` are not granted.
+
+Required Pi packages: `pi-lens`, `pi-web-access`, `@srobroek/pi-code-quality`, `@srobroek/pi-repomix`, `@srobroek/pi-dep-update`, and `@srobroek/pi-whats-new`. Configure the `context7` Pi MCP server in `~/.pi/agent/mcp.json` for `mcp:context7`.
+
 ## Agents
 
 | Agent | Tier | Role |
@@ -72,3 +85,16 @@ Some recipes execute repository or downloaded code: clippy, golangci-lint, deadc
 ## Beads formulas
 
 `challenge_setup` installs nine formulas. Pour the full run with `bd mol pour code-challenge --var target=<paths> --var run_id=<run-id>`. Each phase also runs alone as `mol-challenge-<phase>` (`intake`, `scan`, `challenge`, `research`, `refute`, `decide`, `deliver`) with `--var target= --var run_id= --var depth= --var mode=`. The lead agent sequences the phases and writes every file, bead and log line. Only two steps route to a subagent, both read-only: `mol-challenge-lens` (`analyse-lens`, to `code-challenger`, bonded once per lens by `mol-challenge-challenge`) and `mol-challenge-refute` (`attack-findings`, to `refactor-challenger`). The formulas declare what those steps need in `requires_actions`, and a test checks that the agent's permissions allow it.
+
+## Works with
+
+This package works with these pi packages. Install them next to it.
+
+| Package | Required | For | Install |
+| --- | --- | --- | --- |
+| `pi-lens` | yes | code-intelligence and AST search tools for the challengers | `pi install npm:pi-lens` |
+| `pi-web-access` | yes | web research tools for the code challenger | `pi install npm:pi-web-access` |
+| `@srobroek/pi-code-quality` | yes | test review tools for the code challenger and refactor challenger | `pi install npm:@srobroek/pi-code-quality` |
+| `@srobroek/pi-repomix` | yes | repository packing for the challengers | `pi install npm:@srobroek/pi-repomix` |
+| `@srobroek/pi-dep-update` | yes | read-only dependency scan tools for the challengers | `pi install npm:@srobroek/pi-dep-update` |
+| `@srobroek/pi-whats-new` | yes | version gap scan tools for the challengers | `pi install npm:@srobroek/pi-whats-new` |

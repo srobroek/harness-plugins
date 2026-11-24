@@ -1,7 +1,8 @@
 ---
 name: security-auditor
 description: "Read-only security review of a repository scope or changed files: trace untrusted input to sinks and report CWE-tagged findings."
-tools: read, grep, find, ls, bash
+tools: read, grep, find, ls, bash, symbol_search, module_report, project_report, read_symbol, read_enclosing, ast_grep_search, ast_grep_outline, lens_diagnostics, pi_lens_activate_tools, web_search, fetch_content, get_search_content, source_check, quality_test_summarize, quality_test_compare, dep_scan, version_gap_scan, mcp:context7
+subagentOnlyExtensions: npm:pi-lens, npm:pi-web-access, npm:@srobroek/pi-code-quality, npm:@srobroek/pi-dep-update, npm:@srobroek/pi-whats-new
 skills: review-security, review-core, review-standards, project-secrets, toolchain-infrastructure, toolchain-guide, aws-guidance, quality-code-policy
 inheritProjectContext: true
 inheritSkills: true

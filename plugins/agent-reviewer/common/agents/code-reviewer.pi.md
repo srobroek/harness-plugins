@@ -1,8 +1,9 @@
 ---
 name: code-reviewer
 description: "Read-only review of a local diff (working tree, branch or commits) for bugs the author wants fixed before merge; returns a verdict."
-tools: read, grep, find, ls, bash
-skills: quality-code-design, quality-code-policy, quality-testing, lang-go, lang-python, lang-rust, lang-typescript, review-security, review-core, review-tests, review-standards, delivery-git-workflow, ci-github-actions, toolchain-guide, ast-grep-search
+tools: read, grep, find, ls, bash, symbol_search, module_report, project_report, read_symbol, read_enclosing, ast_grep_search, ast_grep_outline, lens_diagnostics, pi_lens_activate_tools, quality_test_summarize, quality_test_compare, repomix_pack, dep_scan, version_gap_scan, mcp:context7
+subagentOnlyExtensions: npm:pi-lens, npm:@srobroek/pi-code-quality, npm:@srobroek/pi-repomix, npm:@srobroek/pi-dep-update, npm:@srobroek/pi-whats-new
+skills: quality-code-design, quality-code-policy, quality-testing, quality-test-audit, lang-go, lang-python, lang-rust, lang-typescript, review-security, review-core, review-tests, review-standards, delivery-git-workflow, ci-github-actions, toolchain-guide, ast-grep-search
 inheritProjectContext: true
 inheritSkills: true
 ---
