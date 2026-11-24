@@ -9,23 +9,24 @@ metadata:
 
 Sources: [uv CLI reference](https://docs.astral.sh/uv/reference/cli/), [uv workspaces](https://docs.astral.sh/uv/concepts/projects/workspaces/), [ruff](https://docs.astral.sh/ruff/), [mypy configuration](https://mypy.readthedocs.io/en/stable/config_file.html), [pyright configuration](https://microsoft.github.io/pyright/#/configuration), [pytest exit codes](https://docs.pytest.org/en/stable/reference/exit-codes.html).
 
-Run the checks through the shell tool from the project root (the directory with
-`pyproject.toml`), in this order. Stop at the first failing step, fix it, rerun that
-step, then continue. Prefix each tool with the project's runner: `uv run` when the
-project has `uv.lock`, `poetry run` with `poetry.lock`.
+Run checks from the project root (the directory with `pyproject.toml`), using the
+project's configured package manager, linter, formatter, type checker, and test runner
+when present. The commands below are fallback defaults for an unconfigured project;
+do not add or switch tools solely to match them. For package execution, use `uv run`
+with `uv.lock` or `poetry run` with `poetry.lock`.
 
 | Step | Command |
 | --- | --- |
-| Lockfile | `uv lock --check` (fails when `uv.lock` no longer matches `pyproject.toml`) |
-| Lint | `uv run --locked ruff check .` |
-| Format check | `uv run --locked ruff format --check .` |
+| Lockfile | `uv lock --check` when using uv; otherwise use the project's lockfile validation |
+| Lint | `uv run --locked ruff check .` (when Ruff is the project's configured linter) |
+| Format check | `uv run --locked ruff format --check .` (when Ruff is the project's configured formatter) |
 | Type check | `uv run --locked mypy` or `uv run --locked pyright`, whichever the project configures |
-| Test | `uv run --locked pytest -x` |
+| Test | `uv run --locked pytest -x` (when pytest is the project's configured runner) |
 | Dependencies | `uv run --locked deptry .` when configured; `uv run --locked lint-imports` when contracts exist |
 | Audit | `uv run --locked pip-audit` when installed |
 | API breaks | `uv run --locked griffe check PACKAGE -a REF` for a published library |
 | Docs | `uv run --locked sphinx-build -W docs docs/_build` when docs exist |
-| Fix | `uv run ruff check --fix PATHS`, then `uv run ruff format PATHS` |
+| Fix | The project's configured fix command; Ruff defaults: `uv run ruff check --fix PATHS`, then `uv run ruff format PATHS` |
 
 - After an edit that spans modules or changes a signature, run the type check once
   before handing back: the project's own script or task when it has one, else

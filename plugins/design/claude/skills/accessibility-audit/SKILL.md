@@ -17,17 +17,19 @@ TRIGGER
 ## Workflow
 
 1. Report MCP status before routing: say whether `accessibility-scanner` is connected and identify the server-reported axe-core engine and ruleset versions. Never infer those versions from this skill or its package declaration. -> the status and chosen route are named in the report header.
-   - PRIMARY measurement, any web surface: the `accessibility-scanner` MCP server, configured
-     at a pinned version as the design plugin's README shows. Call its
-     `scan_accessibility` tool with `{"url": "..."}`. It scrolls before scanning
-     so lazy content is covered, resolves contrast over gradients, and returns a selector, a
-     criterion, and a fix link. It drives a locally installed Google Chrome, or the browser
-     `CHROME_PATH` names: with neither, the scan tests nothing, and that is an environment
-     blocker to report, never a pass. If the server does not report its engine or ruleset,
-     record them as unknown and do not claim WCAG 2.2 coverage.
-   - SOURCE-ONLY fallback, when MCP is unavailable: inspect the source and report every
-     criterion as UNTESTED unless independently exercised on a reachable surface. This route
-     is untested measurement evidence; it cannot produce a PASS or replace the rendered audit.
+   - PRIMARY measurement, any web surface when the server is configured: use the
+     `accessibility-scanner` MCP server at a pinned version as the design plugin README
+     shows. Call its `scan_accessibility` tool with `{"url": "..."}`. It scrolls before
+     scanning so lazy content is covered, resolves contrast over gradients, and returns a
+     selector, a criterion, and a fix link. It drives a locally installed Google Chrome,
+     or the browser `CHROME_PATH` names: with neither, the scan tests nothing, and that is
+     an environment blocker to report, never a pass. If the server does not report its
+     engine or ruleset, record them as unknown and do not claim WCAG 2.2 coverage.
+   - When the MCP server is absent or disabled, use the browser accessibility tree and
+     rendered surface to measure the criteria directly. State that the automated scanner
+     did not run; do not claim automated axe coverage. If no reachable rendered surface is
+     available, inspect the source and report every criterion as UNTESTED unless independently
+     exercised on a reachable surface. Source-only evidence cannot produce a PASS.
    - web surface, for the criteria coverage and the audit's substance: upstream skill
      `accessibility`.
    - native surface: no upstream skill is routed. Measure through a desktop accessibility

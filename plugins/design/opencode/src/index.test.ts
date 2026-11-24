@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import { permissionEffect, readAgentFile } from "@srobroek/opencode-lib/agent-files"
+import { type AgentPermission, permissionEffect, readAgentFile } from "@srobroek/opencode-lib/agent-files"
 import type { SupervisedRun } from "@srobroek/opencode-lib/subprocess"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import plugin, { createPlugin, SCAN_TOOL, SETUP_TOOL } from "./index.ts"
@@ -125,23 +125,31 @@ test("design_impeccable_scan asks before npx runs, and a rejection stops it", as
   expect((await blocked({ targets: [] }, context)).metadata.ok).toBe(false)
 })
 
-test("adds accessibility-scanner and wire-dsl in a frontend project, storybook only on request", async () => {
+test("design MCP servers are opt-in in frontend projects", async () => {
   const shipped = JSON.parse(await Bun.file(new URL("../.mcp.json", import.meta.url)).text()).mcpServers
   const directory = mkdtempSync(join(tmpdir(), "design-mcp-"))
   try {
     await Bun.write(join(directory, "package.json"), '{"dependencies":{"react":"19"}}')
-    const fake = createFakeContext({ directory })
-    const cleanup = await plugin.setup(fake.context)
-    expect([...fake.mcp.keys()]).toEqual(["accessibility-scanner", "wire-dsl"])
+
+    const defaults = createFakeContext({ directory })
+    await plugin.setup(defaults.context)
+    expect(defaults.mcp.size).toBe(0)
+
+    const enabled = createFakeContext({
+      directory,
+      options: { mcpServers: { "accessibility-scanner": true, "wire-dsl": true } },
+    })
+    const cleanup = await plugin.setup(enabled.context)
+    expect([...enabled.mcp.keys()]).toEqual(["accessibility-scanner", "wire-dsl"])
     // npx runs outside the project, on the public registry: a project .npmrc (for example a
     // CodeArtifact registry with an expired token) must not break the design servers.
     for (const name of ["accessibility-scanner", "wire-dsl"]) {
-      expect(fake.mcp.get(name)).toMatchObject({
+      expect(enabled.mcp.get(name)).toMatchObject({
         cwd: process.env.HOME,
         environment: { npm_config_registry: "https://registry.npmjs.org/" },
       })
     }
-    expect(fake.mcp.get("wire-dsl")).toEqual({
+    expect(enabled.mcp.get("wire-dsl")).toEqual({
       type: "local",
       command: [shipped["wire-dsl"].command, ...shipped["wire-dsl"].args],
       cwd: process.env.HOME,
@@ -149,7 +157,7 @@ test("adds accessibility-scanner and wire-dsl in a frontend project, storybook o
       codemode: true,
     })
     await cleanup?.()
-    expect(fake.mcp.size).toBe(0)
+    expect(enabled.mcp.size).toBe(0)
 
     const withStorybook = createFakeContext({ directory, options: { mcpServers: { storybook: true } } })
     await plugin.setup(withStorybook.context)
@@ -164,14 +172,26 @@ test("adds accessibility-scanner and wire-dsl in a frontend project, storybook o
   }
 })
 
-test("adds no servers outside a frontend project", async () => {
+test("adds no servers outside a frontend project by default", async () => {
   const fake = createFakeContext()
   await plugin.setup(fake.context)
   expect(fake.mcp.size).toBe(0)
 })
 
-test("ui-implementer may spawn debug and still denies every other subagent", () => {
+test("ui-implementer allows debug, defaults to Context7 and opts into AWS tools", async () => {
   const { permissions } = readAgentFile(join(import.meta.dir, "../agents/ui-implementer.md"))
   expect(permissionEffect(permissions, "subagent", "debug")).toBe("allow")
-  for (const other of ["coder", "ui-ux-specialist", "explore"]) expect(permissionEffect(permissions, "subagent", other)).toBe("deny")
+  for (const other of ["coder", "ui-ux-specialist", "explore"])
+    expect(permissionEffect(permissions, "subagent", other)).toBe("deny")
+
+  const defaults = createFakeContext()
+  await plugin.setup(defaults.context)
+  const defaultPermissions = (defaults.agents.get("ui-implementer")?.permissions ?? []) as AgentPermission[]
+  expect(permissionEffect(defaultPermissions, "aws-mcp_search_documentation")).toBe("deny")
+
+  const aws = createFakeContext({ options: { tools: ["context7_*", "aws-mcp_*"] } })
+  await plugin.setup(aws.context)
+  const awsPermissions = (aws.agents.get("ui-implementer")?.permissions ?? []) as AgentPermission[]
+  expect(permissionEffect(awsPermissions, "context7_query-docs")).toBe("allow")
+  expect(permissionEffect(awsPermissions, "aws-mcp_search_documentation")).toBe("allow")
 })

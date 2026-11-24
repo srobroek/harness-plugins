@@ -6,11 +6,13 @@ Follow the install policy in `toolchain-languages` `concerns.md`: detect, recomm
 Checked 2026-11-16.
 
 ## Concerns
+Defer to the project's configured linter and formatter. The entries below are defaults for
+an unconfigured project; do not add Ruff or switch tools solely to match them.
 
 | Concern | Default | Maintenance | Install | Alternatives | Use both when | Run | Avoid |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `lint` | `ruff check` with the project's rule set | >= 0.17 · 2026-11-12 · pre-1.0 | `uv pip show ruff` · `uv add --dev ruff` | pylint: only for checks Ruff lacks | `pylint` with a narrow enabled set for rules Ruff has no equivalent for | every-pr | `ruff check --fix .` on the whole tree during a task; a second linter with the same rules |
-| `format` | `ruff format` | >= 0.17 · 2026-11-12 · pre-1.0 | `uv pip show ruff` · `uv add --dev ruff` | black: the project already formats with it | - | every-pr | Two formatters on one tree |
+| `lint` | `ruff check` with the project's rule set, when Ruff is configured | >= 0.17 · 2026-11-12 · pre-1.0 | `uv pip show ruff` · `uv add --dev ruff` | pylint: only for checks Ruff lacks | `pylint` with a narrow enabled set for rules Ruff has no equivalent for | every-pr | `ruff check --fix .` on the whole tree during a task; a second linter with the same rules |
+| `format` | `ruff format`, when Ruff is configured | >= 0.17 · 2026-11-12 · pre-1.0 | `uv pip show ruff` · `uv add --dev ruff` | black: the project already formats with it | - | every-pr | Two formatters on one tree |
 | `types` | `pyright`, or `mypy` when the project configures it; strict for new code | >= 1.1.400 · 2026-09-10 · active | `uv pip show pyright` · `uv add --dev pyright` | mypy: the project already configures it (2.4, 2026-10-28); basedpyright: stricter defaults and baseline files (1.40, 2026-10-04); pyrefly: advisory second checker (1.4, stable since 1.0); ty: advisory second checker, beta (0.0.104) | `pyrefly` or `ty` as a non-blocking second opinion beside the gate | every-pr | Two gating type checkers; making a beta checker the gate; flipping the project's strictness setting instead of keeping new modules strict |
 | `sast` | `ruff` `S` rules (flake8-bandit port), configured in `pyproject.toml` | >= 0.17 · 2026-11-12 · pre-1.0 | `uv pip show ruff` · `uv add --dev ruff` | opengrep: reviewed cross-language and taint rules; semgrep: permitted internal use with entitlement checked; bandit: required reporting or plugins | the Shared `opengrep` or `semgrep` row for taint and framework rules beside Ruff `S` | every-pr | Lint treated as assurance; `bandit` as a new default (adds little over Ruff `S`); engine and rule licences are separate for Semgrep |
 | `memory-safety` | N/A: managed runtime | - | - | None | Native extensions: Atheris with ASan or UBSan, `memray` (1.20) with `pytest-memray` (1.11), `python -X dev`, `faulthandler` | - | Treating a pure-Python suite as evidence about native extension memory safety |

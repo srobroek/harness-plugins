@@ -6,7 +6,7 @@ test audit with two helper tools, performance profiling, throwaway logic prototy
 
 | Skill | When |
 | --- | --- |
-| `quality-code-policy` | The short policy: SOLID and invariants over YAGNI, DRY for knowledge that changes together, research first and compare with the library standards before building, middleware for cross-cutting concerns, Powertools on Lambda, OpenTelemetry by default, tests kept in step with the code, planning scaled by risk, a type check after multi-file or signature edits, refactors scoped to the change. It requires `quality-code-design` only for new behavior, refactors, hard bugs and reviews |
+| `quality-code-policy` | The short policy: SOLID and invariants over YAGNI, DRY for knowledge that changes together, research first and compare with the library standards before building, middleware for cross-cutting concerns, Powertools on AWS Lambda projects, OpenTelemetry by default, tests kept in step with the code, planning scaled by risk, a type check after multi-file or signature edits, refactors scoped to the change. It requires `quality-code-design` only for new behavior, refactors, hard bugs and reviews |
 | `quality-code-design` | Code design, investigation, implementation, refactoring, review, debugging or test-first work in any language. Picks IMPLEMENT, INVESTIGATE or REVIEW and loads only the references the task needs from `references/`, including `middleware.md` (handlers versus middleware, stack order, one error mapper), `telemetry.md` (OpenTelemetry setup and rules) and `feature-flags.md` (typed decisions, safe defaults, storage and removal) |
 | `quality-profiling` | Slow or memory-heavy code, endpoints, builds or CLIs: set a target, reproduce with a fixed workload, baseline with variance, pick the profiler, change one thing, re-measure, report before/after. hyperfine, Linux perf and macOS Instruments live in `references/`; language tooling is the `lang-<language>-profiling` skills in the `lang-<language>` plugins |
 | `quality-testing` | What to test and how many tests to keep. A workflow and five rules, with references for good and bad tests (`good-tests.md`, `bad-tests.md`), test levels (`what-to-test.md`), the test budget against sprawl (`test-budget.md`), maintenance and deletion with the code (`maintenance.md`), doubles (`doubles.md`), coverage and mutation signals (`signals.md`) and reviewing test changes (`review-tests.md`). Tool choices for coverage, mutation, property tests, fuzzing and flaky order come from the per-language concerns tables; the `lang-<language>-testing` skills and their `references/practice.md` give idioms |
@@ -24,9 +24,8 @@ prompt, from the shared coding core (`plugins/lib/src/coding-core.md`):
 
 - `# Engineering standards`, the `standards` part. It tells the agent to research current
   best practice and compare its plan with the `lang-<language>-libraries`, `toolchain-api`,
-  `aws-guidance` and `toolchain-languages` standards before it writes its own code, to
-  report each departure, to put cross-cutting concerns in middleware, to keep Lambda
-  handlers thin on Powertools for AWS Lambda, and to use OpenTelemetry.
+  best practice and compare its plan with the `lang-<language>-libraries` and `toolchain-api`
+  standards before it writes its own code; for AWS work it also uses `aws-guidance`. It reports each departure, puts cross-cutting concerns in middleware, keeps Lambda handlers thin and uses Powertools in AWS projects where the package fits, and uses OpenTelemetry.
 - `# Repository engineering doc`, the `repo-doc` part. It tells the agent to read
   `docs/engineering.md` (or the path `AGENTS.md` names) first, to update it in the same
   change as any stack change, and to report a missing or stale doc.
@@ -99,7 +98,7 @@ The `adversarial-challenger` fallback copy (agent-reviewer's copy takes over whe
 
 | Option | Default | Effect |
 | --- | --- | --- |
-| `tools` | `["context7_*", "aws-mcp_*"]` | An array of patterns replaces the defaults. `false` or `[]` adds no rules; the agent keeps its fixed allowlist. |
+| `tools` | `["context7_*"]` | Context7 is allowed by default. Set `tools` to add MCP patterns such as `aws-mcp_*` for AWS projects; an array replaces the default. `false` or `[]` adds no rules; the agent keeps its fixed allowlist. |
 
 ```jsonc
 "options": { "tools": ["context7_*", "<server>_<tool>"] }

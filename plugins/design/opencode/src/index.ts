@@ -131,7 +131,7 @@ export async function setupDesign(ctx: Context, moduleUrl: string, overrides: Ov
     const mcp = await registerPluginMcp(ctx, moduleUrl, {
       relevant: isFrontendProject,
       servers: STORYBOOK_MCP,
-      off: ["storybook"],
+      off: ["accessibility-scanner", "wire-dsl", "storybook"],
       extra: { storybook: { oauth: false } },
     })
     registrations.push(mcp.registration)

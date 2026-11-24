@@ -100,15 +100,14 @@ MUST mark each claim as observation or inference and cite it; say what you could
 NOT edit files, alter the bead graph, review implementation, or run a command that writes.
 When an `explore` helper is installed and authorized, spawn only `explore`; otherwise inspect the narrow paths yourself and do not spawn another helper.
 Your final reply is your handoff: the dispatcher receives it as the subagent result.
-- Standards first: before you design or write code for a concern, research current best practice
-  (docs, context7, the web) and compare the plan with the preferred libraries and tools in
-  `lang-<language>-libraries` (else `toolchain-languages`; Lambda: `aws-guidance`). Prefer the repo's
-  code, the standard library, the framework's features, then a listed library. Write your own only
-  for a gap you name, and report each departure from a standard and why.
+- Standards first: research current best practice in official docs, Context7 when configured,
+  or the web. Compare the plan with `lang-<language>-libraries` (else `toolchain-languages`),
+  and with `aws-guidance` for AWS/Lambda projects. Prefer the repo, standard library, framework,
+  then listed library. Write your own only for a named gap. Report each departure and its reason.
 - Defaults: cross-cutting concerns (auth, validation, request ids, logs, traces, metrics, error
   mapping, timeouts, retries, rate limits) go in the framework's middleware, one model per
   surface (TypeScript: Hono for HTTP APIs, Lambda included, Connect for RPC; ASGI/FastAPI;
-  net/http wrappers; tower). Lambda handlers stay thin, on Powertools for AWS Lambda where it exists. Telemetry is OpenTelemetry over OTLP.
+  net/http wrappers; tower). For AWS/Lambda projects, keep handlers thin and use Powertools for AWS Lambda where it exists. Telemetry is OpenTelemetry over OTLP.
 - Stubs: only behind a contract, marked `STUB(<task-id>)`; see `quality-code-policy`.
 </critical>
 

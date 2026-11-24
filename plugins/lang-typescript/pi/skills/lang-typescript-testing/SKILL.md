@@ -13,9 +13,7 @@ Read [practice.md](references/practice.md) for idioms and tool choices.
 When a spawned child ignores an environment variable a test set, read [references/pitfalls.md](references/pitfalls.md). Follow
 `quality-testing` for what to test, the test budget, maintenance, and review.
 
-What to test and which double to use is the `quality-testing` skill. This skill is the
-runner idioms. Use the runner the project already has (`bun test`, `vitest`, `jest`,
-`node --test`); do not add a second one.
+Use the runner the project already has (`bun test`, `vitest`, `jest`, or `node --test`); do not add a second one. For an unconfigured Bun project, `bun test` is the default; Vitest is an alternative.
 
 ## Running
 

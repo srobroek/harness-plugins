@@ -32,18 +32,19 @@ Run the suite as in `lang-rust-quality`.
 ## Running
 
 ```sh
-cargo nextest run                                 # default locally and in CI
-cargo test --doc                                  # nextest does not run doc tests; run them separately
+<configured test runner>                          # usually cargo test
+cargo nextest run                                 # when the project adopts nextest
+cargo test --doc                                  # nextest does not run doc tests
 cargo nextest run -p billing refund               # one crate, tests whose name matches
 cargo nextest run -p billing refund --no-capture  # show println! output; runs tests one at a time
 cargo nextest run --no-fail-fast                  # report every failure, not the first
 ```
 
-`cargo-nextest` provides process-per-test isolation, parallelism, retries that mark
-flaky tests, partitioning, and JUnit output. Costs are a separate binary and doctest
-run; tests relying on in-process state shared across tests break, usually exposing
-an isolation bug. Files, ports, and databases still need isolation. Plain `cargo test`
-is the fallback only when nextest cannot be installed. CI settings (`fail-fast = false`, JUnit
+When the project adopts `cargo-nextest`, it provides process-per-test isolation, parallelism,
+retries that mark flaky tests, partitioning, and JUnit output. Costs are a separate binary and
+doctest run; tests relying on in-process state shared across tests break, usually exposing an
+isolation bug. Files, ports, and databases still need isolation. Keep retries off by default.
+Otherwise use the repository's configured runner, usually `cargo test`. CI settings (`fail-fast = false`, JUnit
 output) go in a `[profile.ci]` section of `.config/nextest.toml`, selected with
 `--profile ci`. Do not add `retries` to hide a flaky test.
 
