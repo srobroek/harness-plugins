@@ -68,7 +68,7 @@
       "name": "docs",
       "description": "Library and API documentation MCP servers for OpenCode: Context7, plus the OpenAI developer docs server on request.",
       "source": "./plugins/docs/omp",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "category": "development"
     },
     {

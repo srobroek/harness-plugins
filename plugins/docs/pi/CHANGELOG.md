@@ -1,3 +1,5 @@
+## docs [0.5.1](https://github.com/srobroek/harness-plugins/compare/docs--v0.5.0...docs--v0.5.1) (2026-11-24)
+
 ## docs [0.5.0](https://github.com/srobroek/harness-plugins/compare/docs--v0.4.0...docs--v0.5.0) (2026-11-24)
 
 ### Features

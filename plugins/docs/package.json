@@ -1,6 +1,6 @@
 {
   "name": "docs",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Library and API documentation MCP servers for OpenCode: Context7, plus the OpenAI developer docs server on request.",
   "private": true,
   "type": "module",
