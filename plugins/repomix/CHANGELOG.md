@@ -1,3 +1,9 @@
+## repomix [0.6.2](https://github.com/srobroek/harness-plugins/compare/repomix--v0.6.1...repomix--v0.6.2) (2026-11-24)
+
+### Bug Fixes
+
+* **design:** make MCP servers opt-in ([1ecb493](https://github.com/srobroek/harness-plugins/commit/1ecb493f35ebfe9112f9e4661fa1b2e5ec457fc4))
+
 ## repomix [0.6.1](https://github.com/srobroek/harness-plugins/compare/repomix--v0.6.0...repomix--v0.6.1) (2026-11-23)
 
 ### Bug Fixes

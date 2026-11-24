@@ -165,7 +165,7 @@
       "name": "repomix",
       "description": "Pack a local or remote repo into one file with repomix for bulk context: external repos, module packs and version diffs.",
       "source": "./plugins/repomix/claude",
-      "version": "0.6.1",
+      "version": "0.6.2",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/repomix",
       "repository": "https://github.com/srobroek/harness-plugins"
