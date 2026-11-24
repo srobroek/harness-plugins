@@ -10,7 +10,7 @@ Run these checks from the crate or workspace root in this order:
 |---|---|
 | Format check | `cargo fmt --check` |
 | Lint | `cargo clippy --all-targets --all-features -- -D warnings` |
-| Test | `cargo nextest run` and `cargo test --doc` |
+| Test | The repository's configured runner (usually `cargo test`); `cargo nextest run` and `cargo test --doc` when the project adopts nextest |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features` |
 | Dependencies | Configured `cargo deny check` and one unused-dependency check (`cargo shear` or `cargo machete`) |
 | API break | `cargo semver-checks` for published libraries |
@@ -21,10 +21,10 @@ Run these checks from the crate or workspace root in this order:
 Run checks in order and stop at the first failure you need to fix. In a workspace, add
 `--workspace` to clippy and test, or `-p <crate>` to narrow them.
 
-Default to cargo-nextest locally and in CI; run `cargo test --doc` beside it because nextest
-does not run doc tests. Nextest isolates tests by process and runs them in parallel. Shared files,
-ports and databases still need isolation. Keep retries off by default. Use plain `cargo test` only
-when nextest cannot be installed.
+Use the repository's configured test runner. When the project adopts cargo-nextest, run
+`cargo nextest run` and `cargo test --doc` beside it because nextest does not run doc tests.
+Nextest isolates tests by process and runs them in parallel. Shared files, ports and databases
+still need isolation. Keep retries off by default.
 
 Use `cargo-shear` as the unused-dependency gate. It parses with rust-analyzer, checks workspace
 members, and offers `--fix`; it does not evaluate `cfg` and can miss macro-generated references

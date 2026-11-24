@@ -26,10 +26,7 @@ TRIGGER
      yet listed, from its install path. Install refused or failed: STOP and report the gap. Do NOT
      take a different row instead: each row answers a different question, and a
      substituted fidelity reads like the real one.
-   - An MCP SERVER row: check the tool is in your available tools. A configured server is
-     not a connected one. Absent: STOP and say so, naming the server's config entry (see
-     the design plugin's README) or the harness's MCP reconnect command (in OpenCode,
-     `/mcps`) as the user's move. Do NOT drop to another row.
+   - An MCP SERVER row: check whether the tool is in your available tools. If the tool is absent, report the missing server and its config entry (see the design plugin README) or the harness MCP reconnect command (in OpenCode, `/mcps`); do not claim to have produced that route's artifact. Choose another route only if its fidelity matches the request, and report that choice.
    - A HARNESS TOOL row, such as image generation: check the tool is present, and STOP and
      say so if it is not, rather than substituting a different fidelity.
    -> the chosen route and its kind are both named before any file is written.

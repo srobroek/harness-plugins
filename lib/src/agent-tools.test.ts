@@ -6,8 +6,8 @@ const quiet = () => {}
 
 describe("parseToolsOption", () => {
   test("absent means the public read-only defaults", () => {
-    expect(parseToolsOption(undefined)).toEqual(["context7_*", "aws-mcp_*"])
-    expect(DEFAULT_MCP_TOOLS).toEqual(["context7_*", "aws-mcp_*"])
+    expect(parseToolsOption(undefined)).toEqual(["context7_*"])
+    expect(DEFAULT_MCP_TOOLS).toEqual(["context7_*"])
   })
 
   test("a list replaces the defaults and drops duplicates", () => {
