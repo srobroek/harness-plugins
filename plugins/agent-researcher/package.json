@@ -15,6 +15,12 @@
     "scope": "global",
     "entries": {
       "index": "index"
-    }
+    },
+    "companions": [
+      { "package": "pi-subagents", "for": "the subagent tool", "required": true },
+      { "package": "pi-lens", "for": "code-intelligence tools for the subagent", "required": true },
+      { "package": "@srobroek/pi-repomix", "for": "the repomix_pack tool", "required": true },
+      { "package": "pi-web-access", "for": "web research tools", "required": true }
+    ]
   }
 }

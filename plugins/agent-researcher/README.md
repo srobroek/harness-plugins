@@ -56,6 +56,14 @@ Patterns must name MCP server tools only (`<server>_<tool>`). The option refuses
 
 This agent allows `execute`, so it reaches MCP tools through Code Mode; each nested call is checked against the same rules (`packages/core/src/tool.ts:337-339`, OpenCode v2.2.6).
 
+## Pi tools
+
+Pi `researcher` keeps `web_search`, `fetch_content`, `get_search_content`, and `source_check` from `pi-web-access`. It adds `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, and `pi_lens_activate_tools` from `pi-lens`. `repomix_pack` comes from `@srobroek/pi-repomix`.
+
+Required companion packages: `pi-subagents`, `pi-web-access`, `pi-lens`, and `@srobroek/pi-repomix`. `context7` must be configured as a Pi MCP server in `~/.pi/agent/mcp.json`; it is selected by `mcp:context7`.
+
+pi-lens keeps `ast_grep_*` tools inactive until `pi_lens_activate_tools` runs; they are available starting the next turn. The read-only allowlist omits `lsp_navigation` and `ast_grep_replace`.
+
 ## Install
 Install the Pi package from npm:
 

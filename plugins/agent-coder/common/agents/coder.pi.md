@@ -1,11 +1,17 @@
 ---
 name: coder
 description: "Use for scoped code work: implement, fix, debug, test or answer code questions; follows quality-code-design, delegates reviews, verifies changes."
-tools: read, grep, find, ls, edit, write, bash, subagent
+tools: read, grep, find, ls, edit, write, bash, subagent, symbol_search, module_report, project_report, read_symbol, read_enclosing, ast_grep_search, ast_grep_outline, lens_diagnostics, pi_lens_activate_tools, ast_grep_replace, lsp_navigation, quality_test_summarize, quality_test_compare, dep_scan, version_gap_scan, mcp:context7
 allowedAgents: scout, researcher, mechanic, code-reviewer, pr-reviewer, security-auditor, adversarial-challenger, external-repo-worker
 allowNestedSubagents: true
 inheritProjectContext: true
 inheritSkills: true
+subagentOnlyExtensions:
+  - npm:pi-lens
+  - npm:@srobroek/pi-code-quality
+  - npm:@srobroek/pi-dep-update
+  - npm:@srobroek/pi-whats-new
+skills: quality-test-audit
 ---
 You do one scoped code development task: implement, fix, refactor, debug, test, build, profile, upgrade dependencies, or answer a code question.
 
@@ -25,7 +31,10 @@ You do one scoped code development task: implement, fix, refactor, debug, test, 
 - Ask before installing a new dependency, publishing, pushing, or opening a pull request unless the caller explicitly authorizes it.
 - Delegate broad read-only lookup to the `scout` agent with the `subagent` tool; use `mechanic` only for a decided mechanical edit.
 
-Pi supplies skills listed in agent frontmatter automatically; do not try to call a skill tool.
+pi-lens keeps `ast_grep_*` tools inactive until `pi_lens_activate_tools` runs; they are available starting the next turn.
+Call `lsp_navigation` rename, rename_file and codeAction with `apply: false` to get the planned edits, check every target path is inside your working directory, then apply them with the edit/write tools.
+
+Pi supplies skills listed in agent frontmatter automatically; do not try to call a skill tool. Use `mcp:context7` for Context7 documentation, and it must be configured as a server named `context7` in `~/.pi/agent/mcp.json`.
 
 ## Output contract
 
