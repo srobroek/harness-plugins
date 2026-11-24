@@ -363,12 +363,19 @@ The OpenCode plugin and the Claude Code hook do not run these three gates.
    that names checkable evidence, as `rule://beads-evidence` asks. The gate accepts any of
    these:
 
-   - a backticked command, or a tool command such as `bun test x.test.ts`
+   - a backticked command, or a tool command such as `bun test x.test.ts` (a git command
+     counts when it names git, or a wrapper listed in `gitWrappers`)
    - a path or a file name
    - a commit SHA, a PR or issue reference, or a URL
    - a test count or an exit code
 
    A reason such as `done` or `N/A` fails this gate.
+
+   pi passes no options to an extension, so this gate reads `gitWrappers` from `beads.json`
+   in pi's agent directory (`~/.pi/agent/beads.json`, or the same file under
+   `PI_CODING_AGENT_DIR`): `{ "gitWrappers": ["git", "<wrapper>"] }`. The default is
+   `["git"]` and a list replaces it. It is the only option pi reads; an unreadable or
+   malformed file leaves only `git` and warns at session start.
 3. `write-claim-gate`: in a pi-subagents child, `edit` and `write` need a claim. The rule
    covers a file in a checkout with a Beads store: the child must hold at least one
    `in_progress` claim in that store. The gate asks
@@ -413,7 +420,7 @@ These parts stay OpenCode-only:
 - claim tracking and lease heartbeats
 - the stop nudge and guarded claim release
 - subagent routing (`bead-agent-routing`) and the fork notice
-- session-start advisories and plugin options
+- session-start advisories and the plugin options (pi reads only `gitWrappers`, above)
 
 # Project ledger store
 
