@@ -19,6 +19,10 @@
     ],
     "entries": {
       "index": "index"
-    }
+    },
+    "companions": [
+      { "package": "pi-subagents", "for": "the subagent tool", "required": true },
+      { "package": "pi-lens", "for": "code-intelligence tools for the subagent", "required": true }
+    ]
   }
 }

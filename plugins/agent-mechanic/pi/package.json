@@ -15,14 +15,29 @@
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "_kit",
     "agents"
   ],
   "publishConfig": {
     "access": "public",
     "provenance": true
   },
+  "peerDependencies": {
+    "pi-lens": "*",
+    "pi-subagents": "*"
+  },
+  "peerDependenciesMeta": {
+    "pi-lens": {
+      "optional": true
+    },
+    "pi-subagents": {
+      "optional": true
+    }
+  },
   "pi": {
-    "extensions": [],
+    "extensions": [
+      "./_kit/prereqs.ts"
+    ],
     "subagents": {
       "agents": [
         "./agents"

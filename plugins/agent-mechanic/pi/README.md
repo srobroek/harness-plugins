@@ -21,6 +21,12 @@ so its requests carry no skill list or tool catalog. `.env` reads and
 `x-opencode-model-role` request header, so with the model-roles plugin that tier picks
 its model; without it the agent inherits the caller's model.
 
+## Pi tools
+
+Pi `mechanic` is allowlisted for `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `ast_grep_replace`, and `lsp_navigation` from required companion `pi-lens`. `pi-subagents` is also required for the subagent runtime.
+
+pi-lens keeps `ast_grep_*` tools inactive until `pi_lens_activate_tools` runs; they are available starting the next turn. Call `lsp_navigation` rename, rename_file and codeAction with `apply: false` to get the planned edits, check every target path is inside your working directory, then apply them with the edit/write tools.
+
 ## Install
 Install the Pi package from npm:
 
@@ -45,3 +51,12 @@ reads and `external_directory` do not ask there. The generated agent file lists 
 its translation drops.
 
 This plugin ships no skills, so it is not in the Claude Code marketplace.
+
+## Works with
+
+This package works with these pi packages. Install them next to it.
+
+| Package | Required | For | Install |
+| --- | --- | --- | --- |
+| `pi-subagents` | yes | the subagent tool | `pi install npm:pi-subagents` |
+| `pi-lens` | yes | code-intelligence and structural-edit tools for the subagent | `pi install npm:pi-lens` |
