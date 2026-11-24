@@ -1,6 +1,6 @@
 {
   "name": "@agent-plugins/architecture",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
   "private": true,
   "omp": {}

@@ -1,3 +1,9 @@
+## architecture [0.11.2](https://github.com/srobroek/harness-plugins/compare/architecture--v0.11.1...architecture--v0.11.2) (2026-11-24)
+
+### Bug Fixes
+
+* **architecture:** qualify repository tooling defaults ([5bf536d](https://github.com/srobroek/harness-plugins/commit/5bf536d90ce7d0475ac1c8ad08b1edaa54fab0b0))
+
 ## architecture [0.11.1](https://github.com/srobroek/harness-plugins/compare/architecture--v0.11.0...architecture--v0.11.1) (2026-11-23)
 
 ### Bug Fixes
