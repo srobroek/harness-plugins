@@ -24,7 +24,7 @@ var MCP_TOOL_AGENTS = new Set([
   "implementer-high",
   "refactor",
   "refactor-challenger",
-  "researcher",
+  "code-researcher",
   "security-auditor",
   "spec",
   "ui-implementer",
@@ -308,16 +308,16 @@ async function registerOwnedAgents(agent, paths, grant) {
 
 // plugins/agent-researcher/opencode/src/index.ts
 var AGENTS_DIR = fileURLToPath(new URL("../agents", import.meta.url));
-var RESEARCHER = "researcher";
+var CODE_RESEARCHER = "code-researcher";
 var src_default = Plugin.define({
   id: "srobroek.agent-researcher",
   async setup(ctx) {
-    const agents = await registerOwnedAgents(ctx.agent, agentPaths(AGENTS_DIR), mcpGrant(ctx.options?.tools, [RESEARCHER]));
+    const agents = await registerOwnedAgents(ctx.agent, agentPaths(AGENTS_DIR), mcpGrant(ctx.options?.tools, [CODE_RESEARCHER]));
     return () => agents.dispose();
   }
 });
 export {
   AGENTS_DIR,
-  RESEARCHER,
+  CODE_RESEARCHER,
   src_default as default
 };
