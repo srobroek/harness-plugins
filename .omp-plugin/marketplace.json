@@ -82,7 +82,7 @@
       "name": "find-tools",
       "description": "Discover and vet plugins, skills and MCP servers across local inventory, catalogs and public registries, without installing anything.",
       "source": "./plugins/find-tools/omp",
-      "version": "0.6.0",
+      "version": "0.6.1",
       "category": "development"
     },
     {
