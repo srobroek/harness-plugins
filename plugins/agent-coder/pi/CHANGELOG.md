@@ -1,3 +1,15 @@
+## agent-coder [0.14.0](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.13.0...agent-coder--v0.14.0) (2026-11-24)
+
+### Features
+
+* **agent-coder:** grant pi subagents code-intelligence and helper tools ([3aa202e](https://github.com/srobroek/harness-plugins/commit/3aa202e5bfab0b949040745d16f1cd1e0c65f966))
+* **agent-coder:** grant pi subagents code-intelligence and helper tools ([d36c00f](https://github.com/srobroek/harness-plugins/commit/d36c00f8aad33e7947747751501a66a307c13c59))
+* **agent-coder:** grant pi subagents code-intelligence and helper tools ([89d8d54](https://github.com/srobroek/harness-plugins/commit/89d8d54af33d144801baf1ea2af5496b78887ced))
+
+### Bug Fixes
+
+* **agent-coder:** keep every lsp_navigation call preview-only ([83620bd](https://github.com/srobroek/harness-plugins/commit/83620bdbadc46677ee5e2e97b8a56a3439abed85))
+
 ## agent-coder [0.13.0](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.4...agent-coder--v0.13.0) (2026-11-24)
 
 ### Features
