@@ -1,3 +1,10 @@
+## agent-researcher [0.10.2](https://github.com/srobroek/harness-plugins/compare/agent-researcher--v0.10.1...agent-researcher--v0.10.2) (2026-11-24)
+
+### Bug Fixes
+
+* **agent-researcher:** clarify beadless research scope ([b98d372](https://github.com/srobroek/harness-plugins/commit/b98d3722ac5cffd6bd4dbe223c36a163466cc350))
+* **agent-researcher:** make Beads lifecycle conditional ([23b369c](https://github.com/srobroek/harness-plugins/commit/23b369cc514a869e8cd6fc48e69aa9bf9ad53280))
+
 ## agent-researcher [0.10.1](https://github.com/srobroek/harness-plugins/compare/agent-researcher--v0.10.0...agent-researcher--v0.10.1) (2026-11-23)
 
 ### Bug Fixes

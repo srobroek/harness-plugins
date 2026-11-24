@@ -1,9 +1,17 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent"
 import { decideCommitGate, MESSAGES } from "../shared/commit-gate.ts"
 import type { MergeRequest } from "../shared/flag-cleanup.ts"
 import { SKIP_CI_ADVISORY } from "../shared/skip-ci.ts"
 import { createExtension, type Overrides } from "./trunk-dev.ts"
+
+let root = ""
+beforeAll(() => {
+  root = realpathSync(mkdtempSync(join(Bun.env.TMPDIR ?? "/tmp", "trunk-dev-pi-")))
+})
+afterAll(() => rmSync(root, { recursive: true, force: true }))
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown
 
@@ -11,7 +19,7 @@ type Handler = (event: unknown, ctx: ExtensionContext) => unknown
 function load(overrides: Overrides = {}) {
   const handlers = new Map<string, Handler>()
   const pi = { on: (name: string, handler: Handler) => handlers.set(name, handler) } as unknown as ExtensionAPI
-  createExtension(overrides)(pi)
+  createExtension({ optionsPath: join(root, "missing.json"), ...overrides })(pi)
   expect([...handlers.keys()].sort()).toEqual(["tool_call", "tool_result"])
   const ctx = { cwd: "/repo" } as ExtensionContext
   return {
@@ -126,5 +134,33 @@ describe("trunk-dev pi tool_result advisories", () => {
 
     const failing = load({ advise: () => [], followUp: () => Promise.reject(new Error("bd missing")) })
     expect(await failing.result(bashResult("gh pr merge 7"))).toBeUndefined()
+  })
+})
+
+describe("trunk-dev pi options file", () => {
+  const skipCommit = bashResult("dgit commit -m 'fix: x [skip ci]'")
+
+  test("gitWrappers in the options file makes the advisories read a listed wrapper as git", async () => {
+    expect(await load({ advise: () => [] }).result(skipCommit)).toBeUndefined()
+    const optionsPath = join(root, "wrappers.json")
+    writeFileSync(optionsPath, JSON.stringify({ gitWrappers: ["git", "dgit"] }))
+    expect(await load({ advise: () => [], optionsPath }).result(skipCommit)).toEqual({
+      content: [
+        { type: "text", text: "ok" },
+        { type: "text", text: SKIP_CI_ADVISORY },
+      ],
+    })
+  })
+
+  test("a malformed options file warns at session start", () => {
+    const optionsPath = join(root, "bad.json")
+    writeFileSync(optionsPath, "{")
+    const handlers = new Map<string, Handler>()
+    const pi = { on: (name: string, handler: Handler) => handlers.set(name, handler) } as unknown as ExtensionAPI
+    createExtension({ optionsPath })(pi)
+    const notify: string[] = []
+    const ctx = { hasUI: true, ui: { notify: (text: string) => notify.push(text) } } as unknown as ExtensionContext
+    handlers.get("session_start")?.({}, ctx)
+    expect(notify).toEqual([`trunk-dev: ${optionsPath} is not valid JSON; only \`git\` is read as git.`])
   })
 })

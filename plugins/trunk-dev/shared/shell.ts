@@ -10,6 +10,7 @@
 
 import { resolve } from "node:path"
 import { commandWords, type HereDocument, scanShell } from "@srobroek/opencode-lib"
+import { DEFAULT_GIT_WRAPPERS, isGitCommand } from "@srobroek/opencode-lib/git-wrappers"
 
 export type Invocation = {
   /** The command and its arguments; `argv[0]` is a basename. */
@@ -92,10 +93,13 @@ export type GitInvocation = Invocation & {
   argExpands: boolean[]
 }
 
-/** A literal `git`/`dgit` subcommand and the directory `-C` moves it to, or `undefined` when uncertain. */
-export function gitInvocation(invocation: Invocation): GitInvocation | undefined {
+/**
+ * A literal git subcommand and the directory `-C` moves it to, or `undefined` when uncertain. The command
+ * word counts as git when it is in `wrappers` (the `gitWrappers` option; only `git` by default).
+ */
+export function gitInvocation(invocation: Invocation, wrappers: readonly string[] = DEFAULT_GIT_WRAPPERS): GitInvocation | undefined {
   const { argv, expands } = invocation
-  if (argv[0] !== "git" && argv[0] !== "dgit") return undefined
+  if (!isGitCommand(argv[0], wrappers)) return undefined
   let cwd = invocation.cwd
   for (let i = 1; i < argv.length; i++) {
     const value = argv[i] as string

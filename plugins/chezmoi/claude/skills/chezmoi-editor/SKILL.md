@@ -25,10 +25,13 @@ literal words only: writes through `sh -c`, the shell eval builtin, scripts, var
    the target is live-owned (see Rules).
 3. Use native chezmoi names for dotfiles, executables, private files, readonly
    files, symlinks, scripts, and templates.
-4. Never write a credential in plaintext. Read it at apply time with
-   `{{ onepasswordRead "op://<vault>/<item>/<field>" }}` in a `.tmpl` file, or
-   store the file with `chezmoi add --encrypt <target>`. `private_` only sets
-   `0600` permissions; the file stays plaintext in git.
+4. Never write a credential in plaintext. With the 1Password CLI, read it at apply time
+   with `{{ onepasswordRead "op://<vault>/<item>/<field>" }}` in a `.tmpl` file.
+   chezmoi has template functions for other password managers too (Bitwarden,
+   KeePassXC, `pass`, Vault and more). Use the one the user already has. Or store the
+   file encrypted with `chezmoi add --encrypt <target>`, which uses the age or GPG
+   `encryption` from the chezmoi config. `private_` only sets `0600` permissions, and
+   the file stays plaintext in git.
 5. Preview with `chezmoi diff`. Apply only when the source diff is correct and
    the user wants the live target updated now.
 

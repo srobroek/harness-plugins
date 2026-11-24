@@ -1,6 +1,6 @@
 {
   "name": "architecture",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "description": "Architecture skills (capability-first layout, ownership boundaries, durable docs/ knowledge) and a read-only architect subagent.",
   "private": true,
   "type": "module",

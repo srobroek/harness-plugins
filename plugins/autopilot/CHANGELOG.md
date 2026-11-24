@@ -1,3 +1,13 @@
+## autopilot [1.4.0](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.3.8...autopilot--v1.4.0) (2026-11-24)
+
+### Features
+
+* **autopilot:** port autopilot to pi as an extension ([91f1ee4](https://github.com/srobroek/harness-plugins/commit/91f1ee4f86e268b28f34aca8288717cf850de601))
+
+### Bug Fixes
+
+* **autopilot:** queue pi prompts as follow-ups ([9773642](https://github.com/srobroek/harness-plugins/commit/97736426f374104bb6bc4272c5ea395c9e38be11))
+
 ## autopilot [1.3.8](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.3.7...autopilot--v1.3.8) (2026-11-23)
 
 ### Bug Fixes

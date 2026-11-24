@@ -17,6 +17,7 @@ import { flagEnabled } from "@srobroek/opencode-lib/bd-actor-gate"
 import type { BdTargets } from "@srobroek/opencode-lib/bd-embedded-write-lock"
 import { parse, parsedInvocations } from "@srobroek/opencode-lib/beads-shell"
 import { readBounded } from "@srobroek/opencode-lib/bounded-read"
+import { DEFAULT_GIT_WRAPPERS, gitWrapperPattern } from "@srobroek/opencode-lib/git-wrappers"
 import { lookupSite } from "../opencode/src/bd-close-gate.ts"
 import { type BdRun, envelopeData, lifecycleBdEnvironment, parseTrailingJson } from "../opencode/src/gate-admission.ts"
 import { actorCovers } from "./pi-session.ts"
@@ -213,20 +214,29 @@ const EVIDENCE: readonly RegExp[] = [
   /(?:^|[\s(])(?:#|!)\d+\b|\b(?:PR|MR|pull request|merge request)\s*[#!]?\d+\b/i,
   /\b\d+\s+(?:pass(?:ed|es|ing)?|fail(?:ed|s|ures?|ing)?|tests?|specs?|checks?|errors?)\b/i,
   /\bexit(?:ed)?\s+(?:code\s+|status\s+)?\d+\b/i,
-  /\b(?:bun|bunx|npm|npx|pnpm|yarn|cargo|pytest|python3?|uv|just|make|tsc|biome|eslint|gh|git|dgit|bd|wt|pi)\s+[\w-]+/,
   /\bgo\s+(?:test|build|vet|run)\b/,
 ]
 
-/** Whether a reason carries at least one piece of checkable evidence. */
-export function hasCheckableEvidence(text: string): boolean {
-  return text.trim() !== "" && EVIDENCE.some((pattern) => pattern.test(text))
+/** A command run with its subcommand (`bun test`, `git push`), where git is any of `gitWrappers`. */
+const commandEvidence = (gitWrappers: readonly string[]): RegExp =>
+  new RegExp(
+    `\\b(?:bun|bunx|npm|npx|pnpm|yarn|cargo|pytest|python3?|uv|just|make|tsc|biome|eslint|gh|${gitWrapperPattern(gitWrappers)}|bd|wt|pi)\\s+[\\w-]+`,
+  )
+
+/** Whether a reason carries at least one piece of checkable evidence; `gitWrappers` name the git commands. */
+export function hasCheckableEvidence(text: string, gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS): boolean {
+  return text.trim() !== "" && (EVIDENCE.some((pattern) => pattern.test(text)) || commandEvidence(gitWrappers).test(text))
 }
 
 const EVIDENCE_RESOLUTION =
   'give the close a factual --reason naming the evidence, for example `bd close ID --reason "bun test x.test.ts: 12 pass; changed src/x.ts"`, or --reason-file with that text'
 
-/** Why a close's reasons do not meet the evidence bar, or `undefined` when they do. */
-export function closeEvidenceRefusal(reasons: readonly CloseReason[], cwd: string): string | undefined {
+/** Why a close's reasons do not meet the evidence bar, or `undefined` when they do; `gitWrappers` name the git commands. */
+export function closeEvidenceRefusal(
+  reasons: readonly CloseReason[],
+  cwd: string,
+  gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS,
+): string | undefined {
   if (reasons.length === 0) return "bd close has no --reason, so the close records no evidence"
   for (const reason of reasons) {
     if (reason.kind === "file") {
@@ -234,10 +244,10 @@ export function closeEvidenceRefusal(reasons: readonly CloseReason[], cwd: strin
         return "bd close reads its --reason-file from stdin or a path the shell computes, so its evidence cannot be checked first"
       const read = readBounded(resolve(cwd, reason.path))
       if (read.kind !== "text") return `bd close --reason-file ${JSON.stringify(reason.path)} is not a small readable file`
-      if (!hasCheckableEvidence(read.text)) return `the reason in ${JSON.stringify(reason.path)} carries no checkable evidence`
+      if (!hasCheckableEvidence(read.text, gitWrappers)) return `the reason in ${JSON.stringify(reason.path)} carries no checkable evidence`
       continue
     }
-    if (!hasCheckableEvidence(reason.text))
+    if (!hasCheckableEvidence(reason.text, gitWrappers))
       return `the close reason ${JSON.stringify(reason.text.slice(0, 120))} carries no checkable evidence (a command run, a changed path, a commit or PR, or a test result)`
   }
   return undefined
@@ -288,6 +298,8 @@ export type WorkGateDeps = {
   run: BdRun
   /** The command's write targets, as the write lock resolves them. */
   targets: BdTargets
+  /** Command names a close reason may cite as git (the `gitWrappers` option); only `git` when absent. */
+  gitWrappers?: readonly string[]
 }
 
 /** Decide the claim and evidence gates for one bash command; `undefined` lets it through. */
@@ -308,7 +320,7 @@ export async function decideBeadWork(command: string, cwd: string, deps: WorkGat
     if (site.verb !== "close") continue
     const target = deps.targets.get(site.shape)
     const where = target !== undefined && !("unresolved" in target) ? target.cwd : cwd
-    const refusal = closeEvidenceRefusal(site.reasons, where)
+    const refusal = closeEvidenceRefusal(site.reasons, where, deps.gitWrappers)
     if (refusal !== undefined) return { gate: EVIDENCE_GATE, cause: refusal, resolution: EVIDENCE_RESOLUTION }
   }
   for (const site of sites) {

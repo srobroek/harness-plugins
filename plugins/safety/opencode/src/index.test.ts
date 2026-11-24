@@ -132,6 +132,12 @@ describe("hard gates", () => {
     await before("c1", "git worktree add /tmp/x")
   })
 
+  test("gitWrappers makes the gates read a listed wrapper as git", async () => {
+    await (await load()).before("c1", "dgit worktree add /tmp/x")
+    const { before } = await load({ gitWrappers: ["git", "dgit"] })
+    await expect(before("c2", "dgit worktree add /tmp/x")).rejects.toThrow(/worktree-tmp-guard/)
+  })
+
   test("a bash call is gated as the shell call it is routed to", async () => {
     const { fake } = await load()
     await expect(
@@ -797,6 +803,11 @@ describe("steering directories and same-repo worktrees", () => {
 })
 
 describe("helpers", () => {
+  test("gitWrappers defaults to git and accepts configured executable basenames", () => {
+    expect(readOptions(undefined).gitWrappers).toEqual(["git"])
+    expect(readOptions({ gitWrappers: ["git", "dgit", 3] }).gitWrappers).toEqual(["git", "dgit"])
+  })
+
   test("readOptions keeps known feature ids only", () => {
     expect([...readOptions({ disable: ["worktree-tmp", "nope", 3] }).disabled]).toEqual(["worktree-tmp"])
     expect(readOptions(undefined).disabled.size).toBe(0)

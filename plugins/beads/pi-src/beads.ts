@@ -9,12 +9,15 @@
  */
 
 import { homedir } from "node:os"
-import { dirname, isAbsolute, resolve } from "node:path"
+import { dirname, isAbsolute, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import type { ExtensionAPI, ExtensionContext, ToolCallEventResult } from "@earendil-works/pi-coding-agent"
+import { type ExtensionAPI, type ExtensionContext, getAgentDir, type ToolCallEventResult } from "@earendil-works/pi-coding-agent"
 import { isMutatingBdCommand } from "@srobroek/opencode-lib/bd-actor-gate"
 import { embeddedWriteRunner, resolveBdTargets } from "@srobroek/opencode-lib/bd-embedded-write-lock"
 import { sessionPinFor } from "@srobroek/opencode-lib/beads-store"
+import { readSessionHeader, type SessionHeaderView } from "@srobroek/opencode-lib/pi-session-header"
+import { readGitWrappers } from "@srobroek/opencode-lib/git-wrappers"
+import { loadPiOptionsFile } from "@srobroek/opencode-lib/pi-options"
 import { Type } from "typebox"
 import { contentionAdvisory } from "../opencode/src/claims.ts"
 import { type BdRun, bdStoreDir, GateAdmitter, lifecycleBdEnvironment, runBdResult } from "../opencode/src/gate-admission.ts"
@@ -28,7 +31,7 @@ import {
   type WorkRefusal,
   writeClaimRefusal,
 } from "../shared/claim-gate.ts"
-import { isSubagentChild, piActor, readSessionHeader, type SessionHeaderView, sessionLineage } from "../shared/pi-session.ts"
+import { isSubagentChild, piActor, sessionLineage } from "../shared/pi-session.ts"
 import { APPLY_NOTE, optionsError, type PreflightDeps, runPreflight, systemDeps } from "../shared/preflight.ts"
 
 /** How long a store pin lookup (a `git rev-parse`) is reused. */
@@ -43,6 +46,9 @@ const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url))
 
 /** How long a child's confirmed claim lets its file writes through without asking bd again. */
 export const HELD_CACHE_MS = 30_000
+
+/** The options file in pi's agent directory: `{ "gitWrappers": [...] }`, the only beads option pi reads. */
+export const OPTIONS_FILE = "beads.json"
 
 /** Most call ids remembered across plugin instances before the oldest are forgotten. */
 const MAX_CLAIMED_CALLS = 1_000
@@ -112,6 +118,8 @@ export type BeadsPiDeps = {
   repositoryControl?: ShellGateDeps["repositoryControl"]
   preflight?: (env: NodeJS.ProcessEnv, cwd: string, signal?: AbortSignal) => PreflightDeps
   now?: () => number
+  /** Replaces `<agentDir>/beads.json`. */
+  optionsPath?: string
 }
 
 type Pending = { command: string; advisories: string[] }
@@ -124,6 +132,12 @@ export function setupBeadsPi(pi: ExtensionAPI, deps: BeadsPiDeps = {}): void {
   const readHeader = deps.readHeader ?? readSessionHeader
   // A pi started from a shell this plugin pinned inherits that pin; each session resolves its own.
   const baseEnv = (): NodeJS.ProcessEnv => withoutInheritedPin(deps.env ?? process.env)
+  const loaded = loadPiOptionsFile(
+    deps.optionsPath ?? join(getAgentDir(), OPTIONS_FILE),
+    "beads",
+    "close evidence counts only `git` as git",
+  )
+  const gitWrappers = readGitWrappers(loaded.options)
   const calls = claimedCalls()
   const pins = new Map<string, { at: number; pin: string | undefined }>()
   const identities = new Map<string, SessionIdentity>()
@@ -177,6 +191,7 @@ export function setupBeadsPi(pi: ExtensionAPI, deps: BeadsPiDeps = {}): void {
       deadline,
       run,
       targets: resolveBdTargets(command, cwd, selection.env),
+      gitWrappers,
     })
     if (work !== undefined) return { block: true, reason: refusalText(work) }
     input.command = [...selectionExports(selection), decision.command].join("\n")
@@ -206,6 +221,7 @@ export function setupBeadsPi(pi: ExtensionAPI, deps: BeadsPiDeps = {}): void {
   }
 
   pi.on("session_start", (_event, ctx) => {
+    if (loaded.warning !== undefined && ctx.hasUI) ctx.ui.notify(loaded.warning, "warning")
     // Start the store's gate verification now, so the first mutation rarely waits for it.
     if (identityOf(ctx).child) return
     const env = lifecycleBdEnvironment(ctx.cwd, pinnedEnvironment(ctx.cwd, baseEnv(), cachedPinFor))

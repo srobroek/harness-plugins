@@ -12,7 +12,7 @@
       "name": "agent-reviewer",
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "source": "./plugins/agent-reviewer/claude",
-      "version": "0.13.1",
+      "version": "0.13.2",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/agent-reviewer",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -21,7 +21,7 @@
       "name": "architecture",
       "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
       "source": "./plugins/architecture/claude",
-      "version": "0.11.1",
+      "version": "0.11.2",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/architecture",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -48,7 +48,7 @@
       "name": "beads",
       "description": "Beads issue tracking: bd prime session context, shell gates on bd, git and gh commands, store pinning and the Beads skills.",
       "source": "./plugins/beads/claude",
-      "version": "0.9.0",
+      "version": "0.9.2",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/beads",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -57,7 +57,7 @@
       "name": "chezmoi",
       "description": "Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill.",
       "source": "./plugins/chezmoi/claude",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/chezmoi",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -66,7 +66,7 @@
       "name": "debate",
       "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
       "source": "./plugins/debate/claude",
-      "version": "0.7.2",
+      "version": "0.7.3",
       "category": "productivity",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/debate",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -138,7 +138,7 @@
       "name": "project",
       "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
       "source": "./plugins/project/claude",
-      "version": "0.12.2",
+      "version": "0.12.3",
       "category": "productivity",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/project",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -147,7 +147,7 @@
       "name": "project-secrets",
       "description": "Per-project secrets with fnox and 1Password: store, use, inspect and rotate them with no value in the transcript.",
       "source": "./plugins/project-secrets/claude",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "category": "productivity",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/project-secrets",
       "repository": "https://github.com/srobroek/harness-plugins"

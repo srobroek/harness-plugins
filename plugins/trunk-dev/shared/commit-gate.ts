@@ -230,6 +230,8 @@ export type CommitGateOptions = {
   exists?: (path: string) => boolean
   list?: (path: string) => string[]
   processEnv?: Readonly<Record<string, string | undefined>>
+  /** Command names read as git (the `gitWrappers` option); only `git` when absent. */
+  gitWrappers?: readonly string[]
 }
 
 /** The refusal for the first commit or push in `command` that breaks the policy, or `undefined`. */
@@ -239,7 +241,7 @@ export function decideCommitGate(command: string, cwd: string, options: CommitGa
     const read = options.readFile ?? readText
     const env = options.processEnv ?? process.env
     for (const invocation of invocations(command, cwd)) {
-      const parsed = gitInvocation(invocation)
+      const parsed = gitInvocation(invocation, options.gitWrappers)
       if (parsed === undefined || (parsed.subcommand !== "commit" && parsed.subcommand !== "push")) continue
       const override = overridden(invocation, parsed.subcommand === "commit" ? COMMIT_OVERRIDE : PUSH_OVERRIDE, env)
       if (override) continue

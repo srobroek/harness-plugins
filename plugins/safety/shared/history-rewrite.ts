@@ -23,6 +23,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpat
 import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
 import { commandWords, commandWrappers } from "@srobroek/opencode-lib"
+import { DEFAULT_GIT_WRAPPERS, gitWrapperPattern, isGitCommand } from "@srobroek/opencode-lib/git-wrappers"
 import { base, type Command, type GitInvocation, gitInvocation, positionals, SHELLS } from "./shell.ts"
 
 const PREFIX = "Blocked by safety (history-rewrite-guard)"
@@ -183,10 +184,10 @@ const LOCALE_REASON =
   'a `$"…"` locale string is translated by bash when a message catalog is active, so a directory operand written that way cannot be verified, wherever it points'
 
 /** A command that could be git, git-filter-repo or a launcher of either (a quoted program word counts). */
-const gitOrLauncher = (command: Command): boolean =>
+const gitOrLauncher = (command: Command, wrappers: readonly string[]): boolean =>
   quotedProgram(command) ||
   FILTER_REPO_NAME.test(base(command.argv[0])) ||
-  gitInvocation(command.argv) !== undefined ||
+  gitInvocation(command.argv, wrappers) !== undefined ||
   launched(command.argv) !== undefined
 
 type FilterRepo = { args: string[]; chdirs: string[]; projects: string[] }
@@ -270,10 +271,10 @@ function launched(argv: readonly string[]): Launched | undefined {
 }
 
 /** `git filter-repo`, `git-filter-repo`, or either run through a launcher; `"uncertain"` when it cannot be told. */
-function filterRepo(command: Command): FilterRepo | "uncertain" | undefined {
+function filterRepo(command: Command, wrappers: readonly string[]): FilterRepo | "uncertain" | undefined {
   const name = base(command.argv[0])
   if (FILTER_REPO_NAME.test(name)) return { args: command.argv.slice(1), chdirs: [], projects: [] }
-  const git = gitInvocation(command.argv)
+  const git = gitInvocation(command.argv, wrappers)
   if (git?.subcommand === "filter-repo") return { args: git.args, chdirs: git.chdirs, projects: [] }
   const run = launched(command.argv)
   if (run === undefined || run === "not-run") return undefined
@@ -500,7 +501,7 @@ function updateRefRewrite(command: Command, git: GitInvocation): string | undefi
 const escapedSpelling = (words: readonly string[]): boolean => words.some((word) => word.startsWith("-") && word.includes("\\"))
 
 /** The first construct in the whole shell command that could change where a rewrite runs. */
-function directoryConstruct(commands: readonly Command[], runnerOk = false): string | undefined {
+function directoryConstruct(commands: readonly Command[], runnerOk: boolean, wrappers: readonly string[]): string | undefined {
   const sources = new Set<string>()
   for (const command of commands) {
     const name = base(command.argv[0])
@@ -510,7 +511,7 @@ function directoryConstruct(commands: readonly Command[], runnerOk = false): str
     const wrapper = command.wrappers.find((item) => CONSTRUCTS.has(item))
     if (wrapper !== undefined) return `\`${wrapper}\``
     if (command.directories.length > 0) return "a wrapper's directory option (`env -C`, `sudo -D`)"
-    const git = gitInvocation(command.argv)
+    const git = gitInvocation(command.argv, wrappers)
     if (git !== undefined && command.argv.slice(1, git.offset - 1).some((word) => word.startsWith("--exec-path")))
       return "`git --exec-path`"
     sources.add(command.source)
@@ -532,8 +533,6 @@ const REF_MUTATING_SUBCOMMANDS: ReadonlySet<string> = new Set([
   "fast-import", "am", "bisect", "clone", "init",
 ])
 
-const isGitWord = (argv: readonly string[]): boolean => ["git", "dgit"].includes(base(argv[0]))
-
 /**
  * The command a runner (`xargs`, `parallel`, `find -exec`) starts, as its words, when stdin could make it a
  * rewrite, with whether stdin can also choose its target. Git with no visible subcommand, git-filter-repo and a
@@ -543,10 +542,10 @@ const isGitWord = (argv: readonly string[]): boolean => ["git", "dgit"].includes
  */
 type Runner = { started: string[]; hidden: boolean; wrapper?: string }
 
-function runnerCommand(command: Command): Runner | undefined {
+function runnerCommand(command: Command, wrappers: readonly string[]): Runner | undefined {
   const classify = (argv: readonly string[]): Runner | undefined => {
-    if (isGitWord(argv)) {
-      const visible = gitInvocation(argv)
+    if (isGitCommand(argv[0], wrappers)) {
+      const visible = gitInvocation(argv, wrappers)
       if (visible === undefined) return { started: [...argv], hidden: true }
       // `parallel git ::: args` and `find -exec git {} +` put the subcommand where the runner substitutes it.
       if (/^(?::+|-|.*[{}])/.test(visible.subcommand)) return { started: [...argv], hidden: true }
@@ -608,7 +607,10 @@ function runnerCommand(command: Command): Runner | undefined {
     }
     const tool = rest.some(
       (word) =>
-        isGitWord([word]) || FILTER_REPO_NAME.test(base(word)) || launched([word]) !== undefined || commandWrappers([word, "x"]).length > 0,
+        isGitCommand(word, wrappers) ||
+        FILTER_REPO_NAME.test(base(word)) ||
+        launched([word]) !== undefined ||
+        commandWrappers([word, "x"]).length > 0,
     )
     return tool ? { started: [...words], hidden: true } : undefined
   }
@@ -650,7 +652,8 @@ const GIT_DATA_SUBCOMMANDS: ReadonlySet<string> = new Set(["log", "commit", "sho
 const DESCENDED: ReadonlySet<string> = new Set(["eval", "xargs"])
 const REWRITE_FORM = /(?<![\w-])git[-_]filter[-_]repo(?![\w-])/
 const REWRITE_WORD = /(?<![\w/.-])(?:filter-repo|filter-branch|update-ref|replace)(?![\w/-]|\.\w)/
-const GIT_WORD = /(?<![\w/.-])d?git(?![\w-])/
+/** A word in a command's text naming one of `wrappers` (git and the `gitWrappers` option). */
+const gitWord = (wrappers: readonly string[]): RegExp => new RegExp(`(?<![\\w/.-])(?:${gitWrapperPattern(wrappers)})(?![\\w-])`)
 
 /** Options that run a program or pager (`git grep -O`, `git diff --ext-diff`, `rg --pre`), whatever their value. */
 const EXECUTABLE_OPTION =
@@ -728,12 +731,12 @@ function launcherJudged(argv: readonly string[]): boolean {
 /**
  * The rewrite word a command names that the walker did not judge as a rewrite, or `undefined`.
  * A text-level fallback: a word counts as a mention when it sits in the command's own words with
- * `git` (or as `git-filter-repo`), unless the command only prints or searches its arguments, is a
+ * `git` or a listed wrapper (or as `git-filter-repo`), unless the command only prints or searches its arguments, is a
  * shell the walker descends into, or is a git subcommand that treats them as data.
  */
-function unaccountedMention(command: Command, git: GitInvocation | undefined): string | undefined {
+function unaccountedMention(command: Command, git: GitInvocation | undefined, gitText: RegExp): string | undefined {
   const text = command.argv.join(" ")
-  const found = REWRITE_FORM.exec(text) ?? (GIT_WORD.test(text) ? REWRITE_WORD.exec(text) : null)
+  const found = REWRITE_FORM.exec(text) ?? (gitText.test(text) ? REWRITE_WORD.exec(text) : null)
   if (found === null) return undefined
   const name = base(command.argv[0])
   if (SHELLS.has(name) || DESCENDED.has(name)) return undefined
@@ -757,7 +760,9 @@ export function historyRewrite(
   cwd: string,
   tempRoots: readonly string[] = defaultTempRoots(),
   env: NodeJS.ProcessEnv = process.env,
+  wrappers: readonly string[] = DEFAULT_GIT_WRAPPERS,
 ): string | undefined {
+  const gitText = gitWord(wrappers)
   const judge = (
     what: string,
     moves: string[],
@@ -767,7 +772,7 @@ export function historyRewrite(
   ): string | undefined => {
     const selection = repositorySelection(commands)
     if (selection !== undefined) return withSelection(what, selection)
-    const construct = directoryConstruct(commands, runnerOk)
+    const construct = directoryConstruct(commands, runnerOk, wrappers)
     if (construct !== undefined) return withConstruct(what, construct)
     const inherited = INHERITED_SELECTION.find((name) => env[name] !== undefined)
     if (inherited !== undefined) return withSelection(what, `The session's environment sets \`${inherited}\`, which`)
@@ -794,10 +799,10 @@ export function historyRewrite(
   // never reads (`/bin/$'ba\163h' -c 'g""it …'`), so it is refused wherever it runs.
   for (const command of commands)
     if (quotedProgram(command)) return unverifiable(`\`${command.argv.slice(0, 4).join(" ")}\``)
-  if (commands.some(ansiQuoted) && commands.some(gitOrLauncher)) {
+  if (commands.some(ansiQuoted) && commands.some((command) => gitOrLauncher(command, wrappers))) {
     for (const command of commands) {
-      if (!gitOrLauncher(command)) continue
-      const git = gitInvocation(command.argv)
+      if (!gitOrLauncher(command, wrappers)) continue
+      const git = gitInvocation(command.argv, wrappers)
       const text = `\`${command.argv.slice(0, 4).join(" ")}\``
       // An escape may spell an option, a value or the program; only the git subcommand may carry one.
       if (command.argv.some((word, at) => word.includes("\\") && at !== (git?.offset ?? 0) - 1)) return unverifiable(text)
@@ -810,7 +815,7 @@ export function historyRewrite(
   // A runner can append arguments from stdin that the guard cannot see, so a git, filter-repo or launcher command
   // it starts is judged by where it would run: the workdir plus any visible `-C`, `--directory` or `--target`.
   for (const command of commands) {
-    const found = runnerCommand(command)
+    const found = runnerCommand(command, wrappers)
     if (found === undefined) continue
     const { started, hidden } = found
     if (found.wrapper !== undefined)
@@ -818,7 +823,8 @@ export function historyRewrite(
     if (hidden)
       return `${PREFIX}: refused \`${started.slice(0, 4).join(" ")}\` run by \`${command.argv[0]}\`: its subcommand, \`-C\`, \`--git-dir\` or \`--target\` can come from stdin, which the guard cannot read, so it cannot tell where it runs. Write the arguments out in the command. ${GUIDANCE}`
     // `git -C x` has no subcommand yet: add a placeholder so its options still parse.
-    const startedGit = gitInvocation(started) ?? (isGitWord(started) ? gitInvocation([...started, "x"]) : undefined)
+    const startedGit =
+      gitInvocation(started, wrappers) ?? (isGitCommand(started[0], wrappers) ? gitInvocation([...started, "x"], wrappers) : undefined)
     const target = FILTER_REPO_NAME.test(base(started[0])) || startedGit?.subcommand === "filter-repo"
       ? optionValue(startedGit?.args ?? started.slice(1), "--target")
       : undefined
@@ -831,9 +837,9 @@ export function historyRewrite(
     }
   }
   for (const [position, command] of commands.entries()) {
-    const git = gitInvocation(command.argv)
+    const git = gitInvocation(command.argv, wrappers)
     const text = `\`${command.argv.slice(0, 4).join(" ")}\``
-    const rewrite = filterRepo(command)
+    const rewrite = filterRepo(command, wrappers)
     if (rewrite === "uncertain") return uncertain(text, "the launcher's command line could not be read")
     if (rewrite !== undefined) {
       if (base(command.argv[0]).startsWith("uv")) {
@@ -862,7 +868,7 @@ export function historyRewrite(
       }
       continue
     }
-    const mention = unaccountedMention(command, git)
+    const mention = unaccountedMention(command, git, gitText)
     if (mention !== undefined)
       return uncertain(text, `the command text mentions \`${mention}\` where the guard could not parse a rewrite`)
     if (git === undefined) continue

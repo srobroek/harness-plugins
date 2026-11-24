@@ -12,7 +12,7 @@ describe("shellFlagDirectories", () => {
     ["git -C /a -C b status", ["/a", "/a/b"]],
     ["git --git-dir=/x/.git --work-tree /x status", ["/x/.git", "/x"]],
     ["GIT_DIR=/y/.git git log", ["/y/.git"]],
-    ["dgit -C /z push", ["/z"]],
+    ["git -C /z push", ["/z"]],
     ["git -c core.x=1 -C /q status", ["/q"]],
     ["sudo git -C /root/r status", ["/root/r"]],
     ["make -C /m all", ["/m"]],
@@ -33,6 +33,11 @@ describe("shellFlagDirectories", () => {
     ["git -C ~/r status", [join(homedir(), "r")]],
   ])("%s", (command, dirs) => {
     expect(shellFlagDirectories(command, CWD)).toEqual(dirs)
+  })
+
+  test("custom git wrappers are opt-in", () => {
+    expect(shellFlagDirectories("dgit -C /x status", "/work")).toEqual([])
+    expect(shellFlagDirectories("dgit -C /x status", "/work", ["git", "dgit"])).toEqual(["/x"])
   })
 
   test.each([
