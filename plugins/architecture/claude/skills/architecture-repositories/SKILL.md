@@ -56,7 +56,7 @@ tools/  scripts/  docs/
 
 | Need | Default | Graduate to | Notes |
 | --- | --- | --- | --- |
-| Tool versions and one task entrypoint | `mise` (monorepo tasks with explicit config roots) or `just` / Task over native commands | - | `mise` artifact caching is experimental; do not treat it as a build cache |
+| Tool versions and one task entrypoint | The repository's existing tool/version manager and task runner (for example, `mise`, `just`, or Task) | - | Use `mise` when the project already uses it or is choosing it; its artifact caching is experimental and is not a build cache |
 | Cross-language task graph with caching | - | moon 2 (Bun, Node, Go and Rust fully integrated; Python partial) or Nx 24 with the community Python and Go plugins | Validate the Python integration before relying on it |
 | JavaScript-heavy repository | Turborepo 2 | - | It discovers `package.json` workspaces only; non-JS tasks are wrapped, not modelled |
 | Python-heavy repository with fine-grained packaging | - | Pants 2 (dependency inference, hermetic runs, Lambda packaging) | Check JS and framework support before adopting it |
@@ -67,10 +67,10 @@ Keep one thin orchestration entrypoint. Do not rebuild every ecosystem's depende
 ## CI, ownership and releases
 
 - Select jobs by what changed: start with path filters (`dorny/paths-filter`, which supports matrices and `merge_group`), and move to moon or Nx affected graphs when shared libraries make path filters fragile. Inputs include contracts, shared libraries, lockfiles and CI configuration, not only the changed directory.
-- Always start the required workflow. Run language or component jobs conditionally, then finish with an always-running gate job that fails on any failed or skipped-by-mistake job. Path-filtering a required workflow out leaves its check pending, and merge queues need the `merge_group` trigger.
+- For GitHub Actions required checks, start the required workflow, run language or component jobs conditionally, then finish with an always-running gate job that fails on any failed or skipped-by-mistake job. Path-filtering a required workflow out leaves its check pending; GitHub merge queues need the `merge_group` trigger. For other CI and forge setups, implement equivalent required-check and merge-train behavior using the platform's conventions.
 - Cache downloads separately from build outputs. Key build caches on sources, contracts, lockfiles, toolchain versions and flags; untrusted pull requests never write to shared caches.
 - CODEOWNERS per deployable, plus `schemas/`, `infrastructure/` and CI configuration. Ownership routes review; it does not hide source.
-- Release each deployable or package on its own with release-please manifest mode (a release type per path, component-prefixed tags). Link versions only for components that ship together on purpose. Changesets is npm-oriented and needs adapters for Python or Go; `semantic-release-monorepo` is a community extension to validate before use. Deploying stays a separate pipeline step.
+- Release each deployable or package on its own using the repository's established release tooling. When choosing a system, release-please manifest mode is one option (a release type per path, component-prefixed tags); Changesets is npm-oriented and needs adapters for Python or Go; `semantic-release-monorepo` is a community extension to validate before use. Link versions only for components that ship together on purpose. Deploying stays a separate pipeline step.
 
 ## Avoid
 

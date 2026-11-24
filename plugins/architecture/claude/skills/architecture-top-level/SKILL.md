@@ -5,7 +5,7 @@ metadata:
   opencode/autoinvoke: false
 ---
 
-Prefer these top-level directories when the project shape needs them:
+Starting taxonomy when defining boundaries for a new or changing project: follow existing repository conventions and ownership when they differ.
 
 - `apps/` for user-facing surfaces: web, admin, mobile, desktop, marketing, and docs.
 - `services/` for long-lived backend deployables: API, GraphQL, RPC, webhooks, auth, billing, and notifications.
