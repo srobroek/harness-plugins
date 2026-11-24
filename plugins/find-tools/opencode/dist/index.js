@@ -832,8 +832,34 @@ var SOURCES = [
   "skills_cli"
 ];
 var SOURCE_TIMEOUT_MS = 1e4;
-var REPO_SPEC = "github:srobroek/opencode-plugins::path:plugins";
-var DEFAULT_CATALOG_URL = "https://raw.githubusercontent.com/srobroek/opencode-plugins/main/.claude-plugin/marketplace.json";
+var REPOSITORY = "srobroek/harness-plugins";
+var REPO_SPEC = `github:${REPOSITORY}::path:plugins`;
+var INVENTORY_URL = `https://raw.githubusercontent.com/${REPOSITORY}/main/inventory.json`;
+var CATALOG_URLS = {
+  claude: `https://raw.githubusercontent.com/${REPOSITORY}/main/.claude-plugin/marketplace.json`,
+  opencode: INVENTORY_URL,
+  omp: `https://raw.githubusercontent.com/${REPOSITORY}/main/.omp-plugin/marketplace.json`,
+  pi: INVENTORY_URL
+};
+var DEFAULT_CATALOG_URL = CATALOG_URLS.opencode;
+function catalogUrlFor(harness) {
+  return CATALOG_URLS[harness];
+}
+function piPackage(name, piName) {
+  return `@srobroek/${piName ?? `pi-${name}`}`;
+}
+function installHint(harness, name, piName) {
+  switch (harness) {
+    case "claude":
+      return `/plugin install ${name}@harness-plugins`;
+    case "omp":
+      return `omp plugin install --scope project ${name}@harness-plugins`;
+    case "pi":
+      return `pi install npm:${piPackage(name, piName)}`;
+    case "opencode":
+      return `opencode plugin add 'github:${REPOSITORY}::path:plugins/${name}/opencode'`;
+  }
+}
 var AWESOME_OPENCODE_URL = "https://raw.githubusercontent.com/awesome-opencode/awesome-opencode/main/README.md";
 var MCP_REGISTRY_URL = "https://registry.modelcontextprotocol.io/v0.1/servers";
 var NPM_SEARCH_URL = "https://registry.npmjs.org/-/v1/search";
@@ -889,6 +915,8 @@ function pluginHit(plugin) {
   let origin = source?.type ?? "unknown";
   if (source?.type === "package") {
     origin = `package ${source.target ?? "?"}${source.version ? `@${source.version}` : ""}${source.outdated ? " (outdated)" : ""}`;
+  } else if (source?.version) {
+    origin = `${source.type} ${source.version}`;
   }
   const failedState = plugin.state?.status === "failed" ? "; failed to load" : "";
   const name = plugin.id ?? (source?.type === "package" ? source.target : undefined) ?? "unnamed";
@@ -931,15 +959,16 @@ async function scanLocal(local) {
     return { source: "local", ok: true, hits };
   }
   const [plugins, skills, mcp] = await Promise.allSettled([
-    local.plugins?.() ?? Promise.reject(new Error("plugin inventory unavailable")),
-    local.skills?.() ?? Promise.reject(new Error("skill inventory unavailable")),
-    local.mcp?.() ?? Promise.reject(new Error("MCP inventory unavailable"))
+    local.plugins?.() ?? Promise.resolve([]),
+    local.skills?.() ?? Promise.resolve([]),
+    local.mcp?.() ?? Promise.resolve([])
   ]);
   const hits = [];
   const failures = [];
-  if (plugins.status === "fulfilled")
-    hits.push(...listOf(plugins.value).map(pluginHit));
-  else
+  if (plugins.status === "fulfilled") {
+    const entries = listOf(plugins.value);
+    hits.push(...entries.map((plugin) => pluginHit(plugin)));
+  } else
     failures.push(`plugin list failed: ${message(plugins.reason).slice(0, 200)}`);
   if (skills.status === "fulfilled") {
     for (const skill of listOf(skills.value)) {
@@ -957,51 +986,47 @@ async function scanLocal(local) {
     return failed("local", failures.join("; "), { failures });
   return { source: "local", ok: true, hits, ...failures.length ? { failures } : {} };
 }
-function catalogEntries(json) {
+function catalogEntries(json, harness = "opencode") {
   const obj = record(json);
   const list = Array.isArray(json) ? json : Array.isArray(obj?.plugins) ? obj.plugins : obj?.skills;
   if (!Array.isArray(list))
     return;
-  const kind = Array.isArray(obj?.plugins) ? "marketplace" : "skills";
+  const inventory = Array.isArray(obj?.plugins) && obj.plugins.some((item) => record(record(item)?.harnesses) !== undefined);
+  const kind = inventory ? "inventory" : Array.isArray(obj?.plugins) ? "marketplace" : "skills";
   const entries = [];
   for (const item of list) {
     const entry = record(item);
     const name = str(entry?.name);
     if (!name)
       continue;
+    if (inventory && record(record(entry?.harnesses)?.[harness]) === undefined)
+      continue;
     const description = str(entry?.description);
     const source = str(entry?.source) ?? str(record(entry?.source)?.url) ?? str(record(entry?.source)?.repo);
-    entries.push({ name, ...description ? { description } : {}, ...source ? { source } : {} });
+    const piName = inventory ? str(entry?.piName) : undefined;
+    entries.push({ name, ...description ? { description } : {}, ...source ? { source } : {}, ...piName ? { piName } : {} });
   }
   return { kind, entries };
 }
 function catalogIndexUrl(url) {
   return url.endsWith("/") ? `${url}index.json` : url;
 }
-function catalogHits(url, own, json, terms) {
-  const parsed = catalogEntries(json);
+function catalogHits(url, own, json, terms, harness = "opencode") {
+  const parsed = catalogEntries(json, harness);
   if (!parsed)
     return;
   const ranked = parsed.entries.map((entry) => ({ entry, score: terms.length ? relevance(terms, entry.name, entry.description) : 1 })).filter(({ score }) => score > 0).sort((a, b) => b.score - a.score).slice(0, SEARCH_CAP);
   return ranked.map(({ entry }) => {
-    let install;
-    if (own) {
-      const spec = `${REPO_SPEC}/${entry.name}`;
-      install = `project: add "${spec}" to "plugins" in opencode.json; user-wide: opencode plugin add '${spec}'`;
-    } else if (parsed.kind === "skills") {
-      install = `project: add "${url}" to "skills" in opencode.json`;
-    } else {
-      install = `Claude Code marketplace entry${entry.source ? ` (source ${entry.source})` : ""}; inspect it before adapting`;
-    }
+    const install = own ? installHint(harness, entry.name, entry.piName) : parsed.kind === "skills" ? `project: add "${url}" to "skills" in opencode.json` : `Claude Code marketplace entry${entry.source ? ` (source ${entry.source})` : ""}; inspect it before adapting`;
     return {
       name: own ? entry.name : `${entry.name} (${new URL(url).host})`,
       ...entry.description ? { detail: entry.description } : {},
-      url: own ? `https://github.com/srobroek/opencode-plugins/tree/main/plugins/${entry.name}` : url,
+      url: own ? `https://github.com/${REPOSITORY}/tree/main/plugins/${entry.name}/${harness}` : url,
       install
     };
   });
 }
-async function scanCatalog(fetchFn, signal, query, catalogUrl, extra) {
+async function scanCatalog(fetchFn, signal, query, catalogUrl, extra, harness) {
   const terms = queryTerms(query);
   const urls = [catalogUrl, ...extra.filter((u) => u !== catalogUrl)];
   const answers = await Promise.all(urls.map(async (url, index) => {
@@ -1016,7 +1041,7 @@ async function scanCatalog(fetchFn, signal, query, catalogUrl, extra) {
     const res = await getText(fetchFn, target, signal);
     if (!res.ok)
       return { url, error: httpReason(res) };
-    const hits = catalogHits(url, index === 0 && url === catalogUrl, parseJson(res.text), terms);
+    const hits = catalogHits(url, index === 0 && url === catalogUrl, parseJson(res.text), terms, harness);
     return hits ? { url, hits } : { url, error: "not a recognised catalog" };
   }));
   const hits = [];
@@ -1391,7 +1416,7 @@ async function scanSources(params, deps = {}) {
   const selected = requested.length > 0 ? new Set(requested) : null;
   const jobs = {
     local: () => scanLocal(deps.local),
-    catalog: (signal) => scanCatalog(fetchFn, signal, query, deps.catalogUrl ?? DEFAULT_CATALOG_URL, deps.skillCatalogs ?? []),
+    catalog: (signal) => scanCatalog(fetchFn, signal, query, deps.catalogUrl ?? catalogUrlFor(deps.harness ?? "opencode"), deps.skillCatalogs ?? [], deps.harness ?? "opencode"),
     mcp_registry: (signal) => scanMcpRegistry(fetchFn, signal, query),
     npm: (signal) => scanNpm(fetchFn, signal, query),
     github: (signal) => scanGithub(run, which, signal, ms, query),
@@ -1501,7 +1526,7 @@ var src_default = Plugin.define({
       editor.add({
         name: "find_tools_scan",
         description: `Read-only discovery of plugins, skills and MCP servers for a capability.
-Sources run in parallel, ` + "10 s each: local (installed plugins and skills; MCP as counts only), catalog (srobroek/opencode-plugins " + "marketplace and configured skill catalogs), mcp_registry, npm, github (gh api), awesome_opencode " + "(unvetted), smithery (needs SMITHERY_API_KEY), skills_cli (reported gap, never run). Each source " + "reports ok, empty, partial, skipped or failed, with gaps and coverage. Install hints are shown, never run.",
+Sources run in parallel, ` + "10 s each: local (installed plugins and skills; MCP as counts only), catalog (the " + "harness-plugins marketplace and configured skill catalogs), mcp_registry, npm, github (gh api), awesome_opencode " + "(unvetted), smithery (needs SMITHERY_API_KEY), skills_cli (reported gap, never run). Each source " + "reports ok, empty, partial, skipped or failed, with gaps and coverage. Install hints are shown, never run.",
         input: {
           type: "object",
           properties: {
@@ -1540,17 +1565,22 @@ Sources run in parallel, ` + "10 s each: local (installed plugins and skills; MC
   }
 });
 export {
+  CATALOG_URLS,
+  REPO_SPEC,
   SKILL_PATH,
   SOURCES,
   awesomeEntries,
   catalogEntries,
+  catalogHits,
   catalogIndexUrl,
+  catalogUrlFor,
   classify,
   src_default as default,
   defaultRun,
   evaluationKind,
   githubSearches,
   guardInstall,
+  installHint,
   installKind,
   keyTerms,
   localInventory,
