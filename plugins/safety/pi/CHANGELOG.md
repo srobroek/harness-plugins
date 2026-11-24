@@ -1,3 +1,9 @@
+## safety [0.14.5](https://github.com/srobroek/harness-plugins/compare/safety--v0.14.4...safety--v0.14.5) (2026-11-24)
+
+### Bug Fixes
+
+* **safety:** load on hosts whose plugin effect module lacks Tool ([#169](https://github.com/srobroek/harness-plugins/issues/169)) ([1543acd](https://github.com/srobroek/harness-plugins/commit/1543acd3908001b8339176f35de92fc1af45233f))
+
 ## safety [0.14.4](https://github.com/srobroek/harness-plugins/compare/safety--v0.14.3...safety--v0.14.4) (2026-11-24)
 
 ## safety [0.14.3](https://github.com/srobroek/harness-plugins/compare/safety--v0.14.2...safety--v0.14.3) (2026-11-24)
