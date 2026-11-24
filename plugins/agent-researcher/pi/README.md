@@ -57,6 +57,11 @@ Patterns must name MCP server tools only (`<server>_<tool>`). The option refuses
 This agent allows `execute`, so it reaches MCP tools through Code Mode; each nested call is checked against the same rules (`packages/core/src/tool.ts:337-339`, OpenCode v2.2.6).
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-agent-researcher
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-researcher/opencode'

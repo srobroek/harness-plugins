@@ -11,6 +11,11 @@ The tool, its `safety_secret_store` and `safety_secret_command` permissions and 
 the names they had in the safety plugin, so existing permission rules and steering still match.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-secret-store
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/secret-store/opencode'

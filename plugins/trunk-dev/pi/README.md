@@ -12,6 +12,11 @@ The OpenCode and pi adapters share the parser and decision functions in `shared/
 The parser reads only statically visible shell commands. It does not evaluate shell text, so wrappers, expansions, and aliases may be outside its view.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-trunk-dev-policy
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/trunk-dev/opencode'

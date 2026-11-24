@@ -43,6 +43,11 @@ The [project](https://github.com/srobroek/harness-plugins/tree/main/plugins/proj
 `project-scaffold` skill loads this skill for its secrets step.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-project-secrets
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/project-secrets/opencode'

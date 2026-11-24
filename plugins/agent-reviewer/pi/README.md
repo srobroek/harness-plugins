@@ -79,6 +79,11 @@ omp plugin install /path/to/harness-plugins/plugins/agent-reviewer/omp
 The `pr-reviewer` agent uses OMP's `github` tool. OMP disables that tool by default; enable `github` under **Settings → Tools** before asking it to review a GitHub pull request. OMP does not expose the restricted shell reads needed for GitLab merge requests, so use OpenCode for GitLab MR reviews.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-agent-reviewer
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-reviewer/opencode'

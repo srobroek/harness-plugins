@@ -10,6 +10,11 @@ Replaces the Go half of the former `languages` plugin, which ported the omp-plug
 plugin (its `go_quality` tool is not ported).
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-lang-go
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/lang-go/opencode'

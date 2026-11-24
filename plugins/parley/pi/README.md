@@ -7,6 +7,11 @@ change, annotate or defer every question, then submit the round in one go.
 Inspired by [octto](https://github.com/vtemian/octto).
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-parley-rounds
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/parley/opencode'

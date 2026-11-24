@@ -10,6 +10,11 @@ Replaces the Python half of the former `languages` plugin, which ported the omp-
 `python` plugin (its `python_quality` tool is not ported).
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-lang-python
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/lang-python/opencode'

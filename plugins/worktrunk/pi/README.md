@@ -11,6 +11,11 @@ It does three things:
 - Ships two skills: `worktrunk-preflight` and `worktrunk-worktrees`.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-worktrunk-merge-policy
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/worktrunk/opencode'

@@ -105,6 +105,11 @@ picks its model; without it the agent inherits the caller's model. Set
 `agent.coder.model` to pin one.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-agent-coder
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-coder/opencode'

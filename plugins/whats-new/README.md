@@ -5,6 +5,11 @@ project uses and the latest one: breaking changes, deprecations, new features an
 notable fixes. It reports and changes nothing.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-whats-new
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/whats-new/opencode'

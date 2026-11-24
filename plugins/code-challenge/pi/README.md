@@ -3,6 +3,11 @@
 Challenge existing code for simplification, performance, stability, hand-rolled code and structure. Every finding carries a locator and an evidence tier (`proven`, `measured` or `hypothesis`). The plugin plans; it never edits source.
 
 The plugin ships to OpenCode and OMP (`harnesses: ["opencode", "omp"]`). It has no Claude Code tree: the skill needs the `challenge_*` tools and subagents.
+## Install
+
+```sh
+pi install npm:@srobroek/pi-code-challenge
+```
 
 ## Use
 

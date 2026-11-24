@@ -92,6 +92,11 @@ Both omp rules adapted the rules file from
 (Apache-2.0).
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-aws-guidance
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/aws/opencode'

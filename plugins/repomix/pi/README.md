@@ -7,6 +7,11 @@ versions, or a doc set. The pack goes to a file and only its path and metrics co
 so it never lands in the context.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-repomix
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/repomix/opencode'
