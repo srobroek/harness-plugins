@@ -834,7 +834,7 @@
     },
     {
       "name": "dep-update",
-      "version": "0.7.0",
+      "version": "0.7.1",
       "description": "Classify dependency updates by semver safety and apply confirmed patch and minor bumps.",
       "category": "development",
       "harnesses": {
