@@ -78,6 +78,18 @@ omp plugin install /path/to/harness-plugins/plugins/agent-reviewer/omp
 
 The `pr-reviewer` agent uses OMP's `github` tool. OMP disables that tool by default; enable `github` under **Settings → Tools** before asking it to review a GitHub pull request. OMP does not expose the restricted shell reads needed for GitLab merge requests, so use OpenCode for GitLab MR reviews.
 
+## Pi subagent tools
+
+The Pi agents load these required companion packages in their child sessions:
+
+- `code-reviewer`: `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `quality_test_summarize`, `quality_test_compare`, `repomix_pack`, `dep_scan`, `version_gap_scan`, and `mcp:context7`. Its skills include `quality-test-audit`.
+- `pr-reviewer`: `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `quality_test_summarize`, `quality_test_compare`, `dep_scan`, `version_gap_scan`, and `mcp:context7`. Its skills include `quality-test-audit`.
+- `security-auditor`: `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `web_search`, `fetch_content`, `get_search_content`, `source_check`, `quality_test_summarize`, `quality_test_compare`, `dep_scan`, `version_gap_scan`, and `mcp:context7`. It remains without `bash`.
+
+Install the required Pi packages: `pi-lens`, `pi-web-access`, `@srobroek/pi-code-quality`, `@srobroek/pi-repomix`, `@srobroek/pi-dep-update`, and `@srobroek/pi-whats-new`. Configure the `context7` Pi MCP server in `~/.pi/agent/mcp.json` for `mcp:context7`.
+
+Pi-lens keeps `ast_grep_search` and `ast_grep_outline` inactive until `pi_lens_activate_tools` runs; activation takes effect on the next turn. `lsp_navigation` and `ast_grep_replace` are not granted. The code-reviewer live check also tries activating both forbidden tools and calling `lsp_navigation` with operation `capabilities` on the next turn.
+
 ## Install
 Install the Pi package from npm:
 
@@ -97,3 +109,16 @@ claude plugin marketplace add srobroek/harness-plugins
 claude plugin install agent-reviewer@harness-plugins
 
 ```
+
+## Works with
+
+This package works with these pi packages. Install them next to it.
+
+| Package | Required | For | Install |
+| --- | --- | --- | --- |
+| `pi-lens` | yes | code-intelligence and AST search tools for Pi subagents | `pi install npm:pi-lens` |
+| `pi-web-access` | yes | web research tools for the security auditor | `pi install npm:pi-web-access` |
+| `@srobroek/pi-code-quality` | yes | test review tools and quality-test-audit for Pi subagents | `pi install npm:@srobroek/pi-code-quality` |
+| `@srobroek/pi-repomix` | yes | repository packing for the code reviewer | `pi install npm:@srobroek/pi-repomix` |
+| `@srobroek/pi-dep-update` | yes | read-only dependency scan tools for Pi subagents | `pi install npm:@srobroek/pi-dep-update` |
+| `@srobroek/pi-whats-new` | yes | version gap scan tools for Pi subagents | `pi install npm:@srobroek/pi-whats-new` |

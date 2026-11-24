@@ -15,6 +15,7 @@
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "_kit",
     "agents",
     "skills"
   ],
@@ -22,7 +23,34 @@
     "access": "public",
     "provenance": true
   },
+  "peerDependencies": {
+    "@srobroek/pi-dep-update": "*",
+    "@srobroek/pi-repomix": "*",
+    "@srobroek/pi-whats-new": "*",
+    "pi-lens": "*",
+    "pi-web-access": "*"
+  },
+  "peerDependenciesMeta": {
+    "@srobroek/pi-dep-update": {
+      "optional": true
+    },
+    "@srobroek/pi-repomix": {
+      "optional": true
+    },
+    "@srobroek/pi-whats-new": {
+      "optional": true
+    },
+    "pi-lens": {
+      "optional": true
+    },
+    "pi-web-access": {
+      "optional": true
+    }
+  },
   "pi": {
+    "extensions": [
+      "./_kit/prereqs.ts"
+    ],
     "skills": [
       "./skills"
     ],
