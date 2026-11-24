@@ -1,3 +1,9 @@
+## project [0.12.4](https://github.com/srobroek/harness-plugins/compare/project--v0.12.3...project--v0.12.4) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
 ## project [0.12.3](https://github.com/srobroek/harness-plugins/compare/project--v0.12.2...project--v0.12.3) (2026-11-24)
 
 ### Bug Fixes
