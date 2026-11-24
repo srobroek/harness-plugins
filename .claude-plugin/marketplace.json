@@ -138,7 +138,7 @@
       "name": "project",
       "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
       "source": "./plugins/project/claude",
-      "version": "0.12.1",
+      "version": "0.12.2",
       "category": "productivity",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/project",
       "repository": "https://github.com/srobroek/harness-plugins"
