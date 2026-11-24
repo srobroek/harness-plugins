@@ -82,7 +82,7 @@ Add one when any of its signals holds in the repository.
 
 | Plugin | Add when | Requires |
 | --- | --- | --- |
-| beads | .beads/ (skip under ~/pace, which inherits it, and with .beads/RETIRED); every repository | none |
+| beads | .beads/ (skip when .beads/RETIRED exists; otherwise add only when the user chooses Beads); every repository | none |
 | build | work in a repository outside the current project | none |
 | claude-compat | Claude Code plugins to load from a repository | none |
 | design | a frontend project: package.json depends on react, vue, svelte, astro, next, nuxt, solid-js or another UI framework, or .storybook/, DESIGN.md, index.html or a Tailwind config; a web or desktop UI | none |
