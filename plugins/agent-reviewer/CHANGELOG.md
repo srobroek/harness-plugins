@@ -1,3 +1,5 @@
+## agent-reviewer [0.13.4](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.13.3...agent-reviewer--v0.13.4) (2026-11-24)
+
 ## agent-reviewer [0.13.3](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.13.2...agent-reviewer--v0.13.3) (2026-11-24)
 
 ### Bug Fixes
