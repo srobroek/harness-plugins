@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import { permissionEffect, readAgentFile } from "@srobroek/opencode-lib/agent-files"
+import { type AgentPermission, permissionEffect, readAgentFile } from "@srobroek/opencode-lib/agent-files"
 import type { SupervisedRun } from "@srobroek/opencode-lib/subprocess"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import plugin, { createPlugin, SCAN_TOOL, SETUP_TOOL } from "./index.ts"
@@ -171,7 +171,22 @@ test("adds no servers outside a frontend project", async () => {
 })
 
 test("ui-implementer may spawn debug and still denies every other subagent", () => {
+test("ui-implementer allows debug, defaults to Context7 and opts into AWS tools", async () => {
   const { permissions } = readAgentFile(join(import.meta.dir, "../agents/ui-implementer.md"))
   expect(permissionEffect(permissions, "subagent", "debug")).toBe("allow")
   for (const other of ["coder", "ui-ux-specialist", "explore"]) expect(permissionEffect(permissions, "subagent", other)).toBe("deny")
+  for (const other of ["coder", "ui-ux-specialist", "explore"])
+    expect(permissionEffect(permissions, "subagent", other)).toBe("deny")
+
+  const defaults = createFakeContext()
+  await plugin.setup(defaults.context)
+  const defaultPermissions = (defaults.agents.get("ui-implementer")?.permissions ?? []) as AgentPermission[]
+  expect(permissionEffect(defaultPermissions, "context7_query-docs")).toBe("allow")
+  expect(permissionEffect(defaultPermissions, "aws-mcp_search_documentation")).toBe("deny")
+
+  const aws = createFakeContext({ options: { tools: ["context7_*", "aws-mcp_*"] } })
+  await plugin.setup(aws.context)
+  const awsPermissions = (aws.agents.get("ui-implementer")?.permissions ?? []) as AgentPermission[]
+  expect(permissionEffect(awsPermissions, "context7_query-docs")).toBe("allow")
+  expect(permissionEffect(awsPermissions, "aws-mcp_search_documentation")).toBe("allow")
 })
