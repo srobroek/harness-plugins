@@ -24,7 +24,7 @@
 | design | 0.10.2 | development | project | opencode, claude |
 | docs | 0.4.0 | development | global | opencode |
 | eli5 | 0.7.2 | productivity | global | opencode, claude, omp, pi |
-| find-tools | 0.5.0 | development | global | opencode, omp, pi |
+| find-tools | 0.6.0 | development | global | opencode, omp, pi |
 | journeys | 0.6.0 | development | project | opencode, claude, pi |
 | lang-go | 0.9.1 | development | global | opencode, claude, omp, pi |
 | lang-python | 0.9.1 | development | global | opencode, claude, omp, pi |
