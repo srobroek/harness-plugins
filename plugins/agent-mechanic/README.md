@@ -22,6 +22,11 @@ so its requests carry no skill list or tool catalog. `.env` reads and
 its model; without it the agent inherits the caller's model.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-agent-mechanic
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-mechanic/opencode'
