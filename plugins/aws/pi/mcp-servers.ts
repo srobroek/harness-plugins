@@ -22,7 +22,7 @@ const servers = {
     }
   }
 } as const
-const requiredEnvironment = {} as const
+const requiredEnvironment: Record<string, readonly string[]> = {}
 const optionalHeaders = {} as const
 
 const expand = (value: unknown): unknown => {

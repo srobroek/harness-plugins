@@ -18,7 +18,7 @@
         "@semantic-release/exec": "7.1.0",
         "@semantic-release/git": "11.0.1",
         "@semantic-release/github": "12.0.11",
-        "@srobroek/harness-kit": "1.10.0",
+        "@srobroek/harness-kit": "1.10.1",
         "@types/bun": "1.4.5",
         "@types/spdx-expression-parse": "4.0.0",
         "@visulima/yaml": "2.0.0",
@@ -129,7 +129,7 @@
     },
     "plugins/find-tools": {
       "name": "find-tools",
-      "version": "0.5.0",
+      "version": "0.6.0",
     },
     "plugins/journeys": {
       "name": "journeys",
@@ -173,11 +173,11 @@
     },
     "plugins/project": {
       "name": "project",
-      "version": "0.12.1",
+      "version": "0.12.2",
     },
     "plugins/project-secrets": {
       "name": "project-secrets",
-      "version": "0.1.0",
+      "version": "1.0.0",
     },
     "plugins/quality": {
       "name": "quality",
@@ -189,11 +189,11 @@
     },
     "plugins/safety": {
       "name": "safety",
-      "version": "0.14.1",
+      "version": "0.14.2",
     },
     "plugins/secret-store": {
       "name": "secret-store",
-      "version": "0.1.0",
+      "version": "1.0.0",
     },
     "plugins/session": {
       "name": "session",
@@ -213,7 +213,7 @@
     },
     "plugins/toolchain": {
       "name": "toolchain",
-      "version": "0.10.1",
+      "version": "0.10.2",
     },
     "plugins/trunk-dev": {
       "name": "trunk-dev",
@@ -688,7 +688,7 @@
 
     "@smithy/util-utf8": ["@smithy/util-utf8@4.2.2", "", { "dependencies": { "@smithy/util-buffer-from": "^4.2.2", "tslib": "^2.6.2" } }, "sha512-75MeYpjdWRe8M5E3AW0O4Cx3UadweS+cwdXjwYGBW5h/gxxnbeZ877sLPX/ZJA9GVTlL/qG0dXP29JWFCD1Ayw=="],
 
-    "@srobroek/harness-kit": ["@srobroek/harness-kit@1.10.0", "", { "peerDependencies": { "@anolilab/multi-semantic-release": "*", "@anthropic-ai/claude-code": "*", "@semantic-release/changelog": "*", "@semantic-release/exec": "*", "@semantic-release/git": "*", "@visulima/yaml": "*", "conventional-changelog-conventionalcommits": "*", "semantic-release": "*" }, "optionalPeers": ["@anolilab/multi-semantic-release", "@anthropic-ai/claude-code", "@semantic-release/changelog", "@semantic-release/exec", "@semantic-release/git", "@visulima/yaml", "conventional-changelog-conventionalcommits", "semantic-release"], "bin": { "harness-kit": "src/cli.ts" } }, "sha512-PMju0f7bkfqSGPU5Fi5TKr37iNBA727/7hCUlSQweYVQRWqpP460MAhjW9aG458i8pA7Z0bbHmfaturEyidMHQ=="],
+    "@srobroek/harness-kit": ["@srobroek/harness-kit@1.10.1", "", { "peerDependencies": { "@anolilab/multi-semantic-release": "*", "@anthropic-ai/claude-code": "*", "@semantic-release/changelog": "*", "@semantic-release/exec": "*", "@semantic-release/git": "*", "@visulima/yaml": "*", "conventional-changelog-conventionalcommits": "*", "semantic-release": "*" }, "optionalPeers": ["@anolilab/multi-semantic-release", "@anthropic-ai/claude-code", "@semantic-release/changelog", "@semantic-release/exec", "@semantic-release/git", "@visulima/yaml", "conventional-changelog-conventionalcommits", "semantic-release"], "bin": { "harness-kit": "src/cli.ts" } }, "sha512-ro3azzz4ooP8UDmoTHuAbiVkPbBArzNjbsB1f10c8i8va6LGouTbnOR1Uo68ir6/7H4ZEGJUSMoNGe2dmEw+yg=="],
 
     "@srobroek/opencode-lib": ["@srobroek/opencode-lib@workspace:lib"],
 
