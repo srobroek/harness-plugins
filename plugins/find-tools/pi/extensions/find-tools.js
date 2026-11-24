@@ -754,8 +754,32 @@ var SOURCES = [
   "skills_cli"
 ];
 var SOURCE_TIMEOUT_MS = 1e4;
-var REPO_SPEC = "github:srobroek/opencode-plugins::path:plugins";
-var DEFAULT_CATALOG_URL = "https://raw.githubusercontent.com/srobroek/opencode-plugins/main/.claude-plugin/marketplace.json";
+var REPOSITORY = "srobroek/harness-plugins";
+var REPO_SPEC = `github:${REPOSITORY}::path:plugins`;
+var CATALOG_URLS = {
+  claude: `https://raw.githubusercontent.com/${REPOSITORY}/main/.claude-plugin/marketplace.json`,
+  opencode: `https://raw.githubusercontent.com/${REPOSITORY}/main/.claude-plugin/marketplace.json`,
+  omp: `https://raw.githubusercontent.com/${REPOSITORY}/main/.omp-plugin/marketplace.json`,
+  pi: `https://raw.githubusercontent.com/${REPOSITORY}/main/.claude-plugin/marketplace.json`
+};
+var DEFAULT_CATALOG_URL = CATALOG_URLS.opencode;
+function catalogUrlFor(harness) {
+  return CATALOG_URLS[harness];
+}
+function installHint(harness, name) {
+  switch (harness) {
+    case "claude":
+      return `/plugin install ${name}@harness-plugins`;
+    case "omp":
+      return `omp plugin install ${name}@harness-plugins`;
+    case "pi": {
+      const packageName = { aws: "aws-guidance", beads: "beads-enforcer", build: "external-repo-worker", chezmoi: "chezmoi-editor", "code-challenge": "code-challenge", journeys: "user-journeys", parley: "parley-rounds", quality: "code-quality", "trunk-dev": "trunk-dev-policy", worktrunk: "worktrunk-merge-policy" };
+      return `pi install npm:@srobroek/pi-${packageName[name] ?? name}`;
+    }
+    case "opencode":
+      return `opencode plugin add 'github:${REPOSITORY}::path:plugins/${name}/opencode'`;
+  }
+}
 var AWESOME_OPENCODE_URL = "https://raw.githubusercontent.com/awesome-opencode/awesome-opencode/main/README.md";
 var MCP_REGISTRY_URL = "https://registry.modelcontextprotocol.io/v0.1/servers";
 var NPM_SEARCH_URL = "https://registry.npmjs.org/-/v1/search";
@@ -853,15 +877,16 @@ async function scanLocal(local) {
     return { source: "local", ok: true, hits };
   }
   const [plugins, skills, mcp] = await Promise.allSettled([
-    local.plugins?.() ?? Promise.reject(new Error("plugin inventory unavailable")),
-    local.skills?.() ?? Promise.reject(new Error("skill inventory unavailable")),
-    local.mcp?.() ?? Promise.reject(new Error("MCP inventory unavailable"))
+    local.plugins?.() ?? Promise.resolve([]),
+    local.skills?.() ?? Promise.resolve([]),
+    local.mcp?.() ?? Promise.resolve([])
   ]);
   const hits = [];
   const failures = [];
-  if (plugins.status === "fulfilled")
-    hits.push(...listOf(plugins.value).map(pluginHit));
-  else
+  if (plugins.status === "fulfilled") {
+    const entries = listOf(plugins.value);
+    hits.push(...entries.map((plugin) => pluginHit(plugin)));
+  } else
     failures.push(`plugin list failed: ${message(plugins.reason).slice(0, 200)}`);
   if (skills.status === "fulfilled") {
     for (const skill of listOf(skills.value)) {
@@ -900,30 +925,23 @@ function catalogEntries(json) {
 function catalogIndexUrl(url) {
   return url.endsWith("/") ? `${url}index.json` : url;
 }
-function catalogHits(url, own, json, terms) {
+function catalogHits(url, own, json, terms, harness = "opencode") {
   const parsed = catalogEntries(json);
   if (!parsed)
     return;
   const ranked = parsed.entries.map((entry) => ({ entry, score: terms.length ? relevance(terms, entry.name, entry.description) : 1 })).filter(({ score }) => score > 0).sort((a, b) => b.score - a.score).slice(0, SEARCH_CAP);
   return ranked.map(({ entry }) => {
-    let install;
-    if (own) {
-      const spec = `${REPO_SPEC}/${entry.name}`;
-      install = `project: add "${spec}" to "plugins" in opencode.json; user-wide: opencode plugin add '${spec}'`;
-    } else if (parsed.kind === "skills") {
-      install = `project: add "${url}" to "skills" in opencode.json`;
-    } else {
-      install = `Claude Code marketplace entry${entry.source ? ` (source ${entry.source})` : ""}; inspect it before adapting`;
-    }
+    const install = own ? installHint(harness, entry.name) : parsed.kind === "skills" ? `project: add "${url}" to "skills" in opencode.json` : `Claude Code marketplace entry${entry.source ? ` (source ${entry.source})` : ""}; inspect it before adapting`;
+    const piPackageName = { aws: "aws-guidance", beads: "beads-enforcer", build: "external-repo-worker", chezmoi: "chezmoi-editor", "code-challenge": "code-challenge", journeys: "user-journeys", parley: "parley-rounds", project: "project", quality: "code-quality", "trunk-dev": "trunk-dev-policy", worktrunk: "worktrunk-merge-policy" };
     return {
       name: own ? entry.name : `${entry.name} (${new URL(url).host})`,
       ...entry.description ? { detail: entry.description } : {},
-      url: own ? `https://github.com/srobroek/opencode-plugins/tree/main/plugins/${entry.name}` : url,
-      install
+      url: own ? `https://github.com/${REPOSITORY}/tree/main/plugins/${entry.name}/${harness === "opencode" ? "opencode" : harness === "claude" ? "claude" : harness}` : url,
+      install: own && harness === "pi" ? `pi install npm:@srobroek/pi-${piPackageName[entry.name] ?? entry.name}` : install
     };
   });
 }
-async function scanCatalog(fetchFn, signal, query, catalogUrl, extra) {
+async function scanCatalog(fetchFn, signal, query, catalogUrl, extra, harness) {
   const terms = queryTerms(query);
   const urls = [catalogUrl, ...extra.filter((u) => u !== catalogUrl)];
   const answers = await Promise.all(urls.map(async (url, index) => {
@@ -938,7 +956,7 @@ async function scanCatalog(fetchFn, signal, query, catalogUrl, extra) {
     const res = await getText(fetchFn, target, signal);
     if (!res.ok)
       return { url, error: httpReason(res) };
-    const hits = catalogHits(url, index === 0 && url === catalogUrl, parseJson(res.text), terms);
+    const hits = catalogHits(url, index === 0 && url === catalogUrl, parseJson(res.text), terms, harness);
     return hits ? { url, hits } : { url, error: "not a recognised catalog" };
   }));
   const hits = [];
@@ -1313,7 +1331,7 @@ async function scanSources(params, deps = {}) {
   const selected = requested.length > 0 ? new Set(requested) : null;
   const jobs = {
     local: () => scanLocal(deps.local),
-    catalog: (signal) => scanCatalog(fetchFn, signal, query, deps.catalogUrl ?? DEFAULT_CATALOG_URL, deps.skillCatalogs ?? []),
+    catalog: (signal) => scanCatalog(fetchFn, signal, query, deps.catalogUrl ?? catalogUrlFor(deps.harness ?? "opencode"), deps.skillCatalogs ?? [], deps.harness ?? "opencode"),
     mcp_registry: (signal) => scanMcpRegistry(fetchFn, signal, query),
     npm: (signal) => scanNpm(fetchFn, signal, query),
     github: (signal) => scanGithub(run, which, signal, ms, query),
@@ -1438,6 +1456,33 @@ async function readPiInventory(agentDirOverride) {
   } catch {}
   return { packages, skills, mcp };
 }
+async function readOmpInventory(exec) {
+  const result = await exec("omp", ["plugin", "list", "--json"]);
+  if (result.code !== 0)
+    throw new Error("omp plugin list failed");
+  const data = JSON.parse(result.stdout);
+  const marketplace = Array.isArray(data.marketplace) ? data.marketplace.flatMap((group) => {
+    if (!group || typeof group !== "object")
+      return [];
+    const value = group;
+    const entries = Array.isArray(value.entries) ? value.entries : [];
+    const active = entries.some((entry) => entry && typeof entry === "object" && entry.enabled !== false);
+    return active && typeof value.id === "string" ? [{ id: value.id }] : [];
+  }) : [];
+  const npm = Array.isArray(data.npm) ? data.npm.flatMap((item) => {
+    if (!item || typeof item !== "object")
+      return [];
+    const plugin = item;
+    return plugin.enabled !== false && typeof plugin.name === "string" ? [{ id: plugin.name }] : [];
+  }) : [];
+  return { plugins: [...marketplace, ...npm] };
+}
+function isOmpHost(pi) {
+  return pi.runtime !== undefined;
+}
+function ompInventory(exec) {
+  return { plugins: async () => (await readOmpInventory(exec)).plugins };
+}
 var piInventory = (agentDir) => ({
   pi: () => readPiInventory(agentDir)
 });
@@ -1445,7 +1490,7 @@ function find_tools_default(pi) {
   pi.registerTool({
     name: "find_tools_scan",
     label: "Find tools",
-    description: "Read-only discovery of plugins, skills and MCP servers for a capability. Sources run in parallel, 10 s each: local (installed Pi packages and skills; MCP as counts only), catalog (srobroek/opencode-plugins marketplace and configured skill catalogs), mcp_registry, npm, github (gh api), awesome_opencode (unvetted), smithery (needs SMITHERY_API_KEY), skills_cli (reported gap, never run). Each source reports ok, empty, partial, skipped or failed, with gaps and coverage. Install hints are shown, never run.",
+    description: "Read-only discovery of plugins, skills and MCP servers for a capability. Sources run in parallel, 10 s each: local (installed host plugins and skills; MCP as counts only), catalog (harness-plugins marketplace and configured skill catalogs), mcp_registry, npm, github (gh api), awesome_opencode (unvetted), smithery (needs SMITHERY_API_KEY), skills_cli (reported gap, never run). Each source reports ok, empty, partial, skipped or failed, with gaps and coverage. Install hints are shown, never run.",
     parameters: Type.Object({
       query: Type.String({ description: "The capability to find, in a few words" }),
       sources: Type.Optional(Type.Array(Type.String({ enum: [...SOURCES] }), {
@@ -1454,7 +1499,13 @@ function find_tools_default(pi) {
     }, { additionalProperties: false }),
     async execute(_toolCallId, params, signal) {
       try {
-        const report = await scanSources(params, { signal, local: piInventory(getAgentDir()) });
+        const ompHost = isOmpHost(pi);
+        const inventory = ompHost ? ompInventory(async (command, args) => pi.exec(command, args, { signal, timeout: 1e4, maxBuffer: 1e6 })) : piInventory(getAgentDir());
+        const report = await scanSources(params, {
+          signal,
+          local: inventory,
+          harness: ompHost ? "omp" : "pi"
+        });
         return { content: [{ type: "text", text: renderScan(report) }], details: report };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1481,5 +1532,8 @@ function find_tools_default(pi) {
 }
 export {
   find_tools_default as default,
+  isOmpHost,
+  ompInventory,
+  readOmpInventory,
   readPiInventory
 };

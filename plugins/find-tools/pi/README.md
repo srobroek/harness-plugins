@@ -1,15 +1,16 @@
 # find-tools
 
-Finds reusable OpenCode plugins, agent skills and MCP servers for a capability,
-vets them, and recommends one decision: `Use existing`, `Adopt`, `Trial`,
-`Reject` or `Build`. It never installs anything.
+Finds reusable plugins, agent skills and MCP servers for a capability, vets them,
+and recommends one decision: `Use existing`, `Adopt`, `Trial`, `Reject` or `Build`.
+It never installs anything.
 
-Ported from the omp-plugins `find-tools` plugin, without its omp sources and
-without `setup-tools`.
+Ships to OpenCode, Pi and OMP. OMP uses the same extension bundle as Pi, but
+reads installed plugins from `omp plugin list --json` rather than Pi package
+settings.
 
 ## Install
 
-The plugin directory is a Pi package. Add its repository path to `packages` in `~/.pi/agent/settings.json`:
+The OpenCode plugin and Pi package are available separately. For local Pi development, add the repository path to `packages` in `~/.pi/agent/settings.json`:
 
 ```json
 { "packages": ["/absolute/path/to/harness-plugins/plugins/find-tools"] }
@@ -23,7 +24,19 @@ The OpenCode plugin is available separately:
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/find-tools/opencode'
 ```
 
-The skill drives the `find_tools_scan` tool. The plugin is not exported to Claude Code.
+Install the OMP plugin from this repository's OMP marketplace:
+
+```sh
+omp plugin install find-tools@harness-plugins
+```
+
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-find-tools
+```
+
+The OpenCode plugin, Pi package and OMP plugin all register `find_tools_scan`.
 
 ## Tool
 
@@ -35,8 +48,8 @@ and a coverage count.
 
 | Source | Searches |
 | --- | --- |
-| `local` | Pi packages from `~/.pi/agent/settings.json`; user skills from `~/.pi/agent/skills`; MCP status counts from `~/.pi/agent/mcp.json`, without names, commands, URLs or environment |
-| `catalog` | This repository's `.claude-plugin/marketplace.json` from GitHub, plus `skillCatalogs` |
+| `local` | Pi package declarations and skills/MCP config; OMP installed marketplace/npm plugin IDs from `omp plugin list --json`; OpenCode plugins and skills from host APIs. MCP details are counts only |
+| `catalog` | The Claude marketplace for Claude Code/OpenCode/Pi; the OMP marketplace for OMP; extra `skillCatalogs` |
 | `mcp_registry` | The official MCP Registry (`/v0.1/servers?search=…&version=latest`) |
 | `npm` | Keywords `opencode-plugin`, `mcp-server`, `agent-skill`, `claude-skill`; ranked and capped at 20 |
 | `github` | `gh api` code search for `.claude-plugin/marketplace.json` and `SKILL.md`, and repositories with topic `opencode-plugin`. Skipped without `gh` |
@@ -44,9 +57,8 @@ and a coverage count.
 | `smithery` | The Smithery registry. Skipped unless `SMITHERY_API_KEY` is set |
 | `skills_cli` | Always a gap: the skills CLI runs package code, so discovery never calls it |
 
-Hits carry install hints (project scope first, user-wide for plugins). Hints
-that start a package runner are marked *runs package code*. The tool shows them
-and never runs them.
+Hits carry install hints appropriate to the detected host. The scanner displays
+them without executing them.
 
 [`pi-vetter`](https://pi.dev/packages/pi-vetter) is an optional Pi package for package vetting. It complements this discovery workflow; it does not replace it.
 

@@ -1,0 +1,6 @@
+{
+  "name": "find-tools",
+  "description": "Discover and vet plugins, skills and MCP servers across local inventory, catalogs and public registries, without installing anything.",
+  "version": "0.5.0",
+  "category": "development"
+}
