@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { npmSearchText } from "../../shared/query.js"
 import {
-  CATALOG_URLS,
-  catalogUrlFor,
   awesomeEntries,
+  CATALOG_URLS,
   catalogHits,
   catalogIndexUrl,
+  catalogUrlFor,
   DEFAULT_CATALOG_URL,
   mcpCounts,
   registryInstall,

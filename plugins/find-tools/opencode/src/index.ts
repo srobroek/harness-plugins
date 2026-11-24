@@ -9,18 +9,18 @@ export { keyTerms, npmSearchText, queryTerms, relevance } from "../../shared/que
 export { defaultRun } from "../../shared/run.js"
 export {
   awesomeEntries,
+  CATALOG_URLS,
   catalogEntries,
   catalogHits,
   catalogIndexUrl,
   catalogUrlFor,
-  CATALOG_URLS,
   classify,
   githubSearches,
   installHint,
   mcpCounts,
+  REPO_SPEC,
   registryInstall,
   renderScan,
-  REPO_SPEC,
   SOURCES,
   scanSources,
 } from "../../shared/scan.js"
