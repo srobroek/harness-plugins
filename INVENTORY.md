@@ -14,7 +14,7 @@
 | autopilot | 1.4.0 | development | global | opencode, pi |
 | aws | 0.9.2 | development | global | opencode, claude, pi |
 | beads | 0.9.2 | development | project | opencode, claude, pi |
-| build | 0.10.1 | development | project | opencode, omp, pi |
+| build | 0.10.2 | development | project | opencode, omp, pi |
 | chezmoi | 0.7.1 | development | global | opencode, claude, pi |
 | claude-compat | 0.5.3 | development | project | opencode |
 | code-challenge | 2.0.1 | development | global | opencode, omp, pi |
