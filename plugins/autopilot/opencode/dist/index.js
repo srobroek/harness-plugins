@@ -1620,6 +1620,7 @@ var READ_ONLY_AGENTS = new Set([
   "explore",
   "researcher",
   "code-researcher",
+  "code-reviewer",
   "pr-reviewer",
   "security-auditor",
   "adversarial-challenger",

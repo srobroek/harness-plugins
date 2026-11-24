@@ -32,6 +32,7 @@ export const READ_ONLY_AGENTS: ReadonlySet<string> = new Set([
   "explore",
   "researcher",
   "code-researcher",
+  "code-reviewer",
   "pr-reviewer",
   "security-auditor",
   "adversarial-challenger",

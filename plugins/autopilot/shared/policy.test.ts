@@ -20,6 +20,7 @@ test.each([
   ["code-reviewer", false],
   ["researcher", false],
   ["code-researcher", false],
+  ["coder", true],
   ["general", true],
   [undefined, true],
 ])("holdsLane(%p) is %p", (agent, expected) => {
