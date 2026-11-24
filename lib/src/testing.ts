@@ -493,7 +493,7 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
  * `BEADS_DOLT_SERVER_*`, `BEADS_DOLT_SHARED_SERVER`, ...). The OpenCode server, and so a
  * test process, can inherit these from another project's shell; they carry that project's
  * ledger, actor or dolt server routing, so a test that runs a real `bd` would act on it.
- * A prefix rule covers variables a later `bd` release adds. `SROBROEK_BEADS_PIN` and
+ * A prefix rule covers variables a later `bd` release adds. `HARNESS_BEADS_PIN` and
  * `MY_BD_X` do not match.
  */
 export function isBeadsEnvKey(name: string): boolean {

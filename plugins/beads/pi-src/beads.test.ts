@@ -124,12 +124,12 @@ describe("bash gate", () => {
   })
 
   test("the session's store is pinned ahead of the command", async () => {
-    const { bash } = setup({}, { pinFor: () => "/r/.beads", env: { BEADS_DIR: "/old/.beads", SROBROEK_BEADS_PIN: "/old/.beads" } })
+    const { bash } = setup({}, { pinFor: () => "/r/.beads", env: { BEADS_DIR: "/old/.beads", HARNESS_BEADS_PIN: "/old/.beads" } })
     const { command } = await bash("git status")
     expect(command.split("\n").slice(0, 3)).toEqual([
       "export BEADS_DOLT_SHARED_SERVER=''",
       "export BEADS_DIR='/r/.beads'",
-      "export SROBROEK_BEADS_PIN='/r/.beads'",
+      "export HARNESS_BEADS_PIN='/r/.beads'",
     ])
     expect(command.endsWith("git status")).toBe(true)
   })

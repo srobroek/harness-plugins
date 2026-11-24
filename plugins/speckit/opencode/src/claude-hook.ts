@@ -53,7 +53,7 @@ async function main(argv: string[]): Promise<void> {
     const output = await claudeDecision(JSON.parse(await Bun.stdin.text()) as HookInput)
     if (output !== undefined) await Bun.write(Bun.stdout, JSON.stringify(output))
   } catch (error) {
-    console.error(`srobroek speckit hook: ${error instanceof Error ? error.message : String(error)}`)
+    console.error(`speckit hook: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 

@@ -48,7 +48,7 @@ export { SAFE_GIT_ARGS }
 
 export type Forge = "github" | "gitlab" | "unknown"
 /** The GitLab instances whose API this adapter addresses, by canonical API host. */
-export type GitlabHost = "gitlab.com" | "gitlab.aws.dev"
+export type GitlabHost = "gitlab.com" | "gitlab.example.com"
 export type ForgeTarget =
   | Readonly<{ forge: "github"; canonicalHost: "github.com" }>
   | Readonly<{ forge: "gitlab"; canonicalHost: GitlabHost }>
@@ -128,11 +128,11 @@ const GITLAB_MAX_PATH_SEGMENTS = 21
  * `ssh.github.com` and `altssh.gitlab.com` are each vendor's documented
  * alternate SSH endpoint for networks that block port 22. They are transport
  * hosts only: forge CLI and API calls stay pinned to the vendor's canonical
- * host. `gitlab.aws.dev` is the one self-hosted GitLab instance recognised, by
- * name: its git-over-SSH endpoint `ssh.gitlab.aws.dev` serves no API, so a remote
- * on either host addresses the API at `gitlab.aws.dev`. Any other self-hosted
- * instance is deliberately not recognised, because its API dialect is not
- * verified here.
+ * host. `gitlab.example.com` is the neutral hostname used for the self-hosted
+ * GitLab fixture; its git-over-SSH endpoint `ssh.gitlab.example.com` serves no
+ * API, so a remote on either host addresses the API at `gitlab.example.com`.
+ * Other self-hosted instances are not recognized because their API dialect is
+ * not verified here.
  *
  * A host is attacker-influenced input. The allowlist therefore has a null
  * prototype, is frozen, and is read through an own-property descriptor rather
@@ -140,15 +140,15 @@ const GITLAB_MAX_PATH_SEGMENTS = 21
  */
 const GITHUB_TARGET: ForgeTarget = Object.freeze({ forge: "github", canonicalHost: "github.com" })
 const GITLAB_TARGET: ForgeTarget = Object.freeze({ forge: "gitlab", canonicalHost: "gitlab.com" })
-const GITLAB_AWS_TARGET: ForgeTarget = Object.freeze({ forge: "gitlab", canonicalHost: "gitlab.aws.dev" })
+const GITLAB_CUSTOM_TARGET: ForgeTarget = Object.freeze({ forge: "gitlab", canonicalHost: "gitlab.example.com" })
 const FORGE_HOSTS: Readonly<Record<string, ForgeTarget>> = Object.freeze(
   Object.assign(Object.create(null) as Record<string, ForgeTarget>, {
     "github.com": GITHUB_TARGET,
     "ssh.github.com": GITHUB_TARGET,
     "gitlab.com": GITLAB_TARGET,
     "altssh.gitlab.com": GITLAB_TARGET,
-    "gitlab.aws.dev": GITLAB_AWS_TARGET,
-    "ssh.gitlab.aws.dev": GITLAB_AWS_TARGET,
+    "gitlab.example.com": GITLAB_CUSTOM_TARGET,
+    "ssh.gitlab.example.com": GITLAB_CUSTOM_TARGET,
   }),
 )
 
@@ -498,7 +498,7 @@ export function forgeTarget(remoteUrl: string | null): ForgeTarget | null {
   const target: unknown = descriptor.value
   if (target === GITHUB_TARGET) return GITHUB_TARGET
   if (target === GITLAB_TARGET) return GITLAB_TARGET
-  if (target === GITLAB_AWS_TARGET) return GITLAB_AWS_TARGET
+  if (target === GITLAB_CUSTOM_TARGET) return GITLAB_CUSTOM_TARGET
   return null
 }
 
@@ -631,7 +631,7 @@ function supportedForge(forge: Forge): "github" | "gitlab" | null {
 
 const GITLAB_HOSTS: readonly GitlabHost[] = Object.freeze([
   GITLAB_TARGET.canonicalHost,
-  GITLAB_AWS_TARGET.canonicalHost,
+  GITLAB_CUSTOM_TARGET.canonicalHost,
 ] as GitlabHost[])
 
 /** The GitLab API host, tested positively for the same reason {@link supportedForge} is: it becomes an argv element. */

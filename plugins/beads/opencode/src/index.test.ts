@@ -319,7 +319,7 @@ describe("shell create.before", () => {
       cwd: "/x",
       timeout: 0,
       shell: "/bin/zsh",
-      env: { BEADS_DIR: "/mine/.beads", SROBROEK_BEADS_PIN: "/old/.beads" } as Record<string, string | undefined>,
+      env: { BEADS_DIR: "/mine/.beads", HARNESS_BEADS_PIN: "/old/.beads" } as Record<string, string | undefined>,
     })
     expect(event.env.BEADS_DIR).toBe("/mine/.beads")
     await cleanup()
@@ -332,10 +332,10 @@ describe("shell create.before", () => {
       cwd: "/x",
       timeout: 0,
       shell: "/bin/zsh",
-      env: { BEADS_DIR: "/old/.beads", SROBROEK_BEADS_PIN: "/old/.beads" } as Record<string, string | undefined>,
+      env: { BEADS_DIR: "/old/.beads", HARNESS_BEADS_PIN: "/old/.beads" } as Record<string, string | undefined>,
     })
     expect(event.env.BEADS_DIR).toBeUndefined()
-    expect(event.env.SROBROEK_BEADS_PIN).toBeUndefined()
+    expect(event.env.HARNESS_BEADS_PIN).toBeUndefined()
     await cleanup()
   })
 
@@ -346,10 +346,10 @@ describe("shell create.before", () => {
       cwd: "/x",
       timeout: 0,
       shell: "/bin/zsh",
-      env: { BEADS_DIR: "/old/.beads", SROBROEK_BEADS_PIN: "/old/.beads", BEADS_DB: "/q/.beads/beads.db" } as Record<string, string | undefined>,
+      env: { BEADS_DIR: "/old/.beads", HARNESS_BEADS_PIN: "/old/.beads", BEADS_DB: "/q/.beads/beads.db" } as Record<string, string | undefined>,
     })
     expect(event.env.BEADS_DIR).toBeUndefined()
-    expect(event.env.SROBROEK_BEADS_PIN).toBeUndefined()
+    expect(event.env.HARNESS_BEADS_PIN).toBeUndefined()
     expect(event.env.BEADS_DB).toBe("/q/.beads/beads.db")
     await cleanup()
   })
@@ -361,7 +361,7 @@ describe("shell create.before", () => {
     expect(pinnedEnvironment("/x", {}, () => "/p")).toEqual({
       BEADS_DIR: "/p",
       BEADS_DOLT_SHARED_SERVER: "",
-      SROBROEK_BEADS_PIN: "/p",
+      HARNESS_BEADS_PIN: "/p",
     })
     expect(pinnedEnvironment("/x", {}, () => undefined)).toEqual({})
   })
@@ -376,7 +376,7 @@ describe("shell create.before", () => {
       BEADS_DB: "/q/.beads/beads.db",
       BEADS_DIR: "/q/.beads",
       BEADS_DOLT_SHARED_SERVER: "",
-      SROBROEK_BEADS_PIN: "/q/.beads",
+      HARNESS_BEADS_PIN: "/q/.beads",
     })
   })
 })

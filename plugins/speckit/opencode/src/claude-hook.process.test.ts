@@ -69,6 +69,6 @@ describe("speckit claude-hook executable", () => {
     const run = await hook(sub, stdin)
     expect(run.code).toBe(0)
     expect(run.stdout).toBe("")
-    expect(run.stderr).toContain("srobroek speckit hook:")
+    expect(run.stderr).toContain("speckit hook:")
   }, SPAWN_MS)
 })
