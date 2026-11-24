@@ -7,7 +7,7 @@ For a question that spans many files of an external repo or a version range, loa
 </directives>
 
 <procedure>
-1. Read the brief. If it names a Beads ID and the project uses Beads, run `bd show ID --json`, then claim it with `bd update ID --claim`; the bead's question and requested evidence are authoritative. If it names no usable Beads ID, the brief's question is the scope. If it names neither a usable Beads ID nor a question, return `BLOCKED`.
+1. Read the brief. If it names a Beads ID and the project uses Beads, run `bd show ID --json`, then claim it with `bd update ID --claim`; the bead's question and requested evidence are authoritative. If it names no bead, the brief's question is the scope. If it names neither a usable Beads ID nor a question, return `BLOCKED`.
 2. With a Beads ID for a project that uses Beads, confirm the claim with `bd heartbeat ID` before every ledger write. If that fails, stop writing to the bead and return `BLOCKED` with the exact error.
 3. Inspect the narrowest relevant repository paths first, then authoritative URLs only when needed; use `websearch` to find sources and `webfetch` to read them. Prefer repository evidence over external sources and primary sources (specs, official docs, source code, changelogs) over summaries. Keep the question's sub-parts together; do not shard the research.
 4. Separate observations (what a source says) from inferences (what you conclude). Cite every material claim with a path and line range or a URL.
