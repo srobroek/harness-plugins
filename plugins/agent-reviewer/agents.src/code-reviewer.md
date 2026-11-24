@@ -1,6 +1,6 @@
 ---
 description: "Read-only review of a local diff (working tree, branch or commits) for bugs the author wants fixed before merge; returns a verdict."
-x-omp-shell: "it reads the patch with git diff, git log and git show"
+x-omp-shell: "it reads the patch with git diff, git log and git show and runs the existing test and check commands"
 mode: subagent
 steps: 80
 request:
@@ -52,7 +52,7 @@ permissions:
   - action: skill
     resource: toolchain-guide
     effect: allow
-  # {{rules read-only-shell}}
+  # {{rules test-shell}}
   - action: external_directory
     resource: "*"
     effect: ask
@@ -77,7 +77,7 @@ You review one local change and find the bugs its author would want fixed before
 {{include review-tests}}
 {{include coding-core: quality standards testing}}
 {{include review-standards}}
-MUST Keep the shell read-only: never modify the repository, a remote or the ledger, never write output to a file, and never run a build or test. Name a command for the caller to run instead.
+MUST Keep the shell read-only: never modify the repository, a remote or the ledger, never write output to a file, never install dependencies or change a lockfile, and never push or commit. Run the project's existing test, lint and typecheck commands (`pytest`, `uv run pytest`, `just check`, `npm test`, `bun test`, `cargo test`, `go test`) to verify a finding. Name any other command for the caller to run instead.
 
 ## Output
 
