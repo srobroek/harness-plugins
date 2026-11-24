@@ -231,12 +231,18 @@ const SHELL_TOOLS: readonly string[] = ["bash", "eval"]
 const EDIT_TOOLS: readonly string[] = TOOL_GROUPS.find((group) => group.actions.includes("edit"))?.tools ?? []
 
 /**
- * The tools of an agent after the read-only rule, and the frontmatter comment it adds. A
- * read-only agent, one without an OMP edit tool, loses bash and eval: OMP cannot hold the
- * per-command rules that keep an OpenCode read-only shell from writing. `reason`, from
- * `x-omp-shell`, keeps them and is recorded; it throws on an agent the rule does not touch.
+ * The tools of an agent after the read-only rule, the frontmatter comment it adds, and the
+ * prompt notice for a kept shell. A read-only agent, one without an OMP edit tool, loses bash
+ * and eval: OMP cannot hold the per-command rules that keep an OpenCode read-only shell from
+ * writing. `reason`, from `x-omp-shell`, keeps them and is recorded; the comment is not part of
+ * the prompt, so `notice` tells the agent itself that nothing enforces its limits. It throws on
+ * an agent the rule does not touch.
  */
-export function readOnlyShell(tools: readonly string[], reason: string | undefined, where = "agent"): { tools: string[]; comment: string[] } {
+export function readOnlyShell(
+  tools: readonly string[],
+  reason: string | undefined,
+  where = "agent",
+): { tools: string[]; comment: string[]; notice?: string } {
   const shells = tools.filter((tool) => SHELL_TOOLS.includes(tool))
   const readOnly = shells.length > 0 && !tools.some((tool) => EDIT_TOOLS.includes(tool))
   if (!readOnly) {
@@ -244,13 +250,18 @@ export function readOnlyShell(tools: readonly string[], reason: string | undefin
     return { tools: [...tools], comment: [] }
   }
   const named = shells.join(" and ")
-  if (reason !== undefined) return { tools: [...tools], comment: [`# Read-only, but keeps ${named}: ${reason}`] }
+  if (reason !== undefined)
+    return {
+      tools: [...tools],
+      comment: [`# Read-only, but keeps ${named}: ${reason}`],
+      notice: `Your ${named} ${shells.length > 1 ? "are" : "is"} not limited to read-only commands here: only the session's approval mode gates ${shells.length > 1 ? "them" : "it"}, and nothing enforces the limits in these instructions. You MUST keep to them yourself, and run only the commands they call for.`,
+    }
   const left = shells.length > 1 ? "are left out: OMP cannot limit them" : "is left out: OMP cannot limit it"
   return { tools: tools.filter((tool) => !shells.includes(tool)), comment: [`# Read-only: ${named} ${left} to read-only commands.`] }
 }
 
 /** The OMP tools for a translated allowlist and the hints, with the comment the read-only rule adds. */
-function hintedTools(tools: string[] | undefined, hints: OmpHints, where: string): { tools?: string[]; comment: string[] } {
+function hintedTools(tools: string[] | undefined, hints: OmpHints, where: string): { tools?: string[]; comment: string[]; notice?: string } {
   if (tools === undefined) {
     if (hints.tools !== undefined || hints.shell !== undefined)
       throw new Error(`${where}: ${HINT_KEYS.tools} and ${HINT_KEYS.shell} need a permissions list; without one the agent keeps OMP's default tools`)
@@ -277,14 +288,16 @@ export function translateOmpAgent(id: string, text: string, where = `agents/${id
   const tierModel = ompModel(agentRole(request), where)
   const model = hints.model ?? tierModel
   const translated = ompTools(readRules(where, data.permissions))
-  const { tools, comment } = hintedTools(translated.tools, hints, where)
+  const { tools, comment, notice } = hintedTools(translated.tools, hints, where)
   const lines = ["---", `${SOURCE_PREFIX}${where}. Do not edit.`, ...comment, ...droppedComment(translated.dropped), `name: ${id}`, `description: ${quote(description)}`]
   // An empty `tools:` reads as YAML null, which OMP takes as its default tools; `[]` means none.
   if (tools !== undefined) lines.push(`tools: ${tools.length > 0 ? tools.join(", ") : "[]"}`)
   if (translated.spawns !== undefined) lines.push(`spawns: ${quote(translated.spawns)}`)
   if (model !== undefined) lines.push(`model: ${quote(model)}`)
   lines.push("---")
-  return { id, contents: `${lines.join("\n")}\n${body}`, dropped: translated.dropped }
+  // The notice opens the prompt, ahead of the instructions it qualifies.
+  const prompt = notice === undefined ? body : `\n${notice}\n${body}`
+  return { id, contents: `${lines.join("\n")}\n${prompt}`, dropped: translated.dropped }
 }
 
 /**

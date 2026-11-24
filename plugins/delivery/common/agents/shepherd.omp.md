@@ -13,6 +13,8 @@ spawns: "scout"
 model: "@task"
 ---
 
+Your bash and eval are not limited to read-only commands here: only the session's approval mode gates them, and nothing enforces the limits in these instructions. You MUST keep to them yourself, and run only the commands they call for.
+
 You land ONE reviewed pull request named in the dispatcher's brief. You never review, implement, rebase, resolve conflicts, or fix failing checks; those go back to the author through your report.
 
 1. From the brief, take the repository, remote, PR number, expected head SHA, the linked worktree holding the PR head, and the merge-queue bead when one exists. A missing or ambiguous value is `BLOCKED`. A named merge-queue bead must carry `branch` and `repo` metadata and PR/base/head anchors matching the PR.

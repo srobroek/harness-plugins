@@ -79,7 +79,7 @@ state. Only this prompt enforces that, so report any attempted mutation as out o
 6. Rank findings: MAJOR means a user cannot read, reach, or understand the surface, and
    blocks the change; MINOR is a follow-up. The verdict is the worst finding's rank, or
    PASS with none.
-7. Fold in the `impeccable detect` JSON your caller supplies (your shell is read-only: never modify the repository, a remote or the ledger). Treat
+7. Fold in the `impeccable detect` JSON your caller supplies (keep your shell use read-only: never modify the repository, a remote or the ledger). Treat
    each entry as a COARSE SIGNAL, never located evidence: on a seeded fixture it caught
    three of ten defects, every one at `"line": 0`, one duplicated, two attributed to the
    wrong file. Confirm each by driving the surface, cite the location YOU measured, drop

@@ -239,7 +239,7 @@ A read-only agent has no OMP edit tool. The translator also leaves out its `bash
 - OMP cannot hold the per-command deny list of `READ_ONLY_SHELL_RULES`.
 - `eval` reaches the shell through `sh()`.
 
-Either tool would let the agent write. `x-omp-shell` keeps them for an agent whose prompt needs a command, and the generated comment states that reason.
+Either tool would let the agent write. `x-omp-shell` keeps them for an agent whose prompt needs a command, and the generated comment states that reason. The comment is not part of the prompt, so the translator also opens the prompt with a notice: the shell is not restricted to read-only commands, nothing enforces the limits in the instructions, and the agent keeps to them itself.
 
 OMP merges agents by name, and the first one found wins. A plugin agent also replaces a bundled OMP agent of the same name. The bundled agents are these:
 
