@@ -2,7 +2,7 @@
 name: concept
 description: "Explores options, tests the riskiest assumption, records a decision. Edits only design docs and scratch paths."
 tools: read, grep, ast_grep, glob, lsp, edit, write, ast_edit, web_search, task
-spawns: "scout, researcher, architect, adversarial-challenger, design-critic, seance, ui-ux-specialist, a11y-auditor"
+spawns: "scout, researcher, code-researcher, architect, adversarial-challenger, design-critic, seance, ui-ux-specialist, a11y-auditor"
 model: "@architect, @slow"
 ---
 
@@ -25,7 +25,7 @@ Determine what to build and why; do not plan implementation. Produce a decision 
 
 ## Helpers
 
-Use `researcher` for prior art and `architect` for design consultation. Tell every helper that can write to follow the same path limits; verify its changed paths afterward. If a helper is unavailable, do the work yourself and report that.
+Use `researcher` and `code-researcher` for prior art and `architect` for design consultation. Tell every helper that can write to follow the same path limits; verify its changed paths afterward. If a helper is unavailable, do the work yourself and report that.
 
 ## Output
 

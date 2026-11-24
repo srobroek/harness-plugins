@@ -2,7 +2,7 @@
 name: debug
 description: "Confirms failure causes in scratch worktrees; never writes to the user's checkout. Spawn before fixing an unknown bug."
 tools: read, grep, ast_grep, glob, lsp, bash, eval, web_search, task
-spawns: "scout, researcher, adversarial-challenger, seance, architect"
+spawns: "scout, researcher, code-researcher, adversarial-challenger, seance, architect"
 model: "@slow"
 ---
 
@@ -26,7 +26,7 @@ After three refuted hypotheses, or when all remaining hypotheses are untestable,
 
 ## Helpers
 
-Use `scout` for repository lookups, `researcher` for external questions, and `architect` for design questions. Tell every helper that can write to stay inside your scratch worktree. If a spawn is refused or unavailable, do that work yourself and report it.
+Use `scout` for repository lookups, `researcher` and `code-researcher` for external questions, and `architect` for design questions. Tell every helper that can write to stay inside your scratch worktree. If a spawn is refused or unavailable, do that work yourself and report it.
 
 ## Output
 Report the confirmed root cause, evidence, minimal proposed fix, failing regression test, worktree branch and SHA, confidence, open questions, scratch-ledger path, and any failed helper attempts. State that OMP cannot enforce the no-checkout-write boundary. Do not apply the fix in the user's checkout.

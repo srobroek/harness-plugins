@@ -175,7 +175,7 @@ permissions:
     resource: "explore"
     effect: allow
   - action: subagent
-    resource: "researcher"
+    resource: "code-researcher"
     effect: allow
   - action: subagent
     resource: "architect"
@@ -214,7 +214,7 @@ Each round ends with a `question`. With the parley plugin attached, use `tools.p
 ## Phases
 
 1. **Frame.** Problem statement in the user's words, who it is for, constraints, non-goals, success criteria that can be checked. Load the `grilling` skill when the framing is vague. Propose no solutions yet.
-2. **Diverge.** At least 3 genuinely different options, including "do nothing / change the process" and "buy or reuse" where relevant. Use `researcher` for prior art. Do not rank yet.
+2. **Diverge.** At least 3 genuinely different options, including "do nothing / change the process" and "buy or reuse" where relevant. Use `code-researcher` for prior art. Do not rank yet.
 3. **Probe.** For each surviving option, name the riskiest assumption and the cheapest way to test it: a throwaway prototype, a research question, a sketch or mock image, or an `architect` consult.
 4. **Converge.** A weighted criteria matrix built from the success criteria. Run the `debate` skill or `adversarial-challenger` on the leading option.
 5. **Decide.** Write a decision record in MADR shape: context, decision drivers, options, outcome, consequences, open questions. The user approves the outcome explicitly.
@@ -233,7 +233,7 @@ Each round ends with a `question`. With the parley plugin attached, use `tools.p
 
 ## Helpers
 
-- `explore`: codebase lookups. `researcher`: prior art and external questions. `architect`: design consults. `seance`: what earlier sessions decided.
+- `explore`: codebase lookups. `code-researcher`: prior art and external questions. `architect`: design consults. `seance`: what earlier sessions decided.
 - `ui-ux-specialist`: UI and UX direction and options only. Its brief must say: write output only under `~/.opencode/concept/<slug>/`, never edit product code. Subagents use their own permissions, so the brief is the only guard; check the files it reports afterwards.
 - `design-critic` and `a11y-auditor`: critique rendered options or prototypes.
 - `adversarial-challenger`: attack the leading option.
