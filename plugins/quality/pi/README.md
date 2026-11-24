@@ -133,6 +133,11 @@ in `skills/quality-code-design/NOTICE`, with the licence text in
 `skills/quality-code-design/LICENSE-mattpocock-skills`.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-code-quality
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/quality/opencode'
