@@ -1,3 +1,5 @@
+## agent-researcher [0.10.4](https://github.com/srobroek/harness-plugins/compare/agent-researcher--v0.10.3...agent-researcher--v0.10.4) (2026-11-24)
+
 ## agent-researcher [0.10.3](https://github.com/srobroek/harness-plugins/compare/agent-researcher--v0.10.2...agent-researcher--v0.10.3) (2026-11-24)
 
 ### Bug Fixes
