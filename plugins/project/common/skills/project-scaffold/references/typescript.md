@@ -5,11 +5,13 @@ detail, and `toolchain-frontend` for the framework pick.
 
 ## Apps and monorepos: use Better-T-Stack
 
-For any web, full-stack, native or backend TypeScript app or monorepo, scaffold with
-create-better-t-stack (https://www.better-t-stack.dev/docs/cli), not by hand. Libraries,
-single-purpose CLIs and scripts do not need it: `bun init` is enough.
+For web, full-stack, native or backend TypeScript apps and monorepos, offer
+create-better-t-stack (https://www.better-t-stack.dev/docs/cli) as one scaffold option; otherwise
+use the project's existing generator or ask which approach the user wants. For a new library,
+CLI or script, offer the existing language toolchain or `bun init` as one option.
 
-1. Check the live contract instead of trusting this file: `bun create better-t-stack@latest schema --name createInput`
+1. Check the live contract for the selected generator instead of trusting this file: for
+   Better-T-Stack, run `bun create better-t-stack@latest schema --name createInput`
    (or `bunx create-better-t-stack@latest ...`), and `--help`.
 2. Choose options with the user, one question each, recommended first. The CLI flags:
    `--frontend` (`tanstack-router`, `react-router`, `tanstack-start`, `next`, `nuxt`,
@@ -20,12 +22,15 @@ single-purpose CLIs and scripts do not need it: `bun init` is enough.
    `--auth` (`better-auth`, `clerk`, `none`), `--payments`, `--addons` (`biome`, `oxlint`,
    `turborepo`, `nx`, `lefthook`, `husky`, `tauri`, `pwa`, `starlight`, `fumadocs`, `mcp`,
    `skills`, ...), `--examples`, `--web-deploy`, `--server-deploy`, `--package-manager`.
-   Defaults to propose: `--package-manager bun`, `--runtime bun`, addon `biome` (the
-   preferred linter/formatter), `--git`. Framework preference by surface is in
-   `toolchain-frontend` (React + Vite for SPAs, Next.js for SSR, Astro for content); map it
-   to the closest option and say when Better-T-Stack lacks it (for example React + Vite).
-   Ask about the rest; do not guess auth, payments, database or deploy target.
-3. Dry run first, show the result, then create:
+   Defaults to propose for a new project: `--package-manager bun`, `--runtime bun`, addon
+   `biome` (the preferred linter/formatter), and `--git`. Check the repository first; preserve
+   its package manager, runtime and lint/format setup. For a new project, present npm, pnpm or
+   Bun and Biome, ESLint/Prettier or Oxlint as alternatives; offer the project's existing
+   tools when available. Framework preference by surface is in `toolchain-frontend` (React +
+   Vite for SPAs, Next.js for SSR, Astro for content); map it to the closest option and say
+   when Better-T-Stack lacks it (for example React + Vite). Ask about auth, payments, database
+   and deploy target; do not guess.
+3. If Better-T-Stack is selected, dry-run first, show the result, then create:
 
    ```sh
    bun create better-t-stack@latest my-app --frontend tanstack-router --backend hono \
@@ -33,28 +38,29 @@ single-purpose CLIs and scripts do not need it: `bun init` is enough.
      --addons biome --package-manager bun --no-install --disable-analytics --dry-run
    ```
 
-   Re-run without `--dry-run`, then `bun install` separately. `create-json` takes the same
-   fields as one JSON object when flag quoting gets awkward. Use `--directory-conflict error`
-   in an existing directory. Later additions: `create-better-t-stack add --addons ...` or
-   `add --package <name>`. It writes `bts.jsonc` with the reproducible command; commit it.
+   Re-run without `--dry-run`, then install with the selected package manager. `create-json` takes
+   the same fields as one JSON object when flag quoting gets awkward. Use
+   `--directory-conflict error` in an existing directory. Later additions: `create-better-t-stack
+   add --addons ...` or `add --package <name>`. It writes `bts.jsonc` with the reproducible
+   command; commit it.
 4. Never pass `--yolo`. `--db-setup` providers can create cloud resources: keep `manual`
    unless the user opts in.
-5. Afterwards layer the common steps (mise pin for `bun`/`node`, `justfile`, docs,
-   `AGENTS.md`, hooks) on top. Better-T-Stack already writes a git repo unless `--no-git`.
+5. Layer common steps such as a toolchain manager, task runner, docs, `AGENTS.md` and hooks;
+   match the existing project or ask the user which to adopt. Better-T-Stack already writes a
+   git repo unless `--no-git`.
 
 ## Plain TypeScript (library, CLI, script)
 
-```sh
-mise use bun@latest
-bun init                      # then `bun add -d typescript @types/bun @biomejs/biome`
-```
+For a new project, offer mise, npm, Homebrew or pipx where they apply; preserve the existing
+installer if the project already uses one. `mise use bun@latest`, `bun init` and installing
+TypeScript, Bun types and Biome are one option, not a requirement.
 
 ## Preferred tools and libraries
 
 | Need | Pick |
 | --- | --- |
-| Package manager | `bun` (pnpm only for existing pnpm monorepos); `bun add`/`bun remove` |
-| Lint + format | `Biome` (`biome check`, with its complexity rules) is the default; `ESLint` flat config plus `Prettier` when required plugins need it. `Oxlint` with `oxlint-tsgolint` is an optional type-aware alternative; avoid overlapping mandatory lint. `Knip` (`bunx knip`) for unused files, exports and dependencies, in the gate |
+| Package manager | Bun (`bun add`/`bun remove`) is one option; preserve the project's existing choice, or ask the user to choose Bun, npm or pnpm. |
+| Lint + format | Biome is one default option (`biome check`); use existing tools or ask whether to choose Biome, ESLint with Prettier, or Oxlint. Avoid overlapping mandatory lint. `Knip` (`bunx knip`) for unused files, exports and dependencies, in the gate |
 | Types | `tsc --noEmit` (`tsc -b` with project references), `strict` plus `noUncheckedIndexedAccess`, `verbatimModuleSyntax` (`lang-typescript-types`) |
 | Tests | Vitest (`vitest run`) or `bun test`; keep one runner. `msw` for HTTP mocks. Coverage: Vitest v8 coverage or `bun test --coverage` |
 | Property | `fast-check` |
@@ -75,7 +81,7 @@ compatibility path when needed, not just a passing `tsc` run.
 
 ## Gate (`just check`)
 
-`bun install --frozen-lockfile`, `biome check .`, `tsc --noEmit` (or `tsc -b`), the test
-script and configured `knip` task. Library projects add the `api-break` and `docs` tasks to `release`/`every-pr` per the concerns table. Mutation, fuzz and flaky runs are separate recipes (`justfile.md`), not part of `check`. Use the selected lint stack, not all alternatives.
-CI: `oven-sh/setup-bun`, same steps. Commit `bun.lock`. `.gitignore`: `node_modules/`,
-`dist/`, `.env*` (keep `.env.example`).
+For the gate, use the selected package manager, formatter/linter, type checker, test runner and
+dependency checker. Preserve the project's existing CI action and lockfile conventions; Bun,
+Biome and `oven-sh/setup-bun` are examples for projects that choose them. `.gitignore` should
+cover `node_modules/`, `dist/` and `.env*`.

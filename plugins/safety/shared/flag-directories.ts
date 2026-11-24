@@ -8,6 +8,7 @@
 
 import { homedir } from "node:os"
 import { dirname, isAbsolute, join, resolve } from "node:path"
+import { DEFAULT_GIT_WRAPPERS, isGitCommand } from "@srobroek/opencode-lib/git-wrappers"
 import { base, type Command, walkShell } from "./shell.ts"
 
 /** `$HOME`/`~` expand; any other expansion cannot be read statically and yields `undefined`. */
@@ -96,16 +97,15 @@ function toolDirectories(name: string, argv: readonly string[], cwd: string): st
   return out
 }
 
-/** Absolute directories `command`'s flags point it at, resolved against `cwd`. */
-export function flagDirectories(command: Command, cwd: string): string[] {
-  const name = base(command.argv[0])
-  if (name === "git" || name === "dgit") return gitDirectories(command, cwd)
-  return toolDirectories(name, command.argv, cwd)
+/** Absolute directories `command`'s flags point it at, resolved against `cwd`; `gitWrappers` name the git commands. */
+export function flagDirectories(command: Command, cwd: string, gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS): string[] {
+  if (isGitCommand(command.argv[0], gitWrappers)) return gitDirectories(command, cwd)
+  return toolDirectories(base(command.argv[0]), command.argv, cwd)
 }
 
 /** Every flag directory a shell call names, each once, in order. */
-export function shellFlagDirectories(source: string, cwd: string): string[] {
+export function shellFlagDirectories(source: string, cwd: string, gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS): string[] {
   const out = new Set<string>()
-  for (const command of walkShell(source).commands) for (const dir of flagDirectories(command, cwd)) out.add(dir)
+  for (const command of walkShell(source).commands) for (const dir of flagDirectories(command, cwd, gitWrappers)) out.add(dir)
   return [...out]
 }

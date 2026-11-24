@@ -62,6 +62,11 @@ describe("removal recognition", () => {
     expect(removals("echo 'wt remove loose'")).toEqual([])
   })
 
+  test("reads a listed git wrapper as git", () => {
+    expect(removals("dgit worktree remove ../loose")).toEqual([])
+    expect(removals("dgit worktree remove ../loose", ["git", "dgit"])).toEqual([literal(["../loose"], { tool: "git" })])
+  })
+
   test("marks wrapper-built and expanded removals as untrusted", () => {
     expect(removals("git worktree list --porcelain | xargs wt remove")[0]?.literal).toBe(false)
     expect(removals('wt remove "$STALE"')[0]?.literal).toBe(false)

@@ -65,6 +65,13 @@
       "category": "productivity"
     },
     {
+      "name": "find-tools",
+      "description": "Discover and vet plugins, skills and MCP servers across local inventory, catalogs and public registries, without installing anything.",
+      "source": "./plugins/find-tools/omp",
+      "version": "0.6.0",
+      "category": "development"
+    },
+    {
       "name": "lang-go",
       "description": "Go skills: build, lint, go test -race, tidy and govulncheck checks, testing and fuzzing, module and package layout, and pprof profiling.",
       "source": "./plugins/lang-go/omp",

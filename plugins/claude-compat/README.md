@@ -37,7 +37,7 @@ removing the entry.
        "package": "github:srobroek/harness-plugins::path:plugins/claude-compat/opencode",
         "options": {
           "enabled": true,
-         "sources": [{ "path": "~/src/pace-claude-plugins" }],
+         "sources": [{ "path": "~/src/claude-plugins" }],
          "plugins": ["prototype", "proto-report"]
        }
      }]

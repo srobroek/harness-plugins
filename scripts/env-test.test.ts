@@ -13,7 +13,7 @@ test(".env.test excludes the host git config from spawned children", () => {
 test("the preload deletes the beads variables a parent shell leaks and keeps others", () => {
   // The child is a fresh bun process given the foreign values; only the preload can remove them.
   const leaked = ["BEADS_DIR", "BEADS_DB", "BEADS_ACTOR", "BD_ACTOR", "BD_DB", "BD_SOCKET", "BEADS_DOLT_SERVER_PORT"]
-  const kept = ["BEADSX", "MY_BD_X", "SROBROEK_BEADS_PIN"]
+  const kept = ["BEADSX", "MY_BD_X", "HARNESS_BEADS_PIN"]
   const child = Bun.spawnSync(
     [
       process.execPath,

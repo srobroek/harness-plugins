@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent"
@@ -94,6 +94,7 @@ function setup(table: Record<string, Bead> = {}, deps: BeadsPiDeps = {}) {
     run: fakeBd(table, calls),
     pinFor: () => undefined,
     readHeader: (file) => headers[file],
+    optionsPath: join(root, "missing.json"),
     ...deps,
   })
   const bash = async (command: string, session: Session = ROOT) => {
@@ -124,12 +125,12 @@ describe("bash gate", () => {
   })
 
   test("the session's store is pinned ahead of the command", async () => {
-    const { bash } = setup({}, { pinFor: () => "/r/.beads", env: { BEADS_DIR: "/old/.beads", SROBROEK_BEADS_PIN: "/old/.beads" } })
+    const { bash } = setup({}, { pinFor: () => "/r/.beads", env: { BEADS_DIR: "/old/.beads", HARNESS_BEADS_PIN: "/old/.beads" } })
     const { command } = await bash("git status")
     expect(command.split("\n").slice(0, 3)).toEqual([
       "export BEADS_DOLT_SHARED_SERVER=''",
       "export BEADS_DIR='/r/.beads'",
-      "export SROBROEK_BEADS_PIN='/r/.beads'",
+      "export HARNESS_BEADS_PIN='/r/.beads'",
     ])
     expect(command.endsWith("git status")).toBe(true)
   })
@@ -158,6 +159,24 @@ describe("bash gate", () => {
     expect(calls).toEqual([])
   })
 
+  test("beads.json gitWrappers lets close evidence cite a listed wrapper", async () => {
+    const table = { "ab-2": { status: "in_progress", assignee: "pi/root" } }
+    const close = 'bd close ab-2 --reason "dgit push origin topic"'
+    expect((await setup(table).bash(close)).result?.reason).toContain("(beads gate bd-close-evidence-gate)")
+    const optionsPath = join(root, "beads.json")
+    writeFileSync(optionsPath, JSON.stringify({ gitWrappers: ["git", "dgit"] }))
+    expect((await setup(table, { optionsPath }).bash(close)).result).toBeUndefined()
+  })
+
+  test("a malformed beads.json warns at session start", async () => {
+    const optionsPath = join(root, "bad-beads.json")
+    writeFileSync(optionsPath, "{")
+    const { emit } = setup({}, { optionsPath })
+    const notes: string[] = []
+    await emit("session_start", {}, { ...ctxFor(ROOT), hasUI: true, ui: { notify: (text: string) => notes.push(text) } })
+    expect(notes).toEqual([`beads: ${optionsPath} is not valid JSON; close evidence counts only \`git\` as git.`])
+  })
+
   test("the OpenCode shell gates run too", async () => {
     const { bash } = setup()
     expect((await bash("bd edit ab-1")).result?.reason).toContain("(beads gate bd-editor-gate)")
@@ -167,7 +186,7 @@ describe("bash gate", () => {
 
   test("a call another instance already gated is left alone", async () => {
     const fake = fakePi()
-    const deps = { env: {}, run: fakeBd({}), pinFor: () => undefined, readHeader: () => undefined }
+    const deps = { env: {}, run: fakeBd({}), pinFor: () => undefined, readHeader: () => undefined, optionsPath: join(root, "missing.json") }
     setupBeadsPi(fake.pi, deps)
     setupBeadsPi(fake.pi, deps)
     const event = { type: "tool_call", toolName: "bash", toolCallId: "dup-1", input: { command: "ls" } }

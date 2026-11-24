@@ -166,7 +166,7 @@ const MUST_FIRE: Case[] = [
   { id: "generated-with --message=", command: 'git commit --message="Generated with Codex"', fire: "attribution", why: "" },
   {
     id: "message file written earlier in the call",
-    command: 'printf "generated with codex" > /tmp/m && dgit commit -F /tmp/m',
+    command: 'printf "generated with codex" > /tmp/m && git commit -F /tmp/m',
     fire: "attribution",
     why: "-F reads what the call wrote",
   },
@@ -384,6 +384,13 @@ describe("options and messages", () => {
     expect(hardGate("git worktree add ../feat", "/Users/me/repo")).toBeUndefined()
   })
 
+  test("worktree temp refusal recommends a persistent non-temp location without prescribing a home path", () => {
+    const message = hardGate("git worktree add /tmp/feature", "/repo")?.reason
+    expect(message).toContain("a persistent directory outside the system temp dir")
+    expect(message).toContain("one your worktree tool manages")
+    expect(message).not.toContain("~/tmp/worktrees")
+  })
+
   test("every refusal names its guard and the way forward", () => {
     for (const [guard, entry] of Object.entries(MESSAGES)) {
       const message = typeof entry === "function" ? entry("github.com", "dgit", "/work/repo") : entry
@@ -391,5 +398,25 @@ describe("options and messages", () => {
       expect(message.length).toBeGreaterThan(80)
       expect(guard).toMatch(/^[a-z-]+$/)
     }
+  })
+})
+
+describe("gitWrappers", () => {
+  const wrapped = { gitWrappers: ["git", "dgit"] }
+
+  test.each([
+    ["attribution", 'printf "generated with codex" > /tmp/m && dgit commit -F /tmp/m'],
+    ["worktree-tmp", "dgit worktree add /tmp/release"],
+    ["history-rewrite", "dgit filter-branch --tree-filter true HEAD"],
+    ["history-rewrite", "/opt/bin/dgit -C /work filter-repo --path x"],
+    ["history-rewrite", "printf x | xargs dgit filter-branch"],
+  ] as const)("%s reads a listed wrapper as git: %s", (guard, command) => {
+    expect(hardGate(command, "/work", wrapped)?.guard).toBe(guard)
+    expect(hardGate(command, "/work")).toBeUndefined()
+  })
+
+  test("the default list reads only git", () => {
+    expect(hardGate("git worktree add /tmp/release", "/work")?.guard).toBe("worktree-tmp")
+    expect(hardGate("git worktree add /tmp/release", "/work", { gitWrappers: ["dgit"] })).toBeUndefined()
   })
 })

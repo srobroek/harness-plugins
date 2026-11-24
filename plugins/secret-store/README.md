@@ -19,7 +19,9 @@ opencode plugin add 'github:srobroek/harness-plugins::path:plugins/secret-store/
 On pi, the plugin directory's `pi/` tree is a pi package, and `pi/extensions/secret-store.js` (built
 from `pi-src/secret-store.ts`) registers the tool.
 
-`op` and `fnox` must be on `PATH`.
+The tool supports two backends: a 1Password item that fnox references, and an fnox provider that
+stores values. The 1Password target needs `op` on `PATH`, and both need `fnox`. A project on
+another secret manager uses that manager's own workflow.
 
 ## The tool
 

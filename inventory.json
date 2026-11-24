@@ -1015,7 +1015,7 @@
     },
     {
       "name": "find-tools",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "description": "Discover and vet plugins, skills and MCP servers across local inventory, catalogs and public registries, without installing anything.",
       "category": "development",
       "harnesses": {
@@ -1030,6 +1030,20 @@
           "tools": [],
           "extensions": [
             "index"
+          ],
+          "mcp": []
+        },
+        "omp": {
+          "skills": [
+            "find-tools"
+          ],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "find-tools"
           ],
           "mcp": []
         },

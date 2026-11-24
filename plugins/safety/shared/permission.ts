@@ -13,10 +13,11 @@
 
 import { isAbsolute, resolve } from "node:path"
 import { leadingCdCwd } from "@srobroek/opencode-lib"
+import { DEFAULT_GIT_WRAPPERS } from "@srobroek/opencode-lib/git-wrappers"
 import { type GateOptions, reviewBranchDeletes } from "./branch-delete.ts"
 import { type Bounds, budget, gitOut, ProbeTimeout } from "./probes.ts"
 import { base, type Command, gitInvocation, hasFlag, positionals, walkShell } from "./shell.ts"
-import { defaultProbe, type GitProbe, reviewRemovals } from "./worktree-detached.ts"
+import { defaultProbe, type GitProbe, removals as parseRemovals, reviewRemovals } from "./worktree-detached.ts"
 
 export type DecisionID = "force-push" | "sudo-destructive" | "worktree-destruction"
 
@@ -32,8 +33,8 @@ const DESTRUCTION_HEADER =
   "safety (worktree-destruction-guard): this call destroys work that may exist nowhere else. Approve only if you asked for this exact target in this session."
 
 /** A force push that is not `--force-with-lease`/`--force-if-includes`. */
-export function forcePush(command: Command): boolean {
-  const git = gitInvocation(command.argv)
+export function forcePush(command: Command, gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS): boolean {
+  const git = gitInvocation(command.argv, gitWrappers)
   if (git?.subcommand !== "push") return false
   for (const arg of git.args) {
     if (arg === "--force" || arg.startsWith("--force=")) return true
@@ -64,10 +65,14 @@ export type Destruction =
 const RESET_VALUED: ReadonlySet<string> = new Set(["--pathspec-from-file"])
 
 /** The git destructions in a call, other than branch deletes and worktree removals. */
-export function destructions(commands: readonly Command[], cwd: string | undefined): Destruction[] {
+export function destructions(
+  commands: readonly Command[],
+  cwd: string | undefined,
+  gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS,
+): Destruction[] {
   const found: Destruction[] = []
   for (const command of commands) {
-    const git = gitInvocation(command.argv)
+    const git = gitInvocation(command.argv, gitWrappers)
     if (!git) continue
     const literal = command.context === "top" && command.words !== undefined && !git.overridden
     const dir =
@@ -127,10 +132,14 @@ async function resetRisk(
   return notes.join("\n  ")
 }
 
-async function stashNote(run: ReturnType<typeof budget>["run"], destruction: Destruction): Promise<string> {
+async function stashNote(
+  run: ReturnType<typeof budget>["run"],
+  destruction: Destruction,
+  gitWrappers: readonly string[] | undefined,
+): Promise<string> {
   if (destruction.dir === undefined) return ""
   if (destruction.kind === "stash-drop") {
-    const git = gitInvocation(destruction.command.argv)
+    const git = gitInvocation(destruction.command.argv, gitWrappers)
     const ref = git ? (positionals(git.args.slice(1))[0] ?? "stash@{0}") : "stash@{0}"
     const sha = (await gitOut(run, ["rev-parse", "--verify", "--quiet", ref], destruction.dir))?.trim()
     return sha ? `\n  ${ref} is ${sha}. Restore: git stash store -m restored ${sha}` : ""
@@ -151,6 +160,8 @@ export type ReviewOptions = GateOptions & {
   disabled?: ReadonlySet<DecisionID>
   /** Probe override for worktree removals. */
   worktreeProbe?: GitProbe
+  /** Command names read as git (the `gitWrappers` option); only `git` when absent. */
+  gitWrappers?: readonly string[]
 }
 
 /** Directory the call's top-level commands run in, or `undefined` when a later `cd` makes it unknowable. */
@@ -181,7 +192,9 @@ export async function reviewPermission(
   const on = (id: DecisionID) => options.disabled?.has(id) !== true
   const walk = walkShell(source)
   const { commands } = walk
-  if (on("force-push") && commands.some(forcePush)) return { effect: "deny", message: FORCE_PUSH_MESSAGE }
+  const { gitWrappers } = options
+  if (on("force-push") && commands.some((command) => forcePush(command, gitWrappers)))
+    return { effect: "deny", message: FORCE_PUSH_MESSAGE }
   const asks: string[] = []
   if (on("sudo-destructive") && commands.some(sudoDestructive)) asks.push(SUDO_MESSAGE)
   if (on("worktree-destruction")) {
@@ -192,10 +205,12 @@ export async function reviewPermission(
       if (branches.definitive) return { effect: "deny", message: branches.reason }
       destructive.push(branches.reason)
     } else if (branches.action === "confirm") destructive.push(`${branches.title}\n${branches.message}`)
-    const removals = await reviewRemovals(source, dir ?? cwd, options.worktreeProbe ?? defaultProbe(options))
+    const removals = await reviewRemovals(source, dir ?? cwd, options.worktreeProbe ?? defaultProbe(options), (text) =>
+      parseRemovals(text, gitWrappers),
+    )
     if (removals.refuse) return { effect: "deny", message: removals.refuse }
     destructive.push(...removals.ask)
-    const found = destructions(commands, dir)
+    const found = destructions(commands, dir, gitWrappers)
     if (found.length > 0) {
       const run = budget(options as Bounds).run
       for (const destruction of found) {
@@ -206,7 +221,7 @@ export async function reviewPermission(
             if (risk !== null) destructive.push(`\`${text}\` ${LABELS[destruction.kind]}: ${risk}`)
             continue
           }
-          destructive.push(`\`${text}\` ${LABELS[destruction.kind]}.${await stashNote(run, destruction)}`)
+          destructive.push(`\`${text}\` ${LABELS[destruction.kind]}.${await stashNote(run, destruction, gitWrappers)}`)
         } catch (error) {
           if (!(error instanceof ProbeTimeout)) throw error
           destructive.push(`\`${text}\` ${LABELS[destruction.kind]}; \`${error.message}\` timed out, so nothing could be proved safe.`)

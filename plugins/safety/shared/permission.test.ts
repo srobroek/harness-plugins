@@ -275,6 +275,20 @@ describe("parsing", () => {
     expect(found[0]).toMatchObject({ kind: "reset-hard", dir: undefined })
   })
 
+  test("a listed git wrapper is read as git", async () => {
+    const [push] = walkShell("dgit -C /r push --force").commands
+    expect(push && forcePush(push)).toBe(false)
+    expect(push && forcePush(push, ["git", "dgit"])).toBe(true)
+    expect(destructions(walkShell('dgit reset --hard "$REF"').commands, "/r")).toEqual([])
+    expect(destructions(walkShell('dgit reset --hard "$REF"').commands, "/r", ["git", "dgit"])[0]).toMatchObject({
+      kind: "reset-hard",
+    })
+    expect(await reviewPermission("dgit push -f", "/", { gitWrappers: ["git", "dgit"] })).toEqual({
+      effect: "deny",
+      message: FORCE_PUSH_MESSAGE,
+    })
+  })
+
   test("a later cd makes the directory unknowable", async () => {
     expect((await review(`git status; cd ${clean}; git reset --hard`))?.message).toContain("cannot be read with certainty")
     expect(await review(`cd ${clean} && git reset --hard`, "/")).toBeUndefined()

@@ -124,11 +124,11 @@ function pushHasBranchRef(args: readonly string[]): boolean | undefined {
 
 const NO_AGE_PUSH: ReadonlySet<string> = new Set(["--dry-run", "-n", "--delete", "-d", "--tags", "--all", "--mirror"])
 
-function createAdvice(forge: Forge): string[] {
+function createAdvice(forge: Forge, conventionalTitle: boolean): string[] {
   const out: string[] = []
   const title = optionValue(forge.args, forge.expands, new Set(["--title", "-t"]))
   if (title.value === undefined || title.uncertain) return out
-  if (!CONVENTIONAL_TITLE.test(title.value)) out.push(ADVICE.title)
+  if (conventionalTitle && !CONVENTIONAL_TITLE.test(title.value)) out.push(ADVICE.title)
   const parts = titleParts(title.value)
   if (parts === undefined || (parts.type !== "feat" && !parts.breaking)) return out
   const feature = parts.type === "feat"
@@ -146,6 +146,10 @@ export type AdvisoryOptions = {
   exists?: (path: string) => boolean
   list?: (path: string) => string[]
   now?: number
+  /** Defaults to true for compatibility; false suppresses only the Conventional Commit title advice. */
+  conventionalTitle?: boolean
+  /** Command names read as git (the `gitWrappers` option); only `git` when absent. */
+  gitWrappers?: readonly string[]
 }
 
 /** Concise advisories for the command, deduplicated; parsing and probe failures yield none. */
@@ -157,12 +161,12 @@ export function decideMrAdvisory(command: string, cwd: string, options: Advisory
     const advisories: string[] = []
     for (const invocation of invocations(command, cwd)) {
       const forge = forgeCommand(invocation)
-      if (forge?.kind === "create") advisories.push(...createAdvice(forge))
+      if (forge?.kind === "create") advisories.push(...createAdvice(forge, options.conventionalTitle !== false))
       if (forge?.kind === "merge" && !forge.args.some((arg) => arg === "--squash" || arg === "-s")) {
         if (isReleaseRepository(forge.cwd, { git, exists: options.exists, readFile: read, list: options.list }))
           advisories.push(ADVICE.squash)
       }
-      const push = gitInvocation(invocation)
+      const push = gitInvocation(invocation, options.gitWrappers)
       if (push?.subcommand !== "push" || push.args.some((arg) => NO_AGE_PUSH.has(arg))) continue
       if (pushHasBranchRef(push.args)) {
         const age = branchPushAge(push.cwd, git, now)

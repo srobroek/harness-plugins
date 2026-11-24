@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { createFakeContext } from "@srobroek/opencode-lib/testing";
 import type { MergeRequest } from "../../shared/flag-cleanup.ts";
-import { createPlugin, readOptions, SKILL_NAMES, SKIP_CI_ADVISORY, shellCwd } from "./index.ts";
+import { ADVICE } from "../../shared/mr-advisory.ts";
+import { createPlugin, readOptions, SKILL_NAMES, SKIP_CI_ADVISORY, shellAdvisories, shellCwd } from "./index.ts";
 
 const session = { id: "ses_1", location: { directory: "/project" } }
 const base = { sessionID: "ses_1", agent: "build", messageID: "msg_1" }
@@ -107,6 +108,25 @@ describe("trunk-dev plugin", () => {
     await cleanup?.()
   })
 
+  test("the gitWrappers option makes skip-CI read a listed wrapper as git", async () => {
+    const content = async (options: Record<string, unknown>) => {
+      const { fake, plugin } = setup(options)
+      const cleanup = await plugin.setup(fake.context)
+      const event = await fake.fire.tool("execute.after", {
+        ...base,
+        id: "c1",
+        tool: "shell",
+        input: { command: "dgit commit -m 'fix: x [skip ci]'" },
+        status: "completed",
+        result: shellResult(0),
+      })
+      await cleanup?.()
+      return String((event as { result: { content: unknown } }).result.content)
+    }
+    expect(await content({})).not.toContain(SKIP_CI_ADVISORY)
+    expect(await content({ gitWrappers: ["git", "dgit"] })).toContain(SKIP_CI_ADVISORY)
+  })
+
   test("a proved delivery_land triggers the flag-cleanup follow-up; a refusal does not", async () => {
     const { fake, plugin, merges } = setup()
     const cleanup = await plugin.setup(fake.context)
@@ -171,8 +191,18 @@ describe("trunk-dev plugin", () => {
     expect(fake.active()).toBe(0)
   })
 
+  test("mr-title disables only the Conventional Commit title advice", () => {
+    expect([...readOptions({ disable: ["mr-title"] })]).toEqual(["mr-title"])
+  })
+
+  test("mr-title option disables title advice without disabling other MR advisories", () => {
+    const command = "gh pr create --title 'Add feature' --body 'body'"
+    expect(shellAdvisories(command, "/repo", new Set())).toContain(ADVICE.title)
+    expect(shellAdvisories(command, "/repo", new Set(["mr-title"]))).toEqual([])
+  })
+
   test("options and workdir helpers", () => {
-    expect([...readOptions({ disable: ["skip-ci", "nope"] })]).toEqual(["skip-ci"])
+    expect([...readOptions({ disable: ["skip-ci", "mr-title", "nope"] })]).toEqual(["skip-ci", "mr-title"])
     expect(shellCwd(undefined, "/p")).toBe("/p")
     expect(shellCwd("/abs", "/p")).toBe("/abs")
     expect(shellCwd("rel", "/p")).toBe("/p/rel")

@@ -1,12 +1,15 @@
 # Where a secret lives
 Source: https://fnox.jdx.dev/guide/config-files, /providers/1password.
 
+Use this reference when the project uses fnox. If it already uses another secret
+manager, follow that manager's existing vault and access policy instead.
+
 | Situation | Where it lives |
 | --- | --- |
 | Machine-wide value already configured by the user | Nothing in the project |
-| One user, one machine, one project | A private vault, item `<project> <purpose>`, tag `project/<project>` |
-| CI or collaborators need a shared credential | A user-configured shared vault and provider |
-| A project has its own service account or distinct access | A user-configured project vault and provider |
+| One user, one machine, one project | A private vault or provider configured by the user |
+| CI or collaborators need a shared credential | A user-configured shared vault or provider |
+| A project has its own service account or distinct access | A user-configured project vault or provider |
 | Local-only generated value | OS keychain (`references/store.md`) |
 
 A machine-wide key is not a project secret. It belongs in the user's managed global
@@ -19,6 +22,9 @@ Access differs when users or services need different permissions. Confirm whethe
 So CI needs its secrets in a vault accessible to the project's service account. For a solo project, one private vault may be enough. When access differs, use separate user-configured vaults.
 
 ## Create a project vault
+
+Use this section only when the project selects fnox with a 1Password provider.
+Otherwise, configure the selected fnox provider according to its documentation.
 
 1. Ask the user; never create a vault unasked.
 2. After approval, create a vault using the configured provider's documented process.

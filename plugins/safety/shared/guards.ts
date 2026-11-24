@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
 import { shellWriteTargets } from "@srobroek/opencode-lib"
 import type { ProviderTypes } from "@srobroek/opencode-lib/fnox-config"
+import { DEFAULT_GIT_WRAPPERS } from "@srobroek/opencode-lib/git-wrappers"
 import { hasAttribution } from "./attribution.ts"
 import { historyRewrite } from "./history-rewrite.ts"
 import { CHECK_FAILED_MESSAGE, NESTING_MESSAGE, OP_MESSAGE, opGuard } from "./op-guard.ts"
@@ -60,7 +61,7 @@ export const MESSAGES: { [K in GuardID]: K extends "push-via" ? (host: string, c
   attribution:
     "Blocked by safety (attribution-guard): this commit message carries AI-assistant attribution (a Co-authored-by trailer naming an assistant, a 'Generated with' line, or an assistant noreply address). Rewrite the `-m`/`--message` text, the `--trailer`, or the file supplied to `-F`/`--file`, so the commit names only the human author.",
   "worktree-tmp":
-    "Blocked by safety (worktree-tmp-guard): do not create a worktree under /tmp or /private/tmp, where a container bind mount cannot see it. Use a path under $HOME, such as ~/tmp/worktrees/<repo>/<branch>.",
+    "Blocked by safety (worktree-tmp-guard): do not create a worktree under /tmp or /private/tmp, where a container bind mount cannot see it. Use a persistent directory outside the system temp dir (for example one your worktree tool manages).",
   "history-rewrite":
     "Blocked by safety (history-rewrite-guard): history-rewriting commands (`git filter-repo`, `git filter-branch`, `git replace`, `git update-ref -d` on a branch) must not run in place in a canonical checkout, and `filter-repo --force` must not run at all. Clone the repository into a temp directory and run the command there with the tool's workdir set to the clone.",
   "push-via": (host, command, dir) =>
@@ -226,9 +227,14 @@ function writtenInto(commands: readonly Command[], before: Command, path: string
 }
 
 /** A `git commit` whose message carries AI-assistant attribution. */
-export function attribution(commands: readonly Command[], cwd: string, read: FileReader = readText): boolean {
+export function attribution(
+  commands: readonly Command[],
+  cwd: string,
+  read: FileReader = readText,
+  gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS,
+): boolean {
   for (const command of commands) {
-    const git = gitInvocation(command.argv)
+    const git = gitInvocation(command.argv, gitWrappers)
     if (git?.subcommand !== "commit") continue
     const { texts, files } = commitMessage(git.args)
     if (texts.some(hasAttribution)) return true
@@ -260,8 +266,8 @@ function underTmp(path: string): boolean {
 const WORKTREE_ADD_VALUED: ReadonlySet<string> = new Set(["-b", "-B", "--reason"])
 
 /** `git worktree add` or `wt switch|new|co|agent` placing a worktree under `/tmp`. */
-export function worktreeTmp(command: Command, cwd: string): boolean {
-  const git = gitInvocation(command.argv)
+export function worktreeTmp(command: Command, cwd: string, gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS): boolean {
+  const git = gitInvocation(command.argv, gitWrappers)
   if (git?.subcommand === "worktree" && git.args[0] === "add") {
     const dir = git.chdirs.reduce((at, chdir) => resolve(at, chdir), cwd)
     const path = positionals(git.args.slice(1), WORKTREE_ADD_VALUED)[0]
@@ -298,6 +304,8 @@ export type GuardOptions = {
   pushVia?: PushViaConfig
   /** Test seam: replaces reading the remote URL from git. */
   resolveRemote?: RemoteResolver
+  /** Command names read as git (the `gitWrappers` option); only `git` when absent. */
+  gitWrappers?: readonly string[]
 }
 
 /** The first hard gate `source` trips, or `undefined`. */
@@ -312,11 +320,11 @@ export function hardGate(source: string, cwd: string, options: GuardOptions = {}
     const { commands } = walkShell(source)
     if (on("remote-exec") && remoteExec(commands)) refusal = refuse("remote-exec")
     else if (on("indirection") && commands.some(indirection)) refusal = refuse("indirection")
-    else if (on("attribution") && attribution(commands, cwd, options.read)) refusal = refuse("attribution")
-    else if (on("worktree-tmp") && commands.some((command) => worktreeTmp(command, cwd)))
+    else if (on("attribution") && attribution(commands, cwd, options.read, options.gitWrappers)) refusal = refuse("attribution")
+    else if (on("worktree-tmp") && commands.some((command) => worktreeTmp(command, cwd, options.gitWrappers)))
       refusal = refuse("worktree-tmp")
     else if (on("history-rewrite")) {
-      const reason = historyRewrite(commands, cwd, options.tempRoots, options.env)
+      const reason = historyRewrite(commands, cwd, options.tempRoots, options.env, options.gitWrappers)
       if (reason !== undefined) refusal = { guard: "history-rewrite", reason }
     }
     if (refusal === undefined && on("push-via") && options.pushVia !== undefined && !repositorySelected(options.env)) {

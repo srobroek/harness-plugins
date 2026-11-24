@@ -132,6 +132,14 @@ describe("hasCheckableEvidence", () => {
       expect(hasCheckableEvidence(text)).toBe(false)
     },
   )
+
+  test("a git command counts by default; a wrapper only when listed in gitWrappers", () => {
+    expect(hasCheckableEvidence("ran git push origin topic")).toBe(true)
+    expect(hasCheckableEvidence("ran dgit push origin topic")).toBe(false)
+    expect(hasCheckableEvidence("ran dgit push origin topic", ["git", "dgit"])).toBe(true)
+    expect(hasCheckableEvidence("ran git push origin topic", ["dgit"])).toBe(false)
+    expect(hasCheckableEvidence("ran gxt push", ["g.t"])).toBe(false)
+  })
 })
 
 describe("closeEvidenceRefusal", () => {
@@ -162,6 +170,16 @@ describe("closeEvidenceRefusal", () => {
         root,
       ),
     ).toContain('"done"')
+  })
+
+  test("gitWrappers reaches every reason", () => {
+    writeFileSync(join(root, "wrapped.md"), "dgit push origin topic\n")
+    const reasons = [
+      { kind: "text" as const, text: "dgit push origin topic" },
+      { kind: "file" as const, path: "wrapped.md" },
+    ]
+    expect(closeEvidenceRefusal(reasons, root)).toContain("no checkable evidence")
+    expect(closeEvidenceRefusal(reasons, root, ["git", "dgit"])).toBeUndefined()
   })
 })
 

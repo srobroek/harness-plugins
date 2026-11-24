@@ -67,13 +67,14 @@ A refusal is thrown, so the model sees it as the tool error.
 primary checkout's from a linked worktree) and clears `BEADS_DOLT_SHARED_SERVER`
 in the child environment. An explicitly set `BEADS_DIR` is left alone, and it is the default ledger for
 claim tracking: a plain claim is tracked under that store (see Claim tracking).
-The pin also sets `SROBROEK_BEADS_PIN` to the same path. A process can inherit a pinned
+The pin also sets `HARNESS_BEADS_PIN` to the same path. A process can inherit a pinned
 shell's environment, for example an OpenCode server restarted from that shell. When the
 two variables match, the plugin drops the inherited pin and pins each session to its own
 checkout's store. A `BEADS_DIR` that the user sets in a pinned shell differs from the
 marker, so the plugin keeps it. To select the marker's own path on purpose, clear the
-marker as well: `unset SROBROEK_BEADS_PIN; export BEADS_DIR=/path/.beads`. With
-`beads-dir-pin` off, the hook still drops an inherited pin but sets no new one.
+marker as well: `unset HARNESS_BEADS_PIN; export BEADS_DIR=/path/.beads`. With
+`beads-dir-pin` off, the hook still drops an inherited pin but sets no new one. Sessions
+started before the upgrade keep the old marker until restarted.
 
 Every gate judges a `bd` write at the store the write lock runs it in. The lock's
 planner follows what the command does before the write:
@@ -300,9 +301,9 @@ It ships the skills and the two hooks in `hooks/claude-hooks.json`. Both hooks r
 - `SessionStart` adds `bd prime` and the session-start advisories as context, within
   Claude Code's 10,000-character limit. It runs on startup, resume, clear and compact.
   It also writes the store pin to `CLAUDE_ENV_FILE`: `BEADS_DIR` with its
-  `SROBROEK_BEADS_PIN` marker, and an empty `BEADS_DOLT_SHARED_SERVER`. It drops an
+  `HARNESS_BEADS_PIN` marker, and an empty `BEADS_DOLT_SHARED_SERVER`. It drops an
   inherited pin first, so `bd prime`, the advisories and the pin share one store. In a
-  directory without a store, it writes `unset BEADS_DIR SROBROEK_BEADS_PIN`, so Bash
+  directory without a store, it writes `unset BEADS_DIR HARNESS_BEADS_PIN`, so Bash
   leaves the inherited ledger too.
 - `PreToolUse` on `Bash` runs the shell gates above, with every gate on. It skips a
   command that names none of `bd`, `git` and `gh`. A refusal denies the call. A rewrite replaces
@@ -333,8 +334,7 @@ above on every `bash` call with every gate on, and it adds three pi-only gates a
 A refusal blocks the call with `<cause>; <fix>. (beads gate <name>)`. A call that passes
 gets two prefixes:
 
-- The store pin: `export` lines for `BEADS_DIR`, its `SROBROEK_BEADS_PIN` marker and an empty
-  `BEADS_DOLT_SHARED_SERVER`. A directory without a store gets an `unset` of an inherited pin.
+- The store pin: `export` lines for `BEADS_DIR`, its `HARNESS_BEADS_PIN` marker and an empty
 - The actor: `unset BEADS_ACTOR; export BD_ACTOR='pi/<root session>/.../<this session>';`.
 
 Every pi session gets its own actor, the interactive root session included. pi runs a
@@ -363,12 +363,19 @@ The OpenCode plugin and the Claude Code hook do not run these three gates.
    that names checkable evidence, as `rule://beads-evidence` asks. The gate accepts any of
    these:
 
-   - a backticked command, or a tool command such as `bun test x.test.ts`
+   - a backticked command, or a tool command such as `bun test x.test.ts` (a git command
+     counts when it names git, or a wrapper listed in `gitWrappers`)
    - a path or a file name
    - a commit SHA, a PR or issue reference, or a URL
    - a test count or an exit code
 
    A reason such as `done` or `N/A` fails this gate.
+
+   pi passes no options to an extension, so this gate reads `gitWrappers` from `beads.json`
+   in pi's agent directory (`~/.pi/agent/beads.json`, or the same file under
+   `PI_CODING_AGENT_DIR`): `{ "gitWrappers": ["git", "<wrapper>"] }`. The default is
+   `["git"]` and a list replaces it. It is the only option pi reads; an unreadable or
+   malformed file leaves only `git` and warns at session start.
 3. `write-claim-gate`: in a pi-subagents child, `edit` and `write` need a claim. The rule
    covers a file in a checkout with a Beads store: the child must hold at least one
    `in_progress` claim in that store. The gate asks
@@ -413,7 +420,7 @@ These parts stay OpenCode-only:
 - claim tracking and lease heartbeats
 - the stop nudge and guarded claim release
 - subagent routing (`bead-agent-routing`) and the fork notice
-- session-start advisories and plugin options
+- session-start advisories and the plugin options (pi reads only `gitWrappers`, above)
 
 # Project ledger store
 
