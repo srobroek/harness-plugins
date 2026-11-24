@@ -20,7 +20,7 @@ type Profile = {
 const PROFILES: Readonly<Record<string, Profile>> = {
   coder: { hidden: false, codeMode: ["dep_scan", "dep_apply", "version_gap_scan"], web: true },
   mechanic: { hidden: false, codeMode: [], web: false },
-  researcher: { hidden: false, codeMode: ["repomix_pack"], web: true },
+  "code-researcher": { hidden: false, codeMode: ["repomix_pack"], web: true },
   "adversarial-challenger": { hidden: false, codeMode: [], web: true },
   "code-challenger": { hidden: false, codeMode: ["challenge_scan", "challenge_lib_facts"], web: true },
   "refactor-challenger": { hidden: false, codeMode: ["challenge_scan", "challenge_lib_facts"], web: true },

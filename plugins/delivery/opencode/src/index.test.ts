@@ -252,14 +252,14 @@ describe("agents", () => {
     expect(implementer.mode).toBe("subagent")
     expect(implementer.steps).toBe(150)
     expect(fake.agents.get("implementer-high")?.steps).toBe(200)
-    expect(fake.agents.get("researcher")?.steps).toBe(80)
+    expect(fake.agents.get("code-researcher")?.steps).toBe(80)
     expect(fake.agents.get("pr-reviewer")?.steps).toBe(80)
     expect(fake.agents.get("operator")?.steps).toBe(30)
     expect(fake.agents.get("shepherd")?.steps).toBe(60)
     expect(String(implementer.system)).toContain("VERDICT: DONE|BLOCKED|SPLIT")
     expect(implementer.model).toBeUndefined()
     expect(implementer.request).toEqual({ headers: { "x-opencode-model-role": "standard" } })
-    expect(implementer.permissions).toContainEqual({ action: "subagent", resource: "researcher", effect: "allow" })
+    expect(implementer.permissions).toContainEqual({ action: "subagent", resource: "code-researcher", effect: "allow" })
     for (const id of ["implementer", "implementer-high"])
       expect(fake.agents.get(id)?.permissions).toContainEqual({
         action: "skill",
@@ -295,17 +295,26 @@ describe("agents", () => {
     })
   })
 
-  test("the researcher fallback copy is marked as a fallback too", async () => {
+  test("the code-researcher fallback copy is marked as a fallback too", async () => {
     const fake = withHost(createFakeContext(), [{ id: "srobroek.delivery" }])
     await plugin.setup(fake.context)
-    const researcher = fake.agents.get("researcher")
-    expect(researcher?.model).toEqual({ providerID: "amazon-bedrock", id: "global.anthropic.claude-sonnet-5-5", variant: "medium" })
-    expect(researcher?.request).toEqual({
+    const codeResearcher = fake.agents.get("code-researcher")
+    expect(codeResearcher?.model).toEqual({ providerID: "amazon-bedrock", id: "global.anthropic.claude-sonnet-5-5", variant: "medium" })
+    expect(codeResearcher?.request).toEqual({
       headers: {
         "x-opencode-model-role": "standard",
         "x-opencode-model-fallback": "amazon-bedrock/global.anthropic.claude-sonnet-5-5#medium",
       },
     })
+  })
+
+  test("the code-researcher fallback is skipped when the plugin is listed or the agent exists", async () => {
+    const listed = withHost(createFakeContext(), [{ source: { target: "github:srobroek/opencode-plugins#main::path:plugins/agent-researcher" } }])
+    await plugin.setup(listed.context)
+    expect(listed.agents.has("code-researcher")).toBe(false)
+    expect(listed.agents.has("implementer")).toBe(true)
+    const { fake } = await load({ agents: [{ id: "code-researcher", system: "theirs", permissions: [] }] })
+    expect(fake.agents.get("code-researcher")).toEqual({ id: "code-researcher", system: "theirs", permissions: [] })
   })
 
   test("with model-roles installed an agent pins no model and keeps only its role header", async () => {

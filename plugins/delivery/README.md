@@ -14,7 +14,7 @@ means `delivery_cleanup` has not run yet (or `delivery_land` could not finish it
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/delivery/opencode'
 ```
 
-The implementer agents spawn `explore`, `operator` and `researcher`. Nested
+The implementer agents spawn `explore`, `operator` and `code-researcher`. Nested
 subagents need `experimental.subagent_depth` of at least 2 in your config.
 
 ## Tools
@@ -360,16 +360,16 @@ The plugin registers these subagents from `agents/*.md` through
 | --- | --- | --- | --- |
 | `implementer` (steps 150) | One bead or task in its own worktree; `DONE`/`BLOCKED`/`SPLIT` | `standard` | `amazon-bedrock/global.anthropic.claude-sonnet-5-5#medium` |
 | `implementer-high` (steps 200) | Root cause, concurrency, contracts, precision, design judgment | `strong` | `amazon-bedrock/global.anthropic.claude-opus-5-5#high` |
-| `researcher` (steps 80) | One cited answer; no product edits (fallback copy, see below) | `standard` | `amazon-bedrock/global.anthropic.claude-sonnet-5-5#medium` |
+| `code-researcher` (steps 80) | One cited answer; no product edits (fallback copy, see below) | `standard` | `amazon-bedrock/global.anthropic.claude-sonnet-5-5#medium` |
 | `pr-reviewer` (steps 80) | Read-only diff review through `gh pr view` / `gh pr diff`; `VERDICT:` first line (fallback copy, see below) | `reviewer` | `amazon-bedrock/global.anthropic.claude-opus-5-5#high` |
 | `operator` (steps 30) | One exact bounded command | `cheap` | `amazon-bedrock/global.anthropic.claude-haiku-5-5` |
 | `shepherd` (steps 60) | Lands one approved PR with `delivery_land` (approval and checks required), closes beads, cleans up | `standard` | `amazon-bedrock/global.anthropic.claude-sonnet-5-5#medium` |
 
-- `researcher` belongs to the [`agent-researcher`](../agent-researcher/README.md)
-  plugin. Delivery ships the same agent as a fallback, so `execution_agent_type=researcher`
+- `code-researcher` belongs to the [`agent-researcher`](../agent-researcher/README.md)
+  plugin. Delivery ships the same agent as a fallback, so `execution_agent_type=code-researcher`
   beads still have an agent without that plugin. Delivery skips its copy when
   `plugin.list` reports `srobroek.agent-researcher` or an earlier plugin already
-  registered `researcher`; if delivery's copy loads first anyway, the owner replaces
+  registered `code-researcher`; if delivery's copy loads first anyway, the owner replaces
   it, so either order leaves one agent. The logic is
   `@srobroek/opencode-lib/agent-fallback` and `FALLBACK_AGENTS` in `src/agents.ts`;
   `plugins/agent-researcher` tests keep the two files in sync.

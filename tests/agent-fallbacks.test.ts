@@ -11,13 +11,13 @@ import delivery from "../plugins/delivery/opencode/src/index.ts"
 import { parseVerdict } from "../plugins/delivery/opencode/src/verdict.ts"
 import quality from "../plugins/quality/opencode/src/index.ts"
 
-// Plugins that ship the same agent as another plugin's fallback copy (delivery's researcher and pr-reviewer,
+// Plugins that ship the same agent as another plugin's fallback copy (delivery's code-researcher and pr-reviewer,
 // quality's adversarial-challenger), and the consumers of agent-reviewer's and agent-researcher's prompts
 // (delivery's verdict parser, the beads routing gate). These span plugins, so they live here and not in a plugin.
 
 const files = new Map<string, AgentFile>(REVIEWERS.map((id) => [id, readAgentFile(join(AGENTS_DIR, `${id}.md`))]))
 const file = (id: string) => files.get(id) as AgentFile
-const researcherFile = readAgentFile(join(RESEARCHER_DIR, `${RESEARCHER}.md`))
+const codeResearcherFile = readAgentFile(join(CODE_RESEARCHER_DIR, `${CODE_RESEARCHER}.md`))
 
 type Fake = ReturnType<typeof createFakeContext>
 const withPlugins = (fake: Fake, plugins: unknown[]) => {
@@ -110,46 +110,46 @@ test("quality's challenger copy is the owner's file", () => {
   expect(copy).toEqual(file("adversarial-challenger"))
 })
 
-describe("delivery fallback for researcher", () => {
-  test("delivery's researcher is the same agent apart from its fallback model", () => {
-    const copy = loadAgents(["researcher"])[0]
-    expect(copy?.description).toBe(researcherFile.description)
-    expect(copy?.system).toBe(researcherFile.system)
-    expect(copy?.permissions).toEqual(researcherFile.permissions)
-    expect(copy?.request).toEqual(researcherFile.request)
+describe("delivery fallback for code-researcher", () => {
+  test("delivery's code-researcher is the same agent apart from its fallback model", () => {
+    const copy = loadAgents(["code-researcher"])[0]
+    expect(copy?.description).toBe(codeResearcherFile.description)
+    expect(copy?.system).toBe(codeResearcherFile.system)
+    expect(copy?.permissions).toEqual(codeResearcherFile.permissions)
+    expect(copy?.request).toEqual(codeResearcherFile.request)
   })
 
-  test("delivery alone registers researcher", async () => {
+  test("delivery alone registers code-researcher", async () => {
     const fake = createFakeContext()
     await delivery.setup(fake.context)
-    expect(fake.agents.get(RESEARCHER)?.system).toBe(researcherFile.system)
+    expect(fake.agents.get(CODE_RESEARCHER)?.system).toBe(codeResearcherFile.system)
   })
 
   const expectOne = (fake: ReturnType<typeof createFakeContext>) => {
-    const agent = fake.agents.get(RESEARCHER) as Record<string, unknown>
-    expect(agent.system).toBe(researcherFile.system)
-    expect(agent.permissions).toEqual([...researcherFile.permissions, ...toolRules(DEFAULT_MCP_TOOLS)])
+    const agent = fake.agents.get(CODE_RESEARCHER) as Record<string, unknown>
+    expect(agent.system).toBe(codeResearcherFile.system)
+    expect(agent.permissions).toEqual([...codeResearcherFile.permissions, ...toolRules(DEFAULT_MCP_TOOLS)])
     expect(agent.model).toBeUndefined()
-    expect(agent.request).toEqual(researcherFile.request)
+    expect(agent.request).toEqual(codeResearcherFile.request)
   }
 
-  test("researcher then delivery: delivery leaves the registered agent alone", async () => {
+  test("code-researcher then delivery: delivery leaves the registered agent alone", async () => {
     const fake = createFakeContext()
-    await researcher.setup(fake.context)
+    await codeResearcher.setup(fake.context)
     await delivery.setup(fake.context)
     expectOne(fake)
-    expect(fake.agentUpdates.filter((id) => id === RESEARCHER)).toHaveLength(1)
+    expect(fake.agentUpdates.filter((id) => id === CODE_RESEARCHER)).toHaveLength(1)
   })
 
-  test("delivery then researcher, with plugin.list reporting agent-researcher: delivery skips its copy", async () => {
+  test("delivery then code-researcher, with plugin.list reporting agent-researcher: delivery skips its copy", async () => {
     const fake = withPlugins(createFakeContext(), [{ id: "srobroek.delivery" }, { id: "srobroek.agent-researcher" }])
     await delivery.setup(fake.context)
-    expect(fake.agents.has(RESEARCHER)).toBe(false)
-    await researcher.setup(fake.context)
+    expect(fake.agents.has(CODE_RESEARCHER)).toBe(false)
+    await codeResearcher.setup(fake.context)
     expectOne(fake)
   })
 
-  test("delivery then researcher, unseen by plugin.list: researcher replaces the copy", async () => {
+  test("delivery then code-researcher, unseen by plugin.list: code-researcher replaces the copy", async () => {
     const fake = withPlugins(createFakeContext(), [{ id: "srobroek.delivery" }])
     const context = fake.context as unknown as Record<string, unknown>
     context.model = {
@@ -158,17 +158,17 @@ describe("delivery fallback for researcher", () => {
       }),
     }
     await delivery.setup(fake.context)
-    expect(fake.agents.get(RESEARCHER)?.model).toBeDefined()
-    await researcher.setup(fake.context)
+    expect(fake.agents.get(CODE_RESEARCHER)?.model).toBeDefined()
+    await codeResearcher.setup(fake.context)
     expectOne(fake)
   })
 })
 
-describe("beads routing (FO-5) of researcher", () => {
-  test("beads routing (FO-5) admits researcher for an execution_agent_type=researcher bead", () => {
-    const bead = [{ id: "repo-abc", agentType: RESEARCHER }]
-    expect(decideRouting(RESEARCHER, bead).kind).toBe("allow")
-    expect(decideRouting(`researcher:${RESEARCHER}`, bead).kind).toBe("allow")
+describe("beads routing (FO-5) of code-researcher", () => {
+  test("beads routing (FO-5) admits code-researcher for execution_agent_type=code-researcher", () => {
+    const bead = [{ id: "repo-abc", agentType: CODE_RESEARCHER }]
+    expect(decideRouting(CODE_RESEARCHER, bead).kind).toBe("allow")
+    expect(decideRouting(`code-researcher:${CODE_RESEARCHER}`, bead).kind).toBe("allow")
     expect(decideRouting("general", bead).kind).toBe("block")
   })
 })

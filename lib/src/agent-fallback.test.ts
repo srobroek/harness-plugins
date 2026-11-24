@@ -15,13 +15,13 @@ import type { AgentFile } from "./agent-files.ts"
 import { createFakeContext } from "./testing.ts"
 
 const file: AgentFile = {
-  id: "researcher",
+  id: "code-researcher",
   mode: "subagent",
   request: { headers: { "x-opencode-model-role": "standard" } },
   permissions: [{ action: "read", resource: "*", effect: "allow" }],
   system: "prompt",
 }
-const owners = { researcher: "agent-researcher" }
+const owners = { "code-researcher": "agent-researcher" }
 
 describe("listsPlugin", () => {
   test("matches the srobroek id or a package target", () => {

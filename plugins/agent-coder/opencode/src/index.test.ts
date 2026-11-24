@@ -42,7 +42,7 @@ test("allows only coding tools", async () => {
 test("spawns only explore, mechanic, code-reviewer and operator", async () => {
   const { rules } = await setup()
   for (const child of ["explore", "mechanic", "code-reviewer", "operator"]) expect(permissionEffect(rules, "subagent", child)).toBe("allow")
-  for (const child of ["general", "coder", "implementer", "researcher"])
+  for (const child of ["general", "coder", "implementer", "code-researcher"])
     expect(permissionEffect(rules, "subagent", child)).toBe("deny")
 })
 

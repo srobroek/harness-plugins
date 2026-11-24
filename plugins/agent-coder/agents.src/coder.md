@@ -1,5 +1,5 @@
 ---
-description: "Use for any code development (implement, fix, refactor, debug, test, build, profile, upgrade deps, code questions); general only for non-code work."
+description: "Use for scoped code work: implement, fix, debug, test or answer code questions; follows quality-code-design, delegates reviews, verifies changes."
 mode: subagent
 steps: 150
 request:

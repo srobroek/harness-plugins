@@ -1,11 +1,11 @@
 # agent-researcher
 
-A `researcher` subagent that answers one scoped research question from the
+A `code-researcher` subagent that answers one scoped research question from the
 codebase, its docs and the web, with cited observations kept apart from inferences.
 
 ## Agent
 
-`researcher` (mode `subagent`, steps 80) takes a question in its brief, or a bead id that
+`code-researcher` (mode `subagent`, steps 80) takes a question in its brief, or a bead id that
 holds one. It:
 
 - reads the narrowest relevant repository paths first, spawns `explore` for broad
@@ -30,19 +30,19 @@ so the skill listing stays out of its requests. Reads outside the workspace (`ex
 The agent pins no model. It declares the `standard` tier through the
 `x-opencode-model-role` request header, so with the model-roles plugin that tier
 picks its model; without it the agent inherits the caller's model. Set
-`agent.researcher.model` to pin one.
+`agent.code-researcher.model` to pin one.
 
 ## With delivery
 
-The id stays `researcher`, so beads routing (`execution_agent_type=researcher`)
-works with or without delivery. Delivery ships the same agent as a fallback and
-skips it when this plugin (`srobroek.agent-researcher`) is installed. If delivery's
-copy registers first, this plugin replaces it rather than layering over it, so either load order leaves one
+The id is `code-researcher`; callers and beads must use `execution_agent_type=code-researcher`.
+Delivery ships the same agent as a fallback and skips it when this plugin
+(`srobroek.agent-researcher`) is installed. If delivery's copy registers first,
+this plugin replaces it rather than layering over it, so either load order leaves one
 agent.
 
 ## MCP tools
 
-`researcher` cannot call MCP tools unless a rule allows them. The `tools` option adds allow rules for MCP tool patterns after the agent's own rules. OpenCode names an MCP tool's permission action `<server>_<tool>`, so `context7_*` allows every tool of the `context7` server and `context7_query-docs` allows one. Characters outside letters, digits, `_` and `-` become `_`.
+`code-researcher` cannot call MCP tools unless a rule allows them. The `tools` option adds allow rules for MCP tool patterns after the agent's own rules. OpenCode names an MCP tool's permission action `<server>_<tool>`, so `context7_*` allows every tool of the `context7` server and `context7_query-docs` allows one. Characters outside letters, digits, `_` and `-` become `_`.
 
 | Option | Default | Effect |
 | --- | --- | --- |

@@ -3,20 +3,20 @@ import { join } from "node:path"
 import { applyOwnedAgent, isCopyOf } from "@srobroek/opencode-lib/agent-fallback"
 import { type AgentPermission, permissionEffect, readAgentFile } from "@srobroek/opencode-lib/agent-files"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
-import plugin, { AGENTS_DIR, RESEARCHER } from "./index.ts"
+import plugin, { AGENTS_DIR, CODE_RESEARCHER } from "./index.ts"
 
-const file = readAgentFile(join(AGENTS_DIR, `${RESEARCHER}.md`))
+const file = readAgentFile(join(AGENTS_DIR, `${CODE_RESEARCHER}.md`))
 
-describe("researcher agent", () => {
-  test("registers researcher and disposes it", async () => {
+describe("code-researcher agent", () => {
+  test("registers code-researcher and disposes it", async () => {
     const fake = createFakeContext()
     const cleanup = await plugin.setup(fake.context)
     expect(fake.skills.size).toBe(0)
-    expect(fake.agents.get(RESEARCHER)).toMatchObject({
+    expect(fake.agents.get(CODE_RESEARCHER)).toMatchObject({
       mode: "subagent",
       request: { headers: { "x-opencode-model-role": "standard" } },
     })
-    expect(fake.agents.get(RESEARCHER)?.model).toBeUndefined()
+    expect(fake.agents.get(CODE_RESEARCHER)?.model).toBeUndefined()
     await cleanup?.()
     expect(fake.active()).toBe(0)
   })
@@ -24,7 +24,7 @@ describe("researcher agent", () => {
   test("allows web and code reads and only explore as a child", async () => {
     const fake = createFakeContext()
     await plugin.setup(fake.context)
-    const rules = fake.agents.get(RESEARCHER)?.permissions as AgentPermission[]
+    const rules = fake.agents.get(CODE_RESEARCHER)?.permissions as AgentPermission[]
     for (const action of ["read", "grep", "glob", "execute", "lsp_hover", "webfetch", "websearch", "shell", "repomix_pack"])
       expect(permissionEffect(rules, action)).toBe("allow")
     expect(permissionEffect(rules, "skill", "repomix")).toBe("allow")
@@ -32,7 +32,7 @@ describe("researcher agent", () => {
     for (const skill of ["beads-guide", "chezmoi-editor"]) expect(permissionEffect(rules, "skill", skill)).toBe("deny")
     for (const action of ["edit", "write", "question", "some_plugin_tool"]) expect(permissionEffect(rules, action)).toBe("deny")
     expect(permissionEffect(rules, "subagent", "explore")).toBe("allow")
-    for (const child of ["general", "implementer", "researcher"]) expect(permissionEffect(rules, "subagent", child)).toBe("deny")
+    for (const child of ["general", "implementer", "code-researcher"]) expect(permissionEffect(rules, "subagent", child)).toBe("deny")
     expect(permissionEffect(rules, "external_directory")).toBe("ask")
   })
 
@@ -44,7 +44,7 @@ describe("researcher agent", () => {
 })
 
 describe("shared agent copies", () => {
-  test("another plugin's researcher keeps its fields and gains these permissions after its own", () => {
+  test("another plugin's code-researcher keeps its fields and gains these permissions after its own", () => {
     const own: AgentPermission = { action: "edit", resource: "*", effect: "allow" }
     const draft = { system: "mine", permissions: [own] }
     expect(isCopyOf(draft, file)).toBe(false)

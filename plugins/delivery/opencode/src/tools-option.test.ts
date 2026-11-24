@@ -3,7 +3,7 @@ import { type AgentPermission, permissionEffect } from "@srobroek/opencode-lib/a
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import plugin from "./index.ts"
 
-const IDS = ["implementer", "implementer-high", "researcher"]
+const IDS = ["implementer", "implementer-high", "code-researcher"]
 
 const rulesOf = async (options?: Record<string, unknown>) => {
   const fake = createFakeContext({ options })

@@ -121,7 +121,7 @@ permissions:
     resource: "explore"
     effect: allow
   - action: subagent
-    resource: "researcher"
+    resource: "code-researcher"
     effect: allow
   - action: subagent
     resource: "adversarial-challenger"
@@ -165,7 +165,7 @@ After 3 refuted hypotheses, or when every remaining hypothesis is untestable, sp
 
 ## Helpers
 
-`explore` for codebase lookups, `researcher` for external questions (upstream issues, library behaviour), `architect` for design questions, `seance` for what earlier sessions learned. Subagents use their own permissions, so tell any that can write to stay inside the worktree.
+`explore` for codebase lookups, `code-researcher` for external questions (upstream issues, library behaviour), `architect` for design questions, `seance` for what earlier sessions learned. Subagents use their own permissions, so tell any that can write to stay inside the worktree.
 
 Subagent depth is limited (`experimental.subagent_depth`; the default 1 lets a subagent spawn none). If a spawn is refused or unavailable, do that work yourself and say so in the report. For `adversarial-challenger`, run its facts-only self-check: list the facts, the refuted hypotheses and what each would predict, then look for the explanation you have not tried. Never fail the task over a refused spawn.
 

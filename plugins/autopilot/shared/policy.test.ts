@@ -19,7 +19,7 @@ test.each([
   ["explore", false],
   ["code-reviewer", false],
   ["researcher", false],
-  ["coder", true],
+  ["code-researcher", false],
   ["general", true],
   [undefined, true],
 ])("holdsLane(%p) is %p", (agent, expected) => {
@@ -228,10 +228,16 @@ describe("rootIntact", () => {
 
 describe("recordableLane", () => {
   const base = { agent: "coder", directory: "/w/a", listed: new Set(["/real/a", "/real/main"]), primary: new Set(["/real/main"]), canon: real({ "/w/a": "/real/a", "/w/main": "/real/main", "/w/gone": "/real/gone" }), linked: (dir: string) => dir !== "/w/main" }
+  test("researcher agents do not hold a write lane", () => {
+    expect(holdsLane("researcher")).toBe(false)
+    expect(holdsLane("code-researcher")).toBe(false)
+  })
+
+
   test("a writer in a listed, linked, non-primary worktree is recorded", () => {
     expect(recordableLane(base)).toBe(true)
   })
-  test.each(["explore", "researcher", "code-reviewer", "pr-reviewer", "security-auditor", "debug", "operator", "plan"])("a %s lane is not recorded", (agent) => {
+  test.each(["explore", "researcher", "code-researcher", "code-reviewer", "pr-reviewer", "security-auditor", "debug", "operator", "plan"])("a %s lane is not recorded", (agent) => {
     expect(recordableLane({ ...base, agent })).toBe(false)
   })
   test("the primary checkout is not recorded, even though the project lists it", () => {

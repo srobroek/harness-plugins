@@ -35,7 +35,7 @@ describe("parseVerdict", () => {
       summary: "diff only",
       late: true,
     })
-    expect(parseVerdict(`\`\`\`\nVERDICT: DONE — answered\n\`\`\`${json({ verdict: "DONE" })}`, "researcher")).toMatchObject({
+    expect(parseVerdict(`\`\`\`\nVERDICT: DONE — answered\n\`\`\`${json({ verdict: "DONE" })}`, "code-researcher")).toMatchObject({
       verdict: "DONE",
       summary: "answered",
       late: true,
@@ -55,8 +55,8 @@ describe("parseVerdict", () => {
     expect(parseVerdict("Done! All good.", "implementer")).toMatchObject({ verdict: "MALFORMED" })
     expect(parseVerdict(`VERDICT: APPROVE${json({})}`, "implementer")).toMatchObject({ verdict: "MALFORMED" })
     expect(parseVerdict("VERDICT: DONE", "implementer")).toMatchObject({ verdict: "MALFORMED" })
-    expect(parseVerdict("VERDICT: DONE\n```json\n{oops\n```", "researcher")).toMatchObject({ verdict: "MALFORMED" })
-    expect(parseVerdict(`VERDICT: DONE${json([1])}`, "researcher")).toMatchObject({ verdict: "MALFORMED" })
+    expect(parseVerdict("VERDICT: DONE\n```json\n{oops\n```", "code-researcher")).toMatchObject({ verdict: "MALFORMED" })
+    expect(parseVerdict(`VERDICT: DONE${json([1])}`, "code-researcher")).toMatchObject({ verdict: "MALFORMED" })
     expect(parseVerdict(`VERDICT: DONE${json({ verdict: "BLOCKED" })}`, "operator")).toMatchObject({
       verdict: "MALFORMED",
     })

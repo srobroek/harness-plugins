@@ -19,7 +19,7 @@ import { MODEL_FALLBACK_HEADER } from "@srobroek/opencode-lib/model-roles"
 export const AGENT_IDS = [
   "implementer",
   "implementer-high",
-  "researcher",
+  "code-researcher",
   "pr-reviewer",
   "operator",
   "shepherd",
@@ -143,7 +143,7 @@ export function hasModelRoles(listed: unknown): boolean {
  * when the owner is not installed and no earlier plugin added the id (see
  * `@srobroek/opencode-lib/agent-fallback`). Keep the copy in sync with the owner's file.
  */
-export const FALLBACK_AGENTS: FallbackOwners = { researcher: "agent-researcher", "pr-reviewer": "agent-reviewer" }
+export const FALLBACK_AGENTS: FallbackOwners = { "code-researcher": "agent-researcher", "pr-reviewer": "agent-reviewer" }
 
 /**
  * The model to give an agent. An explicit `models` option wins; `false` means none.

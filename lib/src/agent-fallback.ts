@@ -40,7 +40,7 @@ export function listsPlugin(listed: unknown, name: string): boolean {
   )
 }
 
-/** Fallback agent id to the name of the plugin that owns it (`agent-researcher` for `srobroek.agent-researcher`). */
+/** Fallback agent id to the name of the plugin that owns it (`code-researcher` for `srobroek.agent-researcher`). */
 export type FallbackOwners = Readonly<Record<string, string>>
 
 /** The fallback agent ids whose owning plugin `plugin.list` reports installed. */

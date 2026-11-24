@@ -34,7 +34,7 @@ Its permissions are an allowlist; every other tool, questions included, is denie
 | Tool | Why |
 | --- | --- |
 | `read`, `grep`, `glob`, `edit` (covers `write` and `patch`), `shell` | Code work, builds, tests, profilers |
-| `webfetch`, `websearch` | Library, API and changelog docs without spawning a researcher |
+| `webfetch`, `websearch` | Library, API and changelog docs without spawning the `code-researcher` agent |
 | `execute` (Code Mode) | Plugin and MCP tools are reached through it by default |
 | `lsp_*` | Diagnostics and navigation from the lsp MCP server |
 | `dep_scan`, `dep_apply` | Dependency upgrades (dep-update plugin); `dep_apply` still prompts per bump |

@@ -339,10 +339,10 @@ Use the mechanic agent to rename the function add to sum everywhere in this repo
 
 **Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/agent-researcher/opencode'`.
 
-### Agent `researcher`
+### Agent `code-researcher`
 
 ```text
-Use the researcher agent to answer: what is the default merge method of `gh pr merge` when none is given? Cite sources.
+Use the code-researcher agent to answer: what is the default merge method of `gh pr merge` when none is given? Cite sources.
 ```
 
 **Expect:** starts with `VERDICT: DONE|BLOCKED`, each claim marked observation or inference with a URL, and a fenced `json` block (`verdict`, `answer`) at the end.
@@ -565,7 +565,7 @@ Run `BEADS_ACTOR=manual/test bd mol pour design-touch --var surface=/ --var scop
 ### Gate `bead-agent-routing` (FO-5)
 
 ```text
-Run exactly: BEADS_ACTOR=manual/test bd create "route probe" -t task --metadata '{"execution_agent_type":"researcher"}' --json
+Run exactly: BEADS_ACTOR=manual/test bd create "route probe" -t task --metadata '{"execution_agent_type":"code-researcher"}' --json
 ```
 
 Then, with the new id:
@@ -832,10 +832,10 @@ Use the shepherd agent to land PR #<n> in my GitHub sandbox repo.
 **Expect:** it requires exact-head approval and green checks, calls `delivery_land`, closes beads, runs `delivery_cleanup`, and replies `VERDICT: COMPLETE|BLOCKED`.
 **If not:** `plugins/delivery/common/agents/shepherd.md`.
 
-### Agents `researcher` and `pr-reviewer` (fallback copies)
+### Agents `code-researcher` and `pr-reviewer` (fallback copies)
 
 Uninstall agent-researcher and agent-reviewer, restart, then rerun the
-[researcher](#agent-researcher) and [pr-reviewer](#agent-pr-reviewer-hidden) prompts.
+[code-researcher](#agent-researcher) and [pr-reviewer](#agent-pr-reviewer-hidden) prompts.
 
 **Expect:** the same verdict formats, now from delivery's copies with their fallback models.
 **If not:** `FALLBACK_AGENTS` in `plugins/delivery/opencode/src/agents.ts`.

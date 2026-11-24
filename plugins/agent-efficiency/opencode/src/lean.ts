@@ -35,7 +35,7 @@ export const DEFAULT_LEAN_AGENTS: ReadonlyArray<string> = [
   "seance",
   "security-auditor",
   "code-reviewer",
-  "researcher",
+  "code-researcher",
   "architect",
   "speckit-sync",
   "whats-new",

@@ -31,7 +31,7 @@ export const REPROMPT =
 export const READ_ONLY_AGENTS: ReadonlySet<string> = new Set([
   "explore",
   "researcher",
-  "code-reviewer",
+  "code-researcher",
   "pr-reviewer",
   "security-auditor",
   "adversarial-challenger",

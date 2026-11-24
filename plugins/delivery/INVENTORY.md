@@ -6,7 +6,7 @@ Pull-request landing with merge proof and receipts, receipt-driven worktree clea
 | Kind | opencode |
 | --- | --- |
 | skills | delivery-fan-out, delivery-git-workflow |
-| agents | implementer, implementer-high, operator, orchestrator, pr-reviewer, researcher, shepherd |
+| agents | code-researcher, implementer, implementer-high, operator, orchestrator, pr-reviewer, shepherd |
 | commands | - |
 | rules | - |
 | hooks | - |

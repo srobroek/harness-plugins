@@ -9,7 +9,7 @@ const plugins = join(import.meta.dir, "..", "plugins")
 const COPIES: Record<string, string[]> = {
   "adversarial-challenger": ["agent-reviewer/common/agents/adversarial-challenger.opencode.md", "quality/common/agents/adversarial-challenger.opencode.md"],
   "pr-reviewer": ["agent-reviewer/common/agents/pr-reviewer.opencode.md", "delivery/common/agents/pr-reviewer.md"],
-  researcher: ["agent-researcher/common/agents/researcher.md", "delivery/common/agents/researcher.md"],
+  "code-researcher": ["agent-researcher/common/agents/code-researcher.md", "delivery/common/agents/code-researcher.md"],
 }
 const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---\r?\n/
 const body = (text: string) => text.replace(FRONTMATTER, "")

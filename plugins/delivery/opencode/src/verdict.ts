@@ -11,14 +11,14 @@
 export const AGENT_VERDICTS: Readonly<Record<string, readonly string[]>> = {
   implementer: ["DONE", "BLOCKED", "SPLIT"],
   "implementer-high": ["DONE", "BLOCKED", "SPLIT"],
-  researcher: ["DONE", "BLOCKED"],
+  "code-researcher": ["DONE", "BLOCKED"],
   operator: ["DONE", "BLOCKED"],
   shepherd: ["COMPLETE", "BLOCKED"],
   "pr-reviewer": ["APPROVE", "REQUEST-CHANGES", "COMMENT"],
 }
 
 /** Agents whose reply ends with a JSON block. */
-const REPORTS_JSON = new Set(["implementer", "implementer-high", "researcher", "operator", "shepherd"])
+const REPORTS_JSON = new Set(["implementer", "implementer-high", "code-researcher", "operator", "shepherd"])
 
 export type DeliveryVerdict =
   | {

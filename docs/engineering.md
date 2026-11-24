@@ -213,7 +213,7 @@ Three `x-omp-*` keys in `agents.src/<id>.md` steer the OMP form only. The build 
 | Key | Effect | Used by |
 |---|---|---|
 | `x-omp-model` | OMP roles that replace the tier's `model:` | `architect` and `concept` (`@architect, @slow`), `ui-ux-specialist` and `ui-implementer` (`@designer, @slow`), `spec` (`@plan, @slow`) |
-| `x-omp-shell` | why a read-only agent keeps `bash` and `eval`, written into the generated comment | agents whose prompt runs commands, such as `code-reviewer` (`git diff`) and `researcher` (`bd`) |
+| `x-omp-shell` | why a read-only agent keeps `bash` and `eval`, written into the generated comment | agents whose prompt runs commands, such as `code-reviewer` (`git diff`) and `code-researcher` (`bd`) |
 | `x-omp-tools` | OMP tools to add that no OpenCode permission stands for | `pr-reviewer` (`github`) |
 
 The OMP `tools` key is an allowlist of built-ins. OpenCode allows an action that no rule names, so the translator reads a `permissions` list on top of that default. Every shipped agent starts from a deny-all rule. `journey-validator` has only deny rules, so it gets every built-in it does not deny. Only an agent with no rules keeps the OMP default tools. Each unrestricted allow maps to built-ins:
@@ -249,7 +249,7 @@ OMP merges agents by name, and the first one found wins. A plugin agent also rep
 - `task`
 - `sonic`
 
-OMP has no plugin dependency, so `researcher`, `pr-reviewer` and `adversarial-challenger` each ship from two plugins. `ompNameConflicts` makes `bun run build` fail in two cases:
+OMP has no plugin dependency, so `code-researcher`, `pr-reviewer` and `adversarial-challenger` each ship from two plugins. `ompNameConflicts` makes `bun run build` fail in two cases:
 
 - The OMP files of one agent in two plugins differ in more than the source comment.
 - A plugin agent takes a bundled name.

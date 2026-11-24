@@ -92,8 +92,8 @@ describe("tool rules", () => {
 
 describe("mcpGrant", () => {
   test("grants the `tools` rules only to the shipped agents the shared set allows", () => {
-    const grant = mcpGrant(undefined, ["coder", "pr-reviewer", "operator", "researcher"])
-    expect(grant.agents).toEqual(["coder", "researcher"])
+    const grant = mcpGrant(undefined, ["coder", "pr-reviewer", "operator", "code-researcher"])
+    expect(grant.agents).toEqual(["coder", "code-researcher"])
     expect(grant.rules).toEqual(toolRules(DEFAULT_MCP_TOOLS))
   })
 })
