@@ -1,11 +1,10 @@
 # docs
 
-Documentation MCP servers for OpenCode, OMP and Pi, with the OpenAI developer
-docs server available on request. The shared source is
+Documentation MCP servers for OpenCode, OMP and Pi. The shared source is
 [`common/.mcp.json`](common/.mcp.json); harness-kit generates the OMP, Claude and
-Pi MCP declarations from it. Context7 is enabled without a key; when
-`CONTEXT7_API_KEY` is set, OpenCode and Pi send it as the `CONTEXT7_API_KEY`
-header. OMP omits servers that require missing credentials.
+Pi MCP declarations from it. Context7 works without a key. When
+`CONTEXT7_API_KEY` is set, OpenCode and Pi send it as a `CONTEXT7_API_KEY` header.
+OMP omits the optional header. OpenAI Developer Docs stays off by default.
 
 | Server | Default | What it serves |
 | --- | --- | --- |
