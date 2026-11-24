@@ -37,6 +37,13 @@
       "category": "development"
     },
     {
+      "name": "aws",
+      "description": "AWS working guidance: route AWS tasks through the AWS MCP Server's guided skills, verify against AWS documentation, and price with the AWS Pricing MCP server.",
+      "source": "./plugins/aws/omp",
+      "version": "0.9.2",
+      "category": "development"
+    },
+    {
       "name": "build",
       "description": "External-repository worker subagent: clone, follow the target's conventions, edit, verify, and publish only when delegated.",
       "source": "./plugins/build/omp",
@@ -56,6 +63,13 @@
       "source": "./plugins/debate/omp",
       "version": "0.7.4",
       "category": "productivity"
+    },
+    {
+      "name": "docs",
+      "description": "Library and API documentation MCP servers for OpenCode: Context7, plus the OpenAI developer docs server on request.",
+      "source": "./plugins/docs/omp",
+      "version": "0.4.0",
+      "category": "development"
     },
     {
       "name": "eli5",

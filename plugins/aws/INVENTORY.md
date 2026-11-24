@@ -3,13 +3,13 @@
 
 AWS working guidance: route AWS tasks through the AWS MCP Server's guided skills, verify against AWS documentation, and price with the AWS Pricing MCP server.
 
-| Kind | opencode | claude | pi |
-| --- | --- | --- | --- |
-| skills | aws-guidance | aws-guidance | aws-guidance |
-| agents | - | - | - |
-| commands | - | - | - |
-| rules | - | - | - |
-| hooks | - | - | - |
-| tools | - | - | - |
-| extensions | index | - | - |
-| mcp | aws-mcp, aws-pricing | aws-mcp, aws-pricing | aws-mcp, aws-pricing |
+| Kind | opencode | claude | omp | pi |
+| --- | --- | --- | --- | --- |
+| skills | aws-guidance | aws-guidance | aws-guidance | aws-guidance |
+| agents | - | - | - | - |
+| commands | - | - | - | - |
+| rules | - | - | - | - |
+| hooks | - | - | - | - |
+| tools | - | - | - | - |
+| extensions | index | - | - | - |
+| mcp | aws-mcp, aws-pricing | aws-mcp, aws-pricing | aws-mcp, aws-pricing | aws-mcp, aws-pricing |

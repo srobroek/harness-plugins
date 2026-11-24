@@ -25,6 +25,15 @@ stays one per directory.
 Prerequisites: `uv` on `PATH`, and AWS credentials in the default chain for
 authenticated calls (set `AWS_PROFILE` before starting OpenCode to pick a profile).
 
+### OMP and Pi
+
+The shared MCP source is [`common/.mcp.json`](common/.mcp.json); harness-kit generates
+the OMP and Pi MCP declarations from it. Both servers are available in OMP and Pi:
+the AWS MCP Server is read-only and works without AWS credentials for documentation
+and guided skills, while AWS Pricing uses the default AWS credential chain for
+authenticated pricing queries. OMP does not substitute credential variables in
+plugin MCP configs, so configure any required credentials at user scope.
+
 ### When OpenCode adds them
 
 By default (`mcp: "auto"`) the plugin adds the servers only where the session's

@@ -3,13 +3,13 @@
 
 Library and API documentation MCP servers for OpenCode: Context7, plus the OpenAI developer docs server on request.
 
-| Kind | opencode |
-| --- | --- |
-| skills | - |
-| agents | - |
-| commands | - |
-| rules | - |
-| hooks | - |
-| tools | - |
-| extensions | index |
-| mcp | - |
+| Kind | opencode | omp | pi |
+| --- | --- | --- | --- |
+| skills | - | - | - |
+| agents | - | - | - |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | - | - |
+| tools | - | - | - |
+| extensions | index | - | - |
+| mcp | context7, openaiDeveloperDocs | context7, openaiDeveloperDocs | context7, openaiDeveloperDocs |
