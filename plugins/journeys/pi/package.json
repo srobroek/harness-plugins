@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/pi-user-journeys",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Author, validate and maintain user journeys: seven skills, the journeys.py helper, and the journey-scribe and journey-validator subagents.",
   "keywords": [
     "pi-package"
