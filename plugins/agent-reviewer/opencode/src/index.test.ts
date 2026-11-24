@@ -69,13 +69,12 @@ describe("agent-reviewer", () => {
     for (const skill of ["quality-code-design", "lang-rust", "review-security"]) expect(permissionEffect(pr, "skill", skill)).toBe("allow")
   })
 
-  test("code-reviewer has the read-only shell: inspection and fetches run, mutations do not", async () => {
+  test("code-reviewer has no shell: every command is denied, and it reads with read, grep, glob and LSP", async () => {
     const fake = createFakeContext()
     await plugin.setup(fake.context)
     const code = rules(fake, "code-reviewer")
-    for (const command of ["git diff main...HEAD", "git log --oneline -5", "git status", "git fetch origin pull/7/head", "gh pr diff 1", "gh pr view 1"])
-      expect(permissionEffect(code, "shell", command)).toBe("allow")
-    for (const command of ["git diff --output=x", "git log -p --output x", "git commit -m x", "rm -rf .", "gh pr merge 1", "bd close bd-1"])
+    expect(code.filter((rule) => rule.action === "shell" && rule.effect !== "deny")).toEqual([])
+    for (const command of ["git diff main...HEAD", "git status", "git fetch origin pull/7/head", "gh pr diff 1", "cat x"])
       expect(permissionEffect(code, "shell", command)).toBe("deny")
     for (const action of ["read", "grep", "glob", "lsp_diagnostics"]) expect(permissionEffect(code, action)).toBe("allow")
     for (const action of ["webfetch", "websearch"]) expect(permissionEffect(code, action)).toBe("deny")
