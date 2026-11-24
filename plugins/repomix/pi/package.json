@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/pi-repomix",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "Pack a local or remote repo into one file with repomix for bulk context: external repos, module packs and version diffs.",
   "keywords": [
     "pi-package"
