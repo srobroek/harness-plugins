@@ -6,6 +6,11 @@ does and observes end to end, validated against the running product.
 Ported from the omp-plugins `journeys` plugin.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-user-journeys
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/journeys/opencode'
