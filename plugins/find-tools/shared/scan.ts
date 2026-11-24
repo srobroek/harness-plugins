@@ -102,12 +102,17 @@ export type ScanParams = { query: string; sources?: string[] }
 export const SOURCE_TIMEOUT_MS = 10_000
 export const REPOSITORY = "srobroek/harness-plugins"
 export const REPO_SPEC = `github:${REPOSITORY}::path:plugins`
+const INVENTORY_URL = `https://raw.githubusercontent.com/${REPOSITORY}/main/inventory.json`
+/**
+ * The catalog each harness installs from. Claude Code and OMP read their own marketplace file.
+ * OpenCode installs straight from GitHub and Pi from npm, so neither has one; both read the
+ * generated inventory, which lists each plugin's harnesses (and its npm `piName`).
+ */
 export const CATALOG_URLS: Record<Harness, string> = {
   claude: `https://raw.githubusercontent.com/${REPOSITORY}/main/.claude-plugin/marketplace.json`,
-  opencode: `https://raw.githubusercontent.com/${REPOSITORY}/main/.claude-plugin/marketplace.json`,
+  opencode: INVENTORY_URL,
   omp: `https://raw.githubusercontent.com/${REPOSITORY}/main/.omp-plugin/marketplace.json`,
-  // Pi has no marketplace file; the generated inventory lists each plugin's harnesses and npm name.
-  pi: `https://raw.githubusercontent.com/${REPOSITORY}/main/inventory.json`,
+  pi: INVENTORY_URL,
 }
 export const DEFAULT_CATALOG_URL = CATALOG_URLS.opencode
 
@@ -278,9 +283,9 @@ type CatalogEntry = { name: string; description?: string; source?: string; piNam
 /**
  * Entries of a Claude or OMP marketplace (`plugins`), a skill index (`skills`), a bare array,
  * or this repository's generated `inventory.json` (`plugins` whose entries carry `harnesses`).
- * From an inventory only plugins that ship a Pi tree are kept, with their npm `piName`.
+ * From an inventory only plugins that ship a tree for `harness` are kept, with their npm `piName`.
  */
-export function catalogEntries(json: unknown): { kind: "marketplace" | "skills" | "inventory"; entries: CatalogEntry[] } | undefined {
+export function catalogEntries(json: unknown, harness: Harness = "opencode"): { kind: "marketplace" | "skills" | "inventory"; entries: CatalogEntry[] } | undefined {
   const obj = record(json)
   const list = Array.isArray(json) ? json : Array.isArray(obj?.plugins) ? obj.plugins : obj?.skills
   if (!Array.isArray(list)) return undefined
@@ -291,7 +296,7 @@ export function catalogEntries(json: unknown): { kind: "marketplace" | "skills" 
     const entry = record(item)
     const name = str(entry?.name)
     if (!name) continue
-    if (inventory && record(record(entry?.harnesses)?.pi) === undefined) continue
+    if (inventory && record(record(entry?.harnesses)?.[harness]) === undefined) continue
     const description = str(entry?.description)
     const source = str(entry?.source) ?? str(record(entry?.source)?.url) ?? str(record(entry?.source)?.repo)
     const piName = inventory ? str(entry?.piName) : undefined
@@ -306,7 +311,7 @@ export function catalogIndexUrl(url: string): string {
 }
 
 export function catalogHits(url: string, own: boolean, json: unknown, terms: readonly string[], harness: Harness = "opencode"): Hit[] | undefined {
-  const parsed = catalogEntries(json)
+  const parsed = catalogEntries(json, harness)
   if (!parsed) return undefined
   const ranked = parsed.entries
     .map((entry) => ({ entry, score: terms.length ? relevance(terms, entry.name, entry.description) : 1 }))

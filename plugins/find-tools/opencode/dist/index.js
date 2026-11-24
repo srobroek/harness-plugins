@@ -834,11 +834,12 @@ var SOURCES = [
 var SOURCE_TIMEOUT_MS = 1e4;
 var REPOSITORY = "srobroek/harness-plugins";
 var REPO_SPEC = `github:${REPOSITORY}::path:plugins`;
+var INVENTORY_URL = `https://raw.githubusercontent.com/${REPOSITORY}/main/inventory.json`;
 var CATALOG_URLS = {
   claude: `https://raw.githubusercontent.com/${REPOSITORY}/main/.claude-plugin/marketplace.json`,
-  opencode: `https://raw.githubusercontent.com/${REPOSITORY}/main/.claude-plugin/marketplace.json`,
+  opencode: INVENTORY_URL,
   omp: `https://raw.githubusercontent.com/${REPOSITORY}/main/.omp-plugin/marketplace.json`,
-  pi: `https://raw.githubusercontent.com/${REPOSITORY}/main/inventory.json`
+  pi: INVENTORY_URL
 };
 var DEFAULT_CATALOG_URL = CATALOG_URLS.opencode;
 function catalogUrlFor(harness) {
@@ -985,7 +986,7 @@ async function scanLocal(local) {
     return failed("local", failures.join("; "), { failures });
   return { source: "local", ok: true, hits, ...failures.length ? { failures } : {} };
 }
-function catalogEntries(json) {
+function catalogEntries(json, harness = "opencode") {
   const obj = record(json);
   const list = Array.isArray(json) ? json : Array.isArray(obj?.plugins) ? obj.plugins : obj?.skills;
   if (!Array.isArray(list))
@@ -998,7 +999,7 @@ function catalogEntries(json) {
     const name = str(entry?.name);
     if (!name)
       continue;
-    if (inventory && record(record(entry?.harnesses)?.pi) === undefined)
+    if (inventory && record(record(entry?.harnesses)?.[harness]) === undefined)
       continue;
     const description = str(entry?.description);
     const source = str(entry?.source) ?? str(record(entry?.source)?.url) ?? str(record(entry?.source)?.repo);
@@ -1011,7 +1012,7 @@ function catalogIndexUrl(url) {
   return url.endsWith("/") ? `${url}index.json` : url;
 }
 function catalogHits(url, own, json, terms, harness = "opencode") {
-  const parsed = catalogEntries(json);
+  const parsed = catalogEntries(json, harness);
   if (!parsed)
     return;
   const ranked = parsed.entries.map((entry) => ({ entry, score: terms.length ? relevance(terms, entry.name, entry.description) : 1 })).filter(({ score }) => score > 0).sort((a, b) => b.score - a.score).slice(0, SEARCH_CAP);
