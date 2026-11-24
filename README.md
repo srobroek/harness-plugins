@@ -1,9 +1,8 @@
 # harness-plugins
 
-Agent plugins by Sjors Robroek for OpenCode and Claude Code. The repository is set up with
+Agent plugins for OpenCode and Claude Code. The repository is set up with
 [`@srobroek/harness-kit`](https://github.com/srobroek/harness-kit), which generates the
 per-harness manifests, the Claude Code marketplace and the inventories from `plugins/<name>/`.
-The plugins began in `srobroek/opencode-plugins`, whose history this repository carries.
 
 | Field | Value |
 | --- | --- |
@@ -60,15 +59,6 @@ claude plugin marketplace add srobroek/harness-plugins
 claude plugin install worktrunk@harness-plugins
 ```
 
-The CAD plugin now lives in [srobroek/cad-agent](https://github.com/srobroek/cad-agent). To install
-it for OpenCode from a checkout, set `CAD_AGENT` to that checkout and run:
-
-```sh
-CAD_AGENT=/path/to/cad-agent
-python3 "$CAD_AGENT/harness/install.py" --harness opencode
-```
-
-See the [cad-agent install instructions](https://github.com/srobroek/cad-agent#install) for other harnesses.
 
 Plugins with `claude` in their `harnesses` are in the marketplace. They carry the skills, the
 `.mcp.json` where there is one, the subagents translated by `scripts/claude-agents.ts`, and hooks.
@@ -117,9 +107,8 @@ Load a local checkout by adding `plugins/<name>/opencode` to `plugins` in `openc
 
 ```sh
 bun scripts/convert-agent.ts --out .opencode/agents \
-  --fragment model-roles.json ../omp-plugins/delivery/agents/*.md
+  --fragment model-roles.json plugins/delivery/agents.src/*.md
 ```
-
 - The omp `@role` becomes the `x-opencode-model-role` request header with the model-roles tier
   it stands for (`cheap`, `standard`, `strong`, `reviewer`, `orchestrate`). Old role names map to their tier:
   `smol`, `commit` and `tiny` to `cheap`, `task` to `standard`, `slow`, `plan`, `architect` and
@@ -169,8 +158,6 @@ Renovate moves the package and the workflow tags in one pull request, using the 
 
 ## Migration notes
 
-- The Codex marketplace of `srobroek/opencode-plugins` was dropped; only OpenCode and Claude Code are generated.
-- The stale-branches cron of `srobroek/opencode-plugins` was not carried over.
 
 ## License
 
