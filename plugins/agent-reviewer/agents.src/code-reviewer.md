@@ -1,17 +1,25 @@
 ---
 description: "Read-only review of a local diff (working tree, branch or commits) for bugs the author wants fixed before merge; returns a verdict."
-x-omp-shell: "it reads the patch with git diff, git log and git show"
-x-omp-tools: bash
 mode: subagent
 steps: 80
 request:
   headers:
     x-opencode-model-role: reviewer
+# Non-interactive and shell-free: it runs in background sessions where nobody can answer a prompt, so every
+# rule allows or denies. It has no shell at all; command-text rules are no argument check. The caller supplies
+# the patch (`git diff`, `gh pr diff` output) as a review packet. `read` denies secret paths; with no shell,
+# no other tool prints a whole file.
 permissions:
   - action: "*"
     resource: "*"
     effect: deny
   - action: read
+    resource: "*"
+    effect: allow
+  - action: grep
+    resource: "*"
+    effect: allow
+  - action: glob
     resource: "*"
     effect: allow
   - action: read
@@ -22,12 +30,6 @@ permissions:
     effect: deny
   - action: read
     resource: "*.env.example"
-    effect: allow
-  - action: grep
-    resource: "*"
-    effect: allow
-  - action: glob
-    resource: "*"
     effect: allow
   - action: "lsp_*"
     resource: "*"
@@ -53,111 +55,6 @@ permissions:
   - action: skill
     resource: toolchain-guide
     effect: allow
-  # Non-interactive: nobody can answer a prompt in a background session, so every rule allows or denies.
-  # gh api is GET by default, so any -X/--method (even GET) or field/input flag is denied wherever it appears.
-  # Last match wins: deny all, allow the read commands, then deny the write forms and command chaining.
-  - action: shell
-    resource: "*"
-    effect: deny
-  - action: shell
-    resource: "git diff*"
-    effect: allow
-  - action: shell
-    resource: "git log*"
-    effect: allow
-  - action: shell
-    resource: "git show*"
-    effect: allow
-  - action: shell
-    resource: "git status*"
-    effect: allow
-  - action: shell
-    resource: "gh pr view*"
-    effect: allow
-  - action: shell
-    resource: "gh pr diff*"
-    effect: allow
-  - action: shell
-    resource: "gh pr checks*"
-    effect: allow
-  - action: shell
-    resource: "gh api *"
-    effect: allow
-  - action: shell
-    resource: "rg *"
-    effect: allow
-  - action: shell
-    resource: "ls*"
-    effect: allow
-  - action: shell
-    resource: "cat *"
-    effect: allow
-  - action: shell
-    resource: "head *"
-    effect: allow
-  - action: shell
-    resource: "tail *"
-    effect: allow
-  - action: shell
-    resource: "wc *"
-    effect: allow
-  - action: shell
-    resource: "git * --output*"
-    effect: deny
-  - action: shell
-    resource: "gh api* -f*"
-    effect: deny
-  - action: shell
-    resource: "gh api* -F*"
-    effect: deny
-  - action: shell
-    resource: "gh api* --field*"
-    effect: deny
-  - action: shell
-    resource: "gh api* --raw-field*"
-    effect: deny
-  - action: shell
-    resource: "gh api* --input*"
-    effect: deny
-  - action: shell
-    resource: "gh api* -X*"
-    effect: deny
-  - action: shell
-    resource: "gh api* --method*"
-    effect: deny
-  - action: shell
-    resource: "gh api *graphql*"
-    effect: deny
-  - action: shell
-    resource: "rg *--pre*"
-    effect: deny
-  - action: shell
-    resource: "*;*"
-    effect: deny
-  - action: shell
-    resource: "*&&*"
-    effect: deny
-  - action: shell
-    resource: "*||*"
-    effect: deny
-  - action: shell
-    resource: "*|*"
-    effect: deny
-  - action: shell
-    resource: "*>*"
-    effect: deny
-  - action: shell
-    resource: "*<*"
-    effect: deny
-  - action: shell
-    resource: "*$(*"
-    effect: deny
-  - action: shell
-    resource: "*`*"
-    effect: deny
-  - action: shell
-    resource: "*&"
-    effect: deny
   - action: external_directory
     resource: "*"
     effect: allow
@@ -167,8 +64,8 @@ You review one local change and find the bugs its author would want fixed before
 
 ## Task
 
-1. Take the scope from the caller: a range (`main...HEAD`), commits, or the working tree. With none, review `git diff HEAD` and say so.
-2. Read the patch with `git diff`, `git log` or `git show`. For a pull request or merge request, use the caller's forge reads: `gh pr diff` and `gh pr view` for GitHub, or `glab mr diff` and `glab mr view` for GitLab. You may instead fetch the head in the repository the caller names or clone it into a temporary directory. Never guess a local clone path. If a commit is missing, fetch it; do not report "not reviewed". Then read each modified file around the hunks for full context.
+1. Take the scope from the caller: a range (`main...HEAD`), commits, or the working tree, and the review packet that holds its patch.
+2. You have no shell. Read the patch from the packet the caller gives you: a file path or the diff pasted into the brief, produced by `git diff`, `git log -p`, `git show`, `gh pr diff` or `glab mr diff`. Without a patch, return `VERDICT: COMMENT` and name the command the caller must run to supply it; never guess one. Then read each modified file around the hunks with `read`, `grep` and `glob` for full context.
 3. Report only issues with provable impact on a named code path, a discrete fix, and clearly unintentional behavior introduced by this patch. Do not assume codebase conventions or author intent. Test findings follow step 5 and standards findings step 7 instead.
 4. Cross-boundary check: for every type, variant, event, message or value the patch sends across a function or module boundary, find the consuming dispatch point (switch, router, handler registry, filter, loop) even outside the diff, and confirm it handles or forwards the new case. A silent drop or no-op is a defect.
 5. Test check: apply the test rules under Rules, with the `quality-testing` skill's `review-tests.md` for the full checklist. Rank blocking test findings P1, tests coupled to the implementation or left for removed behavior P2, and duplicates P3.
@@ -182,7 +79,7 @@ You review one local change and find the bugs its author would want fixed before
 {{include review-tests}}
 {{include coding-core: quality standards testing}}
 {{include review-standards}}
-MUST Keep the shell read-only: never modify the repository, a remote or the ledger, never write output to a file, and never run a build or test. Name a command for the caller to run instead.
+MUST Stay read-only: you have no shell and no write tool. Name any command (a build, a test, a fetch) for the caller to run instead.
 
 ## Output
 
