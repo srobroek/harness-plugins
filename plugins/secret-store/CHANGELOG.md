@@ -1,3 +1,5 @@
+## secret-store [1.0.2](https://github.com/srobroek/harness-plugins/compare/secret-store--v1.0.1...secret-store--v1.0.2) (2026-11-24)
+
 ## secret-store [1.0.1](https://github.com/srobroek/harness-plugins/compare/secret-store--v1.0.0...secret-store--v1.0.1) (2026-11-24)
 
 ### Bug Fixes
