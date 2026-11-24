@@ -9,7 +9,7 @@
 | agent-researcher | 0.10.4 | development | global | opencode, omp, pi |
 | agent-reviewer | 0.13.4 | development | global | opencode, claude, omp, pi |
 | agent-seance | 0.8.2 | development | global | opencode |
-| architecture | 0.11.3 | development | global | opencode, claude, omp, pi |
+| architecture | 0.11.4 | development | global | opencode, claude, omp, pi |
 | ast-grep | 1.3.2 | development | global | opencode, claude |
 | autopilot | 1.4.0 | development | global | opencode, pi |
 | aws | 0.10.0 | development | global | opencode, claude, omp, pi |

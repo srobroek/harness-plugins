@@ -1,3 +1,5 @@
+## architecture [0.11.4](https://github.com/srobroek/harness-plugins/compare/architecture--v0.11.3...architecture--v0.11.4) (2026-11-24)
+
 ## architecture [0.11.3](https://github.com/srobroek/harness-plugins/compare/architecture--v0.11.2...architecture--v0.11.3) (2026-11-24)
 
 ### Bug Fixes
