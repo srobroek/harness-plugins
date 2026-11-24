@@ -147,7 +147,7 @@
       "name": "project-secrets",
       "description": "Per-project secrets with fnox and 1Password: store, use, inspect and rotate them with no value in the transcript.",
       "source": "./plugins/project-secrets/claude",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "category": "productivity",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/project-secrets",
       "repository": "https://github.com/srobroek/harness-plugins"
