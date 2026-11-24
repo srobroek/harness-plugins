@@ -41,7 +41,7 @@ Loaded in every project by the global configuration. Do not add them per project
 | agent-coder | coder subagent for any code development task (implement, fix, debug, test, build, profile, upgrade deps) with only coding tools and skills |
 | agent-efficiency | Cut agent tokens: run bash calls as the built-in shell tool, narrow explore to search and web tools, and trim read-only subagent prompts |
 | agent-mechanic | mechanic subagent: cheap, exact mechanical edits (renames, bulk edits, formatting, moving code) that run the given check |
-| agent-researcher | The researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one |
+| agent-researcher | The code-researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one |
 | agent-reviewer | Read-only reviewer subagents (pull request, local diff, security, adversarial challenge) sharing one review core, and a security review skill |
 | agent-seance | seance subagent and read-only seance_read tool: answer a question from a past session and its subagent transcripts |
 | architecture | Architecture skills (capability-first layout, ownership boundaries, durable docs/ knowledge) and a read-only architect subagent |

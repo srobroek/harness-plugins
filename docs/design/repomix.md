@@ -87,10 +87,10 @@ set compression per glob.
 
 | Use case | Recipe | Consumer |
 |---|---|---|
-| Learn an external repo's layout and APIs | `--remote owner/repo --remote-branch <ref> --compress --include "src/**"`, then grep the pack for `<file path=` | researcher, external-repo-worker (before cloning) |
+| Learn an external repo's layout and APIs | `--remote owner/repo --remote-branch <ref> --compress --include "src/**"`, then grep the pack for `<file path=` | code-researcher, external-repo-worker (before cloning) |
 | Review a whole module | `<dir> --include "<module>/**" --ignore "**/dist/**"`, uncompressed, `--output-show-line-numbers` | reviewer, as a subagent brief attachment |
-| Compare two versions (whats-new) | the same remote pack at two tags with `--compress --no-file-summary --no-git-sort-by-changes`, then `diff` | whats-new via researcher |
-| Feed in a doc set | `--remote … --include "docs/**/*.md"`, uncompressed, `--style markdown` | researcher |
+| Compare two versions (whats-new) | the same remote pack at two tags with `--compress --no-file-summary --no-git-sort-by-changes`, then `diff` | whats-new via code-researcher |
+| Feed in a doc set | `--remote … --include "docs/**/*.md"`, uncompressed, `--style markdown` | code-researcher |
 
 Without `--no-git-sort-by-changes`, files are ordered by churn, which makes a diff between
 two versions noisy (inference; I always set it).
@@ -103,7 +103,7 @@ two versions noisy (inference; I always set it).
    `--token-count-tree <N>` view as a cheaper index).
 3. Navigate with the built-in `grep` (`<file path="…">` anchors) and `read` with
    offset/limit.
-4. For packs above about 50k tokens, have a subagent (researcher) read the pack and report
+4. For packs above about 50k tokens, have a subagent (code-researcher) read the pack and report
    back. The main agent sees only the conclusions.
 5. `--split-output 500kb` is only for handing chunks to separate subagents.
 
@@ -132,7 +132,7 @@ A new plugin, `plugins/repomix` (`srobroek.repomix`).
   description: "Packs a local or remote repo into one file for bulk context; external
   repos, module packs, version diffs."
 - **README**: an optional MCP snippet for users who want the server anyway.
-- **Not in whats-new/researcher/build directly**: the tool needs its own permission and
+- **Not in whats-new/code-code-researcher/build directly**: the tool needs its own permission and
   binary policy, and several agents share it. whats-new's `references/recipes.md` gets a
   one-line pointer to the `repomix` skill for source-level version diffs.
 
@@ -159,20 +159,20 @@ decisions:
 - **Result**: the path, files, tokens and chars, the top ten files and the files the secret
   scan dropped, parsed from repomix's summary (ANSI stripped; missing fields become null),
   plus the grep anchor for the style and, above 50k tokens, advice to hand the path to a
-  researcher. The same fields are in the tool metadata, with `runner`.
+  code-code-researcher. The same fields are in the tool metadata, with `runner`.
 - **Permission**: action `repomix_pack`, resource the absolute directory or `remote@ref`,
   metadata `runner: path|npx`. The user's permission rules decide. With the boolean
   `confirmPack: true`, an `evaluate` hook turns an allowed npx run into a prompt. The fallback runs `npx --yes repomix@1.19.0`.
 - **Skill**: exported to Claude Code, with a CLI recipe that keeps the same rules
   for hosts without the tool. Description: "Use to pack a repo into one file with repomix
   for bulk context: external repo APIs, module review, version diffs, docs."
-- **Agents**: `repomix_pack` is allowed for `researcher` (agent-researcher and delivery's
+- **Agents**: `repomix_pack` is allowed for `code-code-researcher` (agent-code-researcher and delivery's
   fallback copy) and `external-repo-worker`, each with one prompt line on when to use it.
 
 Live check (private `opencode serve`, HOME and every XDG dir isolated, Bedrock Haiku 5.5):
 `plugins/lib` with `compress` packed 40 files to 17.7k tokens, and the model found the 40
 files by grepping the anchors; `yamadashy/repomix@v1.17.0` `src/mcp/**` compressed packed 11
-files, 4.5k tokens; asked how `--compress` works, `researcher` packed the repo at v1.18.0
+files, 4.5k tokens; asked how `--compress` works, `code-code-researcher` packed the repo at v1.18.0
 with `repomix_pack` and answered from that pack, citing its files. With `repomix` off PATH, the npx
 fallback ran repomix 1.18.1.
 
@@ -180,9 +180,9 @@ fallback ran repomix 1.18.1.
 
 | Agent | `repomix_pack` | Why |
 |---|---|---|
-| `researcher` (agent-researcher) | allow | Its job is read-only research, and the shell rule "no command that writes" forbids the CLI. The tool is a scoped, safe exception. |
+| `code-code-researcher` (agent-code-researcher) | allow | Its job is read-only research, and the shell rule "no command that writes" forbids the CLI. The tool is a scoped, safe exception. |
 | `external-repo-worker` (build) | allow | Orientation before cloning, or inside the clone. |
-| main/build agent | no rule (the host default applies) | Usually delegates to researcher. |
+| main/build agent | no rule (the host default applies) | Usually delegates to code-code-researcher. |
 | reviewer agents | deny (default `*` deny) | Reviews get the diff and paths. A module pack should arrive as a path in the brief, which reviewers can `read`. |
 | coder/mechanic/explore | deny | Single-lookup work. grep/read is cheaper. |
 

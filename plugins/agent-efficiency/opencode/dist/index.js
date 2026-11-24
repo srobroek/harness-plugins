@@ -21,7 +21,7 @@ var MCP_TOOL_AGENTS = new Set([
   "implementer-high",
   "refactor",
   "refactor-challenger",
-  "researcher",
+  "code-researcher",
   "security-auditor",
   "spec",
   "ui-implementer",
@@ -1777,7 +1777,7 @@ var DEFAULT_LEAN_AGENTS = [
   "seance",
   "security-auditor",
   "code-reviewer",
-  "researcher",
+  "code-researcher",
   "architect",
   "speckit-sync",
   "whats-new"

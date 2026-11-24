@@ -11,7 +11,7 @@
 name: spec
 description: "Drives a SpecKit feature from setup through specify, clarify, plan, tasks as beads and analyze; edits only specs/ and .specify/."
 tools: read, grep, ast_grep, glob, lsp, task
-spawns: "scout, researcher, architect, speckit-verify, speckit-sync"
+spawns: "scout, code-researcher, architect, speckit-verify, speckit-sync"
 model: "@plan, @slow"
 ---
 
@@ -53,7 +53,7 @@ When the user points at a decision record (from the `concept` agent, `docs/adr/`
 ## Helpers
 
 - `explore`: codebase lookups that need more than a few reads.
-- `researcher`: an external question the repository cannot answer.
+- `code-researcher`: an external question the repository cannot answer.
 - `architect`: a design or component decision the plan depends on.
 - `speckit-verify` / `speckit-sync`: steps whose `execution_agent_type` names them, with the step's bead id and its `mode:` or `scope:`.
 

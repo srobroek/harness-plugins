@@ -1559,7 +1559,7 @@ var REPROMPT = "autopilot is armed and the user is away: do not ask. Pick the mo
 var READ_ONLY_AGENTS = new Set([
   "explore",
   "researcher",
-  "code-reviewer",
+  "code-researcher",
   "pr-reviewer",
   "security-auditor",
   "adversarial-challenger",

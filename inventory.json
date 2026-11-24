@@ -106,13 +106,13 @@
     {
       "name": "agent-researcher",
       "version": "0.10.2",
-      "description": "The researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one.",
+      "description": "The code-researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one.",
       "category": "development",
       "harnesses": {
         "opencode": {
           "skills": [],
           "agents": [
-            "researcher"
+            "code-researcher"
           ],
           "commands": [],
           "rules": [],
@@ -126,7 +126,7 @@
         "omp": {
           "skills": [],
           "agents": [
-            "researcher"
+            "code-researcher"
           ],
           "commands": [],
           "rules": [],
@@ -138,7 +138,7 @@
         "pi": {
           "skills": [],
           "agents": [
-            "researcher"
+            "code-researcher"
           ],
           "commands": [],
           "rules": [],
@@ -797,12 +797,12 @@
             "delivery-git-workflow"
           ],
           "agents": [
+            "code-researcher",
             "implementer",
             "implementer-high",
             "operator",
             "orchestrator",
             "pr-reviewer",
-            "researcher",
             "shepherd"
           ],
           "commands": [],
