@@ -29,7 +29,7 @@
 | lang-go | 0.9.2 | development | global | opencode, claude, omp, pi |
 | lang-python | 0.9.2 | development | global | opencode, claude, omp, pi |
 | lang-rust | 0.9.2 | development | global | opencode, claude, omp, pi |
-| lang-typescript | 0.10.1 | development | global | opencode, claude, omp, pi |
+| lang-typescript | 0.10.2 | development | global | opencode, claude, omp, pi |
 | lsp | 0.5.0 | development | project | opencode |
 | model-roles | 0.11.2 | development | global | opencode |
 | modes | 1.3.1 | development | global | opencode, omp |
