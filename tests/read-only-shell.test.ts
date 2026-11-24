@@ -79,6 +79,12 @@ describe("code-reviewer", () => {
 
   test.each(omp)("%s has no bash", (path) => expect(frontmatterTools(path)).not.toContain("bash"))
 
+  test.each(["common/agents/code-reviewer.pi.md", "pi/agents/code-reviewer.md"])("%s keeps read and has no bash", (path) => {
+    const tools = frontmatterTools(path)
+    expect(tools).toContain("read")
+    expect(tools).not.toContain("bash")
+  })
+
   describe("the shipped Claude hook command", () => {
     const root = join(reviewer, "claude")
     const hooks = JSON.parse(readFileSync(join(root, "hooks/hooks.json"), "utf8"))
