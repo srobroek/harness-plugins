@@ -85,6 +85,11 @@ default; enable `github` under **Settings → Tools** before asking it to review
 pull request. Other reviewers do not require that tool.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-agent-reviewer
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-reviewer/opencode'
