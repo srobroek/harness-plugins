@@ -24,7 +24,7 @@
 | design | 0.10.2 | development | project | opencode, claude |
 | docs | 0.4.0 | development | global | opencode |
 | eli5 | 0.7.2 | productivity | global | opencode, claude, omp, pi |
-| find-tools | 0.5.0 | development | global | opencode, pi |
+| find-tools | 0.6.0 | development | global | opencode, omp, pi |
 | journeys | 0.6.0 | development | project | opencode, claude, pi |
 | lang-go | 0.9.1 | development | global | opencode, claude, omp, pi |
 | lang-python | 0.9.1 | development | global | opencode, claude, omp, pi |
@@ -35,17 +35,17 @@
 | modes | 1.3.1 | development | global | opencode, omp |
 | parley | 0.5.0 | development | global | opencode, pi |
 | plugin-audit | 0.2.0 | development | project | opencode |
-| project | 0.12.1 | productivity | global | opencode, claude, omp, pi |
-| project-secrets | 0.1.0 | productivity | global | opencode, claude, omp, pi |
+| project | 0.12.2 | productivity | global | opencode, claude, omp, pi |
+| project-secrets | 1.0.0 | productivity | global | opencode, claude, omp, pi |
 | quality | 0.15.1 | development | global | opencode, claude, pi |
 | repomix | 0.6.1 | development | global | opencode, claude, pi |
-| safety | 0.14.1 | development | global | opencode, pi |
-| secret-store | 0.1.0 | development | global | opencode, pi |
+| safety | 0.14.2 | development | global | opencode, pi |
+| secret-store | 1.0.0 | development | global | opencode, pi |
 | session | 0.4.1 | development | global | opencode |
 | speckit | 0.11.2 | development | project | opencode, claude |
 | statusline | 0.4.0 | development | global | opencode |
 | subagent-worktree | 0.9.2 | development | global | opencode |
-| toolchain | 0.10.1 | development | global | opencode, claude, omp, pi |
+| toolchain | 0.10.2 | development | global | opencode, claude, omp, pi |
 | trunk-dev | 0.12.1 | development | global | opencode, claude, pi |
 | whats-new | 0.5.0 | development | global | opencode, pi |
 | worktrunk | 0.7.1 | development | project | opencode, claude, pi |

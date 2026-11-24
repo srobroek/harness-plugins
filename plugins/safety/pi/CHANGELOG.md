@@ -1,3 +1,5 @@
+## safety [0.14.2](https://github.com/srobroek/harness-plugins/compare/safety--v0.14.1...safety--v0.14.2) (2026-11-24)
+
 ## safety [0.14.1](https://github.com/srobroek/harness-plugins/compare/safety--v0.14.0...safety--v0.14.1) (2026-11-23)
 
 ### Bug Fixes
