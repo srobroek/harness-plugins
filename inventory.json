@@ -2186,7 +2186,7 @@
     },
     {
       "name": "speckit",
-      "version": "0.11.4",
+      "version": "0.11.5",
       "description": "SpecKit on beads: a tasks.md guard, setup and bugfix skills, formulas, and the speckit-sync and speckit-verify subagents.",
       "category": "development",
       "harnesses": {

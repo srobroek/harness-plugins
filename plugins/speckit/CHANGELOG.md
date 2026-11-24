@@ -1,3 +1,9 @@
+## speckit [0.11.5](https://github.com/srobroek/harness-plugins/compare/speckit--v0.11.4...speckit--v0.11.5) (2026-11-24)
+
+### Bug Fixes
+
+* **agent-reviewer:** tell OMP agents that keep a shell it is unrestricted ([#173](https://github.com/srobroek/harness-plugins/issues/173)) ([1b8386d](https://github.com/srobroek/harness-plugins/commit/1b8386dbf43fa6cb5580d4dbc03e619476ba023c))
+
 ## speckit [0.11.4](https://github.com/srobroek/harness-plugins/compare/speckit--v0.11.3...speckit--v0.11.4) (2026-11-24)
 
 ### Bug Fixes
