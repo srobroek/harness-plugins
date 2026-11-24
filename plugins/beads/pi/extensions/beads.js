@@ -3108,6 +3108,39 @@ async function decideEmbeddedWrite(parsed, cwd, env, callID, deadline = Date.now
   }
 }
 
+// lib/src/pi-session-header.ts
+import { closeSync as closeSync3, lstatSync as lstatSync3, openSync as openSync3, readSync as readSync2 } from "fs";
+var HEADER_BYTES = 16 * 1024;
+function readSessionHeader(file) {
+  let fd;
+  try {
+    if (!lstatSync3(file).isFile())
+      return;
+    fd = openSync3(file, "r");
+    const buffer = Buffer.alloc(HEADER_BYTES);
+    const length = readSync2(fd, buffer, 0, HEADER_BYTES, 0);
+    const text = buffer.subarray(0, length).toString("utf8");
+    const end = text.indexOf(`
+`);
+    if (end < 0 && length === HEADER_BYTES)
+      return;
+    return headerView(JSON.parse(end < 0 ? text : text.slice(0, end)));
+  } catch {
+    return;
+  } finally {
+    if (fd !== undefined)
+      closeSync3(fd);
+  }
+}
+function headerView(value) {
+  if (value === null || typeof value !== "object")
+    return;
+  const header = value;
+  if (header.type !== "session" || typeof header.id !== "string" || header.id === "")
+    return;
+  return typeof header.parentSession === "string" && header.parentSession !== "" ? { id: header.id, parentSession: header.parentSession } : { id: header.id };
+}
+
 // plugins/beads/pi-src/beads.ts
 import { Type } from "typebox";
 
@@ -3895,7 +3928,7 @@ function decideBdUpdateCloseParsed(parsed) {
 
 // plugins/beads/opencode/src/binary-hooks.ts
 import { spawnSync as spawnSync3 } from "child_process";
-import { closeSync as closeSync3, existsSync as existsSync3, openSync as openSync3, readdirSync, readFileSync as readFileSync2, readSync as readSync2, realpathSync as realpathSync4, statSync as statSync4 } from "fs";
+import { closeSync as closeSync4, existsSync as existsSync3, openSync as openSync4, readdirSync, readFileSync as readFileSync2, readSync as readSync3, realpathSync as realpathSync4, statSync as statSync4 } from "fs";
 import { isAbsolute as isAbsolute4, join as join3, resolve as resolve4, sep } from "path";
 var BINARY_MAGICS = [
   [254, 237, 250, 206],
@@ -3937,16 +3970,16 @@ function hooksDirectory(cwd, git) {
   return existsSync3(conventional) ? conventional : undefined;
 }
 function fileHasMarker(path, magicsOnly = false) {
-  const fd = openSync3(path, "r");
+  const fd = openSync4(path, "r");
   try {
     const bytes = Buffer.alloc(SAMPLE_BYTES);
-    const count = readSync2(fd, bytes, 0, bytes.length, 0);
+    const count = readSync3(fd, bytes, 0, bytes.length, 0);
     const sample = bytes.subarray(0, count);
     if (!magicsOnly && sample.includes(0))
       return true;
     return BINARY_MAGICS.some((magic) => sample.length >= magic.length && magic.every((byte, index) => sample[index] === byte));
   } finally {
-    closeSync3(fd);
+    closeSync4(fd);
   }
 }
 function hasBinaryHooks(cwd, git = runGit) {
@@ -4050,7 +4083,7 @@ function protectBinaryHookCommands(input, command, cwd, git = runGit) {
 }
 
 // plugins/beads/opencode/src/ledger-context.ts
-import { existsSync as existsSync4, lstatSync as lstatSync3, realpathSync as realpathSync5 } from "fs";
+import { existsSync as existsSync4, lstatSync as lstatSync4, realpathSync as realpathSync5 } from "fs";
 import { basename as basename4, dirname as dirname4, join as join4, resolve as resolve5 } from "path";
 var SAFE_PREFIX = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 function findLedger(from) {
@@ -4070,7 +4103,7 @@ function findLedger(from) {
 }
 function isRetired(store) {
   try {
-    return lstatSync3(join4(store, "RETIRED")).isFile();
+    return lstatSync4(join4(store, "RETIRED")).isFile();
   } catch {
     return false;
   }
@@ -4159,7 +4192,7 @@ function unplacedBdRefusal(input) {
 
 // plugins/beads/opencode/src/pr-bead-link-gate.ts
 import { execFileSync } from "child_process";
-import { closeSync as closeSync4, constants as constants3, existsSync as existsSync5, fstatSync as fstatSync2, lstatSync as lstatSync4, openSync as openSync4, readSync as readSync3, realpathSync as realpathSync6 } from "fs";
+import { closeSync as closeSync5, constants as constants3, existsSync as existsSync5, fstatSync as fstatSync2, lstatSync as lstatSync5, openSync as openSync5, readSync as readSync4, realpathSync as realpathSync6 } from "fs";
 import { basename as basename6, dirname as dirname5, join as join5, resolve as resolve6 } from "path";
 
 // plugins/beads/opencode/src/pr-create-form.ts
@@ -4647,7 +4680,7 @@ function beadsActive(dir) {
     const beads = join5(current, ".beads");
     if (existsSync5(beads)) {
       try {
-        return !lstatSync4(join5(beads, "RETIRED")).isFile();
+        return !lstatSync5(join5(beads, "RETIRED")).isFile();
       } catch {
         return true;
       }
@@ -4715,7 +4748,7 @@ function readBodyFile(cwd) {
       const directory = resolve6(realpathSync6(cwd), dirname5(path));
       if (realpathSync6(directory) !== directory)
         return { ok: false, reason: "its directory is or goes through a symlink" };
-      fd = openSync4(join5(directory, basename6(path)), constants3.O_RDONLY | constants3.O_NOFOLLOW | constants3.O_NONBLOCK);
+      fd = openSync5(join5(directory, basename6(path)), constants3.O_RDONLY | constants3.O_NOFOLLOW | constants3.O_NONBLOCK);
       const stat = fstatSync2(fd);
       if (!stat.isFile())
         return { ok: false, reason: "it is not a regular file" };
@@ -4724,7 +4757,7 @@ function readBodyFile(cwd) {
       const buffer = Buffer.alloc(MAX_BODY_BYTES + 1);
       let length = 0;
       while (length < buffer.length) {
-        const read = readSync3(fd, buffer, length, buffer.length - length, null);
+        const read = readSync4(fd, buffer, length, buffer.length - length, null);
         if (read === 0)
           break;
         length += read;
@@ -4744,7 +4777,7 @@ function readBodyFile(cwd) {
       return { ok: false, reason: `it could not be opened as a regular file${code === undefined ? "" : ` (${code})`}`, cause: error };
     } finally {
       if (fd !== undefined)
-        closeSync4(fd);
+        closeSync5(fd);
     }
   };
 }
@@ -4976,40 +5009,9 @@ import { existsSync as existsSync6, statSync as statSync5 } from "fs";
 import { dirname as dirname7, resolve as resolve9 } from "path";
 
 // plugins/beads/shared/pi-session.ts
-import { closeSync as closeSync5, lstatSync as lstatSync5, openSync as openSync5, readSync as readSync4 } from "fs";
 import { basename as basename7, dirname as dirname6, isAbsolute as isAbsolute5, join as join6, relative, resolve as resolve8 } from "path";
 var SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-var HEADER_BYTES = 16 * 1024;
 var MAX_LINEAGE_DEPTH = 16;
-function readSessionHeader(file) {
-  let fd;
-  try {
-    if (!lstatSync5(file).isFile())
-      return;
-    fd = openSync5(file, "r");
-    const buffer = Buffer.alloc(HEADER_BYTES);
-    const length = readSync4(fd, buffer, 0, HEADER_BYTES, 0);
-    const text = buffer.subarray(0, length).toString("utf8");
-    const end = text.indexOf(`
-`);
-    if (end < 0 && length === HEADER_BYTES)
-      return;
-    return headerView(JSON.parse(end < 0 ? text : text.slice(0, end)));
-  } catch {
-    return;
-  } finally {
-    if (fd !== undefined)
-      closeSync5(fd);
-  }
-}
-function headerView(value) {
-  if (value === null || typeof value !== "object")
-    return;
-  const header = value;
-  if (header.type !== "session" || typeof header.id !== "string" || header.id === "")
-    return;
-  return typeof header.parentSession === "string" && header.parentSession !== "" ? { id: header.id, parentSession: header.parentSession } : { id: header.id };
-}
 function sessionLineage(session, readHeader = readSessionHeader, maxDepth = MAX_LINEAGE_DEPTH) {
   const lineage = [session.id];
   let parent = session.parentSession;
