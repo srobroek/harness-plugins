@@ -1,3 +1,9 @@
+## modes [1.3.2](https://github.com/srobroek/harness-plugins/compare/modes--v1.3.1...modes--v1.3.2) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
 ## modes [1.3.1](https://github.com/srobroek/harness-plugins/compare/modes--v1.3.0...modes--v1.3.1) (2026-11-23)
 
 ### Bug Fixes
