@@ -11,6 +11,11 @@ omp-plugins `typescript` plugin. Its `typescript_quality` tool is not ported, an
 part of `lang-typescript-types`.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-lang-typescript
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/lang-typescript/opencode'
