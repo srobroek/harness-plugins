@@ -1,3 +1,5 @@
+## agent-mechanic [0.8.3](https://github.com/srobroek/harness-plugins/compare/agent-mechanic--v0.8.2...agent-mechanic--v0.8.3) (2026-11-24)
+
 ## agent-mechanic [0.8.2](https://github.com/srobroek/harness-plugins/compare/agent-mechanic--v0.8.1...agent-mechanic--v0.8.2) (2026-11-24)
 
 ### Bug Fixes
