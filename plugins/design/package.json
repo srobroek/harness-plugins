@@ -1,6 +1,6 @@
 {
   "name": "design",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "description": "UI and UX design skills (system audit, DESIGN.md, browser verification, accessibility, motion, microcopy, prototypes, wireframes), four design subagents, nine beads formulas with a design_setup installer, an impeccable detector scan tool, and optional accessibility-scanner and wire-dsl MCP integrations.",
   "private": true,
   "type": "module",
