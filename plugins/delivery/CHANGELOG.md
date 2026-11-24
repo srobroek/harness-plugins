@@ -1,3 +1,13 @@
+## delivery [0.12.3](https://github.com/srobroek/harness-plugins/compare/delivery--v0.12.2...delivery--v0.12.3) (2026-11-24)
+
+### Bug Fixes
+
+* **agent-researcher:** clarify beadless research scope ([b98d372](https://github.com/srobroek/harness-plugins/commit/b98d3722ac5cffd6bd4dbe223c36a163466cc350))
+* **agent-researcher:** make Beads lifecycle conditional ([23b369c](https://github.com/srobroek/harness-plugins/commit/23b369cc514a869e8cd6fc48e69aa9bf9ad53280))
+* **beads:** rename the store-pin env marker to HARNESS_BEADS_PIN ([f111b05](https://github.com/srobroek/harness-plugins/commit/f111b051e312b4fd6155486e45e145a9a199bc95))
+* **delivery:** align shared reviewer workflow ([7c5814e](https://github.com/srobroek/harness-plugins/commit/7c5814ea37bd8210151de0e7f97f56293eb02ec5))
+* **delivery:** make dev checks and tool integrations configurable ([7b66397](https://github.com/srobroek/harness-plugins/commit/7b663976738a90ed05b544c56109a5e3cc4f91e3))
+
 ## delivery [0.12.2](https://github.com/srobroek/harness-plugins/compare/delivery--v0.12.1...delivery--v0.12.2) (2026-11-23)
 
 ### Bug Fixes
