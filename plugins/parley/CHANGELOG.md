@@ -1,3 +1,5 @@
+## parley [0.5.1](https://github.com/srobroek/harness-plugins/compare/parley--v0.5.0...parley--v0.5.1) (2026-11-24)
+
 ## parley [0.5.0](https://github.com/srobroek/harness-plugins/compare/parley--v0.4.2...parley--v0.5.0) (2026-11-23)
 
 ### Features
