@@ -1,3 +1,9 @@
+## agent-efficiency [0.14.4](https://github.com/srobroek/harness-plugins/compare/agent-efficiency--v0.14.3...agent-efficiency--v0.14.4) (2026-11-24)
+
+### Bug Fixes
+
+* **agent-efficiency:** neutralize captured host details ([70895a9](https://github.com/srobroek/harness-plugins/commit/70895a92c8a79e52407f905b26fd787634035da8))
+
 ## agent-efficiency [0.14.3](https://github.com/srobroek/harness-plugins/compare/agent-efficiency--v0.14.2...agent-efficiency--v0.14.3) (2026-11-23)
 
 ### Bug Fixes
