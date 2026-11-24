@@ -3,7 +3,6 @@
 // plugins/safety/opencode/src/index.ts
 import { isAbsolute as isAbsolute13, resolve as resolve12 } from "path";
 import { Plugin } from "@opencode/plugin";
-import { Tool } from "@opencode/plugin/effect";
 
 // lib/src/agent-tools.ts
 var MCP_TOOL_AGENTS = new Set([
@@ -7080,7 +7079,8 @@ function createPlugin(overrides = {}) {
           const clean = { message: redactor.text(message), error: redactor.value(error), metadata: redactor.value(metadata) };
           if (clean.message === message && clean.error === error && clean.metadata === metadata)
             return;
-          event.error = new Tool.Error({
+          const ToolError = event.error.constructor;
+          event.error = new ToolError({
             message: clean.message,
             ...clean.error === undefined ? {} : { error: clean.error },
             ...clean.metadata === undefined ? {} : { metadata: clean.metadata }
