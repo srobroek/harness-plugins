@@ -1,3 +1,10 @@
+## agent-researcher [0.12.0](https://github.com/srobroek/harness-plugins/compare/agent-researcher--v0.11.0...agent-researcher--v0.12.0) (2026-11-24)
+
+### Features
+
+* **agent-coder:** grant pi subagents code-intelligence and helper tools ([89d8d54](https://github.com/srobroek/harness-plugins/commit/89d8d54af33d144801baf1ea2af5496b78887ced))
+* **agent-researcher:** grant pi subagents code-intelligence and helper tools ([911efc5](https://github.com/srobroek/harness-plugins/commit/911efc59063d68104b81c8bc4af9da0d34fc6ef8))
+
 ## agent-researcher [0.11.0](https://github.com/srobroek/harness-plugins/compare/agent-researcher--v0.10.4...agent-researcher--v0.11.0) (2026-11-24)
 
 ### Features

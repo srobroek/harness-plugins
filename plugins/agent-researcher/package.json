@@ -1,6 +1,6 @@
 {
   "name": "agent-researcher",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "The researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one.",
   "private": true,
   "type": "module",
@@ -17,10 +17,26 @@
       "index": "index"
     },
     "companions": [
-      { "package": "pi-subagents", "for": "the subagent tool", "required": true },
-      { "package": "pi-lens", "for": "code-intelligence tools for the subagent", "required": true },
-      { "package": "@srobroek/pi-repomix", "for": "the repomix_pack tool", "required": true },
-      { "package": "pi-web-access", "for": "web research tools", "required": true }
+      {
+        "package": "pi-subagents",
+        "for": "the subagent tool",
+        "required": true
+      },
+      {
+        "package": "pi-lens",
+        "for": "code-intelligence tools for the subagent",
+        "required": true
+      },
+      {
+        "package": "@srobroek/pi-repomix",
+        "for": "the repomix_pack tool",
+        "required": true
+      },
+      {
+        "package": "pi-web-access",
+        "for": "web research tools",
+        "required": true
+      }
     ]
   }
 }
