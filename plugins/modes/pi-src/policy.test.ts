@@ -2,10 +2,15 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { AgentPermission } from "@srobroek/opencode-lib/agent-files"
+import { type AgentPermission, permissionEffect } from "@srobroek/opencode-lib/agent-files"
+import { contextModeTools, toolOrder } from "./context-mode-tools.ts"
 import {
   AGENT_IDS,
   type AgentId,
+  branchMode,
+  CODE_RUNNING_TOOLS,
+  CONTEXT_ADMIN_TOOLS,
+  CONTEXT_TOOLS,
   childMode,
   decideToolCall,
   enterReminder,
@@ -47,12 +52,15 @@ function piSpelling(rule: AgentPermission): AgentPermission {
   return { ...rule, resource: rule.action === "subagent" && resource === "explore" ? "scout" : resource }
 }
 
-describe("pi rules and tools stay in step with the agents", () => {
-  const GUARDED = new Set(["*", "read", "external_directory", "edit", "shell", "subagent"])
+/** OpenCode helpers pi does without: its own session tools cover `seance`. */
+const OPENCODE_ONLY_HELPERS = new Set(["seance"])
 
-  test.each(AGENT_IDS.map((id) => [id]))("%s has its OpenCode agent's read, edit, shell and subagent rules", (id) => {
+describe("pi rules and tools stay in step with the agents", () => {
+  const GUARDED = new Set(["*", "read", "external_directory", "edit", "shell", "webfetch", "subagent"])
+
+  test.each(AGENT_IDS.map((id) => [id]))("%s has its OpenCode agent's read, edit, shell, webfetch and subagent rules", (id) => {
     const rules = (frontmatter(join(PLUGIN, "agents.src", `${id}.md`)).permissions as AgentPermission[])
-      .filter((rule) => GUARDED.has(rule.action))
+      .filter((rule) => GUARDED.has(rule.action) && !(rule.action === "subagent" && OPENCODE_ONLY_HELPERS.has(rule.resource)))
       .map(piSpelling)
     expect(MODE_RULES[id]).toEqual(rules)
   })
@@ -73,10 +81,55 @@ describe("the tool allowlist", () => {
     expect(effect("concept", "web_search", { query: "x" })).toBe("allow")
   })
 
+  test("context-mode's code-running tools are refused in every mode; its search and report tools pass", () => {
+    expect([...CODE_RUNNING_TOOLS]).toEqual(["ctx_execute", "ctx_batch"])
+    for (const id of AGENT_IDS) {
+      for (const tool of CODE_RUNNING_TOOLS) {
+        expect(MODE_TOOLS[id]).not.toContain(tool)
+        expect(decide(id, tool, { language: "shell", code: "git push" })).toEqual({
+          effect: "deny",
+          reason: `\`${tool}\` runs code the ${id[0]?.toUpperCase()}${id.slice(1)} mode guard cannot check; use bash`,
+        })
+      }
+      for (const tool of ["ctx_search", "ctx_resume", "ctx_stats", "ctx_doctor"]) expect(effect(id, tool, {})).toBe("allow")
+      for (const tool of CONTEXT_ADMIN_TOOLS) expect(effect(id, tool, {})).toBe("deny")
+    }
+  })
+
+  test.each(AGENT_IDS.map((id) => [id]))("%s indexes only content, and a URL under its web rule", (id) => {
+    for (const input of [{ path: ".env" }, { path: "." }, { path: "src", content: "x" }]) {
+      const verdict = decide(id, "ctx_index", input)
+      expect(verdict.effect === "deny" && verdict.reason).toContain("reads files past the mode's read rules")
+    }
+    expect(effect(id, "ctx_index", { content: "x" })).toBe("allow")
+    const url = "https://example.com/doc"
+    expect(effect(id, "ctx_index", { url })).toBe(permissionEffect(MODE_RULES[id], "webfetch", url))
+    expect(effect(id, "ctx_index", { url })).toBe("allow")
+    expect(effect(id, "ctx_index", { url, content: "x" })).toBe("deny")
+    expect(effect(id, "ctx_index", {})).toBe("deny")
+  })
+
   test("calls whose target cannot be read are refused", () => {
     expect(effect("refactor", "write", { content: "x" })).toBe("deny")
     expect(effect("refactor", "read", {})).toBe("deny")
     expect(effect("debug", "bash", { command: "  " })).toBe("deny")
+  })
+})
+
+describe("context-mode's tools", () => {
+  const { version, tools, source } = contextModeTools()
+
+  test(`every tool of context-mode ${version} (${source}) is allowed, refused as code-running, or left out`, () => {
+    const classes = [new Set(CONTEXT_TOOLS), CODE_RUNNING_TOOLS, CONTEXT_ADMIN_TOOLS]
+    const unclassified = tools.filter((tool) => !classes.some((set) => set.has(tool)))
+    expect(unclassified).toEqual([])
+    expect(classes.flatMap((set) => [...set]).sort()).toEqual([...tools].sort())
+    for (const id of AGENT_IDS) expect(MODE_TOOLS[id].filter((tool) => tool.startsWith("ctx_"))).toEqual([...CONTEXT_TOOLS])
+  })
+
+  test("the list is read from TOOL_ORDER in context-mode's pi bundle", () => {
+    expect(toolOrder('var TOOL_ORDER = Object.freeze(["ctx_execute", "ctx_batch"]);')).toEqual(["ctx_execute", "ctx_batch"])
+    expect(() => toolOrder("var OTHER = 1")).toThrow("no TOOL_ORDER")
   })
 })
 
@@ -198,22 +251,57 @@ describe("which mode a session runs", () => {
     expect(childMode("prompt", "refactor: extract", false)).toBeUndefined()
   })
 
+  const USER = ["read", "bash", "edit"]
+
   test("/mode enters, switches and leaves, restoring the tools from before the first mode", () => {
-    const entered = switchMode({}, "debug", ["read", "bash", "edit"])
-    expect(entered).toMatchObject({ state: { mode: "debug", saved: ["read", "bash", "edit"] }, tools: MODE_TOOLS.debug, entered: "debug" })
+    const entered = switchMode({}, "debug", USER)
+    expect(entered).toMatchObject({ state: { mode: "debug", saved: USER }, tools: MODE_TOOLS.debug, entered: "debug" })
     const switched = switchMode(entered?.state ?? {}, "concept", MODE_TOOLS.debug)
-    expect(switched).toMatchObject({ state: { mode: "concept", saved: ["read", "bash", "edit"] }, left: "debug", entered: "concept" })
+    expect(switched).toMatchObject({ state: { mode: "concept", saved: USER }, left: "debug", entered: "concept" })
     const left = switchMode(switched?.state ?? {}, "off", MODE_TOOLS.concept)
-    expect(left).toMatchObject({ state: {}, tools: ["read", "bash", "edit"], left: "concept" })
+    expect(left).toMatchObject({ state: { saved: USER }, tools: USER, left: "concept" })
     expect(switchMode({}, "off", [])).toEqual({ state: {}, notice: "No mode is active." })
     expect(switchMode({}, "build", [])).toBeUndefined()
   })
 
-  test("a stored state is read back only when it names a mode", () => {
+  test("entering after /mode off snapshots the tools active now, not the earlier snapshot", () => {
+    expect(switchMode({ saved: USER }, "refactor", ["read", "grep"])?.state).toEqual({ mode: "refactor", saved: ["read", "grep"] })
+  })
+
+  test("a stored state keeps its mode and its tool snapshot when they are well formed", () => {
     expect(readState({ mode: "refactor", saved: ["read"] })).toEqual({ mode: "refactor", saved: ["read"] })
     expect(readState({ mode: "refactor", saved: [1] })).toEqual({ mode: "refactor" })
+    expect(readState({ saved: ["read"] })).toEqual({ saved: ["read"] })
     expect(readState({ mode: "build" })).toEqual({})
     expect(readState(undefined)).toEqual({})
+  })
+})
+
+describe("a branch change", () => {
+  const USER = ["read", "bash", "edit"]
+  const REFACTOR = { mode: "refactor", saved: USER } as const
+
+  test("from a mode to a branch without one restores the user's tools and drops the guard", () => {
+    expect(branchMode({}, REFACTOR)).toEqual({ state: { saved: USER }, tools: USER })
+  })
+
+  test("prefers the target branch's /mode off snapshot, then the mode being left, then the session's first", () => {
+    expect(branchMode({ saved: ["read"] }, REFACTOR, ["ls"]).tools).toEqual(["read"])
+    expect(branchMode({}, { mode: "debug" }, ["ls"]).tools).toEqual(["ls"])
+  })
+
+  test("keeps the mode on when no snapshot exists, so its tools never run unguarded", () => {
+    expect(branchMode({}, { mode: "debug" })).toEqual({ state: { mode: "debug" } })
+  })
+
+  test("into a branch with a mode applies that mode, from no mode or from another mode", () => {
+    expect(branchMode(REFACTOR, {})).toEqual({ state: REFACTOR, tools: MODE_TOOLS.refactor })
+    expect(branchMode({ mode: "concept", saved: USER }, REFACTOR)).toEqual({ state: { mode: "concept", saved: USER }, tools: MODE_TOOLS.concept })
+  })
+
+  test("between branches without a mode leaves the tools alone", () => {
+    expect(branchMode({ saved: ["read"] }, {})).toEqual({ state: { saved: ["read"] } })
+    expect(branchMode({}, {})).toEqual({ state: {} })
   })
 })
 

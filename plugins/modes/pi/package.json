@@ -25,12 +25,16 @@
   },
   "peerDependencies": {
     "@plannotator/pi-extension": "*",
+    "context-mode": "*",
     "pi-lens": "*",
     "pi-subagents": "*",
     "pi-web-access": "*"
   },
   "peerDependenciesMeta": {
     "@plannotator/pi-extension": {
+      "optional": true
+    },
+    "context-mode": {
       "optional": true
     },
     "pi-lens": {

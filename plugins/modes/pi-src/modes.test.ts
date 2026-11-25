@@ -21,15 +21,30 @@ type Handler = (event: unknown, ctx: unknown) => unknown
 type Command = { handler: (args: string, ctx: unknown) => Promise<void>; getArgumentCompletions?: (prefix: string) => unknown }
 type Entry = { type: "custom"; customType: string; data: unknown }
 
+const USER_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls", "ast_grep_replace"]
+const stateEntry = (data: unknown): Entry => ({ type: "custom", customType: STATE_ENTRY, data })
+
+type FakeOptions = {
+  omp?: boolean
+  prompt?: string
+  parent?: string
+  confirm?: boolean
+  entries?: Entry[]
+  /** The session tree as the entries on each leaf's branch; `/mode` appends to the current leaf's branch. */
+  branches?: Record<string, Entry[]>
+  leaf?: string
+}
+
 /** A fake pi that records what the extension registers and sets, plus a session context. */
-function fakePi(options: { omp?: boolean; prompt?: string; parent?: string; confirm?: boolean; entries?: Entry[] } = {}) {
+function fakePi(options: FakeOptions = {}) {
   const handlers = new Map<string, Handler[]>()
   const tools: ToolDefinition[] = []
   const commands = new Map<string, Command>()
   const notices: string[] = []
-  const entries: Entry[] = [...(options.entries ?? [])]
+  const branches: Record<string, Entry[]> = options.branches ?? { main: [...(options.entries ?? [])] }
+  let leaf = options.leaf ?? (Object.keys(branches)[0] as string)
   const headChecks: string[] = []
-  let active = ["read", "bash", "edit", "write", "grep", "find", "ls", "ast_grep_replace"]
+  let active = [...USER_TOOLS]
   const pi = {
     ...(options.omp ? { runtime: {} } : {}),
     on: (name: string, handler: Handler) => handlers.set(name, [...(handlers.get(name) ?? []), handler]),
@@ -39,7 +54,9 @@ function fakePi(options: { omp?: boolean; prompt?: string; parent?: string; conf
     setActiveTools: (names: string[]) => {
       active = names
     },
-    appendEntry: (customType: string, data: unknown) => entries.push({ type: "custom", customType, data }),
+    appendEntry: (customType: string, data: unknown) => {
+      branches[leaf] = [...(branches[leaf] ?? []), { type: "custom", customType, data }]
+    },
     getSessionName: () => undefined,
   } as unknown as ExtensionAPI
   const ctx = {
@@ -48,7 +65,8 @@ function fakePi(options: { omp?: boolean; prompt?: string; parent?: string; conf
     ui: { notify: (text: string) => notices.push(text), confirm: async () => options.confirm ?? false },
     sessionManager: {
       getHeader: () => ({ type: "session", id: "s", parentSession: options.parent }),
-      getBranch: () => entries,
+      getBranch: (fromId?: string) => branches[fromId ?? leaf] ?? [],
+      getEntries: () => [...new Set(Object.values(branches).flat())],
     },
     getSystemPrompt: () => options.prompt ?? "base prompt",
   }
@@ -67,7 +85,16 @@ function fakePi(options: { omp?: boolean; prompt?: string; parent?: string; conf
   }
   const call = (toolName: string, input: unknown) => emit("tool_call", { toolName, input, toolCallId: "t" })
   const mode = (args: string) => (commands.get("mode") as Command).handler(args, ctx)
-  return { tools, commands, notices, entries, headChecks, active: () => active, emit, call, mode, ctx }
+  /** `/tree` to `to`, as pi reports it. */
+  const tree = (to: string) => {
+    const oldLeafId = leaf
+    leaf = to
+    return emit("session_tree", { type: "session_tree", oldLeafId, newLeafId: to })
+  }
+  const setActive = (names: readonly string[]) => {
+    active = [...names]
+  }
+  return { tools, commands, notices, entries: () => branches[leaf] ?? [], headChecks, active: () => active, setActive, emit, call, mode, tree, ctx }
 }
 
 describe("/mode in the main session", () => {
@@ -79,7 +106,7 @@ describe("/mode in the main session", () => {
     expect(await pi.call("ast_grep_replace", {})).toEqual({ block: true, reason: "`ast_grep_replace` is not available in Refactor mode" })
     expect(await pi.call("edit", { path: "src/a.test.ts" })).toEqual({ block: true, reason: "Refactor mode may not edit src/a.test.ts" })
     expect(await pi.call("edit", { path: "src/a.ts" })).toBeUndefined()
-    expect(pi.entries.at(-1)).toMatchObject({ customType: STATE_ENTRY, data: { mode: "refactor" } })
+    expect(pi.entries().at(-1)).toMatchObject({ customType: STATE_ENTRY, data: { mode: "refactor", saved: USER_TOOLS } })
   })
 
   test("delivers the mode's reminder and role once, and the leave reminder after /mode off", async () => {
@@ -91,7 +118,8 @@ describe("/mode in the main session", () => {
     expect(first.message.display).toBe(false)
     expect(await pi.emit("before_agent_start")).toBeUndefined()
     await pi.mode("off")
-    expect(pi.active()).toEqual(["read", "bash", "edit", "write", "grep", "find", "ls", "ast_grep_replace"])
+    expect(pi.active()).toEqual(USER_TOOLS)
+    expect(pi.entries().at(-1)).toMatchObject({ data: { saved: USER_TOOLS } })
     expect(((await pi.emit("before_agent_start")) as { message: { content: string } }).message.content).toContain("NO LONGER in Debug mode")
     expect(await pi.call("ast_grep_replace", {})).toBeUndefined()
   })
@@ -127,6 +155,66 @@ describe("/mode in the main session", () => {
     expect(await pi.call("edit", { path: "tests/a.py" })).toMatchObject({ block: true })
     await pi.mode("off")
     expect(pi.active()).toEqual(["read"])
+  })
+})
+
+describe("/tree in the main session", () => {
+  test("back to before /mode refactor restores the user's tools and turns the guard off", async () => {
+    const pi = fakePi({ branches: { before: [], main: [] }, leaf: "main" })
+    await pi.mode("refactor")
+    expect(await pi.call("edit", { path: "tests/a.test.ts" })).toMatchObject({ block: true })
+    await pi.tree("before")
+    expect(pi.active()).toEqual(USER_TOOLS)
+    expect(await pi.call("edit", { path: "tests/a.test.ts" })).toBeUndefined()
+    expect(await pi.call("ast_grep_replace", {})).toBeUndefined()
+    expect(await pi.emit("before_agent_start")).toBeUndefined()
+  })
+
+  test("onto a branch with a mode applies that mode's tools and guard", async () => {
+    const pi = fakePi({ branches: { before: [], refactor: [stateEntry({ mode: "refactor", saved: USER_TOOLS })] }, leaf: "before" })
+    await pi.emit("session_start")
+    expect(pi.active()).toEqual(USER_TOOLS)
+    await pi.tree("refactor")
+    expect(pi.active()).toEqual([...MODE_TOOLS.refactor])
+    expect(await pi.call("edit", { path: "tests/a.test.ts" })).toMatchObject({ block: true })
+    expect(((await pi.emit("before_agent_start")) as { message: { content: string } }).message.content).toContain("Refactor mode")
+  })
+
+  test("between branches with different modes applies the target's guard", async () => {
+    const pi = fakePi({
+      branches: {
+        refactor: [stateEntry({ mode: "refactor", saved: USER_TOOLS })],
+        concept: [stateEntry({ mode: "concept", saved: USER_TOOLS })],
+      },
+      leaf: "refactor",
+    })
+    await pi.emit("session_start")
+    expect(await pi.call("write", { path: "src/a.ts" })).toBeUndefined()
+    await pi.tree("concept")
+    expect(await pi.call("write", { path: "src/a.ts" })).toEqual({ block: true, reason: "Concept mode may not edit src/a.ts" })
+    await pi.tree("refactor")
+    expect(await pi.call("write", { path: "src/a.ts" })).toBeUndefined()
+  })
+
+  test("onto a branch that left its mode restores what /mode off restored there", async () => {
+    const pi = fakePi({
+      branches: {
+        off: [stateEntry({ mode: "debug", saved: USER_TOOLS }), stateEntry({ saved: ["read", "bash"] })],
+        refactor: [stateEntry({ mode: "refactor", saved: USER_TOOLS })],
+      },
+      leaf: "refactor",
+    })
+    await pi.emit("session_start")
+    await pi.tree("off")
+    expect(pi.active()).toEqual(["read", "bash"])
+    expect(await pi.call("edit", { path: "tests/a.test.ts" })).toBeUndefined()
+  })
+
+  test("a fresh extension instance reads the mode being left from the old branch", async () => {
+    const pi = fakePi({ branches: { before: [], refactor: [stateEntry({ mode: "refactor", saved: USER_TOOLS })] }, leaf: "refactor" })
+    pi.setActive(MODE_TOOLS.refactor)
+    await pi.tree("before")
+    expect(pi.active()).toEqual(USER_TOOLS)
   })
 })
 

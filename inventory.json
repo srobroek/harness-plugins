@@ -1853,6 +1853,11 @@
           "required": true
         },
         {
+          "package": "context-mode",
+          "for": "the indexing and search tools of the mode agents; the guard refuses its code-running tools",
+          "required": true
+        },
+        {
           "package": "@plannotator/pi-extension",
           "for": "plan mode and plan review, which modes leaves to it",
           "required": false

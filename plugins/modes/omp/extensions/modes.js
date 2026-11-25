@@ -1976,6 +1976,9 @@ var LENS_READ_TOOLS = [
   "pi_lens_activate_tools"
 ];
 var WEB_TOOLS = ["web_search", "fetch_content", "get_search_content", "source_check"];
+var CONTEXT_TOOLS = ["ctx_index", "ctx_search", "ctx_resume", "ctx_stats", "ctx_doctor"];
+var CODE_RUNNING_TOOLS = new Set(["ctx_execute", "ctx_batch"]);
+var CONTEXT_ADMIN_TOOLS = new Set(["ctx_upgrade", "ctx_purge"]);
 var MODE_TOOL_LIST = [
   ...READ_TOOLS2,
   "bash",
@@ -1985,7 +1988,8 @@ var MODE_TOOL_LIST = [
   "contact_supervisor",
   STATUS_TOOL,
   ...LENS_READ_TOOLS,
-  ...WEB_TOOLS
+  ...WEB_TOOLS,
+  ...CONTEXT_TOOLS
 ];
 var MODE_TOOLS = {
   debug: MODE_TOOL_LIST,
@@ -2023,6 +2027,7 @@ var FROZEN_TESTS = [
 ];
 var PUSH_AND_CLEAN = ["git push*", "git clean*", "rm -rf*", "git -C * push*", "git -c * push*", "git -C * clean*", "git -c * clean*"];
 var helpers = (names) => [rule("subagent", "*", "deny"), ...names.map((name) => rule("subagent", name, "allow"))];
+var WEB_FETCH = rule("webfetch", "*", "allow");
 var MODE_RULES = {
   debug: [
     rule("*", "*", "deny"),
@@ -2037,7 +2042,8 @@ var MODE_RULES = {
     rule("edit", DEBUG_WORKTREES, "allow"),
     rule("shell", "*", "allow"),
     ...PUSH_AND_CLEAN.map((pattern) => rule("shell", pattern, "deny")),
-    ...helpers(["scout", "researcher", "adversarial-challenger", "seance", "architect"])
+    WEB_FETCH,
+    ...helpers(["scout", "researcher", "adversarial-challenger", "architect"])
   ],
   refactor: [
     rule("*", "*", "deny"),
@@ -2051,6 +2057,7 @@ var MODE_RULES = {
       rule("shell", `git -C * ${sub}`, "deny"),
       rule("shell", `git -c * ${sub}`, "deny")
     ]),
+    WEB_FETCH,
     ...helpers(["scout", "mechanic", "refactor-challenger", "bloodhound", "code-reviewer", "architect", "debug"])
   ],
   concept: [
@@ -2065,16 +2072,8 @@ var MODE_RULES = {
     rule("edit", "docs/decisions/*", "allow"),
     rule("shell", "*", "ask"),
     ...["git status*", "git log*", "git diff*", "git show*", "python3 -m http.server*"].map((pattern) => rule("shell", pattern, "allow")),
-    ...helpers([
-      "scout",
-      "researcher",
-      "architect",
-      "adversarial-challenger",
-      "design-critic",
-      "seance",
-      "ui-ux-specialist",
-      "a11y-auditor"
-    ])
+    WEB_FETCH,
+    ...helpers(["scout", "researcher", "architect", "adversarial-challenger", "design-critic", "ui-ux-specialist", "a11y-auditor"])
   ]
 };
 var RANK = { allow: 0, ask: 1, deny: 2 };
@@ -2181,9 +2180,27 @@ function subagentVerdict(mode, input) {
     return { effect: "deny", reason: `${name} mode needs the helper named in \`agent\`` };
   return verdict(mode, permissionEffect(MODE_RULES[mode], "subagent", call.agent), `launch ${call.agent}`);
 }
+function indexVerdict(mode, input) {
+  const call = input !== null && typeof input === "object" ? input : {};
+  const name = MODE_ROLES[mode].name;
+  if (call.path !== undefined) {
+    return {
+      effect: "deny",
+      reason: `${name} mode refuses \`ctx_index\` with \`path\`: it reads files past the mode's read rules (\`.env\` files need the user's approval); use \`read\``
+    };
+  }
+  if (typeof call.url === "string" && call.content === undefined)
+    return verdict(mode, permissionEffect(MODE_RULES[mode], "webfetch", call.url), `index ${call.url}`);
+  if (typeof call.content === "string" && call.url === undefined)
+    return ALLOW;
+  return { effect: "deny", reason: "`ctx_index` needs exactly one of `content` or `url` here, so the call cannot be checked" };
+}
 function decideToolCall(mode, toolName, input, env) {
   if (RUNTIME_TOOLS.has(toolName))
     return ALLOW;
+  if (CODE_RUNNING_TOOLS.has(toolName)) {
+    return { effect: "deny", reason: `\`${toolName}\` runs code the ${MODE_ROLES[mode].name} mode guard cannot check; use bash` };
+  }
   if (!MODE_TOOLS[mode].includes(toolName)) {
     return { effect: "deny", reason: `\`${toolName}\` is not available in ${MODE_ROLES[mode].name} mode` };
   }
@@ -2199,6 +2216,8 @@ function decideToolCall(mode, toolName, input, env) {
       return shellVerdict(mode, input, env);
     case "subagent":
       return subagentVerdict(mode, input);
+    case "ctx_index":
+      return indexVerdict(mode, input);
     default:
       return ALLOW;
   }
@@ -2213,7 +2232,8 @@ function switchMode(state, choice, active) {
   if (choice === "off") {
     if (state.mode === undefined)
       return { state, notice: "No mode is active." };
-    return { state: {}, tools: state.saved ?? active, left: state.mode, notice: `Left ${MODE_ROLES[state.mode].name} mode.` };
+    const tools = state.saved ?? active;
+    return { state: { saved: tools }, tools, left: state.mode, notice: `Left ${MODE_ROLES[state.mode].name} mode.` };
   }
   const next = AGENT_IDS.find((id) => id === choice);
   if (next === undefined)
@@ -2221,20 +2241,26 @@ function switchMode(state, choice, active) {
   if (next === state.mode)
     return { state, notice: `Already in ${MODE_ROLES[next].name} mode.` };
   return {
-    state: { mode: next, saved: state.saved ?? [...active] },
+    state: { mode: next, saved: state.mode === undefined ? [...active] : state.saved ?? [...active] },
     tools: MODE_TOOLS[next],
     left: state.mode,
     entered: next,
     notice: `${MODE_ROLES[next].name} mode: other tools are off and the guard checks every call. Leave with /mode off.`
   };
 }
+function branchMode(target, left, earliest) {
+  if (target.mode !== undefined)
+    return { state: target, tools: MODE_TOOLS[target.mode] };
+  if (left.mode === undefined)
+    return { state: target };
+  const tools = target.saved ?? left.saved ?? earliest;
+  return tools === undefined ? { state: left } : { state: { saved: tools }, tools };
+}
 function readState(data) {
   const value = data !== null && typeof data === "object" ? data : {};
   const mode = AGENT_IDS.find((id) => id === value.mode);
-  if (mode === undefined)
-    return {};
   const saved = Array.isArray(value.saved) && value.saved.every((tool) => typeof tool === "string") ? value.saved : undefined;
-  return saved === undefined ? { mode } : { mode, saved };
+  return { ...mode === undefined ? {} : { mode }, ...saved === undefined ? {} : { saved } };
 }
 var ALLOWED = {
   debug: `a \`debug-<slug>\` worktree under \`~/${PI_SCRATCH.worktrees}/<project>/\`, and \`~/${PI_SCRATCH.ledger}/\``,
@@ -2319,21 +2345,19 @@ ${role(mode)}`;
   });
   if (isOmpHost(pi))
     return;
-  const restore = (ctx) => {
-    let found;
-    for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type === "custom" && entry.customType === STATE_ENTRY)
-        found = entry.data;
-    }
-    state = readState(found);
-    pending = [];
-    if (state.mode === undefined)
-      return;
-    pi.setActiveTools([...MODE_TOOLS[state.mode]]);
-    pending = [entering(state.mode)];
+  const states = (entries) => entries.filter((entry) => entry.type === "custom" && entry.customType === STATE_ENTRY).map((entry) => readState(entry.data));
+  const restore = (ctx, oldLeafId) => {
+    const target = states(ctx.sessionManager.getBranch()).at(-1) ?? {};
+    const left = state.mode !== undefined || !oldLeafId ? state : states(ctx.sessionManager.getBranch(oldLeafId)).at(-1) ?? {};
+    const earliest = states(ctx.sessionManager.getEntries()).find((recorded) => recorded.saved !== undefined)?.saved;
+    const next = branchMode(target, left, earliest);
+    if (next.tools !== undefined)
+      pi.setActiveTools([...next.tools]);
+    state = next.state;
+    pending = state.mode === undefined ? [] : [entering(state.mode)];
   };
   pi.on("session_start", (_event, ctx) => restore(ctx));
-  pi.on("session_tree", (_event, ctx) => restore(ctx));
+  pi.on("session_tree", (event, ctx) => restore(ctx, event.oldLeafId));
   pi.on("session_compact", () => {
     if (state.mode !== undefined)
       pending = [entering(state.mode)];
@@ -2405,6 +2429,9 @@ function modes(pi) {
 }
 export {
   AGENT_IDS,
+  CODE_RUNNING_TOOLS,
+  CONTEXT_ADMIN_TOOLS,
+  CONTEXT_TOOLS,
   MODE_CHOICES,
   MODE_RULES,
   MODE_TOOLS,
@@ -2412,6 +2439,7 @@ export {
   RUNTIME_TOOLS,
   STATE_ENTRY,
   STATUS_TOOL,
+  branchMode,
   childMode,
   decideToolCall,
   modes as default,

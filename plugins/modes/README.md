@@ -24,11 +24,13 @@ The OMP package also receives the pi extension, because OMP loads pi extensions.
 
 ## pi
 
-`@srobroek/pi-agent-modes` ships `debug`, `refactor` and `concept` as pi-subagents agents and the `modes` extension. It needs pi-subagents, pi-lens and pi-web-access. Plan mode stays with Plannotator (`/plannotator-plan-mode`): this package adds no plan state and no plan review.
+`@srobroek/pi-agent-modes` ships `debug`, `refactor` and `concept` as pi-subagents agents and the `modes` extension. It needs pi-subagents, pi-lens, pi-web-access and context-mode. Plan mode stays with Plannotator (`/plannotator-plan-mode`): this package adds no plan state and no plan review.
 
 ### Agents
 
-Each agent names its tools explicitly and loads the `modes` extension, pi-lens and pi-web-access through `subagentOnlyExtensions`. It uses `systemPromptMode: append` and inherits the project's context files and skills. Each agent also lists `modes_status`, a tool only the `modes` extension registers. pi-subagents checks every listed tool before a child's first turn, so a launch without the guard fails instead of running unguarded. The same check fails a launch whose `agentOverrides` drop the extension from `subagentOnlyExtensions`.
+Each agent names its tools explicitly and loads the `modes` extension, pi-lens, pi-web-access and context-mode through `subagentOnlyExtensions`. It uses `systemPromptMode: append` and inherits the project's context files and skills. Each agent also lists `modes_status`, a tool only the `modes` extension registers. pi-subagents checks every listed tool before a child's first turn, so a launch without the guard fails instead of running unguarded. The same check fails a launch whose `agentOverrides` drop the extension from `subagentOnlyExtensions`.
+
+The helper lists name agents from other packages. `bloodhound` arrives with the sniff migration, and `design-critic`, `ui-ux-specialist` and `a11y-auditor` arrive with the design port. A mode can launch each one once its package is installed. pi has no `seance` helper; pi's own session tools cover it.
 
 ### `/mode`
 
@@ -38,14 +40,20 @@ Each agent names its tools explicitly and loads the `modes` extension, pi-lens a
 - The mode's reminder and the agent's instructions arrive as one hidden message before the next turn. After compaction they arrive again.
 - The guard checks every tool call.
 
-`/mode off` restores the tools that were active before the first mode and tells the model the mode ended. The mode is stored on the session branch, so a resumed session and `/tree` keep it. `/mode` with no argument shows the current mode.
+`/mode off` restores the tools that were active before the first mode and tells the model the mode ended. `/mode` with no argument shows the current mode.
+
+Each `/mode` change appends an entry to the session branch with the mode and the user's tool list: the tools active before the first mode, or the tools `/mode off` restored. A resumed session and `/tree` read the last entry on the new branch:
+
+- A branch with a mode gets that mode's tools and guard, whether the session came from no mode or from another mode.
+- Leaving a mode for a branch without one restores the user's tools and turns the guard off. The extension takes that branch's own `/mode off` list first, because it is what that branch last had. Without one, it takes the list recorded when the mode being left was entered. Failing that, it takes the first list the session recorded.
+- With no recorded list the mode stays on, so its tools never run without the guard.
 
 ### Guard
 
 The guard runs in a main session after `/mode`, and in a child launched as one of the three agents. pi-subagents tags each child's prompt with `<active_agent name="…"/>`, and the guard reads the mode from that tag. Children of other agents are not guarded. The guard fails closed: a tool outside the list, a target it cannot read, or an error refuses the call.
 
-- **Tools.** Only the mode's list runs. pi-lens's `ast_grep_replace` and `lsp_navigation` are left out because they write files past the path checks. pi-subagents' child tools (`structured_output`, `contact_supervisor`, `intercom`, `bg_wait`) pass.
-- **Rules.** The guard applies the OpenCode agent's `read`, `edit`, `external_directory`, `shell` and `subagent` permission rules with pi's paths. The last matching rule wins, and no match means ask. A test keeps the two rule sets in step.
+- **Tools.** Only the mode's list runs. pi-lens's `ast_grep_replace` and `lsp_navigation` are left out because they write files past the path checks. context-mode's `ctx_execute` and `ctx_batch` are refused because they run code the guard cannot check. `ctx_search`, `ctx_resume`, `ctx_stats` and `ctx_doctor` pass, and `ctx_upgrade` and `ctx_purge` are not on the list. `ctx_index` passes with `content`, and with a `url` when the mode's `webfetch` rule allows it. With a `path` it is refused, because it would read files, and folders recursively, past the `read` rules such as the `.env` confirmation. pi-subagents' child tools (`structured_output`, `contact_supervisor`, `intercom`, `bg_wait`) pass.
+- **Rules.** The guard applies the OpenCode agent's `read`, `edit`, `external_directory`, `shell`, `webfetch` and `subagent` permission rules with pi's paths. The last matching rule wins, and no match means ask. A test keeps the two rule sets in step.
 - **Paths.** A path resolves the way pi's file tools resolve it (a leading `@`, `~` and `file://` URLs), and must pass both with symlinks followed and with `..` applied by name.
 - **`debug`.** Writes go only to a `debug-<slug>` worktree and the ledger directory. Git runs from the OpenCode allowlist, git that writes runs only inside the scratch worktree, and before a commit the guard checks that the scratch HEAD is detached or on a `debug/<slug>` branch.
 - **`refactor`.** Test, spec, fixture, testdata and snapshot paths are frozen. Git runs from refactor's allowlist.
@@ -67,7 +75,7 @@ The guard runs in a main session after `/mode`, and in a child launched as one o
 - pi's `bash` has no working-directory option. A leading `cd <dir> &&` counts as the working directory when the rest of the line is chained with `&&` or pipes. `||`, `;`, `&` and newlines anywhere in the line keep it from counting, and git that writes is then refused.
 - OpenCode asks before reads outside the project; pi does not.
 - In the main session the active tool list only sets which tool definitions pi sends with each request; the guard is the boundary.
-- The agents declare their own `subagentOnlyExtensions`, so `subagents.defaultSubagentOnlyExtensions` does not reach them. To run context-mode in them, see the agent-efficiency README.
+- The agents load context-mode themselves. A host that also adds context-mode to every child as a required extension may load it twice in them; that case is untested.
 
 The following mode-switching and guard sections describe OpenCode-only behavior.
 

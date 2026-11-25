@@ -14,12 +14,12 @@ import type { TSchema } from "typebox"
 import { headRefusal } from "../opencode/src/head-guard.ts"
 import {
   type AgentId,
+  branchMode,
   childMode,
   decideToolCall,
   enterReminder,
   leaveReminder,
   MODE_CHOICES,
-  MODE_TOOLS,
   type ModeState,
   readState,
   STATUS_TOOL,
@@ -97,20 +97,27 @@ export function registerModes(pi: ExtensionAPI, overrides: Overrides = {}): void
   })
   if (isOmpHost(pi)) return
 
-  const restore = (ctx: ExtensionContext) => {
-    let found: unknown
-    for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type === "custom" && entry.customType === STATE_ENTRY) found = entry.data
-    }
-    state = readState(found)
-    pending = []
-    if (state.mode === undefined) return
-    pi.setActiveTools([...MODE_TOOLS[state.mode]])
-    pending = [entering(state.mode)]
+  /** The `/mode` states recorded on `entries`, oldest first. */
+  const states = (entries: readonly { type: string; customType?: string; data?: unknown }[]) =>
+    entries.filter((entry) => entry.type === "custom" && entry.customType === STATE_ENTRY).map((entry) => readState(entry.data))
+
+  /**
+   * Bring the mode in line with the branch now active. The state being left is the one in memory, or,
+   * for a fresh extension instance, the last `/mode` entry on the old branch; snapshots come from the
+   * session file, so they survive a reload.
+   */
+  const restore = (ctx: ExtensionContext, oldLeafId?: string | null) => {
+    const target = states(ctx.sessionManager.getBranch()).at(-1) ?? {}
+    const left = state.mode !== undefined || !oldLeafId ? state : (states(ctx.sessionManager.getBranch(oldLeafId)).at(-1) ?? {})
+    const earliest = states(ctx.sessionManager.getEntries()).find((recorded) => recorded.saved !== undefined)?.saved
+    const next = branchMode(target, left, earliest)
+    if (next.tools !== undefined) pi.setActiveTools([...next.tools])
+    state = next.state
+    pending = state.mode === undefined ? [] : [entering(state.mode)]
   }
 
   pi.on("session_start", (_event, ctx) => restore(ctx))
-  pi.on("session_tree", (_event, ctx) => restore(ctx))
+  pi.on("session_tree", (event, ctx) => restore(ctx, event.oldLeafId))
   pi.on("session_compact", () => {
     if (state.mode !== undefined) pending = [entering(state.mode)]
   })

@@ -4,9 +4,10 @@
  *
  * Each mode has a tool allowlist and the permission rules of its OpenCode agent (`agents.src/<id>.md`),
  * evaluated the way OpenCode does: the last matching rule wins, nothing matching means `ask`. The rules
- * keep OpenCode's order and patterns; only the host paths differ (pi's scratch roots, `scout` for
- * OpenCode's `explore`), and `policy.test.ts` checks the two stay in step. On top of the rules, `debug`
- * and `refactor` get the OpenCode plugin's git allowlist and `debug` its segment-aware write guard.
+ * keep OpenCode's order and patterns; only the host parts differ (pi's scratch roots, `scout` for
+ * OpenCode's `explore`, no `seance` helper), and `policy.test.ts` checks the two stay in step. On top
+ * of the rules, `debug` and `refactor` get the OpenCode plugin's git allowlist and `debug` its
+ * segment-aware write guard.
  *
  * Every refusal is fail-closed: a tool outside the allowlist, a call whose target cannot be read, or a
  * shape the guard does not know is denied rather than allowed.
@@ -46,6 +47,16 @@ const LENS_READ_TOOLS = [
   "pi_lens_activate_tools",
 ]
 const WEB_TOOLS = ["web_search", "fetch_content", "get_search_content", "source_check"]
+/**
+ * context-mode's tools that index, search and report. None takes a command: `ctx_doctor` takes no input,
+ * and `ctx_index` stores a file, a string or a URL in context-mode's database (`indexVerdict` allows the
+ * string and, under the mode's web rule, the URL).
+ */
+export const CONTEXT_TOOLS: readonly string[] = ["ctx_index", "ctx_search", "ctx_resume", "ctx_stats", "ctx_doctor"]
+/** context-mode's tools that run code the guard cannot check: `ctx_execute` runs a script in any language, `ctx_batch` shell commands. */
+export const CODE_RUNNING_TOOLS: ReadonlySet<string> = new Set(["ctx_execute", "ctx_batch"])
+/** context-mode's administrative tools, left off every mode's list: they update the install and delete indexed data. */
+export const CONTEXT_ADMIN_TOOLS: ReadonlySet<string> = new Set(["ctx_upgrade", "ctx_purge"])
 const MODE_TOOL_LIST = [
   ...READ_TOOLS,
   "bash",
@@ -56,6 +67,7 @@ const MODE_TOOL_LIST = [
   STATUS_TOOL,
   ...LENS_READ_TOOLS,
   ...WEB_TOOLS,
+  ...CONTEXT_TOOLS,
 ]
 
 /** The tools each mode may call. Each `common/agents/<id>.pi.md` lists exactly these. */
@@ -102,11 +114,12 @@ const FROZEN_TESTS = [
 const PUSH_AND_CLEAN = ["git push*", "git clean*", "rm -rf*", "git -C * push*", "git -c * push*", "git -C * clean*", "git -c * clean*"]
 
 const helpers = (names: readonly string[]) => [rule("subagent", "*", "deny"), ...names.map((name) => rule("subagent", name, "allow"))]
+const WEB_FETCH = rule("webfetch", "*", "allow")
 
 /**
- * The read, external_directory, edit, shell and subagent rules of each OpenCode agent, in its order,
- * with pi's paths. OpenCode applies `external_directory` to reads as well; pi does not ask before a
- * read outside the project, so only writes outside it check those rules.
+ * The read, external_directory, edit, shell, webfetch and subagent rules of each OpenCode agent, in its
+ * order, with pi's paths. OpenCode applies `external_directory` to reads as well; pi does not ask before
+ * a read outside the project, so only writes outside it check those rules.
  */
 export const MODE_RULES: Readonly<Record<AgentId, readonly AgentPermission[]>> = {
   debug: [
@@ -122,7 +135,8 @@ export const MODE_RULES: Readonly<Record<AgentId, readonly AgentPermission[]>> =
     rule("edit", DEBUG_WORKTREES, "allow"),
     rule("shell", "*", "allow"),
     ...PUSH_AND_CLEAN.map((pattern) => rule("shell", pattern, "deny")),
-    ...helpers(["scout", "researcher", "adversarial-challenger", "seance", "architect"]),
+    WEB_FETCH,
+    ...helpers(["scout", "researcher", "adversarial-challenger", "architect"]),
   ],
   refactor: [
     rule("*", "*", "deny"),
@@ -136,6 +150,7 @@ export const MODE_RULES: Readonly<Record<AgentId, readonly AgentPermission[]>> =
       rule("shell", `git -C * ${sub}`, "deny"),
       rule("shell", `git -c * ${sub}`, "deny"),
     ]),
+    WEB_FETCH,
     ...helpers(["scout", "mechanic", "refactor-challenger", "bloodhound", "code-reviewer", "architect", "debug"]),
   ],
   concept: [
@@ -150,16 +165,8 @@ export const MODE_RULES: Readonly<Record<AgentId, readonly AgentPermission[]>> =
     rule("edit", "docs/decisions/*", "allow"),
     rule("shell", "*", "ask"),
     ...["git status*", "git log*", "git diff*", "git show*", "python3 -m http.server*"].map((pattern) => rule("shell", pattern, "allow")),
-    ...helpers([
-      "scout",
-      "researcher",
-      "architect",
-      "adversarial-challenger",
-      "design-critic",
-      "seance",
-      "ui-ux-specialist",
-      "a11y-auditor",
-    ]),
+    WEB_FETCH,
+    ...helpers(["scout", "researcher", "architect", "adversarial-challenger", "design-critic", "ui-ux-specialist", "a11y-auditor"]),
   ],
 }
 
@@ -298,9 +305,32 @@ function subagentVerdict(mode: AgentId, input: unknown): Verdict {
   return verdict(mode, permissionEffect(MODE_RULES[mode], "subagent", call.agent), `launch ${call.agent}`)
 }
 
+/**
+ * `ctx_index` stores what it reads in context-mode's database, and `ctx_search` returns it. Text the
+ * caller passes as `content` is already in the conversation. A `url` is a web fetch, so it follows the
+ * mode's `webfetch` rule. A `path` reads files, a folder recursively, without the mode's `read` rules,
+ * so it is refused even when another field is set too.
+ */
+function indexVerdict(mode: AgentId, input: unknown): Verdict {
+  const call = input !== null && typeof input === "object" ? (input as Record<string, unknown>) : {}
+  const name = MODE_ROLES[mode].name
+  if (call.path !== undefined) {
+    return {
+      effect: "deny",
+      reason: `${name} mode refuses \`ctx_index\` with \`path\`: it reads files past the mode's read rules (\`.env\` files need the user's approval); use \`read\``,
+    }
+  }
+  if (typeof call.url === "string" && call.content === undefined) return verdict(mode, permissionEffect(MODE_RULES[mode], "webfetch", call.url), `index ${call.url}`)
+  if (typeof call.content === "string" && call.url === undefined) return ALLOW
+  return { effect: "deny", reason: "`ctx_index` needs exactly one of `content` or `url` here, so the call cannot be checked" }
+}
+
 /** The verdict on `toolName` called with `input` in `mode`. */
 export function decideToolCall(mode: AgentId, toolName: string, input: unknown, env: CallEnv): Verdict {
   if (RUNTIME_TOOLS.has(toolName)) return ALLOW
+  if (CODE_RUNNING_TOOLS.has(toolName)) {
+    return { effect: "deny", reason: `\`${toolName}\` runs code the ${MODE_ROLES[mode].name} mode guard cannot check; use bash` }
+  }
   if (!MODE_TOOLS[mode].includes(toolName)) {
     return { effect: "deny", reason: `\`${toolName}\` is not available in ${MODE_ROLES[mode].name} mode` }
   }
@@ -318,6 +348,8 @@ export function decideToolCall(mode: AgentId, toolName: string, input: unknown, 
       return shellVerdict(mode, input, env)
     case "subagent":
       return subagentVerdict(mode, input)
+    case "ctx_index":
+      return indexVerdict(mode, input)
     default:
       return ALLOW
   }
@@ -334,7 +366,10 @@ export function childMode(systemPrompt: string, sessionName: string | undefined,
   return AGENT_IDS.find((id) => id === tagged) ?? AGENT_IDS.find((id) => id === named)
 }
 
-/** The main session's mode, as `/mode` stores it: the mode and the tools that were active before it. */
+/**
+ * The main session's mode, as `/mode` stores it on the branch. `saved` is the user's own tool list: the
+ * tools active before the first mode when a mode is on, and the tools `/mode off` restored when none is.
+ */
 export type ModeState = { mode?: AgentId; saved?: readonly string[] }
 
 /** What `/mode <choice>` does: the next state, the tools to activate, the modes left and entered, and what to tell the user. */
@@ -347,13 +382,15 @@ export const MODE_CHOICES: readonly string[] = [...AGENT_IDS, "off"]
 export function switchMode(state: ModeState, choice: string, active: readonly string[]): Transition | undefined {
   if (choice === "off") {
     if (state.mode === undefined) return { state, notice: "No mode is active." }
-    return { state: {}, tools: state.saved ?? active, left: state.mode, notice: `Left ${MODE_ROLES[state.mode].name} mode.` }
+    const tools = state.saved ?? active
+    return { state: { saved: tools }, tools, left: state.mode, notice: `Left ${MODE_ROLES[state.mode].name} mode.` }
   }
   const next = AGENT_IDS.find((id) => id === choice)
   if (next === undefined) return undefined
   if (next === state.mode) return { state, notice: `Already in ${MODE_ROLES[next].name} mode.` }
   return {
-    state: { mode: next, saved: state.saved ?? [...active] },
+    // Outside a mode the active tools are the user's own; a mode-to-mode switch keeps the first snapshot.
+    state: { mode: next, saved: state.mode === undefined ? [...active] : (state.saved ?? [...active]) },
     tools: MODE_TOOLS[next],
     left: state.mode,
     entered: next,
@@ -361,13 +398,27 @@ export function switchMode(state: ModeState, choice: string, active: readonly st
   }
 }
 
+/**
+ * The main session's mode after a branch change (`/tree`, resume, reload). `target` is the last `/mode`
+ * entry on the new branch, `left` the state on the branch being left, and `earliest` the first tool
+ * snapshot the session recorded. A branch with a mode gets that mode's tools and guard. Leaving a mode
+ * for a branch without one restores the user's tools: the branch's own `/mode off` snapshot first, since
+ * it is what that branch last had, then the snapshot of the mode being left, then the session's tools
+ * from before any mode. With no snapshot at all the mode stays on, so its tools never run unguarded.
+ */
+export function branchMode(target: ModeState, left: ModeState, earliest?: readonly string[]): { state: ModeState; tools?: readonly string[] } {
+  if (target.mode !== undefined) return { state: target, tools: MODE_TOOLS[target.mode] }
+  if (left.mode === undefined) return { state: target }
+  const tools = target.saved ?? left.saved ?? earliest
+  return tools === undefined ? { state: left } : { state: { saved: tools }, tools }
+}
+
 /** A stored `ModeState`, or the empty state when `data` is not one. */
 export function readState(data: unknown): ModeState {
   const value = data !== null && typeof data === "object" ? (data as { mode?: unknown; saved?: unknown }) : {}
   const mode = AGENT_IDS.find((id) => id === value.mode)
-  if (mode === undefined) return {}
   const saved = Array.isArray(value.saved) && value.saved.every((tool) => typeof tool === "string") ? (value.saved as string[]) : undefined
-  return saved === undefined ? { mode } : { mode, saved }
+  return { ...(mode === undefined ? {} : { mode }), ...(saved === undefined ? {} : { saved }) }
 }
 
 const ALLOWED: Readonly<Record<AgentId, string>> = {
