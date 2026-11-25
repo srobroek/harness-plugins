@@ -1,7 +1,7 @@
 ---
 name: spec
 description: "Drives a SpecKit feature from setup through specify, clarify, plan, tasks as beads and analyze; writes spec artifacts, never implements."
-tools: read, ls, grep, find, bash, edit, write, subagent, speckit_setup, speckit_start, speckit_commit
+tools: read, ls, grep, find, bash, edit, write, subagent, contact_supervisor, speckit_setup, speckit_start, speckit_commit
 allowedAgents: scout, researcher, architect, speckit-verify, speckit-sync
 subagentOnlyExtensions: npm:@srobroek/pi-speckit-beads
 inheritProjectContext: true
