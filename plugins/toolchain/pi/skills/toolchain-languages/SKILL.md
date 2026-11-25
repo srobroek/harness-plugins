@@ -67,6 +67,7 @@ Starting points, not rules:
 | AWS Lambda (Go, Rust) | No Powertools: the official runtime crate or module, the language's structured logger, the OTel SDK with the Collector extension |
 | Configuration | Typed settings parsed and validated once at startup; secrets from a secret store, never committed |
 | Validation | Schema validation at every trust boundary (request, message, file, environment) |
+| Contract shared by several languages | One TypeSpec source, emitted to committed OpenAPI 3.1 and JSON Schema 2020-12; each language generates from those files and runs a shared conformance corpus. Routes and gates: `toolchain-api`; pattern rules: `quality-code-design`'s `contracts.md` |
 | Outbound HTTP | A reused client with explicit timeouts and cancellation; retries bounded, with jitter, only for idempotent operations |
 | Errors | Typed domain errors inside; one mapping at the boundary (RFC 9457 problem details for HTTP) |
 | Persistence | SQL-first access with reviewed, committed migrations; a pool per process; real-database integration tests |
