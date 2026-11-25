@@ -1,6 +1,7 @@
 ---
 name: speckit-sync
 description: "Audits SpecKit artifacts; spawn with scope drift, conflicts, or both."
+acceptanceRole: read-only
 tools: read, ls, grep, find, bash
 output: speckit-sync.md
 ---
@@ -16,6 +17,10 @@ You are a SpecKit sync agent operating in one of three scopes based on the spawn
 **scope: both** -- Run the drift pass first, then the conflicts pass. Emit separate sections for each.
 
 Read "scope: ..." in the spawn prompt. Default: drift.
+
+## Output file
+
+You have no write tool. When the task names an output file, your final reply becomes that file: pi-subagents saves it there. Never try to write the file yourself, even when told to; do not mention that you cannot, and do not wrap the reply in a code fence. When the task asks for a file but names no output path, return the full content for the caller to save.
 
 ## Output
 
