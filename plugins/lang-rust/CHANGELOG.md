@@ -1,3 +1,9 @@
+## lang-rust [0.10.1](https://github.com/srobroek/harness-plugins/compare/lang-rust--v0.10.0...lang-rust--v0.10.1) (2026-11-25)
+
+### Bug Fixes
+
+* **toolchain:** ship the full languages and lang-libraries skills to OMP ([#197](https://github.com/srobroek/harness-plugins/issues/197)) ([bbba5da](https://github.com/srobroek/harness-plugins/commit/bbba5da0cc894c6870bedfffd7842615fa9e310e)), closes [#181](https://github.com/srobroek/harness-plugins/issues/181)
+
 ## lang-rust [0.10.0](https://github.com/srobroek/harness-plugins/compare/lang-rust--v0.9.3...lang-rust--v0.10.0) (2026-11-25)
 
 ### Features

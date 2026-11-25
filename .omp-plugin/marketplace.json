@@ -103,7 +103,7 @@
       "name": "lang-rust",
       "description": "Rust skills: fmt, clippy and test checks, testing with nextest, proptest and insta, crates and workspaces, CI, sqlx persistence, Tauri and profiling.",
       "source": "./plugins/lang-rust/omp",
-      "version": "0.10.0",
+      "version": "0.10.1",
       "category": "development"
     },
     {
