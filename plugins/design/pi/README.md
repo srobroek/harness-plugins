@@ -215,8 +215,17 @@ installs impeccable. The timeout and the output limit are the same as in OpenCod
 
 ### Browser
 
-The extension registers a `playwright` MCP server. It runs Playwright MCP in a headless
-Chrome with an in-memory profile. The extension hides three tools:
+The extension registers a `playwright` MCP server. It runs Playwright MCP in Chrome with an
+in-memory profile. At session start the extension picks the browser mode:
+
+1. `PLAYWRIGHT_MCP_HEADLESS=1` (or `true`) makes it headless, and `0` (or `false`) makes it
+   headed. The extension ignores other values.
+2. With no such setting, a Mac gets a headed browser. Linux gets one when `DISPLAY` or
+   `WAYLAND_DISPLAY` has a value.
+3. Otherwise it is headless, because a headed Chrome cannot start on a host with no display.
+
+A headed `/design-review` opens two windows, one for each reviewer. The extension hides
+three tools:
 
 - `browser_run_code_unsafe` runs code in the server's Node process.
 - `browser_file_upload` hands local files to the page.
@@ -234,22 +243,76 @@ The design tests check each recorded tool that takes a file, a path or code.
 A `playwright` server in your `mcp.json` replaces this one. Pi gives a server that an
 extension registers only to background subagents. So the four design agents set
 `async: true`, and `/design-review` and `ui-ux-specialist` start them in the background.
-A foreground run of a design agent fails unless your own `mcp.json` has the server. Add it
-to `~/.pi/agent/mcp.json`, or to a trusted project's `.pi/mcp.json`. Create the `cwd`
-directory first:
+A foreground run of a design agent fails unless your own `mcp.json` has the server.
+
+To add it, put this entry in `~/.pi/agent/mcp.json`, or in a trusted project's
+`.pi/mcp.json`, and create the `cwd` directory first. Your own entry follows the
+Playwright MCP rule instead: headless on Linux without `DISPLAY`, unless its `env` sets
+`PLAYWRIGHT_MCP_HEADLESS`.
 
 ```json
 {
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@0.0.86", "--headless", "--isolated", "--browser", "chrome", "--viewport-size", "1440x900", "--ignore-roots", "--file-paths", "absolute"],
+      "args": ["-y", "@playwright/mcp@0.0.86", "--isolated", "--browser", "chrome", "--viewport-size", "1440x900", "--ignore-roots", "--file-paths", "absolute"],
       "cwd": "~/.cache/pi-design-playwright",
       "toolExposure": { "browser_run_code_unsafe": "hidden", "browser_file_upload": "hidden", "browser_drop": "hidden" }
     }
   }
 }
 ```
+
+### Using your own browser
+
+The design agents always use the isolated browser above. To let your own pi session work
+in the Chrome where you sign in, add a second server yourself. The package does not
+register it.
+
+1. In Chrome, install the "Playwright Extension" from the Chrome Web Store. Use a Chrome
+   profile that you keep for the agent, and sign in there only to the sites it needs.
+2. Add the server to `~/.pi/agent/mcp.json`, disabled, and create its `cwd` directory:
+
+   ```json
+   {
+     "mcpServers": {
+       "playwright-mine": {
+         "command": "npx",
+         "args": ["-y", "@playwright/mcp@0.0.86", "--extension", "--session-name", "pi", "--session-color", "red", "--ignore-roots", "--file-paths", "absolute", "--redact-url-params", "access_token,code,state,id_token"],
+         "cwd": "~/.cache/pi-playwright-mine",
+         "env": { "npm_config_registry": "https://registry.npmjs.org/" },
+         "enabled": false,
+         "exposure": "deferred",
+         "description": "My Chrome through the Playwright Extension: only the tabs I share at the connect prompt.",
+         "toolExposure": { "browser_run_code_unsafe": "hidden", "browser_file_upload": "hidden", "browser_drop": "hidden", "browser_evaluate": "hidden" }
+       }
+     }
+   }
+   ```
+
+3. Turn it on only in a trusted project. Put
+   `{"mcpServers":{"playwright-mine":{"enabled":true}}}` in that project's `.pi/mcp.json`,
+   or use `/mcp` and choose "Enable in this project".
+
+At each connection, Chrome opens an approval page where you pick the tabs to share. The
+session reaches only those tabs and the tabs it opens itself. It works only where your
+Chrome runs, so it needs a display and `PLAYWRIGHT_MCP_HEADLESS` does not apply.
+
+Rules for this server:
+
+- Never name it `playwright`. That name replaces the isolated browser for every design agent.
+- Never add `mcp:playwright-mine` to a design agent. The design agents run in the background,
+  and nobody watches what they do in your browser.
+- Do not set `PLAYWRIGHT_MCP_EXTENSION_TOKEN`, so that every connection needs your approval.
+- Do not add `--caps`.
+- For read-only use, also hide the tools that act on the page:
+  - `browser_click`, `browser_type` and `browser_fill_form`
+  - `browser_press_key` and `browser_select_option`
+  - `browser_drag` and `browser_handle_dialog`
+
+  `browser_navigate` can still send data out in a URL.
+- A page where you sign in can carry prompt injection, and what the session reads goes
+  into its transcript.
 
 ### Agents on pi
 

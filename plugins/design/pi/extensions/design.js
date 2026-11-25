@@ -306,7 +306,6 @@ var PLAYWRIGHT_SERVER = "playwright";
 var PLAYWRIGHT_ARGS = [
   "-y",
   `@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}`,
-  "--headless",
   "--isolated",
   "--browser",
   "chrome",
@@ -316,6 +315,17 @@ var PLAYWRIGHT_ARGS = [
   "--file-paths",
   "absolute"
 ];
+var HEADLESS_ENV = "PLAYWRIGHT_MCP_HEADLESS";
+function playwrightHeadless(env, platform) {
+  const forced = env[HEADLESS_ENV];
+  if (forced === "1" || forced === "true")
+    return true;
+  if (forced === "0" || forced === "false")
+    return false;
+  if (platform === "darwin")
+    return false;
+  return !env.DISPLAY && !env.WAYLAND_DISPLAY;
+}
 var TOOL_REVIEW = {
   browser_run_code_unsafe: { kind: "hidden", why: "runs code, or a local file's code, in the server's Node process" },
   browser_file_upload: { kind: "hidden", why: "hands local files to the page" },
@@ -329,13 +339,13 @@ var TOOL_REVIEW = {
   browser_take_screenshot: { kind: "writes-output", why: "saves the screenshot" }
 };
 var HIDDEN_TOOLS = Object.entries(TOOL_REVIEW).filter(([, review]) => review.kind === "hidden").map(([name]) => name);
-function playwrightMcp(workspace) {
+function playwrightMcp(workspace, headless) {
   return {
     command: "npx",
-    args: [...PLAYWRIGHT_ARGS],
+    args: [...PLAYWRIGHT_ARGS, ...headless ? ["--headless"] : []],
     cwd: workspace,
-    env: { npm_config_registry: "https://registry.npmjs.org/" },
-    description: "Headless, isolated Chrome for rendered-UI review: ARIA snapshots, page evaluation, resize, keyboard, console, network and screenshots.",
+    env: { npm_config_registry: "https://registry.npmjs.org/", [HEADLESS_ENV]: headless ? "true" : "false" },
+    description: `${headless ? "Headless" : "Headed"}, isolated Chrome for rendered-UI review: ARIA snapshots, page evaluation, resize, keyboard, console, network and screenshots.`,
     toolExposure: Object.fromEntries(HIDDEN_TOOLS.map((tool) => [tool, "hidden"]))
   };
 }
@@ -369,7 +379,7 @@ function registerDesign(pi, overrides = {}) {
     if (workspace !== undefined)
       return;
     workspace = (overrides.makeWorkspace ?? newWorkspace)();
-    pi.registerMcpServer(PLAYWRIGHT_SERVER, playwrightMcp(workspace));
+    pi.registerMcpServer(PLAYWRIGHT_SERVER, playwrightMcp(workspace, playwrightHeadless(process.env, process.platform)));
   });
   pi.on("session_shutdown", () => {
     if (workspace === undefined)

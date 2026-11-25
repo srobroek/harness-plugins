@@ -2,8 +2,16 @@
 // offers with the shipped arguments, as recorded in playwright-tools.json.
 
 import { expect, test } from "bun:test"
-import { readFileSync } from "node:fs"
-import { HIDDEN_TOOLS, PLAYWRIGHT_ARGS, PLAYWRIGHT_MCP_VERSION, playwrightMcp, TOOL_REVIEW } from "./playwright.ts"
+import { readdirSync, readFileSync } from "node:fs"
+import {
+  HEADLESS_ENV,
+  HIDDEN_TOOLS,
+  PLAYWRIGHT_ARGS,
+  PLAYWRIGHT_MCP_VERSION,
+  playwrightHeadless,
+  playwrightMcp,
+  TOOL_REVIEW,
+} from "./playwright.ts"
 
 type RecordedTool = {
   name: string
@@ -80,7 +88,7 @@ test("a visible tool takes a file only to save its own output, and code only for
 
 test("the server hides the tools that read local files into the page or run code outside it", () => {
   expect(HIDDEN_TOOLS.toSorted()).toEqual(["browser_drop", "browser_file_upload", "browser_run_code_unsafe"])
-  expect(playwrightMcp("/scratch").toolExposure).toEqual({
+  expect(playwrightMcp("/scratch", false).toolExposure).toEqual({
     browser_drop: "hidden",
     browser_file_upload: "hidden",
     browser_run_code_unsafe: "hidden",
@@ -92,15 +100,61 @@ test("no optional capability or unrestricted file access is turned on", () => {
   expect(args.filter((arg) => arg === "--caps" || arg === "--allow-unrestricted-file-access")).toEqual([])
   expect(PLAYWRIGHT_ARGS).toContain("--ignore-roots")
   expect(PLAYWRIGHT_ARGS).toContain("--isolated")
-  expect(PLAYWRIGHT_ARGS).toContain("--headless")
+  expect(PLAYWRIGHT_ARGS).not.toContain("--headless")
   expect(recording.tools.map(({ name }) => name).filter((name) => /storage|cookie|route|pdf|tracing|video/.test(name))).toEqual([])
 })
 
 test("the server's working directory is the scratch workspace it is given", () => {
-  expect(playwrightMcp("/scratch/pi-design-playwright-x")).toMatchObject({
+  expect(playwrightMcp("/scratch/pi-design-playwright-x", false)).toMatchObject({
     command: "npx",
     cwd: "/scratch/pi-design-playwright-x",
     args: [...PLAYWRIGHT_ARGS],
   })
   expect(PLAYWRIGHT_ARGS.slice(0, 2)).toEqual(["-y", `@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}`])
+})
+
+test("the browser is headed on macOS and on a Linux desktop, headless on a Linux host without a display", () => {
+  expect(playwrightHeadless({}, "darwin")).toBe(false)
+  expect(playwrightHeadless({}, "linux")).toBe(true)
+  expect(playwrightHeadless({ DISPLAY: ":0" }, "linux")).toBe(false)
+  expect(playwrightHeadless({ WAYLAND_DISPLAY: "wayland-0" }, "linux")).toBe(false)
+  expect(playwrightHeadless({ DISPLAY: "" }, "linux")).toBe(true)
+})
+
+test("PLAYWRIGHT_MCP_HEADLESS overrides the rule both ways, and other values are ignored", () => {
+  for (const value of ["1", "true"]) {
+    expect(playwrightHeadless({ [HEADLESS_ENV]: value }, "darwin")).toBe(true)
+    expect(playwrightHeadless({ [HEADLESS_ENV]: value, DISPLAY: ":0" }, "linux")).toBe(true)
+  }
+  for (const value of ["0", "false"]) {
+    expect(playwrightHeadless({ [HEADLESS_ENV]: value }, "linux")).toBe(false)
+  }
+  expect(playwrightHeadless({ [HEADLESS_ENV]: "yes" }, "linux")).toBe(true)
+  expect(playwrightHeadless({ [HEADLESS_ENV]: "yes" }, "darwin")).toBe(false)
+})
+
+test("the mode reaches the server as --headless and as an explicit PLAYWRIGHT_MCP_HEADLESS", () => {
+  const headless = playwrightMcp("/w", true)
+  expect(headless.args).toEqual([...PLAYWRIGHT_ARGS, "--headless"])
+  expect(headless.env[HEADLESS_ENV]).toBe("true")
+  expect(headless.description).toStartWith("Headless,")
+  const headed = playwrightMcp("/w", false)
+  expect(headed.args).toEqual([...PLAYWRIGHT_ARGS])
+  expect(headed.env[HEADLESS_ENV]).toBe("false")
+  expect(headed.description).toStartWith("Headed,")
+})
+
+test("the design agents select no MCP server but the package's isolated browser", () => {
+  const agents = new URL("../common/agents/", import.meta.url)
+  const selected = readdirSync(agents)
+    .filter((file) => file.endsWith(".pi.md"))
+    .flatMap((file) => {
+      const tools = /^tools:(.*)$/m.exec(readFileSync(new URL(file, agents), "utf8"))?.[1] ?? ""
+      return tools
+        .split(",")
+        .map((tool) => tool.trim())
+        .filter((tool) => tool.startsWith("mcp:"))
+    })
+  expect(selected.length).toBeGreaterThan(0)
+  expect(new Set(selected)).toEqual(new Set(["mcp:playwright"]))
 })

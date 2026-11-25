@@ -6,7 +6,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import type { SupervisedRun } from "@srobroek/opencode-lib/subprocess"
 import { NPX_RUNNER, SCAN_TOOL } from "../shared/impeccable.ts"
 import { IMPECCABLE_INSTALL, registerDesign, scanConsent } from "./design.ts"
-import { PLAYWRIGHT_MCP_VERSION, PLAYWRIGHT_SERVER, playwrightMcp } from "./playwright.ts"
+import { PLAYWRIGHT_MCP_VERSION, PLAYWRIGHT_SERVER, playwrightHeadless, playwrightMcp } from "./playwright.ts"
 
 type Tool = Parameters<ExtensionAPI["registerTool"]>[0]
 type Execute = NonNullable<Tool["execute"]>
@@ -70,7 +70,7 @@ test("the session start registers the Playwright server in a new workspace that 
   fire("session_start")
   expect(made).toBe(1)
   expect([...servers.keys()]).toEqual([PLAYWRIGHT_SERVER])
-  expect(servers.get(PLAYWRIGHT_SERVER)).toEqual(playwrightMcp(workspace))
+  expect(servers.get(PLAYWRIGHT_SERVER)).toEqual(playwrightMcp(workspace, playwrightHeadless(process.env, process.platform)))
   fire("session_shutdown")
   expect(existsSync(workspace)).toBe(false)
   fire("session_shutdown")

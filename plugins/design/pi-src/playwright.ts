@@ -7,10 +7,11 @@ export const PLAYWRIGHT_MCP_VERSION = "0.0.86"
 export const PLAYWRIGHT_SERVER = "playwright"
 
 /**
- * The server's arguments: a headless Chrome with an in-memory profile, sized like the widest
- * ui-review width. There is no `--caps`, so the `storage`, `network`, `pdf`, `devtools` and
- * `vision` capabilities are off: `browser_set_storage_state`, `browser_route` and `browser_pdf_save`
- * are not offered (playwright-tools.json lists all 25 tools 0.0.86 offers with these arguments).
+ * The server's arguments, whatever the browser mode: Chrome with an in-memory profile, sized like
+ * the widest ui-review width. `--headless` is added only when `playwrightHeadless` says so. There
+ * is no `--caps`, so the `storage`, `network`, `pdf`, `devtools` and `vision` capabilities are off:
+ * `browser_set_storage_state`, `browser_route` and `browser_pdf_save` are not offered
+ * (playwright-tools.json lists all 25 tools 0.0.86 offers with these arguments, in either mode).
  * `--ignore-roots` makes the server's `cwd` its only workspace root, whatever roots the client
  * advertises, and there is no `--allow-unrestricted-file-access`: file writes outside that root are
  * refused and `file:` URLs are blocked.
@@ -18,7 +19,6 @@ export const PLAYWRIGHT_SERVER = "playwright"
 export const PLAYWRIGHT_ARGS = [
   "-y",
   `@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}`,
-  "--headless",
   "--isolated",
   "--browser",
   "chrome",
@@ -28,6 +28,23 @@ export const PLAYWRIGHT_ARGS = [
   "--file-paths",
   "absolute",
 ] as const
+
+/** The variable that picks the mode, read the way Playwright MCP's own `envToBoolean` reads it. */
+export const HEADLESS_ENV = "PLAYWRIGHT_MCP_HEADLESS"
+
+/**
+ * Whether the browser runs headless. `PLAYWRIGHT_MCP_HEADLESS` set to `1`/`true` or `0`/`false`
+ * wins; any other value is ignored. Otherwise the browser is headed on macOS, or elsewhere when
+ * `DISPLAY` or `WAYLAND_DISPLAY` is set, and headless on a host with no display, where a headed
+ * Chrome cannot start.
+ */
+export function playwrightHeadless(env: Readonly<Record<string, string | undefined>>, platform: string): boolean {
+  const forced = env[HEADLESS_ENV]
+  if (forced === "1" || forced === "true") return true
+  if (forced === "0" || forced === "false") return false
+  if (platform === "darwin") return false
+  return !env.DISPLAY && !env.WAYLAND_DISPLAY
+}
 
 /**
  * What the package does with each tool that takes a local path, a file name or code, as recorded
@@ -60,18 +77,20 @@ export const HIDDEN_TOOLS = Object.entries(TOOL_REVIEW)
 
 /**
  * Pi `mcpServers` entry. `workspace` is the server's `cwd` and its only workspace root, so the
- * snapshots and screenshots it saves land there and nowhere in the project. A `playwright`
- * server in the user's or a trusted project's mcp.json wins. `npm_config_registry` keeps a
- * project `.npmrc` registry from breaking npx, as in common/.mcp.json.
+ * snapshots and screenshots it saves land there and nowhere in the project. `headless` comes from
+ * `playwrightHeadless`. It is passed both as `--headless` and as `PLAYWRIGHT_MCP_HEADLESS`, which
+ * overrides the inherited variable, so the server cannot fall back on its own rule (headless on
+ * Linux without `DISPLAY`, which ignores Wayland). A `playwright` server in the user's or a
+ * trusted project's mcp.json wins. `npm_config_registry` keeps a project `.npmrc` registry from
+ * breaking npx, as in common/.mcp.json.
  */
-export function playwrightMcp(workspace: string) {
+export function playwrightMcp(workspace: string, headless: boolean) {
   return {
     command: "npx",
-    args: [...PLAYWRIGHT_ARGS],
+    args: [...PLAYWRIGHT_ARGS, ...(headless ? ["--headless"] : [])],
     cwd: workspace,
-    env: { npm_config_registry: "https://registry.npmjs.org/" },
-    description:
-      "Headless, isolated Chrome for rendered-UI review: ARIA snapshots, page evaluation, resize, keyboard, console, network and screenshots.",
+    env: { npm_config_registry: "https://registry.npmjs.org/", [HEADLESS_ENV]: headless ? "true" : "false" },
+    description: `${headless ? "Headless" : "Headed"}, isolated Chrome for rendered-UI review: ARIA snapshots, page evaluation, resize, keyboard, console, network and screenshots.`,
     toolExposure: Object.fromEntries(HIDDEN_TOOLS.map((tool) => [tool, "hidden" as const])),
   } satisfies McpServerConfig
 }
