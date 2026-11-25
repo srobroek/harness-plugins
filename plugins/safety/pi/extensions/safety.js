@@ -1384,14 +1384,16 @@ var HAS_WELLFORMED = !!"".isWellFormed;
 var compiled = new Map;
 // lib/src/shell-command.ts
 import { resolve } from "path";
-function leadingCdCwd(command, cwd) {
-  const match = /^\s*cd\s+([^\s;&|]+)\s*&&/.exec(command);
-  if (!match)
-    return cwd;
-  const dir = match[1];
-  if (!dir || /^[-~$]/.test(dir) || /[\\`"'*?\x5b\x5d{}]/.test(dir))
-    return cwd;
-  return dir.startsWith("/") ? dir : resolve(cwd, dir);
+var LITERAL_CD = /^\s*cd[ \t]+([A-Za-z0-9_@%+=:,./-]+)[ \t]*(?:&&|$)/;
+var STARTS_WITH_CD = /^\s*(?:cd|pushd|popd)(?=\s|$|[;&|<>()])/;
+function leadingCd(command, cwd) {
+  if (!STARTS_WITH_CD.test(command))
+    return { kind: "none" };
+  const match = LITERAL_CD.exec(command);
+  const dir = match?.[1];
+  if (match === null || dir === undefined || dir.startsWith("-") || dir.split("/").includes(".."))
+    return { kind: "rejected" };
+  return { kind: "dir", dir: resolve(cwd, dir), length: match[0].length };
 }
 function scanShell(source, options = {}) {
   const items = [];
@@ -2928,13 +2930,19 @@ function positionals(args, valued = new Set) {
 }
 
 // plugins/safety/shared/flag-directories.ts
-function literalDir(raw, cwd) {
+function literalDir(raw, cwd, unresolved) {
   const value = raw.replace(/^\$\{?HOME\}?(?=\/|$)/, homedir3());
   if (value === "" || /[$`]/.test(value))
     return;
   if (value === "~" || value.startsWith("~/"))
     return join4(homedir3(), value.slice(1));
-  return isAbsolute3(value) ? resolve4(value) : resolve4(cwd, value);
+  if (isAbsolute3(value))
+    return resolve4(value);
+  if (cwd === undefined) {
+    unresolved.push(raw);
+    return;
+  }
+  return resolve4(cwd, value);
 }
 var FLAGS = {
   make: [{ names: ["-C", "--directory"], attached: true }],
@@ -2948,11 +2956,11 @@ var FLAGS = {
   uv: [{ names: ["--directory", "--project"] }]
 };
 var GIT_VALUED2 = new Set(["-c", "--namespace", "--config-env", "--super-prefix"]);
-function gitDirectories(command, cwd) {
+function gitDirectories(command, cwd, unresolved) {
   const out = [];
   for (const assignment of command.assignments) {
     const match = /^(GIT_DIR|GIT_WORK_TREE)=(.*)$/.exec(assignment);
-    const dir = match?.[2] === undefined ? undefined : literalDir(match[2], cwd);
+    const dir = match?.[2] === undefined ? undefined : literalDir(match[2], cwd, unresolved);
     if (dir !== undefined)
       out.push(dir);
   }
@@ -2965,13 +2973,13 @@ function gitDirectories(command, cwd) {
     const [flag] = word.split("=", 1);
     const value = word.includes("=") ? word.slice(flag.length + 1) : undefined;
     if (flag === "-C") {
-      const next = literalDir(argv[++i] ?? "", at);
+      const next = literalDir(argv[++i] ?? "", at, unresolved);
       if (next === undefined)
         return out;
       at = next;
       out.push(at);
     } else if (flag === "--git-dir" || flag === "--work-tree") {
-      const dir = literalDir(value ?? argv[++i] ?? "", at);
+      const dir = literalDir(value ?? argv[++i] ?? "", at, unresolved);
       if (dir !== undefined)
         out.push(dir);
     } else if (GIT_VALUED2.has(flag) && value === undefined) {
@@ -2980,7 +2988,7 @@ function gitDirectories(command, cwd) {
   }
   return out;
 }
-function toolDirectories(name, argv, cwd) {
+function toolDirectories(name, argv, cwd, unresolved) {
   if (!Object.hasOwn(FLAGS, name))
     return [];
   const flags = FLAGS[name];
@@ -3002,7 +3010,7 @@ function toolDirectories(name, argv, cwd) {
       }
       if (value === undefined)
         continue;
-      const path = literalDir(value, at);
+      const path = literalDir(value, at, unresolved);
       if (path === undefined)
         break;
       if (flag.file)
@@ -3017,17 +3025,18 @@ function toolDirectories(name, argv, cwd) {
   }
   return out;
 }
-function flagDirectories(command, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS) {
+function flagDirectories(command, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS, unresolved = []) {
   if (isGitCommand(command.argv[0], gitWrappers))
-    return gitDirectories(command, cwd);
-  return toolDirectories(base(command.argv[0]), command.argv, cwd);
+    return gitDirectories(command, cwd, unresolved);
+  return toolDirectories(base(command.argv[0]), command.argv, cwd, unresolved);
 }
-function shellFlagDirectories(source, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS) {
-  const out = new Set;
+function flagDirectoryReport(source, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS) {
+  const dirs = new Set;
+  const unresolved = [];
   for (const command of walkShell(source).commands)
-    for (const dir of flagDirectories(command, cwd, gitWrappers))
-      out.add(dir);
-  return [...out];
+    for (const dir of flagDirectories(command, cwd, gitWrappers, unresolved))
+      dirs.add(dir);
+  return { dirs: [...dirs], unresolved: [...new Set(unresolved)] };
 }
 
 // plugins/safety/shared/guards.ts
@@ -4914,6 +4923,7 @@ function matchTarget(target, cwd, worktrees, probe) {
   const named = worktrees.filter((w) => base(w.path) === target || w.branch === target);
   return named.length === 1 ? named[0] : null;
 }
+var UNKNOWN_DIRECTORY_REMOVAL = `${PREFIX2}: the call changes directory in a way this gate cannot read (a quoted, expanded, \`..\` or redirected \`cd\`, or more than one), so the repository the removal acts on is unknown. Start the call with \`cd <literal path> &&\`, or name the worktree by its absolute path.`;
 async function reviewRemoval(removal, cwd, probe) {
   if (!removal.literal) {
     return {
@@ -4928,7 +4938,9 @@ async function reviewRemoval(removal, cwd, probe) {
   const target = removal.targets[0] ?? (removal.tool === "wt" ? "." : undefined);
   if (target === undefined)
     return null;
-  const at = removal.chdir ? probe.resolve(cwd, removal.chdir) : cwd;
+  const at = cwd !== undefined ? removal.chdir ? probe.resolve(cwd, removal.chdir) : cwd : removal.chdir && isAbsolute6(removal.chdir) ? probe.resolve("/", removal.chdir) : !removal.chdir && isAbsolute6(target) ? target : undefined;
+  if (at === undefined)
+    return { refuse: UNKNOWN_DIRECTORY_REMOVAL };
   const worktrees = await probe.list(at);
   if (worktrees === null) {
     return {
@@ -5818,12 +5830,12 @@ ${entries.slice(0, 10).map((line) => `    ${line}`).join(`
   return "";
 }
 function callDirectory(source, commands, cwd) {
-  const leading = leadingCdCwd(source, cwd);
   const changes = commands.filter((command) => command.context === "top" && ["cd", "pushd", "popd"].includes(base(command.argv[0])));
   if (changes.length === 0)
     return cwd;
-  if (changes.length === 1 && changes[0]?.index === 0 && leading !== cwd)
-    return leading;
+  const lead = leadingCd(source, cwd);
+  if (changes.length === 1 && changes[0]?.index === 0 && lead.kind === "dir")
+    return lead.dir;
   return;
 }
 var LABELS = {
@@ -5854,7 +5866,7 @@ async function reviewPermission(source, cwd, options = {}) {
     } else if (branches.action === "confirm")
       destructive.push(`${branches.title}
 ${branches.message}`);
-    const removals2 = await reviewRemovals(source, dir ?? cwd, options.worktreeProbe ?? defaultProbe(options), (text) => removals(text, gitWrappers));
+    const removals2 = await reviewRemovals(source, dir, options.worktreeProbe ?? defaultProbe(options), (text) => removals(text, gitWrappers));
     if (removals2.refuse)
       return { effect: "deny", message: removals2.refuse };
     destructive.push(...removals2.ask);
@@ -6125,6 +6137,9 @@ var REVIEW_FAILED = "safety (worktree-destruction-guard): the review of this com
 function externalMessage(external) {
   return `safety (external-directory): this command points a tool at a directory outside the session (${external.map((item) => item.resource).join(", ")}). Approve only if you meant to work there.`;
 }
+function unresolvedMessage(unresolved) {
+  return `safety (external-directory): this command starts with a cd this guard cannot read (a quoted, expanded, \`..\` or redirected directory), so it cannot tell where ${unresolved.map((value) => `\`${value}\``).join(", ")} points. Approve only if you meant to work there.`;
+}
 function attempt(run) {
   try {
     return run();
@@ -6137,7 +6152,8 @@ function migrationsOn(config) {
 }
 async function gateBash(command, cwd, config) {
   const { disabled } = config.options;
-  const gateCwd = leadingCdCwd(command, cwd);
+  const lead = leadingCd(command, cwd);
+  const gateCwd = lead.kind === "dir" ? lead.dir : cwd;
   let types;
   const providerTypes = config.guard?.providerTypes ?? ((name, file) => {
     types ??= readProviderTypes(cwd);
@@ -6180,9 +6196,12 @@ async function gateBash(command, cwd, config) {
     asks.push(REVIEW_FAILED);
   }
   if (!disabled.has("external-directory")) {
-    const external = attempt(() => externalDirectories(shellFlagDirectories(command, gateCwd, config.options.gitWrappers), sessionRoots(cwd))) ?? [];
+    const flags = attempt(() => flagDirectoryReport(command, lead.kind === "rejected" ? undefined : gateCwd, config.options.gitWrappers));
+    const external = flags === undefined ? [] : attempt(() => externalDirectories(flags.dirs, sessionRoots(cwd))) ?? [];
     if (external.length > 0)
       asks.push(externalMessage(external));
+    if (flags !== undefined && flags.unresolved.length > 0)
+      asks.push(unresolvedMessage(flags.unresolved));
   }
   return asks.length === 0 ? RUN : { kind: "ask", message: asks.join(`
 
@@ -6287,5 +6306,6 @@ export {
   loadPiOptions,
   readPiOptions,
   resultPatch,
-  settle
+  settle,
+  unresolvedMessage
 };

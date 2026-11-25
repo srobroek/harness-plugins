@@ -1,4 +1,4 @@
-import { commandWords, leadingCdCwd, scanShell } from "@srobroek/opencode-lib"
+import { commandWords, leadingCd, scanShell } from "@srobroek/opencode-lib"
 import { hardenedGitEnv } from "@srobroek/opencode-lib/safe-git"
 import { supervise } from "@srobroek/opencode-lib/subprocess"
 
@@ -12,6 +12,8 @@ const OPAQUE_DYNAMIC_MERGE_REFUSAL =
   "opaque dynamic shell body names a merge or land command; retry with a literal command"
 const UNPARSEABLE_MERGE_REFUSAL =
   "the command has an unterminated quote, substitution or here-document and names wt merge, so the merge cannot be checked; retry with a complete literal command"
+export const UNKNOWN_DIRECTORY_MERGE_REFUSAL =
+  "the command starts with a cd this gate cannot read (a quoted, expanded, `..` or redirected directory), so the repository the merge runs in is unknown; retry with `cd <literal path> && wt merge …` or `wt -C <absolute path> merge …`"
 
 const SHELLS: ReadonlySet<string> = new Set(["bash", "sh", "zsh", "dash", "ksh"])
 const GLOBAL_VALUE_OPTIONS: ReadonlySet<string> = new Set(["-C", "--config", "--config-set"])
@@ -219,16 +221,20 @@ async function decideCommands(
     collected.executed.some((word) => references(word, collected.mergeVariables))
   )
     return { block: true, reason: OPAQUE_DYNAMIC_MERGE_REFUSAL }
-  const shellCwd = leadingCdCwd(command, cwd)
+  const lead = leadingCd(command, cwd)
+  const shellCwd = lead.kind === "dir" ? lead.dir : lead.kind === "none" ? cwd : undefined
   for (const argv of collected.commands) {
     const invocation = parseMergeInvocation(argv)
     if (!invocation || invocation.target === null) continue
     const target = invocation.target
-    const repoCwd = invocation.workdir
-      ? invocation.workdir.startsWith("/")
-        ? invocation.workdir
-        : `${shellCwd}/${invocation.workdir}`
-      : shellCwd
+    const repoCwd = invocation.workdir?.startsWith("/")
+      ? invocation.workdir
+      : shellCwd === undefined
+        ? undefined
+        : invocation.workdir
+          ? `${shellCwd}/${invocation.workdir}`
+          : shellCwd
+    if (repoCwd === undefined) return { block: true, reason: UNKNOWN_DIRECTORY_MERGE_REFUSAL }
     const configured = await wt(["config", "state", "default-branch"], repoCwd)
     const symbolic = configured || (await git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repoCwd))
     const defaultBranch = symbolic?.replace(/^origin\//, "")

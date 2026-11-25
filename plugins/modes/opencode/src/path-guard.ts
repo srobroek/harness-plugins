@@ -3,8 +3,8 @@
  *
  * Permission globs let `*` span `/`, so a pattern like worktree, star, debug-star also matches a debug-star directory
  * nested inside another lane. This guard decides on path segments after resolving symlinks:
- * a write is allowed only inside `~/.opencode/debug/`, or inside `<worktree root>/<hash>/debug-<slug>/`,
- * and never inside the directory the session started in.
+ * a write is allowed only inside the debug ledger directory, or inside `<worktree root>/<hash>/debug-<slug>/`,
+ * and never inside the directory the session started in. Each host names its own two roots (`ScratchRoots`).
  */
 
 import { lstatSync, readlinkSync } from "node:fs"
@@ -12,11 +12,26 @@ import { homedir } from "node:os"
 import { dirname, isAbsolute, join, relative, sep } from "node:path"
 import { WRITE_TOOLS, writeTargets } from "@srobroek/opencode-lib/tool-targets"
 
+/** Where `debug` may write, relative to the home directory: its ledger directory and the root of its scratch worktrees. */
+export type ScratchRoots = { ledger: string; worktrees: string }
+
+/** OpenCode's roots: `~/.opencode/debug/` and the worktrees OpenCode creates under `~/.local/share/opencode/worktree/`. */
+export const OPENCODE_SCRATCH: ScratchRoots = { ledger: ".opencode/debug", worktrees: ".local/share/opencode/worktree" }
+
 export type PathGuardOptions = {
   /** The user's home directory. Defaults to `os.homedir()`. */
   home?: string
   /** The directory the session started in, which is never writable. */
   startDir: string
+  /** The host's scratch roots. Defaults to `OPENCODE_SCRATCH`. */
+  roots?: ScratchRoots
+}
+
+/** The absolute ledger and worktree roots for `options`, under the resolved home directory. */
+function scratchDirs(options: PathGuardOptions): { ledger: string; worktrees: string } {
+  const home = canonical(options.home ?? homedir())
+  const roots = options.roots ?? OPENCODE_SCRATCH
+  return { ledger: join(home, roots.ledger), worktrees: join(home, roots.worktrees) }
 }
 
 const MAX_LINKS = 40
@@ -73,7 +88,7 @@ function appendLexically(base: string, segments: readonly string[]): string {
  * The ways a tool may read a path: as the operating system does (symlinks first, then `..`), and as a
  * tool that normalises `..` by name before it opens the file. A path must pass under both.
  */
-function readings(path: string): string[] {
+export function readings(path: string): string[] {
   const absolute = isAbsolute(path) ? path : `${process.cwd()}${sep}${path}`
   const lexical = appendLexically(sep, absolute.split(sep).filter((part) => part !== ""))
   return [canonical(absolute), canonical(lexical)]
@@ -103,10 +118,9 @@ function checkResolved(target: string, options: PathGuardOptions): string | unde
 }
 
 function checkReading(target: string, path: string, start: string, options: PathGuardOptions): string | undefined {
-  const home = canonical(options.home ?? homedir())
+  const { ledger, worktrees } = scratchDirs(options)
   if (path === start || inside(path, start)) return `${target} is inside the directory this session started in`
-  if (inside(path, join(home, ".opencode", "debug"))) return undefined
-  const worktrees = join(home, ".local", "share", "opencode", "worktree")
+  if (inside(path, ledger)) return undefined
   if (inside(path, worktrees)) {
     const [hash, lane, ...rest] = relative(worktrees, path).split(sep)
     if (hash !== undefined && lane !== undefined && /^debug-.+/.test(lane) && rest.length > 0) return undefined
@@ -120,9 +134,8 @@ function checkReading(target: string, path: string, start: string, options: Path
  */
 export function isScratchPath(path: string, options: PathGuardOptions): boolean {
   try {
-    const home = canonical(options.home ?? homedir())
+    const { worktrees } = scratchDirs(options)
     const start = canonical(options.startDir)
-    const worktrees = join(home, ".local", "share", "opencode", "worktree")
     return readings(isAbsolute(path) ? path : `${start}${sep}${path}`).every((resolved) => {
       if (resolved === start || inside(resolved, start)) return false
       if (!inside(resolved, worktrees)) return false
@@ -137,8 +150,7 @@ export function isScratchPath(path: string, options: PathGuardOptions): boolean 
 /** Whether `path` is exactly a `debug-*` scratch worktree directory, `<worktree root>/<hash>/debug-<slug>`, not something inside one. */
 export function isScratchRoot(path: string, options: PathGuardOptions): boolean {
   try {
-    const home = canonical(options.home ?? homedir())
-    const worktrees = join(home, ".local", "share", "opencode", "worktree")
+    const { worktrees } = scratchDirs(options)
     return isScratchPath(path, options) && readings(isAbsolute(path) ? path : `${canonical(options.startDir)}${sep}${path}`).every((resolved) => relative(worktrees, resolved).split(sep).length === 2)
   } catch {
     return false

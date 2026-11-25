@@ -3,6 +3,7 @@
 
 import { readFileSync } from "node:fs"
 import path from "node:path"
+import { contextModeTools } from "../plugins/modes/pi-src/context-mode-tools.ts"
 import { isPiAgentFile } from "./agent-files.ts"
 
 export type PiAgent = {
@@ -38,6 +39,9 @@ export const PI_LENS_TOOLS: readonly string[] = [
   "pi_lens_activate_tools",
   "lsp_navigation",
 ]
+
+/** context-mode's tools, read from its installed package or its recorded fixture. */
+export const CONTEXT_MODE_TOOLS: readonly string[] = contextModeTools().tools
 
 /** A frontmatter list: pi-subagents takes a comma-separated string or a YAML list. */
 function list(value: unknown): string[] {

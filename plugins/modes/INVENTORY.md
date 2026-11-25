@@ -3,13 +3,13 @@
 
 Debug, refactor and concept agents with plan-style mode reminders: root-cause diagnosis in a scratch worktree, behaviour-preserving refactoring, and design iteration.
 
-| Kind | opencode | omp |
-| --- | --- | --- |
-| skills | - | - |
-| agents | concept, debug, refactor | concept, debug, refactor |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | - |
-| tools | - | - |
-| extensions | index | - |
-| mcp | - | - |
+| Kind | opencode | omp | pi |
+| --- | --- | --- | --- |
+| skills | - | - | - |
+| agents | concept, debug, refactor | concept, debug, refactor | concept, debug, refactor |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | - | - |
+| tools | - | - | - |
+| extensions | index | modes | modes |
+| mcp | - | - | - |

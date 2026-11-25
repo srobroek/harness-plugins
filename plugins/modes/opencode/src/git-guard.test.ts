@@ -458,6 +458,23 @@ const verdict = (agents: string[], command: string, expected: "refused" | "allow
   }
 }
 
+describe("a directory change the workdir cannot account for", () => {
+  test.each([
+    `builtin cd ${CHECKOUT} && git commit -m x`,
+    `eval cd ${CHECKOUT} && git commit -m x`,
+    `eval "cd ${CHECKOUT}" && git commit -m x`,
+    "source ./env.sh && git commit -m x",
+    ". ./env.sh && git commit -m x",
+  ])("debug refuses git that writes after %j", (command) => verdict(["debug"], command, "refused"))
+
+  test("builtin does not hide the command it runs", () => verdict(["debug", "refactor"], "builtin eval 'git push'", "refused"))
+
+  test("git that only reads still runs after them", () => {
+    verdict(["debug"], `eval cd ${CHECKOUT} && git status`, "allowed")
+    verdict(["debug"], "source ./env.sh && git log -1", "allowed")
+  })
+})
+
 describe("fetch", () => {
   test.each(["git fetch", "git fetch origin", "git fetch --all", "git fetch --update-head-ok origin +main:main", "git fetch origin main:refs/heads/x"])(
     "debug may not run %j",

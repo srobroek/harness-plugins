@@ -21,7 +21,7 @@ import { isAbsolute } from "node:path"
 import { commandWords } from "@srobroek/opencode-lib/command-words"
 import { type CommandPosition, type ParsedCommand, parse } from "@srobroek/opencode-lib/shell-command"
 import { isShellTool, shellCall } from "@srobroek/opencode-lib/tool-targets"
-import { checkDebugWrite, isScratchPath, isScratchRoot } from "./path-guard.ts"
+import { checkDebugWrite, isScratchPath, isScratchRoot, OPENCODE_SCRATCH, type ScratchRoots } from "./path-guard.ts"
 
 /** What the guard needs to know about where a command runs. */
 export type GitContext = {
@@ -31,6 +31,8 @@ export type GitContext = {
   workdir?: string
   /** The user's home directory. Defaults to `os.homedir()`. */
   home?: string
+  /** The host's debug scratch roots. Defaults to `OPENCODE_SCRATCH`. */
+  roots?: ScratchRoots
 }
 
 type Policy = { subcommands: ReadonlySet<string> }
@@ -71,7 +73,10 @@ const RISKY_OPTION = /^--(upload-pack|receive-pack|exec|open-files-in-pager|ext-
 const MENTIONS_GIT = /git/i
 /** A command that is worth parsing: it mentions git or has a word that could expand into it. */
 const WORTH_PARSING = /git|[{*?[$`]/i
-const KEYWORDS = new Set(["if", "then", "else", "elif", "while", "until", "do", "!", "{", "(", "coproc"])
+// `builtin` runs the builtin that follows it, so `builtin cd X` and `builtin eval …` are read as `cd X` and `eval …`.
+const KEYWORDS = new Set(["if", "then", "else", "elif", "while", "until", "do", "!", "{", "(", "coproc", "builtin"])
+/** Commands that run shell text in the current shell, where a `cd` changes the directory of everything after them. */
+const IN_SHELL = new Set(["eval", "source", "."])
 const INTERPRETERS = /^(python[0-9.]*|node|nodejs|perl|ruby|php|lua|awk|gawk|mawk|osascript|tclsh|Rscript)$/
 type InterpreterSpec = {
   name: RegExp
@@ -456,12 +461,14 @@ function worktreeTarget(action: string, args: readonly string[]): string | undef
 
 /** Whether `path` is exactly a debug scratch worktree directory for this session. */
 function scratchRoot(path: string, ctx: Ctx): boolean {
-  return ctx.env.startDir !== undefined && isScratchRoot(path, { home: ctx.env.home, startDir: ctx.env.startDir })
+  const { startDir, home, roots } = ctx.env
+  return startDir !== undefined && isScratchRoot(path, { home, startDir, roots })
 }
 
 /** Whether `path` is a debug scratch worktree (or inside one) for this session. */
 function scratch(path: string, ctx: Ctx): boolean {
-  return ctx.env.startDir !== undefined && isScratchPath(path, { home: ctx.env.home, startDir: ctx.env.startDir })
+  const { startDir, home, roots } = ctx.env
+  return startDir !== undefined && isScratchPath(path, { home, startDir, roots })
 }
 
 /**
@@ -487,11 +494,11 @@ function outputDestinations(sub: string, rest: readonly string[]): string[] | un
 
 /** Why a git output path is refused, or undefined when it lands in a scratch worktree or the debug ledger directory. */
 function checkDestination(destination: string, tree: string | undefined, ctx: Ctx): string | undefined {
-  const { startDir, home } = ctx.env
+  const { startDir, home, roots } = ctx.env
   const resolved = joinPath(tree, destination, ctx.env.home)
   if (startDir === undefined || resolved === undefined) return "the destination or the start directory is unknown"
-  if (scratch(resolved, ctx) || checkDebugWrite(resolved, { home, startDir }) === undefined) return undefined
-  return "outside a debug-* scratch worktree and ~/.opencode/debug"
+  if (scratch(resolved, ctx) || checkDebugWrite(resolved, { home, startDir, roots }) === undefined) return undefined
+  return `outside a debug-* scratch worktree and ~/${(roots ?? OPENCODE_SCRATCH).ledger}`
 }
 
 /** Words after the xargs/watch/parallel options, as the command they run. */
@@ -567,13 +574,18 @@ function checkWords(input: readonly string[], ctx: Ctx): string | undefined {
   return undefined
 }
 
-/** Note `cd`, `pushd` and `popd`: from then on the directory of later commands is not the shell's `workdir`. */
+/**
+ * Note `cd`, `pushd` and `popd`, and `eval`, `source` and `.`, which can run one: from then on the
+ * directory of later commands is not the shell's `workdir`. Only a directory change is skipped; the
+ * others are still checked as commands.
+ */
 function followDirectory(position: CommandPosition, ctx: Ctx): boolean {
-  const { argv } = realCommand(position.argv)
-  if (!["cd", "pushd", "popd"].includes(basename(argv[0] ?? ""))) return false
+  const name = basename(realCommand(position.argv).argv[0] ?? "")
+  const changes = ["cd", "pushd", "popd"].includes(name)
+  if (!changes && !IN_SHELL.has(name)) return false
   ctx.state.cwd = undefined
   ctx.state.moved = true
-  return true
+  return changes
 }
 
 function checkParsed(parsed: ParsedCommand, ctx: Ctx): string | undefined {

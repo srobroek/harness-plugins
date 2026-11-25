@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test"
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
-import { PI_LENS_TOOLS, PI_WEB_TOOLS, type PiAgent, piAgents } from "./pi-agents.ts"
+import { CONTEXT_MODE_TOOLS, PI_LENS_TOOLS, PI_WEB_TOOLS, type PiAgent, piAgents } from "./pi-agents.ts"
 
 const PLUGINS = path.join(import.meta.dir, "..", "plugins")
 
@@ -15,6 +15,7 @@ const BUILTIN_TOOLS = new Set(["read", "bash", "edit", "write", "grep", "find", 
 
 /** The tools of the third-party Pi packages the agents load. */
 const THIRD_PARTY_TOOLS: Readonly<Record<string, readonly string[]>> = {
+  "npm:context-mode": CONTEXT_MODE_TOOLS,
   "npm:pi-lens": PI_LENS_TOOLS,
   "npm:pi-web-access": PI_WEB_TOOLS,
 }
