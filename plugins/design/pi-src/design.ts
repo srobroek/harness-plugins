@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { Type } from "typebox"
 import {
@@ -13,7 +16,7 @@ import {
   SCAN_TOOL,
   type ScanRunner,
 } from "../shared/impeccable.ts"
-import { PLAYWRIGHT_MCP, PLAYWRIGHT_SERVER } from "./playwright.ts"
+import { PLAYWRIGHT_SERVER, playwrightMcp } from "./playwright.ts"
 
 /** How to install the prerequisite; the same route as `prerequisites` in plugins/design/package.json. */
 export const IMPECCABLE_INSTALL = "mise use -g npm:impeccable"
@@ -54,13 +57,15 @@ const parameters = Type.Object(
 )
 
 /** Test seams; pi never passes them. */
-export type DesignOverrides = { exec?: Exec; which?: (bin: string) => string | null }
+export type DesignOverrides = { exec?: Exec; which?: (bin: string) => string | null; workspace?: string }
 
 const text = (value: string, details: Record<string, unknown>) => ({ content: [{ type: "text" as const, text: value }], details })
 
 export function registerDesign(pi: ExtensionAPI, overrides: DesignOverrides = {}): void {
   const which = overrides.which ?? ((bin: string) => Bun.which(bin))
-  pi.registerMcpServer(PLAYWRIGHT_SERVER, PLAYWRIGHT_MCP)
+  // A fresh directory per load: the browser's only workspace root, kept for the screenshot paths it reports.
+  const workspace = overrides.workspace ?? mkdtempSync(join(tmpdir(), "pi-design-playwright-"))
+  pi.registerMcpServer(PLAYWRIGHT_SERVER, playwrightMcp(workspace))
   pi.registerTool({
     name: SCAN_TOOL,
     label: "Impeccable Scan",

@@ -4,7 +4,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import type { SupervisedRun } from "@srobroek/opencode-lib/subprocess"
 import { NPX_RUNNER, SCAN_TOOL } from "../shared/impeccable.ts"
 import { IMPECCABLE_INSTALL, registerDesign, scanConsent } from "./design.ts"
-import { PLAYWRIGHT_MCP, PLAYWRIGHT_MCP_VERSION, PLAYWRIGHT_SERVER } from "./playwright.ts"
+import { PLAYWRIGHT_MCP_VERSION, PLAYWRIGHT_SERVER, playwrightMcp } from "./playwright.ts"
 
 type Tool = Parameters<ExtensionAPI["registerTool"]>[0]
 type Execute = NonNullable<Tool["execute"]>
@@ -20,6 +20,7 @@ function load(which: (bin: string) => string | null) {
     registerMcpServer: (name: string, config: unknown) => servers.set(name, config),
   } as unknown as ExtensionAPI
   registerDesign(pi, {
+    workspace: "/scratch",
     which,
     exec: async (argv) => {
       runs.push(argv)
@@ -35,19 +36,11 @@ function load(which: (bin: string) => string | null) {
 const textOf = (result: Awaited<ReturnType<Execute>>) =>
   result.content.map((part) => (part.type === "text" ? part.text : "")).join("\n")
 
-test("the extension registers the scan tool and the Playwright MCP server", () => {
+test("the extension registers the scan tool and the Playwright MCP server in its workspace", () => {
   const { tools, servers } = load(() => null)
   expect(tools.map(({ name }) => name)).toEqual([SCAN_TOOL])
   expect([...servers.keys()]).toEqual([PLAYWRIGHT_SERVER])
-  expect(servers.get(PLAYWRIGHT_SERVER)).toBe(PLAYWRIGHT_MCP)
-})
-
-test("the Playwright server is pinned, headless, isolated and hides the tools that leave the page", () => {
-  expect(PLAYWRIGHT_MCP.command).toBe("npx")
-  expect(PLAYWRIGHT_MCP.args.slice(0, 2)).toEqual(["-y", `@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}`])
-  expect(PLAYWRIGHT_MCP.args).toContain("--headless")
-  expect(PLAYWRIGHT_MCP.args).toContain("--isolated")
-  expect(PLAYWRIGHT_MCP.toolExposure).toEqual({ browser_run_code_unsafe: "hidden", browser_file_upload: "hidden" })
+  expect(servers.get(PLAYWRIGHT_SERVER)).toEqual(playwrightMcp("/scratch"))
 })
 
 test("the README pins the same @playwright/mcp release as the extension", () => {

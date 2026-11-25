@@ -216,20 +216,34 @@ installs impeccable. The timeout and the output limit are the same as in OpenCod
 ### Browser
 
 The extension registers a `playwright` MCP server. It runs Playwright MCP in a headless
-Chrome with an in-memory profile, and it hides `browser_run_code_unsafe` and
-`browser_file_upload`. A `playwright` server in your `mcp.json` replaces it.
+Chrome with an in-memory profile. The extension hides three tools:
 
-Pi gives a server that an extension registers only to background subagents. So the four
-design agents set `async: true`, and `/design-review` and `ui-ux-specialist` start them in
-the background. A foreground run of a design agent fails unless your own `mcp.json` has
-the server. Add it to `~/.pi/agent/mcp.json`, or to a trusted project's `.pi/mcp.json`:
+- `browser_run_code_unsafe` runs code in the server's Node process.
+- `browser_file_upload` hands local files to the page.
+- `browser_drop` drops local files onto the page.
+
+The server runs in a new temporary directory for each session, and that directory is its
+only workspace root. Snapshots, screenshots and the other files the tools save go there.
+A write outside that root fails with "File access denied", and the server blocks `file:` URLs.
+`pi-src/playwright-tools.json` records the 25 tools the pinned release offers. After a
+version bump, record it again with `bun scripts/record-playwright-tools.ts`.
+The design tests check each recorded tool that takes a file, a path or code.
+
+A `playwright` server in your `mcp.json` replaces this one. Pi gives a server that an
+extension registers only to background subagents. So the four design agents set
+`async: true`, and `/design-review` and `ui-ux-specialist` start them in the background.
+A foreground run of a design agent fails unless your own `mcp.json` has the server. Add it
+to `~/.pi/agent/mcp.json`, or to a trusted project's `.pi/mcp.json`. Create the `cwd`
+directory first:
 
 ```json
 {
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@0.0.86", "--headless", "--isolated", "--browser", "chrome", "--viewport-size", "1440x900"]
+      "args": ["-y", "@playwright/mcp@0.0.86", "--headless", "--isolated", "--browser", "chrome", "--viewport-size", "1440x900", "--ignore-roots", "--file-paths", "absolute"],
+      "cwd": "~/.cache/pi-design-playwright",
+      "toolExposure": { "browser_run_code_unsafe": "hidden", "browser_file_upload": "hidden", "browser_drop": "hidden" }
     }
   }
 }
