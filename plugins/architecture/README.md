@@ -25,7 +25,7 @@ change into an ordered implementation plan. It starts its reply with
 `VERDICT: DESIGNED|PARTIAL|BLOCKED`.
 
 It writes design and research documents where the caller names them. Its prompt, not a
-permission, keeps it out of product code, tests and configuration.
+permission, limits its writes to those documents.
 
 Its permissions are an allowlist. Every tool is denied except these:
 
@@ -79,8 +79,8 @@ OMP installs the agent and skills from the generated OMP directory:
 omp plugin install /path/to/harness-plugins/plugins/architecture/omp
 ```
 
-In OMP the agent runs on `@architect, @slow`. It gets the OMP forms of the tools above,
-with `edit`, `write` and `bash`, plus `task` for `scout`. OMP cannot hold the read-only
+In OMP the agent runs on `@architect, @slow`. It gets the OMP forms of the tools above. They
+include the edit tools and `bash`, and `task` for `scout`. OMP cannot hold the read-only
 shell rules, so only the prompt keeps `bash` to inspection commands.
 
 Claude Code installs the skills and the agent from this repository's marketplace. There
