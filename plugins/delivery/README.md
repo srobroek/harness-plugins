@@ -202,7 +202,7 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
   (`<common>/opencode/holds/…`, the same format `subagent-worktree` writes): a shell that names the
   worktree, or any job of a session working in it. The last check before a removal reads them, so
   running background work keeps the worktree. The jobs are written before the lock wait as well
-  (`recordHold`, as `subagent-worktree` writes them).
+  (`recordHold`, as `subagent-worktree` writes them), for every worktree before any lock is taken.
   A write whose lock wait times out behind a long removal hold therefore still blocks every
   remover until that session's next write. A refusal caused by such a pending hold says
   "recorded before its lock was taken", with its age, the time after which it is ignored, and its

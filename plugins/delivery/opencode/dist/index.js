@@ -7030,6 +7030,7 @@ function createPendingCleanup(deps) {
     } catch {
       return;
     }
+    const writes = new Map;
     for (const receipt of pending) {
       const path = receipt.worktree.path;
       if (path === null)
@@ -7048,6 +7049,9 @@ function createPendingCleanup(deps) {
         if (inside)
           jobs.push({ kind: job.kind, id: job.shellID ?? job.childSessionID ?? job.sessionID ?? "unknown" });
       }
+      writes.set(want, { path, jobs });
+    }
+    await Promise.all([...writes].map(async ([want, { path, jobs }]) => {
       try {
         await recordHold(common, path, sessionID, jobs, now(), { sessionID: "delivery", now, ...deps.lock });
         unsafe.delete(want);
@@ -7056,7 +7060,7 @@ function createPendingCleanup(deps) {
         unsafe.set(want, `its running work could not be recorded (${why})`);
         console.error(`delivery: could not record holds for ${path}: ${why}`);
       }
-    }
+    }));
   };
   const registrations = [];
   let watching;

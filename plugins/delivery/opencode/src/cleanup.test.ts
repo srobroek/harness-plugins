@@ -3692,6 +3692,42 @@ describe("pending cleanup: one remover per worktree", () => {
     await h.finish()
   })
 
+  test("a busy lock on one worktree does not delay another worktree's hold", async () => {
+    const h = await harness("holds-two-worktrees", { lock: { waitMs: 5_000 } })
+    const key = (await repoKey(h.f.main)) as string
+    const other = join(h.f.root, "other worktree")
+    mkdirSync(other)
+    const later = buildReceipt({
+      now: NOW + 5000,
+      emitter: h.f.receipt.emitter,
+      repo: h.f.receipt.repo,
+      pr: { ...h.f.receipt.pr, number: 18 },
+      branch: { ...h.f.receipt.branch, name: "feat/other" },
+      worktree: { ...h.f.receipt.worktree, path: other },
+      beads: h.f.receipt.beads,
+      proof: h.f.receipt.proof,
+      outcome: "landed",
+    })
+    writeReceipt(later, receiptDirectory(h.f.env, key))
+    await h.pending.start()
+    // Another remover holds the lock of the worktree the writer comes to first (receipts are read newest first).
+    mkdirSync(join(h.common, "opencode", "locks"), { recursive: true })
+    const busy = lockFile(h.common, other)
+    writeFileSync(busy, JSON.stringify({ pid: process.pid, host: hostname().split(".")[0], owner: "subagent-worktree", token: "theirs", taken: NOW + 10, expires: NOW + 10 + 60_000 }))
+    const fired = h.fake.fire.session("experimental.idle", {
+      sessionID: "ses_lead",
+      background: [{ kind: "shell", sessionID: "ses_x", shellID: "sh_1", command: `make -C '${h.f.linked}' -C '${other}'` }],
+    } as never)
+    const end = Date.now() + 2_000
+    while (holdsState(h.common, h.f.linked, NOW + 10) === undefined && Date.now() < end) await Bun.sleep(20)
+    // The first write is still waiting for its lock with its pending hold on disk; the second worktree's hold is written.
+    expect(holdsState(h.common, other, NOW + 10)).toContain("recorded before its lock was taken")
+    expect(holdsState(h.common, h.f.linked, NOW + 10)).toBe("session ses_lead has 1 background job(s) running (shell sh_1)")
+    rmSync(busy)
+    await fired
+    await h.finish()
+  })
+
   describe("one removal boundary for every delivery remover", () => {
     const explicitCleanup = (h: Harness) =>
       cleanupDelivery({ receipt: h.f.receiptPath }, h.f.main, {
