@@ -2746,9 +2746,9 @@ function createLifecycle(deps) {
         return matched[0]?.why;
       };
       const busyOf = new Map;
-      for (const lane of (await deps.scan()).filter((candidate) => (candidate.state === "active" || candidate.state === "removing") && related(candidate))) {
-        busyOf.set(lane.child, await recordHolds(lane));
-      }
+      const toRecord = (await deps.scan()).filter((candidate) => (candidate.state === "active" || candidate.state === "removing") && related(candidate));
+      for (const [child, why] of await Promise.all(toRecord.map(async (lane) => [lane.child, await recordHolds(lane)])))
+        busyOf.set(child, why);
       await resumeRemovals(related, planned);
       const lanes = (await deps.scan()).filter((lane) => lane.state === "active" && related(lane));
       if (lanes.length === 0)
