@@ -1,3 +1,9 @@
+## autopilot [1.4.2](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.4.1...autopilot--v1.4.2) (2026-11-25)
+
+### Bug Fixes
+
+* **delivery,autopilot,model-roles:** resubscribe event watchers after a stream error ([#153](https://github.com/srobroek/harness-plugins/issues/153)) ([28e6922](https://github.com/srobroek/harness-plugins/commit/28e6922dfa90dea8b4b87bafe388f20fd71cbc58))
+
 ## autopilot [1.4.1](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.4.0...autopilot--v1.4.1) (2026-11-24)
 
 ## autopilot [1.4.0](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.3.8...autopilot--v1.4.0) (2026-11-24)

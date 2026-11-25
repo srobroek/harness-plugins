@@ -1,6 +1,6 @@
 {
   "name": "autopilot",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Unattended runs: /autopilot arms a no-questions session with a journal, a 4-minute tick and stop conditions.",
   "private": true,
   "type": "module",
