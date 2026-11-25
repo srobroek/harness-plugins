@@ -1,3 +1,9 @@
+## quality [0.19.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.18.0...quality--v0.19.0) (2026-11-25)
+
+### Features
+
+* **quality:** bring the legacy OMP quality rule and advisor skills to OMP ([#201](https://github.com/srobroek/harness-plugins/issues/201)) ([bbcff0a](https://github.com/srobroek/harness-plugins/commit/bbcff0a97d8431446ae1b186f3d174980a1b55a9))
+
 ## quality [0.18.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.17.0...quality--v0.18.0) (2026-11-25)
 
 ### Features
