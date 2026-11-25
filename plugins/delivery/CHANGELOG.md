@@ -1,3 +1,11 @@
+## delivery [0.12.7](https://github.com/srobroek/harness-plugins/compare/delivery--v0.12.6...delivery--v0.12.7) (2026-11-25)
+
+### Bug Fixes
+
+* **delivery:** keep a hold write from being starved by the cleanup lock ([ac2cb67](https://github.com/srobroek/harness-plugins/commit/ac2cb67d4f2ca2489a94b955a63f5a3877bd0d49))
+* **delivery:** prove cleanup targets under the remover lock and never refuse after a removal ([beb7f68](https://github.com/srobroek/harness-plugins/commit/beb7f68b970f3d807547fabc24fc1ea1b0e307c3))
+* **delivery:** report a removal that stopped part-way as partly removed, not as a refusal ([4ce8163](https://github.com/srobroek/harness-plugins/commit/4ce816399fbcee46315e399c0d38b5472835300d))
+
 ## delivery [0.12.6](https://github.com/srobroek/harness-plugins/compare/delivery--v0.12.5...delivery--v0.12.6) (2026-11-25)
 
 ### Bug Fixes
