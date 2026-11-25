@@ -1,16 +1,46 @@
 # Cross-language and wire contracts
 
-Read when two sides of a boundary must agree on names, shapes, or casing: generated bindings or clients (OpenAPI, protobuf, GraphQL, ts-rs, specta), IPC command registries, or JSON payloads shared between a backend and a frontend. API and event compatibility across versions is in [release.md](release.md).
+Read when two sides of a boundary must agree on names, shapes, or casing: a new or changed contract, generated bindings or clients (OpenAPI, protobuf, GraphQL, ts-rs, specta), IPC command registries, or JSON payloads shared between a backend and a frontend. API and event compatibility across versions is in [release.md](release.md).
 
 ## Generated code is committed and drift-checked
 
 **Do:** generate bindings from the authoritative side, commit the output, and in CI regenerate and run `git diff --exit-code`. That one gate covers the whole generated surface; consumers use it without repeating it.
 **Do not:** generate in a postinstall step nobody reviews, or hand-edit generated files. Change the source or the generator.
 
-## One source for every contract artifact
+## TypeSpec is the source of every contract
 
-**Do:** keep one authoritative source per contract (TypeSpec for HTTP and JSON contracts shared across languages, `.proto` for protobuf) and emit every schema from it: OpenAPI, JSON Schema and each language's types. Publish a JSON Schema with a root entry point that `$ref`s the top-level model, so validating against the published file rejects an invalid document. Derive any generator-specific copy (a normalized schema) with a pinned script in CI, and never publish it. `toolchain-api` has the generator routes and gates.
-**Do not:** keep a hand-written second schema beside the source, or let a hand-edited emitted file stand in for a source change.
+**Do:** author every data or API contract that crosses a process, language or repository boundary in TypeSpec, and emit everything from it: OpenAPI 3.1, JSON Schema 2020-12 and each language's types. Commit the output and gate it with the drift check above. Publish a JSON Schema with a root entry point that `$ref`s the top-level model, so validating against the published file rejects an invalid document. Derive any generator-specific copy (a normalized schema) with a pinned script in CI, and never publish it. `toolchain-api` has the routes, versions and CI gates; each `lang-<language>-libraries` has the generator entry.
+**Do not:** hand-write a model class, Zod schema, serde struct or Go struct for such a contract, keep a second schema beside the source, or let a hand-edited emitted file stand in for a source change. A contract change is a TypeSpec change plus a regenerate.
+
+| Exception | Reason |
+| --- | --- |
+| Protobuf and gRPC services keep `.proto` | Binary wire format; `buf lint` and `buf breaking` own the checks (`toolchain-api`) |
+| A contract another party owns | Their published file is the source: generate from it, never re-author it |
+
+Any other departure is a recorded decision in the engineering doc with its reason. A construct the spike did not cover (nested unions, recursive models, `int64` or decimal precision, `bytes`) still goes in TypeSpec: add a fixture for it first.
+
+### Why not another source
+
+Measured on the spike's 29 fixtures, 2026-11-25. None beats TypeSpec on any language (Pydantic 28/29, Zod 28/29, Rust 29/29, Go 28/29).
+
+| Alternative | Result | Reason |
+| --- | --- | --- |
+| Protobuf with protojson | 23/29 best | Cannot carry a `kind`-tagged union or present-but-null; its published JSON Schema fails to compile in Ajv |
+| Smithy | Ties | Only after 8 OpenAPI overrides kept outside the IDL |
+| quicktype | 13/29 to 19/29 | Enforces types, not constraints |
+| Typical | No JSON route | Binary format only, no constraints |
+
+### Known issues and workarounds
+
+| Issue | Workaround |
+| --- | --- |
+| Pydantic reads `\d` as Unicode and accepts `٣` (rust-regex engine) | Write `[0-9]` (pattern rule below); keep the default engine |
+| A lowercase `t` or `z` in a date-time is rejected on the Zod routes (`z.iso.datetime()`) and all Go routes (`time.Parse`) but accepted by Ajv, Python and Rust | No generator fixes it. Narrow the contract or keep the fixture as a documented known failure |
+| `@hey-api/openapi-ts` drops field descriptions and `datamodel-code-generator` drops model docstrings (3/6 each) | Read documentation from the published JSON Schema; keep the docs fixture check |
+| No generator reads the emitted `unevaluatedProperties` or bundle `$id` refs | The pinned schema normaliser rewrites them into the generator input; it fails loudly on a construct it cannot rewrite, so run it in the regenerate gate |
+| `cargo-typify` does not enforce ranges, item counts or optional-not-null (25/29) | Validate the raw `serde_json::Value` with the `jsonschema` crate before deserializing (29/29) |
+| The emitted schema is only `$defs`, so it accepts any document | Publish a root `$ref`; test it with an invalid document |
+| Fractions longer than 6 digits (Pydantic) or 9 digits (typify, ogen) are truncated on round trip; `ogen` orders open-object extras randomly | Compare parsed values, not bytes, in round-trip and golden tests |
 
 ## Pattern dialect
 
@@ -24,7 +54,7 @@ Schema `pattern` values run in a different regex engine in each language (ECMASc
 - Keep pydantic-core's default `rust-regex` engine. Python `re` rejects `\p{..}` and its `$` accepts a trailing newline.
 - Lint every emitted schema in CI (no `\d \D \w \W \s \S \b \B`, no lookaround, no backreference, whole-pattern anchoring) and cover each pattern with corpus cases: NBSP, a non-ASCII digit, a trailing newline.
 
-**Do not:** rely on RE2, Rust `regex` or pydantic-core for lookaround or backreferences, or claim a pattern migration preserves behavior before the conformance suite has rerun on it. The spike did not rerun on a compliant contract.
+**Do not:** rely on RE2, Rust `regex` or pydantic-core for lookaround or backreferences, or claim a pattern migration preserves behavior before the conformance suite has rerun on it. The spike did not rerun on a rule-compliant contract.
 
 ## Names are tested, not trusted
 
