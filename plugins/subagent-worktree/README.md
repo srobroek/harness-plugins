@@ -340,7 +340,10 @@ lives under `<git-common-dir>/opencode/`, shared by every instance of the reposi
 - `holds/<sha1 of the directory>/<sha1 of the session>.pending.json`: the same jobs, written before
   the gate waits for the lock (`recordHold`). A remover can hold the lock through a tree scan and a
   removal for longer than that wait. A gate whose write times out leaves this entry, and every
-  remover reads it as a hold. The session's next write that takes the lock replaces it.
+  remover reads it as a hold. The session's next write that takes the lock replaces it. A refusal
+  caused by this entry says "recorded before its lock was taken". It gives the entry's age, when
+  it is ignored, and its file. If that session has ended and nothing runs in the worktree, delete
+  the named file; otherwise wait for that session's next turn or for the time given.
 
 ### Sessions and removed worktrees
 
