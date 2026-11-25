@@ -1,3 +1,19 @@
+## toolchain [0.11.0](https://github.com/srobroek/harness-plugins/compare/toolchain--v0.10.4...toolchain--v0.11.0) (2026-11-25)
+
+### Features
+
+* **toolchain:** add TypeSpec contract routes, gates and version rows ([0973b38](https://github.com/srobroek/harness-plugins/commit/0973b388368cccc1dd0b3593e158444c07877dad))
+* **toolchain:** rescore TypeSpec routes on 29 fixtures, add required CI gates and validation tools ([520e8a7](https://github.com/srobroek/harness-plugins/commit/520e8a7354ceb964061905b1cbee2e188e76d2d0))
+
+### Bug Fixes
+
+* **project:** emit openapi.yaml at the scaffold root; gate 4 adds the status-key and jsonSchemaDialect checks; label the cached Redocly timing ([1e3d9bc](https://github.com/srobroek/harness-plugins/commit/1e3d9bc2c4382dfa2f6a97271867beb846927f89))
+* **toolchain:** add Contract tooling pin table, split HTTP and schema-only gates ([b64fad1](https://github.com/srobroek/harness-plugins/commit/b64fad1a1846fe5e4872c94b6f1b9b1bdf4896a6))
+* **toolchain:** keep the published OpenAPI path stable on the 3.1 fallback, scope the same-version pin, show a usable buf breaking input, and add the measured linter comparison ([ecc83cc](https://github.com/srobroek/harness-plugins/commit/ecc83cc8a507abd99316294654f20404f0d2e1f6))
+* **toolchain:** make Redocly the OpenAPI lint default, set openapi-versions 3.1.0, require the sealed-property check, scope gate 9 and point shared-tools at the pin table ([4de22ab](https://github.com/srobroek/harness-plugins/commit/4de22abbc0bc74133865ec530f3de83a9561ecd1))
+* **toolchain:** recognise TypeSpec's emitted seal, publish OpenAPI 3.2.0, ship the full API skill to OMP and adopt the framework-adapter pattern ([818f193](https://github.com/srobroek/harness-plugins/commit/818f193ecb67974fed549502705b6f5663708797))
+* **toolchain:** scope the gate 4 status-key check to operation Responses Objects and skip x-* extensions ([1ad1da3](https://github.com/srobroek/harness-plugins/commit/1ad1da3caf88a3f76a6ba47d801d1c6464c17d79))
+
 ## toolchain [0.10.4](https://github.com/srobroek/harness-plugins/compare/toolchain--v0.10.3...toolchain--v0.10.4) (2026-11-24)
 
 ## toolchain [0.10.3](https://github.com/srobroek/harness-plugins/compare/toolchain--v0.10.2...toolchain--v0.10.3) (2026-11-24)
