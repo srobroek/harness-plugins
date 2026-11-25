@@ -1,3 +1,18 @@
+## delivery [0.13.1](https://github.com/srobroek/harness-plugins/compare/delivery--v0.13.0...delivery--v0.13.1) (2026-11-25)
+
+### Bug Fixes
+
+* **delivery:** keep every job when two receipts spell one worktree differently ([23e4a36](https://github.com/srobroek/harness-plugins/commit/23e4a36afa45498c08626648ef123a175accb563))
+* **delivery:** keep git's dirty-tree refusal a refusal and never advise a destructive command ([db60f6a](https://github.com/srobroek/harness-plugins/commit/db60f6ac83d7d892a16a9945dc69c109f6b30b23))
+* **delivery:** match git's clean-check refusal only on its own line and exit 128 ([ae777d3](https://github.com/srobroek/harness-plugins/commit/ae777d35c06e04c5eb816858f51160489c85f069))
+* **delivery:** name the cause, not a removal command, in the deleted-files refusal ([3e9c23e](https://github.com/srobroek/harness-plugins/commit/3e9c23e3ea2fa4f7ace7d842aabe732c3dfbbfe2))
+* **delivery:** quote git's removal and branch-delete messages without their deleting hints ([30fe1d0](https://github.com/srobroek/harness-plugins/commit/30fe1d0c302eba1b678734b37a63c23b2439ad7c))
+* **delivery:** report git's clean-check refusal as a refusal, not this call's partial removal ([8e13172](https://github.com/srobroek/harness-plugins/commit/8e13172be0762b8e55038441532f86479d6dd36f))
+* **delivery:** say the README guarantee is about forcing commands ([a9bd32a](https://github.com/srobroek/harness-plugins/commit/a9bd32a5f0424416beb42b875c88af290afba279))
+* **delivery:** say when a blocking hold is a pending one, how old it is and which file ([6b9b241](https://github.com/srobroek/harness-plugins/commit/6b9b2418592d5f990e47f2a37f1421f6863b7261))
+* **delivery:** say when a pending hold's file is safe to delete ([f129089](https://github.com/srobroek/harness-plugins/commit/f1290898725538f083b4d14988f3679d5fe35883))
+* **delivery:** write every worktree's pending hold before any lock wait ([61872b2](https://github.com/srobroek/harness-plugins/commit/61872b2f285fba808cb9346fda34ca0cfd2c5cba))
+
 ## delivery [0.13.0](https://github.com/srobroek/harness-plugins/compare/delivery--v0.12.7...delivery--v0.13.0) (2026-11-25)
 
 ### Features
