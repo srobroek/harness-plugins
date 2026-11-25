@@ -2552,7 +2552,7 @@ export default Plugin.define({
         }
       },
       warn,
-      label: "model-roles event",
+      label: "model-roles",
       ...eventWatchTiming,
     })
 

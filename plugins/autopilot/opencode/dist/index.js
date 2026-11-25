@@ -4877,7 +4877,7 @@ async function setupAutopilot(ctx, deps = {}) {
         pilot.compacted(event.data.sessionID).catch(report("compaction recovery"));
     },
     warn,
-    label: "autopilot event",
+    label: "autopilot",
     ...deps.watch
   });
   return async () => {

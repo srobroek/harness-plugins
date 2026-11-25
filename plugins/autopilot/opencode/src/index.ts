@@ -188,7 +188,7 @@ export async function setupAutopilot(ctx: Context, deps: Deps = {}): Promise<() 
       if (event.type === "session.compaction.ended" && typeof event.data?.sessionID === "string") void pilot.compacted(event.data.sessionID).catch(report("compaction recovery"))
     },
     warn,
-    label: "autopilot event",
+    label: "autopilot",
     ...deps.watch,
   })
   return async () => {

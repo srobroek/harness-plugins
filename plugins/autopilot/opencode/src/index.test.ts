@@ -1088,7 +1088,7 @@ test("a closed event stream is resubscribed and a later compaction is still hand
   const before = subscriptions()
   fake.closeEvents()
   while (subscriptions() === before) await new Promise((done) => setTimeout(done, 0))
-  expect(warnings.some((message) => message.includes("autopilot event watch failed; resubscribing"))).toBe(true)
+  expect(warnings.some((message) => message.includes("autopilot watch failed; resubscribing"))).toBe(true)
   const sentPromise = whenCalled("synthetic")
   fake.emit({ type: "session.compaction.ended", data: { sessionID: "ses_lead", reason: "auto" } })
   expect(((await sentPromise) as { text: string }).text).toContain("still armed after compaction")

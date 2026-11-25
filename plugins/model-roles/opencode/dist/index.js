@@ -8116,7 +8116,7 @@ ${refs.size}`;
         } catch {}
       },
       warn,
-      label: "model-roles event",
+      label: "model-roles",
       ...eventWatchTiming
     });
     return async () => {
