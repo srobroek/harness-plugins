@@ -1,0 +1,44 @@
+{
+  "name": "@srobroek/pi-speckit-beads",
+  "version": "0.0.0",
+  "description": "SpecKit on Beads: a tasks.md guard, setup, ledger and bugfix skills, formulas, and the speckit-sync and speckit-verify subagents.",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/speckit-beads/pi"
+  },
+  "files": [
+    "LICENSE",
+    "README.md",
+    "_kit",
+    "agents",
+    "extensions",
+    "formulas",
+    "skills"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/speckit-beads.js",
+      "./_kit/prereqs.ts"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "subagents": {
+      "agents": [
+        "./agents"
+      ]
+    }
+  }
+}

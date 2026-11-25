@@ -8,6 +8,8 @@ const PLUGINS = path.join(import.meta.dir, "..", "plugins")
 const FAMILIES: Readonly<Record<string, readonly string[]>> = {
   "agent-reviewer": ["review"],
   journeys: ["journey", "journeys"],
+  // The agents' skill allowlists name `speckit-*`, which also covers spec-kit's own skills.
+  "speckit-beads": ["speckit"],
 }
 
 /**
