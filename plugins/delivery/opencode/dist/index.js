@@ -2578,7 +2578,7 @@ function gitMessage(text) {
   return (hint === null ? first : `${first.slice(0, hint.index).trim()} \u2026`).slice(0, 400);
 }
 var MUTATION_ENV = { LC_ALL: "C" };
-var CLEAN_CHECK_REFUSAL = /contains modified or untracked files/;
+var CLEAN_CHECK_REFUSAL = /^fatal: '.*' contains modified or untracked files(?:,|$)/m;
 function mutationFailure(field, argv, result) {
   const exit = result.exitCode === null ? "no exit status" : `exit ${result.exitCode}`;
   const error = result.error === undefined ? "" : `, error ${result.error}`;
@@ -3425,7 +3425,7 @@ async function cleanupInRepository(params, cwd, deps) {
       if (!completed(removed)) {
         failure = mutationFailure("worktree.removed", ["git", ...removeArgv], removed);
         stopped = removed.exitCode === null;
-        refusedClean = !stopped && CLEAN_CHECK_REFUSAL.test(removed.stderr);
+        refusedClean = !stopped && removed.exitCode === 128 && CLEAN_CHECK_REFUSAL.test(removed.stderr);
       }
     }
     const registration = await registrationAbsence(executionDir, targetPath, commit, bounds.refReadMs, executionPin);

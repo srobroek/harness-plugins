@@ -2105,6 +2105,16 @@ describe("delivery_cleanup beside another remover", () => {
     expect(rerun).not.toMatch(DESTRUCTIVE_ADVICE)
   })
 
+  test("a part-way failure whose path holds git's clean-check words is still partly removed", async () => {
+    // The fixture's path carries the phrase; git's failure names that path.
+    const f = await fixture("contains modified or untracked files", "feat/clean-check-words")
+    expect(f.linked).toContain("contains modified or untracked files")
+    const { result } = await invoke(f, { receipt: f.receiptPath }, stoppedPartWay(f, "exit 255", true))
+    const done = removal(result)
+    expect(done.partlyRemoved).toBe(true)
+    expect(done.report.skipped.join("\n")).toContain("removal attempted and stopped part-way")
+  })
+
   test("a failed removal that deleted nothing is still a refusal", async () => {
     const f = await fixture("refused-untouched")
     git(f.main, ["worktree", "lock", f.linked])

@@ -481,8 +481,11 @@ function gitMessage(text: string): string {
 /** The environment of the two calls that delete: git's messages in the C locale, so {@link gitMessage} reads the hint it knows. */
 const MUTATION_ENV = { LC_ALL: "C" } as const
 
-/** Git's C-locale message when `git worktree remove` refuses a changed tree at its clean check, before deleting anything. */
-const CLEAN_CHECK_REFUSAL = /contains modified or untracked files/
+/**
+ * Git's C-locale line when `git worktree remove` refuses a changed tree at its clean check, before deleting
+ * anything. Anchored to git's own line: the worktree path is in git's messages and may hold the same words.
+ */
+const CLEAN_CHECK_REFUSAL = /^fatal: '.*' contains modified or untracked files(?:,|$)/m
 
 /** A failed worktree removal or branch deletion, quoted through {@link gitMessage}. */
 function mutationFailure(field: string, argv: readonly string[], result: CliResult): CleanupFailure {
@@ -1773,7 +1776,7 @@ async function cleanupInRepository(
       if (!completed(removed)) {
         failure = mutationFailure("worktree.removed", ["git", ...removeArgv], removed)
         stopped = removed.exitCode === null
-        refusedClean = !stopped && CLEAN_CHECK_REFUSAL.test(removed.stderr)
+        refusedClean = !stopped && removed.exitCode === 128 && CLEAN_CHECK_REFUSAL.test(removed.stderr)
       }
     }
 
