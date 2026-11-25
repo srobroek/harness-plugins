@@ -69,7 +69,7 @@
     },
     {
       "name": "agent-efficiency",
-      "version": "0.14.5",
+      "version": "0.14.6",
       "description": "Cut agent tokens: run bash calls as the built-in shell tool, narrow explore to search and web tools, and trim read-only subagent prompts.",
       "category": "development",
       "harnesses": {
