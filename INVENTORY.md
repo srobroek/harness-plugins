@@ -19,7 +19,7 @@
 | claude-compat | 0.5.4 | development | project | opencode |
 | code-challenge | 2.1.1 | development | global | opencode, omp, pi |
 | debate | 1.0.1 | productivity | global | opencode, claude, omp, pi |
-| delivery | 0.12.5 | development | global | opencode |
+| delivery | 0.12.6 | development | global | opencode |
 | dep-update | 0.7.1 | development | global | opencode, pi |
 | design | 0.10.4 | development | project | opencode, claude |
 | docs | 0.5.1 | development | global | opencode, omp, pi |
