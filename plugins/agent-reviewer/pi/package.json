@@ -17,6 +17,7 @@
     "README.md",
     "_kit",
     "agents",
+    "extensions",
     "skills"
   ],
   "publishConfig": {
@@ -53,6 +54,7 @@
   },
   "pi": {
     "extensions": [
+      "./extensions/index.js",
       "./_kit/prereqs.ts"
     ],
     "skills": [
