@@ -1,6 +1,7 @@
 ---
 name: researcher
 description: "Answers one scoped research question from code, docs and the web with cited observations and inferences; edits nothing."
+acceptanceRole: read-only
 tools: read, grep, find, ls, bash, subagent, web_search, fetch_content, get_search_content, source_check, symbol_search, module_report, project_report, read_symbol, read_enclosing, ast_grep_search, ast_grep_outline, lens_diagnostics, pi_lens_activate_tools, repomix_pack, mcp:context7
 allowedAgents: scout
 allowNestedSubagents: true
