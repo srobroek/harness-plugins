@@ -340,7 +340,7 @@ The clone registry is `<receipts root>/.clones/<session repo key>.json` (`clone-
 
 The turn-end pass and an explicit cleanup drop the settled ids. An entry with no id left goes once gc collects the landing records of the target. The turn-end retry reads the registry. So do the idle-hook holds, and so does gc. Each one checks the key of a root again first. Each update takes a lease lock (`lib/src/lease-lock.ts`) beside the file and replaces the file by rename.
 
-Past 32 entries, the oldest entries with no pending receipts go. An entry with pending receipts stays.
+Past 32 entries, the oldest entries that need no registration go. An entry stays whatever the count when it has pending receipts, when a landing record of its target repository is not collected yet, or when those records cannot be read (`registrationNeeded`): once the registration is gone nothing else would find the records. An older entry with no common directory follows the count rule.
 
 Each plugin instance also keeps the clones it registered in memory, and those win over the file. A failed write leaves its own holds and retry intact. A landing record reaches the target before the registry write starts, and each clone's holds are written without waiting on any other clone.
 
