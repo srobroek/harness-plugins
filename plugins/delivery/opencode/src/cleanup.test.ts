@@ -2159,7 +2159,15 @@ describe("delivery_cleanup beside another remover", () => {
       ? [...result.report.skipped, cleanupText(result), textAfterCleanup("landed", reportFromCleanup(result)), partlyRemovedText(f.receipt, result.report.skipped)]
       : [result.reason, cleanupText(result), textAfterCleanup("landed", reportFromCleanup(result))]
 
-  type Shape = { name: string; outcome: "refusal" | "partly removed"; arrange?: (f: Fixture) => void; options?: (f: Fixture) => RunnerOptions; run?: (f: Fixture, inner: CliRunner) => CliRunner }
+  type Shape = {
+    name: string
+    outcome: "refusal" | "partly removed"
+    /** Text the result must carry. */
+    says?: string
+    arrange?: (f: Fixture) => void
+    options?: (f: Fixture) => RunnerOptions
+    run?: (f: Fixture, inner: CliRunner) => CliRunner
+  }
   const deleteTracked = (f: Fixture) => rmSync(join(f.linked, "base.txt"))
   const writeUntracked = (f: Fixture) => writeFileSync(join(f.linked, "new-work.txt"), "new work\n")
   const onRemove = (act: (f: Fixture) => void) => (f: Fixture): RunnerOptions => ({ before: (argv) => (isWorktreeRemove(argv) ? act(f) : undefined) })
@@ -2172,10 +2180,12 @@ describe("delivery_cleanup beside another remover", () => {
   const matrix: Shape[] = [
     { name: "an untracked file only", outcome: "refusal", options: onRemove(writeUntracked) },
     { name: "a tracked edit only", outcome: "refusal", options: onRemove((f) => writeFileSync(join(f.linked, "base.txt"), "edited\n")) },
-    { name: "a deletion only, git refusing at its clean check", outcome: "partly removed", options: onRemove(deleteTracked) },
+    // Git refuses at its clean check before deleting anything: the deletion is another process's, not this call's.
+    { name: "a deletion only, git refusing at its clean check", outcome: "refusal", says: "a removal is running or stopped part-way", options: onRemove(deleteTracked) },
     {
       name: "a deletion and an untracked file",
-      outcome: "partly removed",
+      outcome: "refusal",
+      says: "the tree changed after the last proof",
       options: onRemove((f) => {
         deleteTracked(f)
         writeUntracked(f)
@@ -2211,6 +2221,7 @@ describe("delivery_cleanup beside another remover", () => {
     const run = shape.run === undefined ? scripted.run : shape.run(f, scripted.run)
     const result = await cleanupDelivery({ receipt: f.receiptPath }, f.main, { run, now: () => NOW + 10, env: f.env, bounds: HEAVY_FIXTURE_BOUNDS })
     expect(result.ok ? (result.partlyRemoved ? "partly removed" : "removed") : "refusal").toBe(shape.outcome)
+    if (shape.says !== undefined) expect(surfaces(f, result).join("\n")).toContain(shape.says)
     for (const text of surfaces(f, result)) expect(text).not.toMatch(DESTRUCTIVE_ADVICE)
     expect(readdirSync(dirname(f.receiptPath)).sort()).toEqual(before)
     expect(scripted.calls.some((argv) => argv[0] === "git" && argv[1] === "branch")).toBe(false)
@@ -3447,6 +3458,7 @@ describe("pending cleanup: one remover per worktree", () => {
       maxPerPass?: number
       list?: (query: Record<string, unknown>) => Promise<unknown>
       before?: RunnerOptions["before"]
+      after?: RunnerOptions["after"]
       hook?: boolean
       bounds?: Partial<CleanupBounds>
       observe?: GitRunner
@@ -3457,7 +3469,7 @@ describe("pending cleanup: one remover per worktree", () => {
     } = {},
   ) {
     const f = await fixture(name)
-    const options: RunnerOptions = { beadStatus: over.beadStatus ?? "closed", ...(over.before ? { before: over.before } : {}) }
+    const options: RunnerOptions = { beadStatus: over.beadStatus ?? "closed", ...(over.before ? { before: over.before } : {}), ...(over.after ? { after: over.after } : {}) }
     const scripted = runner(f, options)
     const fake = createFakeContext({ directory: f.main })
     if (over.list) (fake.context.session as unknown as { list: unknown }).list = over.list
@@ -3885,10 +3897,13 @@ describe("pending cleanup: one remover per worktree", () => {
 
     test("a retry whose removal stops part-way tells the session once, keeps the landing record and does not retry", async () => {
       const h = await harness("retry-part-way", {
-        // Tracked files go before git looks; git then refuses the dirty tree, so it stays registered and on disk.
+        // Tracked files go, then git fails to delete the rest: still registered and on disk, part-way.
         before: (argv) => {
           if (!isWorktreeRemove(argv)) return
           for (const file of git(h.f.linked, ["ls-files"]).split("\n").filter(Boolean).slice(0, 2)) rmSync(join(h.f.linked, file))
+        },
+        after: (argv, result) => {
+          if (isWorktreeRemove(argv)) Object.assign(result, { ok: true, exitCode: 255, error: undefined, stderr: `error: failed to delete '${h.f.linked}': Permission denied\n` })
         },
       })
       await h.pending.record(h.f.receipt, "ses_lead")

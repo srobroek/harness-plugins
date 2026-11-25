@@ -481,6 +481,9 @@ function gitMessage(text: string): string {
 /** The environment of the two calls that delete: git's messages in the C locale, so {@link gitMessage} reads the hint it knows. */
 const MUTATION_ENV = { LC_ALL: "C" } as const
 
+/** Git's C-locale message when `git worktree remove` refuses a changed tree at its clean check, before deleting anything. */
+const CLEAN_CHECK_REFUSAL = /contains modified or untracked files/
+
 /** A failed worktree removal or branch deletion, quoted through {@link gitMessage}. */
 function mutationFailure(field: string, argv: readonly string[], result: CliResult): CleanupFailure {
   const exit = result.exitCode === null ? "no exit status" : `exit ${result.exitCode}`
@@ -1755,6 +1758,9 @@ async function cleanupInRepository(
     let failure: CleanupFailure | null = null
     // A command that ended with no exit status (a timeout or a kill) may have deleted anything.
     let stopped = false
+    // Git refused at its clean check, which comes before it deletes anything. The C locale of the call
+    // makes its message the English one matched here; another message falls back to the status below.
+    let refusedClean = false
     if (route === "host" && deps.host !== undefined) {
       try {
         await deps.host.remove(targetPath)
@@ -1767,6 +1773,7 @@ async function cleanupInRepository(
       if (!completed(removed)) {
         failure = mutationFailure("worktree.removed", ["git", ...removeArgv], removed)
         stopped = removed.exitCode === null
+        refusedClean = !stopped && CLEAN_CHECK_REFUSAL.test(removed.stderr)
       }
     }
 
@@ -1775,19 +1782,16 @@ async function cleanupInRepository(
     // What the tree holds now, when the removal failed and left its directory: the status lines, or
     // null when they cannot be read (an admin directory the removal deleted, a tree too far gone).
     const left = failure !== null && pathGone !== "absent" ? await treeStatus(boundary, commit, bounds.treeScanMs) : null
-    // `git worktree remove` only deletes. A tree still registered and on disk, with its marker bound and
-    // no deletion in its status, was not touched: git refused it, and the failure is a refusal. A change
-    // there was written after the last proof, which is why git refused, so the refusal names it.
-    if (
-      failure !== null &&
-      !stopped &&
-      registration !== "absent" &&
-      pathGone !== "absent" &&
-      left !== null &&
-      !left.some(isDeletion) &&
-      markersStillBound(boundary, executionDir, executionPin) === null
-    ) {
-      return left.length === 0 ? failure : { ok: false, reason: `${failure.reason}; ${changedAfterProof(left)}` }
+    // `git worktree remove` only deletes. A tree still registered and on disk was not touched by it when
+    // git refused at its clean check, or when the marker is bound and the status shows no deletion. Its
+    // failure is then a refusal, and it names the change that made git refuse: written after the last
+    // proof, or, when only tracked files are gone, a removal by a process outside the lock.
+    const untouched =
+      refusedClean || (left !== null && !left.some(isDeletion) && markersStillBound(boundary, executionDir, executionPin) === null)
+    if (failure !== null && !stopped && registration !== "absent" && pathGone !== "absent" && untouched) {
+      if (left === null || left.length === 0) return failure
+      const why = left.every((line) => line.startsWith(" D ")) ? removalElsewhere(path) : changedAfterProof(left)
+      return { ok: false, reason: `${failure.reason}; ${why}` }
     }
     // From here the removal ran, whole or part-way, and nothing refuses: what could not be finished
     // or proved is reported with the result, and only a proven absence gets a continuation receipt.

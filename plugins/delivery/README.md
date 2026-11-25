@@ -330,6 +330,11 @@ A failed removal without such a sign stays a refusal. A tree that changed after 
 proof is why Git refused it, for example an untracked file or an edit. The refusal then
 lists the changed paths and says to save them.
 
+Git's refusal at its clean check ("contains modified or untracked files") is a refusal
+too, even when the status shows deleted files. Git makes that check before it deletes
+anything, so those deletions come from another process. Git runs the removal in the C
+locale, so its message is the English one. Any other message falls back to the signs above.
+
 Every unverified or partly removed result names the path to inspect and says to save any
 changes there. No result of a failed removal or branch deletion names a command that
 deletes. Git runs those two calls in the C locale, and the result quotes only the first

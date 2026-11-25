@@ -2578,6 +2578,7 @@ function gitMessage(text) {
   return (hint === null ? first : `${first.slice(0, hint.index).trim()} \u2026`).slice(0, 400);
 }
 var MUTATION_ENV = { LC_ALL: "C" };
+var CLEAN_CHECK_REFUSAL = /contains modified or untracked files/;
 function mutationFailure(field, argv, result) {
   const exit = result.exitCode === null ? "no exit status" : `exit ${result.exitCode}`;
   const error = result.error === undefined ? "" : `, error ${result.error}`;
@@ -3411,6 +3412,7 @@ async function cleanupInRepository(params, cwd, deps) {
       return rebound;
     let failure = null;
     let stopped = false;
+    let refusedClean = false;
     if (route === "host" && deps.host !== undefined) {
       try {
         await deps.host.remove(targetPath);
@@ -3423,13 +3425,18 @@ async function cleanupInRepository(params, cwd, deps) {
       if (!completed(removed)) {
         failure = mutationFailure("worktree.removed", ["git", ...removeArgv], removed);
         stopped = removed.exitCode === null;
+        refusedClean = !stopped && CLEAN_CHECK_REFUSAL.test(removed.stderr);
       }
     }
     const registration = await registrationAbsence(executionDir, targetPath, commit, bounds.refReadMs, executionPin);
     const pathGone = pathAbsence(targetPath);
     const left = failure !== null && pathGone !== "absent" ? await treeStatus(boundary, commit, bounds.treeScanMs) : null;
-    if (failure !== null && !stopped && registration !== "absent" && pathGone !== "absent" && left !== null && !left.some(isDeletion) && markersStillBound(boundary, executionDir, executionPin) === null) {
-      return left.length === 0 ? failure : { ok: false, reason: `${failure.reason}; ${changedAfterProof(left)}` };
+    const untouched = refusedClean || left !== null && !left.some(isDeletion) && markersStillBound(boundary, executionDir, executionPin) === null;
+    if (failure !== null && !stopped && registration !== "absent" && pathGone !== "absent" && untouched) {
+      if (left === null || left.length === 0)
+        return failure;
+      const why = left.every((line) => line.startsWith(" D ")) ? removalElsewhere(path) : changedAfterProof(left);
+      return { ok: false, reason: `${failure.reason}; ${why}` };
     }
     const unfinished = [];
     const branch = receipt.branch.name;
