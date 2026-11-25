@@ -201,7 +201,10 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
 - The idle hook also records the `background` list as holds on disk
   (`<common>/opencode/holds/…`, the same format `subagent-worktree` writes): a shell that names the
   worktree, or any job of a session working in it. The last check before a removal reads them, so
-  running background work keeps the worktree. Landing records are dropped only on positive evidence
+  running background work keeps the worktree. The jobs are written before the lock wait as well
+  (`recordHold`, as `subagent-worktree` writes them). A write whose lock wait times out behind a
+  long removal hold therefore still blocks every remover until that session's next write.
+  Landing records are dropped only on positive evidence
   (their own receipt readable and cleaned or superseded); a denial is never dropped by cleanup of
   stale records, and a missing or unreadable receipt directory deletes nothing.
 - The lock is the Beads embedded write lock's protocol (a leased, token-owned file with a steal
@@ -212,8 +215,12 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
 - Every removal delivery makes (explicit, inline, retry) runs its last step inside
   `lockedWorktreeRemoval`: the same on-disk lock `subagent-worktree` takes, then, under it and after
   every proof, a final look at claims, background holds, running sessions and denials, then the
-  removal. The prompt, if any, comes before and outside the lock. If the coordination store cannot
-  be written, or a hold could not be recorded, the worktree is treated as unsafe and kept.
+  removal. The reads that prove the target (its identity, the PR read from inside it, a clean tree,
+  a pushed tip) run first without the lock, so the lock is held only for the removal section, which
+  proves them again. A refusal is read again under the same lock (`lockedWorktreeRead`), so it is
+  never the sight of another remover's removal part-way: a half-deleted tree would read as dirty.
+  The prompt, if any, comes before the removal section and outside the lock. If the coordination
+  store cannot be written, or a hold could not be recorded, the worktree is treated as unsafe and kept.
 - After the worktree is removed and its absence is proven, delivery moves the lane's own sessions
   to the repository's canonical checkout, so none is left pointing at a directory that is gone
   (`Location not found`). The lane is the session that called the tool (for the background retry,
@@ -222,12 +229,11 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
   only those sessions' children (`session.list` with `parentID`), never the whole project. It does
   this after the removal, because the host still lists and reads sessions whose directory is gone,
   so a session created while the worktree was being removed is found too. It runs even when a
-  later step (branch deletion, a ref probe) refuses the cleanup. Other sessions are not touched. A
+  later step (branch deletion, a ref probe) cannot finish. Other sessions are not touched. A
   running session in the worktree or below it still refuses the removal (see the final look
   above). Moving never fails the cleanup: a session that could not be moved or read, or an
-  incomplete listing, is listed under `skipped` in the result (appended to the reason when the
-  cleanup is refused), with the session id and the reason. A session that no longer exists is
-  dropped silently.
+  incomplete listing, is listed under `skipped` in the result, with the session id and the reason.
+  A session that no longer exists is dropped silently.
 - **A refusal sticks.** If the inline cleanup is refused at its prompt, the landing record
   keeps `denied` and nothing retries it. A later explicit `delivery_cleanup` call that is
   authorized clears it; one that is refused records a fresh denial and leaves the old one
@@ -297,13 +303,32 @@ The tool refuses in these cases:
 - on an active ledger, a receipt bead is not closed with `metadata.merge_sha`
   equal to the merge.
 
+A refusal means that the call removed nothing. After the removal command runs, the call
+does not refuse. It succeeds and lists what it removed (`removed`) and what it could not
+finish or prove (`skipped`). Examples are a branch that Git could not delete, or a
+worktree that reappeared at the path.
+
+A removal that stops part-way reports `partlyRemoved: true` and the headline "removal
+attempted, partly removed, unverified", with nothing in `removed`. Examples are a file
+Git cannot delete, or a kill at the time bound. A failed removal command counts as
+stopped part-way unless the tree is still registered and on disk and `git status` shows
+it unchanged. Such a call keeps the local branch and the landing receipt, which stays
+the receipt of record, and names the path to inspect. Delivery's own retry tells the
+session once, keeps the landing record and does not retry it.
+
+A tree whose only changes are deleted tracked files is a removal that is running or
+stopped part-way. The cause can be another process that takes no delivery lock, such as
+a delivery plugin in another harness or `wt remove`. It can also be an earlier cleanup
+that failed. The refusal says so and names the path to inspect.
+
 Cleanup deletes the receipt's branch ref only while it still points at the reviewed
 head. It leaves a ref that is gone or points elsewhere, and it keeps the differently
 named branch a worktree sits on. The result lists what it removed (`removed`) and
 what it left (`skipped`).
 
 Cleanup treats a worktree that is already gone as done, whether an earlier cleanup
-finished or someone removed it by hand. The call succeeds with `alreadyCleaned: true`,
+finished, another remover took it during this call's checks, or someone removed
+it by hand. The call succeeds with `alreadyCleaned: true`,
 changes nothing and writes no receipt. If a worktree or directory has reappeared at the
 recorded path since, cleanup refuses instead: it reports the path and the worktree's
 HEAD, and removes nothing.
