@@ -9,7 +9,7 @@
     },
     {
       "package": "pi-web-access",
-      "for": "web research tools for the security auditor",
+      "for": "web research tools for the adversarial challenger",
       "required": true
     },
     {

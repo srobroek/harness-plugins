@@ -1,15 +1,14 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { isPiChildAgent } from "@srobroek/opencode-lib/pi-child-agent"
 import { commandMutates, isDependencyFile } from "../shared/report-only.js"
 
 export const REPORT_ONLY_REASON =
   "blocked by whats-new (report-only): this agent reports what changed and changes nothing itself. Do not " +
   "edit dependency manifests or lockfiles, or run installers or upgrade commands while researching."
 
-const ACTIVE_AGENT = /<active_agent\s+name=["']whats-new["']\s*\/>/
-
 /** pi-subagents tags each native child prompt and names its child session from the selected agent. */
 export function isWhatsNewWorkflow(systemPrompt: string, sessionName: string | undefined, isChild: boolean): boolean {
-  return isChild && (ACTIVE_AGENT.test(systemPrompt) || sessionName === "whats-new" || sessionName?.startsWith("whats-new: ") === true)
+  return isPiChildAgent("whats-new", systemPrompt, sessionName, isChild)
 }
 
 export type ToolCallLike = { toolName: string; input: unknown }

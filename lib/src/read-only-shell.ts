@@ -1,13 +1,13 @@
 /**
- * The shell permission rules of every read-only agent (reviewers, challengers, architect,
- * seance, and the built-in explore).
+ * The shell permission rules of every read-only agent (reviewers, challengers, seance, and the
+ * built-in explore), and of the architect, which writes documents but runs only read-only commands.
  *
  * A read-only agent may run any command except the ones that change the repository, a remote,
  * the beads ledger or files on disk. OpenCode lets the last matching rule win, so the order
  * below is part of the contract: allow everything, deny the mutators, then re-allow the
  * read forms that a broader deny caught. Clones, fetches and `git worktree add` stay allowed
  * (they write only where the caller points them). `edit`, `write` and `patch` stay denied in
- * each agent's own rules.
+ * each read-only agent's own rules.
  *
  * This is best-effort, not a sandbox. The rules match command text by prefix and pattern, so an
  * interpreter (`python -c`, `bash -c`, `node -e`), a nested shell or a form the patterns do not

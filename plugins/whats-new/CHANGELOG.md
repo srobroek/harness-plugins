@@ -1,3 +1,9 @@
+## whats-new [0.5.4](https://github.com/srobroek/harness-plugins/compare/whats-new--v0.5.3...whats-new--v0.5.4) (2026-11-25)
+
+### Bug Fixes
+
+* **whats-new:** give the Pi agent the skills its prompt uses ([8c07eb2](https://github.com/srobroek/harness-plugins/commit/8c07eb2684280c9df020217f5ba9a09cee6985a7))
+
 ## whats-new [0.5.3](https://github.com/srobroek/harness-plugins/compare/whats-new--v0.5.2...whats-new--v0.5.3) (2026-11-25)
 
 ### Bug Fixes

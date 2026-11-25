@@ -69,6 +69,8 @@ sniff release. Bun is used for maintainer builds, not required at plugin runtime
 
 The OMP tree has the same skill, agents and formulas. Its extension registers the four tools and `/code-challenge`. The tools take the same parameters as the OpenCode ones and return the same text, with the OpenCode metadata as `details`.
 
+In OMP both agents keep `bash` and `eval`, because their prompts run linters, type checks and read-only benchmarks. OMP cannot limit either tool to read-only commands, so each agent file opens with a notice and the agent keeps to the limits itself.
+
 Skill text: the `*.omp.md` files name OMP's `ask` and `read` tools instead of OpenCode's `question` tool and `webfetch`. The CHALLENGE brief names each lens reference by its `skill://code-challenge/references/` URI.
 
 ## Code-running analyzers

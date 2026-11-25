@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/pi-whats-new",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Research breaking changes, deprecations and new features between two versions, report-only.",
   "keywords": [
     "pi-package"

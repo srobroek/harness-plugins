@@ -11,5 +11,5 @@ A security review skill: trace untrusted input to sinks, tag CWE ids and check c
 | rules | - | - | - | - |
 | hooks | - | PreToolUse | - | - |
 | tools | - | - | - | - |
-| extensions | index | - | - | - |
+| extensions | index | - | index | index |
 | mcp | - | - | - | - |

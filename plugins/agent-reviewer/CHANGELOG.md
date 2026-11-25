@@ -1,3 +1,16 @@
+## agent-reviewer [0.15.4](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.15.3...agent-reviewer--v0.15.4) (2026-11-25)
+
+### Bug Fixes
+
+* **agent-reviewer:** add a hardened git_read tool for shell-less pi reviewers ([b263f7b](https://github.com/srobroek/harness-plugins/commit/b263f7bd8f3bfb273cb5cc8ac1c44237b4fcaaa6))
+
+## agent-reviewer [0.15.3](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.15.2...agent-reviewer--v0.15.3) (2026-11-25)
+
+### Bug Fixes
+
+* **agent-reviewer:** align the Pi reviewers with their prompts and the other harnesses ([f3e52ec](https://github.com/srobroek/harness-plugins/commit/f3e52ec0050c8fd082622027f0e36bca9a6c4548))
+* **agent-reviewer:** compare canonical paths in the Pi pr-reviewer read gate ([2bad36e](https://github.com/srobroek/harness-plugins/commit/2bad36e521f591b0afeea93ff7c0ed9900019d9b))
+
 ## agent-reviewer [0.15.2](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.15.1...agent-reviewer--v0.15.2) (2026-11-25)
 
 ### Bug Fixes

@@ -1,3 +1,9 @@
+## debate [1.1.0](https://github.com/srobroek/harness-plugins/compare/debate--v1.0.2...debate--v1.1.0) (2026-11-25)
+
+### Features
+
+* **debate:** run /council-arch with a read-only architecture advisor ([98b357e](https://github.com/srobroek/harness-plugins/commit/98b357ec1938e9899a1a67fd3edb0746347258fd))
+
 ## debate [1.0.2](https://github.com/srobroek/harness-plugins/compare/debate--v1.0.1...debate--v1.0.2) (2026-11-25)
 
 ### Bug Fixes

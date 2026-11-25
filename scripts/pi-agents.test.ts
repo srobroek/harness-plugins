@@ -93,7 +93,7 @@ describe("a Pi agent without write or edit hands files back through output", () 
   const readOnly = agents.filter((agent) => !agent.tools.includes("write") && !agent.tools.includes("edit"))
 
   test("some shipped agents are read-only", () => {
-    expect(readOnly.map(label)).toContain("architecture/architect")
+    expect(readOnly.map(label)).toContain("agent-reviewer/code-reviewer")
   })
 
   test.each(readOnly.map((agent) => [label(agent), agent] as const))("%s", (_name, agent) => {
@@ -102,6 +102,21 @@ describe("a Pi agent without write or edit hands files back through output", () 
       rule: agent.body.includes(OUTPUT_FILE_RULE),
       acceptanceRole: agent.acceptanceRole,
     }).toEqual({ writes: [], rule: true, acceptanceRole: "read-only" })
+  })
+})
+
+describe("a Pi agent with write or edit writes its own files", () => {
+  const writers = agents.filter((agent) => agent.tools.includes("write") || agent.tools.includes("edit"))
+
+  test("the architect writes its design and research documents", () => {
+    expect(writers.map(label)).toContain("architecture/architect")
+  })
+
+  test.each(writers.map((agent) => [label(agent), agent] as const))("%s", (_name, agent) => {
+    expect({ rule: agent.body.includes(OUTPUT_FILE_RULE), readOnlyRole: agent.acceptanceRole === "read-only" }).toEqual({
+      rule: false,
+      readOnlyRole: false,
+    })
   })
 })
 

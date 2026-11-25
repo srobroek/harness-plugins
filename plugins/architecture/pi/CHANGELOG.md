@@ -1,3 +1,15 @@
+## architecture [0.13.1](https://github.com/srobroek/harness-plugins/compare/architecture--v0.13.0...architecture--v0.13.1) (2026-11-25)
+
+### Bug Fixes
+
+* **architecture:** state the architect's shell limit as an instruction ([#189](https://github.com/srobroek/harness-plugins/issues/189)) ([2044e8c](https://github.com/srobroek/harness-plugins/commit/2044e8c80eb99ff9bd337f35215aa3d551bc6066)), closes [#186](https://github.com/srobroek/harness-plugins/issues/186)
+
+## architecture [0.13.0](https://github.com/srobroek/harness-plugins/compare/architecture--v0.12.1...architecture--v0.13.0) (2026-11-25)
+
+### Features
+
+* **architecture:** let the architect write design and research documents ([a548043](https://github.com/srobroek/harness-plugins/commit/a54804362d7398cbc38da97d99b540992bb3039d))
+
 ## architecture [0.12.1](https://github.com/srobroek/harness-plugins/compare/architecture--v0.12.0...architecture--v0.12.1) (2026-11-25)
 
 ### Bug Fixes

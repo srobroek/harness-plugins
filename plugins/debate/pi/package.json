@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/pi-debate",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Stress-test a decision from both sides or grill a plan in frontier rounds.",
   "keywords": [
     "pi-package"
@@ -25,13 +25,9 @@
     "provenance": true
   },
   "peerDependencies": {
-    "@srobroek/pi-architecture": "*",
     "pi-subagents": "*"
   },
   "peerDependenciesMeta": {
-    "@srobroek/pi-architecture": {
-      "optional": true
-    },
     "pi-subagents": {
       "optional": true
     }

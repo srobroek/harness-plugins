@@ -23,6 +23,10 @@ Pi package declares `version_gap_scan` and the report-only `whats-new` agent.
 The `whats-new` agent is a subagent. Ask Pi to use it by name. The `whats-new` skill
 also works in any session.
 
+Besides `whats-new`, the agent may load the `lang-*` and `toolchain-*` skills, only to
+find where an ecosystem records its installed version or toolchain pin. On Pi it lists
+`whats-new`, the `lang-*` routers and `toolchain-guide`, and inherits no other skill.
+
 Report-only policy denies dependency manifest and lockfile edits, installers and
 upgrade commands, and `dep_apply`. OpenCode installs an evaluation hook for this
 agent. It denies wrapped installers such as `sudo npm i`, commands inside

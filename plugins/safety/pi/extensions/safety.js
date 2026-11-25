@@ -3041,7 +3041,7 @@ function flagDirectoryReport(source, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS) {
 
 // plugins/safety/shared/guards.ts
 import { readFileSync as readFileSync3 } from "fs";
-import { isAbsolute as isAbsolute5, resolve as resolve7 } from "path";
+import { isAbsolute as isAbsolute5, resolve as resolve6 } from "path";
 
 // plugins/safety/shared/attribution.ts
 var ATTRIBUTION = /co-authored-by:[^\n]{0,120}(?:claude|codex|gpt|copilot|cursor|devin|anthropic|openai|gemini)|generated (?:with|by) [[(]?(?:claude|codex|copilot|opencode|gemini)|noreply@(?:anthropic|openai)\.com/i;
@@ -4363,252 +4363,6 @@ function opGuard(commands, allow = [], types = () => {
   }
 }
 
-// plugins/safety/shared/push-via.ts
-import { spawnSync } from "child_process";
-import { resolve as resolve6 } from "path";
-
-// lib/src/safe-git.ts
-import { devNull } from "os";
-var SAFE_GIT_CONFIG = [
-  ["core.fsmonitor", "false"],
-  ["core.hooksPath", devNull]
-];
-var SAFE_GIT_ARGS = [...SAFE_GIT_CONFIG.flatMap(([key, value]) => ["-c", `${key}=${value}`]), "--no-optional-locks"];
-var HARDENED_GIT_CONFIG = [
-  ...SAFE_GIT_CONFIG,
-  ["core.attributesFile", devNull],
-  ["log.showSignature", "false"],
-  ["gpg.program", devNull],
-  ["gpg.ssh.program", devNull],
-  ["gpg.x509.program", devNull],
-  ["commit.gpgSign", "false"],
-  ["tag.gpgSign", "false"],
-  ["gpg.ssh.defaultKeyCommand", ""],
-  ["core.sshCommand", ""],
-  ["credential.helper", ""],
-  ["diff.external", ""]
-];
-var EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-var INHERITED_GIT_VARIABLES = [
-  "GIT_DIR",
-  "GIT_WORK_TREE",
-  "GIT_COMMON_DIR",
-  "GIT_INDEX_FILE",
-  "GIT_OBJECT_DIRECTORY",
-  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-  "GIT_PREFIX",
-  "GIT_NAMESPACE",
-  "GIT_REPLACE_REF_BASE",
-  "GIT_GRAFT_FILE",
-  "GIT_SHALLOW_FILE",
-  "GIT_CONFIG",
-  "GIT_EXEC_PATH",
-  "GIT_EXTERNAL_DIFF",
-  "GIT_PAGER",
-  "GIT_EDITOR",
-  "GIT_SEQUENCE_EDITOR",
-  "GIT_SSH",
-  "GIT_SSH_COMMAND",
-  "GIT_ASKPASS",
-  "GIT_PROXY_COMMAND",
-  "GIT_LITERAL_PATHSPECS",
-  "GIT_GLOB_PATHSPECS",
-  "GIT_NOGLOB_PATHSPECS",
-  "GIT_ICASE_PATHSPECS"
-];
-var PROGRAM_VARIABLES = ["PAGER", "EDITOR", "VISUAL", "SSH_ASKPASS"];
-function hardenedGitEnv(base) {
-  const env = {};
-  const dropped = new Set([...INHERITED_GIT_VARIABLES, ...PROGRAM_VARIABLES]);
-  for (const [key, value] of Object.entries(base)) {
-    if (value === undefined || dropped.has(key) || key.startsWith("GIT_TRACE"))
-      continue;
-    if (key === "GIT_CONFIG_PARAMETERS" || key === "GIT_CONFIG_COUNT" || /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key))
-      continue;
-    env[key] = value;
-  }
-  let count = 0;
-  for (const [key, value] of HARDENED_GIT_CONFIG) {
-    env[`GIT_CONFIG_KEY_${count}`] = key;
-    env[`GIT_CONFIG_VALUE_${count}`] = value;
-    count += 1;
-  }
-  env.GIT_CONFIG_COUNT = String(count);
-  env.GIT_ATTR_SOURCE = EMPTY_TREE;
-  env.GIT_OPTIONAL_LOCKS = "0";
-  env.GIT_NO_LAZY_FETCH = "1";
-  env.GIT_ALLOW_PROTOCOL = "";
-  return env;
-}
-
-// plugins/safety/shared/push-via.ts
-var HOST = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
-var COMMAND = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-function readPushVia(options) {
-  const raw = options?.pushVia;
-  if (typeof raw !== "object" || raw === null)
-    return;
-  const { host, command } = raw;
-  if (typeof host !== "string" || typeof command !== "string")
-    return;
-  if (!HOST.test(host) || !COMMAND.test(command))
-    return;
-  return { host: host.toLowerCase(), command };
-}
-function hostOf(url) {
-  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^/]*)/.exec(url);
-  let authority;
-  if (scheme) {
-    if (scheme[1]?.toLowerCase() === "file")
-      return;
-    authority = scheme[2]?.replace(/^.*@/, "").replace(/:\d*$/, "");
-  } else {
-    authority = /^(?:[^@/:]+@)?([^/:@]+):/.exec(url)?.[1];
-  }
-  return authority ? authority.toLowerCase() : undefined;
-}
-function git(cwd, args, env) {
-  const result = spawnSync("git", [...SAFE_GIT_ARGS, "-C", cwd, ...args], { encoding: "utf8", timeout: 5000, env });
-  if (result.status !== 0)
-    return;
-  const lines = result.stdout.split(`
-`).filter((line) => line !== "");
-  return lines.length === 0 ? undefined : lines;
-}
-function gitRemoteResolver(inherited) {
-  const env = hardenedGitEnv(inherited);
-  return (cwd, remote) => {
-    if (remote !== undefined) {
-      const named = git(cwd, ["remote", "get-url", "--push", "--all", "--", remote], env);
-      if (named !== undefined || !/[/:]/.test(remote))
-        return named;
-      if (git(cwd, ["config", "--get-regexp", "^url\\..*\\.pushinsteadof$"], env) !== undefined)
-        return;
-      return git(cwd, ["ls-remote", "--get-url", "--", remote], env);
-    }
-    const branch = git(cwd, ["symbolic-ref", "-q", "--short", "HEAD"], env)?.[0];
-    const configured = (key) => git(cwd, ["config", "--get", key], env)?.[0];
-    const remotes = git(cwd, ["remote"], env);
-    if (remotes === undefined)
-      return;
-    const name = (branch === undefined ? undefined : configured(`branch.${branch}.pushRemote`)) ?? configured("remote.pushDefault") ?? (branch === undefined ? undefined : configured(`branch.${branch}.remote`)) ?? (remotes.length === 1 ? remotes[0] : undefined) ?? "origin";
-    return git(cwd, ["remote", "get-url", "--push", "--all", "--", name], env);
-  };
-}
-var VALUED_LONG = ["repo", "push-option", "receive-pack", "exec", "recurse-submodules"];
-var BOOLEAN_LONG = [
-  "all",
-  "branches",
-  "prune",
-  "mirror",
-  "delete",
-  "tags",
-  "follow-tags",
-  "atomic",
-  "dry-run",
-  "porcelain",
-  "force",
-  "force-if-includes",
-  "thin",
-  "progress",
-  "verbose",
-  "quiet",
-  "set-upstream",
-  "verify",
-  "ipv4",
-  "ipv6",
-  "help"
-];
-var OTHER_LONG = ["force-with-lease", "signed", "no-push-option"];
-var LONG_OPTIONS = [...VALUED_LONG, ...OTHER_LONG, ...BOOLEAN_LONG, ...BOOLEAN_LONG.map((name) => `no-${name}`)];
-function longOption(name) {
-  const matches = LONG_OPTIONS.includes(name) ? [name] : LONG_OPTIONS.filter((long) => name !== "" && long.startsWith(name));
-  const only = matches[0];
-  return matches.length === 1 && only !== undefined ? { name: only, valued: VALUED_LONG.includes(only) } : undefined;
-}
-function pushArgs(args) {
-  let help = false;
-  let unknown = false;
-  let repo;
-  const positional = [];
-  let options = true;
-  for (let i = 0;i < args.length; i++) {
-    const arg = args[i];
-    if (!options || !arg.startsWith("-") || arg === "-") {
-      positional.push(arg);
-      continue;
-    }
-    if (arg === "--") {
-      options = false;
-      continue;
-    }
-    if (arg === "-h" || arg === "--help") {
-      help = true;
-      continue;
-    }
-    if (arg.startsWith("--")) {
-      const [name = "", ...rest] = arg.slice(2).split("=");
-      const option = longOption(name);
-      if (option === undefined) {
-        unknown = true;
-        continue;
-      }
-      if (option.name === "help")
-        help = true;
-      if (!option.valued)
-        continue;
-      const value = rest.length > 0 ? rest.join("=") : args[++i];
-      if (option.name === "repo")
-        repo = value;
-      continue;
-    }
-    if (/^-[A-Za-z0-9]+$/.test(arg) && arg.endsWith("o") && arg.slice(1).indexOf("o") === arg.length - 2)
-      i++;
-  }
-  return { help, unknown, remote: positional[0] ?? repo };
-}
-var SELECTOR = /GIT_(?:CONFIG|DIR|WORK_TREE|COMMON_DIR)/;
-function repositorySelected(env) {
-  return Object.keys(env ?? {}).some((name) => SELECTOR.test(name));
-}
-var literalWords = (command) => command.words !== undefined && command.words.length === command.argv.length && command.words.every((word, i) => !word.quoted && !word.expands && command.source.slice(word.start, word.end) === command.argv[i]);
-function literalPush(command, cwd) {
-  if (command === undefined || command.context !== "top" || command.argv[0] !== "git")
-    return;
-  if (command.wrappers.length > 0 || command.assignments.length > 0 || command.redirects.length > 0)
-    return;
-  const first = command.words?.[0];
-  if (first === undefined || command.source.slice(0, first.start).trim() !== "")
-    return;
-  if (!literalWords(command))
-    return;
-  let dir = cwd;
-  let i = 1;
-  while (command.argv[i] === "-C") {
-    const chdir = command.argv[i + 1];
-    if (chdir === undefined || chdir.split("/").includes(".."))
-      return;
-    dir = resolve6(dir, chdir);
-    i += 2;
-  }
-  return command.argv[i] === "push" ? { dir, args: command.argv.slice(i + 1) } : undefined;
-}
-function pushVia(commands, cwd, config, resolveRemote) {
-  const push = literalPush(commands[0], cwd);
-  if (push === undefined)
-    return;
-  const { help, unknown, remote } = pushArgs(push.args);
-  if (help || unknown)
-    return;
-  let urls;
-  try {
-    urls = resolveRemote(push.dir, remote);
-  } catch {
-    return;
-  }
-  return urls?.some((url) => hostOf(url) === config.host) ? { dir: push.dir } : undefined;
-}
-
 // plugins/safety/shared/guards.ts
 var GUARD_IDS = [
   "indirection",
@@ -4616,19 +4370,14 @@ var GUARD_IDS = [
   "attribution",
   "worktree-tmp",
   "op-guard",
-  "history-rewrite",
-  "push-via"
+  "history-rewrite"
 ];
-function shellPath(path) {
-  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`;
-}
 var MESSAGES2 = {
   indirection: "Blocked by safety (bash-indirection-guard): this destructive command targets an unexpanded variable, command substitution, or backtick expression, so its path cannot be verified. Resolve the target and re-issue a literal command; a quoted variable is accepted only after a bare `--` end-of-options marker.",
   "remote-exec": "Blocked by safety (remote-exec-guard): this command would execute content fetched from the network without review: a download piped into a shell, a shell or `eval` running a fetch's output, or a netcat invocation with an exec flag. Download to a file, inspect it, and run only an explicitly reviewed script.",
   attribution: "Blocked by safety (attribution-guard): this commit message carries AI-assistant attribution (a Co-authored-by trailer naming an assistant, a 'Generated with' line, or an assistant noreply address). Rewrite the `-m`/`--message` text, the `--trailer`, or the file supplied to `-F`/`--file`, so the commit names only the human author.",
   "worktree-tmp": "Blocked by safety (worktree-tmp-guard): do not create a worktree under /tmp or /private/tmp, where a container bind mount cannot see it. Use a persistent directory outside the system temp dir (for example one your worktree tool manages).",
   "history-rewrite": "Blocked by safety (history-rewrite-guard): history-rewriting commands (`git filter-repo`, `git filter-branch`, `git replace`, `git update-ref -d` on a branch) must not run in place in a canonical checkout, and `filter-repo --force` must not run at all. Clone the repository into a temp directory and run the command there with the tool's workdir set to the clone.",
-  "push-via": (host, command, dir) => `Blocked by safety (push-via-guard): a plain \`git push\` to ${host} cannot work on this host. Push with \`${command} -C ${shellPath(dir)} push\` instead (same arguments), and push WIP often so commits are not lost.`,
   "op-guard": OP_MESSAGE
 };
 var DESTRUCTIVE = new Set(["rm", "rmdir", "dd", "shred", "truncate", "unlink", "wipefs"]);
@@ -4766,13 +4515,13 @@ var readText = (path) => {
 };
 function writtenInto(commands, before, path, cwd) {
   const out = [];
-  const target = isAbsolute5(path) ? path : resolve7(cwd, path);
+  const target = isAbsolute5(path) ? path : resolve6(cwd, path);
   for (const command of commands) {
     if (command.index >= before.index && command.source === before.source)
       break;
     const writes = command.redirects.some((word) => {
       const value = word.value;
-      return value === path || (!isAbsolute5(value) ? resolve7(cwd, value) : value) === target;
+      return value === path || (!isAbsolute5(value) ? resolve6(cwd, value) : value) === target;
     });
     const tee = base(command.argv[0]) === "tee" && command.argv.slice(1).includes(path);
     if (!writes && !tee)
@@ -4803,8 +4552,8 @@ function attribution(commands, cwd, read = readText, gitWrappers = DEFAULT_GIT_W
             sources.push(stage.argv.join(" "), ...stage.hereDocuments.map((document) => document.body));
           }
       } else {
-        const dir = git.chdirs.reduce((at, chdir) => resolve7(at, chdir), cwd);
-        const content = read(isAbsolute5(file) ? file : resolve7(dir, file));
+        const dir = git.chdirs.reduce((at, chdir) => resolve6(at, chdir), cwd);
+        const content = read(isAbsolute5(file) ? file : resolve6(dir, file));
         if (content !== undefined)
           sources.push(content);
         sources.push(...writtenInto(commands, command, file, dir));
@@ -4822,11 +4571,11 @@ var WORKTREE_ADD_VALUED = new Set(["-b", "-B", "--reason"]);
 function worktreeTmp(command, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS) {
   const git = gitInvocation(command.argv, gitWrappers);
   if (git?.subcommand === "worktree" && git.args[0] === "add") {
-    const dir = git.chdirs.reduce((at, chdir) => resolve7(at, chdir), cwd);
+    const dir = git.chdirs.reduce((at, chdir) => resolve6(at, chdir), cwd);
     const path = positionals(git.args.slice(1), WORKTREE_ADD_VALUED)[0];
     if (path === undefined || path.startsWith("~") || path.startsWith("$"))
       return false;
-    return underTmp(isAbsolute5(path) ? path : resolve7(dir, path));
+    return underTmp(isAbsolute5(path) ? path : resolve6(dir, path));
   }
   const wt = wtInvocation(command.argv);
   if (wt && ["switch", "new", "co", "agent"].includes(wt.subcommand)) {
@@ -4853,12 +4602,6 @@ function hardGate(source, cwd, options = {}) {
       const reason = historyRewrite(commands, cwd, options.tempRoots, options.env, options.gitWrappers);
       if (reason !== undefined)
         refusal = { guard: "history-rewrite", reason };
-    }
-    if (refusal === undefined && on("push-via") && options.pushVia !== undefined && !repositorySelected(options.env)) {
-      const resolveRemote = options.resolveRemote ?? gitRemoteResolver(options.env ?? {});
-      const push = pushVia(commands, cwd, options.pushVia, resolveRemote);
-      if (push !== undefined)
-        refusal = { guard: "push-via", reason: MESSAGES2["push-via"](options.pushVia.host, options.pushVia.command, push.dir) };
     }
   } catch (error) {
     failure = { error };
@@ -5093,16 +4836,16 @@ function createPackageAdvisor() {
 }
 
 // plugins/safety/shared/permission.ts
-import { isAbsolute as isAbsolute8, resolve as resolve10 } from "path";
+import { isAbsolute as isAbsolute8, resolve as resolve9 } from "path";
 
 // plugins/safety/shared/branch-delete.ts
 import { realpathSync as realpathSync5 } from "fs";
 import { homedir as homedir5 } from "os";
-import { basename as basename3, isAbsolute as isAbsolute7, resolve as resolve9 } from "path";
+import { basename as basename3, isAbsolute as isAbsolute7, resolve as resolve8 } from "path";
 
 // plugins/safety/shared/worktree-detached.ts
 import { realpathSync as realpathSync4 } from "fs";
-import { isAbsolute as isAbsolute6, join as join8, resolve as resolve8 } from "path";
+import { isAbsolute as isAbsolute6, join as join8, resolve as resolve7 } from "path";
 var MAX_COMMAND_LENGTH2 = 64000;
 var PREFIX2 = "Worktree removal refused";
 var OPAQUE = new Set(["ssh", "parallel"]);
@@ -5253,7 +4996,7 @@ function defaultProbe(bounds = {}) {
 `).filter((line) => line.trim() !== "");
     },
     resolve: (cwd, target) => {
-      const absolute = resolve8(cwd, target);
+      const absolute = resolve7(cwd, target);
       try {
         return realpathSync4(absolute);
       } catch {
@@ -5648,7 +5391,7 @@ function deleteRequests(command, cwd) {
     }
     let target = here;
     for (const chdir of git?.chdirs ?? removal?.chdirs ?? [])
-      target = resolve9(target, pathOf(chdir));
+      target = resolve8(target, pathOf(chdir));
     if (flags) {
       if (flags.remotes)
         return refuse(`\`${text}\` deletes remote-tracking refs, which this gate does not classify. Prune them with \`git fetch --prune\` instead.`);
@@ -5674,7 +5417,7 @@ function directoryTarget(line, from) {
     return path;
   if (process.env.CDPATH && !/^\.\.?(?:\/|$)/.test(path))
     return null;
-  return from === null ? null : resolve9(from, path);
+  return from === null ? null : resolve8(from, path);
 }
 function gitIn(budget) {
   const run = async (args, dir) => {
@@ -5763,7 +5506,7 @@ async function wtBranchNames(git, request) {
   const existing = await readBranches(git, dir, named);
   const names = new Set;
   for (const target of request.targets) {
-    const path = realpath(resolve9(dir, target));
+    const path = realpath(resolve8(dir, target));
     const matches = worktrees.filter((w) => realpath(w.path) === path || basename3(w.path) === target || w.branch === target);
     for (const match of matches)
       if (!match.detached && match.branch)
@@ -6017,7 +5760,7 @@ function destructions(commands, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS) {
     if (!git)
       continue;
     const literal = command.context === "top" && command.words !== undefined && !git.overridden;
-    const dir = literal && cwd !== undefined && !command.assignments.some((value) => value.startsWith("GIT_")) ? git.chdirs.reduce((at, chdir) => isAbsolute8(chdir) ? chdir : resolve10(at, chdir), cwd) : undefined;
+    const dir = literal && cwd !== undefined && !command.assignments.some((value) => value.startsWith("GIT_")) ? git.chdirs.reduce((at, chdir) => isAbsolute8(chdir) ? chdir : resolve9(at, chdir), cwd) : undefined;
     const [verb] = git.args;
     if (git.subcommand === "stash" && (verb === "drop" || verb === "clear")) {
       found.push({ kind: verb === "drop" ? "stash-drop" : "stash-clear", command, dir });
@@ -6380,13 +6123,12 @@ function readPiOptions(raw) {
   return {
     disabled: new Set(disable.filter((id) => PI_FEATURE_IDS.includes(id))),
     opAllow: allow.filter((entry) => typeof entry === "string"),
-    pushVia: readPushVia(options),
     redact: readRedactOptions(options),
     gitWrappers: readGitWrappers(options)
   };
 }
 function loadPiOptions(path) {
-  const loaded = loadPiOptionsFile(path, "safety", "every check runs and push-via is off");
+  const loaded = loadPiOptionsFile(path, "safety", "every check runs");
   const options = readPiOptions(loaded.options);
   return loaded.warning === undefined ? { options } : { options, warning: loaded.warning };
 }
@@ -6422,7 +6164,6 @@ async function gateBash(command, cwd, config) {
     ...config.guard,
     disabled,
     opAllow: config.options.opAllow,
-    ...config.options.pushVia ? { pushVia: config.options.pushVia } : {},
     gitWrappers: config.options.gitWrappers,
     providerTypes
   }));

@@ -44,7 +44,7 @@ Loaded in every project by the global configuration. Do not add them per project
 | agent-researcher | The researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one |
 | agent-reviewer | Read-only reviewer subagents (pull request, local diff, security, adversarial challenge) sharing one review core, and a security review skill |
 | agent-seance | seance subagent and read-only seance_read tool: answer a question from a past session and its subagent transcripts |
-| architecture | Architecture skills (capability-first layout, ownership boundaries, durable docs/ knowledge) and a read-only architect subagent |
+| architecture | Architecture skills (capability-first layout, ownership boundaries, durable docs/ knowledge) and an architect subagent that writes design documents |
 | ast-grep | Structural code search with the ast-grep CLI: a skill on patterns, Rust macro and Go call gotchas, bounded output, preview-only rewrites, and when to use Semgrep or rust-analyzer instead |
 | autopilot | Unattended runs: /autopilot arms a no-questions session with a journal, a 4-minute tick and stop conditions |
 | aws | AWS working guidance as a skill, plus the read-only AWS MCP Server and the AWS Pricing MCP server, added in AWS projects |

@@ -1,5 +1,5 @@
 ---
-description: Run a bounded architecture decision council with the architect and three council advisors
+description: Run a bounded architecture decision council with the architecture advisor and three council advisors
 argument-hint: "<question> [--scope ...] [--non-goals ...]"
 ---
 
@@ -7,7 +7,7 @@ Run a council on the user's question and constraints at the end of this prompt. 
 
 1. Before you orchestrate, call `subagent({ action: "guide", options: { topic: "council" } })`.
 2. Read the council protocol it returns and follow it, with its required references. Do not type or invoke another slash command.
-3. Use exactly this roster: `architect,council-advocate,council-skeptic,council-pragmatist`.
+3. Use exactly this roster: `council-architect,council-advocate,council-skeptic,council-pragmatist`.
 4. Cap the council at three passes.
 5. Frame the question with these parts:
    - the architecture question

@@ -1,3 +1,9 @@
+## agent-mechanic [0.9.1](https://github.com/srobroek/harness-plugins/compare/agent-mechanic--v0.9.0...agent-mechanic--v0.9.1) (2026-11-25)
+
+### Bug Fixes
+
+* **agent-mechanic:** give the Pi mechanic its OpenCode skills ([d7d9a07](https://github.com/srobroek/harness-plugins/commit/d7d9a07bf0cd576ae4952ea524c5b3c390a810fd))
+
 ## agent-mechanic [0.9.0](https://github.com/srobroek/harness-plugins/compare/agent-mechanic--v0.8.3...agent-mechanic--v0.9.0) (2026-11-24)
 
 ### Features

@@ -13,6 +13,10 @@ export type PiAgent = {
   tools: string[]
   /** `subagentOnlyExtensions`: `npm:<package>` or a path relative to the shipped `pi/agents/` file. */
   extensions: string[]
+  /** `skills`: the skills pi-subagents gives the child, whatever `inheritSkills` says. */
+  skills: string[]
+  /** `inheritSkills: true` also gives the child Pi's whole discovered skill catalog. */
+  inheritSkills: boolean
   body: string
   /** `acceptanceRole`: `read-only` keeps pi-subagents from asking the child for a writer's acceptance report. */
   acceptanceRole: string | undefined
@@ -63,6 +67,8 @@ export function piAgents(plugins: string): PiAgent[] {
         id: path.basename(file, ".pi.md"),
         tools: list(data.tools),
         extensions: list(data.subagentOnlyExtensions),
+        skills: list(data.skills),
+        inheritSkills: data.inheritSkills === true,
         body: text.slice(match?.[0].length ?? 0),
         acceptanceRole: typeof data.acceptanceRole === "string" ? data.acceptanceRole : undefined,
       }

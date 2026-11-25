@@ -1,3 +1,9 @@
+## code-challenge [2.1.3](https://github.com/srobroek/harness-plugins/compare/code-challenge--v2.1.2...code-challenge--v2.1.3) (2026-11-25)
+
+### Bug Fixes
+
+* **code-challenge:** give the OMP refactor challenger a shell ([f2075a6](https://github.com/srobroek/harness-plugins/commit/f2075a61aa475bd1d7cbb700dd063e768095ab71))
+
 ## code-challenge [2.1.2](https://github.com/srobroek/harness-plugins/compare/code-challenge--v2.1.1...code-challenge--v2.1.2) (2026-11-25)
 
 ### Bug Fixes

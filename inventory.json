@@ -90,7 +90,7 @@
     },
     {
       "name": "agent-mechanic",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "description": "mechanic subagent: cheap, exact mechanical edits (renames, bulk edits, formatting, moving code) that run the given check.",
       "category": "development",
       "harnesses": {
@@ -218,7 +218,7 @@
     },
     {
       "name": "agent-reviewer",
-      "version": "0.15.2",
+      "version": "0.15.4",
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "category": "development",
       "harnesses": {
@@ -273,7 +273,9 @@
           "rules": [],
           "hooks": [],
           "tools": [],
-          "extensions": [],
+          "extensions": [
+            "index"
+          ],
           "mcp": []
         },
         "pi": {
@@ -290,7 +292,9 @@
           "rules": [],
           "hooks": [],
           "tools": [],
-          "extensions": [],
+          "extensions": [
+            "index"
+          ],
           "mcp": []
         }
       },
@@ -303,7 +307,7 @@
         },
         {
           "package": "pi-web-access",
-          "for": "web research tools for the security auditor",
+          "for": "web research tools for the adversarial challenger",
           "required": true
         },
         {
@@ -353,7 +357,7 @@
     },
     {
       "name": "architecture",
-      "version": "0.12.1",
+      "version": "0.13.1",
       "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
       "category": "development",
       "harnesses": {
@@ -836,7 +840,7 @@
     },
     {
       "name": "code-challenge",
-      "version": "2.1.2",
+      "version": "2.1.3",
       "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
       "category": "development",
       "harnesses": {
@@ -928,7 +932,7 @@
     },
     {
       "name": "debate",
-      "version": "1.0.2",
+      "version": "1.1.0",
       "description": "Stress-test a decision from both sides or grill a plan in frontier rounds.",
       "category": "productivity",
       "harnesses": {
@@ -980,6 +984,7 @@
           ],
           "agents": [
             "council-advocate",
+            "council-architect",
             "council-pragmatist",
             "council-security",
             "council-skeptic"
@@ -1000,11 +1005,6 @@
         {
           "package": "pi-subagents",
           "for": "council advisors and the council protocol",
-          "required": true
-        },
-        {
-          "package": "@srobroek/pi-architecture",
-          "for": "the architect agent in /council-arch",
           "required": true
         }
       ]
@@ -1319,7 +1319,7 @@
     },
     {
       "name": "journeys",
-      "version": "0.6.2",
+      "version": "0.6.3",
       "description": "Author, validate and maintain user journeys: seven skills, the journeys.py helper, and the journey-scribe and journey-validator subagents.",
       "category": "development",
       "harnesses": {
@@ -2062,7 +2062,7 @@
     },
     {
       "name": "quality",
-      "version": "0.16.1",
+      "version": "0.16.2",
       "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
       "category": "development",
       "harnesses": {
@@ -2192,7 +2192,7 @@
     },
     {
       "name": "safety",
-      "version": "0.14.6",
+      "version": "1.0.0",
       "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help and redaction of secret environment values from tool output.",
       "category": "development",
       "harnesses": {
@@ -2598,7 +2598,7 @@
     },
     {
       "name": "whats-new",
-      "version": "0.5.3",
+      "version": "0.5.4",
       "description": "Research breaking changes, deprecations and new features between two versions, report-only.",
       "category": "development",
       "harnesses": {
