@@ -79,7 +79,9 @@ get `read`, `grep`, `find`, `ls`, `edit`, `write`, `bash`, `journeys_index` and
 `journey-validator` gets no MCP or browser tool. For a profile that drives the product
 through one, set the validator's `tools` in `subagents.agentOverrides` to the list above
 plus that tool (for example `mcp:<server>`); an override replaces the whole list. Without
-it, the validator reports those steps as `blocked`.
+it, the validator reports those steps as `blocked`. As on OpenCode, the Pi validator gets
+no skills: it follows `FORMAT.md` and its own definition, and `journey-verify`, the skill
+that launches it, is not for it to load.
 
 ## Tools
 

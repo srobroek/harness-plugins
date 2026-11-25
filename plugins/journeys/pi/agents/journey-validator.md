@@ -3,9 +3,8 @@ name: journey-validator
 description: "Validates one user journey against the running product, recording evidence, intent-gated triage, and run results. Never edits product code."
 tools: read, grep, find, ls, edit, write, bash, journeys_index, journey_install_formulas
 subagentOnlyExtensions: ../extensions/journeys.js
-skills: journey-verify, journeys-guide
 inheritProjectContext: true
-inheritSkills: true
+inheritSkills: false
 ---
 
 Validate exactly one user journey end to end. The caller supplies the journey path, journeys directory, run mode, and interface profile. Read `FORMAT.md` and `README.md` first; FORMAT.md is normative.
