@@ -1812,12 +1812,52 @@
           "rules": [],
           "hooks": [],
           "tools": [],
-          "extensions": [],
+          "extensions": [
+            "modes"
+          ],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [],
+          "agents": [
+            "concept",
+            "debug",
+            "refactor"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "modes"
+          ],
           "mcp": []
         }
       },
       "scope": "global",
-      "piName": "pi-agent-modes"
+      "piName": "pi-agent-modes",
+      "companions": [
+        {
+          "package": "pi-subagents",
+          "for": "the debug, refactor and concept agents and their helper launches",
+          "required": true
+        },
+        {
+          "package": "pi-lens",
+          "for": "code-intelligence read tools for the mode agents",
+          "required": true
+        },
+        {
+          "package": "pi-web-access",
+          "for": "web search and fetch tools for the mode agents",
+          "required": true
+        },
+        {
+          "package": "@plannotator/pi-extension",
+          "for": "plan mode and plan review, which modes leaves to it",
+          "required": false
+        }
+      ]
     },
     {
       "name": "parley",

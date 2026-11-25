@@ -21,7 +21,7 @@ import { isAbsolute } from "node:path"
 import { commandWords } from "@srobroek/opencode-lib/command-words"
 import { type CommandPosition, type ParsedCommand, parse } from "@srobroek/opencode-lib/shell-command"
 import { isShellTool, shellCall } from "@srobroek/opencode-lib/tool-targets"
-import { checkDebugWrite, isScratchPath, isScratchRoot } from "./path-guard.ts"
+import { checkDebugWrite, isScratchPath, isScratchRoot, OPENCODE_SCRATCH, type ScratchRoots } from "./path-guard.ts"
 
 /** What the guard needs to know about where a command runs. */
 export type GitContext = {
@@ -31,6 +31,8 @@ export type GitContext = {
   workdir?: string
   /** The user's home directory. Defaults to `os.homedir()`. */
   home?: string
+  /** The host's debug scratch roots. Defaults to `OPENCODE_SCRATCH`. */
+  roots?: ScratchRoots
 }
 
 type Policy = { subcommands: ReadonlySet<string> }
@@ -456,12 +458,14 @@ function worktreeTarget(action: string, args: readonly string[]): string | undef
 
 /** Whether `path` is exactly a debug scratch worktree directory for this session. */
 function scratchRoot(path: string, ctx: Ctx): boolean {
-  return ctx.env.startDir !== undefined && isScratchRoot(path, { home: ctx.env.home, startDir: ctx.env.startDir })
+  const { startDir, home, roots } = ctx.env
+  return startDir !== undefined && isScratchRoot(path, { home, startDir, roots })
 }
 
 /** Whether `path` is a debug scratch worktree (or inside one) for this session. */
 function scratch(path: string, ctx: Ctx): boolean {
-  return ctx.env.startDir !== undefined && isScratchPath(path, { home: ctx.env.home, startDir: ctx.env.startDir })
+  const { startDir, home, roots } = ctx.env
+  return startDir !== undefined && isScratchPath(path, { home, startDir, roots })
 }
 
 /**
@@ -487,11 +491,11 @@ function outputDestinations(sub: string, rest: readonly string[]): string[] | un
 
 /** Why a git output path is refused, or undefined when it lands in a scratch worktree or the debug ledger directory. */
 function checkDestination(destination: string, tree: string | undefined, ctx: Ctx): string | undefined {
-  const { startDir, home } = ctx.env
+  const { startDir, home, roots } = ctx.env
   const resolved = joinPath(tree, destination, ctx.env.home)
   if (startDir === undefined || resolved === undefined) return "the destination or the start directory is unknown"
-  if (scratch(resolved, ctx) || checkDebugWrite(resolved, { home, startDir }) === undefined) return undefined
-  return "outside a debug-* scratch worktree and ~/.opencode/debug"
+  if (scratch(resolved, ctx) || checkDebugWrite(resolved, { home, startDir, roots }) === undefined) return undefined
+  return `outside a debug-* scratch worktree and ~/${(roots ?? OPENCODE_SCRATCH).ledger}`
 }
 
 /** Words after the xargs/watch/parallel options, as the command they run. */

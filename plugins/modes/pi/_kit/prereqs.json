@@ -1,0 +1,26 @@
+{
+  "plugin": "modes",
+  "prerequisites": [],
+  "companions": [
+    {
+      "package": "pi-subagents",
+      "for": "the debug, refactor and concept agents and their helper launches",
+      "required": true
+    },
+    {
+      "package": "pi-lens",
+      "for": "code-intelligence read tools for the mode agents",
+      "required": true
+    },
+    {
+      "package": "pi-web-access",
+      "for": "web search and fetch tools for the mode agents",
+      "required": true
+    },
+    {
+      "package": "@plannotator/pi-extension",
+      "for": "plan mode and plan review, which modes leaves to it",
+      "required": false
+    }
+  ]
+}

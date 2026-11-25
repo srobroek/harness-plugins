@@ -1486,6 +1486,12 @@ function shellCall(tool, input) {
 import { lstatSync, readlinkSync } from "fs";
 import { homedir } from "os";
 import { dirname, isAbsolute, join as join2, relative, sep } from "path";
+var OPENCODE_SCRATCH = { ledger: ".opencode/debug", worktrees: ".local/share/opencode/worktree" };
+function scratchDirs(options) {
+  const home = canonical(options.home ?? homedir());
+  const roots = options.roots ?? OPENCODE_SCRATCH;
+  return { ledger: join2(home, roots.ledger), worktrees: join2(home, roots.worktrees) };
+}
 var MAX_LINKS = 40;
 function canonical(path) {
   const pending = (isAbsolute(path) ? path : `${process.cwd()}${sep}${path}`).split(sep).filter((segment) => segment !== "");
@@ -1557,12 +1563,11 @@ function checkResolved(target, options) {
   return;
 }
 function checkReading(target, path, start, options) {
-  const home = canonical(options.home ?? homedir());
+  const { ledger, worktrees } = scratchDirs(options);
   if (path === start || inside(path, start))
     return `${target} is inside the directory this session started in`;
-  if (inside(path, join2(home, ".opencode", "debug")))
+  if (inside(path, ledger))
     return;
-  const worktrees = join2(home, ".local", "share", "opencode", "worktree");
   if (inside(path, worktrees)) {
     const [hash, lane, ...rest] = relative(worktrees, path).split(sep);
     if (hash !== undefined && lane !== undefined && /^debug-.+/.test(lane) && rest.length > 0)
@@ -1572,9 +1577,8 @@ function checkReading(target, path, start, options) {
 }
 function isScratchPath(path, options) {
   try {
-    const home = canonical(options.home ?? homedir());
+    const { worktrees } = scratchDirs(options);
     const start = canonical(options.startDir);
-    const worktrees = join2(home, ".local", "share", "opencode", "worktree");
     return readings(isAbsolute(path) ? path : `${start}${sep}${path}`).every((resolved) => {
       if (resolved === start || inside(resolved, start))
         return false;
@@ -1589,8 +1593,7 @@ function isScratchPath(path, options) {
 }
 function isScratchRoot(path, options) {
   try {
-    const home = canonical(options.home ?? homedir());
-    const worktrees = join2(home, ".local", "share", "opencode", "worktree");
+    const { worktrees } = scratchDirs(options);
     return isScratchPath(path, options) && readings(isAbsolute(path) ? path : `${canonical(options.startDir)}${sep}${path}`).every((resolved) => relative(worktrees, resolved).split(sep).length === 2);
   } catch {
     return false;
@@ -2024,10 +2027,12 @@ function worktreeTarget(action, args) {
   return;
 }
 function scratchRoot(path, ctx) {
-  return ctx.env.startDir !== undefined && isScratchRoot(path, { home: ctx.env.home, startDir: ctx.env.startDir });
+  const { startDir, home, roots } = ctx.env;
+  return startDir !== undefined && isScratchRoot(path, { home, startDir, roots });
 }
 function scratch(path, ctx) {
-  return ctx.env.startDir !== undefined && isScratchPath(path, { home: ctx.env.home, startDir: ctx.env.startDir });
+  const { startDir, home, roots } = ctx.env;
+  return startDir !== undefined && isScratchPath(path, { home, startDir, roots });
 }
 function outputDestinations(sub, rest) {
   const found = [];
@@ -2048,13 +2053,13 @@ function outputDestinations(sub, rest) {
   return found;
 }
 function checkDestination(destination, tree, ctx) {
-  const { startDir, home } = ctx.env;
+  const { startDir, home, roots } = ctx.env;
   const resolved = joinPath(tree, destination, ctx.env.home);
   if (startDir === undefined || resolved === undefined)
     return "the destination or the start directory is unknown";
-  if (scratch(resolved, ctx) || checkDebugWrite(resolved, { home, startDir }) === undefined)
+  if (scratch(resolved, ctx) || checkDebugWrite(resolved, { home, startDir, roots }) === undefined)
     return;
-  return "outside a debug-* scratch worktree and ~/.opencode/debug";
+  return `outside a debug-* scratch worktree and ~/${(roots ?? OPENCODE_SCRATCH).ledger}`;
 }
 function runnerCommand(exe, args) {
   let i = 0;
@@ -2237,25 +2242,36 @@ async function headRefusal(workdir, run = runSymbolicRef) {
 // plugins/modes/opencode/src/modes.ts
 import { basename as basename3 } from "path";
 var AGENT_IDS = ["debug", "refactor", "concept"];
+var MODE_ROLES = {
+  debug: {
+    name: "Debug",
+    purpose: "you diagnose a failure to a confirmed root cause and never fix the user's checkout. Experiments run in a scratch git worktree."
+  },
+  refactor: {
+    name: "Refactor",
+    purpose: "you restructure code in small verified steps without changing behaviour. Tests, fixtures and snapshots are frozen."
+  },
+  concept: {
+    name: "Concept",
+    purpose: "you frame problems, explore options and record a decision. You do not implement."
+  }
+};
 var MODES2 = {
   debug: defineMode({
     id: "debug",
-    name: "Debug",
-    purpose: "you diagnose a failure to a confirmed root cause and never fix the user's checkout. Experiments run in a scratch git worktree.",
+    ...MODE_ROLES.debug,
     allowed: "the scratch worktree under `~/.local/share/opencode/worktree/` and `~/.opencode/debug/`",
     redirect: "switch to `build` to apply the fix"
   }),
   refactor: defineMode({
     id: "refactor",
-    name: "Refactor",
-    purpose: "you restructure code in small verified steps without changing behaviour. Tests, fixtures and snapshots are frozen.",
+    ...MODE_ROLES.refactor,
     allowed: "source files; never test, fixture or snapshot files",
     redirect: "switch to `build` for features, bug fixes or test changes"
   }),
   concept: defineMode({
     id: "concept",
-    name: "Concept",
-    purpose: "you frame problems, explore options and record a decision. You do not implement.",
+    ...MODE_ROLES.concept,
     allowed: "`docs/design/`, `docs/adr/`, `docs/decisions/` and `~/.opencode/concept/`",
     redirect: "switch to `spec` or `plan`, then `build`"
   })

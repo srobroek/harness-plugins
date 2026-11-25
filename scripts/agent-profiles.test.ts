@@ -61,8 +61,18 @@ const DENYLIST = new Set(["journey-validator"])
 /** Agents that change state without the edit tool. */
 const WRITERS = new Set(["shepherd"])
 
-/** Code Mode tools a Pi child reaches through another tool: it has no parley panel, so it asks its supervisor. */
-const PI_EQUIVALENTS: Readonly<Record<string, string>> = { parley: "contact_supervisor" }
+/**
+ * Code Mode tools a Pi child reaches through another tool: it has no parley panel, so it asks its supervisor,
+ * and it creates and removes worktrees with git through `bash`.
+ */
+const PI_EQUIVALENTS: Readonly<Record<string, string>> = {
+  parley: "contact_supervisor",
+  worktree_create: "bash",
+  worktree_remove: "bash",
+}
+
+/** Optional MCP tools a Pi agent leaves out: an `mcp:` entry for a server that is not configured fails the launch. */
+const PI_OPTIONAL: ReadonlySet<string> = new Set(["wire-dsl_*"])
 
 type Agent = { plugin: string; id: string; hidden: boolean; rules: AgentPermission[] }
 
@@ -175,7 +185,7 @@ test("a Pi agent keeps its profile's Code Mode tools, and the web tools when its
   for (const agent of piAgents(PLUGINS)) {
     const profile = PROFILES[agent.id]
     if (profile === undefined || DENYLIST.has(agent.id)) continue
-    const codeMode = profile.codeMode.map((tool) => PI_EQUIVALENTS[tool] ?? tool)
+    const codeMode = profile.codeMode.filter((tool) => !PI_OPTIONAL.has(tool)).map((tool) => PI_EQUIVALENTS[tool] ?? tool)
     const missing = [...codeMode, ...(profile.web ? PI_WEB_TOOLS : [])].filter((tool) => !agent.tools.includes(tool))
     expect({ plugin: agent.plugin, id: agent.id, missing }).toEqual({ plugin: agent.plugin, id: agent.id, missing: [] })
   }
