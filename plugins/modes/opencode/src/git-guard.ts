@@ -73,7 +73,10 @@ const RISKY_OPTION = /^--(upload-pack|receive-pack|exec|open-files-in-pager|ext-
 const MENTIONS_GIT = /git/i
 /** A command that is worth parsing: it mentions git or has a word that could expand into it. */
 const WORTH_PARSING = /git|[{*?[$`]/i
-const KEYWORDS = new Set(["if", "then", "else", "elif", "while", "until", "do", "!", "{", "(", "coproc"])
+// `builtin` runs the builtin that follows it, so `builtin cd X` and `builtin eval …` are read as `cd X` and `eval …`.
+const KEYWORDS = new Set(["if", "then", "else", "elif", "while", "until", "do", "!", "{", "(", "coproc", "builtin"])
+/** Commands that run shell text in the current shell, where a `cd` changes the directory of everything after them. */
+const IN_SHELL = new Set(["eval", "source", "."])
 const INTERPRETERS = /^(python[0-9.]*|node|nodejs|perl|ruby|php|lua|awk|gawk|mawk|osascript|tclsh|Rscript)$/
 type InterpreterSpec = {
   name: RegExp
@@ -571,13 +574,18 @@ function checkWords(input: readonly string[], ctx: Ctx): string | undefined {
   return undefined
 }
 
-/** Note `cd`, `pushd` and `popd`: from then on the directory of later commands is not the shell's `workdir`. */
+/**
+ * Note `cd`, `pushd` and `popd`, and `eval`, `source` and `.`, which can run one: from then on the
+ * directory of later commands is not the shell's `workdir`. Only a directory change is skipped; the
+ * others are still checked as commands.
+ */
 function followDirectory(position: CommandPosition, ctx: Ctx): boolean {
-  const { argv } = realCommand(position.argv)
-  if (!["cd", "pushd", "popd"].includes(basename(argv[0] ?? ""))) return false
+  const name = basename(realCommand(position.argv).argv[0] ?? "")
+  const changes = ["cd", "pushd", "popd"].includes(name)
+  if (!changes && !IN_SHELL.has(name)) return false
   ctx.state.cwd = undefined
   ctx.state.moved = true
-  return true
+  return changes
 }
 
 function checkParsed(parsed: ParsedCommand, ctx: Ctx): string | undefined {
