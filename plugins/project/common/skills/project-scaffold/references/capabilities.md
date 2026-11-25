@@ -37,9 +37,10 @@ OpenAPI), organization for the contact.
 
   Set the same `seal-object-schemas: true` on both emitters. Run the project's conformance
   gate on 3.2.0 (`toolchain-api`'s Contract tooling table records the 2026-11-25 acceptance
-  check; the generator scores were measured on 3.1.0). If a generator fails on 3.2.0, emit
-  `["3.2.0", "3.1.0"]` (one directory per version, for example `3.2.0/openapi.json` and
-  `3.1.0/openapi.json` with `file-type: json`), publish 3.2 and feed the 3.1 document to that generator.
+  check; the generator scores were measured on 3.1.0). If a generator fails on 3.2.0, keep `openapi.yaml` (3.2.0) where it
+  is and add `tspconfig.oa31.yaml` emitting `openapi-versions: ["3.1.0"]` into
+  `build/openapi-3.1/` for that generator only. Every task below keeps using `openapi.yaml`;
+  listing both versions in one config moves it into per-version directories.
 - Tasks: `redocly lint openapi.yaml` with a committed `redocly.yaml`; regenerate and fail on
   `git status --porcelain` over the generated paths; breaking-change check against the PR
   base: `git show origin/main:openapi.yaml > "$base"` then
@@ -59,7 +60,7 @@ OpenAPI), organization for the contact.
   output is only compared with TypeSpec's (`toolchain-languages`: OpenAPI for HTTP contracts).
 - gRPC and ConnectRPC services keep `.proto` as the source for now (Connect stays the
   preferred RPC choice): gates are `buf lint` (`STANDARD`) and
-  `buf breaking --against <base ref>`, with protovalidate carrying value limits. Revisit and
+  `buf breaking --against ".git#ref=${BASE_SHA}"` with the fetched PR base SHA, with protovalidate carrying value limits. Revisit and
   switch to TypeSpec-emitted `.proto` when `@typespec/protobuf` reaches 1.0 and emits
   protovalidate rules (`toolchain-api`, gRPC row of the Contract tooling table).
 
