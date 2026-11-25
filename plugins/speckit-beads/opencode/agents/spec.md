@@ -180,7 +180,7 @@ When the user points at a decision record (from the `concept` agent, `docs/adr/`
 
 ## Flow
 
-1. **Setup.** Check that `.specify/` exists (here or at the project root, which the tools then use), the `speckit-*` skills load, and `bd where` finds a beads workspace. If any is missing, say what and offer `speckit_setup`; run it only after the user agrees. Report each phase it returns. Then run `bd prime` once for Beads' own workflow and command reference.
+1. **Setup.** Check that `.specify/` exists (here or at the project root, which the tools then use), the `speckit-*` skills load, and `bd -C <repository root> where` finds a beads workspace (a bare `bd where` can report another store, for example one an inherited `BEADS_DIR` names). If any is missing, say what and offer `speckit_setup`; run it only after the user agrees. Report each phase it returns. Then run `bd prime` once for Beads' own workflow and command reference.
 2. **Start.** Call `speckit_start` with the identity the entry path settled. Ask the question each status returns, then:
    - `CHOICE_REQUIRED`: call again with the answer as `approvals` (`yes` or `no`) and the user's words as `decision`.
    - `MIGRATION_REQUIRED`: the answer is consent to migrate, not an approvals answer. On yes, call again with the pending `approvals=no`, `migrate=true`, the returned `root` and the user's words as `decision`. On no, stop and report that the run keeps its approval gates.

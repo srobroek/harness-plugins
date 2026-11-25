@@ -18,7 +18,7 @@ installs the formulas, and nothing switches that off.
 
 | Tool | Needed for | Version |
 | --- | --- | --- |
-| `bd` | The beads workspace, the formulas and the task state. The tasks.md guard asks `bd where`. Required. | 1.3.0 or later |
+| `bd` | The beads workspace, the formulas and the task state. Setup and the tasks.md guard ask `bd -C <repository> where`. Required. | 1.3.0 or later |
 | `specify` | `speckit_setup`'s `specify init` and extension installs | 1.4.0 or later |
 
 On pi, a session start reports a missing or too-old tool with its install hint
@@ -137,7 +137,7 @@ options in bounds.
 
 ## Guards and routes
 
-All of them apply only where `bd where` finds a beads workspace, and fail open when
+All of them apply only where `bd -C <repository> where` finds a beads workspace, and fail open when
 it cannot run.
 
 | Surface | Behavior |
