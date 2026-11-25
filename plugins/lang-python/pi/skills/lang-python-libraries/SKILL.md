@@ -34,7 +34,7 @@ Checked 2026-11-16.
 | Settings | `pydantic-settings` `>= 2` | Validate once at startup |
 | HTTP client | `httpx` `>= 0.28` | Reuse clients; explicit timeout budget |
 | OpenAPI client | `openapi-python-client` `>= 0.30` | Model-only generation uses `datamodel-code-generator` `>= 0.95` |
-| TypeSpec-sourced models | `datamodel-code-generator` `>= 0.101` from the normalized JSON Schema, `--use-missing-sentinel` | Keep pydantic's default regex engine; 25/26 on the spike, the miss is Unicode `\d`. Route and gates in `toolchain-api` |
+| TypeSpec-sourced models | `datamodel-code-generator` `>= 0.101` from the normalized JSON Schema, `--use-missing-sentinel` | A contract type comes from TypeSpec, never hand-written. Keep pydantic's default regex engine; 28/29 on the spike (2026-11-25), the miss is Unicode `\d`. Route and gates in `toolchain-api` |
 | gRPC | `grpcio` `>= 1` | Official generated protobuf bindings |
 | GraphQL | `strawberry-graphql` `>= 0.341` | `ariadne` `>= 1` for schema-first |
 | Server push | Framework WebSockets; `sse-starlette` `>= 3` | Test proxy timeouts and disconnect cleanup |

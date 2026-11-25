@@ -30,7 +30,7 @@ Standard-library entries below use Go `1.27`; retain a supported lower minimum w
 | Middleware | `func(http.Handler) http.Handler` | Use framework middleware for cross-cutting concerns, not repeated handler code. |
 | Request validation | Explicit domain checks; `github.com/go-playground/validator/v10` `>= 10` for tags | Standard library suffices for small boundary types. |
 | OpenAPI | `github.com/oapi-codegen/oapi-codegen/v2` `>= 2` | Schema-first; `github.com/danielgtaylor/huma/v2` `>= 2` for code-first. |
-| TypeSpec-sourced types | `github.com/ogen-go/ogen` `>= 1.25` from the normalized OpenAPI 3.1 with `x-ogen-time-format` on date-times | Spike: 26/26 configured, 24/26 raw. Open-object extra keys serialize in random order, so golden tests compare parsed JSON. Route in `toolchain-api` |
+| TypeSpec-sourced types | `github.com/ogen-go/ogen` `>= 1.25` from the normalized OpenAPI 3.1 with `x-ogen-time-format` on date-times | A contract type comes from TypeSpec, never a hand-written struct. Spike (2026-11-25): 28/29 configured, 26/29 raw; a lowercase `t`/`z` date-time is rejected. Open-object extra keys serialize in random order, so golden tests compare parsed JSON. Route in `toolchain-api` |
 | RPC | `connectrpc.com/connect/v2` `>= 2` | `google.golang.org/grpc` `>= 1` for established gRPC infrastructure. |
 | GraphQL | `github.com/99designs/gqlgen` `>= 0.17` | Only when graph-shaped client needs justify it. |
 | Streaming | `net/http` SSE | Standard library suffices for one-way notifications. |
