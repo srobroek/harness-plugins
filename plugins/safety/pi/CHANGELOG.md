@@ -1,3 +1,9 @@
+## safety [1.0.1](https://github.com/srobroek/harness-plugins/compare/safety--v1.0.0...safety--v1.0.1) (2026-11-25)
+
+### Bug Fixes
+
+* **safety:** treat the directory after an unreadable leading cd as unknown ([c35af57](https://github.com/srobroek/harness-plugins/commit/c35af579307066032b4a2117e4e4ad55e361d67b))
+
 ## safety [1.0.0](https://github.com/srobroek/harness-plugins/compare/safety--v0.14.6...safety--v1.0.0) (2026-11-25)
 
 ### ⚠ BREAKING CHANGES
