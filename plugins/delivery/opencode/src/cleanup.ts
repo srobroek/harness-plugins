@@ -905,7 +905,7 @@ function worktreePathState(path: string): "directory" | "absent" | "unsafe" {
 const removalElsewhere = (path: string) =>
   "the tree has only deleted tracked files: a removal is running or stopped part-way (another process outside " +
   "the delivery worktree lock, such as another harness's delivery plugin or `wt remove`, or an earlier cleanup " +
-  `that failed); this call removed nothing; inspect ${path}`
+  `that failed); this call removed nothing; inspect ${path} and save any changes in it`
 
 function dirtyPaths(output: string): string[] {
   return output
@@ -914,6 +914,29 @@ function dirtyPaths(output: string): string[] {
     .map((line) => (line.length > 3 ? line.slice(3) : line))
     .slice(0, MAX_DIRTY_PATHS)
 }
+
+/** A porcelain status line for a deleted tracked file, staged or not. */
+const isDeletion = (line: string): boolean => line.startsWith(" D") || line.startsWith("D ")
+
+/** The target's status lines, read through its pinned admin directory, or null when they cannot be read. */
+async function treeStatus(target: Pick<TargetIdentity, "cwd" | "pin">, run: CliRunner, timeoutMs: number): Promise<string[] | null> {
+  const status = await runGit(run, target.cwd, ["status", "--porcelain"], timeoutMs, target.pin)
+  return completed(status) ? status.stdout.split(/\r?\n/).filter(Boolean) : null
+}
+
+const statusSummary = (lines: readonly string[]): string => show({ paths: dirtyPaths(lines.join("\n")), total: lines.length })
+
+/** What a refused removal adds when the tree changed after the last proof: the changes, to be saved. */
+const changedAfterProof = (lines: readonly string[]): string =>
+  `the tree changed after the last proof (${statusSummary(lines)}); nothing was removed; save those changes before cleaning up again`
+
+/**
+ * What to do with a tree a removal left unverified: look at it and save what is in it. It never names a
+ * command that deletes: a deletion in the status may be the user's own work, and the status lists no
+ * ignored file, so no status proves that what is left is only what the removal did not finish.
+ */
+const inspectAdvice = (path: string, left: readonly string[] | null): string =>
+  `inspect ${path} and save any changes in it before removing what is left${left !== null && left.length > 0 ? ` (git status there: ${statusSummary(left)})` : ""}`
 
 /**
  * The target is clean: no tracked change, no untracked file (ignored files are allowed),
@@ -1725,12 +1748,22 @@ async function cleanupInRepository(
 
     const registration = await registrationAbsence(executionDir, targetPath, commit, bounds.refReadMs, executionPin)
     const pathGone = pathAbsence(targetPath)
-    // Still registered and on disk (or unreadable): the tree was proven clean in this same hold, so an
-    // empty status now means the command deleted nothing and its failure is a refusal. Anything else
-    // (a change, a status that cannot be read, a command that never exited) means it stopped part-way.
-    if (failure !== null && registration !== "absent" && pathGone !== "absent" && !stopped) {
-      const status = await runGit(commit, boundary.cwd, ["status", "--porcelain"], bounds.treeScanMs, boundary.pin)
-      if (completed(status) && status.stdout === "") return failure
+    // What the tree holds now, when the removal failed and left its directory: the status lines, or
+    // null when they cannot be read (an admin directory the removal deleted, a tree too far gone).
+    const left = failure !== null && pathGone !== "absent" ? await treeStatus(boundary, commit, bounds.treeScanMs) : null
+    // `git worktree remove` only deletes. A tree still registered and on disk, with its marker bound and
+    // no deletion in its status, was not touched: git refused it, and the failure is a refusal. A change
+    // there was written after the last proof, which is why git refused, so the refusal names it.
+    if (
+      failure !== null &&
+      !stopped &&
+      registration !== "absent" &&
+      pathGone !== "absent" &&
+      left !== null &&
+      !left.some(isDeletion) &&
+      markersStillBound(boundary, executionDir, executionPin) === null
+    ) {
+      return left.length === 0 ? failure : { ok: false, reason: `${failure.reason}; ${changedAfterProof(left)}` }
     }
     // From here the removal ran, whole or part-way, and nothing refuses: what could not be finished
     // or proved is reported with the result, and only a proven absence gets a continuation receipt.
@@ -1739,8 +1772,8 @@ async function cleanupInRepository(
     if (registration !== "absent" || pathGone !== "absent") {
       unfinished.push(
         failure === null
-          ? `worktree ${path} is there again after its removal (registration ${registration}, directory ${pathGone}) and was left alone; absence unverified; no continuation receipt`
-          : `worktree ${path}: removal attempted and stopped part-way (${failure.reason}); registration ${registration}, directory ${pathGone}; absence unverified; no continuation receipt; inspect ${path} before removing what is left by hand (git worktree remove --force)`,
+          ? `worktree ${path} is there again after its removal (registration ${registration}, directory ${pathGone}) and was left alone; absence unverified; no continuation receipt; ${inspectAdvice(path, left)}`
+          : `worktree ${path}: removal attempted and stopped part-way (${failure.reason}); registration ${registration}, directory ${pathGone}; absence unverified; no continuation receipt; ${inspectAdvice(path, left)}`,
         `local branch ${branch} kept: the worktree's absence is not proven`,
       )
       return { ok: true, worktreeRemoved: failure === null, registration, pathGone, localAbsence: "unknown", localRefPlan: localRef, localRefDeleted: false, executionDir, unfinished }

@@ -2843,10 +2843,19 @@ function worktreePathState(path) {
     return "unsafe";
   }
 }
-var removalElsewhere = (path) => "the tree has only deleted tracked files: a removal is running or stopped part-way (another process outside " + "the delivery worktree lock, such as another harness's delivery plugin or `wt remove`, or an earlier cleanup " + `that failed); this call removed nothing; inspect ${path}`;
+var removalElsewhere = (path) => "the tree has only deleted tracked files: a removal is running or stopped part-way (another process outside " + "the delivery worktree lock, such as another harness's delivery plugin or `wt remove`, or an earlier cleanup " + `that failed); this call removed nothing; inspect ${path} and save any changes in it`;
 function dirtyPaths(output) {
   return output.split(/\r?\n/).filter(Boolean).map((line) => line.length > 3 ? line.slice(3) : line).slice(0, MAX_DIRTY_PATHS);
 }
+var isDeletion = (line) => line.startsWith(" D") || line.startsWith("D ");
+async function treeStatus(target, run, timeoutMs) {
+  const status = await runGit(run, target.cwd, ["status", "--porcelain"], timeoutMs, target.pin);
+  return completed(status) ? status.stdout.split(/\r?\n/).filter(Boolean) : null;
+}
+var statusSummary = (lines) => show2({ paths: dirtyPaths(lines.join(`
+`)), total: lines.length });
+var changedAfterProof = (lines) => `the tree changed after the last proof (${statusSummary(lines)}); nothing was removed; save those changes before cleaning up again`;
+var inspectAdvice = (path, left) => `inspect ${path} and save any changes in it before removing what is left${left !== null && left.length > 0 ? ` (git status there: ${statusSummary(left)})` : ""}`;
 async function verifyCleanTarget(path, run, timeoutMs, pin, branches = []) {
   const state = worktreePathState(path);
   if (state !== "directory")
@@ -3405,15 +3414,14 @@ async function cleanupInRepository(params, cwd, deps) {
     }
     const registration = await registrationAbsence(executionDir, targetPath, commit, bounds.refReadMs, executionPin);
     const pathGone = pathAbsence(targetPath);
-    if (failure !== null && registration !== "absent" && pathGone !== "absent" && !stopped) {
-      const status = await runGit(commit, boundary.cwd, ["status", "--porcelain"], bounds.treeScanMs, boundary.pin);
-      if (completed(status) && status.stdout === "")
-        return failure;
+    const left = failure !== null && pathGone !== "absent" ? await treeStatus(boundary, commit, bounds.treeScanMs) : null;
+    if (failure !== null && !stopped && registration !== "absent" && pathGone !== "absent" && left !== null && !left.some(isDeletion) && markersStillBound(boundary, executionDir, executionPin) === null) {
+      return left.length === 0 ? failure : { ok: false, reason: `${failure.reason}; ${changedAfterProof(left)}` };
     }
     const unfinished = [];
     const branch = receipt.branch.name;
     if (registration !== "absent" || pathGone !== "absent") {
-      unfinished.push(failure === null ? `worktree ${path} is there again after its removal (registration ${registration}, directory ${pathGone}) and was left alone; absence unverified; no continuation receipt` : `worktree ${path}: removal attempted and stopped part-way (${failure.reason}); registration ${registration}, directory ${pathGone}; absence unverified; no continuation receipt; inspect ${path} before removing what is left by hand (git worktree remove --force)`, `local branch ${branch} kept: the worktree's absence is not proven`);
+      unfinished.push(failure === null ? `worktree ${path} is there again after its removal (registration ${registration}, directory ${pathGone}) and was left alone; absence unverified; no continuation receipt; ${inspectAdvice(path, left)}` : `worktree ${path}: removal attempted and stopped part-way (${failure.reason}); registration ${registration}, directory ${pathGone}; absence unverified; no continuation receipt; ${inspectAdvice(path, left)}`, `local branch ${branch} kept: the worktree's absence is not proven`);
       return { ok: true, worktreeRemoved: failure === null, registration, pathGone, localAbsence: "unknown", localRefPlan: localRef, localRefDeleted: false, executionDir, unfinished };
     }
     if (failure !== null)

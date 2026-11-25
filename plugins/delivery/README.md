@@ -310,16 +310,31 @@ worktree that reappeared at the path.
 
 A removal that stops part-way reports `partlyRemoved: true` and the headline "removal
 attempted, partly removed, unverified", with nothing in `removed`. Examples are a file
-Git cannot delete, or a kill at the time bound. A failed removal command counts as
-stopped part-way unless the tree is still registered and on disk and `git status` shows
-it unchanged. Such a call keeps the local branch and the landing receipt, which stays
-the receipt of record, and names the path to inspect. Delivery's own retry tells the
-session once, keeps the landing record and does not retry it.
+Git cannot delete, or a kill at the time bound. `git worktree remove` only deletes. A
+failed removal counts as stopped part-way only when it left one of these signs:
+
+- a deleted tracked file in `git status`;
+- a `.git` marker that does not bind the tree to its admin directory;
+- a status that cannot be read, or a missing registration;
+- a command that ended with no exit status.
+
+Such a call keeps the local branch and the landing receipt, which stays the receipt of
+record. Delivery's own retry tells the session once, keeps the landing record and does
+not retry it.
+
+A failed removal without such a sign stays a refusal. A tree that changed after the last
+proof is why Git refused it, for example an untracked file or an edit. The refusal then
+lists the changed paths and says to save them.
+
+Every unverified or partly removed result names the path to inspect and says to save any
+changes there. It names no command that deletes. A deleted file in the status may be the
+user's own work. The status does not list ignored files either. So no status proves that
+what is left belongs to the interrupted removal.
 
 A tree whose only changes are deleted tracked files is a removal that is running or
 stopped part-way. The cause can be another process that takes no delivery lock, such as
 a delivery plugin in another harness or `wt remove`. It can also be an earlier cleanup
-that failed. The refusal says so and names the path to inspect.
+that failed. The refusal says so, names the path to inspect and says to save any changes.
 
 Cleanup deletes the receipt's branch ref only while it still points at the reviewed
 head. It leaves a ref that is gone or points elsewhere, and it keeps the differently
