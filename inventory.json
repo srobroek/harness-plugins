@@ -914,14 +914,13 @@
     {
       "name": "debate",
       "version": "0.7.4",
-      "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
+      "description": "Stress-test a decision from both sides or grill a plan in frontier rounds.",
       "category": "productivity",
       "harnesses": {
         "opencode": {
           "skills": [
             "debate",
-            "grilling",
-            "to-questionnaire"
+            "grilling"
           ],
           "agents": [],
           "commands": [],
@@ -936,8 +935,7 @@
         "claude": {
           "skills": [
             "debate",
-            "grilling",
-            "to-questionnaire"
+            "grilling"
           ],
           "agents": [],
           "commands": [],
@@ -950,8 +948,7 @@
         "omp": {
           "skills": [
             "debate",
-            "grilling",
-            "to-questionnaire"
+            "grilling"
           ],
           "agents": [],
           "commands": [],
@@ -960,9 +957,42 @@
           "tools": [],
           "extensions": [],
           "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "debate",
+            "grilling"
+          ],
+          "agents": [
+            "council-advocate",
+            "council-pragmatist",
+            "council-security",
+            "council-skeptic"
+          ],
+          "commands": [
+            "council-arch",
+            "council-security"
+          ],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "companions": [
+        {
+          "package": "pi-subagents",
+          "for": "council advisors and the council protocol",
+          "required": true
+        },
+        {
+          "package": "@srobroek/pi-architecture",
+          "for": "the architect agent in /council-arch",
+          "required": true
+        }
+      ]
     },
     {
       "name": "delivery",
