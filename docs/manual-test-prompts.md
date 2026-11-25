@@ -1758,8 +1758,8 @@ Resume my session: continue where I left off on the math module.
 It needs no other plugin, but it needs `bd` for the guards and the workflow, and `specify` for setup.
 Options: `integration`, `tasksGuard`, `implementRedirect`, `blockTasksToIssues`, `workflow`, `agents` and `specAgent`.
 
-On pi, install it with `pi install npm:@srobroek/pi-speckit-beads` and put the same options in
-`~/.pi/agent/speckit-beads.json`. The prompts below work there too. Setup writes the SpecKit
+On pi, install it with `pi install npm:@srobroek/pi-speckit-beads` and put the same options under
+the `speckit-beads` key of `~/.pi/agent/settings.json`. The prompts below work there too. Setup writes the SpecKit
 commands as `.pi/prompts/speckit.*.md`. The routes act on the typed `/speckit.implement`,
 `/speckit.analyze` and `/speckit.taskstoissues` commands, and on `read`s of those files.
 

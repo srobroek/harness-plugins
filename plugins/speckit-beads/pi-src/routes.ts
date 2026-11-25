@@ -23,9 +23,6 @@ import {
 } from "../opencode/src/skills.ts"
 import { GUARD_REASON } from "../opencode/src/tasks-guard.ts"
 
-/** The options file in pi's agent directory, in the shape of the OpenCode `options` block. */
-export const OPTIONS_FILE = "speckit-beads.json"
-
 /** The system prompt section that carries the workflow instructions. */
 export const WORKFLOW_SECTION = "speckit_workflow"
 
@@ -33,13 +30,13 @@ export const WORKFLOW_SECTION = "speckit_workflow"
 export const MESSAGE_TYPE = "speckit-beads"
 
 /** pi's tasks.md refusal: the shared reason plus where to switch the guard off. */
-export function guardReason(optionsPath: string): string {
-  return `${GUARD_REASON} Disable: set "tasksGuard": false in ${optionsPath}`
+export function guardReason(settingsPath: string): string {
+  return `${GUARD_REASON} Disable: set "tasksGuard": false under the "speckit-beads" key of ${settingsPath}`
 }
 
 /** pi's taskstoissues refusal. */
-export function tasksToIssuesReason(optionsPath: string): string {
-  return `${TASKSTOISSUES_REASON} Disable: set "blockTasksToIssues": false in ${optionsPath}`
+export function tasksToIssuesReason(settingsPath: string): string {
+  return `${TASKSTOISSUES_REASON} Disable: set "blockTasksToIssues": false under the "speckit-beads" key of ${settingsPath}`
 }
 
 /** A typed spec-kit command: its prompt or skill id and the text after it. */

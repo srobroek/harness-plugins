@@ -618,24 +618,35 @@ function repositoryRoot(dir) {
   }
 }
 
-// lib/src/pi-options.ts
+// lib/src/pi-settings.ts
 import { readFileSync } from "fs";
-function loadPiOptionsFile(path, plugin, fallback) {
+var PI_SETTINGS_FILE = "settings.json";
+var isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+function loadPiPluginSettings(path, plugin, fallback) {
+  const unusable = (problem) => ({ options: {}, warning: `${plugin}: ${problem}; ${fallback}.` });
+  const unread = `so its "${plugin}" key was not read`;
   let text;
   try {
     text = readFileSync(path, "utf8");
   } catch (error) {
     if (error.code === "ENOENT")
       return { options: {} };
-    return { options: {}, warning: `${plugin}: ${path} could not be read; ${fallback}.` };
+    return unusable(`${path} could not be read, ${unread}`);
   }
-  let raw;
+  let settings;
   try {
-    raw = JSON.parse(text);
+    settings = JSON.parse(text.replace(/^\uFEFF/, ""));
   } catch {
-    return { options: {}, warning: `${plugin}: ${path} is not valid JSON; ${fallback}.` };
+    return unusable(`${path} is not valid JSON, ${unread}`);
   }
-  return { options: raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw : {} };
+  if (!isObject(settings))
+    return unusable(`${path} is not a JSON object, ${unread}`);
+  const value = settings[plugin];
+  if (value === undefined)
+    return { options: {} };
+  if (!isObject(value))
+    return unusable(`the "${plugin}" key in ${path} is not an object`);
+  return { options: value };
 }
 
 // plugins/speckit-beads/opencode/instructions/speckit-workflow.md
@@ -2972,14 +2983,13 @@ async function executeStart(input, directory, signal, lock = BEADS_LOCK) {
 // plugins/speckit-beads/pi-src/routes.ts
 import { homedir as homedir2 } from "os";
 import { isAbsolute as isAbsolute8, resolve as resolve8 } from "path";
-var OPTIONS_FILE = "speckit-beads.json";
 var WORKFLOW_SECTION = "speckit_workflow";
 var MESSAGE_TYPE = "speckit-beads";
-function guardReason(optionsPath) {
-  return `${GUARD_REASON} Disable: set "tasksGuard": false in ${optionsPath}`;
+function guardReason(settingsPath) {
+  return `${GUARD_REASON} Disable: set "tasksGuard": false under the "speckit-beads" key of ${settingsPath}`;
 }
-function tasksToIssuesReason(optionsPath) {
-  return `${TASKSTOISSUES_REASON} Disable: set "blockTasksToIssues": false in ${optionsPath}`;
+function tasksToIssuesReason(settingsPath) {
+  return `${TASKSTOISSUES_REASON} Disable: set "blockTasksToIssues": false under the "speckit-beads" key of ${settingsPath}`;
 }
 var ROUTED = new Set([...IMPLEMENT_SKILLS, ...ANALYZE_SKILLS, ...TASKSTOISSUES_SKILLS]);
 function routedCommand(text) {
@@ -3037,12 +3047,12 @@ function notify(ctx, message) {
 `);
 }
 function setupSpeckitPi(pi, deps = {}) {
-  const optionsPath = deps.optionsPath ?? join8(getAgentDir(), OPTIONS_FILE);
-  const loaded = loadPiOptionsFile(optionsPath, "speckit-beads", "the defaults apply");
+  const settingsPath = deps.settingsPath ?? join8(getAgentDir(), PI_SETTINGS_FILE);
+  const loaded = loadPiPluginSettings(settingsPath, "speckit-beads", "the defaults apply");
   const options = parseOptions(loaded.options, PI_INTEGRATION);
   const probe = deps.probe ?? ((directory) => beadsActive(directory));
   const workflow = speckit_workflow_default.trim();
-  const refusal = tasksToIssuesReason(optionsPath);
+  const refusal = tasksToIssuesReason(settingsPath);
   const workspaceOf = (directory) => speckitWorkspace(directory, repositoryRoot(directory));
   const routing = async (cwd) => {
     const active = await probe(cwd);
@@ -3090,7 +3100,7 @@ function setupSpeckitPi(pi, deps = {}) {
         return;
       let reason;
       try {
-        reason = await decideToolCall(event.toolName, guardInput(event.input, ctx.cwd), ctx.cwd, probe, guardReason(optionsPath));
+        reason = await decideToolCall(event.toolName, guardInput(event.input, ctx.cwd), ctx.cwd, probe, guardReason(settingsPath));
       } catch {
         return;
       }

@@ -1,6 +1,6 @@
 /**
  * The plugin's options, shared by every harness: OpenCode passes them as the plugin's
- * `options` block, pi reads the same shape from `<agentDir>/speckit-beads.json`.
+ * `options` block, pi reads the same shape from the `speckit-beads` key of `<agentDir>/settings.json`.
  */
 
 import { DEFAULT_INTEGRATION } from "./setup.ts"

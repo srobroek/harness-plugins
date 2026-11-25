@@ -4,14 +4,16 @@
  * taskstoissues routes, and the workflow instructions as a system prompt section. The decisions
  * live in the OpenCode modules and `routes.ts`; this file only wires them to pi's events.
  *
- * Options come from `<agentDir>/speckit-beads.json`, in the shape of the OpenCode `options`
- * block; `agents` and `specAgent` do not apply, because pi-subagents lists the package's agents.
+ * Options come from the `speckit-beads` key of pi's user settings, `<agentDir>/settings.json`, in
+ * the shape of the OpenCode `options` block; `agents` and `specAgent` do not apply, because
+ * pi-subagents lists the package's agents. A project's `.pi/settings.json` is not read: it could
+ * switch the guards off.
  */
 
 import { join } from "node:path"
 import { type ExtensionAPI, type ExtensionContext, getAgentDir } from "@earendil-works/pi-coding-agent"
 import { repositoryRoot } from "@srobroek/opencode-lib/external-directories"
-import { loadPiOptionsFile } from "@srobroek/opencode-lib/pi-options"
+import { loadPiPluginSettings, PI_SETTINGS_FILE } from "@srobroek/opencode-lib/pi-settings"
 import type { TSchema } from "typebox"
 import WORKFLOW from "../opencode/instructions/speckit-workflow.md" with { type: "text" }
 import { beadsActive } from "../opencode/src/beads.ts"
@@ -39,7 +41,6 @@ import {
   guardReason,
   inputRoute,
   MESSAGE_TYPE,
-  OPTIONS_FILE,
   readCommand,
   routedCommand,
   routedRead,
@@ -51,8 +52,8 @@ import {
 /** Seams for tests; production passes none. */
 export type SpeckitPiDeps = {
   probe?: BeadsProbe
-  /** Replaces `<agentDir>/speckit-beads.json`. */
-  optionsPath?: string
+  /** Replaces `<agentDir>/settings.json`. */
+  settingsPath?: string
 }
 
 /** The tools share their JSON schemas with OpenCode; pi takes them as they are. */
@@ -72,12 +73,12 @@ function notify(ctx: ExtensionContext, message: string): void {
 }
 
 export function setupSpeckitPi(pi: ExtensionAPI, deps: SpeckitPiDeps = {}): void {
-  const optionsPath = deps.optionsPath ?? join(getAgentDir(), OPTIONS_FILE)
-  const loaded = loadPiOptionsFile(optionsPath, "speckit-beads", "the defaults apply")
+  const settingsPath = deps.settingsPath ?? join(getAgentDir(), PI_SETTINGS_FILE)
+  const loaded = loadPiPluginSettings(settingsPath, "speckit-beads", "the defaults apply")
   const options = parseOptions(loaded.options, PI_INTEGRATION)
   const probe = deps.probe ?? ((directory: string) => beadsActive(directory))
   const workflow = WORKFLOW.trim()
-  const refusal = tasksToIssuesReason(optionsPath)
+  const refusal = tasksToIssuesReason(settingsPath)
   const workspaceOf = (directory: string) => speckitWorkspace(directory, repositoryRoot(directory))
   // Beads activity in the session directory decides every route, as the location does on OpenCode.
   const routing = async (cwd: string): Promise<SkillRouting> => {
@@ -128,7 +129,7 @@ export function setupSpeckitPi(pi: ExtensionAPI, deps: SpeckitPiDeps = {}): void
       if (event.toolName !== "bash" && event.toolName !== "edit" && event.toolName !== "write") return undefined
       let reason: string | undefined
       try {
-        reason = await decideToolCall(event.toolName, guardInput(event.input, ctx.cwd), ctx.cwd, probe, guardReason(optionsPath))
+        reason = await decideToolCall(event.toolName, guardInput(event.input, ctx.cwd), ctx.cwd, probe, guardReason(settingsPath))
       } catch {
         // Fails open, as on OpenCode: a guard that cannot decide does not stop the call.
         return undefined
