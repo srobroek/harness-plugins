@@ -60,7 +60,8 @@ test("allowlists coding skills by id or family prefix and denies the rest", asyn
 test("every allowlisted skill ships in this repository", async () => {
   const { rules } = await setup()
   const ids = new Set(
-    [...new Bun.Glob("*/common/skills/**/SKILL.md").scanSync(PLUGINS)].map((path) => path.split("/").at(-2)),
+    // A skill a plugin ships to some harnesses only is a variant file such as `SKILL.opencode.md`.
+    [...new Bun.Glob("*/common/skills/**/SKILL*.md").scanSync(PLUGINS)].map((path) => path.split("/").at(-2)),
   )
   for (const id of allowedSkills(rules)) {
     const shipped = id.endsWith("*") ? [...ids].some((name) => name?.startsWith(id.slice(0, -1))) : ids.has(id)
