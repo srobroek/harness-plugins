@@ -24,6 +24,18 @@ Treat `just`, `mise`, and `moon` as independent setup choices:
 - `mise` for language and tool version management.
 - `moon` for task orchestration in larger monorepos.
 
+Contracts: TypeSpec is the source of every data or API contract that crosses a process,
+language or repository boundary (`.proto` stays the source for protobuf and gRPC services).
+Install the pinned tools through mise; `toolchain-api` has the routes, gates and dated versions.
+
+| Job | Tool (checked 2026-11-25) |
+| --- | --- |
+| Author, format, compile | `@typespec/compiler` 1.18.0 (`tsp`) |
+| OpenAPI 3.1 lint | Redocly CLI 2.83.0 |
+| JSON Schema lint and meta-validation | Sourcemeta `jsonschema` 17.3.3 |
+| Breaking changes | `oasdiff` v1.39.0 |
+| Running-API tests | Schemathesis 4.34.2 |
+
 Language plugins, when installed, add skills that run the project's own format,
 lint, and test tools, and `lang-<language>-libraries` skills with the library
 standards. Language design guidance lives in the `quality-code-design` skill.
