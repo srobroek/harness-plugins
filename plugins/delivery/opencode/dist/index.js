@@ -2571,6 +2571,19 @@ function commandFailure(field, argv, result, expected) {
   const stderr = result.stderr.trim() === "" ? "" : `, stderr ${result.stderr.trim().slice(0, 400)}`;
   return refuse2(field, `${commandLabel(argv)} (${exit}${error}${stderr})`, expected);
 }
+var DELETING_HINT = /--force|-f -f|\s-D\b/;
+function gitMessage(text) {
+  const first = (text.trim().split(/\r?\n/)[0] ?? "").replace(/[,;]\s*use .*$/i, "").trim();
+  const hint = DELETING_HINT.exec(first);
+  return (hint === null ? first : `${first.slice(0, hint.index).trim()} \u2026`).slice(0, 400);
+}
+var MUTATION_ENV = { LC_ALL: "C" };
+function mutationFailure(field, argv, result) {
+  const exit = result.exitCode === null ? "no exit status" : `exit ${result.exitCode}`;
+  const error = result.error === undefined ? "" : `, error ${result.error}`;
+  const message = gitMessage(result.stderr);
+  return refuse2(field, `${commandLabel(argv)} (${exit}${error}${message === "" ? "" : `, stderr ${message}`})`, "exit 0");
+}
 function own(holder, key) {
   const descriptor = Object.getOwnPropertyDescriptor(holder, key);
   if (descriptor?.enumerable !== true || !("value" in descriptor))
@@ -2820,11 +2833,11 @@ function verifyArguments(params, receipt) {
   }
   return null;
 }
-async function runGit(run, cwd, args, timeoutMs, pin) {
+async function runGit(run, cwd, args, timeoutMs, pin, extra = {}) {
   return run(["git", ...SAFE_GIT_ARGS, ...args], {
     cwd,
     timeoutMs,
-    env: { ...gitObservationEnvironment(process.env), ...pin }
+    env: { ...gitObservationEnvironment(process.env), ...extra, ...pin }
   });
 }
 function worktreePathState(path) {
@@ -3403,12 +3416,12 @@ async function cleanupInRepository(params, cwd, deps) {
         await deps.host.remove(targetPath);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        failure = refuse2("worktree.removed", `host worktree.remove ${JSON.stringify(targetPath)} (error ${message.trim().slice(0, 400)})`, "host removal without force");
+        failure = refuse2("worktree.removed", `host worktree.remove ${JSON.stringify(targetPath)} (error ${gitMessage(message)})`, "host removal");
       }
     } else {
-      const removed = await runGit(commit, executionDir, removeArgv, bounds.mutationMs, executionPin);
+      const removed = await runGit(commit, executionDir, removeArgv, bounds.mutationMs, executionPin, MUTATION_ENV);
       if (!completed(removed)) {
-        failure = commandFailure("worktree.removed", ["git", ...removeArgv], removed, "exit 0 without --force");
+        failure = mutationFailure("worktree.removed", ["git", ...removeArgv], removed);
         stopped = removed.exitCode === null;
       }
     }
@@ -3436,11 +3449,11 @@ async function cleanupInRepository(params, cwd, deps) {
       unfinished.push(`local branch ${branch} kept: it moved off ${receipt.pr.headRefOid} during the removal`);
     } else if (refAfterWorktree === "delete") {
       const deleteArgv = branchDeleteArgs(branch);
-      const result = await runGit(commit, executionDir, deleteArgv, bounds.mutationMs, executionPin);
+      const result = await runGit(commit, executionDir, deleteArgv, bounds.mutationMs, executionPin, MUTATION_ENV);
       if (completed(result))
         deleted = true;
       else
-        unfinished.push(`local branch ${branch} kept: ${commandFailure("worktree.localRefDeleted", ["git", ...deleteArgv], result, "exit 0 without -D").reason}`);
+        unfinished.push(`local branch ${branch} kept: ${mutationFailure("worktree.localRefDeleted", ["git", ...deleteArgv], result).reason}`);
     }
     const localAbsence = await localRefAbsence(executionDir, branch, commit, bounds.refReadMs, executionPin);
     const expected = deleted || localRefPlan === "absent" ? "absent" : "present";

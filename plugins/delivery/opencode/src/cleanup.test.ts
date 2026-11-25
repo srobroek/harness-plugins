@@ -22,7 +22,8 @@ import {
   withDiskLock,
 } from "@srobroek/opencode-lib/worktree-locks"
 import { addClone, MAX_CLONES, readClones, registryFile } from "./clone-registry.ts"
-import { authorizeExplicit, CleanupDeferred, createPendingCleanup } from "./pending-cleanup.ts"
+import { authorizeExplicit, CleanupDeferred, createPendingCleanup, partlyRemovedText } from "./pending-cleanup.ts"
+import { cleanupText } from "./index.ts"
 
 // Fixture setup creates several real Git repositories and measured about 20s under full-suite load;
 // keep three times that headroom instead of letting Bun's 5s default kill a child process mid-fixture.
@@ -1947,8 +1948,8 @@ describe("delivery_cleanup beside a background job that starts during it", () =>
 
 const isWorktreeRemove = (argv: readonly string[]) => argv[0] === "git" && argv[1] === "worktree" && argv[2] === "remove"
 
-/** A command that deletes, named as advice. Quoted evidence (git's stderr, the failure's "expected exit 0 without --force") is not advice. */
-const DESTRUCTIVE_ADVICE = /worktree remove --force|remove what is left with|rm -r/
+/** A command that deletes, in any form a result could carry it: its own advice, git's quoted hint, or an expectation text. */
+const DESTRUCTIVE_ADVICE = /--force|-f -f|\s-D\b|rm -r/
 
 describe("delivery_cleanup beside another remover", () => {
   test("a cleanup that overlaps another call's removal reports the worktree already cleaned, not a dirty tree", async () => {
@@ -2150,6 +2151,89 @@ describe("delivery_cleanup beside another remover", () => {
     expect(done.report.skipped.join("\n")).toContain(`inspect ${f.linked} and save any changes in it`)
     expect(done.report.skipped.join("\n")).not.toMatch(DESTRUCTIVE_ADVICE)
     expect(scripted.calls.some((argv) => argv[0] === "git" && argv[1] === "branch")).toBe(false)
+  })
+
+  /** Every text a failed removal reaches a person or an agent through: the tool's, the land report's, and the idle retry's note. */
+  const surfaces = (f: Fixture, result: CleanupResult): string[] =>
+    result.ok
+      ? [...result.report.skipped, cleanupText(result), textAfterCleanup("landed", reportFromCleanup(result)), partlyRemovedText(f.receipt, result.report.skipped)]
+      : [result.reason, cleanupText(result), textAfterCleanup("landed", reportFromCleanup(result))]
+
+  type Shape = { name: string; outcome: "refusal" | "partly removed"; arrange?: (f: Fixture) => void; options?: (f: Fixture) => RunnerOptions; run?: (f: Fixture, inner: CliRunner) => CliRunner }
+  const deleteTracked = (f: Fixture) => rmSync(join(f.linked, "base.txt"))
+  const writeUntracked = (f: Fixture) => writeFileSync(join(f.linked, "new-work.txt"), "new work\n")
+  const onRemove = (act: (f: Fixture) => void) => (f: Fixture): RunnerOptions => ({ before: (argv) => (isWorktreeRemove(argv) ? act(f) : undefined) })
+  /** A remove that fails with git's "failed to delete" after `act`, without running git. */
+  const failsToDelete = (act: (f: Fixture) => void) => (f: Fixture, inner: CliRunner): CliRunner => async (argv, options) => {
+    if (!isWorktreeRemove(argv)) return inner(argv, options)
+    act(f)
+    return { ok: true, exitCode: 255, stdout: "", stderr: `error: failed to delete '${f.linked}': Permission denied\n` }
+  }
+  const matrix: Shape[] = [
+    { name: "an untracked file only", outcome: "refusal", options: onRemove(writeUntracked) },
+    { name: "a tracked edit only", outcome: "refusal", options: onRemove((f) => writeFileSync(join(f.linked, "base.txt"), "edited\n")) },
+    { name: "a deletion only, git refusing at its clean check", outcome: "partly removed", options: onRemove(deleteTracked) },
+    {
+      name: "a deletion and an untracked file",
+      outcome: "partly removed",
+      options: onRemove((f) => {
+        deleteTracked(f)
+        writeUntracked(f)
+      }),
+    },
+    { name: "the .git marker only (exit 255)", outcome: "partly removed", run: failsToDelete((f) => rmSync(join(f.linked, ".git"))) },
+    {
+      name: "a status that cannot be read afterwards (exit 255)",
+      outcome: "partly removed",
+      run: (f, inner) => {
+        let removed = false
+        const failing = failsToDelete(() => {
+          removed = true
+        })(f, inner)
+        return async (argv, options) =>
+          removed && argv.includes("status") ? { ok: false, exitCode: null, stdout: "", stderr: "", error: "timeout" } : failing(argv, options)
+      },
+    },
+    {
+      name: "no exit status (a timeout)",
+      outcome: "partly removed",
+      arrange: (f) => git(f.main, ["worktree", "lock", f.linked]),
+      options: () => ({ after: (argv, result) => (isWorktreeRemove(argv) ? Object.assign(result, { ok: false, exitCode: null, stderr: "", error: "timeout" }) : undefined) }),
+    },
+    { name: "a locked tree, untouched", outcome: "refusal", arrange: (f) => git(f.main, ["worktree", "lock", "--reason", "kept on purpose", f.linked]) },
+  ]
+
+  test.each(matrix.map((shape) => [shape.name, shape] as const))("a failed removal with %s names no command that deletes", async (_name, shape) => {
+    const f = await fixture("no-deleting-advice")
+    const before = readdirSync(dirname(f.receiptPath)).sort()
+    shape.arrange?.(f)
+    const scripted = runner(f, shape.options?.(f) ?? {})
+    const run = shape.run === undefined ? scripted.run : shape.run(f, scripted.run)
+    const result = await cleanupDelivery({ receipt: f.receiptPath }, f.main, { run, now: () => NOW + 10, env: f.env, bounds: HEAVY_FIXTURE_BOUNDS })
+    expect(result.ok ? (result.partlyRemoved ? "partly removed" : "removed") : "refusal").toBe(shape.outcome)
+    for (const text of surfaces(f, result)) expect(text).not.toMatch(DESTRUCTIVE_ADVICE)
+    expect(readdirSync(dirname(f.receiptPath)).sort()).toEqual(before)
+    expect(scripted.calls.some((argv) => argv[0] === "git" && argv[1] === "branch")).toBe(false)
+    expect(existsSync(f.linked)).toBe(true)
+  })
+
+  test("a branch deletion that git refuses is reported without git's branch -D hint", async () => {
+    const f = await fixture("branch-delete-hint")
+    const scripted = runner(f)
+    const run: CliRunner = async (argv, options) =>
+      argv[0] === "git" && argv[1] === "branch" && argv[2] === "-d"
+        ? {
+            ok: true,
+            exitCode: 1,
+            stdout: "",
+            stderr: `error: the branch '${f.branch}' is not fully merged\nhint: If you are sure you want to delete it, run 'git branch -D ${f.branch}'\n`,
+          }
+        : scripted.run(argv, options)
+    const done = removal(await cleanupDelivery({ receipt: f.receiptPath }, f.main, { run, now: () => NOW + 10, env: f.env, bounds: HEAVY_FIXTURE_BOUNDS }))
+    const notes = done.report.skipped.join("\n")
+    expect(notes).toContain(`local branch ${f.branch} kept`)
+    expect(notes).toContain("is not fully merged")
+    for (const text of surfaces(f, done)) expect(text).not.toMatch(DESTRUCTIVE_ADVICE)
   })
 })
 

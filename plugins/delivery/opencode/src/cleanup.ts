@@ -462,6 +462,33 @@ function commandFailure(field: string, argv: readonly string[], result: CliResul
   return refuse(field, `${commandLabel(argv)} (${exit}${error}${stderr})`, expected)
 }
 
+/** A command that deletes, as git names it in a hint: no result of this tool may name one. */
+const DELETING_HINT = /--force|-f -f|\s-D\b/
+
+/**
+ * Git's message for a failed worktree removal or branch deletion, safe to quote: its first line, with
+ * the hint clause cut ("…, use --force to delete it"). The hint names a command that deletes the very
+ * work the refusal protects ("use --force", "remove -f -f", "branch -D"). The calls run in the C
+ * locale (`MUTATION_ENV`), so the hint is the English one this cut knows; whatever still names such a
+ * command is cut where it starts.
+ */
+function gitMessage(text: string): string {
+  const first = (text.trim().split(/\r?\n/)[0] ?? "").replace(/[,;]\s*use .*$/i, "").trim()
+  const hint = DELETING_HINT.exec(first)
+  return (hint === null ? first : `${first.slice(0, hint.index).trim()} …`).slice(0, 400)
+}
+
+/** The environment of the two calls that delete: git's messages in the C locale, so {@link gitMessage} reads the hint it knows. */
+const MUTATION_ENV = { LC_ALL: "C" } as const
+
+/** A failed worktree removal or branch deletion, quoted through {@link gitMessage}. */
+function mutationFailure(field: string, argv: readonly string[], result: CliResult): CleanupFailure {
+  const exit = result.exitCode === null ? "no exit status" : `exit ${result.exitCode}`
+  const error = result.error === undefined ? "" : `, error ${result.error}`
+  const message = gitMessage(result.stderr)
+  return refuse(field, `${commandLabel(argv)} (${exit}${error}${message === "" ? "" : `, stderr ${message}`})`, "exit 0")
+}
+
 function own(holder: Record<string, unknown>, key: string): unknown {
   const descriptor = Object.getOwnPropertyDescriptor(holder, key)
   if (descriptor?.enumerable !== true || !("value" in descriptor)) return undefined
@@ -875,13 +902,14 @@ async function runGit(
   args: string[],
   timeoutMs: number,
   pin?: GitPin,
+  extra: Readonly<Record<string, string>> = {},
 ): Promise<CliResult> {
   // A pin fixes `GIT_DIR`, `GIT_WORK_TREE` and `GIT_COMMON_DIR` to what was verified, so
   // Git does not rediscover the repository through a `.git` marker that may have changed.
   return run(["git", ...SAFE_GIT_ARGS, ...args], {
     cwd,
     timeoutMs,
-    env: { ...gitObservationEnvironment(process.env), ...pin },
+    env: { ...gitObservationEnvironment(process.env), ...extra, ...pin },
   })
 }
 
@@ -1732,16 +1760,12 @@ async function cleanupInRepository(
         await deps.host.remove(targetPath)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        failure = refuse(
-          "worktree.removed",
-          `host worktree.remove ${JSON.stringify(targetPath)} (error ${message.trim().slice(0, 400)})`,
-          "host removal without force",
-        )
+        failure = refuse("worktree.removed", `host worktree.remove ${JSON.stringify(targetPath)} (error ${gitMessage(message)})`, "host removal")
       }
     } else {
-      const removed = await runGit(commit, executionDir, removeArgv, bounds.mutationMs, executionPin)
+      const removed = await runGit(commit, executionDir, removeArgv, bounds.mutationMs, executionPin, MUTATION_ENV)
       if (!completed(removed)) {
-        failure = commandFailure("worktree.removed", ["git", ...removeArgv], removed, "exit 0 without --force")
+        failure = mutationFailure("worktree.removed", ["git", ...removeArgv], removed)
         stopped = removed.exitCode === null
       }
     }
@@ -1793,9 +1817,9 @@ async function cleanupInRepository(
       unfinished.push(`local branch ${branch} kept: it moved off ${receipt.pr.headRefOid} during the removal`)
     } else if (refAfterWorktree === "delete") {
       const deleteArgv = branchDeleteArgs(branch)
-      const result = await runGit(commit, executionDir, deleteArgv, bounds.mutationMs, executionPin)
+      const result = await runGit(commit, executionDir, deleteArgv, bounds.mutationMs, executionPin, MUTATION_ENV)
       if (completed(result)) deleted = true
-      else unfinished.push(`local branch ${branch} kept: ${commandFailure("worktree.localRefDeleted", ["git", ...deleteArgv], result, "exit 0 without -D").reason}`)
+      else unfinished.push(`local branch ${branch} kept: ${mutationFailure("worktree.localRefDeleted", ["git", ...deleteArgv], result).reason}`)
     }
     const localAbsence = await localRefAbsence(executionDir, branch, commit, bounds.refReadMs, executionPin)
     // The last probe must give a definite answer that matches what was done: absent after a deletion or

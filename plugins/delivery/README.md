@@ -331,9 +331,13 @@ proof is why Git refused it, for example an untracked file or an edit. The refus
 lists the changed paths and says to save them.
 
 Every unverified or partly removed result names the path to inspect and says to save any
-changes there. It names no command that deletes. A deleted file in the status may be the
-user's own work. The status does not list ignored files either. So no status proves that
-what is left belongs to the interrupted removal.
+changes there. No result of a failed removal or branch deletion names a command that
+deletes. Git runs those two calls in the C locale, and the result quotes only the first
+line of its message, without the hint ("use --force to delete it", "remove -f -f",
+"branch -D"). The expected outcome reads "exit 0".
+
+A deleted file in the status may be the user's own work. The status does not list ignored
+files either. So no status proves that what is left belongs to the interrupted removal.
 
 A tree whose only changes are deleted tracked files is a removal that is running or
 stopped part-way. The cause can be another process that takes no delivery lock, such as
