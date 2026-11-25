@@ -202,8 +202,12 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
   (`<common>/opencode/holds/…`, the same format `subagent-worktree` writes): a shell that names the
   worktree, or any job of a session working in it. The last check before a removal reads them, so
   running background work keeps the worktree. The jobs are written before the lock wait as well
-  (`recordHold`, as `subagent-worktree` writes them). A write whose lock wait times out behind a
-  long removal hold therefore still blocks every remover until that session's next write.
+  (`recordHold`, as `subagent-worktree` writes them).
+  A write whose lock wait times out behind a long removal hold therefore still blocks every
+  remover until that session's next write. A refusal caused by such a pending hold says
+  "recorded before its lock was taken", with its age, the time after which it is ignored, and its
+  file. If that session has ended and nothing runs in the worktree, delete the named file;
+  otherwise wait for that session's next turn or for the time given.
   Landing records are dropped only on positive evidence
   (their own receipt readable and cleaned or superseded); a denial is never dropped by cleanup of
   stale records, and a missing or unreadable receipt directory deletes nothing.

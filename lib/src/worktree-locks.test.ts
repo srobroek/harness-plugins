@@ -163,6 +163,23 @@ describe("recordHold", () => {
     await recordHold(dir, "/wt/a", "ses_bg", [], 2000, { sessionID: "ses_bg" })
     expect(holdsState(dir, "/wt/a", 4000)).toContain("(shell sh_2)")
   })
+
+  test("a pending hold says what it is, how old it is, when it is ignored and which file it is", async () => {
+    const dir = common()
+    mkdirSync(join(dir, "opencode", "locks"), { recursive: true })
+    writeFileSync(lockFile(dir, "/wt/a"), JSON.stringify(heldByOther()))
+    const at = Date.UTC(2027, 0, 15, 8, 0, 0)
+    await expect(recordHold(dir, "/wt/a", "ses_gone", job, at, { sessionID: "ses_gone", waitMs: 40 })).rejects.toBeInstanceOf(LockTimeout)
+    const [pending] = readHolds(dir, "/wt/a").holds
+    expect(pending?.pendingFile).toEndWith(".pending.json")
+    expect(holdsState(dir, "/wt/a", at + 3_600_000 + 5 * 60_000)).toBe(
+      `session ses_gone has 1 background job(s) running (shell sh_1); recorded before its lock was taken, 1 h 5 min ago; ignored after 2027-01-16T08:00:00.000Z; ${pending?.pendingFile}`,
+    )
+    expect(holdsState(dir, "/wt/a", at + HOLD_EXPIRY_MS)).toBeUndefined()
+    // A hold written under its lock reads as before.
+    setHold(dir, "/wt/b", "ses_live", job, at)
+    expect(holdsState(dir, "/wt/b", at + 1000)).toBe("session ses_live has 1 background job(s) running (shell sh_1)")
+  })
 })
 
 describe("lockedWorktreeRemoval", () => {

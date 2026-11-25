@@ -5848,7 +5848,8 @@ function setHold(commonDir, directory, sessionID, jobs, now) {
   writeFileSync5(temp, JSON.stringify({ sessionID, directory, jobs, updatedAt: now }));
   renameSync2(temp, path);
 }
-var pendingHoldFile = (commonDir, directory, sessionID) => join7(holdsDir(commonDir, directory), `${sha1(sessionID)}.pending.json`);
+var PENDING_SUFFIX = ".pending.json";
+var pendingHoldFile = (commonDir, directory, sessionID) => join7(holdsDir(commonDir, directory), `${sha1(sessionID)}${PENDING_SUFFIX}`);
 async function recordHold(commonDir, directory, sessionID, jobs, at, lock) {
   const pending = pendingHoldFile(commonDir, directory, sessionID);
   if (jobs.length > 0) {
@@ -5886,12 +5887,19 @@ function readHolds(commonDir, directory) {
       if (hold === undefined)
         unreadable = true;
       else
-        holds.push(hold);
+        holds.push(name.endsWith(PENDING_SUFFIX) ? { ...hold, pendingFile: join7(dir, name) } : hold);
     } catch {
       unreadable = true;
     }
   }
   return { holds, unreadable };
+}
+function elapsed(ms) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60)
+    return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
 }
 function holdBlock(read, now, expiryMs = HOLD_EXPIRY_MS) {
   if (read.unreadable)
@@ -5900,7 +5908,11 @@ function holdBlock(read, now, expiryMs = HOLD_EXPIRY_MS) {
   if (live === undefined)
     return;
   const first = live.jobs[0];
-  return `session ${live.sessionID} has ${live.jobs.length} background job(s) running (${first?.kind} ${first?.id})`;
+  const running = `session ${live.sessionID} has ${live.jobs.length} background job(s) running (${first?.kind} ${first?.id})`;
+  if (live.pendingFile === undefined)
+    return running;
+  const ignoredAfter = new Date(live.updatedAt + expiryMs).toISOString();
+  return `${running}; recorded before its lock was taken, ${elapsed(now - live.updatedAt)} ago; ignored after ${ignoredAfter}; ${live.pendingFile}`;
 }
 function holdsWritable(commonDir, directory) {
   const dir = holdsDir(commonDir, directory);
