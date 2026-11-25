@@ -26,11 +26,12 @@
  * carries it out.
  */
 
-import { existsSync, readdirSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync } from "node:fs"
 import { hostname } from "node:os"
 import { join, resolve } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import { type EventWatchDeps, watchEvents } from "@srobroek/opencode-lib/event-watch"
+import { type LeaseOptions, withLease } from "@srobroek/opencode-lib/lease-lock"
 import { canonicalCheckout } from "@srobroek/opencode-lib/session-eviction"
 import { isSessionNotFound } from "@srobroek/opencode-lib/session-lanes"
 import { processAlive } from "@srobroek/opencode-lib/subprocess"
@@ -85,6 +86,7 @@ import {
   removeReport,
   reportBlock,
   reportsWritable,
+  reportVersion,
   writeReport,
 } from "./running-reports.ts"
 
@@ -267,9 +269,20 @@ export type PendingDeps = {
   lock?: Partial<LockOptions>
   /** How long the idle hook waits for one session's location; a lookup that takes longer may match any worktree. */
   sessionLookupMs?: number
+  /** Test seam: the clock reports expire on, against the files' mtime (default: the real clock). */
+  fileNow?: () => number
   /** Test seam: the backoff clock of the event watch. */
   watch?: Pick<EventWatchDeps, "delaysMs" | "sleep">
 }
+
+/**
+ * This server process. A report it wrote is its own, and what its host says about the reporting
+ * session (not found) can say the report is dead; another server's report is judged by its pid alone.
+ */
+const SERVER_INSTANCE = `${hostname()}:${process.pid}:${Date.now().toString(36)}`
+
+/** One removal's hold on the running-reports lease: taken at its last read of the reports, released when its removal section ends. */
+type StoreHold = { active: boolean; lease: { release: () => Promise<void> } | undefined }
 
 /** The default bound on one session lookup in the idle hook. */
 export const SESSION_LOOKUP_MS = 5_000
@@ -287,6 +300,67 @@ export function createPendingCleanup(deps: PendingDeps) {
    * unknown, so nothing is removed until the session's next successful write or delete, or its deletion.
    */
   const unrecorded = new Map<string, string>()
+  /** Each report of this server takes a number above the last one, so equal clock readings still order. */
+  let lastAt = 0
+  const stamp = (): number => {
+    lastAt = Math.max(now(), lastAt + 1)
+    return lastAt
+  }
+  /** The lease every write to the running-reports store, and a removal from its last read to its end, holds. */
+  const leaseFile = () => join(receiptDirectory(env), ".running.lock")
+  const leaseOptions = (): LeaseOptions => ({
+    owner: "delivery running reports",
+    ...(deps.lock?.waitMs === undefined ? {} : { waitMs: deps.lock.waitMs }),
+    ...(deps.lock?.ttlMs === undefined ? {} : { leaseMs: deps.lock.ttlMs }),
+    ...(deps.lock?.renewMs === undefined ? {} : { renewMs: deps.lock.renewMs }),
+    ...(deps.lock?.now === undefined ? {} : { now: deps.lock.now }),
+    ...(deps.lock?.host === undefined ? {} : { host: deps.lock.host }),
+    ...(deps.lock?.alive === undefined ? {} : { alive: deps.lock.alive }),
+    ...(deps.lock?.sleep === undefined ? {} : { sleep: deps.lock.sleep }),
+    ...(deps.lock?.seams === undefined ? {} : { seams: deps.lock.seams }),
+  })
+  /** Run `work` holding the store's lease; throws when it cannot be taken. */
+  const underStore = async <T>(work: () => T): Promise<T> => {
+    mkdirSync(receiptDirectory(env), { recursive: true })
+    const result = await withLease(leaseFile(), leaseOptions(), work)
+    if (result.kind === "failed") throw new Error(result.reason, { cause: result.cause })
+    return result.value
+  }
+  /** Take the lease and keep it until `release`; a string is why it could not be taken. */
+  const takeStore = async (): Promise<{ release: () => Promise<void> } | string> => {
+    try {
+      mkdirSync(receiptDirectory(env), { recursive: true })
+      let release: () => void = () => {}
+      const held = new Promise<void>((done) => {
+        release = done
+      })
+      let entered: () => void = () => {}
+      const inside = new Promise<"held">((done) => {
+        entered = () => done("held")
+      })
+      const running = withLease(leaseFile(), leaseOptions(), () => {
+        entered()
+        return held
+      })
+      const first = await Promise.race([inside, running])
+      if (first === "held") {
+        return {
+          release: async () => {
+            release()
+            await running
+          },
+        }
+      }
+      return `the running-work store lease could not be taken (${first.kind === "failed" ? first.reason : "it was not entered"}), so running work cannot be ruled out`
+    } catch (error) {
+      return `the running-work store lease could not be taken (${error instanceof Error ? error.message : String(error)}), so running work cannot be ruled out`
+    }
+  }
+  const releaseStore = async (hold: StoreHold | undefined): Promise<void> => {
+    const lease = hold?.lease
+    if (hold !== undefined) hold.lease = undefined
+    await lease?.release()
+  }
   /** Denials that could not be written to disk, until an authorized re-arm; keyed by {@link deniedKey}, valued by canonical worktree. */
   const deniedInMemory = new Map<string, string>()
   const deniedKey = (receipt: Pick<LandingReceipt, "receiptId" | "repo">) => `${receipt.repo.key}/${receipt.receiptId}`
@@ -765,8 +839,8 @@ export function createPendingCleanup(deps: PendingDeps) {
    * directory. What the sessions reported as running is read last, after the session listing, its own
    * lookups and a final synchronous re-read, with no wait after it.
    */
-  const holdCheckAt = async (repo: Repository, common: string | null, worktree: string): Promise<string | undefined> =>
-    (await holdAtBase(repo, common, worktree)) ?? landingBlockAt(common, worktree) ?? (await runningBlock(worktree))
+  const holdCheckAt = async (repo: Repository, common: string | null, worktree: string, hold?: StoreHold): Promise<string | undefined> =>
+    (await holdAtBase(repo, common, worktree)) ?? landingBlockAt(common, worktree) ?? (await runningBlock(worktree, hold))
 
   /**
    * The last look before the removal call itself (claims, holds, sessions, denials), read fresh. The
@@ -782,13 +856,22 @@ export function createPendingCleanup(deps: PendingDeps) {
    * throw) when anything holds.
    */
   const sectionIn =
-    (repo: Repository) =>
+    (repo: Repository, hold?: StoreHold) =>
     async (worktree: string, run: () => Promise<CleanupFailure | RemovalFacts>): Promise<CleanupFailure | RemovalFacts> => {
       const common = await commonOf(repo)
       if (common === null) return { ok: false, reason: "worktree.held: observed the git common directory could not be resolved, expected a coordination store; nothing was removed" }
       const outcome = await lockedWorktreeRemoval(common, worktree, { sessionID: "delivery", now, ...deps.lock }, {
         recheck: () => holdCheck(repo, worktree),
-        remove: run,
+        // The last look of `run` takes the running-reports lease (the worktree's lock is held, so always in that order); it is let go when `run` ends.
+        remove: async () => {
+          if (hold !== undefined) hold.active = true
+          try {
+            return await run()
+          } finally {
+            if (hold !== undefined) hold.active = false
+            await releaseStore(hold)
+          }
+        },
       })
       if (outcome.removed) return outcome.value
       return { ok: false, reason: `worktree.held: observed ${outcome.reason}, expected no owner, hold, denial or competing remover; nothing was removed` }
@@ -809,11 +892,12 @@ export function createPendingCleanup(deps: PendingDeps) {
     const client = ctx.session as unknown as LaneClient
     let roots: string[] = []
     let forms: string[] = []
+    const hold: StoreHold = { active: false, lease: undefined }
     return {
-      removalSection: sectionIn(repo),
+      removalSection: sectionIn(repo, hold),
       finalCheck: async (worktree: string): Promise<string | undefined> => {
         const common = await commonOf(repo)
-        const held = await holdCheckAt(repo, common, worktree)
+        const held = await holdCheckAt(repo, common, worktree, hold)
         if (held !== undefined) return held
         const recorded = common === null ? [] : landingsFor(listLandings(common).records, worktree).map((entry) => entry.sessionID)
         roots = [...new Set([...sessionIDs, ...recorded].filter((id): id is string => typeof id === "string"))]
@@ -1098,14 +1182,15 @@ export function createPendingCleanup(deps: PendingDeps) {
     )
   }
 
-  const handleEvent = (raw: unknown) => {
+  const handleEvent = (raw: unknown): Promise<void> | undefined => {
     const event = raw as { type?: string; data?: { sessionID?: unknown } }
     const sessionID = event.data?.sessionID
-    if (typeof sessionID !== "string") return
+    if (typeof sessionID !== "string") return undefined
     if (event.type === "session.idle") schedule(sessionID, true)
     // A deleted session runs nothing: its report goes, and so does any failure to record one.
-    else if (event.type === "session.deleted") forgetSession(sessionID)
+    else if (event.type === "session.deleted") return forgetSession(sessionID)
     else if (event.type === "session.execution.succeeded" || event.type === "session.execution.failed") schedule(sessionID, false)
+    return undefined
   }
 
   /**
@@ -1126,15 +1211,19 @@ export function createPendingCleanup(deps: PendingDeps) {
     return Promise.race([lookup, bound]).finally(() => clearTimeout(timer))
   }
 
-  const reportClock = (): ReportClock => ({ now: now(), host: hostname(), alive: processAlive })
+  const reportClock = (): ReportClock => ({ now: (deps.fileNow ?? Date.now)(), host: hostname(), instance: SERVER_INSTANCE, alive: processAlive })
 
   /**
    * What the sessions reported as running keeps `worktree`, or undefined. The reports are read, the
    * sessions they name looked up, and the reports read again after the lookups, with those same lookups:
    * a report that arrived meanwhile and names a session not looked up holds. A session that could not
    * record its last report (`unrecorded`), or a store that cannot be read or written, holds too.
+   *
+   * With a removal's `hold` the last read is taken under the store's lease, which `hold` keeps until
+   * the removal section ends: no report is written meanwhile (its writer waits), and the lookups are
+   * made again for each report that changed since the first read, so the decision uses fresh ones.
    */
-  const runningBlock = async (worktree: string): Promise<string | undefined> => {
+  const runningBlock = async (worktree: string, hold?: StoreHold): Promise<string | undefined> => {
     const stuck = (): string | undefined => {
       const first = unrecorded.entries().next().value
       return first === undefined ? undefined : `the running work of ${first[0]} could not be recorded (${first[1]}); held until it reports again or is deleted`
@@ -1147,29 +1236,64 @@ export function createPendingCleanup(deps: PendingDeps) {
     const forms = [...new Set([worktree, canonicalDirectory(worktree)])]
     const first = readReports(root)
     if (first.unreadable) return unreadable
+    const seen = new Map(first.reports.map((report) => [report.sessionID, reportVersion(report)]))
     const cache = new Map<string, JobLookup>()
-    await Promise.all(neededLookups(first.reports, forms, reportClock()).map(async (id) => void cache.set(id, await sessionState(id))))
-    // The last read has no wait after it.
-    const again = stuck()
-    if (again !== undefined) return again
-    const last = readReports(root)
-    if (last.unreadable) return unreadable
-    const blocked = reportBlock(last.reports, forms, (id) => cache.get(id), reportClock(), canonicalDirectory)
-    if (blocked !== undefined) console.error(`delivery: cleanup of ${worktree} is held: ${blocked}`)
-    return blocked
+    const lookUp = async (ids: readonly string[]) => {
+      await Promise.all(ids.map(async (id) => void cache.set(id, await sessionState(id))))
+    }
+    await lookUp(neededLookups(first.reports, forms, reportClock()))
+    let leased = false
+    if (hold?.active === true) {
+      await releaseStore(hold)
+      const taken = await takeStore()
+      if (typeof taken === "string") return taken
+      hold.lease = taken
+      leased = true
+    }
+    const refuse = async (why: string): Promise<string> => {
+      if (leased) await releaseStore(hold)
+      return why
+    }
+    try {
+      // The last read: nothing awaited after it unless the lease is held.
+      const again = stuck()
+      if (again !== undefined) return await refuse(again)
+      const last = readReports(root)
+      if (last.unreadable) return await refuse(unreadable)
+      if (leased) await lookUp(neededLookups(last.reports.filter((report) => seen.get(report.sessionID) !== reportVersion(report)), forms, reportClock()))
+      const blocked = reportBlock(last.reports, forms, (id) => cache.get(id), reportClock(), canonicalDirectory)
+      if (blocked === undefined) return undefined
+      console.error(`delivery: cleanup of ${worktree} is held: ${blocked}`)
+      return await refuse(blocked)
+    } catch (error) {
+      if (leased) await releaseStore(hold)
+      throw error
+    }
   }
 
   /**
-   * The idle hook's `background` list, kept as the session's one report on disk: synchronous, before
-   * the hook awaits anything, so a removal that starts a moment later sees it. An empty list is the
-   * session's own word that nothing of it runs: its report is deleted. A write that fails marks the
-   * session `unrecorded` (a hold on every removal) until its next successful write or delete.
+   * The idle hook's `background` list, kept as the session's one report on disk. The write is the
+   * hook's first step, under the store's lease (a file lock, taken at once when nothing holds it): no
+   * git, registry or receipt work comes before it. An empty list is the session's own word that nothing
+   * of it runs: its report is deleted. A write that fails marks the session `unrecorded` (a hold on every
+   * removal) until its next write or delete that succeeds, or finds a newer report of the session
+   * already there; a lease that cannot be taken is a failed write.
    */
-  const recordHolds = (sessionID: string, background: ReadonlyArray<BackgroundJob>): void => {
+  const recordHolds = async (sessionID: string, background: ReadonlyArray<BackgroundJob>): Promise<void> => {
     const root = receiptDirectory(env)
+    const at = stamp()
+    const jobs: ReportJob[] = background.map((job) => ({
+      kind: job.kind,
+      ...(job.sessionID === undefined ? {} : { sessionID: job.sessionID }),
+      ...(job.childSessionID === undefined ? {} : { childSessionID: job.childSessionID }),
+      ...(job.shellID === undefined ? {} : { shellID: job.shellID }),
+      ...(job.command === undefined ? {} : { command: job.command }),
+      ...(typeof job.cwd === "string" ? { cwd: canonicalDirectory(job.cwd) } : {}),
+    }))
     try {
-      if (background.length === 0) clearReport(root, sessionID, now())
-      else writeReport(root, { sessionID, jobs: background.map((job) => ({ ...job })), at: now(), pid: process.pid, host: hostname() })
+      await underStore(() =>
+        background.length === 0 ? clearReport(root, sessionID, at) : writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname(), instance: SERVER_INSTANCE }),
+      )
       unrecorded.delete(sessionID)
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error)
@@ -1178,11 +1302,14 @@ export function createPendingCleanup(deps: PendingDeps) {
     }
   }
 
-  /** A deleted session runs nothing: its report goes, and so does the failure to record one. */
-  const forgetSession = (sessionID: string): void => {
+  /**
+   * A deleted session runs nothing: the failure to record its report is forgotten whether or not the
+   * file can be removed. A file left behind expires, or its owner is judged dead.
+   */
+  const forgetSession = async (sessionID: string): Promise<void> => {
+    unrecorded.delete(sessionID)
     try {
-      removeReport(receiptDirectory(env), sessionID)
-      unrecorded.delete(sessionID)
+      await underStore(() => removeReport(receiptDirectory(env), sessionID))
     } catch (error) {
       console.error(`delivery: could not remove the report of deleted session ${sessionID}: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -1207,8 +1334,8 @@ export function createPendingCleanup(deps: PendingDeps) {
         await ctx.session.hook(
           "experimental.idle" as never,
           (async (input: { sessionID: string; background?: ReadonlyArray<BackgroundJob> }) => {
-            // Written before anything is awaited; never throws: a failed write is a hold, never a removal.
-            recordHolds(input.sessionID, input.background ?? [])
+            // Written first, before any git, registry or receipt work; never throws: a failed write is a hold, never a removal.
+            await recordHolds(input.sessionID, input.background ?? [])
             await retryNow(input.sessionID, true)
           }) as never,
         ),
