@@ -1,6 +1,7 @@
 ---
 name: council-security
 description: "Council advisor: assesses a decision's threat model, trust boundaries and security risks."
+acceptanceRole: read-only
 tools: read, grep, find, ls
 systemPromptMode: replace
 inheritSkills: false
