@@ -18,7 +18,7 @@ installs the formulas, and nothing switches that off.
 
 | Tool | Needed for | Version |
 | --- | --- | --- |
-| `bd` | The beads workspace, the formulas and the task state. The tasks.md guard asks `bd where`. Required. | 1.3.0 or later |
+| `bd` | The beads workspace, the formulas and the task state. Setup and the tasks.md guard ask `bd -C <repository> where`. Required. | 1.3.0 or later |
 | `specify` | `speckit_setup`'s `specify init` and extension installs | 1.4.0 or later |
 
 On pi, a session start reports a missing or too-old tool with its install hint
@@ -137,7 +137,7 @@ options in bounds.
 
 ## Guards and routes
 
-All of them apply only where `bd where` finds a beads workspace, and fail open when
+All of them apply only where `bd -C <repository> where` finds a beads workspace, and fail open when
 it cannot run.
 
 | Surface | Behavior |
@@ -218,7 +218,7 @@ On pi it is a pi-subagents agent, from `common/agents/spec.pi.md`. Its own sessi
 this package's extension (`subagentOnlyExtensions`). It has the `speckit_*` tools, the
 guard and the workflow section even where the parent session does not load the package.
 
-- Tools: every pi file tool, edit and write included, plus bash, `subagent` and the three `speckit_*` tools.
+- Tools: every pi file tool, edit and write included, plus bash, `subagent`, `contact_supervisor` and the three `speckit_*` tools.
 - Subagents: `scout`, `researcher` and `architect`, plus `speckit-verify` and `speckit-sync`.
 - Context: the repository's `AGENTS.md` and the skills catalog, so it can load `speckit-ledger`.
 - Questions go to the user through `contact_supervisor`. It ends with a report for its
@@ -241,8 +241,10 @@ from the subagent catalog, since the formulas and the workflow instructions spaw
 id, and neither gets Code Mode. `speckit-verify` may load the `quality-*` skills, and
 `speckit-sync` only `speckit-ledger`.
 
-On pi each has the file-reading tools and bash, from `common/agents/<id>.pi.md`.
-pi-subagents saves the report to `<id>.md` in the output directory of the run.
+On pi each has the file-reading tools and bash, from `common/agents/<id>.pi.md`, and no
+write tool. Both declare `acceptanceRole: read-only`, so pi-subagents asks them for no
+writer's acceptance report. pi-subagents saves the reply to `<id>.md` in the output
+directory of the run.
 
 `speckit-verify` is composed by `bun run build` from `agents.src/speckit-verify.md` and
 the evidence and report parts of the shared review core (`lib/src/review-core.md`);

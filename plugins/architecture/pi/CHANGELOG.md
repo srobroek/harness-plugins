@@ -1,3 +1,10 @@
+## architecture [0.12.1](https://github.com/srobroek/harness-plugins/compare/architecture--v0.12.0...architecture--v0.12.1) (2026-11-25)
+
+### Bug Fixes
+
+* **architecture:** declare the Pi architect read-only for acceptance ([8f17e9f](https://github.com/srobroek/harness-plugins/commit/8f17e9f9913dbf85b4f86c3844fb95fc8e5f4563))
+* **architecture:** let the Pi architect hand back research through output ([0105b9d](https://github.com/srobroek/harness-plugins/commit/0105b9d40a3f094fdbab581b74851a0f78a1fa53))
+
 ## architecture [0.12.0](https://github.com/srobroek/harness-plugins/compare/architecture--v0.11.4...architecture--v0.12.0) (2026-11-24)
 
 ### Features

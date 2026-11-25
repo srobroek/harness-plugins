@@ -2,7 +2,7 @@
   "plugins": [
     {
       "name": "agent-coder",
-      "version": "0.14.0",
+      "version": "0.14.1",
       "description": "coder subagent for any code development task (implement, fix, debug, test, build, profile, upgrade deps) with only coding tools and skills.",
       "category": "development",
       "harnesses": {
@@ -69,7 +69,7 @@
     },
     {
       "name": "agent-efficiency",
-      "version": "0.14.5",
+      "version": "0.14.6",
       "description": "Cut agent tokens: run bash calls as the built-in shell tool, narrow explore to search and web tools, and trim read-only subagent prompts.",
       "category": "development",
       "harnesses": {
@@ -149,7 +149,7 @@
     },
     {
       "name": "agent-researcher",
-      "version": "0.12.1",
+      "version": "0.12.2",
       "description": "The researcher subagent: answers one scoped question from code, docs and the web with cited observations and inferences, and records it on a bead when given one.",
       "category": "development",
       "harnesses": {
@@ -218,7 +218,7 @@
     },
     {
       "name": "agent-reviewer",
-      "version": "0.15.1",
+      "version": "0.15.2",
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "category": "development",
       "harnesses": {
@@ -357,7 +357,7 @@
     },
     {
       "name": "architecture",
-      "version": "0.12.0",
+      "version": "0.12.1",
       "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
       "category": "development",
       "harnesses": {
@@ -699,7 +699,7 @@
     },
     {
       "name": "build",
-      "version": "0.11.0",
+      "version": "0.11.1",
       "description": "External-repository worker subagent: clone, follow the target's conventions, edit, verify, and publish only when delegated.",
       "category": "development",
       "harnesses": {
@@ -840,7 +840,7 @@
     },
     {
       "name": "code-challenge",
-      "version": "2.1.1",
+      "version": "2.1.2",
       "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
       "category": "development",
       "harnesses": {
@@ -932,7 +932,7 @@
     },
     {
       "name": "debate",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Stress-test a decision from both sides or grill a plan in frontier rounds.",
       "category": "productivity",
       "harnesses": {
@@ -1319,7 +1319,7 @@
     },
     {
       "name": "journeys",
-      "version": "0.6.1",
+      "version": "0.6.2",
       "description": "Author, validate and maintain user journeys: seven skills, the journeys.py helper, and the journey-scribe and journey-validator subagents.",
       "category": "development",
       "harnesses": {
@@ -1879,7 +1879,7 @@
     },
     {
       "name": "project",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
       "category": "productivity",
       "harnesses": {
@@ -2017,7 +2017,7 @@
     },
     {
       "name": "quality",
-      "version": "0.16.0",
+      "version": "0.16.1",
       "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
       "category": "development",
       "harnesses": {
@@ -2243,7 +2243,7 @@
     },
     {
       "name": "speckit-beads",
-      "version": "0.0.0",
+      "version": "1.0.1",
       "description": "SpecKit on Beads: a tasks.md guard, setup, ledger and bugfix skills, formulas, and the speckit-sync and speckit-verify subagents.",
       "category": "development",
       "harnesses": {
@@ -2553,7 +2553,7 @@
     },
     {
       "name": "whats-new",
-      "version": "0.5.2",
+      "version": "0.5.3",
       "description": "Research breaking changes, deprecations and new features between two versions, report-only.",
       "category": "development",
       "harnesses": {

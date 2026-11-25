@@ -1,3 +1,10 @@
+## agent-reviewer [0.15.2](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.15.1...agent-reviewer--v0.15.2) (2026-11-25)
+
+### Bug Fixes
+
+* **agent-reviewer:** declare the Pi reviewer agents read-only for acceptance ([97b2f88](https://github.com/srobroek/harness-plugins/commit/97b2f881d2440d1e04f3e8ee7ac0893b589b86e8))
+* **agent-reviewer:** load web and pi-lens providers for the Pi adversarial challenger ([5ac939c](https://github.com/srobroek/harness-plugins/commit/5ac939cf3d7984aacfebc3baa9b955b79dd57cd4))
+
 ## agent-reviewer [0.15.1](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.15.0...agent-reviewer--v0.15.1) (2026-11-24)
 
 ### Bug Fixes

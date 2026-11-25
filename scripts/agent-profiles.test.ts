@@ -61,6 +61,9 @@ const DENYLIST = new Set(["journey-validator"])
 /** Agents that change state without the edit tool. */
 const WRITERS = new Set(["shepherd"])
 
+/** Code Mode tools a Pi child reaches through another tool: it has no parley panel, so it asks its supervisor. */
+const PI_EQUIVALENTS: Readonly<Record<string, string>> = { parley: "contact_supervisor" }
+
 type Agent = { plugin: string; id: string; hidden: boolean; rules: AgentPermission[] }
 
 function agents(): Agent[] {
@@ -172,7 +175,8 @@ test("a Pi agent keeps its profile's Code Mode tools, and has the web tools exac
   for (const agent of piAgents(PLUGINS)) {
     const profile = PROFILES[agent.id]
     if (profile === undefined || DENYLIST.has(agent.id)) continue
-    const missing = [...profile.codeMode, ...(profile.web ? PI_WEB_TOOLS : [])].filter((tool) => !agent.tools.includes(tool))
+    const codeMode = profile.codeMode.map((tool) => PI_EQUIVALENTS[tool] ?? tool)
+    const missing = [...codeMode, ...(profile.web ? PI_WEB_TOOLS : [])].filter((tool) => !agent.tools.includes(tool))
     const unprofiledWeb = profile.web ? [] : agent.tools.filter((tool) => PI_WEB_TOOLS.includes(tool))
     expect({ plugin: agent.plugin, id: agent.id, missing, unprofiledWeb }).toEqual({
       plugin: agent.plugin,

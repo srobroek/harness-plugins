@@ -1,3 +1,9 @@
+## agent-coder [0.14.1](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.14.0...agent-coder--v0.14.1) (2026-11-25)
+
+### Bug Fixes
+
+* **agent-coder:** grant the Pi coder web research and dep_apply ([82ce9e9](https://github.com/srobroek/harness-plugins/commit/82ce9e9b1dc7984aa744c40ea35071363d6e0cc8))
+
 ## agent-coder [0.14.0](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.13.0...agent-coder--v0.14.0) (2026-11-24)
 
 ### Features

@@ -1,3 +1,10 @@
+## quality [0.16.1](https://github.com/srobroek/harness-plugins/compare/quality--v0.16.0...quality--v0.16.1) (2026-11-25)
+
+### Bug Fixes
+
+* **quality:** declare the Pi adversarial challenger read-only for acceptance ([791c9cd](https://github.com/srobroek/harness-plugins/commit/791c9cdf1bdd043042c46460d2cfecaf51d09f2d))
+* **quality:** load web and pi-lens providers for the Pi adversarial challenger ([28fe30e](https://github.com/srobroek/harness-plugins/commit/28fe30e0c54089434e55150d45dc1f8093756b88))
+
 ## quality [0.16.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.15.3...quality--v0.16.0) (2026-11-24)
 
 ### Features

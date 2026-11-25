@@ -1,3 +1,10 @@
+## agent-researcher [0.12.2](https://github.com/srobroek/harness-plugins/compare/agent-researcher--v0.12.1...agent-researcher--v0.12.2) (2026-11-25)
+
+### Bug Fixes
+
+* **agent-researcher:** declare the Pi researcher read-only for acceptance ([5a538e8](https://github.com/srobroek/harness-plugins/commit/5a538e88a579bb1af7122f597449e54b7d2afedc))
+* **agent-researcher:** return the Pi research report as the output file ([510d247](https://github.com/srobroek/harness-plugins/commit/510d2472f755100f22392321756d2989195b4969))
+
 ## agent-researcher [0.12.1](https://github.com/srobroek/harness-plugins/compare/agent-researcher--v0.12.0...agent-researcher--v0.12.1) (2026-11-24)
 
 ### Bug Fixes
