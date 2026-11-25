@@ -44,23 +44,22 @@ A skill you already have with the same name wins over the plugin's copy.
 pi install npm:@srobroek/pi-debate
 ```
 
-The pi package needs `pi-subagents`, which runs the council, and `@srobroek/pi-architecture`,
-which provides the `architect` agent. Install both beside it.
+The pi package needs `pi-subagents`, which runs the council. Install it beside the package.
 
 For a consequential or contested decision, the `debate` skill hands the finished two-sided
 analysis to a pi-subagents council for independent critique. The default roster is
 `council-advocate`, `council-skeptic` and `council-pragmatist`. An architecture decision adds
-`architect`, and a security decision adds `council-security`. The council runs at most three
+`council-architect`, and a security decision adds `council-security`. The council runs at most three
 passes. The skill treats the council memo as evidence and still writes the conditional verdict.
 
 Two commands run a council with a fixed roster and up to three passes:
 
 | Command | Roster |
 | --- | --- |
-| `/council-arch <question>` | `architect`, `council-advocate`, `council-skeptic`, `council-pragmatist` |
+| `/council-arch <question>` | `council-architect`, `council-advocate`, `council-skeptic`, `council-pragmatist` |
 | `/council-security <question>` | `council-security`, `council-advocate`, `council-skeptic`, `council-pragmatist` |
 
-The four `council-*` advisors can only read, and the parent's agent list does not show them.
+The five `council-*` advisors can only read, and the parent's agent list does not show them.
 They pin no model. Set one per advisor in `~/.pi/agent/settings.json`, replacing
 `provider/model-id` with the provider and model you use:
 
@@ -71,7 +70,8 @@ They pin no model. Set one per advisor in `~/.pi/agent/settings.json`, replacing
       "council-advocate": { "model": "provider/model-id" },
       "council-skeptic": { "model": "provider/model-id" },
       "council-pragmatist": { "model": "provider/model-id" },
-      "council-security": { "model": "provider/model-id" }
+      "council-security": { "model": "provider/model-id" },
+      "council-architect": { "model": "provider/model-id" }
     }
   }
 }

@@ -8,8 +8,8 @@ skill they load.
 | Agent | Reviews | Tools | Verdict | In the subagent catalog |
 | --- | --- | --- | --- | --- |
 | `pr-reviewer` (steps 80) | GitHub pull request on all harnesses; GitLab merge request on OpenCode only | OpenCode shell `gh pr view *`, `gh pr diff *`, `glab mr view *`, `glab mr diff *`, and GET-only `glab api` patterns; Pi shell `gh pr view *`, `gh pr diff *`; OMP `github` tool | `APPROVE\|REQUEST-CHANGES\|COMMENT` | no (`hidden: true`) |
-| `code-reviewer` (steps 80) | A local diff: working tree, branch range or commits | read, grep, glob, `lsp_*`; shell `git diff`, `git log`, `git show` only, never `--output` | `APPROVE\|REQUEST-CHANGES\|COMMENT` | yes |
-| `security-auditor` (steps 80) | A repository scope or the files a change touches, source to sink, CWE-tagged | read, grep, glob, `lsp_*`; no shell, no web | `PASS\|MINOR\|MAJOR` | yes |
+| `code-reviewer` (steps 80) | A local diff: working tree, branch range or commits | read, grep, glob, `lsp_*`; a read-only shell for git reads and the project's checks, no web | `APPROVE\|REQUEST-CHANGES\|COMMENT` | yes |
+| `security-auditor` (steps 80) | A repository scope or the files a change touches, source to sink, CWE-tagged | read, grep, glob, `lsp_*`; a read-only shell for the project's checks, no web | `PASS\|MINOR\|MAJOR` | yes |
 | `adversarial-challenger` (steps 60) | A claim, plan, design or decision, with evidence-backed counter-arguments | read, grep, glob, `lsp_*`, webfetch, websearch | `HOLDS\|WEAKENED\|REFUTED` | yes |
 
 Every reply starts with its `VERDICT:` line. When the delivery plugin is installed, its verdict hook parses `pr-reviewer`'s verdict and accepts that line below a preamble or inside a code fence too.
@@ -27,6 +27,8 @@ outside the workspace (`external_directory`) and `.env` files ask.
 Every agent declares the `reviewer` tier in the `x-opencode-model-role` request header and
 pins no model: with the model-roles plugin that tier picks the model, without it the agent
 inherits the caller's.
+
+In Claude Code, `code-reviewer` and `security-auditor` have no `Bash`. Their shell rules deny some commands, and a subagent's frontmatter cannot hold such denies. So the translation leaves the shell out, and the generated prompt names that gap.
 
 ## MCP tools
 
@@ -82,9 +84,15 @@ The `pr-reviewer` agent uses OMP's `github` tool. OMP disables that tool by defa
 
 The Pi agents load these required companion packages in their child sessions:
 
-- `code-reviewer`: `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `quality_test_summarize`, `quality_test_compare`, `repomix_pack`, `dep_scan`, `version_gap_scan`, and `mcp:context7`. Its skills include `quality-test-audit`.
-- `pr-reviewer`: `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `quality_test_summarize`, `quality_test_compare`, `dep_scan`, `version_gap_scan`, and `mcp:context7`. Its skills include `quality-test-audit`.
-- `security-auditor`: `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `web_search`, `fetch_content`, `get_search_content`, `source_check`, `quality_test_summarize`, `quality_test_compare`, `dep_scan`, `version_gap_scan`, and `mcp:context7`. It also has `bash`, to run the project's tests.
+- `code-reviewer`: `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `quality_test_summarize`, `quality_test_compare`, `repomix_pack`, `dep_scan`, `version_gap_scan`, and `mcp:context7`. Its `bash` reads the patch and runs the project's tests. Its skills include `quality-test-audit`.
+- `pr-reviewer`: `read` and `bash` only. This plugin's Pi extension holds the child to its prompt, as the OpenCode allowlist does:
+  - `bash` runs one command per call, and only these two:
+    - `gh pr view <number> --repo <owner>/<name> --json <fields>`
+    - `gh pr diff <number> --repo <owner>/<name>`
+  - `read` opens only the skill files that pi-subagents lists for it.
+  - The extension refuses any other command or read.
+  - The agent inherits no skill catalog. It lists the `quality-*` skills, `review-security` and the `lang-*` routers.
+- `security-auditor`: `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `quality_test_summarize`, `quality_test_compare`, `dep_scan`, `version_gap_scan`, and `mcp:context7`. It also has `bash`, to run the project's tests. It has no web tools on any harness. It traces source to sink in the code and looks up no advisories.
 - `adversarial-challenger`: `web_search`, `fetch_content`, `get_search_content` and `source_check` from `pi-web-access`, and `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics` and `pi_lens_activate_tools` from `pi-lens`.
 
 Install the required Pi packages: `pi-lens`, `pi-web-access`, `@srobroek/pi-code-quality`, `@srobroek/pi-repomix`, `@srobroek/pi-dep-update`, and `@srobroek/pi-whats-new`. Configure the `context7` Pi MCP server in `~/.pi/agent/mcp.json` for `mcp:context7`.
@@ -120,7 +128,7 @@ This package works with these pi packages. Install them next to it.
 | Package | Required | For | Install |
 | --- | --- | --- | --- |
 | `pi-lens` | yes | code-intelligence and AST search tools for Pi subagents | `pi install npm:pi-lens` |
-| `pi-web-access` | yes | web research tools for the security auditor | `pi install npm:pi-web-access` |
+| `pi-web-access` | yes | web research tools for the adversarial challenger | `pi install npm:pi-web-access` |
 | `@srobroek/pi-code-quality` | yes | test review tools and quality-test-audit for Pi subagents | `pi install npm:@srobroek/pi-code-quality` |
 | `@srobroek/pi-repomix` | yes | repository packing for the code reviewer | `pi install npm:@srobroek/pi-repomix` |
 | `@srobroek/pi-dep-update` | yes | read-only dependency scan tools for Pi subagents | `pi install npm:@srobroek/pi-dep-update` |

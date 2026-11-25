@@ -273,7 +273,9 @@
           "rules": [],
           "hooks": [],
           "tools": [],
-          "extensions": [],
+          "extensions": [
+            "index"
+          ],
           "mcp": []
         },
         "pi": {
@@ -290,7 +292,9 @@
           "rules": [],
           "hooks": [],
           "tools": [],
-          "extensions": [],
+          "extensions": [
+            "index"
+          ],
           "mcp": []
         }
       },
@@ -303,7 +307,7 @@
         },
         {
           "package": "pi-web-access",
-          "for": "web research tools for the security auditor",
+          "for": "web research tools for the adversarial challenger",
           "required": true
         },
         {
@@ -980,6 +984,7 @@
           ],
           "agents": [
             "council-advocate",
+            "council-architect",
             "council-pragmatist",
             "council-security",
             "council-skeptic"
@@ -1000,11 +1005,6 @@
         {
           "package": "pi-subagents",
           "for": "council advisors and the council protocol",
-          "required": true
-        },
-        {
-          "package": "@srobroek/pi-architecture",
-          "for": "the architect agent in /council-arch",
           "required": true
         }
       ]

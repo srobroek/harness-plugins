@@ -81,6 +81,9 @@ through one, set the validator's `tools` in `subagents.agentOverrides` to the li
 plus that tool (for example `mcp:<server>`); an override replaces the whole list. Without
 it, the validator reports those steps as `blocked`.
 
+As on OpenCode, the Pi validator gets no skills. It follows `FORMAT.md` and its own
+definition. `journey-verify` launches the validator, so the validator does not load it.
+
 ## Tools
 
 - `journeys_index` runs the bundled `journeys.py` with `command` `index`, `lint` or

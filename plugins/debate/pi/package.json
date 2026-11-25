@@ -25,13 +25,9 @@
     "provenance": true
   },
   "peerDependencies": {
-    "@srobroek/pi-architecture": "*",
     "pi-subagents": "*"
   },
   "peerDependenciesMeta": {
-    "@srobroek/pi-architecture": {
-      "optional": true
-    },
     "pi-subagents": {
       "optional": true
     }
