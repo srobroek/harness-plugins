@@ -1,6 +1,7 @@
 ---
 name: refactor-challenger
 description: "Read-only critic that attacks refactoring, library-swap, performance and simplification findings so only changes that earn their cost survive."
+acceptanceRole: read-only
 tools: read, ls, grep, find, bash, challenge_scan, challenge_lib_facts, symbol_search, module_report, project_report, read_symbol, read_enclosing, ast_grep_search, ast_grep_outline, lens_diagnostics, pi_lens_activate_tools, web_search, fetch_content, get_search_content, source_check, quality_test_summarize, quality_test_compare, repomix_pack, dep_scan, version_gap_scan, mcp:context7
 subagentOnlyExtensions: ../extensions/index.js, npm:pi-lens, npm:pi-web-access, npm:@srobroek/pi-code-quality, npm:@srobroek/pi-repomix, npm:@srobroek/pi-dep-update, npm:@srobroek/pi-whats-new
 inheritSkills: true
