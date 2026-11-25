@@ -18,7 +18,7 @@
 | chezmoi | 0.7.2 | development | global | opencode, claude, pi |
 | claude-compat | 0.5.4 | development | project | opencode |
 | code-challenge | 2.1.3 | development | global | opencode, omp, pi |
-| debate | 1.0.2 | productivity | global | opencode, claude, omp, pi |
+| debate | 1.1.0 | productivity | global | opencode, claude, omp, pi |
 | delivery | 0.12.6 | development | global | opencode |
 | dep-update | 0.7.1 | development | global | opencode, pi |
 | design | 0.10.4 | development | project | opencode, claude |
