@@ -379,9 +379,10 @@ var DIRTY_GATE = /^worktree\.(?:status|operation|stash):/;
 function reportFromCleanup(result) {
   if (!result.ok)
     return { ok: false, reason: DIRTY_GATE.test(result.reason) ? `dirty: ${result.reason}` : result.reason };
+  const path = result.receipt.worktree.path ?? "";
   return {
     ok: true,
-    ...result.alreadyCleaned ? {} : { removed: result.receipt.worktree.path ?? "" },
+    ...result.alreadyCleaned ? {} : result.partlyRemoved ? { partlyRemoved: path } : { removed: path },
     localRefDeleted: result.localRefDeleted,
     alreadyCleaned: result.alreadyCleaned,
     kept: result.report.skipped
@@ -416,8 +417,12 @@ function textAfterCleanup(text, report) {
       return [...kept, `cleanup: nothing to remove (${(report.kept ?? []).join("; ")}).`].join(`
 `);
     }
-    const branch = report.localRefDeleted === false ? "" : " and its local branch";
     const left = report.kept !== undefined && report.kept.length > 0 ? `; kept: ${report.kept.join("; ")}` : "";
+    if (report.partlyRemoved !== undefined) {
+      return [...kept, `cleanup: removal attempted, partly removed, unverified: ${report.partlyRemoved}${left}.`].join(`
+`);
+    }
+    const branch = report.localRefDeleted === false ? "" : " and its local branch";
     const tail = left === "" ? "; nothing left to run" : "";
     return [...kept, `cleanup: removed ${report.removed}${branch}${left}${tail}.`].join(`
 `);
@@ -2518,23 +2523,22 @@ function selectReceipt(candidates, selector, scope = "this repository") {
   }
   return refuse2("receipt", `${pool.length} matching receipts`, `exactly one: pass receipt, pr or branch to choose; ${describeCandidates(pool)}`);
 }
-function removalReport(receipt, path, target, plan) {
-  const removed = [`worktree ${path}`];
+function removalReport(receipt, path, target, facts) {
+  const removed = facts.worktreeRemoved ? [`worktree ${path}`] : [];
   const skipped = [];
   const branch = receipt.branch.name;
-  if (plan === "delete")
+  if (facts.localRefDeleted)
     removed.push(`local branch ${branch}`);
-  else if (plan === "absent")
+  else if (facts.localRefPlan === "absent")
     skipped.push(`local branch ${branch} was already gone`);
-  else
+  else if (facts.localRefPlan === "moved")
     skipped.push(`local branch ${branch} left in place: it no longer points at the reviewed head`);
   if (!target.detached && target.branch !== null && target.branch !== `${LOCAL_REF_PREFIX}${branch}`) {
     skipped.push(`branch ${target.branch.slice(LOCAL_REF_PREFIX.length)} (the worktree's own) left in place`);
   }
-  return { removed, skipped };
+  return { removed, skipped: [...skipped, ...facts.unfinished] };
 }
 var withNotes = (report, notes) => notes.length === 0 ? report : { ...report, skipped: [...report.skipped, ...notes] };
-var withRefusalNotes = (failure, notes) => notes.length === 0 ? failure : { ...failure, reason: `${failure.reason}; after the removal: ${notes.join("; ")}` };
 function acceptWorktree(record, receipt) {
   const failure = compare("worktree.HEAD", record.head, receipt.pr.headRefOid);
   if (failure !== null)
@@ -2839,6 +2843,7 @@ function worktreePathState(path) {
     return "unsafe";
   }
 }
+var removalElsewhere = (path) => "the tree has only deleted tracked files: a removal is running or stopped part-way (another process outside " + "the delivery worktree lock, such as another harness's delivery plugin or `wt remove`, or an earlier cleanup " + `that failed); this call removed nothing; inspect ${path}`;
 function dirtyPaths(output) {
   return output.split(/\r?\n/).filter(Boolean).map((line) => line.length > 3 ? line.slice(3) : line).slice(0, MAX_DIRTY_PATHS);
 }
@@ -2852,7 +2857,8 @@ async function verifyCleanTarget(path, run, timeoutMs, pin, branches = []) {
     return commandFailure("worktree.status", ["git", ...argv], result, "exit 0 with empty output");
   if (result.stdout !== "") {
     const all = result.stdout.split(/\r?\n/).filter(Boolean);
-    return refuse2("worktree.status", { paths: dirtyPaths(result.stdout), total: all.length }, "no dirty paths (empty porcelain output)");
+    const dirty = refuse2("worktree.status", { paths: dirtyPaths(result.stdout), total: all.length }, "no dirty paths (empty porcelain output)");
+    return all.every((line) => line.startsWith(" D ")) ? { ok: false, reason: `${dirty.reason}; ${removalElsewhere(path)}` } : dirty;
   }
   const gitDir = pin?.GIT_DIR;
   if (gitDir === undefined)
@@ -3219,6 +3225,7 @@ async function cleanupDelivery(params, sessionCwd, deps = {}) {
   const { coordinate: _session, ...shared } = deps;
   return cleanupInRepository({ ...rest, repo }, target.cwd, {
     ...shared,
+    proofSection: coordination.proofSection,
     removalSection: coordination.removalSection,
     finalCheck: coordination.finalCheck,
     afterRemoval: coordination.afterRemoval,
@@ -3289,6 +3296,7 @@ async function cleanupInRepository(params, cwd, deps) {
       path: receiptPath,
       remoteBranchAbsence: receipt.branch.deletedRemote ? "absent" : "unknown",
       alreadyCleaned: true,
+      partlyRemoved: false,
       localRefDeleted: false,
       report: { removed: [], skipped: [note] }
     };
@@ -3309,22 +3317,34 @@ async function cleanupInRepository(params, cwd, deps) {
   if (invocationInsideTarget(cwd, receipt.worktree.path)) {
     return refuse2("worktree.invocationCwd", cwd, `a directory outside the worktree this call would remove (${receipt.worktree.path}, resolved to ${physicalPath(receipt.worktree.path)})`);
   }
-  const identity = await verifyTargetIdentity(receipt, cwd, run, bounds.refReadMs, git);
-  if (isFailure(identity))
-    return identity;
-  const observed = await observePullRequest(receipt, run, identity.cwd, env, bounds.refReadMs, identity.pin);
-  if (isFailure(observed))
-    return observed;
-  const observedFailure = verifyObservation(receipt, observed.pr);
-  if (observedFailure !== null)
-    return observedFailure;
   const path = receipt.worktree.path;
-  const dirty = await verifyCleanTarget(identity.cwd, run, bounds.treeScanMs, identity.pin, stashBranches(receipt.branch.name, identity.target));
-  if (dirty !== null)
-    return dirty;
-  const pushed = await verifyPushed(identity.cwd, run, bounds.refReadMs, identity.pin);
-  if (isFailure(pushed))
-    return pushed;
+  const settle = async (failure) => {
+    const taken = await alreadyCleaned(receipt, resolution.path);
+    return taken?.ok === true ? taken : failure;
+  };
+  const proveTarget = async () => {
+    const identity = await verifyTargetIdentity(receipt, cwd, run, bounds.refReadMs, git);
+    if (isFailure(identity))
+      return identity;
+    const observed = await observePullRequest(receipt, run, identity.cwd, env, bounds.refReadMs, identity.pin);
+    if (isFailure(observed))
+      return observed;
+    const observedFailure = verifyObservation(receipt, observed.pr);
+    if (observedFailure !== null)
+      return observedFailure;
+    const dirty = await verifyCleanTarget(identity.cwd, run, bounds.treeScanMs, identity.pin, stashBranches(receipt.branch.name, identity.target));
+    if (dirty !== null)
+      return dirty;
+    const pushed = await verifyPushed(identity.cwd, run, bounds.refReadMs, identity.pin);
+    if (isFailure(pushed))
+      return pushed;
+    return { identity, observed, pushed };
+  };
+  const unlocked = await proveTarget();
+  const proofs = !isFailure(unlocked) || deps.proofSection === undefined ? unlocked : await deps.proofSection(path, proveTarget);
+  if (isFailure(proofs))
+    return settle(proofs);
+  const { identity, observed, pushed } = proofs;
   const ledger = await verifyLedger(receipt, cwd, resolution.path, run, bounds.bdShowMs, bounds.refReadMs, git, env);
   if (ledger !== null)
     return ledger;
@@ -3367,45 +3387,68 @@ async function cleanupInRepository(params, cwd, deps) {
     const rebound = markersStillBound(boundary, executionDir, executionPin);
     if (rebound !== null)
       return rebound;
+    let failure = null;
+    let stopped = false;
     if (route === "host" && deps.host !== undefined) {
       try {
         await deps.host.remove(targetPath);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        return refuse2("worktree.removed", `host worktree.remove ${JSON.stringify(targetPath)} (error ${message.trim().slice(0, 400)})`, "host removal without force");
+        failure = refuse2("worktree.removed", `host worktree.remove ${JSON.stringify(targetPath)} (error ${message.trim().slice(0, 400)})`, "host removal without force");
       }
     } else {
       const removed = await runGit(commit, executionDir, removeArgv, bounds.mutationMs, executionPin);
       if (!completed(removed)) {
-        return commandFailure("worktree.removed", ["git", ...removeArgv], removed, "exit 0 without --force");
+        failure = commandFailure("worktree.removed", ["git", ...removeArgv], removed, "exit 0 without --force");
+        stopped = removed.exitCode === null;
       }
     }
     const registration = await registrationAbsence(executionDir, targetPath, commit, bounds.refReadMs, executionPin);
     const pathGone = pathAbsence(targetPath);
-    if (registration !== "absent")
-      return refuse2("worktree.registrationAbsence", registration, '"absent" after removal');
-    if (pathGone !== "absent")
-      return refuse2("worktree.pathAbsence", pathGone, '"absent" after removal');
+    if (failure !== null && registration !== "absent" && pathGone !== "absent" && !stopped) {
+      const status = await runGit(commit, boundary.cwd, ["status", "--porcelain"], bounds.treeScanMs, boundary.pin);
+      if (completed(status) && status.stdout === "")
+        return failure;
+    }
+    const unfinished = [];
+    const branch = receipt.branch.name;
+    if (registration !== "absent" || pathGone !== "absent") {
+      unfinished.push(failure === null ? `worktree ${path} is there again after its removal (registration ${registration}, directory ${pathGone}) and was left alone; absence unverified; no continuation receipt` : `worktree ${path}: removal attempted and stopped part-way (${failure.reason}); registration ${registration}, directory ${pathGone}; absence unverified; no continuation receipt; inspect ${path} before removing what is left by hand (git worktree remove --force)`, `local branch ${branch} kept: the worktree's absence is not proven`);
+      return { ok: true, worktreeRemoved: failure === null, registration, pathGone, localAbsence: "unknown", localRefPlan: localRef, localRefDeleted: false, executionDir, unfinished };
+    }
+    if (failure !== null)
+      unfinished.push(`the worktree removal reported a failure, yet the worktree is gone: ${failure.reason}`);
     absenceProven = true;
     const refAfterWorktree = await verifyLocalRef(receipt, executionDir, commit, bounds.refReadMs, executionPin);
-    if (isFailure(refAfterWorktree))
-      return refAfterWorktree;
-    if (localRef === "delete" && refAfterWorktree !== "delete") {
-      return refuse2("branch.localRef", refAfterWorktree, `a ref still at ${receipt.pr.headRefOid}, as before the removal`);
+    const localRefPlan = isFailure(refAfterWorktree) ? localRef : refAfterWorktree;
+    let deleted = false;
+    if (isFailure(refAfterWorktree)) {
+      unfinished.push(`local branch ${branch} kept: ${refAfterWorktree.reason}`);
+    } else if (localRef === "delete" && refAfterWorktree === "moved") {
+      unfinished.push(`local branch ${branch} kept: it moved off ${receipt.pr.headRefOid} during the removal`);
+    } else if (refAfterWorktree === "delete") {
+      const deleteArgv = branchDeleteArgs(branch);
+      const result = await runGit(commit, executionDir, deleteArgv, bounds.mutationMs, executionPin);
+      if (completed(result))
+        deleted = true;
+      else
+        unfinished.push(`local branch ${branch} kept: ${commandFailure("worktree.localRefDeleted", ["git", ...deleteArgv], result, "exit 0 without -D").reason}`);
     }
-    if (refAfterWorktree === "delete") {
-      const deleteArgv = branchDeleteArgs(receipt.branch.name);
-      const deleted = await runGit(commit, executionDir, deleteArgv, bounds.mutationMs, executionPin);
-      if (!completed(deleted)) {
-        return commandFailure("worktree.localRefDeleted", ["git", ...deleteArgv], deleted, "exit 0 without -D");
-      }
-    }
-    const localAbsence = await localRefAbsence(executionDir, receipt.branch.name, commit, bounds.refReadMs, executionPin);
-    const expected = refAfterWorktree === "moved" ? "present" : "absent";
-    if (localAbsence !== expected) {
-      return refuse2("worktree.localRefAbsence", localAbsence, `"${expected}" (ref plan ${refAfterWorktree})`);
-    }
-    return { ok: true, registration, pathGone, localAbsence, localRefPlan: refAfterWorktree, executionDir };
+    const localAbsence = await localRefAbsence(executionDir, branch, commit, bounds.refReadMs, executionPin);
+    const expected = deleted || localRefPlan === "absent" ? "absent" : "present";
+    if (localAbsence !== expected)
+      unfinished.push(`local branch ${branch}: observed ${localAbsence} afterwards, expected ${expected}`);
+    return {
+      ok: true,
+      worktreeRemoved: true,
+      registration,
+      pathGone,
+      localAbsence,
+      localRefPlan,
+      localRefDeleted: deleted && localAbsence === "absent",
+      executionDir,
+      unfinished
+    };
   };
   const section = deps.removalSection === undefined ? await removeSection() : await deps.removalSection(path, removeSection);
   let afterNotes = [];
@@ -3417,8 +3460,21 @@ async function cleanupInRepository(params, cwd, deps) {
     }
   }
   if (isFailure(section))
-    return withRefusalNotes(section, afterNotes);
-  const { registration, pathGone, localAbsence, localRefPlan, executionDir } = section;
+    return settle(section);
+  const { registration, pathGone, localAbsence, executionDir } = section;
+  const report = withNotes(removalReport(receipt, path, identity.target, section), afterNotes);
+  const withoutContinuation = (remoteBranchAbsence, notes) => ({
+    ok: true,
+    receipt,
+    path: resolution.path,
+    remoteBranchAbsence,
+    alreadyCleaned: false,
+    partlyRemoved: !section.worktreeRemoved,
+    localRefDeleted: section.localRefDeleted,
+    report: withNotes(report, notes)
+  });
+  if (!absenceProven)
+    return withoutContinuation(receipt.branch.deletedRemote ? "absent" : "unknown", []);
   const remoteAbsence = observed.identity.forge === "github" ? (await observeGithubBranch(observed.identity.nameWithOwner, receipt.branch.name, commit, env)).verdict : await remoteBranchAbsent(observed.identity.remoteUrl, receipt.branch.name, executionDir, commit);
   const issuedAt = nextReceiptEpoch(receipt, now);
   const verifiedAt = new Date(issuedAt).toISOString();
@@ -3466,12 +3522,12 @@ async function cleanupInRepository(params, cwd, deps) {
   });
   const validation = validateReceipt(continued);
   if (!validation.ok)
-    return withRefusalNotes({ ok: false, reason: `continuation receipt: ${validation.reason}` }, afterNotes);
+    return withoutContinuation(remoteAbsence, [`no continuation receipt written: ${validation.reason}`]);
   let written;
   try {
     written = writeReceipt(continued, dirname4(resolution.path));
   } catch (error) {
-    return withRefusalNotes(refuse2("continuation receipt write", error instanceof Error ? error.message : String(error), "one persisted validated receipt"), afterNotes);
+    return withoutContinuation(remoteAbsence, [`no continuation receipt written: ${error instanceof Error ? error.message : String(error)}`]);
   }
   return {
     ok: true,
@@ -3479,8 +3535,9 @@ async function cleanupInRepository(params, cwd, deps) {
     path: written,
     remoteBranchAbsence: remoteAbsence,
     alreadyCleaned: false,
-    localRefDeleted: localRefPlan === "delete",
-    report: withNotes(removalReport(receipt, path, identity.target, localRefPlan), afterNotes)
+    partlyRemoved: false,
+    localRefDeleted: section.localRefDeleted,
+    report
   };
 }
 
@@ -5783,6 +5840,27 @@ function setHold(commonDir, directory, sessionID, jobs, now) {
   writeFileSync5(temp, JSON.stringify({ sessionID, directory, jobs, updatedAt: now }));
   renameSync2(temp, path);
 }
+var pendingHoldFile = (commonDir, directory, sessionID) => join7(holdsDir(commonDir, directory), `${sha1(sessionID)}.pending.json`);
+async function recordHold(commonDir, directory, sessionID, jobs, at, lock) {
+  const pending = pendingHoldFile(commonDir, directory, sessionID);
+  if (jobs.length > 0) {
+    mkdirSync5(holdsDir(commonDir, directory), { recursive: true });
+    const temp = `${pending}.${randomUUID2()}.tmp`;
+    writeFileSync5(temp, JSON.stringify({ sessionID, directory, jobs, updatedAt: at }));
+    renameSync2(temp, pending);
+  }
+  await lockedWrite(commonDir, directory, lock, () => {
+    setHold(commonDir, directory, sessionID, jobs, at);
+    let left;
+    try {
+      left = parseHold(JSON.parse(readFileSync6(pending, "utf8")));
+    } catch {
+      left = undefined;
+    }
+    if (left === undefined || left.updatedAt <= at)
+      rmSync4(pending, { force: true });
+  });
+}
 function readHolds(commonDir, directory) {
   const dir = holdsDir(commonDir, directory);
   let names;
@@ -5837,22 +5915,28 @@ function holdsState(commonDir, directory, now, expiryMs = HOLD_EXPIRY_MS) {
     return "the coordination store is not writable, so running work cannot be ruled out";
   return;
 }
-async function lockedWorktreeRemoval(commonDir, directory, lock, steps) {
+async function lockedWorktreeRead(commonDir, directory, lock, read) {
   let entered = false;
   try {
     return await withDiskLock(commonDir, directory, lock, async () => {
       entered = true;
-      const reason = await steps.recheck();
-      if (reason !== undefined)
-        return { removed: false, reason };
-      return { removed: true, value: await steps.remove() };
+      return { locked: true, value: await read() };
     });
   } catch (error) {
     if (entered)
       throw error;
     const message = error instanceof LockTimeout ? `the worktree is locked by another remover (${error.message})` : `the lock could not be taken (${error instanceof Error ? error.message : String(error)})`;
-    return { removed: false, reason: message };
+    return { locked: false, reason: message };
   }
+}
+async function lockedWorktreeRemoval(commonDir, directory, lock, steps) {
+  const outcome = await lockedWorktreeRead(commonDir, directory, lock, async () => {
+    const reason = await steps.recheck();
+    if (reason !== undefined)
+      return { removed: false, reason };
+    return { removed: true, value: await steps.remove() };
+  });
+  return outcome.locked ? outcome.value : { removed: false, reason: outcome.reason };
 }
 function lockedWrite(commonDir, directory, options, write) {
   return withDiskLock(commonDir, directory, { waitMs: 1e4, ...options }, async () => write());
@@ -6159,6 +6243,7 @@ async function moveLaneHome(client, lane, destination) {
 var RECEIPT_FILE2 = /^\d+-(?:[0-9a-f]{12}|nomerge)\.json$/;
 var RETRY_WINDOW_MS = 5000;
 var DEBOUNCE_MS = 2000;
+var UNRESOLVED_COMMON = "worktree.held: observed the git common directory could not be resolved, expected a coordination store; nothing was removed";
 var MAX_PER_PASS = 20;
 var MAX_SESSION_PAGES = 20;
 function pendingCleanupAction(receipt, facts) {
@@ -6190,6 +6275,9 @@ function nudgeText(receipt, receiptPath, clone) {
     return clone === undefined ? [update, close] : [inClone(clone, update), inClone(clone, close)];
   });
   return `<system-reminder>Landed PR #${receipt.pr.number}: close beads ${receipt.beads.ids.join(", ")} (commands: ${commands.join("; ")}) so its worktree can be cleaned up.</system-reminder>`;
+}
+function partlyRemovedText(receipt, notes) {
+  return `<system-reminder>delivery cleanup of PR #${receipt.pr.number}: removal attempted, partly removed, unverified: ${receipt.worktree.path ?? ""}. ${notes.join("; ")}. Delivery does not retry it; the landing receipt stays the receipt of record.</system-reminder>`;
 }
 function pendingReceipts(receipts) {
   const superseded = new Set(receipts.flatMap((receipt) => receipt.supersedes === null ? [] : [receipt.supersedes]));
@@ -6602,10 +6690,19 @@ function createPendingCleanup(deps) {
   };
   const holdCheckAt = async (repo, common, worktree) => await holdAt(repo, common, worktree) ?? landingBlockAt(common, worktree) ?? unsafe.get(canonicalDirectory(worktree)) ?? (holdReportsInFlight > 0 ? "running work reported by an idle session is still being recorded" : undefined);
   const holdCheck = async (repo, worktree) => holdCheckAt(repo, await commonOf(repo), worktree);
+  const proofIn = (repo) => async (worktree, read) => {
+    const common = await commonOf(repo);
+    if (common === null)
+      return { ok: false, reason: UNRESOLVED_COMMON };
+    const outcome = await lockedWorktreeRead(common, worktree, { sessionID: "delivery", now, ...deps.lock }, read);
+    if (outcome.locked)
+      return outcome.value;
+    return { ok: false, reason: `worktree.held: observed ${outcome.reason}, expected no competing remover; nothing was removed` };
+  };
   const sectionIn = (repo) => async (worktree, run) => {
     const common = await commonOf(repo);
     if (common === null)
-      return { ok: false, reason: "worktree.held: observed the git common directory could not be resolved, expected a coordination store; nothing was removed" };
+      return { ok: false, reason: UNRESOLVED_COMMON };
     const outcome = await lockedWorktreeRemoval(common, worktree, { sessionID: "delivery", now, ...deps.lock }, {
       recheck: () => holdCheck(repo, worktree),
       remove: run
@@ -6621,6 +6718,7 @@ function createPendingCleanup(deps) {
     let roots = [];
     let forms = [];
     return {
+      proofSection: proofIn(repo),
       removalSection: sectionIn(repo),
       finalCheck: async (worktree) => {
         const common = await commonOf(repo);
@@ -6807,7 +6905,10 @@ function createPendingCleanup(deps) {
         } catch {
           continue;
         }
-        if (result.ok) {
+        if (result.ok && result.partlyRemoved) {
+          doneIds.add(idOf(receipt));
+          await ctx.session.synthetic({ sessionID, text: partlyRemovedText(receipt, result.report.skipped) }).catch(() => {});
+        } else if (result.ok) {
           doneIds.add(idOf(receipt));
           finished.add(receipt.receiptId);
           if (recorded.common !== null && recorded.byReceipt.get(receipt.receiptId)?.denied === undefined) {
@@ -6928,7 +7029,7 @@ function createPendingCleanup(deps) {
           jobs.push({ kind: job.kind, id: job.shellID ?? job.childSessionID ?? job.sessionID ?? "unknown" });
       }
       try {
-        await lockedAt(common, path, () => setHold(common, path, sessionID, jobs, now()));
+        await recordHold(common, path, sessionID, jobs, now(), { sessionID: "delivery", now, ...deps.lock });
         unsafe.delete(want);
       } catch (error) {
         const why = error instanceof Error ? error.message : String(error);
@@ -7167,6 +7268,7 @@ var LAND_OUTPUT = {
         ok: { type: "boolean" },
         reason: { type: "string" },
         removed: { type: "string" },
+        partlyRemoved: { type: "string" },
         localRefDeleted: { type: "boolean" },
         skipped: { type: "boolean" },
         deferred: { type: "string" },
@@ -7203,6 +7305,7 @@ var CLEANUP_OUTPUT = {
     worktree: { type: "string" },
     remoteBranchAbsence: { type: "string", enum: ["absent", "present", "unknown"] },
     alreadyCleaned: { type: "boolean" },
+    partlyRemoved: { type: "boolean" },
     removed: { type: "array", items: { type: "string" } },
     skipped: { type: "array", items: { type: "string" } },
     reason: { type: "string" },
@@ -7248,10 +7351,24 @@ function cleanupOutput(result) {
     worktree: result.receipt.worktree.path ?? "",
     remoteBranchAbsence: result.remoteBranchAbsence,
     alreadyCleaned: result.alreadyCleaned,
+    partlyRemoved: result.partlyRemoved,
     removed: result.report.removed,
     skipped: result.report.skipped,
     receipt: result.receipt
   };
+}
+function cleanupText(result) {
+  if (!result.ok)
+    return `delivery_cleanup refused: ${result.reason}`;
+  const skipped = result.report.skipped.length > 0 ? `; skipped: ${result.report.skipped.join("; ")}` : "";
+  const receipt = `
+receipt: ${result.path}`;
+  if (result.alreadyCleaned)
+    return `delivery_cleanup: nothing to remove. ${result.report.skipped.join("; ")}.${receipt}`;
+  if (result.partlyRemoved) {
+    return `delivery_cleanup: removal attempted, partly removed, unverified: ${result.receipt.worktree.path ?? ""}${skipped}.${receipt}`;
+  }
+  return `delivery_cleanup removed ${result.report.removed.join(", ")}${skipped}; remote branch ${result.remoteBranchAbsence}.${receipt}`;
 }
 function metadataOf(output) {
   const { receipt: _receipt, ...rest } = output;
@@ -7381,9 +7498,7 @@ async function setupDelivery(ctx, overrides = {}) {
         }
         await pending.gc(result.ok ? result.receipt : undefined);
         const output = cleanupOutput(result);
-        const text = !result.ok ? `delivery_cleanup refused: ${result.reason}` : result.alreadyCleaned ? `delivery_cleanup: nothing to remove. ${result.report.skipped.join("; ")}.
-receipt: ${result.path}` : `delivery_cleanup removed ${result.report.removed.join(", ")}${result.report.skipped.length > 0 ? `; skipped: ${result.report.skipped.join("; ")}` : ""}; remote branch ${result.remoteBranchAbsence}.
-receipt: ${result.path}`;
+        const text = cleanupText(result);
         return { output, content: text, metadata: metadataOf(output) };
       }
     });
@@ -7502,6 +7617,7 @@ export {
   SKILL_PATH,
   availableModel,
   cleanupDelivery,
+  cleanupText,
   confirmDelivery,
   src_default as default,
   fallbackModel,

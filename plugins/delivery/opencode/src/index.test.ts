@@ -6,6 +6,7 @@ import { createFakeContext, type FakeContextOptions } from "@srobroek/opencode-l
 import { AGENT_IDS, hasModelRoles, loadAgents } from "./agents.ts"
 import plugin, {
   CLEANUP_ACTION,
+  cleanupText,
   confirmDelivery,
   FAN_OUT_PATH,
   FAN_OUT_SKILL_PATH,
@@ -18,6 +19,26 @@ import plugin, {
 
 type Result = { output?: Record<string, unknown>; content: string; metadata: Record<string, unknown> }
 type Execute = (input: unknown, context: unknown) => Promise<Result>
+
+describe("cleanupText", () => {
+  const done = {
+    ok: true as const,
+    receipt: { worktree: { path: "/w/a" } },
+    path: "/r",
+    remoteBranchAbsence: "absent" as const,
+    alreadyCleaned: false,
+    partlyRemoved: false,
+    localRefDeleted: true,
+    report: { removed: ["worktree /w/a", "local branch b"], skipped: [] as string[] },
+  }
+  test("a removal that stopped part-way is headed as attempted, partly removed and unverified, never as removed", () => {
+    const text = cleanupText({ ...done, partlyRemoved: true, localRefDeleted: false, report: { removed: [], skipped: ["inspect /w/a"] } } as never)
+    expect(text).toBe("delivery_cleanup: removal attempted, partly removed, unverified: /w/a; skipped: inspect /w/a.\nreceipt: /r")
+  })
+  test("a finished removal lists what it removed", () => {
+    expect(cleanupText(done as never)).toBe("delivery_cleanup removed worktree /w/a, local branch b; remote branch absent.\nreceipt: /r")
+  })
+})
 
 describe("landOutput", () => {
   test("a queued (non-final) result reaches the tool output with queued true and no mergeIssued", () => {
