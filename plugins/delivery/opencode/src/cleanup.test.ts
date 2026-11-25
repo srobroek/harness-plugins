@@ -9,7 +9,16 @@ import {
   writeClaim,
   writeLanding,
 } from "@srobroek/opencode-lib/worktree-claims"
-import { holdsState, lockedWrite, lockFile, readHolds, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
+import {
+  holdsState,
+  lockedWorktreeRead,
+  lockedWorktreeRemoval,
+  lockedWrite,
+  lockFile,
+  readHolds,
+  setHold,
+  withDiskLock,
+} from "@srobroek/opencode-lib/worktree-locks"
 import { addClone, MAX_CLONES, readClones, registryFile } from "./clone-registry.ts"
 import { authorizeExplicit, CleanupDeferred, createPendingCleanup } from "./pending-cleanup.ts"
 
@@ -693,6 +702,12 @@ async function invoke(
 function refusal(result: CleanupResult): string {
   if (result.ok) throw new Error(`expected refusal, got ${result.receipt.receiptId}`)
   return result.reason
+}
+
+/** The success of a call whose removal ran, whatever it could not finish afterwards. */
+function removal(result: CleanupResult): Extract<CleanupResult, { ok: true }> {
+  if (!result.ok) throw new Error(`expected the removal to be reported, got a refusal: ${result.reason}`)
+  return result
 }
 
 function commandCalls(calls: string[][], verb: string): string[][] {
@@ -1635,7 +1650,7 @@ describe("delivery_cleanup irreversible boundary", () => {
     expect(existsSync(f.linked)).toBe(true)
   })
 
-  test("a ref that moves after worktree removal is not force-deleted and emits no receipt", async () => {
+  test("a ref that moves after worktree removal is kept, and the removal reports success with the ref recorded present", async () => {
     const f = await fixture("ref-race")
     const beforeReceipts = readFileSync(f.receiptPath, "utf8")
     const raced = git(f.main, ["commit-tree", `${f.merge}^{tree}`, "-p", f.merge, "-m", "raced ref"])
@@ -1650,13 +1665,18 @@ describe("delivery_cleanup irreversible boundary", () => {
         },
       },
     )
-    expect(refusal(result)).toContain("branch.localRef: observed")
+    const done = removal(result)
+    expect(done.report.removed).toEqual([`worktree ${f.receipt.worktree.path}`])
+    expect(done.report.skipped.join("\n")).toContain(`local branch ${f.branch} kept: it moved off ${f.head}`)
+    expect(done.localRefDeleted).toBe(false)
+    expect(done.receipt.worktree).toMatchObject({ removed: true, localRefDeleted: false })
+    expect(done.receipt.proof.evidence).toMatchObject({ localRef: "present" })
     expect(git(f.main, ["rev-parse", `refs/heads/${f.branch}`])).toBe(raced)
     expect(calls.some((argv) => argv[0] === "git" && argv[1] === "branch")).toBe(false)
     expect(readFileSync(f.receiptPath, "utf8")).toBe(beforeReceipts)
   })
 
-  test("work after the removal still runs when a ref race refuses the cleanup later, and its notes join the refusal", async () => {
+  test("work after the removal still runs when a ref race keeps the branch, and its notes join the report", async () => {
     const f = await fixture("ref-race-after")
     const raced = git(f.main, ["commit-tree", `${f.merge}^{tree}`, "-p", f.merge, "-m", "raced ref"])
     const seen: string[] = []
@@ -1677,8 +1697,9 @@ describe("delivery_cleanup irreversible boundary", () => {
         },
       },
     )
-    expect(refusal(result)).toContain("branch.localRef: observed")
-    expect(refusal(result)).toContain("session ses_x could not be moved")
+    const notes = removal(result).report.skipped.join("\n")
+    expect(notes).toContain(`local branch ${f.branch} kept`)
+    expect(notes).toContain("session ses_x could not be moved")
     expect(seen).toHaveLength(1)
     expect(existsSync(f.linked)).toBe(false)
   })
@@ -1697,7 +1718,9 @@ describe("delivery_cleanup irreversible boundary", () => {
         },
       },
     )
-    expect(result.ok).toBe(false)
+    const done = removal(result)
+    expect(done.receipt.receiptId).toBe(f.receipt.receiptId)
+    expect(done.report.skipped.join("\n")).toContain("absence is not proven")
     expect(ran).toBe(false)
   })
 
@@ -1718,7 +1741,7 @@ describe("delivery_cleanup irreversible boundary", () => {
     expect(result.report.skipped.join("\n")).toContain("move machinery down")
   })
 
-  test("notes from the work after the removal join the refusal when the continuation receipt cannot be written", async () => {
+  test("notes from the work after the removal join the report when the continuation receipt cannot be written", async () => {
     const f = await fixture("after-notes-write-fails")
     const dir = dirname(f.receiptPath)
     const { result } = await invoke(
@@ -1734,11 +1757,14 @@ describe("delivery_cleanup irreversible boundary", () => {
         },
       },
     )
-    expect(refusal(result)).toContain("continuation receipt write")
-    expect(refusal(result)).toContain("session ses_x could not be moved")
+    const done = removal(result)
+    const notes = done.report.skipped.join("\n")
+    expect(notes).toContain("no continuation receipt written")
+    expect(notes).toContain("session ses_x could not be moved")
+    expect(done.receipt.receiptId).toBe(f.receipt.receiptId)
   })
 
-  test("re-registration after removal is detected independently and stops branch deletion", async () => {
+  test("re-registration after removal is reported, keeps the branch and writes no receipt", async () => {
     const f = await fixture("registration-race")
     const { result, calls } = await invoke(
       f,
@@ -1751,7 +1777,10 @@ describe("delivery_cleanup irreversible boundary", () => {
         },
       },
     )
-    expect(refusal(result)).toContain('worktree.registrationAbsence: observed "present", expected "absent"')
+    const done = removal(result)
+    expect(done.report.removed).toEqual([`worktree ${f.receipt.worktree.path}`])
+    expect(done.report.skipped.join("\n")).toContain("registration present")
+    expect(done.receipt.receiptId).toBe(f.receipt.receiptId)
     expect(existsSync(f.linked)).toBe(true)
     expect(calls.some((argv) => argv[0] === "git" && argv[1] === "branch")).toBe(false)
   })
@@ -1759,7 +1788,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   test("a stored registration path remains present proof after its filesystem target vanishes", async () => {
     const f = await fixture("stored-registration")
     const { result, calls } = await invoke(f, { receipt: f.receiptPath }, { registeredTargetAfterRemove: true })
-    expect(refusal(result)).toContain('worktree.registrationAbsence: observed "present", expected "absent"')
+    expect(removal(result).report.skipped.join("\n")).toContain("registration present")
     expect(existsSync(f.linked)).toBe(false)
     expect(calls.some((argv) => argv[0] === "git" && argv[1] === "branch")).toBe(false)
   })
@@ -1767,7 +1796,7 @@ describe("delivery_cleanup irreversible boundary", () => {
   test("a pathless porcelain record makes post-remove registration proof unknown", async () => {
     const f = await fixture("pathless-record")
     const { result, calls } = await invoke(f, { receipt: f.receiptPath }, { pathlessAfterRemove: true })
-    expect(refusal(result)).toContain('worktree.registrationAbsence: observed "unknown", expected "absent"')
+    expect(removal(result).report.skipped.join("\n")).toContain("registration unknown")
     expect(calls.some((argv) => argv[0] === "git" && argv[1] === "branch")).toBe(false)
   })
 
@@ -1784,11 +1813,13 @@ describe("delivery_cleanup irreversible boundary", () => {
         },
       },
     )
-    expect(refusal(result)).toContain('worktree.pathAbsence: observed "present", expected "absent"')
+    const done = removal(result)
+    expect(done.report.skipped.join("\n")).toContain("directory present")
+    expect(done.receipt.receiptId).toBe(f.receipt.receiptId)
     expect(calls.some((argv) => argv[0] === "git" && argv[1] === "branch")).toBe(false)
   })
 
-  test("local-ref recreation after branch -d is independently reported and emits no receipt", async () => {
+  test("local-ref recreation after branch -d is reported, and the receipt records the ref present", async () => {
     const f = await fixture("local-ref-race")
     const { result } = await invoke(
       f,
@@ -1801,7 +1832,10 @@ describe("delivery_cleanup irreversible boundary", () => {
         },
       },
     )
-    expect(refusal(result)).toContain('worktree.localRefAbsence: observed "present", expected "absent"')
+    const done = removal(result)
+    expect(done.report.skipped.join("\n")).toContain(`local branch ${f.branch}: observed present afterwards, expected absent`)
+    expect(done.localRefDeleted).toBe(false)
+    expect(done.receipt.worktree).toMatchObject({ removed: true, localRefDeleted: false })
     expect(git(f.main, ["rev-parse", `refs/heads/${f.branch}`])).toBe(f.head)
   })
 
@@ -1818,6 +1852,128 @@ describe("delivery_cleanup irreversible boundary", () => {
 
   test("a leading-dash branch remains an operand after the branch-delete option terminator", () => {
     expect(branchDeleteArgs("-malicious-option")).toEqual(["branch", "-d", "--", "-malicious-option"])
+  })
+})
+
+/**
+ * The worktree lock every delivery remover takes (`pending-cleanup.ts`), without the host's last
+ * look at claims and sessions, so two calls in one test exclude each other the way two plugin
+ * instances do. `sleep` sees the waits for a busy lock.
+ */
+function lockedDeps(f: Fixture, sessionID: string, sleep?: (ms: number) => Promise<void>): Partial<CleanupDeps> {
+  const common = resolve(f.main, git(f.main, ["rev-parse", "--git-common-dir"]))
+  const lock = { sessionID, ...(sleep === undefined ? {} : { sleep }) }
+  return {
+    proofSection: async (worktree, read) => {
+      const outcome = await lockedWorktreeRead(common, worktree, lock, read)
+      return outcome.locked ? outcome.value : { ok: false, reason: outcome.reason }
+    },
+    removalSection: async (worktree, run) => {
+      const outcome = await lockedWorktreeRemoval(common, worktree, lock, { recheck: async () => undefined, remove: run })
+      return outcome.removed ? outcome.value : { ok: false, reason: outcome.reason }
+    },
+  }
+}
+
+const isWorktreeRemove = (argv: readonly string[]) => argv[0] === "git" && argv[1] === "worktree" && argv[2] === "remove"
+
+describe("delivery_cleanup beside another remover", () => {
+  test("a cleanup that overlaps another call's removal reports the worktree already cleaned, not a dirty tree", async () => {
+    const f = await fixture("overlap")
+    const tracked = git(f.linked, ["ls-files"]).split("\n").filter(Boolean)
+    let partWay = () => {}
+    const removing = new Promise<void>((done) => {
+      partWay = done
+    })
+    let release = () => {}
+    const released = new Promise<void>((done) => {
+      release = done
+    })
+    const first = runner(f)
+    // `git worktree remove` deletes the tree file by file: this one stops part-way until the other call has looked.
+    const runFirst: CliRunner = async (argv, options) => {
+      if (!isWorktreeRemove(argv)) return first.run(argv, options)
+      for (const file of tracked.slice(0, 2)) rmSync(join(f.linked, file))
+      partWay()
+      await released
+      return runCli([...argv.slice(0, 3), "--force", ...argv.slice(3)], options)
+    }
+    const deps = { now: () => NOW + 10, env: f.env, bounds: HEAVY_FIXTURE_BOUNDS }
+    const removal = cleanupDelivery({ receipt: f.receiptPath }, f.main, { ...deps, run: runFirst, ...lockedDeps(f, "first") })
+    await removing
+    let waiting = () => {}
+    const blocked = new Promise<void>((done) => {
+      waiting = done
+    })
+    const lockWait = async (ms: number) => {
+      waiting()
+      await Bun.sleep(ms)
+    }
+    const overlapping = cleanupDelivery({ receipt: f.receiptPath }, f.main, { ...deps, run: runner(f).run, ...lockedDeps(f, "second", lockWait) })
+    // The second call either answers from the half-deleted tree or waits for the lock the removal holds.
+    await Promise.race([overlapping, blocked])
+    release()
+    const [removed, other] = await Promise.all([removal, overlapping])
+    if (!removed.ok) throw new Error(removed.reason)
+    expect(removed.alreadyCleaned).toBe(false)
+    if (!other.ok) throw new Error(`refused while another call removed the worktree: ${other.reason}`)
+    expect(other.alreadyCleaned).toBe(true)
+    expect(other.report.removed).toEqual([])
+    expect(existsSync(f.linked)).toBe(false)
+  })
+
+  test("a worktree another remover takes between the proofs and the removal is reported already cleaned", async () => {
+    const f = await fixture("taken-before-removal")
+    const { result, calls } = await invoke(
+      f,
+      { receipt: f.receiptPath },
+      {},
+      {
+        ...lockedDeps(f, "late"),
+        // The prompt sits between the proofs and the removal section; another remover finishes meanwhile.
+        authorize: async () => {
+          git(f.main, ["worktree", "remove", "--force", f.linked])
+        },
+      },
+    )
+    if (!result.ok) throw new Error(`refused after another remover took the worktree: ${result.reason}`)
+    expect(result.alreadyCleaned).toBe(true)
+    expect(calls.filter(isWorktreeRemove)).toEqual([])
+  })
+
+  test("a tree that only lost tracked files is refused as a removal in progress elsewhere, with nothing removed", async () => {
+    const f = await fixture("unlocked-remover")
+    // A remover that takes no lock (another plugin, `wt remove`) is part-way through the tree.
+    for (const file of git(f.linked, ["ls-files"]).split("\n").filter(Boolean).slice(0, 2)) rmSync(join(f.linked, file))
+    const { result, calls } = await invoke(f, { receipt: f.receiptPath }, {}, lockedDeps(f, "observer"))
+    expect(refusal(result)).toContain("worktree.status")
+    expect(refusal(result)).toContain("only deleted tracked files")
+    expect(refusal(result)).toContain("another process")
+    expect(mutationCalls(calls)).toEqual([])
+    expect(existsSync(f.linked)).toBe(true)
+  })
+
+  test("a removal that fails part-way is reported as what it removed, not as a refusal", async () => {
+    const f = await fixture("part-way")
+    const before = readdirSync(dirname(f.receiptPath)).sort()
+    const scripted = runner(f)
+    // Git deletes the registration even when it cannot delete every file of the tree.
+    const run: CliRunner = async (argv, options) => {
+      if (!isWorktreeRemove(argv)) return scripted.run(argv, options)
+      scripted.calls.push([...argv])
+      await runCli([...argv.slice(0, 3), "--force", ...argv.slice(3)], options)
+      mkdirSync(join(f.linked, "vendor"), { recursive: true })
+      writeFileSync(join(f.linked, "vendor", "read-only.txt"), "x\n")
+      return { ok: true, exitCode: 255, stdout: "", stderr: `error: failed to delete '${f.linked}': Directory not empty\n` }
+    }
+    const result = await cleanupDelivery({ receipt: f.receiptPath }, f.main, { run, now: () => NOW + 10, env: f.env, bounds: HEAVY_FIXTURE_BOUNDS })
+    if (!result.ok) throw new Error(`refused after the removal ran: ${result.reason}`)
+    expect(result.alreadyCleaned).toBe(false)
+    expect(result.report.removed).toEqual([])
+    expect(result.report.skipped.join("\n")).toContain("part-way")
+    expect(result.localRefDeleted).toBe(false)
+    expect(scripted.calls.some((argv) => argv[0] === "git" && argv[1] === "branch")).toBe(false)
+    expect(readdirSync(dirname(f.receiptPath)).sort()).toEqual(before)
   })
 })
 
@@ -3403,6 +3559,31 @@ describe("pending cleanup: one remover per worktree", () => {
       expect(removed(h)).toBe(false)
       expect(mutationCalls(h.scripted.calls)).toEqual([])
       expect(JSON.parse(readFileSync(lockFile(h.common, h.f.linked), "utf8")).token).toBe("theirs")
+      await h.finish()
+    })
+
+    test("an explicit cleanup reads the target only after another remover's removal, and reports it already cleaned", async () => {
+      let waiting = () => {}
+      const blocked = new Promise<void>((done) => {
+        waiting = done
+      })
+      const lockWait = async (ms: number) => {
+        waiting()
+        await Bun.sleep(ms)
+      }
+      const h = await harness("explicit-proofs-locked", { lock: { sleep: lockWait } })
+      let cleanup: Promise<CleanupResult> = Promise.resolve({ ok: false, reason: "the cleanup never started" })
+      await withDiskLock(h.common, h.f.linked, { sessionID: "subagent-worktree", now: () => NOW + 10 }, async () => {
+        // The other remover is part-way: tracked files are gone and the tree is still registered.
+        for (const file of git(h.f.linked, ["ls-files"]).split("\n").filter(Boolean).slice(0, 2)) rmSync(join(h.f.linked, file))
+        cleanup = outsideLocks(() => explicitCleanup(h))
+        await Promise.race([cleanup, blocked])
+        git(h.f.main, ["worktree", "remove", "--force", h.f.linked])
+      })
+      const result = await cleanup
+      if (!result.ok) throw new Error(`refused while another remover removed the worktree: ${result.reason}`)
+      expect(result.alreadyCleaned).toBe(true)
+      expect(h.scripted.calls.filter(isWorktreeRemove)).toEqual([])
       await h.finish()
     })
 
@@ -5031,14 +5212,18 @@ describe("delivery_cleanup round 2", () => {
   test.each([
     ["a preserved moved ref", (f: Fixture) => git(f.main, ["branch", f.branch, f.merge])],
     ["an already absent ref", () => undefined],
-  ])("an unknown final local-ref probe on %s refuses and writes no cleaned receipt", async (_name, arrange) => {
+  ])("an unknown final local-ref probe on %s is reported, and the cleaned receipt records the ref unknown", async (_name, arrange) => {
     const f = await fixture("probe-unknown")
     git(f.linked, ["branch", "-m", "renamed-branch"])
     arrange(f)
     const before = listReceipts(receiptDirectory(f.env, f.receipt.repo.key)).length
     const { result } = await invoke(f, { receipt: f.receiptPath }, { after: failFinalProbe() })
-    expect(refusal(result)).toContain("worktree.localRefAbsence")
-    expect(listReceipts(receiptDirectory(f.env, f.receipt.repo.key))).toHaveLength(before)
+    const done = removal(result)
+    expect(done.report.skipped.join("\n")).toContain(`local branch ${f.branch}: observed unknown afterwards`)
+    expect(done.localRefDeleted).toBe(false)
+    expect(done.receipt.worktree).toMatchObject({ removed: true, localRefDeleted: false })
+    expect(done.receipt.proof.evidence).toMatchObject({ localRef: "unknown" })
+    expect(listReceipts(receiptDirectory(f.env, f.receipt.repo.key))).toHaveLength(before + 1)
   })
 
   test("a ref that was already absent is reported as such, never as deleted", async () => {

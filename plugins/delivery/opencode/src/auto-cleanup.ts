@@ -68,10 +68,12 @@ const DIRTY_GATE = /^worktree\.(?:status|operation|stash):/
 export function reportFromCleanup(result: CleanupResult): CleanupReport {
   if (!result.ok) return { ok: false, reason: DIRTY_GATE.test(result.reason) ? `dirty: ${result.reason}` : result.reason }
   // The facts come from what cleanupDelivery did: nothing was removed when the worktree was already
-  // gone, and the local ref survives when it was absent or had moved off the reviewed head.
+  // gone or its removal failed part-way, and the local ref survives when it was absent or had moved
+  // off the reviewed head.
+  const removed = !result.alreadyCleaned && result.report.removed.length > 0
   return {
     ok: true,
-    ...(result.alreadyCleaned ? {} : { removed: result.receipt.worktree.path ?? "" }),
+    ...(removed ? { removed: result.receipt.worktree.path ?? "" } : {}),
     localRefDeleted: result.localRefDeleted,
     alreadyCleaned: result.alreadyCleaned,
     kept: result.report.skipped,
@@ -116,7 +118,8 @@ export function textAfterCleanup(text: string, report: CleanupReport): string {
     const branch = report.localRefDeleted === false ? "" : " and its local branch"
     const left = report.kept !== undefined && report.kept.length > 0 ? `; kept: ${report.kept.join("; ")}` : ""
     const tail = left === "" ? "; nothing left to run" : ""
-    return [...kept, `cleanup: removed ${report.removed}${branch}${left}${tail}.`].join("\n")
+    const what = report.removed === undefined ? "nothing" : `${report.removed}${branch}`
+    return [...kept, `cleanup: removed ${what}${left}${tail}.`].join("\n")
   }
   return [...lines, `cleanup: not finished (${report.reason}); the landing stands. Fix that and call delivery_cleanup.`].join("\n")
 }

@@ -442,7 +442,7 @@ export async function setupDelivery(
           ? `delivery_cleanup refused: ${result.reason}`
           : result.alreadyCleaned
             ? `delivery_cleanup: nothing to remove. ${result.report.skipped.join("; ")}.\nreceipt: ${result.path}`
-            : `delivery_cleanup removed ${result.report.removed.join(", ")}${result.report.skipped.length > 0 ? `; skipped: ${result.report.skipped.join("; ")}` : ""}; remote branch ${result.remoteBranchAbsence}.\nreceipt: ${result.path}`
+            : `delivery_cleanup removed ${result.report.removed.length === 0 ? "nothing" : result.report.removed.join(", ")}${result.report.skipped.length > 0 ? `; skipped: ${result.report.skipped.join("; ")}` : ""}; remote branch ${result.remoteBranchAbsence}.\nreceipt: ${result.path}`
         return { output, content: text, metadata: metadataOf(output) }
       },
     })

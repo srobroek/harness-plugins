@@ -54,6 +54,19 @@ test("a successful cleanup reports the removed path and the local ref", () => {
   expect(reportFromCleanup(success)).toEqual({ ok: true, removed: "/w/a", localRefDeleted: true, alreadyCleaned: false, kept: [] })
 })
 
+test("a removal that failed part-way reports nothing removed, with its notes kept", () => {
+  const partWay: CleanupResult = {
+    ...success,
+    localRefDeleted: false,
+    report: { removed: [], skipped: ["worktree /w/a: the removal failed part-way"] },
+  }
+  const report = reportFromCleanup(partWay)
+  expect(report).toEqual({ ok: true, localRefDeleted: false, alreadyCleaned: false, kept: ["worktree /w/a: the removal failed part-way"] })
+  expect(textAfterCleanup("landed\nnext: run delivery_cleanup to remove the worktree and the local branch.", report)).toBe(
+    "landed\ncleanup: removed nothing; kept: worktree /w/a: the removal failed part-way.",
+  )
+})
+
 test.each(["worktree.status", "worktree.operation", "worktree.stash"])("a %s refusal is reported as dirty", (gate) => {
   expect(reportFromCleanup({ ok: false, reason: `${gate}: observed x, expected y` })).toEqual({
     ok: false,

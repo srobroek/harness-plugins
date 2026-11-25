@@ -131,10 +131,20 @@ export type CleanupDeps = {
    */
   host?: HostWorktrees
   /**
+   * Runs the reads that prove the target (its identity, the pull request read from inside it, a clean
+   * tree, a pushed tip) under the lock `removalSection` takes, without its last look. A remover part-way
+   * through deleting the tree makes it read as dirty or unregistered; under the lock such a remover has
+   * either not started or finished, and a finished one leaves the target gone, which this call then
+   * reports as already cleaned. Returns `read`'s result, or a refusal when the lock cannot be taken.
+   * Absent, `read` is called directly.
+   */
+  proofSection?: <T>(worktree: string, read: () => Promise<T>) => Promise<T | CleanupFailure>
+  /**
    * Runs the removal itself (the last identity proof, the worktree removal and the branch deletion)
    * as one critical section: the caller takes whatever lock excludes every other remover, confirms
    * what it must confirm last, then calls `run`. It returns `run`'s result, or a failure when it
    * refuses. Absent, `run` is called directly. `authorize` (a prompt) happens before and outside it.
+   * `run` refuses only before its removal command has changed anything.
    */
   removalSection?: (worktree: string, run: () => Promise<CleanupFailure | RemovalFacts>) => Promise<CleanupFailure | RemovalFacts>
   /**
@@ -169,17 +179,26 @@ export type CleanupDeps = {
 export type RepositoryIdentity = { common: string; root: string }
 
 /** What {@link CleanupDeps.coordinate} binds to one repository. */
-export type Coordination = Pick<CleanupDeps, "removalSection" | "finalCheck" | "afterRemoval" | "host" | "authorize">
+export type Coordination = Pick<CleanupDeps, "proofSection" | "removalSection" | "finalCheck" | "afterRemoval" | "host" | "authorize">
 
-/** What the removal section proved and did, for the continuation receipt. */
+/**
+ * What the removal section did once its removal command ran, for the result and the continuation
+ * receipt. From then on nothing refuses: what it could not finish or prove is in `unfinished`.
+ */
 export type RemovalFacts = {
   ok: true
+  /** The worktree removal finished: its command succeeded, or the target is proven gone. False when it failed part-way. */
+  worktreeRemoved: boolean
   registration: Absence
   pathGone: Absence
   localAbsence: Absence
   /** What was done with the receipt branch's local ref: deleted, already gone, or left because it moved. */
   localRefPlan: LocalRefPlan
+  /** True only when this call deleted the receipt branch's ref and it is absent afterwards. */
+  localRefDeleted: boolean
   executionDir: string
+  /** What the removal left unfinished or unproven, in words for the caller; empty when nothing was. */
+  unfinished: readonly string[]
 }
 
 export type HostWorktrees = {
@@ -361,30 +380,28 @@ export function selectReceipt(
   )
 }
 
-/** What a finished removal took and left, for the caller. Pure. */
+/** What a removal took and left, for the caller, from what its section did. Pure. */
 export function removalReport(
   receipt: LandingReceipt,
   path: string,
   target: { head: string; branch: string | null; detached: boolean },
-  plan: LocalRefPlan,
+  facts: Pick<RemovalFacts, "worktreeRemoved" | "localRefPlan" | "localRefDeleted" | "unfinished">,
 ): CleanupReport {
-  const removed = [`worktree ${path}`]
+  const removed = facts.worktreeRemoved ? [`worktree ${path}`] : []
   const skipped: string[] = []
   const branch = receipt.branch.name
-  if (plan === "delete") removed.push(`local branch ${branch}`)
-  else if (plan === "absent") skipped.push(`local branch ${branch} was already gone`)
-  else skipped.push(`local branch ${branch} left in place: it no longer points at the reviewed head`)
+  // A ref planned for deletion that was not deleted is explained among the unfinished notes.
+  if (facts.localRefDeleted) removed.push(`local branch ${branch}`)
+  else if (facts.localRefPlan === "absent") skipped.push(`local branch ${branch} was already gone`)
+  else if (facts.localRefPlan === "moved") skipped.push(`local branch ${branch} left in place: it no longer points at the reviewed head`)
   if (!target.detached && target.branch !== null && target.branch !== `${LOCAL_REF_PREFIX}${branch}`) {
     skipped.push(`branch ${target.branch.slice(LOCAL_REF_PREFIX.length)} (the worktree's own) left in place`)
   }
-  return { removed, skipped }
+  return { removed, skipped: [...skipped, ...facts.unfinished] }
 }
 
 const withNotes = (report: CleanupReport, notes: readonly string[]): CleanupReport =>
   notes.length === 0 ? report : { ...report, skipped: [...report.skipped, ...notes] }
-
-const withRefusalNotes = (failure: CleanupFailure, notes: readonly string[]): CleanupFailure =>
-  notes.length === 0 ? failure : { ...failure, reason: `${failure.reason}; after the removal: ${notes.join("; ")}` }
 
 export type WorktreeAcceptance = { ok: true; branch: "same" | "renamed" | "detached" } | CleanupFailure
 
@@ -878,6 +895,12 @@ function worktreePathState(path: string): "directory" | "absent" | "unsafe" {
   }
 }
 
+/** Why a tree with only deleted tracked files is refused, and what to do: see {@link verifyCleanTarget}. */
+const REMOVAL_ELSEWHERE =
+  "the tree has only deleted tracked files, which is what another process removing it looks like part-way " +
+  "(one outside the delivery worktree lock, such as another harness's delivery plugin or `wt remove`); " +
+  "this call removed nothing, so rerun delivery_cleanup once that removal has finished"
+
 function dirtyPaths(output: string): string[] {
   return output
     .split(/\r?\n/)
@@ -905,11 +928,10 @@ async function verifyCleanTarget(
   if (!completed(result)) return commandFailure("worktree.status", ["git", ...argv], result, "exit 0 with empty output")
   if (result.stdout !== "") {
     const all = result.stdout.split(/\r?\n/).filter(Boolean)
-    return refuse(
-      "worktree.status",
-      { paths: dirtyPaths(result.stdout), total: all.length },
-      "no dirty paths (empty porcelain output)",
-    )
+    const dirty = refuse("worktree.status", { paths: dirtyPaths(result.stdout), total: all.length }, "no dirty paths (empty porcelain output)")
+    // No delivery remover is part-way through a tree read under its lock, so a tree that has only
+    // lost tracked files is most likely being deleted by a process that takes no such lock.
+    return all.every((line) => line.startsWith(" D ")) ? { ok: false, reason: `${dirty.reason}; ${REMOVAL_ELSEWHERE}` } : dirty
   }
   // The verified pin names this worktree's own git directory; no extra git read is needed.
   const gitDir = pin?.GIT_DIR
@@ -1448,6 +1470,7 @@ export async function cleanupDelivery(
   const { coordinate: _session, ...shared } = deps
   return cleanupInRepository({ ...rest, repo }, target.cwd, {
     ...shared,
+    proofSection: coordination.proofSection,
     removalSection: coordination.removalSection,
     finalCheck: coordination.finalCheck,
     afterRemoval: coordination.afterRemoval,
@@ -1570,6 +1593,14 @@ async function cleanupInRepository(
       `a directory outside the worktree this call would remove (${receipt.worktree.path}, resolved to ${physicalPath(receipt.worktree.path as string)})`,
     )
   }
+  const path = receipt.worktree.path as string
+  // A refusal stands only while the target is still there. Gone, another remover took it while this
+  // call looked: the proofs or the removal section refused on a tree it was deleting or had deleted.
+  // This call changed nothing, which is the already-cleaned success, not a refusal of a cleanup that happened.
+  const settle = async (failure: CleanupFailure): Promise<CleanupResult> => {
+    const taken = await alreadyCleaned(receipt, resolution.path)
+    return taken?.ok === true ? taken : failure
+  }
   // The target's identity is proved before the pull request is read, because the read
   // has to be made from inside the target. With `extensions.worktreeConfig`, a
   // `url.<other>.insteadOf` rewrite is worktree-scoped, and `git remote get-url`
@@ -1583,17 +1614,25 @@ async function cleanupInRepository(
   // receipt's branch and head before it is used as a directory to run a command in,
   // and `revalidateBoundary` proves the same identity again immediately before the
   // irreversible step.
-  const identity = await verifyTargetIdentity(receipt, cwd, run, bounds.refReadMs, git)
-  if (isFailure(identity)) return identity
-  const observed = await observePullRequest(receipt, run, identity.cwd, env, bounds.refReadMs, identity.pin)
-  if (isFailure(observed)) return observed
-  const observedFailure = verifyObservation(receipt, observed.pr)
-  if (observedFailure !== null) return observedFailure
-  const path = receipt.worktree.path as string
-  const dirty = await verifyCleanTarget(identity.cwd, run, bounds.treeScanMs, identity.pin, stashBranches(receipt.branch.name, identity.target))
-  if (dirty !== null) return dirty
-  const pushed = await verifyPushed(identity.cwd, run, bounds.refReadMs, identity.pin)
-  if (isFailure(pushed)) return pushed
+  //
+  // Every read of the target runs under the lock the removal section takes, so none of them sees
+  // another remover's removal part-way (a half-deleted tree reads as dirty).
+  const proveTarget = async () => {
+    const identity = await verifyTargetIdentity(receipt, cwd, run, bounds.refReadMs, git)
+    if (isFailure(identity)) return identity
+    const observed = await observePullRequest(receipt, run, identity.cwd, env, bounds.refReadMs, identity.pin)
+    if (isFailure(observed)) return observed
+    const observedFailure = verifyObservation(receipt, observed.pr)
+    if (observedFailure !== null) return observedFailure
+    const dirty = await verifyCleanTarget(identity.cwd, run, bounds.treeScanMs, identity.pin, stashBranches(receipt.branch.name, identity.target))
+    if (dirty !== null) return dirty
+    const pushed = await verifyPushed(identity.cwd, run, bounds.refReadMs, identity.pin)
+    if (isFailure(pushed)) return pushed
+    return { identity, observed, pushed }
+  }
+  const proofs = deps.proofSection === undefined ? await proveTarget() : await deps.proofSection(path, proveTarget)
+  if (isFailure(proofs)) return settle(proofs)
+  const { identity, observed, pushed } = proofs
   const ledger = await verifyLedger(receipt, cwd, resolution.path, run, bounds.bdShowMs, bounds.refReadMs, git, env)
   if (ledger !== null) return ledger
 
@@ -1650,12 +1689,16 @@ async function cleanupInRepository(
     // proved again here, synchronously, so no wait sits between this proof and the removal call.
     const rebound = markersStillBound(boundary, executionDir, executionPin)
     if (rebound !== null) return rebound
+    // The removal call. A failure refuses only while the target is still whole: git refuses a dirty
+    // or locked tree before deleting anything, but a removal that fails part-way (a file it cannot
+    // delete) has already deleted files and the registration, so reporting it as a refusal would be false.
+    let failure: CleanupFailure | null = null
     if (route === "host" && deps.host !== undefined) {
       try {
         await deps.host.remove(targetPath)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        return refuse(
+        failure = refuse(
           "worktree.removed",
           `host worktree.remove ${JSON.stringify(targetPath)} (error ${message.trim().slice(0, 400)})`,
           "host removal without force",
@@ -1663,44 +1706,64 @@ async function cleanupInRepository(
       }
     } else {
       const removed = await runGit(commit, executionDir, removeArgv, bounds.mutationMs, executionPin)
-      if (!completed(removed)) {
-        return commandFailure("worktree.removed", ["git", ...removeArgv], removed, "exit 0 without --force")
-      }
+      if (!completed(removed)) failure = commandFailure("worktree.removed", ["git", ...removeArgv], removed, "exit 0 without --force")
     }
 
     const registration = await registrationAbsence(executionDir, targetPath, commit, bounds.refReadMs, executionPin)
     const pathGone = pathAbsence(targetPath)
-    if (registration !== "absent") return refuse("worktree.registrationAbsence", registration, '"absent" after removal')
-    if (pathGone !== "absent") return refuse("worktree.pathAbsence", pathGone, '"absent" after removal')
+    // No sign that anything went (registered and on disk, or unreadable): nothing was removed.
+    if (failure !== null && registration !== "absent" && pathGone !== "absent") return failure
+    // From here the removal ran, whole or part-way, and nothing refuses: what could not be finished
+    // or proved is reported with the result, and only a proven absence gets a continuation receipt.
+    const unfinished: string[] = []
+    const branch = receipt.branch.name
+    if (registration !== "absent" || pathGone !== "absent") {
+      unfinished.push(
+        failure === null
+          ? `worktree ${path} is there again after its removal (registration ${registration}, directory ${pathGone}) and was left alone`
+          : `worktree ${path}: the removal failed part-way (${failure.reason}), leaving registration ${registration} and directory ${pathGone}; remove what is left by hand`,
+        `local branch ${branch} kept and no continuation receipt written: the worktree's absence is not proven`,
+      )
+      return { ok: true, worktreeRemoved: failure === null, registration, pathGone, localAbsence: "unknown", localRefPlan: localRef, localRefDeleted: false, executionDir, unfinished }
+    }
+    if (failure !== null) unfinished.push(`the worktree removal reported a failure, yet the worktree is gone: ${failure.reason}`)
     // From here the worktree is gone and proven so; whatever fails later, work that follows the removal still runs.
     absenceProven = true
 
+    // Only a ref still at the reviewed head is deleted; one that is gone, has moved or cannot be read is left as found.
     const refAfterWorktree = await verifyLocalRef(receipt, executionDir, commit, bounds.refReadMs, executionPin)
-    if (isFailure(refAfterWorktree)) return refAfterWorktree
-    // A ref that was at the reviewed head before the removal and is not now was moved by someone else.
-    if (localRef === "delete" && refAfterWorktree !== "delete") {
-      return refuse("branch.localRef", refAfterWorktree, `a ref still at ${receipt.pr.headRefOid}, as before the removal`)
+    const localRefPlan: LocalRefPlan = isFailure(refAfterWorktree) ? localRef : refAfterWorktree
+    let deleted = false
+    if (isFailure(refAfterWorktree)) {
+      unfinished.push(`local branch ${branch} kept: ${refAfterWorktree.reason}`)
+    } else if (localRef === "delete" && refAfterWorktree === "moved") {
+      // A ref that was at the reviewed head before the removal and is not now was moved by someone else.
+      unfinished.push(`local branch ${branch} kept: it moved off ${receipt.pr.headRefOid} during the removal`)
+    } else if (refAfterWorktree === "delete") {
+      const deleteArgv = branchDeleteArgs(branch)
+      const result = await runGit(commit, executionDir, deleteArgv, bounds.mutationMs, executionPin)
+      if (completed(result)) deleted = true
+      else unfinished.push(`local branch ${branch} kept: ${commandFailure("worktree.localRefDeleted", ["git", ...deleteArgv], result, "exit 0 without -D").reason}`)
     }
-    // Only a ref still at the reviewed head is deleted; one that is gone or has moved is left as found.
-    if (refAfterWorktree === "delete") {
-      const deleteArgv = branchDeleteArgs(receipt.branch.name)
-      const deleted = await runGit(commit, executionDir, deleteArgv, bounds.mutationMs, executionPin)
-      if (!completed(deleted)) {
-        return commandFailure("worktree.localRefDeleted", ["git", ...deleteArgv], deleted, "exit 0 without -D")
-      }
+    const localAbsence = await localRefAbsence(executionDir, branch, commit, bounds.refReadMs, executionPin)
+    // The last probe must give a definite answer that matches what was done: absent after a deletion or
+    // when the ref was gone, present when it was left. Any other answer is reported, never passed.
+    const expected: Absence = deleted || localRefPlan === "absent" ? "absent" : "present"
+    if (localAbsence !== expected) unfinished.push(`local branch ${branch}: observed ${localAbsence} afterwards, expected ${expected}`)
+    return {
+      ok: true,
+      worktreeRemoved: true,
+      registration,
+      pathGone,
+      localAbsence,
+      localRefPlan,
+      localRefDeleted: deleted && localAbsence === "absent",
+      executionDir,
+      unfinished,
     }
-    const localAbsence = await localRefAbsence(executionDir, receipt.branch.name, commit, bounds.refReadMs, executionPin)
-    // The last probe must give a definite answer that matches the plan: absent after a deletion or
-    // when the ref was gone, present when it was left because it moved. An unknown answer never passes.
-    const expected: Absence = refAfterWorktree === "moved" ? "present" : "absent"
-    if (localAbsence !== expected) {
-      return refuse("worktree.localRefAbsence", localAbsence, `"${expected}" (ref plan ${refAfterWorktree})`)
-    }
-
-    return { ok: true, registration, pathGone, localAbsence, localRefPlan: refAfterWorktree, executionDir }
   }
   const section = deps.removalSection === undefined ? await removeSection() : await deps.removalSection(path, removeSection)
-  // After the lock is released, and whether or not the later steps (branch deletion, ref probes) held.
+  // After the lock is released, and whether or not the later steps (branch deletion, ref probes) finished.
   let afterNotes: readonly string[] = []
   if (absenceProven) {
     try {
@@ -1709,8 +1772,23 @@ async function cleanupInRepository(
       afterNotes = [`work after the removal failed: ${error instanceof Error ? error.message : String(error)}`]
     }
   }
-  if (isFailure(section)) return withRefusalNotes(section, afterNotes)
-  const { registration, pathGone, localAbsence, localRefPlan, executionDir } = section
+  // The section refuses only before its removal command changed anything.
+  if (isFailure(section)) return settle(section)
+  const { registration, pathGone, localAbsence, executionDir } = section
+  const report = withNotes(removalReport(receipt, path, identity.target, section), afterNotes)
+  // The removal ran, so the result is a success whatever follows; when no continuation receipt can be
+  // written, the landing receipt stays the receipt of record and the report says why.
+  const withoutContinuation = (remoteBranchAbsence: CleanupSuccess["remoteBranchAbsence"], notes: readonly string[]): CleanupSuccess => ({
+    ok: true,
+    receipt,
+    path: resolution.path,
+    remoteBranchAbsence,
+    alreadyCleaned: false,
+    localRefDeleted: section.localRefDeleted,
+    report: withNotes(report, notes),
+  })
+  // Without a proven absence there is nothing a continuation receipt could truthfully record.
+  if (!absenceProven) return withoutContinuation(receipt.branch.deletedRemote ? "absent" : "unknown", [])
 
   // The probe is given the URL the target resolved, not `repo.remote`. A name is
   // re-resolved wherever it is asked, and by now the target is gone, so the question
@@ -1779,16 +1857,13 @@ async function cleanupInRepository(
     notes: remoteAbsence === "absent" ? undefined : `remote branch absence observed ${remoteAbsence}`,
   })
   const validation = validateReceipt(continued)
-  if (!validation.ok) return withRefusalNotes({ ok: false, reason: `continuation receipt: ${validation.reason}` }, afterNotes)
+  if (!validation.ok) return withoutContinuation(remoteAbsence, [`no continuation receipt written: ${validation.reason}`])
   let written: string
   try {
     // Beside the receipt it continues: the directory resolveReceipt proved.
     written = writeReceipt(continued, dirname(resolution.path))
   } catch (error) {
-    return withRefusalNotes(
-      refuse("continuation receipt write", error instanceof Error ? error.message : String(error), "one persisted validated receipt"),
-      afterNotes,
-    )
+    return withoutContinuation(remoteAbsence, [`no continuation receipt written: ${error instanceof Error ? error.message : String(error)}`])
   }
   return {
     ok: true,
@@ -1796,7 +1871,7 @@ async function cleanupInRepository(
     path: written,
     remoteBranchAbsence: remoteAbsence,
     alreadyCleaned: false,
-    localRefDeleted: localRefPlan === "delete",
-    report: withNotes(removalReport(receipt, path, identity.target, localRefPlan), afterNotes),
+    localRefDeleted: section.localRefDeleted,
+    report,
   }
 }

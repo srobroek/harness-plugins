@@ -179,6 +179,30 @@ export function holdsState(commonDir: string, directory: string, now: number, ex
 }
 
 /**
+ * Run `read` under the worktree's on-disk lock, the one every remover takes, so it never sees a
+ * removal part-way: under the lock another remover has either not started or finished. A lock
+ * that cannot be taken is a refusal, not an error; a failure inside `read` is not ours to mask.
+ */
+export async function lockedWorktreeRead<T>(
+  commonDir: string,
+  directory: string,
+  lock: LockOptions,
+  read: () => Promise<T>,
+): Promise<{ locked: false; reason: string } | { locked: true; value: T }> {
+  let entered = false
+  try {
+    return await withDiskLock(commonDir, directory, lock, async () => {
+      entered = true
+      return { locked: true as const, value: await read() }
+    })
+  } catch (error) {
+    if (entered) throw error
+    const message = error instanceof LockTimeout ? `the worktree is locked by another remover (${error.message})` : `the lock could not be taken (${error instanceof Error ? error.message : String(error)})`
+    return { locked: false, reason: message }
+  }
+}
+
+/**
  * The one removal boundary. Under the worktree's on-disk lock: `recheck` (claim, holds, landing
  * records and denials, the final cleanup proofs: whatever the caller must confirm last) and, only
  * if it returns no refusal, `remove` (the worktree removal and the compare-and-delete of its ref).
@@ -191,20 +215,12 @@ export async function lockedWorktreeRemoval<T>(
   lock: LockOptions,
   steps: { recheck: () => Promise<string | undefined>; remove: () => Promise<T> },
 ): Promise<{ removed: false; reason: string } | { removed: true; value: T }> {
-  let entered = false
-  try {
-    return await withDiskLock(commonDir, directory, lock, async () => {
-      entered = true
-      const reason = await steps.recheck()
-      if (reason !== undefined) return { removed: false as const, reason }
-      return { removed: true as const, value: await steps.remove() }
-    })
-  } catch (error) {
-    // Failing to take the lock (contention, an unwritable store) is a refusal; a failure inside the steps is not ours to mask.
-    if (entered) throw error
-    const message = error instanceof LockTimeout ? `the worktree is locked by another remover (${error.message})` : `the lock could not be taken (${error instanceof Error ? error.message : String(error)})`
-    return { removed: false, reason: message }
-  }
+  const outcome = await lockedWorktreeRead(commonDir, directory, lock, async () => {
+    const reason = await steps.recheck()
+    if (reason !== undefined) return { removed: false as const, reason }
+    return { removed: true as const, value: await steps.remove() }
+  })
+  return outcome.locked ? outcome.value : { removed: false, reason: outcome.reason }
 }
 
 /**

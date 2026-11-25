@@ -43,7 +43,7 @@ import {
   removeLanding,
   writeLanding,
 } from "@srobroek/opencode-lib/worktree-claims"
-import { holdsState, type LockOptions, lockedWorktreeRemoval, lockedWrite, setHold } from "@srobroek/opencode-lib/worktree-locks"
+import { holdsState, type LockOptions, lockedWorktreeRead, lockedWorktreeRemoval, lockedWrite, setHold } from "@srobroek/opencode-lib/worktree-locks"
 import { ownershipDeferral } from "./auto-cleanup.ts"
 import {
   CLEANUP_BOUNDS,
@@ -79,6 +79,9 @@ const RECEIPT_FILE = /^\d+-(?:[0-9a-f]{12}|nomerge)\.json$/
 /** The same receipt is not retried within this window: an event and the idle hook fire for one turn end. */
 export const RETRY_WINDOW_MS = 5_000
 export const DEBOUNCE_MS = 2_000
+
+/** The refusal of a lock that has no coordination store to live in. */
+const UNRESOLVED_COMMON = "worktree.held: observed the git common directory could not be resolved, expected a coordination store; nothing was removed"
 const MAX_PER_PASS = 20
 const MAX_SESSION_PAGES = 20
 
@@ -761,6 +764,21 @@ export function createPendingCleanup(deps: PendingDeps) {
   const holdCheck = async (repo: Repository, worktree: string): Promise<string | undefined> => holdCheckAt(repo, await commonOf(repo), worktree)
 
   /**
+   * `CleanupDeps.proofSection` in `repo`: the lock {@link sectionIn} takes, alone, around the reads that
+   * prove a target, so they never see another remover's removal part-way. Refuses (does not throw)
+   * when the lock cannot be taken.
+   */
+  const proofIn =
+    (repo: Repository) =>
+    async <T>(worktree: string, read: () => Promise<T>): Promise<T | CleanupFailure> => {
+      const common = await commonOf(repo)
+      if (common === null) return { ok: false, reason: UNRESOLVED_COMMON }
+      const outcome = await lockedWorktreeRead(common, worktree, { sessionID: "delivery", now, ...deps.lock }, read)
+      if (outcome.locked) return outcome.value
+      return { ok: false, reason: `worktree.held: observed ${outcome.reason}, expected no competing remover; nothing was removed` }
+    }
+
+  /**
    * The removal boundary every delivery remover goes through (explicit, inline, retry), in `repo`:
    * the same on-disk lock `subagent-worktree` takes, then, under it and after every proof, the last
    * look at claims, running work, sessions and denials, then the removal itself. Refuses (does not
@@ -770,7 +788,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     (repo: Repository) =>
     async (worktree: string, run: () => Promise<CleanupFailure | RemovalFacts>): Promise<CleanupFailure | RemovalFacts> => {
       const common = await commonOf(repo)
-      if (common === null) return { ok: false, reason: "worktree.held: observed the git common directory could not be resolved, expected a coordination store; nothing was removed" }
+      if (common === null) return { ok: false, reason: UNRESOLVED_COMMON }
       const outcome = await lockedWorktreeRemoval(common, worktree, { sessionID: "delivery", now, ...deps.lock }, {
         recheck: () => holdCheck(repo, worktree),
         remove: run,
@@ -795,6 +813,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     let roots: string[] = []
     let forms: string[] = []
     return {
+      proofSection: proofIn(repo),
       removalSection: sectionIn(repo),
       finalCheck: async (worktree: string): Promise<string | undefined> => {
         const common = await commonOf(repo)
