@@ -1,9 +1,81 @@
 ---
 name: lang-typescript-libraries
-description: TypeScript and JavaScript library selection for runtime, services, data, security, and testing.
+description: Compare TypeScript libraries before writing code for services, data, AWS, telemetry, AI, CLI, testing or security.
+metadata:
+  opencode/autoinvoke: false
 ---
-# TypeScript Libraries
 
-Before adding a dependency, check the standard library and mature packages. Review license,
-maintenance, runtime compatibility, and security. Pin dependencies with the package manager and
-lockfile. Load the matching reference for runtime, services, data, security, or testing.
+# TypeScript library standards
+
+Checked 2026-11-16.
+
+## How to use
+
+- Keep the project's existing choice unless the task is a migration. Prefer its code,
+  the standard library, and framework features before adding a package.
+- Otherwise use the default below. Use an alternative only for its listed condition.
+- A departure from both needs a named gap; report the departure and why.
+- Re-check fast-moving MCP, LLM SDK and OpenTelemetry releases on the registry before
+  adding them. Commit the lockfile. A dependency the request did
+  not name needs approval, even when this guide lists it. A registry `latest` tag can point to a prerelease.
+- These defaults are engineering recommendations. Test the
+  actual Node or Bun runtime, native binaries, adapters and instrumentation you ship.
+- Use `toolchain-api` for API style and contract rules, `quality-code-design`'s
+  `middleware.md` and `telemetry.md` for shared design rules, and `aws-guidance` for Lambda.
+- Commands belong in `lang-typescript-quality` and `lang-typescript-testing`.
+
+## Default stack
+
+| Concern | Default | Notes |
+| --- | --- | --- |
+| Runtime | Node `>= 24` LTS; Bun `>= 1.4` for Bun projects | Check deployment support; Node `>= 26` has native `Temporal`. |
+| All new HTTP APIs | `hono` `>= 4` | Same app on Lambda Event/Web Functions and Node/Bun containers. RPC APIs use Connect. |
+| Existing Node HTTP | Keep the existing framework | `fastify` `>= 5` alternative for required schema/hooks/plugin integration. |
+| Middleware | Framework built-ins/hooks | Cross-cutting behavior does not belong in each endpoint. |
+| Schemas | `zod` `>= 4` | `zod/mini` for bundle pressure; validate trust boundaries. |
+| OpenAPI | `@hono/zod-openapi` `>= 1`; `@fastify/swagger` `>= 9` | Framework adapters: the route schemas are the Zod schemas generated from TypeSpec, and the framework's emitted document is a drift check against the committed TypeSpec OpenAPI, never a second source. |
+| API clients | `openapi-typescript` `>= 7`; native `fetch` | `orval` `>= 8` when generated query hooks are needed. |
+| TypeSpec-sourced Zod | `@hey-api/openapi-ts`, pinned exactly in the Contract tooling table of `toolchain-api`, with `dates.offset` and a strict/loose object resolver | A contract type comes from TypeSpec, never a hand-written Zod schema. Configured 28/29 and defaults 25/29 on the spike (2026-11-25); a lowercase `t`/`z` date-time is rejected and field descriptions are not carried; run a conformance corpus on upgrade. Not `json-schema-to-zod` (deprecated). Route in `toolchain-api` |
+| RPC APIs | `@connectrpc/connect` `>= 2` with its Node server adapter and `@bufbuild/protobuf` `>= 2` | A separate surface beside Hono, with Connect interceptors. `@grpc/grpc-js` `>= 1` only to call or serve native gRPC. |
+| TypeScript-only typed RPC | `@orpc/server` `>= 1` with `@orpc/contract` | Recommended when both ends are TypeScript and no protobuf contract is wanted (Connect stays preferred otherwise): the router's input and output schemas are the Zod schemas generated from TypeSpec, and oRPC's own OpenAPI is only a drift check. `@trpc/server` `>= 11` for an existing tRPC stack, as a departure from Connect. |
+| GraphQL | `graphql-yoga` `>= 6` | Fetch-oriented; only when GraphQL is the chosen API style. |
+| Streaming | `hono` `>= 4` SSE; `ws` `>= 8` on Node | Native Bun server WebSockets on Bun. |
+| Auth tokens | `jose` `>= 6` | Verify issuer, audience and algorithms, not just signature. |
+| HTTP clients | Native `fetch` and `AbortSignal` | Reuse SDKs/generated clients for service semantics. |
+| SQL access | `drizzle-orm` `>= 0.45` | `kysely` `>= 0.29` when SQL-oriented query building is enough. |
+| PostgreSQL | `pg` `>= 8` | Bun built-in SQL only when portability is unnecessary. |
+| Redis/Valkey | `redis` `>= 6` | Queue/client requirements can select `ioredis` `>= 6`. |
+| Local cache | `lru-cache` `>= 11` | Bound size and TTL; never substitute for durable state. |
+| Object storage | `@aws-sdk/client-s3` `>= 3` | Multipart: `@aws-sdk/lib-storage` `>= 3`. |
+| Jobs | `bullmq` `>= 6` | `pg-boss` `>= 12` if PostgreSQL is the existing durable store. |
+| Workflows | `@temporalio/client` `>= 1` | Worker/runtime compatibility must be tested separately. |
+| Logging | `pino` `>= 10` in Hono services/containers | Powertools Logger `>= 2` on Lambda events, including Hono invocation context. |
+| Telemetry | `@opentelemetry/sdk-node` `>= 0.301`, OTLP | Stable traces/metrics; log maturity and package lines differ. |
+| Lambda | Hono HTTP; Powertools `>= 2` for event utilities | Never wrap Hono in Middy; Middy `>= 7` optional for non-HTTP events. |
+| AWS SDK | `@aws-sdk/client-*` `>= 3` | SDK `>= 2` support ended `2025-09-08`. |
+| MCP | `@modelcontextprotocol/server` `>= 2` | Separate client package; re-check protocol compatibility. |
+| LLM abstraction | `ai` `>= 7` | Provider SDK when its native API is needed. |
+| CLI | `commander` `>= 15`; `@clack/prompts` `>= 1` | Bun/Node standard argument parsing for tiny CLIs. |
+| Configuration | Runtime env loading plus `zod` `>= 4` | Validate once; do not expose server secrets to clients. |
+| Tests | `vitest` `>= 5`; `bun test` on Bun; `node:test` for dependency-free Node libraries | One runner per project, matching the production runtime. Tables: [testing.md](references/testing.md). |
+| HTTP test doubles | `msw` `>= 3` | Test Bun interception; real adapter tests remain necessary. |
+| Properties | `fast-check` `>= 4` | Seed failures and retain shrunk regression cases. Fuzz targets run on Node. |
+| Password hashing | `@node-rs/argon2` `>= 2` | Bun native password APIs when intentionally Bun-only. |
+| Feature flags | `@openfeature/server-sdk` `>= 1` | Inject a provider and define outage defaults. |
+| Build and quality | `typescript` `>= 7`; `@biomejs/biome` `>= 2` for lint and format | ESLint only for named gaps; `tsdown` `>= 0.23` for new libraries; no bundled type-check assumption. Tables: [quality.md](references/quality.md). |
+
+## References
+
+| File | Covers |
+| --- | --- |
+| [services.md](references/services.md) | HTTP frameworks and API/content integrations. |
+| [data.md](references/data.md) | Schemas and storage integrations. |
+| [messaging.md](references/messaging.md) | Durable jobs and broker clients. |
+| [observability.md](references/observability.md) | Logging and OTel setup. |
+| [aws.md](references/aws.md) | Lambda and service clients. |
+| [ai.md](references/ai.md) | MCP and model integrations. |
+| [cli.md](references/cli.md) | Terminal interfaces and settings. |
+| [testing.md](references/testing.md) | Test runner, property, fuzz, mutation, coverage and boundary verification. |
+| [quality.md](references/quality.md) | Lint, format, types, SAST, audit, dead code, complexity, API breaks and docs. |
+| [security.md](references/security.md) | Security controls and scanners. |
+| [runtime.md](references/runtime.md) | Deployment and shared runtime helpers. |

@@ -1,3 +1,14 @@
+## agent-reviewer [0.16.0](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.15.4...agent-reviewer--v0.16.0) (2026-11-25)
+
+### Features
+
+* **agent-reviewer:** flag hand-written contract types and edits to generated output ([26e05ad](https://github.com/srobroek/harness-plugins/commit/26e05adeddebffb8e65f60c87030a8e074bb7b9c))
+
+### Bug Fixes
+
+* **agent-reviewer:** flag serialized or published contracts with no authoritative source ([e4ec4b0](https://github.com/srobroek/harness-plugins/commit/e4ec4b0092cfab0cdf4b4f35015f77f6a21f828e))
+* **agent-reviewer:** name AsyncAPI channels and bindings as an authoritative contract source ([503076c](https://github.com/srobroek/harness-plugins/commit/503076ce4b06b33084a0c34ed1a87fe07494e1f7))
+
 ## agent-reviewer [0.15.4](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.15.3...agent-reviewer--v0.15.4) (2026-11-25)
 
 ### Bug Fixes

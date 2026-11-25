@@ -1,3 +1,21 @@
+## lang-typescript [0.11.1](https://github.com/srobroek/harness-plugins/compare/lang-typescript--v0.11.0...lang-typescript--v0.11.1) (2026-11-25)
+
+### Bug Fixes
+
+* **toolchain:** ship the full languages and lang-libraries skills to OMP ([#197](https://github.com/srobroek/harness-plugins/issues/197)) ([bbba5da](https://github.com/srobroek/harness-plugins/commit/bbba5da0cc894c6870bedfffd7842615fa9e310e)), closes [#181](https://github.com/srobroek/harness-plugins/issues/181)
+
+## lang-typescript [0.11.0](https://github.com/srobroek/harness-plugins/compare/lang-typescript--v0.10.3...lang-typescript--v0.11.0) (2026-11-25)
+
+### Features
+
+* **lang-go:** rescore TypeSpec generator entries and say contract types are never hand-written ([87bb529](https://github.com/srobroek/harness-plugins/commit/87bb529b2feb56b8784452253d08126208e6f081))
+* **lang-typescript:** add TypeSpec-sourced generator entry to libraries ([ba0d1d0](https://github.com/srobroek/harness-plugins/commit/ba0d1d00178e1b12e468af82960949afb029890e))
+
+### Bug Fixes
+
+* **lang-typescript:** point TypeSpec generator pin to the Contract tooling table and keep framework schemas as adapters ([c9f3e02](https://github.com/srobroek/harness-plugins/commit/c9f3e02a8f187785b32a1132850270cab240c783))
+* **toolchain:** recognise TypeSpec's emitted seal, publish OpenAPI 3.2.0, ship the full API skill to OMP and adopt the framework-adapter pattern ([818f193](https://github.com/srobroek/harness-plugins/commit/818f193ecb67974fed549502705b6f5663708797))
+
 ## lang-typescript [0.10.3](https://github.com/srobroek/harness-plugins/compare/lang-typescript--v0.10.2...lang-typescript--v0.10.3) (2026-11-24)
 
 ## lang-typescript [0.10.2](https://github.com/srobroek/harness-plugins/compare/lang-typescript--v0.10.1...lang-typescript--v0.10.2) (2026-11-24)

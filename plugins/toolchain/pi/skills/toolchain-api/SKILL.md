@@ -7,14 +7,14 @@ metadata:
 
 # API standards
 
-Checked 2026-11-12. Per-language frameworks and generators are in the `lang-<language>-libraries` skills (`services.md`); wire-contract hygiene (committed codegen, one casing, conformance tests) is in `quality-code-design`'s `contracts.md`.
+Checked 2026-11-12 (contract tooling checked 2026-11-25). Per-language frameworks and generators are in the `lang-<language>-libraries` skills (`services.md`); wire-contract hygiene (committed codegen, one casing, conformance tests) is in `quality-code-design`'s `contracts.md`.
 
 ## Pick the style
 
 | Situation | Default | Choose instead when | Costs to plan for |
 | --- | --- | --- | --- |
 | Public or partner API | HTTP+JSON, resource-oriented, described with OpenAPI | - | SDK generation, consistent pagination and errors, long migration windows for breaking versions |
-| Browser or mobile client of your own backend | HTTP+JSON with OpenAPI | Connect for typed RPC with generated clients; GraphQL when clients need materially different graph-shaped reads | GraphQL adds resolver authorization, query-cost limits, N+1 control and special caching |
+| Browser or mobile client of your own backend | HTTP+JSON with OpenAPI | Connect for typed RPC with generated clients (oRPC when both ends are TypeScript and no `.proto` is wanted); GraphQL when clients need materially different graph-shaped reads | GraphQL adds resolver authorization, query-cost limits, N+1 control and special caching |
 | Internal service to service | HTTP+JSON, or gRPC/Connect when generated contracts across teams or languages pay off | - | Protobuf toolchain and plugin pinning; native gRPC needs HTTP/2-aware proxies and trailers; binary payloads are harder to inspect |
 | High-throughput, low-latency internal path | Benchmark gRPC with protobuf first | Keep HTTP+JSON when the benchmark shows no material gain | Binary encoding alone does not prove lower end-to-end latency |
 | Server push to browsers | Server-sent events | gRPC/Connect server streaming for typed internal streams | Test proxy buffering and idle timeouts; streams are not cacheable |
@@ -29,7 +29,7 @@ Decision order:
 1. Tools for AI agents: MCP.
 2. Durable asynchronous notifications: AsyncAPI with CloudEvents; Standard Webhooks for partners.
 3. Server push to browsers: SSE. Bidirectional browser traffic: WebSockets.
-4. RPC, where you own both ends and calls are actions rather than resources: Connect; gRPC when existing gRPC infrastructure or the language requires it (see below).
+4. RPC, where you own both ends and calls are actions rather than resources: Connect stays the preferred choice; oRPC is the recommended option when both ends are TypeScript and no `.proto` is wanted (pattern in Own the contract); gRPC when existing gRPC infrastructure or the language requires it (see below).
 5. Graph-shaped client queries: GraphQL.
 6. Everything else: HTTP+JSON with OpenAPI.
 
@@ -105,26 +105,81 @@ Connect gives up resource URLs (every path is `POST /<package>.<Service>/<Method
 
 ### HTTP and RPC in one TypeScript service
 
-Hono serves HTTP APIs and Connect serves RPC APIs. They are separate surfaces, each with its own middleware: Hono middleware for the HTTP API, Connect interceptors for RPC. Serve them on separate route prefixes or ports, and share token verification, logging setup and error policy as plain functions that both chains call. Do not mount one framework inside the other unless the framework documents that adapter.
+Hono serves HTTP APIs and Connect serves RPC APIs (oRPC is the TypeScript-only alternative to Connect). They are separate surfaces, each with its own middleware: Hono middleware for the HTTP API, Connect interceptors for RPC. Serve them on separate route prefixes or ports, and share token verification, logging setup and error policy as plain functions that both chains call. Do not mount one framework inside the other unless the framework documents that adapter.
 
 ## Specification versions
 
 | Spec | Status | Use |
 | --- | --- | --- |
-| OpenAPI | 3.2.1 (2026-09-10) and 3.1.2 published; both use JSON Schema 2020-12 with OAS extensions | 3.1.2 for an existing pipeline; 3.2 once every generator, linter and docs tool in the chain passes fixtures |
+| OpenAPI | 3.2.1 (2026-09-10) and 3.1.2 published; both use JSON Schema 2020-12 with OAS extensions | A TypeSpec project publishes 3.2.0 (`openapi-versions: ["3.2.0"]`); its conformance gate proves every generator on it, and a generator that fails gets the 3.1.0 document (see [Generate from a TypeSpec contract](#generate-from-a-typespec-contract)). Any other pipeline stays on 3.1.2 until every generator, linter and docs tool in the chain passes fixtures |
 | Arazzo, Overlay | Arazzo 1.1.0 (workflows), Overlay 1.2.0 (declarative edits) | Optional companions to the base document, never replacements |
-| AsyncAPI | 3.1.0 | Use 3.x-aware tooling; 2.x tools do not carry over |
+| AsyncAPI | 3.1.0 | Use 3.x-aware tooling; 2.x tools do not carry over. Its schema-format table requires draft-07 support, not 2020-12: a project that references a TypeSpec-emitted (2020-12) payload schema must add a parser fixture for the exact artifact it references (the emitted schema, or the draft-07 projection it publishes instead; a fallback projection counts only when its fixture validates draft-07 payloads, not a 2020-12 bundle with rewritten references), run with its pinned AsyncAPI parser; see AsyncAPI in Quality gates and tools |
 | Protobuf | Editions 2023 and 2024 released; wire format unchanged | The newest edition every plugin and runtime in the chain supports; proto3 stays a valid compatibility choice |
 | GraphQL | September 2025 edition; GraphQL-over-HTTP is a working draft without subscriptions | Pin the released edition and a tested HTTP profile; choose the subscription transport separately |
 | CloudEvents | 1.0 (main branch is 1.0.3-wip) | Pin a released tag; the envelope version is not the payload schema version |
 | Standard Webhooks | 1.0.0 | Signature headers, timestamps and retries as the spec defines |
 | MCP | 2026-07-28 | Pin the SDK and protocol version; older handshake and session assumptions do not carry over |
+| TypeSpec and contract tooling | Exact pins live only in the [Contract tooling](#contract-tooling) table (checked 2026-11-25) | Every other skill points to that table; pin `@typespec/compiler` and its companion emitters (`http`, `openapi3`, `json-schema`) to one version, as they release together; pre-1.0 libraries such as `@typespec/protobuf` have their own pin in the table |
+| TypeSpec emitters that failed the spike | `typespec-zod` 0.0.0-68 (prerelease), `@kattebak/typespec-zod-emitter` 2.5.0 (one maintainer), `@azure-tools/typespec-rust` 0.42.1, `@azure-tools/typespec-go` 0.19.0 | Do not adopt for this use; scope is these versions only |
+
+## Contract tooling
+
+The one exact-pin table. Every other skill, the stack defaults and the language libraries point here; none repeats a version. Each row was installed and run live on 2026-11-25 against the spike's TypeSpec output. Pin exactly (lockfile, `mise.toml`, devDependency); a pin newer than mise's release-age hold needs that hold lifted explicitly, and CI verifies `<tool> --version` against the pin instead of skipping an existing binary.
+
+| Job | Tool | Version | mise id | Source |
+| --- | --- | --- | --- | --- |
+| TypeSpec compile, format, language server (`tsp`, `tsp-server`) | `@typespec/compiler` | 1.18.0 | `npm:@typespec/compiler` | https://www.npmjs.com/package/@typespec/compiler |
+| Emitters, pinned per project, same version as the compiler | `@typespec/http`, `@typespec/openapi3`, `@typespec/json-schema` | 1.18.0 | project devDependency | https://typespec.io/docs/ |
+| Import existing OpenAPI into TypeSpec | `tsp-openapi3` (ships in `@typespec/openapi3`) | 1.18.0 | project devDependency | https://typespec.io/docs/emitters/openapi3/cli/ |
+| Editor | TypeSpec VS Code extension, or `tsp-server` over LSP | 1.18.0 | n/a | https://typespec.io/docs/ |
+| OpenAPI lint, bundle, API reference docs (`redocly build-docs`) | `@redocly/cli` | 2.83.0 | `npm:@redocly/cli` | https://github.com/Redocly/redocly-cli |
+| JSON Schema 2020-12 metaschema, lint, validate, test | Sourcemeta `jsonschema` | 17.3.3 (2026-11-07) | `aqua:sourcemeta/jsonschema` | https://github.com/sourcemeta/jsonschema |
+| Breaking changes (HTTP) | `oasdiff` | 1.40.0 (2026-11-25) | `github:oasdiff/oasdiff` | https://github.com/oasdiff/oasdiff |
+| Running-API property tests | `schemathesis` | 4.34.2 (2026-11-24) | `pipx:schemathesis` | https://github.com/schemathesis/schemathesis |
+| Zod from normalized OpenAPI | `@hey-api/openapi-ts` (0.x) | 0.99.0 | project devDependency | https://github.com/hey-api/openapi-ts |
+| Pydantic from normalized JSON Schema | `datamodel-code-generator` | 0.101.0 | project dependency | https://github.com/datamodel-code-generator/datamodel-code-generator |
+| Rust types from normalized JSON Schema | `cargo-typify` | 0.10.1 | project tool | https://github.com/oxidecomputer/typify |
+| Rust raw-value validation | `jsonschema` crate | 0.63.1 | project dependency | https://crates.io/crates/jsonschema |
+| Go from normalized OpenAPI | `ogen` | v1.25.0 | project tool | https://github.com/ogen-go/ogen |
+| OpenAPI 3.2.0 acceptance (compiled from the spike contract, checked 2026-11-25): Redocly lints it with the same findings as 3.1; the others accept it; hey-api, ogen and datamodel-codegen generate code from it | Redocly, oasdiff, vacuum, Spectral, hey-api, ogen, `datamodel-code-generator` | Redocly 2.82, oasdiff 1.40, vacuum 0.42.3, Spectral 6.17.1, ogen 1.25; hey-api and datamodel-codegen at the pins above | n/a | https://spec.openapis.org/oas/ |
+| Protobuf lint (`STANDARD`), format, breaking (`buf breaking --against ".git#ref=${BASE_SHA}"`) | `buf` | 1.75.0 | `aqua:bufbuild/buf` | https://github.com/bufbuild/buf |
+| gRPC and ConnectRPC source (the gRPC row): `.proto` stays the source for now; protovalidate carries value limits. Revisit: switch to TypeSpec-emitted `.proto` when `@typespec/protobuf` reaches 1.0 and emits protovalidate rules | `.proto` with `buf`, Protovalidate | n/a | n/a | https://github.com/bufbuild/protovalidate |
+| Emit `.proto` from TypeSpec; not yet the source, see the gRPC row | `@typespec/protobuf` | 0.88.0 (pre-1.0, checked 2026-11-25) | project devDependency | https://www.npmjs.com/package/@typespec/protobuf |
+
+The generator rows are the spike pins (2026-11-25); the conformance suite below is the upgrade gate. Bump `oasdiff` only after the breaking-change mutations pass.
+
+`@typespec/protobuf` 0.88.0, tested 2026-11-25: it emits messages, enums, `oneof` (from a named union with `@field` on each variant), server streaming, `google.protobuf.Timestamp`, maps and doc comments. It silently drops `@minValue` and `@pattern` and emits no protovalidate rules, and its output layout fails `buf lint` `STANDARD` (`PACKAGE_DIRECTORY_MATCH`). That is why `.proto` stays the source.
+
+Alternatives considered:
+
+- Redocly CLI is the default OpenAPI linter (gate 4) and owns the HTTP docs gate (`redocly build-docs`, gate 5).
+- vacuum 0.42.3 (`aqua:daveshanley/vacuum`): the faster alternative to Redocly lint. It has a single maintainer.
+- Spectral 6.17.1 (`aqua:stoplightio/spectral`): only for a project that must keep an existing Spectral ruleset. SmartBear's maintenance of Spectral has slowed; [OpenLint](https://apisyouwonthate.com/blog/openlint-picking-up-where-spectral-left-off/) is a community fork to watch.
+- ajv-cli 5.0.0: last released 2023-04, so not recommended.
+- check-jsonschema 0.39.0: superseded by Sourcemeta for this job.
+
+On the spike output (2026-11-25, OpenAPI 3.1.0; 3.2.0 gave Redocly the same findings): Redocly reported 3 errors and 2 warnings (style rules such as `info.description`), vacuum 1 error, Spectral 5 warnings, Sourcemeta `metaschema` and `validate` passed, and `oasdiff` gave the expected exit codes. Set the ruleset in a committed `redocly.yaml` and fix the source; do not ignore the findings by default.
+
+Measured OpenAPI linter comparison (2026-11-25, `typespec-spike/lint-bakeoff/RESULTS.md`): 12 error-class and 13 quality-class seeded defects, each tool on its recommended ruleset.
+
+| | Redocly 2.83.0 `recommended` | Spectral 6.17.1 `spectral:oas` | vacuum 0.42.3 recommended |
+| --- | --- | --- | --- |
+| Error-class defects that fail the build | 10/12 | 11/12 | 7/12 |
+| Quality-class defects reported | 9/13 | 7/13 | 7/13 |
+| Findings on the clean spec | 0 | 0 | 0 |
+| GitHub's 11 MB 3.1 spec (median of 3) | 4.0 s, 0.63 GB (cached binary; 5.4 s, 0.67 GB through `npx`) | 17.9 s, 1.9 GB | 4.5 s, 2.8 GB |
+| SARIF | no SARIF; GitHub Actions annotations supported | yes | yes |
+
+Run Redocly `recommended` with a committed `redocly.yaml` that adds `operation-description`, `operation-tags` and `info-contact`. Redocly checks neither response status keys nor that `jsonSchemaDialect` is a URI, so gate 4 adds both checks (for example a small script over the bundled document: every key of an operation's Responses Object, skipping `x-*` extensions, is `default`, `1XX`–`5XX` or a three-digit code from 100 to 599 (names under `components.responses` are not checked); `jsonSchemaDialect`, when present, is an absolute URI). Spectral `spectral:oas` can run alongside for SARIF, but its recommended ruleset failed one valid 2020-12 probe in the comparison, so review its findings before making it blocking. Don't use vacuum's default ruleset as the only structural gate.
 
 ## Own the contract
 
-- Keep one authoritative contract per API. Schema-first fits public and partner APIs, several teams and several languages. Code-first fits one owning team that validates close to the handlers (FastAPI, Hono `@hono/zod-openapi`, Huma, utoipa or aide).
-- Either way, export a deterministic contract file, commit it, review its diff, generate clients from it and test the wire behavior against the real server.
-- Protobuf: use the Buf CLI with v2 configuration (`buf.yaml`, `buf.gen.yaml`) for `buf generate`, `buf lint`, `buf format` and `buf breaking`; pin the CLI and plugins and lock dependencies. Version packages (`orders.v1`), reserve deleted field numbers and names.
+- Keep one authoritative contract per API or format, and generate from it reproducibly.
+- In every project, author each serialized or published contract you own in TypeSpec, even when it stays within one process, language, or repository. Use `@typespec/http` and `@typespec/openapi3` for internal and external HTTP APIs. Use `@typespec/json-schema` for config, file and record formats, CLI and tool JSON output, event and message payloads, and MCP tool input and output schemas. Keep `.proto` for protobuf, gRPC and ConnectRPC wire contracts (see the gRPC row) and GraphQL SDL for GraphQL APIs. Keep channels and bindings in AsyncAPI and reference the emitted payload schemas until a stable TypeSpec AsyncAPI emitter is available. Vendor third-party schemas as published; do not re-author them. In-memory types that are never serialized or published are out of scope. Generate and commit the applicable artifacts, and generate OpenAPI, JSON Schema, API reference docs and reference documentation from the same source; never edit generated output by hand. Closed models are the default; open one with `...Record<unknown>`.
+- TypeSpec emits OpenAPI 3.2 (`@typespec/openapi3`) and JSON Schema 2020-12 (`@typespec/json-schema`). Set both in `tspconfig.yaml`: `openapi-versions: ["3.2.0"]` (the 1.18.0 default is 3.0.0; the emitter supports 3.0.0, 3.1.0 and 3.2.0) and `seal-object-schemas: true` under `options["@typespec/openapi3"]` as well as `options["@typespec/json-schema"]`; the OpenAPI emitter does not seal by default. Each project's conformance gate proves its generators on 3.2.0; if one fails, keep the published 3.2.0 document at its stable path and add a second config (for example `tspconfig.oa31.yaml`) that emits `openapi-versions: ["3.1.0"]` into a separate generator-input directory such as `build/openapi-3.1/`. Feed only that generator from it, and keep every lint, diff, drift and docs task on the published 3.2.0 path. Don't list both versions in one config: the emitter then writes one directory per version (`3.2.0/openapi.json`, `3.1.0/openapi.json`; measured 2026-11-25), which moves the published file. Commit the emitted files, publish the JSON Schema, and generate every language and the docs from the committed files. Evidence is one spike on a 29-fixture contract (2026-11-25, scored on 3.1.0 output); four alternative sources measured on the same corpus lost (see [Generate from a TypeSpec contract](#generate-from-a-typespec-contract)).
+- Framework adapters (oRPC, FastAPI, Hono `@hono/zod-openapi`, NestJS, Huma, utoipa, aide) follow one pattern: the framework's input and output schemas are the validators and types generated from the TypeSpec output (Zod through `@hey-api/openapi-ts`, Pydantic, serde and Go types as in the generation table); the framework serves and calls them. The OpenAPI the framework generates from its own code is not the published source; a drift check compares its operations and request and response schemas with the committed TypeSpec output. For oRPC, the `@orpc/contract` router's input and output schemas are the generated Zod schemas, oRPC serves and calls them, and `@orpc/openapi` output is only compared with TypeSpec's. A schema exported from code never replaces the committed file.
+- Exceptions keep their native source: `.proto` for protobuf, gRPC and ConnectRPC services (`buf` owns lint and breaking checks; revisit trigger in the gRPC row), GraphQL SDL for GraphQL, the published file for a third-party contract. Test the wire behavior against the real server.
+- Protobuf: use the Buf CLI with v2 configuration (`buf.yaml`, `buf.gen.yaml`) for `buf generate`, `buf lint`, `buf format` and `buf breaking`; pin the CLI and plugins and lock dependencies. Version packages (`orders.v1`), reserve deleted field numbers and names. Gates: `buf lint` with the `STANDARD` rule set and `buf breaking --against ".git#ref=${BASE_SHA}"` (fetch the PR base in CI and pass its SHA; for a fixed branch, `.git#branch=main`; see [Buf inputs](https://buf.build/docs/reference/inputs/)); protovalidate carries value limits, which `buf breaking` does not see (it did not flag a lowered maximum in the spike), so test them with a conformance corpus. Connect stays the preferred RPC choice.
 
 ## Design rules
 
@@ -165,8 +220,8 @@ Hono serves HTTP APIs and Connect serves RPC APIs. They are separate surfaces, e
 | Target | Default | Alternatives | Notes |
 | --- | --- | --- | --- |
 | TypeScript client | `openapi-typescript` 7 with `openapi-fetch` (types plus a small runtime) | Orval 8 (TanStack Query hooks, mocks); Hey API `@hey-api/openapi-ts` (pre-1.0 plugin system); `oazapfts` | Generated types do not validate responses at runtime |
-| Python client | `openapi-python-client` 0.30 | `datamodel-code-generator` 0.95 for models only | Models alone are not an HTTP client |
-| Go server and client | `oapi-codegen` v2 | `ogen` (typed client, server and validation) | Code-first alternative: Huma 2 |
+| Python client | `openapi-python-client` 0.30 | `datamodel-code-generator` for models only (pin: Contract tooling table) | Models alone are not an HTTP client |
+| Go server and client | `ogen` on the normalized TypeSpec OpenAPI (route and pin in [Generate from a TypeSpec contract](#generate-from-a-typespec-contract)) | `oapi-codegen` v2 only for a vendored third-party spec: it validated nothing in the spike (13/29) | Huma 2 is a framework adapter (pattern in Own the contract), not a source |
 | Rust client | `progenitor` 0.16 (OpenAPI 3.0.x) | OpenAPI Generator's `rust` target | Test unions, nullability and `oneOf` |
 | Many languages at once | Microsoft Kiota 1 | OpenAPI Generator 7 (Java-based, quality varies per target) | Pin the generator and its templates |
 | Public SDKs in several languages | A commercial generator (Speakeasy, Stainless) when you need polished retries, pagination, auth, publishing and support | - | Fern's open-source repository is no longer maintained |
@@ -174,14 +229,75 @@ Hono serves HTTP APIs and Connect serves RPC APIs. They are separate surfaces, e
 | GraphQL | GraphQL Code Generator 8 (TypeScript), `gql.tada` (inferred types), `gqlgen` (Go server), Strawberry (Python, code-first) | - | Check operations as well as the schema |
 | AsyncAPI | AsyncAPI CLI 6 `generate`, Modelina for payload models | - | Generated code does not give delivery guarantees |
 
+## Generate from a TypeSpec contract
+
+Every OpenAPI route below was scored on the output of `@typespec/openapi3` with `openapi-versions: ["3.1.0"]` (the 1.18.0 default is 3.0.0, to which the scores do not apply); the projects publish 3.2.0, so the scores are 3.1.0 evidence and each project's conformance gate proves its generators on 3.2.0 (the acceptance check in the Contract tooling table shows hey-api, ogen and datamodel-codegen generate from it, not that they score the same). A generator that fails on 3.2.0 reads the 3.1.0 document. Scores are observed results for one contract: agreement with Ajv 2020 plus `ajv-formats` on 29 fixtures (12 valid, 17 invalid), checked 2026-11-25. Ajv agrees with every fixture's label, so each score is also agreement with the label. Nested unions, recursive models, `int64` or decimal precision and `bytes` are not covered: add a fixture for each before relying on a route. Versions are in the [Contract tooling](#contract-tooling) table.
+
+| Target | Route | Spike | Conditions and known gaps |
+| --- | --- | --- | --- |
+| Published JSON Schema | `@typespec/json-schema`, sealed, with a generated entry point: emit each public model as its own file with `@jsonSchema`, or generate a root `$ref` wrapper per public model. Generators read a normalized copy from an in-house script (`unevaluatedProperties` to `additionalProperties`, bundle refs to `#/$defs`, `const` to a one-item `enum`); no tested generator reads the emitted form | Ajv 29/29 on the `RunRequest` subschema | The 29/29 harness selects the `RunRequest` subschema, not the bundle root, and the pinned emitter emits only `$defs` in bundle mode: such a bundle accepts any document (`jsonschema lint` reports every definition as `orphan_definitions`). Run every valid and invalid fixture against the exact published artifact (`jsonschema validate <published file> <fixture>`), not a subschema selected by the harness |
+| Pydantic v2 | Normalized JSON Schema to `datamodel-code-generator` with `--use-missing-sentinel`; keep pydantic-core's default `rust-regex` engine | 28/29 | The miss is Unicode `\d` (see the pattern rule in `quality-code-design`'s `contracts.md`). Model docstrings are not emitted by the binding (docs 3/6); the published schema carries them. Fractions over 6 digits are truncated. No Pydantic emitter was tested: `@typespec/http-client-python` emits an SDK client |
+| Zod | Normalized OpenAPI (3.1.0 in the spike) to `@hey-api/openapi-ts` with `dates: { offset: true }` and a `$resolvers.object` that emits `z.strictObject` or `z.looseObject` | 28/29 (defaults 25/29) | The miss is a lowercase `t` or `z` in a date-time (`z.iso.datetime()` rejects it, Ajv accepts it): narrow the contract or record a per-route exception for that fixture. Field descriptions are not carried by the binding (docs 3/6). Plugin API is 0.x. Measured through OpenAPI only |
+| Zod, other routes | `json-schema-to-zod` (deprecated, repo archived), `z.fromJSONSchema`, `typespec-zod`, kattebak | 17/29 as shipped | `\p{..}` patterns compiled without the `u` flag reject every valid fixture (up to 28/29 only with a forced `u` flag, which is not shipped code); `typespec-zod` throws on import (declaration order); kattebak ignores `seal-object-schemas` |
+| Rust serde | Normalized JSON Schema to `cargo-typify`, then validate the raw `serde_json::Value` with the `jsonschema` crate before deserializing | 29/29 (typify alone 25/29) | typify does not enforce ranges, `minItems`, `maxItems` or optional-not-null; `tags: []` serializes as absent; fractions over 9 digits are truncated. `progenitor` reads OpenAPI 3.0 only and adds nothing over typify. `@azure-tools/typespec-rust` emits an Azure SDK crate (16/29) |
+| Go | Normalized OpenAPI (3.1.0 in the spike) with `x-ogen-time-format: 2006-01-02T15:04:05.999999999Z07:00` on each date-time, to `ogen`. The default for owned Go HTTP contracts | 28/29 (raw 26/29) | The miss is a lowercase `t` or `z` (Go's `time` parser). `ogen` writes open-object extra keys in random order: golden tests compare parsed JSON. `oapi-codegen` validates nothing (13/29); `go-jsonschema` nests extras under `"AdditionalProperties"` (22/29, wrong wire shape); `typespec-go` stops at a union. Measured through OpenAPI only |
+
+### Schema-only contracts
+
+A contract with no HTTP surface (config, file and record formats, CLI and tool JSON output, event payloads, MCP tool schemas) is emitted by `@typespec/json-schema` alone. It runs the schema-only gates below, not the HTTP gates.
+
+- **Measured:** Pydantic (28/29) and Rust (29/29 with the validator) read the normalized JSON Schema directly, so their scores apply as they stand.
+- **Unmeasured:** the Go and Zod routes in the table read OpenAPI. Their schema-only routes (a throwaway OpenAPI wrapper around the schema, or a schema-native generator) are unmeasured until a fixture-tested route exists. Fixture-test one before mandating Go or Zod bindings for a schema-only contract; until then validate the raw value against the published schema (Ajv 2020 in TypeScript, a pinned validator in Go) and treat the binding as unverified.
+- **Docs:** generate the reference documentation from the published JSON Schema with one generator. The adopting project records its pin and fixture in its own repository; this skill's tooling table lists none, because no generator was measured.
+
+### Why not another source
+
+The same 29 fixtures and scorer, one candidate per branch of the spike repository, 2026-11-25. None beats TypeSpec on any language.
+
+| Source | Observed result | Why it loses |
+| --- | --- | --- |
+| Protobuf (`buf`, protojson, protovalidate) | Best 23/29: protojson plus protovalidate in Go, Python and TypeScript, and the Rust connect-openapi schema through typify (19/29 with the `jsonschema` pass). protojson alone 14/29; Pydantic and Zod through OpenAPI 19/29; the published JSON Schema 17/29 | `oneof` writes `{"shell": {...}}`, so protojson cannot carry a `kind`-tagged union, and it treats present-but-null as unset. The published `protoc-gen-jsonschema` output fails to compile in Ajv (invalid `u`-mode `uri` pattern). `buf breaking` did not flag a lowered maximum |
+| Smithy | Ties: 28/29 to 29/29 | Only after 8 JSON-pointer overrides in `smithy-build.json` (union, nullability, closedness, `uri`) that repeat the model outside the IDL; without them the JSON Schema scores 17/29, and `smithy diff` cannot see them. Direct code generators are 0.x and service-shaped |
+| quicktype | Standalone bindings 13/29 (Go) to 19/29 (Zod), Rust 15/29, Pydantic 14/29 to 17/29. Rust with a separate `jsonschema` validator 29/29, but 3/12 on exact round-trip | Generates types, not validators: enforces array bounds in Zod only, merges the `kind` union into one class, drops open-object keys and does not close objects. The validator-assisted score needs a second source of truth for the shape |
+| Typical | No JSON route | Binary wire format; no patterns, ranges, list bounds, date-time, JSON Schema or OpenAPI; Rust and TypeScript only. A hand-written JSON adapter accepted 11 of 17 invalid fixtures |
+
+### Required CI gates
+
+Every repository with a TypeSpec source runs the gates that apply to its contracts on every PR. An HTTP contract runs the HTTP gates and schema gates 7, 8 and 10 (its emitted schemas are JSON Schema too), plus gate 9 only when it publishes a standalone schema. A contract with no HTTP surface runs the schema gates. One tool per gate.
+
+| # | Applies to | Gate | Command | Tool |
+| --- | --- | --- | --- | --- |
+| 1 | all | Format | `tsp format --check "**/*.tsp"` | `@typespec/compiler` |
+| 2 | all | Compile, warnings as errors | `tsp compile . --warn-as-error` (linter rules report as warnings) | `@typespec/compiler` |
+| 3 | all | Regenerate and drift | Regenerate every output (OpenAPI, JSON Schema, bindings, docs) with the pinned toolchain, then fail on `git status --porcelain -- <generated dirs>` (it also catches new untracked files; `git diff --exit-code` does not) | Pinned generators |
+| 4 | HTTP | OpenAPI lint | `redocly lint <openapi.json>` with a committed `redocly.yaml`, plus a check that every key of an operation's Responses Object, other than `x-*` extensions, is `default`, `1XX`–`5XX` or 100–599 (names under `components.responses` are not status codes and are left alone), and that `jsonSchemaDialect`, when present, is an absolute URI (Redocly checks neither) | Redocly CLI, plus a project script |
+| 5 | HTTP | API docs | `redocly build-docs <openapi.json> -o <docs file>`; the docs are generated output, never hand-written | Redocly CLI |
+| 6 | HTTP | Breaking changes | `oasdiff breaking <base openapi> <head openapi> --fail-on ERR --severity-levels oasdiff-severity.txt` (see Breaking changes) | `oasdiff` |
+| 7 | schema | JSON Schema meta-validation | `jsonschema metaschema <schema>` and `jsonschema lint <schema>`, plus the pattern lint in `contracts.md` | Sourcemeta `jsonschema` |
+| 8 | schema | Schema breaking check | The additive-only gate below on every published JSON Schema, and the sealed-property check in every dialect (mandatory; HTTP payloads included), recognising TypeSpec's emitted seal `unevaluatedProperties: {"not": {}}` as `false` | In-house check, plus `json-schema-diff` for draft-07 |
+| 9 | published schema | Reference docs | Required only when a standalone JSON Schema is published (a schema-only contract, or a schema file published beside an HTTP API): generate its reference documentation. An HTTP contract that publishes no standalone schema relies on gate 5 | One generator, pinned and fixture-tested by the adopting project in its own repository |
+| 10 | all | Conformance fixtures | Every non-exempt fixture's verdict equals its label in every recommended route | The repository's corpus and harness |
+
+Add Schemathesis against a disposable running server when the HTTP contract has one; never against production. Versions are in the [Contract tooling](#contract-tooling) table.
+
+- **Findings on the spike output:** `jsonschema lint` reported `orphan_definitions` for every `$defs` entry and a missing top-level title, description and examples. The Redocly, vacuum, Spectral and Sourcemeta results are in the [Contract tooling](#contract-tooling) section.
+- **Drift:** gate 3 is the porcelain-status check on every generated directory. Record the binary versions in the run log; the installer must verify versions, not skip existing binaries.
+- **Conformance as the upgrade gate:** one corpus of valid and invalid documents, each labelled. The check asserts each fixture's verdict equals its label in every recommended route, not only agreement with another validator. Every non-exempt fixture must match; there is no score floor, because a floor hides a newly accepted invalid payload when another case improves. Record each temporary exception by route and fixture with its exact expected result (for example `zod/<fixture>: rejected, label valid`), review it in the PR and expire it when the route is fixed. Add an isolated negative for every constraint (below minimum, above maximum, too few and too many items, each pattern, unknown key on a closed model, `null` on an optional field) and date-time variants (lowercase `t`/`z`, more than six fractional digits, offsets).
+- **Docs:** the published schema must carry every model and field description; test that in the schema. Test the docs each binding claims to support separately in that binding (the Pydantic and Zod bindings scored 3/6 each on the spike and record that as a per-route exception, not as a floor).
+- **Breaking changes (HTTP):** take the base document from an explicit base ref that CI must supply (`git show <base>:<path>`; a default of `HEAD` compares the tree to itself). `oasdiff` reports a removed request property (`request-property-removed`) as a warning, which `--fail-on ERR` ignores. Promote it with a committed `oasdiff-severity.txt` containing the line `request-property-removed err` (checked on 1.40.0: exit 0 without the file, exit 1 with it), or use `--fail-on WARN` to fail on every warning. Commit one isolated mutation per case with its expected exit status: `new-required-request-property`, `request-property-max-decreased`, `response-property-enum-value-added`, `request-property-removed`, and the sealed-model addition below.
+- **Sealed payloads, every protocol:** with sealed models, adding an optional property breaks older strict readers and `oasdiff` does not flag it. Run the schema check (gate 8) on each emitted schema used by a sealed payload, HTTP request and response schemas included, and keep an isolated mutation that adds an optional property to a sealed model and expects the check to fail; the seal forms it must recognise and the raw-output fixtures are listed in the additive-only gate. `json-schema-diff` 1.0 ignores `enum`, `const`, `format` and `pattern` and fails only on removed values, so an optional property added to a sealed model passes it. The sealed-property check is therefore mandatory whatever the dialect, draft-07 included: run the in-house check's sealed-property rule (below) in addition to `json-schema-diff`.
+- **Determinism:** the spike regenerated twice on one machine and the files matched. Output of compile-time macros (`progenitor`) and determinism across machines are unmeasured.
+
 ## Generate schemas from code, and validate against them
+
+For a contract you own, the schema comes from TypeSpec. This table lists the validators and types that consume the committed schema, and the code-to-schema exports used only as a drift check against it (the framework-adapter pattern in Own the contract) or for a contract you do not own.
 
 | Language | Code to JSON Schema | JSON Schema to types | Validator (2020-12) |
 | --- | --- | --- | --- |
 | TypeScript | Zod 4 `z.toJSONSchema`; TypeBox 1 (`typebox`, not the legacy `@sinclair/typebox`) | `json-schema-to-typescript` 16; quicktype | Ajv 8 through the `Ajv2020` class; never mix dialects in one instance |
 | Python | Pydantic 2 `model_json_schema` (choose validation or serialization mode); msgspec | `datamodel-code-generator` | `jsonschema` 4; `jsonschema-rs` for speed |
 | Go | `invopop/jsonschema` (2020-12); Huma | `go-jsonschema` (formerly atombender) | `santhosh-tekuri/jsonschema` |
-| Rust | `schemars` 1 | `typify` 0.8 | `jsonschema` crate 0.61 |
+| Rust | `schemars` 1 | `typify` 0.8 | `jsonschema` crate (pin: Contract tooling table) |
 
 Transforms, refinements and custom runtime checks often have no JSON Schema form: test the emitted schema. Choose format assertion and remote `$ref` fetching explicitly in the validator.
 
@@ -191,17 +307,17 @@ One tool per gate.
 
 | Gate | Default | Alternatives | Where |
 | --- | --- | --- | --- |
-| OpenAPI lint | Redocly CLI 2 | Spectral 6 (supports OpenAPI 3.2; custom governance rulesets and the OWASP API security ruleset); `vacuum` (fast, Go); IBM `openapi-validator` (OpenAPI 3.0 and 3.1 only) | Pre-commit and CI |
+| OpenAPI lint | Redocly CLI (pinned in the Contract tooling table) with a committed `redocly.yaml` | `vacuum` (faster, Go, single maintainer); Spectral 6 only to keep an existing Spectral ruleset (SmartBear maintenance has slowed; OpenLint is a community fork to watch); IBM `openapi-validator` (OpenAPI 3.0 and 3.1 only) | Pre-commit and CI |
 | OpenAPI breaking changes | `oasdiff` against the released baseline | `openapi-diff` (JVM). Optic is archived: do not adopt | CI |
-| JSON Schema breaking changes | Draft-07 schemas: `json-schema-diff` against the base branch, failing on any removed difference. 2020-12 schemas: a small, tested in-house check plus an allow-file (see the additive-only gate) | A registry compatibility mode where a schema registry already holds the schemas | CI |
+| JSON Schema breaking changes | Draft-07 schemas: `json-schema-diff` against the base branch, failing on any removed difference. 2020-12 schemas: a small, tested in-house check plus an allow-file (see the additive-only gate). Every dialect, draft-07 included: the sealed-property rule, which treats `unevaluatedProperties: {"not": {}}` as `false`, because `json-schema-diff` does not flag an added optional property | A registry compatibility mode where a schema registry already holds the schemas | CI |
 | Bundling and overlays | `redocly bundle` and `redocly split`; a pinned overlay tool (`vacuum apply-overlay`) | `openapi-format` for sorting and filtering | CI |
 | Protobuf lint, format, breaking | `buf lint`, `buf format`, `buf breaking` | `api-linter` for Google AIP style; `protolint` | Lint in pre-commit; breaking in CI |
 | Protobuf runtime validation | Protovalidate (replaces `protoc-gen-validate`) | - | Code and tests |
 | GraphQL | `graphql-eslint` 4 and GraphQL Inspector 7 | Schema checks in Hive (MIT, self-hostable) or Apollo GraphOS | Pre-commit and CI |
-| AsyncAPI | AsyncAPI CLI 6 `validate` with Spectral's AsyncAPI rules | EventCatalog for documentation only (BUSL-1.1 licence) | Pre-commit and CI |
+| AsyncAPI | AsyncAPI CLI 6 `validate` with Spectral's AsyncAPI rules; payloads reference the TypeSpec-emitted schemas. AsyncAPI requires draft-07 support, not 2020-12, so the adopting project must commit a parser fixture for the exact artifact each channel references, including a generated draft-07 projection when it publishes one: parse the document with the pinned `@asyncapi/parser` and fail on any error-severity diagnostic or a missing payload property. The projection is a published artifact too: it also runs the conformance corpus and the sealed-property check. Spike measurement (`@asyncapi/parser` 3.6.6, 2026-11-25): a direct `$ref` to the emitted bundle (`contracts.schema.json#/$defs/RunRequest`) failed with `invalid-ref` on its relative `$id` refs (`Owner.json` and the others), while the normalized copy (`contracts.normalized.schema.json#/$defs/RunRequest`, bundle refs rewritten to `#/$defs`) parsed with no diagnostics and exposed the payload properties | EventCatalog for documentation only (BUSL-1.1 licence) | Pre-commit and CI |
 | Generated code | Regenerate with the pinned generator and fail on a diff; compile the generated client | - | CI |
 | Mock server | Prism 5 (also a validation proxy) | Microcks (OpenAPI, AsyncAPI, protobuf, GraphQL); Mockoon | Local and CI |
-| API docs | Scalar | Redoc 3, Swagger UI 5 | Build |
+| API docs | `redocly build-docs` on the TypeSpec-emitted OpenAPI (required for HTTP contracts) | Scalar, Redoc 3, Swagger UI 5 | Build |
 | Contract and property tests | Schemathesis (never against production) | Pact for consumer-driven contracts between independently deployed services. Dredd is archived (2024-11-08): do not adopt | CI |
 | HTTP regression tests | Hurl | Bruno, Postman with Newman, StepCI | CI |
 | Load | k6 | `ghz` for gRPC; `oha` or `vegeta` for quick HTTP runs | Scheduled |
@@ -210,36 +326,37 @@ One tool per gate.
 
 Security rules in a linter check what the document declares, not how the server behaves.
 
-Versions, install commands, licences and tradeoffs for Schemathesis, Pact, Hurl, oasdiff and k6 are in `toolchain-languages`' [shared-tools.md](../toolchain-languages/references/shared-tools.md); this table gives only the choice per gate.
+In a TypeSpec project the exact versions of Redocly, Sourcemeta, `oasdiff` and Schemathesis are in the [Contract tooling](#contract-tooling) table. Licences, tradeoffs and install commands for Schemathesis, Pact, Hurl, oasdiff and k6 are in `toolchain-languages`' [shared-tools.md](../toolchain-languages/references/shared-tools.md); this table gives only the choice per gate.
 
 ## Contract gates by style
 
-Every style has a schema gate on every PR. Where significant internal services you own call each other and deploy independently, add Pact (consumer-driven contracts, a Pact Broker, `can-i-deploy`). Public and third-party consumers get the schema gate only. Versions, install commands and the Pact conditions are in [shared-tools.md](../toolchain-languages/references/shared-tools.md#contracts-by-api-style).
+Every style has a schema gate on every PR. Where significant internal services you own call each other and deploy independently, add Pact (consumer-driven contracts, a Pact Broker, `can-i-deploy`). Public and third-party consumers get the schema gate only. Pact versions, install commands and conditions are in [shared-tools.md](../toolchain-languages/references/shared-tools.md#contracts-by-api-style).
 
 | Style | Default gate | Required add-on for internal services |
 | --- | --- | --- |
-| HTTP/OpenAPI | `oasdiff` plus Schemathesis | Pact with Broker |
-| gRPC, protobuf, Connect | `buf breaking` and `buf lint` | Pact with `pact-protobuf-plugin` |
+| HTTP/OpenAPI | `oasdiff` with the severity file, the schema check for sealed payloads, plus Schemathesis | Pact with Broker |
+| gRPC, protobuf, Connect | `buf lint` (`STANDARD`) and `buf breaking --against <base ref>`, with protovalidate for value limits | Pact with `pact-protobuf-plugin` |
 | GraphQL | `graphql-inspector diff` | - |
 | Events | Registry compatibility mode plus `asyncapi validate` | Pact V4 message pacts |
 | Webhooks | The payload schema diff plus Standard Webhooks tests | - |
-| Plain JSON Schema | Additive-only gate: `json-schema-diff` (draft-07) or an in-house check (2020-12) | The shared-contract gate below when two languages consume the schema |
+| Plain JSON Schema (schema-only contracts) | Additive-only gate: `json-schema-diff` (draft-07) or an in-house check (2020-12), plus the sealed-property check in every dialect | The shared-contract gate below when two languages consume the schema |
 | JSON-RPC over stdio | A scripted peer plus a frame corpus | The MCP conformance runner for MCP servers |
 | MCP servers | Committed `tools/list` snapshot diff | - |
 
 ## JSON Schema additive-only gate
 
-For a contract that is plain JSON Schema (no OpenAPI or protobuf around it), compare the schema on the PR with the one on the base branch and allow only additive change.
+For every published JSON Schema, whether a plain schema or one used by an OpenAPI request or response, compare the schema on the PR with the one on the base branch and allow only additive change.
 
-- **Draft-07 schemas:** `json-schema-diff` (Atlassian, Apache-2.0). It compares two schemas by set theory and reports "added" (the new schema is more permissive) and "removed" (it is more restrictive). The CLI exits non-zero when anything is removed, which is the additive-only rule: everything the old schema accepted still validates. Its README says the files must be valid draft-07. Pin the version in the lockfile and check the keywords you use against its `KEYWORDS.md` with committed fixtures. Treat "unsupported keyword" output as a failed gate.
-- **2020-12 schemas, and any schema with `$id`:** no maintained tool covers them. Atlassian's and Sentry's `json-schema-diff` read draft-07 only (Sentry's README: "used with draft-07 but even that is work in progress", best effort), and `jsoncompat` reads 2020-12 but says it is alpha software that reports `Unknown` for incomplete proofs. Write a small in-house check, tested with committed fixtures (one failing and one passing pair per rule), that fails on at least:
+- **Draft-07 schemas:** `json-schema-diff` (Atlassian, Apache-2.0). It compares two schemas by set theory and reports "added" (the new schema is more permissive) and "removed" (it is more restrictive). The CLI exits non-zero when anything is removed, which is the additive-only rule: everything the old schema accepted still validates. Its README says the files must be valid draft-07. Pin the version in the lockfile and check the keywords you use against its `KEYWORDS.md` with committed fixtures. Treat "unsupported keyword" output as a failed gate. It does not replace the sealed-property check: it fails only on removed values, so the in-house sealed-property rule below also runs on draft-07 schemas.
+- **2020-12 schemas, and any schema with `$id`; the sealed-property rule for every dialect:** no maintained tool covers them. Atlassian's and Sentry's `json-schema-diff` read draft-07 only (Sentry's README: "used with draft-07 but even that is work in progress", best effort), and `jsoncompat` reads 2020-12 but says it is alpha software that reports `Unknown` for incomplete proofs. Write a small in-house check, tested with committed fixtures (one failing and one passing pair per rule), that fails on at least:
   - a removed property, or a narrowed `type`, `enum`, `format`, `pattern`, `minimum`/`maximum`, `minLength`/`maxLength` or `minItems`/`maxItems`;
   - a newly `required` field;
+  - a property added to a sealed model, even optional, since older strict readers reject it (mandatory in every dialect). A model is sealed when `additionalProperties` or `unevaluatedProperties` is `false`, or when `unevaluatedProperties` is `{"not": {}}`, the form both pinned 1.18.0 emitters write (JSON Schema `$defs` and OpenAPI `components.schemas` alike; an open model is `unevaluatedProperties: {}`). Treat `{"not": {}}` as equivalent to `false`: a check that matches only the literal `false` finds no sealed model in either raw output and passes the mutation. Walk every subschema, and fixture-test the check against both raw emitter outputs, committed unedited (the JSON Schema bundle and the OpenAPI document): the unchanged file passes, and a mutation that adds an optional property to a sealed model fails;
   - a removed `enum` value;
   - a changed `$id`.
 
   Keep an allow-file for intentional breaks: each entry names the schema, the rule, the reason and the new schema version, is reviewed in the PR, and expires when the version ships. An entry with no reason fails the check.
-- **Rules:** a new property is optional, never added to `required`; do not tighten a type, `enum`, bound or `pattern`; do not set `additionalProperties` to `false` where it was open. A deliberate break ships as a new versioned schema.
+- **Rules:** a new property is optional, never added to `required` (on a sealed model the first rule above still applies: a deliberate, versioned addition); do not tighten a type, `enum`, bound or `pattern`; do not set `additionalProperties` to `false` where it was open. A deliberate break ships as a new versioned schema.
 - **Alternatives:** a schema registry's compatibility mode (Confluent documents `BACKWARD` and `FULL`) fits where the registry already holds the schemas. The JSON Schema organisation lists no official compatibility tool.
 - **Review check:** a schema file changed with no gate in CI; a field added to `required`; a tightened constraint with no new schema version.
 
@@ -247,8 +364,8 @@ For a contract that is plain JSON Schema (no OpenAPI or protobuf around it), com
 
 When two languages share a contract (a Rust host and a TypeScript SDK, a Go server and a Python client), both consume the same generated schema files, never hand-copied ones.
 
-1. **One source:** generate the schemas from one place (the code or the IDL that owns the contract) with a pinned generator, and commit them.
-2. **Regenerate and diff:** CI regenerates the schemas with the pinned generator and fails on any diff against the committed files.
+1. **One source:** generate the schemas from the contract's TypeSpec source with a pinned generator, and commit them. Protobuf keeps its `.proto`, GraphQL its SDL, AsyncAPI channels and bindings their AsyncAPI document (which references the emitted payload schemas), and a third-party contract its published file.
+2. **Regenerate and diff:** CI regenerates the schemas with the pinned generator and fails on `git status --porcelain` against the committed files.
 3. **Byte-checked copies:** where a package must vendor the files, CI compares each vendored copy to the source byte for byte and fails on a difference.
 4. **Shared conformance corpus:** one corpus of valid and invalid messages lives with the schemas, and each language runs it against its own validator or codec. Expected outcomes live in the corpus, never in a language's tests.
 5. **Cross-language tests:** for each message type, a test drives the real SDK of one language through the real host of the other, over the real transport. A mock host proves nothing about the other side.
@@ -286,10 +403,16 @@ Neither [Schemathesis](https://schemathesis.readthedocs.io/) nor [Pact](https://
 
 - OpenAPI specifications: https://spec.openapis.org/oas/
 - Connect protocol and multi-protocol servers: https://connectrpc.com/docs/protocol/, https://connectrpc.com/docs/multi-protocol/
-- Spectral: https://github.com/stoplightio/spectral
+- Spectral: https://github.com/stoplightio/spectral; OpenLint, a community fork: https://apisyouwonthate.com/blog/openlint-picking-up-where-spectral-left-off/
+- vacuum: https://github.com/daveshanley/vacuum
+- Schemathesis: https://github.com/schemathesis/schemathesis
 - Redocly CLI: https://github.com/Redocly/redocly-cli
 - oasdiff: https://github.com/oasdiff/oasdiff
-- Buf CLI: https://github.com/bufbuild/buf
+- Sourcemeta `jsonschema`: https://github.com/sourcemeta/jsonschema
+- TypeSpec spike (29-fixture report, bake-off of protobuf, Smithy, quicktype and Typical, OpenAPI linter comparison in `lint-bakeoff/RESULTS.md`): `typespec-spike/REPORT.md` and the `candidates/<name>/FINDINGS.md` files on its branches
+- Buf CLI: https://github.com/bufbuild/buf; `@typespec/protobuf`: https://www.npmjs.com/package/@typespec/protobuf
+- oRPC: https://orpc.dev/
+- AsyncAPI parser: https://github.com/asyncapi/parser-js
 - Protovalidate: https://github.com/bufbuild/protovalidate
 - Kiota: https://github.com/microsoft/kiota
 - Ajv JSON Schema 2020-12: https://ajv.js.org/json-schema.html
@@ -298,6 +421,9 @@ Neither [Schemathesis](https://schemathesis.readthedocs.io/) nor [Pact](https://
 - gRPC guides: https://grpc.io/docs/guides/
 - GraphQL specification: https://spec.graphql.org/
 - JSON Schema specification: https://json-schema.org/specification
+- TypeSpec compiler: https://www.npmjs.com/package/@typespec/compiler, OpenAPI import CLI: https://typespec.io/docs/emitters/openapi3/cli/
+- TypeSpec: https://typespec.io/docs/, JSON Schema emitter https://typespec.io/docs/emitters/json-schema/reference/emitter/ (`seal-object-schemas`), https://github.com/microsoft/typespec
+- TypeSpec-adjacent generators: https://github.com/hey-api/openapi-ts, https://github.com/datamodel-code-generator/datamodel-code-generator, https://github.com/oxidecomputer/typify, https://github.com/ogen-go/ogen
 - json-schema-diff (Atlassian): https://bitbucket.org/atlassian/json-schema-diff, https://www.npmjs.com/package/json-schema-diff
 - json-schema-diff (Sentry, Rust; draft-07, best effort): https://github.com/getsentry/json-schema-diff
 - jsoncompat (2020-12, alpha): https://github.com/ostrowr/jsoncompat

@@ -1,3 +1,21 @@
+## lang-rust [0.10.1](https://github.com/srobroek/harness-plugins/compare/lang-rust--v0.10.0...lang-rust--v0.10.1) (2026-11-25)
+
+### Bug Fixes
+
+* **toolchain:** ship the full languages and lang-libraries skills to OMP ([#197](https://github.com/srobroek/harness-plugins/issues/197)) ([bbba5da](https://github.com/srobroek/harness-plugins/commit/bbba5da0cc894c6870bedfffd7842615fa9e310e)), closes [#181](https://github.com/srobroek/harness-plugins/issues/181)
+
+## lang-rust [0.10.0](https://github.com/srobroek/harness-plugins/compare/lang-rust--v0.9.3...lang-rust--v0.10.0) (2026-11-25)
+
+### Features
+
+* **lang-go:** rescore TypeSpec generator entries and say contract types are never hand-written ([87bb529](https://github.com/srobroek/harness-plugins/commit/87bb529b2feb56b8784452253d08126208e6f081))
+* **lang-rust:** add TypeSpec-sourced generator entry to libraries ([d6f0f28](https://github.com/srobroek/harness-plugins/commit/d6f0f2880be4165a183d149f324d1529daeae078))
+
+### Bug Fixes
+
+* **lang-rust:** point TypeSpec generator pin to the Contract tooling table and keep framework schemas as adapters ([77b9288](https://github.com/srobroek/harness-plugins/commit/77b9288e44232e4f5481fe67c40a0ceaba6b8f08))
+* **toolchain:** recognise TypeSpec's emitted seal, publish OpenAPI 3.2.0, ship the full API skill to OMP and adopt the framework-adapter pattern ([818f193](https://github.com/srobroek/harness-plugins/commit/818f193ecb67974fed549502705b6f5663708797))
+
 ## lang-rust [0.9.3](https://github.com/srobroek/harness-plugins/compare/lang-rust--v0.9.2...lang-rust--v0.9.3) (2026-11-24)
 
 ## lang-rust [0.9.2](https://github.com/srobroek/harness-plugins/compare/lang-rust--v0.9.1...lang-rust--v0.9.2) (2026-11-24)
