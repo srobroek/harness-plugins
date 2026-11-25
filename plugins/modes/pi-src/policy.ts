@@ -16,7 +16,7 @@
 import { isAbsolute, join, relative, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import { type AgentPermission, permissionEffect } from "@srobroek/opencode-lib/agent-files"
-import { leadingCdCwd, type ParsedCommand, parse } from "@srobroek/opencode-lib/shell-command"
+import { leadingCd, type ParsedCommand, parse } from "@srobroek/opencode-lib/shell-command"
 import { writeTargets } from "@srobroek/opencode-lib/tool-targets"
 import { inspectShellCall } from "../opencode/src/git-guard.ts"
 import { AGENT_IDS, type AgentId, MODE_ROLES } from "../opencode/src/modes.ts"
@@ -258,14 +258,18 @@ function commandTexts(parsed: ParsedCommand): string[] {
 
 /**
  * pi's bash has no `workdir` field, which the git guard trusts for commands that write. A leading
- * `cd <dir> &&` stands in for it when everything after it is chained with `&&` or pipes, so nothing
- * runs when `cd` fails; `||`, `;`, `&` or a newline (even quoted) keeps the command as written.
+ * `cd <dir> &&` that `leadingCd` reads as a literal directory stands in for it when everything after
+ * it is chained with `&&` or pipes, so nothing runs when `cd` fails; `||`, `;`, `&` or a newline
+ * (even quoted) keeps the command as written. The cut is the length of `leadingCd`'s own match, so the
+ * directory and the stripped text come from one parse. Any other leading `cd` also stays in the
+ * command, where the git guard sees it and refuses git that writes.
  */
 export function shellWorkdir(command: string, cwd: string): { command: string; workdir?: string } {
-  const workdir = leadingCdCwd(command, cwd)
-  if (workdir === cwd) return { command }
-  const rest = command.replace(/^\s*cd\s+[^\s;&|]+\s*&&/, "")
-  return /\|\||;|\n|(?<!&)&(?!&)/.test(rest) ? { command } : { command: rest, workdir }
+  const lead = leadingCd(command, cwd)
+  if (lead.kind !== "dir") return { command }
+  const rest = command.slice(lead.length)
+  if (rest.trim() === "" || /\|\||;|\n|(?<!&)&(?!&)/.test(rest)) return { command }
+  return { command: rest, workdir: lead.dir }
 }
 
 /** The shell rules on the whole command and on each simple command in it, as OpenCode checks a compound command. */

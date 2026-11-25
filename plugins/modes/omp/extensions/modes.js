@@ -374,14 +374,16 @@ function tokenize(segment) {
     quoted: startsQuoted
   }));
 }
-function leadingCdCwd(command, cwd) {
-  const match = /^\s*cd\s+([^\s;&|]+)\s*&&/.exec(command);
-  if (!match)
-    return cwd;
-  const dir = match[1];
-  if (!dir || /^[-~$]/.test(dir) || /[\\`"'*?\x5b\x5d{}]/.test(dir))
-    return cwd;
-  return dir.startsWith("/") ? dir : resolve(cwd, dir);
+var LITERAL_CD = /^\s*cd[ \t]+([A-Za-z0-9_@%+=:,./-]+)[ \t]*(?:&&|$)/;
+var STARTS_WITH_CD = /^\s*(?:cd|pushd|popd)(?=\s|$|[;&|<>()])/;
+function leadingCd(command, cwd) {
+  if (!STARTS_WITH_CD.test(command))
+    return { kind: "none" };
+  const match = LITERAL_CD.exec(command);
+  const dir = match?.[1];
+  if (match === null || dir === undefined || dir.startsWith("-") || dir.split("/").includes(".."))
+    return { kind: "rejected" };
+  return { kind: "dir", dir: resolve(cwd, dir), length: match[0].length };
 }
 function scanShell(source, options = {}) {
   const items = [];
@@ -1387,7 +1389,8 @@ var DANGEROUS_ENV = /^(GIT_(CONFIG[A-Z_0-9]*|SSH|SSH_COMMAND|ASKPASS|EXTERNAL_DI
 var RISKY_OPTION = /^--(upload-pack|receive-pack|exec|open-files-in-pager|ext-diff|textconv)(=|$)/;
 var MENTIONS_GIT = /git/i;
 var WORTH_PARSING = /git|[{*?[$`]/i;
-var KEYWORDS = new Set(["if", "then", "else", "elif", "while", "until", "do", "!", "{", "(", "coproc"]);
+var KEYWORDS = new Set(["if", "then", "else", "elif", "while", "until", "do", "!", "{", "(", "coproc", "builtin"]);
+var IN_SHELL = new Set(["eval", "source", "."]);
 var INTERPRETERS2 = /^(python[0-9.]*|node|nodejs|perl|ruby|php|lua|awk|gawk|mawk|osascript|tclsh|Rscript)$/;
 var INTERPRETERS_SPECS = [
   { name: /^python[0-9.]*$/, inline: ["-c"], valued: ["-W", "-X", "-Q"], stop: ["-m"], once: true },
@@ -1838,12 +1841,13 @@ function checkWords(input, ctx) {
   return;
 }
 function followDirectory(position, ctx) {
-  const { argv } = realCommand(position.argv);
-  if (!["cd", "pushd", "popd"].includes(basename(argv[0] ?? "")))
+  const name = basename(realCommand(position.argv).argv[0] ?? "");
+  const changes = ["cd", "pushd", "popd"].includes(name);
+  if (!changes && !IN_SHELL.has(name))
     return false;
   ctx.state.cwd = undefined;
   ctx.state.moved = true;
-  return true;
+  return changes;
 }
 function checkParsed(parsed, ctx) {
   for (const position of parsed.commands) {
@@ -2142,11 +2146,13 @@ function commandTexts(parsed) {
   return [...parsed.commands.map((command) => command.raw), ...parsed.nested.flatMap(commandTexts)];
 }
 function shellWorkdir(command, cwd) {
-  const workdir = leadingCdCwd(command, cwd);
-  if (workdir === cwd)
+  const lead = leadingCd(command, cwd);
+  if (lead.kind !== "dir")
     return { command };
-  const rest = command.replace(/^\s*cd\s+[^\s;&|]+\s*&&/, "");
-  return /\|\||;|\n|(?<!&)&(?!&)/.test(rest) ? { command } : { command: rest, workdir };
+  const rest = command.slice(lead.length);
+  if (rest.trim() === "" || /\|\||;|\n|(?<!&)&(?!&)/.test(rest))
+    return { command };
+  return { command: rest, workdir: lead.dir };
 }
 function shellVerdict(mode, input, env) {
   const command = input?.command;

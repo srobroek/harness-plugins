@@ -241,6 +241,35 @@ describe("a leading cd as pi's bash working directory", () => {
     }
     expect(shellWorkdir("git status", "/r")).toEqual({ command: "git status" })
   })
+
+  test("only a literal directory counts, and the cut is the same match", () => {
+    expect(shellWorkdir("cd /w/a.b_c && git commit -m x", "/r")).toEqual({ command: " git commit -m x", workdir: "/w/a.b_c" })
+    for (const command of [
+      "cd /w/..>/dev/null && git commit -m x",
+      "cd /w/lnk>x && git commit -m x",
+      "cd /w/a/../b && git commit -m x",
+      "cd .. && git commit -m x",
+      "cd -P /w && git commit -m x",
+      "cd /w",
+    ]) {
+      expect(shellWorkdir(command, "/r")).toEqual({ command })
+    }
+  })
+
+  test("debug refuses git that writes after a cd it cannot read literally", () => {
+    for (const command of [
+      `cd ${scratch}/..>/dev/null && git commit -m x`,
+      `cd ${scratch}/escape>x && git commit -m x`,
+      `cd ${scratch}/a/.. && git commit -m x`,
+      `cd ${scratch} && builtin cd ${cwd} && git commit -m x`,
+      `cd ${scratch} && eval cd ${cwd} && git commit -m x`,
+      `cd ${scratch} && source ./setup.sh && git commit -m x`,
+      `cd ${scratch} && . ./setup.sh && git commit -m x`,
+    ]) {
+      expect({ command, effect: effect("debug", "bash", { command }) }).toEqual({ command, effect: "deny" })
+    }
+    expect(decide("debug", "bash", { command: `cd ${scratch} && git commit -m x` })).toEqual({ effect: "allow", headCheck: scratch })
+  })
 })
 
 describe("which mode a session runs", () => {
