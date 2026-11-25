@@ -222,7 +222,9 @@ describe("createFakeContext", () => {
     const pending = fake.emit({ type: "a" })
     fake.closeEvents()
     await pending
-    expect(await iterator.next()).toEqual({ value: { type: "a" }, done: false })
+    const first = await iterator.next()
+    expect(first.done).toBe(false)
+    expect(first.value).toEqual({ type: "a" })
     expect((await iterator.next()).done).toBe(true)
   })
 
