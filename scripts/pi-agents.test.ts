@@ -96,10 +96,11 @@ describe("a Pi agent without write or edit hands files back through output", () 
   })
 
   test.each(readOnly.map((agent) => [label(agent), agent] as const))("%s", (_name, agent) => {
-    expect({ writes: agent.tools.filter((tool) => WRITE_TOOLS.includes(tool)), rule: agent.body.includes(OUTPUT_FILE_RULE) }).toEqual({
-      writes: [],
-      rule: true,
-    })
+    expect({
+      writes: agent.tools.filter((tool) => WRITE_TOOLS.includes(tool)),
+      rule: agent.body.includes(OUTPUT_FILE_RULE),
+      acceptanceRole: agent.acceptanceRole,
+    }).toEqual({ writes: [], rule: true, acceptanceRole: "read-only" })
   })
 })
 

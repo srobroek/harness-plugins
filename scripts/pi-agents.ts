@@ -13,6 +13,8 @@ export type PiAgent = {
   /** `subagentOnlyExtensions`: `npm:<package>` or a path relative to the shipped `pi/agents/` file. */
   extensions: string[]
   body: string
+  /** `acceptanceRole`: `read-only` keeps pi-subagents from asking the child for a writer's acceptance report. */
+  acceptanceRole: string | undefined
 }
 
 /** pi-web-access 0.48's tools; on Pi they stand in for OpenCode's webfetch and websearch. */
@@ -58,6 +60,7 @@ export function piAgents(plugins: string): PiAgent[] {
         tools: list(data.tools),
         extensions: list(data.subagentOnlyExtensions),
         body: text.slice(match?.[0].length ?? 0),
+        acceptanceRole: typeof data.acceptanceRole === "string" ? data.acceptanceRole : undefined,
       }
     })
 }
