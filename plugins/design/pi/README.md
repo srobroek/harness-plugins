@@ -224,7 +224,9 @@ Chrome with an in-memory profile. The extension hides three tools:
 
 The server runs in a new temporary directory for each session, and that directory is its
 only workspace root. Snapshots, screenshots and the other files the tools save go there.
+The extension deletes the directory when the session ends, so copy a file you want to keep.
 A write outside that root fails with "File access denied", and the server blocks `file:` URLs.
+
 `pi-src/playwright-tools.json` records the 25 tools the pinned release offers. After a
 version bump, record it again with `bun scripts/record-playwright-tools.ts`.
 The design tests check each recorded tool that takes a file, a path or code.

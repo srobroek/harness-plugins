@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test"
-import { readFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import type { SupervisedRun } from "@srobroek/opencode-lib/subprocess"
 import { NPX_RUNNER, SCAN_TOOL } from "../shared/impeccable.ts"
@@ -11,16 +13,18 @@ type Execute = NonNullable<Tool["execute"]>
 
 const clean: SupervisedRun = { kind: "exited", exitCode: 0, signalCode: null, stdout: "[]", stderr: "" }
 
-function load(which: (bin: string) => string | null) {
+function load(which: (bin: string) => string | null, makeWorkspace: () => string = () => "/scratch") {
   const tools: Tool[] = []
   const servers = new Map<string, unknown>()
+  const handlers = new Map<string, () => unknown>()
   const runs: string[][] = []
   const pi = {
     registerTool: (tool: Tool) => tools.push(tool),
     registerMcpServer: (name: string, config: unknown) => servers.set(name, config),
+    on: (event: string, handler: () => unknown) => handlers.set(event, handler),
   } as unknown as ExtensionAPI
   registerDesign(pi, {
-    workspace: "/scratch",
+    makeWorkspace,
     which,
     exec: async (argv) => {
       runs.push(argv)
@@ -30,17 +34,46 @@ function load(which: (bin: string) => string | null) {
   const execute = tools[0]?.execute as Execute
   const call = (input: unknown, ctx: Record<string, unknown>) =>
     execute("call", input as never, new AbortController().signal, () => {}, { cwd: "/project", ...ctx } as never)
-  return { tools, servers, runs, call }
+  const fire = (event: string) => handlers.get(event)?.()
+  return { tools, servers, runs, call, fire }
 }
 
 const textOf = (result: Awaited<ReturnType<Execute>>) =>
   result.content.map((part) => (part.type === "text" ? part.text : "")).join("\n")
 
-test("the extension registers the scan tool and the Playwright MCP server in its workspace", () => {
-  const { tools, servers } = load(() => null)
+test("loading registers only the scan tool and creates no directory", () => {
+  let made = 0
+  const { tools, servers } = load(
+    () => null,
+    () => {
+      made++
+      return "/scratch"
+    },
+  )
   expect(tools.map(({ name }) => name)).toEqual([SCAN_TOOL])
+  expect([...servers.keys()]).toEqual([])
+  expect(made).toBe(0)
+})
+
+test("the session start registers the Playwright server in a new workspace that shutdown removes", () => {
+  const workspace = mkdtempSync(join(tmpdir(), "design-pi-workspace-"))
+  writeFileSync(join(workspace, "page.png"), "")
+  let made = 0
+  const { servers, fire } = load(
+    () => null,
+    () => {
+      made++
+      return workspace
+    },
+  )
+  fire("session_start")
+  fire("session_start")
+  expect(made).toBe(1)
   expect([...servers.keys()]).toEqual([PLAYWRIGHT_SERVER])
-  expect(servers.get(PLAYWRIGHT_SERVER)).toEqual(playwrightMcp("/scratch"))
+  expect(servers.get(PLAYWRIGHT_SERVER)).toEqual(playwrightMcp(workspace))
+  fire("session_shutdown")
+  expect(existsSync(workspace)).toBe(false)
+  fire("session_shutdown")
 })
 
 test("the README pins the same @playwright/mcp release as the extension", () => {

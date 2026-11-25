@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
@@ -57,15 +57,28 @@ const parameters = Type.Object(
 )
 
 /** Test seams; pi never passes them. */
-export type DesignOverrides = { exec?: Exec; which?: (bin: string) => string | null; workspace?: string }
+export type DesignOverrides = { exec?: Exec; which?: (bin: string) => string | null; makeWorkspace?: () => string }
 
 const text = (value: string, details: Record<string, unknown>) => ({ content: [{ type: "text" as const, text: value }], details })
 
+const newWorkspace = () => mkdtempSync(join(tmpdir(), "pi-design-playwright-"))
+
 export function registerDesign(pi: ExtensionAPI, overrides: DesignOverrides = {}): void {
   const which = overrides.which ?? ((bin: string) => Bun.which(bin))
-  // A fresh directory per load: the browser's only workspace root, kept for the screenshot paths it reports.
-  const workspace = overrides.workspace ?? mkdtempSync(join(tmpdir(), "pi-design-playwright-"))
-  pi.registerMcpServer(PLAYWRIGHT_SERVER, playwrightMcp(workspace))
+  // The browser's only workspace root lives as long as the session: pi starts the server when the
+  // session starts, so the directory is made then, and the session's snapshots and screenshots go
+  // with it at shutdown. Loading the extension alone creates nothing.
+  let workspace: string | undefined
+  pi.on("session_start", () => {
+    if (workspace !== undefined) return
+    workspace = (overrides.makeWorkspace ?? newWorkspace)()
+    pi.registerMcpServer(PLAYWRIGHT_SERVER, playwrightMcp(workspace))
+  })
+  pi.on("session_shutdown", () => {
+    if (workspace === undefined) return
+    rmSync(workspace, { recursive: true, force: true })
+    workspace = undefined
+  })
   pi.registerTool({
     name: SCAN_TOOL,
     label: "Impeccable Scan",
