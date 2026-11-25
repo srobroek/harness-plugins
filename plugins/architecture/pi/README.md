@@ -1,6 +1,6 @@
 # architecture
 
-Architecture guidance as skills, plus a read-only `architect` subagent.
+Architecture guidance as skills, plus an `architect` subagent that writes design and research documents.
 
 Only `architecture-guide` is listed to the model in OpenCode: it is a router whose body maps each
 situation to the skills below, which set `opencode/autoinvoke: false` and load by id. One listing
@@ -23,10 +23,14 @@ references, which now name the skill (`architecture-docs-files` points at the
 `architect` (mode `subagent`, steps 80) designs systems, modules and APIs and turns a hard
 change into an ordered implementation plan. It starts its reply with
 `VERDICT: DESIGNED|PARTIAL|BLOCKED`. Its permissions are an allowlist: every tool
-is denied except read, grep, glob, the `lsp_*` tools, webfetch, websearch, `subagent`
-for `explore`, and the `architecture-*`, `lang-*` and `quality-*` skill families, so
-`edit`, `shell`, Code Mode and other skills are not in its requests. Rules are added after any you configure for an agent
-with the same id, so the read-only boundary holds.
+is denied except read, grep, glob, `edit`, the `lsp_*` tools, the read-only shell,
+webfetch, websearch, `subagent` for `explore`, the `architecture-*`, `lang-*`,
+`quality-*` and `toolchain-*` skill families, and `aws-guidance`. Code Mode and other
+skills are not in its requests. It writes design notes, decision records, research
+reports and plans where the caller names them. Its prompt, not a permission, keeps it
+out of product code, tests and configuration. Its shell runs only read-only commands, so
+it never builds or tests. Rules are added after any you configure for an agent with the
+same id.
 
 The agent was converted from omp with `scripts/convert-agent.ts`. The omp
 `ast_grep`, `lsp` and `find` tools became `grep`, `glob`, an LSP tool when one is
@@ -42,7 +46,7 @@ set `agent.architect.model` in your config to pin one.
 
 `architect` adds `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `web_search`, `fetch_content`, `get_search_content`, `source_check`, `repomix_pack`, `dep_scan`, `version_gap_scan`, and `mcp:context7` to its existing tools. Pi-lens keeps `ast_grep_search` and `ast_grep_outline` inactive until `pi_lens_activate_tools` runs; activation takes effect on the next turn. `lsp_navigation` and `ast_grep_replace` are not granted.
 
-`architect` also has `bash` for read-only inspection such as `git log`. It has no `write` or `edit`. To get its research as a file, pass the `output` option of the `subagent` call: pi-subagents saves the architect's final reply to that path. Give an absolute path for a file in the project; pi-subagents puts a relative `output` path under the run's artifact directory. A task that asks for a document or names an output file lifts the reply's word cap.
+`architect` also has `bash` for read-only inspection such as `git log`, and `write` and `edit` for its design and research documents. Name an absolute path in the task and it writes the document there. With the `output` option instead, pi-subagents tells it to write its full reply to that path. Give an absolute path for a file in the project; pi-subagents puts a relative `output` path under the run's artifact directory. A document has no word cap; the reply keeps it.
 
 Required Pi packages: `pi-lens`, `pi-web-access`, `@srobroek/pi-repomix`, `@srobroek/pi-dep-update`, and `@srobroek/pi-whats-new`. Configure the `context7` Pi MCP server in `~/.pi/agent/mcp.json` for `mcp:context7`.
 
@@ -62,8 +66,13 @@ OMP installs the agent and skills from the generated OMP directory:
 omp plugin install /path/to/harness-plugins/plugins/architecture/omp
 ```
 
-Claude Code install the skills, not the agent, from this repository's
-marketplace:
+In OMP the agent runs on `@architect, @slow` with `read`, `grep`, `ast_grep`, `glob`, `lsp`,
+`edit`, `write`, `ast_edit`, `bash`, `web_search` and `task` for `scout`. OMP cannot hold the
+read-only shell rules, so the prompt alone keeps its `bash` to inspection commands.
+
+Claude Code installs the skills and the agent from this repository's marketplace. There
+the agent has `Read`, `Grep`, `Glob`, `LSP`, `Edit`, `Write`, `NotebookEdit`, `WebFetch`
+and `WebSearch`, and no `Bash`:
 
 ```sh
 claude plugin marketplace add srobroek/harness-plugins

@@ -1,7 +1,7 @@
 {
   "name": "architecture",
   "version": "0.12.0",
-  "description": "Architecture skills (capability-first layout, ownership boundaries, durable docs/ knowledge) and a read-only architect subagent.",
+  "description": "Architecture skills (capability-first layout, ownership boundaries, durable docs/ knowledge) and an architect subagent that writes design documents.",
   "private": true,
   "type": "module",
   "agent-plugins": {
