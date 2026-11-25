@@ -124,11 +124,11 @@ describe("review-standards", () => {
 
   test("the checklist names the departures reviewers flag", () => {
     const text = parts.get("checklist") ?? ""
-    for (const item of ["copied", "outside its shared crate", "message registry", "lint allowed without a stated reason", "untrusted input"]) expect(text).toContain(item)
+    for (const item of ["copied", "outside its shared crate", "message registry", "lint allowed without a stated reason", "untrusted input", "no TypeSpec source", "edit to generated output"]) expect(text).toContain(item)
   })
 
-  test("stays near 350 tokens (about 4 characters each)", () => {
-    expect([...parts.values()].join("\n").length).toBeLessThan(2000)
+  test("stays near 400 tokens (about 4 characters each)", () => {
+    expect([...parts.values()].join("\n").length).toBeLessThan(2300)
   })
 })
 
