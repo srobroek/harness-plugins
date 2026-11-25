@@ -206,8 +206,8 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
   A write whose lock wait times out behind a long removal hold therefore still blocks every
   remover until that session's next write. A refusal caused by such a pending hold says
   "recorded before its lock was taken", with its age, the time after which it is ignored, and its
-  file. If that session has ended and nothing runs in the worktree, delete the named file;
-  otherwise wait for that session's next turn or for the time given.
+  file. Delete the named file only after that session's listed jobs have finished and that
+  session has ended. Until then, wait for its next turn or for the time given.
   Landing records are dropped only on positive evidence
   (their own receipt readable and cleaned or superseded); a denial is never dropped by cleanup of
   stale records, and a missing or unreadable receipt directory deletes nothing.

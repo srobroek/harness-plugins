@@ -195,7 +195,9 @@ function elapsed(ms: number): string {
 /**
  * Why background work blocks a removal, or undefined. Entries older than the expiry (a crashed host) are
  * ignored. A pending hold says so, with its age, when it is ignored and its file, because a stale one
- * (a session that ended before a later write took the lock) looks like running work otherwise. Pure.
+ * (a session that ended before a later write took the lock) looks like running work otherwise. It also
+ * says when deleting that file is safe: it is the only record of those jobs, and the session writes
+ * the same file again when it next reports. Pure.
  */
 export function holdBlock(read: { holds: readonly ReadHold[]; unreadable: boolean }, now: number, expiryMs: number = HOLD_EXPIRY_MS): string | undefined {
   if (read.unreadable) return "the background-work records cannot be read"
@@ -205,7 +207,11 @@ export function holdBlock(read: { holds: readonly ReadHold[]; unreadable: boolea
   const running = `session ${live.sessionID} has ${live.jobs.length} background job(s) running (${first?.kind} ${first?.id})`
   if (live.pendingFile === undefined) return running
   const ignoredAfter = new Date(live.updatedAt + expiryMs).toISOString()
-  return `${running}; recorded before its lock was taken, ${elapsed(now - live.updatedAt)} ago; ignored after ${ignoredAfter}; ${live.pendingFile}`
+  const jobs = live.jobs.map((job) => `${job.kind} ${job.id}`).join(", ")
+  return (
+    `${running}; recorded before its lock was taken, ${elapsed(now - live.updatedAt)} ago; ignored after ${ignoredAfter}; ${live.pendingFile}; ` +
+    `delete it only after session ${live.sessionID}'s ${live.jobs.length} job(s) (${jobs}) have finished and that session has ended`
+  )
 }
 
 export type { Read }

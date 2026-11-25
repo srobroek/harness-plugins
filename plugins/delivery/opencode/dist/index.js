@@ -5932,7 +5932,8 @@ function holdBlock(read, now, expiryMs = HOLD_EXPIRY_MS) {
   if (live.pendingFile === undefined)
     return running;
   const ignoredAfter = new Date(live.updatedAt + expiryMs).toISOString();
-  return `${running}; recorded before its lock was taken, ${elapsed(now - live.updatedAt)} ago; ignored after ${ignoredAfter}; ${live.pendingFile}`;
+  const jobs = live.jobs.map((job) => `${job.kind} ${job.id}`).join(", ");
+  return `${running}; recorded before its lock was taken, ${elapsed(now - live.updatedAt)} ago; ignored after ${ignoredAfter}; ${live.pendingFile}; ` + `delete it only after session ${live.sessionID}'s ${live.jobs.length} job(s) (${jobs}) have finished and that session has ended`;
 }
 function holdsWritable(commonDir, directory) {
   const dir = holdsDir(commonDir, directory);

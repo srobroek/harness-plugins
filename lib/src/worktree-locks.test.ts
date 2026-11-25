@@ -173,7 +173,8 @@ describe("recordHold", () => {
     const [pending] = readHolds(dir, "/wt/a").holds
     expect(pending?.pendingFile).toEndWith(".pending.json")
     expect(holdsState(dir, "/wt/a", at + 3_600_000 + 5 * 60_000)).toBe(
-      `session ses_gone has 1 background job(s) running (shell sh_1); recorded before its lock was taken, 1 h 5 min ago; ignored after 2027-01-16T08:00:00.000Z; ${pending?.pendingFile}`,
+      `session ses_gone has 1 background job(s) running (shell sh_1); recorded before its lock was taken, 1 h 5 min ago; ignored after 2027-01-16T08:00:00.000Z; ${pending?.pendingFile}; ` +
+        "delete it only after session ses_gone's 1 job(s) (shell sh_1) have finished and that session has ended",
     )
     expect(holdsState(dir, "/wt/a", at + HOLD_EXPIRY_MS)).toBeUndefined()
     // A hold written under its lock reads as before.
