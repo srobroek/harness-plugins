@@ -3,13 +3,13 @@
 
 Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.
 
-| Kind | opencode | claude | pi |
-| --- | --- | --- | --- |
-| skills | prototype-logic, quality-code-design, quality-code-policy, quality-profiling, quality-test-audit, quality-testing | prototype-logic, quality-code-design, quality-code-policy, quality-profiling, quality-test-audit, quality-testing | prototype-logic, quality-code-design, quality-code-policy, quality-profiling, quality-test-audit, quality-testing |
-| agents | adversarial-challenger | - | adversarial-challenger |
-| commands | - | - | - |
-| rules | - | - | - |
-| hooks | - | - | - |
-| tools | - | - | - |
-| extensions | index | - | quality |
-| mcp | - | - | - |
+| Kind | opencode | claude | omp | pi |
+| --- | --- | --- | --- | --- |
+| skills | prototype-logic, quality-code-design, quality-code-policy, quality-profiling, quality-test-audit, quality-testing | prototype-logic, quality-code-design, quality-code-policy, quality-profiling, quality-test-audit, quality-testing | prototype-logic, quality-code-design, quality-code-policy, quality-profiling, quality-test-audit, quality-testing | prototype-logic, quality-code-design, quality-code-policy, quality-profiling, quality-test-audit, quality-testing |
+| agents | adversarial-challenger | - | adversarial-challenger | adversarial-challenger |
+| commands | - | - | - | - |
+| rules | - | - | - | - |
+| hooks | - | - | - | - |
+| tools | - | - | - | - |
+| extensions | index | - | quality | quality |
+| mcp | - | - | - | - |
