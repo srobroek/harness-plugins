@@ -89,7 +89,7 @@
       "name": "lang-go",
       "description": "Go skills: build, lint, go test -race, tidy and govulncheck checks, testing and fuzzing, module and package layout, and pprof profiling.",
       "source": "./plugins/lang-go/omp",
-      "version": "0.9.3",
+      "version": "0.10.0",
       "category": "development"
     },
     {
