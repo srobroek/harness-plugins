@@ -1,3 +1,9 @@
+## beads [0.9.4](https://github.com/srobroek/harness-plugins/compare/beads--v0.9.3...beads--v0.9.4) (2026-11-25)
+
+### Bug Fixes
+
+* **beads:** accept dotted child bead ids in the PR trailer ([#202](https://github.com/srobroek/harness-plugins/issues/202)) ([6c9464e](https://github.com/srobroek/harness-plugins/commit/6c9464e6158af172b1ba21f1fe050f51f0e01446))
+
 ## beads [0.9.3](https://github.com/srobroek/harness-plugins/compare/beads--v0.9.2...beads--v0.9.3) (2026-11-24)
 
 ## beads [0.9.2](https://github.com/srobroek/harness-plugins/compare/beads--v0.9.1...beads--v0.9.2) (2026-11-24)
