@@ -7,6 +7,25 @@ Read when two sides of a boundary must agree on names, shapes, or casing: genera
 **Do:** generate bindings from the authoritative side, commit the output, and in CI regenerate and run `git diff --exit-code`. That one gate covers the whole generated surface; consumers use it without repeating it.
 **Do not:** generate in a postinstall step nobody reviews, or hand-edit generated files. Change the source or the generator.
 
+## One source for every contract artifact
+
+**Do:** keep one authoritative source per contract (TypeSpec for HTTP and JSON contracts shared across languages, `.proto` for protobuf) and emit every schema from it: OpenAPI, JSON Schema and each language's types. Publish a JSON Schema with a root entry point that `$ref`s the top-level model, so validating against the published file rejects an invalid document. Derive any generator-specific copy (a normalized schema) with a pinned script in CI, and never publish it. `toolchain-api` has the generator routes and gates.
+**Do not:** keep a hand-written second schema beside the source, or let a hand-edited emitted file stand in for a source change.
+
+## Pattern dialect
+
+Schema `pattern` values run in a different regex engine in each language (ECMAScript, Rust `regex`, RE2, Python `re`, pydantic-core), and they disagree on `\d`, `\w`, `\s`, `$` and Unicode classes. Spike evidence, 9 engines, 2026-11-24.
+
+**Do:**
+
+- Write ECMA-262 patterns that compile with the `u` flag, anchored as a whole: `^(?:a|b)$`. `^a|b$` anchors one alternative each.
+- Spell classes out: `[0-9]`, `[A-Za-z0-9_]`. Replace `\S` with an explicit class equal to ECMAScript whitespace (space, `\t\n\v\f\r`, U+00A0, U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF). `[^ \t\n\r\f\v]` is not equal: it accepts NBSP, which `\S` rejects. Otherwise record the narrowing as a contract change.
+- Use `\p{..}` only for one- or two-letter general categories (`\p{L}`, `\p{Nd}`), and only with a generator that emits the `u` flag. `@hey-api/openapi-ts` does; `json-schema-to-zod`, `z.fromJSONSchema`, `typespec-zod` and the kattebak emitter do not.
+- Keep pydantic-core's default `rust-regex` engine. Python `re` rejects `\p{..}` and its `$` accepts a trailing newline.
+- Lint every emitted schema in CI (no `\d \D \w \W \s \S \b \B`, no lookaround, no backreference, whole-pattern anchoring) and cover each pattern with corpus cases: NBSP, a non-ASCII digit, a trailing newline.
+
+**Do not:** rely on RE2, Rust `regex` or pydantic-core for lookaround or backreferences, or claim a pattern migration preserves behavior before the conformance suite has rerun on it. The spike did not rerun on a compliant contract.
+
 ## Names are tested, not trusted
 
 **Do:** when one side registers commands or operations by name and the other calls them by string, add a test that fails when the registered set and the called set differ.
