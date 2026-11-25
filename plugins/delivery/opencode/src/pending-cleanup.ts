@@ -1379,7 +1379,7 @@ export function createPendingCleanup(deps: PendingDeps) {
           const repo = await cloneAt(entry).catch(() => null)
           if (repo === null) {
             const why = `the clone ${entry.root} could not be resolved to record the running work of ${sessionID}`
-            if (vetoes()) (holdsUnknown as any).vetoes.set(holdKey(entry.key, sessionID), { why: `${why}; ${recovery(sessionID)}`, seq })
+            if (vetoes()) markHoldsUnknown(entry.key, sessionID, { why: `${why}; ${recovery(sessionID)}`, seq })
             console.error(`delivery: ${why}`)
             return
           }
