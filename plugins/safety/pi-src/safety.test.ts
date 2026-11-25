@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
+import { piAgentDir, withPiAgentDir } from "@srobroek/opencode-lib/testing"
 import { MESSAGES } from "../shared/guards.ts"
 import { OP_MESSAGE } from "../shared/op-guard.ts"
 import { INVESTIGATE_NOTICE } from "../shared/package-investigate.ts"
@@ -59,6 +60,9 @@ git(repo, "stash", "-q")
 const plain = join(root, "plain")
 mkdirSync(plain)
 
+/** A fresh agent directory under `root` whose `settings.json` holds `settings`. */
+const agentDir = (settings: unknown) => piAgentDir(root, settings)
+
 const config = (raw: unknown = {}, env: NodeJS.ProcessEnv = {}): GateConfig => ({
   options: readPiOptions(raw),
   env,
@@ -90,13 +94,29 @@ describe("readPiOptions and loadPiOptions", () => {
     expect(readPiOptions({ gitWrappers: ["git", "dgit"] }).gitWrappers).toEqual(["git", "dgit"])
   })
 
-  test("a missing file is the defaults without a warning; a malformed one warns", () => {
-    expect(loadPiOptions(join(root, "missing.json"))).toEqual({ options: readPiOptions({}) })
-    const bad = join(root, "bad.json")
-    writeFileSync(bad, "{ disable: ")
+  test("a missing file or key is the defaults without a warning", () => {
+    expect(loadPiOptions(join(root, "missing", "settings.json"))).toEqual({ options: readPiOptions({}) })
+    expect(loadPiOptions(join(agentDir({ defaultModel: "m" }), "settings.json"))).toEqual({ options: readPiOptions({}) })
+  })
+
+  test("reads the safety key of settings.json", () => {
+    const path = join(agentDir({ defaultModel: "m", safety: { disable: ["attribution"], opAllow: ["vault list"] } }), "settings.json")
+    const loaded = loadPiOptions(path)
+    expect([...loaded.options.disabled]).toEqual(["attribution"])
+    expect(loaded.options.opAllow).toEqual(["vault list"])
+    expect(loaded.warning).toBeUndefined()
+  })
+
+  test("a malformed file or a safety key that is not an object is the defaults with a warning", () => {
+    const bad = join(agentDir("{ safety: "), "settings.json")
     const loaded = loadPiOptions(bad)
     expect(loaded.options.disabled.size).toBe(0)
-    expect(loaded.warning).toContain("is not valid JSON")
+    expect(loaded.warning).toBe(`safety: ${bad} is not valid JSON, so its "safety" key was not read; every check runs.`)
+    const list = join(agentDir({ safety: ["attribution"] }), "settings.json")
+    expect(loadPiOptions(list)).toEqual({
+      options: readPiOptions({}),
+      warning: `safety: the "safety" key in ${list} is not an object; every check runs.`,
+    })
   })
 })
 
@@ -290,7 +310,7 @@ function load(overrides: Parameters<typeof createSafetyExtension>[0] = {}) {
     on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
     registerTool: (tool: Tool) => tools.set(tool.name, tool),
   }
-  createSafetyExtension({ optionsPath: join(root, "missing.json"), env: {}, ...overrides })(pi as unknown as ExtensionAPI)
+  createSafetyExtension({ settingsPath: join(root, "missing", "settings.json"), env: {}, ...overrides })(pi as unknown as ExtensionAPI)
   const fire = async (event: string, payload: unknown, ctx: unknown) => {
     let result: unknown
     for (const handler of handlers.get(event) ?? []) result = await handler(payload, ctx)
@@ -348,13 +368,26 @@ describe("the extension", () => {
     expect(await fire("tool_result", result("installed"), context(true))).toBeUndefined()
   })
 
-  test("a malformed options file warns at session start", async () => {
-    const bad = join(root, "bad-start.json")
-    writeFileSync(bad, "[")
-    const { fire } = load({ optionsPath: bad })
+  test("a safety key that is not an object warns at session start", async () => {
+    const settingsPath = join(agentDir({ safety: "off" }), "settings.json")
+    const { fire } = load({ settingsPath })
     const ctx = context(true)
     await fire("session_start", { type: "session_start" }, ctx)
-    expect(ctx.ui.notify.mock.calls[0]?.[0]).toContain("is not valid JSON")
+    expect(ctx.ui.notify.mock.calls[0]?.[0]).toBe(`safety: the "safety" key in ${settingsPath} is not an object; every check runs.`)
+  })
+
+  test("reads <agentDir>/settings.json alone: a stale safety.json and a project's .pi/settings.json are ignored", async () => {
+    const attributed = { type: "tool_call", toolCallId: "6", toolName: "bash", input: { command: "git commit -m 'x\n\nCo-Authored-By: Claude'" } }
+    const project = join(root, "project")
+    mkdirSync(join(project, ".pi"), { recursive: true })
+    writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({ safety: { disable: ["attribution"] } }))
+    const fromDefault = (dir: string) => withPiAgentDir(dir, () => load({ settingsPath: undefined }))
+    const keyed = fromDefault(agentDir({ safety: { disable: ["attribution"] } }))
+    expect(await keyed.fire("tool_call", attributed, context(true))).toBeUndefined()
+    const stale = agentDir({ defaultModel: "m" })
+    writeFileSync(join(stale, "safety.json"), JSON.stringify({ disable: ["attribution"] }))
+    const unkeyed = fromDefault(stale)
+    expect(await unkeyed.fire("tool_call", attributed, context(true, project))).toEqual({ block: true, reason: MESSAGES.attribution })
   })
 
   test("registers no tool: the secret-store plugin ships safety_secret_store", () => {

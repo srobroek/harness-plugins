@@ -376,11 +376,13 @@ The OpenCode plugin and the Claude Code hook do not run these three gates.
 
    A reason such as `done` or `N/A` fails this gate.
 
-   pi passes no options to an extension, so this gate reads `gitWrappers` from `beads.json`
-   in pi's agent directory (`~/.pi/agent/beads.json`, or the same file under
-   `PI_CODING_AGENT_DIR`): `{ "gitWrappers": ["git", "<wrapper>"] }`. The default is
-   `["git"]` and a list replaces it. It is the only option pi reads; an unreadable or
-   malformed file leaves only `git` and warns at session start.
+   pi passes no options to an extension. This gate reads `gitWrappers`, the only beads option on
+   pi, from the `beads` key of pi's user settings, `~/.pi/agent/settings.json` (or
+   `settings.json` under `PI_CODING_AGENT_DIR`), for example
+   `{ "beads": { "gitWrappers": ["git", "<wrapper>"] } }`. The gate ignores a project's
+   `.pi/settings.json`, so a repository cannot widen what counts as evidence. The default is
+   `["git"]` and a list replaces it. A `beads` value that is not an object leaves only `git` and
+   warns at session start. So does a `settings.json` that is unreadable or not valid JSON.
 3. `write-claim-gate`: in a pi-subagents child, `edit` and `write` need a claim. The rule
    covers a file in a checkout with a Beads store: the child must hold at least one
    `in_progress` claim in that store. The gate asks

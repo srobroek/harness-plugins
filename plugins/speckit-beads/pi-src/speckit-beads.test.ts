@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent"
+import { piAgentDir, withPiAgentDir } from "@srobroek/opencode-lib/testing"
 import { setSpawnForTests } from "../opencode/src/setup.ts"
 import { ANALYZE_NOTE, IMPLEMENT_REDIRECT, IMPLEMENT_ROUTE } from "../opencode/src/skills.ts"
 import { MESSAGE_TYPE, WORKFLOW_SECTION } from "./routes.ts"
@@ -18,9 +19,9 @@ for (const dir of [join(speckit, ".specify"), join(speckit, ".git"), plain]) mkd
 
 type Handler = (event: unknown, ctx: unknown) => unknown
 
+/** Load the extension with `options` under the `speckit-beads` key of a fresh `settings.json`. */
 function load(options: Record<string, unknown> = {}, deps: Partial<SpeckitPiDeps> = {}) {
-  const optionsPath = join(root, `options-${Math.random().toString(36).slice(2)}.json`)
-  writeFileSync(optionsPath, JSON.stringify(options))
+  const settingsPath = join(piAgentDir(root, { defaultModel: "m", "speckit-beads": options }), "settings.json")
   const handlers = new Map<string, Handler[]>()
   const tools = new Map<string, ToolDefinition>()
   const probes: string[] = []
@@ -29,7 +30,7 @@ function load(options: Record<string, unknown> = {}, deps: Partial<SpeckitPiDeps
     registerTool: (tool: ToolDefinition) => tools.set(tool.name, tool),
   } as unknown as ExtensionAPI
   setupSpeckitPi(pi, {
-    optionsPath,
+    settingsPath,
     probe: async (dir) => {
       probes.push(dir)
       return true
@@ -48,7 +49,7 @@ function load(options: Record<string, unknown> = {}, deps: Partial<SpeckitPiDeps
       content: { text: string }[]
       details: Record<string, unknown>
     }>
-  return { handlers, tools, probes, notices, emit, execute, optionsPath }
+  return { handlers, tools, probes, notices, emit, execute, settingsPath }
 }
 
 const agentStart = () => ({ type: "before_agent_start", messageType: "user", prompt: "x", systemPromptOptions: { sections: {} as Record<string, string> } })
@@ -61,13 +62,31 @@ describe("registration", () => {
     expect(tools.get("speckit_setup")?.promptSnippet).toStartWith("Resumable SpecKit bootstrap")
   })
 
-  test("tasksGuard false drops the guard, and a broken options file warns", async () => {
+  test("tasksGuard false drops the guard, and a speckit-beads key that is not an object warns", async () => {
     expect(load({ tasksGuard: false }).handlers.has("tool_call")).toBe(false)
-    const broken = load()
-    writeFileSync(broken.optionsPath, "{")
-    const reloaded = load({}, { optionsPath: broken.optionsPath })
-    await reloaded.emit("session_start", { type: "session_start" })
-    expect(reloaded.notices[0]).toContain("is not valid JSON; the defaults apply")
+    const settingsPath = join(piAgentDir(root, { "speckit-beads": "off" }), "settings.json")
+    const broken = load({}, { settingsPath })
+    expect(broken.handlers.has("tool_call")).toBe(true)
+    await broken.emit("session_start", { type: "session_start" })
+    expect(broken.notices).toEqual([`speckit-beads: the "speckit-beads" key in ${settingsPath} is not an object; the defaults apply.`])
+  })
+
+  test("reads <agentDir>/settings.json alone: a stale speckit-beads.json and a project's .pi/settings.json are ignored", async () => {
+    const keyed = piAgentDir(root, { "speckit-beads": { tasksGuard: false } })
+    expect(withPiAgentDir(keyed, () => load({}, { settingsPath: undefined })).handlers.has("tool_call")).toBe(false)
+    const stale = piAgentDir(root, { defaultModel: "m" })
+    writeFileSync(join(stale, "speckit-beads.json"), JSON.stringify({ tasksGuard: false }))
+    const project = join(root, "project")
+    mkdirSync(join(project, ".pi"), { recursive: true })
+    mkdirSync(join(project, ".specify"))
+    writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({ "speckit-beads": { tasksGuard: false } }))
+    const { emit } = withPiAgentDir(stale, () => load({}, { settingsPath: undefined }))
+    const result = (await emit("tool_call", { type: "tool_call", toolCallId: "c", toolName: "write", input: { path: "specs/001-a/tasks.md", content: "x" } }, project)) as {
+      block: boolean
+      reason: string
+    }
+    expect(result.block).toBe(true)
+    expect(result.reason).toEndWith(`Disable: set "tasksGuard": false under the "speckit-beads" key of ${join(stale, "settings.json")}`)
   })
 })
 

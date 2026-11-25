@@ -27,7 +27,7 @@ import { leadingCd } from "@srobroek/opencode-lib"
 import { type ExternalDirectory, externalDirectories, sessionRoots } from "@srobroek/opencode-lib/external-directories"
 import { type ProviderTypes, readProviderTypes } from "@srobroek/opencode-lib/fnox-config"
 import { readGitWrappers } from "@srobroek/opencode-lib/git-wrappers"
-import { loadPiOptionsFile } from "@srobroek/opencode-lib/pi-options"
+import { loadPiPluginSettings, PI_SETTINGS_FILE } from "@srobroek/opencode-lib/pi-settings"
 import { rewriteCloseKeywords } from "../shared/close-keywords.ts"
 import { flagDirectoryReport } from "../shared/flag-directories.ts"
 import { GUARD_IDS, type GuardID, type GuardOptions, hardGate } from "../shared/guards.ts"
@@ -46,7 +46,7 @@ export type PiFeatureID =
   | "close-keywords"
   | "package-investigate"
 
-/** What `disable` in the options file can turn off. */
+/** What `disable` under the `safety` settings key can turn off. */
 export const PI_FEATURE_IDS: readonly PiFeatureID[] = [
   ...GUARD_IDS,
   ...SYSTEM_GATE_IDS,
@@ -67,9 +67,6 @@ export type PiOptions = {
   gitWrappers: readonly string[]
 }
 
-/** The options file in pi's agent directory. */
-export const OPTIONS_FILE = "safety.json"
-
 /** `{ disable, opAllow, gitWrappers, redactSecrets, redactNames, redactExclude }`, read as the OpenCode options are. */
 export function readPiOptions(raw: unknown): PiOptions {
   const options = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
@@ -83,9 +80,12 @@ export function readPiOptions(raw: unknown): PiOptions {
   }
 }
 
-/** The options at `path`: a missing file gives the defaults, an unreadable or malformed one the defaults and a warning. */
+/**
+ * The options under the `safety` key of the settings file at `path`: a missing file or key gives the
+ * defaults, an unreadable or malformed file or a key that is not an object the defaults and a warning.
+ */
 export function loadPiOptions(path: string): { options: PiOptions; warning?: string } {
-  const loaded = loadPiOptionsFile(path, "safety", "every check runs")
+  const loaded = loadPiPluginSettings(path, "safety", "every check runs")
   const options = readPiOptions(loaded.options)
   return loaded.warning === undefined ? { options } : { options, warning: loaded.warning }
 }
@@ -241,7 +241,8 @@ export function resultPatch(
 
 /** Test seams for `createSafetyExtension`; the default export passes none. */
 export type Overrides = {
-  optionsPath?: string
+  /** Replaces `<agentDir>/settings.json`. */
+  settingsPath?: string
   env?: NodeJS.ProcessEnv
   guard?: GateConfig["guard"]
   review?: ReviewOptions
@@ -252,7 +253,7 @@ export type Overrides = {
 export function createSafetyExtension(overrides: Overrides = {}) {
   return function safety(pi: ExtensionAPI): void {
     const env = overrides.env ?? process.env
-    const loaded = loadPiOptions(overrides.optionsPath ?? join(getAgentDir(), OPTIONS_FILE))
+    const loaded = loadPiOptions(overrides.settingsPath ?? join(getAgentDir(), PI_SETTINGS_FILE))
     const { options } = loaded
     const on = (id: PiFeatureID) => !options.disabled.has(id)
     const config: GateConfig = {

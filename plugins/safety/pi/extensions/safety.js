@@ -2445,24 +2445,35 @@ function gitWrapperPattern(wrappers = DEFAULT_GIT_WRAPPERS) {
   return wrappers.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
 }
 
-// lib/src/pi-options.ts
+// lib/src/pi-settings.ts
 import { readFileSync as readFileSync2 } from "fs";
-function loadPiOptionsFile(path, plugin, fallback) {
+var PI_SETTINGS_FILE = "settings.json";
+var isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+function loadPiPluginSettings(path, plugin, fallback) {
+  const unusable = (problem) => ({ options: {}, warning: `${plugin}: ${problem}; ${fallback}.` });
+  const unread = `so its "${plugin}" key was not read`;
   let text;
   try {
     text = readFileSync2(path, "utf8");
   } catch (error) {
     if (error.code === "ENOENT")
       return { options: {} };
-    return { options: {}, warning: `${plugin}: ${path} could not be read; ${fallback}.` };
+    return unusable(`${path} could not be read, ${unread}`);
   }
-  let raw;
+  let settings;
   try {
-    raw = JSON.parse(text);
+    settings = JSON.parse(text.replace(/^\uFEFF/, ""));
   } catch {
-    return { options: {}, warning: `${plugin}: ${path} is not valid JSON; ${fallback}.` };
+    return unusable(`${path} is not valid JSON, ${unread}`);
   }
-  return { options: raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw : {} };
+  if (!isObject(settings))
+    return unusable(`${path} is not a JSON object, ${unread}`);
+  const value = settings[plugin];
+  if (value === undefined)
+    return { options: {} };
+  if (!isObject(value))
+    return unusable(`the "${plugin}" key in ${path} is not an object`);
+  return { options: value };
 }
 
 // plugins/safety/shared/close-keywords.ts
@@ -6115,7 +6126,6 @@ var PI_FEATURE_IDS = [
   "close-keywords",
   "package-investigate"
 ];
-var OPTIONS_FILE = "safety.json";
 function readPiOptions(raw) {
   const options = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
   const disable = Array.isArray(options.disable) ? options.disable : [];
@@ -6128,7 +6138,7 @@ function readPiOptions(raw) {
   };
 }
 function loadPiOptions(path) {
-  const loaded = loadPiOptionsFile(path, "safety", "every check runs");
+  const loaded = loadPiPluginSettings(path, "safety", "every check runs");
   const options = readPiOptions(loaded.options);
   return loaded.warning === undefined ? { options } : { options, warning: loaded.warning };
 }
@@ -6249,7 +6259,7 @@ function resultPatch(event, notice, redactor) {
 function createSafetyExtension(overrides = {}) {
   return function safety(pi) {
     const env = overrides.env ?? process.env;
-    const loaded = loadPiOptions(overrides.optionsPath ?? join10(getAgentDir(), OPTIONS_FILE));
+    const loaded = loadPiOptions(overrides.settingsPath ?? join10(getAgentDir(), PI_SETTINGS_FILE));
     const { options } = loaded;
     const on = (id) => !options.disabled.has(id);
     const config = {
@@ -6295,7 +6305,6 @@ var safety_default = createSafetyExtension();
 export {
   DECLINED,
   NO_UI_REFUSAL,
-  OPTIONS_FILE,
   PI_FEATURE_IDS,
   REVIEW_FAILED,
   createSafetyExtension,

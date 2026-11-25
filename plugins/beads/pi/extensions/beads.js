@@ -3122,26 +3122,6 @@ function gitWrapperPattern(wrappers = DEFAULT_GIT_WRAPPERS) {
   return wrappers.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
 }
 
-// lib/src/pi-options.ts
-import { readFileSync as readFileSync2 } from "fs";
-function loadPiOptionsFile(path, plugin, fallback) {
-  let text;
-  try {
-    text = readFileSync2(path, "utf8");
-  } catch (error) {
-    if (error.code === "ENOENT")
-      return { options: {} };
-    return { options: {}, warning: `${plugin}: ${path} could not be read; ${fallback}.` };
-  }
-  let raw;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    return { options: {}, warning: `${plugin}: ${path} is not valid JSON; ${fallback}.` };
-  }
-  return { options: raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw : {} };
-}
-
 // lib/src/pi-session-header.ts
 import { closeSync as closeSync3, lstatSync as lstatSync3, openSync as openSync3, readSync as readSync2 } from "fs";
 var HEADER_BYTES = 16 * 1024;
@@ -3173,6 +3153,37 @@ function headerView(value) {
   if (header.type !== "session" || typeof header.id !== "string" || header.id === "")
     return;
   return typeof header.parentSession === "string" && header.parentSession !== "" ? { id: header.id, parentSession: header.parentSession } : { id: header.id };
+}
+
+// lib/src/pi-settings.ts
+import { readFileSync as readFileSync2 } from "fs";
+var PI_SETTINGS_FILE = "settings.json";
+var isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+function loadPiPluginSettings(path, plugin, fallback) {
+  const unusable = (problem) => ({ options: {}, warning: `${plugin}: ${problem}; ${fallback}.` });
+  const unread = `so its "${plugin}" key was not read`;
+  let text;
+  try {
+    text = readFileSync2(path, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT")
+      return { options: {} };
+    return unusable(`${path} could not be read, ${unread}`);
+  }
+  let settings;
+  try {
+    settings = JSON.parse(text.replace(/^\uFEFF/, ""));
+  } catch {
+    return unusable(`${path} is not valid JSON, ${unread}`);
+  }
+  if (!isObject(settings))
+    return unusable(`${path} is not a JSON object, ${unread}`);
+  const value = settings[plugin];
+  if (value === undefined)
+    return { options: {} };
+  if (!isObject(value))
+    return unusable(`the "${plugin}" key in ${path} is not an object`);
+  return { options: value };
 }
 
 // plugins/beads/pi-src/beads.ts
@@ -5884,7 +5895,6 @@ function systemDeps(env, cwd, signal) {
 var PIN_CACHE_MS = 5000;
 var EXTENSION_DIR = dirname8(fileURLToPath(import.meta.url));
 var HELD_CACHE_MS = 30000;
-var OPTIONS_FILE = "beads.json";
 var MAX_CLAIMED_CALLS = 1000;
 function claimedCalls() {
   const key = Symbol.for("com.srobroek.beads.pi.gated-calls.v1");
@@ -5929,7 +5939,7 @@ function setupBeadsPi(pi, deps = {}) {
   const pinFor = deps.pinFor ?? sessionPinFor;
   const readHeader = deps.readHeader ?? readSessionHeader;
   const baseEnv = () => withoutInheritedPin(deps.env ?? process.env);
-  const loaded = loadPiOptionsFile(deps.optionsPath ?? join7(getAgentDir(), OPTIONS_FILE), "beads", "close evidence counts only `git` as git");
+  const loaded = loadPiPluginSettings(deps.settingsPath ?? join7(getAgentDir(), PI_SETTINGS_FILE), "beads", "close evidence counts only `git` as git");
   const gitWrappers = readGitWrappers(loaded.options);
   const calls = claimedCalls();
   const pins = new Map;
@@ -6085,7 +6095,6 @@ function beads_default(pi) {
 }
 export {
   HELD_CACHE_MS,
-  OPTIONS_FILE,
   beads_default as default,
   keptAlive,
   refusalText,

@@ -16,8 +16,8 @@ import { isMutatingBdCommand } from "@srobroek/opencode-lib/bd-actor-gate"
 import { embeddedWriteRunner, resolveBdTargets } from "@srobroek/opencode-lib/bd-embedded-write-lock"
 import { sessionPinFor } from "@srobroek/opencode-lib/beads-store"
 import { readGitWrappers } from "@srobroek/opencode-lib/git-wrappers"
-import { loadPiOptionsFile } from "@srobroek/opencode-lib/pi-options"
 import { readSessionHeader, type SessionHeaderView } from "@srobroek/opencode-lib/pi-session-header"
+import { loadPiPluginSettings, PI_SETTINGS_FILE } from "@srobroek/opencode-lib/pi-settings"
 import { Type } from "typebox"
 import { contentionAdvisory } from "../opencode/src/claims.ts"
 import { type BdRun, bdStoreDir, GateAdmitter, lifecycleBdEnvironment, runBdResult } from "../opencode/src/gate-admission.ts"
@@ -46,9 +46,6 @@ const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url))
 
 /** How long a child's confirmed claim lets its file writes through without asking bd again. */
 export const HELD_CACHE_MS = 30_000
-
-/** The options file in pi's agent directory: `{ "gitWrappers": [...] }`, the only beads option pi reads. */
-export const OPTIONS_FILE = "beads.json"
 
 /** Most call ids remembered across plugin instances before the oldest are forgotten. */
 const MAX_CLAIMED_CALLS = 1_000
@@ -118,8 +115,8 @@ export type BeadsPiDeps = {
   repositoryControl?: ShellGateDeps["repositoryControl"]
   preflight?: (env: NodeJS.ProcessEnv, cwd: string, signal?: AbortSignal) => PreflightDeps
   now?: () => number
-  /** Replaces `<agentDir>/beads.json`. */
-  optionsPath?: string
+  /** Replaces `<agentDir>/settings.json`. */
+  settingsPath?: string
 }
 
 type Pending = { command: string; advisories: string[] }
@@ -132,8 +129,9 @@ export function setupBeadsPi(pi: ExtensionAPI, deps: BeadsPiDeps = {}): void {
   const readHeader = deps.readHeader ?? readSessionHeader
   // A pi started from a shell this plugin pinned inherits that pin; each session resolves its own.
   const baseEnv = (): NodeJS.ProcessEnv => withoutInheritedPin(deps.env ?? process.env)
-  const loaded = loadPiOptionsFile(
-    deps.optionsPath ?? join(getAgentDir(), OPTIONS_FILE),
+  // `{ "beads": { "gitWrappers": [...] } }`: the only beads option pi reads.
+  const loaded = loadPiPluginSettings(
+    deps.settingsPath ?? join(getAgentDir(), PI_SETTINGS_FILE),
     "beads",
     "close evidence counts only `git` as git",
   )
