@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/pi-debate",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Stress-test a decision from both sides or grill a plan in frontier rounds.",
   "keywords": [
     "pi-package"

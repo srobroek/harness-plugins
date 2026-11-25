@@ -1,3 +1,9 @@
+## debate [1.0.1](https://github.com/srobroek/harness-plugins/compare/debate--v1.0.0...debate--v1.0.1) (2026-11-25)
+
+### Bug Fixes
+
+* **debate:** restore OMP's Phase 1 heading and ask-tool mapping ([#180](https://github.com/srobroek/harness-plugins/issues/180)) ([f8256c8](https://github.com/srobroek/harness-plugins/commit/f8256c862cc92195839931add541e3155f62b378)), closes [#179](https://github.com/srobroek/harness-plugins/issues/179)
+
 ## debate [1.0.0](https://github.com/srobroek/harness-plugins/compare/debate--v0.7.4...debate--v1.0.0) (2026-11-25)
 
 ### ⚠ BREAKING CHANGES
