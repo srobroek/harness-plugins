@@ -23,24 +23,35 @@ function isGitCommand(argv0, wrappers = DEFAULT_GIT_WRAPPERS) {
   return wrappers.includes(argv0.slice(argv0.lastIndexOf("/") + 1));
 }
 
-// lib/src/pi-options.ts
+// lib/src/pi-settings.ts
 import { readFileSync } from "fs";
-function loadPiOptionsFile(path, plugin, fallback) {
+var PI_SETTINGS_FILE = "settings.json";
+var isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+function loadPiPluginSettings(path, plugin, fallback) {
+  const unusable = (problem) => ({ options: {}, warning: `${plugin}: ${problem}; ${fallback}.` });
+  const unread = `so its "${plugin}" key was not read`;
   let text;
   try {
     text = readFileSync(path, "utf8");
   } catch (error) {
     if (error.code === "ENOENT")
       return { options: {} };
-    return { options: {}, warning: `${plugin}: ${path} could not be read; ${fallback}.` };
+    return unusable(`${path} could not be read, ${unread}`);
   }
-  let raw;
+  let settings;
   try {
-    raw = JSON.parse(text);
+    settings = JSON.parse(text.replace(/^\uFEFF/, ""));
   } catch {
-    return { options: {}, warning: `${plugin}: ${path} is not valid JSON; ${fallback}.` };
+    return unusable(`${path} is not valid JSON, ${unread}`);
   }
-  return { options: raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw : {} };
+  if (!isObject(settings))
+    return unusable(`${path} is not a JSON object, ${unread}`);
+  const value = settings[plugin];
+  if (value === undefined)
+    return { options: {} };
+  if (!isObject(value))
+    return unusable(`the "${plugin}" key in ${path} is not an object`);
+  return { options: value };
 }
 
 // plugins/trunk-dev/shared/commit-gate.ts
@@ -2027,7 +2038,6 @@ function skipCiAdvisory(command, cwd = "/", gitWrappers = DEFAULT_GIT_WRAPPERS) 
 
 // plugins/trunk-dev/pi-src/trunk-dev.ts
 var PI_ACTOR = "pi/trunk-dev";
-var OPTIONS_FILE = "trunk-dev.json";
 function commitGateBlock(event, cwd, gate = decideCommitGate) {
   if (!isToolCallEventType("bash", event))
     return;
@@ -2070,7 +2080,7 @@ function appendNotes(event, notes) {
 }
 function createExtension(overrides = {}) {
   return (pi) => {
-    const loaded = loadPiOptionsFile(overrides.optionsPath ?? join2(getAgentDir(), OPTIONS_FILE), "trunk-dev", "only `git` is read as git");
+    const loaded = loadPiPluginSettings(overrides.settingsPath ?? join2(getAgentDir(), PI_SETTINGS_FILE), "trunk-dev", "only `git` is read as git");
     const gitWrappers = readGitWrappers(loaded.options);
     const warning = loaded.warning;
     if (warning !== undefined)
@@ -2091,7 +2101,6 @@ function createExtension(overrides = {}) {
 }
 var trunk_dev_default = createExtension();
 export {
-  OPTIONS_FILE,
   PI_ACTOR,
   appendNotes,
   bashResultNotes,

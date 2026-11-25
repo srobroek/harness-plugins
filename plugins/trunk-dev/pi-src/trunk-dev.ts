@@ -10,7 +10,7 @@ import {
   type ToolResultEventResult,
 } from "@earendil-works/pi-coding-agent"
 import { DEFAULT_GIT_WRAPPERS, readGitWrappers } from "@srobroek/opencode-lib/git-wrappers"
-import { loadPiOptionsFile } from "@srobroek/opencode-lib/pi-options"
+import { loadPiPluginSettings, PI_SETTINGS_FILE } from "@srobroek/opencode-lib/pi-settings"
 import { decideCommitGate, type Refusal } from "../shared/commit-gate.js"
 import { flagCleanupFollowUp, type MergeRequest, shellMerges } from "../shared/flag-cleanup.js"
 import { decideMrAdvisory } from "../shared/mr-advisory.js"
@@ -19,9 +19,6 @@ import { skipCiAdvisory } from "../shared/skip-ci.js"
 /** The actor cleanup beads are written as when the environment names none. */
 export const PI_ACTOR = "pi/trunk-dev"
 
-/** The options file in pi's agent directory: `{ "gitWrappers": [...] }`, read as the OpenCode option is. */
-export const OPTIONS_FILE = "trunk-dev.json"
-
 export type CommitGate = (command: string, cwd: string) => Refusal | undefined
 
 /** Test seams; pi never passes these. */
@@ -29,8 +26,8 @@ export type Overrides = {
   commitGate?: CommitGate
   advise?: (command: string, cwd: string) => string[]
   followUp?: (merges: readonly MergeRequest[]) => Promise<string | undefined>
-  /** Replaces `<agentDir>/trunk-dev.json`. */
-  optionsPath?: string
+  /** Replaces `<agentDir>/settings.json`. */
+  settingsPath?: string
 }
 
 /**
@@ -89,8 +86,9 @@ export function appendNotes(event: ToolResultEvent, notes: readonly string[]): T
 
 export function createExtension(overrides: Overrides = {}): (pi: ExtensionAPI) => void {
   return (pi) => {
-    const loaded = loadPiOptionsFile(
-      overrides.optionsPath ?? join(getAgentDir(), OPTIONS_FILE),
+    // `{ "trunk-dev": { "gitWrappers": [...] } }`, read as the OpenCode option is.
+    const loaded = loadPiPluginSettings(
+      overrides.settingsPath ?? join(getAgentDir(), PI_SETTINGS_FILE),
       "trunk-dev",
       "only `git` is read as git",
     )
