@@ -15,7 +15,7 @@
 //                   omp/extensions/<name>.js when the plugin lists the omp harness (OMP loads Pi extensions)
 //
 // It also composes each `agents.src/<id>.md` into `common/agents/<id>.md` (`<id>.opencode.md`
-// when the plugin also ships to Claude Code), inlining `{{include <fragment>}}` lines from
+// when the plugin also ships to Claude Code, or sets `piAgents: false`), inlining `{{include <fragment>}}` lines from
 // lib/src/<fragment>.md and taking out the `x-omp-*` hints, translates the OpenCode form of every
 // agent into the OMP task agent `common/agents/<id>.omp.md` (scripts/omp-agents.ts), fails when
 // two plugins' OMP agents of one name differ, and writes the Claude Code files of
@@ -75,6 +75,20 @@ export type PluginBuild = {
   piEntries: Record<string, string>
   /** Agents translated for Claude Code; every non-primary one when absent. */
   claudeAgents?: string[]
+  /**
+   * Whether the pi tree gets the plugin's agents. `piAgents: false` keeps them off pi: their OpenCode
+   * form is written as `<id>.opencode.md`, which harness-kit copies to the OpenCode tree only.
+   */
+  piAgents: boolean
+}
+
+/**
+ * Whether an agent's OpenCode form lives in `common/agents/<id>.opencode.md` rather than `<id>.md`:
+ * harness-kit copies a plain file into every harness tree, a variant into its own harness only. The
+ * Claude Code tree gets its own translation, and a plugin with `piAgents: false` ships no pi agents.
+ */
+export function openCodeVariant(build: Pick<PluginBuild, "claude" | "piAgents">): boolean {
+  return build.claude || !build.piAgents
 }
 
 export function readBuild(dir: string): PluginBuild | undefined {
@@ -92,6 +106,7 @@ export function readBuild(dir: string): PluginBuild | undefined {
   }
   const harnesses = Array.isArray(own.harnesses) ? (own.harnesses as string[]) : []
   const claudeAgents = own.claudeAgents as string[] | undefined
+  if (own.piAgents !== undefined && typeof own.piAgents !== "boolean") throw new Error(`${where}: "${CONFIG_KEY}.piAgents" must be a boolean`)
   return {
     claude: harnesses.includes("claude"),
     harnesses,
@@ -99,6 +114,7 @@ export function readBuild(dir: string): PluginBuild | undefined {
     claudeEntries: map("claudeEntries"),
     piEntries: map("piEntries"),
     ...(claudeAgents === undefined ? {} : { claudeAgents }),
+    piAgents: own.piAgents !== false,
   }
 }
 
@@ -214,10 +230,10 @@ const AGENT_SOURCES = "agents.src"
 export type ComposedAgent = Output & { hints: OmpHints }
 
 /**
- * The `common/agents/<id>.md` (`<id>.opencode.md` for a plugin with a Claude Code tree) composed
+ * The `common/agents/<id>.md` (`<id>.opencode.md` when `variant`, see {@link openCodeVariant}) composed
  * from every `agents.src/<id>.md`, without the source's `x-omp-*` keys, which go to `hints`.
  */
-export function composeAgents(dir: string, claude = false, read?: (name: string) => string): ComposedAgent[] {
+export function composeAgents(dir: string, variant = false, read?: (name: string) => string): ComposedAgent[] {
   const sources = path.join(dir, AGENT_SOURCES)
   if (!existsSync(sources)) return []
   return readdirSync(sources)
@@ -227,7 +243,7 @@ export function composeAgents(dir: string, claude = false, read?: (name: string)
       const where = `${AGENT_SOURCES}/${name}`
       const { source, hints } = splitOmpHints(readFileSync(path.join(sources, name), "utf8"), `plugins/${path.basename(dir)}/${where}`)
       return {
-        file: path.join(dir, "common", "agents", openCodeAgentFile(name.slice(0, -3), claude)),
+        file: path.join(dir, "common", "agents", openCodeAgentFile(name.slice(0, -3), variant)),
         contents: composeAgentFile(source, where, read),
         hints,
       }
@@ -255,10 +271,10 @@ export function orphanAgents(dir: string, outputs: readonly Output[]): string[] 
  * The OpenCode form of every agent of a plugin by id: composed, else hand-written in
  * `common/agents/`. An orphaned composed file is left out, since the build removes it.
  */
-export function agentTexts(dir: string, claude: boolean, composed: readonly Output[]): Map<string, string> {
+export function agentTexts(dir: string, variant: boolean, composed: readonly Output[]): Map<string, string> {
   const texts = new Map<string, string>()
   const agents = path.join(dir, "common", "agents")
-  const suffix = claude ? ".opencode.md" : ".md"
+  const suffix = openCodeAgentFile("", variant)
   if (existsSync(agents)) {
     for (const name of readdirSync(agents)) {
       if (isTranslatedAgentFile(name) || !name.endsWith(suffix) || isComposed(path.join(agents, name))) continue
@@ -281,14 +297,14 @@ export type OmpOutput = Output & { id: string }
  * A hand-written `<id>.omp.md` is kept rather than translated. harness-kit copies the file into
  * the omp tree as `agents/<id>.md` when the plugin lists `omp`.
  */
-export function ompAgents(dir: string, claude: boolean, texts: ReadonlyMap<string, string>, composed: readonly ComposedAgent[] = []): OmpOutput[] {
-  const suffix = openCodeAgentFile("", claude)
+export function ompAgents(dir: string, variant: boolean, texts: ReadonlyMap<string, string>, composed: readonly ComposedAgent[] = []): OmpOutput[] {
+  const suffix = openCodeAgentFile("", variant)
   const hints = new Map(composed.map((agent) => [path.basename(agent.file).slice(0, -suffix.length), agent.hints]))
   const outputs: OmpOutput[] = []
   for (const [id, text] of [...texts].sort(([a], [b]) => a.localeCompare(b))) {
     const file = path.join(dir, "common", "agents", ompAgentFile(id))
     if (existsSync(file) && !readFileSync(file, "utf8").startsWith(TRANSLATED_HEADER)) continue
-    const where = `plugins/${path.basename(dir)}/common/agents/${openCodeAgentFile(id, claude)}`
+    const where = `plugins/${path.basename(dir)}/common/agents/${openCodeAgentFile(id, variant)}`
     outputs.push({ id, file, contents: translateOmpAgent(id, text, where, hints.get(id)).contents })
   }
   return outputs
@@ -348,10 +364,11 @@ async function main(check: boolean, only: readonly string[]) {
   for (const dir of selected) {
     const build = readBuild(dir)
     if (build === undefined) continue
-    const composed = composeAgents(dir, build.claude)
+    const variant = openCodeVariant(build)
+    const composed = composeAgents(dir, variant)
     const orphans = orphanAgents(dir, composed)
-    const texts = agentTexts(dir, build.claude, composed)
-    const omp = ompAgents(dir, build.claude, texts, composed)
+    const texts = agentTexts(dir, variant, composed)
+    const omp = ompAgents(dir, variant, texts, composed)
     shipped.push(...omp.map((output) => ({ plugin: path.basename(dir), id: output.id, contents: output.contents })))
     const staleOmp = staleOmpAgents(dir, omp)
     const claude = build.claude ? claudeOutputs({ dir, agents: texts, selected: build.claudeAgents }, (message) => warnings.push(message)) : []

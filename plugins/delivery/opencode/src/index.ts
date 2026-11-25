@@ -29,9 +29,18 @@ import {
   type DeliveryCleanupParams,
   type HostWorktrees,
 } from "./cleanup.ts"
+import {
+  CLEANUP_ACTION,
+  CLEANUP_INPUT,
+  CLEANUP_OUTPUT,
+  CleanupDeferred,
+  cleanupToolResult,
+  deferredToolResult,
+  metadataOf,
+} from "./cleanup-tool.ts"
 import { MERGE_METHODS } from "./forge-adapter.ts"
 import { type LandOutcome, type LandParams, landPullRequest } from "./land.ts"
-import { CleanupDeferred, createPendingCleanup, type PendingDeps } from "./pending-cleanup.ts"
+import { createPendingCleanup, type PendingDeps } from "./pending-cleanup.ts"
 import { malformedNote, parseVerdict } from "./verdict.ts"
 
 export {
@@ -45,11 +54,11 @@ export {
   shapeAgent,
 } from "./agents.ts"
 export { cleanupDelivery } from "./cleanup.ts"
+export { CLEANUP_ACTION } from "./cleanup-tool.ts"
 export { landPullRequest } from "./land.ts"
 export { AGENT_VERDICTS, parseVerdict } from "./verdict.ts"
 
 export const LAND_ACTION = "delivery_land"
-export const CLEANUP_ACTION = "delivery_cleanup"
 export const SKILL_PATH = fileURLToPath(new URL("../skills/delivery-git-workflow/SKILL.md", import.meta.url))
 export const FAN_OUT_SKILL_PATH = fileURLToPath(new URL("../skills/delivery-fan-out/SKILL.md", import.meta.url))
 export const FAN_OUT_PATH = fileURLToPath(new URL("../instructions/delivery-fan-out.md", import.meta.url))
@@ -185,47 +194,6 @@ const LAND_OUTPUT = {
   required: ["ok"],
 } as const
 
-const CLEANUP_INPUT = {
-  type: "object",
-  properties: {
-    receipt: {
-      type: "string",
-      minLength: 1,
-      description: "Path to a canonical landing receipt; omit to select the newest for this repository",
-    },
-    pr: { type: "integer", minimum: 1, description: "PR number, which must equal the selected receipt" },
-    branch: { type: "string", minLength: 1, description: "Branch, which must equal the selected receipt" },
-    worktree: { type: "string", minLength: 1, description: "Worktree path, which must equal the selected receipt" },
-    remote: { type: "string", minLength: 1, description: "Remote name, which must equal the selected receipt" },
-    repo: { type: "string", minLength: 1, description: '"<owner>/<name>", which must equal the selected receipt\'s repo; another repository needs repoPath or worktree' },
-    repoPath: { type: "string", minLength: 1, description: "Checkout of repo on this machine; cleanup then runs in that clone" },
-  },
-  additionalProperties: false,
-} as const
-
-const CLEANUP_OUTPUT = {
-  type: "object",
-  properties: {
-    ok: { type: "boolean" },
-    receiptPath: { type: "string" },
-    branch: { type: "string" },
-    worktree: { type: "string" },
-    remoteBranchAbsence: { type: "string", enum: ["absent", "present", "unknown"] },
-    alreadyCleaned: { type: "boolean" },
-    removed: { type: "array", items: { type: "string" } },
-    skipped: { type: "array", items: { type: "string" } },
-    reason: { type: "string" },
-    deferred: { type: "string" },
-    receipt: { type: "object" },
-  },
-  required: ["ok"],
-} as const
-
-/** What `delivery_cleanup` returns when the worktree belongs to a lane: nothing removed, the owner does it. */
-function deferredOutput(deferred: string) {
-  return { ok: true as const, deferred }
-}
-
 const LAND_DESCRIPTION =
   "Merge a reviewed pull request at most once, prove it landed, and write one landing receipt.\n" +
   "Refuses unless expectHeadSha names the PR head (required whenever the call would merge) " +
@@ -261,27 +229,6 @@ export function landOutput(outcome: LandOutcome, cleanup?: CleanupReport) {
     ...(cleanup === undefined ? {} : { cleanup }),
     receipt: outcome.receipt as Record<string, unknown>,
   }
-}
-
-function cleanupOutput(result: CleanupResult) {
-  if (!result.ok) return { ok: false as const, reason: result.reason }
-  return {
-    ok: true as const,
-    receiptPath: result.path,
-    branch: result.receipt.branch.name,
-    worktree: result.receipt.worktree.path ?? "",
-    remoteBranchAbsence: result.remoteBranchAbsence,
-    alreadyCleaned: result.alreadyCleaned,
-    removed: result.report.removed,
-    skipped: result.report.skipped,
-    receipt: result.receipt as Record<string, unknown>,
-  }
-}
-
-/** The persisted metadata: the output without the full receipt, which lives on disk. */
-function metadataOf(output: Record<string, unknown>): Record<string, unknown> {
-  const { receipt: _receipt, ...rest } = output
-  return rest
 }
 
 /**
@@ -433,17 +380,10 @@ export async function setupDelivery(
           })
         } catch (error) {
           if (!(error instanceof CleanupDeferred)) throw error
-          const output = deferredOutput(error.deferred)
-          return { output, content: `delivery_cleanup deferred: ${error.deferred}`, metadata: metadataOf(output) }
+          return deferredToolResult(error.deferred)
         }
         await pending.gc(result.ok ? result.receipt : undefined)
-        const output = cleanupOutput(result)
-        const text = !result.ok
-          ? `delivery_cleanup refused: ${result.reason}`
-          : result.alreadyCleaned
-            ? `delivery_cleanup: nothing to remove. ${result.report.skipped.join("; ")}.\nreceipt: ${result.path}`
-            : `delivery_cleanup removed ${result.report.removed.length === 0 ? "nothing" : result.report.removed.join(", ")}${result.report.skipped.length > 0 ? `; skipped: ${result.report.skipped.join("; ")}` : ""}; remote branch ${result.remoteBranchAbsence}.\nreceipt: ${result.path}`
-        return { output, content: text, metadata: metadataOf(output) }
+        return cleanupToolResult(result)
       },
     })
   })

@@ -19,7 +19,7 @@
 | claude-compat | 0.5.4 | development | project | opencode |
 | code-challenge | 2.1.3 | development | global | opencode, omp, pi |
 | debate | 1.1.0 | productivity | global | opencode, claude, omp, pi |
-| delivery | 0.12.6 | development | global | opencode |
+| delivery | 0.12.6 | development | global | opencode, pi |
 | dep-update | 0.7.1 | development | global | opencode, pi |
 | design | 0.10.4 | development | project | opencode, claude |
 | docs | 0.5.1 | development | global | opencode, omp, pi |
@@ -51,3 +51,7 @@
 | worktrunk | 0.7.2 | development | project | opencode, claude, pi |
 
 Each plugin's own `INVENTORY.md` lists what it ships per harness.
+
+## Harness discrepancies
+
+- delivery: pi (and OMP, which loads the pi bundle) gets only an explicit delivery_cleanup for the session's repository: no delivery_land, automatic cleanup or clone registry.

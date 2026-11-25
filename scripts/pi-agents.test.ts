@@ -135,3 +135,22 @@ test("every npm package a plugin's Pi agents load is a required companion of tha
     expect({ plugin, missing }).toEqual({ plugin, missing: [] })
   }
 })
+
+/** Every agent file a shipped pi tree carries, as `<plugin>/<file>`: what pi-subagents loads from `subagents.agents`. */
+const shippedPiAgentFiles = () => [...new Bun.Glob("*/pi/agents/*.md").scanSync(PLUGINS)].filter((file) => !file.endsWith(".chain.md")).sort()
+
+test("the delivery pi tree ships no agents and registers no agent directory", () => {
+  const manifest = JSON.parse(readFileSync(path.join(PLUGINS, "delivery", "pi", "package.json"), "utf8")) as { pi: Record<string, unknown> }
+  expect(existsSync(path.join(PLUGINS, "delivery", "pi", "agents"))).toBe(false)
+  expect(manifest.pi.subagents).toBeUndefined()
+  expect(shippedPiAgentFiles().filter((file) => file.startsWith("delivery/"))).toEqual([])
+})
+
+test("no two pi packages ship different agents of one name", () => {
+  // pi-subagents loads every package's agents; two different ones of a name make the pick arbitrary.
+  // A byte-identical copy (one agent several plugins share) is the same agent.
+  const byName = Map.groupBy(shippedPiAgentFiles(), (file) => path.basename(file))
+  const differing = [...byName].filter(([, files]) => new Set(files.map((file) => readFileSync(path.join(PLUGINS, file), "utf8"))).size > 1)
+  expect(differing.map(([name, files]) => `${name}: ${files.join(", ")}`)).toEqual([])
+  expect(byName.size).toBeGreaterThan(10)
+})

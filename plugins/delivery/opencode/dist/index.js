@@ -639,11 +639,50 @@ var package_default = {
     description: "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
     category: "development",
     harnesses: [
-      "opencode"
+      "opencode",
+      "pi"
     ],
     scope: "global",
+    piAgents: false,
+    discrepancies: "pi (and OMP, which loads the pi bundle) gets only an explicit delivery_cleanup for the session's repository: no delivery_land, automatic cleanup or clone registry.",
+    prerequisites: [
+      {
+        bin: "git",
+        for: "delivery_cleanup's worktree, ref and remote proofs, git worktree remove and git branch -d",
+        required: true,
+        install: {
+          url: "https://git-scm.com/downloads"
+        }
+      },
+      {
+        bin: "gh",
+        for: "delivery_cleanup's pull-request read (gh pr view) for a GitHub receipt",
+        install: {
+          mise: "aqua:cli/cli",
+          url: "https://cli.github.com"
+        }
+      },
+      {
+        bin: "glab",
+        for: "delivery_cleanup's merge-request read (glab mr view) for a GitLab receipt",
+        install: {
+          url: "https://gitlab.com/gitlab-org/cli#installation"
+        }
+      },
+      {
+        bin: "bd",
+        for: "delivery_cleanup's read-only bd show of a receipt's beads when the repository's Beads ledger is active",
+        install: {
+          mise: "aqua:gastownhall/beads",
+          url: "https://github.com/gastownhall/beads/blob/main/docs/getting-started/installation.md"
+        }
+      }
+    ],
     entries: {
       index: "index"
+    },
+    piEntries: {
+      "delivery-cleanup": "delivery-cleanup"
     }
   }
 };
@@ -3528,6 +3567,96 @@ async function cleanupInRepository(params, cwd, deps) {
   };
 }
 
+// plugins/delivery/opencode/src/cleanup-tool.ts
+var CLEANUP_ACTION = "delivery_cleanup";
+var CLEANUP_INPUT = {
+  type: "object",
+  properties: {
+    receipt: {
+      type: "string",
+      minLength: 1,
+      description: "Path to a canonical landing receipt; omit to select the newest for this repository"
+    },
+    pr: { type: "integer", minimum: 1, description: "PR number, which must equal the selected receipt" },
+    branch: { type: "string", minLength: 1, description: "Branch, which must equal the selected receipt" },
+    worktree: { type: "string", minLength: 1, description: "Worktree path, which must equal the selected receipt" },
+    remote: { type: "string", minLength: 1, description: "Remote name, which must equal the selected receipt" },
+    repo: { type: "string", minLength: 1, description: `"<owner>/<name>", which must equal the selected receipt's repo; another repository needs repoPath or worktree` },
+    repoPath: { type: "string", minLength: 1, description: "Checkout of repo on this machine; cleanup then runs in that clone" }
+  },
+  additionalProperties: false
+};
+var CLEANUP_OUTPUT = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    receiptPath: { type: "string" },
+    branch: { type: "string" },
+    worktree: { type: "string" },
+    remoteBranchAbsence: { type: "string", enum: ["absent", "present", "unknown"] },
+    alreadyCleaned: { type: "boolean" },
+    removed: { type: "array", items: { type: "string" } },
+    skipped: { type: "array", items: { type: "string" } },
+    reason: { type: "string" },
+    deferred: { type: "string" },
+    receipt: { type: "object" }
+  },
+  required: ["ok"]
+};
+
+class CleanupDeferred extends Error {
+  deferred;
+  constructor(deferred) {
+    super(deferred);
+    this.deferred = deferred;
+    this.name = "CleanupDeferred";
+  }
+}
+function explicitDeferral(ownership) {
+  const why = ownershipDeferral(ownership);
+  if (why === undefined)
+    return;
+  return ownership.owner === "lane" ? `${why}; removed by its owner once finished` : `${why}; not removed until it can be read`;
+}
+function metadataOf(output) {
+  const { receipt: _receipt, ...rest } = output;
+  return rest;
+}
+function cleanupOutput(result) {
+  if (!result.ok)
+    return { ok: false, reason: result.reason };
+  return {
+    ok: true,
+    receiptPath: result.path,
+    branch: result.receipt.branch.name,
+    worktree: result.receipt.worktree.path ?? "",
+    remoteBranchAbsence: result.remoteBranchAbsence,
+    alreadyCleaned: result.alreadyCleaned,
+    removed: result.report.removed,
+    skipped: result.report.skipped,
+    receipt: result.receipt
+  };
+}
+function cleanupText(result) {
+  if (!result.ok)
+    return `delivery_cleanup refused: ${result.reason}`;
+  if (result.alreadyCleaned)
+    return `delivery_cleanup: nothing to remove. ${result.report.skipped.join("; ")}.
+receipt: ${result.path}`;
+  const removed = result.report.removed.length === 0 ? "nothing" : result.report.removed.join(", ");
+  const skipped = result.report.skipped.length > 0 ? `; skipped: ${result.report.skipped.join("; ")}` : "";
+  return `delivery_cleanup removed ${removed}${skipped}; remote branch ${result.remoteBranchAbsence}.
+receipt: ${result.path}`;
+}
+function cleanupToolResult(result) {
+  const output = cleanupOutput(result);
+  return { output, content: cleanupText(result), metadata: metadataOf(output) };
+}
+function deferredToolResult(deferred) {
+  const output = { ok: true, deferred };
+  return { output, content: `delivery_cleanup deferred: ${deferred}`, metadata: metadataOf(output) };
+}
+
 // plugins/delivery/opencode/src/land.ts
 import { resolve as resolve5 } from "path";
 
@@ -6261,21 +6390,6 @@ function receiptSettled(directory, receiptId) {
     return false;
   }
 }
-
-class CleanupDeferred extends Error {
-  deferred;
-  constructor(deferred) {
-    super(deferred);
-    this.deferred = deferred;
-    this.name = "CleanupDeferred";
-  }
-}
-function explicitDeferral(ownership) {
-  const why = ownershipDeferral(ownership);
-  if (why === undefined)
-    return;
-  return ownership.owner === "lane" ? `${why}; removed by its owner once finished` : `${why}; not removed until it can be read`;
-}
 async function authorizeExplicit(pending, ask, sessionID, request) {
   try {
     await ask(request);
@@ -7139,7 +7253,6 @@ function malformedNote(verdict, sessionID) {
 
 // plugins/delivery/opencode/src/index.ts
 var LAND_ACTION = "delivery_land";
-var CLEANUP_ACTION = "delivery_cleanup";
 var SKILL_PATH = fileURLToPath2(new URL("../skills/delivery-git-workflow/SKILL.md", import.meta.url));
 var FAN_OUT_SKILL_PATH = fileURLToPath2(new URL("../skills/delivery-fan-out/SKILL.md", import.meta.url));
 var FAN_OUT_PATH = fileURLToPath2(new URL("../instructions/delivery-fan-out.md", import.meta.url));
@@ -7238,43 +7351,6 @@ var LAND_OUTPUT = {
   },
   required: ["ok"]
 };
-var CLEANUP_INPUT = {
-  type: "object",
-  properties: {
-    receipt: {
-      type: "string",
-      minLength: 1,
-      description: "Path to a canonical landing receipt; omit to select the newest for this repository"
-    },
-    pr: { type: "integer", minimum: 1, description: "PR number, which must equal the selected receipt" },
-    branch: { type: "string", minLength: 1, description: "Branch, which must equal the selected receipt" },
-    worktree: { type: "string", minLength: 1, description: "Worktree path, which must equal the selected receipt" },
-    remote: { type: "string", minLength: 1, description: "Remote name, which must equal the selected receipt" },
-    repo: { type: "string", minLength: 1, description: `"<owner>/<name>", which must equal the selected receipt's repo; another repository needs repoPath or worktree` },
-    repoPath: { type: "string", minLength: 1, description: "Checkout of repo on this machine; cleanup then runs in that clone" }
-  },
-  additionalProperties: false
-};
-var CLEANUP_OUTPUT = {
-  type: "object",
-  properties: {
-    ok: { type: "boolean" },
-    receiptPath: { type: "string" },
-    branch: { type: "string" },
-    worktree: { type: "string" },
-    remoteBranchAbsence: { type: "string", enum: ["absent", "present", "unknown"] },
-    alreadyCleaned: { type: "boolean" },
-    removed: { type: "array", items: { type: "string" } },
-    skipped: { type: "array", items: { type: "string" } },
-    reason: { type: "string" },
-    deferred: { type: "string" },
-    receipt: { type: "object" }
-  },
-  required: ["ok"]
-};
-function deferredOutput(deferred) {
-  return { ok: true, deferred };
-}
 var LAND_DESCRIPTION = `Merge a reviewed pull request at most once, prove it landed, and write one landing receipt.
 ` + "Refuses unless expectHeadSha names the PR head (required whenever the call would merge) " + "and, when worktree is given, it is a worktree of the repository landed whose HEAD is that head. A repo other than the session's needs worktree or repoPath, a local clone whose remote names it. With requireApproval/requireGreenChecks it also requires an approval artifact on the PR for that exact head " + "and green checks before merging. Merges at most once (an already MERGED request is proved, not re-merged) with merge_method (squash by default, PR title as subject), " + "binds the merge to the head, re-reads it, fetches the landed commits and checks the method's commit shape, observes the remote branch, then writes the receipt. " + "Writes no Beads ledger: when beads.ledgerActive, run the returned next steps child-before-parent, then delivery_cleanup. A landing of another repository is cleaned up in that clone, under its lane claims, holds and denials. " + "A base branch with a GitHub merge queue is landed by enqueuing the head (never --auto): queued true means still queued, call again. " + "A refusal with mergeIssued true means the PR is merged: re-run with the same pr and expectHeadSha to write the receipt.";
 var CLEANUP_DESCRIPTION = `Remove a landed PR's worktree and local branch after proving the landing receipt, and write a continuation receipt.
@@ -7298,25 +7374,6 @@ function landOutput(outcome, cleanup) {
     ...cleanup === undefined ? {} : { cleanup },
     receipt: outcome.receipt
   };
-}
-function cleanupOutput(result) {
-  if (!result.ok)
-    return { ok: false, reason: result.reason };
-  return {
-    ok: true,
-    receiptPath: result.path,
-    branch: result.receipt.branch.name,
-    worktree: result.receipt.worktree.path ?? "",
-    remoteBranchAbsence: result.remoteBranchAbsence,
-    alreadyCleaned: result.alreadyCleaned,
-    removed: result.report.removed,
-    skipped: result.report.skipped,
-    receipt: result.receipt
-  };
-}
-function metadataOf(output) {
-  const { receipt: _receipt, ...rest } = output;
-  return rest;
 }
 function worktreeRegistry(ctx) {
   const worktree = ctx.worktree;
@@ -7437,15 +7494,10 @@ async function setupDelivery(ctx, overrides = {}) {
         } catch (error) {
           if (!(error instanceof CleanupDeferred))
             throw error;
-          const output = deferredOutput(error.deferred);
-          return { output, content: `delivery_cleanup deferred: ${error.deferred}`, metadata: metadataOf(output) };
+          return deferredToolResult(error.deferred);
         }
         await pending.gc(result.ok ? result.receipt : undefined);
-        const output = cleanupOutput(result);
-        const text = !result.ok ? `delivery_cleanup refused: ${result.reason}` : result.alreadyCleaned ? `delivery_cleanup: nothing to remove. ${result.report.skipped.join("; ")}.
-receipt: ${result.path}` : `delivery_cleanup removed ${result.report.removed.length === 0 ? "nothing" : result.report.removed.join(", ")}${result.report.skipped.length > 0 ? `; skipped: ${result.report.skipped.join("; ")}` : ""}; remote branch ${result.remoteBranchAbsence}.
-receipt: ${result.path}`;
-        return { output, content: text, metadata: metadataOf(output) };
+        return cleanupToolResult(result);
       }
     });
   });

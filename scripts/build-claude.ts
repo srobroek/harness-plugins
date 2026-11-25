@@ -40,9 +40,9 @@ const GUARD_COMMAND =
 
 const json = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`
 
-/** The file in `common/agents/` that holds an agent's OpenCode form. */
-export function openCodeAgentFile(id: string, claude: boolean): string {
-  return `${id}${claude ? ".opencode" : ""}.md`
+/** The file in `common/agents/` that holds an agent's OpenCode form; `variant` gives `<id>.opencode.md` (see `openCodeVariant` in build.ts). */
+export function openCodeAgentFile(id: string, variant: boolean): string {
+  return `${id}${variant ? ".opencode" : ""}.md`
 }
 
 /** Agent ids in `agents`, split into primary and not, in id order. */
