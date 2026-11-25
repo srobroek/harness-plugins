@@ -1,3 +1,13 @@
+## safety [1.0.0](https://github.com/srobroek/harness-plugins/compare/safety--v0.14.6...safety--v1.0.0) (2026-11-25)
+
+### ⚠ BREAKING CHANGES
+
+* **safety:** the pushVia option is removed; the gate moved to a private plugin
+
+### Features
+
+* **safety:** drop the push-via gate ([3b39e64](https://github.com/srobroek/harness-plugins/commit/3b39e64b89b9d50b08fe050e9c02ef306e4e1717))
+
 ## safety [0.14.6](https://github.com/srobroek/harness-plugins/compare/safety--v0.14.5...safety--v0.14.6) (2026-11-25)
 
 ### Bug Fixes
