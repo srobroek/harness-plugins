@@ -29,19 +29,24 @@ OpenAPI), organization for the contact.
     - "@typespec/json-schema"   # only when a standalone schema is published
   options:
     "@typespec/openapi3":
+      emitter-output-dir: "{project-root}"        # writes openapi.yaml at the root
       openapi-versions: ["3.2.0"]
       seal-object-schemas: true
     "@typespec/json-schema":
+      emitter-output-dir: "{project-root}/schema"
       seal-object-schemas: true
   ```
+
+  Without `emitter-output-dir`, TypeSpec writes to `tsp-output/@typespec/openapi3/openapi.yaml`,
+  and the tasks below would read a stale file or none (checked with 1.18.0 on 2026-11-25).
 
   Set the same `seal-object-schemas: true` on both emitters. Run the project's conformance
   gate on 3.2.0 (`toolchain-api`'s Contract tooling table records the 2026-11-25 acceptance
   check; the generator scores were measured on 3.1.0). If a generator fails on 3.2.0, keep `openapi.yaml` (3.2.0) where it
-  is and add `tspconfig.oa31.yaml` emitting `openapi-versions: ["3.1.0"]` into
-  `build/openapi-3.1/` for that generator only. Every task below keeps using `openapi.yaml`;
+  is and add `tspconfig.oa31.yaml` emitting `openapi-versions: ["3.1.0"]` with
+  `emitter-output-dir: "{project-root}/build/openapi-3.1"` for that generator only. Every task below keeps using `openapi.yaml`;
   listing both versions in one config moves it into per-version directories.
-- Tasks: `redocly lint openapi.yaml` with a committed `redocly.yaml`; regenerate and fail on
+- Tasks: `redocly lint openapi.yaml` with a committed `redocly.yaml`, plus the response-status-key and `jsonSchemaDialect` checks of `toolchain-api` gate 4; regenerate and fail on
   `git status --porcelain` over the generated paths; breaking-change check against the PR
   base: `git show origin/main:openapi.yaml > "$base"` then
   `oasdiff breaking --fail-on ERR --severity-levels oasdiff-severity.txt "$base" openapi.yaml`

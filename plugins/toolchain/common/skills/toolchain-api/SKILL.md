@@ -167,10 +167,10 @@ Measured OpenAPI linter comparison (2026-11-25, `typespec-spike/lint-bakeoff/RES
 | Error-class defects that fail the build | 10/12 | 11/12 | 7/12 |
 | Quality-class defects reported | 9/13 | 7/13 | 7/13 |
 | Findings on the clean spec | 0 | 0 | 0 |
-| GitHub's 11 MB 3.1 spec (median of 3) | 4.0 s, 0.63 GB | 17.9 s, 1.9 GB | 4.5 s, 2.8 GB |
-| SARIF | no (`github-actions` format only) | yes | yes |
+| GitHub's 11 MB 3.1 spec (median of 3) | 4.0 s, 0.63 GB (cached binary; 5.4 s, 0.67 GB through `npx`) | 17.9 s, 1.9 GB | 4.5 s, 2.8 GB |
+| SARIF | no SARIF; GitHub Actions annotations supported | yes | yes |
 
-Run Redocly `recommended` with a committed `redocly.yaml` that adds `operation-description`, `operation-tags` and `info-contact`. Redocly checks neither response status keys nor that `jsonSchemaDialect` is a URI, so gate 4 adds a check for both, or runs Spectral `spectral:oas` as well, which also gives SARIF for code scanning. Don't use vacuum's default ruleset as the only structural gate.
+Run Redocly `recommended` with a committed `redocly.yaml` that adds `operation-description`, `operation-tags` and `info-contact`. Redocly checks neither response status keys nor that `jsonSchemaDialect` is a URI, so gate 4 adds both checks (for example a small script over the bundled document: every response key is `default`, `1XX`–`5XX` or a three-digit code from 100 to 599; `jsonSchemaDialect`, when present, is an absolute URI). Spectral `spectral:oas` can run alongside for SARIF, but its recommended ruleset failed one valid 2020-12 probe in the comparison, so review its findings before making it blocking. Don't use vacuum's default ruleset as the only structural gate.
 
 ## Own the contract
 
@@ -270,7 +270,7 @@ Every repository with a TypeSpec source runs the gates that apply to its contrac
 | 1 | all | Format | `tsp format --check "**/*.tsp"` | `@typespec/compiler` |
 | 2 | all | Compile, warnings as errors | `tsp compile . --warn-as-error` (linter rules report as warnings) | `@typespec/compiler` |
 | 3 | all | Regenerate and drift | Regenerate every output (OpenAPI, JSON Schema, bindings, docs) with the pinned toolchain, then fail on `git status --porcelain -- <generated dirs>` (it also catches new untracked files; `git diff --exit-code` does not) | Pinned generators |
-| 4 | HTTP | OpenAPI lint | `redocly lint <openapi.json>` with a committed `redocly.yaml` | Redocly CLI |
+| 4 | HTTP | OpenAPI lint | `redocly lint <openapi.json>` with a committed `redocly.yaml`, plus a check that every response key is `default`, `1XX`–`5XX` or 100–599 and that `jsonSchemaDialect`, when present, is an absolute URI (Redocly checks neither) | Redocly CLI, plus a project script |
 | 5 | HTTP | API docs | `redocly build-docs <openapi.json> -o <docs file>`; the docs are generated output, never hand-written | Redocly CLI |
 | 6 | HTTP | Breaking changes | `oasdiff breaking <base openapi> <head openapi> --fail-on ERR --severity-levels oasdiff-severity.txt` (see Breaking changes) | `oasdiff` |
 | 7 | schema | JSON Schema meta-validation | `jsonschema metaschema <schema>` and `jsonschema lint <schema>`, plus the pattern lint in `contracts.md` | Sourcemeta `jsonschema` |
