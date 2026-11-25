@@ -337,9 +337,10 @@ locale, so its message is the English one. Any other message falls back to the s
 
 Every unverified or partly removed result names the path to inspect and says to save any
 changes there. No result of a failed removal or branch deletion names a command that
-deletes. Git runs those two calls in the C locale, and the result quotes only the first
-line of its message, without the hint ("use --force to delete it", "remove -f -f",
-"branch -D"). The expected outcome reads "exit 0".
+forces a deletion. It quotes the command that ran (`git worktree remove`, `git branch -d`),
+which never forces. Git runs those two calls in the C locale, and the result quotes only
+the first line of its message, without the hint ("use --force to delete it",
+"remove -f -f", "branch -D"). The expected outcome reads "exit 0".
 
 A deleted file in the status may be the user's own work. The status does not list ignored
 files either. So no status proves that what is left belongs to the interrupted removal.
