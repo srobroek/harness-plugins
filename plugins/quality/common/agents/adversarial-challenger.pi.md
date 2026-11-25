@@ -1,6 +1,7 @@
 ---
 name: adversarial-challenger
 description: "Read-only challenger that stress-tests a claim, plan, design or decision and returns evidence-backed counter-arguments."
+acceptanceRole: read-only
 tools: read, grep, find, ls, bash, web_search, fetch_content, get_search_content, source_check, symbol_search, module_report, project_report, read_symbol, read_enclosing, ast_grep_search, ast_grep_outline, lens_diagnostics, pi_lens_activate_tools
 subagentOnlyExtensions: npm:pi-web-access, npm:pi-lens
 skills: quality-code-design, quality-code-policy, quality-testing, quality-test-audit, quality-profiling, prototype-logic, lang-go, lang-python, lang-rust, lang-typescript, architecture-guide
