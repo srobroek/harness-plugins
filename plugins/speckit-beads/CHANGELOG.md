@@ -1,3 +1,13 @@
+## speckit-beads [2.0.0](https://github.com/srobroek/harness-plugins/compare/speckit-beads--v1.0.1...speckit-beads--v2.0.0) (2026-11-25)
+
+### ⚠ BREAKING CHANGES
+
+* **speckit-beads:** pi reads the speckit-beads key of `<agentDir>/settings.json`; `<agentDir>/speckit-beads.json` is no longer read. Move its object under the key.
+
+### Features
+
+* **speckit-beads:** read settings from pi settings.json ([3d0dd48](https://github.com/srobroek/harness-plugins/commit/3d0dd48d51fc20249d560e497578a46b549f096b))
+
 ## speckit-beads [1.0.1](https://github.com/srobroek/harness-plugins/compare/speckit-beads--v1.0.0...speckit-beads--v1.0.1) (2026-11-25)
 
 ### Bug Fixes

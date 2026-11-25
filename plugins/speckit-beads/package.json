@@ -1,6 +1,6 @@
 {
   "name": "speckit-beads",
-  "version": "1.0.1",
+  "version": "2.0.0",
   "description": "SpecKit on Beads: speckit_setup, speckit_start and speckit_commit tools, a tasks.md guard, the implement and taskstoissues routes, workflow instructions, formulas, a spec agent, and the speckit-sync and speckit-verify subagents.",
   "private": true,
   "type": "module",
