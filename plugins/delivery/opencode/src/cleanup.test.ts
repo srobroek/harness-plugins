@@ -22,8 +22,8 @@ import {
   withDiskLock,
 } from "@srobroek/opencode-lib/worktree-locks"
 import { addClone, MAX_CLONES, readClones, registryFile } from "./clone-registry.ts"
-import { authorizeExplicit, CleanupDeferred, createPendingCleanup, partlyRemovedText } from "./pending-cleanup.ts"
 import { cleanupText } from "./index.ts"
+import { authorizeExplicit, CleanupDeferred, createPendingCleanup, partlyRemovedText } from "./pending-cleanup.ts"
 
 // Fixture setup creates several real Git repositories and measured about 20s under full-suite load;
 // keep three times that headroom instead of letting Bun's 5s default kill a child process mid-fixture.
