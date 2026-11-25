@@ -1332,6 +1332,25 @@ describe("background work is held on disk by every gate", () => {
     expect(worktree[0]?.method).toBe("remove")
     await cleanup()
   })
+
+  test("a busy lock on one lane does not delay another lane's hold", async () => {
+    const WT_B = "/wt/lane-b"
+    const lock = { waitMs: 5_000, ttlMs: 60_000, alive: () => true, host: "this-host", now: () => NOW }
+    const { fake, common, cleanup } = await start({ ancestor: 1 }, { stored: [lane(), lane({ child: "ses_child_b", directory: WT_B, branch: "lane-b" })], lock })
+    // Another instance holds the first lane's lock.
+    mkdirSync(join(common, "opencode", "locks"), { recursive: true })
+    const busy = lockFile(common, WT)
+    writeFileSync(busy, JSON.stringify({ pid: process.pid, host: "this-host", owner: "other", token: "theirs", taken: NOW, expires: NOW + 60_000 }))
+    const fired = gate(fake, PARENT, [{ kind: "shell", shellID: "sh_1", command: `make -C ${WT} -C ${WT_B}` }])
+    const end = Date.now() + 2_000
+    while (readHolds(common, WT_B).holds.length === 0 && Date.now() < end) await Bun.sleep(20)
+    // The first lane's write still waits for its lock with its pending hold on disk; the second lane's hold is written.
+    expect(readHolds(common, WT).holds.map((hold) => hold.pendingFile !== undefined)).toEqual([true])
+    expect(readHolds(common, WT_B).holds).toEqual([{ sessionID: PARENT, directory: WT_B, jobs: [{ kind: "shell", id: "sh_1" }], updatedAt: NOW }])
+    rmSync(busy)
+    await fired
+    await cleanup()
+  })
 })
 
 describe("coordination errors never escape a hook and never remove", () => {

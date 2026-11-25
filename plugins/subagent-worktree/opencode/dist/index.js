@@ -660,7 +660,8 @@ function setHold(commonDir, directory, sessionID, jobs, now) {
   writeFileSync2(temp, JSON.stringify({ sessionID, directory, jobs, updatedAt: now }));
   renameSync2(temp, path);
 }
-var pendingHoldFile = (commonDir, directory, sessionID) => join2(holdsDir(commonDir, directory), `${sha1(sessionID)}.pending.json`);
+var PENDING_SUFFIX = ".pending.json";
+var pendingHoldFile = (commonDir, directory, sessionID) => join2(holdsDir(commonDir, directory), `${sha1(sessionID)}${PENDING_SUFFIX}`);
 async function recordHold(commonDir, directory, sessionID, jobs, at, lock) {
   const pending = pendingHoldFile(commonDir, directory, sessionID);
   if (jobs.length > 0) {
@@ -698,12 +699,19 @@ function readHolds(commonDir, directory) {
       if (hold === undefined)
         unreadable = true;
       else
-        holds.push(hold);
+        holds.push(name.endsWith(PENDING_SUFFIX) ? { ...hold, pendingFile: join2(dir, name) } : hold);
     } catch {
       unreadable = true;
     }
   }
   return { holds, unreadable };
+}
+function elapsed(ms) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60)
+    return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
 }
 function holdBlock(read, now, expiryMs = HOLD_EXPIRY_MS) {
   if (read.unreadable)
@@ -712,7 +720,12 @@ function holdBlock(read, now, expiryMs = HOLD_EXPIRY_MS) {
   if (live === undefined)
     return;
   const first = live.jobs[0];
-  return `session ${live.sessionID} has ${live.jobs.length} background job(s) running (${first?.kind} ${first?.id})`;
+  const running = `session ${live.sessionID} has ${live.jobs.length} background job(s) running (${first?.kind} ${first?.id})`;
+  if (live.pendingFile === undefined)
+    return running;
+  const ignoredAfter = new Date(live.updatedAt + expiryMs).toISOString();
+  const jobs = live.jobs.map((job) => `${job.kind} ${job.id}`).join(", ");
+  return `${running}; recorded before its lock was taken, ${elapsed(now - live.updatedAt)} ago; ignored after ${ignoredAfter}; ${live.pendingFile}; ` + `delete it only after session ${live.sessionID}'s ${live.jobs.length} job(s) (${jobs}) have finished and that session has ended`;
 }
 function holdsWritable(commonDir, directory) {
   const dir = holdsDir(commonDir, directory);
@@ -2734,9 +2747,9 @@ function createLifecycle(deps) {
         return matched[0]?.why;
       };
       const busyOf = new Map;
-      for (const lane of (await deps.scan()).filter((candidate) => (candidate.state === "active" || candidate.state === "removing") && related(candidate))) {
-        busyOf.set(lane.child, await recordHolds(lane));
-      }
+      const toRecord = (await deps.scan()).filter((candidate) => (candidate.state === "active" || candidate.state === "removing") && related(candidate));
+      for (const [child, why] of await Promise.all(toRecord.map(async (lane) => [lane.child, await recordHolds(lane)])))
+        busyOf.set(child, why);
       await resumeRemovals(related, planned);
       const lanes = (await deps.scan()).filter((lane) => lane.state === "active" && related(lane));
       if (lanes.length === 0)

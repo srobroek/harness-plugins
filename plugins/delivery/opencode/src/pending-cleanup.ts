@@ -1181,6 +1181,10 @@ export function createPendingCleanup(deps: PendingDeps) {
     } catch {
       return
     }
+    // Every worktree's jobs first (the session lookups wait), then every write at once: `recordHold`
+    // puts the pending hold on disk before its own lock wait, so no worktree's record waits behind
+    // another worktree's busy lock.
+    const writes = new Map<string, { path: string; jobs: Array<{ kind: string; id: string }> }>()
     for (const receipt of pending) {
       const path = receipt.worktree.path
       if (path === null) continue
@@ -1196,17 +1200,23 @@ export function createPendingCleanup(deps: PendingDeps) {
         }
         if (inside) jobs.push({ kind: job.kind, id: job.shellID ?? job.childSessionID ?? job.sessionID ?? "unknown" })
       }
-      try {
-        // The jobs reach disk before the lock wait, so a remover holding the lock longer than the wait still sees them.
-        await recordHold(common, path, sessionID, jobs, now(), { sessionID: "delivery", now, ...deps.lock })
-        unsafe.delete(want)
-      } catch (error) {
-        // The record could not be written, so running work cannot be ruled out: nothing is removed from this worktree until a write succeeds.
-        const why = error instanceof Error ? error.message : String(error)
-        unsafe.set(want, `its running work could not be recorded (${why})`)
-        console.error(`delivery: could not record holds for ${path}: ${why}`)
-      }
+      // Receipts that name one worktree under different spellings match different shells: keep every job.
+      const prior = writes.get(want)?.jobs ?? []
+      writes.set(want, { path, jobs: [...prior, ...jobs.filter((job) => !prior.some((kept) => kept.kind === job.kind && kept.id === job.id))] })
     }
+    await Promise.all(
+      [...writes].map(async ([want, { path, jobs }]) => {
+        try {
+          await recordHold(common, path, sessionID, jobs, now(), { sessionID: "delivery", now, ...deps.lock })
+          unsafe.delete(want)
+        } catch (error) {
+          // The record could not be written, so running work cannot be ruled out: nothing is removed from this worktree until a write succeeds.
+          const why = error instanceof Error ? error.message : String(error)
+          unsafe.set(want, `its running work could not be recorded (${why})`)
+          console.error(`delivery: could not record holds for ${path}: ${why}`)
+        }
+      }),
+    )
   }
 
   const registrations: Array<{ dispose: () => Promise<void> }> = []
