@@ -1,3 +1,11 @@
+## subagent-worktree [0.9.4](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.9.3...subagent-worktree--v0.9.4) (2026-11-25)
+
+### Bug Fixes
+
+* **subagent-worktree:** record every lane's hold together, not one lane's lock wait after another ([013c633](https://github.com/srobroek/harness-plugins/commit/013c633c72c87068e5e7a99208e22f2101064d0d))
+* **subagent-worktree:** say when a blocking hold is a pending one, how old it is and which file ([6dec4aa](https://github.com/srobroek/harness-plugins/commit/6dec4aaa702fa199969646008178d2c00a13c7ad))
+* **subagent-worktree:** say when a pending hold's file is safe to delete ([c9b1ea9](https://github.com/srobroek/harness-plugins/commit/c9b1ea944574656518467c6a9bce1b6cfa82bb09))
+
 ## subagent-worktree [0.9.3](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.9.2...subagent-worktree--v0.9.3) (2026-11-25)
 
 ### Bug Fixes
