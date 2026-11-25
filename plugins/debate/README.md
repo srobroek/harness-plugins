@@ -1,19 +1,15 @@
 # debate
 
-Stress-test a decision before committing to it. Three skills:
+Stress-test a decision before committing to it. Two skills:
 
 | Skill | When |
 | --- | --- |
 | `debate` | Two-sided analysis of an architectural decision, technology choice or feature proposal, with a conditional verdict |
 | `grilling` | Interview the user in numbered frontier rounds until every branch of a plan has an answer. `debate` routes deeper interviews here. |
-| `to-questionnaire` | User-invoked only: turn a decision the user cannot answer alone into a questionnaire for one other person |
 
-`to-questionnaire` writes the questionnaire to a path the user names, or to the system temp
-directory.
-
-This plugin vendors `grilling` and `to-questionnaire` in modified form from
-[mattpocock/skills](https://github.com/mattpocock/skills) under the MIT license. Each
-skill directory carries the license text and a NOTICE listing the changes.
+This plugin vendors `grilling` in modified form from
+[mattpocock/skills](https://github.com/mattpocock/skills) under the MIT license. Its skill
+directory carries the license text and a NOTICE listing the changes.
 
 ## Asking questions
 

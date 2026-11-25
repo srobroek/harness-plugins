@@ -42,9 +42,9 @@ Maturity figures below use npm’s registry metadata and downloads for **2026-11
 
 ## Gaps where we still need our own plugin
 
-- **Keep Parley** for multi-round decision trees, explicit recommendations, notes/defer/pending semantics, reopenable rounds, and forwarding answers from user UI back into the correct session. `grilling` and `to-questionnaire` rely on this richer contract (`plugins/debate/common/skills/grilling/SKILL.md:39-56,75-110`; `plugins/debate/common/skills/to-questionnaire/SKILL.md:45-60`).
+- **Keep Parley** for multi-round decision trees, explicit recommendations, notes/defer/pending semantics, reopenable rounds, and forwarding answers from user UI back into the correct session. `grilling` relies on this richer contract (`plugins/debate/common/skills/grilling/SKILL.md:39-56,75-110`).
 - **Keep `modes`** for the OMP-specific Debug, Refactor, and Concept boundaries. Pi Plan Mode supplies a plan workflow, not those agent-specific restrictions (`plugins/modes/opencode/src/modes.ts:9-30`).
-- **Keep `debate`** for the two-sided decision analysis and the user’s grilling/questionnaire process; UI packages supply input controls, not those methods (`plugins/debate/common/skills/debate/SKILL.md:10-20,67-71`).
+- **Keep `debate`** for the two-sided decision analysis and the user’s grilling process; UI packages supply input controls, not those methods (`plugins/debate/common/skills/debate/SKILL.md:10-20,67-71`).
 - **Keep existing OMP workflow guidance** for Beads, worktrunk, fan-out/merge-back, and PR proof. None of these packages is a drop-in replacement for those conventions.
 
 ## Unverified items

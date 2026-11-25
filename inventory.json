@@ -914,14 +914,13 @@
     {
       "name": "debate",
       "version": "0.7.4",
-      "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
+      "description": "Stress-test a decision from both sides or grill a plan in frontier rounds.",
       "category": "productivity",
       "harnesses": {
         "opencode": {
           "skills": [
             "debate",
-            "grilling",
-            "to-questionnaire"
+            "grilling"
           ],
           "agents": [],
           "commands": [],
@@ -936,8 +935,7 @@
         "claude": {
           "skills": [
             "debate",
-            "grilling",
-            "to-questionnaire"
+            "grilling"
           ],
           "agents": [],
           "commands": [],
@@ -950,8 +948,7 @@
         "omp": {
           "skills": [
             "debate",
-            "grilling",
-            "to-questionnaire"
+            "grilling"
           ],
           "agents": [],
           "commands": [],
@@ -964,8 +961,7 @@
         "pi": {
           "skills": [
             "debate",
-            "grilling",
-            "to-questionnaire"
+            "grilling"
           ],
           "agents": [
             "council-advocate",

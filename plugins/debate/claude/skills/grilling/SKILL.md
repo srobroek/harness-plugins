@@ -28,7 +28,6 @@ TRIGGER
 + "grill me", "stress-test my thinking", "poke holes in this plan"
 + a decision with several dependent sub-decisions that the user wants settled one by one
 - a two-sided analysis of one decision → the `debate` skill
-- a questionnaire for someone other than the user → the `to-questionnaire` skill
 
 Interview the user relentlessly until you reach a shared understanding. Map this as a
 **design tree**: every decision branches into the decisions that hang off it.
@@ -41,11 +40,10 @@ Interview the user relentlessly until you reach a shared understanding. Map this
    recommended answer and why, then wait for the answers before the next round. See
    **Asking questions** for the channel and the format.
 2. Fold the answers into the tree. An answer settles its node; a note on it becomes a
-   constraint on the nodes below. A deferred or unanswered question stays on the
-   frontier: decide whether it is a fact to look up or a question for someone else
-   (the `to-questionnaire` skill), and say which in the next round. Follow-ups are
-   questions too: checking what a note means, or whether to hand a deferred node to
-   someone, goes into the next round through the same channel, not into chat prose.
+   constraint on the nodes below. A deferred or unanswered question stays on the frontier.
+   Decide whether it is a fact to look up or a question for someone else, and say which
+   in the next round. Follow-ups are questions too. Checking what a note means, or whether
+   to hand a deferred node to someone, goes into the next round through the same channel.
 3. Each round reshapes the tree: settled decisions push the frontier outward and unblock
    the questions that depended on them. Recompute the frontier and ask the next round. A
    question whose answer depends on another question still open in this round belongs to
@@ -71,7 +69,7 @@ Write each frontier question once, with:
 - `recommended`: your answer (an option id, ids, `yes`/`no`, a number or text), and
   `rationale`: one line on why.
 
-Deliver each round through your preferred question tool when available. If no question
+When you have a question tool, deliver each round through your preferred one. If no question
 tool is available, or it cannot handle the round, print the round in chat and wait:
 
 ```
@@ -83,8 +81,9 @@ paragraphs and list several choices
 > your recommended answer, because {rationale}
 ```
 
-When the frontier is empty, present the settled tree to the user and ask them to
-confirm the shared understanding through your preferred question tool or in chat.
+When the frontier is empty, present the settled tree to the user. Ask them to confirm that
+you share an understanding, through your preferred question tool or in chat.
+
 ## Rules
 
 MUST End the session only when the frontier is empty: every branch of the design tree
