@@ -1,3 +1,10 @@
+## code-challenge [2.1.2](https://github.com/srobroek/harness-plugins/compare/code-challenge--v2.1.1...code-challenge--v2.1.2) (2026-11-25)
+
+### Bug Fixes
+
+* **code-challenge:** declare the Pi challengers read-only for acceptance ([0f879b4](https://github.com/srobroek/harness-plugins/commit/0f879b4ff5f9c03ab6f72d26826c4348adec8ec2))
+* **code-challenge:** give the Pi challengers their tools, skills and providers ([6eb17ce](https://github.com/srobroek/harness-plugins/commit/6eb17ceac34722e99f973697cc13f33196d409a3))
+
 ## code-challenge [2.1.1](https://github.com/srobroek/harness-plugins/compare/code-challenge--v2.1.0...code-challenge--v2.1.1) (2026-11-24)
 
 ### Bug Fixes
