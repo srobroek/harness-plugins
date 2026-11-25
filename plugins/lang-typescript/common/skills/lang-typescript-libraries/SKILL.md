@@ -33,11 +33,11 @@ Checked 2026-11-16.
 | Existing Node HTTP | Keep the existing framework | `fastify` `>= 5` alternative for required schema/hooks/plugin integration. |
 | Middleware | Framework built-ins/hooks | Cross-cutting behavior does not belong in each endpoint. |
 | Schemas | `zod` `>= 4` | `zod/mini` for bundle pressure; validate trust boundaries. |
-| OpenAPI | `@hono/zod-openapi` `>= 1`; `@fastify/swagger` `>= 9` | Runtime adapters: check the framework's emitted document against the committed TypeSpec OpenAPI; they are never a second source. |
+| OpenAPI | `@hono/zod-openapi` `>= 1`; `@fastify/swagger` `>= 9` | Framework adapters: the route schemas are the Zod schemas generated from TypeSpec, and the framework's emitted document is a drift check against the committed TypeSpec OpenAPI, never a second source. |
 | API clients | `openapi-typescript` `>= 7`; native `fetch` | `orval` `>= 8` when generated query hooks are needed. |
 | TypeSpec-sourced Zod | `@hey-api/openapi-ts`, pinned exactly in the Contract tooling table of `toolchain-api`, with `dates.offset` and a strict/loose object resolver | A contract type comes from TypeSpec, never a hand-written Zod schema. Configured 28/29 and defaults 25/29 on the spike (2026-11-25); a lowercase `t`/`z` date-time is rejected and field descriptions are not carried; run a conformance corpus on upgrade. Not `json-schema-to-zod` (deprecated). Route in `toolchain-api` |
 | RPC APIs | `@connectrpc/connect` `>= 2` with its Node server adapter and `@bufbuild/protobuf` `>= 2` | A separate surface beside Hono, with Connect interceptors. `@grpc/grpc-js` `>= 1` only to call or serve native gRPC. |
-| TypeScript-only typed RPC | `@orpc/server` `>= 1` | Only inside a TypeScript-only app that wants no protobuf contract; `@trpc/server` `>= 11` for an existing tRPC stack. Report it as a departure from Connect. |
+| TypeScript-only typed RPC | `@orpc/server` `>= 1` with `@orpc/contract` | Recommended when both ends are TypeScript and no protobuf contract is wanted (Connect stays preferred otherwise): the router's input and output schemas are the Zod schemas generated from TypeSpec, and oRPC's own OpenAPI is only a drift check. `@trpc/server` `>= 11` for an existing tRPC stack, as a departure from Connect. |
 | GraphQL | `graphql-yoga` `>= 6` | Fetch-oriented; only when GraphQL is the chosen API style. |
 | Streaming | `hono` `>= 4` SSE; `ws` `>= 8` on Node | Native Bun server WebSockets on Bun. |
 | Auth tokens | `jose` `>= 6` | Verify issuer, audience and algorithms, not just signature. |
