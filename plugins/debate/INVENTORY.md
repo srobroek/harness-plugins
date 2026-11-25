@@ -6,7 +6,7 @@ Stress-test a decision from both sides or grill a plan in frontier rounds.
 | Kind | opencode | claude | omp | pi |
 | --- | --- | --- | --- | --- |
 | skills | debate, grilling | debate, grilling | debate, grilling | debate, grilling |
-| agents | - | - | - | council-advocate, council-pragmatist, council-security, council-skeptic |
+| agents | - | - | - | council-advocate, council-architect, council-pragmatist, council-security, council-skeptic |
 | commands | - | - | - | council-arch, council-security |
 | rules | - | - | - | - |
 | hooks | - | - | - | - |

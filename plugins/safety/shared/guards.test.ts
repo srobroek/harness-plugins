@@ -392,8 +392,7 @@ describe("options and messages", () => {
   })
 
   test("every refusal names its guard and the way forward", () => {
-    for (const [guard, entry] of Object.entries(MESSAGES)) {
-      const message = typeof entry === "function" ? entry("github.com", "dgit", "/work/repo") : entry
+    for (const [guard, message] of Object.entries(MESSAGES)) {
       expect(message).toMatch(/^(Blocked by )?safety/)
       expect(message.length).toBeGreaterThan(80)
       expect(guard).toMatch(/^[a-z-]+$/)

@@ -1,6 +1,6 @@
 {
   "name": "debate",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Stress-test a decision from both sides or grill a plan in frontier rounds.",
   "private": true,
   "type": "module",
@@ -17,11 +17,6 @@
       {
         "package": "pi-subagents",
         "for": "council advisors and the council protocol",
-        "required": true
-      },
-      {
-        "package": "@srobroek/pi-architecture",
-        "for": "the architect agent in /council-arch",
         "required": true
       }
     ],

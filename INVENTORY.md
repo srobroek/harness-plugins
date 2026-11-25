@@ -5,11 +5,11 @@
 | --- | --- | --- | --- | --- |
 | agent-coder | 0.14.1 | development | global | opencode, pi |
 | agent-efficiency | 0.14.6 | development | global | opencode |
-| agent-mechanic | 0.9.0 | development | global | opencode, omp, pi |
+| agent-mechanic | 0.9.1 | development | global | opencode, omp, pi |
 | agent-researcher | 0.12.2 | development | global | opencode, omp, pi |
-| agent-reviewer | 0.15.2 | development | global | opencode, claude, omp, pi |
+| agent-reviewer | 0.15.4 | development | global | opencode, claude, omp, pi |
 | agent-seance | 0.8.2 | development | global | opencode |
-| architecture | 0.12.1 | development | global | opencode, claude, omp, pi |
+| architecture | 0.13.1 | development | global | opencode, claude, omp, pi |
 | ast-grep | 1.3.2 | development | global | opencode, claude |
 | autopilot | 1.4.2 | development | global | opencode, pi |
 | aws | 0.10.1 | development | global | opencode, claude, omp, pi |
@@ -17,15 +17,15 @@
 | build | 0.11.1 | development | project | opencode, omp, pi |
 | chezmoi | 0.7.2 | development | global | opencode, claude, pi |
 | claude-compat | 0.5.4 | development | project | opencode |
-| code-challenge | 2.1.2 | development | global | opencode, omp, pi |
-| debate | 1.0.2 | productivity | global | opencode, claude, omp, pi |
-| delivery | 0.12.6 | development | global | opencode |
+| code-challenge | 2.1.3 | development | global | opencode, omp, pi |
+| debate | 1.1.0 | productivity | global | opencode, claude, omp, pi |
+| delivery | 0.12.7 | development | global | opencode |
 | dep-update | 0.7.1 | development | global | opencode, pi |
 | design | 0.10.4 | development | project | opencode, claude, pi |
 | docs | 0.5.1 | development | global | opencode, omp, pi |
 | eli5 | 0.7.4 | productivity | global | opencode, claude, omp, pi |
 | find-tools | 0.6.1 | development | global | opencode, omp, pi |
-| journeys | 0.6.2 | development | project | opencode, claude, pi |
+| journeys | 0.6.3 | development | project | opencode, claude, pi |
 | lang-go | 0.9.3 | development | global | opencode, claude, omp, pi |
 | lang-python | 0.9.3 | development | global | opencode, claude, omp, pi |
 | lang-rust | 0.9.3 | development | global | opencode, claude, omp, pi |
@@ -37,17 +37,17 @@
 | plugin-audit | 0.2.0 | development | project | opencode |
 | project | 1.0.1 | productivity | global | opencode, claude, omp, pi |
 | project-secrets | 1.0.3 | productivity | global | opencode, claude, omp, pi |
-| quality | 0.16.1 | development | global | opencode, claude, pi |
+| quality | 0.16.2 | development | global | opencode, claude, pi |
 | repomix | 0.6.3 | development | global | opencode, claude, pi |
-| safety | 0.14.6 | development | global | opencode, pi |
+| safety | 1.0.0 | development | global | opencode, pi |
 | secret-store | 1.0.2 | development | global | opencode, pi |
 | session | 0.4.2 | development | global | opencode |
 | speckit-beads | 1.0.1 | development | project | opencode, claude, pi |
 | statusline | 0.4.0 | development | global | opencode |
-| subagent-worktree | 0.9.2 | development | global | opencode |
+| subagent-worktree | 0.9.3 | development | global | opencode |
 | toolchain | 0.10.4 | development | global | opencode, claude, omp, pi |
 | trunk-dev | 0.12.3 | development | global | opencode, claude, pi |
-| whats-new | 0.5.3 | development | global | opencode, pi |
+| whats-new | 0.5.4 | development | global | opencode, pi |
 | worktrunk | 0.7.2 | development | project | opencode, claude, pi |
 
 Each plugin's own `INVENTORY.md` lists what it ships per harness.

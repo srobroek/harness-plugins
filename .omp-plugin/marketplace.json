@@ -12,7 +12,7 @@
       "name": "agent-mechanic",
       "description": "mechanic subagent: cheap, exact mechanical edits (renames, bulk edits, formatting, moving code) that run the given check.",
       "source": "./plugins/agent-mechanic/omp",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "category": "development"
     },
     {
@@ -26,14 +26,14 @@
       "name": "agent-reviewer",
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "source": "./plugins/agent-reviewer/omp",
-      "version": "0.15.2",
+      "version": "0.15.4",
       "category": "development"
     },
     {
       "name": "architecture",
       "description": "Architecture skills: capability-first top-level layout, ownership boundaries, and durable docs/ project knowledge.",
       "source": "./plugins/architecture/omp",
-      "version": "0.12.1",
+      "version": "0.13.1",
       "category": "development"
     },
     {
@@ -54,14 +54,14 @@
       "name": "code-challenge",
       "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
       "source": "./plugins/code-challenge/omp",
-      "version": "2.1.2",
+      "version": "2.1.3",
       "category": "development"
     },
     {
       "name": "debate",
       "description": "Stress-test a decision from both sides or grill a plan in frontier rounds.",
       "source": "./plugins/debate/omp",
-      "version": "1.0.2",
+      "version": "1.1.0",
       "category": "productivity"
     },
     {

@@ -1,6 +1,6 @@
 {
   "name": "agent-reviewer",
-  "version": "0.15.2",
+  "version": "0.15.4",
   "description": "Read-only reviewer subagents (pull request, local diff, security, adversarial challenge) sharing one review core, and a security review skill.",
   "private": true,
   "type": "module",
@@ -22,7 +22,7 @@
       },
       {
         "package": "pi-web-access",
-        "for": "web research tools for the security auditor",
+        "for": "web research tools for the adversarial challenger",
         "required": true
       },
       {
@@ -52,6 +52,9 @@
       "security-auditor"
     ],
     "entries": {
+      "index": "index"
+    },
+    "piEntries": {
       "index": "index"
     },
     "claude": {

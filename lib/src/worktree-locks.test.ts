@@ -17,6 +17,7 @@ import {
   lockFile,
   parseHold,
   readHolds,
+  recordHold,
   setHold,
   withDiskLock,
 } from "./worktree-locks.ts"
@@ -132,6 +133,35 @@ describe("withDiskLock", () => {
       }),
     ).rejects.toBeInstanceOf(LockTimeout)
     expect(ran).toBe(false)
+  })
+})
+
+describe("recordHold", () => {
+  const job = [{ kind: "shell", id: "sh_1" }]
+
+  test("a write starved by a remover's lock still leaves the jobs on disk for every remover, until the session's next write", async () => {
+    const dir = common()
+    mkdirSync(join(dir, "opencode", "locks"), { recursive: true })
+    writeFileSync(lockFile(dir, "/wt/a"), JSON.stringify(heldByOther()))
+    await expect(recordHold(dir, "/wt/a", "ses_bg", job, 1000, { sessionID: "ses_bg", waitMs: 40 })).rejects.toBeInstanceOf(LockTimeout)
+    expect(holdsState(dir, "/wt/a", 2000)).toContain("session ses_bg has 1 background job(s) running (shell sh_1)")
+    rmSync(lockFile(dir, "/wt/a"))
+    await recordHold(dir, "/wt/a", "ses_bg", [], 3000, { sessionID: "ses_bg" })
+    expect(readHolds(dir, "/wt/a")).toMatchObject({ holds: [], unreadable: false })
+    expect(holdsState(dir, "/wt/a", 4000)).toBeUndefined()
+  })
+
+  test("a successful write leaves one hold per session, and an older write keeps a newer pending hold", async () => {
+    const dir = common()
+    await recordHold(dir, "/wt/a", "ses_bg", job, 1000, { sessionID: "ses_bg" })
+    expect(readHolds(dir, "/wt/a").holds).toEqual([{ sessionID: "ses_bg", directory: "/wt/a", jobs: job, updatedAt: 1000 }])
+    // A later report wrote its pending hold and is still waiting while an earlier one finishes.
+    mkdirSync(join(dir, "opencode", "locks"), { recursive: true })
+    writeFileSync(lockFile(dir, "/wt/a"), JSON.stringify(heldByOther()))
+    await expect(recordHold(dir, "/wt/a", "ses_bg", [{ kind: "shell", id: "sh_2" }], 3000, { sessionID: "ses_bg", waitMs: 40 })).rejects.toBeInstanceOf(LockTimeout)
+    rmSync(lockFile(dir, "/wt/a"))
+    await recordHold(dir, "/wt/a", "ses_bg", [], 2000, { sessionID: "ses_bg" })
+    expect(holdsState(dir, "/wt/a", 4000)).toContain("(shell sh_2)")
   })
 })
 

@@ -1,5 +1,6 @@
 ---
 description: "Read-only critic that attacks refactoring, library-swap, performance and simplification findings so only changes that earn their cost survive."
+x-omp-shell: "it re-runs linters, type checks and read-only benchmarks to test a finding"
 mode: subagent
 steps: 60
 request:

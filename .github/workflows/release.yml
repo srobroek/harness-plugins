@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   release:
-    uses: srobroek/harness-kit/.github/workflows/release.yml@v1.10.1
+    uses: srobroek/harness-kit/.github/workflows/release.yml@v1.11.0
     with:
       npm-publish: true
     permissions:

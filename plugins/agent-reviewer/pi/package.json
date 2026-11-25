@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/pi-agent-reviewer",
-  "version": "0.15.2",
+  "version": "0.15.4",
   "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
   "keywords": [
     "pi-package"
@@ -17,6 +17,7 @@
     "README.md",
     "_kit",
     "agents",
+    "extensions",
     "skills"
   ],
   "publishConfig": {
@@ -29,7 +30,8 @@
     "@srobroek/pi-repomix": "*",
     "@srobroek/pi-whats-new": "*",
     "pi-lens": "*",
-    "pi-web-access": "*"
+    "pi-web-access": "*",
+    "typebox": "*"
   },
   "peerDependenciesMeta": {
     "@srobroek/pi-code-quality": {
@@ -53,6 +55,7 @@
   },
   "pi": {
     "extensions": [
+      "./extensions/index.js",
       "./_kit/prereqs.ts"
     ],
     "skills": [

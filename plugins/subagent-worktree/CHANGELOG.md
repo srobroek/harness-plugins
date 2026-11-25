@@ -1,3 +1,9 @@
+## subagent-worktree [0.9.3](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.9.2...subagent-worktree--v0.9.3) (2026-11-25)
+
+### Bug Fixes
+
+* **subagent-worktree:** record lane holds before waiting for the worktree lock ([8c1d703](https://github.com/srobroek/harness-plugins/commit/8c1d7030b2c6f20bb6396cfe20f9c23f85227cf3))
+
 ## subagent-worktree [0.9.2](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.9.1...subagent-worktree--v0.9.2) (2026-11-23)
 
 ## subagent-worktree [0.9.2](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.9.1...subagent-worktree--v0.9.2) (2026-11-23)

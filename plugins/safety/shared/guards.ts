@@ -13,7 +13,6 @@ import { DEFAULT_GIT_WRAPPERS } from "@srobroek/opencode-lib/git-wrappers"
 import { hasAttribution } from "./attribution.ts"
 import { historyRewrite } from "./history-rewrite.ts"
 import { CHECK_FAILED_MESSAGE, NESTING_MESSAGE, OP_MESSAGE, opGuard } from "./op-guard.ts"
-import { gitRemoteResolver, type PushViaConfig, pushVia, type RemoteResolver, repositorySelected } from "./push-via.ts"
 import {
   base,
   type Command,
@@ -34,7 +33,6 @@ export type GuardID =
   | "worktree-tmp"
   | "op-guard"
   | "history-rewrite"
-  | "push-via"
 
 export const GUARD_IDS: readonly GuardID[] = [
   "indirection",
@@ -43,17 +41,12 @@ export const GUARD_IDS: readonly GuardID[] = [
   "worktree-tmp",
   "op-guard",
   "history-rewrite",
-  "push-via",
 ]
 
 export type Refusal = { guard: GuardID; reason: string }
 
-function shellPath(path: string): string {
-  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(path) ? path : `'${path.replaceAll("'", "'\\''")}'`
-}
-
-/** Refusal text per guard; `push-via` is parameterised by the configured host, command and the push's directory. */
-export const MESSAGES: { [K in GuardID]: K extends "push-via" ? (host: string, command: string, dir: string) => string : string } = {
+/** Refusal text per guard. */
+export const MESSAGES: Record<GuardID, string> = {
   indirection:
     "Blocked by safety (bash-indirection-guard): this destructive command targets an unexpanded variable, command substitution, or backtick expression, so its path cannot be verified. Resolve the target and re-issue a literal command; a quoted variable is accepted only after a bare `--` end-of-options marker.",
   "remote-exec":
@@ -64,8 +57,6 @@ export const MESSAGES: { [K in GuardID]: K extends "push-via" ? (host: string, c
     "Blocked by safety (worktree-tmp-guard): do not create a worktree under /tmp or /private/tmp, where a container bind mount cannot see it. Use a persistent directory outside the system temp dir (for example one your worktree tool manages).",
   "history-rewrite":
     "Blocked by safety (history-rewrite-guard): history-rewriting commands (`git filter-repo`, `git filter-branch`, `git replace`, `git update-ref -d` on a branch) must not run in place in a canonical checkout, and `filter-repo --force` must not run at all. Clone the repository into a temp directory and run the command there with the tool's workdir set to the clone.",
-  "push-via": (host, command, dir) =>
-    `Blocked by safety (push-via-guard): a plain \`git push\` to ${host} cannot work on this host. Push with \`${command} -C ${shellPath(dir)} push\` instead (same arguments), and push WIP often so commits are not lost.`,
   "op-guard": OP_MESSAGE,
 }
 
@@ -300,10 +291,6 @@ export type GuardOptions = {
   tempRoots?: readonly string[]
   /** The environment the shell inherits; the history-rewrite guard refuses when it already selects a repository. */
   env?: NodeJS.ProcessEnv
-  /** Off when absent: refuse a plain `git push` whose remote resolves to `host`, pointing at `command`. */
-  pushVia?: PushViaConfig
-  /** Test seam: replaces reading the remote URL from git. */
-  resolveRemote?: RemoteResolver
   /** Command names read as git (the `gitWrappers` option); only `git` when absent. */
   gitWrappers?: readonly string[]
 }
@@ -311,7 +298,7 @@ export type GuardOptions = {
 /** The first hard gate `source` trips, or `undefined`. */
 export function hardGate(source: string, cwd: string, options: GuardOptions = {}): Refusal | undefined {
   const on = (guard: GuardID) => options.disabled?.has(guard) !== true
-  const refuse = (guard: Exclude<GuardID, "push-via">): Refusal => ({ guard, reason: MESSAGES[guard] })
+  const refuse = (guard: GuardID): Refusal => ({ guard, reason: MESSAGES[guard] })
   // The other gates fail open (the caller treats a throw as "allow"); op-guard fails closed, so it
   // runs on its own and a throw above never skips it.
   let failure: { error: unknown } | undefined
@@ -326,12 +313,6 @@ export function hardGate(source: string, cwd: string, options: GuardOptions = {}
     else if (on("history-rewrite")) {
       const reason = historyRewrite(commands, cwd, options.tempRoots, options.env, options.gitWrappers)
       if (reason !== undefined) refusal = { guard: "history-rewrite", reason }
-    }
-    if (refusal === undefined && on("push-via") && options.pushVia !== undefined && !repositorySelected(options.env)) {
-      const resolveRemote = options.resolveRemote ?? gitRemoteResolver(options.env ?? {})
-      const push = pushVia(commands, cwd, options.pushVia, resolveRemote)
-      if (push !== undefined)
-        refusal = { guard: "push-via", reason: MESSAGES["push-via"](options.pushVia.host, options.pushVia.command, push.dir) }
     }
   } catch (error) {
     failure = { error }
