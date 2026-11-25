@@ -13,13 +13,18 @@
       "required": true
     },
     {
+      "package": "pi-web-access",
+      "for": "web search and fetch tools for the subagent",
+      "required": true
+    },
+    {
       "package": "@srobroek/pi-code-quality",
       "for": "read-only test report analysis tools",
       "required": true
     },
     {
       "package": "@srobroek/pi-dep-update",
-      "for": "dependency scan tool",
+      "for": "dependency scan and apply tools",
       "required": true
     },
     {

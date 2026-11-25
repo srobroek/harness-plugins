@@ -1,7 +1,8 @@
 ---
 name: journey-validator
 description: "Validates one user journey against the running product, recording evidence, intent-gated triage, and run results. Never edits product code."
-tools: read, grep, find, ls, bash, journeys_index, journey_install_formulas
+tools: read, grep, find, ls, edit, write, bash, journeys_index, journey_install_formulas
+subagentOnlyExtensions: ../extensions/journeys.js
 skills: journey-verify, journeys-guide
 inheritProjectContext: true
 inheritSkills: true
@@ -18,7 +19,7 @@ Validate exactly one user journey end to end. The caller supplies the journey pa
 
 ## Procedure
 
-1. Resolve the driving strategy from the profile and project docs. Use only the named shell commands, configured MCP server, or browser interface.
+1. Resolve the driving strategy from the profile and project docs. Use only the named shell commands, configured MCP server, or browser interface. This agent's Pi tools include no MCP or browser tool; when the profile drives the product through one you were not given, mark the steps that need it `blocked` with that reason.
 2. Establish preconditions and record the Git commit. Unestablishable preconditions block dependent steps; continue independently reachable work.
 3. Execute steps in order and observe every expectation. Record evidence proportionate to each claim.
 4. Triage mismatches as exactly one of correction, intended-change, suspected-regression, product-question, or environment. Search intent evidence before concluding regression.

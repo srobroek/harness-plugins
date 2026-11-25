@@ -12,6 +12,13 @@
       "pi"
     ],
     "scope": "global",
+    "companions": [
+      {
+        "package": "pi-web-access",
+        "for": "web search and fetch tools for the whats-new agent",
+        "required": true
+      }
+    ],
     "entries": {
       "index": "index"
     },

@@ -34,10 +34,12 @@ the agent. The gate checks that prompt marker and, when Pi identifies a child by
 `parentSession` header, its session name. This limits the gate to the whats-new
 researcher without disabling writes in parent sessions or other agents.
 
-Pi foreground children do not load ambient parent extensions. Add the extension
-path to pi-subagents `subagents.defaultSubagentOnlyExtensions`, or set
-`subagentOnlyExtensions` on the `whats-new` agent definition, to load the gate in
-child sessions.
+Pi foreground children do not load ambient parent extensions. The shipped `whats-new`
+agent loads this package's extension and `pi-web-access` through
+`subagentOnlyExtensions`, so the gate, `version_gap_scan`, `web_search`,
+`fetch_content`, `get_search_content` and `source_check` work in its child
+sessions. Install `pi-web-access` beside this package. A copy of the agent you
+define yourself needs the same `subagentOnlyExtensions` entries.
 
 The gate blocks `write` and `edit` calls for dependency manifests and lockfiles,
 and installer or upgrade commands sent through `bash`. Other tools and research
@@ -60,3 +62,11 @@ manifests. Resolve a declaration range separately when needed.
 The plugin registers the `whats-new` skill, unless one with that id already exists.
 The skill links to recipes for registry, git and service-feed endpoints, and to a
 report template.
+
+## Works with
+
+This package works with these pi packages. Install them next to it.
+
+| Package | Required | For | Install |
+| --- | --- | --- | --- |
+| `pi-web-access` | yes | web search and fetch tools for the whats-new agent | `pi install npm:pi-web-access` |

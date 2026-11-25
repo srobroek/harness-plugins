@@ -149,3 +149,12 @@ claude plugin marketplace add srobroek/harness-plugins
 claude plugin install quality@harness-plugins
 
 ```
+
+## Works with
+
+This package works with these pi packages. Install them next to it.
+
+| Package | Required | For | Install |
+| --- | --- | --- | --- |
+| `pi-lens` | yes | code-intelligence and AST search tools for the adversarial challenger | `pi install npm:pi-lens` |
+| `pi-web-access` | yes | web research tools for the adversarial challenger | `pi install npm:pi-web-access` |

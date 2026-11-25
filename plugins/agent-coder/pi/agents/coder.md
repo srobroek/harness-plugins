@@ -1,13 +1,14 @@
 ---
 name: coder
 description: "Use for scoped code work: implement, fix, debug, test or answer code questions; follows quality-code-design, delegates reviews, verifies changes."
-tools: read, grep, find, ls, edit, write, bash, subagent, symbol_search, module_report, project_report, read_symbol, read_enclosing, ast_grep_search, ast_grep_outline, lens_diagnostics, pi_lens_activate_tools, ast_grep_replace, lsp_navigation, quality_test_summarize, quality_test_compare, dep_scan, version_gap_scan, mcp:context7
+tools: read, grep, find, ls, edit, write, bash, subagent, symbol_search, module_report, project_report, read_symbol, read_enclosing, ast_grep_search, ast_grep_outline, lens_diagnostics, pi_lens_activate_tools, ast_grep_replace, lsp_navigation, quality_test_summarize, quality_test_compare, dep_scan, dep_apply, version_gap_scan, web_search, fetch_content, get_search_content, source_check, mcp:context7
 allowedAgents: scout, researcher, mechanic, code-reviewer, pr-reviewer, security-auditor, adversarial-challenger, external-repo-worker
 allowNestedSubagents: true
 inheritProjectContext: true
 inheritSkills: true
 subagentOnlyExtensions:
   - npm:pi-lens
+  - npm:pi-web-access
   - npm:@srobroek/pi-code-quality
   - npm:@srobroek/pi-dep-update
   - npm:@srobroek/pi-whats-new

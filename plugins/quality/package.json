@@ -14,6 +14,18 @@
     ],
     "scope": "global",
     "piName": "pi-code-quality",
+    "companions": [
+      {
+        "package": "pi-lens",
+        "for": "code-intelligence and AST search tools for the adversarial challenger",
+        "required": true
+      },
+      {
+        "package": "pi-web-access",
+        "for": "web research tools for the adversarial challenger",
+        "required": true
+      }
+    ],
     "claudeAgents": [],
     "entries": {
       "index": "index"

@@ -1,8 +1,8 @@
 ---
 name: external-repo-worker
 description: "Works in an external repository: clones, follows its conventions, edits, verifies, and publishes only when delegated."
-tools: read, grep, find, ls, edit, write, bash, symbol_search, module_report, project_report, read_symbol, read_enclosing, ast_grep_search, ast_grep_outline, lens_diagnostics, pi_lens_activate_tools, mcp:context7
-subagentOnlyExtensions: npm:pi-lens
+tools: read, grep, find, ls, edit, write, bash, symbol_search, module_report, project_report, read_symbol, read_enclosing, ast_grep_search, ast_grep_outline, lens_diagnostics, pi_lens_activate_tools, web_search, fetch_content, get_search_content, source_check, repomix_pack, mcp:context7
+subagentOnlyExtensions: npm:pi-lens, npm:pi-web-access, npm:@srobroek/pi-repomix
 skills: lang-go, lang-python, lang-rust, lang-typescript, quality-code-design, quality-testing, toolchain-guide, shell-language, terraform-language, backend-background-jobs, ci-github-actions, coexistence-worktree, infrastructure-tfstate-guard, ops-no-global-cargo-target, ops-toolchain-cache-policy, architecture-guide, worktrunk-worktrees, worktrunk-preflight, repomix, delivery-git-workflow, project-secrets, aws-guidance
 inheritProjectContext: false
 inheritSkills: true

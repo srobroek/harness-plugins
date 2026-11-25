@@ -72,6 +72,15 @@ added after the shipped ones, so they take precedence. `journey-scribe` declares
 their model. Without it they inherit the caller's model. `journey-validator` runs at
 most 400 steps.
 
+On Pi, pi-subagents gives each agent only the tools its `tools` list names. Both agents
+get `read`, `grep`, `find`, `ls`, `edit`, `write`, `bash`, `journeys_index` and
+`journey_install_formulas`, and load this package's extension through
+`subagentOnlyExtensions` for the journeys tools. Pi has no denylist form, so
+`journey-validator` gets no MCP or browser tool. For a profile that drives the product
+through one, set the validator's `tools` in `subagents.agentOverrides` to the list above
+plus that tool (for example `mcp:<server>`); an override replaces the whole list. Without
+it, the validator reports those steps as `blocked`.
+
 ## Tools
 
 - `journeys_index` runs the bundled `journeys.py` with `command` `index`, `lint` or
