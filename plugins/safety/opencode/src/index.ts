@@ -12,7 +12,6 @@ import { GUARD_IDS, type GuardID, type GuardOptions, hardGate } from "../../shar
 import { decideToolCall, type MigrationOptions, migrationOverride } from "../../shared/migrations.ts"
 import { createPackageAdvisor } from "../../shared/package-investigate.ts"
 import { type Decision, type DecisionID, type ReviewOptions, reviewPermission } from "../../shared/permission.ts"
-import { type PushViaConfig, readPushVia } from "../../shared/push-via.ts"
 import { createRedactor, type RedactOptions, readRedactOptions } from "../../shared/redact.ts"
 import { type AskedWatchDeps, watchAsked } from "./asked-watch.ts"
 import { allowWorktreeReads, createWorktreeLister, type GitRun } from "./repo-worktrees.ts"
@@ -83,8 +82,6 @@ export type SafetyOptions = {
   steeringDirs: string[]
   /** Extra secret locations the `subagent-external-reads` check never allows. */
   secretPaths: string[]
-  /** Host whose plain `git push` is refused in favour of a wrapper command; off when absent. */
-  pushVia: PushViaConfig | undefined
   /** Command names the gates read as git; only `git` by default. */
   gitWrappers: readonly string[]
 }
@@ -102,7 +99,6 @@ export type SafetyOptions = {
  * `disable: ["root-external-reads"]` stops allowing a root session's `read` of one non-secret file outside the directory;
  * `subagentSecretPaths` adds locations (`~/…` or absolute) to `SECRET_LOCATIONS` that stay asks in both.
  * `disable: ["subagent-prompts"]` lets a subagent session's asks prompt instead of failing at once.
- * `pushVia: { host, command }` refuses a plain `git push` whose remote resolves to `host` and names `command -C <dir> push`; off by default.
  * `redactSecrets`, `redactNames` and `redactExclude` configure secret redaction.
  * `gitWrappers` lists the command names the gates read as git, matched on the basename (default `["git"]`).
  */
@@ -120,7 +116,6 @@ export function readOptions(options: Readonly<Record<string, unknown>> | undefin
     scratchDirs: options?.scratchDirs !== false,
     steeringDirs: readSteeringDirs(options?.steeringDirs),
     secretPaths,
-    pushVia: readPushVia(options),
     gitWrappers: readGitWrappers(options),
   }
 }
@@ -220,14 +215,13 @@ export function createPlugin(overrides: Overrides = {}) {
     async setup(ctx) {
       // Bound before the first await, while the fiber still carries the host's logger.
       const warn = overrides.warn ?? hostWarn("srobroek.safety")
-      const { disabled, redact, opAllow, scratchDirs, steeringDirs, secretPaths, pushVia, gitWrappers } = readOptions(ctx.options)
+      const { disabled, redact, opAllow, scratchDirs, steeringDirs, secretPaths, gitWrappers } = readOptions(ctx.options)
       const on = (id: FeatureID) => !disabled.has(id)
       const guardOptions = {
         env: overrides.env ?? process.env,
         ...overrides.guard,
         disabled: disabled as ReadonlySet<GuardID>,
         opAllow,
-        pushVia,
         gitWrappers,
       }
       const reviewOptions: ReviewOptions = { ...overrides.review, disabled: disabled as ReadonlySet<DecisionID>, gitWrappers }

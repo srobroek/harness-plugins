@@ -34,7 +34,6 @@ import { GUARD_IDS, type GuardID, type GuardOptions, hardGate } from "../shared/
 import { decideToolCall, type MigrationOptions, migrationOverride } from "../shared/migrations.ts"
 import { createPackageAdvisor } from "../shared/package-investigate.ts"
 import { type DecisionID, type ReviewOptions, reviewPermission } from "../shared/permission.ts"
-import { type PushViaConfig, readPushVia } from "../shared/push-via.ts"
 import { createRedactor, type RedactOptions, type Redactor, readRedactOptions } from "../shared/redact.ts"
 import { SYSTEM_GATE_IDS, type SystemGateID, type SystemGateOptions, systemGate } from "./system-gates.ts"
 
@@ -63,7 +62,6 @@ export const PI_FEATURE_IDS: readonly PiFeatureID[] = [
 export type PiOptions = {
   disabled: ReadonlySet<PiFeatureID>
   opAllow: readonly string[]
-  pushVia: PushViaConfig | undefined
   redact: RedactOptions
   /** Command names the gates read as git; only `git` by default. */
   gitWrappers: readonly string[]
@@ -72,7 +70,7 @@ export type PiOptions = {
 /** The options file in pi's agent directory. */
 export const OPTIONS_FILE = "safety.json"
 
-/** `{ disable, opAllow, pushVia, gitWrappers, redactSecrets, redactNames, redactExclude }`, read as the OpenCode options are. */
+/** `{ disable, opAllow, gitWrappers, redactSecrets, redactNames, redactExclude }`, read as the OpenCode options are. */
 export function readPiOptions(raw: unknown): PiOptions {
   const options = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
   const disable: unknown[] = Array.isArray(options.disable) ? options.disable : []
@@ -80,7 +78,6 @@ export function readPiOptions(raw: unknown): PiOptions {
   return {
     disabled: new Set(disable.filter((id): id is PiFeatureID => PI_FEATURE_IDS.includes(id as PiFeatureID))),
     opAllow: allow.filter((entry): entry is string => typeof entry === "string"),
-    pushVia: readPushVia(options),
     redact: readRedactOptions(options),
     gitWrappers: readGitWrappers(options),
   }
@@ -88,7 +85,7 @@ export function readPiOptions(raw: unknown): PiOptions {
 
 /** The options at `path`: a missing file gives the defaults, an unreadable or malformed one the defaults and a warning. */
 export function loadPiOptions(path: string): { options: PiOptions; warning?: string } {
-  const loaded = loadPiOptionsFile(path, "safety", "every check runs and push-via is off")
+  const loaded = loadPiOptionsFile(path, "safety", "every check runs")
   const options = readPiOptions(loaded.options)
   return loaded.warning === undefined ? { options } : { options, warning: loaded.warning }
 }
@@ -102,7 +99,7 @@ export type GateConfig = {
   /** The environment the shell inherits. */
   env: NodeJS.ProcessEnv
   /** Test seams. */
-  guard?: Pick<GuardOptions, "read" | "analyzeOp" | "providerTypes" | "resolveRemote">
+  guard?: Pick<GuardOptions, "read" | "analyzeOp" | "providerTypes">
   review?: ReviewOptions
   migrations?: MigrationOptions
   system?: Pick<SystemGateOptions, "home" | "tempRoots" | "managed">
@@ -150,7 +147,6 @@ export async function gateBash(command: string, cwd: string, config: GateConfig)
       // The checks only call `has`, as in the OpenCode adapter, so a non-guard id is harmless here.
       disabled: disabled as ReadonlySet<GuardID>,
       opAllow: config.options.opAllow,
-      ...(config.options.pushVia ? { pushVia: config.options.pushVia } : {}),
       gitWrappers: config.options.gitWrappers,
       providerTypes,
     }),
