@@ -1,14 +1,17 @@
 import { describe, expect, test } from "bun:test"
 import type { SupervisedRun } from "@srobroek/opencode-lib/subprocess"
 import {
+  chooseScanRunner,
   confirmScan,
   countFindings,
   DEFAULT_TIMEOUT_SECONDS,
   interpretScan,
   MAX_OUTPUT_CHARS,
+  NPX_RUNNER,
   readScanParams,
   resolveTargets,
   runScan,
+  SCAN_DESCRIPTION,
   SCAN_TOOL,
   scanArgv,
 } from "./impeccable.ts"
@@ -141,4 +144,35 @@ test("confirmScan turns only an allowed scan into a prompt", () => {
   const other = { action: "shell", resources: [], effect: "allow" }
   confirmScan(other)
   expect(other.effect).toBe("allow")
+})
+
+test("chooseScanRunner prefers the impeccable on PATH and falls back to npx", () => {
+  expect(chooseScanRunner((bin) => (bin === "impeccable" ? "/bin/impeccable" : null))).toEqual({
+    kind: "path",
+    argv: ["/bin/impeccable"],
+  })
+  expect(chooseScanRunner(() => null)).toEqual(NPX_RUNNER)
+})
+
+test("scanArgv and runScan start the detector through the chosen runner", async () => {
+  const runner = { kind: "path" as const, argv: ["/bin/impeccable"] }
+  expect(scanArgv({ targets: ["a"], noConfig: false, timeoutSeconds: 1 }, ["/p/a"], runner)).toEqual([
+    "/bin/impeccable",
+    "detect",
+    "--json",
+    "/p/a",
+  ])
+  const seen: string[][] = []
+  await runScan({ targets: ["a"], noConfig: false, timeoutSeconds: 1 }, "/p", undefined, async (argv) => {
+    seen.push(argv)
+    return exited(0, "[]")
+  }, runner)
+  expect(seen[0]?.[0]).toBe("/bin/impeccable")
+})
+
+test("the OpenCode description keeps its summary line and names npx", () => {
+  expect(SCAN_DESCRIPTION.split("\n")[0]).toBe(
+    "Run impeccable's deterministic design detector over files, directories or a URL; returns JSON findings.",
+  )
+  expect(SCAN_DESCRIPTION).toContain("npx --yes impeccable detect --json")
 })

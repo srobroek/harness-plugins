@@ -1080,7 +1080,7 @@
     },
     {
       "name": "design",
-      "version": "0.10.4",
+      "version": "0.11.0",
       "description": "UI and UX design skills: design-system audit, DESIGN.md, rendered-surface review, accessibility audit, motion, microcopy, prototypes, and wireframes.",
       "category": "development",
       "harnesses": {
@@ -1153,9 +1153,87 @@
             "accessibility-scanner",
             "wire-dsl"
           ]
+        },
+        "pi": {
+          "skills": [
+            "accessibility-audit",
+            "design-component-truth",
+            "design-evidence",
+            "design-guide",
+            "design-md",
+            "design-no-slop",
+            "design-prototype",
+            "design-system-audit",
+            "design-token-discipline",
+            "design-upstream-preflight",
+            "motion-design",
+            "ui-microcopy",
+            "ui-review",
+            "wireloom"
+          ],
+          "agents": [
+            "a11y-auditor",
+            "council-user",
+            "council-ux",
+            "design-critic",
+            "ui-implementer",
+            "ui-ux-specialist"
+          ],
+          "commands": [
+            "council-product",
+            "design-review"
+          ],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "design"
+          ],
+          "mcp": [
+            "accessibility-scanner",
+            "wire-dsl"
+          ]
         }
       },
-      "scope": "project"
+      "scope": "project",
+      "prerequisites": [
+        {
+          "bin": "impeccable",
+          "for": "design_impeccable_scan and the upstream impeccable skill pack",
+          "required": true,
+          "install": {
+            "mise": "npm:impeccable",
+            "url": "https://github.com/pbakaus/impeccable#readme"
+          },
+          "version": ">=4.10.0"
+        },
+        {
+          "bin": "npx",
+          "for": "the Playwright, accessibility-scanner and wire-dsl MCP servers",
+          "required": true,
+          "install": {
+            "mise": "node",
+            "url": "https://nodejs.org/en/download"
+          }
+        }
+      ],
+      "companions": [
+        {
+          "package": "pi-subagents",
+          "for": "the design agents, /design-review and /council-product",
+          "required": true
+        },
+        {
+          "package": "pi-web-access",
+          "for": "web search and fetch in ui-ux-specialist, design-critic and a11y-auditor",
+          "required": true
+        },
+        {
+          "package": "@srobroek/pi-debate",
+          "for": "council-advocate and council-skeptic in /council-product",
+          "required": true
+        }
+      ]
     },
     {
       "name": "docs",

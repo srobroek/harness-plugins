@@ -13,7 +13,7 @@ each comes from its upstream author.
 
 | Routed name | Upstream repo | Marketplace | Install address | Prerequisite probe | Needed when |
 |---|---|---|---|---|---|
-| `impeccable` skill; `impeccable detect` CLI | `pbakaus/impeccable` | `impeccable` | `impeccable@impeccable` | `npx --version` | design workflow; critique steps run the CLI |
+| `impeccable` skill; `impeccable detect` CLI | `pbakaus/impeccable` | `impeccable` | `impeccable@impeccable` | `impeccable --version`, or `npx --version` where the scan runs through npx | design workflow; critique steps run the CLI |
 | `ss-lint`, `ss-review`, `ss-tokens`, `ss-score`, `ss-motion` | `bitjaru/styleseed` | `styleseed` | `styleseed@styleseed` | `node --version` | `design-system-audit` StyleSeed route, only after the user opts in; `motion-design` React `motion.X` authoring |
 | `accessibility` | `addyosmani/web-quality-skills` | `addy-web-quality-skills` | `web-quality-skills@addy-web-quality-skills` | none | `accessibility-audit` |
 | `html-wireframe`, `html-prototype` | `plannotator/effective-html` | `effective-html` | `plannotator-effective-html@effective-html` | `python3 --version` to serve | `design-prototype` |
@@ -34,6 +34,10 @@ each comes from its upstream author.
      `git clone --depth 1 "https://github.com/OWNER/REPO" "$HOME/.local/share/design-upstream/REPO"`,
      then add the clone's skills directory to the `skills` array of the global OpenCode
      config. OpenCode reloads skills after the config is saved.
+   - pi: for `impeccable`, run `impeccable install -y --providers=pi --scope=project --no-hooks`.
+     It writes `.pi/skills/impeccable/`. For another row, clone the repo as for OpenCode.
+     Then add the clone's skills directory to the `skills` array of
+     `~/.pi/agent/settings.json`. Run `/reload` to list the new skills.
    - Another harness: its own plugin or skill install route for the listed repo.
 3. Probe each prerequisite. -> the probe exits zero. Python packages: run
    `python3 -c 'import PIL'` or `python3 -c 'import pptx'`; on failure run the upstream

@@ -1,6 +1,6 @@
 {
   "name": "design",
-  "version": "0.10.4",
+  "version": "0.11.0",
   "description": "UI and UX design skills (system audit, DESIGN.md, browser verification, accessibility, motion, microcopy, prototypes, wireframes), four design subagents, nine beads formulas with a design_setup installer, an impeccable detector scan tool, and optional accessibility-scanner and wire-dsl MCP integrations.",
   "private": true,
   "type": "module",
@@ -9,15 +9,57 @@
     "category": "development",
     "harnesses": [
       "opencode",
-      "claude"
+      "claude",
+      "pi"
     ],
     "scope": "project",
     "signals": [
       "a frontend project: package.json depends on react, vue, svelte, astro, next, nuxt, solid-js or another UI framework, or .storybook/, DESIGN.md, index.html or a Tailwind config",
       "a web or desktop UI"
     ],
+    "prerequisites": [
+      {
+        "bin": "impeccable",
+        "for": "design_impeccable_scan and the upstream impeccable skill pack",
+        "required": true,
+        "install": {
+          "mise": "npm:impeccable",
+          "url": "https://github.com/pbakaus/impeccable#readme"
+        },
+        "version": ">=4.10.0"
+      },
+      {
+        "bin": "npx",
+        "for": "the Playwright, accessibility-scanner and wire-dsl MCP servers",
+        "required": true,
+        "install": {
+          "mise": "node",
+          "url": "https://nodejs.org/en/download"
+        }
+      }
+    ],
+    "companions": [
+      {
+        "package": "pi-subagents",
+        "for": "the design agents, /design-review and /council-product",
+        "required": true
+      },
+      {
+        "package": "pi-web-access",
+        "for": "web search and fetch in ui-ux-specialist, design-critic and a11y-auditor",
+        "required": true
+      },
+      {
+        "package": "@srobroek/pi-debate",
+        "for": "council-advocate and council-skeptic in /council-product",
+        "required": true
+      }
+    ],
     "entries": {
       "index": "index"
+    },
+    "piEntries": {
+      "design": "design"
     },
     "claude": {
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/design"

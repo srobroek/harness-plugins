@@ -63,12 +63,14 @@ const WRITERS = new Set(["shepherd"])
 
 /**
  * Code Mode tools a Pi child reaches through another tool: it has no parley panel, so it asks its supervisor,
- * and it creates and removes worktrees with git through `bash`.
+ * it creates and removes worktrees with git through `bash`, and the design agents drive the design package's
+ * Playwright MCP server.
  */
 const PI_EQUIVALENTS: Readonly<Record<string, string>> = {
   parley: "contact_supervisor",
   worktree_create: "bash",
   worktree_remove: "bash",
+  browser: "mcp:playwright",
 }
 
 /** Optional MCP tools a Pi agent leaves out: an `mcp:` entry for a server that is not configured fails the launch. */

@@ -694,7 +694,7 @@ function installFormulas2(workspace, cwd, force = false) {
 `) } : result;
 }
 
-// plugins/design/opencode/src/impeccable.ts
+// plugins/design/shared/impeccable.ts
 import { isAbsolute as isAbsolute2, resolve as resolve2 } from "path";
 
 // lib/src/subprocess.ts
@@ -839,13 +839,13 @@ function signalName(code) {
   return Object.entries(constants.signals).find(([, n]) => n === code)?.[0] ?? String(code);
 }
 
-// plugins/design/opencode/src/impeccable.ts
+// plugins/design/shared/impeccable.ts
 var SCAN_TOOL = "design_impeccable_scan";
 var DEFAULT_TIMEOUT_SECONDS = 180;
 var MAX_TIMEOUT_SECONDS = 900;
 var MAX_OUTPUT_CHARS = 60000;
-var SCAN_DESCRIPTION = `Run impeccable's deterministic design detector over files, directories or a URL; returns JSON findings.
-` + "Runs npx --yes impeccable detect --json. Your permission config controls the run; the boolean option confirmScan: true adds a prompt, because npx " + "may download impeccable and its engine. Findings are a coarse corroborating signal: HTML-engine findings can carry line 0, so confirm each one " + "on the rendered surface before citing it.";
+var SCAN_SUMMARY = "Run impeccable's deterministic design detector over files, directories or a URL; returns JSON findings.";
+var SCAN_CAVEAT = "Findings are a coarse corroborating signal: HTML-engine findings can carry line 0, so confirm each one " + "on the rendered surface before citing it.";
 var SCAN_INPUT = {
   type: "object",
   properties: {
@@ -902,11 +902,13 @@ function readScanParams(input) {
 function resolveTargets(targets, cwd) {
   return targets.map((target) => URL_TARGET.test(target) || isAbsolute2(target) ? target : resolve2(cwd, target));
 }
-function scanArgv(params, targets) {
+var NPX_RUNNER = { kind: "npx", argv: ["npx", "--yes", "impeccable"] };
+function downloadQuestion(resources) {
+  return `Run npx --yes impeccable detect on ${resources.join(", ")}? npx may download impeccable and its engine from the network before scanning.`;
+}
+function scanArgv(params, targets, runner = NPX_RUNNER) {
   return [
-    "npx",
-    "--yes",
-    "impeccable",
+    ...runner.argv,
     "detect",
     "--json",
     ...params.noConfig ? ["--no-config"] : [],
@@ -976,16 +978,20 @@ var spawnScan = async (argv, { cwd, timeoutMs, signal }) => {
     return { kind: "exited", exitCode: 127, signalCode: null, stdout: "", stderr: String(error) };
   }
 };
-async function runScan(params, cwd, signal, exec = spawnScan) {
-  const argv = scanArgv(params, resolveTargets(params.targets, cwd));
+async function runScan(params, cwd, signal, exec = spawnScan, runner = NPX_RUNNER) {
+  const argv = scanArgv(params, resolveTargets(params.targets, cwd), runner);
   const run = await exec(argv, { cwd, timeoutMs: params.timeoutSeconds * 1000, signal });
   return interpretScan(run, params.timeoutSeconds);
 }
+
+// plugins/design/opencode/src/impeccable.ts
+var SCAN_DESCRIPTION = `${SCAN_SUMMARY}
+` + "Runs npx --yes impeccable detect --json. Your permission config controls the run; the boolean option confirmScan: true adds a prompt, because npx " + `may download impeccable and its engine. ${SCAN_CAVEAT}`;
 function confirmScan(evaluation) {
   if (evaluation.effect !== "allow" || evaluation.action !== SCAN_TOOL)
     return;
   evaluation.effect = "ask";
-  evaluation.message = `Run npx --yes impeccable detect on ${evaluation.resources.join(", ")}? npx may download impeccable and its engine from the network before scanning.`;
+  evaluation.message = downloadQuestion(evaluation.resources);
 }
 
 // plugins/design/opencode/src/index.ts
