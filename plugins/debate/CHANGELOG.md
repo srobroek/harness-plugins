@@ -1,3 +1,10 @@
+## debate [1.0.2](https://github.com/srobroek/harness-plugins/compare/debate--v1.0.1...debate--v1.0.2) (2026-11-25)
+
+### Bug Fixes
+
+* **debate:** declare the Pi council advisors read-only for acceptance ([6c9dd1a](https://github.com/srobroek/harness-plugins/commit/6c9dd1ac075517f735a29257ab809dad88897689))
+* **debate:** tell Pi council advisors how output files are saved ([74c025a](https://github.com/srobroek/harness-plugins/commit/74c025ac985b1f659b904db9cc62cf64891e6eb8))
+
 ## debate [1.0.1](https://github.com/srobroek/harness-plugins/compare/debate--v1.0.0...debate--v1.0.1) (2026-11-25)
 
 ### Bug Fixes
