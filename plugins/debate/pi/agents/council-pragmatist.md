@@ -1,6 +1,7 @@
 ---
 name: council-pragmatist
 description: "Council advisor: recommends the simplest viable decision for user value and operations."
+acceptanceRole: read-only
 tools: read, grep, find, ls
 systemPromptMode: replace
 inheritSkills: false

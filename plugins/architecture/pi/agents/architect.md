@@ -1,6 +1,7 @@
 ---
 name: architect
 description: "Read-only architect for software, system, module, and API design and complex plans. Spawn before nontrivial structural work."
+acceptanceRole: read-only
 tools: read, grep, find, ls, bash, subagent, symbol_search, module_report, project_report, read_symbol, read_enclosing, ast_grep_search, ast_grep_outline, lens_diagnostics, pi_lens_activate_tools, web_search, fetch_content, get_search_content, source_check, repomix_pack, dep_scan, version_gap_scan, mcp:context7
 subagentOnlyExtensions: npm:pi-lens, npm:pi-web-access, npm:@srobroek/pi-repomix, npm:@srobroek/pi-dep-update, npm:@srobroek/pi-whats-new
 allowedAgents: scout

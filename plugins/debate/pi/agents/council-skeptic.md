@@ -1,6 +1,7 @@
 ---
 name: council-skeptic
 description: "Council advisor: tests a material decision's strongest countercase and alternatives."
+acceptanceRole: read-only
 tools: read, grep, find, ls
 systemPromptMode: replace
 inheritSkills: false

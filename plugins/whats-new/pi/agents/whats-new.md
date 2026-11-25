@@ -1,6 +1,7 @@
 ---
 name: whats-new
 description: Research breaking changes, deprecations and new features between the version in use and the latest. Report-only.
+acceptanceRole: read-only
 tools: read, grep, find, ls, bash, web_search, fetch_content, get_search_content, source_check, version_gap_scan
 steps: 100
 request:

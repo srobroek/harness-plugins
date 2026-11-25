@@ -1,6 +1,7 @@
 ---
 name: council-advocate
 description: "Council advisor: builds the strongest supportable case for a material decision."
+acceptanceRole: read-only
 tools: read, grep, find, ls
 systemPromptMode: replace
 inheritSkills: false
