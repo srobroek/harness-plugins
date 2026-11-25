@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/pi-design",
-  "version": "0.10.4",
+  "version": "0.11.0",
   "description": "UI and UX design skills: design-system audit, DESIGN.md, rendered-surface review, accessibility audit, motion, microcopy, prototypes, and wireframes.",
   "keywords": [
     "pi-package"

@@ -1,3 +1,16 @@
+## design [0.11.0](https://github.com/srobroek/harness-plugins/compare/design--v0.10.4...design--v0.11.0) (2026-11-25)
+
+### Features
+
+* **design:** add the pi package ([c6782a9](https://github.com/srobroek/harness-plugins/commit/c6782a966a81fd3d1315f00cb30ee05a7398479b))
+* **design:** pick the Playwright browser mode from the environment ([00b22b0](https://github.com/srobroek/harness-plugins/commit/00b22b0fd35b875190c3f8e8f9721aeb3370b16a))
+
+### Bug Fixes
+
+* **design:** drive Playwright's Chromium where Google Chrome is not installed ([79a8b19](https://github.com/srobroek/harness-plugins/commit/79a8b1966b132c352abb3fa066026eb74100c36f))
+* **design:** hide every Playwright tool that reads local files or runs host code ([cb4017e](https://github.com/srobroek/harness-plugins/commit/cb4017e44fa0475031043f93cacba1639f805189))
+* **design:** make the Playwright workspace session-scoped ([3853e81](https://github.com/srobroek/harness-plugins/commit/3853e814a5da43bc4a1a70922acd71e2161bdf38))
+
 ## design [0.10.4](https://github.com/srobroek/harness-plugins/compare/design--v0.10.3...design--v0.10.4) (2026-11-24)
 
 ### Bug Fixes

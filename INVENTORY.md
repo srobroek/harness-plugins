@@ -21,7 +21,7 @@
 | debate | 1.1.0 | productivity | global | opencode, claude, omp, pi |
 | delivery | 0.13.0 | development | global | opencode |
 | dep-update | 0.7.1 | development | global | opencode, pi |
-| design | 0.10.4 | development | project | opencode, claude, pi |
+| design | 0.11.0 | development | project | opencode, claude, pi |
 | docs | 0.5.1 | development | global | opencode, omp, pi |
 | eli5 | 0.7.4 | productivity | global | opencode, claude, omp, pi |
 | find-tools | 0.6.1 | development | global | opencode, omp, pi |
