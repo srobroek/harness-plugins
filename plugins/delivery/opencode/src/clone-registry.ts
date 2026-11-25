@@ -206,24 +206,6 @@ function leaseFailure(file: string, result: { reason: string; cause?: unknown })
   return new Error(`the clone registry ${file} could not be updated: ${result.reason}`, { cause: result.cause })
 }
 
-/** Drop the entry for `key` under the registry's lock; the file is deleted when it was the last. Throws as {@link addClone} does. */
-export async function removeClone(env: NodeJS.ProcessEnv, sessionKey: string, key: string, options: { waitMs?: number } = {}): Promise<void> {
-  const file = registryFile(env, sessionKey)
-  const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: options.waitMs ?? LOCK_WAIT_MS }, () => {
-    const current = loadForUpdate(file)
-    if (!current.some((entry) => entry.key === key)) return
-    const next = current.filter((entry) => entry.key !== key)
-    if (next.length === 0) {
-      rmSync(file, { force: true })
-      return
-    }
-    const temporary = `${file}.${process.pid}.${Date.now()}.tmp`
-    writeFileSync(temporary, `${JSON.stringify(next)}\n`, { mode: 0o600 })
-    renameSync(temporary, file)
-  })
-  if (result.kind === "failed") throw leaseFailure(file, result)
-}
-
 /**
  * Settle receipts of the entry for `key` under the registry's lock: it loses `ids`, and goes when none
  * is left. An entry with no list, or no entry, is unchanged. Throws like {@link addClone}.

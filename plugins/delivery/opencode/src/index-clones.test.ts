@@ -1,17 +1,17 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, mock, setDefaultTimeout, setSystemTime, spyOn, test } from "bun:test"
 import { execFileSync } from "node:child_process"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import { landingFile, readLanding, removeClaim, writeClaim } from "@srobroek/opencode-lib/worktree-claims"
-import { holdsState } from "@srobroek/opencode-lib/worktree-locks"
 import type { CleanupDeps, CleanupResult } from "./cleanup.ts"
 import * as realCleanup from "./cleanup.ts"
 import { registryFile } from "./clone-registry.ts"
 import { type CliRunner, runCli } from "./forge-adapter.ts"
 import * as realLand from "./land.ts"
 import { buildReceipt, type GitRunner, type LandingReceipt, listReceipts, receiptDirectory, repositoryContext, writeReceipt } from "./landing-receipt.ts"
+import { readReports, runningDirectory } from "./running-reports.ts"
 
 // Landing needs a forge and cleanup needs a real remote; both are replaced so the test sees only how
 // the registered tools and the turn-end retry chain them across two real repositories: the session's
@@ -125,6 +125,20 @@ type Session = {
   dispose: () => Promise<void>
 }
 
+/**
+ * The host has every session that reports through the idle hook: a report whose own session the host does
+ * not have is skipped as a dead reporter's, so a session that reports must exist (a test that wants it
+ * gone deletes it from `fake.sessions`).
+ */
+function hostHasReporters(fake: ReturnType<typeof createFakeContext>, directory: string) {
+  const fire = fake.fire.session
+  fake.fire.session = ((name: string, input: unknown) => {
+    const id = (input as { sessionID?: unknown } | undefined)?.sessionID
+    if (name === "experimental.idle" && typeof id === "string" && !fake.sessions.has(id)) fake.sessions.set(id, { id, location: { directory } })
+    return fire(name as never, input as never)
+  }) as typeof fake.fire.session
+}
+
 /** A fresh `setupDelivery`: a new process, as after a server restart. */
 async function session(
   sessionID = "s",
@@ -132,6 +146,7 @@ async function session(
   observe?: GitRunner,
 ): Promise<Session> {
   const fake = createFakeContext({ directory: repoA })
+  hostHasReporters(fake, repoA)
   const context = fake.context as unknown as { location: unknown; worktree: unknown; options: unknown }
   context.location = { ...(context.location as object), project: { id: "prj" } }
   context.options = { receiptsDirectory: receiptsRoot }
@@ -273,7 +288,7 @@ test("a clone stays registered while another receipt of its repository is still 
     expect((await registryOf())?.clones).toHaveLength(1)
     // The clone is still discovered: a shell in the second worktree holds it ...
     await s.idle([{ kind: "shell", shellID: "sh1", command: `tail -f ${other}/log` }])
-    expect(holdsState(commonB, other, Date.now())).toBeDefined()
+    expect(readReports(receiptsRoot).reports.map((report) => report.sessionID)).toEqual(["s"])
     // ... and its cleanup is retried once the retry window has passed.
     cleanupCalls = []
     cleanupResult = REMOVED
@@ -492,14 +507,16 @@ test("a shell another session reports in the target worktree is held, though tha
   await lander.land()
   const reporter = await session("reporter")
   await reporter.idle([{ kind: "shell", shellID: "sh1", command: `tail -f ${worktree}/log` }])
-  expect(holdsState(commonB, worktree, Date.now())).toBeDefined()
+  // Both instances serve one host: the lander can find the reporter's session there.
+  lander.fake.sessions.set("reporter", { id: "reporter", location: { directory: repoA } })
+  expect(readReports(receiptsRoot).reports.map((report) => report.sessionID)).toEqual(["reporter"])
   cleanupCalls = []
   cleanupResult = REMOVED
   await lander.idle()
   expect(cleanupCalls).toEqual([])
 })
 
-test("a registration that cannot be persisted stays in memory: the retry and the holds still reach the clone", async () => {
+test("a registration that cannot be persisted stays in memory: the retry still reaches the clone, and a reported shell holds it", async () => {
   const errors = spyOn(console, "error").mockImplementation(() => {})
   try {
     // `.clones` is a file, so the registry cannot be written.
@@ -509,7 +526,7 @@ test("a registration that cannot be persisted stays in memory: the retry and the
     cleanupCalls = []
     cleanupResult = REMOVED
     await s.idle([{ kind: "shell", shellID: "sh1", command: `tail -f ${worktree}/log` }])
-    expect(holdsState(commonB, worktree, Date.now())).toBeDefined()
+    expect(readReports(receiptsRoot).reports.map((report) => report.sessionID)).toEqual(["s"])
     expect(cleanupCalls).toEqual([])
     await s.idle([])
     expect(cleanupCalls).toHaveLength(1)
@@ -540,7 +557,7 @@ const withUnreadableReceipts = async (work: () => Promise<unknown>) => {
 
 const SHELL = () => [{ kind: "shell", shellID: "sh1", command: `tail -f ${worktree}/log` }]
 
-test("a fresh instance runs discovery before an explicit cleanup in the target: an unreadable registry refuses it", async () => {
+test("an unreadable clone registry does not stop an explicit cleanup in the target: the final check allows it", async () => {
   if (process.getuid?.() === 0) return // root reads any file
   const errors = spyOn(console, "error").mockImplementation(() => {})
   try {
@@ -563,200 +580,30 @@ test("a fresh instance runs discovery before an explicit cleanup in the target: 
         return FAILED
       })()) as never
     await fresh.cleanup({ receipt: join(receiptDirectory(env(), (await repositoryContext(repoB))?.key as string), `${receiptId}.json`), repo: "o/b", repoPath: repoB })
-    expect(refused).toContain("clone registry")
-    // Readable again, the same check allows it.
+    // The registry only tells the retry where receipts are; the final check reads no registry.
+    expect(refused).toBeUndefined()
     expect(await (await lastCoordination()).finalCheck(worktree)).toBeUndefined()
   } finally {
     errors.mockRestore()
   }
 })
 
-test("a report that missed the clones keeps the target's worktree until that session reports again, though the registry is readable again", async () => {
-  if (process.getuid?.() === 0) return // root reads any file
-  const errors = spyOn(console, "error").mockImplementation(() => {})
-  try {
-    const s = await session()
-    await s.land()
-    cleanupResult = REMOVED
-    const file = registryFile(env(), (await repositoryContext(repoA))?.key as string)
-    chmodSync(file, 0o000) // check-test-executables: registry file permission, not a script
-    try {
-      await s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
-    } finally {
-      chmodSync(file, 0o600) // check-test-executables: registry file permission, not a script
-    }
-    cleanupCalls = []
-    await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
-    expect(cleanupCalls).toEqual([])
-    await s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] })
-    expect(cleanupCalls).toHaveLength(1)
-  } finally {
-    errors.mockRestore()
-  }
+// I2: only the session that reported clears its report.
+test("another session's report of nothing running does not lift a session's hold; its own report of nothing does", async () => {
+  const s = await session()
+  await s.land()
+  cleanupResult = REMOVED
+  await s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
+  cleanupCalls = []
+  await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
+  expect(cleanupCalls).toEqual([])
+  expect(readReports(receiptsRoot).reports.map((report) => report.sessionID)).toEqual(["a"])
+  await s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] })
+  expect(cleanupCalls).toHaveLength(1)
 })
 
-test.each([
-  ["its receipts cannot be listed", "receipts"],
-  ["the clone cannot be resolved", "clone"],
-] as const)("when %s, one session's failed report holds the target until that session reports again, whatever another session reports", async (_name, how) => {
-  if (how === "receipts" && process.getuid?.() === 0) return // root reads any directory
-  const errors = spyOn(console, "error").mockImplementation(() => {})
-  try {
-    const s = await session()
-    await s.land()
-    cleanupResult = REMOVED
-    const report = () => s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
-    if (how === "receipts") await withUnreadableReceipts(report)
-    else {
-      const away = `${repoB}.away`
-      renameSync(repoB, away)
-      try {
-        await report()
-      } finally {
-        renameSync(away, repoB)
-      }
-      // The veto is reported where it is set.
-      expect(errors.mock.calls.map((call) => String(call[0])).join("\n")).toContain("could not be resolved to record the running work of a")
-    }
-    cleanupCalls = []
-    await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
-    expect(cleanupCalls).toEqual([])
-    await s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] })
-    expect(cleanupCalls).toHaveLength(1)
-  } finally {
-    errors.mockRestore()
-  }
-})
-
-/**
- * A git runner whose first observations of the clone (B) after `hold(count)` are held until the test settles
- * them, in the order they began: a held observation then fails (`null`) or runs the real git; later ones run it. Clone resolution is the
- * step each test needs to order; the clone is moved away so that resolving it must observe it with git.
- */
-const gatedCloneObserve = (cloneRoot: string) => {
-  const run = (argv: readonly string[], cwd: string, timeoutMs: number): string | null => {
-    try {
-      return execFileSync("git", [...argv], { cwd, timeout: timeoutMs, encoding: "utf8" })
-    } catch {
-      return null
-    }
-  }
-  const waits: Array<(outcome: "fail" | "pass") => void> = []
-  let toHold = 0
-  let notify: () => void = () => {}
-  const observe: GitRunner = async (argv, cwd, timeoutMs) => {
-    if (toHold === 0 || cwd !== cloneRoot) return run(argv, cwd, timeoutMs)
-    toHold--
-    const outcome = await new Promise<"fail" | "pass">((settle) => {
-      waits.push(settle)
-      notify()
-    })
-    return outcome === "pass" ? run(argv, cwd, timeoutMs) : null
-  }
-  const reached = async (n: number) => {
-    while (waits.length < n) await new Promise<void>((done) => (notify = done))
-  }
-  return { observe, waits, reached, hold: (count: number) => {
-      toHold = count
-    } }
-}
-
-test("an older report's clone-resolution failure that arrives after a newer report reached the clone does not bring the veto back", async () => {
-  const errors = spyOn(console, "error").mockImplementation(() => {})
-  try {
-    const cloneRoot = realpathSync(repoB)
-    const gate = gatedCloneObserve(cloneRoot)
-    const s = await session("s", undefined, gate.observe)
-    await s.land()
-    cleanupResult = FAILED // a failed attempt stays pending, so each retry is observable
-    const away = `${repoB}.away`
-    renameSync(repoB, away)
-    gate.hold(1)
-    const report = () => s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
-    // The older report's observation of the clone is held; the clone is back before the newer report starts.
-    const older = report()
-    await gate.reached(1)
-    renameSync(away, repoB)
-    // The newer report runs a shell outside the target worktree, so it leaves no hold there.
-    await s.fake.fire.session("experimental.idle", { sessionID: "a", background: [{ kind: "shell", shellID: "sh0", command: "sleep 60" }] })
-    // The older report's resolution now fails, after the newer report reached the clone and cleared.
-    gate.waits[0]?.("fail")
-    await older
-    await s.idle([])
-    // No veto was left, so no removal was refused on a report's account.
-    expect(errors.mock.calls.map((call) => String(call[0])).join("\n")).not.toContain("is held")
-  } finally {
-    errors.mockRestore()
-  }
-})
-
-test("a delayed clone-resolution failure of the first report does not replace the third report's veto, so the second report cannot lift it", async () => {
-  const errors = spyOn(console, "error").mockImplementation(() => {})
-  try {
-    const cloneRoot = realpathSync(repoB)
-    const gate = gatedCloneObserve(cloneRoot)
-    const s = await session("s", undefined, gate.observe)
-    await s.land()
-    cleanupResult = REMOVED
-    const away = `${repoB}.away`
-    renameSync(repoB, away)
-    gate.hold(3)
-    const report = () => s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
-    const first = report()
-    await gate.reached(1)
-    // The second report runs a shell outside the target worktree, so it leaves no hold there.
-    const second = s.fake.fire.session("experimental.idle", { sessionID: "a", background: [{ kind: "shell", shellID: "sh0", command: "sleep 60" }] })
-    await gate.reached(2)
-    const third = report()
-    await gate.reached(3)
-    // The third fails first, then the first fails late: the third's veto stands.
-    gate.waits[2]?.("fail")
-    await third
-    gate.waits[0]?.("fail")
-    await first
-    // The clone is back, and the second report (between them) resolves it and succeeds.
-    renameSync(away, repoB)
-    gate.waits[1]?.("pass")
-    await second
-    cleanupCalls = []
-    await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
-    expect(cleanupCalls).toEqual([])
-    // The session's own empty report lifts it.
-    await s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] })
-    expect(cleanupCalls).toHaveLength(1)
-  } finally {
-    errors.mockRestore()
-  }
-})
-
-test("a clone path that is a symlink to another checkout when its resolution fails still holds the clone once the path is restored", async () => {
-  const errors = spyOn(console, "error").mockImplementation(() => {})
-  try {
-    const s = await session()
-    await s.land()
-    cleanupResult = REMOVED
-    const away = `${repoB}.away`
-    renameSync(repoB, away)
-    // The recorded path now leads to the session's own repository: it cannot resolve to the clone.
-    symlinkSync(repoA, repoB)
-    try {
-      await s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
-    } finally {
-      unlinkSync(repoB)
-      renameSync(away, repoB)
-    }
-    cleanupCalls = []
-    await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
-    expect(cleanupCalls).toEqual([])
-    await s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] })
-    expect(cleanupCalls).toHaveLength(1)
-  } finally {
-    errors.mockRestore()
-  }
-})
-
-test("a hold scan that fails while the final check lists sessions refuses the removal", async () => {
-  if (process.getuid?.() === 0) return // root reads any directory
+test("a report that cannot be written while the final check lists sessions refuses the removal", async () => {
+  if (process.getuid?.() === 0) return // root writes into a read-only directory
   const errors = spyOn(console, "error").mockImplementation(() => {})
   try {
     const s = await session()
@@ -774,9 +621,12 @@ test("a hold scan that fails while the final check lists sessions refuses the re
       return list(query)
     }
     const receiptId = (((await registryOf())?.clones[0]?.receiptIds as string[] | undefined) ?? [])[0] as string
+    const reports = runningDirectory(receiptsRoot)
+    mkdirSync(reports, { recursive: true })
     let refused: string | undefined
     onCleanup = (() =>
       (async () => {
+        onCleanup = undefined // the one cleanup this test drives; a later retry just gets the default result
         let started: () => void = () => {}
         let release: () => void = () => {}
         const listing = new Promise<void>((done) => {
@@ -785,14 +635,23 @@ test("a hold scan that fails while the final check lists sessions refuses the re
         gate = { started, release: new Promise<void>((done) => (release = done)) }
         const check = (await lastCoordination()).finalCheck(worktree)
         await listing
-        // While the listing is awaited, a report's hold scan in the target fails and the report finishes.
-        await withUnreadableReceipts(() => s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() }))
+        // While the listing is awaited, a session's shell report cannot be written.
+        chmodSync(reports, 0o555) // check-test-executables: directory permission, not a script
+        try {
+          await s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
+        } finally {
+          chmodSync(reports, 0o755) // check-test-executables: directory permission, not a script
+        }
         release()
         refused = await check
         return FAILED
       })()) as never
     await s.cleanup({ receipt: join(receiptDirectory(env(), (await repositoryContext(repoB))?.key as string), `${receiptId}.json`), repo: "o/b", repoPath: repoB })
     expect(refused).toContain("the running work of a could not be recorded")
+    // The session's next successful write lifts it.
+    expect(await (await lastCoordination()).finalCheck(worktree)).toContain("the running work of a could not be recorded")
+    await s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] })
+    expect(await (await lastCoordination()).finalCheck(worktree)).toBeUndefined()
   } finally {
     errors.mockRestore()
   }
@@ -804,42 +663,19 @@ const landedReceipt = async () => {
   return join(receiptDirectory(env(), (await repositoryContext(repoB))?.key as string), `${receiptId}.json`)
 }
 
-test("an empty report, though its hold scan fails, lifts the same session's earlier veto and creates none", async () => {
-  if (process.getuid?.() === 0) return // root reads any directory
+test("a deleted session's report goes, and while it holds the log names the session and the worktree", async () => {
   const errors = spyOn(console, "error").mockImplementation(() => {})
   try {
     const s = await session()
     await s.land()
     cleanupResult = REMOVED
-    // A veto from session a: its shell report could not be recorded in the target.
-    await withUnreadableReceipts(() => s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() }))
-    cleanupCalls = []
-    await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
-    expect(cleanupCalls).toEqual([])
-    // Session a now reports no running work, and that scan fails too.
-    await withUnreadableReceipts(() => s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] }))
-    // Reads recover; another session's turn end cleans.
-    await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
-    expect(cleanupCalls).toHaveLength(1)
-  } finally {
-    errors.mockRestore()
-  }
-})
-
-test("a deleted session's veto goes, and while it holds the log names the session and what lifts it", async () => {
-  if (process.getuid?.() === 0) return // root reads any directory
-  const errors = spyOn(console, "error").mockImplementation(() => {})
-  try {
-    const s = await session()
-    await s.land()
-    cleanupResult = REMOVED
-    await withUnreadableReceipts(() => s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() }))
+    await s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
     cleanupCalls = []
     errors.mockClear()
     await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
     expect(cleanupCalls).toEqual([])
     const logged = errors.mock.calls.map((call) => String(call[0])).join("\n")
-    expect(logged).toContain("held for session a until it reports again with its running work recorded, reports no running work, or is deleted")
+    expect(logged).toContain("session a has a shell running that names the worktree")
     // Resolves once the plugin's subscription has handled it.
     await s.fake.emit({ type: "session.deleted", data: { sessionID: "a" } })
     await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
@@ -849,88 +685,7 @@ test("a deleted session's veto goes, and while it holds the log names the sessio
   }
 })
 
-test("a report still in flight when its session is deleted leaves no veto, though its clone scan then fails", async () => {
-  const errors = spyOn(console, "error").mockImplementation(() => {})
-  try {
-    const rootB = (await repositoryContext(repoB))?.ledger.root as string
-    // Resolving the clone waits here once, so the deletion lands mid-report; then it fails.
-    let entered: () => void = () => {}
-    const inside = new Promise<void>((done) => {
-      entered = done
-    })
-    let release: () => void = () => {}
-    const released = new Promise<void>((done) => {
-      release = done
-    })
-    let gated = false
-    const observe: GitRunner = async (argv, cwd, timeoutMs) => {
-      if (gated && (cwd === rootB || cwd === repoB)) {
-        gated = false
-        entered()
-        await released
-        return null
-      }
-      try {
-        return execFileSync("git", [...argv], { cwd, timeout: timeoutMs, encoding: "utf8" })
-      } catch {
-        return null
-      }
-    }
-    const s = await session("s", undefined, observe)
-    await s.land()
-    cleanupResult = REMOVED
-    const away = `${repoB}.away`
-    // The clone's .git marker is gone with it, so resolving it asks git.
-    renameSync(repoB, away)
-    let report: Promise<unknown> | undefined
-    try {
-      gated = true
-      report = s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
-      await inside
-      await s.fake.emit({ type: "session.deleted", data: { sessionID: "a" } })
-      release()
-      await report
-    } finally {
-      release()
-      await report
-      renameSync(away, repoB)
-    }
-    cleanupCalls = []
-    await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
-    expect(cleanupCalls).toHaveLength(1)
-  } finally {
-    errors.mockRestore()
-  }
-})
-
-test("a veto on a clone the next report leaves out (nothing pending there) goes with that report", async () => {
-  const errors = spyOn(console, "error").mockImplementation(() => {})
-  try {
-    const s = await session()
-    await s.land()
-    // A pending receipt there, but this session's shell report cannot reach the clone: a veto there.
-    const away = `${repoB}.away`
-    renameSync(repoB, away)
-    try {
-      await s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
-    } finally {
-      renameSync(away, repoB)
-    }
-    // Settled now: the next report of running work lists the clones, and this one is left out.
-    await settleRegistered()
-    await s.fake.fire.session("experimental.idle", { sessionID: "a", background: [{ kind: "shell", shellID: "sh2", command: "sleep 60" }] })
-    // A new landing there is cleaned: the old veto is gone.
-    await s.land()
-    cleanupCalls = []
-    cleanupResult = REMOVED
-    await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
-    expect(cleanupCalls).toHaveLength(1)
-  } finally {
-    errors.mockRestore()
-  }
-})
-
-test("a registry that becomes unreadable while the final check lists sessions refuses the removal", async () => {
+test("a registry that becomes unreadable while the final check lists sessions does not change the check: it allows the removal", async () => {
   if (process.getuid?.() === 0) return // root reads any file
   const errors = spyOn(console, "error").mockImplementation(() => {})
   try {
@@ -943,7 +698,7 @@ test("a registry that becomes unreadable while the final check lists sessions re
     client.list = async (query) => {
       if (armed && "directory" in query) {
         armed = false
-        // No idle report notices this: only the final check's own reread can.
+        // The final check reads no registry, so this changes nothing for it.
         chmodSync(file, 0o000) // check-test-executables: registry file permission, not a script
       }
       return list(query)
@@ -960,7 +715,7 @@ test("a registry that becomes unreadable while the final check lists sessions re
         return FAILED
       })()) as never
     await s.cleanup({ receipt: await landedReceipt(), repo: "o/b", repoPath: repoB })
-    expect(refused).toContain("clone registry")
+    expect(refused).toBeUndefined()
   } finally {
     errors.mockRestore()
   }
@@ -978,7 +733,7 @@ const withoutSourceRepository = async (work: () => Promise<void>) => {
   }
 }
 
-test("a fresh instance whose own repository resolves neither by git nor by its .git marker refuses cleanup in the target", async () => {
+test("a fresh instance whose own repository resolves neither by git nor by its .git marker still checks the target, and allows its cleanup", async () => {
   const errors = spyOn(console, "error").mockImplementation(() => {})
   try {
     const first = await session()
@@ -995,13 +750,14 @@ test("a fresh instance whose own repository resolves neither by git nor by its .
         })()) as never
       await fresh.cleanup({ receipt, repo: "o/b", repoPath: repoB })
     })
-    expect(refused).toContain("the session's repository could not be resolved")
+    // The final check in the target needs the target alone: no registry, so no session repository.
+    expect(refused).toBeUndefined()
   } finally {
     errors.mockRestore()
   }
 })
 
-test("a report of running work while the session's repository resolves neither way holds the target after it resolves again", async () => {
+test("a report of running work while the session's repository resolves neither way is kept whole, and holds the target", async () => {
   const errors = spyOn(console, "error").mockImplementation(() => {})
   try {
     const first = await session()
@@ -1020,7 +776,7 @@ test("a report of running work while the session's repository resolves neither w
         return FAILED
       })()) as never
     await fresh?.cleanup({ receipt, repo: "o/b", repoPath: repoB })
-    expect(refused).toContain("held for session a")
+    expect(refused).toContain("session a has a shell running that names the worktree")
   } finally {
     errors.mockRestore()
   }

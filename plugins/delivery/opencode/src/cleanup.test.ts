@@ -12,6 +12,7 @@ import {
 import { holdsState, lockedWrite, lockFile, readHolds, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
 import { addClone, MAX_CLONES, readClones, registryFile } from "./clone-registry.ts"
 import { authorizeExplicit, CleanupDeferred, createPendingCleanup } from "./pending-cleanup.ts"
+import { readReports, runningDirectory, writeReport } from "./running-reports.ts"
 
 // Fixture setup creates several real Git repositories and measured about 20s under full-suite load;
 // keep three times that headroom instead of letting Bun's 5s default kill a child process mid-fixture.
@@ -3022,6 +3023,20 @@ describe("delivery_cleanup refuses a registered worktree whose directory is not 
   }, 30_000)
 })
 
+/**
+ * The host has every session that reports through the idle hook: a report whose own session the host does
+ * not have is skipped as a dead reporter's, so a session that reports must exist (a test that wants it
+ * gone deletes it from `fake.sessions`).
+ */
+function hostHasReporters(fake: ReturnType<typeof createFakeContext>, directory: string) {
+  const fire = fake.fire.session
+  fake.fire.session = ((name: string, input: unknown) => {
+    const id = (input as { sessionID?: unknown } | undefined)?.sessionID
+    if (name === "experimental.idle" && typeof id === "string" && !fake.sessions.has(id)) fake.sessions.set(id, { id, location: { directory } })
+    return fire(name as never, input as never)
+  }) as typeof fake.fire.session
+}
+
 describe("pending cleanup: one remover per worktree", () => {
   type Harness = Awaited<ReturnType<typeof harness>>
   async function harness(
@@ -3044,6 +3059,7 @@ describe("pending cleanup: one remover per worktree", () => {
     const options: RunnerOptions = { beadStatus: over.beadStatus ?? "closed", ...(over.before ? { before: over.before } : {}) }
     const scripted = runner(f, options)
     const fake = createFakeContext({ directory: f.main })
+    hostHasReporters(fake, f.main)
     if (over.list) (fake.context.session as unknown as { list: unknown }).list = over.list
     if (over.hook === false) {
       const session = fake.context.session as unknown as { hook: (name: string, callback: unknown) => Promise<unknown> }
@@ -3859,74 +3875,56 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
-    test.each(priming)("%s: a background shell reported by the idle hook is on disk as a hold before any git wait", async (_name, primed) => {
-      const h = await vetoHarness(`veto-hold-${primed}`, primed)
+    test.each(priming)("%s: a background shell reported by the idle hook is on disk before any git wait, and the explicit cleanup is refused", async (_name, primed) => {
+      const h = await vetoHarness(`veto-report-${primed}`, primed)
       await h.pending.start()
       const held = holdObservations()
-      // The hook's first git wait (its cleanup pass) comes only after the hold is written.
+      // The hook's first git wait (its cleanup pass) comes only after the report is written.
       await Promise.race([shellReport(h), held.started])
-      expect(holdsState(h.common, h.f.linked, NOW + 10)).toBeDefined()
+      expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.sessionID)).toEqual(["ses_x"])
       held.release()
       await h.pending.settle()
       expect(removed(h)).toBe(false)
+      const refused = await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)
+      expect(refused).toContain("names the worktree")
       await h.finish()
     })
 
-    test("a session lookup that never settles neither keeps the report open nor leaves the worktree unguarded", async () => {
-      const h = await harness("veto-hold-lookup", { sessionLookupMs: 50 })
+    // I7: a session lookup that does not answer at removal is a hold, within the bound.
+    test("a session lookup that never settles refuses the removal within the lookup bound", async () => {
+      const h = await harness("veto-lookup-hung", { sessionLookupMs: 50 })
       ;(h.fake.context.session as unknown as { get: () => Promise<never> }).get = () => new Promise<never>(() => {})
       await h.pending.start()
       await h.fake.fire.session("experimental.idle", {
         sessionID: "ses_x",
         background: [{ kind: "subagent", sessionID: "ses_x", childSessionID: "ses_hung" }],
       } as never)
-      const hold = holdsState(h.common, h.f.linked, NOW + 10)
-      expect(hold).toBeDefined()
-      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toBe(hold)
+      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("could not be read")
       await h.finish()
     })
 
-    test("a removal attempted while a report's session lookup is pending is refused, before any hold is on disk", async () => {
-      const lookupStarted = Promise.withResolvers<void>()
-      const lookup = Promise.withResolvers<unknown>()
-      const h = await harness("veto-hold-pending-lookup", { list: async () => ({ data: [] }) })
-      ;(h.fake.context.session as unknown as { get: () => Promise<unknown> }).get = () => {
-        lookupStarted.resolve()
-        return lookup.promise
-      }
+    test("a lookup that fails, or a session found in the worktree, refuses the removal; one the host does not have does not", async () => {
+      const h = await harness("veto-lookup-outcomes", { list: async () => ({ data: [] }) })
+      const session = h.fake.context.session as unknown as { get: (input: { sessionID: string }) => Promise<unknown> }
+      const real = session.get.bind(session)
+      const answers: Record<string, () => Promise<unknown>> = {}
+      session.get = (input) => (answers[input.sessionID] ?? (() => real(input)))()
       await h.pending.start()
-      const reported = h.fake.fire.session("experimental.idle", {
-        sessionID: "ses_x",
-        background: [{ kind: "subagent", sessionID: "ses_x", childSessionID: "ses_child" }],
-      } as never)
-      await lookupStarted.promise
-      expect(readHolds(h.common, h.f.linked).holds).toEqual([])
-      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("still being recorded")
-      lookup.resolve({ location: { directory: h.f.root } })
-      await reported
+      const report = (child: string) =>
+        h.fake.fire.session("experimental.idle", { sessionID: "ses_x", background: [{ kind: "subagent", sessionID: "ses_x", childSessionID: child }] } as never)
+      answers.ses_here = async () => ({ id: "ses_here", location: { directory: h.f.linked } })
+      await report("ses_here")
+      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("runs in the worktree")
+      answers.ses_broken = () => Promise.reject(new Error("the host is down"))
+      await report("ses_broken")
+      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("could not be read")
+      await report("ses_nowhere") // the fake has no such session: not found
+      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toBeUndefined()
       await h.finish()
     })
 
     const needsPermissions = process.getuid?.() === 0 ? test.skip : test
-    test("the receipts a report reads and the holds it writes come from one repository observation", async () => {
-      // Git answers the combined read for another repository and nothing else, so a location
-      // assembled from two sources would read this repository's receipts and write the holds
-      // into the other's common directory.
-      const other = await fixture("veto-pair-other")
-      const onlyCombinedRead: GitRunner = (argv, _cwd, timeoutMs, signal) =>
-        argv.length === REPOSITORY_OBSERVATION_ARGS.length && argv.every((part, i) => part === REPOSITORY_OBSERVATION_ARGS[i])
-          ? spawnGit(argv, other.main, timeoutMs, signal)
-          : null
-      const h = await harness("veto-pair", { observe: onlyCombinedRead })
-      await h.pending.start()
-      await shellReport(h)
-      const otherCommon = (await repositoryContext(other.main))?.commonDir as string
-      expect(readHolds(otherCommon, h.f.linked).holds).toEqual([])
-      await h.finish()
-      rmSync(other.root, { recursive: true, force: true })
-    })
-
-    needsPermissions("a hold that fails to be written while the final check lists sessions keeps the worktree", async () => {
+    needsPermissions("a report that fails to be written while the final check lists sessions keeps the worktree", async () => {
       // The final check's session listing waits until released; the report fails meanwhile.
       const listing = Promise.withResolvers<void>()
       const listed = Promise.withResolvers<void>()
@@ -3939,21 +3937,20 @@ describe("pending cleanup: one remover per worktree", () => {
         }
         return { data: [] }
       }
-      const h = await harness("veto-hold-unwritable", { list })
+      const h = await harness("veto-report-unwritable", { list })
       await h.pending.start()
+      const reports = runningDirectory(receiptDirectory(h.f.env))
+      mkdirSync(reports, { recursive: true })
       const check = h.pending.removalFor("ses_lead").finalCheck(h.f.linked)
       await listed.promise
-      // The check's own writability probe has made the worktree's holds directory by now.
-      const holdsRoot = join(h.common, "opencode", "holds")
-      const holdsDir = join(holdsRoot, readdirSync(holdsRoot)[0] as string)
-      chmodSync(holdsDir, 0o555) // check-test-executables: directory permission, not a script
+      chmodSync(reports, 0o555) // check-test-executables: directory permission, not a script
       try {
         await shellReport(h)
       } finally {
-        chmodSync(holdsDir, 0o755) // check-test-executables: directory permission, not a script
+        chmodSync(reports, 0o755) // check-test-executables: directory permission, not a script
       }
       listing.resolve()
-      expect(await check).toContain("its running work could not be recorded")
+      expect(await check).toContain("could not be recorded")
       await h.finish()
     })
   })
@@ -4023,7 +4020,7 @@ describe("pending cleanup: one remover per worktree", () => {
       await idleHook(h, [{ kind: "shell", sessionID: "ses_x", shellID: "sh1", command: `cd ${h.f.linked} && make test` }])
       await h.pending.settle()
       expect(removed(h)).toBe(false)
-      expect(readHolds(h.common, h.f.linked).holds.map((hold) => hold.sessionID)).toEqual(["ses_lead"])
+      expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.sessionID)).toEqual(["ses_lead"])
       await h.finish()
     })
 
@@ -4059,8 +4056,146 @@ describe("pending cleanup: one remover per worktree", () => {
       h.advance(60_000)
       await idleHook(h, [])
       await h.pending.settle()
-      expect(readHolds(h.common, h.f.linked).holds).toEqual([])
+      expect(readReports(receiptDirectory(h.f.env)).reports).toEqual([])
       expect(removed(h)).toBe(true)
+      await h.finish()
+    })
+  })
+
+  // What each session last said is running: one raw report per session on disk, judged when a removal asks.
+  describe("running reports", () => {
+    const needsPermissions = process.getuid?.() === 0 ? test.skip : test
+    const reportFrom = (h: Harness, sessionID: string, background: unknown[]) =>
+      h.fake.fire.session("experimental.idle", { sessionID, background } as never)
+    const shellIn = (h: Harness, shellID = "sh1") => ({ kind: "shell", shellID, command: `cd ${h.f.linked} && make` })
+    const elsewhere = (shellID = "sh0") => ({ kind: "shell", shellID, command: "sleep 60" })
+    const check = (h: Harness) => h.pending.removalFor("ses_lead").finalCheck(h.f.linked)
+    const reportIds = (h: Harness) => readReports(receiptDirectory(h.f.env)).reports.map((report) => report.sessionID)
+
+    // I2: only the session that reported clears its report.
+    test("another session's report of nothing running does not lift a session's hold; its own does", async () => {
+      const h = await harness("running-owner-only")
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await reportFrom(h, "ses_b", [])
+      expect(reportIds(h)).toEqual(["ses_a"])
+      expect(await check(h)).toContain("names the worktree")
+      await reportFrom(h, "ses_a", [])
+      expect(reportIds(h)).toEqual([])
+      expect(await check(h)).toBeUndefined()
+      await h.finish()
+    })
+
+    // I3: one report per session, the last one.
+    test("three overlapping reports of one session leave exactly the last on disk", async () => {
+      const h = await harness("running-last-wins")
+      await h.pending.start()
+      await Promise.all([reportFrom(h, "ses_a", [shellIn(h, "one")]), reportFrom(h, "ses_a", [shellIn(h, "two")]), reportFrom(h, "ses_a", [elsewhere("three")])])
+      const reports = readReports(receiptDirectory(h.f.env)).reports
+      expect(reports.map((report) => report.jobs.map((job) => job.shellID))).toEqual([["three"]])
+      // The last one names nothing in the worktree: so the earlier ones no longer hold it.
+      expect(await check(h)).toBeUndefined()
+      await h.finish()
+    })
+
+    // I4: a failed write is a hold until the session's next successful write.
+    needsPermissions("a report that cannot be written refuses removal until the session's next successful write", async () => {
+      const h = await harness("running-write-fails")
+      await h.pending.start()
+      const directory = runningDirectory(receiptDirectory(h.f.env))
+      mkdirSync(directory, { recursive: true })
+      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        await reportFrom(h, "ses_a", [elsewhere()])
+        expect(await check(h)).toContain("the running work of ses_a could not be recorded")
+      } finally {
+        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
+      }
+      // Another session's success does not lift it.
+      await reportFrom(h, "ses_b", [elsewhere("other")])
+      expect(await check(h)).toContain("the running work of ses_a could not be recorded")
+      await reportFrom(h, "ses_a", [elsewhere()])
+      expect(await check(h)).toBeUndefined()
+      await h.finish()
+    })
+
+    // I5: a store that cannot be read or written proves nothing.
+    test.each([
+      ["written", (directory: string) => writeFileSync(directory, "a file where the directory goes"), "not writable"],
+      ["read", (directory: string) => (mkdirSync(directory, { recursive: true }), writeFileSync(join(directory, "damaged.json"), "{not json")), "cannot be read"],
+    ] as const)("a running-work store that cannot be %s refuses removal", async (_name, damage, why) => {
+      const h = await harness(`running-store-${why.split(" ")[0]}`)
+      await h.pending.start()
+      damage(runningDirectory(receiptDirectory(h.f.env)))
+      expect(await check(h)).toContain(why)
+      await h.finish()
+    })
+
+    // I6: reports that cannot mean running work do not hold.
+    test("after the session's deletion the worktree is removed", async () => {
+      const h = await harness("running-deleted")
+      await h.pending.record(h.f.receipt, "ses_lead")
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await h.idle()
+      expect(removed(h)).toBe(false)
+      await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
+      expect(reportIds(h)).toEqual([])
+      h.advance(60_000)
+      await h.idle()
+      expect(removed(h)).toBe(true)
+      await h.finish()
+    })
+
+    test("a report whose reporter process is gone on this host does not hold the worktree", async () => {
+      const h = await harness("running-dead-pid")
+      await h.pending.record(h.f.receipt, "ses_lead")
+      await h.pending.start()
+      const dead = Number(execFileSync("sh", ["-c", "echo $$"], { encoding: "utf8" }).trim())
+      h.fake.sessions.set("ses_a", { id: "ses_a", location: { directory: h.f.root } })
+      writeReport(receiptDirectory(h.f.env), { sessionID: "ses_a", jobs: [shellIn(h)], at: NOW + 10, pid: dead, host: hostname() })
+      await h.idle()
+      expect(removed(h)).toBe(true)
+      await h.finish()
+    })
+
+    test("a report whose reporter runs on another host holds until it expires, whatever the local processes say", async () => {
+      const h = await harness("running-other-host")
+      await h.pending.start()
+      const dead = Number(execFileSync("sh", ["-c", "echo $$"], { encoding: "utf8" }).trim())
+      h.fake.sessions.set("ses_a", { id: "ses_a", location: { directory: h.f.root } })
+      writeReport(receiptDirectory(h.f.env), { sessionID: "ses_a", jobs: [shellIn(h)], at: NOW + 10, pid: dead, host: "another-host" })
+      expect(await check(h)).toContain("names the worktree")
+      h.advance(25 * 3_600_000)
+      expect(await check(h)).toBeUndefined()
+      await h.finish()
+    })
+
+    test("a job whose session the host does not have does not hold the worktree", async () => {
+      const h = await harness("running-job-gone")
+      await h.pending.record(h.f.receipt, "ses_lead")
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [{ kind: "subagent", sessionID: "ses_a", childSessionID: "ses_gone" }])
+      await h.idle()
+      expect(removed(h)).toBe(true)
+      await h.finish()
+    })
+
+    // I8: nothing accumulates per session.
+    needsPermissions("after a hundred sessions whose reports failed are deleted, no failure is remembered", async () => {
+      const h = await harness("running-unrecorded-drained")
+      await h.pending.start()
+      const directory = runningDirectory(receiptDirectory(h.f.env))
+      mkdirSync(directory, { recursive: true })
+      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        for (let index = 0; index < 100; index++) await reportFrom(h, `ses_${index}`, [elsewhere()])
+        expect(h.pending.unrecordedCount()).toBe(100)
+      } finally {
+        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
+      }
+      for (let index = 0; index < 100; index++) await h.fake.emit({ type: "session.deleted", data: { sessionID: `ses_${index}` } })
+      expect(h.pending.unrecordedCount()).toBe(0)
       await h.finish()
     })
   })
@@ -4291,6 +4426,7 @@ describe("cleanup of another repository's landing runs against that repository",
         ? Promise.resolve(success(SESSION_URL))
         : scripted.run(argv, commandOptions)
     const fake = createFakeContext({ directory: s.main, projectID: "prj_session", sessions: over.sessions?.(f) ?? [] })
+    hostHasReporters(fake, s.main)
     const hostRemoved: Array<{ projectID: string; directory: string }> = []
     const make = () => createPendingCleanup({
       ctx: fake.context,
@@ -4506,7 +4642,7 @@ describe("cleanup of another repository's landing runs against that repository",
     writeFileSync(join(receiptDirectory(env, key), "1800000000000-aaaaaaaaaaaa.json"), "{not json")
   }
 
-  test("a clone whose observation stalls does not hold back another clone's running-work hold", async () => {
+  test("a clone whose observation stalls does not delay the report: it is on disk at once, and the worktree is kept", async () => {
     let release: () => void = () => {}
     const stalled = new Promise<void>((done) => {
       release = done
@@ -4530,14 +4666,10 @@ describe("cleanup of another repository's landing runs against that repository",
       sessionID: "ses_lead",
       background: [{ kind: "shell", shellID: "sh_1", command: `ls '${h.f.linked}'` }],
     })
-    let held = false
-    for (let tries = 0; tries < 200 && !held; tries++) {
-      held = readHolds(h.targetCommon, h.f.linked).holds.some((hold) => hold.jobs.length > 0)
-      if (!held) await new Promise((done) => setTimeout(done, 10))
-    }
+    // Written before the hook awaited anything: no wait on a clone stands before it.
+    expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.sessionID)).toEqual(["ses_lead"])
     release()
     await fired
-    expect(held).toBe(true)
     expect(existsSync(h.f.linked)).toBe(true)
     await h.finish()
   })
@@ -4651,264 +4783,7 @@ describe("cleanup of another repository's landing runs against that repository",
     await taken
     return { release: () => release(), held }
   }
-  /**
-   * Lock options for delivery whose first wait on a busy lock lasts until `go`: `waiting` resolves when
-   * a report reaches the lock, so the test decides which write goes first.
-   */
-  const gatedLock = (outcome: "proceed" | "fail" = "proceed") => {
-    let arrived: () => void = () => {}
-    const waiting = new Promise<void>((done) => {
-      arrived = done
-    })
-    let go: () => void = () => {}
-    const opened = new Promise<void>((done, fail) => {
-      go = outcome === "proceed" ? done : () => fail(new Error("the gated lock wait failed"))
-    })
-    let first = true
-    const sleep = (ms: number) => {
-      if (!first) return new Promise<void>((done) => setTimeout(done, ms))
-      first = false
-      arrived()
-      return opened
-    }
-    return { lock: { waitMs: 30_000, sleep }, waiting, go: () => go() }
-  }
-
-  test("an older empty report that resumes after a newer report's veto leaves that veto and its hold", async () => {
-    if (process.getuid?.() === 0) return // root reads any directory
-    const gate = gatedLock()
-    const h = await foreignHarness("foreign-ordered-clear", { lock: gate.lock })
-    await h.pending.record(h.f.receipt, "ses_lead")
-    await h.pending.start()
-    const { release, held } = await holdTargetLock(h)
-    // The older report is empty and waits at the target worktree's lock to write its (empty) hold.
-    const older = outsideLocks(() => h.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [] } as never))
-    try {
-      await gate.waiting
-      // The newer report of the same session cannot list the target's receipts: a veto on the target.
-      await unreadableTarget(h, () => shellReport(h, "ses_a"))
-    } finally {
-      release()
-      await held
-      gate.go()
-      await older
-    }
-    // The older empty report finished last; the newer report's veto still holds the target.
-    await h.idle()
-    expect(existsSync(h.f.linked)).toBe(true)
-    await h.finish()
-  })
-
-  test("an older report that resumes after a newer report wrote a worktree's hold leaves that hold", async () => {
-    const gate = gatedLock()
-    const h = await foreignHarness("foreign-ordered-hold", { lock: gate.lock })
-    await h.pending.record(h.f.receipt, "ses_lead")
-    await h.pending.start()
-    const { release, held } = await holdTargetLock(h)
-    // The older report runs a shell outside the worktree, so its hold there is empty; it waits at the lock.
-    const older = outsideLocks(() =>
-      h.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [{ kind: "shell", shellID: "sh_0", command: "sleep 60" }] } as never))
-    try {
-      await gate.waiting
-      release()
-      await held
-      // The newer report has a shell in the worktree and writes its hold first.
-      await outsideLocks(() => shellReport(h, "ses_a"))
-    } finally {
-      release()
-      gate.go()
-      await older
-    }
-    expect(readHolds(h.targetCommon, h.f.linked).holds.flatMap((hold) => hold.jobs.map((job) => job.id))).toEqual(["sh_1"])
-    await h.idle()
-    expect(existsSync(h.f.linked)).toBe(true)
-    await h.finish()
-  })
-
-  /**
-   * Lock options for delivery where every wait on a busy lock is held until the test settles it, in the
-   * order the waits began: `reached(n)` resolves once `n` writers wait, and `waits[i]` opens or fails the i-th.
-   */
-  const queuedLock = () => {
-    const waits: Array<{ go: () => void; fail: () => void }> = []
-    let notify: () => void = () => {}
-    const sleep = () =>
-      new Promise<void>((go, fail) => {
-        waits.push({ go, fail: () => fail(new Error("the queued lock wait failed")) })
-        notify()
-      })
-    const reached = async (n: number) => {
-      while (waits.length < n) await new Promise<void>((done) => (notify = done))
-    }
-    return { lock: { waitMs: 30_000, sleep }, waits, reached }
-  }
-  /** A report of `ses_a` whose running shell is outside the target worktree: its hold there is empty. */
-  const outsideReport = (h: { fake: ReturnType<typeof createFakeContext> }) =>
-    outsideLocks(() =>
-      h.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [{ kind: "shell", shellID: "sh_0", command: "sleep 60" }] } as never))
-
-  test("an older report that waits on the lock after a newer report failed to take it leaves the unsafe mark", async () => {
-    const queue = queuedLock()
-    const h = await foreignHarness("foreign-prelock-unsafe", { lock: queue.lock })
-    await h.pending.record(h.f.receipt, "ses_lead")
-    await h.pending.start()
-    const { release, held } = await holdTargetLock(h)
-    const older = outsideReport(h)
-    await queue.reached(1)
-    const newer = outsideLocks(() => shellReport(h, "ses_a"))
-    await queue.reached(2)
-    // The newer report never takes the lock: its wait fails, so the worktree is marked unsafe.
-    queue.waits[1]?.fail()
-    await newer
-    release()
-    await held
-    // The older report then takes the lock and writes its empty hold: it must not lift the newer mark.
-    queue.waits[0]?.go()
-    await older
-    await h.pending.settle()
-    const result = await h.explicit()
-    expect(result.ok).toBe(false)
-    expect(existsSync(h.f.linked)).toBe(true)
-    await h.finish()
-  })
-
-  test("a delayed failure of an older report does not replace a newer report's mark, so a report between them cannot lift it", async () => {
-    const queue = queuedLock()
-    const h = await foreignHarness("foreign-three-reports", { lock: queue.lock })
-    await h.pending.record(h.f.receipt, "ses_lead")
-    await h.pending.start()
-    const { release, held } = await holdTargetLock(h)
-    const first = outsideReport(h)
-    await queue.reached(1)
-    const second = outsideReport(h)
-    await queue.reached(2)
-    const third = outsideLocks(() => shellReport(h, "ses_a"))
-    await queue.reached(3)
-    // The third report fails first, then the first fails late: the third's mark stands.
-    queue.waits[2]?.fail()
-    await third
-    queue.waits[0]?.fail()
-    await first
-    release()
-    await held
-    // The second report succeeds between them (its empty hold lands) and lifts only what is no newer.
-    queue.waits[1]?.go()
-    await second
-    await h.pending.settle()
-    const result = await h.explicit()
-    expect(result.ok).toBe(false)
-    expect(existsSync(h.f.linked)).toBe(true)
-    await h.finish()
-  })
-
-  test("an older report that resumes after a newer report's failed hold write leaves the unsafe mark", async () => {
-    if (process.getuid?.() === 0) return // root writes into a read-only directory
-    const gate = gatedLock()
-    const h = await foreignHarness("foreign-ordered-unsafe", { lock: gate.lock })
-    await h.pending.record(h.f.receipt, "ses_lead")
-    // An older entry makes the holds directory exist; the newer report's write then fails once it is read-only.
-    setHold(h.targetCommon, h.f.linked, "ses_old", [{ kind: "shell", id: "old" }], NOW - 25 * 3_600_000)
-    const holdsRoot = join(h.targetCommon, "opencode", "holds")
-    const holdsDir = join(holdsRoot, readdirSync(holdsRoot)[0] as string)
-    await h.pending.start()
-    const { release, held } = await holdTargetLock(h)
-    const older = outsideLocks(() =>
-      h.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [{ kind: "shell", shellID: "sh_0", command: "sleep 60" }] } as never))
-    try {
-      await gate.waiting
-      release()
-      await held
-      chmodSync(holdsDir, 0o555) // check-test-executables: directory permission, not a script
-      try {
-        // The newer report stamps the worktree, then its hold write fails: unsafe.
-        await outsideLocks(() => shellReport(h, "ses_a"))
-      } finally {
-        chmodSync(holdsDir, 0o755) // check-test-executables: directory permission, not a script
-      }
-    } finally {
-      release()
-      gate.go()
-      await older
-    }
-    // The older report skipped its write as superseded: it must not lift the newer failure's mark.
-    await h.pending.settle()
-    const result = await h.explicit()
-    expect(result.ok).toBe(false)
-    expect(existsSync(h.f.linked)).toBe(true)
-    await h.finish()
-  })
-
-  test("a deleted session's report that resumes after the deletion writes no hold", async () => {
-    const gate = gatedLock()
-    const h = await foreignHarness("foreign-deleted-hold", { lock: gate.lock })
-    await h.pending.record(h.f.receipt, "ses_lead")
-    await h.pending.start()
-    const { release, held } = await holdTargetLock(h)
-    const report = outsideLocks(() => shellReport(h, "ses_a"))
-    try {
-      await gate.waiting
-      await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
-    } finally {
-      release()
-      await held
-      gate.go()
-      await report
-    }
-    expect(readHolds(h.targetCommon, h.f.linked).holds.filter((hold) => hold.jobs.length > 0)).toEqual([])
-    await h.idle()
-    expect(existsSync(h.f.linked)).toBe(false)
-    await h.finish()
-  })
-
-  test("a deleted session's report whose hold write fails after the deletion marks no worktree unsafe", async () => {
-    // The report's wait at the lock fails once the gate opens, so its hold write fails.
-    const gate = gatedLock("fail")
-    const h = await foreignHarness("foreign-deleted-unsafe", { lock: gate.lock })
-    await h.pending.record(h.f.receipt, "ses_lead")
-    await h.pending.start()
-    const { release, held } = await holdTargetLock(h)
-    const report = outsideLocks(() => shellReport(h, "ses_a"))
-    try {
-      await gate.waiting
-      await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
-      gate.go()
-      await report
-    } finally {
-      release()
-      await held
-    }
-    // The turn-end passes keep a retry window, so ask for the removal explicitly: it reads the same
-    // hold check, where an unsafe mark would refuse it.
-    await h.pending.settle()
-    const result = await h.explicit()
-    expect(result.ok).toBe(true)
-    expect(existsSync(h.f.linked)).toBe(false)
-    await h.finish()
-  })
-
-  test("report state is kept only while reports are in flight: none after a deletion of a session that never reported, none after a deleted session's report settles", async () => {
-    const gate = gatedLock()
-    const h = await foreignHarness("foreign-report-state", { lock: gate.lock })
-    await h.pending.record(h.f.receipt, "ses_lead")
-    await h.pending.start()
-    await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_never" } })
-    expect(h.pending.trackedReports()).toBe(0)
-    const { release, held } = await holdTargetLock(h)
-    const report = outsideLocks(() => shellReport(h, "ses_a"))
-    try {
-      await gate.waiting
-      await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
-    } finally {
-      release()
-      await held
-      gate.go()
-      await report
-    }
-    expect(h.pending.trackedReports()).toBe(0)
-    await h.finish()
-  })
-
-  test("a repository whose receipts cannot be listed while running work is recorded refuses removal until holds are recorded", async () => {
+  test("a shell reported while the target's receipts cannot be listed still keeps its worktree until the session reports none", async () => {
     const h = await foreignHarness("foreign-holds-unknown")
     await h.pending.record(h.f.receipt, "ses_lead")
     await h.pending.start()
@@ -4922,17 +4797,17 @@ describe("cleanup of another repository's landing runs against that repository",
     } finally {
       chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
     }
-    // The shell was never recorded; nothing may be removed on that ignorance.
+    // The report is kept whole, whatever could be listed when it came: nothing is removed under it.
     await h.idle()
     expect(existsSync(h.f.linked)).toBe(true)
-    // A later report that records its holds lifts the refusal.
+    // The session's own report of nothing running lifts it.
     await h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] })
     await h.idle()
     expect(existsSync(h.f.linked)).toBe(false)
     await h.finish()
   })
 
-  test("an unreadable clone registry refuses the retry's cleanup, and a readable one allows it", async () => {
+  test("an unreadable clone registry keeps the retry from finding the receipt, and a readable one lets it clean", async () => {
     const h = await foreignHarness("foreign-registry-unreadable")
     await h.pending.record(h.f.receipt, "ses_lead")
     await h.pending.start()
@@ -4941,8 +4816,6 @@ describe("cleanup of another repository's landing runs against that repository",
     try {
       await h.idle()
       expect(existsSync(h.f.linked)).toBe(true)
-      // Even an explicit cleanup in the clone refuses while discovery is incomplete.
-      expect(refusal(await h.explicit())).toContain("clone registry")
     } finally {
       chmodSync(file, 0o600) // check-test-executables: registry file permission, not a script
     }

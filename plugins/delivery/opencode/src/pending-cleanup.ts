@@ -27,10 +27,13 @@
  */
 
 import { existsSync, readdirSync } from "node:fs"
+import { hostname } from "node:os"
 import { join, resolve } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import { type EventWatchDeps, watchEvents } from "@srobroek/opencode-lib/event-watch"
 import { canonicalCheckout } from "@srobroek/opencode-lib/session-eviction"
+import { isSessionNotFound } from "@srobroek/opencode-lib/session-lanes"
+import { processAlive } from "@srobroek/opencode-lib/subprocess"
 import {
   canonicalDirectory,
   type LandingRecord,
@@ -43,7 +46,7 @@ import {
   removeLanding,
   writeLanding,
 } from "@srobroek/opencode-lib/worktree-claims"
-import { holdsState, type LockOptions, lockedWorktreeRemoval, lockedWrite, setHold } from "@srobroek/opencode-lib/worktree-locks"
+import { holdsState, type LockOptions, lockedWorktreeRemoval, lockedWrite } from "@srobroek/opencode-lib/worktree-locks"
 import { ownershipDeferral } from "./auto-cleanup.ts"
 import {
   CLEANUP_BOUNDS,
@@ -72,6 +75,18 @@ import {
   repositoryContext,
 } from "./landing-receipt.ts"
 import { type LaneClient, laneSessionsIn, moveLaneHome } from "./lane-move.ts"
+import {
+  clearReport,
+  type JobLookup,
+  neededLookups,
+  type ReportClock,
+  type ReportJob,
+  readReports,
+  removeReport,
+  reportBlock,
+  reportsWritable,
+  writeReport,
+} from "./running-reports.ts"
 
 /** A receipt file's name: `<epoch>-<merge oid prefix>.json` (see `receiptId`). */
 const RECEIPT_FILE = /^\d+-(?:[0-9a-f]{12}|nomerge)\.json$/
@@ -227,7 +242,7 @@ export async function authorizeExplicit(
 }
 
 /** One entry of the idle hook's `background` list. */
-export type BackgroundJob = { kind: string; sessionID?: string; childSessionID?: string; shellID?: string; command?: string }
+export type BackgroundJob = ReportJob
 
 export type PendingDeps = {
   ctx: Context
@@ -256,58 +271,8 @@ export type PendingDeps = {
   watch?: Pick<EventWatchDeps, "delaysMs" | "sleep">
 }
 
-/** A session location the host did not report within {@link SESSION_LOOKUP_MS}. */
-const UNRESOLVED: unique symbol = Symbol("unresolved")
-type Location = string | undefined | typeof UNRESOLVED
-
 /** The default bound on one session lookup in the idle hook. */
 export const SESSION_LOOKUP_MS = 5_000
-
-/** A veto a report left, stamped with that report's number: the higher number wins, whatever order the reports finish in. */
-type Veto = { why: string; seq: number }
-
-/**
- * Vetoes keyed by what they guard, ordered by report number. One rule serves every set and every
- * clear: a report whose number is below the highest one this key has seen, as a veto or as a clear,
- * changes nothing. The highest number seen is kept even once the veto is gone (a clear is a tombstone),
- * so an older report's delayed failure cannot bring a cleared veto back. A tombstone goes once no report
- * older than it is still in flight ({@link VetoMarks.prune}): only an older report could still act on it.
- */
-class VetoMarks<K extends string> {
-  private readonly vetoes = new Map<K, Veto>()
-  private readonly seen = new Map<K, number>()
-
-  /** The veto in force on `key`, if any. */
-  get(key: K): Veto | undefined {
-    return this.vetoes.get(key)
-  }
-  /** Every key with a veto in force. */
-  keys(): K[] {
-    return [...this.vetoes.keys()]
-  }
-  /** The first veto in force whose key satisfies `match`. */
-  find(match: (key: K) => boolean): Veto | undefined {
-    for (const [key, veto] of this.vetoes) if (match(key)) return veto
-    return undefined
-  }
-  /** Set `veto` on `key` unless a report with a higher number already set or lifted it. */
-  raise(key: K, veto: Veto): void {
-    const floor = Math.max(this.seen.get(key) ?? 0, this.vetoes.get(key)?.seq ?? 0)
-    if (veto.seq < floor) return
-    this.seen.set(key, veto.seq)
-    this.vetoes.set(key, veto)
-  }
-  /** Lift the veto on `key` if a report no newer than `seq` set it, and remember that `seq` has been through. */
-  lift(key: K, seq: number): void {
-    this.seen.set(key, Math.max(this.seen.get(key) ?? 0, seq))
-    const stored = this.vetoes.get(key)
-    if (stored !== undefined && stored.seq <= seq) this.vetoes.delete(key)
-  }
-  /** Forget the numbers no in-flight report can still be older than (`oldestInFlight`, Infinity when none is in flight). */
-  prune(oldestInFlight: number): void {
-    for (const [key, seq] of this.seen) if (seq <= oldestInFlight) this.seen.delete(key)
-  }
-}
 
 export function createPendingCleanup(deps: PendingDeps) {
   const { ctx, cwd, env } = deps
@@ -317,70 +282,22 @@ export function createPendingCleanup(deps: PendingDeps) {
   // The same ref-read bound `delivery_cleanup` uses (injectable through `cleanup.bounds`), not a fixed 5 s.
   const observationMs = deps.cleanup?.bounds?.refReadMs ?? CLEANUP_BOUNDS.refReadMs
   const sessionLookupMs = deps.sessionLookupMs ?? SESSION_LOOKUP_MS
-  // The veto state below is keyed by canonical worktree path, so it is shared by every repository
-  // this instance coordinates: a veto is published here, before any wait, whichever one it is in.
-  /** Worktrees whose hold could not be recorded: nothing is removed from them until a later write succeeds. */
-  const unsafe = new VetoMarks<string>()
+  /**
+   * Sessions whose last non-empty report could not be written to disk, by reason: their running work is
+   * unknown, so nothing is removed until the session's next successful write or delete, or its deletion.
+   */
+  const unrecorded = new Map<string, string>()
   /** Denials that could not be written to disk, until an authorized re-arm; keyed by {@link deniedKey}, valued by canonical worktree. */
   const deniedInMemory = new Map<string, string>()
   const deniedKey = (receipt: Pick<LandingReceipt, "receiptId" | "repo">) => `${receipt.repo.key}/${receipt.receiptId}`
   /** Worktrees an explicit `delivery_cleanup` was refused for, published before any wait; cleared only by `arm`. */
   const deniedWorktrees = new Set<string>()
-  /** Idle-hook reports of running work whose holds are not written yet; any one keeps every worktree. */
-  let holdReportsInFlight = 0
   // Receipt ids are unique only within one repository, so these are keyed by `<repo key>/<receipt id>`.
   const doneIds = new Set<string>()
   const retriedAt = new Map<string, number>()
   const attemptedAt = new Map<string, number>()
   /** Clones registered by this instance, kept here too: a registry write that fails still leaves them found. */
   const registered = new Map<string, CloneEntry>()
-  /** Why the clone registry could not be listed at the last read; while set, no other repository's worktree is removed. */
-  let discoveryFailure: string | undefined
-  /**
-   * Sessions whose last report of running work could not reach the clones (the registry could not be
-   * listed, or the session's repository not resolved): their running work there is unknown, so no
-   * other repository's worktree is removed until a later report from the same session reaches them.
-   */
-  const missedReports = new VetoMarks<string>()
-  /** Every report of running work (empty or not) takes the next number, in the order the reports start. */
-  let reportSeq = 0
-  /** The numbers of the reports not yet settled: what bounds how long a lifted veto is remembered. */
-  const inFlight = new Set<number>()
-  /**
-   * Sessions with reports still in flight: how many, and the number of the last report at the time
-   * their work was confirmed stopped (an empty report, or a deletion). A report numbered no higher is
-   * stale: it may leave no veto and no hold. The entry goes when its last report settles, so nothing
-   * stays per session.
-   */
-  const reports = new Map<string, { inFlight: number; stoppedAt: number; written: Map<string, number> }>()
-  /** Whether the report numbered `seq` of `sessionID` started no later than its work was last confirmed stopped. */
-  const staleReport = (sessionID: string, seq: number) => seq <= (reports.get(sessionID)?.stoppedAt ?? 0)
-  /**
-   * Repositories (by the registry's recorded identity, the receipt key) where a session's last report of
-   * running work could not be recorded, by reporting session: nothing is removed there until that
-   * session's next report records it. Never keyed by a path resolved when the failure happened: the
-   * path may by then lead to another checkout.
-   */
-  const holdsUnknown = new VetoMarks<string>()
-  const SEP = "\u0000"
-  const holdKey = (identity: string, sessionID: string) => `${identity}${SEP}${sessionID}`
-  /** The identity of a repository for vetoes: its receipt key; the session's own before its key is known has a fixed stand-in. */
-  const OWN_UNKNOWN = "(session repository)"
-  const identityOf = (repo: { foreign: boolean; veto: () => { key: string } | null }): string => repo.veto()?.key ?? OWN_UNKNOWN
-  const markHoldsUnknown = (identity: string, sessionID: string, veto: Veto) => {
-    holdsUnknown.raise(holdKey(identity, sessionID), veto)
-  }
-  /** Drop `sessionID`'s veto on `identity` if a report no newer than `seq` set it. */
-  const clearHoldsUnknown = (identity: string, sessionID: string, seq: number) => {
-    holdsUnknown.lift(holdKey(identity, sessionID), seq)
-  }
-  /** The repository identities `sessionID` holds a veto on. */
-  const holdIdentities = (sessionID: string): string[] =>
-    holdsUnknown.keys().filter((key) => key.endsWith(`${SEP}${sessionID}`)).map((key) => key.slice(0, key.length - sessionID.length - 1))
-  /** Drop `sessionID`'s missed report if a report no newer than `seq` set it. */
-  const clearMissedReport = (sessionID: string, seq: number) => {
-    missedReports.lift(sessionID, seq)
-  }
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const pendingIdle = new Set<string>()
   let disposed = false
@@ -512,84 +429,8 @@ export function createPendingCleanup(deps: PendingDeps) {
     return pendingReceipts(receipts).length > 0
   }
 
-  /** The registry's entries, tracking whether the registry could be read ({@link discoveryFailure}). Throws when it cannot. */
-  const registryEntries = (sessionKey: string): CloneEntry[] => {
-    try {
-      const listed = readClones(env, sessionKey)
-      discoveryFailure = undefined
-      return listed
-    } catch (error) {
-      discoveryFailure = `the clones this session landed in could not be listed (${error instanceof Error ? error.message : String(error)}); the clone registry is unreadable, and cleanup in other repositories waits until it can be read`
-      throw error
-    }
-  }
-
-  /**
-   * Read the registry now, without a git wait, so {@link discoveryFailure} says whether it can be read
-   * at this moment. Synchronous, so it can run again after any wait.
-   */
-  const discoverNow = (): void => {
-    const mine = own.veto()
-    if (mine === null) {
-      discoveryFailure = "the session's repository could not be resolved, so the clones it landed in are unknown; cleanup in other repositories waits until it resolves"
-      return
-    }
-    try {
-      registryEntries(mine.key)
-    } catch {
-      // registryEntries recorded the failure.
-    }
-  }
-
-  /** {@link discoverNow}, observing the session's repository first when it is not known yet. */
-  const discover = async (): Promise<void> => {
-    if (own.veto() === null) await own.observe()
-    discoverNow()
-  }
-
-  /**
-   * Why a report of running work cannot rule out work in `repo`, or undefined: for another repository,
-   * an unreadable registry or a session whose report missed the clones; for any, a session whose
-   * report could not be recorded there. Synchronous, so it can be read again after any wait. A veto
-   * that holds a removal is logged with the session it is held for and what lifts it.
-   */
-  const reportVeto = (repo: Repository): string | undefined => {
-    let why: string | undefined
-    if (repo.foreign) why = discoveryFailure ?? missedReports.find(() => true)?.why
-    const identities = repo.foreign ? [identityOf(repo)] : [identityOf(repo), OWN_UNKNOWN]
-    why ??= holdsUnknown.find((key) => identities.some((identity) => key.startsWith(`${identity}${SEP}`)))?.why
-    if (why !== undefined) console.error(`delivery: cleanup in ${repo.cwd} is held: ${why}`)
-    return why
-  }
-
-  /**
-   * Positive evidence that `sessionID` ran nothing as of report number `seq` (an empty report, or its
-   * deletion): every veto its reports up to `seq` left is dropped, and while reports of it are still
-   * in flight, any that started by then is stale. A session with nothing in flight keeps no state.
-   */
-  const forgetReports = (sessionID: string, seq: number) => {
-    const tracked = reports.get(sessionID)
-    if (tracked !== undefined) tracked.stoppedAt = Math.max(tracked.stoppedAt, seq)
-    clearMissedReport(sessionID, seq)
-    for (const identity of holdIdentities(sessionID)) clearHoldsUnknown(identity, sessionID, seq)
-  }
-
-  /** Start a report of `sessionID`: its number, tracked in flight until {@link settleReport}. */
-  const beginReport = (sessionID: string): number => {
-    const seq = ++reportSeq
-    const tracked = reports.get(sessionID) ?? { inFlight: 0, stoppedAt: 0, written: new Map<string, number>() }
-    tracked.inFlight++
-    reports.set(sessionID, tracked)
-    inFlight.add(seq)
-    return seq
-  }
-  const settleReport = (sessionID: string, seq: number) => {
-    const tracked = reports.get(sessionID)
-    if (tracked !== undefined && --tracked.inFlight <= 0) reports.delete(sessionID)
-    inFlight.delete(seq)
-    const oldest = inFlight.size === 0 ? Number.POSITIVE_INFINITY : Math.min(...inFlight)
-    for (const marks of [unsafe, missedReports, holdsUnknown]) marks.prune(oldest)
-  }
+  /** The registry's entries for the session's repository. Throws when the registry cannot be read. */
+  const registryEntries = (sessionKey: string): CloneEntry[] => readClones(env, sessionKey)
 
   /** The registry entry for `receipt`'s landing: where the clone is, and which receipt the session landed there. */
   const cloneEntryFor = (receipt: LandingReceipt, commonDir: string): CloneEntry => ({
@@ -615,8 +456,7 @@ export function createPendingCleanup(deps: PendingDeps) {
   /**
    * The clones the session's repository landed into that may have pending receipts, read from the
    * registry file and from this instance's own registrations, which win for the same key. No git runs.
-   * A registry that cannot be read throws; until a later read succeeds {@link discoveryFailure} holds
-   * every other repository's worktrees, so nothing is cleaned on an incomplete list.
+   * A registry that cannot be read throws, so nothing is cleaned on an incomplete list.
    */
   const cloneEntries = (sessionKey: string): CloneEntry[] => {
     const entries = new Map(registryEntries(sessionKey).map((entry) => [entry.key, entry]))
@@ -865,18 +705,12 @@ export function createPendingCleanup(deps: PendingDeps) {
    * fails or is incomplete holds. Returns the reason to hold, or undefined. `common` is the git
    * common directory the caller observed before this check, so the session listing is its only wait.
    */
-  const holdAt = async (repo: Repository, common: string | null, path: string): Promise<string | undefined> => {
+  const holdAtBase = async (repo: Repository, common: string | null, path: string): Promise<string | undefined> => {
     const owned = ownershipDeferral(ownershipAt(common, path))
     if (owned !== undefined) return owned
     // Background work any idle gate (this plugin's or the lane owner's) recorded for this directory,
     // and whether the store those records live in can be written at all.
     if (common === null) return "the git common directory could not be resolved"
-    // Discovery runs now, before any removal, so a fresh instance never removes on an unread registry.
-    if (repo.foreign) await discover()
-    const vetoed = reportVeto(repo)
-    if (vetoed !== undefined) return vetoed
-    const failed = unsafe.get(canonicalDirectory(path))
-    if (failed !== undefined) return failed.why
     const running = holdsState(common, path, now())
     if (running !== undefined) return running
     const projectID = repo.project()
@@ -905,6 +739,13 @@ export function createPendingCleanup(deps: PendingDeps) {
     }
   }
 
+  /**
+   * Whether `path` may be removed by delivery right now: {@link holdAtBase}, then what the sessions
+   * last reported as running ({@link runningBlock}).
+   */
+  const holdAt = async (repo: Repository, common: string | null, path: string): Promise<string | undefined> =>
+    (await holdAtBase(repo, common, path)) ?? (await runningBlock(path))
+
   /** A denial recorded for `path`, or records that cannot be read, read fresh from `common`. */
   const landingBlockAt = (common: string | null, path: string): string | undefined => {
     if (common === null) return "the git common directory could not be resolved"
@@ -921,22 +762,11 @@ export function createPendingCleanup(deps: PendingDeps) {
 
   /**
    * The hold and the denials for `worktree`, both read after the one observation of the common
-   * directory. Vetoes still being written (an idle report of running work) are read last, with no
-   * wait after them.
+   * directory. What the sessions reported as running is read last, after the session listing, its own
+   * lookups and a final synchronous re-read, with no wait after it.
    */
-  const holdCheckAt = async (repo: Repository, common: string | null, worktree: string): Promise<string | undefined> => {
-    const held = (await holdAt(repo, common, worktree)) ?? landingBlockAt(common, worktree)
-    if (held !== undefined) return held
-    // Read again after the session listing: the registry itself (it may have become unreadable during
-    // it), a report that failed to write its hold during it (marks the worktree), and one whose hold
-    // scan or clone listing failed during it (marks the repository).
-    if (repo.foreign) discoverNow()
-    return (
-      reportVeto(repo) ??
-      unsafe.get(canonicalDirectory(worktree))?.why ??
-      (holdReportsInFlight > 0 ? "running work reported by an idle session is still being recorded" : undefined)
-    )
-  }
+  const holdCheckAt = async (repo: Repository, common: string | null, worktree: string): Promise<string | undefined> =>
+    (await holdAtBase(repo, common, worktree)) ?? landingBlockAt(common, worktree) ?? (await runningBlock(worktree))
 
   /**
    * The last look before the removal call itself (claims, holds, sessions, denials), read fresh. The
@@ -1273,207 +1103,88 @@ export function createPendingCleanup(deps: PendingDeps) {
     const sessionID = event.data?.sessionID
     if (typeof sessionID !== "string") return
     if (event.type === "session.idle") schedule(sessionID, true)
-    // A deleted session runs nothing: the vetoes its reports left go.
-    else if (event.type === "session.deleted") forgetReports(sessionID, reportSeq)
+    // A deleted session runs nothing: its report goes, and so does any failure to record one.
+    else if (event.type === "session.deleted") forgetSession(sessionID)
     else if (event.type === "session.execution.succeeded" || event.type === "session.execution.failed") schedule(sessionID, false)
   }
 
   /**
-   * Where a session works, or `UNRESOLVED` when the host does not answer within the bound. A lookup
-   * that fails is a session the host does not have, as before; one that never settles must not keep
-   * the report, and with it every removal, waiting.
+   * What the host says about a session: where it works, that it does not have it, or (a failed or
+   * unanswered lookup) nothing. A lookup that never settles must not keep a removal waiting, so it is bounded.
    */
-  const sessionLocation = (id: string): Promise<Location> => {
+  const sessionState = (id: string): Promise<JobLookup> => {
     let timer: ReturnType<typeof setTimeout> | undefined
-    const bound = new Promise<typeof UNRESOLVED>((done) => {
-      timer = setTimeout(() => done(UNRESOLVED), sessionLookupMs)
+    const bound = new Promise<JobLookup>((done) => {
+      timer = setTimeout(() => done({ state: "unknown" }), sessionLookupMs)
     })
     const lookup = Promise.resolve()
       .then(() => ctx.session.get({ sessionID: id } as never))
       .then(
-        (session) => (session as { location?: { directory?: string } } | undefined)?.location?.directory,
-        () => undefined,
+        (session): JobLookup => ({ state: "at", directory: (session as { location?: { directory?: string } } | undefined)?.location?.directory }),
+        (error): JobLookup => (isSessionNotFound(error, id) ? { state: "missing" } : { state: "unknown" }),
       )
     return Promise.race([lookup, bound]).finally(() => clearTimeout(timer))
   }
 
-  /**
-   * The idle hook's `background` list, written to disk for every worktree delivery might clean (in the
-   * session's repository and in each clone it landed into), so its final check (and the lane owner)
-   * sees running work: a shell whose command names the worktree, or any job of a session that works in
-   * it. A session with none clears its own entry.
-   */
-  const recordHolds = async (sessionID: string, background: ReadonlyArray<BackgroundJob>) => {
-    const seq = beginReport(sessionID)
-    try {
-      // An empty report is the session's own word that none of its work runs: every veto its reports
-      // up to this one left goes, and a failure below creates none (there is no running work to miss).
-      if (background.length === 0) {
-        forgetReports(sessionID, seq)
-        return await writeHolds(sessionID, background, seq)
-      }
-      // Until every hold below is written (or the worktree is marked unsafe), the report itself keeps
-      // every worktree: the waits before the writes must not let a remover miss this running work.
-      holdReportsInFlight++
-      try {
-        await writeHolds(sessionID, background, seq)
-      } finally {
-        holdReportsInFlight--
-      }
-    } finally {
-      settleReport(sessionID, seq)
-    }
-  }
-
-  /** How a veto left by `sessionID`'s report is lifted, for the log line that says it holds a removal. */
-  const recovery = (sessionID: string) =>
-    `held for session ${sessionID} until it reports again with its running work recorded, reports no running work, or is deleted`
+  const reportClock = (): ReportClock => ({ now: now(), host: hostname(), alive: processAlive })
 
   /**
-   * Write report number `seq` of `sessionID`. A report of running work may leave vetoes and holds only
-   * while it is not stale (no empty report or deletion of its session came after it started); a clear
-   * it makes reaches only vetoes from reports no newer than itself.
+   * What the sessions reported as running keeps `worktree`, or undefined. The reports are read, the
+   * sessions they name looked up, and the reports read again after the lookups, with those same lookups:
+   * a report that arrived meanwhile and names a session not looked up holds. A session that could not
+   * record its last report (`unrecorded`), or a store that cannot be read or written, holds too.
    */
-  const writeHolds = async (sessionID: string, background: ReadonlyArray<BackgroundJob>, seq: number) => {
-    const vetoes = () => background.length > 0 && !staleReport(sessionID, seq)
-    // One lookup per session, shared by every repository's writes.
-    const locations = new Map<string, Promise<Location>>()
-    const locationOf = (id: string): Promise<Location> => {
-      let found = locations.get(id)
-      if (found === undefined) {
-        found = sessionLocation(id)
-        locations.set(id, found)
-      }
-      return found
+  const runningBlock = async (worktree: string): Promise<string | undefined> => {
+    const stuck = (): string | undefined => {
+      const first = unrecorded.entries().next().value
+      return first === undefined ? undefined : `the running work of ${first[0]} could not be recorded (${first[1]}); held until it reports again or is deleted`
     }
-    // Each repository's holds are written side by side, so none waits behind another's lookups, locks
-    // or observation (a stale clone that needs git delays only itself).
-    const inClones = async () => {
-      const mine = own.veto() ?? (await own.observe())
-      if (mine === null) {
-        const why = `the session's repository could not be resolved to find the clones the running work of ${sessionID} may be in`
-        if (vetoes()) missedReports.raise(sessionID, { why: `${why}; ${recovery(sessionID)}`, seq })
-        console.error(`delivery: ${why}`)
-        return
-      }
-      let entries: CloneEntry[]
-      try {
-        entries = cloneEntries(mine.key)
-      } catch (error) {
-        // The clones are unknown: until this session reports again and reaches them, no other repository's worktree is removed.
-        const why = `the running work of ${sessionID} could not be recorded in the clones (${error instanceof Error ? error.message : String(error)})`
-        if (vetoes()) missedReports.raise(sessionID, { why: `${why}; ${recovery(sessionID)}`, seq })
-        console.error(`delivery: ${why}`, error)
-        return
-      }
-      clearMissedReport(sessionID, seq)
-      // A clone left out of the listing (nothing pending there) has nothing to hold for this report:
-      // the vetoes this session's earlier reports left there go.
-      const listed = new Set(entries.map((entry) => entry.key))
-      const ownIdentities = new Set([identityOf(own), OWN_UNKNOWN])
-      for (const identity of holdIdentities(sessionID)) {
-        if (!ownIdentities.has(identity) && !listed.has(identity)) clearHoldsUnknown(identity, sessionID, seq)
-      }
-      await Promise.all(
-        entries.map(async (entry) => {
-          const repo = await cloneAt(entry).catch(() => null)
-          if (repo === null) {
-            const why = `the clone ${entry.root} could not be resolved to record the running work of ${sessionID}`
-            if (vetoes()) markHoldsUnknown(entry.key, sessionID, { why: `${why}; ${recovery(sessionID)}`, seq })
-            console.error(`delivery: ${why}`)
-            return
-          }
-          await writeHoldsIn(repo, sessionID, background, locationOf, vetoes, seq)
-        }),
-      )
-    }
-    await Promise.all([writeHoldsIn(own, sessionID, background, locationOf, vetoes, seq), inClones()])
+    const unreadable = "the running-work reports cannot be read, so running work cannot be ruled out"
+    const root = receiptDirectory(env)
+    const early = stuck()
+    if (early !== undefined) return early
+    if (!reportsWritable(root)) return "the running-work store is not writable, so running work cannot be ruled out"
+    const forms = [...new Set([worktree, canonicalDirectory(worktree)])]
+    const first = readReports(root)
+    if (first.unreadable) return unreadable
+    const cache = new Map<string, JobLookup>()
+    await Promise.all(neededLookups(first.reports, forms, reportClock()).map(async (id) => void cache.set(id, await sessionState(id))))
+    // The last read has no wait after it.
+    const again = stuck()
+    if (again !== undefined) return again
+    const last = readReports(root)
+    if (last.unreadable) return unreadable
+    const blocked = reportBlock(last.reports, forms, (id) => cache.get(id), reportClock(), canonicalDirectory)
+    if (blocked !== undefined) console.error(`delivery: cleanup of ${worktree} is held: ${blocked}`)
+    return blocked
   }
 
   /**
-   * {@link establishHolds} for one repository. When the holds of a report of running work (`vetoes`)
-   * cannot be established, the repository refuses every removal ({@link holdsUnknown}) until a later
-   * report from the same session records them, reports none, or the session is deleted.
+   * The idle hook's `background` list, kept as the session's one report on disk: synchronous, before
+   * the hook awaits anything, so a removal that starts a moment later sees it. An empty list is the
+   * session's own word that nothing of it runs: its report is deleted. A write that fails marks the
+   * session `unrecorded` (a hold on every removal) until its next successful write or delete.
    */
-  const writeHoldsIn = async (
-    repo: Repository,
-    sessionID: string,
-    background: ReadonlyArray<BackgroundJob>,
-    locationOf: (id: string) => Promise<Location>,
-    vetoes: () => boolean,
-    seq: number,
-  ) => {
-    const guard = identityOf(repo)
+  const recordHolds = (sessionID: string, background: ReadonlyArray<BackgroundJob>): void => {
+    const root = receiptDirectory(env)
     try {
-      await establishHolds(repo, sessionID, background, locationOf, seq)
-      clearHoldsUnknown(guard, sessionID, seq)
+      if (background.length === 0) clearReport(root, sessionID, now())
+      else writeReport(root, { sessionID, jobs: background.map((job) => ({ ...job })), at: now(), pid: process.pid, host: hostname() })
+      unrecorded.delete(sessionID)
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error)
-      if (vetoes()) markHoldsUnknown(guard, sessionID, { why: `the running work of ${sessionID} could not be recorded in ${repo.cwd} (${why}); ${recovery(sessionID)}`, seq })
-      console.error(`delivery: could not record holds in ${repo.cwd}: ${why}`)
+      if (background.length > 0) unrecorded.set(sessionID, why)
+      console.error(`delivery: could not record the running work of ${sessionID}: ${why}`)
     }
   }
 
-  /**
-   * Write `sessionID`'s holds in `repo` for its report number `seq`. A report whose session's work was
-   * confirmed stopped after it started (stale) writes the hold empty, read under the lock, and a failed
-   * write marks nothing, so it can neither restore a deleted session's hold nor leave a worktree unsafe
-   * on its account. A report older than one that already wrote a worktree's hold leaves that hold alone.
-   */
-  const establishHolds = async (
-    repo: Repository,
-    sessionID: string,
-    background: ReadonlyArray<BackgroundJob>,
-    locationOf: (id: string) => Promise<Location>,
-    seq: number,
-  ) => {
-    const current = () => !staleReport(sessionID, seq)
-    // Where the repository was last observed, so a hold reaches disk without a git wait.
-    const location = repo.veto() ?? (await repo.observe())
-    if (location === null) throw new Error(`the repository at ${repo.cwd} could not be resolved`)
-    const { commonDir: common, key } = location
-    let pending: LandingReceipt[]
-    const directory = resolve(receiptDirectory(env, key))
+  /** A deleted session runs nothing: its report goes, and so does the failure to record one. */
+  const forgetSession = (sessionID: string): void => {
     try {
-      // `listReceipts` reads an unreadable directory as empty; only a missing one has no receipts.
-      readdirSync(directory)
-      pending = pendingReceipts(listReceipts(directory)).slice(0, 100)
+      removeReport(receiptDirectory(env), sessionID)
+      unrecorded.delete(sessionID)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return
-      throw new Error(`its receipts could not be listed (${error instanceof Error ? error.message : String(error)})`, { cause: error })
-    }
-    for (const receipt of pending) {
-      const path = receipt.worktree.path
-      if (path === null) continue
-      const want = canonicalDirectory(path)
-      const jobs: Array<{ kind: string; id: string }> = []
-      for (const job of background) {
-        let inside = job.kind === "shell" && typeof job.command === "string" && job.command.includes(path)
-        for (const id of [job.sessionID, job.childSessionID]) {
-          if (inside || typeof id !== "string") continue
-          const where = await locationOf(id)
-          // A session whose location is still unknown after the bound may work in this worktree: hold it.
-          if (where === UNRESOLVED || (where !== undefined && canonicalDirectory(where) === want)) inside = true
-        }
-        if (inside) jobs.push({ kind: job.kind, id: job.shellID ?? job.childSessionID ?? job.sessionID ?? "unknown" })
-      }
-      try {
-        const wrote = await lockedAt(common, path, () => {
-          // Reports of one session reach the lock in any order: the newest one's hold stands.
-          const written = reports.get(sessionID)?.written
-          if ((written?.get(want) ?? 0) > seq) return false
-          written?.set(want, seq)
-          setHold(common, path, sessionID, current() ? jobs : [], now())
-          return true
-        })
-        // Only a write that landed shows the record is sound; a superseded report leaves a newer failure's mark.
-        if (wrote) unsafe.lift(want, seq)
-      } catch (error) {
-        // The record could not be written, so running work cannot be ruled out: nothing is removed from this worktree until a write succeeds.
-        const why = error instanceof Error ? error.message : String(error)
-        if (current()) unsafe.raise(want, { why: `its running work could not be recorded (${why})`, seq })
-        console.error(`delivery: could not record holds for ${path}: ${why}`)
-      }
+      console.error(`delivery: could not remove the report of deleted session ${sessionID}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -1496,12 +1207,8 @@ export function createPendingCleanup(deps: PendingDeps) {
         await ctx.session.hook(
           "experimental.idle" as never,
           (async (input: { sessionID: string; background?: ReadonlyArray<BackgroundJob> }) => {
-            // Never throws out of the hook: coordination errors mean a held outcome, never a removal.
-            try {
-              await recordHolds(input.sessionID, input.background ?? [])
-            } catch (error) {
-              console.error("delivery: recording holds failed", error)
-            }
+            // Written before anything is awaited; never throws: a failed write is a hold, never a removal.
+            recordHolds(input.sessionID, input.background ?? [])
             await retryNow(input.sessionID, true)
           }) as never,
         ),
@@ -1532,8 +1239,8 @@ export function createPendingCleanup(deps: PendingDeps) {
     dispose,
     prime,
     record,
-    /** How many sessions have report state kept; for tests (it must not grow with deletions). */
-    trackedReports: () => reports.size,
+    /** How many sessions have an unrecorded report; for tests (it must not grow with deletions). */
+    unrecordedCount: () => unrecorded.size,
     deny: denyIn(own),
     arm: armIn(own),
     markNudged: (receiptId: string, worktree: string) => markNudged(receiptId, worktree),

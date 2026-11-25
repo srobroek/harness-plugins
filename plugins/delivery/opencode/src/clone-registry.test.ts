@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { hostname, tmpdir } from "node:os"
 import { dirname, join } from "node:path"
-import { addClone, MAX_CLONES, mergeClone, parseClones, readClones, registryFile, removeClone, settleReceipts, withClone, withoutReceipts } from "./clone-registry.ts"
+import { addClone, MAX_CLONES, mergeClone, parseClones, readClones, registryFile, settleReceipts, withClone, withoutReceipts } from "./clone-registry.ts"
 
 const A = { key: "a".repeat(16), root: "/repos/a" }
 const B = { key: "b".repeat(16), root: "/repos/b" }
@@ -241,24 +241,6 @@ describe("registry lock failure", () => {
       expect(((failure as Error).cause as NodeJS.ErrnoException | undefined)?.code).toBe("EACCES")
     } finally {
       chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
-      rmSync(root, { recursive: true, force: true })
-    }
-  })
-})
-
-describe("removeClone", () => {
-  test("drops one repository and deletes the file when none is left", async () => {
-    const root = mkdtempSync(join(tmpdir(), "delivery-clones-remove-"))
-    const receipts = { DELIVERY_RECEIPTS_DIR: join(root, "receipts") }
-    const session = "c".repeat(16)
-    try {
-      await addClone(receipts, session, A, () => false)
-      await addClone(receipts, session, B, () => false)
-      await removeClone(receipts, session, A.key)
-      expect(readClones(receipts, session)).toEqual([B])
-      await removeClone(receipts, session, B.key)
-      expect(readClones(receipts, session)).toEqual([])
-    } finally {
       rmSync(root, { recursive: true, force: true })
     }
   })
