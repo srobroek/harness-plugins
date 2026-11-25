@@ -1,3 +1,9 @@
+## journeys [0.6.3](https://github.com/srobroek/harness-plugins/compare/journeys--v0.6.2...journeys--v0.6.3) (2026-11-25)
+
+### Bug Fixes
+
+* **journeys:** give the Pi journey validator no skills, as on OpenCode ([ac4f496](https://github.com/srobroek/harness-plugins/commit/ac4f496a4227372bfb62941306f935d7a5838cbf))
+
 ## journeys [0.6.2](https://github.com/srobroek/harness-plugins/compare/journeys--v0.6.1...journeys--v0.6.2) (2026-11-25)
 
 ### Bug Fixes
