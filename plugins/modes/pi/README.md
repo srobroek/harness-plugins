@@ -66,7 +66,7 @@ The guard runs in a main session after `/mode`, and in a child launched as one o
 - Only git and the file tools are path-checked. A script, a build or a shell redirect can still write anywhere, as on OpenCode.
 - pi's `bash` has no working-directory option. A leading `cd <dir> &&` counts as the working directory when the rest of the line is chained with `&&` or pipes. `||`, `;`, `&` and newlines anywhere in the line keep it from counting, and git that writes is then refused.
 - OpenCode asks before reads outside the project; pi does not.
-- In the main session the active tool list only controls what the model sees; the guard is the boundary.
+- In the main session the active tool list only sets which tool definitions pi sends with each request; the guard is the boundary.
 - The agents declare their own `subagentOnlyExtensions`, so `subagents.defaultSubagentOnlyExtensions` does not reach them. To run context-mode in them, see the agent-efficiency README.
 
 The following mode-switching and guard sections describe OpenCode-only behavior.
