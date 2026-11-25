@@ -15,8 +15,8 @@ Answer an already-specified request directly. Ask only for missing context that 
 
 Infer decision type and scope from the request and available evidence. Ask about
 unresolved constraints only, in one round through the channels in the `grilling` skill's
-**Asking questions** section (parley when installed, else the host's question tool, else
-chat), each question with your recommended answer. Research when requested or when current facts are
+**Asking questions** section (your preferred question tool, or chat), each question with
+your recommended answer. Research when requested or when current facts are
 material; do not require the user to choose an agent strategy.
 
 ### Phase 1: Decomposition
@@ -49,13 +49,12 @@ Synthesize into structured sections:
 
 ### Phase 4: Devil's advocate
 
-For a simple request, present the strongest counterargument directly.
-For consequential or contested decisions, first check whether an appropriate
-independent critique agent is available. If one is available, brief it with the
-finished Phase 3 analysis: challenge the strongest pro, identify unstated
-assumptions, and name the strongest argument against the proposal. If no
-appropriate agent is available, run a separate critique pass and label it
-**self-review**, not independent evidence.
+For a simple request, present the strongest counterargument directly. For consequential or
+contested decisions, get an independent critique of the finished Phase 3 analysis: challenge
+the analysis, surface unstated assumptions, and identify the strongest case against the
+proposal. Ask the critic to question the framing instead of accepting it. Without an
+independent critique capability, run a separate critique pass and label it **self-review**,
+not independent evidence.
 
 ### Phase 5: Synthesis
 
@@ -67,8 +66,8 @@ Merge the main analysis with the devil's advocate critique:
 Offer additional rounds only when an unresolved tradeoff warrants discussion. Ask them
 the same way: one question per open tradeoff, usually `show_options` with the
 alternatives' pros and cons and the verdict's pick as the recommendation. When an
-answer opens dependent decisions, hand off to the `grilling` skill. Call `parley_end`
-when you used parley and the debate is done.
+answer opens dependent decisions, hand off to the `grilling` skill. If your preferred
+question tool was used, close the round with it.
 
 ### Phase 6: Save
 

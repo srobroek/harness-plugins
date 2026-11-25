@@ -1,3 +1,20 @@
+## debate [1.0.1](https://github.com/srobroek/harness-plugins/compare/debate--v1.0.0...debate--v1.0.1) (2026-11-25)
+
+### Bug Fixes
+
+* **debate:** restore OMP's Phase 1 heading and ask-tool mapping ([#180](https://github.com/srobroek/harness-plugins/issues/180)) ([f8256c8](https://github.com/srobroek/harness-plugins/commit/f8256c862cc92195839931add541e3155f62b378)), closes [#179](https://github.com/srobroek/harness-plugins/issues/179)
+
+## debate [1.0.0](https://github.com/srobroek/harness-plugins/compare/debate--v0.7.4...debate--v1.0.0) (2026-11-25)
+
+### ⚠ BREAKING CHANGES
+
+* **debate:** the to-questionnaire skill is removed on every harness.
+
+### Features
+
+* **debate:** drop the to-questionnaire skill ([d45393b](https://github.com/srobroek/harness-plugins/commit/d45393b93645a4d8e059c77c9544cf244ac2513c))
+* **debate:** ship debate on pi with council handoff ([553b863](https://github.com/srobroek/harness-plugins/commit/553b86339229e98f337fa3b2fd43e218ca05585a))
+
 ## debate [0.7.4](https://github.com/srobroek/harness-plugins/compare/debate--v0.7.3...debate--v0.7.4) (2026-11-24)
 
 ### Bug Fixes

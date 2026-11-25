@@ -1,6 +1,6 @@
 {
   "name": "delivery",
-  "version": "0.12.5",
+  "version": "0.12.6",
   "description": "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
   "private": true,
   "type": "module",

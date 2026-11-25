@@ -1,0 +1,16 @@
+{
+  "plugin": "debate",
+  "prerequisites": [],
+  "companions": [
+    {
+      "package": "pi-subagents",
+      "for": "council advisors and the council protocol",
+      "required": true
+    },
+    {
+      "package": "@srobroek/pi-architecture",
+      "for": "the architect agent in /council-arch",
+      "required": true
+    }
+  ]
+}

@@ -2,6 +2,7 @@ import { homedir } from "node:os"
 import { Plugin } from "@opencode/plugin"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import type { SessionRetry } from "@opencode/plugin/promise/session"
+import { type EventWatchDeps, watchEvents } from "@srobroek/opencode-lib/event-watch"
 import { hostWarn } from "@srobroek/opencode-lib/host-log"
 import { BACKGROUND_HOLD_MS, type HoldTimer, IdleReports, SYSTEM_HOLD_TIMER } from "@srobroek/opencode-lib/idle-background"
 import { parseVerdict } from "@srobroek/opencode-lib/review-verdict"
@@ -284,6 +285,9 @@ function serial() {
     return next
   }
 }
+
+/** Test seam: the backoff clock of the event watch. */
+export const eventWatchTiming: { -readonly [K in "delaysMs" | "sleep"]?: EventWatchDeps[K] } = {}
 
 export default Plugin.define({
   id: "srobroek.model-roles",
@@ -2429,13 +2433,14 @@ export default Plugin.define({
       }
     })
 
-    void (async () => {
-      for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
-        if (controller.signal.aborted) break
+    const watching = watchEvents<unknown>({
+      subscribe: (signal) => ctx.event.subscribe({ signal })[Symbol.asyncIterator](),
+      handle: async (event) => {
+        if (controller.signal.aborted) return
         const type = isRecord(event) ? event.type : undefined
         if (type === FAILED_EVENT) {
           const data = (event as { data?: { sessionID?: unknown; error?: unknown } }).data
-          if (typeof data?.sessionID !== "string" || !isRecord(data.error)) continue
+          if (typeof data?.sessionID !== "string" || !isRecord(data.error)) return
           const sessionID = data.sessionID
           idleReports.take(sessionID, endedAt(event))
           unhold(sessionID)
@@ -2447,11 +2452,11 @@ export default Plugin.define({
           await queue(() => (claimEvent(noticeState, eventID(event), Date.now()) ? onSessionFailed(sessionID, error) : Promise.resolve())).catch((error) =>
             warn(`fallback after a failed execution did not complete`, { error: String(error) }),
           )
-          continue
+          return
         }
         if (type === SUCCEEDED_EVENT) {
           const sessionID = (event as { data?: { sessionID?: unknown } }).data?.sessionID
-          if (typeof sessionID !== "string") continue
+          if (typeof sessionID !== "string") return
           const model = settleRequest(requestLog, sessionID, endedAt(event))
           if (model !== undefined) healthHistory = recordRecovery(healthHistory, model.providerID, finishedAt(event))
           // Background work the child owns wakes it again; its last idle, its deletion or the hold timeout ends it.
@@ -2464,7 +2469,7 @@ export default Plugin.define({
           }
           pruneChildModels()
           if (noticeState.outages.size > 0) await queue(() => onSessionSucceeded(sessionID, model)).catch(() => {})
-          continue
+          return
         }
         if (type === INTERRUPTED_EVENT) {
           // Neither a success nor a failure: the interrupted request only leaves the log.
@@ -2477,30 +2482,30 @@ export default Plugin.define({
             await outcomes.end(sessionID, "interrupted", finishedAt(event))
             pruneChildModels()
           }
-          continue
+          return
         }
         if (type === TEXT_ENDED_EVENT) {
           const data = (event as { data?: { sessionID?: unknown; text?: unknown } }).data
-          if (typeof data?.sessionID !== "string" || typeof data.text !== "string") continue
+          if (typeof data?.sessionID !== "string" || typeof data.text !== "string") return
           const verdict = parseVerdict(data.text)
           if (verdict !== undefined) await outcomes.signals(data.sessionID, { verdict })
-          continue
+          return
         }
         if (type === STEP_STARTED_EVENT || type === STEP_FIRST_TOKEN_EVENT) {
           const data = (event as { data?: { sessionID?: unknown; started?: unknown } }).data
-          if (typeof data?.sessionID !== "string") continue
+          if (typeof data?.sessionID !== "string") return
           if (type === STEP_FIRST_TOKEN_EVENT) firstTokens.firstToken(data.sessionID, endedAt(event))
           else firstTokens.started(data.sessionID, typeof data.started === "number" ? data.started : endedAt(event))
-          continue
+          return
         }
         if (type === STEP_ENDED_EVENT || type === COMPACTION_ENDED_EVENT) {
           const data = (event as { data?: { sessionID?: unknown; files?: unknown } & Usage }).data
-          if (typeof data?.sessionID !== "string") continue
+          if (typeof data?.sessionID !== "string") return
           if (type === STEP_ENDED_EVENT && Array.isArray(data.files) && touchesTests(data.files.filter((f): f is string => typeof f === "string"), evaluate.testGlobs))
             await outcomes.signals(data.sessionID, { touchedTests: true })
           if (type === STEP_ENDED_EVENT) await outcomes.step(data.sessionID, { ...data, firstTokenMs: firstTokens.take(data.sessionID) })
           else await outcomes.compaction(data.sessionID, data)
-          continue
+          return
         }
         if (type === DELETED_EVENT) {
           const sessionID = (event as { data?: { sessionID?: unknown } }).data?.sessionID
@@ -2515,7 +2520,7 @@ export default Plugin.define({
               await outcomes.end(sessionID, "succeeded", finishedAt(event))
             }
           }
-          continue
+          return
         }
         if (type === STARTED_EVENT) {
           const sessionID = (event as { data?: { sessionID?: unknown } }).data?.sessionID
@@ -2523,18 +2528,18 @@ export default Plugin.define({
           if (typeof sessionID === "string" && typeof id === "string") noteExecution(sessionID, id)
           // A held child woke up: its outcome stays open, and its next end decides it.
           if (typeof sessionID === "string" && heldOpen.has(sessionID)) holdTimer.clearTimeout(heldOpen.get(sessionID)?.timer)
-          continue
+          return
         }
         if (type === CREATED_EVENT) {
           const data = (event as { data?: unknown }).data
           if (isRecord(data)) await onSessionCreated(data).catch(() => {})
-          continue
+          return
         }
         if (type === CONFIG_EVENT) {
           await queue(() => reloadTiers(false)).catch((error) => warn("could not apply the reloaded config", { error: String(error) }))
-          continue
+          return
         }
-        if (typeof type !== "string" || !CHECK_EVENTS.has(type)) continue
+        if (typeof type !== "string" || !CHECK_EVENTS.has(type)) return
         try {
           await queue(async () => {
             const changed = REFRESH_EVENTS.has(type) && (await refresh())
@@ -2545,12 +2550,16 @@ export default Plugin.define({
         } catch {
           // A failed list or transform leaves the current mapping in place; the next event retries.
         }
-      }
-    })().catch(() => {})
+      },
+      warn,
+      label: "model-roles",
+      ...eventWatchTiming,
+    })
 
     return async () => {
       const disposeStart = Date.now()
       controller.abort()
+      watching.stop()
       reassess.dispose()
       if (expiry !== undefined) clearTimeout(expiry)
       for (const sessionID of [...heldOpen.keys()]) unhold(sessionID)

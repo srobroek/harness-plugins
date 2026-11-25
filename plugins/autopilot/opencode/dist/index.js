@@ -4,6 +4,107 @@
 import { fileURLToPath } from "url";
 import { Plugin } from "@opencode/plugin";
 
+// lib/src/event-watch.ts
+function abortableSleep(ms, signal, timers = globalThis) {
+  return new Promise((resolve) => {
+    if (signal.aborted)
+      return resolve();
+    const done = () => {
+      timers.clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = timers.setTimeout(done, ms);
+    timer.unref?.();
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+var DEFAULT_RESUBSCRIBE_DELAYS_MS = [1000, 5000, 15000];
+var errorName = (error) => error instanceof Error ? error.name : typeof error;
+function watchStream(deps) {
+  const { signal } = deps;
+  const sleep = deps.sleep ?? abortableSleep;
+  const delays = deps.delaysMs ?? DEFAULT_RESUBSCRIBE_DELAYS_MS;
+  let current;
+  const consume = async () => {
+    try {
+      current = deps.subscribe();
+    } catch (error) {
+      return errorName(error);
+    }
+    for (;; ) {
+      let next;
+      try {
+        next = await current.next();
+      } catch (error) {
+        return signal.aborted ? undefined : errorName(error);
+      }
+      if (signal.aborted)
+        return;
+      if (next.done)
+        return "stream ended";
+      try {
+        await deps.handle(next.value);
+      } catch (error) {
+        try {
+          deps.onHandlerError?.(error);
+        } catch {}
+      }
+    }
+  };
+  const run = async () => {
+    for (let attempt = 1;; attempt++) {
+      const failure = await consume();
+      if (failure === undefined || signal.aborted)
+        return;
+      const delay = delays[attempt - 1];
+      deps.onFailure({ error: failure, attempt, willRetry: delay !== undefined });
+      if (delay === undefined)
+        return;
+      await sleep(delay, signal);
+      if (signal.aborted)
+        return;
+    }
+  };
+  return {
+    done: run(),
+    stop: () => {
+      try {
+        Promise.resolve(current?.return?.()).catch(() => {
+          return;
+        });
+      } catch {}
+    }
+  };
+}
+function watchEvents(deps) {
+  const controller = new AbortController;
+  const { label, warn } = deps;
+  const safeWarn = (message, error) => {
+    if (controller.signal.aborted)
+      return;
+    try {
+      warn(message, { error });
+    } catch {}
+  };
+  const watch = watchStream({
+    subscribe: () => deps.subscribe(controller.signal),
+    handle: deps.handle,
+    onHandlerError: (error) => safeWarn(`${label} event handler failed`, errorName(error)),
+    onFailure: ({ error, attempt, willRetry }) => safeWarn(willRetry ? `${label} watch failed; resubscribing (attempt ${attempt})` : `${label} watch stopped; later events are no longer handled`, error),
+    signal: controller.signal,
+    sleep: deps.sleep,
+    delaysMs: deps.delaysMs
+  });
+  return {
+    done: watch.done,
+    stop: () => {
+      controller.abort();
+      watch.stop();
+    }
+  };
+}
+
 // lib/src/host-log.ts
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -4767,22 +4868,20 @@ async function setupAutopilot(ctx, deps = {}) {
   registrations.push(await ctx.permission.hook("evaluate", (event) => pilot.evaluate(event).catch(report("permission hook"))));
   registrations.push(await ctx.session.hook("experimental.idle", (event) => pilot.idle(event.sessionID).catch(report("idle hook"))));
   registrations.push(await registerSkills(ctx.skill, [SKILL_FILE]));
-  const abort = new AbortController;
-  const iterator = ctx.event.subscribe({ signal: abort.signal })[Symbol.asyncIterator]();
-  (async () => {
-    for (;; ) {
-      const next = await iterator.next().catch(() => ({ done: true, value: undefined }));
-      if (next.done)
-        return;
-      pilot.activity.observe(next.value);
-      const event = next.value;
+  const watching = watchEvents({
+    subscribe: (signal) => ctx.event.subscribe({ signal })[Symbol.asyncIterator](),
+    handle: (value) => {
+      pilot.activity.observe(value);
+      const event = value;
       if (event.type === "session.compaction.ended" && typeof event.data?.sessionID === "string")
         pilot.compacted(event.data.sessionID).catch(report("compaction recovery"));
-    }
-  })();
+    },
+    warn,
+    label: "autopilot",
+    ...deps.watch
+  });
   return async () => {
-    abort.abort();
-    await iterator.return?.();
+    watching.stop();
     pilot.dispose();
     for (const registration of registrations.reverse())
       await registration.dispose();

@@ -28,31 +28,26 @@ Pick the kind from the decision: `pick_one` or `show_options` for alternatives; 
 or no; `pick_many` for several items; `rank` for an order; `slider` for a number; `ask_text` for
 open answers.
 
-Deliver the round through the first channel that works:
+Deliver each round through your preferred question tool when available. In OMP that is usually
+the interactive `ask` tool: send one question per call, with the title as the header, the first
+paragraph plus `Why: {rationale}` as the question, and the recommended option first with
+`(Recommended)` on its label. Use Yes/No for `confirm`, multiple choice for `pick_many`, preset
+values for `slider`, and one `Use recommended` option for `rank` and `ask_text`.
 
-1. Use `parley_ask` when installed and available. Send the whole round, at most 12 questions.
-   Handle answers by `id`; keep noted constraints, wait on deferred or pending questions, and
-   route unavailable questions to the next channel.
-2. Otherwise use OMP's interactive `ask` tool, one question per call. Use the title as the
-   header, the first paragraph plus `Why: {rationale}` as the question, and put the recommended
-   option first with `(Recommended)` on its label. Use Yes/No for confirmation, multiple choice
-   for `pick_many`, preset values for `slider`, and one `Use recommended` option for `rank` and
-   `ask_text`.
-3. If neither channel works, print the round in chat and wait:
+If no question tool is available, or the tool cannot handle the round, print the round in chat
+and wait:
 
-   ```
-   **Q1** - **Question title** (`node.id`): question body, which may run to several
-   paragraphs and list several choices
-   > your recommended answer, because {rationale}
+```
+**Q1** - **Question title** (`node.id`): question body, which may run to several
+paragraphs and list several choices
+> your recommended answer, because {rationale}
 
-   **Q2** - **Question title** (`node.id`): question body
-   > your recommended answer, because {rationale}
-   ```
+**Q2** - **Question title** (`node.id`): question body
+> your recommended answer, because {rationale}
+```
 
-When the frontier is empty, put the settled tree to the user for approval. With parley, use one
-`review` question with `sections` for settled branches and recommended `approve`; a `revise`
-with feedback reopens named nodes. Otherwise print the summary and ask Yes/No. Call `parley_end`
-if you used parley.
+When the frontier is empty, put the settled tree to the user for approval through your
+preferred question tool or in chat.
 
 ## Rules
 

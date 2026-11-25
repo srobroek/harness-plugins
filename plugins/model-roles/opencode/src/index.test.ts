@@ -10,7 +10,7 @@ import * as Logger from "effect/Logger"
 import { type AgentAssessment, assessmentRows } from "./assess.ts"
 import reference from "./fixtures/reference.json"
 import work from "./fixtures/work-models.json"
-import plugin, { CHILD_LOOKUP_MS, MAX_REREGISTER, type ModelRef, readAgents, readTiers, setExploreRandom, setHoldTimer, spawnTarget } from "./index.ts"
+import plugin, { CHILD_LOOKUP_MS, eventWatchTiming, MAX_REREGISTER, type ModelRef, readAgents, readTiers, setExploreRandom, setHoldTimer, spawnTarget } from "./index.ts"
 import { adoptPlan } from "./tiers-draft.ts"
 import type { TierRow } from "./tiers-ui.ts"
 
@@ -89,6 +89,8 @@ function createHost(input: {
     for (const transform of toolTransforms) transform(editor)
     subagent = current
   }
+  let breakNext = false
+  let subscriptions = 0
   const emit = (event: unknown) => {
     queue.push(event)
     wake?.()
@@ -209,10 +211,14 @@ function createHost(input: {
     },
     event: {
       subscribe: () => ({
-        [Symbol.asyncIterator]: () => ({
+        [Symbol.asyncIterator]: () => (subscriptions++, {
           next: async () => {
-            while (queue.length === 0 && !closed) await new Promise<void>((r) => (wake = r))
+            while (queue.length === 0 && !closed && !breakNext) await new Promise<void>((r) => (wake = r))
             wake = undefined
+            if (breakNext) {
+              breakNext = false
+              throw new TypeError("stream broke")
+            }
             if (queue.length > 0) return { value: queue.shift(), done: false }
             return { value: undefined, done: true }
           },
@@ -252,6 +258,12 @@ function createHost(input: {
       emit({ type: "model.updated" })
     },
     emit,
+    /** Make the open event stream fail once, as a dropped connection does. */
+    breakStream: () => {
+      breakNext = true
+      wake?.()
+    },
+    subscriptions: () => subscriptions,
     toolHooks: () => toolHooks.filter((hook) => hook.name === "execute.before").length,
     subagent: () => subagent,
     toolReplays: () => toolReplays,
@@ -1445,6 +1457,29 @@ describe("runtime fallback", () => {
     expect(after).not.toContain("still out")
     host.close()
     await cleanup()
+  })
+
+  test("a failed event stream is resubscribed and later events are still handled", async () => {
+    eventWatchTiming.sleep = async () => {}
+    try {
+      const host = createHost({ agents: [{ id: "build" }], models, options: fallbackOptions })
+      const cleanup = await setup(host)
+      const run = async () => (await host.tools.get("model_roles_check")?.execute({}))?.content ?? ""
+      const quota = { type: "provider.quota", message: "You exceeded your current quota", status: 429 }
+      await host.fireRetry({ sessionID: "r", agent: "build", model: sonnet, error: quota, attempt: 2 })
+      expect(host.subscriptions()).toBe(1)
+      host.breakStream()
+      while (host.subscriptions() < 2) await new Promise((resolve) => setTimeout(resolve, 0))
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      host.fireModelRequest({}, { sessionID: "r", model: sonnet, kind: "primary" })
+      host.emit({ type: "session.execution.succeeded", data: { sessionID: "r" } })
+      await settle()
+      expect(await run()).toMatch(/recovered \d\d:\d\d:\d\d/)
+      host.close()
+      await cleanup()
+    } finally {
+      delete eventWatchTiming.sleep
+    }
   })
 
   test("a non-retryable model error is retried on the next model; other errors are left alone", async () => {

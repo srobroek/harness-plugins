@@ -4,6 +4,107 @@
 import { homedir } from "os";
 import { Plugin } from "@opencode/plugin";
 
+// lib/src/event-watch.ts
+function abortableSleep(ms, signal, timers = globalThis) {
+  return new Promise((resolve) => {
+    if (signal.aborted)
+      return resolve();
+    const done = () => {
+      timers.clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = timers.setTimeout(done, ms);
+    timer.unref?.();
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+var DEFAULT_RESUBSCRIBE_DELAYS_MS = [1000, 5000, 15000];
+var errorName = (error) => error instanceof Error ? error.name : typeof error;
+function watchStream(deps) {
+  const { signal } = deps;
+  const sleep = deps.sleep ?? abortableSleep;
+  const delays = deps.delaysMs ?? DEFAULT_RESUBSCRIBE_DELAYS_MS;
+  let current;
+  const consume = async () => {
+    try {
+      current = deps.subscribe();
+    } catch (error) {
+      return errorName(error);
+    }
+    for (;; ) {
+      let next;
+      try {
+        next = await current.next();
+      } catch (error) {
+        return signal.aborted ? undefined : errorName(error);
+      }
+      if (signal.aborted)
+        return;
+      if (next.done)
+        return "stream ended";
+      try {
+        await deps.handle(next.value);
+      } catch (error) {
+        try {
+          deps.onHandlerError?.(error);
+        } catch {}
+      }
+    }
+  };
+  const run = async () => {
+    for (let attempt = 1;; attempt++) {
+      const failure = await consume();
+      if (failure === undefined || signal.aborted)
+        return;
+      const delay = delays[attempt - 1];
+      deps.onFailure({ error: failure, attempt, willRetry: delay !== undefined });
+      if (delay === undefined)
+        return;
+      await sleep(delay, signal);
+      if (signal.aborted)
+        return;
+    }
+  };
+  return {
+    done: run(),
+    stop: () => {
+      try {
+        Promise.resolve(current?.return?.()).catch(() => {
+          return;
+        });
+      } catch {}
+    }
+  };
+}
+function watchEvents(deps) {
+  const controller = new AbortController;
+  const { label, warn } = deps;
+  const safeWarn = (message, error) => {
+    if (controller.signal.aborted)
+      return;
+    try {
+      warn(message, { error });
+    } catch {}
+  };
+  const watch = watchStream({
+    subscribe: () => deps.subscribe(controller.signal),
+    handle: deps.handle,
+    onHandlerError: (error) => safeWarn(`${label} event handler failed`, errorName(error)),
+    onFailure: ({ error, attempt, willRetry }) => safeWarn(willRetry ? `${label} watch failed; resubscribing (attempt ${attempt})` : `${label} watch stopped; later events are no longer handled`, error),
+    signal: controller.signal,
+    sleep: deps.sleep,
+    delaysMs: deps.delaysMs
+  });
+  return {
+    done: watch.done,
+    stop: () => {
+      controller.abort();
+      watch.stop();
+    }
+  };
+}
+
 // lib/src/host-log.ts
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -6037,6 +6138,7 @@ function serial() {
     return next;
   };
 }
+var eventWatchTiming = {};
 var src_default = Plugin.define({
   id: "srobroek.model-roles",
   async setup(ctx) {
@@ -7883,15 +7985,16 @@ ${refs.size}`;
         warn(`could not record the subagent failure`, { error: String(error) });
       }
     });
-    (async () => {
-      for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+    const watching = watchEvents({
+      subscribe: (signal) => ctx.event.subscribe({ signal })[Symbol.asyncIterator](),
+      handle: async (event) => {
         if (controller.signal.aborted)
-          break;
+          return;
         const type = isRecord11(event) ? event.type : undefined;
         if (type === FAILED_EVENT) {
           const data = event.data;
           if (typeof data?.sessionID !== "string" || !isRecord11(data.error))
-            continue;
+            return;
           const sessionID = data.sessionID;
           idleReports.take(sessionID, endedAt(event));
           unhold(sessionID);
@@ -7901,12 +8004,12 @@ ${refs.size}`;
           await outcomes.end(sessionID, `failed:${classifyFailure(error) ?? "other"}`, finishedAt(event));
           pruneChildModels();
           await queue(() => claimEvent(noticeState, eventID(event), Date.now()) ? onSessionFailed(sessionID, error) : Promise.resolve()).catch((error) => warn(`fallback after a failed execution did not complete`, { error: String(error) }));
-          continue;
+          return;
         }
         if (type === SUCCEEDED_EVENT) {
           const sessionID = event.data?.sessionID;
           if (typeof sessionID !== "string")
-            continue;
+            return;
           const model = settleRequest(requestLog, sessionID, endedAt(event));
           if (model !== undefined)
             healthHistory = recordRecovery(healthHistory, model.providerID, finishedAt(event));
@@ -7920,7 +8023,7 @@ ${refs.size}`;
           pruneChildModels();
           if (noticeState.outages.size > 0)
             await queue(() => onSessionSucceeded(sessionID, model)).catch(() => {});
-          continue;
+          return;
         }
         if (type === INTERRUPTED_EVENT) {
           const sessionID = event.data?.sessionID;
@@ -7932,38 +8035,38 @@ ${refs.size}`;
             await outcomes.end(sessionID, "interrupted", finishedAt(event));
             pruneChildModels();
           }
-          continue;
+          return;
         }
         if (type === TEXT_ENDED_EVENT) {
           const data = event.data;
           if (typeof data?.sessionID !== "string" || typeof data.text !== "string")
-            continue;
+            return;
           const verdict = parseVerdict(data.text);
           if (verdict !== undefined)
             await outcomes.signals(data.sessionID, { verdict });
-          continue;
+          return;
         }
         if (type === STEP_STARTED_EVENT || type === STEP_FIRST_TOKEN_EVENT) {
           const data = event.data;
           if (typeof data?.sessionID !== "string")
-            continue;
+            return;
           if (type === STEP_FIRST_TOKEN_EVENT)
             firstTokens.firstToken(data.sessionID, endedAt(event));
           else
             firstTokens.started(data.sessionID, typeof data.started === "number" ? data.started : endedAt(event));
-          continue;
+          return;
         }
         if (type === STEP_ENDED_EVENT || type === COMPACTION_ENDED_EVENT) {
           const data = event.data;
           if (typeof data?.sessionID !== "string")
-            continue;
+            return;
           if (type === STEP_ENDED_EVENT && Array.isArray(data.files) && touchesTests(data.files.filter((f) => typeof f === "string"), evaluate.testGlobs))
             await outcomes.signals(data.sessionID, { touchedTests: true });
           if (type === STEP_ENDED_EVENT)
             await outcomes.step(data.sessionID, { ...data, firstTokenMs: firstTokens.take(data.sessionID) });
           else
             await outcomes.compaction(data.sessionID, data);
-          continue;
+          return;
         }
         if (type === DELETED_EVENT) {
           const sessionID = event.data?.sessionID;
@@ -7978,7 +8081,7 @@ ${refs.size}`;
               await outcomes.end(sessionID, "succeeded", finishedAt(event));
             }
           }
-          continue;
+          return;
         }
         if (type === STARTED_EVENT) {
           const sessionID = event.data?.sessionID;
@@ -7987,20 +8090,20 @@ ${refs.size}`;
             noteExecution(sessionID, id);
           if (typeof sessionID === "string" && heldOpen.has(sessionID))
             holdTimer.clearTimeout(heldOpen.get(sessionID)?.timer);
-          continue;
+          return;
         }
         if (type === CREATED_EVENT) {
           const data = event.data;
           if (isRecord11(data))
             await onSessionCreated(data).catch(() => {});
-          continue;
+          return;
         }
         if (type === CONFIG_EVENT) {
           await queue(() => reloadTiers(false)).catch((error) => warn("could not apply the reloaded config", { error: String(error) }));
-          continue;
+          return;
         }
         if (typeof type !== "string" || !CHECK_EVENTS.has(type))
-          continue;
+          return;
         try {
           await queue(async () => {
             const changed = REFRESH_EVENTS.has(type) && await refresh();
@@ -8011,11 +8114,15 @@ ${refs.size}`;
               await refreshSubagentTool();
           });
         } catch {}
-      }
-    })().catch(() => {});
+      },
+      warn,
+      label: "model-roles",
+      ...eventWatchTiming
+    });
     return async () => {
       const disposeStart = Date.now();
       controller.abort();
+      watching.stop();
       reassess.dispose();
       if (expiry !== undefined)
         clearTimeout(expiry);
@@ -8197,6 +8304,7 @@ export {
   desiredModels,
   duration,
   effectiveConfig,
+  eventWatchTiming,
   exitStatusOf,
   expandRole,
   explainSpawn,

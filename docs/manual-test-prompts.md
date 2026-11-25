@@ -735,15 +735,6 @@ Grill me on my plan to rewrite the CLI in Rust.
 **Expect:** loads `grilling` and asks numbered rounds (in the parley panel when it is installed).
 **If not:** `plugins/debate/common/skills/grilling/SKILL.md`.
 
-### Skill `to-questionnaire`
-
-```text
-Write a questionnaire for my product manager about which login providers we must support.
-```
-
-**Expect:** loads `to-questionnaire` and writes the questionnaire to a named path or `~/tmp`.
-**If not:** `plugins/debate/common/skills/to-questionnaire/SKILL.md`.
-
 ## delivery
 
 **Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/delivery/opencode'`.

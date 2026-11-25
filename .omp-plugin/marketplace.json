@@ -59,9 +59,9 @@
     },
     {
       "name": "debate",
-      "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
+      "description": "Stress-test a decision from both sides or grill a plan in frontier rounds.",
       "source": "./plugins/debate/omp",
-      "version": "0.7.4",
+      "version": "1.0.1",
       "category": "productivity"
     },
     {
@@ -124,7 +124,7 @@
       "name": "project",
       "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
       "source": "./plugins/project/omp",
-      "version": "0.12.5",
+      "version": "1.0.0",
       "category": "productivity"
     },
     {

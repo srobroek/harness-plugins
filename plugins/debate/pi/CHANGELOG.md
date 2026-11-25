@@ -1,0 +1,113 @@
+## debate [1.0.1](https://github.com/srobroek/harness-plugins/compare/debate--v1.0.0...debate--v1.0.1) (2026-11-25)
+
+### Bug Fixes
+
+* **debate:** restore OMP's Phase 1 heading and ask-tool mapping ([#180](https://github.com/srobroek/harness-plugins/issues/180)) ([f8256c8](https://github.com/srobroek/harness-plugins/commit/f8256c862cc92195839931add541e3155f62b378)), closes [#179](https://github.com/srobroek/harness-plugins/issues/179)
+
+## debate [1.0.0](https://github.com/srobroek/harness-plugins/compare/debate--v0.7.4...debate--v1.0.0) (2026-11-25)
+
+### ⚠ BREAKING CHANGES
+
+* **debate:** the to-questionnaire skill is removed on every harness.
+
+### Features
+
+* **debate:** drop the to-questionnaire skill ([d45393b](https://github.com/srobroek/harness-plugins/commit/d45393b93645a4d8e059c77c9544cf244ac2513c))
+* **debate:** ship debate on pi with council handoff ([553b863](https://github.com/srobroek/harness-plugins/commit/553b86339229e98f337fa3b2fd43e218ca05585a))
+
+## debate [0.7.4](https://github.com/srobroek/harness-plugins/compare/debate--v0.7.3...debate--v0.7.4) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## debate [0.7.3](https://github.com/srobroek/harness-plugins/compare/debate--v0.7.2...debate--v0.7.3) (2026-11-24)
+
+### Bug Fixes
+
+* **debate:** regenerate questionnaire destinations ([6691783](https://github.com/srobroek/harness-plugins/commit/66917836576fd51fe6205651768c68645f23b72f))
+* **debate:** use portable questionnaire destinations ([dc4a21f](https://github.com/srobroek/harness-plugins/commit/dc4a21fcfd48507527290830a9ac736c1f57e15b))
+
+## debate [0.7.2](https://github.com/srobroek/harness-plugins/compare/debate--v0.7.1...debate--v0.7.2) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## debate [0.7.1](https://github.com/srobroek/harness-plugins/compare/debate--v0.7.0...debate--v0.7.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
+## debate [0.7.0](https://github.com/srobroek/harness-plugins/compare/debate--v0.6.0...debate--v0.7.0) (2026-11-23)
+
+### Features
+
+* ship seven skills plugins to OMP ([6658a5f](https://github.com/srobroek/harness-plugins/commit/6658a5fe470ab0f1eea0e41803af29b98e7e3a27))
+
+## debate [0.6.0](https://github.com/srobroek/harness-plugins/compare/debate--v0.5.1...debate--v0.6.0) (2026-11-22)
+
+### Features
+
+* **delivery:** ship the orchestrator agent ([#121](https://github.com/srobroek/harness-plugins/issues/121)) ([53f33c0](https://github.com/srobroek/harness-plugins/commit/53f33c016315732220a7c87066267931ee87f514))
+
+## debate [0.5.1](https://github.com/srobroek/harness-plugins/compare/debate--v0.5.0...debate--v0.5.1) (2026-11-21)
+
+### Bug Fixes
+
+* **code-challenge:** close dogfood friction in skill, schema and validation ([043a8b3](https://github.com/srobroek/harness-plugins/commit/043a8b39057ec8fca54d09adebb0532c2154e330))
+
+# Changelog
+
+## [0.5.0](https://github.com/srobroek/opencode-plugins/compare/debate--v0.4.0...debate--v0.5.0) (2026-11-20)
+
+
+### Features
+
+* plugin scan fixes, wider agent access and the plugin-audit plugin ([9c71525](https://github.com/srobroek/opencode-plugins/commit/9c7152559776aaf80cfed9626d78bafdd845fa9a))
+* **plugin-audit:** add plugin_audit_scan tool and plugin-audit skill ([d400433](https://github.com/srobroek/opencode-plugins/commit/d4004330e9a922d8e832b6f3266502141eaea4a3))
+
+
+### Refactors
+
+* **lib:** one MCP tool grant table for the tools option ([f8cc1d8](https://github.com/srobroek/opencode-plugins/commit/f8cc1d817d62b211b712d1889200f7c91f049c89))
+
+## [0.4.0](https://github.com/srobroek/opencode-plugins/compare/debate--v0.3.0...debate--v0.4.0) (2026-11-19)
+
+
+### Features
+
+* **modes:** debug, refactor and concept agents ([6369b8a](https://github.com/srobroek/opencode-plugins/commit/6369b8ae6c4ca35c664f094b60c28d356cc13298))
+* **safety:** secret_store tool stores a generated or command-issued secret without a shell ([d84a1d2](https://github.com/srobroek/opencode-plugins/commit/d84a1d22b0ff6e72f327fb185c512b2296a80a1e))
+
+## [0.3.0](https://github.com/srobroek/opencode-plugins/compare/debate--v0.2.1...debate--v0.3.0) (2026-11-13)
+
+
+### Features
+
+* **agents:** a tools option that lets read-only and coding agents call allowed MCP tools ([70558c3](https://github.com/srobroek/opencode-plugins/commit/70558c30dc450faec7e6012cdb0f678f1ecd7f01))
+
+## [0.2.1](https://github.com/srobroek/opencode-plugins/compare/debate--v0.2.0...debate--v0.2.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **lib:** keep a shipped agent hidden when the host prefills hidden: false ([6156c94](https://github.com/srobroek/opencode-plugins/commit/6156c946f8a5265ff5498bb4062a9d822bbd0555))
+
+## [0.2.0](https://github.com/srobroek/opencode-plugins/compare/debate--v0.1.0...debate--v0.2.0) (2026-10-27)
+
+
+### Features
+
+* **debate:** add debate, grilling and to-questionnaire skills ([280d4d3](https://github.com/srobroek/opencode-plugins/commit/280d4d337bf33c8072693d890b536e16a0785133))
+* **debate:** ask grilling, debate and to-questionnaire rounds through parley ([d7dfd5c](https://github.com/srobroek/opencode-plugins/commit/d7dfd5cc8b5393526a7caaadd50c0b289c61f9e0))
+* **lib:** carry steps and the model-role header from shipped agent files ([7538ab1](https://github.com/srobroek/opencode-plugins/commit/7538ab1a05b3071564defb2ab11ce356245c3890))
+* **lib:** honour metadata opencode/autoinvoke in shipped SKILL.md files ([881e7df](https://github.com/srobroek/opencode-plugins/commit/881e7df220095d0155b07437e733fdb795d9279b))
+* **lib:** shared review core composed into agents at build time ([d79c79b](https://github.com/srobroek/opencode-plugins/commit/d79c79b48ba09d5770c7586799f856237f3b00af))
+
+
+### Performance
+
+* **parley:** route the parley tools through Code Mode and trim their schema ([85640c9](https://github.com/srobroek/opencode-plugins/commit/85640c9cd5f6a886c3518ba9d28885331358a868))
+* shorten skill descriptions and hide pure reference skills from the listing ([51841bd](https://github.com/srobroek/opencode-plugins/commit/51841bd68ae7fe809711430fe3430b75b63e81c0))

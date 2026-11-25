@@ -495,7 +495,7 @@
     },
     {
       "name": "autopilot",
-      "version": "1.4.1",
+      "version": "1.4.2",
       "description": "Unattended runs: /autopilot arms a no-questions session with a journal, a 4-minute tick and stop conditions.",
       "category": "development",
       "harnesses": {
@@ -913,15 +913,14 @@
     },
     {
       "name": "debate",
-      "version": "0.7.4",
-      "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
+      "version": "1.0.1",
+      "description": "Stress-test a decision from both sides or grill a plan in frontier rounds.",
       "category": "productivity",
       "harnesses": {
         "opencode": {
           "skills": [
             "debate",
-            "grilling",
-            "to-questionnaire"
+            "grilling"
           ],
           "agents": [],
           "commands": [],
@@ -936,8 +935,7 @@
         "claude": {
           "skills": [
             "debate",
-            "grilling",
-            "to-questionnaire"
+            "grilling"
           ],
           "agents": [],
           "commands": [],
@@ -950,8 +948,7 @@
         "omp": {
           "skills": [
             "debate",
-            "grilling",
-            "to-questionnaire"
+            "grilling"
           ],
           "agents": [],
           "commands": [],
@@ -960,13 +957,46 @@
           "tools": [],
           "extensions": [],
           "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "debate",
+            "grilling"
+          ],
+          "agents": [
+            "council-advocate",
+            "council-pragmatist",
+            "council-security",
+            "council-skeptic"
+          ],
+          "commands": [
+            "council-arch",
+            "council-security"
+          ],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [],
+          "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "companions": [
+        {
+          "package": "pi-subagents",
+          "for": "council advisors and the council protocol",
+          "required": true
+        },
+        {
+          "package": "@srobroek/pi-architecture",
+          "for": "the architect agent in /council-arch",
+          "required": true
+        }
+      ]
     },
     {
       "name": "delivery",
-      "version": "0.12.5",
+      "version": "0.12.6",
       "description": "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
       "category": "development",
       "harnesses": {
@@ -1714,7 +1744,7 @@
     },
     {
       "name": "model-roles",
-      "version": "0.11.2",
+      "version": "0.11.3",
       "description": "Give agents a model tier (cheap, standard, strong, reviewer) derived from the model catalog, and resolve each tier to the first available candidate.",
       "category": "development",
       "harnesses": {
@@ -1834,7 +1864,7 @@
     },
     {
       "name": "project",
-      "version": "0.12.5",
+      "version": "1.0.0",
       "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
       "category": "productivity",
       "harnesses": {
@@ -2090,7 +2120,7 @@
     },
     {
       "name": "safety",
-      "version": "0.14.5",
+      "version": "0.14.6",
       "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help and redaction of secret environment values from tool output.",
       "category": "development",
       "harnesses": {

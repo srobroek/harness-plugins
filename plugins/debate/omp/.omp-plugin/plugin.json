@@ -1,6 +1,6 @@
 {
   "name": "debate",
-  "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
-  "version": "0.7.4",
+  "description": "Stress-test a decision from both sides or grill a plan in frontier rounds.",
+  "version": "1.0.1",
   "category": "productivity"
 }

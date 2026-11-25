@@ -1,16 +1,29 @@
 {
   "name": "debate",
-  "version": "0.7.4",
-  "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
+  "version": "1.0.1",
+  "description": "Stress-test a decision from both sides or grill a plan in frontier rounds.",
   "private": true,
   "type": "module",
   "agent-plugins": {
-    "description": "Stress-test a decision from both sides, grill a plan in frontier rounds, or write a questionnaire for someone else.",
+    "description": "Stress-test a decision from both sides or grill a plan in frontier rounds.",
     "category": "productivity",
     "harnesses": [
       "opencode",
       "claude",
-      "omp"
+      "omp",
+      "pi"
+    ],
+    "companions": [
+      {
+        "package": "pi-subagents",
+        "for": "council advisors and the council protocol",
+        "required": true
+      },
+      {
+        "package": "@srobroek/pi-architecture",
+        "for": "the architect agent in /council-arch",
+        "required": true
+      }
     ],
     "scope": "global",
     "entries": {

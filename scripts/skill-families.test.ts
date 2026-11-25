@@ -17,10 +17,7 @@ const FAMILIES: Readonly<Record<string, readonly string[]>> = {
  * by id next to the family pattern, so keep this list short and add no new entries.
  */
 const EXCEPTIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-  debate: {
-    grilling: "debate and to-questionnaire name it by id",
-    "to-questionnaire": "grilling hands off to it by id",
-  },
+  debate: { grilling: "debate routes deeper interviews to it by id" },
   design: {
     "accessibility-audit": "design-guide routes to it by id",
     "motion-design": "design-guide routes to it by id",
