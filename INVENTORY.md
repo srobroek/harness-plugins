@@ -42,7 +42,7 @@
 | safety | 0.14.6 | development | global | opencode, pi |
 | secret-store | 1.0.2 | development | global | opencode, pi |
 | session | 0.4.2 | development | global | opencode |
-| speckit-beads | 1.0.0 | development | project | opencode, claude, pi |
+| speckit-beads | 1.0.1 | development | project | opencode, claude, pi |
 | statusline | 0.4.0 | development | global | opencode |
 | subagent-worktree | 0.9.2 | development | global | opencode |
 | toolchain | 0.10.4 | development | global | opencode, claude, omp, pi |

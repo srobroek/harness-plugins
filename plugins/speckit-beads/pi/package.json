@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/pi-speckit-beads",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "SpecKit on Beads: a tasks.md guard, setup, ledger and bugfix skills, formulas, and the speckit-sync and speckit-verify subagents.",
   "keywords": [
     "pi-package"

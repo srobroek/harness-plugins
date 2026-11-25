@@ -174,7 +174,7 @@
       "name": "speckit-beads",
       "description": "SpecKit on Beads: a tasks.md guard, setup, ledger and bugfix skills, formulas, and the speckit-sync and speckit-verify subagents.",
       "source": "./plugins/speckit-beads/claude",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/speckit-beads",
       "repository": "https://github.com/srobroek/harness-plugins"

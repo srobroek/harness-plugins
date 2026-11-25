@@ -1,3 +1,9 @@
+## speckit-beads [1.0.1](https://github.com/srobroek/harness-plugins/compare/speckit-beads--v1.0.0...speckit-beads--v1.0.1) (2026-11-25)
+
+### Bug Fixes
+
+* **speckit-beads:** pin the spec agent's workspace check to the repository ([2acceca](https://github.com/srobroek/harness-plugins/commit/2acceca26fa4c4fb4f5b0a8b04c8e4e01313caff))
+
 ## speckit-beads 1.0.0 (2026-11-25)
 
 ### Features
