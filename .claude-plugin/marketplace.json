@@ -102,7 +102,7 @@
       "name": "lang-go",
       "description": "Go skills: build, lint, go test -race, tidy and govulncheck checks, testing and fuzzing, module and package layout, and pprof profiling.",
       "source": "./plugins/lang-go/claude",
-      "version": "0.10.0",
+      "version": "0.10.1",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/lang-go",
       "repository": "https://github.com/srobroek/harness-plugins"

@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/pi-lang-go",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Go skills: build, lint, go test -race, tidy and govulncheck checks, testing and fuzzing, module and package layout, and pprof profiling.",
   "keywords": [
     "pi-package"
