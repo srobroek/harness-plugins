@@ -1,3 +1,9 @@
+## model-roles [0.11.3](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.11.2...model-roles--v0.11.3) (2026-11-25)
+
+### Bug Fixes
+
+* **delivery,autopilot,model-roles:** resubscribe event watchers after a stream error ([#153](https://github.com/srobroek/harness-plugins/issues/153)) ([28e6922](https://github.com/srobroek/harness-plugins/commit/28e6922dfa90dea8b4b87bafe388f20fd71cbc58))
+
 ## model-roles [0.11.2](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.11.1...model-roles--v0.11.2) (2026-11-23)
 
 ### Bug Fixes
