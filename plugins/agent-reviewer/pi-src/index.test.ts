@@ -109,6 +109,7 @@ describe("agent-reviewer pi extension", () => {
         if (event === "tool_call") handler = fn
       },
       getSessionName: () => sessionName,
+      registerTool: () => undefined,
     } as never)
     return handler as Handler
   }

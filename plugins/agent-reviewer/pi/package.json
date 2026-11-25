@@ -30,7 +30,8 @@
     "@srobroek/pi-repomix": "*",
     "@srobroek/pi-whats-new": "*",
     "pi-lens": "*",
-    "pi-web-access": "*"
+    "pi-web-access": "*",
+    "typebox": "*"
   },
   "peerDependenciesMeta": {
     "@srobroek/pi-code-quality": {
