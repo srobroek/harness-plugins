@@ -19,8 +19,8 @@ const TIMEOUT_MS = 120_000
 type Message = { id?: number; method?: string; result?: { tools?: unknown[] }; error?: unknown }
 
 const cwd = mkdtempSync(path.join(tmpdir(), "playwright-tools-"))
-// The tool list does not depend on the browser mode; headless keeps the recording from opening a window.
-const server = playwrightMcp(cwd, true)
+// The tool list does not depend on the browser or the mode; headless keeps the recording from opening a window.
+const server = playwrightMcp(cwd, { browser: "chromium", headless: true })
 const child = Bun.spawn([server.command, ...server.args], {
   cwd: server.cwd,
   env: { ...process.env, ...server.env },

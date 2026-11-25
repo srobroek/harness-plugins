@@ -4,10 +4,14 @@
 import { expect, test } from "bun:test"
 import { readdirSync, readFileSync } from "node:fs"
 import {
+  BROWSER_ENV,
+  CHROME_PATHS,
   HEADLESS_ENV,
   HIDDEN_TOOLS,
+  hostBrowserMode,
   PLAYWRIGHT_ARGS,
   PLAYWRIGHT_MCP_VERSION,
+  playwrightBrowser,
   playwrightHeadless,
   playwrightMcp,
   TOOL_REVIEW,
@@ -88,7 +92,7 @@ test("a visible tool takes a file only to save its own output, and code only for
 
 test("the server hides the tools that read local files into the page or run code outside it", () => {
   expect(HIDDEN_TOOLS.toSorted()).toEqual(["browser_drop", "browser_file_upload", "browser_run_code_unsafe"])
-  expect(playwrightMcp("/scratch", false).toolExposure).toEqual({
+  expect(playwrightMcp("/scratch", { browser: "chrome", headless: false }).toolExposure).toEqual({
     browser_drop: "hidden",
     browser_file_upload: "hidden",
     browser_run_code_unsafe: "hidden",
@@ -100,15 +104,15 @@ test("no optional capability or unrestricted file access is turned on", () => {
   expect(args.filter((arg) => arg === "--caps" || arg === "--allow-unrestricted-file-access")).toEqual([])
   expect(PLAYWRIGHT_ARGS).toContain("--ignore-roots")
   expect(PLAYWRIGHT_ARGS).toContain("--isolated")
-  expect(PLAYWRIGHT_ARGS).not.toContain("--headless")
+  expect(args.filter((arg) => arg === "--headless" || arg === "--browser")).toEqual([])
   expect(recording.tools.map(({ name }) => name).filter((name) => /storage|cookie|route|pdf|tracing|video/.test(name))).toEqual([])
 })
 
 test("the server's working directory is the scratch workspace it is given", () => {
-  expect(playwrightMcp("/scratch/pi-design-playwright-x", false)).toMatchObject({
+  expect(playwrightMcp("/scratch/pi-design-playwright-x", { browser: "chrome", headless: false })).toMatchObject({
     command: "npx",
     cwd: "/scratch/pi-design-playwright-x",
-    args: [...PLAYWRIGHT_ARGS],
+    args: [...PLAYWRIGHT_ARGS, "--browser", "chrome"],
   })
   expect(PLAYWRIGHT_ARGS.slice(0, 2)).toEqual(["-y", `@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}`])
 })
@@ -133,15 +137,31 @@ test("PLAYWRIGHT_MCP_HEADLESS overrides the rule both ways, and other values are
   expect(playwrightHeadless({ [HEADLESS_ENV]: "yes" }, "darwin")).toBe(false)
 })
 
-test("the mode reaches the server as --headless and as an explicit PLAYWRIGHT_MCP_HEADLESS", () => {
-  const headless = playwrightMcp("/w", true)
-  expect(headless.args).toEqual([...PLAYWRIGHT_ARGS, "--headless"])
+test("the mode reaches the server as --browser, --headless and an explicit PLAYWRIGHT_MCP_HEADLESS", () => {
+  const headless = playwrightMcp("/w", { browser: "chromium", headless: true })
+  expect(headless.args).toEqual([...PLAYWRIGHT_ARGS, "--browser", "chromium", "--headless"])
   expect(headless.env[HEADLESS_ENV]).toBe("true")
-  expect(headless.description).toStartWith("Headless,")
-  const headed = playwrightMcp("/w", false)
-  expect(headed.args).toEqual([...PLAYWRIGHT_ARGS])
+  expect(headless.description).toStartWith("Headless, isolated chromium")
+  const headed = playwrightMcp("/w", { browser: "chrome", headless: false })
+  expect(headed.args).toEqual([...PLAYWRIGHT_ARGS, "--browser", "chrome"])
   expect(headed.env[HEADLESS_ENV]).toBe("false")
-  expect(headed.description).toStartWith("Headed,")
+  expect(headed.description).toStartWith("Headed, isolated chrome")
+})
+
+test("Google Chrome is used where it is installed, Playwright's Chromium where it is not", () => {
+  const only = (path: string) => (candidate: string) => candidate === path
+  expect(playwrightBrowser({}, "darwin", only(CHROME_PATHS.darwin as string))).toBe("chrome")
+  expect(playwrightBrowser({}, "darwin", () => false)).toBe("chromium")
+  expect(playwrightBrowser({}, "linux", only(CHROME_PATHS.linux as string))).toBe("chrome")
+  expect(playwrightBrowser({}, "linux", () => false)).toBe("chromium")
+  expect(playwrightBrowser({}, "win32", () => false)).toBe("chrome")
+  expect(playwrightBrowser({ [BROWSER_ENV]: "msedge" }, "linux", () => false)).toBe("msedge")
+  expect(playwrightBrowser({ [BROWSER_ENV]: " " }, "linux", () => false)).toBe("chromium")
+})
+
+test("a Linux ARM server without a display gets headless Chromium; a Mac with Chrome gets headed Chrome", () => {
+  expect(hostBrowserMode({}, "linux", () => false)).toEqual({ browser: "chromium", headless: true })
+  expect(hostBrowserMode({}, "darwin", () => true)).toEqual({ browser: "chrome", headless: false })
 })
 
 test("the design agents select no MCP server but the package's isolated browser", () => {

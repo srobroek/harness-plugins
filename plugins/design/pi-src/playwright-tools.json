@@ -4,8 +4,6 @@
     "-y",
     "@playwright/mcp@0.0.86",
     "--isolated",
-    "--browser",
-    "chrome",
     "--viewport-size",
     "1440x900",
     "--ignore-roots",

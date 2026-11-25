@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
@@ -16,7 +16,7 @@ import {
   SCAN_TOOL,
   type ScanRunner,
 } from "../shared/impeccable.ts"
-import { PLAYWRIGHT_SERVER, playwrightHeadless, playwrightMcp } from "./playwright.ts"
+import { hostBrowserMode, PLAYWRIGHT_SERVER, playwrightMcp } from "./playwright.ts"
 
 /** How to install the prerequisite; the same route as `prerequisites` in plugins/design/package.json. */
 export const IMPECCABLE_INSTALL = "mise use -g npm:impeccable"
@@ -72,7 +72,7 @@ export function registerDesign(pi: ExtensionAPI, overrides: DesignOverrides = {}
   pi.on("session_start", () => {
     if (workspace !== undefined) return
     workspace = (overrides.makeWorkspace ?? newWorkspace)()
-    pi.registerMcpServer(PLAYWRIGHT_SERVER, playwrightMcp(workspace, playwrightHeadless(process.env, process.platform)))
+    pi.registerMcpServer(PLAYWRIGHT_SERVER, playwrightMcp(workspace, hostBrowserMode(process.env, process.platform, existsSync)))
   })
   pi.on("session_shutdown", () => {
     if (workspace === undefined) return

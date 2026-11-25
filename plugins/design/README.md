@@ -204,7 +204,13 @@ The impeccable skill pack is a separate install. This command writes it to
 impeccable install -y --providers=pi --scope=project --no-hooks
 ```
 
-The Playwright server drives Google Chrome. Before the first review, install Chrome.
+The Playwright server drives Google Chrome where it is installed. On a host without it, such
+as a Linux ARM server, it drives Playwright's Chromium. Install that Chromium once for the
+pinned Playwright:
+
+```sh
+npx -y playwright-core@1.66.0-alpha-2026-11-18 install chromium chromium-headless-shell
+```
 
 ### Scan tool
 
@@ -215,8 +221,13 @@ installs impeccable. The timeout and the output limit are the same as in OpenCod
 
 ### Browser
 
-The extension registers a `playwright` MCP server. It runs Playwright MCP in Chrome with an
-in-memory profile. At session start the extension picks the browser mode:
+The extension registers a `playwright` MCP server. It runs Playwright MCP with an in-memory
+profile. At session start the extension picks the browser:
+
+- `PLAYWRIGHT_MCP_BROWSER` names it, for example `chromium` or `msedge`.
+- With no such setting, it is `chrome` when Google Chrome is installed, else `chromium`.
+
+Then the extension picks the mode:
 
 1. `PLAYWRIGHT_MCP_HEADLESS=1` (or `true`) makes it headless, and `0` (or `false`) makes it
    headed. The extension ignores other values.

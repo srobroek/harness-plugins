@@ -7,27 +7,51 @@ export const PLAYWRIGHT_MCP_VERSION = "0.0.86"
 export const PLAYWRIGHT_SERVER = "playwright"
 
 /**
- * The server's arguments, whatever the browser mode: Chrome with an in-memory profile, sized like
- * the widest ui-review width. `--headless` is added only when `playwrightHeadless` says so. There
- * is no `--caps`, so the `storage`, `network`, `pdf`, `devtools` and `vision` capabilities are off:
- * `browser_set_storage_state`, `browser_route` and `browser_pdf_save` are not offered
- * (playwright-tools.json lists all 25 tools 0.0.86 offers with these arguments, in either mode).
- * `--ignore-roots` makes the server's `cwd` its only workspace root, whatever roots the client
- * advertises, and there is no `--allow-unrestricted-file-access`: file writes outside that root are
- * refused and `file:` URLs are blocked.
+ * The server's arguments, whatever the browser and mode: an in-memory profile, sized like the
+ * widest ui-review width. `--browser` comes from `playwrightBrowser`, and `--headless` is added
+ * only when `playwrightHeadless` says so. There is no `--caps`, so the `storage`, `network`, `pdf`,
+ * `devtools` and `vision` capabilities are off: `browser_set_storage_state`, `browser_route` and
+ * `browser_pdf_save` are not offered (playwright-tools.json lists all 25 tools 0.0.86 offers with
+ * these arguments, in any mode). `--ignore-roots` makes the server's `cwd` its only workspace
+ * root, whatever roots the client advertises, and there is no `--allow-unrestricted-file-access`:
+ * file writes outside that root are refused and `file:` URLs are blocked.
  */
 export const PLAYWRIGHT_ARGS = [
   "-y",
   `@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}`,
   "--isolated",
-  "--browser",
-  "chrome",
   "--viewport-size",
   "1440x900",
   "--ignore-roots",
   "--file-paths",
   "absolute",
 ] as const
+
+/** The variable that names the browser, as Playwright MCP's own `--browser` takes it. */
+export const BROWSER_ENV = "PLAYWRIGHT_MCP_BROWSER"
+
+/** Where Playwright's `chrome` channel looks for Google Chrome on each platform. */
+export const CHROME_PATHS: Readonly<Record<string, string>> = {
+  darwin: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  linux: "/opt/google/chrome/chrome",
+}
+
+/**
+ * The browser the server drives. `PLAYWRIGHT_MCP_BROWSER` wins. Otherwise it is Google Chrome
+ * when it is installed where Playwright looks, and Playwright's own Chromium when it is not:
+ * Google Chrome does not exist for Linux on ARM, for example. Chromium must then be installed
+ * for the pinned Playwright (see the README).
+ */
+export function playwrightBrowser(
+  env: Readonly<Record<string, string | undefined>>,
+  platform: string,
+  exists: (path: string) => boolean,
+): string {
+  const forced = env[BROWSER_ENV]?.trim()
+  if (forced) return forced
+  const chrome = CHROME_PATHS[platform]
+  return chrome === undefined || exists(chrome) ? "chrome" : "chromium"
+}
 
 /** The variable that picks the mode, read the way Playwright MCP's own `envToBoolean` reads it. */
 export const HEADLESS_ENV = "PLAYWRIGHT_MCP_HEADLESS"
@@ -75,22 +99,34 @@ export const HIDDEN_TOOLS = Object.entries(TOOL_REVIEW)
   .filter(([, review]) => review.kind === "hidden")
   .map(([name]) => name)
 
+/** How the server runs on this host: from `playwrightBrowser` and `playwrightHeadless`. */
+export type BrowserMode = { browser: string; headless: boolean }
+
 /**
  * Pi `mcpServers` entry. `workspace` is the server's `cwd` and its only workspace root, so the
- * snapshots and screenshots it saves land there and nowhere in the project. `headless` comes from
- * `playwrightHeadless`. It is passed both as `--headless` and as `PLAYWRIGHT_MCP_HEADLESS`, which
- * overrides the inherited variable, so the server cannot fall back on its own rule (headless on
- * Linux without `DISPLAY`, which ignores Wayland). A `playwright` server in the user's or a
- * trusted project's mcp.json wins. `npm_config_registry` keeps a project `.npmrc` registry from
- * breaking npx, as in common/.mcp.json.
+ * snapshots and screenshots it saves land there and nowhere in the project. The mode is passed
+ * as `--browser`, as `--headless` when headless, and as an explicit `PLAYWRIGHT_MCP_HEADLESS`,
+ * which overrides the inherited variable, so the server cannot fall back on its own rule
+ * (headless on Linux without `DISPLAY`, which ignores Wayland). A `playwright` server in the
+ * user's or a trusted project's mcp.json wins. `npm_config_registry` keeps a project `.npmrc`
+ * registry from breaking npx, as in common/.mcp.json.
  */
-export function playwrightMcp(workspace: string, headless: boolean) {
+export function playwrightMcp(workspace: string, { browser, headless }: BrowserMode) {
   return {
     command: "npx",
-    args: [...PLAYWRIGHT_ARGS, ...(headless ? ["--headless"] : [])],
+    args: [...PLAYWRIGHT_ARGS, "--browser", browser, ...(headless ? ["--headless"] : [])],
     cwd: workspace,
     env: { npm_config_registry: "https://registry.npmjs.org/", [HEADLESS_ENV]: headless ? "true" : "false" },
-    description: `${headless ? "Headless" : "Headed"}, isolated Chrome for rendered-UI review: ARIA snapshots, page evaluation, resize, keyboard, console, network and screenshots.`,
+    description: `${headless ? "Headless" : "Headed"}, isolated ${browser} for rendered-UI review: ARIA snapshots, page evaluation, resize, keyboard, console, network and screenshots.`,
     toolExposure: Object.fromEntries(HIDDEN_TOOLS.map((tool) => [tool, "hidden" as const])),
   } satisfies McpServerConfig
+}
+
+/** The mode for this process: its environment, its platform and the files on this host. */
+export function hostBrowserMode(
+  env: Readonly<Record<string, string | undefined>>,
+  platform: string,
+  exists: (path: string) => boolean,
+): BrowserMode {
+  return { browser: playwrightBrowser(env, platform, exists), headless: playwrightHeadless(env, platform) }
 }
