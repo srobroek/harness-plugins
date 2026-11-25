@@ -1,3 +1,15 @@
+## modes [1.4.0](https://github.com/srobroek/harness-plugins/compare/modes--v1.3.2...modes--v1.4.0) (2026-11-25)
+
+### Features
+
+* **modes:** give the pi modes context-mode's index and search tools; /tree restores the user's tools ([b921181](https://github.com/srobroek/harness-plugins/commit/b9211811c54ccc018d71a2b8617f7423278bfe0b))
+* **modes:** ship the modes agents, guard and /mode command for pi ([e3d1bd7](https://github.com/srobroek/harness-plugins/commit/e3d1bd7e2d511948ae268e379a45e96cd0df2797))
+
+### Bug Fixes
+
+* **modes:** accept only literal directories as pi bash's working directory ([7ad7892](https://github.com/srobroek/harness-plugins/commit/7ad789257dc21e8e951b4751ba3bb9c6123cb37b))
+* **modes:** read builtin, eval, source and . as directory changes in the git guard ([b5f0cd1](https://github.com/srobroek/harness-plugins/commit/b5f0cd1eef3f0f34b19861636a13f134571a288d))
+
 ## modes [1.3.2](https://github.com/srobroek/harness-plugins/compare/modes--v1.3.1...modes--v1.3.2) (2026-11-24)
 
 ### Bug Fixes
