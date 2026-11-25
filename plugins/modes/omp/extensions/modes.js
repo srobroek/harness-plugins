@@ -2295,9 +2295,9 @@ function leaveReminder(mode) {
   const { name } = MODE_ROLES[mode];
   return wrap2(`You are NO LONGER in ${name} mode. The previous ${name} restrictions no longer apply. Any ${name} mode instructions from earlier in this conversation are no longer active.`);
 }
-function statusText(mode, env) {
+function statusText(mode, env, host = {}) {
   if (mode === undefined)
-    return "No mode is active. The user enters one with `/mode debug`, `/mode refactor` or `/mode concept`.";
+    return host.omp ? "No mode is active. This host has no `/mode` command: launch the `debug`, `refactor` or `concept` agent instead." : "No mode is active. The user enters one with `/mode debug`, `/mode refactor` or `/mode concept`.";
   const lines = [`${MODE_ROLES[mode].name} mode is active.`, `Tools: ${MODE_TOOLS[mode].join(", ")}.`, `Writes: ${ALLOWED[mode]}.`];
   if (mode === "debug") {
     const project = env.cwd.split(sep2).filter(Boolean).pop() ?? "project";
@@ -2339,6 +2339,7 @@ ${role(mode)}`;
       return enterReminder(mode);
     }
   };
+  const omp = isOmpHost(pi);
   pi.registerTool({
     name: STATUS_TOOL,
     label: "Mode status",
@@ -2346,10 +2347,10 @@ ${role(mode)}`;
     parameters: { type: "object", properties: {}, additionalProperties: false },
     defaultActive: false,
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-      return { content: [{ type: "text", text: statusText(activeMode(ctx).mode, { cwd: ctx.cwd, home }) }], details: {} };
+      return { content: [{ type: "text", text: statusText(activeMode(ctx).mode, { cwd: ctx.cwd, home }, { omp }) }], details: {} };
     }
   });
-  if (isOmpHost(pi))
+  if (omp)
     return;
   const states = (entries) => entries.filter((entry) => entry.type === "custom" && entry.customType === STATE_ENTRY).map((entry) => readState(entry.data));
   const restore = (ctx, oldLeafId) => {

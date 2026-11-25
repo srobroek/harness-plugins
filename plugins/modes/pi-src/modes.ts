@@ -85,6 +85,7 @@ export function registerModes(pi: ExtensionAPI, overrides: Overrides = {}): void
   }
 
   // Registered before the OMP check: mode agents list it, so a child that lost this extension fails at launch.
+  const omp = isOmpHost(pi)
   pi.registerTool({
     name: STATUS_TOOL,
     label: "Mode status",
@@ -92,10 +93,10 @@ export function registerModes(pi: ExtensionAPI, overrides: Overrides = {}): void
     parameters: { type: "object", properties: {}, additionalProperties: false } as unknown as TSchema,
     defaultActive: false,
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-      return { content: [{ type: "text", text: statusText(activeMode(ctx).mode, { cwd: ctx.cwd, home }) }], details: {} }
+      return { content: [{ type: "text", text: statusText(activeMode(ctx).mode, { cwd: ctx.cwd, home }, { omp }) }], details: {} }
     },
   })
-  if (isOmpHost(pi)) return
+  if (omp) return
 
   /** The `/mode` states recorded on `entries`, oldest first. */
   const states = (entries: readonly { type: string; customType?: string; data?: unknown }[]) =>

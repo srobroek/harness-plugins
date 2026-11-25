@@ -347,4 +347,11 @@ describe("what the model is told", () => {
     expect(text).toContain(join(home, PI_SCRATCH.ledger))
     expect(statusText(undefined, env)).toContain("No mode is active")
   })
+
+  test("on OMP, the inactive status names the agents, not a /mode command it lacks", () => {
+    const omp = statusText(undefined, env, { omp: true })
+    expect(omp).toContain("launch the `debug`, `refactor` or `concept` agent")
+    expect(omp).not.toContain("`/mode debug`")
+    expect(statusText(undefined, env)).toContain("`/mode debug`")
+  })
 })

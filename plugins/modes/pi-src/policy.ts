@@ -459,9 +459,15 @@ export function leaveReminder(mode: AgentId): string {
   )
 }
 
-/** What `modes_status` reports: the active mode, its tools and where it may write, with pi's roots spelled out. */
-export function statusText(mode: AgentId | undefined, env: CallEnv): string {
-  if (mode === undefined) return "No mode is active. The user enters one with `/mode debug`, `/mode refactor` or `/mode concept`."
+/**
+ * What `modes_status` reports: the active mode, its tools and where it may write, with pi's roots
+ * spelled out. OMP registers no `/mode`, so there the inactive text names the agents instead.
+ */
+export function statusText(mode: AgentId | undefined, env: CallEnv, host: { omp?: boolean } = {}): string {
+  if (mode === undefined)
+    return host.omp
+      ? "No mode is active. This host has no `/mode` command: launch the `debug`, `refactor` or `concept` agent instead."
+      : "No mode is active. The user enters one with `/mode debug`, `/mode refactor` or `/mode concept`."
   const lines = [`${MODE_ROLES[mode].name} mode is active.`, `Tools: ${MODE_TOOLS[mode].join(", ")}.`, `Writes: ${ALLOWED[mode]}.`]
   if (mode === "debug") {
     const project = env.cwd.split(sep).filter(Boolean).pop() ?? "project"
