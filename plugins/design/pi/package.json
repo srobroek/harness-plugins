@@ -1,0 +1,65 @@
+{
+  "name": "@srobroek/pi-design",
+  "version": "0.10.4",
+  "description": "UI and UX design skills: design-system audit, DESIGN.md, rendered-surface review, accessibility audit, motion, microcopy, prototypes, and wireframes.",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/design/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "_kit",
+    "agents",
+    "commands",
+    "extensions",
+    "formulas",
+    "mcp-servers.ts",
+    "skills"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "peerDependencies": {
+    "@srobroek/pi-debate": "*",
+    "pi-subagents": "*",
+    "pi-web-access": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@srobroek/pi-debate": {
+      "optional": true
+    },
+    "pi-subagents": {
+      "optional": true
+    },
+    "pi-web-access": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/design.js",
+      "./mcp-servers.ts",
+      "./_kit/prereqs.ts"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./commands"
+    ],
+    "subagents": {
+      "agents": [
+        "./agents"
+      ]
+    }
+  }
+}

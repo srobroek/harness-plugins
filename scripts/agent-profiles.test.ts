@@ -61,8 +61,11 @@ const DENYLIST = new Set(["journey-validator"])
 /** Agents that change state without the edit tool. */
 const WRITERS = new Set(["shepherd"])
 
-/** Code Mode tools a Pi child reaches through another tool: it has no parley panel, so it asks its supervisor. */
-const PI_EQUIVALENTS: Readonly<Record<string, string>> = { parley: "contact_supervisor" }
+/**
+ * Code Mode tools a Pi child reaches through another tool: it has no parley panel, so it asks its
+ * supervisor, and the design agents drive the design package's Playwright MCP server.
+ */
+const PI_EQUIVALENTS: Readonly<Record<string, string>> = { parley: "contact_supervisor", browser: "mcp:playwright" }
 
 type Agent = { plugin: string; id: string; hidden: boolean; rules: AgentPermission[] }
 
