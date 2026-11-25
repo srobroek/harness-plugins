@@ -656,7 +656,9 @@ const gatedCloneObserve = (cloneRoot: string) => {
   const reached = async (n: number) => {
     while (waits.length < n) await new Promise<void>((done) => (notify = done))
   }
-  return { observe, waits, reached, hold: (count: number) => void (toHold = count) }
+  return { observe, waits, reached, hold: (count: number) => {
+      toHold = count
+    } }
 }
 
 test("an older report's clone-resolution failure that arrives after a newer report reached the clone does not bring the veto back", async () => {

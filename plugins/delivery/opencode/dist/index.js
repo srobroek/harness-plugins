@@ -6261,16 +6261,41 @@ async function authorizeExplicit(pending, ask, sessionID, request) {
 }
 var UNRESOLVED = Symbol("unresolved");
 var SESSION_LOOKUP_MS = 5000;
-var raise = (marks, key, veto) => {
-  const stored = marks.get(key);
-  if (stored === undefined || stored.seq <= veto.seq)
-    marks.set(key, veto);
-};
-var lift = (marks, key, seq) => {
-  const stored = marks.get(key);
-  if (stored !== undefined && stored.seq <= seq)
-    marks.delete(key);
-};
+
+class VetoMarks {
+  vetoes = new Map;
+  seen = new Map;
+  get(key) {
+    return this.vetoes.get(key);
+  }
+  keys() {
+    return [...this.vetoes.keys()];
+  }
+  find(match) {
+    for (const [key, veto] of this.vetoes)
+      if (match(key))
+        return veto;
+    return;
+  }
+  raise(key, veto) {
+    const floor = Math.max(this.seen.get(key) ?? 0, this.vetoes.get(key)?.seq ?? 0);
+    if (veto.seq < floor)
+      return;
+    this.seen.set(key, veto.seq);
+    this.vetoes.set(key, veto);
+  }
+  lift(key, seq) {
+    this.seen.set(key, Math.max(this.seen.get(key) ?? 0, seq));
+    const stored = this.vetoes.get(key);
+    if (stored !== undefined && stored.seq <= seq)
+      this.vetoes.delete(key);
+  }
+  prune(oldestInFlight) {
+    for (const [key, seq] of this.seen)
+      if (seq <= oldestInFlight)
+        this.seen.delete(key);
+  }
+}
 function createPendingCleanup(deps) {
   const { ctx, cwd, env } = deps;
   const now = deps.now ?? Date.now;
@@ -6278,7 +6303,7 @@ function createPendingCleanup(deps) {
   const limit = deps.maxPerPass ?? MAX_PER_PASS;
   const observationMs = deps.cleanup?.bounds?.refReadMs ?? CLEANUP_BOUNDS.refReadMs;
   const sessionLookupMs = deps.sessionLookupMs ?? SESSION_LOOKUP_MS;
-  const unsafe = new Map;
+  const unsafe = new VetoMarks;
   const deniedInMemory = new Map;
   const deniedKey = (receipt) => `${receipt.repo.key}/${receipt.receiptId}`;
   const deniedWorktrees = new Set;
@@ -6288,26 +6313,25 @@ function createPendingCleanup(deps) {
   const attemptedAt = new Map;
   const registered = new Map;
   let discoveryFailure;
-  const missedReports = new Map;
+  const missedReports = new VetoMarks;
   let reportSeq = 0;
+  const inFlight = new Set;
   const reports = new Map;
   const staleReport = (sessionID, seq) => seq <= (reports.get(sessionID)?.stoppedAt ?? 0);
-  const holdsUnknown = new Map;
-  const markHoldsUnknown = (directory, sessionID, veto) => {
-    const bySession = holdsUnknown.get(directory) ?? new Map;
-    raise(bySession, sessionID, veto);
-    holdsUnknown.set(directory, bySession);
+  const holdsUnknown = new VetoMarks;
+  const SEP = "\x00";
+  const holdKey = (identity, sessionID) => `${identity}${SEP}${sessionID}`;
+  const OWN_UNKNOWN = "(session repository)";
+  const identityOf = (repo) => repo.veto()?.key ?? OWN_UNKNOWN;
+  const markHoldsUnknown = (identity, sessionID, veto) => {
+    holdsUnknown.raise(holdKey(identity, sessionID), veto);
   };
-  const clearHoldsUnknown = (directory, sessionID, seq) => {
-    const bySession = holdsUnknown.get(directory);
-    if (bySession === undefined)
-      return;
-    lift(bySession, sessionID, seq);
-    if (bySession.size === 0)
-      holdsUnknown.delete(directory);
+  const clearHoldsUnknown = (identity, sessionID, seq) => {
+    holdsUnknown.lift(holdKey(identity, sessionID), seq);
   };
+  const holdIdentities = (sessionID) => holdsUnknown.keys().filter((key) => key.endsWith(`${SEP}${sessionID}`)).map((key) => key.slice(0, key.length - sessionID.length - 1));
   const clearMissedReport = (sessionID, seq) => {
-    lift(missedReports, sessionID, seq);
+    missedReports.lift(sessionID, seq);
   };
   const timers = new Map;
   const pendingIdle = new Set;
@@ -6421,8 +6445,9 @@ function createPendingCleanup(deps) {
   const reportVeto = (repo) => {
     let why;
     if (repo.foreign)
-      why = discoveryFailure ?? missedReports.values().next().value?.why;
-    why ??= holdsUnknown.get(canonicalDirectory(repo.cwd))?.values().next().value?.why;
+      why = discoveryFailure ?? missedReports.find(() => true)?.why;
+    const identities = repo.foreign ? [identityOf(repo)] : [identityOf(repo), OWN_UNKNOWN];
+    why ??= holdsUnknown.find((key) => identities.some((identity) => key.startsWith(`${identity}${SEP}`)))?.why;
     if (why !== undefined)
       console.error(`delivery: cleanup in ${repo.cwd} is held: ${why}`);
     return why;
@@ -6432,20 +6457,25 @@ function createPendingCleanup(deps) {
     if (tracked !== undefined)
       tracked.stoppedAt = Math.max(tracked.stoppedAt, seq);
     clearMissedReport(sessionID, seq);
-    for (const directory of [...holdsUnknown.keys()])
-      clearHoldsUnknown(directory, sessionID, seq);
+    for (const identity of holdIdentities(sessionID))
+      clearHoldsUnknown(identity, sessionID, seq);
   };
   const beginReport = (sessionID) => {
     const seq = ++reportSeq;
     const tracked = reports.get(sessionID) ?? { inFlight: 0, stoppedAt: 0, written: new Map };
     tracked.inFlight++;
     reports.set(sessionID, tracked);
+    inFlight.add(seq);
     return seq;
   };
-  const settleReport = (sessionID) => {
+  const settleReport = (sessionID, seq) => {
     const tracked = reports.get(sessionID);
     if (tracked !== undefined && --tracked.inFlight <= 0)
       reports.delete(sessionID);
+    inFlight.delete(seq);
+    const oldest = inFlight.size === 0 ? Number.POSITIVE_INFINITY : Math.min(...inFlight);
+    for (const marks of [unsafe, missedReports, holdsUnknown])
+      marks.prune(oldest);
   };
   const cloneEntryFor = (receipt, commonDir) => ({
     key: receipt.repo.key,
@@ -7020,7 +7050,7 @@ function createPendingCleanup(deps) {
         holdReportsInFlight--;
       }
     } finally {
-      settleReport(sessionID);
+      settleReport(sessionID, seq);
     }
   };
   const recovery = (sessionID) => `held for session ${sessionID} until it reports again with its running work recorded, reports no running work, or is deleted`;
@@ -7040,7 +7070,7 @@ function createPendingCleanup(deps) {
       if (mine === null) {
         const why = `the session's repository could not be resolved to find the clones the running work of ${sessionID} may be in`;
         if (vetoes())
-          raise(missedReports, sessionID, { why: `${why}; ${recovery(sessionID)}`, seq });
+          missedReports.raise(sessionID, { why: `${why}; ${recovery(sessionID)}`, seq });
         console.error(`delivery: ${why}`);
         return;
       }
@@ -7050,23 +7080,23 @@ function createPendingCleanup(deps) {
       } catch (error) {
         const why = `the running work of ${sessionID} could not be recorded in the clones (${error instanceof Error ? error.message : String(error)})`;
         if (vetoes())
-          raise(missedReports, sessionID, { why: `${why}; ${recovery(sessionID)}`, seq });
+          missedReports.raise(sessionID, { why: `${why}; ${recovery(sessionID)}`, seq });
         console.error(`delivery: ${why}`, error);
         return;
       }
       clearMissedReport(sessionID, seq);
-      const listed = new Set(entries.map((entry) => canonicalDirectory(entry.root)));
-      const ownDirectory = canonicalDirectory(own.cwd);
-      for (const directory of [...holdsUnknown.keys()]) {
-        if (directory !== ownDirectory && !listed.has(directory))
-          clearHoldsUnknown(directory, sessionID, seq);
+      const listed = new Set(entries.map((entry) => entry.key));
+      const ownIdentities = new Set([identityOf(own), OWN_UNKNOWN]);
+      for (const identity of holdIdentities(sessionID)) {
+        if (!ownIdentities.has(identity) && !listed.has(identity))
+          clearHoldsUnknown(identity, sessionID, seq);
       }
       await Promise.all(entries.map(async (entry) => {
         const repo = await cloneAt(entry).catch(() => null);
         if (repo === null) {
           const why = `the clone ${entry.root} could not be resolved to record the running work of ${sessionID}`;
           if (vetoes())
-            markHoldsUnknown(canonicalDirectory(entry.root), sessionID, { why: `${why}; ${recovery(sessionID)}`, seq });
+            markHoldsUnknown(entry.key, sessionID, { why: `${why}; ${recovery(sessionID)}`, seq });
           console.error(`delivery: ${why}`);
           return;
         }
@@ -7076,7 +7106,7 @@ function createPendingCleanup(deps) {
     await Promise.all([writeHoldsIn(own, sessionID, background, locationOf, vetoes, seq), inClones()]);
   };
   const writeHoldsIn = async (repo, sessionID, background, locationOf, vetoes, seq) => {
-    const guard = canonicalDirectory(repo.cwd);
+    const guard = identityOf(repo);
     try {
       await establishHolds(repo, sessionID, background, locationOf, seq);
       clearHoldsUnknown(guard, sessionID, seq);
@@ -7131,11 +7161,11 @@ function createPendingCleanup(deps) {
           return true;
         });
         if (wrote)
-          lift(unsafe, want, seq);
+          unsafe.lift(want, seq);
       } catch (error) {
         const why = error instanceof Error ? error.message : String(error);
         if (current())
-          raise(unsafe, want, { why: `its running work could not be recorded (${why})`, seq });
+          unsafe.raise(want, { why: `its running work could not be recorded (${why})`, seq });
         console.error(`delivery: could not record holds for ${path}: ${why}`);
       }
     }
