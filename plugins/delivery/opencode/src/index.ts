@@ -174,6 +174,7 @@ const LAND_OUTPUT = {
         ok: { type: "boolean" },
         reason: { type: "string" },
         removed: { type: "string" },
+        partlyRemoved: { type: "string" },
         localRefDeleted: { type: "boolean" },
         skipped: { type: "boolean" },
         deferred: { type: "string" },
@@ -212,6 +213,7 @@ const CLEANUP_OUTPUT = {
     worktree: { type: "string" },
     remoteBranchAbsence: { type: "string", enum: ["absent", "present", "unknown"] },
     alreadyCleaned: { type: "boolean" },
+    partlyRemoved: { type: "boolean" },
     removed: { type: "array", items: { type: "string" } },
     skipped: { type: "array", items: { type: "string" } },
     reason: { type: "string" },
@@ -272,10 +274,23 @@ function cleanupOutput(result: CleanupResult) {
     worktree: result.receipt.worktree.path ?? "",
     remoteBranchAbsence: result.remoteBranchAbsence,
     alreadyCleaned: result.alreadyCleaned,
+    partlyRemoved: result.partlyRemoved,
     removed: result.report.removed,
     skipped: result.report.skipped,
     receipt: result.receipt as Record<string, unknown>,
   }
+}
+
+/** The text `delivery_cleanup` returns: a refusal, nothing to remove, a removal that stopped part-way, or what it removed. Pure. */
+export function cleanupText(result: CleanupResult): string {
+  if (!result.ok) return `delivery_cleanup refused: ${result.reason}`
+  const skipped = result.report.skipped.length > 0 ? `; skipped: ${result.report.skipped.join("; ")}` : ""
+  const receipt = `\nreceipt: ${result.path}`
+  if (result.alreadyCleaned) return `delivery_cleanup: nothing to remove. ${result.report.skipped.join("; ")}.${receipt}`
+  if (result.partlyRemoved) {
+    return `delivery_cleanup: removal attempted, partly removed, unverified: ${result.receipt.worktree.path ?? ""}${skipped}.${receipt}`
+  }
+  return `delivery_cleanup removed ${result.report.removed.join(", ")}${skipped}; remote branch ${result.remoteBranchAbsence}.${receipt}`
 }
 
 /** The persisted metadata: the output without the full receipt, which lives on disk. */
@@ -438,11 +453,7 @@ export async function setupDelivery(
         }
         await pending.gc(result.ok ? result.receipt : undefined)
         const output = cleanupOutput(result)
-        const text = !result.ok
-          ? `delivery_cleanup refused: ${result.reason}`
-          : result.alreadyCleaned
-            ? `delivery_cleanup: nothing to remove. ${result.report.skipped.join("; ")}.\nreceipt: ${result.path}`
-            : `delivery_cleanup removed ${result.report.removed.length === 0 ? "nothing" : result.report.removed.join(", ")}${result.report.skipped.length > 0 ? `; skipped: ${result.report.skipped.join("; ")}` : ""}; remote branch ${result.remoteBranchAbsence}.\nreceipt: ${result.path}`
+        const text = cleanupText(result)
         return { output, content: text, metadata: metadataOf(output) }
       },
     })

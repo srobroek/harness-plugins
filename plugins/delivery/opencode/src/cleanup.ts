@@ -98,6 +98,11 @@ export type CleanupSuccess = {
   remoteBranchAbsence: "absent" | "present" | "unknown"
   /** True when the worktree was already gone, so this call removed nothing and wrote no receipt. */
   alreadyCleaned: boolean
+  /**
+   * True when this call's removal stopped part-way: the worktree is partly removed and its absence
+   * unverified, so nothing is listed as removed, no branch was deleted and no receipt was written.
+   */
+  partlyRemoved: boolean
   /** True only when this call deleted the receipt branch's ref; false when it was already gone, left alone, or nothing ran. */
   localRefDeleted: boolean
   report: CleanupReport
@@ -896,10 +901,10 @@ function worktreePathState(path: string): "directory" | "absent" | "unsafe" {
 }
 
 /** Why a tree with only deleted tracked files is refused, and what to do: see {@link verifyCleanTarget}. */
-const REMOVAL_ELSEWHERE =
-  "the tree has only deleted tracked files, which is what another process removing it looks like part-way " +
-  "(one outside the delivery worktree lock, such as another harness's delivery plugin or `wt remove`); " +
-  "this call removed nothing, so rerun delivery_cleanup once that removal has finished"
+const removalElsewhere = (path: string) =>
+  "the tree has only deleted tracked files: a removal is running or stopped part-way (another process outside " +
+  "the delivery worktree lock, such as another harness's delivery plugin or `wt remove`, or an earlier cleanup " +
+  `that failed); this call removed nothing; inspect ${path}`
 
 function dirtyPaths(output: string): string[] {
   return output
@@ -929,9 +934,9 @@ async function verifyCleanTarget(
   if (result.stdout !== "") {
     const all = result.stdout.split(/\r?\n/).filter(Boolean)
     const dirty = refuse("worktree.status", { paths: dirtyPaths(result.stdout), total: all.length }, "no dirty paths (empty porcelain output)")
-    // No delivery remover is part-way through a tree read under its lock, so a tree that has only
-    // lost tracked files is most likely being deleted by a process that takes no such lock.
-    return all.every((line) => line.startsWith(" D ")) ? { ok: false, reason: `${dirty.reason}; ${REMOVAL_ELSEWHERE}` } : dirty
+    // No delivery remover is part-way through a tree read under its lock, so a tree that has only lost
+    // tracked files is being deleted by a process that takes no such lock, or was left by one that stopped.
+    return all.every((line) => line.startsWith(" D ")) ? { ok: false, reason: `${dirty.reason}; ${removalElsewhere(path)}` } : dirty
   }
   // The verified pin names this worktree's own git directory; no extra git read is needed.
   const gitDir = pin?.GIT_DIR
@@ -1569,6 +1574,7 @@ async function cleanupInRepository(
       path: receiptPath,
       remoteBranchAbsence: receipt.branch.deletedRemote ? "absent" : "unknown",
       alreadyCleaned: true,
+      partlyRemoved: false,
       localRefDeleted: false,
       report: { removed: [], skipped: [note] },
     }
@@ -1689,10 +1695,12 @@ async function cleanupInRepository(
     // proved again here, synchronously, so no wait sits between this proof and the removal call.
     const rebound = markersStillBound(boundary, executionDir, executionPin)
     if (rebound !== null) return rebound
-    // The removal call. A failure refuses only while the target is still whole: git refuses a dirty
-    // or locked tree before deleting anything, but a removal that fails part-way (a file it cannot
-    // delete) has already deleted files and the registration, so reporting it as a refusal would be false.
+    // The removal call. A failure refuses only while the target is untouched: git refuses a dirty or
+    // locked tree before deleting anything, but a removal that stops part-way (a file it cannot delete,
+    // a kill at the bound) has deleted files, and possibly the registration, so a refusal would be false.
     let failure: CleanupFailure | null = null
+    // A command that ended with no exit status (a timeout or a kill) may have deleted anything.
+    let stopped = false
     if (route === "host" && deps.host !== undefined) {
       try {
         await deps.host.remove(targetPath)
@@ -1706,13 +1714,21 @@ async function cleanupInRepository(
       }
     } else {
       const removed = await runGit(commit, executionDir, removeArgv, bounds.mutationMs, executionPin)
-      if (!completed(removed)) failure = commandFailure("worktree.removed", ["git", ...removeArgv], removed, "exit 0 without --force")
+      if (!completed(removed)) {
+        failure = commandFailure("worktree.removed", ["git", ...removeArgv], removed, "exit 0 without --force")
+        stopped = removed.exitCode === null
+      }
     }
 
     const registration = await registrationAbsence(executionDir, targetPath, commit, bounds.refReadMs, executionPin)
     const pathGone = pathAbsence(targetPath)
-    // No sign that anything went (registered and on disk, or unreadable): nothing was removed.
-    if (failure !== null && registration !== "absent" && pathGone !== "absent") return failure
+    // Still registered and on disk (or unreadable): the tree was proven clean in this same hold, so an
+    // empty status now means the command deleted nothing and its failure is a refusal. Anything else
+    // (a change, a status that cannot be read, a command that never exited) means it stopped part-way.
+    if (failure !== null && registration !== "absent" && pathGone !== "absent" && !stopped) {
+      const status = await runGit(commit, boundary.cwd, ["status", "--porcelain"], bounds.treeScanMs, boundary.pin)
+      if (completed(status) && status.stdout === "") return failure
+    }
     // From here the removal ran, whole or part-way, and nothing refuses: what could not be finished
     // or proved is reported with the result, and only a proven absence gets a continuation receipt.
     const unfinished: string[] = []
@@ -1720,9 +1736,9 @@ async function cleanupInRepository(
     if (registration !== "absent" || pathGone !== "absent") {
       unfinished.push(
         failure === null
-          ? `worktree ${path} is there again after its removal (registration ${registration}, directory ${pathGone}) and was left alone`
-          : `worktree ${path}: the removal failed part-way (${failure.reason}), leaving registration ${registration} and directory ${pathGone}; remove what is left by hand`,
-        `local branch ${branch} kept and no continuation receipt written: the worktree's absence is not proven`,
+          ? `worktree ${path} is there again after its removal (registration ${registration}, directory ${pathGone}) and was left alone; absence unverified; no continuation receipt`
+          : `worktree ${path}: removal attempted and stopped part-way (${failure.reason}); registration ${registration}, directory ${pathGone}; absence unverified; no continuation receipt; inspect ${path} before removing what is left by hand (git worktree remove --force)`,
+        `local branch ${branch} kept: the worktree's absence is not proven`,
       )
       return { ok: true, worktreeRemoved: failure === null, registration, pathGone, localAbsence: "unknown", localRefPlan: localRef, localRefDeleted: false, executionDir, unfinished }
     }
@@ -1784,6 +1800,7 @@ async function cleanupInRepository(
     path: resolution.path,
     remoteBranchAbsence,
     alreadyCleaned: false,
+    partlyRemoved: !section.worktreeRemoved,
     localRefDeleted: section.localRefDeleted,
     report: withNotes(report, notes),
   })
@@ -1871,6 +1888,7 @@ async function cleanupInRepository(
     path: written,
     remoteBranchAbsence: remoteAbsence,
     alreadyCleaned: false,
+    partlyRemoved: false,
     localRefDeleted: section.localRefDeleted,
     report,
   }

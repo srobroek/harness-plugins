@@ -1953,7 +1953,7 @@ describe("delivery_cleanup beside another remover", () => {
     expect(existsSync(f.linked)).toBe(true)
   })
 
-  test("a removal that fails part-way is reported as what it removed, not as a refusal", async () => {
+  test("a removal that fails part-way after deleting the registration is reported as partly removed, not as a refusal", async () => {
     const f = await fixture("part-way")
     const before = readdirSync(dirname(f.receiptPath)).sort()
     const scripted = runner(f)
@@ -1967,13 +1967,75 @@ describe("delivery_cleanup beside another remover", () => {
       return { ok: true, exitCode: 255, stdout: "", stderr: `error: failed to delete '${f.linked}': Directory not empty\n` }
     }
     const result = await cleanupDelivery({ receipt: f.receiptPath }, f.main, { run, now: () => NOW + 10, env: f.env, bounds: HEAVY_FIXTURE_BOUNDS })
-    if (!result.ok) throw new Error(`refused after the removal ran: ${result.reason}`)
-    expect(result.alreadyCleaned).toBe(false)
-    expect(result.report.removed).toEqual([])
-    expect(result.report.skipped.join("\n")).toContain("part-way")
-    expect(result.localRefDeleted).toBe(false)
+    const done = removal(result)
+    expect(done.alreadyCleaned).toBe(false)
+    expect(done.partlyRemoved).toBe(true)
+    expect(done.report.removed).toEqual([])
+    expect(done.report.skipped.join("\n")).toContain("removal attempted and stopped part-way")
+    expect(done.localRefDeleted).toBe(false)
     expect(scripted.calls.some((argv) => argv[0] === "git" && argv[1] === "branch")).toBe(false)
     expect(readdirSync(dirname(f.receiptPath)).sort()).toEqual(before)
+  })
+
+  /** Git stops part-way with the tree still registered and on disk: `before` deletes tracked files, then real git refuses the now-dirty tree, and `after` gives the command the reported shape. */
+  const stoppedPartWay = (f: Fixture, shape: "exit 255" | "timeout", deletes: boolean): RunnerOptions => ({
+    before: (argv) => {
+      if (!isWorktreeRemove(argv) || !deletes) return
+      for (const file of git(f.linked, ["ls-files"]).split("\n").filter(Boolean).slice(0, 2)) rmSync(join(f.linked, file))
+    },
+    after: (argv, result) => {
+      if (!isWorktreeRemove(argv)) return
+      if (shape === "exit 255") Object.assign(result, { ok: true, exitCode: 255, error: undefined, stderr: `error: failed to delete '${f.linked}': Permission denied\n` })
+      else Object.assign(result, { ok: false, exitCode: null, stderr: "", error: "timeout" })
+    },
+  })
+
+  test.each([
+    ["exit 255 after deleting tracked files", "exit 255", true],
+    ["a timeout after deleting tracked files", "timeout", true],
+    ["a timeout that deleted nothing it can show", "timeout", false],
+  ] as const)("a removal that stopped part-way, still registered and on disk (%s), is reported as partly removed, unverified", async (_name, shape, deletes) => {
+    const f = await fixture("stopped-part-way")
+    const before = readdirSync(dirname(f.receiptPath)).sort()
+    // A timeout with nothing deleted would otherwise remove the clean tree for real.
+    if (!deletes) git(f.main, ["worktree", "lock", f.linked])
+    let after = false
+    const { result, calls } = await invoke(f, { receipt: f.receiptPath }, stoppedPartWay(f, shape, deletes), {
+      afterRemoval: async () => {
+        after = true
+        return []
+      },
+    })
+    const done = removal(result)
+    expect(done.partlyRemoved).toBe(true)
+    expect(done.report.removed).toEqual([])
+    const notes = done.report.skipped.join("\n")
+    expect(notes).toContain("removal attempted and stopped part-way")
+    expect(notes).toContain("registration present, directory present; absence unverified; no continuation receipt")
+    expect(notes).toContain(`inspect ${f.linked}`)
+    expect(done.localRefDeleted).toBe(false)
+    expect(after).toBe(false)
+    expect(calls.some((argv) => argv[0] === "git" && argv[1] === "branch")).toBe(false)
+    expect(readdirSync(dirname(f.receiptPath)).sort()).toEqual(before)
+    expect(existsSync(f.linked)).toBe(true)
+    expect(git(f.main, ["worktree", "list", "--porcelain"])).toContain(`worktree ${f.linked}`)
+    if (!deletes) return
+    // The rerun meets the half-removed tree and says what it is, without claiming to remove anything.
+    const rerun = refusal((await invoke(f)).result)
+    expect(rerun).toContain("a removal is running or stopped part-way")
+    expect(rerun).toContain("an earlier cleanup that failed")
+    expect(rerun).toContain(`inspect ${f.linked}`)
+    expect(rerun).not.toContain("rerun")
+  })
+
+  test("a failed removal that deleted nothing is still a refusal", async () => {
+    const f = await fixture("refused-untouched")
+    git(f.main, ["worktree", "lock", f.linked])
+    const { result } = await invoke(f)
+    expect(refusal(result)).toContain("worktree.removed")
+    expect(refusal(result)).toContain("locked")
+    expect(existsSync(f.linked)).toBe(true)
+    expect(git(f.linked, ["status", "--porcelain"])).toBe("")
   })
 })
 
@@ -3584,6 +3646,29 @@ describe("pending cleanup: one remover per worktree", () => {
       if (!result.ok) throw new Error(`refused while another remover removed the worktree: ${result.reason}`)
       expect(result.alreadyCleaned).toBe(true)
       expect(h.scripted.calls.filter(isWorktreeRemove)).toEqual([])
+      await h.finish()
+    })
+
+    test("a retry whose removal stops part-way tells the session once, keeps the landing record and does not retry", async () => {
+      const h = await harness("retry-part-way", {
+        // Tracked files go before git looks; git then refuses the dirty tree, so it stays registered and on disk.
+        before: (argv) => {
+          if (!isWorktreeRemove(argv)) return
+          for (const file of git(h.f.linked, ["ls-files"]).split("\n").filter(Boolean).slice(0, 2)) rmSync(join(h.f.linked, file))
+        },
+      })
+      await h.pending.record(h.f.receipt, "ses_lead")
+      await h.pending.start()
+      await h.idle()
+      expect(synthetic(h)).toHaveLength(1)
+      const told = JSON.stringify(synthetic(h)[0]?.input)
+      expect(told).toContain("removal attempted, partly removed, unverified")
+      expect(told).toContain("Delivery does not retry it")
+      expect(readLanding(h.common, h.f.receipt.receiptId).kind).toBe("present")
+      await h.idle()
+      expect(synthetic(h)).toHaveLength(1)
+      expect(h.scripted.calls.filter(isWorktreeRemove)).toHaveLength(1)
+      expect(removed(h)).toBe(false)
       await h.finish()
     })
 

@@ -304,13 +304,18 @@ does not refuse. It succeeds and lists what it removed (`removed`) and what it c
 finish or prove (`skipped`). Examples are a branch that Git could not delete, or a
 worktree that reappeared at the path.
 
-A removal that fails part-way (a file Git cannot delete) gives the same kind of result,
-with nothing in `removed`. Only a proven absence gets a continuation receipt. Otherwise
-the landing receipt stays the receipt of record.
+A removal that stops part-way reports `partlyRemoved: true` and the headline "removal
+attempted, partly removed, unverified", with nothing in `removed`. Examples are a file
+Git cannot delete, or a kill at the time bound. A failed removal command counts as
+stopped part-way unless the tree is still registered and on disk and `git status` shows
+it unchanged. Such a call keeps the local branch and the landing receipt, which stays
+the receipt of record, and names the path to inspect. Delivery's own retry tells the
+session once, keeps the landing record and does not retry it.
 
-A tree whose only changes are deleted tracked files looks like a removal part-way by
-another process. Examples are a delivery plugin in another harness, or `wt remove`.
-Neither takes delivery's lock, so the refusal of such a tree says so.
+A tree whose only changes are deleted tracked files is a removal that is running or
+stopped part-way. The cause can be another process that takes no delivery lock, such as
+a delivery plugin in another harness or `wt remove`. It can also be an earlier cleanup
+that failed. The refusal says so and names the path to inspect.
 
 Cleanup deletes the receipt's branch ref only while it still points at the reviewed
 head. It leaves a ref that is gone or points elsewhere, and it keeps the differently

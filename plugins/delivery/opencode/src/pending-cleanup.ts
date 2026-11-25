@@ -139,6 +139,11 @@ export function nudgeText(receipt: LandingReceipt, receiptPath: string, clone?: 
   return `<system-reminder>Landed PR #${receipt.pr.number}: close beads ${receipt.beads.ids.join(", ")} (commands: ${commands.join("; ")}) so its worktree can be cleaned up.</system-reminder>`
 }
 
+/** What the session is told when delivery's own retry stopped part-way through a removal. Pure. */
+export function partlyRemovedText(receipt: Pick<LandingReceipt, "pr" | "worktree">, notes: readonly string[]): string {
+  return `<system-reminder>delivery cleanup of PR #${receipt.pr.number}: removal attempted, partly removed, unverified: ${receipt.worktree.path ?? ""}. ${notes.join("; ")}. Delivery does not retry it; the landing receipt stays the receipt of record.</system-reminder>`
+}
+
 /** Pending receipts: not cleaned, not superseded by a later receipt. Pure. */
 export function pendingReceipts(receipts: readonly LandingReceipt[]): LandingReceipt[] {
   const superseded = new Set(receipts.flatMap((receipt) => (receipt.supersedes === null ? [] : [receipt.supersedes])))
@@ -1040,7 +1045,12 @@ export function createPendingCleanup(deps: PendingDeps) {
           continue
         }
         // A refusal is silent: the proofs say what is missing and a later turn end tries again.
-        if (result.ok) {
+        if (result.ok && result.partlyRemoved) {
+          // A removal that stopped part-way needs a person: it is not retried here (every rerun would
+          // refuse the half-removed tree), its landing record stays, and the session is told.
+          doneIds.add(idOf(receipt))
+          await ctx.session.synthetic({ sessionID, text: partlyRemovedText(receipt, result.report.skipped) } as never).catch(() => {})
+        } else if (result.ok) {
           doneIds.add(idOf(receipt))
           finished.add(receipt.receiptId)
           if (recorded.common !== null && recorded.byReceipt.get(receipt.receiptId)?.denied === undefined) {
