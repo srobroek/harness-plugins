@@ -29,7 +29,7 @@ Where the extension loads:
 
 - **Main session:** `pi install npm:context-mode`.
 - **Background children:** they load the main session's packages, unless the agent sets `extensions`.
-- **Foreground children:** they never load the main session's packages, so they need context-mode named for them.
+- **Foreground children:** pi-subagents starts them inside the main session's process without its packages, so they need context-mode named for them.
 
 Three ways to name it for children:
 
@@ -39,7 +39,7 @@ Three ways to name it for children:
 
 Load context-mode once per child: pick one way for each agent.
 
-To give an agent the tools, set `subagents.agentOverrides.<name>.tools` to its full list plus the `ctx_*` names it should get. That override also replaces the list. Leave out `ctx_upgrade` and `ctx_purge`: they update the install and delete indexed data.
+To give an agent the tools, set `subagents.agentOverrides.<name>.tools` to its full list plus the `ctx_*` names it should get. That override also replaces the list. Leave out `ctx_upgrade` and `ctx_purge`: one upgrades context-mode and the other deletes indexed data.
 
 The modes agents (`debug`, `refactor`, `concept`) and a main session in `/mode` refuse every `ctx_*` tool, because `ctx_execute` runs code their guard cannot check. context-mode's hooks still run there. When the large-read refusal names `ctx_execute`, those agents read the file with `offset` and `limit` instead.
 
