@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
   commandFromInput,
-  leadingCdCwd,
+  leadingCd,
   parse,
   parsedInvocations,
   readsScriptFromStdin,
@@ -102,11 +102,40 @@ test("reports an open quote, substitution or here-document as incomplete", () =>
   }
 })
 
-test("resolves a leading literal cd against cwd", () => {
-  expect(leadingCdCwd("cd sub && ls", "/repo")).toBe("/repo/sub")
-  expect(leadingCdCwd("cd /abs && ls", "/repo")).toBe("/abs")
-  expect(leadingCdCwd("cd $DIR && ls", "/repo")).toBe("/repo")
-  expect(leadingCdCwd("ls", "/repo")).toBe("/repo")
+describe("a leading cd", () => {
+  test("a literal directory resolves against cwd, with the length of the cd and its &&", () => {
+    expect(leadingCd("cd sub && ls", "/repo")).toEqual({ kind: "dir", dir: "/repo/sub", length: "cd sub &&".length })
+    expect(leadingCd("cd /abs && ls", "/repo")).toEqual({ kind: "dir", dir: "/abs", length: "cd /abs &&".length })
+    expect(leadingCd("  cd /a/b.c_d-e@f:g", "/repo")).toEqual({ kind: "dir", dir: "/a/b.c_d-e@f:g", length: "  cd /a/b.c_d-e@f:g".length })
+  })
+
+  test("no directory change at the start is none", () => {
+    for (const command of ["ls", "git status && cd x", "cdk deploy", "cd.sh && x", "FOO=1 git status"]) {
+      expect({ command, lead: leadingCd(command, "/repo") }).toEqual({ command, lead: { kind: "none" } })
+    }
+  })
+
+  test("any other directory change at the start is rejected, never the session directory", () => {
+    for (const command of [
+      "cd /w/..>/dev/null && git commit -m x",
+      "cd /w/lnk>x && git commit -m x",
+      "cd /w/a/../b && ls",
+      "cd .. && ls",
+      "cd $DIR && ls",
+      'cd "$(git rev-parse --show-toplevel)" && ls',
+      "cd ~/x && ls",
+      "cd - && ls",
+      "cd && ls",
+      "cd x; ls",
+      "cd x || ls",
+      "cd 'a b' && ls",
+      "cd\nls",
+      "pushd /x && ls",
+      "popd",
+    ]) {
+      expect({ command, lead: leadingCd(command, "/repo") }).toEqual({ command, lead: { kind: "rejected" } })
+    }
+  })
 })
 
 test("parses command positions and nested sources, flagging what it cannot read", () => {

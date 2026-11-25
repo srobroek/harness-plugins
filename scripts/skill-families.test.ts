@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { existsSync, readdirSync } from "node:fs"
 import path from "node:path"
+import { openCodeForms } from "./agent-files.ts"
 
 const PLUGINS = path.join(import.meta.dir, "..", "plugins")
 
@@ -43,7 +44,7 @@ const EXCEPTIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
 const skillsOf = (plugin: string) => {
   const dir = path.join(PLUGINS, plugin, "common", "skills")
   if (!existsSync(dir)) return []
-  return readdirSync(dir).filter((name) => existsSync(path.join(dir, name, "SKILL.md")))
+  return readdirSync(dir).filter((name) => openCodeForms(path.join(dir, name, "SKILL.md")).some((file) => existsSync(file)))
 }
 
 const inFamily = (id: string, families: readonly string[]) =>

@@ -1,0 +1,61 @@
+{
+  "name": "@srobroek/pi-agent-modes",
+  "version": "1.4.1",
+  "description": "Debug, refactor and concept agents with plan-style mode reminders: root-cause diagnosis in a scratch worktree, behaviour-preserving refactoring, and design iteration.",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/modes/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "_kit",
+    "agents",
+    "extensions"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "peerDependencies": {
+    "@plannotator/pi-extension": "*",
+    "context-mode": "*",
+    "pi-lens": "*",
+    "pi-subagents": "*",
+    "pi-web-access": "*"
+  },
+  "peerDependenciesMeta": {
+    "@plannotator/pi-extension": {
+      "optional": true
+    },
+    "context-mode": {
+      "optional": true
+    },
+    "pi-lens": {
+      "optional": true
+    },
+    "pi-subagents": {
+      "optional": true
+    },
+    "pi-web-access": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/modes.js",
+      "./_kit/prereqs.ts"
+    ],
+    "subagents": {
+      "agents": [
+        "./agents"
+      ]
+    }
+  }
+}

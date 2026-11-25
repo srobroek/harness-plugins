@@ -1,3 +1,27 @@
+## quality [0.19.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.18.0...quality--v0.19.0) (2026-11-25)
+
+### Features
+
+* **quality:** bring the legacy OMP quality rule and advisor skills to OMP ([#201](https://github.com/srobroek/harness-plugins/issues/201)) ([bbcff0a](https://github.com/srobroek/harness-plugins/commit/bbcff0a97d8431446ae1b186f3d174980a1b55a9))
+
+## quality [0.18.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.17.0...quality--v0.18.0) (2026-11-25)
+
+### Features
+
+* **quality:** ship quality to OMP ([#200](https://github.com/srobroek/harness-plugins/issues/200)) ([fed762e](https://github.com/srobroek/harness-plugins/commit/fed762ec504dad3a6fed928f78eff7b8b428661a))
+
+## quality [0.17.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.16.2...quality--v0.17.0) (2026-11-25)
+
+### Features
+
+* **quality:** add single-source and pattern-dialect rules for contracts ([bb8a0ee](https://github.com/srobroek/harness-plugins/commit/bb8a0ee23d50c34b86d9fce506e10f892933cf1d))
+* **quality:** make TypeSpec the required source of every cross-boundary contract ([5f38c72](https://github.com/srobroek/harness-plugins/commit/5f38c7220fa56716c208266f09d4c185be51a88b))
+
+### Bug Fixes
+
+* **quality:** make TypeSpec the source of every serialized or published contract ([8775a34](https://github.com/srobroek/harness-plugins/commit/8775a343fdd44d5b9f57d0e678ccbeea7a1fecee))
+* **toolchain:** recognise TypeSpec's emitted seal, publish OpenAPI 3.2.0, ship the full API skill to OMP and adopt the framework-adapter pattern ([818f193](https://github.com/srobroek/harness-plugins/commit/818f193ecb67974fed549502705b6f5663708797))
+
 ## quality [0.16.2](https://github.com/srobroek/harness-plugins/compare/quality--v0.16.1...quality--v0.16.2) (2026-11-25)
 
 ### Bug Fixes

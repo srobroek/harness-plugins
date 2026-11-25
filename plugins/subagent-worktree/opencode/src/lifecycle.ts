@@ -16,7 +16,7 @@ import type { Context } from "@opencode/plugin/promise/plugin"
 import { canonicalCheckout } from "@srobroek/opencode-lib/session-eviction"
 import { isSessionNotFound, type LaneSessionClient, laneSessions, MAX_LANE_DEPTH, moveSessionsHome } from "@srobroek/opencode-lib/session-lanes"
 import { bumpClaim, forgetNotice, landingsFor, listLandings, readClaim, readNotices, recordNotice } from "@srobroek/opencode-lib/worktree-claims"
-import { holdsState, type LockOptions, lockedWrite, setHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
+import { holdsState, type LockOptions, recordHold, withDiskLock } from "@srobroek/opencode-lib/worktree-locks"
 import { OPERATION_MARKERS, operationsInProgress, stashesOnBranch } from "@srobroek/opencode-lib/worktree-state"
 import {
   archivedKeptNotice,
@@ -1098,14 +1098,14 @@ export function createLifecycle(deps: LifecycleDeps) {
         const common = await deps.commonDir(lane.parentDir)
         if (common !== undefined) {
           try {
-            await lockedWrite(common, lane.directory, { sessionID: input.sessionID, now, ...deps.lock }, () =>
-              setHold(
-                common,
-                lane.directory,
-                input.sessionID,
-                matched.map(({ job }) => ({ kind: job.kind, id: job.shellID ?? job.childSessionID ?? job.sessionID ?? "unknown" })),
-                now(),
-              ),
+            // The jobs reach disk before the lock wait, so a remover holding the lock longer than the wait still sees them.
+            await recordHold(
+              common,
+              lane.directory,
+              input.sessionID,
+              matched.map(({ job }) => ({ kind: job.kind, id: job.shellID ?? job.childSessionID ?? job.sessionID ?? "unknown" })),
+              now(),
+              { sessionID: input.sessionID, now, ...deps.lock },
             )
             unsafeHolds.delete(canonical(lane.directory))
           } catch (error) {
@@ -1118,10 +1118,10 @@ export function createLifecycle(deps: LifecycleDeps) {
         return matched[0]?.why
       }
       // The running work is recorded for active and removing lanes before any recovery looks at them: a lane a crash left in `removing` may still have a shell in its checkout.
+      // The lanes are recorded together, so no lane's pending hold waits behind another lane's busy lock.
       const busyOf = new Map<string, string | undefined>()
-      for (const lane of (await deps.scan()).filter((candidate) => (candidate.state === "active" || candidate.state === "removing") && related(candidate))) {
-        busyOf.set(lane.child, await recordHolds(lane))
-      }
+      const toRecord = (await deps.scan()).filter((candidate) => (candidate.state === "active" || candidate.state === "removing") && related(candidate))
+      for (const [child, why] of await Promise.all(toRecord.map(async (lane) => [lane.child, await recordHolds(lane)] as const))) busyOf.set(child, why)
       await resumeRemovals(related, planned)
       const lanes = (await deps.scan()).filter((lane) => lane.state === "active" && related(lane))
       if (lanes.length === 0) return

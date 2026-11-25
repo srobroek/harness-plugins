@@ -69,7 +69,7 @@
     },
     {
       "name": "agent-efficiency",
-      "version": "0.14.6",
+      "version": "0.14.7",
       "description": "Cut agent tokens: run bash calls as the built-in shell tool, narrow explore to search and web tools, and trim read-only subagent prompts.",
       "category": "development",
       "harnesses": {
@@ -218,7 +218,7 @@
     },
     {
       "name": "agent-reviewer",
-      "version": "0.15.4",
+      "version": "0.16.0",
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "category": "development",
       "harnesses": {
@@ -1011,7 +1011,7 @@
     },
     {
       "name": "delivery",
-      "version": "0.12.6",
+      "version": "0.14.0",
       "description": "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
       "category": "development",
       "harnesses": {
@@ -1037,9 +1037,58 @@
             "index"
           ],
           "mcp": []
+        },
+        "pi": {
+          "skills": [],
+          "agents": [],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "delivery-cleanup"
+          ],
+          "mcp": []
         }
       },
-      "scope": "global"
+      "scope": "global",
+      "discrepancies": "pi (and OMP, which loads the pi bundle) gets only an explicit delivery_cleanup for the session's repository: no delivery_land, automatic cleanup or clone registry.",
+      "prerequisites": [
+        {
+          "bin": "git",
+          "for": "delivery_cleanup's worktree, ref and remote proofs, git worktree remove and git branch -d",
+          "required": true,
+          "install": {
+            "url": "https://git-scm.com/downloads"
+          }
+        },
+        {
+          "bin": "gh",
+          "for": "delivery_cleanup's pull-request read (gh pr view) for a GitHub receipt",
+          "required": false,
+          "install": {
+            "mise": "aqua:cli/cli",
+            "url": "https://cli.github.com"
+          }
+        },
+        {
+          "bin": "glab",
+          "for": "delivery_cleanup's merge-request read (glab mr view) for a GitLab receipt",
+          "required": false,
+          "install": {
+            "url": "https://gitlab.com/gitlab-org/cli#installation"
+          }
+        },
+        {
+          "bin": "bd",
+          "for": "delivery_cleanup's read-only bd show of a receipt's beads when the repository's Beads ledger is active",
+          "required": false,
+          "install": {
+            "mise": "aqua:gastownhall/beads",
+            "url": "https://github.com/gastownhall/beads/blob/main/docs/getting-started/installation.md"
+          }
+        }
+      ]
     },
     {
       "name": "dep-update",
@@ -1080,7 +1129,7 @@
     },
     {
       "name": "design",
-      "version": "0.10.4",
+      "version": "0.11.0",
       "description": "UI and UX design skills: design-system audit, DESIGN.md, rendered-surface review, accessibility audit, motion, microcopy, prototypes, and wireframes.",
       "category": "development",
       "harnesses": {
@@ -1153,9 +1202,87 @@
             "accessibility-scanner",
             "wire-dsl"
           ]
+        },
+        "pi": {
+          "skills": [
+            "accessibility-audit",
+            "design-component-truth",
+            "design-evidence",
+            "design-guide",
+            "design-md",
+            "design-no-slop",
+            "design-prototype",
+            "design-system-audit",
+            "design-token-discipline",
+            "design-upstream-preflight",
+            "motion-design",
+            "ui-microcopy",
+            "ui-review",
+            "wireloom"
+          ],
+          "agents": [
+            "a11y-auditor",
+            "council-user",
+            "council-ux",
+            "design-critic",
+            "ui-implementer",
+            "ui-ux-specialist"
+          ],
+          "commands": [
+            "council-product",
+            "design-review"
+          ],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "design"
+          ],
+          "mcp": [
+            "accessibility-scanner",
+            "wire-dsl"
+          ]
         }
       },
-      "scope": "project"
+      "scope": "project",
+      "prerequisites": [
+        {
+          "bin": "impeccable",
+          "for": "design_impeccable_scan and the upstream impeccable skill pack",
+          "required": true,
+          "install": {
+            "mise": "npm:impeccable",
+            "url": "https://github.com/pbakaus/impeccable#readme"
+          },
+          "version": ">=4.10.0"
+        },
+        {
+          "bin": "npx",
+          "for": "the Playwright, accessibility-scanner and wire-dsl MCP servers",
+          "required": true,
+          "install": {
+            "mise": "node",
+            "url": "https://nodejs.org/en/download"
+          }
+        }
+      ],
+      "companions": [
+        {
+          "package": "pi-subagents",
+          "for": "the design agents, /design-review and /council-product",
+          "required": true
+        },
+        {
+          "package": "pi-web-access",
+          "for": "web search and fetch in ui-ux-specialist, design-critic and a11y-auditor",
+          "required": true
+        },
+        {
+          "package": "@srobroek/pi-debate",
+          "for": "council-advocate and council-skeptic in /council-product",
+          "required": true
+        }
+      ]
     },
     {
       "name": "docs",
@@ -1398,7 +1525,7 @@
     },
     {
       "name": "lang-go",
-      "version": "0.9.3",
+      "version": "0.10.1",
       "description": "Go skills: build, lint, go test -race, tidy and govulncheck checks, testing and fuzzing, module and package layout, and pprof profiling.",
       "category": "development",
       "harnesses": {
@@ -1477,7 +1604,7 @@
     },
     {
       "name": "lang-python",
-      "version": "0.9.3",
+      "version": "0.10.1",
       "description": "Python skills: uv, ruff, mypy or pyright and pytest checks, testing, packaging, typing and pydantic, SQLAlchemy and Alembic, and profiling.",
       "category": "development",
       "harnesses": {
@@ -1564,7 +1691,7 @@
     },
     {
       "name": "lang-rust",
-      "version": "0.9.3",
+      "version": "0.10.1",
       "description": "Rust skills: fmt, clippy and test checks, testing with nextest, proptest and insta, crates and workspaces, CI, sqlx persistence, Tauri and profiling.",
       "category": "development",
       "harnesses": {
@@ -1655,7 +1782,7 @@
     },
     {
       "name": "lang-typescript",
-      "version": "0.10.3",
+      "version": "0.11.1",
       "description": "TypeScript and JavaScript skills: install, lint, tsc and test checks, testing, monorepo packaging, type safety and zod, and Bun and Node profiling.",
       "category": "development",
       "harnesses": {
@@ -1781,7 +1908,7 @@
     },
     {
       "name": "modes",
-      "version": "1.3.2",
+      "version": "1.4.1",
       "description": "Debug, refactor and concept agents with plan-style mode reminders: root-cause diagnosis in a scratch worktree, behaviour-preserving refactoring, and design iteration.",
       "category": "development",
       "harnesses": {
@@ -1812,12 +1939,57 @@
           "rules": [],
           "hooks": [],
           "tools": [],
-          "extensions": [],
+          "extensions": [
+            "modes"
+          ],
+          "mcp": []
+        },
+        "pi": {
+          "skills": [],
+          "agents": [
+            "concept",
+            "debug",
+            "refactor"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "modes"
+          ],
           "mcp": []
         }
       },
       "scope": "global",
-      "piName": "pi-agent-modes"
+      "piName": "pi-agent-modes",
+      "companions": [
+        {
+          "package": "pi-subagents",
+          "for": "the debug, refactor and concept agents and their helper launches",
+          "required": true
+        },
+        {
+          "package": "pi-lens",
+          "for": "code-intelligence read tools for the mode agents",
+          "required": true
+        },
+        {
+          "package": "pi-web-access",
+          "for": "web search and fetch tools for the mode agents",
+          "required": true
+        },
+        {
+          "package": "context-mode",
+          "for": "the indexing and search tools of the mode agents; the guard refuses its code-running tools",
+          "required": true
+        },
+        {
+          "package": "@plannotator/pi-extension",
+          "for": "plan mode and plan review, which modes leaves to it",
+          "required": false
+        }
+      ]
     },
     {
       "name": "parley",
@@ -1879,7 +2051,7 @@
     },
     {
       "name": "project",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
       "category": "productivity",
       "harnesses": {
@@ -2017,7 +2189,7 @@
     },
     {
       "name": "quality",
-      "version": "0.16.2",
+      "version": "0.19.0",
       "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
       "category": "development",
       "harnesses": {
@@ -2057,6 +2229,31 @@
           "hooks": [],
           "tools": [],
           "extensions": [],
+          "mcp": []
+        },
+        "omp": {
+          "skills": [
+            "advisor-resample",
+            "prototype-logic",
+            "quality-code-design",
+            "quality-code-policy",
+            "quality-profiling",
+            "quality-test-audit",
+            "quality-testing",
+            "watchdog-files"
+          ],
+          "agents": [
+            "adversarial-challenger"
+          ],
+          "commands": [],
+          "rules": [
+            "quality-code-design"
+          ],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "quality"
+          ],
           "mcp": []
         },
         "pi": {
@@ -2147,7 +2344,7 @@
     },
     {
       "name": "safety",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help and redaction of secret environment values from tool output.",
       "category": "development",
       "harnesses": {
@@ -2354,7 +2551,7 @@
     },
     {
       "name": "subagent-worktree",
-      "version": "0.9.2",
+      "version": "0.9.4",
       "description": "Runs opted-in subagents in their own git worktree and merges their branch back with wt merge.",
       "category": "development",
       "harnesses": {
@@ -2375,7 +2572,7 @@
     },
     {
       "name": "toolchain",
-      "version": "0.10.4",
+      "version": "0.11.1",
       "description": "Toolchain defaults as skills: stack, frontend, infrastructure, languages, observability, shell, Terraform, caches, background jobs and worktree coexistence.",
       "category": "development",
       "harnesses": {
@@ -2601,7 +2798,7 @@
     },
     {
       "name": "worktrunk",
-      "version": "0.7.2",
+      "version": "0.7.3",
       "description": "Worktrunk (wt) skills: work in linked worktrees and run deterministic preflight checks before an agent run or merge.",
       "category": "development",
       "harnesses": {

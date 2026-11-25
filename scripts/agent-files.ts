@@ -1,4 +1,4 @@
-// Names of the agent files in `plugins/<name>/common/agents/`.
+// Names of the files in `plugins/<name>/common/`, mostly agent files in `common/agents/`.
 
 const CLAUDE_SUFFIX = ".claude.md"
 const OMP_SUFFIX = ".omp.md"
@@ -17,4 +17,12 @@ export const isPiAgentFile = (name: string) => name.endsWith(PI_SUFFIX)
 /** Whether a `common/agents/` file name is a translation rather than an OpenCode agent. */
 export function isTranslatedAgentFile(name: string): boolean {
   return TRANSLATED_AGENT_SUFFIXES.some((suffix) => name.endsWith(suffix))
+}
+
+/**
+ * A common file's two names: plain (`x.md`), which harness-kit copies into every harness tree, and
+ * its OpenCode variant (`x.opencode.md`), which only the OpenCode tree gets, under the plain name.
+ */
+export function openCodeForms(file: string): [plain: string, openCode: string] {
+  return [file, file.replace(/(\.[^./]+)$/, ".opencode$1")]
 }

@@ -32,12 +32,13 @@ const landed = buildReceipt({
   proof: { method: "gh pr view", observedAt: "2027-01-15T08:00:00.000Z", evidence: { state: "MERGED" } },
   outcome: "cleaned",
 })
-const success: CleanupResult = {
+const success: Extract<CleanupResult, { ok: true }> = {
   ok: true,
   receipt: landed,
   path: "/r",
   remoteBranchAbsence: "absent",
   alreadyCleaned: false,
+  partlyRemoved: false,
   localRefDeleted: true,
   report: { removed: ["worktree /w/a", "local branch b"], skipped: [] },
 }
@@ -52,6 +53,20 @@ test.each([
 
 test("a successful cleanup reports the removed path and the local ref", () => {
   expect(reportFromCleanup(success)).toEqual({ ok: true, removed: "/w/a", localRefDeleted: true, alreadyCleaned: false, kept: [] })
+})
+
+test("a removal that stopped part-way is reported as partly removed and unverified, never as removed", () => {
+  const partWay: CleanupResult = {
+    ...success,
+    partlyRemoved: true,
+    localRefDeleted: false,
+    report: { removed: [], skipped: ["worktree /w/a: removal attempted and stopped part-way"] },
+  }
+  const report = reportFromCleanup(partWay)
+  expect(report).toEqual({ ok: true, partlyRemoved: "/w/a", localRefDeleted: false, alreadyCleaned: false, kept: ["worktree /w/a: removal attempted and stopped part-way"] })
+  expect(textAfterCleanup("landed\nnext: run delivery_cleanup to remove the worktree and the local branch.", report)).toBe(
+    "landed\ncleanup: removal attempted, partly removed, unverified: /w/a; kept: worktree /w/a: removal attempted and stopped part-way.",
+  )
 })
 
 test.each(["worktree.status", "worktree.operation", "worktree.stash"])("a %s refusal is reported as dirty", (gate) => {

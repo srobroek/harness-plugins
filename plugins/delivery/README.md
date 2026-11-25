@@ -201,7 +201,14 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
 - The idle hook also records the `background` list as holds on disk
   (`<common>/opencode/holds/…`, the same format `subagent-worktree` writes): a shell that names the
   worktree, or any job of a session working in it. The last check before a removal reads them, so
-  running background work keeps the worktree. Landing records are dropped only on positive evidence
+  running background work keeps the worktree. The jobs are written before the lock wait as well
+  (`recordHold`, as `subagent-worktree` writes them), for every worktree before any lock is taken.
+  A write whose lock wait times out behind a long removal hold therefore still blocks every
+  remover until that session's next write. A refusal caused by such a pending hold says
+  "recorded before its lock was taken", with its age, the time after which it is ignored, and its
+  file. Delete the named file only after that session's listed jobs have finished and that
+  session has ended. Until then, wait for its next turn or for the time given.
+  Landing records are dropped only on positive evidence
   (their own receipt readable and cleaned or superseded); a denial is never dropped by cleanup of
   stale records, and a missing or unreadable receipt directory deletes nothing.
 - The lock is the Beads embedded write lock's protocol (a leased, token-owned file with a steal
@@ -212,8 +219,12 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
 - Every removal delivery makes (explicit, inline, retry) runs its last step inside
   `lockedWorktreeRemoval`: the same on-disk lock `subagent-worktree` takes, then, under it and after
   every proof, a final look at claims, background holds, running sessions and denials, then the
-  removal. The prompt, if any, comes before and outside the lock. If the coordination store cannot
-  be written, or a hold could not be recorded, the worktree is treated as unsafe and kept.
+  removal. The reads that prove the target (its identity, the PR read from inside it, a clean tree,
+  a pushed tip) run first without the lock, so the lock is held only for the removal section, which
+  proves them again. A refusal is read again under the same lock (`lockedWorktreeRead`), so it is
+  never the sight of another remover's removal part-way: a half-deleted tree would read as dirty.
+  The prompt, if any, comes before the removal section and outside the lock. If the coordination
+  store cannot be written, or a hold could not be recorded, the worktree is treated as unsafe and kept.
 - After the worktree is removed and its absence is proven, delivery moves the lane's own sessions
   to the repository's canonical checkout, so none is left pointing at a directory that is gone
   (`Location not found`). The lane is the session that called the tool (for the background retry,
@@ -222,12 +233,11 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
   only those sessions' children (`session.list` with `parentID`), never the whole project. It does
   this after the removal, because the host still lists and reads sessions whose directory is gone,
   so a session created while the worktree was being removed is found too. It runs even when a
-  later step (branch deletion, a ref probe) refuses the cleanup. Other sessions are not touched. A
+  later step (branch deletion, a ref probe) cannot finish. Other sessions are not touched. A
   running session in the worktree or below it still refuses the removal (see the final look
   above). Moving never fails the cleanup: a session that could not be moved or read, or an
-  incomplete listing, is listed under `skipped` in the result (appended to the reason when the
-  cleanup is refused), with the session id and the reason. A session that no longer exists is
-  dropped silently.
+  incomplete listing, is listed under `skipped` in the result, with the session id and the reason.
+  A session that no longer exists is dropped silently.
 - **A refusal sticks.** If the inline cleanup is refused at its prompt, the landing record
   keeps `denied` and nothing retries it. A later explicit `delivery_cleanup` call that is
   authorized clears it; one that is refused records a fresh denial and leaves the old one
@@ -297,13 +307,57 @@ The tool refuses in these cases:
 - on an active ledger, a receipt bead is not closed with `metadata.merge_sha`
   equal to the merge.
 
+A refusal means that the call removed nothing. After the removal command runs, the call
+does not refuse. It succeeds and lists what it removed (`removed`) and what it could not
+finish or prove (`skipped`). Examples are a branch that Git could not delete, or a
+worktree that reappeared at the path.
+
+A removal that stops part-way reports `partlyRemoved: true` and the headline "removal
+attempted, partly removed, unverified", with nothing in `removed`. Examples are a file
+Git cannot delete, or a kill at the time bound. `git worktree remove` only deletes. A
+failed removal counts as stopped part-way only when it left one of these signs:
+
+- a deleted tracked file in `git status`;
+- a `.git` marker that does not bind the tree to its admin directory;
+- a status that cannot be read, or a missing registration;
+- a command that ended with no exit status.
+
+Such a call keeps the local branch and the landing receipt, which stays the receipt of
+record. Delivery's own retry tells the session once, keeps the landing record and does
+not retry it.
+
+A failed removal without such a sign stays a refusal. A tree that changed after the last
+proof is why Git refused it, for example an untracked file or an edit. The refusal then
+lists the changed paths and says to save them.
+
+Git's refusal at its clean check ("contains modified or untracked files") is a refusal
+too, even when the status shows deleted files. Git makes that check before it deletes
+anything, so those deletions come from another process. Git runs the removal in the C
+locale, so its message is the English one. Any other message falls back to the signs above.
+
+Every unverified or partly removed result names the path to inspect and says to save any
+changes there. No result of a failed removal or branch deletion names a command that
+forces a deletion. It quotes the command that ran (`git worktree remove`, `git branch -d`),
+which never forces. Git runs those two calls in the C locale, and the result quotes only
+the first line of its message, without the hint ("use --force to delete it",
+"remove -f -f", "branch -D"). The expected outcome reads "exit 0".
+
+A deleted file in the status may be the user's own work. The status does not list ignored
+files either. So no status proves that what is left belongs to the interrupted removal.
+
+A tree whose only changes are deleted tracked files is a removal that is running or
+stopped part-way. The cause can be another process that takes no delivery lock, such as
+a delivery plugin in another harness or `wt remove`. It can also be an earlier cleanup
+that failed. The refusal says so, names the path to inspect and says to save any changes.
+
 Cleanup deletes the receipt's branch ref only while it still points at the reviewed
 head. It leaves a ref that is gone or points elsewhere, and it keeps the differently
 named branch a worktree sits on. The result lists what it removed (`removed`) and
 what it left (`skipped`).
 
 Cleanup treats a worktree that is already gone as done, whether an earlier cleanup
-finished or someone removed it by hand. The call succeeds with `alreadyCleaned: true`,
+finished, another remover took it during this call's checks, or someone removed
+it by hand. The call succeeds with `alreadyCleaned: true`,
 changes nothing and writes no receipt. If a worktree or directory has reappeared at the
 recorded path since, cleanup refuses instead: it reports the path and the worktree's
 HEAD, and removes nothing.
@@ -351,6 +405,34 @@ different root, set `DELIVERY_RECEIPTS_DIR` or the `receiptsDirectory` option.
 `PI_CODING_AGENT_DIR` is not read. A directory scan reads at most 1000 receipts
 per repository.
 
+## pi and OMP
+
+The pi package (`@srobroek/pi-delivery`, `plugins/delivery/pi`) ships one tool:
+`delivery_cleanup`, for an explicit call. It takes the same input and returns the
+same text as the OpenCode tool, and runs the same `cleanupDelivery`. It holds the
+same worktree lock as every other delivery remover and as `subagent-worktree`. Under
+that lock it reads the lane claim and the background-work records.
+
+It differs from the OpenCode tool in these ways:
+
+- It cleans up only the session's own repository. It refuses a `repo` and `repoPath`
+  that name another clone, and a receipt or worktree of another repository.
+- It has no retry and no background cleanup. It does not clean up after a land and
+  keeps no clone registry. It does not see OpenCode sessions running in the worktree.
+- Its `authorize` step defers a lane-owned worktree and calls no UI, so a session
+  without a UI (a subagent) runs it the same way. The OMP approval mode gates it as
+  an `exec` tool.
+- The pi package ships neither `delivery_land` nor the hygiene report. The agents and
+  the two skills are OpenCode variants (`<id>.opencode.md`, `SKILL.opencode.md`),
+  because they name tools and agents that pi lacks, so pi gets none of them.
+
+OMP loads pi extensions unchanged. To load this tool in OMP, add the bundle's file
+path (`plugins/delivery/pi/extensions/delivery-cleanup.js`) to `extensions:` in
+`~/.omp/agent/config.yml`. A file entry loads no sibling skills or agents. Only one
+`delivery_cleanup` may load, so disable any other one. For the omp-plugins `delivery`
+package, add `extension-module:delivery-cleanup-tool` to `disabledExtensions`. Its
+`delivery_land` and hygiene report stay loaded.
+
 ## Agents
 
 The plugin registers these subagents from `agents/*.md` through
@@ -395,11 +477,11 @@ ID available to your host.
   with or without model-roles; `false` means no model.
 - Your own markdown or config agent with the same id loads after the plugin and
   overrides it field by field, including the tier header.
-- `agents/roles.json` holds the same mapping as the headers, as a model-roles
+- `agents/roles.json` (`common/agents/roles.opencode.json` in the source) holds the same mapping as the headers, as a model-roles
   `agents` fragment, for hosts that set tiers in config instead.
 
 The agents were converted with
-`bun scripts/convert-agent.ts --roles plugins/delivery/common/agents/roles.source.json`,
+`bun scripts/convert-agent.ts --roles plugins/delivery/common/agents/roles.source.opencode.json`,
 then edited by hand. The roles file is keyed by model-roles tier (`cheap`, `standard`,
 `strong`, `reviewer`); the omp names `smol`, `task` and `slow` resolve to the same keys. The edits removed omp-only references, slimmed the
 shepherd, and limited the reviewer's shell to `gh pr view` and `gh pr diff`.

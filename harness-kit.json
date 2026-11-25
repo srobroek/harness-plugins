@@ -9,7 +9,8 @@
   "commonDirs": [
     "skills",
     "agents",
-    "formulas"
+    "formulas",
+    "rules"
   ],
   "piScope": "@srobroek",
   "piPrefix": "pi-",

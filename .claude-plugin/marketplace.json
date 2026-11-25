@@ -12,7 +12,7 @@
       "name": "agent-reviewer",
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "source": "./plugins/agent-reviewer/claude",
-      "version": "0.15.4",
+      "version": "0.16.0",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/agent-reviewer",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -75,7 +75,7 @@
       "name": "design",
       "description": "UI and UX design skills: design-system audit, DESIGN.md, rendered-surface review, accessibility audit, motion, microcopy, prototypes, and wireframes.",
       "source": "./plugins/design/claude",
-      "version": "0.10.4",
+      "version": "0.11.0",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/design",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -102,7 +102,7 @@
       "name": "lang-go",
       "description": "Go skills: build, lint, go test -race, tidy and govulncheck checks, testing and fuzzing, module and package layout, and pprof profiling.",
       "source": "./plugins/lang-go/claude",
-      "version": "0.9.3",
+      "version": "0.10.1",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/lang-go",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -111,7 +111,7 @@
       "name": "lang-python",
       "description": "Python skills: uv, ruff, mypy or pyright and pytest checks, testing, packaging, typing and pydantic, SQLAlchemy and Alembic, and profiling.",
       "source": "./plugins/lang-python/claude",
-      "version": "0.9.3",
+      "version": "0.10.1",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/lang-python",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -120,7 +120,7 @@
       "name": "lang-rust",
       "description": "Rust skills: fmt, clippy and test checks, testing with nextest, proptest and insta, crates and workspaces, CI, sqlx persistence, Tauri and profiling.",
       "source": "./plugins/lang-rust/claude",
-      "version": "0.9.3",
+      "version": "0.10.1",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/lang-rust",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -129,7 +129,7 @@
       "name": "lang-typescript",
       "description": "TypeScript and JavaScript skills: install, lint, tsc and test checks, testing, monorepo packaging, type safety and zod, and Bun and Node profiling.",
       "source": "./plugins/lang-typescript/claude",
-      "version": "0.10.3",
+      "version": "0.11.1",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/lang-typescript",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -138,7 +138,7 @@
       "name": "project",
       "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
       "source": "./plugins/project/claude",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "category": "productivity",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/project",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -156,7 +156,7 @@
       "name": "quality",
       "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
       "source": "./plugins/quality/claude",
-      "version": "0.16.2",
+      "version": "0.19.0",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/quality",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -183,7 +183,7 @@
       "name": "toolchain",
       "description": "Toolchain defaults as skills: stack, frontend, infrastructure, languages, observability, shell, Terraform, caches, background jobs and worktree coexistence.",
       "source": "./plugins/toolchain/claude",
-      "version": "0.10.4",
+      "version": "0.11.1",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/toolchain",
       "repository": "https://github.com/srobroek/harness-plugins"
@@ -201,7 +201,7 @@
       "name": "worktrunk",
       "description": "Worktrunk (wt) skills: work in linked worktrees and run deterministic preflight checks before an agent run or merge.",
       "source": "./plugins/worktrunk/claude",
-      "version": "0.7.2",
+      "version": "0.7.3",
       "category": "development",
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/worktrunk",
       "repository": "https://github.com/srobroek/harness-plugins"

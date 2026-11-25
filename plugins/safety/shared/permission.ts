@@ -12,7 +12,7 @@
  */
 
 import { isAbsolute, resolve } from "node:path"
-import { leadingCdCwd } from "@srobroek/opencode-lib"
+import { leadingCd } from "@srobroek/opencode-lib"
 import { DEFAULT_GIT_WRAPPERS } from "@srobroek/opencode-lib/git-wrappers"
 import { type GateOptions, reviewBranchDeletes } from "./branch-delete.ts"
 import { type Bounds, budget, gitOut, ProbeTimeout } from "./probes.ts"
@@ -164,14 +164,17 @@ export type ReviewOptions = GateOptions & {
   gitWrappers?: readonly string[]
 }
 
-/** Directory the call's top-level commands run in, or `undefined` when a later `cd` makes it unknowable. */
+/**
+ * Directory the call's top-level commands run in, or `undefined` when a `cd` makes it unknowable: any
+ * directory change other than one leading `cd` that `leadingCd` reads as a literal directory.
+ */
 function callDirectory(source: string, commands: readonly Command[], cwd: string): string | undefined {
-  const leading = leadingCdCwd(source, cwd)
   const changes = commands.filter(
     (command) => command.context === "top" && ["cd", "pushd", "popd"].includes(base(command.argv[0])),
   )
   if (changes.length === 0) return cwd
-  if (changes.length === 1 && changes[0]?.index === 0 && leading !== cwd) return leading
+  const lead = leadingCd(source, cwd)
+  if (changes.length === 1 && changes[0]?.index === 0 && lead.kind === "dir") return lead.dir
   return undefined
 }
 
@@ -205,7 +208,7 @@ export async function reviewPermission(
       if (branches.definitive) return { effect: "deny", message: branches.reason }
       destructive.push(branches.reason)
     } else if (branches.action === "confirm") destructive.push(`${branches.title}\n${branches.message}`)
-    const removals = await reviewRemovals(source, dir ?? cwd, options.worktreeProbe ?? defaultProbe(options), (text) =>
+    const removals = await reviewRemovals(source, dir, options.worktreeProbe ?? defaultProbe(options), (text) =>
       parseRemovals(text, gitWrappers),
     )
     if (removals.refuse) return { effect: "deny", message: removals.refuse }

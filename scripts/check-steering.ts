@@ -3,9 +3,10 @@
  * Fail when shipped markdown still carries Oh My Pi steering: `skill://`, `rule://`,
  * `agent://`, `proc://` and the other omp URI schemes, omp tool names, TTSR wording, or
  * omp CLI and config paths. Shipped markdown is every `*.md` under a plugin's `skills/`
- * or `agents/` directory. A `SKILL.md` must also open with YAML frontmatter that parses
+ * or `agents/` directory. A `SKILL.md` (or its OpenCode variant `SKILL.opencode.md`) must also open with YAML frontmatter that parses
  * and carries a `name` and a `description`: Claude Code and Codex read it strictly. Every
- * relative markdown link must name a file that exists. An OMP or pi variant (`<name>.omp.md`,
+ * relative markdown link must name a file that exists; an OpenCode variant may name a file that
+ * exists only as an OpenCode variant too, since both ship under their plain names. An OMP or pi variant (`<name>.omp.md`,
  * `<name>.pi.md`, which harness-kit ships to that harness alone) may name that harness's tools,
  * so only its frontmatter and links are checked.
  *
@@ -15,6 +16,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import path from "node:path"
+import { openCodeForms } from "./agent-files.ts"
 
 export type Finding = { file: string; line: number; match: string; reason: string }
 
@@ -123,6 +125,9 @@ export function shippedMarkdown(pluginsDir: string): string[] {
 /** A harness-kit variant that only the OMP or the pi tree receives. */
 const HARNESS_VARIANT = /\.(omp|pi)\.md$/
 
+/** A harness-kit variant that only the OpenCode tree receives. */
+const OPENCODE_VARIANT = /\.opencode\.md$/
+
 function main(argv: string[]): number {
   const root = path.resolve(import.meta.dir, "..")
   const files = argv.length > 0 ? argv : shippedMarkdown(path.join(root, "plugins"))
@@ -130,9 +135,11 @@ function main(argv: string[]): number {
     const name = path.relative(root, path.resolve(file))
     const text = readFileSync(file, "utf8")
     return [
-      ...(path.basename(file) === "SKILL.md" ? checkSkillFrontmatter(name, text) : []),
+      ...(openCodeForms("SKILL.md").includes(path.basename(file)) ? checkSkillFrontmatter(name, text) : []),
       ...(HARNESS_VARIANT.test(file) ? [] : checkText(name, text)),
-      ...checkLocalLinks(file, text, existsSync).map((finding) => ({ ...finding, file: name })),
+      ...checkLocalLinks(file, text, (target) => existsSync(target) || (OPENCODE_VARIANT.test(file) && existsSync(openCodeForms(target)[1]))).map(
+        (finding) => ({ ...finding, file: name }),
+      ),
     ]
   })
   for (const finding of findings) console.error(`${finding.file}:${finding.line}: ${finding.reason}`)

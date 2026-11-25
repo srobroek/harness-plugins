@@ -6,26 +6,39 @@ import { defineMode, type Mode } from "@srobroek/opencode-lib/mode-reminders"
 export const AGENT_IDS = ["debug", "refactor", "concept"] as const
 export type AgentId = (typeof AGENT_IDS)[number]
 
-export const MODES: Readonly<Record<AgentId, Mode>> = {
-  debug: defineMode({
-    id: "debug",
+/** What each mode is for, on every host. Each host adds where the mode may edit and how to leave it. */
+export const MODE_ROLES: Readonly<Record<AgentId, { name: string; purpose: string }>> = {
+  debug: {
     name: "Debug",
     purpose:
       "you diagnose a failure to a confirmed root cause and never fix the user's checkout. Experiments run in a scratch git worktree.",
+  },
+  refactor: {
+    name: "Refactor",
+    purpose: "you restructure code in small verified steps without changing behaviour. Tests, fixtures and snapshots are frozen.",
+  },
+  concept: {
+    name: "Concept",
+    purpose: "you frame problems, explore options and record a decision. You do not implement.",
+  },
+}
+
+export const MODES: Readonly<Record<AgentId, Mode>> = {
+  debug: defineMode({
+    id: "debug",
+    ...MODE_ROLES.debug,
     allowed: "the scratch worktree under `~/.local/share/opencode/worktree/` and `~/.opencode/debug/`",
     redirect: "switch to `build` to apply the fix",
   }),
   refactor: defineMode({
     id: "refactor",
-    name: "Refactor",
-    purpose: "you restructure code in small verified steps without changing behaviour. Tests, fixtures and snapshots are frozen.",
+    ...MODE_ROLES.refactor,
     allowed: "source files; never test, fixture or snapshot files",
     redirect: "switch to `build` for features, bug fixes or test changes",
   }),
   concept: defineMode({
     id: "concept",
-    name: "Concept",
-    purpose: "you frame problems, explore options and record a decision. You do not implement.",
+    ...MODE_ROLES.concept,
     allowed: "`docs/design/`, `docs/adr/`, `docs/decisions/` and `~/.opencode/concept/`",
     redirect: "switch to `spec` or `plan`, then `build`",
   }),

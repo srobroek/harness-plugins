@@ -3,13 +3,20 @@
 
 UI and UX design skills: design-system audit, DESIGN.md, rendered-surface review, accessibility audit, motion, microcopy, prototypes, and wireframes.
 
-| Kind | opencode | claude |
-| --- | --- | --- |
-| skills | accessibility-audit, design-component-truth, design-evidence, design-guide, design-md, design-no-slop, design-prototype, design-system-audit, design-token-discipline, design-upstream-preflight, motion-design, ui-microcopy, ui-review, wireloom | accessibility-audit, design-component-truth, design-evidence, design-guide, design-md, design-no-slop, design-prototype, design-system-audit, design-token-discipline, design-upstream-preflight, motion-design, ui-microcopy, ui-review, wireloom |
-| agents | a11y-auditor, design-critic, ui-implementer, ui-ux-specialist | a11y-auditor, design-critic, ui-implementer, ui-ux-specialist |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | PreToolUse |
-| tools | - | - |
-| extensions | index | - |
-| mcp | accessibility-scanner, wire-dsl | accessibility-scanner, wire-dsl |
+| Kind | opencode | claude | pi |
+| --- | --- | --- | --- |
+| skills | accessibility-audit, design-component-truth, design-evidence, design-guide, design-md, design-no-slop, design-prototype, design-system-audit, design-token-discipline, design-upstream-preflight, motion-design, ui-microcopy, ui-review, wireloom | accessibility-audit, design-component-truth, design-evidence, design-guide, design-md, design-no-slop, design-prototype, design-system-audit, design-token-discipline, design-upstream-preflight, motion-design, ui-microcopy, ui-review, wireloom | accessibility-audit, design-component-truth, design-evidence, design-guide, design-md, design-no-slop, design-prototype, design-system-audit, design-token-discipline, design-upstream-preflight, motion-design, ui-microcopy, ui-review, wireloom |
+| agents | a11y-auditor, design-critic, ui-implementer, ui-ux-specialist | a11y-auditor, design-critic, ui-implementer, ui-ux-specialist | a11y-auditor, council-user, council-ux, design-critic, ui-implementer, ui-ux-specialist |
+| commands | - | - | council-product, design-review |
+| rules | - | - | - |
+| hooks | - | PreToolUse | - |
+| tools | - | - | - |
+| extensions | index | - | design |
+| mcp | accessibility-scanner, wire-dsl | accessibility-scanner, wire-dsl | accessibility-scanner, wire-dsl |
+
+## Prerequisites
+
+| Tool | Required | Version | For | Install |
+| --- | --- | --- | --- | --- |
+| impeccable | yes | >=4.10.0 | design_impeccable_scan and the upstream impeccable skill pack | mise use -g npm:impeccable, or see https://github.com/pbakaus/impeccable#readme |
+| npx | yes | any | the Playwright, accessibility-scanner and wire-dsl MCP servers | mise use -g node, or see https://nodejs.org/en/download |

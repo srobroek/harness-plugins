@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { type AgentPermission, permissionEffect } from "../lib/src/agent-files.ts"
 import { DEFAULT_LEAN_AGENTS } from "../plugins/agent-efficiency/opencode/src/lean.ts"
-import { isTranslatedAgentFile } from "./agent-files.ts"
+import { isTranslatedAgentFile, openCodeForms } from "./agent-files.ts"
 import { PI_WEB_TOOLS, piAgents } from "./pi-agents.ts"
 
 const PLUGINS = path.join(import.meta.dir, "..", "plugins")
@@ -61,8 +61,20 @@ const DENYLIST = new Set(["journey-validator"])
 /** Agents that change state without the edit tool. */
 const WRITERS = new Set(["shepherd"])
 
-/** Code Mode tools a Pi child reaches through another tool: it has no parley panel, so it asks its supervisor. */
-const PI_EQUIVALENTS: Readonly<Record<string, string>> = { parley: "contact_supervisor" }
+/**
+ * Code Mode tools a Pi child reaches through another tool: it has no parley panel, so it asks its supervisor,
+ * it creates and removes worktrees with git through `bash`, and the design agents drive the design package's
+ * Playwright MCP server.
+ */
+const PI_EQUIVALENTS: Readonly<Record<string, string>> = {
+  parley: "contact_supervisor",
+  worktree_create: "bash",
+  worktree_remove: "bash",
+  browser: "mcp:playwright",
+}
+
+/** Optional MCP tools a Pi agent leaves out: an `mcp:` entry for a server that is not configured fails the launch. */
+const PI_OPTIONAL: ReadonlySet<string> = new Set(["wire-dsl_*"])
 
 type Agent = { plugin: string; id: string; hidden: boolean; rules: AgentPermission[] }
 
@@ -76,7 +88,8 @@ function agents(): Agent[] {
   })
 }
 
-const skillFiles = () => [...new Bun.Glob("*/common/skills/*/SKILL.md").scanSync(PLUGINS)]
+// A skill's file may be its OpenCode variant (`SKILL.opencode.md`), which the OpenCode tree ships as SKILL.md.
+const skillFiles = () => openCodeForms("SKILL.md").flatMap((name) => [...new Bun.Glob(`*/common/skills/*/${name}`).scanSync(PLUGINS)])
 const shipped = new Set(skillFiles().map((file) => file.split("/")[3] as string))
 
 /** Upstream skills the design-upstream-preflight table routes to; design agents may allow them. */
@@ -175,7 +188,7 @@ test("a Pi agent keeps its profile's Code Mode tools, and has the web tools exac
   for (const agent of piAgents(PLUGINS)) {
     const profile = PROFILES[agent.id]
     if (profile === undefined || DENYLIST.has(agent.id)) continue
-    const codeMode = profile.codeMode.map((tool) => PI_EQUIVALENTS[tool] ?? tool)
+    const codeMode = profile.codeMode.filter((tool) => !PI_OPTIONAL.has(tool)).map((tool) => PI_EQUIVALENTS[tool] ?? tool)
     const missing = [...codeMode, ...(profile.web ? PI_WEB_TOOLS : [])].filter((tool) => !agent.tools.includes(tool))
     const unprofiledWeb = profile.web ? [] : agent.tools.filter((tool) => PI_WEB_TOOLS.includes(tool))
     expect({ plugin: agent.plugin, id: agent.id, missing, unprofiledWeb }).toEqual({
