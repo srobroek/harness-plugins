@@ -1,3 +1,13 @@
+## safety [2.0.0](https://github.com/srobroek/harness-plugins/compare/safety--v1.0.1...safety--v2.0.0) (2026-11-25)
+
+### ⚠ BREAKING CHANGES
+
+* **safety:** pi reads the safety key of `<agentDir>/settings.json`; `<agentDir>/safety.json` is no longer read. Move its object under the key.
+
+### Features
+
+* **safety:** read settings from pi settings.json ([79f2a1a](https://github.com/srobroek/harness-plugins/commit/79f2a1a1152601379e62b21cecc4efe15a12170b))
+
 ## safety [1.0.1](https://github.com/srobroek/harness-plugins/compare/safety--v1.0.0...safety--v1.0.1) (2026-11-25)
 
 ### Bug Fixes
