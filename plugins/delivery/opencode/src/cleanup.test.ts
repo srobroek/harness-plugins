@@ -3824,6 +3824,37 @@ describe("pending cleanup: one remover per worktree", () => {
     await h.finish()
   })
 
+  test("two receipts that spell one worktree differently hold every job either spelling matches", async () => {
+    const h = await harness("holds-two-spellings")
+    const key = (await repoKey(h.f.main)) as string
+    const spelled = join(h.f.root, "linked via a link")
+    symlinkSync(h.f.linked, spelled)
+    const again = buildReceipt({
+      now: NOW + 5000,
+      emitter: h.f.receipt.emitter,
+      repo: h.f.receipt.repo,
+      pr: { ...h.f.receipt.pr, number: 18 },
+      branch: { ...h.f.receipt.branch, name: "feat/again" },
+      worktree: { ...h.f.receipt.worktree, path: spelled },
+      beads: h.f.receipt.beads,
+      proof: h.f.receipt.proof,
+      outcome: "landed",
+    })
+    writeReceipt(again, receiptDirectory(h.f.env, key))
+    await h.pending.start()
+    await h.fake.fire.session("experimental.idle", {
+      sessionID: "ses_lead",
+      background: [
+        { kind: "shell", shellID: "sh_real", command: `make -C '${h.f.linked}'` },
+        { kind: "shell", shellID: "sh_link", command: `make -C '${spelled}'` },
+      ],
+    } as never)
+    await h.pending.settle()
+    const ids = readHolds(h.common, h.f.linked).holds.flatMap((hold) => hold.jobs.map((job) => job.id))
+    expect(ids.sort()).toEqual(["sh_link", "sh_real"])
+    await h.finish()
+  })
+
   describe("one removal boundary for every delivery remover", () => {
     const explicitCleanup = (h: Harness) =>
       cleanupDelivery({ receipt: h.f.receiptPath }, h.f.main, {

@@ -1200,7 +1200,9 @@ export function createPendingCleanup(deps: PendingDeps) {
         }
         if (inside) jobs.push({ kind: job.kind, id: job.shellID ?? job.childSessionID ?? job.sessionID ?? "unknown" })
       }
-      writes.set(want, { path, jobs })
+      // Receipts that name one worktree under different spellings match different shells: keep every job.
+      const prior = writes.get(want)?.jobs ?? []
+      writes.set(want, { path, jobs: [...prior, ...jobs.filter((job) => !prior.some((kept) => kept.kind === job.kind && kept.id === job.id))] })
     }
     await Promise.all(
       [...writes].map(async ([want, { path, jobs }]) => {

@@ -7070,7 +7070,8 @@ function createPendingCleanup(deps) {
         if (inside)
           jobs.push({ kind: job.kind, id: job.shellID ?? job.childSessionID ?? job.sessionID ?? "unknown" });
       }
-      writes.set(want, { path, jobs });
+      const prior = writes.get(want)?.jobs ?? [];
+      writes.set(want, { path, jobs: [...prior, ...jobs.filter((job) => !prior.some((kept) => kept.kind === job.kind && kept.id === job.id))] });
     }
     await Promise.all([...writes].map(async ([want, { path, jobs }]) => {
       try {
