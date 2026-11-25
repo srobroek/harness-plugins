@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, mock, setDefaultTimeout, setSystemTime, spyOn, test } from "bun:test"
 import { execFileSync } from "node:child_process"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
@@ -617,6 +617,130 @@ test.each([
       }
       // The veto is reported where it is set.
       expect(errors.mock.calls.map((call) => String(call[0])).join("\n")).toContain("could not be resolved to record the running work of a")
+    }
+    cleanupCalls = []
+    await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
+    expect(cleanupCalls).toEqual([])
+    await s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] })
+    expect(cleanupCalls).toHaveLength(1)
+  } finally {
+    errors.mockRestore()
+  }
+})
+
+/**
+ * A git runner whose first observations of the clone (B) after `hold(count)` are held until the test settles
+ * them, in the order they began: a held observation then fails (`null`) or runs the real git; later ones run it. Clone resolution is the
+ * step each test needs to order; the clone is moved away so that resolving it must observe it with git.
+ */
+const gatedCloneObserve = (cloneRoot: string) => {
+  const run = (argv: readonly string[], cwd: string, timeoutMs: number): string | null => {
+    try {
+      return execFileSync("git", [...argv], { cwd, timeout: timeoutMs, encoding: "utf8" })
+    } catch {
+      return null
+    }
+  }
+  const waits: Array<(outcome: "fail" | "pass") => void> = []
+  let toHold = 0
+  let notify: () => void = () => {}
+  const observe: GitRunner = async (argv, cwd, timeoutMs) => {
+    if (toHold === 0 || cwd !== cloneRoot) return run(argv, cwd, timeoutMs)
+    toHold--
+    const outcome = await new Promise<"fail" | "pass">((settle) => {
+      waits.push(settle)
+      notify()
+    })
+    return outcome === "pass" ? run(argv, cwd, timeoutMs) : null
+  }
+  const reached = async (n: number) => {
+    while (waits.length < n) await new Promise<void>((done) => (notify = done))
+  }
+  return { observe, waits, reached, hold: (count: number) => void (toHold = count) }
+}
+
+test("an older report's clone-resolution failure that arrives after a newer report reached the clone does not bring the veto back", async () => {
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const cloneRoot = realpathSync(repoB)
+    const gate = gatedCloneObserve(cloneRoot)
+    const s = await session("s", undefined, gate.observe)
+    await s.land()
+    cleanupResult = FAILED // a failed attempt stays pending, so each retry is observable
+    const away = `${repoB}.away`
+    renameSync(repoB, away)
+    gate.hold(1)
+    const report = () => s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
+    // The older report's observation of the clone is held; the clone is back before the newer report starts.
+    const older = report()
+    await gate.reached(1)
+    renameSync(away, repoB)
+    // The newer report runs a shell outside the target worktree, so it leaves no hold there.
+    await s.fake.fire.session("experimental.idle", { sessionID: "a", background: [{ kind: "shell", shellID: "sh0", command: "sleep 60" }] })
+    // The older report's resolution now fails, after the newer report reached the clone and cleared.
+    gate.waits[0]?.("fail")
+    await older
+    await s.idle([])
+    // No veto was left, so no removal was refused on a report's account.
+    expect(errors.mock.calls.map((call) => String(call[0])).join("\n")).not.toContain("is held")
+  } finally {
+    errors.mockRestore()
+  }
+})
+
+test("a delayed clone-resolution failure of the first report does not replace the third report's veto, so the second report cannot lift it", async () => {
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const cloneRoot = realpathSync(repoB)
+    const gate = gatedCloneObserve(cloneRoot)
+    const s = await session("s", undefined, gate.observe)
+    await s.land()
+    cleanupResult = REMOVED
+    const away = `${repoB}.away`
+    renameSync(repoB, away)
+    gate.hold(3)
+    const report = () => s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
+    const first = report()
+    await gate.reached(1)
+    const second = report()
+    await gate.reached(2)
+    const third = report()
+    await gate.reached(3)
+    // The third fails first, then the first fails late: the third's veto stands.
+    gate.waits[2]?.("fail")
+    await third
+    gate.waits[0]?.("fail")
+    await first
+    // The clone is back, and the second report (between them) resolves it and succeeds.
+    renameSync(away, repoB)
+    gate.waits[1]?.("pass")
+    await second
+    cleanupCalls = []
+    await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })
+    expect(cleanupCalls).toEqual([])
+    // The session's own empty report lifts it.
+    await s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] })
+    expect(cleanupCalls).toHaveLength(1)
+  } finally {
+    errors.mockRestore()
+  }
+})
+
+test("a clone path that is a symlink to another checkout when its resolution fails still holds the clone once the path is restored", async () => {
+  const errors = spyOn(console, "error").mockImplementation(() => {})
+  try {
+    const s = await session()
+    await s.land()
+    cleanupResult = REMOVED
+    const away = `${repoB}.away`
+    renameSync(repoB, away)
+    // The recorded path now leads to the session's own repository: it cannot resolve to the clone.
+    symlinkSync(repoA, repoB)
+    try {
+      await s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
+    } finally {
+      unlinkSync(repoB)
+      renameSync(away, repoB)
     }
     cleanupCalls = []
     await s.fake.fire.session("experimental.idle", { sessionID: "b", background: [] })

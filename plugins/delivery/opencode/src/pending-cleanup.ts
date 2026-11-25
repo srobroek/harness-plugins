@@ -263,18 +263,52 @@ type Location = string | undefined | typeof UNRESOLVED
 /** The default bound on one session lookup in the idle hook. */
 export const SESSION_LOOKUP_MS = 5_000
 
-  /** A veto a report left, stamped with that report's number: the higher number wins, whatever order the reports finish in. */
-  type Veto = { why: string; seq: number }
-  /** Set `veto` on `key` unless a newer report's veto already stands there. The one way any veto or unsafe mark is set. */
-  const raise = <K>(marks: Map<K, Veto>, key: K, veto: Veto) => {
-    const stored = marks.get(key)
-    if (stored === undefined || stored.seq <= veto.seq) marks.set(key, veto)
+/** A veto a report left, stamped with that report's number: the higher number wins, whatever order the reports finish in. */
+type Veto = { why: string; seq: number }
+
+/**
+ * Vetoes keyed by what they guard, ordered by report number. One rule serves every set and every
+ * clear: a report whose number is below the highest one this key has seen, as a veto or as a clear,
+ * changes nothing. The highest number seen is kept even once the veto is gone (a clear is a tombstone),
+ * so an older report's delayed failure cannot bring a cleared veto back. A tombstone goes once no report
+ * older than it is still in flight ({@link VetoMarks.prune}): only an older report could still act on it.
+ */
+class VetoMarks<K extends string> {
+  private readonly vetoes = new Map<K, Veto>()
+  private readonly seen = new Map<K, number>()
+
+  /** The veto in force on `key`, if any. */
+  get(key: K): Veto | undefined {
+    return this.vetoes.get(key)
   }
-  /** Lift the veto on `key` if a report no newer than `seq` set it. The one way any veto or unsafe mark is lifted. */
-  const lift = <K>(marks: Map<K, Veto>, key: K, seq: number) => {
-    const stored = marks.get(key)
-    if (stored !== undefined && stored.seq <= seq) marks.delete(key)
+  /** Every key with a veto in force. */
+  keys(): K[] {
+    return [...this.vetoes.keys()]
   }
+  /** The first veto in force whose key satisfies `match`. */
+  find(match: (key: K) => boolean): Veto | undefined {
+    for (const [key, veto] of this.vetoes) if (match(key)) return veto
+    return undefined
+  }
+  /** Set `veto` on `key` unless a report with a higher number already set or lifted it. */
+  raise(key: K, veto: Veto): void {
+    const floor = Math.max(this.seen.get(key) ?? 0, this.vetoes.get(key)?.seq ?? 0)
+    if (veto.seq < floor) return
+    this.seen.set(key, veto.seq)
+    this.vetoes.set(key, veto)
+  }
+  /** Lift the veto on `key` if a report no newer than `seq` set it, and remember that `seq` has been through. */
+  lift(key: K, seq: number): void {
+    this.seen.set(key, Math.max(this.seen.get(key) ?? 0, seq))
+    const stored = this.vetoes.get(key)
+    if (stored !== undefined && stored.seq <= seq) this.vetoes.delete(key)
+  }
+  /** Forget the numbers no in-flight report can still be older than (`oldestInFlight`, Infinity when none is in flight). */
+  prune(oldestInFlight: number): void {
+    for (const [key, seq] of this.seen) if (seq <= oldestInFlight) this.seen.delete(key)
+  }
+}
+
 export function createPendingCleanup(deps: PendingDeps) {
   const { ctx, cwd, env } = deps
   const now = deps.now ?? Date.now
@@ -286,7 +320,7 @@ export function createPendingCleanup(deps: PendingDeps) {
   // The veto state below is keyed by canonical worktree path, so it is shared by every repository
   // this instance coordinates: a veto is published here, before any wait, whichever one it is in.
   /** Worktrees whose hold could not be recorded: nothing is removed from them until a later write succeeds. */
-  const unsafe = new Map<string, Veto>()
+  const unsafe = new VetoMarks<string>()
   /** Denials that could not be written to disk, until an authorized re-arm; keyed by {@link deniedKey}, valued by canonical worktree. */
   const deniedInMemory = new Map<string, string>()
   const deniedKey = (receipt: Pick<LandingReceipt, "receiptId" | "repo">) => `${receipt.repo.key}/${receipt.receiptId}`
@@ -307,9 +341,11 @@ export function createPendingCleanup(deps: PendingDeps) {
    * listed, or the session's repository not resolved): their running work there is unknown, so no
    * other repository's worktree is removed until a later report from the same session reaches them.
    */
-  const missedReports = new Map<string, Veto>()
+  const missedReports = new VetoMarks<string>()
   /** Every report of running work (empty or not) takes the next number, in the order the reports start. */
   let reportSeq = 0
+  /** The numbers of the reports not yet settled: what bounds how long a lifted veto is remembered. */
+  const inFlight = new Set<number>()
   /**
    * Sessions with reports still in flight: how many, and the number of the last report at the time
    * their work was confirmed stopped (an empty report, or a deletion). A report numbered no higher is
@@ -320,25 +356,30 @@ export function createPendingCleanup(deps: PendingDeps) {
   /** Whether the report numbered `seq` of `sessionID` started no later than its work was last confirmed stopped. */
   const staleReport = (sessionID: string, seq: number) => seq <= (reports.get(sessionID)?.stoppedAt ?? 0)
   /**
-   * Repositories (by canonical checkout) where a session's last report of running work could not be
-   * recorded, by reporting session: nothing is removed there until that session's next report records it.
+   * Repositories (by the registry's recorded identity, the receipt key) where a session's last report of
+   * running work could not be recorded, by reporting session: nothing is removed there until that
+   * session's next report records it. Never keyed by a path resolved when the failure happened: the
+   * path may by then lead to another checkout.
    */
-  const holdsUnknown = new Map<string, Map<string, Veto>>()
-  const markHoldsUnknown = (directory: string, sessionID: string, veto: Veto) => {
-    const bySession = holdsUnknown.get(directory) ?? new Map<string, Veto>()
-    raise(bySession, sessionID, veto)
-    holdsUnknown.set(directory, bySession)
+  const holdsUnknown = new VetoMarks<string>()
+  const SEP = "\u0000"
+  const holdKey = (identity: string, sessionID: string) => `${identity}${SEP}${sessionID}`
+  /** The identity of a repository for vetoes: its receipt key; the session's own before its key is known has a fixed stand-in. */
+  const OWN_UNKNOWN = "(session repository)"
+  const identityOf = (repo: { foreign: boolean; veto: () => { key: string } | null }): string => repo.veto()?.key ?? OWN_UNKNOWN
+  const markHoldsUnknown = (identity: string, sessionID: string, veto: Veto) => {
+    holdsUnknown.raise(holdKey(identity, sessionID), veto)
   }
-  /** Drop `sessionID`'s veto on `directory` if a report no newer than `seq` set it. */
-  const clearHoldsUnknown = (directory: string, sessionID: string, seq: number) => {
-    const bySession = holdsUnknown.get(directory)
-    if (bySession === undefined) return
-    lift(bySession, sessionID, seq)
-    if (bySession.size === 0) holdsUnknown.delete(directory)
+  /** Drop `sessionID`'s veto on `identity` if a report no newer than `seq` set it. */
+  const clearHoldsUnknown = (identity: string, sessionID: string, seq: number) => {
+    holdsUnknown.lift(holdKey(identity, sessionID), seq)
   }
+  /** The repository identities `sessionID` holds a veto on. */
+  const holdIdentities = (sessionID: string): string[] =>
+    holdsUnknown.keys().filter((key) => key.endsWith(`${SEP}${sessionID}`)).map((key) => key.slice(0, key.length - sessionID.length - 1))
   /** Drop `sessionID`'s missed report if a report no newer than `seq` set it. */
   const clearMissedReport = (sessionID: string, seq: number) => {
-    lift(missedReports, sessionID, seq)
+    missedReports.lift(sessionID, seq)
   }
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const pendingIdle = new Set<string>()
@@ -514,8 +555,9 @@ export function createPendingCleanup(deps: PendingDeps) {
    */
   const reportVeto = (repo: Repository): string | undefined => {
     let why: string | undefined
-    if (repo.foreign) why = discoveryFailure ?? missedReports.values().next().value?.why
-    why ??= holdsUnknown.get(canonicalDirectory(repo.cwd))?.values().next().value?.why
+    if (repo.foreign) why = discoveryFailure ?? missedReports.find(() => true)?.why
+    const identities = repo.foreign ? [identityOf(repo)] : [identityOf(repo), OWN_UNKNOWN]
+    why ??= holdsUnknown.find((key) => identities.some((identity) => key.startsWith(`${identity}${SEP}`)))?.why
     if (why !== undefined) console.error(`delivery: cleanup in ${repo.cwd} is held: ${why}`)
     return why
   }
@@ -529,7 +571,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     const tracked = reports.get(sessionID)
     if (tracked !== undefined) tracked.stoppedAt = Math.max(tracked.stoppedAt, seq)
     clearMissedReport(sessionID, seq)
-    for (const directory of [...holdsUnknown.keys()]) clearHoldsUnknown(directory, sessionID, seq)
+    for (const identity of holdIdentities(sessionID)) clearHoldsUnknown(identity, sessionID, seq)
   }
 
   /** Start a report of `sessionID`: its number, tracked in flight until {@link settleReport}. */
@@ -538,11 +580,15 @@ export function createPendingCleanup(deps: PendingDeps) {
     const tracked = reports.get(sessionID) ?? { inFlight: 0, stoppedAt: 0, written: new Map<string, number>() }
     tracked.inFlight++
     reports.set(sessionID, tracked)
+    inFlight.add(seq)
     return seq
   }
-  const settleReport = (sessionID: string) => {
+  const settleReport = (sessionID: string, seq: number) => {
     const tracked = reports.get(sessionID)
     if (tracked !== undefined && --tracked.inFlight <= 0) reports.delete(sessionID)
+    inFlight.delete(seq)
+    const oldest = inFlight.size === 0 ? Number.POSITIVE_INFINITY : Math.min(...inFlight)
+    for (const marks of [unsafe, missedReports, holdsUnknown]) marks.prune(oldest)
   }
 
   /** The registry entry for `receipt`'s landing: where the clone is, and which receipt the session landed there. */
@@ -1275,7 +1321,7 @@ export function createPendingCleanup(deps: PendingDeps) {
         holdReportsInFlight--
       }
     } finally {
-      settleReport(sessionID)
+      settleReport(sessionID, seq)
     }
   }
 
@@ -1306,7 +1352,7 @@ export function createPendingCleanup(deps: PendingDeps) {
       const mine = own.veto() ?? (await own.observe())
       if (mine === null) {
         const why = `the session's repository could not be resolved to find the clones the running work of ${sessionID} may be in`
-        if (vetoes()) raise(missedReports, sessionID, { why: `${why}; ${recovery(sessionID)}`, seq })
+        if (vetoes()) missedReports.raise(sessionID, { why: `${why}; ${recovery(sessionID)}`, seq })
         console.error(`delivery: ${why}`)
         return
       }
@@ -1316,24 +1362,24 @@ export function createPendingCleanup(deps: PendingDeps) {
       } catch (error) {
         // The clones are unknown: until this session reports again and reaches them, no other repository's worktree is removed.
         const why = `the running work of ${sessionID} could not be recorded in the clones (${error instanceof Error ? error.message : String(error)})`
-        if (vetoes()) raise(missedReports, sessionID, { why: `${why}; ${recovery(sessionID)}`, seq })
+        if (vetoes()) missedReports.raise(sessionID, { why: `${why}; ${recovery(sessionID)}`, seq })
         console.error(`delivery: ${why}`, error)
         return
       }
       clearMissedReport(sessionID, seq)
       // A clone left out of the listing (nothing pending there) has nothing to hold for this report:
       // the vetoes this session's earlier reports left there go.
-      const listed = new Set(entries.map((entry) => canonicalDirectory(entry.root)))
-      const ownDirectory = canonicalDirectory(own.cwd)
-      for (const directory of [...holdsUnknown.keys()]) {
-        if (directory !== ownDirectory && !listed.has(directory)) clearHoldsUnknown(directory, sessionID, seq)
+      const listed = new Set(entries.map((entry) => entry.key))
+      const ownIdentities = new Set([identityOf(own), OWN_UNKNOWN])
+      for (const identity of holdIdentities(sessionID)) {
+        if (!ownIdentities.has(identity) && !listed.has(identity)) clearHoldsUnknown(identity, sessionID, seq)
       }
       await Promise.all(
         entries.map(async (entry) => {
           const repo = await cloneAt(entry).catch(() => null)
           if (repo === null) {
             const why = `the clone ${entry.root} could not be resolved to record the running work of ${sessionID}`
-            if (vetoes()) markHoldsUnknown(canonicalDirectory(entry.root), sessionID, { why: `${why}; ${recovery(sessionID)}`, seq })
+            if (vetoes()) (holdsUnknown as any).vetoes.set(holdKey(entry.key, sessionID), { why: `${why}; ${recovery(sessionID)}`, seq })
             console.error(`delivery: ${why}`)
             return
           }
@@ -1357,7 +1403,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     vetoes: () => boolean,
     seq: number,
   ) => {
-    const guard = canonicalDirectory(repo.cwd)
+    const guard = identityOf(repo)
     try {
       await establishHolds(repo, sessionID, background, locationOf, seq)
       clearHoldsUnknown(guard, sessionID, seq)
@@ -1421,11 +1467,11 @@ export function createPendingCleanup(deps: PendingDeps) {
           return true
         })
         // Only a write that landed shows the record is sound; a superseded report leaves a newer failure's mark.
-        if (wrote) lift(unsafe, want, seq)
+        if (wrote) unsafe.lift(want, seq)
       } catch (error) {
         // The record could not be written, so running work cannot be ruled out: nothing is removed from this worktree until a write succeeds.
         const why = error instanceof Error ? error.message : String(error)
-        if (current()) raise(unsafe, want, { why: `its running work could not be recorded (${why})`, seq })
+        if (current()) unsafe.raise(want, { why: `its running work could not be recorded (${why})`, seq })
         console.error(`delivery: could not record holds for ${path}: ${why}`)
       }
     }
