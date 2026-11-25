@@ -81,6 +81,20 @@
       ],
       "depNameTemplate": "repomix",
       "datasourceTemplate": "npm"
+    },
+    {
+      "description": "The Playwright MCP pin of the design pi extension and its README",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^plugins\\/design\\/pi-src\\/playwright\\.ts$/",
+        "/^plugins\\/design\\/README\\.md$/"
+      ],
+      "matchStrings": [
+        "PLAYWRIGHT_MCP_VERSION = \\\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\\\"",
+        "\\\"@playwright/mcp@(?<currentValue>\\d+\\.\\d+\\.\\d+)\\\""
+      ],
+      "depNameTemplate": "@playwright/mcp",
+      "datasourceTemplate": "npm"
     }
   ]
 }

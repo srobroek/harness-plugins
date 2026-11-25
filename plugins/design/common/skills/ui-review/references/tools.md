@@ -43,27 +43,35 @@ plugin's README.
 
 ## Browser routes
 
-The design skills name browser steps by what they measure. Run each through whichever
-browser the harness offers: the OpenCode desktop browser tools, a browser MCP server, or a
-Playwright script (`npx --yes playwright install chromium` once, then a script run with
-`node`). Probe snippets elsewhere in this package are page-side functions: pass them to the
+The design skills name browser steps by what they measure. Run each step in one of these
+browsers:
+
+- the OpenCode desktop browser tools
+- the Playwright MCP server, which is the browser of the design package on pi
+- a Playwright script: run `npx --yes playwright install chromium` one time, then run the
+  script with `node`
+
+Probe snippets elsewhere in this package are page-side functions: pass them to the
 evaluate step unchanged.
 
-| step | OpenCode desktop browser | Playwright |
-|---|---|---|
-| open a route | `browser.tabs.open`, `browser.navigate` | `page.goto(url)` |
-| ARIA snapshot | `browser.snapshot` | `page.locator("body").ariaSnapshot()` |
-| computed style, any page-side probe | `browser.evaluate` | `page.evaluate(fn)` |
-| keyboard | `browser.press` | `page.keyboard.press("Tab")` |
-| click, fill, select | `browser.click`, `browser.fill`, `browser.select` | `page.click`, `page.fill`, `page.selectOption` |
-| wait for an element or text | `browser.wait` | `page.waitForSelector`, `page.waitForFunction` |
-| viewport width | none; use Playwright | `page.setViewportSize({ width, height })` |
-| device emulation | none; use Playwright | a context from `devices["iPhone 8"]` |
-| reduced motion | none; use Playwright | `page.emulateMedia({ reducedMotion: "reduce" })` |
-| console and page errors | `browser.console` | `page.on("console")`, `page.on("pageerror")` |
-| failed requests | `browser.network.list` | `page.on("requestfailed")`, `page.on("response")` |
-| screenshot | `browser.screenshot` | `page.screenshot({ fullPage })`, `locator.screenshot()` |
-| screenshot diff | none | `expect(page).toHaveScreenshot()` in `@playwright/test`, with its threshold |
+| step | OpenCode desktop browser | Playwright MCP | Playwright |
+|---|---|---|---|
+| open a route | `browser.tabs.open`, `browser.navigate` | `browser_navigate` | `page.goto(url)` |
+| ARIA snapshot | `browser.snapshot` | `browser_snapshot` | `page.locator("body").ariaSnapshot()` |
+| computed style, any page-side probe | `browser.evaluate` | `browser_evaluate` | `page.evaluate(fn)` |
+| keyboard | `browser.press` | `browser_press_key` | `page.keyboard.press("Tab")` |
+| click, fill, select | `browser.click`, `browser.fill`, `browser.select` | `browser_click`, `browser_type`, `browser_select_option` | `page.click`, `page.fill`, `page.selectOption` |
+| wait for an element or text | `browser.wait` | `browser_wait_for` | `page.waitForSelector`, `page.waitForFunction` |
+| viewport width | none; use Playwright | `browser_resize`, one width per call | `page.setViewportSize({ width, height })` |
+| device emulation | none; use Playwright | none | a context from `devices["iPhone 8"]` |
+| reduced motion | none; use Playwright | `browser_emulate_media` | `page.emulateMedia({ reducedMotion: "reduce" })` |
+| console and page errors | `browser.console` | `browser_console_messages` | `page.on("console")`, `page.on("pageerror")` |
+| failed requests | `browser.network.list` | `browser_network_requests` | `page.on("requestfailed")`, `page.on("response")` |
+| screenshot | `browser.screenshot` | `browser_take_screenshot` | `page.screenshot({ fullPage })`, `locator.screenshot()` |
+| screenshot diff | none | none | `expect(page).toHaveScreenshot()` in `@playwright/test`, with its threshold |
+
+With Playwright MCP, do one width at a time: resize, measure, then go to the next width.
+A probe that runs in parallel with a resize can read the old width.
 
 Defaults:
 

@@ -1,0 +1,155 @@
+## design [0.10.4](https://github.com/srobroek/harness-plugins/compare/design--v0.10.3...design--v0.10.4) (2026-11-24)
+
+### Bug Fixes
+
+* **agent-reviewer:** tell OMP agents that keep a shell it is unrestricted ([#173](https://github.com/srobroek/harness-plugins/issues/173)) ([1b8386d](https://github.com/srobroek/harness-plugins/commit/1b8386dbf43fa6cb5580d4dbc03e619476ba023c))
+
+## design [0.10.3](https://github.com/srobroek/harness-plugins/compare/design--v0.10.2...design--v0.10.3) (2026-11-24)
+
+### Bug Fixes
+
+* **design:** make MCP servers opt-in ([1ecb493](https://github.com/srobroek/harness-plugins/commit/1ecb493f35ebfe9112f9e4661fa1b2e5ec457fc4))
+* **design:** use shared portable standards ([962f08e](https://github.com/srobroek/harness-plugins/commit/962f08e189f87ec1dc03294d47975c0e4f5966cc))
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## design [0.10.2](https://github.com/srobroek/harness-plugins/compare/design--v0.10.1...design--v0.10.2) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## design [0.10.1](https://github.com/srobroek/harness-plugins/compare/design--v0.10.0...design--v0.10.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
+## design [0.10.0](https://github.com/srobroek/harness-plugins/compare/design--v0.9.1...design--v0.10.0) (2026-11-22)
+
+### Features
+
+* **delivery:** ship the orchestrator agent ([#121](https://github.com/srobroek/harness-plugins/issues/121)) ([53f33c0](https://github.com/srobroek/harness-plugins/commit/53f33c016315732220a7c87066267931ee87f514))
+
+## design [0.9.1](https://github.com/srobroek/harness-plugins/compare/design--v0.9.0...design--v0.9.1) (2026-11-21)
+
+### Bug Fixes
+
+* **code-challenge:** close dogfood friction in skill, schema and validation ([043a8b3](https://github.com/srobroek/harness-plugins/commit/043a8b39057ec8fca54d09adebb0532c2154e330))
+* stop forcing confirmation prompts in delivery, dep-update, design and repomix ([fe59fa1](https://github.com/srobroek/harness-plugins/commit/fe59fa10692bc61a3d7b2b7c8eb728ee6a0050b5))
+
+## design [0.9.0](https://github.com/srobroek/harness-plugins/compare/design--v0.8.0...design--v0.9.0) (2026-11-21)
+
+### Features
+
+* **design:** give the design critic the read-only shell ([11df718](https://github.com/srobroek/harness-plugins/commit/11df71891da0a9734a32ba81b0ac7722b4e6f484))
+
+### Bug Fixes
+
+* **design:** rebuild with the hardened read-only shell rules ([763adcf](https://github.com/srobroek/harness-plugins/commit/763adcfdb2deea9da1075cf69b757f1dceacdfcb))
+
+# Changelog
+
+## [0.8.0](https://github.com/srobroek/opencode-plugins/compare/design--v0.7.0...design--v0.8.0) (2026-11-20)
+
+
+### Features
+
+* **agents:** follow lang skills and the repo engineering doc, report departures ([#267](https://github.com/srobroek/opencode-plugins/issues/267)) ([2c15755](https://github.com/srobroek/opencode-plugins/commit/2c15755d62faed398c8f3ce4747a61d1c92ff00c))
+* **design:** allow lang, quality and toolchain skills in ui-ux-specialist ([85da351](https://github.com/srobroek/opencode-plugins/commit/85da3513b5a74ed5f6248e78054cf73e704fac85))
+* **design:** allow the aws-guidance skill to ui-implementer ([257e96e](https://github.com/srobroek/opencode-plugins/commit/257e96e3a9293ecd9354858f36a316624b0c4dcc))
+* **design:** carry coding-core standards and testing in the ui-ux-specialist prompt ([39e4bcd](https://github.com/srobroek/opencode-plugins/commit/39e4bcdb2f8a12312b5f3b09db2b42d5f22e6b88))
+* plugin scan fixes, wider agent access and the plugin-audit plugin ([9c71525](https://github.com/srobroek/opencode-plugins/commit/9c7152559776aaf80cfed9626d78bafdd845fa9a))
+
+
+### Refactors
+
+* **lib:** one MCP tool grant table for the tools option ([f8cc1d8](https://github.com/srobroek/opencode-plugins/commit/f8cc1d817d62b211b712d1889200f7c91f049c89))
+
+
+### Documentation
+
+* **design:** drop unpinned version numbers from the ui-review tool table ([51da14f](https://github.com/srobroek/opencode-plugins/commit/51da14f684fd9385fdfb86b6c1d50941aa01e91a))
+
+## [0.7.0](https://github.com/srobroek/opencode-plugins/compare/design--v0.6.0...design--v0.7.0) (2026-11-19)
+
+
+### Features
+
+* beads, speckit and journeys in Claude Code; translated subagents instead of raw OpenCode agents ([e5fcc23](https://github.com/srobroek/opencode-plugins/commit/e5fcc2338e0846cbebc3370f65826cf2edf137bc))
+* **modes:** debug, refactor and concept agents ([6369b8a](https://github.com/srobroek/opencode-plugins/commit/6369b8ae6c4ca35c664f094b60c28d356cc13298))
+* **quality:** add stub-and-swap rules to coding and testing standards ([2bdfe9b](https://github.com/srobroek/opencode-plugins/commit/2bdfe9b4755dfc284200dadfb4648e6e9239f3b6))
+
+
+### Bug Fixes
+
+* **design:** run the design MCP servers from HOME on the public npm registry ([#245](https://github.com/srobroek/opencode-plugins/issues/245)) ([f165f77](https://github.com/srobroek/opencode-plugins/commit/f165f771de4e0b46b04036fc17fc82a49340a709))
+
+## [0.6.0](https://github.com/srobroek/opencode-plugins/compare/design--v0.5.0...design--v0.6.0) (2026-11-12)
+
+
+### Features
+
+* **quality:** research-first engineering standards and per-language library standards for every coding agent ([09e8d46](https://github.com/srobroek/opencode-plugins/commit/09e8d461bb2b7654788a588ef6932929ff564d28))
+* **quality:** testing standards: behavior tests, test budget, same-change maintenance, reviewers check test changes ([dcdf941](https://github.com/srobroek/opencode-plugins/commit/dcdf9413b6793ed06ef8978a0084d9f50d30b00c))
+* **toolchain:** compare Connect, gRPC and OpenAPI, and use Connect for RPC beside Hono for HTTP ([d62b5c7](https://github.com/srobroek/opencode-plugins/commit/d62b5c79f355c687a9d53333c64cc583dcabfea8))
+
+## [0.5.0](https://github.com/srobroek/opencode-plugins/compare/design--v0.4.0...design--v0.5.0) (2026-11-11)
+
+
+### Features
+
+* cap every shipped agent with a step limit ([#123](https://github.com/srobroek/opencode-plugins/issues/123)) ([7b3b60f](https://github.com/srobroek/opencode-plugins/commit/7b3b60f84ac4aabcf8d5d649042e26054f79b0f4))
+
+## [0.4.0](https://github.com/srobroek/opencode-plugins/compare/design--v0.3.1...design--v0.4.0) (2026-11-03)
+
+
+### Features
+
+* **claude-compat:** load trusted Claude Code plugins per project ([#89](https://github.com/srobroek/opencode-plugins/issues/89)) ([5143689](https://github.com/srobroek/opencode-plugins/commit/5143689de3933c3fe8a266d94e0e1355dfb42229))
+
+## [0.3.1](https://github.com/srobroek/opencode-plugins/compare/design--v0.3.0...design--v0.3.1) (2026-10-30)
+
+
+### Refactors
+
+* **design:** install formulas through the shared lib installer ([4b6861d](https://github.com/srobroek/opencode-plugins/commit/4b6861d621a1f4e73686ec31248513e489117d56))
+
+## [0.3.0](https://github.com/srobroek/opencode-plugins/compare/design--v0.2.0...design--v0.3.0) (2026-10-27)
+
+
+### Features
+
+* **design:** add accessibility-scanner and wire-dsl MCP servers in frontend projects ([9895602](https://github.com/srobroek/opencode-plugins/commit/989560280d8e5c46b09f8cd5012e206473be6da9))
+
+
+### Bug Fixes
+
+* **lib:** keep a shipped agent hidden when the host prefills hidden: false ([6156c94](https://github.com/srobroek/opencode-plugins/commit/6156c946f8a5265ff5498bb4062a9d822bbd0555))
+
+
+### Performance
+
+* **design:** allow the design agents' skills by family ([d273ee4](https://github.com/srobroek/opencode-plugins/commit/d273ee4b201c71dc896b8e682aaccb884a5a9e06))
+
+## [0.2.0](https://github.com/srobroek/opencode-plugins/compare/design--v0.1.0...design--v0.2.0) (2026-10-27)
+
+
+### Features
+
+* **design:** add design skills, design rules as skills and four design agents ([9b9b4a8](https://github.com/srobroek/opencode-plugins/commit/9b9b4a8b4b80ea8d06253b644a12ae960fbe6068))
+* **design:** compose design-critic and a11y-auditor from the review core ([958003b](https://github.com/srobroek/opencode-plugins/commit/958003b6c99198a8b33036be1ab44c526faf7dda))
+* **design:** declare model roles and a 400-step budget for ui-ux-specialist ([6f3a8af](https://github.com/srobroek/opencode-plugins/commit/6f3a8af00c4da1742a839c6b43cd12561b625b06))
+* **design:** port the beads formulas and the impeccable detector ([c4780c6](https://github.com/srobroek/opencode-plugins/commit/c4780c6824827c108738f86ceb9f14cbd7ff8806))
+* **lib:** carry steps and the model-role header from shipped agent files ([7538ab1](https://github.com/srobroek/opencode-plugins/commit/7538ab1a05b3071564defb2ab11ce356245c3890))
+* **lib:** honour metadata opencode/autoinvoke in shipped SKILL.md files ([881e7df](https://github.com/srobroek/opencode-plugins/commit/881e7df220095d0155b07437e733fdb795d9279b))
+* **lib:** shared review core composed into agents at build time ([d79c79b](https://github.com/srobroek/opencode-plugins/commit/d79c79b48ba09d5770c7586799f856237f3b00af))
+* **model-roles:** tiers derived from the catalog, reviewer tier and one-time classification ([4265016](https://github.com/srobroek/opencode-plugins/commit/42650166140c1fada15bda5066d235fdf5fce327))
+
+
+### Performance
+
+* **design:** route the ten listed design skills through one design-guide listing entry ([f3c0510](https://github.com/srobroek/opencode-plugins/commit/f3c0510e328683b62e4fada9da8de02310cb2f03))
+* give shipped subagents tool allowlists ([014fffb](https://github.com/srobroek/opencode-plugins/commit/014fffb403fd1363f494af84c63bf93074af6d20))
+* keep shipped agent descriptions under 150 characters ([7023675](https://github.com/srobroek/opencode-plugins/commit/70236752520b0fd02b872ec61510ec1388028778))
+* lead every tool description with a first line under 120 characters ([74b65d9](https://github.com/srobroek/opencode-plugins/commit/74b65d9f446fcc535320b7c320ccaf8482d594df))
+* shorten skill descriptions and hide pure reference skills from the listing ([51841bd](https://github.com/srobroek/opencode-plugins/commit/51841bd68ae7fe809711430fe3430b75b63e81c0))

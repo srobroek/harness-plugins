@@ -5,6 +5,10 @@ four design subagents, nine beads formulas with a `design_setup` tool that insta
 them, a `design_impeccable_scan` tool that runs impeccable's detector, and optional
 accessibility, wireframing and Storybook MCP integrations.
 
+The pi package `@srobroek/pi-design` ships the same skills and agents. It adds a
+Playwright browser, a `/design-review` prompt and a `/council-product` prompt.
+See [pi](#pi).
+
 ## Skills
 
 Only `design-guide` is listed to the model in OpenCode: it is a router whose body maps each
@@ -173,6 +177,109 @@ Claude Code gets the same `.mcp.json` from the marketplace. Those servers start 
 every project in that harness unless disabled in its MCP settings; enable them only
 for projects that use them. Add `storybook` there yourself.
 
+## pi
+
+Install the package in each frontend project:
+
+```sh
+pi install -l npm:@srobroek/pi-design
+```
+
+`-l` writes the project's `.pi/settings.json`. Every session that loads the package
+starts its MCP servers, so install it per project.
+
+### Prerequisites
+
+At session start, the package looks for these tools on `PATH` and names each missing tool:
+
+| Tool | Used for | Install |
+| --- | --- | --- |
+| `impeccable` 4.10.0 or later | `design_impeccable_scan` and the upstream impeccable skill pack | `mise use -g npm:impeccable` |
+| `npx` | the Playwright, `accessibility-scanner` and `wire-dsl` MCP servers | `mise use -g node` |
+
+The impeccable skill pack is a separate install. This command writes it to
+`.pi/skills/impeccable/`:
+
+```sh
+impeccable install -y --providers=pi --scope=project --no-hooks
+```
+
+The Playwright server drives Google Chrome. Before the first review, install Chrome.
+
+### Scan tool
+
+`design_impeccable_scan` runs the `impeccable` on `PATH` without a prompt. When
+impeccable is not on `PATH`, the tool asks you to approve the npx download. A session
+that cannot ask, such as a subagent or `pi -p`, gets a refusal and the command that
+installs impeccable. The timeout and the output limit are the same as in OpenCode.
+
+### Browser
+
+The extension registers a `playwright` MCP server. It runs Playwright MCP in a headless
+Chrome with an in-memory profile, and it hides `browser_run_code_unsafe` and
+`browser_file_upload`. A `playwright` server in your `mcp.json` replaces it.
+
+Pi gives a server that an extension registers only to background subagents. So the four
+design agents set `async: true`, and `/design-review` and `ui-ux-specialist` start them in
+the background. A foreground run of a design agent fails unless your own `mcp.json` has
+the server. Add it to `~/.pi/agent/mcp.json`, or to a trusted project's `.pi/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@0.0.86", "--headless", "--isolated", "--browser", "chrome", "--viewport-size", "1440x900"]
+    }
+  }
+}
+```
+
+### Agents on pi
+
+The four agents keep their contracts and list their pi tools explicitly:
+
+| Agent | Tools |
+| --- | --- |
+| `ui-ux-specialist` | read, edit, write, bash, `subagent`, `contact_supervisor`, `design_impeccable_scan`, web tools, Playwright |
+| `ui-implementer` | read, edit, write, bash, `design_impeccable_scan`, Playwright |
+| `design-critic` | read, `design_impeccable_scan`, web tools, Playwright |
+| `a11y-auditor` | read, bash for probes and the axe CLI, `design_impeccable_scan`, web tools, Playwright |
+
+Each agent loads the package extension, and pi-web-access when it has web tools, through
+`subagentOnlyExtensions`. `ui-ux-specialist` may start only `design-critic`,
+`a11y-auditor`, `scout` and `worker`. It asks its intent questions through
+`contact_supervisor` and continues with the answers. The agents pin no model. Set one with
+`subagents.agentOverrides.<name>.model` in pi's settings.
+
+### Prompts
+
+- `/design-review <url> [paths]` runs the scan once, then `design-critic` and
+  `a11y-auditor` in parallel in the background. It merges their findings and keeps the
+  two verdicts apart.
+- `/council-product <question>` runs the pi-subagents council protocol for a product or
+  UI decision, with three passes at most.
+
+The `/council-product` roster has four advisors:
+
+| Advisor | Lens | From |
+| --- | --- | --- |
+| `council-ux` | The view of the design lead | this package |
+| `council-user` | The view of the people who use the product, task by task | this package |
+| `council-advocate` | The strongest case for the proposal | `@srobroek/pi-debate` |
+| `council-skeptic` | The strongest case against the proposal | `@srobroek/pi-debate` |
+
+All four advisors only read files.
+
+`council-ux` and `council-user` are new in this package.
+
+### Not on pi
+
+- `design_setup`: copy `formulas/*.formula.toml` into `.beads/formulas/` yourself.
+- The `confirmScan`, `mcp` and `mcpServers` options, and the Storybook server.
+- Frontend detection: `accessibility-scanner` and `wire-dsl` connect in every session
+  that loads the package.
+
 ## Changes from omp
 
 - Rules became skills, and `skill://` and `rule://` references name the skill or use
@@ -228,3 +335,5 @@ claude plugin marketplace add srobroek/harness-plugins
 claude plugin install design@harness-plugins
 
 ```
+
+For pi, see [pi](#pi).
