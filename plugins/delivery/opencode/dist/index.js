@@ -6261,6 +6261,16 @@ async function authorizeExplicit(pending, ask, sessionID, request) {
 }
 var UNRESOLVED = Symbol("unresolved");
 var SESSION_LOOKUP_MS = 5000;
+var raise = (marks, key, veto) => {
+  const stored = marks.get(key);
+  if (stored === undefined || stored.seq <= veto.seq)
+    marks.set(key, veto);
+};
+var lift = (marks, key, seq) => {
+  const stored = marks.get(key);
+  if (stored !== undefined && stored.seq <= seq)
+    marks.delete(key);
+};
 function createPendingCleanup(deps) {
   const { ctx, cwd, env } = deps;
   const now = deps.now ?? Date.now;
@@ -6285,19 +6295,19 @@ function createPendingCleanup(deps) {
   const holdsUnknown = new Map;
   const markHoldsUnknown = (directory, sessionID, veto) => {
     const bySession = holdsUnknown.get(directory) ?? new Map;
-    bySession.set(sessionID, veto);
+    raise(bySession, sessionID, veto);
     holdsUnknown.set(directory, bySession);
   };
   const clearHoldsUnknown = (directory, sessionID, seq) => {
     const bySession = holdsUnknown.get(directory);
-    if ((bySession?.get(sessionID)?.seq ?? Number.POSITIVE_INFINITY) <= seq)
-      bySession?.delete(sessionID);
-    if (bySession?.size === 0)
+    if (bySession === undefined)
+      return;
+    lift(bySession, sessionID, seq);
+    if (bySession.size === 0)
       holdsUnknown.delete(directory);
   };
   const clearMissedReport = (sessionID, seq) => {
-    if ((missedReports.get(sessionID)?.seq ?? Number.POSITIVE_INFINITY) <= seq)
-      missedReports.delete(sessionID);
+    lift(missedReports, sessionID, seq);
   };
   const timers = new Map;
   const pendingIdle = new Set;
@@ -6657,7 +6667,7 @@ function createPendingCleanup(deps) {
       return vetoed;
     const failed = unsafe.get(canonicalDirectory(path));
     if (failed !== undefined)
-      return failed;
+      return failed.why;
     const running = holdsState(common, path, now());
     if (running !== undefined)
       return running;
@@ -6709,7 +6719,7 @@ function createPendingCleanup(deps) {
       return held;
     if (repo.foreign)
       discoverNow();
-    return reportVeto(repo) ?? unsafe.get(canonicalDirectory(worktree)) ?? (holdReportsInFlight > 0 ? "running work reported by an idle session is still being recorded" : undefined);
+    return reportVeto(repo) ?? unsafe.get(canonicalDirectory(worktree))?.why ?? (holdReportsInFlight > 0 ? "running work reported by an idle session is still being recorded" : undefined);
   };
   const holdCheck = async (repo, worktree) => holdCheckAt(repo, await commonOf(repo), worktree);
   const sectionIn = (repo) => async (worktree, run) => {
@@ -7030,7 +7040,7 @@ function createPendingCleanup(deps) {
       if (mine === null) {
         const why = `the session's repository could not be resolved to find the clones the running work of ${sessionID} may be in`;
         if (vetoes())
-          missedReports.set(sessionID, { why: `${why}; ${recovery(sessionID)}`, seq });
+          raise(missedReports, sessionID, { why: `${why}; ${recovery(sessionID)}`, seq });
         console.error(`delivery: ${why}`);
         return;
       }
@@ -7040,7 +7050,7 @@ function createPendingCleanup(deps) {
       } catch (error) {
         const why = `the running work of ${sessionID} could not be recorded in the clones (${error instanceof Error ? error.message : String(error)})`;
         if (vetoes())
-          missedReports.set(sessionID, { why: `${why}; ${recovery(sessionID)}`, seq });
+          raise(missedReports, sessionID, { why: `${why}; ${recovery(sessionID)}`, seq });
         console.error(`delivery: ${why}`, error);
         return;
       }
@@ -7121,11 +7131,11 @@ function createPendingCleanup(deps) {
           return true;
         });
         if (wrote)
-          unsafe.delete(want);
+          lift(unsafe, want, seq);
       } catch (error) {
         const why = error instanceof Error ? error.message : String(error);
         if (current())
-          unsafe.set(want, `its running work could not be recorded (${why})`);
+          raise(unsafe, want, { why: `its running work could not be recorded (${why})`, seq });
         console.error(`delivery: could not record holds for ${path}: ${why}`);
       }
     }
