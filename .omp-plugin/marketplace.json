@@ -96,7 +96,7 @@
       "name": "lang-python",
       "description": "Python skills: uv, ruff, mypy or pyright and pytest checks, testing, packaging, typing and pydantic, SQLAlchemy and Alembic, and profiling.",
       "source": "./plugins/lang-python/omp",
-      "version": "0.10.0",
+      "version": "0.10.1",
       "category": "development"
     },
     {
