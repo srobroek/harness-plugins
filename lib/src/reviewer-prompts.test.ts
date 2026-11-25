@@ -12,7 +12,7 @@ const shipped = (plugin: string, agent: string): string => {
 
 // The rules every reviewer applies (review-standards: rules), and the checklist the full reviewers add.
 const RULES = ["Standards check: load `lang-<language>`", "`quality-code-policy`", "A departure with no stated reason", "stack-changing diff"]
-const CHECKLIST = ["a helper copied where one shared home exists", "a lint allowed without a stated reason"]
+const CHECKLIST = ["a helper copied where one shared home exists", "a lint allowed without a stated reason", "serialized or published contract with no authoritative source", "TypeSpec for owned contracts", "`.proto` or GraphQL SDL for their native protocols", "published schema for third-party contracts", "cannot be reproduced from the pinned inputs"]
 
 const reviewers = [
   { plugin: "agent-reviewer", agent: "code-reviewer", checklist: true },

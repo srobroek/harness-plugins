@@ -1,3 +1,12 @@
+## project [1.0.2](https://github.com/srobroek/harness-plugins/compare/project--v1.0.1...project--v1.0.2) (2026-11-25)
+
+### Bug Fixes
+
+* **project:** emit openapi.yaml at the scaffold root; gate 4 adds the status-key and jsonSchemaDialect checks; label the cached Redocly timing ([1e3d9bc](https://github.com/srobroek/harness-plugins/commit/1e3d9bc2c4382dfa2f6a97271867beb846927f89))
+* **project:** scaffold OpenAPI from TypeSpec with Redocly lint and the severity file; oRPC is a runtime adapter ([75b9314](https://github.com/srobroek/harness-plugins/commit/75b93141e3a457ac35f38acd96559b55280ca497))
+* **toolchain:** keep the published OpenAPI path stable on the 3.1 fallback, scope the same-version pin, show a usable buf breaking input, and add the measured linter comparison ([ecc83cc](https://github.com/srobroek/harness-plugins/commit/ecc83cc8a507abd99316294654f20404f0d2e1f6))
+* **toolchain:** recognise TypeSpec's emitted seal, publish OpenAPI 3.2.0, ship the full API skill to OMP and adopt the framework-adapter pattern ([818f193](https://github.com/srobroek/harness-plugins/commit/818f193ecb67974fed549502705b6f5663708797))
+
 ## project [1.0.1](https://github.com/srobroek/harness-plugins/compare/project--v1.0.0...project--v1.0.1) (2026-11-25)
 
 ## project [1.0.0](https://github.com/srobroek/harness-plugins/compare/project--v0.12.5...project--v1.0.0) (2026-11-25)

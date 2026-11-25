@@ -67,6 +67,11 @@ install page.
 | `jscpd` | `node_modules/.bin/jscpd --version` | A dev dependency: `npm install --save-dev jscpd` (or the project's package manager) |
 | `gitleaks` | `gitleaks version` | `brew install gitleaks` |
 
+In a TypeSpec project, the `oasdiff`, `schemathesis` and `json-schema-diff` rows are floors for projects that
+have no TypeSpec source. Take the exact version and mise id from the Contract tooling table in `toolchain-api`
+(`oasdiff`, `schemathesis`, Redocly, Sourcemeta `jsonschema`), and use the install command above only where
+the table gives none.
+
 Run Schemathesis only against a disposable environment, never production. Run k6 only against
 an environment sized and approved for the load.
 
@@ -140,12 +145,12 @@ squawk, Atlas or pgroll.
 
 | Style | Default gate | Required add-on | Optional | Run |
 |---|---|---|---|---|
-| HTTP/OpenAPI | `oasdiff` for spec breaks against the base branch; Schemathesis for conformance, never against production | Pact consumer-driven contracts, Pact Broker and `can-i-deploy` when significant internal services call each other | Specmatic; PactFlow bi-directional (paid) | oasdiff every-pr; Schemathesis bounded-pr + scheduled |
+| HTTP/OpenAPI | `oasdiff` for spec breaks against the base branch (a TypeSpec project takes the exact pin and severity file from `toolchain-api`); Schemathesis for conformance, never against production | Pact consumer-driven contracts, Pact Broker and `can-i-deploy` when significant internal services call each other | Specmatic; PactFlow bi-directional (paid) | oasdiff every-pr; Schemathesis bounded-pr + scheduled |
 | gRPC, protobuf, Connect | `buf breaking --against '.git#branch=main'` and `buf lint` | Pact with `pact-protobuf-plugin` 0.8.1 (pre-1.0) for internal gRPC between your own services | `connectrpc/conformance` 1.0.7, only when you implement a Connect or gRPC server or library | every-pr |
 | GraphQL | `graphql-inspector diff` | - | GraphQL Hive 15.3.0 (MIT, self-hostable registry with usage data); Apollo Rover only for an existing GraphOS | every-pr |
 | Events (Kafka, SNS/SQS, EventBridge) | Schema-registry compatibility mode `BACKWARD` or `FULL` (transitive when consumers lag), plus AsyncAPI 3.1 checked with `asyncapi validate` | Pact V4 message pacts for internal producer and consumer pairs you own | CloudEvents 1.0 envelope | every-pr |
 | Webhooks | Payload described in OpenAPI `webhooks` or AsyncAPI, gated by the same diff; Standard Webhooks 1.0.2 tests for signature, replay (stale timestamp), key rotation and deduplication | - | - | every-pr |
-| Plain JSON Schema (no OpenAPI or protobuf around it) | Additive-only gate. Draft-07: `json-schema-diff old.json new.json` against the base branch fails when the new schema removes anything the old one accepted. 2020-12 or `$id`: no maintained tool (the draft-07 tools and alpha `jsoncompat` do not qualify), so use a small tested in-house check plus an allow-file; see `toolchain-api` | When two languages share the schema: the shared-contract gate in `toolchain-api` | A schema registry compatibility mode, where the schemas already live in one | every-pr |
+| Plain JSON Schema (no OpenAPI or protobuf around it) | Additive-only gate, plus the sealed-property check in every dialect (`json-schema-diff` misses an optional property added to a sealed model). Draft-07: `json-schema-diff old.json new.json` against the base branch fails when the new schema removes anything the old one accepted. 2020-12 or `$id`: no maintained tool (the draft-07 tools and alpha `jsoncompat` do not qualify), so use a small tested in-house check plus an allow-file; see `toolchain-api` | When two languages share the schema: the shared-contract gate in `toolchain-api` | A schema registry compatibility mode, where the schemas already live in one | every-pr |
 | JSON-RPC over stdio (LSP, MCP, a custom protocol) | A scripted peer that speaks to the real process over its real pipes, replaying a committed frame corpus (valid, invalid and framing-edge frames) and checking each reply against the schema | - | The MCP conformance runner for an MCP server | every-pr |
 | MCP servers | Committed snapshot of `tools/list` (names, input and output JSON Schemas), diffed in CI; a removed or tightened tool is breaking | - | MCP Inspector 2.15.0 for smoke tests only (licence moving from MIT to Apache-2.0) | every-pr |
 

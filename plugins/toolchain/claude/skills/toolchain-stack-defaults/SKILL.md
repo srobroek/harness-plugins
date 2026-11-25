@@ -24,6 +24,9 @@ Treat `just`, `mise`, and `moon` as independent setup choices:
 - `mise` for language and tool version management.
 - `moon` for task orchestration in larger monorepos.
 
+Contracts: TypeSpec is the source of every serialized or published contract you own; see `toolchain-api` for emitters and exceptions.
+Install the pinned tools through mise; the exact versions are in the `Contract tooling` table of `toolchain-api`, the one place they are written down.
+
 Language plugins, when installed, add skills that run the project's own format,
 lint, and test tools, and `lang-<language>-libraries` skills with the library
 standards. Language design guidance lives in the `quality-code-design` skill.

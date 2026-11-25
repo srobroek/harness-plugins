@@ -218,7 +218,7 @@
     },
     {
       "name": "agent-reviewer",
-      "version": "0.15.4",
+      "version": "0.16.0",
       "description": "A security review skill: trace untrusted input to sinks, tag CWE ids and check cross-boundary dispatch.",
       "category": "development",
       "harnesses": {
@@ -1011,7 +1011,7 @@
     },
     {
       "name": "delivery",
-      "version": "0.12.7",
+      "version": "0.13.0",
       "description": "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
       "category": "development",
       "harnesses": {
@@ -1476,7 +1476,7 @@
     },
     {
       "name": "lang-go",
-      "version": "0.9.3",
+      "version": "0.10.1",
       "description": "Go skills: build, lint, go test -race, tidy and govulncheck checks, testing and fuzzing, module and package layout, and pprof profiling.",
       "category": "development",
       "harnesses": {
@@ -1555,7 +1555,7 @@
     },
     {
       "name": "lang-python",
-      "version": "0.9.3",
+      "version": "0.10.1",
       "description": "Python skills: uv, ruff, mypy or pyright and pytest checks, testing, packaging, typing and pydantic, SQLAlchemy and Alembic, and profiling.",
       "category": "development",
       "harnesses": {
@@ -1642,7 +1642,7 @@
     },
     {
       "name": "lang-rust",
-      "version": "0.9.3",
+      "version": "0.10.1",
       "description": "Rust skills: fmt, clippy and test checks, testing with nextest, proptest and insta, crates and workspaces, CI, sqlx persistence, Tauri and profiling.",
       "category": "development",
       "harnesses": {
@@ -1733,7 +1733,7 @@
     },
     {
       "name": "lang-typescript",
-      "version": "0.10.3",
+      "version": "0.11.1",
       "description": "TypeScript and JavaScript skills: install, lint, tsc and test checks, testing, monorepo packaging, type safety and zod, and Bun and Node profiling.",
       "category": "development",
       "harnesses": {
@@ -1957,7 +1957,7 @@
     },
     {
       "name": "project",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
       "category": "productivity",
       "harnesses": {
@@ -2095,7 +2095,7 @@
     },
     {
       "name": "quality",
-      "version": "0.16.2",
+      "version": "0.17.0",
       "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
       "category": "development",
       "harnesses": {
@@ -2453,7 +2453,7 @@
     },
     {
       "name": "toolchain",
-      "version": "0.10.4",
+      "version": "0.11.1",
       "description": "Toolchain defaults as skills: stack, frontend, infrastructure, languages, observability, shell, Terraform, caches, background jobs and worktree coexistence.",
       "category": "development",
       "harnesses": {

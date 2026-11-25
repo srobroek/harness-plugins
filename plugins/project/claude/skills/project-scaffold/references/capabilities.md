@@ -10,18 +10,64 @@ Ask: does the service expose an HTTP API others consume? Server URL (unknown is 
 use a visible placeholder), contract version (starts `0.1.0`, version of the contract, not of
 OpenAPI), organization for the contact.
 
-- File `openapi.yaml` at the root, `openapi: 3.1.0`, with `info` (title, version,
+- File `openapi.yaml` at the root, `openapi: 3.2.0`, with `info` (title, version,
   description, contact name and repo URL, license when published), `servers`, a `health` tag
   and a worked `/health` `getHealth` example so the gate is green before the first endpoint.
-- Tools: `vacuum` and `oasdiff` (mise: `vacuum`, `"ubi:oasdiff/oasdiff"`).
-- Tasks: `vacuum lint --fail-severity warn openapi.yaml`; breaking-change check against the
-  PR base: `git show origin/main:openapi.yaml > "$base"` then
-  `oasdiff breaking --fail-on ERR "$base" openapi.yaml`, skipping when the base has no spec;
-  `oasdiff changelog` to print the diff. Fetch full history in CI (`fetch-depth: 0`) and set
-  the baseline ref to the PR base branch.
-- With Better-T-Stack and `--api orpc`, OpenAPI comes from the framework; still keep
-  `openapi.yaml` as the committed contract if consumers depend on it (`toolchain-languages`:
-  OpenAPI for HTTP contracts).
+- Tools: Redocly CLI (`@redocly/cli`, mise `npm:@redocly/cli`) and `oasdiff` (mise
+  `github:oasdiff/oasdiff`), at the exact versions in `toolchain-api`'s Contract tooling table.
+  `vacuum` is the faster lint alternative (single maintainer). Spectral only when the project
+  must keep an existing Spectral ruleset.
+- Source: the contract is authored in TypeSpec (`@typespec/http`, `@typespec/openapi3`, one
+  version with `@typespec/compiler`), and `openapi.yaml` is its emitted, committed output, never
+  edited by hand. Set `tspconfig.yaml` as below (`@typespec/openapi3` 1.18.0 supports 3.0.0, 3.1.0 and
+  3.2.0, defaults to 3.0.0, and does not seal object schemas by default). The `/health`
+  example lives in the TypeSpec source.
+
+  ```yaml
+  emit:
+    - "@typespec/openapi3"
+    - "@typespec/json-schema"   # only when a standalone schema is published
+  options:
+    "@typespec/openapi3":
+      emitter-output-dir: "{project-root}"        # writes openapi.yaml at the root
+      openapi-versions: ["3.2.0"]
+      seal-object-schemas: true
+    "@typespec/json-schema":
+      emitter-output-dir: "{project-root}/schema"
+      seal-object-schemas: true
+  ```
+
+  Without `emitter-output-dir`, TypeSpec writes to `tsp-output/@typespec/openapi3/openapi.yaml`,
+  and the tasks below would read a stale file or none (checked with 1.18.0 on 2026-11-25).
+
+  Set the same `seal-object-schemas: true` on both emitters. Run the project's conformance
+  gate on 3.2.0 (`toolchain-api`'s Contract tooling table records the 2026-11-25 acceptance
+  check; the generator scores were measured on 3.1.0). If a generator fails on 3.2.0, keep `openapi.yaml` (3.2.0) where it
+  is and add `tspconfig.oa31.yaml` emitting `openapi-versions: ["3.1.0"]` with
+  `emitter-output-dir: "{project-root}/build/openapi-3.1"` for that generator only. Every task below keeps using `openapi.yaml`;
+  listing both versions in one config moves it into per-version directories.
+- Tasks: `redocly lint openapi.yaml` with a committed `redocly.yaml`, plus the response-status-key and `jsonSchemaDialect` checks of `toolchain-api` gate 4; regenerate and fail on
+  `git status --porcelain` over the generated paths; breaking-change check against the PR
+  base: `git show origin/main:openapi.yaml > "$base"` then
+  `oasdiff breaking --fail-on ERR --severity-levels oasdiff-severity.txt "$base" openapi.yaml`
+  with the committed severity file from `toolchain-api` (it promotes `request-property-removed`
+  to an error), skipping when the base has no spec; `oasdiff changelog` to print the diff. Add
+  the sealed-property schema check and `redocly build-docs` as `toolchain-api`'s Required CI
+  gates list them. Fetch full history in CI (`fetch-depth: 0`) and set the baseline ref to the
+  PR base branch.
+- Framework adapters (oRPC, FastAPI, Hono, NestJS and others) follow one pattern: the
+  framework's input and output schemas are the validators and types generated from the
+  TypeSpec output (Zod through `@hey-api/openapi-ts`), and the framework serves and calls
+  them. The OpenAPI the framework generates from its own code is not the published source; a
+  drift check compares it with the committed emitted `openapi.yaml`. With Better-T-Stack and
+  `--api orpc` (a recommended TypeScript RPC option), the `@orpc/contract` router's input and
+  output schemas are the generated Zod schemas, oRPC serves and calls them, and `@orpc/openapi`
+  output is only compared with TypeSpec's (`toolchain-languages`: OpenAPI for HTTP contracts).
+- gRPC and ConnectRPC services keep `.proto` as the source for now (Connect stays the
+  preferred RPC choice): gates are `buf lint` (`STANDARD`) and
+  `buf breaking --against ".git#ref=${BASE_SHA}"` with the fetched PR base SHA, with protovalidate carrying value limits. Revisit and
+  switch to TypeSpec-emitted `.proto` when `@typespec/protobuf` reaches 1.0 and emits
+  protovalidate rules (`toolchain-api`, gRPC row of the Contract tooling table).
 
 ## i18n (Inlang / Paraglide)
 
