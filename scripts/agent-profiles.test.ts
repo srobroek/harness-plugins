@@ -4,6 +4,7 @@ import path from "node:path"
 import { type AgentPermission, permissionEffect } from "../lib/src/agent-files.ts"
 import { DEFAULT_LEAN_AGENTS } from "../plugins/agent-efficiency/opencode/src/lean.ts"
 import { isTranslatedAgentFile } from "./agent-files.ts"
+import { PI_WEB_TOOLS, piAgents } from "./pi-agents.ts"
 
 const PLUGINS = path.join(import.meta.dir, "..", "plugins")
 const ROUTER_ROW = /^\|.*\|\s*`([\w-]+)`\s*\|\s*$/
@@ -164,6 +165,15 @@ test("execute, web access and hidden match each agent's profile", () => {
     for (const tool of profile.codeMode) expect({ id: agent.id, tool, allowed: allows(agent, tool) }).toEqual({ id: agent.id, tool, allowed: true })
     const web = allows(agent, "webfetch") || allows(agent, "websearch")
     expect({ id: agent.id, web }).toEqual({ id: agent.id, web: profile.web })
+  }
+})
+
+test("a Pi agent keeps its profile's Code Mode tools, and the web tools when its profile has web access", () => {
+  for (const agent of piAgents(PLUGINS)) {
+    const profile = PROFILES[agent.id]
+    if (profile === undefined || DENYLIST.has(agent.id)) continue
+    const missing = [...profile.codeMode, ...(profile.web ? PI_WEB_TOOLS : [])].filter((tool) => !agent.tools.includes(tool))
+    expect({ plugin: agent.plugin, id: agent.id, missing }).toEqual({ plugin: agent.plugin, id: agent.id, missing: [] })
   }
 })
 
