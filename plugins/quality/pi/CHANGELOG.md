@@ -1,3 +1,9 @@
+## quality [0.16.2](https://github.com/srobroek/harness-plugins/compare/quality--v0.16.1...quality--v0.16.2) (2026-11-25)
+
+### Bug Fixes
+
+* **quality:** drop prototype-logic from the Pi adversarial challenger ([48e08e5](https://github.com/srobroek/harness-plugins/commit/48e08e561e4e3f4e9f27426511284ed3248d6d80))
+
 ## quality [0.16.1](https://github.com/srobroek/harness-plugins/compare/quality--v0.16.0...quality--v0.16.1) (2026-11-25)
 
 ### Bug Fixes
