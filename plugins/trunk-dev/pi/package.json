@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/pi-trunk-dev-policy",
-  "version": "0.12.3",
+  "version": "1.0.0",
   "description": "Trunk-based delivery for OpenCode, Claude Code, and pi: Conventional Commit and main-push gates, skip-CI and MR/PR advisories, feature-flag cleanup beads, and release-setup skills.",
   "keywords": [
     "pi-package"
