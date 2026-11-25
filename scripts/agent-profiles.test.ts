@@ -168,12 +168,34 @@ test("execute, web access and hidden match each agent's profile", () => {
   }
 })
 
-test("a Pi agent keeps its profile's Code Mode tools, and the web tools when its profile has web access", () => {
+test("a Pi agent keeps its profile's Code Mode tools, and has the web tools exactly when its profile has web access", () => {
   for (const agent of piAgents(PLUGINS)) {
     const profile = PROFILES[agent.id]
     if (profile === undefined || DENYLIST.has(agent.id)) continue
     const missing = [...profile.codeMode, ...(profile.web ? PI_WEB_TOOLS : [])].filter((tool) => !agent.tools.includes(tool))
-    expect({ plugin: agent.plugin, id: agent.id, missing }).toEqual({ plugin: agent.plugin, id: agent.id, missing: [] })
+    const unprofiledWeb = profile.web ? [] : agent.tools.filter((tool) => PI_WEB_TOOLS.includes(tool))
+    expect({ plugin: agent.plugin, id: agent.id, missing, unprofiledWeb }).toEqual({
+      plugin: agent.plugin,
+      id: agent.id,
+      missing: [],
+      unprofiledWeb: [],
+    })
+  }
+})
+
+test("a Pi agent lists only shipped skills its OpenCode form allows, and inherits the catalog only when that form allows a skill", () => {
+  const openCode = new Map(agents().map((agent) => [`${agent.plugin}/${agent.id}`, agent]))
+  for (const agent of piAgents(PLUGINS)) {
+    const source = openCode.get(`${agent.plugin}/${agent.id}`)
+    if (source === undefined) continue
+    const refused = agent.skills.filter((skill) => !shipped.has(skill) || !allows(source, "skill", skill))
+    const allowsSkills = source.rules.some((rule) => rule.action === "skill" && rule.effect === "allow")
+    expect({ plugin: agent.plugin, id: agent.id, refused, inherits: agent.inheritSkills && !allowsSkills }).toEqual({
+      plugin: agent.plugin,
+      id: agent.id,
+      refused: [],
+      inherits: false,
+    })
   }
 })
 
