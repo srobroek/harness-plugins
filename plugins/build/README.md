@@ -30,7 +30,7 @@ tier picks its model. Without it the agent inherits the caller's model; set
 
 ## Pi tools
 
-Pi `external-repo-worker` is allowlisted for `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, and `pi_lens_activate_tools` from required companion `pi-lens`. `pi-subagents` is required for the subagent runtime. `context7` must be configured as a Pi MCP server in `~/.pi/agent/mcp.json`; it is selected by `mcp:context7`.
+Pi `external-repo-worker` is allowlisted for `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, and `pi_lens_activate_tools` from required companion `pi-lens`, `web_search`, `fetch_content`, `get_search_content`, and `source_check` from required companion `pi-web-access`, and `repomix_pack` from required companion `@srobroek/pi-repomix`. `pi-subagents` is required for the subagent runtime. `context7` must be configured as a Pi MCP server in `~/.pi/agent/mcp.json`; it is selected by `mcp:context7`.
 
 pi-lens keeps `ast_grep_*` tools inactive until `pi_lens_activate_tools` runs; they are available starting the next turn. This agent's allowlist omits `lsp_navigation` and `ast_grep_replace`.
 

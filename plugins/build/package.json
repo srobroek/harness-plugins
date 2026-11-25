@@ -30,6 +30,16 @@
         "package": "pi-lens",
         "for": "code-intelligence tools for the subagent",
         "required": true
+      },
+      {
+        "package": "pi-web-access",
+        "for": "web search and fetch tools for the subagent",
+        "required": true
+      },
+      {
+        "package": "@srobroek/pi-repomix",
+        "for": "repository packing for the subagent",
+        "required": true
       }
     ]
   }
