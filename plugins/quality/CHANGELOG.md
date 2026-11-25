@@ -1,3 +1,9 @@
+## quality [0.18.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.17.0...quality--v0.18.0) (2026-11-25)
+
+### Features
+
+* **quality:** ship quality to OMP ([#200](https://github.com/srobroek/harness-plugins/issues/200)) ([fed762e](https://github.com/srobroek/harness-plugins/commit/fed762ec504dad3a6fed928f78eff7b8b428661a))
+
 ## quality [0.17.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.16.2...quality--v0.17.0) (2026-11-25)
 
 ### Features
