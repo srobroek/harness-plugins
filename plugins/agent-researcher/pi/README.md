@@ -64,6 +64,8 @@ Required companion packages: `pi-subagents`, `pi-web-access`, `pi-lens`, and `@s
 
 pi-lens keeps `ast_grep_*` tools inactive until `pi_lens_activate_tools` runs; they are available starting the next turn. The read-only allowlist omits `lsp_navigation` and `ast_grep_replace`.
 
+Pi `researcher` has no `write` or `edit`. Its definition sets `output: research.md`, so pi-subagents saves its final reply as `research.md` under the run's artifact directory. To save the report in the project, pass an absolute path as the `output` option of the `subagent` call.
+
 ## Install
 Install the Pi package from npm:
 

@@ -15,6 +15,7 @@
     "CHANGELOG.md",
     "LICENSE",
     "README.md",
+    "_kit",
     "agents",
     "extensions",
     "skills"
@@ -24,11 +25,18 @@
     "provenance": true
   },
   "peerDependencies": {
+    "pi-web-access": "*",
     "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "pi-web-access": {
+      "optional": true
+    }
   },
   "pi": {
     "extensions": [
-      "./extensions/index.js"
+      "./extensions/index.js",
+      "./_kit/prereqs.ts"
     ],
     "skills": [
       "./skills"

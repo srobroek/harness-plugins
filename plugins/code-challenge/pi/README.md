@@ -27,12 +27,13 @@ Thirteen lenses, one reference each: scope (the code against its design and docs
 
 ## Pi subagent tools
 
-`code-challenger` adds `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `web_search`, `fetch_content`, `get_search_content`, `source_check`, `quality_test_summarize`, `quality_test_compare`, `repomix_pack`, `dep_scan`, `version_gap_scan`, and `mcp:context7` to its existing tools.
+`code-challenger` adds `challenge_scan`, `challenge_lib_facts`, `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `web_search`, `fetch_content`, `get_search_content`, `source_check`, `quality_test_summarize`, `quality_test_compare`, `repomix_pack`, `dep_scan`, `version_gap_scan`, and `mcp:context7` to its existing tools.
 
-`refactor-challenger` adds `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `quality_test_summarize`, `quality_test_compare`, `repomix_pack`, `dep_scan`, `version_gap_scan`, and `mcp:context7` to its existing tools.
+`refactor-challenger` adds `bash`, `challenge_scan`, `challenge_lib_facts`, `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `web_search`, `fetch_content`, `get_search_content`, `source_check`, `quality_test_summarize`, `quality_test_compare`, `repomix_pack`, `dep_scan`, `version_gap_scan`, and `mcp:context7` to its existing tools. It uses `bash` for read-only diagnostics such as linters and type checks.
 
-`code-challenger` can use `quality-test-audit` from the Pi skills catalog loaded by `@srobroek/pi-code-quality`.
+Both challengers load this package's own extension in their child sessions for the `challenge_*` tools. Both see the Pi skills catalog; `code-challenger` also gets the `code-challenge` skill, whose lens references it reads first, and can use `quality-test-audit` from `@srobroek/pi-code-quality`.
 
+Neither challenger has `write` or `edit`. To get a challenge report as a file, pass the `output` option of the `subagent` call: pi-subagents saves the agent's final reply to that path. Give an absolute path for a file in the project; pi-subagents puts a relative `output` path under the run's artifact directory.
 
 Pi-lens keeps `ast_grep_search` and `ast_grep_outline` inactive until `pi_lens_activate_tools` runs; activation takes effect on the next turn. `lsp_navigation` and `ast_grep_replace` are not granted.
 
