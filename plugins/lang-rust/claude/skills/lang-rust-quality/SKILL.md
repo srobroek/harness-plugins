@@ -14,7 +14,7 @@ directory with `Cargo.toml`):
 | --- | --- |
 | Format check | `cargo fmt --check` |
 | Lint | `cargo clippy --all-targets --all-features -- -D warnings` |
-| Test | `cargo nextest run` and `cargo test --doc` |
+| Test | The repository's configured runner (usually `cargo test`); `cargo nextest run` and `cargo test --doc` when the project adopts nextest |
 | Docs | `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features` |
 | Dependencies | Configured `cargo deny check` and an unused-dependency check (`cargo shear` or `cargo machete`), preferably through the project's `just` tasks |
 | API break (published libraries) | `cargo semver-checks` (the gate; `cargo-public-api` only for a committed API snapshot) |
@@ -25,13 +25,13 @@ directory with `Cargo.toml`):
 Run them in that order and stop at the first failure you need to fix. In a
 workspace, add `--workspace` to clippy and test, or `-p <crate>` to narrow them.
 
-Default to `cargo-nextest` locally and in CI; run `cargo test --doc` beside it because
-nextest does not run doc tests. It provides process-per-test isolation, parallelism,
-retries that mark flaky tests, partitioning, and JUnit output. Costs are a separate
-binary and doctest run; assumptions about state shared across tests in one process
-break, usually revealing an isolation bug. Shared files, ports, and databases still
-need isolation. Keep retries off by default. Use plain `cargo test` only when nextest
-cannot be installed.
+Use `cargo-nextest` when the repository is configured for it. Otherwise run the
+repository's configured test runner (usually `cargo test`). Nextest provides
+process-per-test isolation, parallelism, retries that mark flaky tests, partitioning,
+and JUnit output. Costs are a separate binary and doctest run; assumptions about state
+shared across tests in one process break, usually revealing an isolation bug. Shared
+files, ports, and databases still need isolation. Keep retries off by default. Always run
+`cargo test --doc` separately when using nextest because it does not run doc tests.
 
 Unused-dependency tools: keep both `cargo-shear` and `cargo-machete` available and say which one a project runs. Their READMEs describe different trade-offs. `cargo-machete` calls itself "fast (yet imprecise)" and documents a false-positives section. `cargo-shear` parses sources with rust-analyzer's parser, checks all workspace members and offers `--fix`; it does not evaluate `cfg`, so references in disabled branches count as usage, and it can miss macro-generated references unless you pass `--expand` (nightly). Use `cargo-shear` as the gate. Use `cargo-machete` for a quick local pass and expect to triage false positives; sources: [cargo-shear README](https://github.com/Boshen/cargo-shear#readme), [cargo-machete README](https://github.com/bnjbvr/cargo-machete#readme). Never gate on both.
 
@@ -61,18 +61,13 @@ script or `just`/`make` target for it when it has one.
 CI runs the same steps with `--locked`; the Rust-specific workflow settings are in
 `lang-rust-ci`.
 
-In OpenCode, formatting after an edit is the host's job: with `"formatter": true` in
-`opencode.json`, the built-in `rustfmt` formatter rewrites each `.rs` file after the
-`edit`, `write` or `patch` tool changes it. `cargo fmt --check` still belongs in the
-check, because files changed outside those tools are not formatted.
+After formatting changes, run `cargo fmt --check` on the project; do not rely on the host's edit-time formatting.
 
 A missing `Cargo.toml` or `cargo` means the check did not run. Report it as not run,
 never as a pass. Read failures as the project's actual toolchain output; do not
 invent extra linters.
 
-In OpenCode, the rust plugin refuses edits to a committed migration: only the
-highest-numbered entry under a `migrations/` directory is editable. Write a new
-migration instead.
+Never edit a committed migration; only the highest-numbered entry under a `migrations/` directory is editable. Add a new migration instead.
 
 ## Lint baseline
 

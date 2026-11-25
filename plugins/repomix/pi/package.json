@@ -1,0 +1,36 @@
+{
+  "name": "@srobroek/pi-repomix",
+  "version": "0.6.3",
+  "description": "Pack a local or remote repo into one file with repomix for bulk context: external repos, module packs and version diffs.",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/repomix/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "extensions",
+    "skills"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "peerDependencies": {
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/repomix.js"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  }
+}

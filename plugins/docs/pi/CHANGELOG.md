@@ -1,0 +1,30 @@
+## docs [0.5.1](https://github.com/srobroek/harness-plugins/compare/docs--v0.5.0...docs--v0.5.1) (2026-11-24)
+
+## docs [0.5.0](https://github.com/srobroek/harness-plugins/compare/docs--v0.4.0...docs--v0.5.0) (2026-11-24)
+
+### Features
+
+* **docs:** publish docs and aws MCP for OMP ([5549b38](https://github.com/srobroek/harness-plugins/commit/5549b38ffcba92bb681b6db5a91c74535810d8cb))
+
+# Changelog
+
+## [0.4.0](https://github.com/srobroek/opencode-plugins/compare/docs--v0.3.0...docs--v0.4.0) (2026-11-20)
+
+
+### Features
+
+* plugin scan fixes, wider agent access and the plugin-audit plugin ([9c71525](https://github.com/srobroek/opencode-plugins/commit/9c7152559776aaf80cfed9626d78bafdd845fa9a))
+
+## [0.3.0](https://github.com/srobroek/opencode-plugins/compare/docs--v0.2.0...docs--v0.3.0) (2026-11-10)
+
+
+### Features
+
+* **docs:** pool the context7 and OpenAI docs MCP connections ([299e6aa](https://github.com/srobroek/opencode-plugins/commit/299e6aac6650815222386941071369ef8a0480e6))
+
+## [0.2.0](https://github.com/srobroek/opencode-plugins/compare/docs--v0.1.0...docs--v0.2.0) (2026-10-27)
+
+
+### Features
+
+* **docs:** add docs plugin with Context7 and opt-in OpenAI developer docs MCP servers ([e5cc1b3](https://github.com/srobroek/opencode-plugins/commit/e5cc1b379367367e23e024cd11c6e5d9094323f0))

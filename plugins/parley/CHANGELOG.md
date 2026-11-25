@@ -1,3 +1,15 @@
+## parley [0.5.1](https://github.com/srobroek/harness-plugins/compare/parley--v0.5.0...parley--v0.5.1) (2026-11-24)
+
+## parley [0.5.0](https://github.com/srobroek/harness-plugins/compare/parley--v0.4.2...parley--v0.5.0) (2026-11-23)
+
+### Features
+
+* **parley:** port parley to pi as an extension ([4841634](https://github.com/srobroek/harness-plugins/commit/484163442b05e6044ff8752b1ee2292ad8d8d239))
+
+### Bug Fixes
+
+* **parley:** isolate the pi panel and fall back when the host lacks it ([b79d486](https://github.com/srobroek/harness-plugins/commit/b79d486bbe0a8d44280bab1ce2446e3663a5df5a))
+
 ## parley [0.4.2](https://github.com/srobroek/harness-plugins/compare/parley--v0.4.1...parley--v0.4.2) (2026-11-21)
 
 ## parley [0.4.1](https://github.com/srobroek/harness-plugins/compare/parley--v0.4.0...parley--v0.4.1) (2026-11-21)

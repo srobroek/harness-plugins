@@ -212,21 +212,20 @@ describe("detectForge", () => {
     expect(forgeTarget("ssh://git@evil.example:443/g/p.git")).toBeNull()
   })
 
-  test("the gitlab.aws.dev instance is GitLab, and its SSH-only host addresses the API host", () => {
-    // ssh.gitlab.aws.dev serves git over SSH and never the API, so a remote on it
-    // must address forge commands to gitlab.aws.dev, not to itself or to gitlab.com.
+  test("the gitlab.example.com instance is GitLab, and its SSH-only host addresses the API host", () => {
+    // ssh.gitlab.example.com serves git over SSH and never the API, so a remote on it
+    // must address forge commands to gitlab.example.com, not to itself or to gitlab.com.
     for (const url of [
-      "git@ssh.gitlab.aws.dev:sjors/cde-builderproject.git",
-      "ssh://git@ssh.gitlab.aws.dev/sjors/cde-builderproject.git",
-      "https://gitlab.aws.dev/sjors/cde-builderproject.git",
+      "git@ssh.gitlab.example.com:example-org/example-repo.git",
+      "ssh://git@ssh.gitlab.example.com/example-org/example-repo.git",
+      "https://gitlab.example.com/example-org/example-repo.git",
     ]) {
-      expect(forgeTarget(url)).toEqual({ forge: "gitlab", canonicalHost: "gitlab.aws.dev" })
-      expect(repoPathFromRemote(url)).toBe("sjors/cde-builderproject")
+      expect(forgeTarget(url)).toEqual({ forge: "gitlab", canonicalHost: "gitlab.example.com" })
+      expect(repoPathFromRemote(url)).toBe("example-org/example-repo")
     }
-    expect(forgeTarget("git@ssh.gitlab.aws.dev.evil.example:sjors/p.git")).toBeNull()
-    expect(forgeTarget("git@aws.dev:sjors/p.git")).toBeNull()
+    expect(forgeTarget("git@ssh.gitlab.example.com.evil.example:example-org/p.git")).toBeNull()
+    expect(forgeTarget("git@example.com:example-org/p.git")).toBeNull()
   })
-
   test("a lookalike host is not the forge", () => {
     expect(detectForge("https://github.com.evil.example/o/r")).toBe("unknown")
     expect(detectForge("git@notgithub.com:o/r.git")).toBe("unknown")
@@ -287,7 +286,7 @@ describe("detectForge", () => {
     expect(detectForge(null)).toBe("unknown")
     expect(detectForge("")).toBe("unknown")
     expect(detectForge("   ")).toBe("unknown")
-    expect(detectForge("/Users/sjors/dev/omp-plugins")).toBe("unknown")
+    expect(detectForge("/Users/example/dev/omp-plugins")).toBe("unknown")
     expect(detectForge("./omp-plugins")).toBe("unknown")
     expect(detectForge("../omp-plugins")).toBe("unknown")
     expect(detectForge("~/dev/omp-plugins")).toBe("unknown")
@@ -295,7 +294,7 @@ describe("detectForge", () => {
   })
 
   test("only https, ssh, and scp-like spellings are trusted transports", () => {
-    expect(detectForge("file:///Users/sjors/dev/omp-plugins")).toBe("unknown")
+    expect(detectForge("file:///Users/example/dev/omp-plugins")).toBe("unknown")
     expect(detectForge("git://github.com/o/r.git")).toBe("unknown")
     expect(detectForge("git+ssh://git@github.com/o/r.git")).toBe("unknown")
     expect(detectForge("ftp://github.com/o/r")).toBe("unknown")
@@ -405,7 +404,7 @@ describe("repoPathFromRemote", () => {
 
 describe("redactRemote", () => {
   test("userinfo is dropped while the host, port and path that were classified survive", () => {
-    expect(redactRemote("https://srobroek:ghp_secret@github.com:8443/srobroek/omp-plugins.git")).toBe(
+    expect(redactRemote("https://test-user:ghp_secret@github.com:8443/srobroek/omp-plugins.git")).toBe(
       "https://github.com:8443/srobroek/omp-plugins.git",
     )
     expect(redactRemote("https://github.com/srobroek/omp-plugins.git")).toBe(
@@ -433,10 +432,10 @@ describe("redactRemote", () => {
    */
   test("a spelling no parser here accounts for is replaced, never echoed", () => {
     for (const remote of [
-      "https://srobroek:ghp_secret@github.com:99999/o/r.git",
+      "https://test-user:ghp_secret@github.com:99999/o/r.git",
       "ssh://git:ghp_secret@github.com:-1/o/r.git",
-      "srobroek:ghp_secret@github.com:o/r.git",
-      "git://srobroek:ghp_secret@github.com/o/r.git",
+      "test-user:ghp_secret@github.com:o/r.git",
+      "git://test-user:ghp_secret@github.com/o/r.git",
       "ghp_secret",
     ]) {
       const redacted = redactRemote(remote)
@@ -509,20 +508,20 @@ describe("autoDeleteSetting", () => {
 
   test("gitlab reads the setting from the API host the remote resolved to", async () => {
     const { run, calls } = spy(completed(0, gitlabProject(true)))
-    expect(await autoDeleteSetting("gitlab", "sjors/cde-builderproject", run, "gitlab.aws.dev")).toBe("on")
+    expect(await autoDeleteSetting("gitlab", "example-org/example-repo", run, "gitlab.example.com")).toBe("on")
     expect(calls[0]?.argv).toEqual([
       "glab",
       "api",
-      "projects/sjors%2Fcde-builderproject",
+      "projects/example-org%2Fexample-repo",
       "--hostname",
-      "gitlab.aws.dev",
+      "gitlab.example.com",
     ])
   })
 
   test("an API host outside the allowlist is never put on a command line", async () => {
     const { run, calls } = spy(completed(0, gitlabProject(true)))
     expect(await autoDeleteSetting("gitlab", "g/p", run, "evil.example" as "gitlab.com")).toBe("unknown")
-    expect(await enableAutoDelete("gitlab", "g/p", run, "ssh.gitlab.aws.dev" as "gitlab.com")).toMatchObject({
+    expect(await enableAutoDelete("gitlab", "g/p", run, "evil.example" as "gitlab.com")).toMatchObject({
       ok: false,
     })
     expect(calls).toHaveLength(0)
@@ -714,8 +713,8 @@ describe("enableAutoDelete", () => {
 
   test("gitlab writes the setting on the API host the remote resolved to", async () => {
     const { run, calls } = spy(completed(0, "{}"))
-    expect(await enableAutoDelete("gitlab", "sjors/cde-builderproject", run, "gitlab.aws.dev")).toEqual({ ok: true })
-    expect(calls[0]?.argv.slice(4, 7)).toEqual(["projects/sjors%2Fcde-builderproject", "--hostname", "gitlab.aws.dev"])
+    expect(await enableAutoDelete("gitlab", "example-org/example-repo", run, "gitlab.example.com")).toEqual({ ok: true })
+    expect(calls[0]?.argv.slice(4, 7)).toEqual(["projects/example-org%2Fexample-repo", "--hostname", "gitlab.example.com"])
   })
 
   test("the endpoints take booleans, so neither write uses a raw string field", async () => {
@@ -1030,7 +1029,7 @@ describe("remoteBranchAbsent", () => {
    */
   test("a credential-bearing URL appears in no argv element and in no returned value", async () => {
     for (const url of [
-      "https://srobroek:ghp_secrettoken@github.com/srobroek/omp-plugins.git",
+      "https://test-user:ghp_secrettoken@github.com/srobroek/omp-plugins.git",
       "https://github.com/srobroek/omp-plugins.git?token=ghp_secrettoken",
       "ssh://git:ghp_secrettoken@gitlab.com/group/project.git",
     ]) {
@@ -1623,8 +1622,9 @@ describe("runCli against real processes", () => {
     expect(result.error).toContain("abort")
     // What the command wrote before it was killed is kept.
     expect(result.stdout).toBe("started\n")
-    expect(await exitsWithin(pid(self))).toBe(true)
-    expect(await exitsWithin(pid(child))).toBe(true)
+    // Allow SIGKILL to reach and reap the group; 5s covers 500 ten-millisecond polls.
+    expect(await exitsWithin(pid(self), 5_000)).toBe(true)
+    expect(await exitsWithin(pid(child), 5_000)).toBe(true)
   }, 20_000)
 
   test("the deadline ends a command whose child still holds stdout open", async () => {

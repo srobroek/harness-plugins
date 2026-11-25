@@ -7,6 +7,11 @@ path to edit instead (`chezmoi source-path <target>`).
 Ported from the omp-plugins `chezmoi` plugin.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-chezmoi-editor
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/chezmoi/opencode'
@@ -18,45 +23,50 @@ Claude Code install the skill from this repository's marketplace:
 claude plugin install chezmoi@harness-plugins
 ```
 
-There the skill has no guard behind it.
+Claude Code installs the skill without a write guard.
+
+Pi loads `plugins/chezmoi/pi/extensions/chezmoi.js` as an extension. Foreground
+children started by pi-subagents do not inherit parent extensions. Add the extension
+to `subagents.defaultSubagentOnlyExtensions` in Pi settings:
+
+```json
+{
+  "subagents": {
+    "defaultSubagentOnlyExtensions": ["/absolute/path/to/chezmoi.js"]
+  }
+}
+```
+
+For one agent, use `subagentOnlyExtensions` in its configuration. Set an absolute
+path to the built extension.
 
 ## Guard
 
-A `tool.hook("execute.before")` throws when a call writes a managed target. It reads
-the write targets statically:
+OpenCode's `tool.hook("execute.before")` and pi's `tool_call` handler block writes
+to a managed target. They read write targets statically:
 
-- `edit` and `write`: `path`.
-- `patch`: every `*** Add File:`, `*** Update File:`, `*** Delete File:` and
-  `*** Move to:` header.
-- `shell`: `>`, `>>` and `>|` redirects, `tee`, `cp`/`mv` destinations (including
-  `-t DIR` and an existing destination directory), `sed -i`/`gsed -i` and `perl -i`.
-  Leading `sudo`, `doas`, `env` (including `env -S`), `nice`, `timeout`, `stdbuf`,
-  `command`, `exec`, `nohup`, `time` and `VAR=value` prefixes are skipped with their
-  options. Relative paths resolve against the call's `workdir` and a literal
-  `cd DIR` earlier in the same command; a `cd` inside `( … )` ends with the group.
-  A wrapped command's own paths resolve against its `env -C DIR` or `sudo -D DIR`,
-  while its redirects stay in the shell's directory.
+- `edit` and `write`: the named `path`.
+- `patch` (OpenCode): each file header (`Add File`, `Update File`, `Delete File`,
+  `Move to`).
+- `shell` (OpenCode) and `bash` (pi): redirects (`>`, `>>`, `>|`), `tee`, and
+  `cp`/`mv` destinations. The parser handles `-t DIR`, existing destination
+  directories, `sed -i`/`gsed -i`, and `perl -i`.
+- Wrapper prefixes: `sudo`, `doas`, `env`, `nice`, `timeout`, `stdbuf`, `command`,
+  `exec`, `nohup`, `time`, and `VAR=value`.
 
-Only paths under `$HOME` are checked. Symlink aliases of a managed target count as
-the target. Writes inside the chezmoi source directory are allowed.
+Relative paths resolve against the call's working directory. A literal `cd DIR`
+sets the working directory for following shell commands.
 
-The guard reads the managed set from `chezmoi managed --path-style=absolute` and
-caches it. It re-reads the list after 5 seconds, after a write inside the source
-directory, and after any `shell` command that runs `chezmoi` (for example
-`chezmoi add`).
+The guard checks paths under `$HOME` and resolves symlink aliases. It allows writes
+inside the chezmoi source directory.
 
-Seed-once `create_` targets are app-owned and writable: chezmoi writes them only
-when missing, so the next apply does not overwrite them. The guard still refuses
-`modify_` and every other managed target.
+The guard reads `chezmoi managed --path-style=absolute` and caches the result for five
+seconds. It reloads after a source-directory write or a shell command that runs
+chezmoi. Seed-once `create_` targets remain writable. The guard blocks other managed
+targets and names their source paths.
 
-The guard allows the call when `chezmoi` is missing, fails or times out (2 seconds),
-and for unmanaged paths. It reads literal words only; it is not a shell sandbox. It
-does not see writes behind variables other than `$HOME`, command substitution
-results, `sh -c`/`eval` strings, scripts, or other tools (`install`, `rsync`, `dd`,
-editors).
-
-## Skill
+The guard ignores variable writes beyond `$HOME`, shell strings, scripts, and unlisted tools.
 
 The plugin registers the `chezmoi-editor` skill from
-`skills/chezmoi-editor/SKILL.md`, unless a skill with that id already exists. It
-links to `references/conventions.md` for source-file name prefixes.
+`skills/chezmoi-editor/SKILL.md` unless a skill with that id already exists. The
+skill links to `references/conventions.md` for source-file naming prefixes.

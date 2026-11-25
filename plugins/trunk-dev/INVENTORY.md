@@ -3,13 +3,13 @@
 
 Trunk-based delivery for OpenCode, Claude Code, and pi: Conventional Commit and main-push gates, skip-CI and MR/PR advisories, feature-flag cleanup beads, and release-setup skills.
 
-| Kind | opencode | claude |
-| --- | --- | --- |
-| skills | trunk-dev-feature-flags, trunk-dev-guide, trunk-dev-release-setup, trunk-dev-workflow | trunk-dev-feature-flags, trunk-dev-guide, trunk-dev-release-setup, trunk-dev-workflow |
-| agents | - | - |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | - |
-| tools | - | - |
-| extensions | index | - |
-| mcp | - | - |
+| Kind | opencode | claude | pi |
+| --- | --- | --- | --- |
+| skills | trunk-dev-feature-flags, trunk-dev-guide, trunk-dev-release-setup, trunk-dev-workflow | trunk-dev-feature-flags, trunk-dev-guide, trunk-dev-release-setup, trunk-dev-workflow | trunk-dev-feature-flags, trunk-dev-guide, trunk-dev-release-setup, trunk-dev-workflow |
+| agents | - | - | - |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | - | - |
+| tools | - | - | - |
+| extensions | index | - | trunk-dev |
+| mcp | - | - | - |

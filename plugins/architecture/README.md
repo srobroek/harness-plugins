@@ -38,10 +38,26 @@ The agent pins no model. It declares the `strong` model tier through the
 `strong` tier picks its model. Without it the agent inherits the caller's model;
 set `agent.architect.model` in your config to pin one.
 
+## Pi subagent tools
+
+`architect` adds `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `web_search`, `fetch_content`, `get_search_content`, `source_check`, `repomix_pack`, `dep_scan`, `version_gap_scan`, and `mcp:context7` to its existing tools. Pi-lens keeps `ast_grep_search` and `ast_grep_outline` inactive until `pi_lens_activate_tools` runs; activation takes effect on the next turn. `lsp_navigation` and `ast_grep_replace` are not granted.
+
+Required Pi packages: `pi-lens`, `pi-web-access`, `@srobroek/pi-repomix`, `@srobroek/pi-dep-update`, and `@srobroek/pi-whats-new`. Configure the `context7` Pi MCP server in `~/.pi/agent/mcp.json` for `mcp:context7`.
+
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-architecture
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/architecture/opencode'
+```
+OMP installs the agent and skills from the generated OMP directory:
+
+```sh
+omp plugin install /path/to/harness-plugins/plugins/architecture/omp
 ```
 
 Claude Code install the skills, not the agent, from this repository's

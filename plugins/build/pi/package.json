@@ -1,0 +1,47 @@
+{
+  "name": "@srobroek/pi-external-repo-worker",
+  "version": "0.11.0",
+  "description": "External-repository worker subagent: clone, follow the target's conventions, edit, verify, and publish only when delegated.",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/build/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "_kit",
+    "agents"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "peerDependencies": {
+    "pi-lens": "*",
+    "pi-subagents": "*"
+  },
+  "peerDependenciesMeta": {
+    "pi-lens": {
+      "optional": true
+    },
+    "pi-subagents": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./_kit/prereqs.ts"
+    ],
+    "subagents": {
+      "agents": [
+        "./agents"
+      ]
+    }
+  }
+}

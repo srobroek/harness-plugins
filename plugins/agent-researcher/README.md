@@ -46,7 +46,7 @@ agent.
 
 | Option | Default | Effect |
 | --- | --- | --- |
-| `tools` | `["context7_*", "aws-mcp_*"]` | An array of patterns replaces the defaults. `false` or `[]` adds no rules; the agent keeps its fixed allowlist. |
+| `tools` | `["context7_*"]` | Context7 is allowed by default. Add MCP patterns such as `aws-mcp_*` for AWS projects; an array replaces the default. `false` or `[]` adds no rules; the agent keeps its fixed allowlist. |
 
 ```jsonc
 "options": { "tools": ["context7_*", "<server>_<tool>"] }
@@ -56,10 +56,28 @@ Patterns must name MCP server tools only (`<server>_<tool>`). The option refuses
 
 This agent allows `execute`, so it reaches MCP tools through Code Mode; each nested call is checked against the same rules (`packages/core/src/tool.ts:337-339`, OpenCode v2.2.6).
 
+## Pi tools
+
+Pi `researcher` keeps `web_search`, `fetch_content`, `get_search_content`, and `source_check` from `pi-web-access`. It adds `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, and `pi_lens_activate_tools` from `pi-lens`. `repomix_pack` comes from `@srobroek/pi-repomix`.
+
+Required companion packages: `pi-subagents`, `pi-web-access`, `pi-lens`, and `@srobroek/pi-repomix`. `context7` must be configured as a Pi MCP server in `~/.pi/agent/mcp.json`; it is selected by `mcp:context7`.
+
+pi-lens keeps `ast_grep_*` tools inactive until `pi_lens_activate_tools` runs; they are available starting the next turn. The read-only allowlist omits `lsp_navigation` and `ast_grep_replace`.
+
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-agent-researcher
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-researcher/opencode'
+```
+OMP installs the agent from the generated OMP directory:
+
+```sh
+omp plugin install /path/to/harness-plugins/plugins/agent-researcher/omp
 ```
 
 This plugin ships no skills, so it is not in the Claude Code marketplace.

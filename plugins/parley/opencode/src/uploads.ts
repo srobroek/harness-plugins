@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import type { FileValue } from "./answers.ts"
+import type { FileValue } from "../../shared/answers.ts"
 
 /** Upload files outlive their round record: they are removed this long after the round closed. */
 export const UPLOAD_TTL_MS = 24 * 60 * 60_000

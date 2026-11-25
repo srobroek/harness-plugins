@@ -845,7 +845,7 @@ async function main(argv) {
     if (output !== undefined)
       await Bun.write(Bun.stdout, JSON.stringify(output));
   } catch (error) {
-    console.error(`srobroek speckit hook: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`speckit hook: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 if (import.meta.main)

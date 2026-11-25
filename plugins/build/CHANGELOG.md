@@ -1,3 +1,36 @@
+## build [0.11.0](https://github.com/srobroek/harness-plugins/compare/build--v0.10.3...build--v0.11.0) (2026-11-24)
+
+### Features
+
+* **agent-coder:** grant pi subagents code-intelligence and helper tools ([89d8d54](https://github.com/srobroek/harness-plugins/commit/89d8d54af33d144801baf1ea2af5496b78887ced))
+* **build:** grant pi subagents code-intelligence and helper tools ([a80bd94](https://github.com/srobroek/harness-plugins/commit/a80bd94eb98667edd124f7835a3a94da2c585819))
+
+## build [0.10.3](https://github.com/srobroek/harness-plugins/compare/build--v0.10.2...build--v0.10.3) (2026-11-24)
+
+## build [0.10.2](https://github.com/srobroek/harness-plugins/compare/build--v0.10.1...build--v0.10.2) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## build [0.10.1](https://github.com/srobroek/harness-plugins/compare/build--v0.10.0...build--v0.10.1) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## build [0.10.0](https://github.com/srobroek/harness-plugins/compare/build--v0.9.0...build--v0.10.0) (2026-11-23)
+
+### Features
+
+* **agent-plugins:** complete pi agent prompts ([bd49ec4](https://github.com/srobroek/harness-plugins/commit/bd49ec4a310c315702f2ce63789cda4cf345760d))
+
+## build [0.9.0](https://github.com/srobroek/harness-plugins/compare/build--v0.8.1...build--v0.9.0) (2026-11-23)
+
+### Features
+
+* **agent-reviewer:** ship agent-only plugins to OMP ([4651445](https://github.com/srobroek/harness-plugins/commit/4651445bd2b5ce547a1bf781c7049acf4f894019))
+
 ## build [0.8.1](https://github.com/srobroek/harness-plugins/compare/build--v0.8.0...build--v0.8.1) (2026-11-23)
 
 ### Bug Fixes

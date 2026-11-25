@@ -1,3 +1,34 @@
+## speckit [0.11.5](https://github.com/srobroek/harness-plugins/compare/speckit--v0.11.4...speckit--v0.11.5) (2026-11-24)
+
+### Bug Fixes
+
+* **agent-reviewer:** tell OMP agents that keep a shell it is unrestricted ([#173](https://github.com/srobroek/harness-plugins/issues/173)) ([1b8386d](https://github.com/srobroek/harness-plugins/commit/1b8386dbf43fa6cb5580d4dbc03e619476ba023c))
+
+## speckit [0.11.4](https://github.com/srobroek/harness-plugins/compare/speckit--v0.11.3...speckit--v0.11.4) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## speckit [0.11.3](https://github.com/srobroek/harness-plugins/compare/speckit--v0.11.2...speckit--v0.11.3) (2026-11-24)
+
+### Bug Fixes
+
+* **beads:** rename the store-pin env marker to HARNESS_BEADS_PIN ([f111b05](https://github.com/srobroek/harness-plugins/commit/f111b051e312b4fd6155486e45e145a9a199bc95))
+* **speckit:** remove personal hook diagnostic prefix ([f8280b4](https://github.com/srobroek/harness-plugins/commit/f8280b4e477154be6ec599f320a2ec700b590722))
+
+## speckit [0.11.2](https://github.com/srobroek/harness-plugins/compare/speckit--v0.11.1...speckit--v0.11.2) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## speckit [0.11.1](https://github.com/srobroek/harness-plugins/compare/speckit--v0.11.0...speckit--v0.11.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## speckit [0.11.0](https://github.com/srobroek/harness-plugins/compare/speckit--v0.10.3...speckit--v0.11.0) (2026-11-22)
 
 ### Features

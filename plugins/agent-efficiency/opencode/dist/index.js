@@ -6,7 +6,7 @@ import { homedir as homedir2 } from "os";
 import { Plugin } from "@opencode/plugin";
 
 // lib/src/agent-tools.ts
-var DEFAULT_MCP_TOOLS = ["context7_*", "aws-mcp_*"];
+var DEFAULT_MCP_TOOLS = ["context7_*"];
 var MCP_TOOL_AGENTS = new Set([
   "adversarial-challenger",
   "architect",
@@ -24,7 +24,8 @@ var MCP_TOOL_AGENTS = new Set([
   "researcher",
   "security-auditor",
   "spec",
-  "ui-implementer"
+  "ui-implementer",
+  "whats-new"
 ]);
 var MCP_EXCLUDED_AGENTS = new Set([
   "a11y-auditor",
@@ -64,7 +65,6 @@ var BUILT_IN_ACTIONS = [
 ];
 var RESERVED_TOOL_PREFIXES = [
   "autopilot_",
-  "cad_",
   "challenge_",
   "claude_",
   "dep_",
@@ -1780,9 +1780,7 @@ var DEFAULT_LEAN_AGENTS = [
   "researcher",
   "architect",
   "speckit-sync",
-  "cad-mech-reviewer",
-  "cad-dfm-reviewer",
-  "cad-sourcing-researcher"
+  "whats-new"
 ];
 var IDENTITY = `# Your Model
 - Name: `;

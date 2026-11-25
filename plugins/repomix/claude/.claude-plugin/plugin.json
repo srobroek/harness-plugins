@@ -1,7 +1,7 @@
 {
   "name": "repomix",
   "description": "Pack a local or remote repo into one file with repomix for bulk context: external repos, module packs and version diffs.",
-  "version": "0.5.0",
+  "version": "0.6.3",
   "author": {
     "name": "Sjors Robroek",
     "url": "https://github.com/srobroek"

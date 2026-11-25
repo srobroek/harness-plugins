@@ -1777,7 +1777,7 @@ function stripWrappers(input) {
   return { argv: words.slice(i), directories, wrappers };
 }
 
-// plugins/whats-new/opencode/src/report-only.ts
+// plugins/whats-new/shared/report-only.ts
 var MANIFESTS = {
   "package.json": true,
   "cargo.toml": true,
@@ -1793,15 +1793,7 @@ var MANIFESTS = {
   "pnpm-lock.yaml": true
 };
 var LOCKFILE = /\.lock$|^bun\.lock/;
-var SEPARATORS2 = {
-  ";": true,
-  "&": true,
-  "|": true,
-  "\n": true,
-  "(": true,
-  ")": true,
-  "$(": true
-};
+var SEPARATORS2 = { ";": true, "&": true, "|": true, "\n": true, "(": true, ")": true, "$(": true };
 var SHELLS = { bash: true, sh: true, zsh: true, dash: true, ksh: true };
 var PACKAGE_RUNNERS = new Set(["npx", "bunx"]);
 var PACKAGE_RUNNER_VALUE_FLAGS = new Set(["-p", "--package"]);
@@ -1948,14 +1940,16 @@ function commandMutates(command, depth = 0) {
   }
   return false;
 }
-var AGENT_ID = "whats-new";
-var APPLY_ACTION = "dep_apply";
-var DENY_REASON = "blocked by whats-new (report-only): this agent reports what changed between two versions and changes " + "nothing itself. Do not edit dependency manifests or lockfiles and do not run installers or upgrade " + "commands while researching; the finding belongs in the report. If the user wants the upgrade applied, " + "that is dep-update's job, run from another agent with its dep_scan/dep_apply loop.";
 function isDependencyFile(raw) {
   const path = raw.replaceAll("\\", "/").trim();
   const name = path.slice(path.lastIndexOf("/") + 1).toLowerCase();
   return Object.hasOwn(MANIFESTS, name) || LOCKFILE.test(name);
 }
+
+// plugins/whats-new/opencode/src/report-only.ts
+var AGENT_ID = "whats-new";
+var APPLY_ACTION = "dep_apply";
+var DENY_REASON = "blocked by whats-new (report-only): this agent reports what changed between two versions and changes " + "nothing itself. Do not edit dependency manifests or lockfiles and do not run installers or upgrade " + "commands while researching; the finding belongs in the report. If the user wants the upgrade applied, " + "that is dep-update's job, run from another agent with its dep_scan/dep_apply loop.";
 var MANIFEST_NAMES = [
   "package.json",
   "package-lock.json",
@@ -1972,6 +1966,21 @@ var MANIFEST_NAMES = [
   "composer.json"
 ];
 var PIP_ALIASES = ["pip", "pip3", "python -m pip", "python3 -m pip"];
+var MUTATING2 = new Map([
+  ["npm", new Set(["i", "in", "ins", "inst", "insta", "instal", "install", "isnt", "isnta", "isntal", "isntall", "add", "ci", "clean-install", "ic", "install-clean", "it", "install-test", "cit", "install-ci-test", "update", "up", "upgrade", "udpate"])],
+  ["pnpm", new Set(["i", "install", "add", "update", "up", "upgrade", "it", "install-test"])],
+  ["bun", new Set(["i", "install", "add", "update", "up", "upgrade"])],
+  ["yarn", new Set(["install", "add", "up", "upgrade", "upgrade-interactive", "update"])],
+  ["pip", new Set(["install"])],
+  ["uv", new Set(["add", "sync"])],
+  ["poetry", new Set(["add", "update", "install"])],
+  ["cargo", new Set(["add", "install", "update"])],
+  ["go", new Set(["get"])],
+  ["bundle", new Set(["install", "update", "add"])],
+  ["bundler", new Set(["install", "update", "add"])],
+  ["gem", new Set(["install", "update"])],
+  ["composer", new Set(["require", "update", "upgrade", "install"])]
+]);
 function reportOnlyPermissions() {
   const rules = [];
   const deny = (action, resource) => rules.push({ action, resource, effect: "deny" });
@@ -1980,7 +1989,7 @@ function reportOnlyPermissions() {
     deny("edit", `*/${name}`);
   }
   deny("edit", "*.lock");
-  for (const [pm, subcommands] of MUTATING) {
+  for (const [pm, subcommands] of MUTATING2) {
     for (const pmName of pm === "pip" ? PIP_ALIASES : [pm]) {
       for (const sub of subcommands)
         deny("shell", `${pmName} ${sub} *`);

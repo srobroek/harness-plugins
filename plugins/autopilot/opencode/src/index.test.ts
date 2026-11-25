@@ -4,10 +4,14 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFakeContext, type FakeContext } from "@srobroek/opencode-lib/testing"
-import { DENY_QUESTION, HANDOFF_LABEL, MAX_REPROMPTS, REPROMPT, reviewManifestKey, setupAutopilot, verifyExport, type WriteLock } from "./index.ts"
-import type { LedgerHost } from "./ledger.ts"
-import { type Run, RunDir, RunFileError, runCommand } from "./rundir.ts"
-import { type Clock, Ticks } from "./timer.ts"
+import { MAX_REPROMPTS, type WriteLock } from "../../shared/autopilot.ts"
+import type { LedgerHost } from "../../shared/ledger.ts"
+import { DENY_QUESTION, REPROMPT } from "../../shared/policy.ts"
+import { reviewManifestKey, verifyExport } from "../../shared/review-export.ts"
+import { type Run, RunDir, RunFileError, runCommand } from "../../shared/rundir.ts"
+import { HANDOFF_LABEL } from "../../shared/summary.ts"
+import { type Clock, Ticks } from "../../shared/timer.ts"
+import { setupAutopilot } from "./index.ts"
 
 const NOW = new Date(2026, 10, 20, 14, 0).getTime()
 
@@ -244,6 +248,52 @@ describe("/autopilot", () => {
     expect(await denied("parley_wait", "ses_grand")).toBe(DENY_QUESTION)
     expect(await denied("question", "ses_other")).toBeUndefined()
     expect(await denied("read", "ses_lead")).toBeUndefined()
+  })
+
+  test("a session whose lineage cannot be read is denied while a run is armed; once readable, only a run child is", async () => {
+    await command("")
+    await status({ action: "arm", setup: { scope: "p-1", lanes: 3 } })
+    const session = fake.context.session as unknown as { get: (input: { sessionID: string }) => Promise<unknown> }
+    const get = session.get.bind(session)
+    let failing = true
+    session.get = async (input) => {
+      if (failing) throw new Error("host busy")
+      return get(input)
+    }
+    expect(await denied("question", "ses_child")).toBe(DENY_QUESTION)
+    const asked = { sessionID: "ses_child", action: "shell", resources: ["rm x"], effect: "ask", message: undefined as string | undefined }
+    await fake.fire.permission("evaluate", asked)
+    expect(asked.effect).toBe("deny")
+    const blockers = journal().filter((entry) => entry.type === "blocker")
+    expect(blockers).toEqual([expect.objectContaining({ summary: "permission ask denied: shell", evidence: expect.stringContaining("unknown lineage of ses_child") })])
+
+    failing = false
+    expect(await denied("question", "ses_child")).toBe(DENY_QUESTION)
+    expect(await denied("question", "ses_other")).toBeUndefined()
+    const other = { sessionID: "ses_other", action: "shell", resources: ["rm x"], effect: "ask", message: undefined as string | undefined }
+    await fake.fire.permission("evaluate", other)
+    expect(other.effect).toBe("ask")
+  })
+
+  test("a lookup that fails once, then finds the armed lead, still denies the question and the ask, and journals the ask", async () => {
+    await command("")
+    await status({ action: "arm", setup: { scope: "p-1", lanes: 3 } })
+    const session = fake.context.session as unknown as { get: (input: { sessionID: string }) => Promise<unknown> }
+    const get = session.get.bind(session)
+    const failOnce = () => {
+      let failures = 1
+      session.get = async (input) => {
+        if (failures-- > 0) throw new Error("host busy")
+        return get(input)
+      }
+    }
+    failOnce()
+    expect(await denied("question", "ses_child")).toBe(DENY_QUESTION)
+    failOnce()
+    const asked = { sessionID: "ses_child", action: "shell", resources: ["rm x"], effect: "ask", message: undefined as string | undefined }
+    await fake.fire.permission("evaluate", asked)
+    expect(asked.effect).toBe("deny")
+    expect(journal().filter((entry) => entry.type === "blocker")).toHaveLength(1)
   })
 
   test("arming returns the 4-minute tick automation for this run", async () => {

@@ -1,3 +1,30 @@
+## lang-python [0.9.3](https://github.com/srobroek/harness-plugins/compare/lang-python--v0.9.2...lang-python--v0.9.3) (2026-11-24)
+
+## lang-python [0.9.2](https://github.com/srobroek/harness-plugins/compare/lang-python--v0.9.1...lang-python--v0.9.2) (2026-11-24)
+
+### Bug Fixes
+
+* **design:** make MCP servers opt-in ([1ecb493](https://github.com/srobroek/harness-plugins/commit/1ecb493f35ebfe9112f9e4661fa1b2e5ec457fc4))
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## lang-python [0.9.1](https://github.com/srobroek/harness-plugins/compare/lang-python--v0.9.0...lang-python--v0.9.1) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## lang-python [0.9.0](https://github.com/srobroek/harness-plugins/compare/lang-python--v0.8.1...lang-python--v0.9.0) (2026-11-23)
+
+### Features
+
+* **project:** port content plugins to Pi ([5b0d32a](https://github.com/srobroek/harness-plugins/commit/5b0d32abbe2faf67934ca1d8e3b53f9eca0cee01))
+
+## lang-python [0.8.1](https://github.com/srobroek/harness-plugins/compare/lang-python--v0.8.0...lang-python--v0.8.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## lang-python [0.8.0](https://github.com/srobroek/harness-plugins/compare/lang-python--v0.7.0...lang-python--v0.8.0) (2026-11-23)
 
 ### Features

@@ -6,7 +6,7 @@ import { fileURLToPath as fileURLToPath2 } from "url";
 import { Plugin } from "@opencode/plugin";
 
 // lib/src/agent-tools.ts
-var DEFAULT_MCP_TOOLS = ["context7_*", "aws-mcp_*"];
+var DEFAULT_MCP_TOOLS = ["context7_*"];
 var MCP_TOOL_AGENTS = new Set([
   "adversarial-challenger",
   "architect",
@@ -24,7 +24,8 @@ var MCP_TOOL_AGENTS = new Set([
   "researcher",
   "security-auditor",
   "spec",
-  "ui-implementer"
+  "ui-implementer",
+  "whats-new"
 ]);
 var MCP_EXCLUDED_AGENTS = new Set([
   "a11y-auditor",
@@ -64,7 +65,6 @@ var BUILT_IN_ACTIONS = [
 ];
 var RESERVED_TOOL_PREFIXES = [
   "autopilot_",
-  "cad_",
   "challenge_",
   "claude_",
   "dep_",
@@ -629,7 +629,7 @@ function stashesOnBranch(subjects, branch) {
 // plugins/delivery/package.json
 var package_default = {
   name: "delivery",
-  version: "0.12.0",
+  version: "0.12.5",
   description: "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
   private: true,
   type: "module",
@@ -838,14 +838,14 @@ function forgeEnvironment(env) {
 var GITLAB_MAX_PATH_SEGMENTS = 21;
 var GITHUB_TARGET = Object.freeze({ forge: "github", canonicalHost: "github.com" });
 var GITLAB_TARGET = Object.freeze({ forge: "gitlab", canonicalHost: "gitlab.com" });
-var GITLAB_AWS_TARGET = Object.freeze({ forge: "gitlab", canonicalHost: "gitlab.aws.dev" });
+var GITLAB_CUSTOM_TARGET = Object.freeze({ forge: "gitlab", canonicalHost: "gitlab.example.com" });
 var FORGE_HOSTS = Object.freeze(Object.assign(Object.create(null), {
   "github.com": GITHUB_TARGET,
   "ssh.github.com": GITHUB_TARGET,
   "gitlab.com": GITLAB_TARGET,
   "altssh.gitlab.com": GITLAB_TARGET,
-  "gitlab.aws.dev": GITLAB_AWS_TARGET,
-  "ssh.gitlab.aws.dev": GITLAB_AWS_TARGET
+  "gitlab.example.com": GITLAB_CUSTOM_TARGET,
+  "ssh.gitlab.example.com": GITLAB_CUSTOM_TARGET
 }));
 var ALLOWED_SCHEME = /^(?:https|ssh):\/\//i;
 var ANY_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
@@ -1025,8 +1025,8 @@ function forgeTarget(remoteUrl) {
     return GITHUB_TARGET;
   if (target === GITLAB_TARGET)
     return GITLAB_TARGET;
-  if (target === GITLAB_AWS_TARGET)
-    return GITLAB_AWS_TARGET;
+  if (target === GITLAB_CUSTOM_TARGET)
+    return GITLAB_CUSTOM_TARGET;
   return null;
 }
 function repoPathFromRemote(remoteUrl) {
@@ -1088,7 +1088,7 @@ function supportedForge(forge) {
 }
 var GITLAB_HOSTS = Object.freeze([
   GITLAB_TARGET.canonicalHost,
-  GITLAB_AWS_TARGET.canonicalHost
+  GITLAB_CUSTOM_TARGET.canonicalHost
 ]);
 function supportedGitlabHost(host) {
   return GITLAB_HOSTS.find((known) => known === host) ?? null;
@@ -2899,7 +2899,7 @@ var LEDGER_SELECTORS = [
   "BD_DB",
   "BD_SOCKET",
   "BEADS_DOLT_SHARED_SERVER",
-  "SROBROEK_BEADS_PIN"
+  "HARNESS_BEADS_PIN"
 ];
 function withoutLedgerSelectors(env) {
   const rest = { ...env };
@@ -7420,7 +7420,8 @@ receipt: ${result.path}`;
     } catch {
       modelRoles = false;
     }
-    const grant = mcpGrant(ctx.options?.tools, files.map((file) => file.id));
+    const requestedTools = ctx.options?.tools;
+    const grant = mcpGrant(requestedTools === undefined ? ["context7_*"] : requestedTools, files.map((file) => file.id));
     const agents = await ctx.agent.transform((editor) => {
       for (const file of files) {
         const created = editor.get(file.id) === undefined;

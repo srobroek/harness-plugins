@@ -51,13 +51,20 @@ describe("agent-reviewer", () => {
     }
   })
 
-  test("pr-reviewer runs only its two gh reads", async () => {
+  test("pr-reviewer permits forge-specific reads only", async () => {
     const fake = createFakeContext()
     await plugin.setup(fake.context)
     const pr = rules(fake, "pr-reviewer")
-    expect(permissionEffect(pr, "shell", "gh pr view 7 --repo o/r --json title")).toBe("allow")
-    expect(permissionEffect(pr, "shell", "gh pr diff 7 --repo o/r")).toBe("allow")
-    for (const command of ["gh api repos/o/r", "git diff", "cat x"]) expect(permissionEffect(pr, "shell", command)).toBe("deny")
+    for (const command of [
+      "gh pr view 7 --repo o/r --json title",
+      "gh pr diff 7 --repo o/r",
+      "glab mr view 7 --repo o/r --output json",
+      "glab mr diff 7 --repo o/r",
+      "glab api projects/o%2Fr/merge_requests/7 -X GET",
+      "glab api projects/o%2Fr/merge_requests/7 --method GET",
+    ]) expect(permissionEffect(pr, "shell", command)).toBe("allow")
+    for (const command of ["gh api repos/o/r", "glab api projects/o%2Fr/merge_requests/7 -X POST", "glab api projects/o%2Fr/merge_requests/7 --method POST", "git diff", "cat x"])
+      expect(permissionEffect(pr, "shell", command)).toBe("deny")
     for (const action of ["read", "grep", "webfetch"]) expect(permissionEffect(pr, action)).toBe("deny")
     for (const skill of ["quality-code-design", "lang-rust", "review-security"]) expect(permissionEffect(pr, "skill", skill)).toBe("allow")
   })

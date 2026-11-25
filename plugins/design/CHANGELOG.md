@@ -1,3 +1,29 @@
+## design [0.10.4](https://github.com/srobroek/harness-plugins/compare/design--v0.10.3...design--v0.10.4) (2026-11-24)
+
+### Bug Fixes
+
+* **agent-reviewer:** tell OMP agents that keep a shell it is unrestricted ([#173](https://github.com/srobroek/harness-plugins/issues/173)) ([1b8386d](https://github.com/srobroek/harness-plugins/commit/1b8386dbf43fa6cb5580d4dbc03e619476ba023c))
+
+## design [0.10.3](https://github.com/srobroek/harness-plugins/compare/design--v0.10.2...design--v0.10.3) (2026-11-24)
+
+### Bug Fixes
+
+* **design:** make MCP servers opt-in ([1ecb493](https://github.com/srobroek/harness-plugins/commit/1ecb493f35ebfe9112f9e4661fa1b2e5ec457fc4))
+* **design:** use shared portable standards ([962f08e](https://github.com/srobroek/harness-plugins/commit/962f08e189f87ec1dc03294d47975c0e4f5966cc))
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## design [0.10.2](https://github.com/srobroek/harness-plugins/compare/design--v0.10.1...design--v0.10.2) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## design [0.10.1](https://github.com/srobroek/harness-plugins/compare/design--v0.10.0...design--v0.10.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## design [0.10.0](https://github.com/srobroek/harness-plugins/compare/design--v0.9.1...design--v0.10.0) (2026-11-22)
 
 ### Features

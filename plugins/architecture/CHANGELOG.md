@@ -1,3 +1,41 @@
+## architecture [0.12.0](https://github.com/srobroek/harness-plugins/compare/architecture--v0.11.4...architecture--v0.12.0) (2026-11-24)
+
+### Features
+
+* **agent-reviewer:** grant Pi subagents tools ([159ad02](https://github.com/srobroek/harness-plugins/commit/159ad02eac3b9ba206d568a93877c2dedd5e9036))
+
+## architecture [0.11.4](https://github.com/srobroek/harness-plugins/compare/architecture--v0.11.3...architecture--v0.11.4) (2026-11-24)
+
+## architecture [0.11.3](https://github.com/srobroek/harness-plugins/compare/architecture--v0.11.2...architecture--v0.11.3) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## architecture [0.11.2](https://github.com/srobroek/harness-plugins/compare/architecture--v0.11.1...architecture--v0.11.2) (2026-11-24)
+
+### Bug Fixes
+
+* **architecture:** qualify repository tooling defaults ([5bf536d](https://github.com/srobroek/harness-plugins/commit/5bf536d90ce7d0475ac1c8ad08b1edaa54fab0b0))
+
+## architecture [0.11.1](https://github.com/srobroek/harness-plugins/compare/architecture--v0.11.0...architecture--v0.11.1) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## architecture [0.11.0](https://github.com/srobroek/harness-plugins/compare/architecture--v0.10.0...architecture--v0.11.0) (2026-11-23)
+
+### Features
+
+* **agent-plugins:** complete pi agent prompts ([bd49ec4](https://github.com/srobroek/harness-plugins/commit/bd49ec4a310c315702f2ce63789cda4cf345760d))
+
+## architecture [0.10.0](https://github.com/srobroek/harness-plugins/compare/architecture--v0.9.1...architecture--v0.10.0) (2026-11-23)
+
+### Features
+
+* **agent-reviewer:** ship agent-only plugins to OMP ([4651445](https://github.com/srobroek/harness-plugins/commit/4651445bd2b5ce547a1bf781c7049acf4f894019))
+
 ## architecture [0.9.1](https://github.com/srobroek/harness-plugins/compare/architecture--v0.9.0...architecture--v0.9.1) (2026-11-23)
 
 ### Bug Fixes

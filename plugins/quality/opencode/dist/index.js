@@ -12,7 +12,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from "fs";
 import { basename, join } from "path";
 
 // lib/src/agent-tools.ts
-var DEFAULT_MCP_TOOLS = ["context7_*", "aws-mcp_*"];
+var DEFAULT_MCP_TOOLS = ["context7_*"];
 var MCP_TOOL_AGENTS = new Set([
   "adversarial-challenger",
   "architect",
@@ -30,7 +30,8 @@ var MCP_TOOL_AGENTS = new Set([
   "researcher",
   "security-auditor",
   "spec",
-  "ui-implementer"
+  "ui-implementer",
+  "whats-new"
 ]);
 var MCP_EXCLUDED_AGENTS = new Set([
   "a11y-auditor",
@@ -70,7 +71,6 @@ var BUILT_IN_ACTIONS = [
 ];
 var RESERVED_TOOL_PREFIXES = [
   "autopilot_",
-  "cad_",
   "challenge_",
   "claude_",
   "dep_",
@@ -461,15 +461,14 @@ pays for these lines on every request: keep the whole file near 1100 tokens. -->
   refactor only within the change and report existing ones. Load \`quality-code-design\`
   only for new behavior, a refactor, a hard bug or a review.
 <!-- part: standards -->
-- Standards first: before you design or write code for a concern, research current best practice
-  (docs, context7, the web) and compare the plan with the preferred libraries and tools in
-  \`lang-<language>-libraries\` (else \`toolchain-languages\`; Lambda: \`aws-guidance\`). Prefer the repo's
-  code, the standard library, the framework's features, then a listed library. Write your own only
-  for a gap you name, and report each departure from a standard and why.
+- Standards first: research current best practice in official docs, Context7 when configured,
+  or the web. Compare the plan with \`lang-<language>-libraries\` (else \`toolchain-languages\`),
+  and with \`aws-guidance\` for AWS/Lambda projects. Prefer the repo, standard library, framework,
+  then listed library. Write your own only for a named gap. Report each departure and its reason.
 - Defaults: cross-cutting concerns (auth, validation, request ids, logs, traces, metrics, error
   mapping, timeouts, retries, rate limits) go in the framework's middleware, one model per
   surface (TypeScript: Hono for HTTP APIs, Lambda included, Connect for RPC; ASGI/FastAPI;
-  net/http wrappers; tower). Lambda handlers stay thin, on Powertools for AWS Lambda where it exists. Telemetry is OpenTelemetry over OTLP.
+  net/http wrappers; tower). For AWS/Lambda projects, keep handlers thin and use Powertools for AWS Lambda where it exists. Telemetry is OpenTelemetry over OTLP.
 - Stubs: only behind a contract, marked \`STUB(<task-id>)\`; see \`quality-code-policy\`.
 <!-- part: repo-doc -->
 - Repo doc: read the repo's engineering doc first (\`docs/engineering.md\`, or the path AGENTS.md names): stack,
@@ -571,6 +570,13 @@ var READ_ONLY_SHELL_RULES = [
   ...deny("ast-grep * -U*", "ast-grep *--update-all*", "ast-grep * -i*", "ast-grep *--interactive*", "semgrep *--autofix*", "semgrep *-a *")
 ];
 
+// lib/src/test-shell.ts
+var deny2 = (...resources) => resources.map((resource) => ({ action: "shell", resource, effect: "deny" }));
+var TEST_SHELL_RULES = [
+  ...READ_ONLY_SHELL_RULES,
+  ...deny2("npm install*", "npm i *", "npm i", "npm ci*", "npm add*", "npm update*", "npm uninstall*", "npm link*", "npm dedupe*", "npm audit fix*", "yarn install*", "yarn add*", "yarn remove*", "yarn up*", "yarn upgrade*", "pnpm install*", "pnpm i *", "pnpm i", "pnpm add*", "pnpm remove*", "pnpm update*", "pnpm up*", "bun install*", "bun i *", "bun i", "bun add*", "bun remove*", "bun update*", "bun link*", "pip install*", "pip uninstall*", "pip3 install*", "pip3 uninstall*", "python -m pip install*", "python -m pip uninstall*", "python3 -m pip install*", "python3 -m pip uninstall*", "uv add*", "uv remove*", "uv sync*", "uv lock*", "uv pip install*", "uv pip uninstall*", "uv pip sync*", "uv tool install*", "uv tool upgrade*", "poetry add*", "poetry install*", "poetry remove*", "poetry lock*", "poetry update*", "pipenv install*", "pipenv uninstall*", "pipenv lock*", "cargo add*", "cargo remove*", "cargo update*", "cargo install*", "cargo fetch*", "cargo generate-lockfile*", "go get*", "go install*", "go mod tidy*", "go mod download*", "go mod vendor*", "go work sync*", "bundle install*", "bundle add*", "bundle update*", "gem install*", "composer install*", "composer require*", "composer update*", "brew install*", "brew upgrade*", "apt install*", "apt-get install*", "dnf install*", "apk add*")
+];
+
 // lib/src/fragments.ts
 var FRAGMENTS_DIR = fileURLToPath2(new URL(".", import.meta.url));
 var SHARED_AGENTS_DIR = fileURLToPath2(new URL("../../shared/agents/", import.meta.url));
@@ -657,11 +663,14 @@ async function setupStandards(ctx, options) {
   };
 }
 
-// plugins/quality/opencode/src/audit-util.ts
+// plugins/quality/shared/audit-util.ts
 import { readFileSync as readFileSync3, realpathSync as realpathSync2, statSync } from "fs";
 import { tmpdir } from "os";
 import { isAbsolute, join as join3, relative, resolve, sep } from "path";
 var TEXT_CAP = 4000;
+function opencodeTempDir() {
+  return join3(realpathSync2(tmpdir()), "opencode");
+}
 function capText(lines, cap = TEXT_CAP) {
   const text = lines.join(`
 `);
@@ -703,10 +712,7 @@ function inside(root, target) {
 
 class PathError extends Error {
 }
-function opencodeTempDir() {
-  return join3(realpathSync2(tmpdir()), "opencode");
-}
-function reportRoots(sessionDirectory) {
+function reportRoots(sessionDirectory, temporaryDirectory = opencodeTempDir()) {
   const real = (path) => {
     try {
       return realpathSync2(path);
@@ -714,7 +720,7 @@ function reportRoots(sessionDirectory) {
       return resolve(path);
     }
   };
-  return [real(sessionDirectory), opencodeTempDir()];
+  return [real(sessionDirectory), real(temporaryDirectory)];
 }
 var MAX_REPORT_BYTES = 200 * 1024 * 1024;
 function readReportFile(sessionDirectory, path, roots = reportRoots(sessionDirectory)) {
@@ -723,13 +729,12 @@ function readReportFile(sessionDirectory, path, roots = reportRoots(sessionDirec
   try {
     real = realpathSync2(target);
   } catch {
-    const lexical = [...roots, resolve(sessionDirectory), join3(tmpdir(), "opencode")];
-    if (!lexical.some((root) => inside(root, resolve(target))))
-      throw new PathError(`${path} is outside the session and OpenCode temp directories`);
+    if (!roots.some((root) => inside(root, resolve(target))))
+      throw new PathError(`${path} is outside the session and allowed report directories`);
     throw new Error(`${path} does not exist`);
   }
   if (!roots.some((root) => inside(root, real)))
-    throw new PathError(`${path} is outside the session and OpenCode temp directories`);
+    throw new PathError(`${path} is outside the session and allowed report directories`);
   if (statSync(real).size > MAX_REPORT_BYTES)
     throw new Error(`${path} is larger than ${MAX_REPORT_BYTES / 1024 / 1024} MB`);
   return readFileSync3(real, "utf8");
@@ -4383,7 +4388,7 @@ var XMLValidator = {
   validate
 };
 
-// plugins/quality/opencode/src/coverage.ts
+// plugins/quality/shared/coverage.ts
 var normalizePath = (path, root) => {
   let p = path.trim().replaceAll("\\", "/");
   if (root !== undefined) {
@@ -4621,7 +4626,7 @@ function formatCoverage(c, maxFiles = 15) {
   return capText(lines);
 }
 
-// plugins/quality/opencode/src/junit.ts
+// plugins/quality/shared/junit.ts
 var parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "@_",
@@ -4732,7 +4737,7 @@ function parseJunitReport(xml) {
   return out;
 }
 
-// plugins/quality/opencode/src/mutation.ts
+// plugins/quality/shared/mutation.ts
 var isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 function detectMutationFormat(data) {
   if (!isObj(data))
@@ -4903,7 +4908,7 @@ function formatMutation(c) {
   return capText(lines);
 }
 
-// plugins/quality/opencode/src/test-repeat.ts
+// plugins/quality/shared/test-repeat.ts
 var NOISY_STDERR_LINES = 1000;
 var NOISY_FILE_BYTES = 5000000;
 var isShuffledMode = (mode) => mode !== undefined && /shuffle|random/i.test(mode);
@@ -5088,7 +5093,7 @@ function formatSummary(summary) {
   return capText(lines);
 }
 
-// plugins/quality/opencode/src/test-audit.ts
+// plugins/quality/shared/test-audit.ts
 var TEST_SUMMARIZE_TOOL = "quality_test_summarize";
 var TEST_COMPARE_TOOL = "quality_test_compare";
 var MAX_REPORTS = 50;
@@ -5120,12 +5125,12 @@ function parseSummarizeInput(input) {
     noisyFileBytes
   };
 }
-function summarizeReports(root, raw) {
+function summarizeReports(root, raw, temporaryDirectory = opencodeTempDir()) {
   const fail = (message) => ({ content: `${TEST_SUMMARIZE_TOOL}: ${message}`, metadata: { error: message } });
   const input = parseSummarizeInput(raw);
   if (typeof input === "string")
     return fail(input);
-  const roots = reportRoots(root);
+  const roots = reportRoots(root, temporaryDirectory);
   const records = [];
   for (const [i, path] of input.reports.entries()) {
     const record = { run: i + 1, exitCode: input.exitCodes?.[i], mode: input.modes?.[i], report: "unreadable", cases: [] };
@@ -5148,7 +5153,7 @@ function summarizeReports(root, raw) {
 }
 var COVERAGE_FORMATS = ["lcov", "cobertura", "gocover"];
 var MUTATION_FORMATS = ["mutation-testing", "cargo-mutants", "gremlins"];
-function compareReports(root, input) {
+function compareReports(root, input, temporaryDirectory = opencodeTempDir()) {
   const fail = (message) => ({ content: `${TEST_COMPARE_TOOL}: ${message}`, metadata: { error: message } });
   if (input.kind !== "coverage" && input.kind !== "mutation")
     return fail("kind must be coverage or mutation");
@@ -5158,7 +5163,7 @@ function compareReports(root, input) {
   if (input.format !== undefined && !allowed.includes(input.format))
     return fail(`format for ${input.kind} must be one of ${allowed.join(", ")}`);
   try {
-    const roots = reportRoots(root);
+    const roots = reportRoots(root, temporaryDirectory);
     const baseText = readReportFile(root, input.baseline, roots);
     const candText = readReportFile(root, input.candidate, roots);
     if (input.kind === "coverage") {
@@ -5186,6 +5191,10 @@ function compareReports(root, input) {
     return fail(error instanceof Error ? error.message : String(error));
   }
 }
+
+// plugins/quality/opencode/src/test-audit.ts
+var COVERAGE_FORMATS2 = ["lcov", "cobertura", "gocover"];
+var MUTATION_FORMATS2 = ["mutation-testing", "cargo-mutants", "gremlins"];
 async function setupTestAudit(ctx, options) {
   if (options === undefined)
     return async () => {};
@@ -5235,7 +5244,7 @@ async function setupTestAudit(ctx, options) {
           candidate: { type: "string", description: "Report after the change; same rules" },
           format: {
             type: "string",
-            enum: [...COVERAGE_FORMATS, ...MUTATION_FORMATS],
+            enum: [...COVERAGE_FORMATS2, ...MUTATION_FORMATS2],
             description: "Report format; detected when omitted"
           }
         },

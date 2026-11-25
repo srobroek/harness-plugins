@@ -1,3 +1,22 @@
+## agent-efficiency [0.14.5](https://github.com/srobroek/harness-plugins/compare/agent-efficiency--v0.14.4...agent-efficiency--v0.14.5) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## agent-efficiency [0.14.4](https://github.com/srobroek/harness-plugins/compare/agent-efficiency--v0.14.3...agent-efficiency--v0.14.4) (2026-11-24)
+
+### Bug Fixes
+
+* **agent-efficiency:** neutralize captured host details ([70895a9](https://github.com/srobroek/harness-plugins/commit/70895a92c8a79e52407f905b26fd787634035da8))
+
+## agent-efficiency [0.14.3](https://github.com/srobroek/harness-plugins/compare/agent-efficiency--v0.14.2...agent-efficiency--v0.14.3) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+* **whats-new:** profile Pi agent and preserve lean sync agents ([6298e4c](https://github.com/srobroek/harness-plugins/commit/6298e4ca9e629ceae6f0188f9490ee5fc1665294))
+
 ## agent-efficiency [0.14.2](https://github.com/srobroek/harness-plugins/compare/agent-efficiency--v0.14.1...agent-efficiency--v0.14.2) (2026-11-23)
 
 ### Bug Fixes

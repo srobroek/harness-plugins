@@ -7,18 +7,14 @@ skill they load.
 
 | Agent | Reviews | Tools | Verdict | In the subagent catalog |
 | --- | --- | --- | --- | --- |
-| `pr-reviewer` (steps 80) | One GitHub pull request, against the caller's classification and accepted request | shell `gh pr view *`, `gh pr diff *` only | `APPROVE\|REQUEST-CHANGES\|COMMENT` | no (`hidden: true`) |
+| `pr-reviewer` (steps 80) | GitHub pull request on all harnesses; GitLab merge request on OpenCode only | OpenCode shell `gh pr view *`, `gh pr diff *`, `glab mr view *`, `glab mr diff *`, and GET-only `glab api` patterns; Pi shell `gh pr view *`, `gh pr diff *`; OMP `github` tool | `APPROVE\|REQUEST-CHANGES\|COMMENT` | no (`hidden: true`) |
 | `code-reviewer` (steps 80) | A local diff: working tree, branch range or commits | read, grep, glob, `lsp_*`; shell `git diff`, `git log`, `git show` only, never `--output` | `APPROVE\|REQUEST-CHANGES\|COMMENT` | yes |
 | `security-auditor` (steps 80) | A repository scope or the files a change touches, source to sink, CWE-tagged | read, grep, glob, `lsp_*`; no shell, no web | `PASS\|MINOR\|MAJOR` | yes |
 | `adversarial-challenger` (steps 60) | A claim, plan, design or decision, with evidence-backed counter-arguments | read, grep, glob, `lsp_*`, webfetch, websearch | `HOLDS\|WEAKENED\|REFUTED` | yes |
 
-Every reply starts with its `VERDICT:` line. The delivery plugin's verdict hook parses
-`pr-reviewer`'s, and accepts that line below a preamble or inside a code fence too.
+Every reply starts with its `VERDICT:` line. When the delivery plugin is installed, its verdict hook parses `pr-reviewer`'s verdict and accepts that line below a preamble or inside a code fence too.
 
-`pr-reviewer` is hidden because delivery's workflow and fan-out skill name it when a PR
-is ready, so listing it in every primary request's subagent catalog costs tokens without
-helping the parent choose. The other three stay visible: a parent picks them on its own
-for "review my change", "is this safe" or "poke holes in this plan".
+`pr-reviewer` is hidden because, when the delivery plugin is installed, its workflow and fan-out skill name it when a PR or MR is ready. Otherwise it can still be invoked directly, but listing it in every primary request's subagent catalog costs tokens without helping the parent choose. The other three stay visible for "review my change", "is this safe" or "poke holes in this plan".
 
 Each permission list is an allowlist: a deny on every action, then the tools the agent
 uses. No reviewer can edit, spawn subagents, ask the user, or run Code Mode (`execute`),
@@ -38,13 +34,13 @@ inherits the caller's.
 
 | Option | Default | Effect |
 | --- | --- | --- |
-| `tools` | `["context7_*", "aws-mcp_*"]` | An array of patterns replaces the defaults. `false` or `[]` adds no rules; the agent keeps its fixed allowlist. |
+| `tools` | `["context7_*"]` | Context7 is allowed by default. Add MCP patterns such as `aws-mcp_*` for AWS projects; an array replaces the default. `false` or `[]` adds no rules; the agents keep their fixed allowlists. |
 
 ```jsonc
 "options": { "tools": ["context7_*", "<server>_<tool>"] }
 ```
 
-Patterns must name MCP server tools only (`<server>_<tool>`). The option refuses a pattern that could match a tool from a plugin in this repository or from OpenCode itself, such as `dep_*`, `delivery_*`, `quality_*`, `lsp_*` or `opencode_*`, and a pattern that starts with a wildcard, and logs a warning. Only add read-only tools: an allowed MCP tool runs without a prompt. The option refuses a pattern that matches a built-in action (`shell`, `edit`, `write`, `patch`, `external_directory`, `subagent`, `*` and the like) and logs a warning, so it cannot widen file or shell access. `pr-reviewer` gets no MCP rules: it may only run `gh pr view` and `gh pr diff`.
+Patterns must name MCP server tools only (`<server>_<tool>`). The option refuses a pattern that could match a tool from a plugin in this repository or from OpenCode itself, such as `dep_*`, `delivery_*`, `quality_*`, `lsp_*` or `opencode_*`, and a pattern that starts with a wildcard, and logs a warning. Only add read-only tools: an allowed MCP tool runs without a prompt. The option refuses a pattern that matches a built-in action (`shell`, `edit`, `write`, `patch`, `external_directory`, `subagent`, `*` and the like) and logs a warning, so it cannot widen file or shell access. The PR reviewer uses OpenCode's read-only shell allowlist for GitHub (`gh pr view`/`gh pr diff`) and GitLab (`glab mr view`/`glab mr diff`, with GET-only `glab api`). Pi permits only its two `gh` reads; OMP has only its `github` tool. GitLab MR reviews are therefore OpenCode-only.
 
 This agent denies `execute`, so OpenCode lists its allowed MCP tools directly, even for a server configured for Code Mode: with `execute` wholly denied, every tool left active becomes a direct tool (`packages/core/src/tool.ts:260-264`, OpenCode v2.2.6; an MCP tool's `codemode` flag is set at `packages/core/src/tool/mcp.ts:57`).
 
@@ -74,7 +70,32 @@ earlier plugin already registered the id. If a fallback copy registers first any
 this plugin replaces it, so every load order leaves one agent with these fields. Tests
 here keep the copies in sync.
 
+OMP installs the agents from the generated OMP directory:
+
+```sh
+omp plugin install /path/to/harness-plugins/plugins/agent-reviewer/omp
+```
+
+The `pr-reviewer` agent uses OMP's `github` tool. OMP disables that tool by default; enable `github` under **Settings → Tools** before asking it to review a GitHub pull request. OMP does not expose the restricted shell reads needed for GitLab merge requests, so use OpenCode for GitLab MR reviews.
+
+## Pi subagent tools
+
+The Pi agents load these required companion packages in their child sessions:
+
+- `code-reviewer`: `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `quality_test_summarize`, `quality_test_compare`, `repomix_pack`, `dep_scan`, `version_gap_scan`, and `mcp:context7`. Its skills include `quality-test-audit`.
+- `pr-reviewer`: `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `quality_test_summarize`, `quality_test_compare`, `dep_scan`, `version_gap_scan`, and `mcp:context7`. Its skills include `quality-test-audit`.
+- `security-auditor`: `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `web_search`, `fetch_content`, `get_search_content`, `source_check`, `quality_test_summarize`, `quality_test_compare`, `dep_scan`, `version_gap_scan`, and `mcp:context7`. It also has `bash`, to run the project's tests.
+
+Install the required Pi packages: `pi-lens`, `pi-web-access`, `@srobroek/pi-code-quality`, `@srobroek/pi-repomix`, `@srobroek/pi-dep-update`, and `@srobroek/pi-whats-new`. Configure the `context7` Pi MCP server in `~/.pi/agent/mcp.json` for `mcp:context7`.
+
+Pi-lens keeps `ast_grep_search` and `ast_grep_outline` inactive until `pi_lens_activate_tools` runs; activation takes effect on the next turn. `lsp_navigation` and `ast_grep_replace` are not granted: pi-subagents' tool allowlist keeps them uncallable even after `pi_lens_activate_tools` activates them.
+
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-agent-reviewer
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/agent-reviewer/opencode'

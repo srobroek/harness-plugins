@@ -893,7 +893,7 @@ describe("delivery_cleanup irreversible boundary", () => {
       "https://github.com/owner/repo.git \n",
       "\n",
       "",
-      "https://srobroek:ghp_secrettoken@git\thub.com/owner/repo.git\n",
+      "https://test-user:ghp_secrettoken@git\thub.com/owner/repo.git\n",
       "https://github.com/owner/repo.git?token=ghp_secrettoken\nhttps://evil.example/x\n",
       " ssh://git:ghp_secrettoken@github.com/owner/repo.git\n",
     ]) {
@@ -2701,7 +2701,7 @@ describe("delivery_cleanup reads the target's beads, not the session's", () => {
     BD_DB: "/session/bd-db",
     BD_SOCKET: "/session/sock",
     BEADS_DOLT_SHARED_SERVER: "1",
-    SROBROEK_BEADS_PIN: "/session/.beads",
+    HARNESS_BEADS_PIN: "/session/.beads",
   }
 
   /** A bd that answers by which ledger it would open: a pinned or foreign-cwd read is the session's. */

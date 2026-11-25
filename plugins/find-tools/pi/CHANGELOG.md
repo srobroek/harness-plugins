@@ -1,0 +1,60 @@
+## find-tools [0.6.1](https://github.com/srobroek/harness-plugins/compare/find-tools--v0.6.0...find-tools--v0.6.1) (2026-11-24)
+
+## find-tools [0.6.0](https://github.com/srobroek/harness-plugins/compare/find-tools--v0.5.0...find-tools--v0.6.0) (2026-11-24)
+
+### Features
+
+* **find-tools:** read host catalog and inventory ([bbfa00c](https://github.com/srobroek/harness-plugins/commit/bbfa00c8b1b5a45365cc3cee3ad460f1e7ec48d5))
+
+# Changelog
+
+## find-tools [0.6.0](https://github.com/srobroek/harness-plugins/compare/find-tools--v0.5.0...find-tools--v0.6.0) (unreleased)
+
+### Features
+
+* **find-tools:** use host marketplaces and inventory, including OMP
+
+## find-tools [0.5.0](https://github.com/srobroek/harness-plugins/compare/find-tools--v0.4.0...find-tools--v0.5.0) (2026-11-23)
+
+### Features
+
+* **find-tools:** port discovery scan to Pi ([9092a08](https://github.com/srobroek/harness-plugins/commit/9092a0857a9fe1b94f77c83dbf24c47cbbc59323))
+
+### Bug Fixes
+
+* **find-tools:** document Pi package loading ([923cab9](https://github.com/srobroek/harness-plugins/commit/923cab9979e1e8a6d8940890eab48c1447e6ce24))
+
+# Changelog
+
+## [0.4.0](https://github.com/srobroek/opencode-plugins/compare/find-tools--v0.3.0...find-tools--v0.4.0) (2026-11-20)
+
+
+### Features
+
+* plugin scan fixes, wider agent access and the plugin-audit plugin ([9c71525](https://github.com/srobroek/opencode-plugins/commit/9c7152559776aaf80cfed9626d78bafdd845fa9a))
+
+## [0.3.0](https://github.com/srobroek/opencode-plugins/compare/find-tools--v0.2.0...find-tools--v0.3.0) (2026-11-12)
+
+
+### Features
+
+* **safety:** refuse direct 1Password reads and literal secrets in commands, pointing to fnox ([#131](https://github.com/srobroek/opencode-plugins/issues/131)) ([36cd391](https://github.com/srobroek/opencode-plugins/commit/36cd3912e954c1078b808802b069d7010d8f319f))
+
+## [0.2.0](https://github.com/srobroek/opencode-plugins/compare/find-tools--v0.1.0...find-tools--v0.2.0) (2026-10-27)
+
+
+### Features
+
+* **find-tools:** add read-only discovery scan, vetting skill and install guard ([1254f9e](https://github.com/srobroek/opencode-plugins/commit/1254f9ec74a598ac169f6a5da583d6b4a3a6ec27))
+* **lib:** honour metadata opencode/autoinvoke in shipped SKILL.md files ([881e7df](https://github.com/srobroek/opencode-plugins/commit/881e7df220095d0155b07437e733fdb795d9279b))
+
+
+### Bug Fixes
+
+* **find-tools:** stop a discovery command that vanished without an exit ([545ac47](https://github.com/srobroek/opencode-plugins/commit/545ac470a41deef19e85b0cac8cf8d875985a337))
+
+
+### Performance
+
+* lead every tool description with a first line under 120 characters ([74b65d9](https://github.com/srobroek/opencode-plugins/commit/74b65d9f446fcc535320b7c320ccaf8482d594df))
+* shorten skill descriptions and hide pure reference skills from the listing ([51841bd](https://github.com/srobroek/opencode-plugins/commit/51841bd68ae7fe809711430fe3430b75b63e81c0))

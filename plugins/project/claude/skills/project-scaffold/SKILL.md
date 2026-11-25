@@ -9,8 +9,7 @@ Instructions, not a script. Interview the user, then set the project up with eac
 language's own tools. Never copy template trees by hand. Keep what the user already
 has in an existing repository unless they ask to change it.
 
-For OMP configuration, installed plugins, project-local skills, MCP servers, and
-reloading tooling, load the `new-project` skill. Do not duplicate its host setup here.
+For harness configuration, installed plugins or packages, project-local skills, MCP servers, and reloading, use the `new-project` skill and its active-harness guidance. Do not duplicate host setup here.
 
 Preferences live in other skills; load them by id instead of restating them here:
 `toolchain-guide` (routes to `toolchain-stack-defaults`, `toolchain-languages`,
@@ -21,10 +20,7 @@ Where neither this skill nor those say what to use, ask the user. Do not invent 
 
 ## 1. Interview
 
-Ask in rounds using OMP's `ask` tool. Skip what the argument or repository already
-answers. Check the target first: `git rev-parse --is-inside-work-tree` and
-`git ls-files | head` tell greenfield from existing; an existing repository follows
-`references/brownfield.md`.
+Ask in rounds through the host's user-interaction tool when available; otherwise ask in the conversation. Skip what the argument or repository already answers. Check the target first: `git rev-parse --is-inside-work-tree` and `git ls-files | head` tell greenfield from existing; an existing repository follows `references/brownfield.md`.
 
 1. Shape: purpose in one sentence and the project name; app, library, CLI, service, worker
    or desktop app; language(s); one package or a monorepo. Offer the closest suggested
@@ -35,14 +31,15 @@ answers. Check the target first: `git rev-parse --is-inside-work-tree` and
    conduct contact (omit the file without one), license, public or private, GitHub or
    GitLab, self-hosted hostname, default branch `main`.
 3. Capabilities (`references/capabilities.md`), only those that apply: HTTP API contract,
-   i18n locales, accessibility-scanned routes, infrastructure (AWS CDK).
-4. Delivery: CI and hook options and release flow (`references/ci-hooks.md`; none,
-   release-please, or semantic-release per `trunk-dev-release-setup`), Renovate or Dependabot.
-5. Workflow: beads, speckit, journeys, parallel agents with worktrees
-   (`references/worktrees.md`), secrets needed?
-6. Defaults gate: take current pins and defaults (job timeout 15 min, large-file limit
-   512 KB, README install `mise install && just setup`, dev command `just dev`) or customise.
-   Ask once; do not interrogate each value.
+   i18n locales, accessibility-scanned routes, infrastructure (AWS CDK only for AWS projects).
+4. Delivery: CI and hook options and release flow (`references/ci-hooks.md`); ask which forge
+   and release tooling apply (for example GitHub Actions or GitLab CI), then offer Renovate or
+   Dependabot.
+5. Workflow: ask whether the project needs Beads, SpecKit, journeys, or parallel agents with
+   worktrees (`references/worktrees.md`); ask whether secrets are needed.
+6. Defaults gate: offer the documented defaults (job timeout 15 min, large-file limit 512 KB,
+   `mise install && just setup`, `just dev`) when they fit; otherwise match the project's
+   existing tooling or ask. Ask once; do not interrogate each value.
 
 Read the plan back (name, shape, languages, layout, tools and pinned versions, capabilities,
 files you will create) and wait for approval before writing anything. Where an answer is
@@ -53,9 +50,9 @@ in the final report instead of inventing a value.
 
 1. Directory and `git init -b main`. Add a `.gitignore` for the languages (the
    language's own init usually writes one; extend it, do not replace it).
-2. Pin tools with mise: `mise use <tool>@<version>` writes `mise.toml`. Ask the user
-   for versions or take current stable and say which. mise pins runtimes and CLI
-   tools; the language's own file pins the rest (`rust-toolchain.toml`, `go.mod`,
+2. Pin tools with the project's existing toolchain manager. For a new project, offer mise,
+   npm, Homebrew, and pipx as installation options where they apply; ask before choosing.
+   The language's own file pins runtime versions (`rust-toolchain.toml`, `go.mod`,
    `requires-python`, `package.json` `packageManager`).
 3. Add a `justfile` with the quality gate as one `just check` recipe (the commands
    from the language reference) and `just fmt` / `just test`. `check` runs no formatter in
@@ -63,9 +60,7 @@ in the final report instead of inventing a value.
    `toolchain-stack-defaults`; a larger monorepo may want `moon` (ask).
 4. Run the language setup from `references/<lang>.md`: `rust.md`, `python.md`,
    `go.md`, `typescript.md`. Several languages or packages: `references/monorepo.md`.
-5. Formatter config: commit an explicit formatter config for each language
-   (`formatters.md`; OMP uses `formatters.omp.md`): Ruff in `pyproject.toml`, `biome.json` or
-   `.oxfmtrc.json` (one formatter per file type). This keeps the formatter and check aligned.
+5. Formatter config: commit an explicit formatter config for each language (`formatters.md`; the OMP guidance is `formatters.omp.md`). Prefer the language's native config, such as Ruff in `pyproject.toml`, `biome.json` or `.oxfmtrc.json`, and use one formatter per file type.
 6. Add the license through `license-picker`; a published project also gets REUSE
    (`license-picker`'s REUSE reference: `reuse annotate` headers, `LICENSES/`,
    `REUSE.toml`, `reuse lint` in the required CI gate). Then a short `README.md` (what,
@@ -91,20 +86,19 @@ Tree and file contents: `references/layout.md` (`layout.omp.md` for OMP). Follow
    files may be needed for other coding agents; choose only those the project uses.
 5. `CONTRIBUTING.md` only for a project others contribute to.
 
-## 4. OMP project tooling
+## 4. Harness project tooling
 
-Follow `new-project` for `.omp/` configuration, project-local plugins, skills, and
-MCP servers. Add project skills under `.omp/skills/<id>/SKILL.md` only when needed.
+Follow `new-project` for harness configuration, project-local plugins or packages, skills, and MCP servers. Add project skills only in the active harness's documented project-local skills directory.
 
 ## 5. Tracking and workflow (if chosen)
 
-- Beads: load `beads-setup` (it needs a git `origin` first; use `bd init --skip-hooks`
-  on the work laptop, see the steering file linked from the global AGENTS.md).
+- Beads: load `beads-setup` after confirming the repository does not already use another tracker.
+  If the repository's git hooks are managed by another tool, use `bd init --skip-hooks`.
 - SpecKit: `speckit-setup` (needs `bd`). Journeys: `journey-init`.
 - Release: `trunk-dev-release-setup`; release-please is the GitHub alternative.
-- CI on GitHub: `ci-github-actions` (one `ci-gate` job, pinned actions, least
-  permissions) plus the language's CI notes in its plugin skills.
-- Branch protection, the merge queue and the CI lanes on GitHub: load `delivery-git-workflow`
+- CI on the selected forge: use GitHub Actions or GitLab CI and the language's CI notes in its
+  plugin skills.
+- For GitHub-specific branch protection, merge queues and CI lanes, load `delivery-git-workflow`
   and read its `repo-setup-parallel-agents.md` reference.
 - Worktrees: `references/worktrees.md` (the `worktrunk` plugin). For Rust, never set a global
   `CARGO_TARGET_DIR` (`ops-no-global-cargo-target`); caches follow `ops-toolchain-cache-policy`.
@@ -113,10 +107,7 @@ MCP servers. Add project skills under `.omp/skills/<id>/SKILL.md` only when need
 
 ## 6. Pick plugins
 
-Load `references/plugins.md`: it explains the OpenCode plugin setup. For OMP plugins,
-skills, and MCP servers, follow `new-project` instead. Recommend by the project's
-languages and workflow, show the shortlist with one line each, install only what the user
-accepts.
+Load `references/plugins.md`: it explains OpenCode plugin setup. For other harnesses, use their package documentation and follow `new-project` for configuration, skills, and MCP servers. Recommend by the project's languages and workflow, show the shortlist with one line each, install only what the user accepts.
 
 ## 7. First commit and verify
 

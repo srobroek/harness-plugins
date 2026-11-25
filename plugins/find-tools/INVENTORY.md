@@ -3,13 +3,13 @@
 
 Discover and vet plugins, skills and MCP servers across local inventory, catalogs and public registries, without installing anything.
 
-| Kind | opencode |
-| --- | --- |
-| skills | find-tools |
-| agents | - |
-| commands | - |
-| rules | - |
-| hooks | - |
-| tools | - |
-| extensions | index |
-| mcp | - |
+| Kind | opencode | omp | pi |
+| --- | --- | --- | --- |
+| skills | find-tools | find-tools | find-tools |
+| agents | - | - | - |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | - | - |
+| tools | - | - | - |
+| extensions | index | find-tools | find-tools |
+| mcp | - | - | - |

@@ -1082,7 +1082,6 @@ var require_spdx_expression_parse = __commonJS(function(exports, module) {
 });
 
 // plugins/code-challenge/opencode/src/index.ts
-import { resolve as resolve6 } from "path";
 import { Plugin as Plugin2 } from "@opencode/plugin";
 
 // lib/src/agent-files.ts
@@ -1090,7 +1089,7 @@ import { existsSync, readdirSync, readFileSync, realpathSync } from "fs";
 import { basename, join } from "path";
 
 // lib/src/agent-tools.ts
-var DEFAULT_MCP_TOOLS = ["context7_*", "aws-mcp_*"];
+var DEFAULT_MCP_TOOLS = ["context7_*"];
 var MCP_TOOL_AGENTS = new Set([
   "adversarial-challenger",
   "architect",
@@ -1108,7 +1107,8 @@ var MCP_TOOL_AGENTS = new Set([
   "researcher",
   "security-auditor",
   "spec",
-  "ui-implementer"
+  "ui-implementer",
+  "whats-new"
 ]);
 var MCP_EXCLUDED_AGENTS = new Set([
   "a11y-auditor",
@@ -1148,7 +1148,6 @@ var BUILT_IN_ACTIONS = [
 ];
 var RESERVED_TOOL_PREFIXES = [
   "autopilot_",
-  "cad_",
   "challenge_",
   "claude_",
   "dep_",
@@ -1495,6 +1494,11 @@ var DEPTHS = ["quick", "standard", "deep"];
 // plugins/code-challenge/opencode/src/command.ts
 var COMMAND = "code-challenge";
 var SKILL = "code-challenge";
+var COMMAND_DESCRIPTION = "challenge code for simplification, performance and structure: [auto] [quick|standard|deep] [target]";
+var LOAD_SKILL = {
+  opencode: `Load the \`${SKILL}\` skill with the skill tool and follow it.`,
+  pi: `Read the \`${SKILL}\` skill (\`skill://${SKILL}\` in OMP) and follow it.`
+};
 function parseInvocation(args) {
   const words = args.trim().split(/\s+/).filter(Boolean);
   let autonomous = false;
@@ -1511,10 +1515,10 @@ function parseInvocation(args) {
   }
   return { autonomous, depth, target: words.join(" ") };
 }
-function challengePrompt(args) {
+function challengePrompt(args, host = "opencode") {
   const { autonomous, depth, target } = parseInvocation(args);
   return [
-    `Load the \`${SKILL}\` skill with the skill tool and follow it.`,
+    LOAD_SKILL[host],
     `Mode: ${autonomous ? "autonomous (ask only what INTAKE cannot infer; never post)" : "interactive"}.`,
     depth ? `Depth: ${depth}.` : "Depth: not given; INTAKE decides (default standard).",
     target ? `Target: ${target}` : "Target: not given; INTAKE asks or infers it from the branch diff."
@@ -1524,7 +1528,7 @@ function challengePrompt(args) {
 }
 
 // plugins/code-challenge/opencode/src/formulas.ts
-import { dirname, join as join4 } from "path";
+import { dirname, join as join4, resolve as resolve2 } from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
 
 // lib/src/formulas.ts
@@ -1582,6 +1586,16 @@ function installFormulas(options) {
 
 // plugins/code-challenge/opencode/src/formulas.ts
 var SETUP_TOOL = "challenge_setup";
+var SETUP_DESCRIPTION = `Copy the code-challenge beads formulas into a beads workspace's .beads/formulas/.
+` + "Covers the code-challenge full run and the mol-challenge-<phase> formulas, so bd mol pour finds them. Identical " + "copies stay; divergent ones are refused unless force=true; symlinked paths are always refused.";
+var SETUP_INPUT = {
+  type: "object",
+  properties: {
+    workspace: { type: "string", description: "Beads workspace root (contains .beads/); default the session directory" },
+    force: { type: "boolean", description: "Overwrite code-challenge formulas that differ from the shipped ones" }
+  },
+  additionalProperties: false
+};
 var FORMULAS = [
   "code-challenge",
   "mol-challenge-intake",
@@ -1603,6 +1617,19 @@ function installFormulas2(workspace, cwd, force = false) {
   const result = installFormulas({ workspace, cwd, force, names: FORMULAS, sourceDir: FORMULAS_DIR });
   return result.ok ? { ...result, text: [result.text, ...USAGE].join(`
 `) } : result;
+}
+async function runSetup(input, call, authorize) {
+  const { workspace, force } = input ?? {};
+  if (workspace !== undefined && (typeof workspace !== "string" || workspace === ""))
+    return { content: `${SETUP_TOOL}: workspace must be a non-empty string`, metadata: { ok: false } };
+  const cwd = await call.directory();
+  const target = resolve2(cwd, typeof workspace === "string" ? workspace : ".");
+  await authorize?.(target, force === true);
+  const result = installFormulas2(target, cwd, force === true);
+  return {
+    content: result.ok ? result.text : `${SETUP_TOOL}: ${result.text}`,
+    metadata: { ok: result.ok, copied: result.copied, unchanged: result.unchanged }
+  };
 }
 
 // plugins/code-challenge/opencode/src/lib-facts/index.ts
@@ -2329,19 +2356,20 @@ async function lookupLibFacts(ecosystem, packages, overrides = {}, signal) {
   signal?.throwIfAborted();
   return { ecosystem, fetchedAt: now().toISOString(), packages: results };
 }
+async function runLibFacts(input, call, overrides = {}) {
+  const request = readRequest(input);
+  if (typeof request === "string")
+    return { content: `${LIB_FACTS_TOOL}: ${request}`, metadata: { ok: false } };
+  const facts = await lookupLibFacts(request.ecosystem, request.packages, overrides, call.signal);
+  return { content: JSON.stringify(facts, null, 1), metadata: { ok: true, facts } };
+}
 function registerLibFacts(ctx, overrides = {}) {
   return ctx.tool.transform((editor) => {
     editor.add({
       name: LIB_FACTS_TOOL,
       description: LIB_FACTS_DESCRIPTION,
       input: LIB_FACTS_INPUT,
-      execute: async (input, context) => {
-        const request = readRequest(input);
-        if (typeof request === "string")
-          return { content: `${LIB_FACTS_TOOL}: ${request}`, metadata: { ok: false } };
-        const facts = await lookupLibFacts(request.ecosystem, request.packages, overrides, context.signal);
-        return { content: JSON.stringify(facts, null, 1), metadata: { ok: true, facts } };
-      }
+      execute: (input, context) => runLibFacts(input, { signal: context.signal }, overrides)
     });
   });
 }
@@ -2367,7 +2395,7 @@ function referenceReadRules(moduleUrl, warn = console.warn, resolve = realpathSy
 
 // plugins/code-challenge/opencode/src/scan/index.ts
 import { realpathSync as realpathSync5 } from "fs";
-import { isAbsolute as isAbsolute4, resolve as resolve5 } from "path";
+import { isAbsolute as isAbsolute4, resolve as resolve6 } from "path";
 
 // plugins/code-challenge/opencode/src/session-directory.ts
 async function sessionDirectory(ctx, sessionID, tool) {
@@ -2383,7 +2411,7 @@ async function sessionDirectory(ctx, sessionID, tool) {
 // plugins/code-challenge/opencode/src/scan/run.ts
 import { existsSync as existsSync3, mkdtempSync, realpathSync as realpathSync4, rmSync, statSync as statSync3 } from "fs";
 import { tmpdir } from "os";
-import { extname as extname2, join as join12, resolve as resolve4 } from "path";
+import { extname as extname2, join as join12, resolve as resolve5 } from "path";
 
 // lib/src/subprocess.ts
 import { constants } from "os";
@@ -2650,7 +2678,7 @@ var spawnTool = async (argv, options) => {
 
 // plugins/code-challenge/opencode/src/scan/files.ts
 import { lstatSync as lstatSync3, readdirSync as readdirSync4, realpathSync as realpathSync3, statSync as statSync2 } from "fs";
-import { extname, isAbsolute as isAbsolute2, join as join7, relative, resolve as resolve2, sep } from "path";
+import { extname, isAbsolute as isAbsolute2, join as join7, relative, resolve as resolve3, sep } from "path";
 
 // lib/src/bounded-read.ts
 import { closeSync, constants as constants2, fstatSync, lstatSync as lstatSync2, openSync, readSync } from "fs";
@@ -2766,7 +2794,7 @@ function expandFiles(root, patterns) {
     const isGlob = /[*?[{]/.test(pattern);
     if (isGlob && (isAbsolute2(pattern) || pattern.split("/").includes("..")))
       throw outside(pattern);
-    const abs = resolve2(root, pattern);
+    const abs = resolve3(root, pattern);
     if (!isGlob) {
       if (!inside(root, abs))
         throw outside(pattern);
@@ -2870,7 +2898,7 @@ async function gitListing(root, state, exec, which, signal) {
 
 // plugins/code-challenge/opencode/src/scan/parsers.ts
 import { lstatSync as lstatSync5 } from "fs";
-import { isAbsolute as isAbsolute3, join as join9, relative as relative2, resolve as resolve3 } from "path";
+import { isAbsolute as isAbsolute3, join as join9, relative as relative2, resolve as resolve4 } from "path";
 var obj2 = (v) => typeof v === "object" && v !== null ? v : {};
 var arr2 = (v) => Array.isArray(v) ? v : [];
 var str2 = (v, fallback = "") => typeof v === "string" ? v : fallback;
@@ -2911,7 +2939,7 @@ function collection(owner, key, where = key, allowNull = false) {
   throw new OutputError(`expected "${where}" to be a list, got ${value === undefined ? "nothing" : typeof value}`);
 }
 function relativeTo(root, file, cwd = root) {
-  const abs = isAbsolute3(file) ? file : resolve3(cwd, file);
+  const abs = isAbsolute3(file) ? file : resolve4(cwd, file);
   const rel = relative2(root, abs);
   return rel === "" ? "." : rel;
 }
@@ -3703,7 +3731,7 @@ var firstLine = (text) => text.trim().split(`
 `)[0]?.slice(0, 200) ?? "";
 var slug = (id) => id.replace(/[^\w.-]/g, "_");
 async function prepare(input, deps, signal) {
-  const root = realpathSync4(resolve4(input.root ?? process.cwd()));
+  const root = realpathSync4(resolve5(input.root ?? process.cwd()));
   if (!statSync3(root).isDirectory())
     throw new Error(`challenge_scan: root is not a directory: ${root}`);
   const exec = deps.exec ?? spawnTool;
@@ -3789,12 +3817,6 @@ function plan(p) {
   }
   return items;
 }
-async function consentRisks(input, deps = {}, signal) {
-  const prepared = await prepare(input, deps, signal);
-  if (prepared.emptySelection)
-    return [];
-  return plan(prepared).flatMap((item) => item.status === "ready" && item.risks.length > 0 ? [{ recipe: item.recipe.id, tool: item.recipe.tool, reasons: item.risks }] : []);
-}
 function ensureToolsDir(p) {
   return p.git.kind === "repo" && p.toolsDir === join12(p.git.dir, "code-challenge", "tools") ? ensureDir(p.git.dir, "code-challenge", "tools") : ensureDir(p.toolsDir);
 }
@@ -3836,8 +3858,8 @@ async function runScan(input, deps = {}, signal) {
         entry(item.status, item.reason);
         continue;
       }
-      if (item.risks.length > 0 && deps.approved?.has(recipe.id) !== true) {
-        entry("gap", `${deps.approved === undefined ? "not run without consent" : "not approved for this run"}: ${item.risks.join("; ")}`);
+      if (item.risks.length > 0 && input.allowCode !== true) {
+        entry("gap", `not run without allowCode: ${item.risks.join("; ")}; pass allowCode: true to run it`);
         continue;
       }
       if (signal?.aborted) {
@@ -3949,7 +3971,7 @@ async function runScan(input, deps = {}, signal) {
 var SCAN_TOOL = "challenge_scan";
 var MAX_INLINE_CANDIDATES = 500;
 var SCAN_DESCRIPTION = `Run existing static analyzers in a lens profile and return normalised code-challenge candidates.
-` + "Not read-only: clippy builds the crate (build scripts, proc macros; writes target/), golangci-lint and deadcode " + "compile Go, knip and import-linter load repo config code, and one-off bunx/uvx/go runs download and run pinned " + "packages. Those recipes run only after the user approves them (staticOnly skips them without asking). " + "Hits carry lens, tool, rule, file, line, message, ruleEnabledInRepo. Quick depth skips build-backed analyzers. " + "With runId, raw output goes to <git-dir>/code-challenge/<runId>/scan/.";
+` + "By default only recipes that execute no repository or downloaded code run; the others are coverage gaps that " + "name what they would run. allowCode=true also runs them: clippy builds the crate (build scripts, proc macros; " + "writes target/), golangci-lint and deadcode compile Go, knip and import-linter load repo config code, and one-off " + "bunx/uvx/go runs download and run pinned packages. Pass allowCode only for a repository the user trusts. " + "Hits carry lens, tool, rule, file, line, message, ruleEnabledInRepo. Quick depth skips build-backed analyzers. " + "With runId, raw output goes to <git-dir>/code-challenge/<runId>/scan/.";
 var SCAN_INPUT = {
   type: "object",
   properties: {
@@ -3960,7 +3982,7 @@ var SCAN_INPUT = {
     depth: { enum: [...DEPTHS2], description: "quick skips analyzers that need a build; default standard" },
     timeoutSeconds: { type: "number", maximum: 900, description: "Per-analyzer timeout in seconds; default 120, at most 900" },
     runId: { type: "string", description: "Run id; raw outputs go to <git-dir>/code-challenge/<runId>/scan/" },
-    staticOnly: { type: "boolean", description: "Run only analyzers that execute no repo or downloaded code; ask nothing" }
+    allowCode: { type: "boolean", description: "Also run analyzers that execute repo or downloaded code; only for a trusted repo" }
   },
   additionalProperties: false
 };
@@ -3983,6 +4005,8 @@ function readScanInput(raw, base) {
   }
   if (input.depth !== undefined && !DEPTHS2.includes(input.depth))
     return `depth must be one of ${DEPTHS2.join(", ")}`;
+  if (input.allowCode !== undefined && typeof input.allowCode !== "boolean")
+    return "allowCode must be a boolean";
   const languages = pick("languages", input.languages, LANGUAGES);
   if (typeof languages === "string")
     return languages;
@@ -3991,14 +4015,14 @@ function readScanInput(raw, base) {
     return lenses;
   const files = Array.isArray(input.files) ? input.files.filter((f) => typeof f === "string") : undefined;
   return {
-    root: isAbsolute4(root) ? root : resolve5(base, root),
+    root: isAbsolute4(root) ? root : resolve6(base, root),
     files,
     languages,
     lenses,
     depth: input.depth,
     timeoutSeconds: timeout,
     runId: input.runId,
-    staticOnly: input.staticOnly === true ? true : undefined
+    allowCode: input.allowCode === true ? true : undefined
   };
 }
 function formatScan(report) {
@@ -4006,74 +4030,28 @@ function formatScan(report) {
   const shown = truncated ? report.candidates.slice(0, MAX_INLINE_CANDIDATES) : report.candidates;
   return JSON.stringify({ ...report, candidates: shown, candidateCount: report.candidates.length, truncated }, null, 1);
 }
-function planResource(root, risks) {
-  return `${root} [${risks.map((r) => r.recipe).sort().join(", ")}]`;
-}
-function confirmScan(evaluation) {
-  if (evaluation.action !== SCAN_TOOL || evaluation.effect !== "allow")
-    return;
-  const recipes = evaluation.metadata?.recipes ?? [];
-  if (!Array.isArray(recipes) || recipes.length === 0)
-    return;
-  evaluation.effect = "ask";
-  evaluation.message = `challenge_scan in ${String(evaluation.metadata?.root ?? evaluation.resources.join(", "))} will run code that is not static analysis. ` + "There is no sandbox: these recipes run with your user's permissions. Approving covers exactly these recipes; " + `pass staticOnly to scan without them.
-` + recipes.map((r) => `- ${r.recipe}: ${r.reasons.join("; ")}`).join(`
-`);
+async function runScanTool(raw, call, deps = {}) {
+  const base = await call.directory();
+  const parsed = readScanInput(raw, base);
+  if (typeof parsed === "string")
+    return { content: `${SCAN_TOOL}: ${parsed}`, metadata: { ok: false } };
+  try {
+    const report = await runScan({ ...parsed, root: realpathSync5(parsed.root ?? base) }, deps, call.signal);
+    return { content: formatScan(report), metadata: { ok: true, candidates: report.candidates.length, coverage: report.coverage } };
+  } catch (error) {
+    return { content: `${SCAN_TOOL}: ${error.message}`, metadata: { ok: false } };
+  }
 }
 async function registerScanTool(ctx, deps = {}) {
-  const registrations = [];
-  const cleanup = async () => {
-    for (const registration of registrations.reverse())
-      await registration.dispose();
-  };
-  try {
-    registrations.push(await ctx.tool.transform((editor) => {
-      editor.add({
-        name: SCAN_TOOL,
-        description: SCAN_DESCRIPTION,
-        input: SCAN_INPUT,
-        execute: async (raw, context) => {
-          const base = await sessionDirectory(ctx, context.sessionID, SCAN_TOOL);
-          const parsed = readScanInput(raw, base);
-          if (typeof parsed === "string")
-            return { content: `${SCAN_TOOL}: ${parsed}`, metadata: { ok: false } };
-          let input;
-          let risks;
-          try {
-            input = { ...parsed, root: realpathSync5(parsed.root ?? base) };
-            risks = parsed.staticOnly ? [] : await consentRisks(input, deps, context.signal);
-          } catch (error) {
-            return { content: `${SCAN_TOOL}: ${error.message}`, metadata: { ok: false } };
-          }
-          let approved = deps.approved ?? new Set;
-          if (risks.length > 0 && deps.approved === undefined) {
-            const root = input.root ?? base;
-            await ctx.permission.assert({
-              sessionID: context.sessionID,
-              agent: context.agent,
-              source: { type: "tool", messageID: context.messageID, id: context.id },
-              action: SCAN_TOOL,
-              resources: [planResource(root, risks)],
-              save: [planResource(root, risks)],
-              metadata: { root, depth: input.depth ?? "standard", recipes: risks }
-            });
-            approved = new Set(risks.map((r) => r.recipe));
-          }
-          try {
-            const report = await runScan(input, { ...deps, approved }, context.signal);
-            return { content: formatScan(report), metadata: { ok: true, candidates: report.candidates.length, coverage: report.coverage } };
-          } catch (error) {
-            return { content: `${SCAN_TOOL}: ${error.message}`, metadata: { ok: false } };
-          }
-        }
-      });
-    }));
-    registrations.push(await ctx.permission.hook("evaluate", confirmScan));
-  } catch (error) {
-    await cleanup();
-    throw error;
-  }
-  return cleanup;
+  const registration = await ctx.tool.transform((editor) => {
+    editor.add({
+      name: SCAN_TOOL,
+      description: SCAN_DESCRIPTION,
+      input: SCAN_INPUT,
+      execute: (raw, context) => runScanTool(raw, { directory: () => sessionDirectory(ctx, context.sessionID, SCAN_TOOL), signal: context.signal }, deps)
+    });
+  });
+  return () => registration.dispose();
 }
 
 // plugins/code-challenge/opencode/src/validate.ts
@@ -4249,43 +4227,33 @@ function resolveRunDir(directory, runDir) {
   };
   return roots.some(direct) ? { path: real } : { error: inside };
 }
+async function runValidate(input, call) {
+  const keys = Object.keys(input ?? {});
+  if (keys.length !== 1 || keys[0] !== "run_dir")
+    return { content: `${VALIDATE_TOOL}: expected exactly { run_dir }`, metadata: { ok: false } };
+  const resolved = resolveRunDir(await call.directory(), input.run_dir);
+  if ("error" in resolved)
+    return { content: resolved.error, metadata: { ok: false } };
+  const errors = validateRun(resolved.path);
+  return {
+    content: errors.length === 0 ? "report.json and decisions.jsonl are valid" : errors.join(`
+`),
+    metadata: { ok: errors.length === 0, errors }
+  };
+}
 function registerValidateTool(ctx) {
   return ctx.tool.transform((editor) => {
     editor.add({
       name: VALIDATE_TOOL,
       description: VALIDATE_DESCRIPTION,
       input: VALIDATE_INPUT,
-      execute: async (input, context) => {
-        const keys = Object.keys(input ?? {});
-        if (keys.length !== 1 || keys[0] !== "run_dir")
-          return { content: `${VALIDATE_TOOL}: expected exactly { run_dir }`, metadata: { ok: false } };
-        const directory = await sessionDirectory(ctx, context.sessionID, VALIDATE_TOOL);
-        const resolved = resolveRunDir(directory, input.run_dir);
-        if ("error" in resolved)
-          return { content: resolved.error, metadata: { ok: false } };
-        const errors = validateRun(resolved.path);
-        return {
-          content: errors.length === 0 ? "report.json and decisions.jsonl are valid" : errors.join(`
-`),
-          metadata: { ok: errors.length === 0, errors }
-        };
-      }
+      execute: (input, context) => runValidate(input, { directory: () => sessionDirectory(ctx, context.sessionID, VALIDATE_TOOL) })
     });
   });
 }
 
 // plugins/code-challenge/opencode/src/index.ts
 var ID = "srobroek.code-challenge";
-var SETUP_DESCRIPTION = `Copy the code-challenge beads formulas into a beads workspace's .beads/formulas/.
-` + "Covers the code-challenge full run and the mol-challenge-<phase> formulas, so bd mol pour finds them. Identical " + "copies stay; divergent ones are refused unless force=true; symlinked paths are always refused.";
-var SETUP_INPUT = {
-  type: "object",
-  properties: {
-    workspace: { type: "string", description: "Beads workspace root (contains .beads/); default the session directory" },
-    force: { type: "boolean", description: "Overwrite code-challenge formulas that differ from the shipped ones" }
-  },
-  additionalProperties: false
-};
 async function setupCodeChallenge(ctx, moduleUrl) {
   const { skills, agents } = contentPaths(moduleUrl);
   const registrations = [];
@@ -4309,19 +4277,9 @@ async function setupCodeChallenge(ctx, moduleUrl) {
         name: SETUP_TOOL,
         description: SETUP_DESCRIPTION,
         input: SETUP_INPUT,
-        execute: async (input, context) => {
-          const { workspace, force } = input ?? {};
-          if (workspace !== undefined && (typeof workspace !== "string" || workspace === ""))
-            return { content: `${SETUP_TOOL}: workspace must be a non-empty string`, metadata: { ok: false } };
-          const cwd = await directory(context.sessionID);
-          const target = resolve6(cwd, typeof workspace === "string" ? workspace : ".");
-          await assert(context, SETUP_TOOL, [target], { workspace: target, force: force === true });
-          const result = installFormulas2(target, cwd, force === true);
-          return {
-            content: result.ok ? result.text : `${SETUP_TOOL}: ${result.text}`,
-            metadata: { ok: result.ok, copied: result.copied, unchanged: result.unchanged }
-          };
-        }
+        execute: (input, context) => runSetup(input, { directory: () => directory(context.sessionID) }, async (target, force) => {
+          await assert(context, SETUP_TOOL, [target], { workspace: target, force });
+        })
       });
     }));
     registrations.push(await registerLibFacts(ctx));
@@ -4329,7 +4287,7 @@ async function setupCodeChallenge(ctx, moduleUrl) {
     registrations.push({ dispose: await registerScanTool(ctx) });
     registrations.push(await ctx.command.transform((editor) => editor.add({
       name: COMMAND,
-      description: "challenge code for simplification, performance and structure: [auto] [quick|standard|deep] [target]",
+      description: COMMAND_DESCRIPTION,
       execute: async (input) => {
         await ctx.session.prompt({
           sessionID: input.sessionID,

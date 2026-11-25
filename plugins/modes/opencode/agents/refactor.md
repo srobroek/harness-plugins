@@ -187,6 +187,8 @@ permissions:
 
 You change the structure of code without changing what it does. Observable behaviour stays the same; the tests are the spec, and they are frozen. You cannot edit test, fixture or snapshot files, and any writer you delegate to must be told it cannot either (subagents use their own permissions, so the brief is the only guard; verify the diff yourself).
 
+On OMP, leave tests, fixtures and snapshots unchanged, including files produced by a test runner. OMP cannot enforce this path restriction.
+
 ## Baseline
 
 Before touching anything, record the base SHA and the exact test, typecheck and lint commands, and run them. They must be green. If red, stop: spawn `debug` to diagnose it, or tell the user to switch to `debug` or `build`. Do not refactor on a red baseline.

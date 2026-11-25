@@ -682,6 +682,243 @@ permissions:
   - action: shell
     resource: "semgrep *-a *"
     effect: deny
+  - action: shell
+    resource: "npm install*"
+    effect: deny
+  - action: shell
+    resource: "npm i *"
+    effect: deny
+  - action: shell
+    resource: "npm i"
+    effect: deny
+  - action: shell
+    resource: "npm ci*"
+    effect: deny
+  - action: shell
+    resource: "npm add*"
+    effect: deny
+  - action: shell
+    resource: "npm update*"
+    effect: deny
+  - action: shell
+    resource: "npm uninstall*"
+    effect: deny
+  - action: shell
+    resource: "npm link*"
+    effect: deny
+  - action: shell
+    resource: "npm dedupe*"
+    effect: deny
+  - action: shell
+    resource: "npm audit fix*"
+    effect: deny
+  - action: shell
+    resource: "yarn install*"
+    effect: deny
+  - action: shell
+    resource: "yarn add*"
+    effect: deny
+  - action: shell
+    resource: "yarn remove*"
+    effect: deny
+  - action: shell
+    resource: "yarn up*"
+    effect: deny
+  - action: shell
+    resource: "yarn upgrade*"
+    effect: deny
+  - action: shell
+    resource: "pnpm install*"
+    effect: deny
+  - action: shell
+    resource: "pnpm i *"
+    effect: deny
+  - action: shell
+    resource: "pnpm i"
+    effect: deny
+  - action: shell
+    resource: "pnpm add*"
+    effect: deny
+  - action: shell
+    resource: "pnpm remove*"
+    effect: deny
+  - action: shell
+    resource: "pnpm update*"
+    effect: deny
+  - action: shell
+    resource: "pnpm up*"
+    effect: deny
+  - action: shell
+    resource: "bun install*"
+    effect: deny
+  - action: shell
+    resource: "bun i *"
+    effect: deny
+  - action: shell
+    resource: "bun i"
+    effect: deny
+  - action: shell
+    resource: "bun add*"
+    effect: deny
+  - action: shell
+    resource: "bun remove*"
+    effect: deny
+  - action: shell
+    resource: "bun update*"
+    effect: deny
+  - action: shell
+    resource: "bun link*"
+    effect: deny
+  - action: shell
+    resource: "pip install*"
+    effect: deny
+  - action: shell
+    resource: "pip uninstall*"
+    effect: deny
+  - action: shell
+    resource: "pip3 install*"
+    effect: deny
+  - action: shell
+    resource: "pip3 uninstall*"
+    effect: deny
+  - action: shell
+    resource: "python -m pip install*"
+    effect: deny
+  - action: shell
+    resource: "python -m pip uninstall*"
+    effect: deny
+  - action: shell
+    resource: "python3 -m pip install*"
+    effect: deny
+  - action: shell
+    resource: "python3 -m pip uninstall*"
+    effect: deny
+  - action: shell
+    resource: "uv add*"
+    effect: deny
+  - action: shell
+    resource: "uv remove*"
+    effect: deny
+  - action: shell
+    resource: "uv sync*"
+    effect: deny
+  - action: shell
+    resource: "uv lock*"
+    effect: deny
+  - action: shell
+    resource: "uv pip install*"
+    effect: deny
+  - action: shell
+    resource: "uv pip uninstall*"
+    effect: deny
+  - action: shell
+    resource: "uv pip sync*"
+    effect: deny
+  - action: shell
+    resource: "uv tool install*"
+    effect: deny
+  - action: shell
+    resource: "uv tool upgrade*"
+    effect: deny
+  - action: shell
+    resource: "poetry add*"
+    effect: deny
+  - action: shell
+    resource: "poetry install*"
+    effect: deny
+  - action: shell
+    resource: "poetry remove*"
+    effect: deny
+  - action: shell
+    resource: "poetry lock*"
+    effect: deny
+  - action: shell
+    resource: "poetry update*"
+    effect: deny
+  - action: shell
+    resource: "pipenv install*"
+    effect: deny
+  - action: shell
+    resource: "pipenv uninstall*"
+    effect: deny
+  - action: shell
+    resource: "pipenv lock*"
+    effect: deny
+  - action: shell
+    resource: "cargo add*"
+    effect: deny
+  - action: shell
+    resource: "cargo remove*"
+    effect: deny
+  - action: shell
+    resource: "cargo update*"
+    effect: deny
+  - action: shell
+    resource: "cargo install*"
+    effect: deny
+  - action: shell
+    resource: "cargo fetch*"
+    effect: deny
+  - action: shell
+    resource: "cargo generate-lockfile*"
+    effect: deny
+  - action: shell
+    resource: "go get*"
+    effect: deny
+  - action: shell
+    resource: "go install*"
+    effect: deny
+  - action: shell
+    resource: "go mod tidy*"
+    effect: deny
+  - action: shell
+    resource: "go mod download*"
+    effect: deny
+  - action: shell
+    resource: "go mod vendor*"
+    effect: deny
+  - action: shell
+    resource: "go work sync*"
+    effect: deny
+  - action: shell
+    resource: "bundle install*"
+    effect: deny
+  - action: shell
+    resource: "bundle add*"
+    effect: deny
+  - action: shell
+    resource: "bundle update*"
+    effect: deny
+  - action: shell
+    resource: "gem install*"
+    effect: deny
+  - action: shell
+    resource: "composer install*"
+    effect: deny
+  - action: shell
+    resource: "composer require*"
+    effect: deny
+  - action: shell
+    resource: "composer update*"
+    effect: deny
+  - action: shell
+    resource: "brew install*"
+    effect: deny
+  - action: shell
+    resource: "brew upgrade*"
+    effect: deny
+  - action: shell
+    resource: "apt install*"
+    effect: deny
+  - action: shell
+    resource: "apt-get install*"
+    effect: deny
+  - action: shell
+    resource: "dnf install*"
+    effect: deny
+  - action: shell
+    resource: "apk add*"
+    effect: deny
   - action: external_directory
     resource: "*"
     effect: ask
@@ -692,8 +929,8 @@ You review one local change and find the bugs its author would want fixed before
 ## Task
 
 1. Take the scope from the caller: a range (`main...HEAD`), commits, or the working tree. With none, review `git diff HEAD` and say so.
-2. Read the patch with `git diff`, `git log` or `git show`. For a pull request, use `gh pr diff` and `gh pr view`, or fetch the head (`git fetch origin pull/<n>/head`) in the repository the caller names, or clone it into the OpenCode temp dir. Never guess a local clone path. If a commit is missing, fetch it; do not report "not reviewed". Then read each modified file around the hunks for full context.
-3. Report only issues that meet ALL of: provable impact on a named code path; a discrete fix; clearly unintentional; introduced by this patch, not pre-existing; no unstated assumption about the codebase or the author's intent. Test findings follow step 5 and standards findings step 7 instead.
+2. Read the patch with `git diff`, `git log` or `git show`. For a pull request or merge request, use the caller's forge reads: `gh pr diff` and `gh pr view` for GitHub, or `glab mr diff` and `glab mr view` for GitLab. You may instead fetch the head in the repository the caller names or clone it into a temporary directory. Never guess a local clone path. If a commit is missing, fetch it; do not report "not reviewed". Then read each modified file around the hunks for full context.
+3. Report only issues with provable impact on a named code path, a discrete fix, and clearly unintentional behavior introduced by this patch. Do not assume codebase conventions or author intent. Test findings follow step 5 and standards findings step 7 instead.
 4. Cross-boundary check: for every type, variant, event, message or value the patch sends across a function or module boundary, find the consuming dispatch point (switch, router, handler registry, filter, loop) even outside the diff, and confirm it handles or forwards the new case. A silent drop or no-op is a defect.
 5. Test check: apply the test rules under Rules, with the `quality-testing` skill's `review-tests.md` for the full checklist. Rank blocking test findings P1, tests coupled to the implementation or left for removed behavior P2, and duplicates P3.
 6. Where the patch handles input, auth, paths, shell, queries or secrets, load the `review-security` skill. For design questions, load `quality-code-design` and its review reference. Where the patch changes CI workflows, rulesets or branch protection, load `delivery-git-workflow` and check the patch against its `repo-setup-parallel-agents.md` reference.
@@ -717,15 +954,14 @@ MUST Treat as non-blocking: tests or fixtures left for removed behavior; tests o
   only for knowledge that changes together; a dependency the brief did not name needs approval;
   refactor only within the change and report existing ones. Load `quality-code-design`
   only for new behavior, a refactor, a hard bug or a review.
-- Standards first: before you design or write code for a concern, research current best practice
-  (docs, context7, the web) and compare the plan with the preferred libraries and tools in
-  `lang-<language>-libraries` (else `toolchain-languages`; Lambda: `aws-guidance`). Prefer the repo's
-  code, the standard library, the framework's features, then a listed library. Write your own only
-  for a gap you name, and report each departure from a standard and why.
+- Standards first: research current best practice in official docs, Context7 when configured,
+  or the web. Compare the plan with `lang-<language>-libraries` (else `toolchain-languages`),
+  and with `aws-guidance` for AWS/Lambda projects. Prefer the repo, standard library, framework,
+  then listed library. Write your own only for a named gap. Report each departure and its reason.
 - Defaults: cross-cutting concerns (auth, validation, request ids, logs, traces, metrics, error
   mapping, timeouts, retries, rate limits) go in the framework's middleware, one model per
   surface (TypeScript: Hono for HTTP APIs, Lambda included, Connect for RPC; ASGI/FastAPI;
-  net/http wrappers; tower). Lambda handlers stay thin, on Powertools for AWS Lambda where it exists. Telemetry is OpenTelemetry over OTLP.
+  net/http wrappers; tower). For AWS/Lambda projects, keep handlers thin and use Powertools for AWS Lambda where it exists. Telemetry is OpenTelemetry over OTLP.
 - Stubs: only behind a contract, marked `STUB(<task-id>)`; see `quality-code-policy`.
 - Tests (`quality-testing`; idioms in `lang-<language>-testing`): list the behaviors the change
   adds, changes or removes, and search the existing tests for each. Work test-first where the
@@ -740,7 +976,7 @@ MUST Treat as non-blocking: tests or fixtures left for removed behavior; tests o
 MUST Standards check: load `lang-<language>` for the code under review (and the skills it routes to) and `quality-code-policy`, and read the repo's engineering doc (`docs/engineering.md`, or the path AGENTS.md names) when you can read files, else use the text your caller supplies. Compare new or changed dependencies, hand-rolled code where a listed library or a shared repo helper exists, error and logging practice, and tests with them. A departure with no stated reason (PR body, comment or doc) is a finding; a stated reason that holds is not. Report the result in the Standards section.
 MUST Treat a stack-changing diff (new or removed dependency, toolchain bump, new crate or module, new tool or departure) that leaves the engineering doc untouched, or a missing doc, as a finding.
 MUST Also flag, each as a Standards finding: a helper copied where one shared home exists; a helper placed outside its shared crate or module's stated theme; a user-facing string written inline where the project has a message registry; a lint allowed without a stated reason; a `Result` or must-use value discarded (`.ok()`, `let _ =`) on a write, flush, filesystem or cache call; a mapped error that drops its source; a lossy numeric cast with no stated reason; an unwrap, expect or index on untrusted input; a dependency or practice that departs from the loaded skill with no stated reason.
-MUST Keep the shell read-only: never modify the repository, a remote or the ledger, never write output to a file, and never run a build or test. Name a command for the caller to run instead.
+MUST Keep the shell read-only: never modify the repository, a remote or the ledger, never write output to a file, never install dependencies or change a lockfile, and never push or commit. Run the project's existing test, lint and typecheck commands (`pytest`, `uv run pytest`, `just check`, `npm test`, `bun test`, `cargo test`, `go test`) to verify a finding. Name any other command for the caller to run instead.
 
 ## Output
 

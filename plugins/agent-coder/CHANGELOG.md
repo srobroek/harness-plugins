@@ -1,3 +1,48 @@
+## agent-coder [0.14.0](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.13.0...agent-coder--v0.14.0) (2026-11-24)
+
+### Features
+
+* **agent-coder:** grant pi subagents code-intelligence and helper tools ([3aa202e](https://github.com/srobroek/harness-plugins/commit/3aa202e5bfab0b949040745d16f1cd1e0c65f966))
+* **agent-coder:** grant pi subagents code-intelligence and helper tools ([d36c00f](https://github.com/srobroek/harness-plugins/commit/d36c00f8aad33e7947747751501a66a307c13c59))
+* **agent-coder:** grant pi subagents code-intelligence and helper tools ([89d8d54](https://github.com/srobroek/harness-plugins/commit/89d8d54af33d144801baf1ea2af5496b78887ced))
+
+### Bug Fixes
+
+* **agent-coder:** keep every lsp_navigation call preview-only ([83620bd](https://github.com/srobroek/harness-plugins/commit/83620bdbadc46677ee5e2e97b8a56a3439abed85))
+
+## agent-coder [0.13.0](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.4...agent-coder--v0.13.0) (2026-11-24)
+
+### Features
+
+* **agent-researcher:** match pi-subagents' built-in researcher contract on pi ([e3fa574](https://github.com/srobroek/harness-plugins/commit/e3fa57424c3e58eea0860c0e7529d4ac09288448))
+
+## agent-coder [0.12.4](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.3...agent-coder--v0.12.4) (2026-11-24)
+
+## agent-coder [0.12.3](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.2...agent-coder--v0.12.3) (2026-11-24)
+
+### Bug Fixes
+
+* **content:** refresh portable guidance outputs ([744c177](https://github.com/srobroek/harness-plugins/commit/744c177df26bbc1c5a3e8594b56b5a6c1c5a2595))
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## agent-coder [0.12.2](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.1...agent-coder--v0.12.2) (2026-11-23)
+
+### Bug Fixes
+
+* **release:** commit regenerated pi trees in release commits ([4a648a2](https://github.com/srobroek/harness-plugins/commit/4a648a2d2e83b393ee8a7d6d4e26f5538e513a1c))
+
+## agent-coder [0.12.1](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.0...agent-coder--v0.12.1) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## agent-coder [0.12.0](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.11.1...agent-coder--v0.12.0) (2026-11-23)
+
+### Features
+
+* **agent-plugins:** complete pi agent prompts ([bd49ec4](https://github.com/srobroek/harness-plugins/commit/bd49ec4a310c315702f2ce63789cda4cf345760d))
+
 ## agent-coder [0.11.1](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.11.0...agent-coder--v0.11.1) (2026-11-23)
 
 ### Bug Fixes

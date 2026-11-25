@@ -1,0 +1,59 @@
+{
+  "name": "@srobroek/pi-agent-coder",
+  "version": "0.14.0",
+  "description": "coder subagent for any code development task (implement, fix, debug, test, build, profile, upgrade deps) with only coding tools and skills.",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/agent-coder/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "_kit",
+    "agents"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "peerDependencies": {
+    "@srobroek/pi-code-quality": "*",
+    "@srobroek/pi-dep-update": "*",
+    "@srobroek/pi-whats-new": "*",
+    "pi-lens": "*",
+    "pi-subagents": "*"
+  },
+  "peerDependenciesMeta": {
+    "@srobroek/pi-code-quality": {
+      "optional": true
+    },
+    "@srobroek/pi-dep-update": {
+      "optional": true
+    },
+    "@srobroek/pi-whats-new": {
+      "optional": true
+    },
+    "pi-lens": {
+      "optional": true
+    },
+    "pi-subagents": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./_kit/prereqs.ts"
+    ],
+    "subagents": {
+      "agents": [
+        "./agents"
+      ]
+    }
+  }
+}

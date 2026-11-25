@@ -1,9 +1,8 @@
 # harness-plugins
 
-Agent plugins by Sjors Robroek for OpenCode and Claude Code. The repository is set up with
+Agent plugins for OpenCode and Claude Code. The repository is set up with
 [`@srobroek/harness-kit`](https://github.com/srobroek/harness-kit), which generates the
 per-harness manifests, the Claude Code marketplace and the inventories from `plugins/<name>/`.
-The plugins began in `srobroek/opencode-plugins`, whose history this repository carries.
 
 | Field | Value |
 | --- | --- |
@@ -26,6 +25,7 @@ lib/               @srobroek/opencode-lib, the shared helpers; bundled into each
 INVENTORY.md, inventory.json      generated
 harness-kit.json                  generator config
 ```
+
 
 `opencode/src/index.ts` default-exports `Plugin.define({ id, setup })`. Plugin ids use the
 `srobroek.<name>` prefix. The `agent-plugins` key holds the description, category, `harnesses`,
@@ -58,6 +58,7 @@ Claude Code installs from the marketplace `harness-plugins`:
 claude plugin marketplace add srobroek/harness-plugins
 claude plugin install worktrunk@harness-plugins
 ```
+
 
 Plugins with `claude` in their `harnesses` are in the marketplace. They carry the skills, the
 `.mcp.json` where there is one, the subagents translated by `scripts/claude-agents.ts`, and hooks.
@@ -106,9 +107,8 @@ Load a local checkout by adding `plugins/<name>/opencode` to `plugins` in `openc
 
 ```sh
 bun scripts/convert-agent.ts --out .opencode/agents \
-  --fragment model-roles.json ../omp-plugins/delivery/agents/*.md
+  --fragment model-roles.json plugins/delivery/agents.src/*.md
 ```
-
 - The omp `@role` becomes the `x-opencode-model-role` request header with the model-roles tier
   it stands for (`cheap`, `standard`, `strong`, `reviewer`, `orchestrate`). Old role names map to their tier:
   `smol`, `commit` and `tiny` to `cheap`, `task` to `standard`, `slow`, `plan`, `architect` and
@@ -146,21 +146,18 @@ strict YAML.
 
 - `.github/workflows/ci.yml` calls the reusable `check.yml` of harness-kit (`harness-kit check`,
   `bun test`, `tsc`), runs the `repo-checks` job (lint, `build:check`, the content checks and the
-  Python tests of the shipped scripts) and, when `plugins/cad` changes, the `cad` job
-  (`scripts/sync-cad.ts --check`). The two jobs it runs itself install bun and just from
-  `.mise.toml` and call `just` recipes.
+  Python tests of the shipped scripts). The job installs bun and just from `.mise.toml` and calls
+  `just` recipes.
 - `.github/workflows/release.yml` calls the reusable `release.yml` (multi-semantic-release). It
   tags each plugin as `<name>--v<version>`.
 
-Both pin harness-kit at the version of the package in `package.json`: `srobroek/harness-kit/.github/workflows/check.yml@v1.7.0` and `srobroek/harness-kit/.github/workflows/release.yml@v1.7.0`.
+Both pin harness-kit at the version of the package in `package.json`: `srobroek/harness-kit/.github/workflows/check.yml@v1.10.1` and `srobroek/harness-kit/.github/workflows/release.yml@v1.10.1`.
 Renovate moves the package and the workflow tags in one pull request, using the preset in
 `renovate.json`. That pull request needs `just build` on its branch before it passes
 `harness-kit check`.
 
 ## Migration notes
 
-- The Codex marketplace of `srobroek/opencode-plugins` was dropped; only OpenCode and Claude Code are generated.
-- The stale-branches cron of `srobroek/opencode-plugins` was not carried over.
 
 ## License
 

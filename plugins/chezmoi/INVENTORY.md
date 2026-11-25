@@ -3,13 +3,13 @@
 
 Refuse edits and shell writes to chezmoi-managed live files, naming the source to edit, plus the chezmoi-editor skill.
 
-| Kind | opencode | claude |
-| --- | --- | --- |
-| skills | chezmoi-editor | chezmoi-editor |
-| agents | - | - |
-| commands | - | - |
-| rules | - | - |
-| hooks | - | - |
-| tools | - | - |
-| extensions | index | - |
-| mcp | - | - |
+| Kind | opencode | claude | pi |
+| --- | --- | --- | --- |
+| skills | chezmoi-editor | chezmoi-editor | chezmoi-editor |
+| agents | - | - | - |
+| commands | - | - | - |
+| rules | - | - | - |
+| hooks | - | - | - |
+| tools | - | - | - |
+| extensions | index | - | chezmoi |
+| mcp | - | - | - |

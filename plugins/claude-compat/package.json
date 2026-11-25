@@ -1,6 +1,6 @@
 {
   "name": "claude-compat",
-  "version": "0.5.1",
+  "version": "0.5.4",
   "description": "Load Claude Code plugin repos at runtime: skills, agents, commands, MCP servers and command hooks, per project.",
   "private": true,
   "type": "module",

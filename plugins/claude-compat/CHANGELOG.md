@@ -1,3 +1,17 @@
+## claude-compat [0.5.4](https://github.com/srobroek/harness-plugins/compare/claude-compat--v0.5.3...claude-compat--v0.5.4) (2026-11-25)
+
+## claude-compat [0.5.3](https://github.com/srobroek/harness-plugins/compare/claude-compat--v0.5.2...claude-compat--v0.5.3) (2026-11-24)
+
+### Bug Fixes
+
+* **claude-compat:** generalize local source path ([b4d13dd](https://github.com/srobroek/harness-plugins/commit/b4d13dd1b27d274236da874163e4d4c0080fc55f))
+
+## claude-compat [0.5.2](https://github.com/srobroek/harness-plugins/compare/claude-compat--v0.5.1...claude-compat--v0.5.2) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
 ## claude-compat [0.5.1](https://github.com/srobroek/harness-plugins/compare/claude-compat--v0.5.0...claude-compat--v0.5.1) (2026-11-23)
 
 ### Bug Fixes

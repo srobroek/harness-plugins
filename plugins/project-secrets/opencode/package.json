@@ -1,0 +1,17 @@
+{
+  "name": "project-secrets-opencode",
+  "version": "1.0.3",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": ">=2.1.4 <3"
+  },
+  "peerDependenciesMeta": {
+    "@opencode/plugin": {
+      "optional": true
+    }
+  }
+}

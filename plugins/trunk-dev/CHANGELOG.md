@@ -1,3 +1,33 @@
+## trunk-dev [0.12.3](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.12.2...trunk-dev--v0.12.3) (2026-11-24)
+
+## trunk-dev [0.12.2](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.12.1...trunk-dev--v0.12.2) (2026-11-24)
+
+### Bug Fixes
+
+* **trunk-dev:** read git wrappers from the gitWrappers option ([c1ace8c](https://github.com/srobroek/harness-plugins/commit/c1ace8c28b005c2188a2f3ac1e504da1901be707))
+
+## trunk-dev [0.12.1](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.12.0...trunk-dev--v0.12.1) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## trunk-dev [0.12.0](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.11.0...trunk-dev--v0.12.0) (2026-11-23)
+
+### Features
+
+* **trunk-dev:** enforce commit and push gates and merge advisories on pi ([a96175c](https://github.com/srobroek/harness-plugins/commit/a96175c53d82b6ff71a8c9b2f55c43426983f639))
+
+## trunk-dev [0.11.0](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.10.0...trunk-dev--v0.11.0) (2026-11-23)
+
+### Features
+
+* **trunk-dev:** add pi skip-CI advisory extension ([da93feb](https://github.com/srobroek/harness-plugins/commit/da93febd06b1e44e864f369eff8414d78d0e3a6b))
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## trunk-dev [0.10.0](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.9.0...trunk-dev--v0.10.0) (2026-11-22)
 
 ### Features

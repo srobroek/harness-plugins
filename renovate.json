@@ -44,7 +44,7 @@
         "/^plugins\\/[^/]+\\/common\\/\\.mcp\\.json$/"
       ],
       "matchStrings": [
-        "\\\"command\\\":\\s*\\\"uvx\\\",\\s*\\\"args\\\":\\s*\\[[^\\n]*?\\\"(?<depName>[A-Za-z0-9._-]+)@(?<currentValue>\\d[\\w.+!-]*)\\\""
+        "\\\"command\\\":\\s*\\\"uvx\\\",\\s*\\\"args\\\":\\s*\\[(?:\\s*\\\"[^\\\"]*\\\"\\s*,)*?\\s*\\\"(?<depName>[A-Za-z0-9._-]+)@(?<currentValue>\\d[\\w.+!-]*)\\\""
       ],
       "datasourceTemplate": "pypi",
       "versioningTemplate": "pep440"
@@ -56,7 +56,7 @@
         "/^plugins\\/[^/]+\\/common\\/\\.mcp\\.json$/"
       ],
       "matchStrings": [
-        "\\\"command\\\":\\s*\\\"npx\\\",\\s*\\\"args\\\":\\s*\\[[^\\n]*?\\\"(?<depName>(?:@[a-z0-9~-][a-z0-9._~-]*/)?[a-z0-9~-][a-z0-9._~-]*)@(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-[\\w.-]+)?)\""
+        "\\\"command\\\":\\s*\\\"npx\\\",\\s*\\\"args\\\":\\s*\\[(?:\\s*\\\"[^\\\"]*\\\"\\s*,)*?\\s*\\\"(?<depName>(?:@[a-z0-9~-][a-z0-9._~-]*/)?[a-z0-9~-][a-z0-9._~-]*)@(?<currentValue>\\d+\\.\\d+\\.\\d+(?:-[\\w.-]+)?)\""
       ],
       "datasourceTemplate": "npm"
     },
@@ -74,26 +74,13 @@
       "description": "The repomix runner pin in the plugin source",
       "customType": "regex",
       "managerFilePatterns": [
-        "/^plugins\\/repomix\\/opencode\\/src\\/pack\\.ts$/"
+        "/^plugins\\/repomix\\/shared\\/pack\\.ts$/"
       ],
       "matchStrings": [
         "REPOMIX_VERSION = \\\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\\\""
       ],
       "depNameTemplate": "repomix",
       "datasourceTemplate": "npm"
-    }
-  ],
-  "packageRules": [
-    {
-      "description": "cad common and opencode/examples are vendored from the cad-agent tag; never edit them (AGENTS.md)",
-      "matchManagers": [
-        "custom.regex"
-      ],
-      "matchFileNames": [
-        "plugins/cad/common/**",
-        "plugins/cad/opencode/**"
-      ],
-      "enabled": false
     }
   ]
 }

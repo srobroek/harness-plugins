@@ -9,6 +9,12 @@ Per project it registers the plugins' skills, agents (as new subagents), command
 Only point it at plugins you trust. Their hooks and MCP servers are programs that
 run on your machine, and their skills and agents are instructions the model follows.
 
+There is no pi version. pi reads the same `SKILL.md` skill format from its own skills
+directories and from `~/.agents/skills/` and `.agents/skills/`, but it does not load
+Claude Code plugins: no marketplaces, plugin manifests, agents, commands, hooks or
+`.mcp.json`. On pi, install a pi package instead, or copy a plugin's skill directories
+into one of those skill locations.
+
 ## Install
 
 ```sh
@@ -37,7 +43,7 @@ removing the entry.
        "package": "github:srobroek/harness-plugins::path:plugins/claude-compat/opencode",
         "options": {
           "enabled": true,
-         "sources": [{ "path": "~/src/pace-claude-plugins" }],
+         "sources": [{ "path": "~/src/claude-plugins" }],
          "plugins": ["prototype", "proto-report"]
        }
      }]

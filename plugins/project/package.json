@@ -1,21 +1,28 @@
 {
   "name": "project",
-  "version": "0.11.0",
-  "description": "Project lifecycle: scaffold a project with /new-project, set up fnox and 1Password secrets, and pick an OSI-approved license.",
+  "version": "0.12.5",
+  "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
   "private": true,
   "type": "module",
   "agent-plugins": {
-    "description": "Project lifecycle: scaffold a project with /new-project, set up fnox and 1Password secrets, and pick an OSI-approved license.",
+    "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
     "category": "productivity",
     "harnesses": [
       "opencode",
       "claude",
-      "omp"
+      "omp",
+      "pi"
     ],
     "scope": "global",
     "entries": {
       "index": "index"
     },
+    "companions": [
+      {
+        "package": "@srobroek/pi-project-secrets",
+        "for": "the project-secrets skill that the scaffold's secrets step loads"
+      }
+    ],
     "claude": {
       "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/project"
     }

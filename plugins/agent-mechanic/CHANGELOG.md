@@ -1,3 +1,34 @@
+## agent-mechanic [0.9.0](https://github.com/srobroek/harness-plugins/compare/agent-mechanic--v0.8.3...agent-mechanic--v0.9.0) (2026-11-24)
+
+### Features
+
+* **agent-coder:** grant pi subagents code-intelligence and helper tools ([89d8d54](https://github.com/srobroek/harness-plugins/commit/89d8d54af33d144801baf1ea2af5496b78887ced))
+* **agent-mechanic:** grant pi subagents code-intelligence and helper tools ([dbff25c](https://github.com/srobroek/harness-plugins/commit/dbff25cc20a663bd71c063f6b58e2f67da576a38))
+
+### Bug Fixes
+
+* **agent-coder:** keep every lsp_navigation call preview-only ([83620bd](https://github.com/srobroek/harness-plugins/commit/83620bdbadc46677ee5e2e97b8a56a3439abed85))
+
+## agent-mechanic [0.8.3](https://github.com/srobroek/harness-plugins/compare/agent-mechanic--v0.8.2...agent-mechanic--v0.8.3) (2026-11-24)
+
+## agent-mechanic [0.8.2](https://github.com/srobroek/harness-plugins/compare/agent-mechanic--v0.8.1...agent-mechanic--v0.8.2) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## agent-mechanic [0.8.1](https://github.com/srobroek/harness-plugins/compare/agent-mechanic--v0.8.0...agent-mechanic--v0.8.1) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## agent-mechanic [0.8.0](https://github.com/srobroek/harness-plugins/compare/agent-mechanic--v0.7.1...agent-mechanic--v0.8.0) (2026-11-23)
+
+### Features
+
+* **agent-plugins:** complete pi agent prompts ([bd49ec4](https://github.com/srobroek/harness-plugins/commit/bd49ec4a310c315702f2ce63789cda4cf345760d))
+
 ## agent-mechanic [0.7.1](https://github.com/srobroek/harness-plugins/compare/agent-mechanic--v0.7.0...agent-mechanic--v0.7.1) (2026-11-23)
 
 ### Bug Fixes

@@ -1,7 +1,7 @@
 {
   "name": "harness-plugins",
   "private": true,
-  "description": "Public agent plugins for OpenCode and Claude Code. Plugins live in plugins/.",
+  "description": "Public agent plugins for OpenCode, Claude Code, OMP and pi. Plugins live in plugins/.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -28,8 +28,6 @@
     "agent-roles": "bun scripts/check-agent-roles.ts",
     "descriptions": "bun scripts/check-descriptions.ts",
     "concerns": "bun scripts/check-concerns.ts",
-    "cad:sync": "bun scripts/sync-cad.ts",
-    "cad:check": "bun scripts/sync-cad.ts --check",
     "release": "multi-semantic-release --no-ci"
   },
   "devDependencies": {
@@ -46,7 +44,7 @@
     "@semantic-release/exec": "7.1.0",
     "@semantic-release/git": "11.0.1",
     "@semantic-release/github": "12.0.11",
-    "@srobroek/harness-kit": "1.7.0",
+    "@srobroek/harness-kit": "1.10.1",
     "@types/bun": "1.4.5",
     "@types/spdx-expression-parse": "4.0.0",
     "@visulima/yaml": "2.0.0",

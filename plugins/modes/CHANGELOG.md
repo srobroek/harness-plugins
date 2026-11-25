@@ -1,3 +1,27 @@
+## modes [1.3.2](https://github.com/srobroek/harness-plugins/compare/modes--v1.3.1...modes--v1.3.2) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## modes [1.3.1](https://github.com/srobroek/harness-plugins/compare/modes--v1.3.0...modes--v1.3.1) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## modes [1.3.0](https://github.com/srobroek/harness-plugins/compare/modes--v1.2.1...modes--v1.3.0) (2026-11-23)
+
+### Features
+
+* **modes:** ship task agents to OMP ([3fd7ed2](https://github.com/srobroek/harness-plugins/commit/3fd7ed21c2eedf2046ef12a5d4e171257b57b0dc))
+
+## modes [1.2.1](https://github.com/srobroek/harness-plugins/compare/modes--v1.2.0...modes--v1.2.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## modes [1.2.0](https://github.com/srobroek/harness-plugins/compare/modes--v1.1.1...modes--v1.2.0) (2026-11-22)
 
 ### Features

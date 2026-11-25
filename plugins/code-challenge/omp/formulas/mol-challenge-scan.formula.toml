@@ -1,0 +1,61 @@
+# mol-challenge-scan -- the SCAN phase of a code-challenge run, runnable alone
+#
+# Install: run the challenge_setup tool, which copies every code-challenge formula into
+# <repo>/.beads/formulas/, or copy this file there (or into ~/.beads/formulas/).
+# Pour one phase:
+#   bd mol pour mol-challenge-scan --var target=<paths> --var run_id=<run-id> --var depth=<depth> --var mode=<mode>
+#
+# The phase needs the earlier phases' files in the run directory; each file is named in the
+# code-challenge skill's references/run-storage.md. The vars have no defaults because bd mol bond
+# does not apply them.
+#
+# PRECONDITION: the skills and agents named here ship in the code-challenge plugin
+# (srobroek.code-challenge). Install it first.
+#
+# Evidence rule: every finding carries a tier -- proven, measured or hypothesis -- and a
+# path:line locator. A speed claim without a measurement is a hypothesis.
+formula = "mol-challenge-scan"
+description = "Run the SCAN phase for {{target}}: existing analyzers only, hits tagged by whether the repository enables the rule"
+type = "workflow"
+
+[vars.target]
+required = true
+description = "paths, packages or diff range under challenge"
+
+[vars.run_id]
+required = true
+description = "run id; the run directory is <git-dir>/code-challenge/<run-id>/"
+
+[vars.depth]
+required = true
+description = "quick, standard or deep"
+
+[vars.mode]
+required = true
+description = "interactive or autonomous"
+
+[[steps]]
+id = "run-analyzers"
+title = "RUN the analyzers for {{target}}"
+type = "task"
+labels = ["code-challenge", "sub:scan", "phase:scan"]
+description = """
+Run the code-challenge skill, phase SCAN, from run {{run_id}}. Read intake.json, then run the
+analyzers in references/scan.md for each language in the target, with an isolated lens profile
+that respects the repository's suppressions. At depth quick skip every analyzer that needs a
+build. Run them with challenge_scan. It runs recipes that execute repository or downloaded code only
+with allowCode: true; pass it only for a repository the user trusts or after asking them, and
+otherwise report those recipes as gaps. A missing analyzer is a gap; never install anything.
+"""
+
+[[steps]]
+id = "write-scan"
+title = "WRITE scan.json"
+type = "task"
+needs = ["run-analyzers"]
+labels = ["code-challenge", "sub:scan", "phase:scan"]
+description = """
+Normalise every hit to tool, rule, path:line, message and rule_enabled_in_repo (false hits are
+tagged "rule not enabled in repo"). List each analyzer that could not run as a gap. A hit is a lead
+for CHALLENGE, never a finding.
+"""

@@ -1,3 +1,17 @@
+## chezmoi [0.7.2](https://github.com/srobroek/harness-plugins/compare/chezmoi--v0.7.1...chezmoi--v0.7.2) (2026-11-24)
+
+## chezmoi [0.7.1](https://github.com/srobroek/harness-plugins/compare/chezmoi--v0.7.0...chezmoi--v0.7.1) (2026-11-24)
+
+### Bug Fixes
+
+* **chezmoi:** make the 1Password helper conditional ([fcc0369](https://github.com/srobroek/harness-plugins/commit/fcc0369e26f030556ab7d38e2a99bab2b51591fa))
+
+## chezmoi [0.7.0](https://github.com/srobroek/harness-plugins/compare/chezmoi--v0.6.0...chezmoi--v0.7.0) (2026-11-23)
+
+### Features
+
+* **chezmoi:** add pi write guard ([b462296](https://github.com/srobroek/harness-plugins/commit/b4622966c11a824e069390597019f0b4bbca10b8))
+
 ## chezmoi [0.6.0](https://github.com/srobroek/harness-plugins/compare/chezmoi--v0.5.0...chezmoi--v0.6.0) (2026-11-21)
 
 ### Features

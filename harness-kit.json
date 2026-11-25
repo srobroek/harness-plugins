@@ -1,7 +1,7 @@
 {
   "marketplace": {
     "name": "harness-plugins",
-    "description": "Agent plugins for OpenCode and Claude Code.",
+    "description": "Agent plugins for OpenCode, Claude Code, OMP and pi.",
     "owner": {
       "name": "Sjors Robroek"
     }
@@ -11,10 +11,16 @@
     "agents",
     "formulas"
   ],
+  "piScope": "@srobroek",
+  "piPrefix": "pi-",
+  "pi": {
+    "publish": true
+  },
   "harnesses": [
     "opencode",
     "claude",
-    "omp"
+    "omp",
+    "pi"
   ],
   "claude": {
     "strict": true,

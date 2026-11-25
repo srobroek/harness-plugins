@@ -9,7 +9,7 @@ import { EMBEDDED_PIN_ENV } from "./gate-admission.ts"
  * from a `BEADS_DIR` the user set, so the inheritor resolves its own store per directory
  * instead of following the repository that shell ran in.
  */
-export const PIN_MARKER_ENV = "SROBROEK_BEADS_PIN"
+export const PIN_MARKER_ENV = "HARNESS_BEADS_PIN"
 
 /** The variables that pin a child to `store`. */
 export function pinVariables(store: string): Record<string, string> {
@@ -101,4 +101,13 @@ export function selectStore(
 /** The environment a gate should assume the child shell gets: `base` plus the pin. */
 export function pinnedEnvironment(cwd: string, base: NodeJS.ProcessEnv, pinFor = sessionPinFor): NodeJS.ProcessEnv {
   return selectStore(cwd, base, pinFor).env
+}
+
+const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`
+
+/** The shell lines that give a later shell `selection`'s store, for a host that cannot set a child's environment. */
+export function selectionExports(selection: StoreSelection): string[] {
+  // An inherited pin with no replacement must leave the shell too, or bd keeps writing its ledger.
+  const unset = selection.unset.length === 0 ? [] : [`unset ${selection.unset.join(" ")}`]
+  return [...unset, ...Object.entries(selection.set).map(([name, value]) => `export ${name}=${shellQuote(value)}`)]
 }

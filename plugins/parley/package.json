@@ -1,6 +1,6 @@
 {
   "name": "parley",
-  "version": "0.4.2",
+  "version": "0.5.1",
   "description": "Ask the user rounds of typed questions in a TUI panel, with recommended answers, notes and deferrals.",
   "private": true,
   "type": "module",
@@ -8,12 +8,17 @@
     "description": "Ask the user rounds of typed questions in a TUI panel, with recommended answers, notes and deferrals.",
     "category": "development",
     "harnesses": [
-      "opencode"
+      "opencode",
+      "pi"
     ],
     "scope": "global",
+    "piName": "pi-parley-rounds",
     "entries": {
       "index": "index",
       "tui": "tui"
+    },
+    "piEntries": {
+      "parley": "parley"
     }
   }
 }

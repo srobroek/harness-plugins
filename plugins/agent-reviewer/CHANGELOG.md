@@ -1,3 +1,57 @@
+## agent-reviewer [0.15.1](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.15.0...agent-reviewer--v0.15.1) (2026-11-24)
+
+### Bug Fixes
+
+* **agent-reviewer:** tell OMP agents that keep a shell it is unrestricted ([#173](https://github.com/srobroek/harness-plugins/issues/173)) ([1b8386d](https://github.com/srobroek/harness-plugins/commit/1b8386dbf43fa6cb5580d4dbc03e619476ba023c))
+
+## agent-reviewer [0.15.0](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.14.0...agent-reviewer--v0.15.0) (2026-11-24)
+
+### Features
+
+* **agent-reviewer:** grant Pi subagents tools ([159ad02](https://github.com/srobroek/harness-plugins/commit/159ad02eac3b9ba206d568a93877c2dedd5e9036))
+
+## agent-reviewer [0.14.0](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.13.4...agent-reviewer--v0.14.0) (2026-11-24)
+
+### Features
+
+* **agent-reviewer:** code-reviewer and security-auditor run the project's tests ([#172](https://github.com/srobroek/harness-plugins/issues/172)) ([0d2693e](https://github.com/srobroek/harness-plugins/commit/0d2693eba31b4a1b48f4a2f6726a1170a948e503))
+
+## agent-reviewer [0.13.4](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.13.3...agent-reviewer--v0.13.4) (2026-11-24)
+
+## agent-reviewer [0.13.3](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.13.2...agent-reviewer--v0.13.3) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## agent-reviewer [0.13.2](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.13.1...agent-reviewer--v0.13.2) (2026-11-24)
+
+### Bug Fixes
+
+* **agent-reviewer:** support GitLab merge request reads ([e199086](https://github.com/srobroek/harness-plugins/commit/e1990861ee8b3d10b3adad7294de159c47f4e23b))
+
+## agent-reviewer [0.13.1](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.13.0...agent-reviewer--v0.13.1) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## agent-reviewer [0.13.0](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.12.0...agent-reviewer--v0.13.0) (2026-11-23)
+
+### Features
+
+* **agent-plugins:** complete pi agent prompts ([bd49ec4](https://github.com/srobroek/harness-plugins/commit/bd49ec4a310c315702f2ce63789cda4cf345760d))
+
+### Bug Fixes
+
+* **agent-reviewer:** align duplicate harness agents ([b5bf82a](https://github.com/srobroek/harness-plugins/commit/b5bf82a275d3127e73518336c5b1a9228c4f6a71))
+
+## agent-reviewer [0.12.0](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.11.1...agent-reviewer--v0.12.0) (2026-11-23)
+
+### Features
+
+* **agent-reviewer:** ship agent-only plugins to OMP ([4651445](https://github.com/srobroek/harness-plugins/commit/4651445bd2b5ce547a1bf781c7049acf4f894019))
+
 ## agent-reviewer [0.11.1](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.11.0...agent-reviewer--v0.11.1) (2026-11-23)
 
 ### Bug Fixes

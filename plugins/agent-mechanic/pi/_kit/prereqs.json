@@ -1,0 +1,16 @@
+{
+  "plugin": "agent-mechanic",
+  "prerequisites": [],
+  "companions": [
+    {
+      "package": "pi-subagents",
+      "for": "the subagent tool",
+      "required": true
+    },
+    {
+      "package": "pi-lens",
+      "for": "code-intelligence and structural-edit tools for the subagent",
+      "required": true
+    }
+  ]
+}

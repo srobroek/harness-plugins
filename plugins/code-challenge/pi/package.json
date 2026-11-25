@@ -1,0 +1,70 @@
+{
+  "name": "@srobroek/pi-code-challenge",
+  "version": "2.1.1",
+  "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/code-challenge/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "_kit",
+    "agents",
+    "extensions",
+    "formulas",
+    "skills"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "peerDependencies": {
+    "@srobroek/pi-code-quality": "*",
+    "@srobroek/pi-dep-update": "*",
+    "@srobroek/pi-repomix": "*",
+    "@srobroek/pi-whats-new": "*",
+    "pi-lens": "*",
+    "pi-web-access": "*"
+  },
+  "peerDependenciesMeta": {
+    "@srobroek/pi-code-quality": {
+      "optional": true
+    },
+    "@srobroek/pi-dep-update": {
+      "optional": true
+    },
+    "@srobroek/pi-repomix": {
+      "optional": true
+    },
+    "@srobroek/pi-whats-new": {
+      "optional": true
+    },
+    "pi-lens": {
+      "optional": true
+    },
+    "pi-web-access": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/index.js",
+      "./_kit/prereqs.ts"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "subagents": {
+      "agents": [
+        "./agents"
+      ]
+    }
+  }
+}

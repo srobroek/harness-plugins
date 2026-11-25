@@ -1,3 +1,40 @@
+## project [0.12.5](https://github.com/srobroek/harness-plugins/compare/project--v0.12.4...project--v0.12.5) (2026-11-24)
+
+## project [0.12.4](https://github.com/srobroek/harness-plugins/compare/project--v0.12.3...project--v0.12.4) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## project [0.12.3](https://github.com/srobroek/harness-plugins/compare/project--v0.12.2...project--v0.12.3) (2026-11-24)
+
+### Bug Fixes
+
+* **beads:** make project plugin signal opt in ([e31958d](https://github.com/srobroek/harness-plugins/commit/e31958dd50cad74c832b01da3380626065a26cbc))
+* **project:** make scaffold guidance portable ([c1660ff](https://github.com/srobroek/harness-plugins/commit/c1660ffa83a1d59713b8f7460296c341101c496c))
+* **project:** refresh scaffold references ([c9deb29](https://github.com/srobroek/harness-plugins/commit/c9deb29ddfc6e35421cd2d135cc4153a253bb452))
+* **project:** regenerate portable scaffold guidance ([7bad1b3](https://github.com/srobroek/harness-plugins/commit/7bad1b37fedaad57753a28f165f8c040fc0d0125))
+
+## project [0.12.2](https://github.com/srobroek/harness-plugins/compare/project--v0.12.1...project--v0.12.2) (2026-11-24)
+
+## project [0.12.1](https://github.com/srobroek/harness-plugins/compare/project--v0.12.0...project--v0.12.1) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## project [0.12.0](https://github.com/srobroek/harness-plugins/compare/project--v0.11.1...project--v0.12.0) (2026-11-23)
+
+### Features
+
+* **project:** port content plugins to Pi ([5b0d32a](https://github.com/srobroek/harness-plugins/commit/5b0d32abbe2faf67934ca1d8e3b53f9eca0cee01))
+
+## project [0.11.1](https://github.com/srobroek/harness-plugins/compare/project--v0.11.0...project--v0.11.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## project [0.11.0](https://github.com/srobroek/harness-plugins/compare/project--v0.10.0...project--v0.11.0) (2026-11-23)
 
 ### Features

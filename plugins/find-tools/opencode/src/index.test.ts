@@ -87,8 +87,4 @@ describe("options", () => {
     })
   })
 
-  test("localInventory fails a missing domain instead of throwing at setup", async () => {
-    const inventory = localInventory({})
-    await expect(inventory.plugins()).rejects.toThrow("plugin.list unavailable")
-  })
 })

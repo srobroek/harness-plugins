@@ -7,14 +7,21 @@ versions, or a doc set. The pack goes to a file and only its path and metrics co
 so it never lands in the context.
 
 ## Install
+Install the Pi package from npm:
+
+```sh
+pi install npm:@srobroek/pi-repomix
+```
 
 ```sh
 opencode plugin add 'github:srobroek/harness-plugins::path:plugins/repomix/opencode'
 ```
 
-Install repomix globally (`mise use -g npm:repomix@1.19.0` or `npm i -g repomix`). Without
-it on PATH, the tool runs `npx --yes repomix@1.19.0`, because npx downloads code. Your
-permission rules decide whether that runs; set `confirmPack` (below) to prompt first.
+Install repomix globally with the installer you prefer, for example `mise use -g
+npm:repomix@1.19.0`, `npm i -g repomix`, `brew install repomix`, or `pipx install
+repomix`. Without it on PATH, the tool runs `npx --yes repomix@1.19.0`, because npx
+downloads code. Your permission rules decide whether that runs; set `confirmPack`
+(below) to prompt first.
 
 ## Tool
 
@@ -59,28 +66,8 @@ is a prompt unless you configure otherwise. The shipped allowlist agents deny it
 a pack in slices, and when `compress` loses information. It also carries a CLI recipe,
 so it is exported to Claude Code.
 
+The npm package exposes `repomix_pack` as a Pi tool. It confirms before packing; the pack is written under a temp directory, and only the path and metrics are returned.
+
 ## Optional: the repomix MCP server
 
-The plugin does not configure the repomix MCP server. Its tools add about 1.2k tokens to
-every request under Code Mode, and about 1.9k with `codemode: false`, and its read and
-grep tools duplicate the built-in ones. If you want it anyway:
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "servers": {
-      // Not named "repomix": its tools would then be repomix_*, beside repomix_pack.
-      "repomix-mcp": {
-        "type": "local",
-        "command": ["repomix", "--mcp", "--sandbox"],
-      },
-    },
-  },
-  "permissions": [{ "action": "repomix-mcp_*", "resource": "*", "effect": "deny" }],
-}
-```
-
-`--sandbox` confines its file tools to the working directory and drops remote packing and
-skill generation. Without it the server can read any path you can and writes
-`.claude/skills/`. Remove the deny for the agents that should use it.
+The plugin does not configure the repomix MCP server. In Pi's `.pi/mcp.json` or the user MCP configuration, `repomix --mcp` exposes its tools. `--sandbox` confines file access to the working directory but disables remote packing.

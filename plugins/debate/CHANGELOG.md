@@ -1,3 +1,28 @@
+## debate [0.7.4](https://github.com/srobroek/harness-plugins/compare/debate--v0.7.3...debate--v0.7.4) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## debate [0.7.3](https://github.com/srobroek/harness-plugins/compare/debate--v0.7.2...debate--v0.7.3) (2026-11-24)
+
+### Bug Fixes
+
+* **debate:** regenerate questionnaire destinations ([6691783](https://github.com/srobroek/harness-plugins/commit/66917836576fd51fe6205651768c68645f23b72f))
+* **debate:** use portable questionnaire destinations ([dc4a21f](https://github.com/srobroek/harness-plugins/commit/dc4a21fcfd48507527290830a9ac736c1f57e15b))
+
+## debate [0.7.2](https://github.com/srobroek/harness-plugins/compare/debate--v0.7.1...debate--v0.7.2) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## debate [0.7.1](https://github.com/srobroek/harness-plugins/compare/debate--v0.7.0...debate--v0.7.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## debate [0.7.0](https://github.com/srobroek/harness-plugins/compare/debate--v0.6.0...debate--v0.7.0) (2026-11-23)
 
 ### Features

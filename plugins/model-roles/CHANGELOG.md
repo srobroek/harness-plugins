@@ -1,3 +1,15 @@
+## model-roles [0.11.2](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.11.1...model-roles--v0.11.2) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## model-roles [0.11.1](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.11.0...model-roles--v0.11.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## model-roles [0.11.0](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.10.0...model-roles--v0.11.0) (2026-11-22)
 
 ### Features

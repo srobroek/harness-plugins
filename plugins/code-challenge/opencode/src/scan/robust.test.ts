@@ -30,7 +30,7 @@ describe("config probes", () => {
         ? exited('{"Enabled":[]}')
         : exited(JSON.stringify({ Issues: [{ FromLinter: "unused", Text: "t", Pos: { Filename: "m.go", Line: 1 } }] }), 1)
     }
-    await runScan({ root: goRoot }, { exec: goExec, which: withTools("golangci-lint"), approved: new Set(["golangci:lenses"]) }, controller.signal)
+    await runScan({ root: goRoot, allowCode: true }, { exec: goExec, which: withTools("golangci-lint") }, controller.signal)
     expect(goSeen).toEqual([controller.signal])
   })
 
@@ -54,7 +54,7 @@ describe("config probes", () => {
     writeFileSync(join(root, "go.mod"), "module x\n")
     const issues = JSON.stringify({ Issues: [{ FromLinter: "unused", Text: "t", Pos: { Filename: "m.go", Line: 1 } }] })
     const exec: Exec = async (argv) => (argv.includes("linters") ? probeAnswer : exited(issues, 1))
-    const report = await runScan({ root }, { exec, which: withTools("golangci-lint"), approved: new Set(["golangci:lenses"]) })
+    const report = await runScan({ root, allowCode: true }, { exec, which: withTools("golangci-lint") })
     expect(report.candidates.map((c) => c.ruleEnabledInRepo)).toEqual([null])
   })
 

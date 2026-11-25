@@ -1,3 +1,39 @@
+## safety [0.14.5](https://github.com/srobroek/harness-plugins/compare/safety--v0.14.4...safety--v0.14.5) (2026-11-24)
+
+### Bug Fixes
+
+* **safety:** load on hosts whose plugin effect module lacks Tool ([#169](https://github.com/srobroek/harness-plugins/issues/169)) ([1543acd](https://github.com/srobroek/harness-plugins/commit/1543acd3908001b8339176f35de92fc1af45233f))
+
+## safety [0.14.4](https://github.com/srobroek/harness-plugins/compare/safety--v0.14.3...safety--v0.14.4) (2026-11-24)
+
+## safety [0.14.3](https://github.com/srobroek/harness-plugins/compare/safety--v0.14.2...safety--v0.14.3) (2026-11-24)
+
+### Bug Fixes
+
+* **safety:** read git wrappers from the gitWrappers option ([4da3a61](https://github.com/srobroek/harness-plugins/commit/4da3a6175ea0890c3492b820b01488514cf1a4b4))
+
+## safety [0.14.2](https://github.com/srobroek/harness-plugins/compare/safety--v0.14.1...safety--v0.14.2) (2026-11-24)
+
+## safety [0.14.1](https://github.com/srobroek/harness-plugins/compare/safety--v0.14.0...safety--v0.14.1) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## safety [0.14.0](https://github.com/srobroek/harness-plugins/compare/safety--v0.13.1...safety--v0.14.0) (2026-11-23)
+
+### Features
+
+* **safety:** add pi extension layered on cc-safety-net ([42cb883](https://github.com/srobroek/harness-plugins/commit/42cb88359abd6cbd6276c558d0843024a115b2cd))
+* **safety:** add pi gates for profiles, system permissions, fork bombs, disks and power ([1d23923](https://github.com/srobroek/harness-plugins/commit/1d2392376378fad93afae85ae4619ec8ab8022df))
+* **safety:** remove the Git Defender and Route 53 parent-marker gates ([8bdb0e5](https://github.com/srobroek/harness-plugins/commit/8bdb0e58ae24d1c16b84541f9239b793246a8737))
+
+## safety [0.13.1](https://github.com/srobroek/harness-plugins/compare/safety--v0.13.0...safety--v0.13.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## safety [0.13.0](https://github.com/srobroek/harness-plugins/compare/safety--v0.12.2...safety--v0.13.0) (2026-11-22)
 
 ### Features

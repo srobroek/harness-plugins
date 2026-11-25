@@ -1,6 +1,6 @@
 {
   "name": "agent-reviewer",
-  "version": "0.11.1",
+  "version": "0.15.1",
   "description": "Read-only reviewer subagents (pull request, local diff, security, adversarial challenge) sharing one review core, and a security review skill.",
   "private": true,
   "type": "module",
@@ -9,9 +9,43 @@
     "category": "development",
     "harnesses": [
       "opencode",
-      "claude"
+      "claude",
+      "omp",
+      "pi"
     ],
     "scope": "global",
+    "companions": [
+      {
+        "package": "pi-lens",
+        "for": "code-intelligence and AST search tools for Pi subagents",
+        "required": true
+      },
+      {
+        "package": "pi-web-access",
+        "for": "web research tools for the security auditor",
+        "required": true
+      },
+      {
+        "package": "@srobroek/pi-code-quality",
+        "for": "test review tools and quality-test-audit for Pi subagents",
+        "required": true
+      },
+      {
+        "package": "@srobroek/pi-repomix",
+        "for": "repository packing for the code reviewer",
+        "required": true
+      },
+      {
+        "package": "@srobroek/pi-dep-update",
+        "for": "read-only dependency scan tools for Pi subagents",
+        "required": true
+      },
+      {
+        "package": "@srobroek/pi-whats-new",
+        "for": "version gap scan tools for Pi subagents",
+        "required": true
+      }
+    ],
     "claudeAgents": [
       "adversarial-challenger",
       "code-reviewer",

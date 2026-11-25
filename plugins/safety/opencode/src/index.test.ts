@@ -4,13 +4,12 @@ import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { Tool } from "@opencode/plugin/effect"
 import { createFakeContext, type FakeAssert, type FakeSession, type FakeSkill } from "@srobroek/opencode-lib/testing"
-import plugin, { applyDecision, confirmSecretCommand, createPlugin, type Evaluation, type Overrides, readOptions, shellCwd } from "./index.ts"
-import { FNOX_CONFIG_MESSAGE, FNOX_INDIRECT_MESSAGE, FNOX_STORE_MESSAGE, VALUE_MESSAGE } from "./op-guard.ts"
-import { INVESTIGATE_NOTICE } from "./package-investigate.ts"
-import { FORCE_PUSH_MESSAGE } from "./permission.ts"
+import { FNOX_CONFIG_MESSAGE, FNOX_INDIRECT_MESSAGE, FNOX_STORE_MESSAGE, VALUE_MESSAGE } from "../../shared/op-guard.ts"
+import { INVESTIGATE_NOTICE } from "../../shared/package-investigate.ts"
+import { FORCE_PUSH_MESSAGE } from "../../shared/permission.ts"
+import plugin, { applyDecision, createPlugin, type Evaluation, type Overrides, readOptions, shellCwd } from "./index.ts"
 import type { GitRun } from "./repo-worktrees.ts"
 import { scratchRoots } from "./scratch-dirs.ts"
-import { COMMAND_ACTION, STORE_ACTION } from "./secret-store.ts"
 
 // Every decision spawns real git processes; a loaded machine can take seconds.
 setDefaultTimeout(60_000)
@@ -78,12 +77,12 @@ async function load(options: Record<string, unknown> = {}, more: Load = {}) {
 }
 
 describe("setup", () => {
-  test("registers its hooks and the secret-store tool, and disposes them", async () => {
+  test("registers its hooks, and disposes them", async () => {
     const { fake, cleanup } = await load()
     expect(fake.hooks("tool")).toEqual(["execute.before", "execute.before", "execute.after", "execute.after"])
     expect(fake.hooks("shell")).toEqual(["create.before"])
-    expect(fake.hooks("permission")).toEqual(Array(8).fill("evaluate"))
-    expect([...fake.tools.keys()]).toEqual([STORE_ACTION])
+    expect(fake.hooks("permission")).toEqual(Array(7).fill("evaluate"))
+    expect([...fake.tools.keys()]).toEqual([])
     await cleanup?.()
     expect(fake.active()).toBe(0)
     expect(fake.tools.size).toBe(0)
@@ -103,8 +102,6 @@ describe("hard gates", () => {
       /attribution-guard/,
     )
     await expect(before("c4", "git worktree add /tmp/x")).rejects.toThrow(/worktree-tmp-guard/)
-    await expect(before("c5", "git defender status")).rejects.toThrow(/git-defender-user-only/)
-    await expect(before("c6", "aws route53 delete-hosted-zone --id Z1")).rejects.toThrow(/dns-delegation-guard/)
     await expect(before("c7", "uvx git-filter-repo --force --subdirectory-filter X")).rejects.toThrow(/history-rewrite-guard/)
   })
 
@@ -131,8 +128,14 @@ describe("hard gates", () => {
   })
 
   test("a disabled guard lets the command through", async () => {
-    const { before } = await load({ disable: ["git-defender"] })
-    await before("c1", "git defender status")
+    const { before } = await load({ disable: ["worktree-tmp"] })
+    await before("c1", "git worktree add /tmp/x")
+  })
+
+  test("gitWrappers makes the gates read a listed wrapper as git", async () => {
+    await (await load()).before("c1", "dgit worktree add /tmp/x")
+    const { before } = await load({ gitWrappers: ["git", "dgit"] })
+    await expect(before("c2", "dgit worktree add /tmp/x")).rejects.toThrow(/worktree-tmp-guard/)
   })
 
   test("a bash call is gated as the shell call it is routed to", async () => {
@@ -618,7 +621,7 @@ describe("scratch folders", () => {
 
   test("scratchDirs: false registers no hook", async () => {
     const { fake } = await load({ scratchDirs: false })
-    expect(fake.hooks("permission")).toEqual(Array(7).fill("evaluate"))
+    expect(fake.hooks("permission")).toEqual(Array(6).fill("evaluate"))
   })
 
   test("readOptions reads the documented subagentSecretPaths key and ignores non-strings", () => {
@@ -684,7 +687,7 @@ describe("steering directories and same-repo worktrees", () => {
     const { fake } = await load({ steeringDirs: [steering] }, { scratchRoots: [] })
     for (const tool of ["read", "glob", "grep", "list"]) {
       await start(fake, `st-${tool}`, tool)
-      expect((await ask(fake, [`${steering}/git-defender.md`], `st-${tool}`)).effect).toBe("allow")
+      expect((await ask(fake, [`${steering}/release-checklist.md`], `st-${tool}`)).effect).toBe("allow")
     }
     for (const tool of ["write", "edit", "shell"]) {
       await start(fake, `st-${tool}`, tool)
@@ -735,7 +738,7 @@ describe("steering directories and same-repo worktrees", () => {
     test("steering reads are allowed before the unanswerable deny; an outside path is denied", async () => {
       const { fake } = await load({ steeringDirs: [steering], disable: [ISOLATE] }, { scratchRoots: [], sessions: [child(ELSEWHERE)] })
       await start(fake, "c1", "read")
-      expect((await ask(fake, [`${steering}/git-defender.md`], "c1", "ask", "ses_child")).effect).toBe("allow")
+      expect((await ask(fake, [`${steering}/release-checklist.md`], "c1", "ask", "ses_child")).effect).toBe("allow")
       const denied = await ask(fake, [`${outside}/x`], "c1", "ask", "ses_child")
       expect(denied.effect).toBe("deny")
       expect(denied.message).toContain("subagent sessions cannot answer permission prompts")
@@ -800,8 +803,13 @@ describe("steering directories and same-repo worktrees", () => {
 })
 
 describe("helpers", () => {
+  test("gitWrappers defaults to git and accepts configured executable basenames", () => {
+    expect(readOptions(undefined).gitWrappers).toEqual(["git"])
+    expect(readOptions({ gitWrappers: ["git", "dgit", 3] }).gitWrappers).toEqual(["git", "dgit"])
+  })
+
   test("readOptions keeps known feature ids only", () => {
-    expect([...readOptions({ disable: ["git-defender", "nope", 3] }).disabled]).toEqual(["git-defender"])
+    expect([...readOptions({ disable: ["worktree-tmp", "nope", 3] }).disabled]).toEqual(["worktree-tmp"])
     expect(readOptions(undefined).disabled.size).toBe(0)
   })
 
@@ -809,152 +817,6 @@ describe("helpers", () => {
     expect(shellCwd(undefined, "/p")).toBe("/p")
     expect(shellCwd("sub", "/p")).toBe("/p/sub")
     expect(shellCwd("/abs", "/p")).toBe("/abs")
-  })
-})
-
-describe("safety_secret_store through the plugin", () => {
-  const SENTINEL = "SENTINEL-dummy-6ks-plugin"
-  const toolCall = { ...call, id: "t1", signal: new AbortController().signal }
-  const OP_CONFIG = '[providers.proj6ks]\ntype = "1password"\nvault = "Dev"\n'
-  let root: string
-
-  beforeAll(() => {
-    const base = join(realpathSync(tmpdir()), "opencode")
-    mkdirSync(base, { recursive: true })
-    root = mkdtempSync(join(base, "safety-secret-store-"))
-  })
-  afterAll(() => rmSync(root, { recursive: true, force: true }))
-
-  /** A fresh project with `fnox.toml`, an empty home, and a directory outside the project. */
-  function layout(config = OP_CONFIG) {
-    const dir = mkdtempSync(join(root, "case-"))
-    const project = join(dir, "project")
-    const outside = join(dir, "outside")
-    for (const path of [project, outside, join(dir, "home")]) mkdirSync(path, { recursive: true })
-    writeFileSync(join(project, "fnox.toml"), config)
-    return { project, outside, home: join(dir, "home") }
-  }
-
-  type Run = { argv: string[]; stdin?: string }
-
-  async function storeThrough(
-    input: unknown,
-    options: { assert?: (input: FakeAssert) => void; onCommand?: () => void; project?: string; home?: string } = {},
-  ) {
-    const runs: Run[] = []
-    const where = options.project === undefined ? layout() : { project: options.project, home: options.home as string }
-    const fake = createFakeContext({
-      directory: where.project,
-      sessions: [{ id: "ses_1", location: { directory: where.project } }],
-      ...(options.assert ? { assert: options.assert } : {}),
-    })
-    await createPlugin({
-      env: {},
-      secretStore: {
-        env: { PATH: "/bin" },
-        home: where.home,
-        which: (bin) => `/bin/${bin}`,
-        run: async (argv, run) => {
-          runs.push({ argv, ...(run.stdin ? { stdin: new TextDecoder().decode(run.stdin) } : {}) })
-          if (argv[0] !== "/bin/gh") return { kind: "exited", exitCode: 0 }
-          options.onCommand?.()
-          return { kind: "exited", exitCode: 0, stdout: new TextEncoder().encode(`${SENTINEL}\n`) }
-        },
-      },
-    }).setup(fake.context)
-    const execute = fake.tools.get(STORE_ACTION)?.execute as (input: unknown, context: unknown) => Promise<{ content: string; metadata: unknown }>
-    const result = await execute(input, toolCall).catch((error: Error) => error)
-    return { fake, runs, result, project: where.project }
-  }
-
-  const input = { name: "GH_TOKEN", target: { kind: "1password", vault: "Dev", item: "gh" }, command: { argv: ["gh", "auth", "token"] } }
-
-  test("asks to store into the resolved config, then asks to run the command, and returns no value", async () => {
-    const { fake, runs, result, project } = await storeThrough(input)
-    const file = join(project, "fnox.toml")
-    expect(fake.asserts.map((a) => [a.action, a.resources])).toEqual([
-      [STORE_ACTION, [`GH_TOKEN -> 1password Dev/gh/credential (fnox provider proj6ks) in ${file}`]],
-      [COMMAND_ACTION, [`gh auth token  (in ${project})`]],
-    ])
-    expect(fake.asserts[0]?.metadata).toMatchObject({ config: file, provider: "proj6ks", target: { kind: "1password", vault: "Dev" } })
-    expect(runs.map((run) => run.argv[0])).toEqual(["/bin/gh", "/bin/op", "/bin/fnox"])
-    expect(runs[2]?.argv[1]).toBe(`--config=${file}`)
-    expect(JSON.stringify(result)).not.toContain(SENTINEL)
-    expect(JSON.stringify(fake.asserts)).not.toContain(SENTINEL)
-    expect(result).toMatchObject({ metadata: { name: "GH_TOKEN", reference: "gh/credential", stored: true } })
-  })
-
-  test("a refused command prompt runs nothing", async () => {
-    const { runs, result } = await storeThrough(input, {
-      assert: (a) => {
-        if (a.action === COMMAND_ACTION) throw new Error("rejected")
-      },
-    })
-    expect(String(result)).toContain("rejected")
-    expect(runs).toEqual([])
-  })
-
-  test("a command that switches the provider to plain in the config makes the tool refuse, with no fnox set", async () => {
-    const { project, home } = layout('[providers.host6ks]\ntype = "age"\n')
-    const { runs, result } = await storeThrough(
-      { name: "A", target: { kind: "fnox-store", provider: "host6ks" }, command: { argv: ["gh"] } },
-      { project, home, onCommand: () => writeFileSync(join(project, "fnox.toml"), '[providers.host6ks]\ntype = "plain"\n') },
-    )
-    expect(String(result)).toContain("config changed")
-    expect(String(result)).not.toContain(SENTINEL)
-    expect(runs.map((run) => run.argv[0])).toEqual(["/bin/gh"])
-  })
-
-  test("a command that switches the 1Password provider to plain makes the tool refuse, with no op item create", async () => {
-    const { project, home } = layout()
-    const { runs, result } = await storeThrough(input, {
-      project,
-      home,
-      onCommand: () => writeFileSync(join(project, "fnox.toml"), '[providers.proj6ks]\ntype = "plain"\n'),
-    })
-    expect(String(result)).toContain("config changed")
-    expect(runs.map((run) => run.argv[0])).toEqual(["/bin/gh"])
-  })
-
-  test("a config outside the project asks external_directory, and a refusal stores nothing", async () => {
-    const { project, outside, home } = layout()
-    writeFileSync(join(outside, "fnox.toml"), OP_CONFIG)
-    const { fake, runs, result } = await storeThrough(
-      { ...input, config: "../outside/fnox.toml" },
-      {
-        project,
-        home,
-        assert: (a) => {
-          if (a.action === "external_directory") throw new Error("rejected")
-        },
-      },
-    )
-    expect(String(result)).toContain("rejected")
-    expect(fake.asserts.map((a) => [a.action, a.resources])).toEqual([["external_directory", [join(outside, "*")]]])
-    expect(runs).toEqual([])
-  })
-
-  test("a symlink inside the project to a config outside counts as outside, and the store prompt names the target", async () => {
-    const { project, outside, home } = layout()
-    writeFileSync(join(outside, "real.toml"), OP_CONFIG)
-    symlinkSync(join(outside, "real.toml"), join(project, "fnox.local.toml"))
-    const { fake, runs } = await storeThrough({ ...input, config: "fnox.local.toml" }, { project, home })
-    expect(fake.asserts.map((a) => a.action)).toEqual(["external_directory", STORE_ACTION, COMMAND_ACTION])
-    expect(fake.asserts[0]?.resources).toEqual([join(outside, "*")])
-    expect(fake.asserts[1]?.resources[0]).toEndWith(` in ${join(outside, "real.toml")}`)
-    expect(runs[2]?.argv[1]).toBe(`--config=${join(outside, "real.toml")}`)
-  })
-
-  test("every command run asks, even when the policy allows it; a deny and other actions stay as they are", () => {
-    const evaluation = (action: string, effect: Evaluation["effect"]) => ({ sessionID: "s", action, resources: [], effect }) as Evaluation
-    const allowed = evaluation(COMMAND_ACTION, "allow")
-    confirmSecretCommand(allowed)
-    expect(allowed.effect).toBe("ask")
-    for (const other of [evaluation(COMMAND_ACTION, "deny"), evaluation(STORE_ACTION, "allow")]) {
-      const before = other.effect
-      confirmSecretCommand(other)
-      expect(other.effect).toBe(before)
-    }
   })
 })
 

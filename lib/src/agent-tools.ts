@@ -10,8 +10,8 @@
 
 import type { AgentPermission } from "./agent-files.ts"
 
-/** Public, read-only MCP servers every plugin's agents may call unless the option says otherwise. */
-export const DEFAULT_MCP_TOOLS: readonly string[] = ["context7_*", "aws-mcp_*"]
+/** Context7 is the portable read-only MCP default; callers can opt in to additional servers. */
+export const DEFAULT_MCP_TOOLS: readonly string[] = ["context7_*"]
 
 /**
  * Agents that may gain the `tools` option's MCP rules: the ones that code, research, review or
@@ -36,6 +36,7 @@ export const MCP_TOOL_AGENTS: ReadonlySet<string> = new Set([
   "security-auditor",
   "spec",
   "ui-implementer",
+  "whats-new",
 ])
 
 /**
@@ -89,7 +90,6 @@ const BUILT_IN_ACTIONS: readonly string[] = [
  */
 export const RESERVED_TOOL_PREFIXES: readonly string[] = [
   "autopilot_",
-  "cad_",
   "challenge_",
   "claude_",
   "dep_",

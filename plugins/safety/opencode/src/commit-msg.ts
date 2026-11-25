@@ -11,14 +11,11 @@ import { spawnSync } from "node:child_process"
 import { chmodSync, copyFileSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { hasAttribution } from "./attribution.ts"
+import { hasAttribution } from "../../shared/attribution.ts"
 
 export const MARKER = "srobroek.safety commit-msg hook"
 export const CHECKER_NAME = "safety-commit-msg.js"
 export const CHAINED_NAME = "commit-msg.chained"
-
-/** Hook directories known to run the repository's own `.git/hooks` after their own. */
-export const DELEGATING_HOOKS_PATHS: readonly string[] = ["/usr/local/amazon/var/git-defender/hooks"]
 
 export const REJECTION =
   "safety commit-msg: this commit message carries AI-assistant attribution (a Co-authored-by trailer naming an assistant, a 'Generated with' line, or an assistant noreply address). Remove it so the commit names only the human author, or bypass the hook once with `git commit --no-verify`."
@@ -120,6 +117,7 @@ export type InstallState = {
   existing: HookKind
   chainedExists: boolean
   behindHooksPath: boolean
+  /** Hook directories known to run the repository's own `.git/hooks` after their own; none by default. */
   delegating?: readonly string[]
 }
 
@@ -141,7 +139,7 @@ export function planInstall(state: InstallState): Plan {
   const hook = join(state.localHooks, "commit-msg")
   if (resolve(state.effectiveHooks) !== resolve(state.localHooks)) {
     const where = state.hooksPath ? `core.hooksPath (${state.hooksPath.scope}: ${state.hooksPath.value})` : "core.hooksPath"
-    const delegating = (state.delegating ?? DELEGATING_HOOKS_PATHS).includes(resolve(state.effectiveHooks))
+    const delegating = (state.delegating ?? []).includes(resolve(state.effectiveHooks))
     if (!delegating && !state.behindHooksPath)
       return {
         action: "refuse",

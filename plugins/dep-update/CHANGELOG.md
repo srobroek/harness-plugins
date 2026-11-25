@@ -1,3 +1,11 @@
+## dep-update [0.7.1](https://github.com/srobroek/harness-plugins/compare/dep-update--v0.7.0...dep-update--v0.7.1) (2026-11-24)
+
+## dep-update [0.7.0](https://github.com/srobroek/harness-plugins/compare/dep-update--v0.6.1...dep-update--v0.7.0) (2026-11-23)
+
+### Features
+
+* **dep-update:** add pi-native dependency tools ([9f80e5d](https://github.com/srobroek/harness-plugins/commit/9f80e5dd092c045790952c47d0ca422149caf1ab))
+
 ## dep-update [0.6.1](https://github.com/srobroek/harness-plugins/compare/dep-update--v0.6.0...dep-update--v0.6.1) (2026-11-21)
 
 ### Bug Fixes

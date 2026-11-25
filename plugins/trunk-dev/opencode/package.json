@@ -1,6 +1,6 @@
 {
   "name": "trunk-dev-opencode",
-  "version": "0.10.0",
+  "version": "0.12.3",
   "private": true,
   "type": "module",
   "exports": {

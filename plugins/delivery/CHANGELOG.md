@@ -1,3 +1,38 @@
+## delivery [0.12.5](https://github.com/srobroek/harness-plugins/compare/delivery--v0.12.4...delivery--v0.12.5) (2026-11-24)
+
+### Bug Fixes
+
+* **agent-reviewer:** tell OMP agents that keep a shell it is unrestricted ([#173](https://github.com/srobroek/harness-plugins/issues/173)) ([1b8386d](https://github.com/srobroek/harness-plugins/commit/1b8386dbf43fa6cb5580d4dbc03e619476ba023c))
+
+## delivery [0.12.4](https://github.com/srobroek/harness-plugins/compare/delivery--v0.12.3...delivery--v0.12.4) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## delivery [0.12.3](https://github.com/srobroek/harness-plugins/compare/delivery--v0.12.2...delivery--v0.12.3) (2026-11-24)
+
+### Bug Fixes
+
+* **agent-researcher:** clarify beadless research scope ([b98d372](https://github.com/srobroek/harness-plugins/commit/b98d3722ac5cffd6bd4dbe223c36a163466cc350))
+* **agent-researcher:** make Beads lifecycle conditional ([23b369c](https://github.com/srobroek/harness-plugins/commit/23b369cc514a869e8cd6fc48e69aa9bf9ad53280))
+* **beads:** rename the store-pin env marker to HARNESS_BEADS_PIN ([f111b05](https://github.com/srobroek/harness-plugins/commit/f111b051e312b4fd6155486e45e145a9a199bc95))
+* **delivery:** align shared reviewer workflow ([7c5814e](https://github.com/srobroek/harness-plugins/commit/7c5814ea37bd8210151de0e7f97f56293eb02ec5))
+* **delivery:** make dev checks and tool integrations configurable ([7b66397](https://github.com/srobroek/harness-plugins/commit/7b663976738a90ed05b544c56109a5e3cc4f91e3))
+
+## delivery [0.12.2](https://github.com/srobroek/harness-plugins/compare/delivery--v0.12.1...delivery--v0.12.2) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## delivery [0.12.1](https://github.com/srobroek/harness-plugins/compare/delivery--v0.12.0...delivery--v0.12.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+* **subagent-worktree:** drop project-wide session eviction from finalize ([398ba17](https://github.com/srobroek/harness-plugins/commit/398ba1791911536abc585fd37a129e83347e1e9b))
+
 ## delivery [0.12.0](https://github.com/srobroek/harness-plugins/compare/delivery--v0.11.1...delivery--v0.12.0) (2026-11-22)
 
 ### Features

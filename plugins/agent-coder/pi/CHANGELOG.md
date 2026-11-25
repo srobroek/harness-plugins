@@ -1,0 +1,176 @@
+## agent-coder [0.14.0](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.13.0...agent-coder--v0.14.0) (2026-11-24)
+
+### Features
+
+* **agent-coder:** grant pi subagents code-intelligence and helper tools ([3aa202e](https://github.com/srobroek/harness-plugins/commit/3aa202e5bfab0b949040745d16f1cd1e0c65f966))
+* **agent-coder:** grant pi subagents code-intelligence and helper tools ([d36c00f](https://github.com/srobroek/harness-plugins/commit/d36c00f8aad33e7947747751501a66a307c13c59))
+* **agent-coder:** grant pi subagents code-intelligence and helper tools ([89d8d54](https://github.com/srobroek/harness-plugins/commit/89d8d54af33d144801baf1ea2af5496b78887ced))
+
+### Bug Fixes
+
+* **agent-coder:** keep every lsp_navigation call preview-only ([83620bd](https://github.com/srobroek/harness-plugins/commit/83620bdbadc46677ee5e2e97b8a56a3439abed85))
+
+## agent-coder [0.13.0](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.4...agent-coder--v0.13.0) (2026-11-24)
+
+### Features
+
+* **agent-researcher:** match pi-subagents' built-in researcher contract on pi ([e3fa574](https://github.com/srobroek/harness-plugins/commit/e3fa57424c3e58eea0860c0e7529d4ac09288448))
+
+## agent-coder [0.12.4](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.3...agent-coder--v0.12.4) (2026-11-24)
+
+## agent-coder [0.12.3](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.2...agent-coder--v0.12.3) (2026-11-24)
+
+### Bug Fixes
+
+* **content:** refresh portable guidance outputs ([744c177](https://github.com/srobroek/harness-plugins/commit/744c177df26bbc1c5a3e8594b56b5a6c1c5a2595))
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## agent-coder [0.12.2](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.1...agent-coder--v0.12.2) (2026-11-23)
+
+### Bug Fixes
+
+* **release:** commit regenerated pi trees in release commits ([4a648a2](https://github.com/srobroek/harness-plugins/commit/4a648a2d2e83b393ee8a7d6d4e26f5538e513a1c))
+
+## agent-coder [0.12.1](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.12.0...agent-coder--v0.12.1) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## agent-coder [0.12.0](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.11.1...agent-coder--v0.12.0) (2026-11-23)
+
+### Features
+
+* **agent-plugins:** complete pi agent prompts ([bd49ec4](https://github.com/srobroek/harness-plugins/commit/bd49ec4a310c315702f2ce63789cda4cf345760d))
+
+## agent-coder [0.11.1](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.11.0...agent-coder--v0.11.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
+## agent-coder [0.11.0](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.10.1...agent-coder--v0.11.0) (2026-11-22)
+
+### Features
+
+* **delivery:** ship the orchestrator agent ([#121](https://github.com/srobroek/harness-plugins/issues/121)) ([53f33c0](https://github.com/srobroek/harness-plugins/commit/53f33c016315732220a7c87066267931ee87f514))
+
+## agent-coder [0.10.1](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.10.0...agent-coder--v0.10.1) (2026-11-21)
+
+### Bug Fixes
+
+* **code-challenge:** close dogfood friction in skill, schema and validation ([043a8b3](https://github.com/srobroek/harness-plugins/commit/043a8b39057ec8fca54d09adebb0532c2154e330))
+
+# Changelog
+
+## [0.10.0](https://github.com/srobroek/opencode-plugins/compare/agent-coder--v0.9.0...agent-coder--v0.10.0) (2026-11-20)
+
+
+### Features
+
+* **agent-coder:** allow project-secrets and review-security skills ([bd19c61](https://github.com/srobroek/opencode-plugins/commit/bd19c611249d19e078fa3a542f1bf83f9abb9502))
+* **agents:** follow lang skills and the repo engineering doc, report departures ([#267](https://github.com/srobroek/opencode-plugins/issues/267)) ([2c15755](https://github.com/srobroek/opencode-plugins/commit/2c15755d62faed398c8f3ce4747a61d1c92ff00c))
+* plugin scan fixes, wider agent access and the plugin-audit plugin ([9c71525](https://github.com/srobroek/opencode-plugins/commit/9c7152559776aaf80cfed9626d78bafdd845fa9a))
+* **plugin-audit:** add plugin_audit_scan tool and plugin-audit skill ([d400433](https://github.com/srobroek/opencode-plugins/commit/d4004330e9a922d8e832b6f3266502141eaea4a3))
+
+
+### Refactors
+
+* **lib:** one MCP tool grant table for the tools option ([f8cc1d8](https://github.com/srobroek/opencode-plugins/commit/f8cc1d817d62b211b712d1889200f7c91f049c89))
+
+## [0.9.0](https://github.com/srobroek/opencode-plugins/compare/agent-coder--v0.8.1...agent-coder--v0.9.0) (2026-11-19)
+
+
+### Features
+
+* **modes:** debug, refactor and concept agents ([6369b8a](https://github.com/srobroek/opencode-plugins/commit/6369b8ae6c4ca35c664f094b60c28d356cc13298))
+* **quality:** add stub-and-swap rules to coding and testing standards ([2bdfe9b](https://github.com/srobroek/opencode-plugins/commit/2bdfe9b4755dfc284200dadfb4648e6e9239f3b6))
+* **safety:** secret_store tool stores a generated or command-issued secret without a shell ([d84a1d2](https://github.com/srobroek/opencode-plugins/commit/d84a1d22b0ff6e72f327fb185c512b2296a80a1e))
+
+
+### Bug Fixes
+
+* **safety:** refuse history-rewriting git in a canonical checkout ([#210](https://github.com/srobroek/opencode-plugins/issues/210)) ([515f7ba](https://github.com/srobroek/opencode-plugins/commit/515f7ba36493307fad32de51e48c47197bb31f26))
+
+## [0.8.1](https://github.com/srobroek/opencode-plugins/compare/agent-coder--v0.8.0...agent-coder--v0.8.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **agent-coder:** allow the chezmoi-editor skill ([#177](https://github.com/srobroek/opencode-plugins/issues/177)) ([f7d09b5](https://github.com/srobroek/opencode-plugins/commit/f7d09b5fba7a06d8e840200913c84b1ee205c8c6))
+
+## [0.8.0](https://github.com/srobroek/opencode-plugins/compare/agent-coder--v0.7.0...agent-coder--v0.8.0) (2026-11-13)
+
+
+### Features
+
+* **agents:** a tools option that lets read-only and coding agents call allowed MCP tools ([70558c3](https://github.com/srobroek/opencode-plugins/commit/70558c30dc450faec7e6012cdb0f678f1ecd7f01))
+
+## [0.7.0](https://github.com/srobroek/opencode-plugins/compare/agent-coder--v0.6.0...agent-coder--v0.7.0) (2026-11-12)
+
+
+### Features
+
+* **quality:** research-first engineering standards and per-language library standards for every coding agent ([09e8d46](https://github.com/srobroek/opencode-plugins/commit/09e8d461bb2b7654788a588ef6932929ff564d28))
+* **quality:** testing standards: behavior tests, test budget, same-change maintenance, reviewers check test changes ([dcdf941](https://github.com/srobroek/opencode-plugins/commit/dcdf9413b6793ed06ef8978a0084d9f50d30b00c))
+* **toolchain:** compare Connect, gRPC and OpenAPI, and use Connect for RPC beside Hono for HTTP ([d62b5c7](https://github.com/srobroek/opencode-plugins/commit/d62b5c79f355c687a9d53333c64cc583dcabfea8))
+
+## [0.6.0](https://github.com/srobroek/opencode-plugins/compare/agent-coder--v0.5.0...agent-coder--v0.6.0) (2026-11-11)
+
+
+### Features
+
+* **quality:** require quality-code-design only for new behavior, refactors, hard bugs and reviews ([#125](https://github.com/srobroek/opencode-plugins/issues/125)) ([774d73f](https://github.com/srobroek/opencode-plugins/commit/774d73f64e9966cdd1bbad40c13f152d17f2c61d))
+
+## [0.5.0](https://github.com/srobroek/opencode-plugins/compare/agent-coder--v0.4.0...agent-coder--v0.5.0) (2026-11-11)
+
+
+### Features
+
+* **agent-coder:** route reviews to code-reviewer and long commands to operator ([#120](https://github.com/srobroek/opencode-plugins/issues/120)) ([8a22f42](https://github.com/srobroek/opencode-plugins/commit/8a22f42b35dec7d47d2b7fcb533df7413de8a481))
+* cap every shipped agent with a step limit ([#123](https://github.com/srobroek/opencode-plugins/issues/123)) ([7b3b60f](https://github.com/srobroek/opencode-plugins/commit/7b3b60f84ac4aabcf8d5d649042e26054f79b0f4))
+
+## [0.4.0](https://github.com/srobroek/opencode-plugins/compare/agent-coder--v0.3.0...agent-coder--v0.4.0) (2026-10-27)
+
+
+### Features
+
+* **agent-coder:** allow every lang-* skill by prefix ([21e27f7](https://github.com/srobroek/opencode-plugins/commit/21e27f7b9662cc04c3215bbb6c1b7e3a2970a215))
+* **agent-coder:** allow the ast-grep-* skills for coder ([cedb3a7](https://github.com/srobroek/opencode-plugins/commit/cedb3a75638657b10b8e2965434b9c64a4798fc0))
+* **lib:** coding-core type-checks after multi-file or signature changes ([ea722cd](https://github.com/srobroek/opencode-plugins/commit/ea722cd31c171b4b08969eaa0e9084c6fda0bdd9))
+
+
+### Bug Fixes
+
+* **lib:** keep a shipped agent hidden when the host prefills hidden: false ([6156c94](https://github.com/srobroek/opencode-plugins/commit/6156c946f8a5265ff5498bb4062a9d822bbd0555))
+
+
+### Performance
+
+* **agent-coder:** allow coding skills by family prefix ([a1e1d3d](https://github.com/srobroek/opencode-plugins/commit/a1e1d3d201a73bdb2c964427f6ad9c828a6f3457))
+
+
+### Refactors
+
+* **agent-coder:** compose coder from coding-core ([e6032ab](https://github.com/srobroek/opencode-plugins/commit/e6032ab5e1ea4e8c916b5b8d38eff176ee9eb629))
+
+
+### Documentation
+
+* add repomix to the manual-test install loop ([d411160](https://github.com/srobroek/opencode-plugins/commit/d41116016e8a7f7390046cc8aca70f58b7c2ab22))
+
+## [0.3.0](https://github.com/srobroek/opencode-plugins/compare/agent-coder--v0.2.0...agent-coder--v0.3.0) (2026-10-27)
+
+
+### Features
+
+* **agent-coder:** allow the quality-testing and ci-github-actions skills ([11dba4a](https://github.com/srobroek/opencode-plugins/commit/11dba4a934526b4a58315e583c296456dbcd82b4))
+* **quality:** quality-profiling method skill with per-language profiling skills ([7786848](https://github.com/srobroek/opencode-plugins/commit/7786848fb2cfe68b6c1c29848644023c6668197f))
+
+## [0.2.0](https://github.com/srobroek/opencode-plugins/compare/agent-coder--v0.1.0...agent-coder--v0.2.0) (2026-10-27)
+
+
+### Features
+
+* **agent-coder:** coder subagent for code development with coding tools and skills only ([b01da0b](https://github.com/srobroek/opencode-plugins/commit/b01da0be059d9c72b0c115b74120c7c771532b83))
+* **lib:** shared review core composed into agents at build time ([d79c79b](https://github.com/srobroek/opencode-plugins/commit/d79c79b48ba09d5770c7586799f856237f3b00af))

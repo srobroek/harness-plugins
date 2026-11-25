@@ -26,6 +26,18 @@ permissions:
   - action: shell
     resource: "gh pr diff *"
     effect: allow
+  - action: shell
+    resource: "glab mr view *"
+    effect: allow
+  - action: shell
+    resource: "glab mr diff *"
+    effect: allow
+  - action: shell
+    resource: "glab api *-X GET*"
+    effect: allow
+  - action: shell
+    resource: "glab api *--method GET*"
+    effect: allow
 ---
 
 {{include shared/pr-reviewer}}

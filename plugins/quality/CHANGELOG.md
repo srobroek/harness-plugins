@@ -1,3 +1,42 @@
+## quality [0.16.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.15.3...quality--v0.16.0) (2026-11-24)
+
+### Features
+
+* **agent-reviewer:** code-reviewer and security-auditor run the project's tests ([#172](https://github.com/srobroek/harness-plugins/issues/172)) ([0d2693e](https://github.com/srobroek/harness-plugins/commit/0d2693eba31b4a1b48f4a2f6726a1170a948e503))
+
+## quality [0.15.3](https://github.com/srobroek/harness-plugins/compare/quality--v0.15.2...quality--v0.15.3) (2026-11-24)
+
+## quality [0.15.2](https://github.com/srobroek/harness-plugins/compare/quality--v0.15.1...quality--v0.15.2) (2026-11-24)
+
+### Bug Fixes
+
+* **design:** make MCP servers opt-in ([1ecb493](https://github.com/srobroek/harness-plugins/commit/1ecb493f35ebfe9112f9e4661fa1b2e5ec457fc4))
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## quality [0.15.1](https://github.com/srobroek/harness-plugins/compare/quality--v0.15.0...quality--v0.15.1) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## quality [0.15.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.14.1...quality--v0.15.0) (2026-11-23)
+
+### Features
+
+* **quality:** add pi test audit tools ([57e334b](https://github.com/srobroek/harness-plugins/commit/57e334ba19730f79cd9e4307447322a42abc895a))
+
+### Bug Fixes
+
+* **agent-reviewer:** align duplicate harness agents ([b5bf82a](https://github.com/srobroek/harness-plugins/commit/b5bf82a275d3127e73518336c5b1a9228c4f6a71))
+* **quality:** name the pi bundle quality.js ([2797720](https://github.com/srobroek/harness-plugins/commit/2797720631f7c3088254fffca69eae8db5d53a41))
+* **quality:** restore the adversarial-challenger description ([90dab4b](https://github.com/srobroek/harness-plugins/commit/90dab4b3cf7bcd916e0837882b1c867a9ff1c611))
+
+## quality [0.14.1](https://github.com/srobroek/harness-plugins/compare/quality--v0.14.0...quality--v0.14.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## quality [0.14.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.13.1...quality--v0.14.0) (2026-11-22)
 
 ### Features

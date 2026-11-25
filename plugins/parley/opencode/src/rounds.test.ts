@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import type { Question } from "../../shared/questions.ts"
+import { collect, Rounds, settled, view, waitFor } from "../../shared/rounds.ts"
 import { Presence } from "./presence.ts"
-import type { Question } from "./questions.ts"
-import { collect, Rounds, settled, view, waitFor } from "./rounds.ts"
 
 const q = (id: string): Question => ({
   id,

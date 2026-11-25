@@ -1,3 +1,24 @@
+## worktrunk [0.7.2](https://github.com/srobroek/harness-plugins/compare/worktrunk--v0.7.1...worktrunk--v0.7.2) (2026-11-24)
+
+## worktrunk [0.7.1](https://github.com/srobroek/harness-plugins/compare/worktrunk--v0.7.0...worktrunk--v0.7.1) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## worktrunk [0.7.0](https://github.com/srobroek/harness-plugins/compare/worktrunk--v0.6.1...worktrunk--v0.7.0) (2026-11-23)
+
+### Features
+
+* **trunk-dev:** enforce commit and push gates and merge advisories on pi ([a96175c](https://github.com/srobroek/harness-plugins/commit/a96175c53d82b6ff71a8c9b2f55c43426983f639))
+* **worktrunk:** add pi merge gate, wt switch timeout and preflight tool ([5b5ef87](https://github.com/srobroek/harness-plugins/commit/5b5ef87b10fe4108d3b75ea4d2c0d0fef690c2ff))
+
+## worktrunk [0.6.1](https://github.com/srobroek/harness-plugins/compare/worktrunk--v0.6.0...worktrunk--v0.6.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
 ## worktrunk [0.6.0](https://github.com/srobroek/harness-plugins/compare/worktrunk--v0.5.1...worktrunk--v0.6.0) (2026-11-22)
 
 ### Features

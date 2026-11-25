@@ -6,9 +6,9 @@ import { loadConfig } from "@srobroek/harness-kit"
 const root = path.join(import.meta.dir, "..")
 const json = (file: string) => JSON.parse(readFileSync(path.join(root, file), "utf8"))
 
-test("harness-kit.json is valid and targets OpenCode, Claude Code, and OMP", () => {
+test("harness-kit.json is valid and targets OpenCode, Claude Code, OMP, and pi", () => {
   const config = loadConfig(root)
-  expect(config.harnesses).toEqual(["opencode", "claude", "omp"])
+  expect(config.harnesses).toEqual(["opencode", "claude", "omp", "pi"])
   expect(config.marketplace.name).toBe("harness-plugins")
 })
 
@@ -36,7 +36,7 @@ test("multi-semantic-release discovers every plugin and no other package", () =>
     .map((entry) => entry.name)
     .sort()
   expect(releasedPackages()).toEqual(plugins)
-  expect(plugins).toHaveLength(45)
+  expect(plugins).toHaveLength(46)
 })
 
 /** The commit-analyzer options of a release config. */
@@ -58,18 +58,23 @@ test("refactor and docs commits cut a patch, and a breaking change a major", asy
   ])
 })
 
-test("cad, below 1.0, treats a breaking change as a minor release and keeps the other rules", async () => {
-  expect((await analyzerOptions("plugins/cad/release.config.mjs"))?.releaseRules).toEqual([
-    { breaking: true, release: "minor" },
-    ...refactorAndDocs,
-  ])
+test("the release config publishes pi packages", async () => {
+  const config = (await import(path.join(root, "release.config.mjs"))).default as { plugins: [string, Record<string, unknown>][] }
+  const [, options] = config.plugins.find(([name]) => name === "@semantic-release/exec") ?? []
+  expect(options?.publishCmd).toContain("npm publish ./pi --provenance --access public")
 })
 
-test("no release config publishes to npm", async () => {
-  for (const file of ["release.config.mjs", "plugins/cad/release.config.mjs"]) {
-    const config = (await import(path.join(root, file))).default as { plugins: (string | [string])[] }
-    const names = config.plugins.map((plugin) => (typeof plugin === "string" ? plugin : plugin[0]))
-    expect(names).not.toContain("@semantic-release/npm")
-    expect(names).toContain("@semantic-release/github")
-  }
+test("release config publishes only the intended npm packages via its preset", async () => {
+  const config = (await import(path.join(root, "release.config.mjs"))).default as { plugins: (string | [string])[] }
+  const names = config.plugins.map((plugin) => (typeof plugin === "string" ? plugin : plugin[0]))
+  expect(names).not.toContain("@semantic-release/npm")
+  expect(names).toContain("@semantic-release/github")
+})
+
+// harness-kit stamp rewrites every harness tree's manifest with the new version; a tree missing here is left one
+// version behind on main after each release, and the next harness-kit check fails.
+test("the release commit carries every harness tree", async () => {
+  const config = (await import(path.join(root, "release.config.mjs"))).default as { plugins: [string, Record<string, unknown>][] }
+  const [, options] = config.plugins.find(([name]) => name === "@semantic-release/git") ?? []
+  expect(options?.assets).toEqual(expect.arrayContaining(["opencode/**", "claude/**", "omp/**", "pi/**"]))
 })

@@ -1,0 +1,77 @@
+# mol-challenge-refute -- the REFUTE phase of a code-challenge run, runnable alone
+#
+# Install: run the challenge_setup tool, which copies every code-challenge formula into
+# <repo>/.beads/formulas/, or copy this file there (or into ~/.beads/formulas/).
+# Pour one phase:
+#   bd mol pour mol-challenge-refute --var target=<paths> --var run_id=<run-id> --var depth=<depth> --var mode=<mode>
+#
+# The phase needs the earlier phases' files in the run directory; each file is named in the
+# code-challenge skill's references/run-storage.md. The vars have no defaults because bd mol bond
+# does not apply them.
+#
+# PRECONDITION: the skills and agents named here ship in the code-challenge plugin
+# (srobroek.code-challenge). Install it first.
+#
+# Evidence rule: every finding carries a tier -- proven, measured or hypothesis -- and a
+# path:line locator. A speed claim without a measurement is a hypothesis.
+formula = "mol-challenge-refute"
+description = "Run the REFUTE phase for {{target}}: a reviewer-tier critic attacks every finding"
+type = "workflow"
+
+[vars.target]
+required = true
+description = "paths, packages or diff range under challenge"
+
+[vars.run_id]
+required = true
+description = "run id; the run directory is <git-dir>/code-challenge/<run-id>/"
+
+[vars.depth]
+required = true
+description = "quick, standard or deep"
+
+[vars.mode]
+required = true
+description = "interactive or autonomous"
+
+[[steps]]
+id = "brief-critic"
+title = "BRIEF the critic"
+type = "task"
+labels = ["code-challenge", "sub:refute", "phase:refute"]
+description = """
+Run the code-challenge skill, phase REFUTE, from run {{run_id}}. You (the lead) put a brief of
+observable facts only into the attack-findings bead: no conclusions of your own. Skip this phase at
+depth quick. Do not question the user.
+"""
+
+[[steps]]
+id = "attack-findings"
+title = "ATTACK each finding with refactor-challenger"
+type = "task"
+needs = ["brief-critic"]
+labels = ["code-challenge", "sub:refute", "phase:refute"]
+description = """
+Read the brief in this bead: per finding the id, lens, locator, claim, tool or reading,
+evidence, test protection and proposal, plus the scored candidates for library findings. Attack
+each finding with the refactor-challenger protocol and reply with the verdict table. Read only;
+the lead records your reply.
+"""
+
+[steps.metadata]
+execution_agent_type = "refactor-challenger"
+execution_mode = "subagent"
+requires_actions = "read, grep, glob, skill:code-challenge, skill:quality-code-policy"
+
+[[steps]]
+id = "apply-verdicts"
+title = "APPLY the verdicts to findings.json"
+type = "task"
+needs = ["attack-findings"]
+labels = ["code-challenge", "sub:refute", "phase:refute"]
+description = """
+You (the lead) write verdicts.json from the critic's reply with KEEP, DOWNGRADE or DROP and the cited rationale per finding. A DROP
+leaves the offer list and is reported as dropped. A DOWNGRADE lowers impact or evidence tier as the
+critic states. Record the critic's tier, blast_radius and changes_contract per finding; DECIDE reads those
+in place of the scout's. Never override a verdict without a logged decisions.jsonl line.
+"""

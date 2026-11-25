@@ -17,7 +17,7 @@ it, rerun that step, then continue. Prefer the project's own scripts (`bun run c
 | Step | Command |
 | --- | --- |
 | Install | The lockfile-respecting install: `bun install --frozen-lockfile`, `pnpm install --frozen-lockfile`, `npm ci`, `yarn install --immutable` |
-| Lint and format check | Biome first: `biome check .` covers lint, format and import sorting. `ESLint` 10 flat config (`eslint .`) or `Prettier` (`prettier --check .`) only for a named gap, such as type-aware rules Biome lacks, Vue or Angular templates |
+| Lint and format check | The project's configured linter and formatter; Biome (`biome check .`) is the default for an unconfigured project. `ESLint` 10 flat config (`eslint .`) or `Prettier` (`prettier --check .`) only for a named gap, such as type-aware rules Biome lacks, Vue or Angular templates |
 | Type check | `tsc -b` when `tsconfig.json` has `references`, otherwise `tsc --noEmit` |
 | Test | The project's test script (`bun test`, `vitest run`, `npm test`, …) |
 | Coverage | `vitest run --coverage` (`v8`), or `bun test --coverage --coverage-reporter=lcov` (lines and functions only) |
@@ -84,10 +84,7 @@ frozen-lockfile command, then run each check. Workflow structure, the required
 `ci-gate` job and action pinning are the `toolchain` plugin's `ci-github-actions`
 skill.
 
-In OpenCode, the built-in `biome`, `prettier` or `oxfmt` formatter rewrites each
-file after the `edit`, `write` or `patch` tool changes it when `"formatter": true`
-is set in `opencode.json` and the project configures that formatter. Keep the format
-check for files changed any other way.
+After an edit, run the project's format check for changed files. The host may format files automatically; do not rely on that instead of the project check.
 
 A missing `package.json`, `tsconfig.json` or tool means that step did not run.
 Report it as not run, never as a pass. Read failures as the project's actual

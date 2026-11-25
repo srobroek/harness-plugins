@@ -50,7 +50,7 @@ test("challenge_scan accepts the canonical hand-rolled-library lens", async () =
     const fake = createFakeContext({ sessions: [{ id: "ses_1", location: { directory: repo } }] })
     await plugin.setup(fake.context)
     const scan = fake.tools.get(SCAN_TOOL)?.execute as Execute
-    const result = await scan({ lenses: ["hand-rolled-library"], staticOnly: true }, context)
+    const result = await scan({ lenses: ["hand-rolled-library"] }, context)
     expect(result.metadata.ok).toBe(true)
   } finally {
     rmSync(repo, { recursive: true, force: true })
@@ -65,7 +65,7 @@ test("challenge_scan resolves a default and a relative root against the session 
     const fake = createFakeContext({ directory: plugin_dir, sessions: [{ id: "ses_1", location: { directory: session_dir } }] })
     await plugin.setup(fake.context)
     const scan = fake.tools.get(SCAN_TOOL)?.execute as Execute
-    const roots = await Promise.all([{}, { root: "sub" }].map((input) => scan({ ...input, staticOnly: true }, context)))
+    const roots = await Promise.all([{}, { root: "sub" }].map((input) => scan(input, context)))
     expect(roots.map((r) => (JSON.parse(r.content) as { root: string }).root)).toEqual([session_dir, join(session_dir, "sub")])
   } finally {
     rmSync(plugin_dir, { recursive: true, force: true })
@@ -77,7 +77,7 @@ test("challenge_scan fails closed when the session cannot be read", async () => 
   const fake = createFakeContext()
   await plugin.setup(fake.context)
   const scan = fake.tools.get(SCAN_TOOL)?.execute as Execute
-  const error = await scan({ staticOnly: true }, context).then(
+  const error = await scan({}, context).then(
     () => undefined,
     (caught: unknown) => caught as Error,
   )

@@ -1,0 +1,89 @@
+## eli5 [0.7.4](https://github.com/srobroek/harness-plugins/compare/eli5--v0.7.3...eli5--v0.7.4) (2026-11-24)
+
+## eli5 [0.7.3](https://github.com/srobroek/harness-plugins/compare/eli5--v0.7.2...eli5--v0.7.3) (2026-11-24)
+
+### Bug Fixes
+
+* **tools:** restore portable MCP defaults ([f4c4930](https://github.com/srobroek/harness-plugins/commit/f4c4930b68477b6c050cc3e0a6ed62b6b8f8d402))
+
+## eli5 [0.7.2](https://github.com/srobroek/harness-plugins/compare/eli5--v0.7.1...eli5--v0.7.2) (2026-11-23)
+
+### Bug Fixes
+
+* **whats-new:** grant MCP tools to the whats-new research agent ([8ae7fe0](https://github.com/srobroek/harness-plugins/commit/8ae7fe05c65e2df2f53ebf944c8f9bd5b7625cf9))
+
+## eli5 [0.7.1](https://github.com/srobroek/harness-plugins/compare/eli5--v0.7.0...eli5--v0.7.1) (2026-11-23)
+
+### Bug Fixes
+
+* make every plugin agent's OMP form correct ([96b7bfe](https://github.com/srobroek/harness-plugins/commit/96b7bfea3c35017b34a28f59e81fb059f6c68a24))
+
+## eli5 [0.7.0](https://github.com/srobroek/harness-plugins/compare/eli5--v0.6.0...eli5--v0.7.0) (2026-11-23)
+
+### Features
+
+* **eli5:** publish OMP marketplace output ([f8580b0](https://github.com/srobroek/harness-plugins/commit/f8580b002df56b70f99e2ce8159a1225c70a4de4))
+
+## eli5 [0.6.0](https://github.com/srobroek/harness-plugins/compare/eli5--v0.5.1...eli5--v0.6.0) (2026-11-22)
+
+### Features
+
+* **delivery:** ship the orchestrator agent ([#121](https://github.com/srobroek/harness-plugins/issues/121)) ([53f33c0](https://github.com/srobroek/harness-plugins/commit/53f33c016315732220a7c87066267931ee87f514))
+
+## eli5 [0.5.1](https://github.com/srobroek/harness-plugins/compare/eli5--v0.5.0...eli5--v0.5.1) (2026-11-21)
+
+### Bug Fixes
+
+* **code-challenge:** close dogfood friction in skill, schema and validation ([043a8b3](https://github.com/srobroek/harness-plugins/commit/043a8b39057ec8fca54d09adebb0532c2154e330))
+
+# Changelog
+
+## [0.5.0](https://github.com/srobroek/opencode-plugins/compare/eli5--v0.4.0...eli5--v0.5.0) (2026-11-20)
+
+
+### Features
+
+* plugin scan fixes, wider agent access and the plugin-audit plugin ([9c71525](https://github.com/srobroek/opencode-plugins/commit/9c7152559776aaf80cfed9626d78bafdd845fa9a))
+* **plugin-audit:** add plugin_audit_scan tool and plugin-audit skill ([d400433](https://github.com/srobroek/opencode-plugins/commit/d4004330e9a922d8e832b6f3266502141eaea4a3))
+
+
+### Refactors
+
+* **lib:** one MCP tool grant table for the tools option ([f8cc1d8](https://github.com/srobroek/opencode-plugins/commit/f8cc1d817d62b211b712d1889200f7c91f049c89))
+
+## [0.4.0](https://github.com/srobroek/opencode-plugins/compare/eli5--v0.3.0...eli5--v0.4.0) (2026-11-19)
+
+
+### Features
+
+* **modes:** debug, refactor and concept agents ([6369b8a](https://github.com/srobroek/opencode-plugins/commit/6369b8ae6c4ca35c664f094b60c28d356cc13298))
+* **safety:** secret_store tool stores a generated or command-issued secret without a shell ([d84a1d2](https://github.com/srobroek/opencode-plugins/commit/d84a1d22b0ff6e72f327fb185c512b2296a80a1e))
+
+## [0.3.0](https://github.com/srobroek/opencode-plugins/compare/eli5--v0.2.1...eli5--v0.3.0) (2026-11-13)
+
+
+### Features
+
+* **agents:** a tools option that lets read-only and coding agents call allowed MCP tools ([70558c3](https://github.com/srobroek/opencode-plugins/commit/70558c30dc450faec7e6012cdb0f678f1ecd7f01))
+
+## [0.2.1](https://github.com/srobroek/opencode-plugins/compare/eli5--v0.2.0...eli5--v0.2.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **lib:** keep a shipped agent hidden when the host prefills hidden: false ([6156c94](https://github.com/srobroek/opencode-plugins/commit/6156c946f8a5265ff5498bb4062a9d822bbd0555))
+
+## [0.2.0](https://github.com/srobroek/opencode-plugins/compare/eli5--v0.1.0...eli5--v0.2.0) (2026-10-27)
+
+
+### Features
+
+* **eli5:** add eli5 skill ([a11c29a](https://github.com/srobroek/opencode-plugins/commit/a11c29a76fd0cf5d10bd6dfd3b61b88c4f340f0a))
+* **lib:** carry steps and the model-role header from shipped agent files ([7538ab1](https://github.com/srobroek/opencode-plugins/commit/7538ab1a05b3071564defb2ab11ce356245c3890))
+* **lib:** honour metadata opencode/autoinvoke in shipped SKILL.md files ([881e7df](https://github.com/srobroek/opencode-plugins/commit/881e7df220095d0155b07437e733fdb795d9279b))
+* **lib:** shared review core composed into agents at build time ([d79c79b](https://github.com/srobroek/opencode-plugins/commit/d79c79b48ba09d5770c7586799f856237f3b00af))
+
+
+### Performance
+
+* shorten skill descriptions and hide pure reference skills from the listing ([51841bd](https://github.com/srobroek/opencode-plugins/commit/51841bd68ae7fe809711430fe3430b75b63e81c0))

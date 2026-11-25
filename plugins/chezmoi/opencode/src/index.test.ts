@@ -3,7 +3,7 @@ import { existsSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
-import { createGuard, type Spawn } from "./guard.ts"
+import { createGuard, type Spawn } from "../../shared/guard.ts"
 import { createPlugin, SKILL_PATH } from "./index.ts"
 
 const HOME = homedir()

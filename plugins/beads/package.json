@@ -1,6 +1,6 @@
 {
   "name": "beads",
-  "version": "0.8.10",
+  "version": "0.9.3",
   "description": "Beads issue tracking for OpenCode: shell gates, store pinning, subagent actors, claim tracking, stop nudge and guarded claim release, lease heartbeats, bd prime context and Beads skills.",
   "private": true,
   "type": "module",
@@ -9,11 +9,13 @@
     "category": "development",
     "harnesses": [
       "opencode",
-      "claude"
+      "claude",
+      "pi"
     ],
     "scope": "project",
+    "piName": "pi-beads-enforcer",
     "signals": [
-      ".beads/ (skip under ~/pace, which inherits it, and with .beads/RETIRED)",
+      ".beads/ (skip when .beads/RETIRED exists; otherwise add only when the user chooses Beads)",
       "every repository"
     ],
     "entries": {
@@ -22,6 +24,10 @@
     },
     "claudeEntries": {
       "claude-hook": "claude-hook",
+      "bd-embedded-write-runner": "bd-embedded-write-runner"
+    },
+    "piEntries": {
+      "beads": "beads",
       "bd-embedded-write-runner": "bd-embedded-write-runner"
     },
     "claude": {

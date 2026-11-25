@@ -1,17 +1,9 @@
 import { describe, expect, test } from "bun:test"
+import { nativeSummary, nativeText } from "../../shared/native.ts"
+import { NOTES_HINT } from "../../shared/notes.ts"
+import type { Question } from "../../shared/questions.ts"
 import type { Prompt } from "./fallback.ts"
-import { NOTES_HINT } from "./notes.ts"
-import type { Question } from "./questions.ts"
-import {
-  BUILTIN,
-  fromPrompts,
-  nativeAnswer,
-  nativeResult,
-  nativeSummary,
-  nativeText,
-  shouldTakeOver,
-  wrapQuestion,
-} from "./takeover.ts"
+import { BUILTIN, fromPrompts, nativeAnswer, nativeResult, shouldTakeOver, wrapQuestion } from "./takeover.ts"
 
 const db: Prompt = {
   question: "Which database should we use?",
