@@ -77,17 +77,15 @@ test("shipped agents carry a model-roles role header and no model", () => {
   }
 })
 
-test("the spec agent edits only specs/ and .specify/ and runs only the SpecKit commands", () => {
+test("the spec agent may edit any file and runs only the SpecKit commands", () => {
   const spec = agents.find((agent) => agent.id === "spec")
   if (spec === undefined) throw new Error("no spec agent")
   const rules = spec.permissions
   expect(agentRole(spec.request)).toBe("strong")
   expect(spec.mode).toBe("primary")
   expect(spec.hidden).toBe(false)
-  for (const path of ["specs/001-a/spec.md", "specs/001-a/contracts/api.md", ".specify/memory/constitution.md"])
+  for (const path of ["specs/001-a/spec.md", ".specify/memory/constitution.md", "AGENTS.md", "docs/design/x.md"])
     expect({ path, effect: permissionEffect(rules, "edit", path) }).toEqual({ path, effect: "allow" })
-  for (const path of ["src/index.ts", "README.md", "AGENTS.md", ".beads/config.yaml"])
-    expect({ path, effect: permissionEffect(rules, "edit", path) }).toEqual({ path, effect: "deny" })
   for (const command of [
     "bd mol current bd-1",
     "BEADS_DOLT_SHARED_SERVER= BEADS_DIR=/r/.beads '/bin/bun' '/p/dist/bd-embedded-write-runner.js' --beads-store /r/.beads --beads-wait-ms 5000 -- bd create x",
@@ -97,7 +95,7 @@ test("the spec agent edits only specs/ and .specify/ and runs only the SpecKit c
     "git status --short",
   ])
     expect({ command, effect: permissionEffect(rules, "shell", command) }).toEqual({ command, effect: "allow" })
-  // mkdir stays denied: mixed operands (mkdir -p specs/a src/b) would escape the edit boundary.
+  // Destructive and product-build commands stay denied; edits go through the edit tool.
   for (const command of ["git push", "git reset --hard", "git add src", "rm -rf specs", "bun test", "npm install", "mkdir -p specs/001-a"])
     expect({ command, effect: permissionEffect(rules, "shell", command) }).toEqual({ command, effect: "deny" })
   for (const action of ["speckit_setup", "speckit_start", "speckit_commit", "parley", "question", "execute"])

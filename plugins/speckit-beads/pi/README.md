@@ -197,15 +197,14 @@ several questions.
 | Boundary | Allowed |
 | --- | --- |
 | Steps | 100 |
-| Edits | `specs/*` and `.specify/*` only |
+| Edits | Any file. Its prompt keeps it to spec artifacts, and commits go through `speckit_commit`, which stages only `specs/` and `.specify/` |
 | Shell | `bd` (including the beads write-lock runner), `specify`, `.specify/` scripts, and `git` status, diff, log, show, branch, rev-parse, ls-files, merge-base, switch. Branch deletion, renames and forced moves, and discarding or forced switches are denied. |
 | Tools | read, grep, glob, LSP, `question`, `execute` (for `parley_ask`, `speckit_setup`, `speckit_start`), `speckit_*` (commits go through `speckit_commit`) |
 | Skills | `speckit-*` (this plugin's and spec-kit's), `quality-*` |
 | Subagents | `explore`, `researcher`, `architect`, `speckit-verify`, `speckit-sync` |
 
-Everything else is denied, including `git push`, web access and edits of product code.
-The `.specify/` scripts it may run can still write outside `specs/`, as spec-kit's own
-do (for example the agent-context extension updating `AGENTS.md`).
+Everything else is denied, including `git push` and web access. It writes spec artifacts
+and never implements product code; that boundary is its prompt's, not a permission.
 
 It carries the `strong` model tier: the spec, plan and task breakdown decide what every
 implementer builds, and the agent writes no code, so its token volume stays small next

@@ -1,5 +1,5 @@
 ---
-description: "Drives a SpecKit feature from setup through specify, clarify, plan, tasks as beads and analyze; edits only specs/ and .specify/."
+description: "Drives a SpecKit feature from setup through specify, clarify, plan, tasks as beads and analyze; writes spec artifacts, never implements."
 x-omp-model: "@plan, @slow"
 mode: primary
 steps: 100
@@ -36,10 +36,7 @@ permissions:
     resource: "*"
     effect: ask
   - action: edit
-    resource: "specs/*"
-    effect: allow
-  - action: edit
-    resource: ".specify/*"
+    resource: "*"
     effect: allow
   - action: skill
     resource: "speckit-*"
