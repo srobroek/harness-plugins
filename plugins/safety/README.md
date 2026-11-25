@@ -225,18 +225,21 @@ the six rules off in the cc-safety-net user policy, `~/.cc-safety-net/policy.jso
 
 ### Options on pi
 
-pi passes no options to an extension, so this one reads `safety.json` in pi's agent directory
-(`~/.pi/agent/safety.json`, or the same file under `PI_CODING_AGENT_DIR`). It takes the OpenCode keys
-that apply on pi:
+pi passes no options to an extension, so this one reads the `safety` key of pi's user settings,
+`~/.pi/agent/settings.json` (or `settings.json` under `PI_CODING_AGENT_DIR`). The extension
+ignores a project's `.pi/settings.json`, so a repository cannot switch a check off. The key takes
+the OpenCode keys that apply on pi:
 
 ```json
 {
-  "disable": ["package-investigate"],
-  "opAllow": ["vault list"],
-  "gitWrappers": ["git"],
-  "redactSecrets": true,
-  "redactNames": [],
-  "redactExclude": []
+  "safety": {
+    "disable": ["package-investigate"],
+    "opAllow": ["vault list"],
+    "gitWrappers": ["git"],
+    "redactSecrets": true,
+    "redactNames": [],
+    "redactExclude": []
+  }
 }
 ```
 
@@ -248,8 +251,8 @@ that apply on pi:
 - `migration-edit` and `external-directory`
 - `close-keywords` and `package-investigate`
 
-Without the file, every check runs. An unreadable or malformed file gives the
-same defaults and a warning at session start.
+Without the key, every check runs. A `safety` value that is not an object gives the same defaults
+and a warning at session start. So does a `settings.json` that is unreadable or not valid JSON.
 
 pi has no `external_directory` permission, so the OpenCode features that tune it have no pi
 counterpart. Their ids are not accepted on pi:
