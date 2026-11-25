@@ -101,6 +101,27 @@ Pi-lens keeps `ast_grep_search` and `ast_grep_outline` inactive until `pi_lens_a
 
 None of these agents has `write` or `edit`. To get a review or challenge as a file, pass the `output` option of the `subagent` call: pi-subagents saves the agent's final reply to that path. Give an absolute path for a file in the project; pi-subagents puts a relative `output` path under the run's artifact directory.
 
+## Pi `git_read` tool
+
+The Pi extension registers `git_read`, a read-only git tool for a reviewer subagent that has no shell. In Pi it starts inactive. A child gets it when its `tools` list names `git_read` and its `subagentOnlyExtensions` loads this package. None of this plugin's agents lists it: `code-reviewer` and `security-auditor` read git through `bash`, and `pr-reviewer` reviews only through its two `gh` reads.
+
+A call names one subcommand and its arguments as an array. No shell parses them. The extension runs only these subcommands:
+
+- `log`, `show` and `diff`, each with `--no-ext-diff --no-textconv` added
+- `branch --list`, with listing options only, each value given as `--<option>=<value>`
+- `rev-parse`, `merge-base`, `ls-files`, `ls-tree` and `for-each-ref`
+- `cat-file -p <object>` and `cat-file -t <object>`
+
+It rejects these options and every abbreviation of the long ones: `--output`, `--ext-diff`, `--textconv`, `--show-signature`, `--no-index` and `-o`.
+
+Git runs with the environment from `hardenedGitEnv` in `lib/src/safe-git.ts`, and with every configured filter driver turned off. That environment:
+
+- turns off fsmonitor, hooks and signature verifiers
+- blocks lazy fetch and every transport
+- sets the empty tree as the attribute source
+
+The tool needs git 2.45 or later. A call that runs longer than 30 seconds fails. At 50 KB of output the tool stops git and marks the output as cut.
+
 ## Install
 Install the Pi package from npm:
 
