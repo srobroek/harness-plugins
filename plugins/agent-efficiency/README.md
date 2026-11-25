@@ -34,16 +34,16 @@ Where the extension loads:
 Three ways to name it for children:
 
 1. **A required child extension** (recommended). A host extension calls pi-subagents' `registerRequiredChildExtensions`, and the extension then loads in every native child: foreground, background, nested and resumed. Neither an agent's own lists nor `extensions: []` can drop it. It does not reach external CLI runners.
-2. **`subagents.defaultSubagentOnlyExtensions`** in pi's settings. It reaches only agents that declare no `subagentOnlyExtensions`. Most agents in this repository declare one, and the modes agents must keep theirs to load their guard.
+2. **`subagents.defaultSubagentOnlyExtensions`** in pi's settings. It reaches only agents that declare no `subagentOnlyExtensions`. Most agents in this repository declare one.
 3. **`subagents.agentOverrides.<name>.subagentOnlyExtensions`**. An override replaces the agent's whole list, so it must repeat every entry the agent needs. It cannot safely restate an entry given as a path relative to the agent file, such as the modes guard.
 
 Load context-mode once per child: pick one way for each agent.
 
 To give an agent the tools, set `subagents.agentOverrides.<name>.tools` to its full list plus the `ctx_*` names it should get. That override also replaces the list. Leave out `ctx_upgrade` and `ctx_purge`: one upgrades context-mode and the other deletes indexed data.
 
-The modes agents (`debug`, `refactor`, `concept`) and a main session in `/mode` refuse every `ctx_*` tool, because `ctx_execute` runs code their guard cannot check. context-mode's hooks still run there. When the large-read refusal names `ctx_execute`, those agents read the file with `offset` and `limit` instead.
+The modes agents (`debug`, `refactor`, `concept`) load context-mode themselves and list `ctx_index`, `ctx_search`, `ctx_resume`, `ctx_stats` and `ctx_doctor`. Their guard, also active in a main session under `/mode`, refuses `ctx_execute` and `ctx_batch`, because those run code it cannot check. It also refuses `ctx_index` with a `path`, which reads files past the mode's read rules. When the large-read refusal names `ctx_execute`, those agents read the file with `offset` and `limit` instead.
 
-context-mode is licensed under the Elastic License 2.0. No package in this repository depends on it.
+context-mode is licensed under the Elastic License 2.0. The modes package lists it as a required companion; no package in this repository bundles it.
 
 ## Lead routing
 
