@@ -1,3 +1,9 @@
+## journeys [0.6.2](https://github.com/srobroek/harness-plugins/compare/journeys--v0.6.1...journeys--v0.6.2) (2026-11-25)
+
+### Bug Fixes
+
+* **journeys:** let the Pi journey agents create files and call journeys tools ([21ce6d7](https://github.com/srobroek/harness-plugins/commit/21ce6d7564a319f697ab2fabcf423495ffdaa374))
+
 ## journeys [0.6.1](https://github.com/srobroek/harness-plugins/compare/journeys--v0.6.0...journeys--v0.6.1) (2026-11-24)
 
 ## journeys [0.6.0](https://github.com/srobroek/harness-plugins/compare/journeys--v0.5.1...journeys--v0.6.0) (2026-11-23)
