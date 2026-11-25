@@ -2769,7 +2769,7 @@ var PINS = {
   "@biomejs/biome": "2.6.8",
   oxlint: "1.94.0",
   knip: "6.47.0",
-  "dependency-cruiser": "18.8.0",
+  "dependency-cruiser": "18.9.0",
   jscpd: "5.4.3",
   eslint: "10.15.0",
   "@e18e/eslint-plugin": "0.8.1",
