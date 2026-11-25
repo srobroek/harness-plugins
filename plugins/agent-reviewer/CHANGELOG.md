@@ -1,3 +1,9 @@
+## agent-reviewer [0.15.4](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.15.3...agent-reviewer--v0.15.4) (2026-11-25)
+
+### Bug Fixes
+
+* **agent-reviewer:** add a hardened git_read tool for shell-less pi reviewers ([b263f7b](https://github.com/srobroek/harness-plugins/commit/b263f7bd8f3bfb273cb5cc8ac1c44237b4fcaaa6))
+
 ## agent-reviewer [0.15.3](https://github.com/srobroek/harness-plugins/compare/agent-reviewer--v0.15.2...agent-reviewer--v0.15.3) (2026-11-25)
 
 ### Bug Fixes
