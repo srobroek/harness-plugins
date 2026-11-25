@@ -48,7 +48,7 @@ skill listing, its agents in the `@` picker, and its tools in a Code Mode `searc
   [quality](#quality) ·
   [safety](#safety) ·
   [session](#session) ·
-  [speckit](#speckit) ·
+  [speckit-beads](#speckit-beads) ·
   [statusline](#statusline) ·
   [subagent-worktree](#subagent-worktree) ·
   [toolchain](#toolchain) ·
@@ -64,11 +64,11 @@ skill listing, its agents in the `@` picker, and its tools in a Code Mode `searc
 | OpenCode 2.1.4 or later | every plugin |
 | `git` | safety, trunk-dev, worktrunk, subagent-worktree, delivery, beads |
 | `bun` | beads (write-lock runner), trunk-dev flag cleanup, safety commit-msg hook |
-| `bd` 1.3 or later | beads, speckit, design formulas, journeys formulas, trunk-dev flag cleanup |
+| `bd` 1.3 or later | beads, speckit-beads, design formulas, journeys formulas, trunk-dev flag cleanup |
 | `wt` (Worktrunk) | worktrunk, subagent-worktree merges |
 | `gh` (signed in) and a throwaway GitHub repo | delivery landing, pr-bead-link gate, trunk-dev PR advisories, safety close-keywords, agent-reviewer `pr-reviewer` |
 | `chezmoi` with at least one managed file | chezmoi |
-| `specify` (spec-kit CLI) | speckit `speckit_setup` |
+| `specify` (spec-kit CLI) 1.4 or later | speckit-beads `speckit_setup` |
 | `python3` 3.11+ | worktrunk-preflight, beads-preflight, journeys `journeys_index` |
 | lsp-tools-mcp as MCP server `lsp`, plus `typescript-language-server` | lsp |
 | `uv` / `uvx` and the AWS MCP servers in config | aws (optional) |
@@ -90,7 +90,7 @@ All of them at once (statusline is TUI-only, see below):
 for p in agent-coder agent-efficiency agent-mechanic agent-researcher agent-reviewer \
   agent-seance architecture aws beads build chezmoi debate delivery dep-update design \
   eli5 find-tools journeys lang-go lang-python lang-typescript lang-rust lsp \
-  model-roles parley project quality repomix safety session speckit subagent-worktree \
+  model-roles parley project quality repomix safety session speckit-beads subagent-worktree \
   toolchain trunk-dev whats-new worktrunk; do
   opencode plugin add "github:srobroek/opencode-plugins#main::path:plugins/$p"
 done
@@ -1761,11 +1761,16 @@ Resume my session: continue where I left off on the math module.
 **Expect:** loads `resume-session`, lists the candidates, asks you to confirm one, reads it, writes a short handoff, and waits.
 **If not:** `plugins/session/common/skills/resume-session/SKILL.md`.
 
-## speckit
+## speckit-beads
 
-**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/speckit/opencode'`,
-next to beads. Needs `specify` for setup and `bd` for the guards. Options: `integration`,
-`tasksGuard`, `implementRedirect`, `blockTasksToIssues`, `workflow` and `agents`.
+**Install:** `opencode plugin add 'github:srobroek/harness-plugins#main::path:plugins/speckit-beads/opencode'`.
+It needs no other plugin, but it needs `bd` for the guards and the workflow, and `specify` for setup.
+Options: `integration`, `tasksGuard`, `implementRedirect`, `blockTasksToIssues`, `workflow`, `agents` and `specAgent`.
+
+On pi, install it with `pi install npm:@srobroek/pi-speckit-beads` and put the same options in
+`~/.pi/agent/speckit-beads.json`. The prompts below work there too. Setup writes the SpecKit
+commands as `.pi/prompts/speckit.*.md`. The routes act on the typed `/speckit.implement`,
+`/speckit.analyze` and `/speckit.taskstoissues` commands, and on `read`s of those files.
 
 ### Tool `speckit_setup`
 
@@ -1773,8 +1778,8 @@ next to beads. Needs `specify` for setup and `bd` for the guards. Options: `inte
 Call speckit_setup for this repo.
 ```
 
-**Expect:** each phase reported `done`, `skipped` or `failed`: specify init, extensions, beads formulas, and the `.gitignore` entry. A rerun skips completed phases.
-**If not:** `plugins/speckit/opencode/src/setup.ts`; `specify` must be on `PATH`.
+**Expect:** each phase reported `done`, `skipped` or `failed`: specify init, extensions, beads, formulas, and the `.gitignore` entry. A rerun skips completed phases. Without `bd`, the beads phase fails and names how to get `bd`.
+**If not:** `plugins/speckit-beads/opencode/src/setup.ts`; `specify` and `bd` must be on `PATH`.
 
 ### Tool `speckit_start`
 
@@ -1783,7 +1788,7 @@ Call speckit_start with spec "001-demo".
 ```
 
 **Expect:** `CHOICE_REQUIRED`, with a question about routine approvals. Answer it, and the call again with `approvals` returns `READY`, naming the run root.
-**If not:** `plugins/speckit/opencode/src/spec-start.ts`; the spec must match `NNN-slug`.
+**If not:** `plugins/speckit-beads/opencode/src/spec-start.ts`; the spec must match `NNN-slug`.
 
 ### Guard: `tasks.md`
 
@@ -1791,8 +1796,8 @@ Call speckit_start with spec "001-demo".
 Use the write tool to create specs/001-demo/tasks.md with "- [ ] T001 probe".
 ```
 
-**Expect:** refused with `blocked by speckit (task state lives in beads, tasks.md is never authored): ...`.
-**If not:** `plugins/speckit/opencode/src/tasks-guard.ts`; `bd where` must succeed in the repo.
+**Expect:** refused with `blocked by speckit-beads (task state lives in beads, tasks.md is never authored): ...`, naming the `speckit-ledger` skill.
+**If not:** `plugins/speckit-beads/opencode/src/tasks-guard.ts`; `bd where` must succeed in the repo.
 
 ```text
 Run exactly: echo '- [ ] T001' > specs/001-demo/tasks.md
@@ -1810,7 +1815,7 @@ Load the speckit-implement skill and summarize what it tells you to do.
 ```
 
 **Expect:** the content is the beads route (work the task beads under the molecule's `implement` step), not "tick tasks.md".
-**If not:** `plugins/speckit/opencode/src/skills.ts`; `implementRedirect: false` turns it off.
+**If not:** `plugins/speckit-beads/opencode/src/skills.ts`; `implementRedirect: false` turns it off.
 
 ### Route: taskstoissues refusal
 
@@ -1819,18 +1824,18 @@ Load the speckit-taskstoissues skill.
 ```
 
 **Expect:** the skill tool refuses to load it, and the content explains that beads is the tracker.
-**If not:** `plugins/speckit/opencode/src/skills.ts`; `blockTasksToIssues: false` turns it off.
+**If not:** `plugins/speckit-beads/opencode/src/skills.ts`; `blockTasksToIssues: false` turns it off.
 
 ### Hook: workflow instructions
 
 In a new session in the repo once `.specify/` exists:
 
 ```text
-Without loading any skill, what does the "SpecKit workflow (srobroek.speckit)" section of your instructions say?
+Without loading any skill, what does the "SpecKit workflow (srobroek.speckit-beads)" section of your instructions say?
 ```
 
 **Expect:** the agent quotes the workflow contract. In a repo without `.specify/`, it finds no such section.
-**If not:** `plugins/speckit/opencode/src/workflow.ts`; `workflow: false` turns it off.
+**If not:** `plugins/speckit-beads/opencode/src/workflow.ts`; `workflow: false` turns it off.
 
 ### Skill `speckit-setup`
 
@@ -1839,7 +1844,16 @@ Set up SpecKit in this repo.
 ```
 
 **Expect:** loads `speckit-setup` and calls `speckit_setup`.
-**If not:** `plugins/speckit/common/skills/speckit-setup/SKILL.md`.
+**If not:** `plugins/speckit-beads/common/skills/speckit-setup/SKILL.md`.
+
+### Skill `speckit-ledger`
+
+```text
+Turn the task breakdown for specs/001-demo into beads.
+```
+
+**Expect:** loads `speckit-ledger`, writes `specs/001-demo/tasks.graph.json`, runs `bd create --graph` with `--dry-run` first, then reads the tasks back with `bd list --parent`. `specs/001-demo/tasks.md` stays absent.
+**If not:** `plugins/speckit-beads/common/skills/speckit-ledger/SKILL.md`.
 
 ### Skill `speckit-bugfix`
 
@@ -1848,7 +1862,7 @@ Fix a bug in this SpecKit repo: add(1, 2) returns "12" when given strings.
 ```
 
 **Expect:** loads `speckit-bugfix` (and `quality-code-design`), and offers to bond `mol-speckit-bugfix` for a tracked trail.
-**If not:** `plugins/speckit/common/skills/speckit-bugfix/SKILL.md`.
+**If not:** `plugins/speckit-beads/common/skills/speckit-bugfix/SKILL.md`.
 
 ### Agent `speckit-sync`
 
@@ -1857,7 +1871,7 @@ Use the speckit-sync agent with scope drift on specs/001-demo.
 ```
 
 **Expect:** a structured sync result with scope, verdict, findings and evidence. It makes no edits.
-**If not:** `plugins/speckit/common/agents/speckit-sync.md`.
+**If not:** `plugins/speckit-beads/agents.src/speckit-sync.md`.
 
 ### Agent `speckit-verify`
 
@@ -1866,7 +1880,7 @@ Use the speckit-verify agent with mode requirements on specs/001-demo.
 ```
 
 **Expect:** first line `VERDICT: PASS|GAPS`.
-**If not:** `plugins/speckit/agents.src/speckit-verify.md`.
+**If not:** `plugins/speckit-beads/agents.src/speckit-verify.md`.
 
 ## statusline
 

@@ -35,7 +35,7 @@ export const CONTEXT_BLOCK = 1000
 
 /** Findings that are accepted for now, by `<kind>:<name>`, each with the reason. */
 const EXEMPT: Record<string, string> = {
-  "block:speckit/speckit-workflow.md":
+  "block:speckit-beads/speckit-workflow.md":
     "added only in SpecKit repositories, and its MUST rules redirect the upstream /speckit.* skills on every turn",
 }
 
