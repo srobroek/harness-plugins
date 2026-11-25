@@ -153,6 +153,11 @@ describe.skipIf(!Bun.which("wt"))("automatic merge against a repository with a c
       XDG_DATA_HOME: sandbox("xdg-data"),
       XDG_STATE_HOME: sandbox("xdg-state"),
       WORKTRUNK_CONFIG_PATH: sandbox("wt-config.toml"),
+      // The sandboxed HOME has no git identity, and wt's --no-ff merge commit needs one.
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@example.com",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@example.com",
     })) {
       saved[name] = process.env[name]
       process.env[name] = value
