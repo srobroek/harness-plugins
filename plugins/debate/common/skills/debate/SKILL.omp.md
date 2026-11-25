@@ -14,10 +14,12 @@ decision; use the `grilling` skill when a deeper interview is warranted.
 ### Phase 0: Context questions
 
 Infer decision type and scope from the request and available evidence. Ask about unresolved
-constraints only, in one round through the channels in the `grilling` skill's **Asking Questions**
+constraints only, in one round through the channels in the `grilling` skill's **Asking questions**
 section (your preferred question tool, otherwise chat), with a recommended answer for each.
 Research when requested or when current facts are material. Do not require the user to choose
 an agent strategy.
+
+### Phase 1: Decomposition
 
 Choose only the investigation angles material to the request: user need, simpler alternatives,
 reversibility, implementation or operational cost.

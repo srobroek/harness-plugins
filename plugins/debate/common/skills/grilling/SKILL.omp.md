@@ -28,8 +28,14 @@ Pick the kind from the decision: `pick_one` or `show_options` for alternatives; 
 or no; `pick_many` for several items; `rank` for an order; `slider` for a number; `ask_text` for
 open answers.
 
-Deliver each round through your preferred question tool when available. If no question tool
-is available, or the tool cannot handle the round, print the round in chat and wait:
+Deliver each round through your preferred question tool when available. In OMP that is usually
+the interactive `ask` tool: send one question per call, with the title as the header, the first
+paragraph plus `Why: {rationale}` as the question, and the recommended option first with
+`(Recommended)` on its label. Use Yes/No for `confirm`, multiple choice for `pick_many`, preset
+values for `slider`, and one `Use recommended` option for `rank` and `ask_text`.
+
+If no question tool is available, or the tool cannot handle the round, print the round in chat
+and wait:
 
 ```
 **Q1** - **Question title** (`node.id`): question body, which may run to several
