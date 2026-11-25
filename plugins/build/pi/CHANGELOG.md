@@ -1,3 +1,9 @@
+## build [0.11.1](https://github.com/srobroek/harness-plugins/compare/build--v0.11.0...build--v0.11.1) (2026-11-25)
+
+### Bug Fixes
+
+* **build:** grant the Pi external-repo-worker web research and repomix_pack ([36f2585](https://github.com/srobroek/harness-plugins/commit/36f258548ed55ddf92f1790569f3acba64c25542))
+
 ## build [0.11.0](https://github.com/srobroek/harness-plugins/compare/build--v0.10.3...build--v0.11.0) (2026-11-24)
 
 ### Features
