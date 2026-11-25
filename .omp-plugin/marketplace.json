@@ -117,7 +117,7 @@
       "name": "modes",
       "description": "Debug, refactor and concept agents with plan-style mode reminders: root-cause diagnosis in a scratch worktree, behaviour-preserving refactoring, and design iteration.",
       "source": "./plugins/modes/omp",
-      "version": "1.4.0",
+      "version": "1.4.1",
       "category": "development"
     },
     {

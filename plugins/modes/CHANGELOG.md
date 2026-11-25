@@ -1,3 +1,9 @@
+## modes [1.4.1](https://github.com/srobroek/harness-plugins/compare/modes--v1.4.0...modes--v1.4.1) (2026-11-25)
+
+### Bug Fixes
+
+* **modes:** name the mode agents, not /mode, in OMP's modes_status ([#199](https://github.com/srobroek/harness-plugins/issues/199)) ([54a292e](https://github.com/srobroek/harness-plugins/commit/54a292e717fe355cc37045f9e25e2853206a9981)), closes [#190](https://github.com/srobroek/harness-plugins/issues/190)
+
 ## modes [1.4.0](https://github.com/srobroek/harness-plugins/compare/modes--v1.3.2...modes--v1.4.0) (2026-11-25)
 
 ### Features
