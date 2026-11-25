@@ -1,0 +1,54 @@
+{
+  "name": "speckit-beads",
+  "version": "0.0.0",
+  "description": "SpecKit on Beads: speckit_setup, speckit_start and speckit_commit tools, a tasks.md guard, the implement and taskstoissues routes, workflow instructions, formulas, a spec agent, and the speckit-sync and speckit-verify subagents.",
+  "private": true,
+  "type": "module",
+  "agent-plugins": {
+    "description": "SpecKit on Beads: a tasks.md guard, setup, ledger and bugfix skills, formulas, and the speckit-sync and speckit-verify subagents.",
+    "category": "development",
+    "harnesses": [
+      "opencode",
+      "claude",
+      "pi"
+    ],
+    "scope": "project",
+    "signals": [
+      ".specify/",
+      "specs/*/tasks.md"
+    ],
+    "prerequisites": [
+      {
+        "bin": "bd",
+        "for": "the Beads workspace, formulas and task state; the tasks.md guard probes it",
+        "required": true,
+        "install": {
+          "mise": "aqua:gastownhall/beads",
+          "url": "https://github.com/gastownhall/beads/blob/main/docs/getting-started/installation.md"
+        },
+        "version": ">=1.3.0"
+      },
+      {
+        "bin": "specify",
+        "for": "speckit_setup's specify init and extension installs",
+        "install": {
+          "mise": "pipx:specify-cli",
+          "url": "https://github.com/github/spec-kit"
+        },
+        "version": ">=1.4.0"
+      }
+    ],
+    "entries": {
+      "index": "index"
+    },
+    "claudeEntries": {
+      "claude-hook": "claude-hook"
+    },
+    "piEntries": {
+      "speckit-beads": "speckit-beads"
+    },
+    "claude": {
+      "homepage": "https://github.com/srobroek/harness-plugins/tree/main/plugins/speckit-beads"
+    }
+  }
+}

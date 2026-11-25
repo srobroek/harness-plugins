@@ -51,8 +51,8 @@ Each prompt is composed at build time from `agents.src/<id>.md` and the shared r
 `path:line`, one root cause is one finding, never reprint code, report to the caller and
 never question the user, verdict on the first line, stay within the word cap.
 `bun run build` writes the committed `agents/<id>.md`; `bun run build:check` fails when
-they are stale. The design plugin's `design-critic` and `a11y-auditor` and speckit's
-`speckit-verify` compose the same core.
+they are stale. The design plugin's `design-critic` and `a11y-auditor` and the speckit-beads
+plugin's `speckit-verify` compose the same core.
 
 ## Skill
 

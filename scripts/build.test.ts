@@ -311,7 +311,7 @@ describe("composeAgents", () => {
   })
 
   test("every shipped agents.src file composes to its committed common/agents file", () => {
-    for (const name of ["agent-coder", "agent-reviewer", "delivery", "design", "journeys", "modes", "quality", "speckit"]) {
+    for (const name of ["agent-coder", "agent-reviewer", "delivery", "design", "journeys", "modes", "quality", "speckit-beads"]) {
       const dir = path.join(plugins, name)
       const build = readBuild(dir)
       for (const output of composeAgents(dir, build?.claude)) expect(readFileSync(output.file, "utf8")).toBe(output.contents)

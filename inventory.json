@@ -2215,14 +2215,15 @@
       "scope": "global"
     },
     {
-      "name": "speckit",
-      "version": "0.11.5",
-      "description": "SpecKit on beads: a tasks.md guard, setup and bugfix skills, formulas, and the speckit-sync and speckit-verify subagents.",
+      "name": "speckit-beads",
+      "version": "0.0.0",
+      "description": "SpecKit on Beads: a tasks.md guard, setup, ledger and bugfix skills, formulas, and the speckit-sync and speckit-verify subagents.",
       "category": "development",
       "harnesses": {
         "opencode": {
           "skills": [
             "speckit-bugfix",
+            "speckit-ledger",
             "speckit-setup"
           ],
           "agents": [
@@ -2242,6 +2243,7 @@
         "claude": {
           "skills": [
             "speckit-bugfix",
+            "speckit-ledger",
             "speckit-setup"
           ],
           "agents": [
@@ -2256,9 +2258,51 @@
           "tools": [],
           "extensions": [],
           "mcp": []
+        },
+        "pi": {
+          "skills": [
+            "speckit-bugfix",
+            "speckit-ledger",
+            "speckit-setup"
+          ],
+          "agents": [
+            "spec",
+            "speckit-sync",
+            "speckit-verify"
+          ],
+          "commands": [],
+          "rules": [],
+          "hooks": [],
+          "tools": [],
+          "extensions": [
+            "speckit-beads"
+          ],
+          "mcp": []
         }
       },
-      "scope": "project"
+      "scope": "project",
+      "prerequisites": [
+        {
+          "bin": "bd",
+          "for": "the Beads workspace, formulas and task state; the tasks.md guard probes it",
+          "required": true,
+          "install": {
+            "mise": "aqua:gastownhall/beads",
+            "url": "https://github.com/gastownhall/beads/blob/main/docs/getting-started/installation.md"
+          },
+          "version": ">=1.3.0"
+        },
+        {
+          "bin": "specify",
+          "for": "speckit_setup's specify init and extension installs",
+          "required": false,
+          "install": {
+            "mise": "pipx:specify-cli",
+            "url": "https://github.com/github/spec-kit"
+          },
+          "version": ">=1.4.0"
+        }
+      ]
     },
     {
       "name": "statusline",

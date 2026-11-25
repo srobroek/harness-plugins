@@ -93,7 +93,7 @@ plugin's family are allowed by id:
 | `aws` | `aws-guidance` |
 
 `delivery-git-workflow` requires the delivery plugin; without it, the permission
-allow is inert. Other delivery skills, design, journeys, speckit, debate, beads and
+allow is inert. Other delivery skills, design, journeys, speckit-beads, debate, beads and
 project-management skills are left out. A skill whose plugin is not installed is
 simply absent. To allow another skill, add a rule under `agents.coder.permissions`.
 
