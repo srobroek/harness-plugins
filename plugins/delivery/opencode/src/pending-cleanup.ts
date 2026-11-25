@@ -263,6 +263,18 @@ type Location = string | undefined | typeof UNRESOLVED
 /** The default bound on one session lookup in the idle hook. */
 export const SESSION_LOOKUP_MS = 5_000
 
+  /** A veto a report left, stamped with that report's number: the higher number wins, whatever order the reports finish in. */
+  type Veto = { why: string; seq: number }
+  /** Set `veto` on `key` unless a newer report's veto already stands there. The one way any veto or unsafe mark is set. */
+  const raise = <K>(marks: Map<K, Veto>, key: K, veto: Veto) => {
+    const stored = marks.get(key)
+    if (stored === undefined || stored.seq <= veto.seq) marks.set(key, veto)
+  }
+  /** Lift the veto on `key` if a report no newer than `seq` set it. The one way any veto or unsafe mark is lifted. */
+  const lift = <K>(marks: Map<K, Veto>, key: K, seq: number) => {
+    const stored = marks.get(key)
+    if (stored !== undefined && stored.seq <= seq) marks.delete(key)
+  }
 export function createPendingCleanup(deps: PendingDeps) {
   const { ctx, cwd, env } = deps
   const now = deps.now ?? Date.now
@@ -274,7 +286,7 @@ export function createPendingCleanup(deps: PendingDeps) {
   // The veto state below is keyed by canonical worktree path, so it is shared by every repository
   // this instance coordinates: a veto is published here, before any wait, whichever one it is in.
   /** Worktrees whose hold could not be recorded: nothing is removed from them until a later write succeeds. */
-  const unsafe = new Map<string, string>()
+  const unsafe = new Map<string, Veto>()
   /** Denials that could not be written to disk, until an authorized re-arm; keyed by {@link deniedKey}, valued by canonical worktree. */
   const deniedInMemory = new Map<string, string>()
   const deniedKey = (receipt: Pick<LandingReceipt, "receiptId" | "repo">) => `${receipt.repo.key}/${receipt.receiptId}`
@@ -290,8 +302,6 @@ export function createPendingCleanup(deps: PendingDeps) {
   const registered = new Map<string, CloneEntry>()
   /** Why the clone registry could not be listed at the last read; while set, no other repository's worktree is removed. */
   let discoveryFailure: string | undefined
-  /** A veto a report left, stamped with that report's {@link reportSeq}, so only a report no older clears it. */
-  type Veto = { why: string; seq: number }
   /**
    * Sessions whose last report of running work could not reach the clones (the registry could not be
    * listed, or the session's repository not resolved): their running work there is unknown, so no
@@ -316,18 +326,19 @@ export function createPendingCleanup(deps: PendingDeps) {
   const holdsUnknown = new Map<string, Map<string, Veto>>()
   const markHoldsUnknown = (directory: string, sessionID: string, veto: Veto) => {
     const bySession = holdsUnknown.get(directory) ?? new Map<string, Veto>()
-    bySession.set(sessionID, veto)
+    raise(bySession, sessionID, veto)
     holdsUnknown.set(directory, bySession)
   }
   /** Drop `sessionID`'s veto on `directory` if a report no newer than `seq` set it. */
   const clearHoldsUnknown = (directory: string, sessionID: string, seq: number) => {
     const bySession = holdsUnknown.get(directory)
-    if ((bySession?.get(sessionID)?.seq ?? Number.POSITIVE_INFINITY) <= seq) bySession?.delete(sessionID)
-    if (bySession?.size === 0) holdsUnknown.delete(directory)
+    if (bySession === undefined) return
+    lift(bySession, sessionID, seq)
+    if (bySession.size === 0) holdsUnknown.delete(directory)
   }
   /** Drop `sessionID`'s missed report if a report no newer than `seq` set it. */
   const clearMissedReport = (sessionID: string, seq: number) => {
-    if ((missedReports.get(sessionID)?.seq ?? Number.POSITIVE_INFINITY) <= seq) missedReports.delete(sessionID)
+    lift(missedReports, sessionID, seq)
   }
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const pendingIdle = new Set<string>()
@@ -819,7 +830,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     const vetoed = reportVeto(repo)
     if (vetoed !== undefined) return vetoed
     const failed = unsafe.get(canonicalDirectory(path))
-    if (failed !== undefined) return failed
+    if (failed !== undefined) return failed.why
     const running = holdsState(common, path, now())
     if (running !== undefined) return running
     const projectID = repo.project()
@@ -876,7 +887,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     if (repo.foreign) discoverNow()
     return (
       reportVeto(repo) ??
-      unsafe.get(canonicalDirectory(worktree)) ??
+      unsafe.get(canonicalDirectory(worktree))?.why ??
       (holdReportsInFlight > 0 ? "running work reported by an idle session is still being recorded" : undefined)
     )
   }
@@ -1295,7 +1306,7 @@ export function createPendingCleanup(deps: PendingDeps) {
       const mine = own.veto() ?? (await own.observe())
       if (mine === null) {
         const why = `the session's repository could not be resolved to find the clones the running work of ${sessionID} may be in`
-        if (vetoes()) missedReports.set(sessionID, { why: `${why}; ${recovery(sessionID)}`, seq })
+        if (vetoes()) raise(missedReports, sessionID, { why: `${why}; ${recovery(sessionID)}`, seq })
         console.error(`delivery: ${why}`)
         return
       }
@@ -1305,7 +1316,7 @@ export function createPendingCleanup(deps: PendingDeps) {
       } catch (error) {
         // The clones are unknown: until this session reports again and reaches them, no other repository's worktree is removed.
         const why = `the running work of ${sessionID} could not be recorded in the clones (${error instanceof Error ? error.message : String(error)})`
-        if (vetoes()) missedReports.set(sessionID, { why: `${why}; ${recovery(sessionID)}`, seq })
+        if (vetoes()) raise(missedReports, sessionID, { why: `${why}; ${recovery(sessionID)}`, seq })
         console.error(`delivery: ${why}`, error)
         return
       }
@@ -1410,11 +1421,11 @@ export function createPendingCleanup(deps: PendingDeps) {
           return true
         })
         // Only a write that landed shows the record is sound; a superseded report leaves a newer failure's mark.
-        if (wrote) unsafe.delete(want)
+        if (wrote) lift(unsafe, want, seq)
       } catch (error) {
         // The record could not be written, so running work cannot be ruled out: nothing is removed from this worktree until a write succeeds.
         const why = error instanceof Error ? error.message : String(error)
-        if (current()) unsafe.set(want, `its running work could not be recorded (${why})`)
+        if (current()) raise(unsafe, want, { why: `its running work could not be recorded (${why})`, seq })
         console.error(`delivery: could not record holds for ${path}: ${why}`)
       }
     }

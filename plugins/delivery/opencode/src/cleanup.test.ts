@@ -4725,6 +4725,82 @@ describe("cleanup of another repository's landing runs against that repository",
     await h.finish()
   })
 
+  /**
+   * Lock options for delivery where every wait on a busy lock is held until the test settles it, in the
+   * order the waits began: `reached(n)` resolves once `n` writers wait, and `waits[i]` opens or fails the i-th.
+   */
+  const queuedLock = () => {
+    const waits: Array<{ go: () => void; fail: () => void }> = []
+    let notify: () => void = () => {}
+    const sleep = () =>
+      new Promise<void>((go, fail) => {
+        waits.push({ go, fail: () => fail(new Error("the queued lock wait failed")) })
+        notify()
+      })
+    const reached = async (n: number) => {
+      while (waits.length < n) await new Promise<void>((done) => (notify = done))
+    }
+    return { lock: { waitMs: 30_000, sleep }, waits, reached }
+  }
+  /** A report of `ses_a` whose running shell is outside the target worktree: its hold there is empty. */
+  const outsideReport = (h: { fake: ReturnType<typeof createFakeContext> }) =>
+    outsideLocks(() =>
+      h.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [{ kind: "shell", shellID: "sh_0", command: "sleep 60" }] } as never))
+
+  test("an older report that waits on the lock after a newer report failed to take it leaves the unsafe mark", async () => {
+    const queue = queuedLock()
+    const h = await foreignHarness("foreign-prelock-unsafe", { lock: queue.lock })
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    const { release, held } = await holdTargetLock(h)
+    const older = outsideReport(h)
+    await queue.reached(1)
+    const newer = outsideLocks(() => shellReport(h, "ses_a"))
+    await queue.reached(2)
+    // The newer report never takes the lock: its wait fails, so the worktree is marked unsafe.
+    queue.waits[1]?.fail()
+    await newer
+    release()
+    await held
+    // The older report then takes the lock and writes its empty hold: it must not lift the newer mark.
+    queue.waits[0]?.go()
+    await older
+    await h.pending.settle()
+    const result = await h.explicit()
+    expect(result.ok).toBe(false)
+    expect(existsSync(h.f.linked)).toBe(true)
+    await h.finish()
+  })
+
+  test("a delayed failure of an older report does not replace a newer report's mark, so a report between them cannot lift it", async () => {
+    const queue = queuedLock()
+    const h = await foreignHarness("foreign-three-reports", { lock: queue.lock })
+    await h.pending.record(h.f.receipt, "ses_lead")
+    await h.pending.start()
+    const { release, held } = await holdTargetLock(h)
+    const first = outsideReport(h)
+    await queue.reached(1)
+    const second = outsideReport(h)
+    await queue.reached(2)
+    const third = outsideLocks(() => shellReport(h, "ses_a"))
+    await queue.reached(3)
+    // The third report fails first, then the first fails late: the third's mark stands.
+    queue.waits[2]?.fail()
+    await third
+    queue.waits[0]?.fail()
+    await first
+    release()
+    await held
+    // The second report succeeds between them (its empty hold lands) and lifts only what is no newer.
+    queue.waits[1]?.go()
+    await second
+    await h.pending.settle()
+    const result = await h.explicit()
+    expect(result.ok).toBe(false)
+    expect(existsSync(h.f.linked)).toBe(true)
+    await h.finish()
+  })
+
   test("an older report that resumes after a newer report's failed hold write leaves the unsafe mark", async () => {
     if (process.getuid?.() === 0) return // root writes into a read-only directory
     const gate = gatedLock()
