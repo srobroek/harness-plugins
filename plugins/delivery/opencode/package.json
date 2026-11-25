@@ -1,6 +1,6 @@
 {
   "name": "delivery-opencode",
-  "version": "0.12.6",
+  "version": "0.13.1",
   "private": true,
   "type": "module",
   "exports": {

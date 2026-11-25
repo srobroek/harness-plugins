@@ -1,3 +1,37 @@
+## delivery [0.13.1](https://github.com/srobroek/harness-plugins/compare/delivery--v0.13.0...delivery--v0.13.1) (2026-11-25)
+
+### Bug Fixes
+
+* **delivery:** keep every job when two receipts spell one worktree differently ([23e4a36](https://github.com/srobroek/harness-plugins/commit/23e4a36afa45498c08626648ef123a175accb563))
+* **delivery:** keep git's dirty-tree refusal a refusal and never advise a destructive command ([db60f6a](https://github.com/srobroek/harness-plugins/commit/db60f6ac83d7d892a16a9945dc69c109f6b30b23))
+* **delivery:** match git's clean-check refusal only on its own line and exit 128 ([ae777d3](https://github.com/srobroek/harness-plugins/commit/ae777d35c06e04c5eb816858f51160489c85f069))
+* **delivery:** name the cause, not a removal command, in the deleted-files refusal ([3e9c23e](https://github.com/srobroek/harness-plugins/commit/3e9c23e3ea2fa4f7ace7d842aabe732c3dfbbfe2))
+* **delivery:** quote git's removal and branch-delete messages without their deleting hints ([30fe1d0](https://github.com/srobroek/harness-plugins/commit/30fe1d0c302eba1b678734b37a63c23b2439ad7c))
+* **delivery:** report git's clean-check refusal as a refusal, not this call's partial removal ([8e13172](https://github.com/srobroek/harness-plugins/commit/8e13172be0762b8e55038441532f86479d6dd36f))
+* **delivery:** say the README guarantee is about forcing commands ([a9bd32a](https://github.com/srobroek/harness-plugins/commit/a9bd32a5f0424416beb42b875c88af290afba279))
+* **delivery:** say when a blocking hold is a pending one, how old it is and which file ([6b9b241](https://github.com/srobroek/harness-plugins/commit/6b9b2418592d5f990e47f2a37f1421f6863b7261))
+* **delivery:** say when a pending hold's file is safe to delete ([f129089](https://github.com/srobroek/harness-plugins/commit/f1290898725538f083b4d14988f3679d5fe35883))
+* **delivery:** write every worktree's pending hold before any lock wait ([61872b2](https://github.com/srobroek/harness-plugins/commit/61872b2f285fba808cb9346fda34ca0cfd2c5cba))
+
+## delivery [0.13.0](https://github.com/srobroek/harness-plugins/compare/delivery--v0.12.7...delivery--v0.13.0) (2026-11-25)
+
+### Features
+
+* **agent-reviewer:** flag hand-written contract types and edits to generated output ([26e05ad](https://github.com/srobroek/harness-plugins/commit/26e05adeddebffb8e65f60c87030a8e074bb7b9c))
+
+### Bug Fixes
+
+* **agent-reviewer:** flag serialized or published contracts with no authoritative source ([e4ec4b0](https://github.com/srobroek/harness-plugins/commit/e4ec4b0092cfab0cdf4b4f35015f77f6a21f828e))
+* **agent-reviewer:** name AsyncAPI channels and bindings as an authoritative contract source ([503076c](https://github.com/srobroek/harness-plugins/commit/503076ce4b06b33084a0c34ed1a87fe07494e1f7))
+
+## delivery [0.12.7](https://github.com/srobroek/harness-plugins/compare/delivery--v0.12.6...delivery--v0.12.7) (2026-11-25)
+
+### Bug Fixes
+
+* **delivery:** keep a hold write from being starved by the cleanup lock ([ac2cb67](https://github.com/srobroek/harness-plugins/commit/ac2cb67d4f2ca2489a94b955a63f5a3877bd0d49))
+* **delivery:** prove cleanup targets under the remover lock and never refuse after a removal ([beb7f68](https://github.com/srobroek/harness-plugins/commit/beb7f68b970f3d807547fabc24fc1ea1b0e307c3))
+* **delivery:** report a removal that stopped part-way as partly removed, not as a refusal ([4ce8163](https://github.com/srobroek/harness-plugins/commit/4ce816399fbcee46315e399c0d38b5472835300d))
+
 ## delivery [0.12.6](https://github.com/srobroek/harness-plugins/compare/delivery--v0.12.5...delivery--v0.12.6) (2026-11-25)
 
 ### Bug Fixes

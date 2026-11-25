@@ -1,3 +1,9 @@
+## worktrunk [0.7.3](https://github.com/srobroek/harness-plugins/compare/worktrunk--v0.7.2...worktrunk--v0.7.3) (2026-11-25)
+
+### Bug Fixes
+
+* **worktrunk:** refuse a merge after a leading cd the gate cannot read ([d3b36fe](https://github.com/srobroek/harness-plugins/commit/d3b36fe5e15a7dacfd7481074c10739adfddb6f2))
+
 ## worktrunk [0.7.2](https://github.com/srobroek/harness-plugins/compare/worktrunk--v0.7.1...worktrunk--v0.7.2) (2026-11-24)
 
 ## worktrunk [0.7.1](https://github.com/srobroek/harness-plugins/compare/worktrunk--v0.7.0...worktrunk--v0.7.1) (2026-11-23)

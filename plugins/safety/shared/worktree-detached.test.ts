@@ -9,6 +9,7 @@ import {
   type Removal,
   removals,
   reviewRemovals,
+  UNKNOWN_DIRECTORY_REMOVAL,
   type WorktreeRecord,
 } from "./worktree-detached.ts"
 
@@ -38,9 +39,29 @@ const literal = (targets: string[], extra: Partial<Removal> = {}): Removal => ({
   ...extra,
 })
 
-async function refusal(command: string, cwd: string, gitProbe: GitProbe): Promise<string | undefined> {
+async function refusal(command: string, cwd: string | undefined, gitProbe: GitProbe): Promise<string | undefined> {
   return (await reviewRemovals(command, cwd, gitProbe)).refuse
 }
+
+describe("a removal whose directory is unknown", () => {
+  test("is refused unless an absolute -C or an absolute target places the repository", async () => {
+    const seen: string[] = []
+    const listing: GitProbe = {
+      ...probe([DETACHED], ["refs/heads/main"]),
+      list: async (at) => {
+        seen.push(at)
+        return [DETACHED]
+      },
+    }
+    expect(await refusal("wt remove loose", undefined, listing)).toBe(UNKNOWN_DIRECTORY_REMOVAL)
+    expect(await refusal("git worktree remove ../loose", undefined, listing)).toBe(UNKNOWN_DIRECTORY_REMOVAL)
+    expect(await refusal("wt -C sub remove loose", undefined, listing)).toBe(UNKNOWN_DIRECTORY_REMOVAL)
+    expect(seen).toEqual([])
+    expect(await refusal("git worktree remove /repo/loose", undefined, listing)).toBeUndefined()
+    expect(await refusal("wt -C /repo remove loose", undefined, listing)).toBeUndefined()
+    expect(seen).toEqual(["/repo/loose", "/repo"])
+  })
+})
 
 describe("removal recognition", () => {
   test("names the target of each removal spelling", () => {

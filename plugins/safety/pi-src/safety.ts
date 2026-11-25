@@ -23,18 +23,17 @@ import {
   type ToolResultEvent,
   type ToolResultEventResult,
 } from "@earendil-works/pi-coding-agent"
-import { leadingCdCwd } from "@srobroek/opencode-lib"
+import { leadingCd } from "@srobroek/opencode-lib"
 import { type ExternalDirectory, externalDirectories, sessionRoots } from "@srobroek/opencode-lib/external-directories"
 import { type ProviderTypes, readProviderTypes } from "@srobroek/opencode-lib/fnox-config"
 import { readGitWrappers } from "@srobroek/opencode-lib/git-wrappers"
 import { loadPiOptionsFile } from "@srobroek/opencode-lib/pi-options"
 import { rewriteCloseKeywords } from "../shared/close-keywords.ts"
-import { shellFlagDirectories } from "../shared/flag-directories.ts"
+import { flagDirectoryReport } from "../shared/flag-directories.ts"
 import { GUARD_IDS, type GuardID, type GuardOptions, hardGate } from "../shared/guards.ts"
 import { decideToolCall, type MigrationOptions, migrationOverride } from "../shared/migrations.ts"
 import { createPackageAdvisor } from "../shared/package-investigate.ts"
 import { type DecisionID, type ReviewOptions, reviewPermission } from "../shared/permission.ts"
-import { type PushViaConfig, readPushVia } from "../shared/push-via.ts"
 import { createRedactor, type RedactOptions, type Redactor, readRedactOptions } from "../shared/redact.ts"
 import { SYSTEM_GATE_IDS, type SystemGateID, type SystemGateOptions, systemGate } from "./system-gates.ts"
 
@@ -63,7 +62,6 @@ export const PI_FEATURE_IDS: readonly PiFeatureID[] = [
 export type PiOptions = {
   disabled: ReadonlySet<PiFeatureID>
   opAllow: readonly string[]
-  pushVia: PushViaConfig | undefined
   redact: RedactOptions
   /** Command names the gates read as git; only `git` by default. */
   gitWrappers: readonly string[]
@@ -72,7 +70,7 @@ export type PiOptions = {
 /** The options file in pi's agent directory. */
 export const OPTIONS_FILE = "safety.json"
 
-/** `{ disable, opAllow, pushVia, gitWrappers, redactSecrets, redactNames, redactExclude }`, read as the OpenCode options are. */
+/** `{ disable, opAllow, gitWrappers, redactSecrets, redactNames, redactExclude }`, read as the OpenCode options are. */
 export function readPiOptions(raw: unknown): PiOptions {
   const options = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
   const disable: unknown[] = Array.isArray(options.disable) ? options.disable : []
@@ -80,7 +78,6 @@ export function readPiOptions(raw: unknown): PiOptions {
   return {
     disabled: new Set(disable.filter((id): id is PiFeatureID => PI_FEATURE_IDS.includes(id as PiFeatureID))),
     opAllow: allow.filter((entry): entry is string => typeof entry === "string"),
-    pushVia: readPushVia(options),
     redact: readRedactOptions(options),
     gitWrappers: readGitWrappers(options),
   }
@@ -88,7 +85,7 @@ export function readPiOptions(raw: unknown): PiOptions {
 
 /** The options at `path`: a missing file gives the defaults, an unreadable or malformed one the defaults and a warning. */
 export function loadPiOptions(path: string): { options: PiOptions; warning?: string } {
-  const loaded = loadPiOptionsFile(path, "safety", "every check runs and push-via is off")
+  const loaded = loadPiOptionsFile(path, "safety", "every check runs")
   const options = readPiOptions(loaded.options)
   return loaded.warning === undefined ? { options } : { options, warning: loaded.warning }
 }
@@ -102,7 +99,7 @@ export type GateConfig = {
   /** The environment the shell inherits. */
   env: NodeJS.ProcessEnv
   /** Test seams. */
-  guard?: Pick<GuardOptions, "read" | "analyzeOp" | "providerTypes" | "resolveRemote">
+  guard?: Pick<GuardOptions, "read" | "analyzeOp" | "providerTypes">
   review?: ReviewOptions
   migrations?: MigrationOptions
   system?: Pick<SystemGateOptions, "home" | "tempRoots" | "managed">
@@ -118,6 +115,13 @@ export function externalMessage(external: readonly ExternalDirectory[]): string 
     .join(", ")}). Approve only if you meant to work there.`
 }
 
+/** The question for relative flag directories after a leading `cd` whose directory cannot be read. */
+export function unresolvedMessage(unresolved: readonly string[]): string {
+  return `safety (external-directory): this command starts with a cd this guard cannot read (a quoted, expanded, \`..\` or redirected directory), so it cannot tell where ${unresolved
+    .map((value) => `\`${value}\``)
+    .join(", ")} points. Approve only if you meant to work there.`
+}
+
 /** A check that fails internally lets the call through, as on OpenCode: a parser bug must not take the shell down. */
 function attempt<T>(run: () => T): T | undefined {
   try {
@@ -131,10 +135,16 @@ function migrationsOn(config: GateConfig): boolean {
   return !config.options.disabled.has("migration-edit") && !migrationOverride(config.env)
 }
 
-/** The verdict on a `bash` command that runs in `cwd`, after any close-keyword rewrite. */
+/**
+ * The verdict on a `bash` command that runs in `cwd`, after any close-keyword rewrite. A leading `cd`
+ * to a literal directory moves the gates there. One whose directory cannot be read leaves them in
+ * `cwd`: the checks that follow `cd` themselves see it (history rewrites, write targets, the op-guard,
+ * branch deletes, worktree removals), and the flag-directory check treats its base as unknown.
+ */
 export async function gateBash(command: string, cwd: string, config: GateConfig): Promise<Verdict> {
   const { disabled } = config.options
-  const gateCwd = leadingCdCwd(command, cwd)
+  const lead = leadingCd(command, cwd)
+  const gateCwd = lead.kind === "dir" ? lead.dir : cwd
   // The fnox config is read from the call's own directory, and only when the op-guard asks for a type.
   let types: ProviderTypes | undefined
   const providerTypes: ProviderTypes =
@@ -150,7 +160,6 @@ export async function gateBash(command: string, cwd: string, config: GateConfig)
       // The checks only call `has`, as in the OpenCode adapter, so a non-guard id is harmless here.
       disabled: disabled as ReadonlySet<GuardID>,
       opAllow: config.options.opAllow,
-      ...(config.options.pushVia ? { pushVia: config.options.pushVia } : {}),
       gitWrappers: config.options.gitWrappers,
       providerTypes,
     }),
@@ -176,11 +185,10 @@ export async function gateBash(command: string, cwd: string, config: GateConfig)
     asks.push(REVIEW_FAILED)
   }
   if (!disabled.has("external-directory")) {
-    const external =
-      attempt(() =>
-        externalDirectories(shellFlagDirectories(command, gateCwd, config.options.gitWrappers), sessionRoots(cwd)),
-      ) ?? []
+    const flags = attempt(() => flagDirectoryReport(command, lead.kind === "rejected" ? undefined : gateCwd, config.options.gitWrappers))
+    const external = flags === undefined ? [] : (attempt(() => externalDirectories(flags.dirs, sessionRoots(cwd))) ?? [])
     if (external.length > 0) asks.push(externalMessage(external))
+    if (flags !== undefined && flags.unresolved.length > 0) asks.push(unresolvedMessage(flags.unresolved))
   }
   return asks.length === 0 ? RUN : { kind: "ask", message: asks.join("\n\n") }
 }

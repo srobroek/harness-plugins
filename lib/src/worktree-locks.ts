@@ -113,9 +113,11 @@ export function setHold(commonDir: string, directory: string, sessionID: string,
   renameSync(temp, path)
 }
 
+const PENDING_SUFFIX = ".pending.json"
+
 /** A hold written before its lock is taken: see {@link recordHold}. Its name ends in `.json`, so {@link readHolds} reads it as a hold. */
 const pendingHoldFile = (commonDir: string, directory: string, sessionID: string) =>
-  join(holdsDir(commonDir, directory), `${sha1(sessionID)}.pending.json`)
+  join(holdsDir(commonDir, directory), `${sha1(sessionID)}${PENDING_SUFFIX}`)
 
 /**
  * Record (or, with no jobs, clear) what `sessionID` has running in `directory`: the way every idle gate
@@ -155,8 +157,11 @@ export async function recordHold(
   })
 }
 
+/** A hold as read from disk. `pendingFile` is set for a hold written before its lock was taken ({@link recordHold}): the file to look at. */
+export type ReadHold = SessionHold & { pendingFile?: string }
+
 /** Every session's hold for `directory`. `unreadable` when the directory or any entry could not be read. */
-export function readHolds(commonDir: string, directory: string): { holds: SessionHold[]; unreadable: boolean; missing?: boolean } {
+export function readHolds(commonDir: string, directory: string): { holds: ReadHold[]; unreadable: boolean; missing?: boolean } {
   const dir = holdsDir(commonDir, directory)
   let names: string[]
   try {
@@ -165,13 +170,13 @@ export function readHolds(commonDir: string, directory: string): { holds: Sessio
     const absent = (error as NodeJS.ErrnoException).code === "ENOENT"
     return { holds: [], unreadable: !absent, ...(absent ? { missing: true } : {}) }
   }
-  const holds: SessionHold[] = []
+  const holds: ReadHold[] = []
   let unreadable = false
   for (const name of names) {
     try {
       const hold = parseHold(JSON.parse(readFileSync(join(dir, name), "utf8")))
       if (hold === undefined) unreadable = true
-      else holds.push(hold)
+      else holds.push(name.endsWith(PENDING_SUFFIX) ? { ...hold, pendingFile: join(dir, name) } : hold)
     } catch {
       unreadable = true
     }
@@ -179,13 +184,34 @@ export function readHolds(commonDir: string, directory: string): { holds: Sessio
   return { holds, unreadable }
 }
 
-/** Why background work blocks a removal, or undefined. Entries older than the expiry (a crashed host) are ignored. Pure. */
-export function holdBlock(read: { holds: readonly SessionHold[]; unreadable: boolean }, now: number, expiryMs: number = HOLD_EXPIRY_MS): string | undefined {
+/** A duration for a person: seconds, minutes, or hours and minutes. Pure. */
+function elapsed(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000))
+  if (seconds < 60) return `${seconds} s`
+  const minutes = Math.floor(seconds / 60)
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`
+}
+
+/**
+ * Why background work blocks a removal, or undefined. Entries older than the expiry (a crashed host) are
+ * ignored. A pending hold says so, with its age, when it is ignored and its file, because a stale one
+ * (a session that ended before a later write took the lock) looks like running work otherwise. It also
+ * says when deleting that file is safe: it is the only record of those jobs, and the session writes
+ * the same file again when it next reports. Pure.
+ */
+export function holdBlock(read: { holds: readonly ReadHold[]; unreadable: boolean }, now: number, expiryMs: number = HOLD_EXPIRY_MS): string | undefined {
   if (read.unreadable) return "the background-work records cannot be read"
   const live = read.holds.find((hold) => hold.jobs.length > 0 && now - hold.updatedAt < expiryMs)
   if (live === undefined) return undefined
   const first = live.jobs[0]
-  return `session ${live.sessionID} has ${live.jobs.length} background job(s) running (${first?.kind} ${first?.id})`
+  const running = `session ${live.sessionID} has ${live.jobs.length} background job(s) running (${first?.kind} ${first?.id})`
+  if (live.pendingFile === undefined) return running
+  const ignoredAfter = new Date(live.updatedAt + expiryMs).toISOString()
+  const jobs = live.jobs.map((job) => `${job.kind} ${job.id}`).join(", ")
+  return (
+    `${running}; recorded before its lock was taken, ${elapsed(now - live.updatedAt)} ago; ignored after ${ignoredAfter}; ${live.pendingFile}; ` +
+    `delete it only after session ${live.sessionID}'s ${live.jobs.length} job(s) (${jobs}) have finished and that session has ended`
+  )
 }
 
 export type { Read }

@@ -1,3 +1,5 @@
+## agent-efficiency [0.14.7](https://github.com/srobroek/harness-plugins/compare/agent-efficiency--v0.14.6...agent-efficiency--v0.14.7) (2026-11-25)
+
 ## agent-efficiency [0.14.6](https://github.com/srobroek/harness-plugins/compare/agent-efficiency--v0.14.5...agent-efficiency--v0.14.6) (2026-11-25)
 
 ## agent-efficiency [0.14.5](https://github.com/srobroek/harness-plugins/compare/agent-efficiency--v0.14.4...agent-efficiency--v0.14.5) (2026-11-24)

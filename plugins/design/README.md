@@ -5,6 +5,10 @@ four design subagents, nine beads formulas with a `design_setup` tool that insta
 them, a `design_impeccable_scan` tool that runs impeccable's detector, and optional
 accessibility, wireframing and Storybook MCP integrations.
 
+The pi package `@srobroek/pi-design` ships the same skills and agents. It adds a
+Playwright browser, a `/design-review` prompt and a `/council-product` prompt.
+See [pi](#pi).
+
 ## Skills
 
 Only `design-guide` is listed to the model in OpenCode: it is a router whose body maps each
@@ -173,6 +177,199 @@ Claude Code gets the same `.mcp.json` from the marketplace. Those servers start 
 every project in that harness unless disabled in its MCP settings; enable them only
 for projects that use them. Add `storybook` there yourself.
 
+## pi
+
+Install the package in each frontend project:
+
+```sh
+pi install -l npm:@srobroek/pi-design
+```
+
+`-l` writes the project's `.pi/settings.json`. Every session that loads the package
+starts its MCP servers, so install it per project.
+
+### Prerequisites
+
+At session start, the package looks for these tools on `PATH` and names each missing tool:
+
+| Tool | Used for | Install |
+| --- | --- | --- |
+| `impeccable` 4.10.0 or later | `design_impeccable_scan` and the upstream impeccable skill pack | `mise use -g npm:impeccable` |
+| `npx` | the Playwright, `accessibility-scanner` and `wire-dsl` MCP servers | `mise use -g node` |
+
+The impeccable skill pack is a separate install. This command writes it to
+`.pi/skills/impeccable/`:
+
+```sh
+impeccable install -y --providers=pi --scope=project --no-hooks
+```
+
+The Playwright server drives Google Chrome where it is installed. On a host without it, such
+as a Linux ARM server, it drives Playwright's Chromium. Install that Chromium once for the
+pinned Playwright:
+
+```sh
+npx -y playwright-core@1.66.0-alpha-2026-11-22 install chromium chromium-headless-shell
+```
+
+### Scan tool
+
+`design_impeccable_scan` runs the `impeccable` on `PATH` without a prompt. When
+impeccable is not on `PATH`, the tool asks you to approve the npx download. A session
+that cannot ask, such as a subagent or `pi -p`, gets a refusal and the command that
+installs impeccable. The timeout and the output limit are the same as in OpenCode.
+
+### Browser
+
+The extension registers a `playwright` MCP server. It runs Playwright MCP with an in-memory
+profile. At session start the extension picks the browser:
+
+- `PLAYWRIGHT_MCP_BROWSER` names it, for example `chromium` or `msedge`.
+- With no such setting, it is `chrome` when Google Chrome is installed, else `chromium`.
+
+Then the extension picks the mode:
+
+1. `PLAYWRIGHT_MCP_HEADLESS=1` (or `true`) makes it headless, and `0` (or `false`) makes it
+   headed. The extension ignores other values.
+2. With no such setting, a Mac gets a headed browser. Linux gets one when `DISPLAY` or
+   `WAYLAND_DISPLAY` has a value.
+3. Otherwise it is headless, because a headed Chrome cannot start on a host with no display.
+
+A headed `/design-review` opens two windows, one for each reviewer. The extension hides
+three tools:
+
+- `browser_run_code_unsafe` runs code in the server's Node process.
+- `browser_file_upload` hands local files to the page.
+- `browser_drop` drops local files onto the page.
+
+The server runs in a new temporary directory for each session, and that directory is its
+only workspace root. Snapshots, screenshots and the other files the tools save go there.
+The extension deletes the directory when the session ends, so copy a file you want to keep.
+A write outside that root fails with "File access denied", and the server blocks `file:` URLs.
+
+`pi-src/playwright-tools.json` records the 25 tools the pinned release offers. After a
+version bump, record it again with `bun scripts/record-playwright-tools.ts`.
+The design tests check each recorded tool that takes a file, a path or code.
+
+A `playwright` server in your `mcp.json` replaces this one. Pi gives a server that an
+extension registers only to background subagents. So the four design agents set
+`async: true`, and `/design-review` and `ui-ux-specialist` start them in the background.
+A foreground run of a design agent fails unless your own `mcp.json` has the server.
+
+To add it, put this entry in `~/.pi/agent/mcp.json`, or in a trusted project's
+`.pi/mcp.json`, and create the `cwd` directory first. Your own entry follows the
+Playwright MCP rule instead: headless on Linux without `DISPLAY`, unless its `env` sets
+`PLAYWRIGHT_MCP_HEADLESS`.
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@0.0.86", "--isolated", "--browser", "chrome", "--viewport-size", "1440x900", "--ignore-roots", "--file-paths", "absolute"],
+      "cwd": "~/.cache/pi-design-playwright",
+      "toolExposure": { "browser_run_code_unsafe": "hidden", "browser_file_upload": "hidden", "browser_drop": "hidden" }
+    }
+  }
+}
+```
+
+### Using your own browser
+
+The design agents always use the isolated browser above. To let your own pi session work
+in the Chrome where you sign in, add a second server yourself. The package does not
+register it.
+
+1. In Chrome, install the "Playwright Extension" from the Chrome Web Store. Use a Chrome
+   profile that you keep for the agent, and sign in there only to the sites it needs.
+2. Add the server to `~/.pi/agent/mcp.json`, disabled, and create its `cwd` directory:
+
+   ```json
+   {
+     "mcpServers": {
+       "playwright-mine": {
+         "command": "npx",
+         "args": ["-y", "@playwright/mcp@0.0.86", "--extension", "--session-name", "pi", "--session-color", "red", "--ignore-roots", "--file-paths", "absolute", "--redact-url-params", "access_token,code,state,id_token"],
+         "cwd": "~/.cache/pi-playwright-mine",
+         "env": { "npm_config_registry": "https://registry.npmjs.org/" },
+         "enabled": false,
+         "exposure": "deferred",
+         "description": "My Chrome through the Playwright Extension: only the tabs I share at the connect prompt.",
+         "toolExposure": { "browser_run_code_unsafe": "hidden", "browser_file_upload": "hidden", "browser_drop": "hidden", "browser_evaluate": "hidden" }
+       }
+     }
+   }
+   ```
+
+3. Turn it on only in a trusted project. Put
+   `{"mcpServers":{"playwright-mine":{"enabled":true}}}` in that project's `.pi/mcp.json`,
+   or use `/mcp` and choose "Enable in this project".
+
+At each connection, Chrome opens an approval page where you pick the tabs to share. The
+session reaches only those tabs and the tabs it opens itself. It works only where your
+Chrome runs, so it needs a display and `PLAYWRIGHT_MCP_HEADLESS` does not apply.
+
+Rules for this server:
+
+- Never name it `playwright`. That name replaces the isolated browser for every design agent.
+- Never add `mcp:playwright-mine` to a design agent. The design agents run in the background,
+  and nobody watches what they do in your browser.
+- Do not set `PLAYWRIGHT_MCP_EXTENSION_TOKEN`, so that every connection needs your approval.
+- Do not add `--caps`.
+- For read-only use, also hide the tools that act on the page:
+  - `browser_click`, `browser_type` and `browser_fill_form`
+  - `browser_press_key` and `browser_select_option`
+  - `browser_drag` and `browser_handle_dialog`
+
+  `browser_navigate` can still send data out in a URL.
+- A page where you sign in can carry prompt injection, and what the session reads goes
+  into its transcript.
+
+### Agents on pi
+
+The four agents keep their contracts and list their pi tools explicitly:
+
+| Agent | Tools |
+| --- | --- |
+| `ui-ux-specialist` | read, edit, write, bash, `subagent`, `contact_supervisor`, `design_impeccable_scan`, web tools, Playwright |
+| `ui-implementer` | read, edit, write, bash, `design_impeccable_scan`, Playwright |
+| `design-critic` | read, `design_impeccable_scan`, web tools, Playwright |
+| `a11y-auditor` | read, bash for probes and the axe CLI, `design_impeccable_scan`, web tools, Playwright |
+
+Each agent loads the package extension, and pi-web-access when it has web tools, through
+`subagentOnlyExtensions`. `ui-ux-specialist` may start only `design-critic`,
+`a11y-auditor`, `scout` and `worker`. It asks its intent questions through
+`contact_supervisor` and continues with the answers. The agents pin no model. Set one with
+`subagents.agentOverrides.<name>.model` in pi's settings.
+
+### Prompts
+
+- `/design-review <url> [paths]` runs the scan once, then `design-critic` and
+  `a11y-auditor` in parallel in the background. It merges their findings and keeps the
+  two verdicts apart.
+- `/council-product <question>` runs the pi-subagents council protocol for a product or
+  UI decision, with three passes at most.
+
+The `/council-product` roster has four advisors:
+
+| Advisor | Lens | From |
+| --- | --- | --- |
+| `council-ux` | The view of the design lead | this package |
+| `council-user` | The view of the people who use the product, task by task | this package |
+| `council-advocate` | The strongest case for the proposal | `@srobroek/pi-debate` |
+| `council-skeptic` | The strongest case against the proposal | `@srobroek/pi-debate` |
+
+All four advisors only read files.
+
+`council-ux` and `council-user` are new in this package.
+
+### Not on pi
+
+- `design_setup`: copy `formulas/*.formula.toml` into `.beads/formulas/` yourself.
+- The `confirmScan`, `mcp` and `mcpServers` options, and the Storybook server.
+- Frontend detection: `accessibility-scanner` and `wire-dsl` connect in every session
+  that loads the package.
+
 ## Changes from omp
 
 - Rules became skills, and `skill://` and `rule://` references name the skill or use
@@ -228,3 +425,5 @@ claude plugin marketplace add srobroek/harness-plugins
 claude plugin install design@harness-plugins
 
 ```
+
+For pi, see [pi](#pi).

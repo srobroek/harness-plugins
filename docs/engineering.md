@@ -108,10 +108,6 @@ With git-lfs disabled, an LFS file whose index entry is stale reads as modified.
 
 An autopilot scope read counts only when confirmed: for a bead scope, the scope bead is listed and, when the list shows no open work, `bd children` agrees (`readBeads` in `plugins/autopilot/opencode/src/gather.ts`). The read is bounded to 3 attempts within 180 s; after that it is unknown, a blocker is journaled and the run goes on. A read that is unknown never ends the run as "scope finished"; explicit and idle stops still apply.
 
-## safety push-via guard
-
-`plugins/safety/opencode/src/push-via.ts` holds the optional `push-via` hard gate (`pushVia: { host, command }` option, off by default). By the owner's decision it judges only a call whose first command is a literal `git push` (or `git -C <literal dir> push`): no wrapper, inline assignment, expansion, substitution, quoting, redirect or config/repository option. Everything else fails open, because matching git's config and environment through those shapes never converged. Pure `pushVia(commands, cwd, config, resolveRemote)` decides; `gitRemoteResolver` reads local config with `SAFE_GIT_ARGS` and `hardenedGitEnv` (system and global config are read, as the push would) and never contacts a remote. It fails open when the host cannot be resolved. `guards.ts` wires it into `hardGate` and skips it when the session's environment holds `GIT_CONFIG*`, `GIT_DIR`, `GIT_WORK_TREE` or `GIT_COMMON_DIR`.
-
 ## safety permission relaxations
 
 `review()` in `plugins/safety/opencode/src/index.ts` wraps `reviewPermission`. When it throws an unexpected exception (handled probe timeouts become `ProbeTimeout`, which the destruction review turns into an ask, so they never reach this path), it returns `undefined` and logs a warning through the plugin's `warn` (`hostWarn`) each time. `applyDecision` treats `undefined` as no change, so the host's own effect (allow, ask or deny) decides; `undefined` never means allow. Both callers (the `execute.before` shell hook and the `evaluate` gate) pass `warn`.

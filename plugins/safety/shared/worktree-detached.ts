@@ -119,8 +119,11 @@ function matchTarget(target: string, cwd: string, worktrees: WorktreeRecord[], p
 /** A worktree removal's verdict: a refusal, a risk the owner should confirm, or nothing. */
 export type RemovalVerdict = { refuse: string } | { ask: string } | null
 
-/** The verdict one removal earns. */
-export async function reviewRemoval(removal: Removal, cwd: string, probe: GitProbe): Promise<RemovalVerdict> {
+/** The refusal for a removal whose repository depends on a directory this gate cannot read. */
+export const UNKNOWN_DIRECTORY_REMOVAL = `${PREFIX}: the call changes directory in a way this gate cannot read (a quoted, expanded, \`..\` or redirected \`cd\`, or more than one), so the repository the removal acts on is unknown. Start the call with \`cd <literal path> &&\`, or name the worktree by its absolute path.`
+
+/** The verdict one removal earns; `cwd` is undefined when the call's directory cannot be read. */
+export async function reviewRemoval(removal: Removal, cwd: string | undefined, probe: GitProbe): Promise<RemovalVerdict> {
   if (!removal.literal) {
     return {
       refuse: `${PREFIX}: this call builds its targets through a wrapper or shell expansion, so the checkouts it would delete cannot be identified. Name each worktree path literally, one removal per call.`,
@@ -134,7 +137,18 @@ export async function reviewRemoval(removal: Removal, cwd: string, probe: GitPro
   // `wt remove` without a target removes the current worktree; `git worktree remove` requires one.
   const target = removal.targets[0] ?? (removal.tool === "wt" ? "." : undefined)
   if (target === undefined) return null
-  const at = removal.chdir ? probe.resolve(cwd, removal.chdir) : cwd
+  // With the call's directory unknown, only an absolute `-C` or an absolute target places the repository.
+  const at =
+    cwd !== undefined
+      ? removal.chdir
+        ? probe.resolve(cwd, removal.chdir)
+        : cwd
+      : removal.chdir && isAbsolute(removal.chdir)
+        ? probe.resolve("/", removal.chdir)
+        : !removal.chdir && isAbsolute(target)
+          ? target
+          : undefined
+  if (at === undefined) return { refuse: UNKNOWN_DIRECTORY_REMOVAL }
   const worktrees = await probe.list(at)
   if (worktrees === null) {
     return {
@@ -204,7 +218,7 @@ export type RemovalParser = (command: string) => Removal[]
 /** Every verdict a shell command's worktree removals earn; a refusal ends the list. */
 export async function reviewRemovals(
   command: string,
-  cwd: string,
+  cwd: string | undefined,
   probe: GitProbe = defaultProbe(),
   parse: RemovalParser = removals,
 ): Promise<{ refuse?: string; ask: string[] }> {

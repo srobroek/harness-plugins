@@ -49,7 +49,10 @@ describe("biome (isolated lens profile)", () => {
   test("reports a rule the repo disabled, but honours .gitignore and inline suppressions", async () => {
     expect(which("biome")).not.toBeNull()
     const root = repo(files)
-    const report = await runScan({ root, languages: ["ts"], lenses: ["performance"] }, { which })
+    // Hide oxlint: a `biome-ignore` comment binds biome alone, and oxlint (when installed) reports the
+    // same rule on suppressed.ts. The oxlint case below covers oxlint's own suppressions.
+    const withoutOxlint = (binary: string) => (binary === "oxlint" ? null : which(binary))
+    const report = await runScan({ root, languages: ["ts"], lenses: ["performance"] }, { which: withoutOxlint })
     const biome = only(report, "biome")
     expect(biome.map((c) => [c.file, c.rule, c.ruleEnabledInRepo])).toEqual([["bad.ts", "performance/noAccumulatingSpread", null]])
     expect(where(report)).not.toContain("ignored.ts")

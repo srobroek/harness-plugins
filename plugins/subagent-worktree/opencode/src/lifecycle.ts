@@ -1118,10 +1118,10 @@ export function createLifecycle(deps: LifecycleDeps) {
         return matched[0]?.why
       }
       // The running work is recorded for active and removing lanes before any recovery looks at them: a lane a crash left in `removing` may still have a shell in its checkout.
+      // The lanes are recorded together, so no lane's pending hold waits behind another lane's busy lock.
       const busyOf = new Map<string, string | undefined>()
-      for (const lane of (await deps.scan()).filter((candidate) => (candidate.state === "active" || candidate.state === "removing") && related(candidate))) {
-        busyOf.set(lane.child, await recordHolds(lane))
-      }
+      const toRecord = (await deps.scan()).filter((candidate) => (candidate.state === "active" || candidate.state === "removing") && related(candidate))
+      for (const [child, why] of await Promise.all(toRecord.map(async (lane) => [lane.child, await recordHolds(lane)] as const))) busyOf.set(child, why)
       await resumeRemovals(related, planned)
       const lanes = (await deps.scan()).filter((lane) => lane.state === "active" && related(lane))
       if (lanes.length === 0) return

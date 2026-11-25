@@ -54,12 +54,30 @@ export function tokenize(segment: string): Token[] {
   }))
 }
 
-export function leadingCdCwd(command: string, cwd: string): string {
-  const match = /^\s*cd\s+([^\s;&|]+)\s*&&/.exec(command)
-  if (!match) return cwd
-  const dir = match[1]
-  if (!dir || /^[-~$]/.test(dir) || /[\\`"'*?\x5b\x5d{}]/.test(dir)) return cwd
-  return dir.startsWith("/") ? dir : resolve(cwd, dir)
+/**
+ * A command's leading `cd`, as far as it can be read statically.
+ * - `none`: the command does not start with `cd`, `pushd` or `popd`.
+ * - `dir`: it starts with `cd <dir> &&` (or is only `cd <dir>`), where `<dir>` is a word the shell
+ *   reads literally, names no `..` segment and does not start with `-`. `dir` is that directory
+ *   resolved against `cwd`; `length` is how many characters of the command the `cd` and its `&&` take.
+ * - `rejected`: it starts with a directory change in any other form (quoted, `~`, `$`, a redirection,
+ *   `..`, `;`, `||`, `pushd`, …). Its directory is unknown; callers must not assume the session's.
+ *
+ * `..` is refused because the shell resolves it against its logical `$PWD`, which can differ from the
+ * physical `cwd`; a relative directory without it stays under `cwd` unless `CDPATH` is exported.
+ */
+export type LeadingCd = { kind: "none" } | { kind: "dir"; dir: string; length: number } | { kind: "rejected" }
+
+/** `cd`, the literal directory (the characters the shell reads as one plain word), then `&&` or the end. */
+const LITERAL_CD = /^\s*cd[ \t]+([A-Za-z0-9_@%+=:,./-]+)[ \t]*(?:&&|$)/
+const STARTS_WITH_CD = /^\s*(?:cd|pushd|popd)(?=\s|$|[;&|<>()])/
+
+export function leadingCd(command: string, cwd: string): LeadingCd {
+  if (!STARTS_WITH_CD.test(command)) return { kind: "none" }
+  const match = LITERAL_CD.exec(command)
+  const dir = match?.[1]
+  if (match === null || dir === undefined || dir.startsWith("-") || dir.split("/").includes("..")) return { kind: "rejected" }
+  return { kind: "dir", dir: resolve(cwd, dir), length: match[0].length }
 }
 
 /** One shell word and where it sits in the scanned source. */
