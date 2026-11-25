@@ -1,3 +1,10 @@
+## delivery [0.14.0](https://github.com/srobroek/harness-plugins/compare/delivery--v0.13.1...delivery--v0.14.0) (2026-11-25)
+
+### Features
+
+* **delivery:** add an explicit delivery_cleanup tool for pi and OMP ([dfed416](https://github.com/srobroek/harness-plugins/commit/dfed416a728eb0977e28c29d9501e05d4a15b9dd))
+* **delivery:** document the pi delivery_cleanup and test its partial-removal outcome ([4c0350f](https://github.com/srobroek/harness-plugins/commit/4c0350fa642e724ea3295e09b1651b2fe0ed157a))
+
 ## delivery [0.13.1](https://github.com/srobroek/harness-plugins/compare/delivery--v0.13.0...delivery--v0.13.1) (2026-11-25)
 
 ### Bug Fixes
