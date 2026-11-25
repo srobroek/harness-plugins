@@ -64,16 +64,14 @@ const config = (raw: unknown = {}, env: NodeJS.ProcessEnv = {}): GateConfig => (
 })
 
 describe("readPiOptions and loadPiOptions", () => {
-  test("keeps known feature ids and string opAllow entries, and reads pushVia and redaction", () => {
+  test("keeps known feature ids and string opAllow entries, and reads redaction", () => {
     const options = readPiOptions({
       disable: ["attribution", "indirection", "scratch-shell", "nope", 3],
       opAllow: ["vault list", 4],
-      pushVia: { host: "github.com", command: "dgit" },
       redactSecrets: false,
     })
     expect([...options.disabled]).toEqual(["attribution", "indirection"])
     expect(options.opAllow).toEqual(["vault list"])
-    expect(options.pushVia).toEqual({ host: "github.com", command: "dgit" })
     expect(options.redact.enabled).toBe(false)
   })
 
@@ -81,7 +79,6 @@ describe("readPiOptions and loadPiOptions", () => {
     for (const raw of [null, [], "x", 3]) {
       const options = readPiOptions(raw)
       expect(options.disabled.size).toBe(0)
-      expect(options.pushVia).toBeUndefined()
       expect(options.redact.enabled).toBe(true)
     }
   })
@@ -124,15 +121,6 @@ describe("gateBash hard gates", () => {
   test("a direct op call is refused", async () => {
     const verdict = await gateBash("op item get x", plain, { ...config(), guard: { providerTypes: () => undefined } })
     expect(verdict).toEqual(block(OP_MESSAGE))
-  })
-
-  test("a plain push to the configured host is refused with the wrapper hint", async () => {
-    const options = { pushVia: { host: "github.com", command: "dgit" } }
-    const verdict = await gateBash("git push origin main", plain, {
-      ...config(options),
-      guard: { resolveRemote: () => ["https://github.com/acme/widgets.git"] },
-    })
-    expect(verdict).toEqual(block(MESSAGES["push-via"]("github.com", "dgit", plain)))
   })
 
   test("the gates read a wrapper listed in gitWrappers as git", async () => {
