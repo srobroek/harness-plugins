@@ -1,33 +1,36 @@
-# Cross-language and wire contracts
+# Serialized and published contracts
 
-Read when two sides of a boundary must agree on names, shapes, or casing: a new or changed contract, generated bindings or clients (OpenAPI, protobuf, GraphQL, ts-rs, specta), IPC command registries, or JSON payloads shared between a backend and a frontend. API and event compatibility across versions is in [release.md](release.md).
+Read when you add or change a serialized or published contract (an HTTP API, a config, file or record format, CLI or tool JSON output, an event or message payload, an MCP tool schema), or when two sides must agree on names, shapes, or casing: generated bindings or clients (OpenAPI, protobuf, GraphQL, ts-rs, specta), IPC command registries, or JSON payloads shared between a backend and a frontend. API and event compatibility across versions is in [release.md](release.md).
 
 ## Generated code is committed and drift-checked
 
-**Do:** generate bindings from the authoritative side, commit the output, and in CI regenerate and run `git diff --exit-code`. That one gate covers the whole generated surface; consumers use it without repeating it.
+**Do:** generate bindings from the authoritative side, commit the output, and in CI regenerate and fail on `git status --porcelain -- <generated dirs>`. It covers the whole generated surface, newly emitted untracked files included (`git diff --exit-code` misses them); consumers use it without repeating it.
 **Do not:** generate in a postinstall step nobody reviews, or hand-edit generated files. Change the source or the generator.
 
-## TypeSpec is the source of every contract
+## TypeSpec is the source of every owned contract
 
-**Do:** author every data or API contract that crosses a process, language or repository boundary in TypeSpec, and emit everything from it: OpenAPI 3.1, JSON Schema 2020-12 and each language's types. Commit the output and gate it with the drift check above. Publish a JSON Schema with a root entry point that `$ref`s the top-level model, so validating against the published file rejects an invalid document. Derive any generator-specific copy (a normalized schema) with a pinned script in CI, and never publish it. `toolchain-api` has the routes, versions and CI gates; each `lang-<language>-libraries` has the generator entry.
-**Do not:** hand-write a model class, Zod schema, serde struct or Go struct for such a contract, keep a second schema beside the source, or let a hand-edited emitted file stand in for a source change. A contract change is a TypeSpec change plus a regenerate.
+**Do:** In every project, author each serialized or published contract you own in TypeSpec, even when it stays within one process, language, or repository. Use `@typespec/http` and `@typespec/openapi3` for internal and external HTTP APIs. Use `@typespec/json-schema` for config, file and record formats, CLI and tool JSON output, event and message payloads, and MCP tool input and output schemas. Keep `.proto` for protobuf and gRPC wire contracts and GraphQL SDL for GraphQL APIs. Keep channels and bindings in AsyncAPI and reference the emitted payload schemas until a stable TypeSpec AsyncAPI emitter is available. Vendor third-party schemas as published; do not re-author them. In-memory types that are never serialized or published are out of scope. Generate and commit the applicable artifacts, and generate OpenAPI, JSON Schema, API reference docs and reference documentation from the same source; never edit generated output by hand. Publish a JSON Schema through a generated entry point (each public model emitted separately with `@jsonSchema`, or a root `$ref` wrapper), so validating against the published file rejects an invalid document. Derive any generator-specific copy (a normalized schema) with a pinned script in CI, and never publish it. Complete docs live in the published schema. `toolchain-api` has the routes, versions and CI gates; each `lang-<language>-libraries` has the generator entry.
+**Do not:** hand-write a model class, Zod schema, serde struct or Go struct for such a contract, keep a second schema beside the source, or let a hand-edited emitted file stand in for a source change. A contract change is a TypeSpec change plus a regenerate. A framework schema (FastAPI, Zod, Pydantic, Huma) is a runtime adapter generated from or checked against the emitted output, never a competing source.
 
 | Exception | Reason |
 | --- | --- |
-| Protobuf and gRPC services keep `.proto` | Binary wire format; `buf lint` and `buf breaking` own the checks (`toolchain-api`) |
-| A contract another party owns | Their published file is the source: generate from it, never re-author it |
+| Protobuf and gRPC wire contracts keep `.proto` | Binary wire format; `buf lint` and `buf breaking` own the checks (`toolchain-api`) |
+| GraphQL APIs keep GraphQL SDL | The schema language is the contract |
+| Channels and bindings stay in AsyncAPI | They reference the emitted payload schemas until a stable TypeSpec AsyncAPI emitter exists |
+| A third-party contract | Vendor their published file as published; generate from it, never re-author it |
+| In-memory types never serialized or published | Out of scope |
 
 Any other departure is a recorded decision in the engineering doc with its reason. A construct the spike did not cover (nested unions, recursive models, `int64` or decimal precision, `bytes`) still goes in TypeSpec: add a fixture for it first.
 
 ### Why not another source
 
-Measured on the spike's 29 fixtures, 2026-11-25. None beats TypeSpec on any language (Pydantic 28/29, Zod 28/29, Rust 29/29, Go 28/29).
+Observed on the spike's 29 fixtures for one contract, 2026-11-25. None beat TypeSpec on any language (Pydantic 28/29, Zod 28/29, Rust 29/29, Go 28/29).
 
 | Alternative | Result | Reason |
 | --- | --- | --- |
-| Protobuf with protojson | 23/29 best | Cannot carry a `kind`-tagged union or present-but-null; its published JSON Schema fails to compile in Ajv |
+| Protobuf with protojson | 23/29 best (protojson plus protovalidate; Rust typify route 23/29) | Cannot carry a `kind`-tagged union or present-but-null; its published JSON Schema fails to compile in Ajv |
 | Smithy | Ties | Only after 8 OpenAPI overrides kept outside the IDL |
-| quicktype | 13/29 to 19/29 | Enforces types, not constraints |
+| quicktype | Standalone bindings 13/29 to 19/29; Rust with a separate validator 29/29 but 3/12 on exact round-trip | Enforces types, not constraints |
 | Typical | No JSON route | Binary format only, no constraints |
 
 ### Known issues and workarounds
@@ -35,12 +38,13 @@ Measured on the spike's 29 fixtures, 2026-11-25. None beats TypeSpec on any lang
 | Issue | Workaround |
 | --- | --- |
 | Pydantic reads `\d` as Unicode and accepts `٣` (rust-regex engine) | Write `[0-9]` (pattern rule below); keep the default engine |
-| A lowercase `t` or `z` in a date-time is rejected on the Zod routes (`z.iso.datetime()`) and all Go routes (`time.Parse`) but accepted by Ajv, Python and Rust | No generator fixes it. Narrow the contract or keep the fixture as a documented known failure |
-| `@hey-api/openapi-ts` drops field descriptions and `datamodel-code-generator` drops model docstrings (3/6 each) | Read documentation from the published JSON Schema; keep the docs fixture check |
-| No generator reads the emitted `unevaluatedProperties` or bundle `$id` refs | The pinned schema normaliser rewrites them into the generator input; it fails loudly on a construct it cannot rewrite, so run it in the regenerate gate |
+| A lowercase `t` or `z` in a date-time is rejected on the Zod routes (`z.iso.datetime()`) and all Go routes (`time.Parse`) but accepted by Ajv, Python and Rust | No tested generator fixes it. Narrow the contract, or record an exception for that route and fixture with its exact expected result; every other fixture must still match its label |
+| `@hey-api/openapi-ts` drops field descriptions and `datamodel-code-generator` drops model docstrings (3/6 each) | The published schema must carry complete docs and is tested for them; test the docs a binding claims to support in that binding, and record the gap per route |
+| No tested generator handled the emitted bundle unchanged (`unevaluatedProperties`, bundle `$id` refs) | The pinned schema normaliser rewrites them into the generator input; it fails loudly on a construct it cannot rewrite, so run it in the regenerate gate |
 | `cargo-typify` does not enforce ranges, item counts or optional-not-null (25/29) | Validate the raw `serde_json::Value` with the `jsonschema` crate before deserializing (29/29) |
-| The emitted schema is only `$defs`, so it accepts any document | Publish a root `$ref`; test it with an invalid document |
-| Fractions longer than 6 digits (Pydantic) or 9 digits (typify, ogen) are truncated on round trip; `ogen` orders open-object extras randomly | Compare parsed values, not bytes, in round-trip and golden tests |
+| The emitted bundle is only `$defs`, so it accepts any document; the spike's 29/29 was measured on the `RunRequest` subschema, not the bundle root | Generate an entry point (a separate file per public model, or a root `$ref` wrapper) and run valid and invalid fixtures against the exact published artifact |
+| `ogen` orders open-object extras randomly | Compare parsed JSON, not bytes, in golden tests (this fixes key order only) |
+| Fractions longer than 6 digits (Pydantic) or 9 digits (typify, ogen) are truncated on round trip | Comparing parsed JSON does not recover lost precision. Test the significant fractional digits, then constrain the precision in the contract or use a lossless representation (an integer count or a string) |
 
 ## Pattern dialect
 
