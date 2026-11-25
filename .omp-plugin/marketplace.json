@@ -135,6 +135,13 @@
       "category": "productivity"
     },
     {
+      "name": "quality",
+      "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
+      "source": "./plugins/quality/omp",
+      "version": "0.17.0",
+      "category": "development"
+    },
+    {
       "name": "toolchain",
       "description": "Toolchain defaults as skills: stack, frontend, infrastructure, languages, observability, shell, Terraform, caches, background jobs and worktree coexistence.",
       "source": "./plugins/toolchain/omp",
