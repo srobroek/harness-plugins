@@ -32,8 +32,8 @@ Checked 2026-11-16.
 | HTTP quotas | `tower_governor` `>= 0.8` | Process-local, not a distributed quota. |
 | HTTP client | `reqwest` `>= 0.13` | `ureq` `>= 3.5` for blocking CLIs. |
 | gRPC/protobuf | `tonic` `>= 0.14`, `prost` `>= 0.14` | Check current generation integration. |
-| OpenAPI | `utoipa` `>= 6`, `progenitor` `>= 0.16` | Client generator documents OpenAPI `3.0.x`. |
-| TypeSpec-sourced types | `cargo-typify` `>= 0.10` from the normalized JSON Schema, plus `jsonschema` `>= 0.63` on the raw `serde_json::Value` before deserializing | A contract type comes from TypeSpec, never a hand-written serde struct. typify alone does not enforce ranges, item counts or optional-not-null (25/29 on the spike, 29/29 with the validator; 2026-11-25). Route in `toolchain-api` |
+| OpenAPI | `utoipa` `>= 6` as a runtime adapter checked against the TypeSpec output, `progenitor` `>= 0.16` | Client generator documents OpenAPI `3.0.x`. |
+| TypeSpec-sourced types | `cargo-typify` and the `jsonschema` crate, pinned exactly in the Contract tooling table of `toolchain-api`, from the normalized JSON Schema, then `jsonschema` on the raw `serde_json::Value` before deserializing | A contract type comes from TypeSpec, never a hand-written serde struct. typify alone does not enforce ranges, item counts or optional-not-null (25/29 on the spike, 29/29 with the validator; 2026-11-25). Route in `toolchain-api` |
 | GraphQL | `async-graphql` `>= 7.2` | Only when graph-shaped queries justify it. |
 | JSON | `serde` `>= 1`, `serde_json` `>= 1` | Profile before a SIMD substitution. |
 | Validation/schema | `validator` `>= 0.21`, `schemars` `>= 1.2` | Schema generation is not domain validation. |
