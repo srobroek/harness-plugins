@@ -13,15 +13,26 @@ OpenAPI), organization for the contact.
 - File `openapi.yaml` at the root, `openapi: 3.1.0`, with `info` (title, version,
   description, contact name and repo URL, license when published), `servers`, a `health` tag
   and a worked `/health` `getHealth` example so the gate is green before the first endpoint.
-- Tools: `vacuum` and `oasdiff` (mise: `vacuum`, `"ubi:oasdiff/oasdiff"`).
-- Tasks: `vacuum lint --fail-severity warn openapi.yaml`; breaking-change check against the
-  PR base: `git show origin/main:openapi.yaml > "$base"` then
-  `oasdiff breaking --fail-on ERR "$base" openapi.yaml`, skipping when the base has no spec;
-  `oasdiff changelog` to print the diff. Fetch full history in CI (`fetch-depth: 0`) and set
-  the baseline ref to the PR base branch.
-- With Better-T-Stack and `--api orpc`, OpenAPI comes from the framework; still keep
-  `openapi.yaml` as the committed contract if consumers depend on it (`toolchain-languages`:
-  OpenAPI for HTTP contracts).
+- Tools: Redocly CLI (`@redocly/cli`, mise `npm:@redocly/cli`) and `oasdiff` (mise
+  `github:oasdiff/oasdiff`), at the exact versions in `toolchain-api`'s Contract tooling table.
+  `vacuum` is the faster lint alternative (single maintainer). Spectral only when the project
+  must keep an existing Spectral ruleset.
+- Source: the contract is authored in TypeSpec (`@typespec/http`, `@typespec/openapi3`, one
+  version with `@typespec/compiler`), and `openapi.yaml` is its emitted, committed output, never
+  edited by hand. Set `openapi-versions: ["3.1.0"]` in `tspconfig.yaml`; the 1.18.0 default is
+  3.0.0. The `/health` example lives in the TypeSpec source.
+- Tasks: `redocly lint openapi.yaml` with a committed `redocly.yaml`; regenerate and fail on
+  `git status --porcelain` over the generated paths; breaking-change check against the PR
+  base: `git show origin/main:openapi.yaml > "$base"` then
+  `oasdiff breaking --fail-on ERR --severity-levels oasdiff-severity.txt "$base" openapi.yaml`
+  with the committed severity file from `toolchain-api` (it promotes `request-property-removed`
+  to an error), skipping when the base has no spec; `oasdiff changelog` to print the diff. Add
+  the sealed-property schema check and `redocly build-docs` as `toolchain-api`'s Required CI
+  gates list them. Fetch full history in CI (`fetch-depth: 0`) and set the baseline ref to the
+  PR base branch.
+- With Better-T-Stack and `--api orpc`, the TypeSpec source stays the contract. oRPC's
+  OpenAPI output is a runtime adapter: check it against the committed emitted `openapi.yaml`
+  as a drift check, never as the source (`toolchain-languages`: OpenAPI for HTTP contracts).
 
 ## i18n (Inlang / Paraglide)
 
