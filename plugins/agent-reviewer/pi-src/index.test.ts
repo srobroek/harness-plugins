@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import agentReviewer from "./index.ts"
 import { COMMAND_REASON, prReviewerBlockReason, READ_REASON, skillDirectories } from "./pr-reviewer-gate.ts"
 
@@ -19,8 +22,29 @@ const prompt = [
 ].join("\n")
 
 const bash = (command: unknown) => prReviewerBlockReason({ toolName: "bash", input: { command } }, prompt, "/repo", "/home/u")
+// The lexical cases use paths that do not exist, so they resolve each path to itself.
 const read = (path: unknown, systemPrompt = prompt) =>
-  prReviewerBlockReason({ toolName: "read", input: { path } }, systemPrompt, "/repo", "/home/u")
+  prReviewerBlockReason({ toolName: "read", input: { path } }, systemPrompt, "/repo", "/home/u", (target) => target)
+
+describe("pr-reviewer pi gate on the real file system", () => {
+  test("compares canonical paths: a symlink out of a skill directory and an unresolvable path are refused", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "pr-reviewer-gate-")))
+    try {
+      const skill = join(root, "skills", "quality-code-design")
+      mkdirSync(skill, { recursive: true })
+      writeFileSync(join(skill, "SKILL.md"), "# skill\n")
+      writeFileSync(join(root, "secret.txt"), "secret\n")
+      symlinkSync(join(root, "secret.txt"), join(skill, "escape.md"))
+      const real = `<available_skills><skill><location>${skill}/SKILL.md</location></skill></available_skills>`
+      const readReal = (path: string) => prReviewerBlockReason({ toolName: "read", input: { path } }, real, root, "/home/u")
+      expect(readReal(join(skill, "SKILL.md"))).toBeUndefined()
+      expect(readReal(join(skill, "escape.md"))).toBe(READ_REASON)
+      expect(readReal(join(skill, "missing.md"))).toBe(READ_REASON)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
 
 describe("pr-reviewer pi gate", () => {
   test("allows exactly the two gh reads the prompt names", () => {

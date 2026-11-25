@@ -4,6 +4,7 @@
 // other read is refused. The gate acts only in a pr-reviewer child session; the agent's `tools`
 // list already keeps every other tool away from it.
 
+import { realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
@@ -31,6 +32,9 @@ export const READ_REASON =
 
 export type ToolCallLike = { toolName: string; input: unknown }
 
+/** Resolves a path to its canonical form; throws when it cannot, like `fs.realpathSync`. */
+export type Realpath = (target: string) => string
+
 /** The directories of the skills pi-subagents lists in a child's system prompt. */
 export function skillDirectories(systemPrompt: string): string[] {
   const block = /<available_skills>([\s\S]*?)<\/available_skills>/.exec(systemPrompt)?.[1] ?? ""
@@ -47,8 +51,27 @@ function resolveReadPath(value: string, cwd: string, home: string): string {
   return path.resolve(cwd, expanded)
 }
 
-/** Why the gate refuses a pr-reviewer tool call, or `undefined` when the call is within its surface. */
-export function prReviewerBlockReason(event: ToolCallLike, systemPrompt: string, cwd: string, home = homedir()): string | undefined {
+/** `target` within `dir` once both are canonical, so a symlink inside a skill directory cannot reach outside it. */
+function within(target: string, dir: string, realpath: Realpath): boolean {
+  try {
+    const real = realpath(dir)
+    return target === real || target.startsWith(`${real}${path.sep}`)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Why the gate refuses a pr-reviewer tool call, or `undefined` when the call is within its surface.
+ * A read whose target cannot be resolved (missing, unreadable) is refused.
+ */
+export function prReviewerBlockReason(
+  event: ToolCallLike,
+  systemPrompt: string,
+  cwd: string,
+  home = homedir(),
+  realpath: Realpath = realpathSync,
+): string | undefined {
   const input = event.input !== null && typeof event.input === "object" ? (event.input as Record<string, unknown>) : {}
   if (event.toolName === "bash") {
     const command = typeof input.command === "string" ? input.command.trim() : ""
@@ -56,9 +79,13 @@ export function prReviewerBlockReason(event: ToolCallLike, systemPrompt: string,
   }
   if (event.toolName === "read") {
     if (typeof input.path !== "string") return READ_REASON
-    const target = resolveReadPath(input.path, cwd, home)
-    const inSkill = skillDirectories(systemPrompt).some((dir) => target === dir || target.startsWith(`${dir}${path.sep}`))
-    return inSkill ? undefined : READ_REASON
+    let target: string
+    try {
+      target = realpath(resolveReadPath(input.path, cwd, home))
+    } catch {
+      return READ_REASON
+    }
+    return skillDirectories(systemPrompt).some((dir) => within(target, dir, realpath)) ? undefined : READ_REASON
   }
   return undefined
 }

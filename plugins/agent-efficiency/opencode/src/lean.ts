@@ -22,7 +22,7 @@ const ALIASES: Readonly<Record<string, ReadonlyArray<Segment>>> = {
   instructions: ["global-instructions", "project-instructions"],
 }
 
-/** Read-only agents shipped in this repository, the built-in explore, and ids reserved for upcoming read-only agents. */
+/** Read-only agents shipped in this repository, the architect (it writes only design and research documents), the built-in explore, and ids reserved for upcoming read-only agents. */
 export const DEFAULT_LEAN_AGENTS: ReadonlyArray<string> = [
   "explore",
   "pr-reviewer",

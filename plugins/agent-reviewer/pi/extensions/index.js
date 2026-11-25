@@ -484,6 +484,7 @@ function registerGitRead(pi) {
 }
 
 // plugins/agent-reviewer/pi-src/pr-reviewer-gate.ts
+import { realpathSync } from "fs";
 import { homedir } from "os";
 import path2 from "path";
 
@@ -516,7 +517,15 @@ function resolveReadPath(value, cwd, home) {
   const expanded = bare === "~" ? home : bare.startsWith("~/") ? path2.join(home, bare.slice(2)) : bare;
   return path2.resolve(cwd, expanded);
 }
-function prReviewerBlockReason(event, systemPrompt, cwd, home = homedir()) {
+function within(target, dir, realpath) {
+  try {
+    const real = realpath(dir);
+    return target === real || target.startsWith(`${real}${path2.sep}`);
+  } catch {
+    return false;
+  }
+}
+function prReviewerBlockReason(event, systemPrompt, cwd, home = homedir(), realpath = realpathSync) {
   const input = event.input !== null && typeof event.input === "object" ? event.input : {};
   if (event.toolName === "bash") {
     const command = typeof input.command === "string" ? input.command.trim() : "";
@@ -525,9 +534,13 @@ function prReviewerBlockReason(event, systemPrompt, cwd, home = homedir()) {
   if (event.toolName === "read") {
     if (typeof input.path !== "string")
       return READ_REASON;
-    const target = resolveReadPath(input.path, cwd, home);
-    const inSkill = skillDirectories(systemPrompt).some((dir) => target === dir || target.startsWith(`${dir}${path2.sep}`));
-    return inSkill ? undefined : READ_REASON;
+    let target;
+    try {
+      target = realpath(resolveReadPath(input.path, cwd, home));
+    } catch {
+      return READ_REASON;
+    }
+    return skillDirectories(systemPrompt).some((dir) => within(target, dir, realpath)) ? undefined : READ_REASON;
   }
   return;
 }
