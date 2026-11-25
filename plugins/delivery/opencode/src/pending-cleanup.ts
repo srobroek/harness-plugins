@@ -1401,14 +1401,16 @@ export function createPendingCleanup(deps: PendingDeps) {
         if (inside) jobs.push({ kind: job.kind, id: job.shellID ?? job.childSessionID ?? job.sessionID ?? "unknown" })
       }
       try {
-        await lockedAt(common, path, () => {
+        const wrote = await lockedAt(common, path, () => {
           // Reports of one session reach the lock in any order: the newest one's hold stands.
           const written = reports.get(sessionID)?.written
-          if ((written?.get(want) ?? 0) > seq) return
+          if ((written?.get(want) ?? 0) > seq) return false
           written?.set(want, seq)
           setHold(common, path, sessionID, current() ? jobs : [], now())
+          return true
         })
-        unsafe.delete(want)
+        // Only a write that landed shows the record is sound; a superseded report leaves a newer failure's mark.
+        if (wrote) unsafe.delete(want)
       } catch (error) {
         // The record could not be written, so running work cannot be ruled out: nothing is removed from this worktree until a write succeeds.
         const why = error instanceof Error ? error.message : String(error)

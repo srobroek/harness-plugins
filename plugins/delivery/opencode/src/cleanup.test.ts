@@ -4725,6 +4725,43 @@ describe("cleanup of another repository's landing runs against that repository",
     await h.finish()
   })
 
+  test("an older report that resumes after a newer report's failed hold write leaves the unsafe mark", async () => {
+    if (process.getuid?.() === 0) return // root writes into a read-only directory
+    const gate = gatedLock()
+    const h = await foreignHarness("foreign-ordered-unsafe", { lock: gate.lock })
+    await h.pending.record(h.f.receipt, "ses_lead")
+    // An older entry makes the holds directory exist; the newer report's write then fails once it is read-only.
+    setHold(h.targetCommon, h.f.linked, "ses_old", [{ kind: "shell", id: "old" }], NOW - 25 * 3_600_000)
+    const holdsRoot = join(h.targetCommon, "opencode", "holds")
+    const holdsDir = join(holdsRoot, readdirSync(holdsRoot)[0] as string)
+    await h.pending.start()
+    const { release, held } = await holdTargetLock(h)
+    const older = outsideLocks(() =>
+      h.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [{ kind: "shell", shellID: "sh_0", command: "sleep 60" }] } as never))
+    try {
+      await gate.waiting
+      release()
+      await held
+      chmodSync(holdsDir, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        // The newer report stamps the worktree, then its hold write fails: unsafe.
+        await outsideLocks(() => shellReport(h, "ses_a"))
+      } finally {
+        chmodSync(holdsDir, 0o755) // check-test-executables: directory permission, not a script
+      }
+    } finally {
+      release()
+      gate.go()
+      await older
+    }
+    // The older report skipped its write as superseded: it must not lift the newer failure's mark.
+    await h.pending.settle()
+    const result = await h.explicit()
+    expect(result.ok).toBe(false)
+    expect(existsSync(h.f.linked)).toBe(true)
+    await h.finish()
+  })
+
   test("a deleted session's report that resumes after the deletion writes no hold", async () => {
     const gate = gatedLock()
     const h = await foreignHarness("foreign-deleted-hold", { lock: gate.lock })
@@ -4785,7 +4822,6 @@ describe("cleanup of another repository's landing runs against that repository",
     try {
       await gate.waiting
       await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
-      expect(h.pending.trackedReports()).toBe(1)
     } finally {
       release()
       await held

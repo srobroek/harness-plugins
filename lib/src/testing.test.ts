@@ -216,6 +216,16 @@ describe("createFakeContext", () => {
     ])
   })
 
+  test("closeEvents acknowledges pending emits, though the consumer never advances, and queued events still drain", async () => {
+    const fake = createFakeContext()
+    const iterator = fake.context.event.subscribe()[Symbol.asyncIterator]()
+    const pending = fake.emit({ type: "a" })
+    fake.closeEvents()
+    await pending
+    expect(await iterator.next()).toEqual({ value: { type: "a" }, done: false })
+    expect((await iterator.next()).done).toBe(true)
+  })
+
   test("emit resolves when its own event is handled, though a later one is still being handled", async () => {
     const fake = createFakeContext()
     const seen: string[] = []

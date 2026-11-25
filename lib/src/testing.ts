@@ -504,9 +504,12 @@ export function createFakeContext(options: FakeContextOptions = {}): FakeContext
       return Promise.all(handled).then(() => {})
     },
     closeEvents: () => {
-      // Events already queued are still delivered, and acknowledged as they are handled.
+      // Events already queued are still delivered, but no `emit` waits on a consumer that may never advance:
+      // closing acknowledges them (a promise resolves once, so the later acknowledgement is a no-op).
       for (const subscriber of subscribers) {
         subscriber.closed = true
+        subscriber.handling?.()
+        for (const queued of subscriber.queue) queued.handled()
         subscriber.wake?.()
       }
       subscribers.clear()
