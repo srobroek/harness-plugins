@@ -1,6 +1,6 @@
 {
   "name": "@agent-plugins/lang-python",
-  "version": "0.9.3",
+  "version": "0.10.0",
   "description": "Python skills: uv, ruff, mypy or pyright and pytest checks, testing, packaging, typing and pydantic, SQLAlchemy and Alembic, and profiling.",
   "private": true,
   "omp": {}
