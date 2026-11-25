@@ -89,7 +89,7 @@ Add one when any of its signals holds in the repository.
 | journeys | journeys/ | none |
 | lsp | edit results should carry language-server errors, and lsp-tools-mcp is installed | none |
 | plugin-audit | `plugins/*/package.json` packages that depend on `@opencode/plugin` (this is the OpenCode plugin monorepo) | none |
-| speckit | .specify/; specs/*/tasks.md | beads |
+| speckit-beads | .specify/; specs/*/tasks.md | none |
 | worktrunk | .config/wt.toml | none |
 <!-- plugin-table:end -->
 
@@ -115,7 +115,7 @@ add --help`: if it writes global configuration, add the package spec to the proj
   "$schema": "https://opencode.ai/config.json",
   "plugins": [
     "github:srobroek/harness-plugins#main::path:plugins/beads/opencode",
-    "github:srobroek/harness-plugins#main::path:plugins/speckit/opencode"
+    "github:srobroek/harness-plugins#main::path:plugins/speckit-beads/opencode"
   ]
 }
 ```
