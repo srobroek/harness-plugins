@@ -124,7 +124,7 @@
       "name": "project",
       "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
       "source": "./plugins/project/omp",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "category": "productivity"
     },
     {
