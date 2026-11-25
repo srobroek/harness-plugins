@@ -15,10 +15,10 @@ moving code, where the caller has already decided the change.
   in at most 120 words.
 
 It may `read`, `grep`, `glob`, `edit` (which covers `write` and `patch`) and run
-`shell`. It may load the `lang-*` and `quality-*` skills, `toolchain-languages` and
-`toolchain-guide`, only for how to carry out the change in that language. Code Mode
-(`execute`), subagents, questions and web access are denied, so its requests carry no
-tool catalog. `.env` reads and `external_directory` ask. It declares the `cheap` model
+`shell`. It may load skills from the `lang-*`, `quality-*` and `toolchain-*` families
+that OpenCode allows it, only for how to do the change in that language. Code Mode
+(`execute`) and subagents are denied. Its rules also deny questions and web access, so
+its requests carry no tool catalog. `.env` reads and `external_directory` ask. It declares the `cheap` model
 tier through the `x-opencode-model-role` request header, so with the model-roles plugin
 that tier picks its model; without it the agent inherits the caller's model.
 
@@ -26,7 +26,7 @@ that tier picks its model; without it the agent inherits the caller's model.
 
 Pi `mechanic` is allowlisted for `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `ast_grep_replace`, and `lsp_navigation` from required companion `pi-lens`. `pi-subagents` is also required for the subagent runtime.
 
-Pi `mechanic` lists the same skills as OpenCode allows (the `lang-*` routers, the `quality-*` skills, `toolchain-languages` and `toolchain-guide`) and inherits no other skill.
+Pi `mechanic` lists the skills OpenCode allows it and inherits no other skill.
 
 pi-lens keeps `ast_grep_*` tools inactive until `pi_lens_activate_tools` runs; they are available starting the next turn. Call `lsp_navigation` rename, rename_file and codeAction with `apply: false` to get the planned edits, check every target path is inside your working directory, then apply them with the edit/write tools.
 
