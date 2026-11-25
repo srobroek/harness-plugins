@@ -21,9 +21,8 @@ knows and what the user needs.
 
 ## Workflow
 
-Ask steps 1 and 2 together in one round through `grilling`'s question channels: use `parley`
-when installed; otherwise use OMP's interactive `ask` tool, one question per call; otherwise
-print questions in chat. Ask two `ask_text` questions (`send.recipient` and `send.needs`) with
+Ask steps 1 and 2 together in one round through `grilling`'s question channels: your preferred
+question tool when available, otherwise chat. Ask two `ask_text` questions (`send.recipient` and `send.needs`) with
 no recommendation unless the conversation suggests one. Both answers are needed before step 3.
 
 1. **Who receives it?** Ask the recipient's role, expertise, and relationship to the user.
@@ -32,7 +31,9 @@ no recommendation unless the conversation suggests one. Both answers are needed 
    person. The answer defines what the questionnaire must cover.
 3. **Write the questionnaire.** Draft questions aimed at the gap from steps 1-2, following the
    document structure below. Write it to the path the user names; otherwise use the system
-   temp directory, never the current directory. If using parley, show the draft as one review question before writing, apply any revisions, then call `parley_end`. Report the absolute path.
+   temp directory, never the current directory. If your preferred question tool can show a
+   document for review, show the draft there before writing and apply any revisions. Report the
+   absolute path.
 
 ## Document structure
 

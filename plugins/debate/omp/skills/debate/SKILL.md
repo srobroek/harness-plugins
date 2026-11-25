@@ -14,12 +14,10 @@ decision; use the `grilling` skill when a deeper interview is warranted.
 ### Phase 0: Context questions
 
 Infer decision type and scope from the request and available evidence. Ask about unresolved
-constraints only, in one round through the channels in the `grilling` skill's **Asking questions**
-section (parley when installed, otherwise OMP's `ask` tool, otherwise chat), each question with
-your recommended answer. Research when requested or when current facts are material; do not
-require the user to choose an agent strategy.
-
-### Phase 1: Decomposition
+constraints only, in one round through the channels in the `grilling` skill's **Asking Questions**
+section (your preferred question tool, otherwise chat), with a recommended answer for each.
+Research when requested or when current facts are material. Do not require the user to choose
+an agent strategy.
 
 Choose only the investigation angles material to the request: user need, simpler alternatives,
 reversibility, implementation or operational cost.
@@ -50,10 +48,11 @@ Synthesize into structured sections:
 ### Phase 4: Devil's advocate
 
 For a simple request, present the strongest counterargument directly. For consequential or
-contested decisions, check whether an appropriate independent critique agent is available. If
-available, give it the finished Phase 3 analysis: challenge the strongest pro, identify unstated
-assumptions, and name the strongest argument against the proposal. Otherwise run a separate
-critique pass and label it **self-review**, not independent evidence.
+contested decisions, get an independent critique of the finished Phase 3 analysis: challenge
+the analysis, surface unstated assumptions, and identify the strongest case against the
+proposal. Ask the critic to question the framing instead of accepting it. Without an
+independent critique capability, run a separate critique pass and label it **self-review**,
+not independent evidence.
 
 ### Phase 5: Synthesis
 
@@ -64,8 +63,7 @@ Merge the main analysis with the critique:
 
 Offer additional rounds only when an unresolved tradeoff warrants discussion. Ask one question
 per open tradeoff, usually `show_options` with pros and cons and the verdict's recommendation.
-When an answer opens dependent decisions, hand off to `grilling`. Call `parley_end` when parley
-was used and the debate is done.
+When an answer opens dependent decisions, hand off to `grilling`.
 
 ### Phase 6: Save
 

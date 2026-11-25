@@ -18,8 +18,8 @@ THIS FILE HAS BEEN MODIFIED from the original. Changes:
   3. Rewrote the frontmatter description to this repository's authoring contract.
   4. References to other skills name the skill instead of a harness-specific skill URI.
   5. Steps 1-2 are asked through the channels in the grilling skill's "Asking
-     questions" section (parley, the host's question tool, or chat). With parley, the
-     draft is shown as a review question before it is written.
+     questions" section (your preferred question tool, or chat). When that tool can
+     show a document, the draft is reviewed there before it is written.
 The three steps, the document structure, and the template content are upstream's and are
 unchanged in substance.
 -->
@@ -54,9 +54,9 @@ deferred answer means ask it again in chat; both are needed before step 3.
    user must walk away able to do or decide.
 3. **Write the questionnaire.** Draft questions aimed at the gap from steps 1-2, following
    document structure below. Write it to the path the user names; otherwise use the system temp
-   directory, never the current directory. With parley, show the draft as one `review` question
-   (`markdown` = the draft, recommended `approve`), apply any `revise` feedback, then call
-   `parley_end`. Report the absolute path.
+   directory, never the current directory. If your preferred question tool can show a document
+   for review, show the draft there before writing and apply any revisions. Report the absolute
+   path.
    → the file exists and every item the user named in step 2 is covered by a question.
 
 ## Document structure
