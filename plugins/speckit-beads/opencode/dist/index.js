@@ -1205,9 +1205,12 @@ var spawnExit = async (argv, timeoutMs) => {
   });
   return proc.exited;
 };
+function whereArgv(directory) {
+  return ["bd", "-C", directory, "where"];
+}
 async function beadsActive(directory, spawn = spawnExit) {
   try {
-    return await spawn(["bd", "-C", directory, "where"], PROBE_TIMEOUT_MS) === 0;
+    return await spawn(whereArgv(directory), PROBE_TIMEOUT_MS) === 0;
   } catch {
     return false;
   }
@@ -1849,7 +1852,7 @@ ${ver.stderr}`))
     const bdMissing = await unavailable("bd", deadline, signal);
     if (bdMissing)
       return fail(`${bdMissing}; install beads (bd), then rerun setup`);
-    const where = await run(["bd", "where"], repo, deadline, signal);
+    const where = await run(whereArgv(repo), repo, deadline, signal);
     if (where.exitCode === 0)
       record(current, "skipped", "beads workspace already present");
     else {

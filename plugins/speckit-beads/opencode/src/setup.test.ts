@@ -163,7 +163,7 @@ describe("runSetup skipSpecify", () => {
     }
     setPluginRootForTests(plugin)
     setSpawnForTests((argv) => {
-      if (argv[0] === "bd" && argv[1] === "where") return { exitCode: 0, stdout: dir, stderr: "" }
+      if (argv[0] === "bd" && argv.at(-1) === "where") return { exitCode: 0, stdout: dir, stderr: "" }
       if (argv[0] === "specify") return { exitCode: 1, stdout: "", stderr: "" }
       return { exitCode: 0, stdout: "", stderr: "" }
     })
@@ -222,9 +222,9 @@ describe("runSetup skipSpecify", () => {
   })
 
   test("defaults the workspace to the caller's cwd and resolves a relative one against it", async () => {
-    const cwds: (string | undefined)[] = []
-    setSpawnForTests((argv, opts) => {
-      if (argv[0] === "bd" && argv[1] === "where") cwds.push(opts.cwd)
+    const probes: string[][] = []
+    setSpawnForTests((argv) => {
+      if (argv[0] === "bd" && argv.at(-1) === "where") probes.push(argv)
       return { exitCode: 0, stdout: "", stderr: "" }
     })
     expect((await registeredExecute()("test", { skipSpecify: true }, dir)).ok).toBe(true)
@@ -232,7 +232,11 @@ describe("runSetup skipSpecify", () => {
     mkdirSync(join(dir, "sub"))
     expect((await runSetup({ workspace: "sub", skipSpecify: true }, dir)).ok).toBe(true)
     expect(existsSync(join(dir, "sub", ".beads/formulas/mol-speckit-bugfix.formula.toml"))).toBe(true)
-    expect(cwds).toEqual([dir, join(dir, "sub")])
+    // `-C` pins the probe to the workspace: a bare `bd where` can find a store elsewhere and skip `bd init`.
+    expect(probes).toEqual([
+      ["bd", "-C", dir, "where"],
+      ["bd", "-C", join(dir, "sub"), "where"],
+    ])
   })
 })
 
@@ -345,7 +349,7 @@ describe("runSetup specify phases", () => {
   test("default discovery-only extension failures do not prevent beads init or formulas, and reruns retry them", async () => {
     setSpawnForTests((argv, opts) => {
       calls.push({ argv, timeout: opts.timeout })
-      if (argv[0] === "bd" && argv[1] === "where") return { exitCode: 1, stdout: "", stderr: "no workspace" }
+      if (argv[0] === "bd" && argv.at(-1) === "where") return { exitCode: 1, stdout: "", stderr: "no workspace" }
       if (argv[0] === "specify" && argv[2] === "add" && argv[3] !== "agent-context")
         return { exitCode: 1, stdout: `${argv[3]} is discovery-only`, stderr: "catalog warning" }
       return { exitCode: 0, stdout: argv[1] === "--version" ? "specify 1.2.3" : "", stderr: "" }

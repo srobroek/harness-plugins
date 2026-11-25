@@ -12,9 +12,12 @@ var spawnExit = async (argv, timeoutMs) => {
   });
   return proc.exited;
 };
+function whereArgv(directory) {
+  return ["bd", "-C", directory, "where"];
+}
 async function beadsActive(directory, spawn = spawnExit) {
   try {
-    return await spawn(["bd", "-C", directory, "where"], PROBE_TIMEOUT_MS) === 0;
+    return await spawn(whereArgv(directory), PROBE_TIMEOUT_MS) === 0;
   } catch {
     return false;
   }

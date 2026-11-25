@@ -1,6 +1,7 @@
 import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
+import { whereArgv } from "./beads.ts"
 
 /**
  * Each setup phase gets its own budget, so one slow networked phase neither starves
@@ -357,7 +358,8 @@ export async function runSetup(params: SetupParams, cwd: string, signal?: AbortS
     const deadline = budget()
     const bdMissing = await unavailable("bd", deadline, signal)
     if (bdMissing) return fail(`${bdMissing}; install beads (bd), then rerun setup`)
-    const where = await run(["bd", "where"], repo, deadline, signal)
+    // The tasks.md guard asks the same question, so setup and the guard agree on the workspace.
+    const where = await run(whereArgv(repo), repo, deadline, signal)
     if (where.exitCode === 0) record(current, "skipped", "beads workspace already present")
     else {
       const init = await run(["bd", "init", "--skip-hooks"], repo, deadline, signal)

@@ -41,7 +41,8 @@ that worktree and skip each one already done:
    missing extensions, not installed ones. Other CLI failures stop setup.
    `agent-context` is bundled; the others are community/discovery-only by default.
    Do not bypass catalog trust or infer opt-in from an installation failure.
-4. `bd init --skip-hooks` if no workspace; copy every formula from the speckit-beads
+4. `bd init --skip-hooks` when `bd -C <repo> where` fails. `-C` pins the lookup to the
+   repository; a bare `bd where` may report another store. Then copy every formula from the speckit-beads
    plugin's `formulas/` directory into `.beads/formulas/`. In Claude Code that
    directory is `${CLAUDE_PLUGIN_ROOT}/formulas/`.
    Formulas: `speckit-feature`, `speckit-lean`, `speckit-basic`,
