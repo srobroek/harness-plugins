@@ -1,3 +1,10 @@
+## whats-new [0.5.3](https://github.com/srobroek/harness-plugins/compare/whats-new--v0.5.2...whats-new--v0.5.3) (2026-11-25)
+
+### Bug Fixes
+
+* **whats-new:** declare the Pi whats-new agent read-only for acceptance ([d0fabbe](https://github.com/srobroek/harness-plugins/commit/d0fabbecc37f12af919021cef9be0cf108095387))
+* **whats-new:** load pi-web-access for the Pi whats-new agent ([9ed4d60](https://github.com/srobroek/harness-plugins/commit/9ed4d607f643875c5f6d5248251a4044daacc1f0))
+
 ## whats-new [0.5.2](https://github.com/srobroek/harness-plugins/compare/whats-new--v0.5.1...whats-new--v0.5.2) (2026-11-24)
 
 ### Bug Fixes
