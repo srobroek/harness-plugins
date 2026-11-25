@@ -702,7 +702,8 @@ test("a delayed clone-resolution failure of the first report does not replace th
     const report = () => s.fake.fire.session("experimental.idle", { sessionID: "a", background: SHELL() })
     const first = report()
     await gate.reached(1)
-    const second = report()
+    // The second report runs a shell outside the target worktree, so it leaves no hold there.
+    const second = s.fake.fire.session("experimental.idle", { sessionID: "a", background: [{ kind: "shell", shellID: "sh0", command: "sleep 60" }] })
     await gate.reached(2)
     const third = report()
     await gate.reached(3)
