@@ -3340,7 +3340,8 @@ async function cleanupInRepository(params, cwd, deps) {
       return pushed;
     return { identity, observed, pushed };
   };
-  const proofs = deps.proofSection === undefined ? await proveTarget() : await deps.proofSection(path, proveTarget);
+  const unlocked = await proveTarget();
+  const proofs = !isFailure(unlocked) || deps.proofSection === undefined ? unlocked : await deps.proofSection(path, proveTarget);
   if (isFailure(proofs))
     return settle(proofs);
   const { identity, observed, pushed } = proofs;
@@ -5839,6 +5840,27 @@ function setHold(commonDir, directory, sessionID, jobs, now) {
   writeFileSync5(temp, JSON.stringify({ sessionID, directory, jobs, updatedAt: now }));
   renameSync2(temp, path);
 }
+var pendingHoldFile = (commonDir, directory, sessionID) => join7(holdsDir(commonDir, directory), `${sha1(sessionID)}.pending.json`);
+async function recordHold(commonDir, directory, sessionID, jobs, at, lock) {
+  const pending = pendingHoldFile(commonDir, directory, sessionID);
+  if (jobs.length > 0) {
+    mkdirSync5(holdsDir(commonDir, directory), { recursive: true });
+    const temp = `${pending}.${randomUUID2()}.tmp`;
+    writeFileSync5(temp, JSON.stringify({ sessionID, directory, jobs, updatedAt: at }));
+    renameSync2(temp, pending);
+  }
+  await lockedWrite(commonDir, directory, lock, () => {
+    setHold(commonDir, directory, sessionID, jobs, at);
+    let left;
+    try {
+      left = parseHold(JSON.parse(readFileSync6(pending, "utf8")));
+    } catch {
+      left = undefined;
+    }
+    if (left === undefined || left.updatedAt <= at)
+      rmSync4(pending, { force: true });
+  });
+}
 function readHolds(commonDir, directory) {
   const dir = holdsDir(commonDir, directory);
   let names;
@@ -7007,7 +7029,7 @@ function createPendingCleanup(deps) {
           jobs.push({ kind: job.kind, id: job.shellID ?? job.childSessionID ?? job.sessionID ?? "unknown" });
       }
       try {
-        await lockedAt(common, path, () => setHold(common, path, sessionID, jobs, now()));
+        await recordHold(common, path, sessionID, jobs, now(), { sessionID: "delivery", now, ...deps.lock });
         unsafe.delete(want);
       } catch (error) {
         const why = error instanceof Error ? error.message : String(error);

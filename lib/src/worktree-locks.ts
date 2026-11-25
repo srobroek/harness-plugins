@@ -113,6 +113,48 @@ export function setHold(commonDir: string, directory: string, sessionID: string,
   renameSync(temp, path)
 }
 
+/** A hold written before its lock is taken: see {@link recordHold}. Its name ends in `.json`, so {@link readHolds} reads it as a hold. */
+const pendingHoldFile = (commonDir: string, directory: string, sessionID: string) =>
+  join(holdsDir(commonDir, directory), `${sha1(sessionID)}.pending.json`)
+
+/**
+ * Record (or, with no jobs, clear) what `sessionID` has running in `directory`: the way every idle gate
+ * writes its hold. A remover holds the worktree's lock through its proofs and its removal, which can
+ * outlast a writer's wait, and a writer that gives up must not leave running work unrecorded. So the
+ * jobs are first written outside the lock as a pending hold, which every remover's {@link holdsState}
+ * reads like any other hold; then the hold is written under the lock, and that write drops the
+ * session's pending hold unless a later report replaced it. A writer that cannot take the lock still
+ * throws, but its pending hold stays, so every remover, in every plugin instance, keeps the worktree
+ * until a later write of the session succeeds or the hold expires.
+ */
+export async function recordHold(
+  commonDir: string,
+  directory: string,
+  sessionID: string,
+  jobs: readonly HoldJob[],
+  at: number,
+  lock: LockOptions,
+): Promise<void> {
+  const pending = pendingHoldFile(commonDir, directory, sessionID)
+  if (jobs.length > 0) {
+    mkdirSync(holdsDir(commonDir, directory), { recursive: true })
+    const temp = `${pending}.${randomUUID()}.tmp`
+    writeFileSync(temp, JSON.stringify({ sessionID, directory, jobs, updatedAt: at } satisfies SessionHold))
+    renameSync(temp, pending)
+  }
+  await lockedWrite(commonDir, directory, lock, () => {
+    setHold(commonDir, directory, sessionID, jobs, at)
+    let left: SessionHold | undefined
+    try {
+      left = parseHold(JSON.parse(readFileSync(pending, "utf8")))
+    } catch {
+      left = undefined
+    }
+    // A pending hold newer than this write belongs to a later report that is still waiting for the lock.
+    if (left === undefined || left.updatedAt <= at) rmSync(pending, { force: true })
+  })
+}
+
 /** Every session's hold for `directory`. `unreadable` when the directory or any entry could not be read. */
 export function readHolds(commonDir: string, directory: string): { holds: SessionHold[]; unreadable: boolean; missing?: boolean } {
   const dir = holdsDir(commonDir, directory)

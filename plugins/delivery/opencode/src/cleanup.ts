@@ -137,11 +137,12 @@ export type CleanupDeps = {
   host?: HostWorktrees
   /**
    * Runs the reads that prove the target (its identity, the pull request read from inside it, a clean
-   * tree, a pushed tip) under the lock `removalSection` takes, without its last look. A remover part-way
-   * through deleting the tree makes it read as dirty or unregistered; under the lock such a remover has
-   * either not started or finished, and a finished one leaves the target gone, which this call then
-   * reports as already cleaned. Returns `read`'s result, or a refusal when the lock cannot be taken.
-   * Absent, `read` is called directly.
+   * tree, a pushed tip) again, under the lock `removalSection` takes but without its last look, when they
+   * refused without it. A remover part-way through deleting the tree makes it read as dirty or
+   * unregistered; under the lock such a remover has either not started or finished, and a finished one
+   * leaves the target gone, which this call then reports as already cleaned. Proofs that pass need no
+   * lock: the removal section proves the same again. Returns `read`'s result, or a refusal when the lock
+   * cannot be taken. Absent, the first refusal stands.
    */
   proofSection?: <T>(worktree: string, read: () => Promise<T>) => Promise<T | CleanupFailure>
   /**
@@ -1621,8 +1622,9 @@ async function cleanupInRepository(
   // and `revalidateBoundary` proves the same identity again immediately before the
   // irreversible step.
   //
-  // Every read of the target runs under the lock the removal section takes, so none of them sees
-  // another remover's removal part-way (a half-deleted tree reads as dirty).
+  // The reads run without a lock first, so the lock is held only for the removal section. A refusal is
+  // read again under the lock every remover takes, so it is never the sight of another remover's
+  // removal part-way (a half-deleted tree reads as dirty).
   const proveTarget = async () => {
     const identity = await verifyTargetIdentity(receipt, cwd, run, bounds.refReadMs, git)
     if (isFailure(identity)) return identity
@@ -1636,7 +1638,8 @@ async function cleanupInRepository(
     if (isFailure(pushed)) return pushed
     return { identity, observed, pushed }
   }
-  const proofs = deps.proofSection === undefined ? await proveTarget() : await deps.proofSection(path, proveTarget)
+  const unlocked = await proveTarget()
+  const proofs = !isFailure(unlocked) || deps.proofSection === undefined ? unlocked : await deps.proofSection(path, proveTarget)
   if (isFailure(proofs)) return settle(proofs)
   const { identity, observed, pushed } = proofs
   const ledger = await verifyLedger(receipt, cwd, resolution.path, run, bounds.bdShowMs, bounds.refReadMs, git, env)

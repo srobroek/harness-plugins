@@ -201,7 +201,10 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
 - The idle hook also records the `background` list as holds on disk
   (`<common>/opencode/holds/…`, the same format `subagent-worktree` writes): a shell that names the
   worktree, or any job of a session working in it. The last check before a removal reads them, so
-  running background work keeps the worktree. Landing records are dropped only on positive evidence
+  running background work keeps the worktree. The jobs are written before the lock wait as well
+  (`recordHold`, as `subagent-worktree` writes them). A write whose lock wait times out behind a
+  long removal hold therefore still blocks every remover until that session's next write.
+  Landing records are dropped only on positive evidence
   (their own receipt readable and cleaned or superseded); a denial is never dropped by cleanup of
   stale records, and a missing or unreadable receipt directory deletes nothing.
 - The lock is the Beads embedded write lock's protocol (a leased, token-owned file with a steal
@@ -213,10 +216,11 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
   `lockedWorktreeRemoval`: the same on-disk lock `subagent-worktree` takes, then, under it and after
   every proof, a final look at claims, background holds, running sessions and denials, then the
   removal. The reads that prove the target (its identity, the PR read from inside it, a clean tree,
-  a pushed tip) run under the same lock first (`lockedWorktreeRead`), so they never see another
-  remover's removal part-way: a half-deleted tree would read as dirty. The prompt, if any, comes
-  between the two and outside the lock. If the coordination store cannot be written, or a hold
-  could not be recorded, the worktree is treated as unsafe and kept.
+  a pushed tip) run first without the lock, so the lock is held only for the removal section, which
+  proves them again. A refusal is read again under the same lock (`lockedWorktreeRead`), so it is
+  never the sight of another remover's removal part-way: a half-deleted tree would read as dirty.
+  The prompt, if any, comes before the removal section and outside the lock. If the coordination
+  store cannot be written, or a hold could not be recorded, the worktree is treated as unsafe and kept.
 - After the worktree is removed and its absence is proven, delivery moves the lane's own sessions
   to the repository's canonical checkout, so none is left pointing at a directory that is gone
   (`Location not found`). The lane is the session that called the tool (for the background retry,

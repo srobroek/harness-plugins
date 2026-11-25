@@ -11,11 +11,13 @@ import {
 } from "@srobroek/opencode-lib/worktree-claims"
 import {
   holdsState,
+  LockTimeout,
   lockedWorktreeRead,
   lockedWorktreeRemoval,
   lockedWrite,
   lockFile,
   readHolds,
+  recordHold,
   setHold,
   withDiskLock,
 } from "@srobroek/opencode-lib/worktree-locks"
@@ -1858,22 +1860,90 @@ describe("delivery_cleanup irreversible boundary", () => {
 /**
  * The worktree lock every delivery remover takes (`pending-cleanup.ts`), without the host's last
  * look at claims and sessions, so two calls in one test exclude each other the way two plugin
- * instances do. `sleep` sees the waits for a busy lock.
+ * instances do. `sleep` sees the waits for a busy lock. With `holds`, the removal's two looks read
+ * the background-work records from disk, as every remover's do.
  */
-function lockedDeps(f: Fixture, sessionID: string, sleep?: (ms: number) => Promise<void>): Partial<CleanupDeps> {
+function lockedDeps(f: Fixture, sessionID: string, sleep?: (ms: number) => Promise<void>, holds = false): Partial<CleanupDeps> {
   const common = resolve(f.main, git(f.main, ["rev-parse", "--git-common-dir"]))
   const lock = { sessionID, ...(sleep === undefined ? {} : { sleep }) }
+  const look = async (worktree: string) => (holds ? holdsState(common, worktree, NOW + 10) : undefined)
   return {
     proofSection: async (worktree, read) => {
       const outcome = await lockedWorktreeRead(common, worktree, lock, read)
       return outcome.locked ? outcome.value : { ok: false, reason: outcome.reason }
     },
     removalSection: async (worktree, run) => {
-      const outcome = await lockedWorktreeRemoval(common, worktree, lock, { recheck: async () => undefined, remove: run })
+      const outcome = await lockedWorktreeRemoval(common, worktree, lock, { recheck: () => look(worktree), remove: run })
       return outcome.removed ? outcome.value : { ok: false, reason: outcome.reason }
     },
+    finalCheck: look,
   }
 }
+
+/** `inner`, except that its `nth` call matching `match` first runs `during` and then takes `ms` longer: a slow read under load. */
+function slowCall(inner: CliRunner, match: (argv: readonly string[]) => boolean, nth: number, ms: number, during: () => void): CliRunner {
+  let seen = 0
+  return async (argv, options) => {
+    if (match(argv) && ++seen === nth) {
+      during()
+      await Bun.sleep(ms)
+    }
+    return inner(argv, options)
+  }
+}
+
+describe("delivery_cleanup beside a background job that starts during it", () => {
+  // Scaled down from the real bounds: a hold writer waits 300 ms for the lock (10 s in production) while
+  // one read takes 800 ms (a slow `gh` read, or a `git status` of a large tree, up to `treeScanMs`).
+  const WRITER_WAIT_MS = 300
+  const SLOW_READ_MS = 800
+  const isStatus = (argv: readonly string[]) => argv[0] === "git" && argv.includes("status") && argv.includes("--porcelain")
+  const isPrRead = (argv: readonly string[]) => argv[0] === "gh" && argv[1] === "pr"
+
+  const contend = async (name: string, match: (argv: readonly string[]) => boolean, nth: number) => {
+    const f = await fixture(name)
+    const common = resolve(f.main, git(f.main, ["rev-parse", "--git-common-dir"]))
+    let write: Promise<string> = Promise.resolve("never started")
+    const job = () => {
+      // Another plugin instance's idle gate records a shell it just saw running in the worktree.
+      write = outsideLocks(() =>
+        recordHold(common, f.linked, "ses_bg", [{ kind: "shell", id: "sh_1" }], NOW + 10, { sessionID: "ses_bg", waitMs: WRITER_WAIT_MS }).then(
+          () => "recorded",
+          (error) => (error instanceof LockTimeout ? "starved" : String(error)),
+        ),
+      )
+    }
+    const scripted = runner(f)
+    const result = await cleanupDelivery({ receipt: f.receiptPath }, f.main, {
+      run: slowCall(scripted.run, match, nth, SLOW_READ_MS, job),
+      now: () => NOW + 10,
+      env: f.env,
+      bounds: HEAVY_FIXTURE_BOUNDS,
+      ...lockedDeps(f, "remover", undefined, true),
+    })
+    return { f, result, written: await write, calls: scripted.calls }
+  }
+
+  test("a hold written during a slow first proof is not starved, and the removal refuses", async () => {
+    const { f, result, written, calls } = await contend("hold-during-proof", isPrRead, 1)
+    expect(written).toBe("recorded")
+    expect(refusal(result)).toContain("session ses_bg has 1 background job(s) running (shell sh_1)")
+    expect(calls.filter(isWorktreeRemove)).toEqual([])
+    expect(existsSync(f.linked)).toBe(true)
+  })
+
+  test("a hold whose write is starved by a slow final scan under the removal lock still reaches disk, and the removal refuses", async () => {
+    // The second scan is revalidateBoundary's, inside the removal section, after the removal's first look.
+    const { f, result, written, calls } = await contend("hold-during-final-scan", isStatus, 2)
+    expect(written).toBe("starved")
+    expect(refusal(result)).toContain("session ses_bg has 1 background job(s) running (shell sh_1)")
+    expect(calls.filter(isWorktreeRemove)).toEqual([])
+    expect(existsSync(f.linked)).toBe(true)
+    // The record stays until a later write of that session takes the lock.
+    const common = resolve(f.main, git(f.main, ["rev-parse", "--git-common-dir"]))
+    expect(holdsState(common, f.linked, NOW + 10)).toContain("ses_bg")
+  })
+})
 
 const isWorktreeRemove = (argv: readonly string[]) => argv[0] === "git" && argv[1] === "worktree" && argv[2] === "remove"
 

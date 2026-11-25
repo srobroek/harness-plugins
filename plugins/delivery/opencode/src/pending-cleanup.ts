@@ -43,7 +43,7 @@ import {
   removeLanding,
   writeLanding,
 } from "@srobroek/opencode-lib/worktree-claims"
-import { holdsState, type LockOptions, lockedWorktreeRead, lockedWorktreeRemoval, lockedWrite, setHold } from "@srobroek/opencode-lib/worktree-locks"
+import { holdsState, type LockOptions, lockedWorktreeRead, lockedWorktreeRemoval, lockedWrite, recordHold } from "@srobroek/opencode-lib/worktree-locks"
 import { ownershipDeferral } from "./auto-cleanup.ts"
 import {
   CLEANUP_BOUNDS,
@@ -769,9 +769,9 @@ export function createPendingCleanup(deps: PendingDeps) {
   const holdCheck = async (repo: Repository, worktree: string): Promise<string | undefined> => holdCheckAt(repo, await commonOf(repo), worktree)
 
   /**
-   * `CleanupDeps.proofSection` in `repo`: the lock {@link sectionIn} takes, alone, around the reads that
-   * prove a target, so they never see another remover's removal part-way. Refuses (does not throw)
-   * when the lock cannot be taken.
+   * `CleanupDeps.proofSection` in `repo`: the lock {@link sectionIn} takes, alone, around a second reading
+   * of proofs that refused without it, so a refusal is never the sight of another remover's removal
+   * part-way. Refuses (does not throw) when the lock cannot be taken.
    */
   const proofIn =
     (repo: Repository) =>
@@ -1197,7 +1197,8 @@ export function createPendingCleanup(deps: PendingDeps) {
         if (inside) jobs.push({ kind: job.kind, id: job.shellID ?? job.childSessionID ?? job.sessionID ?? "unknown" })
       }
       try {
-        await lockedAt(common, path, () => setHold(common, path, sessionID, jobs, now()))
+        // The jobs reach disk before the lock wait, so a remover holding the lock longer than the wait still sees them.
+        await recordHold(common, path, sessionID, jobs, now(), { sessionID: "delivery", now, ...deps.lock })
         unsafe.delete(want)
       } catch (error) {
         // The record could not be written, so running work cannot be ruled out: nothing is removed from this worktree until a write succeeds.
