@@ -1,0 +1,31 @@
+{
+  "name": "@srobroek/pi-delivery",
+  "version": "0.13.1",
+  "description": "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
+  "keywords": [
+    "pi-package"
+  ],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/srobroek/harness-plugins.git",
+    "directory": "plugins/delivery/pi"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "_kit",
+    "extensions"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/delivery-cleanup.js",
+      "./_kit/prereqs.ts"
+    ]
+  }
+}

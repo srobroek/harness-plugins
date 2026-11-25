@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { isTranslatedAgentFile } from "./agent-files.ts"
-import { agentTexts, buildPlugin, composeAgents, mcpCopies, ompAgents, ompExtensionCopies, orphanAgents, readBuild, selectPlugins, stale, staleOmpAgents } from "./build.ts"
+import { agentTexts, buildPlugin, composeAgents, mcpCopies, ompAgents, ompExtensionCopies, openCodeVariant, orphanAgents, readBuild, selectPlugins, stale, staleOmpAgents } from "./build.ts"
 
 const plugins = path.resolve(import.meta.dir, "../plugins")
 const session = path.join(plugins, "session")
@@ -98,6 +98,7 @@ describe("readBuild", () => {
         claudeEntries: { hook: "claude-hook" },
         piEntries: {},
         claudeAgents: ["a"],
+        piAgents: true,
       })
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -107,7 +108,7 @@ describe("readBuild", () => {
   test("an OpenCode-only plugin without entries builds nothing", () => {
     const dir = manifest({ harnesses: ["opencode"] })
     try {
-      expect(readBuild(dir)).toEqual({ claude: false, harnesses: ["opencode"], entries: {}, claudeEntries: {}, piEntries: {} })
+      expect(readBuild(dir)).toEqual({ claude: false, harnesses: ["opencode"], entries: {}, claudeEntries: {}, piEntries: {}, piAgents: true })
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -137,6 +138,20 @@ describe("readBuild", () => {
     }
   })
 
+  test("piAgents: false keeps the agents off pi: their OpenCode form becomes the <id>.opencode.md variant", () => {
+    const off = manifest({ harnesses: ["opencode", "pi"], piAgents: false })
+    const bad = manifest({ harnesses: ["opencode", "pi"], piAgents: "no" })
+    try {
+      const build = readBuild(off)
+      expect(build?.piAgents).toBe(false)
+      expect(build === undefined ? undefined : openCodeVariant(build)).toBe(true)
+      expect(() => readBuild(bad)).toThrow('"agent-plugins.piAgents" must be a boolean')
+    } finally {
+      rmSync(off, { recursive: true, force: true })
+      rmSync(bad, { recursive: true, force: true })
+    }
+    expect([openCodeVariant({ claude: false, piAgents: true }), openCodeVariant({ claude: true, piAgents: true })]).toEqual([false, true])
+  })
 })
 
 describe("stale pi bundles", () => {
@@ -310,17 +325,22 @@ describe("composeAgents", () => {
     }
   })
 
+  /** Whether the plugin at `dir` keeps its agents' OpenCode form in the `<id>.opencode.md` variant. */
+  const variantOf = (dir: string) => {
+    const build = readBuild(dir)
+    return build !== undefined && openCodeVariant(build)
+  }
+
   test("every shipped agents.src file composes to its committed common/agents file", () => {
     for (const name of ["agent-coder", "agent-reviewer", "delivery", "design", "journeys", "modes", "quality", "speckit-beads"]) {
       const dir = path.join(plugins, name)
-      const build = readBuild(dir)
-      for (const output of composeAgents(dir, build?.claude)) expect(readFileSync(output.file, "utf8")).toBe(output.contents)
+      for (const output of composeAgents(dir, variantOf(dir))) expect(readFileSync(output.file, "utf8")).toBe(output.contents)
     }
   })
 
   const shipped = (plugin: string, id: string) => {
     const dir = path.join(plugins, plugin, "common", "agents")
-    return readFileSync(path.join(dir, readBuild(path.join(plugins, plugin))?.claude ? `${id}.opencode.md` : `${id}.md`), "utf8")
+    return readFileSync(path.join(dir, variantOf(path.join(plugins, plugin)) ? `${id}.opencode.md` : `${id}.md`), "utf8")
   }
 
   test("the composed coder prompt carries the quality line", () => {

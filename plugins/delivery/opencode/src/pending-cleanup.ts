@@ -57,6 +57,7 @@ import {
   type RemovalFacts,
   type RepositoryIdentity,
 } from "./cleanup.ts"
+import { CleanupDeferred, explicitDeferral } from "./cleanup-tool.ts"
 import { addClone, type CloneEntry, mergeClone, readClones, settleReceipts, withoutReceipts } from "./clone-registry.ts"
 import { inClone } from "./land.ts"
 import {
@@ -186,21 +187,6 @@ export function receiptSettled(directory: string, receiptId: string): boolean {
   } catch {
     return false
   }
-}
-
-/** An explicit `delivery_cleanup` was authorized but its target belongs to a lane: nothing is removed here. */
-export class CleanupDeferred extends Error {
-  constructor(readonly deferred: string) {
-    super(deferred)
-    this.name = "CleanupDeferred"
-  }
-}
-
-/** The text for a worktree an owner removes later, or undefined when delivery may remove it. Pure. */
-export function explicitDeferral(ownership: Ownership): string | undefined {
-  const why = ownershipDeferral(ownership)
-  if (why === undefined) return undefined
-  return ownership.owner === "lane" ? `${why}; removed by its owner once finished` : `${why}; not removed until it can be read`
 }
 
 /**

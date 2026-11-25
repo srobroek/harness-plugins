@@ -405,6 +405,34 @@ different root, set `DELIVERY_RECEIPTS_DIR` or the `receiptsDirectory` option.
 `PI_CODING_AGENT_DIR` is not read. A directory scan reads at most 1000 receipts
 per repository.
 
+## pi and OMP
+
+The pi package (`@srobroek/pi-delivery`, `plugins/delivery/pi`) ships one tool:
+`delivery_cleanup`, for an explicit call. It takes the same input and returns the
+same text as the OpenCode tool, and runs the same `cleanupDelivery`. It holds the
+same worktree lock as every other delivery remover and as `subagent-worktree`. Under
+that lock it reads the lane claim and the background-work records.
+
+It differs from the OpenCode tool in these ways:
+
+- It cleans up only the session's own repository. It refuses a `repo` and `repoPath`
+  that name another clone, and a receipt or worktree of another repository.
+- It has no retry and no background cleanup. It does not clean up after a land and
+  keeps no clone registry. It does not see OpenCode sessions running in the worktree.
+- Its `authorize` step defers a lane-owned worktree and calls no UI, so a session
+  without a UI (a subagent) runs it the same way. The OMP approval mode gates it as
+  an `exec` tool.
+- The pi package ships neither `delivery_land` nor the hygiene report. The agents and
+  the two skills are OpenCode variants (`<id>.opencode.md`, `SKILL.opencode.md`),
+  because they name tools and agents that pi lacks, so pi gets none of them.
+
+OMP loads pi extensions unchanged. To load this tool in OMP, add the bundle's file
+path (`plugins/delivery/pi/extensions/delivery-cleanup.js`) to `extensions:` in
+`~/.omp/agent/config.yml`. A file entry loads no sibling skills or agents. Only one
+`delivery_cleanup` may load, so disable any other one. For the omp-plugins `delivery`
+package, add `extension-module:delivery-cleanup-tool` to `disabledExtensions`. Its
+`delivery_land` and hygiene report stay loaded.
+
 ## Agents
 
 The plugin registers these subagents from `agents/*.md` through
@@ -449,11 +477,11 @@ ID available to your host.
   with or without model-roles; `false` means no model.
 - Your own markdown or config agent with the same id loads after the plugin and
   overrides it field by field, including the tier header.
-- `agents/roles.json` holds the same mapping as the headers, as a model-roles
+- `agents/roles.json` (`common/agents/roles.opencode.json` in the source) holds the same mapping as the headers, as a model-roles
   `agents` fragment, for hosts that set tiers in config instead.
 
 The agents were converted with
-`bun scripts/convert-agent.ts --roles plugins/delivery/common/agents/roles.source.json`,
+`bun scripts/convert-agent.ts --roles plugins/delivery/common/agents/roles.source.opencode.json`,
 then edited by hand. The roles file is keyed by model-roles tier (`cheap`, `standard`,
 `strong`, `reviewer`); the omp names `smol`, `task` and `slow` resolve to the same keys. The edits removed omp-only references, slimmed the
 shepherd, and limited the reviewer's shell to `gh pr view` and `gh pr diff`.

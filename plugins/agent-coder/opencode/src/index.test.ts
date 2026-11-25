@@ -5,6 +5,9 @@ import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import plugin from "./index.ts"
 
 const PLUGINS = join(import.meta.dir, "../../..")
+/** The skill files OpenCode loads: the shared `SKILL.md`, or the OpenCode-only variant `SKILL.opencode.md`. */
+const openCodeSkills = (dirs: string) =>
+  ["SKILL.md", "SKILL.opencode.md"].flatMap((name) => [...new Bun.Glob(`*/common/skills/${dirs}/${name}`).scanSync(PLUGINS)])
 
 const setup = async () => {
   const fake = createFakeContext()
@@ -60,7 +63,7 @@ test("allowlists coding skills by id or family prefix and denies the rest", asyn
 test("every allowlisted skill ships in this repository", async () => {
   const { rules } = await setup()
   const ids = new Set(
-    [...new Bun.Glob("*/common/skills/**/SKILL.md").scanSync(PLUGINS)].map((path) => path.split("/").at(-2)),
+    openCodeSkills("**").map((path) => path.split("/").at(-2)),
   )
   for (const id of allowedSkills(rules)) {
     const shipped = id.endsWith("*") ? [...ids].some((name) => name?.startsWith(id.slice(0, -1))) : ids.has(id)
@@ -73,7 +76,7 @@ test("every allowlisted router member's router is allowlisted too", async () => 
   const allowed = { has: (id: string) => permissionEffect(rules, "skill", id) === "allow" }
   const row = /^\|.*\|\s*`([\w-]+)`\s*\|\s*$/
   const routerOf = new Map<string, string>()
-  for (const path of new Bun.Glob("*/common/skills/*/SKILL.md").scanSync(PLUGINS)) {
+  for (const path of openCodeSkills("*")) {
     const text = await Bun.file(join(PLUGINS, path)).text()
     if (!text.includes("| Load skill |")) continue
     const router = path.split("/").at(-2) as string

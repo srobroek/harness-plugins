@@ -8,8 +8,9 @@ import { join } from "node:path"
 const plugins = join(import.meta.dir, "..", "plugins")
 const COPIES: Record<string, string[]> = {
   "adversarial-challenger": ["agent-reviewer/common/agents/adversarial-challenger.opencode.md", "quality/common/agents/adversarial-challenger.opencode.md"],
-  "pr-reviewer": ["agent-reviewer/common/agents/pr-reviewer.opencode.md", "delivery/common/agents/pr-reviewer.md"],
-  researcher: ["agent-researcher/common/agents/researcher.md", "delivery/common/agents/researcher.md"],
+  // delivery ships its agents to OpenCode only (no pi agents), so its composed copies carry the `.opencode` variant.
+  "pr-reviewer": ["agent-reviewer/common/agents/pr-reviewer.opencode.md", "delivery/common/agents/pr-reviewer.opencode.md"],
+  researcher: ["agent-researcher/common/agents/researcher.md", "delivery/common/agents/researcher.opencode.md"],
 }
 const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---\r?\n/
 const body = (text: string) => text.replace(FRONTMATTER, "")

@@ -4,9 +4,9 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createFakeContext, type FakeContextOptions } from "@srobroek/opencode-lib/testing"
 import { AGENT_IDS, hasModelRoles, loadAgents } from "./agents.ts"
+import { cleanupText } from "./cleanup-tool.ts"
 import plugin, {
   CLEANUP_ACTION,
-  cleanupText,
   confirmDelivery,
   FAN_OUT_PATH,
   FAN_OUT_SKILL_PATH,

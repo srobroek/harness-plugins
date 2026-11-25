@@ -3,7 +3,7 @@
  * Fail when a shipped agent (`plugins/<name>/common/agents/*.md`) does not declare a model-roles
  * tier in its `x-opencode-model-role` request header, declares a value that is neither a
  * tier nor an accepted old role name, or pins a model in a plugin that does not treat it as a fallback. A plugin's
- * `common/agents/roles.json` fragment, when present, must match the headers. Every agent must
+ * `common/agents/roles.json` fragment (`roles.opencode.json` when it ships to OpenCode only), when present, must match the headers. Every agent must
  * declare a positive integer `steps` limit.
  *
  *   bun scripts/check-agent-roles.ts           check plugins/*
@@ -46,7 +46,7 @@ export function checkAgent(file: string, text: string, allowModel: boolean): { r
   return { ...(isModelRole(role) ? { role } : {}), findings }
 }
 
-/** Compare a plugin's `common/agents/roles.json` fragment with the roles its agent files declare. */
+/** Compare a plugin's `common/agents/roles.json` (or `roles.opencode.json`) fragment with the roles its agent files declare. */
 export function checkFragment(file: string, text: string, roles: Record<string, string>): Finding[] {
   const fragment = (JSON.parse(text) as { agents?: Record<string, string> }).agents ?? {}
   const findings: Finding[] = []
@@ -76,9 +76,11 @@ export function checkFiles(root: string, files: readonly string[]): Finding[] {
     byPlugin.set(plugin, roles)
   }
   for (const [plugin, roles] of byPlugin) {
-    const fragment = path.join(root, "plugins", plugin, "common", "agents", "roles.json")
-    const text = readIfPresent(fragment)
-    if (text !== undefined) findings.push(...checkFragment(path.relative(root, fragment), text, roles))
+    for (const name of ["roles.json", "roles.opencode.json"]) {
+      const fragment = path.join(root, "plugins", plugin, "common", "agents", name)
+      const text = readIfPresent(fragment)
+      if (text !== undefined) findings.push(...checkFragment(path.relative(root, fragment), text, roles))
+    }
   }
   return findings
 }

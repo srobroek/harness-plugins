@@ -8,11 +8,50 @@
     "description": "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
     "category": "development",
     "harnesses": [
-      "opencode"
+      "opencode",
+      "pi"
     ],
     "scope": "global",
+    "piAgents": false,
+    "discrepancies": "pi (and OMP, which loads the pi bundle) gets only an explicit delivery_cleanup for the session's repository: no delivery_land, automatic cleanup or clone registry.",
+    "prerequisites": [
+      {
+        "bin": "git",
+        "for": "delivery_cleanup's worktree, ref and remote proofs, git worktree remove and git branch -d",
+        "required": true,
+        "install": {
+          "url": "https://git-scm.com/downloads"
+        }
+      },
+      {
+        "bin": "gh",
+        "for": "delivery_cleanup's pull-request read (gh pr view) for a GitHub receipt",
+        "install": {
+          "mise": "aqua:cli/cli",
+          "url": "https://cli.github.com"
+        }
+      },
+      {
+        "bin": "glab",
+        "for": "delivery_cleanup's merge-request read (glab mr view) for a GitLab receipt",
+        "install": {
+          "url": "https://gitlab.com/gitlab-org/cli#installation"
+        }
+      },
+      {
+        "bin": "bd",
+        "for": "delivery_cleanup's read-only bd show of a receipt's beads when the repository's Beads ledger is active",
+        "install": {
+          "mise": "aqua:gastownhall/beads",
+          "url": "https://github.com/gastownhall/beads/blob/main/docs/getting-started/installation.md"
+        }
+      }
+    ],
     "entries": {
       "index": "index"
+    },
+    "piEntries": {
+      "delivery-cleanup": "delivery-cleanup"
     }
   }
 }

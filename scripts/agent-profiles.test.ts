@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { type AgentPermission, permissionEffect } from "../lib/src/agent-files.ts"
 import { DEFAULT_LEAN_AGENTS } from "../plugins/agent-efficiency/opencode/src/lean.ts"
-import { isTranslatedAgentFile } from "./agent-files.ts"
+import { isTranslatedAgentFile, openCodeForms } from "./agent-files.ts"
 import { PI_WEB_TOOLS, piAgents } from "./pi-agents.ts"
 
 const PLUGINS = path.join(import.meta.dir, "..", "plugins")
@@ -88,7 +88,8 @@ function agents(): Agent[] {
   })
 }
 
-const skillFiles = () => [...new Bun.Glob("*/common/skills/*/SKILL.md").scanSync(PLUGINS)]
+// A skill's file may be its OpenCode variant (`SKILL.opencode.md`), which the OpenCode tree ships as SKILL.md.
+const skillFiles = () => openCodeForms("SKILL.md").flatMap((name) => [...new Bun.Glob(`*/common/skills/*/${name}`).scanSync(PLUGINS)])
 const shipped = new Set(skillFiles().map((file) => file.split("/")[3] as string))
 
 /** Upstream skills the design-upstream-preflight table routes to; design agents may allow them. */

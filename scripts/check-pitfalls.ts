@@ -9,6 +9,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
+import { openCodeForms } from "./agent-files.ts"
 
 export type Finding = { file: string; line: number; reason: string }
 
@@ -39,11 +40,11 @@ export function checkPitfalls(file: string, text: string): Finding[] {
   return findings
 }
 
-/** Findings for a skill directory: a pitfalls file must be linked from SKILL.md and well formed. */
+/** Findings for a skill directory: a pitfalls file must be linked from SKILL.md and well formed. Either may be an OpenCode variant. */
 export function checkSkillDir(dir: string): Finding[] {
-  const pitfalls = path.join(dir, POINTER)
-  if (!existsSync(pitfalls)) return []
-  const skill = path.join(dir, "SKILL.md")
+  const pitfalls = openCodeForms(path.join(dir, POINTER)).find((file) => existsSync(file))
+  if (pitfalls === undefined) return []
+  const skill = openCodeForms(path.join(dir, "SKILL.md")).find((file) => existsSync(file)) ?? path.join(dir, "SKILL.md")
   const findings = checkPitfalls(pitfalls, readFileSync(pitfalls, "utf8"))
   if (!existsSync(skill) || !readFileSync(skill, "utf8").includes(POINTER))
     findings.push({ file: skill, line: 1, reason: `SKILL.md does not point to ${POINTER}` })
@@ -60,7 +61,7 @@ function main(): number {
     if (!existsSync(skills)) continue
     for (const skill of readdirSync(skills).sort()) {
       const dir = path.join(skills, skill)
-      if (existsSync(path.join(dir, POINTER))) count++
+      if (openCodeForms(path.join(dir, POINTER)).some((file) => existsSync(file))) count++
       findings.push(...checkSkillDir(dir))
     }
   }
