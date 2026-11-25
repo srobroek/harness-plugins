@@ -15,6 +15,8 @@ describe("beadIn", () => {
     ["Adds a thing.\n\nBead: a-1\n", "a-1"],
     ["Bead: a-1\r\nmore", "a-1"],
     ["Bead: a-1\nBead: b-2", "a-1"],
+    ["Bead: slopvac-8l4.3.77", "slopvac-8l4.3.77"],
+    ["Closes-Bead: slopvac-8l4.21.6.10", "slopvac-8l4.21.6.10"],
   ])("finds the bead in %j", (body, id) => {
     expect(beadIn(body)).toBe(id)
   })
@@ -32,6 +34,9 @@ describe("beadIn", () => {
     ["a non-ASCII id", "Bead: ä-1"],
     ["the rejected opt-out", "No-Bead: reason"],
     ["a lone carriage return as the separator", "x\rBead: a-1"],
+    ["a trailing dot", "Bead: a-1."],
+    ["an empty child segment", "Bead: a-1..2"],
+    ["a non-numeric child segment", "Bead: a-1.x"],
   ])("finds nothing in %s", (_name, body) => {
     expect(beadIn(body)).toBeUndefined()
   })

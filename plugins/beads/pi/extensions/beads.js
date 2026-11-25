@@ -4245,7 +4245,7 @@ var ACCEPTED_FORMS = [
   "a short flag with its value attached, positional words, and the flags --fill, --web, --editor, --template, --recover and --attach."
 ].join(" ");
 var TRAILER_RULE = "Name the bead on a line of its own in the body: `Bead: <id>`, `Closes-Bead: <id>` or `Bead-Id: <id>`, with no other text on the line.";
-var BEAD_LINE = /^[ \t]*(?:Bead|Closes-Bead|Bead-Id):[ \t]*([A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9]+)[ \t]*$/i;
+var BEAD_LINE = /^[ \t]*(?:Bead|Closes-Bead|Bead-Id):[ \t]*([A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9]+(?:\.[0-9]+)*)[ \t]*$/i;
 function beadIn(body) {
   for (const line of body.split(`
 `)) {
