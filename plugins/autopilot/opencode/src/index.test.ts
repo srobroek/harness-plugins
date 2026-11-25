@@ -132,7 +132,7 @@ async function start(storage?: Record<string, unknown>) {
     storage,
     sessions: [lead(), { id: "ses_child", parentID: "ses_lead", agent: "coder", time: {} }, { id: "ses_grand", parentID: "ses_child", time: {} }, { id: "ses_other", time: {} }],
   })
-  cleanup = await setupAutopilot(fake.context, { run, now: () => NOW + skewMs, lock, warn, ledger: ledgerHost, readPauseMs: 0 })
+  cleanup = await setupAutopilot(fake.context, { run, now: () => NOW + skewMs, lock, warn, ledger: ledgerHost, readPauseMs: 0, watch: { sleep: async () => {} } })
 }
 
 async function command(text: string, sessionID = "ses_lead"): Promise<string> {
@@ -1080,6 +1080,18 @@ test("after compaction the lead gets the rules and a fresh status as a queued me
   const sent = (await sentPromise) as { text: string; delivery: string }
   expect(sent.delivery).toBe("queue")
   expect(sent.text).toContain("still armed after compaction")
+})
+
+test("a closed event stream is resubscribed and a later compaction is still handled", async () => {
+  await armed()
+  const subscriptions = () => fake.calls.filter((entry) => entry.method === "event.subscribe").length
+  const before = subscriptions()
+  fake.closeEvents()
+  while (subscriptions() === before) await new Promise((done) => setTimeout(done, 0))
+  expect(warnings.some((message) => message.includes("autopilot watch failed; resubscribing"))).toBe(true)
+  const sentPromise = whenCalled("synthetic")
+  fake.emit({ type: "session.compaction.ended", data: { sessionID: "ses_lead", reason: "auto" } })
+  expect(((await sentPromise) as { text: string }).text).toContain("still armed after compaction")
 })
 
 test("cleanup disposes every registration", async () => {

@@ -9,6 +9,7 @@ import { lstatSync, realpathSync } from "node:fs"
 import { join } from "node:path"
 import { withEmbeddedWriteLock } from "@srobroek/opencode-lib/bd-embedded-write-lock"
 import { readBoundedBytes } from "@srobroek/opencode-lib/bounded-read"
+import type { EventWatchDeps } from "@srobroek/opencode-lib/event-watch"
 import type { Warn } from "@srobroek/opencode-lib/host-log"
 import { withLease } from "@srobroek/opencode-lib/lease-lock"
 import { SAFE_GIT_ARGS } from "@srobroek/opencode-lib/safe-git"
@@ -200,7 +201,7 @@ export type WriteLock = <T>(cwd: string, owner: string, write: () => Promise<T>,
 
 const embeddedLock: WriteLock = (cwd, owner, write, env) => withEmbeddedWriteLock(cwd, owner, write, env)
 
-export type Deps = { run?: Run; now?: () => number; ticks?: Ticks; lock?: WriteLock; warn?: Warn; ledger?: LedgerHost; readPauseMs?: number }
+export type Deps = { run?: Run; now?: () => number; ticks?: Ticks; lock?: WriteLock; warn?: Warn; ledger?: LedgerHost; readPauseMs?: number; watch?: Pick<EventWatchDeps, "delaysMs" | "sleep"> }
 
 /** How long a state transition waits for another instance's hold on the run lock. */
 const RUN_LOCK_WAIT_MS = 60_000

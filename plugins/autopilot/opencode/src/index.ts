@@ -6,6 +6,7 @@
 import { fileURLToPath } from "node:url"
 import { Plugin } from "@opencode/plugin"
 import type { Context } from "@opencode/plugin/promise/plugin"
+import { watchEvents } from "@srobroek/opencode-lib/event-watch"
 import { hostWarn } from "@srobroek/opencode-lib/host-log"
 import { registerSkills } from "@srobroek/opencode-lib/skill-files"
 import { Autopilot, type AutopilotHost, type Deps, ID, type Json, realPath } from "../../shared/autopilot.ts"
@@ -179,20 +180,19 @@ export async function setupAutopilot(ctx: Context, deps: Deps = {}): Promise<() 
   registrations.push(await ctx.permission.hook("evaluate", (event) => pilot.evaluate(event).catch(report("permission hook"))))
   registrations.push(await ctx.session.hook("experimental.idle", (event) => pilot.idle(event.sessionID).catch(report("idle hook"))))
   registrations.push(await registerSkills(ctx.skill, [SKILL_FILE]))
-  const abort = new AbortController()
-  const iterator = ctx.event.subscribe({ signal: abort.signal })[Symbol.asyncIterator]()
-  void (async () => {
-    for (;;) {
-      const next = await iterator.next().catch(() => ({ done: true as const, value: undefined }))
-      if (next.done) return
-      pilot.activity.observe(next.value)
-      const event = next.value as { type?: string; data?: { sessionID?: string } }
+  const watching = watchEvents<unknown>({
+    subscribe: (signal) => ctx.event.subscribe({ signal })[Symbol.asyncIterator](),
+    handle: (value) => {
+      pilot.activity.observe(value)
+      const event = value as { type?: string; data?: { sessionID?: string } }
       if (event.type === "session.compaction.ended" && typeof event.data?.sessionID === "string") void pilot.compacted(event.data.sessionID).catch(report("compaction recovery"))
-    }
-  })()
+    },
+    warn,
+    label: "autopilot",
+    ...deps.watch,
+  })
   return async () => {
-    abort.abort()
-    await iterator.return?.()
+    watching.stop()
     pilot.dispose()
     for (const registration of registrations.reverse()) await registration.dispose()
   }
