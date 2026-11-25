@@ -35,6 +35,7 @@ Checked 2026-11-16.
 | Schemas | `zod` `>= 4` | `zod/mini` for bundle pressure; validate trust boundaries. |
 | OpenAPI | `@hono/zod-openapi` `>= 1`; `@fastify/swagger` `>= 9` | Generate from framework schemas; test the emitted contract. |
 | API clients | `openapi-typescript` `>= 7`; native `fetch` | `orval` `>= 8` when generated query hooks are needed. |
+| TypeSpec-sourced Zod | `@hey-api/openapi-ts` pinned exactly, with `dates.offset` and a strict/loose object resolver | Defaults score 23/26 on the spike; field descriptions are not carried; run a conformance corpus on upgrade. Not `json-schema-to-zod` (deprecated). Route in `toolchain-api` |
 | RPC APIs | `@connectrpc/connect` `>= 2` with its Node server adapter and `@bufbuild/protobuf` `>= 2` | A separate surface beside Hono, with Connect interceptors. `@grpc/grpc-js` `>= 1` only to call or serve native gRPC. |
 | TypeScript-only typed RPC | `@orpc/server` `>= 1` | Only inside a TypeScript-only app that wants no protobuf contract; `@trpc/server` `>= 11` for an existing tRPC stack. Report it as a departure from Connect. |
 | GraphQL | `graphql-yoga` `>= 6` | Fetch-oriented; only when GraphQL is the chosen API style. |
