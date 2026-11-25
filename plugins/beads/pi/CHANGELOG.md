@@ -1,3 +1,13 @@
+## beads [1.0.0](https://github.com/srobroek/harness-plugins/compare/beads--v0.9.4...beads--v1.0.0) (2026-11-25)
+
+### ⚠ BREAKING CHANGES
+
+* **beads:** pi reads the beads key of `<agentDir>/settings.json`; `<agentDir>/beads.json` is no longer read. Move its object under the key.
+
+### Features
+
+* **beads:** read settings from pi settings.json ([3a7ed55](https://github.com/srobroek/harness-plugins/commit/3a7ed55617c75df76cf1a8134b0f5fb370bedee3))
+
 ## beads [0.9.4](https://github.com/srobroek/harness-plugins/compare/beads--v0.9.3...beads--v0.9.4) (2026-11-25)
 
 ### Bug Fixes
