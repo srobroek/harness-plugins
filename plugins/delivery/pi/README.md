@@ -201,7 +201,10 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
 - The idle hook also records the `background` list as holds on disk
   (`<common>/opencode/holds/…`, the same format `subagent-worktree` writes): a shell that names the
   worktree, or any job of a session working in it. The last check before a removal reads them, so
-  running background work keeps the worktree. Landing records are dropped only on positive evidence
+  running background work keeps the worktree. The jobs are written before the lock wait as well
+  (`recordHold`, as `subagent-worktree` writes them). A write whose lock wait times out behind a
+  long removal hold therefore still blocks every remover until that session's next write.
+  Landing records are dropped only on positive evidence
   (their own receipt readable and cleaned or superseded); a denial is never dropped by cleanup of
   stale records, and a missing or unreadable receipt directory deletes nothing.
 - The lock is the Beads embedded write lock's protocol (a leased, token-owned file with a steal
@@ -213,10 +216,11 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
   `lockedWorktreeRemoval`: the same on-disk lock `subagent-worktree` takes, then, under it and after
   every proof, a final look at claims, background holds, running sessions and denials, then the
   removal. The reads that prove the target (its identity, the PR read from inside it, a clean tree,
-  a pushed tip) run under the same lock first (`lockedWorktreeRead`), so they never see another
-  remover's removal part-way: a half-deleted tree would read as dirty. The prompt, if any, comes
-  between the two and outside the lock. If the coordination store cannot be written, or a hold
-  could not be recorded, the worktree is treated as unsafe and kept.
+  a pushed tip) run first without the lock, so the lock is held only for the removal section, which
+  proves them again. A refusal is read again under the same lock (`lockedWorktreeRead`), so it is
+  never the sight of another remover's removal part-way: a half-deleted tree would read as dirty.
+  The prompt, if any, comes before the removal section and outside the lock. If the coordination
+  store cannot be written, or a hold could not be recorded, the worktree is treated as unsafe and kept.
 - After the worktree is removed and its absence is proven, delivery moves the lane's own sessions
   to the repository's canonical checkout, so none is left pointing at a directory that is gone
   (`Location not found`). The lane is the session that called the tool (for the background retry,
@@ -304,13 +308,18 @@ does not refuse. It succeeds and lists what it removed (`removed`) and what it c
 finish or prove (`skipped`). Examples are a branch that Git could not delete, or a
 worktree that reappeared at the path.
 
-A removal that fails part-way (a file Git cannot delete) gives the same kind of result,
-with nothing in `removed`. Only a proven absence gets a continuation receipt. Otherwise
-the landing receipt stays the receipt of record.
+A removal that stops part-way reports `partlyRemoved: true` and the headline "removal
+attempted, partly removed, unverified", with nothing in `removed`. Examples are a file
+Git cannot delete, or a kill at the time bound. A failed removal command counts as
+stopped part-way unless the tree is still registered and on disk and `git status` shows
+it unchanged. Such a call keeps the local branch and the landing receipt, which stays
+the receipt of record, and names the path to inspect. Delivery's own retry tells the
+session once, keeps the landing record and does not retry it.
 
-A tree whose only changes are deleted tracked files looks like a removal part-way by
-another process. Examples are a delivery plugin in another harness, or `wt remove`.
-Neither takes delivery's lock, so the refusal of such a tree says so.
+A tree whose only changes are deleted tracked files is a removal that is running or
+stopped part-way. The cause can be another process that takes no delivery lock, such as
+a delivery plugin in another harness or `wt remove`. It can also be an earlier cleanup
+that failed. The refusal says so and names the path to inspect.
 
 Cleanup deletes the receipt's branch ref only while it still points at the reviewed
 head. It leaves a ref that is gone or points elsewhere, and it keeps the differently
@@ -367,6 +376,34 @@ different root, set `DELIVERY_RECEIPTS_DIR` or the `receiptsDirectory` option.
 `PI_CODING_AGENT_DIR` is not read. A directory scan reads at most 1000 receipts
 per repository.
 
+## pi and OMP
+
+The pi package (`@srobroek/pi-delivery`, `plugins/delivery/pi`) ships one tool:
+`delivery_cleanup`, for an explicit call. It takes the same input and returns the
+same text as the OpenCode tool, and runs the same `cleanupDelivery`. It holds the
+same worktree lock as every other delivery remover and as `subagent-worktree`. Under
+that lock it reads the lane claim and the background-work records.
+
+It differs from the OpenCode tool in these ways:
+
+- It cleans up only the session's own repository. It refuses a `repo` and `repoPath`
+  that name another clone, and a receipt or worktree of another repository.
+- It has no retry and no background cleanup. It does not clean up after a land and
+  keeps no clone registry. It does not see OpenCode sessions running in the worktree.
+- Its `authorize` step defers a lane-owned worktree and calls no UI, so a session
+  without a UI (a subagent) runs it the same way. The OMP approval mode gates it as
+  an `exec` tool.
+- The pi package ships neither `delivery_land` nor the hygiene report. The agents and
+  the two skills are OpenCode variants (`<id>.opencode.md`, `SKILL.opencode.md`),
+  because they name tools and agents that pi lacks, so pi gets none of them.
+
+OMP loads pi extensions unchanged. To load this tool in OMP, add the bundle's file
+path (`plugins/delivery/pi/extensions/delivery-cleanup.js`) to `extensions:` in
+`~/.omp/agent/config.yml`. A file entry loads no sibling skills or agents. Only one
+`delivery_cleanup` may load, so disable any other one. For the omp-plugins `delivery`
+package, add `extension-module:delivery-cleanup-tool` to `disabledExtensions`. Its
+`delivery_land` and hygiene report stay loaded.
+
 ## Agents
 
 The plugin registers these subagents from `agents/*.md` through
@@ -411,11 +448,11 @@ ID available to your host.
   with or without model-roles; `false` means no model.
 - Your own markdown or config agent with the same id loads after the plugin and
   overrides it field by field, including the tier header.
-- `agents/roles.json` holds the same mapping as the headers, as a model-roles
+- `agents/roles.json` (`common/agents/roles.opencode.json` in the source) holds the same mapping as the headers, as a model-roles
   `agents` fragment, for hosts that set tiers in config instead.
 
 The agents were converted with
-`bun scripts/convert-agent.ts --roles plugins/delivery/common/agents/roles.source.json`,
+`bun scripts/convert-agent.ts --roles plugins/delivery/common/agents/roles.source.opencode.json`,
 then edited by hand. The roles file is keyed by model-roles tier (`cheap`, `standard`,
 `strong`, `reviewer`); the omp names `smol`, `task` and `slow` resolve to the same keys. The edits removed omp-only references, slimmed the
 shepherd, and limited the reviewer's shell to `gh pr view` and `gh pr diff`.

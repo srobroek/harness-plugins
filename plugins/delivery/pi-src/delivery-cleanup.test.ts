@@ -176,6 +176,27 @@ describe("an explicit cleanup in the session's repository", () => {
     expect(branchExists(f)).toBe(false)
   })
 
+  test("a removal that stops part-way is reported as attempted and unverified, with no receipt written and the tree to inspect", async () => {
+    const f = await landed("partly")
+    const real = forge(f)
+    // `git worktree remove` deletes one file, then fails: the tree is partly gone and still registered.
+    const run: CliRunner = (argv, options) => {
+      const git = argv[0] === "git" ? argv.slice(1 + SAFE_GIT_ARGS.length) : []
+      if (git.includes("worktree") && git.includes("remove")) {
+        rmSync(join(f.linked, "feature.txt"))
+        return { ok: true, exitCode: 1, stdout: "", stderr: "error: failed to delete 'build': Permission denied\n" }
+      }
+      return real(argv, options)
+    }
+    const result = await call(cleanupTool({ ...deps(f), cleanup: { run, env: f.env } }), { receipt: f.receiptPath }, context(f.main, false))
+    expect(result.output).toMatchObject({ ok: true, alreadyCleaned: false, partlyRemoved: true, removed: [], receiptPath: f.receiptPath })
+    expect(result.text).toStartWith(`delivery_cleanup: removal attempted, partly removed, unverified: ${f.linked}`)
+    expect(result.text).toContain("no continuation receipt")
+    expect(result.text).toContain(`inspect ${f.linked}`)
+    expect(result.text).toEndWith(`\nreceipt: ${f.receiptPath}`)
+    expect(branchExists(f)).toBe(true)
+  })
+
   test("the tool input reaches cleanupDelivery unchanged: a pr that is not the receipt's is refused", async () => {
     const f = await landed("mismatch")
     const result = await call(cleanupTool(deps(f)), { receipt: f.receiptPath, pr: 18 }, context(f.main, true))
