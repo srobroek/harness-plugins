@@ -1,3 +1,5 @@
+## claude-compat [0.5.4](https://github.com/srobroek/harness-plugins/compare/claude-compat--v0.5.3...claude-compat--v0.5.4) (2026-11-25)
+
 ## claude-compat [0.5.3](https://github.com/srobroek/harness-plugins/compare/claude-compat--v0.5.2...claude-compat--v0.5.3) (2026-11-24)
 
 ### Bug Fixes
