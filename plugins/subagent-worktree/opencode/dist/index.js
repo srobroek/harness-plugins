@@ -660,6 +660,27 @@ function setHold(commonDir, directory, sessionID, jobs, now) {
   writeFileSync2(temp, JSON.stringify({ sessionID, directory, jobs, updatedAt: now }));
   renameSync2(temp, path);
 }
+var pendingHoldFile = (commonDir, directory, sessionID) => join2(holdsDir(commonDir, directory), `${sha1(sessionID)}.pending.json`);
+async function recordHold(commonDir, directory, sessionID, jobs, at, lock) {
+  const pending = pendingHoldFile(commonDir, directory, sessionID);
+  if (jobs.length > 0) {
+    mkdirSync2(holdsDir(commonDir, directory), { recursive: true });
+    const temp = `${pending}.${randomUUID2()}.tmp`;
+    writeFileSync2(temp, JSON.stringify({ sessionID, directory, jobs, updatedAt: at }));
+    renameSync2(temp, pending);
+  }
+  await lockedWrite(commonDir, directory, lock, () => {
+    setHold(commonDir, directory, sessionID, jobs, at);
+    let left;
+    try {
+      left = parseHold(JSON.parse(readFileSync2(pending, "utf8")));
+    } catch {
+      left = undefined;
+    }
+    if (left === undefined || left.updatedAt <= at)
+      rmSync2(pending, { force: true });
+  });
+}
 function readHolds(commonDir, directory) {
   const dir = holdsDir(commonDir, directory);
   let names;
@@ -2701,7 +2722,7 @@ function createLifecycle(deps) {
         const common = await deps.commonDir(lane.parentDir);
         if (common !== undefined) {
           try {
-            await lockedWrite(common, lane.directory, { sessionID: input.sessionID, now, ...deps.lock }, () => setHold(common, lane.directory, input.sessionID, matched.map(({ job }) => ({ kind: job.kind, id: job.shellID ?? job.childSessionID ?? job.sessionID ?? "unknown" })), now()));
+            await recordHold(common, lane.directory, input.sessionID, matched.map(({ job }) => ({ kind: job.kind, id: job.shellID ?? job.childSessionID ?? job.sessionID ?? "unknown" })), now(), { sessionID: input.sessionID, now, ...deps.lock });
             unsafeHolds.delete(canonical(lane.directory));
           } catch (error) {
             const why = error instanceof Error ? error.message : String(error);

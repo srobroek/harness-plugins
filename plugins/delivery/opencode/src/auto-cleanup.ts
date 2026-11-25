@@ -21,6 +21,8 @@ export type CleanupReport = {
   ok: boolean
   reason?: string
   removed?: string
+  /** A worktree whose removal stopped part-way: partly removed, its absence unverified. Set instead of `removed`. */
+  partlyRemoved?: string
   localRefDeleted?: boolean
   /** True when the worktree was already gone, so this call removed nothing. */
   alreadyCleaned?: boolean
@@ -68,12 +70,12 @@ const DIRTY_GATE = /^worktree\.(?:status|operation|stash):/
 export function reportFromCleanup(result: CleanupResult): CleanupReport {
   if (!result.ok) return { ok: false, reason: DIRTY_GATE.test(result.reason) ? `dirty: ${result.reason}` : result.reason }
   // The facts come from what cleanupDelivery did: nothing was removed when the worktree was already
-  // gone or its removal failed part-way, and the local ref survives when it was absent or had moved
-  // off the reviewed head.
-  const removed = !result.alreadyCleaned && result.report.removed.length > 0
+  // gone, a removal that stopped part-way is reported as such, and the local ref survives when it was
+  // absent or had moved off the reviewed head.
+  const path = result.receipt.worktree.path ?? ""
   return {
     ok: true,
-    ...(removed ? { removed: result.receipt.worktree.path ?? "" } : {}),
+    ...(result.alreadyCleaned ? {} : result.partlyRemoved ? { partlyRemoved: path } : { removed: path }),
     localRefDeleted: result.localRefDeleted,
     alreadyCleaned: result.alreadyCleaned,
     kept: result.report.skipped,
@@ -115,11 +117,13 @@ export function textAfterCleanup(text: string, report: CleanupReport): string {
     if (report.alreadyCleaned === true) {
       return [...kept, `cleanup: nothing to remove (${(report.kept ?? []).join("; ")}).`].join("\n")
     }
-    const branch = report.localRefDeleted === false ? "" : " and its local branch"
     const left = report.kept !== undefined && report.kept.length > 0 ? `; kept: ${report.kept.join("; ")}` : ""
+    if (report.partlyRemoved !== undefined) {
+      return [...kept, `cleanup: removal attempted, partly removed, unverified: ${report.partlyRemoved}${left}.`].join("\n")
+    }
+    const branch = report.localRefDeleted === false ? "" : " and its local branch"
     const tail = left === "" ? "; nothing left to run" : ""
-    const what = report.removed === undefined ? "nothing" : `${report.removed}${branch}`
-    return [...kept, `cleanup: removed ${what}${left}${tail}.`].join("\n")
+    return [...kept, `cleanup: removed ${report.removed}${branch}${left}${tail}.`].join("\n")
   }
   return [...lines, `cleanup: not finished (${report.reason}); the landing stands. Fix that and call delivery_cleanup.`].join("\n")
 }

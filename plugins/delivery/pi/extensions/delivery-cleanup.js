@@ -2461,7 +2461,7 @@ function worktreePathState(path) {
     return "unsafe";
   }
 }
-var REMOVAL_ELSEWHERE = "the tree has only deleted tracked files, which is what another process removing it looks like part-way " + "(one outside the delivery worktree lock, such as another harness's delivery plugin or `wt remove`); " + "this call removed nothing, so rerun delivery_cleanup once that removal has finished";
+var removalElsewhere = (path) => "the tree has only deleted tracked files: a removal is running or stopped part-way (another process outside " + "the delivery worktree lock, such as another harness's delivery plugin or `wt remove`, or an earlier cleanup " + `that failed); this call removed nothing; inspect ${path}`;
 function dirtyPaths(output) {
   return output.split(/\r?\n/).filter(Boolean).map((line) => line.length > 3 ? line.slice(3) : line).slice(0, MAX_DIRTY_PATHS);
 }
@@ -2476,7 +2476,7 @@ async function verifyCleanTarget(path, run, timeoutMs, pin, branches = []) {
   if (result.stdout !== "") {
     const all = result.stdout.split(/\r?\n/).filter(Boolean);
     const dirty = refuse2("worktree.status", { paths: dirtyPaths(result.stdout), total: all.length }, "no dirty paths (empty porcelain output)");
-    return all.every((line) => line.startsWith(" D ")) ? { ok: false, reason: `${dirty.reason}; ${REMOVAL_ELSEWHERE}` } : dirty;
+    return all.every((line) => line.startsWith(" D ")) ? { ok: false, reason: `${dirty.reason}; ${removalElsewhere(path)}` } : dirty;
   }
   const gitDir = pin?.GIT_DIR;
   if (gitDir === undefined)
@@ -2908,6 +2908,7 @@ async function cleanupInRepository(params, cwd, deps) {
       path: receiptPath,
       remoteBranchAbsence: receipt.branch.deletedRemote ? "absent" : "unknown",
       alreadyCleaned: true,
+      partlyRemoved: false,
       localRefDeleted: false,
       report: { removed: [], skipped: [note] }
     };
@@ -2951,7 +2952,8 @@ async function cleanupInRepository(params, cwd, deps) {
       return pushed;
     return { identity, observed, pushed };
   };
-  const proofs = deps.proofSection === undefined ? await proveTarget() : await deps.proofSection(path, proveTarget);
+  const unlocked = await proveTarget();
+  const proofs = !isFailure(unlocked) || deps.proofSection === undefined ? unlocked : await deps.proofSection(path, proveTarget);
   if (isFailure(proofs))
     return settle(proofs);
   const { identity, observed, pushed } = proofs;
@@ -2998,6 +3000,7 @@ async function cleanupInRepository(params, cwd, deps) {
     if (rebound !== null)
       return rebound;
     let failure = null;
+    let stopped = false;
     if (route === "host" && deps.host !== undefined) {
       try {
         await deps.host.remove(targetPath);
@@ -3007,17 +3010,22 @@ async function cleanupInRepository(params, cwd, deps) {
       }
     } else {
       const removed = await runGit(commit, executionDir, removeArgv, bounds.mutationMs, executionPin);
-      if (!completed(removed))
+      if (!completed(removed)) {
         failure = commandFailure("worktree.removed", ["git", ...removeArgv], removed, "exit 0 without --force");
+        stopped = removed.exitCode === null;
+      }
     }
     const registration = await registrationAbsence(executionDir, targetPath, commit, bounds.refReadMs, executionPin);
     const pathGone = pathAbsence(targetPath);
-    if (failure !== null && registration !== "absent" && pathGone !== "absent")
-      return failure;
+    if (failure !== null && registration !== "absent" && pathGone !== "absent" && !stopped) {
+      const status = await runGit(commit, boundary.cwd, ["status", "--porcelain"], bounds.treeScanMs, boundary.pin);
+      if (completed(status) && status.stdout === "")
+        return failure;
+    }
     const unfinished = [];
     const branch = receipt.branch.name;
     if (registration !== "absent" || pathGone !== "absent") {
-      unfinished.push(failure === null ? `worktree ${path} is there again after its removal (registration ${registration}, directory ${pathGone}) and was left alone` : `worktree ${path}: the removal failed part-way (${failure.reason}), leaving registration ${registration} and directory ${pathGone}; remove what is left by hand`, `local branch ${branch} kept and no continuation receipt written: the worktree's absence is not proven`);
+      unfinished.push(failure === null ? `worktree ${path} is there again after its removal (registration ${registration}, directory ${pathGone}) and was left alone; absence unverified; no continuation receipt` : `worktree ${path}: removal attempted and stopped part-way (${failure.reason}); registration ${registration}, directory ${pathGone}; absence unverified; no continuation receipt; inspect ${path} before removing what is left by hand (git worktree remove --force)`, `local branch ${branch} kept: the worktree's absence is not proven`);
       return { ok: true, worktreeRemoved: failure === null, registration, pathGone, localAbsence: "unknown", localRefPlan: localRef, localRefDeleted: false, executionDir, unfinished };
     }
     if (failure !== null)
@@ -3073,6 +3081,7 @@ async function cleanupInRepository(params, cwd, deps) {
     path: resolution.path,
     remoteBranchAbsence,
     alreadyCleaned: false,
+    partlyRemoved: !section.worktreeRemoved,
     localRefDeleted: section.localRefDeleted,
     report: withNotes(report, notes)
   });
@@ -3138,6 +3147,7 @@ async function cleanupInRepository(params, cwd, deps) {
     path: written,
     remoteBranchAbsence: remoteAbsence,
     alreadyCleaned: false,
+    partlyRemoved: false,
     localRefDeleted: section.localRefDeleted,
     report
   };
@@ -3171,6 +3181,7 @@ var CLEANUP_OUTPUT = {
     worktree: { type: "string" },
     remoteBranchAbsence: { type: "string", enum: ["absent", "present", "unknown"] },
     alreadyCleaned: { type: "boolean" },
+    partlyRemoved: { type: "boolean" },
     removed: { type: "array", items: { type: "string" } },
     skipped: { type: "array", items: { type: "string" } },
     reason: { type: "string" },
@@ -3208,6 +3219,7 @@ function cleanupOutput(result) {
     worktree: result.receipt.worktree.path ?? "",
     remoteBranchAbsence: result.remoteBranchAbsence,
     alreadyCleaned: result.alreadyCleaned,
+    partlyRemoved: result.partlyRemoved,
     removed: result.report.removed,
     skipped: result.report.skipped,
     receipt: result.receipt
@@ -3216,13 +3228,15 @@ function cleanupOutput(result) {
 function cleanupText(result) {
   if (!result.ok)
     return `delivery_cleanup refused: ${result.reason}`;
-  if (result.alreadyCleaned)
-    return `delivery_cleanup: nothing to remove. ${result.report.skipped.join("; ")}.
-receipt: ${result.path}`;
-  const removed = result.report.removed.length === 0 ? "nothing" : result.report.removed.join(", ");
   const skipped = result.report.skipped.length > 0 ? `; skipped: ${result.report.skipped.join("; ")}` : "";
-  return `delivery_cleanup removed ${removed}${skipped}; remote branch ${result.remoteBranchAbsence}.
+  const receipt = `
 receipt: ${result.path}`;
+  if (result.alreadyCleaned)
+    return `delivery_cleanup: nothing to remove. ${result.report.skipped.join("; ")}.${receipt}`;
+  if (result.partlyRemoved) {
+    return `delivery_cleanup: removal attempted, partly removed, unverified: ${result.receipt.worktree.path ?? ""}${skipped}.${receipt}`;
+  }
+  return `delivery_cleanup removed ${result.report.removed.join(", ")}${skipped}; remote branch ${result.remoteBranchAbsence}.${receipt}`;
 }
 function cleanupToolResult(result) {
   const output = cleanupOutput(result);

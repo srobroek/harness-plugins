@@ -38,6 +38,7 @@ export const CLEANUP_OUTPUT = {
     worktree: { type: "string" },
     remoteBranchAbsence: { type: "string", enum: ["absent", "present", "unknown"] },
     alreadyCleaned: { type: "boolean" },
+    partlyRemoved: { type: "boolean" },
     removed: { type: "array", items: { type: "string" } },
     skipped: { type: "array", items: { type: "string" } },
     reason: { type: "string" },
@@ -80,18 +81,23 @@ function cleanupOutput(result: CleanupResult): Record<string, unknown> {
     worktree: result.receipt.worktree.path ?? "",
     remoteBranchAbsence: result.remoteBranchAbsence,
     alreadyCleaned: result.alreadyCleaned,
+    partlyRemoved: result.partlyRemoved,
     removed: result.report.removed,
     skipped: result.report.skipped,
     receipt: result.receipt as Record<string, unknown>,
   }
 }
 
-function cleanupText(result: CleanupResult): string {
+/** The text `delivery_cleanup` returns: a refusal, nothing to remove, a removal that stopped part-way, or what it removed. Pure. */
+export function cleanupText(result: CleanupResult): string {
   if (!result.ok) return `delivery_cleanup refused: ${result.reason}`
-  if (result.alreadyCleaned) return `delivery_cleanup: nothing to remove. ${result.report.skipped.join("; ")}.\nreceipt: ${result.path}`
-  const removed = result.report.removed.length === 0 ? "nothing" : result.report.removed.join(", ")
   const skipped = result.report.skipped.length > 0 ? `; skipped: ${result.report.skipped.join("; ")}` : ""
-  return `delivery_cleanup removed ${removed}${skipped}; remote branch ${result.remoteBranchAbsence}.\nreceipt: ${result.path}`
+  const receipt = `\nreceipt: ${result.path}`
+  if (result.alreadyCleaned) return `delivery_cleanup: nothing to remove. ${result.report.skipped.join("; ")}.${receipt}`
+  if (result.partlyRemoved) {
+    return `delivery_cleanup: removal attempted, partly removed, unverified: ${result.receipt.worktree.path ?? ""}${skipped}.${receipt}`
+  }
+  return `delivery_cleanup removed ${result.report.removed.join(", ")}${skipped}; remote branch ${result.remoteBranchAbsence}.${receipt}`
 }
 
 /** The result of a call `cleanupDelivery` answered. Pure. */

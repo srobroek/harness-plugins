@@ -183,6 +183,7 @@ const LAND_OUTPUT = {
         ok: { type: "boolean" },
         reason: { type: "string" },
         removed: { type: "string" },
+        partlyRemoved: { type: "string" },
         localRefDeleted: { type: "boolean" },
         skipped: { type: "boolean" },
         deferred: { type: "string" },
