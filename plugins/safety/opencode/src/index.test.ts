@@ -7,7 +7,7 @@ import { createFakeContext, type FakeAssert, type FakeSession, type FakeSkill } 
 import { FNOX_CONFIG_MESSAGE, FNOX_INDIRECT_MESSAGE, FNOX_STORE_MESSAGE, VALUE_MESSAGE } from "../../shared/op-guard.ts"
 import { INVESTIGATE_NOTICE } from "../../shared/package-investigate.ts"
 import { FORCE_PUSH_MESSAGE } from "../../shared/permission.ts"
-import plugin, { applyDecision, createPlugin, type Evaluation, type Overrides, readOptions, shellCwd } from "./index.ts"
+import plugin, { applyDecision, createPlugin, type Evaluation, type Overrides, readOptions, shellCwd, unresolvedFlagRefusal } from "./index.ts"
 import type { GitRun } from "./repo-worktrees.ts"
 import { scratchRoots } from "./scratch-dirs.ts"
 
@@ -253,6 +253,21 @@ describe("external-directory", () => {
       },
     )
     await expect(before("c1", "npm --prefix /elsewhere install")).rejects.toThrow("rejected")
+  })
+
+  test("after a leading cd it cannot read, a relative flag directory is refused and other commands run", async () => {
+    const { fake, before } = await load()
+    await expect(before("c1", 'cd "$X" && git -C sub status')).rejects.toThrow(unresolvedFlagRefusal(["sub"]))
+    await expect(before("c2", "cd ../x && make -C build")).rejects.toThrow(unresolvedFlagRefusal(["build"]))
+    for (const [id, command] of [
+      ["c3", "cd .. && ls"],
+      ["c4", "cd ~/x && git status"],
+      ["c5", 'cd "$(git rev-parse --show-toplevel)" && bun test'],
+      ["c6", 'cd "$X" && git -C /project/x status'],
+    ] as const) {
+      await before(id, command)
+    }
+    expect(fake.asserts).toHaveLength(0)
   })
 
   test("can be disabled", async () => {

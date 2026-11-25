@@ -1,13 +1,13 @@
 import { isAbsolute, resolve } from "node:path"
 import { Plugin } from "@opencode/plugin"
 import type { Tool } from "@opencode/plugin/effect"
-import { appendResultText, isShellTool, leadingCdCwd, shellCall, WRITE_TOOLS } from "@srobroek/opencode-lib"
+import { appendResultText, isShellTool, leadingCd, shellCall, WRITE_TOOLS } from "@srobroek/opencode-lib"
 import { externalDirectories, sessionRoots } from "@srobroek/opencode-lib/external-directories"
 import { readProviderTypes } from "@srobroek/opencode-lib/fnox-config"
 import { readGitWrappers } from "@srobroek/opencode-lib/git-wrappers"
 import { hostWarn, type Warn } from "@srobroek/opencode-lib/host-log"
 import { rewriteCloseKeywords } from "../../shared/close-keywords.ts"
-import { shellFlagDirectories } from "../../shared/flag-directories.ts"
+import { flagDirectoryReport } from "../../shared/flag-directories.ts"
 import { GUARD_IDS, type GuardID, type GuardOptions, hardGate } from "../../shared/guards.ts"
 import { decideToolCall, type MigrationOptions, migrationOverride } from "../../shared/migrations.ts"
 import { createPackageAdvisor } from "../../shared/package-investigate.ts"
@@ -24,7 +24,7 @@ import { allowRootReads, allowSubagentReads } from "./subagent-reads.ts"
 
 export { externalDirectories } from "@srobroek/opencode-lib/external-directories"
 export { normalize as normalizeCloseKeywords, rewriteCloseKeywords } from "../../shared/close-keywords.ts"
-export { flagDirectories, shellFlagDirectories } from "../../shared/flag-directories.ts"
+export { flagDirectories, flagDirectoryReport, shellFlagDirectories } from "../../shared/flag-directories.ts"
 export { hardGate, MESSAGES } from "../../shared/guards.ts"
 export { decidePath as decideMigrationPath, latestMigration, migrationTarget } from "../../shared/migrations.ts"
 export { INVESTIGATE_NOTICE, packagesToInvestigate } from "../../shared/package-investigate.ts"
@@ -163,6 +163,16 @@ function safely<T>(run: () => T): T | undefined {
 }
 
 /**
+ * The refusal for relative flag directories after a leading `cd` this plugin cannot read. OpenCode's
+ * `external_directory` question needs an absolute resource to show and save, which such a flag lacks.
+ */
+export function unresolvedFlagRefusal(unresolved: readonly string[]): string {
+  return `Blocked by safety (external-directory): this command starts with a cd this guard cannot read (a quoted, expanded, \`..\` or redirected directory), so it cannot tell where ${unresolved
+    .map((value) => `\`${value}\``)
+    .join(", ")} points. Give the flag an absolute path, use the shell tool's workdir, or start with \`cd <literal path> &&\`.`
+}
+
+/**
  * A permission review that fails internally (an unexpected exception such as a parser bug; handled probe timeouts still ask) makes no
  * decision and logs the error. `undefined` means "defer to the host's permission rules", never "allow": the
  * caller leaves the evaluation's effect as the host set it, so a configured deny or ask still applies.
@@ -275,7 +285,8 @@ export function createPlugin(overrides: Overrides = {}) {
           }
         }
         const cwd = shellCwd(call.workdir, await sessionDirectory(event.sessionID))
-        const gateCwd = leadingCdCwd(command, cwd)
+        const lead = leadingCd(command, cwd)
+        const gateCwd = lead.kind === "dir" ? lead.dir : cwd
         // The fnox config is read from the call's own directory, and only when the guard asks for a type;
         // the guard ignores it when the command changes directory.
         let types: ReturnType<typeof readProviderTypes> | undefined
@@ -289,10 +300,10 @@ export function createPlugin(overrides: Overrides = {}) {
         if (refusal !== undefined) throw new Error(refusal.reason)
         if (on("external-directory")) {
           const sessionDir = await sessionDirectory(event.sessionID)
-          const external =
-            safely(() =>
-              externalDirectories(shellFlagDirectories(command, leadingCdCwd(command, cwd), gitWrappers), sessionRoots(sessionDir)),
-            ) ?? []
+          // After a leading cd this plugin cannot read, a relative flag directory has no known base.
+          const flags = safely(() => flagDirectoryReport(command, lead.kind === "rejected" ? undefined : gateCwd, gitWrappers))
+          if (flags !== undefined && flags.unresolved.length > 0) throw new Error(unresolvedFlagRefusal(flags.unresolved))
+          const external = flags === undefined ? [] : (safely(() => externalDirectories(flags.dirs, sessionRoots(sessionDir))) ?? [])
           if (external.length > 0)
             await ctx.permission.assert({
               sessionID: event.sessionID,

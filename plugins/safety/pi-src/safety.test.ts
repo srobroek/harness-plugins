@@ -8,6 +8,7 @@ import { OP_MESSAGE } from "../shared/op-guard.ts"
 import { INVESTIGATE_NOTICE } from "../shared/package-investigate.ts"
 import { FORCE_PUSH_MESSAGE, SUDO_MESSAGE } from "../shared/permission.ts"
 import { createRedactor } from "../shared/redact.ts"
+import { UNKNOWN_DIRECTORY_REMOVAL } from "../shared/worktree-detached.ts"
 import {
   type Asker,
   createSafetyExtension,
@@ -22,6 +23,7 @@ import {
   readPiOptions,
   resultPatch,
   settle,
+  unresolvedMessage,
   type Verdict,
 } from "./safety.ts"
 import { SYSTEM_MESSAGES, type SystemGateID } from "./system-gates.ts"
@@ -190,6 +192,26 @@ describe("gateBash evidence-based asks", () => {
     const verdict = await gateBash("git -C /elsewhere/repo status", plain, config())
     expect(verdict).toEqual({ kind: "ask", message: externalMessage([{ resource: "/elsewhere/repo/*", save: "/elsewhere/repo/*" }]) })
     expect(await gateBash(`git -C ${plain} status`, plain, config())).toEqual({ kind: "run" })
+  })
+
+  test("after a leading cd it cannot read, only the checks that need its directory change their verdict", async () => {
+    for (const command of ["cd .. && ls", "cd ~/x && git status", 'cd "$(git rev-parse --show-toplevel)" && bun test']) {
+      expect({ command, verdict: await gateBash(command, plain, config()) }).toEqual({ command, verdict: { kind: "run" } })
+    }
+    expect(await gateBash('cd "$X" && git -C sub status', plain, config())).toEqual({ kind: "ask", message: unresolvedMessage(["sub"]) })
+    expect(await gateBash('cd "$X" && git -C /elsewhere/repo status', plain, config())).toEqual({
+      kind: "ask",
+      message: externalMessage([{ resource: "/elsewhere/repo/*", save: "/elsewhere/repo/*" }]),
+    })
+    expect(await gateBash(`cd ${repo} && git -C migrations status`, plain, config())).toEqual({
+      kind: "ask",
+      message: externalMessage([{ resource: `${repo}/migrations/*`, save: `${repo}/*` }]),
+    })
+    expect(await gateBash('cd "$X" && git worktree remove wt', repo, config())).toEqual({ kind: "block", reason: UNKNOWN_DIRECTORY_REMOVAL })
+    const deleted = await gateBash('cd "$X" && git branch -D local', repo, config())
+    expect(deleted.kind).not.toBe("run")
+    const rewrite = await gateBash('cd "$X" && git filter-branch --env-filter true', repo, config())
+    expect(rewrite.kind).toBe("block")
   })
 })
 

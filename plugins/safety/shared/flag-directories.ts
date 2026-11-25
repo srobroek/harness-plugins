@@ -11,12 +11,20 @@ import { dirname, isAbsolute, join, resolve } from "node:path"
 import { DEFAULT_GIT_WRAPPERS, isGitCommand } from "@srobroek/opencode-lib/git-wrappers"
 import { base, type Command, walkShell } from "./shell.ts"
 
-/** `$HOME`/`~` expand; any other expansion cannot be read statically and yields `undefined`. */
-function literalDir(raw: string, cwd: string): string | undefined {
+/**
+ * `$HOME`/`~` expand; any other expansion cannot be read statically and yields `undefined`. A relative
+ * value with no known base (`cwd` undefined) is recorded in `unresolved` and also yields `undefined`.
+ */
+function literalDir(raw: string, cwd: string | undefined, unresolved: string[]): string | undefined {
   const value = raw.replace(/^\$\{?HOME\}?(?=\/|$)/, homedir())
   if (value === "" || /[$`]/.test(value)) return undefined
   if (value === "~" || value.startsWith("~/")) return join(homedir(), value.slice(1))
-  return isAbsolute(value) ? resolve(value) : resolve(cwd, value)
+  if (isAbsolute(value)) return resolve(value)
+  if (cwd === undefined) {
+    unresolved.push(raw)
+    return undefined
+  }
+  return resolve(cwd, value)
 }
 
 type Flag = { names: readonly string[]; /** `-Cdir` spelling allowed. */ attached?: boolean; file?: boolean }
@@ -37,11 +45,11 @@ const FLAGS: Record<string, readonly Flag[]> = {
 const GIT_VALUED: ReadonlySet<string> = new Set(["-c", "--namespace", "--config-env", "--super-prefix"])
 
 /** `git`'s global `-C`, `--git-dir` and `--work-tree`, and `GIT_DIR`/`GIT_WORK_TREE` assignments. */
-function gitDirectories(command: Command, cwd: string): string[] {
+function gitDirectories(command: Command, cwd: string | undefined, unresolved: string[]): string[] {
   const out: string[] = []
   for (const assignment of command.assignments) {
     const match = /^(GIT_DIR|GIT_WORK_TREE)=(.*)$/.exec(assignment)
-    const dir = match?.[2] === undefined ? undefined : literalDir(match[2], cwd)
+    const dir = match?.[2] === undefined ? undefined : literalDir(match[2], cwd, unresolved)
     if (dir !== undefined) out.push(dir)
   }
   let at = cwd
@@ -52,12 +60,12 @@ function gitDirectories(command: Command, cwd: string): string[] {
     const [flag] = word.split("=", 1) as [string]
     const value = word.includes("=") ? word.slice(flag.length + 1) : undefined
     if (flag === "-C") {
-      const next = literalDir(argv[++i] ?? "", at)
+      const next = literalDir(argv[++i] ?? "", at, unresolved)
       if (next === undefined) return out
       at = next
       out.push(at)
     } else if (flag === "--git-dir" || flag === "--work-tree") {
-      const dir = literalDir(value ?? argv[++i] ?? "", at)
+      const dir = literalDir(value ?? argv[++i] ?? "", at, unresolved)
       if (dir !== undefined) out.push(dir)
     } else if (GIT_VALUED.has(flag) && value === undefined) {
       i++
@@ -66,7 +74,7 @@ function gitDirectories(command: Command, cwd: string): string[] {
   return out
 }
 
-function toolDirectories(name: string, argv: readonly string[], cwd: string): string[] {
+function toolDirectories(name: string, argv: readonly string[], cwd: string | undefined, unresolved: string[]): string[] {
   if (!Object.hasOwn(FLAGS, name)) return []
   const flags = FLAGS[name] as readonly Flag[]
   const out: string[] = []
@@ -83,7 +91,7 @@ function toolDirectories(name: string, argv: readonly string[], cwd: string): st
         if (short !== undefined) value = word.slice(short.length)
       }
       if (value === undefined) continue
-      const path = literalDir(value, at)
+      const path = literalDir(value, at, unresolved)
       if (path === undefined) break
       if (flag.file) out.push(dirname(path))
       else {
@@ -97,15 +105,35 @@ function toolDirectories(name: string, argv: readonly string[], cwd: string): st
   return out
 }
 
-/** Absolute directories `command`'s flags point it at, resolved against `cwd`; `gitWrappers` name the git commands. */
-export function flagDirectories(command: Command, cwd: string, gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS): string[] {
-  if (isGitCommand(command.argv[0], gitWrappers)) return gitDirectories(command, cwd)
-  return toolDirectories(base(command.argv[0]), command.argv, cwd)
+/**
+ * Absolute directories `command`'s flags point it at, resolved against `cwd`; `gitWrappers` name the
+ * git commands. With `cwd` undefined, relative values go to `unresolved` instead.
+ */
+export function flagDirectories(
+  command: Command,
+  cwd: string | undefined,
+  gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS,
+  unresolved: string[] = [],
+): string[] {
+  if (isGitCommand(command.argv[0], gitWrappers)) return gitDirectories(command, cwd, unresolved)
+  return toolDirectories(base(command.argv[0]), command.argv, cwd, unresolved)
 }
 
 /** Every flag directory a shell call names, each once, in order. */
 export function shellFlagDirectories(source: string, cwd: string, gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS): string[] {
-  const out = new Set<string>()
-  for (const command of walkShell(source).commands) for (const dir of flagDirectories(command, cwd, gitWrappers)) out.add(dir)
-  return [...out]
+  return flagDirectoryReport(source, cwd, gitWrappers).dirs
+}
+
+/** A shell call's flag directories, and the relative ones it names when `cwd` (its base) is unknown. */
+export type FlagDirectoryReport = { dirs: string[]; unresolved: string[] }
+
+export function flagDirectoryReport(
+  source: string,
+  cwd: string | undefined,
+  gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS,
+): FlagDirectoryReport {
+  const dirs = new Set<string>()
+  const unresolved: string[] = []
+  for (const command of walkShell(source).commands) for (const dir of flagDirectories(command, cwd, gitWrappers, unresolved)) dirs.add(dir)
+  return { dirs: [...dirs], unresolved: [...new Set(unresolved)] }
 }

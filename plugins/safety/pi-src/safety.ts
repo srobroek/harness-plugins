@@ -23,13 +23,13 @@ import {
   type ToolResultEvent,
   type ToolResultEventResult,
 } from "@earendil-works/pi-coding-agent"
-import { leadingCdCwd } from "@srobroek/opencode-lib"
+import { leadingCd } from "@srobroek/opencode-lib"
 import { type ExternalDirectory, externalDirectories, sessionRoots } from "@srobroek/opencode-lib/external-directories"
 import { type ProviderTypes, readProviderTypes } from "@srobroek/opencode-lib/fnox-config"
 import { readGitWrappers } from "@srobroek/opencode-lib/git-wrappers"
 import { loadPiOptionsFile } from "@srobroek/opencode-lib/pi-options"
 import { rewriteCloseKeywords } from "../shared/close-keywords.ts"
-import { shellFlagDirectories } from "../shared/flag-directories.ts"
+import { flagDirectoryReport } from "../shared/flag-directories.ts"
 import { GUARD_IDS, type GuardID, type GuardOptions, hardGate } from "../shared/guards.ts"
 import { decideToolCall, type MigrationOptions, migrationOverride } from "../shared/migrations.ts"
 import { createPackageAdvisor } from "../shared/package-investigate.ts"
@@ -118,6 +118,13 @@ export function externalMessage(external: readonly ExternalDirectory[]): string 
     .join(", ")}). Approve only if you meant to work there.`
 }
 
+/** The question for relative flag directories after a leading `cd` whose directory cannot be read. */
+export function unresolvedMessage(unresolved: readonly string[]): string {
+  return `safety (external-directory): this command starts with a cd this guard cannot read (a quoted, expanded, \`..\` or redirected directory), so it cannot tell where ${unresolved
+    .map((value) => `\`${value}\``)
+    .join(", ")} points. Approve only if you meant to work there.`
+}
+
 /** A check that fails internally lets the call through, as on OpenCode: a parser bug must not take the shell down. */
 function attempt<T>(run: () => T): T | undefined {
   try {
@@ -131,10 +138,16 @@ function migrationsOn(config: GateConfig): boolean {
   return !config.options.disabled.has("migration-edit") && !migrationOverride(config.env)
 }
 
-/** The verdict on a `bash` command that runs in `cwd`, after any close-keyword rewrite. */
+/**
+ * The verdict on a `bash` command that runs in `cwd`, after any close-keyword rewrite. A leading `cd`
+ * to a literal directory moves the gates there. One whose directory cannot be read leaves them in
+ * `cwd`: the checks that follow `cd` themselves see it (history rewrites, write targets, the op-guard,
+ * branch deletes, worktree removals), and the flag-directory check treats its base as unknown.
+ */
 export async function gateBash(command: string, cwd: string, config: GateConfig): Promise<Verdict> {
   const { disabled } = config.options
-  const gateCwd = leadingCdCwd(command, cwd)
+  const lead = leadingCd(command, cwd)
+  const gateCwd = lead.kind === "dir" ? lead.dir : cwd
   // The fnox config is read from the call's own directory, and only when the op-guard asks for a type.
   let types: ProviderTypes | undefined
   const providerTypes: ProviderTypes =
@@ -176,11 +189,10 @@ export async function gateBash(command: string, cwd: string, config: GateConfig)
     asks.push(REVIEW_FAILED)
   }
   if (!disabled.has("external-directory")) {
-    const external =
-      attempt(() =>
-        externalDirectories(shellFlagDirectories(command, gateCwd, config.options.gitWrappers), sessionRoots(cwd)),
-      ) ?? []
+    const flags = attempt(() => flagDirectoryReport(command, lead.kind === "rejected" ? undefined : gateCwd, config.options.gitWrappers))
+    const external = flags === undefined ? [] : (attempt(() => externalDirectories(flags.dirs, sessionRoots(cwd))) ?? [])
     if (external.length > 0) asks.push(externalMessage(external))
+    if (flags !== undefined && flags.unresolved.length > 0) asks.push(unresolvedMessage(flags.unresolved))
   }
   return asks.length === 0 ? RUN : { kind: "ask", message: asks.join("\n\n") }
 }
