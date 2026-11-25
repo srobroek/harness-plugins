@@ -228,6 +228,22 @@ describe("createFakeContext", () => {
     expect((await iterator.next()).done).toBe(true)
   })
 
+  test("closeEvents acknowledges an event the consumer has taken and paused on, without another next()", async () => {
+    const fake = createFakeContext()
+    const iterator = fake.context.event.subscribe()[Symbol.asyncIterator]()
+    let resolved = false
+    const pending = fake.emit({ type: "a" }).then(() => {
+      resolved = true
+    })
+    // The consumer takes the event and is paused in its handler: it never asks for the next one.
+    const taken = await iterator.next()
+    expect(taken.done).toBe(false)
+    expect(resolved).toBe(false)
+    fake.closeEvents()
+    await pending
+    expect(resolved).toBe(true)
+  })
+
   test("emit resolves when its own event is handled, though a later one is still being handled", async () => {
     const fake = createFakeContext()
     const seen: string[] = []
