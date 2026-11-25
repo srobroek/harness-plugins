@@ -652,14 +652,16 @@ var HAS_WELLFORMED = !!"".isWellFormed;
 var compiled = new Map;
 // lib/src/shell-command.ts
 import { resolve } from "path";
-function leadingCdCwd(command, cwd) {
-  const match = /^\s*cd\s+([^\s;&|]+)\s*&&/.exec(command);
-  if (!match)
-    return cwd;
-  const dir = match[1];
-  if (!dir || /^[-~$]/.test(dir) || /[\\`"'*?\x5b\x5d{}]/.test(dir))
-    return cwd;
-  return dir.startsWith("/") ? dir : resolve(cwd, dir);
+var LITERAL_CD = /^\s*cd[ \t]+([A-Za-z0-9_@%+=:,./-]+)[ \t]*(?:&&|$)/;
+var STARTS_WITH_CD = /^\s*(?:cd|pushd|popd)(?=\s|$|[;&|<>()])/;
+function leadingCd(command, cwd) {
+  if (!STARTS_WITH_CD.test(command))
+    return { kind: "none" };
+  const match = LITERAL_CD.exec(command);
+  const dir = match?.[1];
+  if (match === null || dir === undefined || dir.startsWith("-") || dir.split("/").includes(".."))
+    return { kind: "rejected" };
+  return { kind: "dir", dir: resolve(cwd, dir), length: match[0].length };
 }
 function scanShell(source, options = {}) {
   const items = [];
@@ -1344,6 +1346,7 @@ var SOURCE_WORKTREE_RETRY = `${MERGE_RETRY} from the source worktree`;
 var MERGE_POLICY_REFUSAL = `worker-to-epic merges must preserve history; retry with ${MERGE_RETRY}`;
 var OPAQUE_DYNAMIC_MERGE_REFUSAL = "opaque dynamic shell body names a merge or land command; retry with a literal command";
 var UNPARSEABLE_MERGE_REFUSAL = "the command has an unterminated quote, substitution or here-document and names wt merge, so the merge cannot be checked; retry with a complete literal command";
+var UNKNOWN_DIRECTORY_MERGE_REFUSAL = "the command starts with a cd this gate cannot read (a quoted, expanded, `..` or redirected directory), so the repository the merge runs in is unknown; retry with `cd <literal path> && wt merge \u2026` or `wt -C <absolute path> merge \u2026`";
 var SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
 var GLOBAL_VALUE_OPTIONS = new Set(["-C", "--config", "--config-set"]);
 var MERGE_VALUE_OPTIONS = new Set(["--stage", "--format", "--config", "--config-set", "-C"]);
@@ -1513,13 +1516,16 @@ async function decideCommands(command, cwd, git, wt) {
     return { block: true, reason: UNPARSEABLE_MERGE_REFUSAL };
   if (collected.mergeVariables.size > 0 && collected.executed.some((word) => references(word, collected.mergeVariables)))
     return { block: true, reason: OPAQUE_DYNAMIC_MERGE_REFUSAL };
-  const shellCwd = leadingCdCwd(command, cwd);
+  const lead = leadingCd(command, cwd);
+  const shellCwd = lead.kind === "dir" ? lead.dir : lead.kind === "none" ? cwd : undefined;
   for (const argv of collected.commands) {
     const invocation = parseMergeInvocation(argv);
     if (!invocation || invocation.target === null)
       continue;
     const target = invocation.target;
-    const repoCwd = invocation.workdir ? invocation.workdir.startsWith("/") ? invocation.workdir : `${shellCwd}/${invocation.workdir}` : shellCwd;
+    const repoCwd = invocation.workdir?.startsWith("/") ? invocation.workdir : shellCwd === undefined ? undefined : invocation.workdir ? `${shellCwd}/${invocation.workdir}` : shellCwd;
+    if (repoCwd === undefined)
+      return { block: true, reason: UNKNOWN_DIRECTORY_MERGE_REFUSAL };
     const configured = await wt(["config", "state", "default-branch"], repoCwd);
     const symbolic = configured || await git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], repoCwd);
     const defaultBranch = symbolic?.replace(/^origin\//, "");

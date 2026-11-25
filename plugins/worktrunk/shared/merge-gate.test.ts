@@ -12,6 +12,7 @@ import {
   type Probes,
   parseMergeInvocation,
   spawnProbe,
+  UNKNOWN_DIRECTORY_MERGE_REFUSAL,
 } from "./merge-gate.ts"
 
 // Real git repositories; 30 s leaves headroom for a loaded machine (AGENTS.md, Testing).
@@ -135,6 +136,18 @@ describe("merge policy", () => {
     }
     expect(await decide("cd /wt/worker && wt merge develop --no-squash --no-ff", probes(runner))).toBeUndefined()
     expect(seen).toContain("/wt/worker")
+  })
+
+  test("refuses a merge after a leading cd it cannot read, and leaves other commands alone", async () => {
+    for (const merge of ["wt merge develop --no-squash --no-ff", "wt merge main"]) {
+      for (const lead of ['cd "$WT"', "cd ../worker", "cd ~/wt/worker", "cd /wt/x>/dev/null"]) {
+        expect(await decide(`${lead} && ${merge}`)).toEqual({ block: true, reason: UNKNOWN_DIRECTORY_MERGE_REFUSAL })
+      }
+    }
+    expect(await decide('cd "$WT" && wt -C /wt/worker merge develop --no-squash --no-ff')).toBeUndefined()
+    expect(await decide('cd "$WT" && wt merge')).toBeUndefined()
+    expect(await decide('cd "$(git rev-parse --show-toplevel)" && bun test')).toBeUndefined()
+    expect(await decide("cd .. && git status")).toBeUndefined()
   })
 
   test("allows default-target and omitted-target merges", async () => {
