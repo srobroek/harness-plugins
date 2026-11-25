@@ -6,6 +6,45 @@ Cuts tokens and wasted turns for agents running in OpenCode V2:
 - narrows the built-in `explore` agent to search, web and a read-only shell (no edits, `git push`, `gh pr create|merge`, `gh * delete`) with a short scout prompt;
 - trims the system prompt of read-only subagents.
 
+On pi the plugin ships no package: pi, pi-subagents, pi-lens and context-mode already cover its work (see [pi](#pi)).
+
+## pi
+
+| OpenCode feature | On pi |
+| --- | --- |
+| bash alias | Not needed: pi's shell tool is `bash`. |
+| Narrowed `explore` | pi-subagents' `scout`, and the explicit `tools` list of each agent. |
+| Lean subagent prompts | pi-subagents agents start from their own prompt unless they set `systemPromptMode: append`; `inheritProjectContext`, `inheritGlobalContext` and `inheritSkills` choose what else they get. Not ported: pi's prompt overhead per agent has not been measured. |
+| Foreground wait guard | pi-subagents' async runs wake the parent when they finish, and its tool description says not to sleep or poll for them. |
+| Large-read guard | context-mode refuses untargeted reads of large files and indexes large tool results for later search. For code, pi-lens's `read_symbol` and `read_enclosing` read one symbol. |
+| Scratch reminders | Not ported. |
+| Restart nudge | Not ported. pi-subagents resumes interrupted async runs when their session reopens; whether pi strands a child on a lost background shell has not been reproduced. |
+| Lead routing | pi-subagents lists each agent with `advertise: true`, with its description, in the parent's prompt. |
+
+### context-mode in every agent
+
+context-mode's pi extension has two parts. Its hooks (prompt guidance, the large-read refusal, result indexing, compaction notes) run in every session that loads the extension. Its `ctx_*` tools also need each agent's `tools` list to name them, because a pi-subagents `tools` list is strict.
+
+Where the extension loads:
+
+- **Main session:** `pi install npm:context-mode`.
+- **Background children:** they load the main session's packages, unless the agent sets `extensions`.
+- **Foreground children:** they never load the main session's packages, so they need context-mode named for them.
+
+Three ways to name it for children:
+
+1. **A required child extension** (recommended). A host extension calls pi-subagents' `registerRequiredChildExtensions`, and the extension then loads in every native child: foreground, background, nested and resumed. Neither an agent's own lists nor `extensions: []` can drop it. It does not reach external CLI runners.
+2. **`subagents.defaultSubagentOnlyExtensions`** in pi's settings. It reaches only agents that declare no `subagentOnlyExtensions`. Most agents in this repository declare one, and the modes agents must keep theirs to load their guard.
+3. **`subagents.agentOverrides.<name>.subagentOnlyExtensions`**. An override replaces the agent's whole list, so it must repeat every entry the agent needs. It cannot safely restate an entry given as a path relative to the agent file, such as the modes guard.
+
+Load context-mode once per child: pick one way for each agent.
+
+To give an agent the tools, set `subagents.agentOverrides.<name>.tools` to its full list plus the `ctx_*` names it should get. That override also replaces the list. Leave out `ctx_upgrade` and `ctx_purge`: they update the install and delete indexed data.
+
+The modes agents (`debug`, `refactor`, `concept`) and a main session in `/mode` refuse every `ctx_*` tool, because `ctx_execute` runs code their guard cannot check. context-mode's hooks still run there. When the large-read refusal names `ctx_execute`, those agents read the file with `offset` and `limit` instead.
+
+context-mode is licensed under the Elastic License 2.0. No package in this repository depends on it.
+
 ## Lead routing
 
 `lead` defaults to `true`. Primary sessions with the `subagent` tool receive delegation instructions on context, compaction and generate requests.
