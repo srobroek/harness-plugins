@@ -493,6 +493,7 @@ function parseHold(value) {
   return { sessionID, directory, jobs: parsed, updatedAt };
 }
 var holdsDir = (commonDir, directory) => join2(commonDir, "opencode", "holds", sha1(canonicalDirectory(directory)));
+var PENDING_SUFFIX = ".pending.json";
 function readHolds(commonDir, directory) {
   const dir = holdsDir(commonDir, directory);
   let names;
@@ -510,12 +511,19 @@ function readHolds(commonDir, directory) {
       if (hold === undefined)
         unreadable = true;
       else
-        holds.push(hold);
+        holds.push(name.endsWith(PENDING_SUFFIX) ? { ...hold, pendingFile: join2(dir, name) } : hold);
     } catch {
       unreadable = true;
     }
   }
   return { holds, unreadable };
+}
+function elapsed(ms) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60)
+    return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
 }
 function holdBlock(read, now, expiryMs = HOLD_EXPIRY_MS) {
   if (read.unreadable)
@@ -524,7 +532,12 @@ function holdBlock(read, now, expiryMs = HOLD_EXPIRY_MS) {
   if (live === undefined)
     return;
   const first = live.jobs[0];
-  return `session ${live.sessionID} has ${live.jobs.length} background job(s) running (${first?.kind} ${first?.id})`;
+  const running = `session ${live.sessionID} has ${live.jobs.length} background job(s) running (${first?.kind} ${first?.id})`;
+  if (live.pendingFile === undefined)
+    return running;
+  const ignoredAfter = new Date(live.updatedAt + expiryMs).toISOString();
+  const jobs = live.jobs.map((job) => `${job.kind} ${job.id}`).join(", ");
+  return `${running}; recorded before its lock was taken, ${elapsed(now - live.updatedAt)} ago; ignored after ${ignoredAfter}; ${live.pendingFile}; ` + `delete it only after session ${live.sessionID}'s ${live.jobs.length} job(s) (${jobs}) have finished and that session has ended`;
 }
 function holdsWritable(commonDir, directory) {
   const dir = holdsDir(commonDir, directory);
@@ -705,7 +718,7 @@ function stashesOnBranch(subjects, branch) {
 // plugins/delivery/package.json
 var package_default = {
   name: "delivery",
-  version: "0.12.6",
+  version: "0.13.1",
   description: "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
   private: true,
   type: "module",
@@ -2189,6 +2202,20 @@ function commandFailure(field, argv, result, expected) {
   const stderr = result.stderr.trim() === "" ? "" : `, stderr ${result.stderr.trim().slice(0, 400)}`;
   return refuse2(field, `${commandLabel(argv)} (${exit}${error}${stderr})`, expected);
 }
+var DELETING_HINT = /--force|-f -f|\s-D\b/;
+function gitMessage(text) {
+  const first = (text.trim().split(/\r?\n/)[0] ?? "").replace(/[,;]\s*use .*$/i, "").trim();
+  const hint = DELETING_HINT.exec(first);
+  return (hint === null ? first : `${first.slice(0, hint.index).trim()} \u2026`).slice(0, 400);
+}
+var MUTATION_ENV = { LC_ALL: "C" };
+var CLEAN_CHECK_REFUSAL = /^fatal: '.*' contains modified or untracked files(?:,|$)/m;
+function mutationFailure(field, argv, result) {
+  const exit = result.exitCode === null ? "no exit status" : `exit ${result.exitCode}`;
+  const error = result.error === undefined ? "" : `, error ${result.error}`;
+  const message = gitMessage(result.stderr);
+  return refuse2(field, `${commandLabel(argv)} (${exit}${error}${message === "" ? "" : `, stderr ${message}`})`, "exit 0");
+}
 function own(holder, key) {
   const descriptor = Object.getOwnPropertyDescriptor(holder, key);
   if (descriptor?.enumerable !== true || !("value" in descriptor))
@@ -2438,11 +2465,11 @@ function verifyArguments(params, receipt) {
   }
   return null;
 }
-async function runGit(run, cwd, args, timeoutMs, pin) {
+async function runGit(run, cwd, args, timeoutMs, pin, extra = {}) {
   return run(["git", ...SAFE_GIT_ARGS, ...args], {
     cwd,
     timeoutMs,
-    env: { ...gitObservationEnvironment(process.env), ...pin }
+    env: { ...gitObservationEnvironment(process.env), ...extra, ...pin }
   });
 }
 function worktreePathState(path) {
@@ -2461,10 +2488,19 @@ function worktreePathState(path) {
     return "unsafe";
   }
 }
-var removalElsewhere = (path) => "the tree has only deleted tracked files: a removal is running or stopped part-way (another process outside " + "the delivery worktree lock, such as another harness's delivery plugin or `wt remove`, or an earlier cleanup " + `that failed); this call removed nothing; inspect ${path}`;
+var removalElsewhere = (path) => "the tree has only deleted tracked files: a removal is running or stopped part-way (another process outside " + "the delivery worktree lock, such as another harness's delivery plugin or another tool that removes worktrees " + `without the delivery lock, or an earlier cleanup that failed); this call removed nothing; inspect ${path} and save any changes in it`;
 function dirtyPaths(output) {
   return output.split(/\r?\n/).filter(Boolean).map((line) => line.length > 3 ? line.slice(3) : line).slice(0, MAX_DIRTY_PATHS);
 }
+var isDeletion = (line) => line.startsWith(" D") || line.startsWith("D ");
+async function treeStatus(target, run, timeoutMs) {
+  const status = await runGit(run, target.cwd, ["status", "--porcelain"], timeoutMs, target.pin);
+  return completed(status) ? status.stdout.split(/\r?\n/).filter(Boolean) : null;
+}
+var statusSummary = (lines) => show2({ paths: dirtyPaths(lines.join(`
+`)), total: lines.length });
+var changedAfterProof = (lines) => `the tree changed after the last proof (${statusSummary(lines)}); nothing was removed; save those changes before cleaning up again`;
+var inspectAdvice = (path, left) => `inspect ${path} and save any changes in it before removing what is left${left !== null && left.length > 0 ? ` (git status there: ${statusSummary(left)})` : ""}`;
 async function verifyCleanTarget(path, run, timeoutMs, pin, branches = []) {
   const state = worktreePathState(path);
   if (state !== "directory")
@@ -3001,31 +3037,36 @@ async function cleanupInRepository(params, cwd, deps) {
       return rebound;
     let failure = null;
     let stopped = false;
+    let refusedClean = false;
     if (route === "host" && deps.host !== undefined) {
       try {
         await deps.host.remove(targetPath);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        failure = refuse2("worktree.removed", `host worktree.remove ${JSON.stringify(targetPath)} (error ${message.trim().slice(0, 400)})`, "host removal without force");
+        failure = refuse2("worktree.removed", `host worktree.remove ${JSON.stringify(targetPath)} (error ${gitMessage(message)})`, "host removal");
       }
     } else {
-      const removed = await runGit(commit, executionDir, removeArgv, bounds.mutationMs, executionPin);
+      const removed = await runGit(commit, executionDir, removeArgv, bounds.mutationMs, executionPin, MUTATION_ENV);
       if (!completed(removed)) {
-        failure = commandFailure("worktree.removed", ["git", ...removeArgv], removed, "exit 0 without --force");
+        failure = mutationFailure("worktree.removed", ["git", ...removeArgv], removed);
         stopped = removed.exitCode === null;
+        refusedClean = !stopped && removed.exitCode === 128 && CLEAN_CHECK_REFUSAL.test(removed.stderr);
       }
     }
     const registration = await registrationAbsence(executionDir, targetPath, commit, bounds.refReadMs, executionPin);
     const pathGone = pathAbsence(targetPath);
-    if (failure !== null && registration !== "absent" && pathGone !== "absent" && !stopped) {
-      const status = await runGit(commit, boundary.cwd, ["status", "--porcelain"], bounds.treeScanMs, boundary.pin);
-      if (completed(status) && status.stdout === "")
+    const left = failure !== null && pathGone !== "absent" ? await treeStatus(boundary, commit, bounds.treeScanMs) : null;
+    const untouched = refusedClean || left !== null && !left.some(isDeletion) && markersStillBound(boundary, executionDir, executionPin) === null;
+    if (failure !== null && !stopped && registration !== "absent" && pathGone !== "absent" && untouched) {
+      if (left === null || left.length === 0)
         return failure;
+      const why = left.every((line) => line.startsWith(" D ")) ? removalElsewhere(path) : changedAfterProof(left);
+      return { ok: false, reason: `${failure.reason}; ${why}` };
     }
     const unfinished = [];
     const branch = receipt.branch.name;
     if (registration !== "absent" || pathGone !== "absent") {
-      unfinished.push(failure === null ? `worktree ${path} is there again after its removal (registration ${registration}, directory ${pathGone}) and was left alone; absence unverified; no continuation receipt` : `worktree ${path}: removal attempted and stopped part-way (${failure.reason}); registration ${registration}, directory ${pathGone}; absence unverified; no continuation receipt; inspect ${path} before removing what is left by hand (git worktree remove --force)`, `local branch ${branch} kept: the worktree's absence is not proven`);
+      unfinished.push(failure === null ? `worktree ${path} is there again after its removal (registration ${registration}, directory ${pathGone}) and was left alone; absence unverified; no continuation receipt; ${inspectAdvice(path, left)}` : `worktree ${path}: removal attempted and stopped part-way (${failure.reason}); registration ${registration}, directory ${pathGone}; absence unverified; no continuation receipt; ${inspectAdvice(path, left)}`, `local branch ${branch} kept: the worktree's absence is not proven`);
       return { ok: true, worktreeRemoved: failure === null, registration, pathGone, localAbsence: "unknown", localRefPlan: localRef, localRefDeleted: false, executionDir, unfinished };
     }
     if (failure !== null)
@@ -3040,11 +3081,11 @@ async function cleanupInRepository(params, cwd, deps) {
       unfinished.push(`local branch ${branch} kept: it moved off ${receipt.pr.headRefOid} during the removal`);
     } else if (refAfterWorktree === "delete") {
       const deleteArgv = branchDeleteArgs(branch);
-      const result = await runGit(commit, executionDir, deleteArgv, bounds.mutationMs, executionPin);
+      const result = await runGit(commit, executionDir, deleteArgv, bounds.mutationMs, executionPin, MUTATION_ENV);
       if (completed(result))
         deleted = true;
       else
-        unfinished.push(`local branch ${branch} kept: ${commandFailure("worktree.localRefDeleted", ["git", ...deleteArgv], result, "exit 0 without -D").reason}`);
+        unfinished.push(`local branch ${branch} kept: ${mutationFailure("worktree.localRefDeleted", ["git", ...deleteArgv], result).reason}`);
     }
     const localAbsence = await localRefAbsence(executionDir, branch, commit, bounds.refReadMs, executionPin);
     const expected = deleted || localRefPlan === "absent" ? "absent" : "present";

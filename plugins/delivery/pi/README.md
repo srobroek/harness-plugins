@@ -202,8 +202,12 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
   (`<common>/opencode/holds/…`, the same format `subagent-worktree` writes): a shell that names the
   worktree, or any job of a session working in it. The last check before a removal reads them, so
   running background work keeps the worktree. The jobs are written before the lock wait as well
-  (`recordHold`, as `subagent-worktree` writes them). A write whose lock wait times out behind a
-  long removal hold therefore still blocks every remover until that session's next write.
+  (`recordHold`, as `subagent-worktree` writes them), for every worktree before any lock is taken.
+  A write whose lock wait times out behind a long removal hold therefore still blocks every
+  remover until that session's next write. A refusal caused by such a pending hold says
+  "recorded before its lock was taken", with its age, the time after which it is ignored, and its
+  file. Delete the named file only after that session's listed jobs have finished and that
+  session has ended. Until then, wait for its next turn or for the time given.
   Landing records are dropped only on positive evidence
   (their own receipt readable and cleaned or superseded); a denial is never dropped by cleanup of
   stale records, and a missing or unreadable receipt directory deletes nothing.
@@ -310,16 +314,41 @@ worktree that reappeared at the path.
 
 A removal that stops part-way reports `partlyRemoved: true` and the headline "removal
 attempted, partly removed, unverified", with nothing in `removed`. Examples are a file
-Git cannot delete, or a kill at the time bound. A failed removal command counts as
-stopped part-way unless the tree is still registered and on disk and `git status` shows
-it unchanged. Such a call keeps the local branch and the landing receipt, which stays
-the receipt of record, and names the path to inspect. Delivery's own retry tells the
-session once, keeps the landing record and does not retry it.
+Git cannot delete, or a kill at the time bound. `git worktree remove` only deletes. A
+failed removal counts as stopped part-way only when it left one of these signs:
+
+- a deleted tracked file in `git status`;
+- a `.git` marker that does not bind the tree to its admin directory;
+- a status that cannot be read, or a missing registration;
+- a command that ended with no exit status.
+
+Such a call keeps the local branch and the landing receipt, which stays the receipt of
+record. Delivery's own retry tells the session once, keeps the landing record and does
+not retry it.
+
+A failed removal without such a sign stays a refusal. A tree that changed after the last
+proof is why Git refused it, for example an untracked file or an edit. The refusal then
+lists the changed paths and says to save them.
+
+Git's refusal at its clean check ("contains modified or untracked files") is a refusal
+too, even when the status shows deleted files. Git makes that check before it deletes
+anything, so those deletions come from another process. Git runs the removal in the C
+locale, so its message is the English one. Any other message falls back to the signs above.
+
+Every unverified or partly removed result names the path to inspect and says to save any
+changes there. No result of a failed removal or branch deletion names a command that
+forces a deletion. It quotes the command that ran (`git worktree remove`, `git branch -d`),
+which never forces. Git runs those two calls in the C locale, and the result quotes only
+the first line of its message, without the hint ("use --force to delete it",
+"remove -f -f", "branch -D"). The expected outcome reads "exit 0".
+
+A deleted file in the status may be the user's own work. The status does not list ignored
+files either. So no status proves that what is left belongs to the interrupted removal.
 
 A tree whose only changes are deleted tracked files is a removal that is running or
 stopped part-way. The cause can be another process that takes no delivery lock, such as
 a delivery plugin in another harness or `wt remove`. It can also be an earlier cleanup
-that failed. The refusal says so and names the path to inspect.
+that failed. The refusal says so, names the path to inspect and says to save any changes.
 
 Cleanup deletes the receipt's branch ref only while it still points at the reviewed
 head. It leaves a ref that is gone or points elsewhere, and it keeps the differently
