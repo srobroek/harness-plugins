@@ -7,9 +7,9 @@ skill they load.
 
 | Agent | Reviews | Tools | Verdict | In the subagent catalog |
 | --- | --- | --- | --- | --- |
-| `pr-reviewer` (steps 80) | GitHub pull request on all harnesses; GitLab merge request on OpenCode only | OpenCode shell `gh pr view *`, `gh pr diff *`, `glab mr view *`, `glab mr diff *`, and GET-only `glab api` patterns; Pi shell `gh pr view` and `gh pr diff` only, enforced by this plugin's Pi extension; OMP `github` tool | `APPROVE\|REQUEST-CHANGES\|COMMENT` | no (`hidden: true`) |
-| `code-reviewer` (steps 80) | A local diff: working tree, branch range or commits | read, grep, glob, `lsp_*`; a read-only shell for git reads and the project's checks. No web. | `APPROVE\|REQUEST-CHANGES\|COMMENT` | yes |
-| `security-auditor` (steps 80) | A repository scope or the files a change touches, source to sink, CWE-tagged | read, grep, glob, `lsp_*`; a read-only shell for the project's checks. No web. | `PASS\|MINOR\|MAJOR` | yes |
+| `pr-reviewer` (steps 80) | GitHub pull request on all harnesses; GitLab merge request on OpenCode only | OpenCode shell `gh pr view *`, `gh pr diff *`, `glab mr view *`, `glab mr diff *`, and GET-only `glab api` patterns; Pi shell `gh pr view *`, `gh pr diff *`; OMP `github` tool | `APPROVE\|REQUEST-CHANGES\|COMMENT` | no (`hidden: true`) |
+| `code-reviewer` (steps 80) | A local diff: working tree, branch range or commits | read, grep, glob, `lsp_*`; a read-only shell for git reads and the project's checks, no web | `APPROVE\|REQUEST-CHANGES\|COMMENT` | yes |
+| `security-auditor` (steps 80) | A repository scope or the files a change touches, source to sink, CWE-tagged | read, grep, glob, `lsp_*`; a read-only shell for the project's checks, no web | `PASS\|MINOR\|MAJOR` | yes |
 | `adversarial-challenger` (steps 60) | A claim, plan, design or decision, with evidence-backed counter-arguments | read, grep, glob, `lsp_*`, webfetch, websearch | `HOLDS\|WEAKENED\|REFUTED` | yes |
 
 Every reply starts with its `VERDICT:` line. When the delivery plugin is installed, its verdict hook parses `pr-reviewer`'s verdict and accepts that line below a preamble or inside a code fence too.
