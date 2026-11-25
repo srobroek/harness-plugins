@@ -2017,12 +2017,15 @@ describe("delivery_cleanup beside another remover", () => {
 
   test("a tree that only lost tracked files is refused as a removal in progress elsewhere, with nothing removed", async () => {
     const f = await fixture("unlocked-remover")
-    // A remover that takes no lock (another plugin, `wt remove`) is part-way through the tree.
+    // A remover that takes no lock (another plugin, another tool that removes worktrees) is part-way through the tree.
     for (const file of git(f.linked, ["ls-files"]).split("\n").filter(Boolean).slice(0, 2)) rmSync(join(f.linked, file))
     const { result, calls } = await invoke(f, { receipt: f.receiptPath }, {}, lockedDeps(f, "observer"))
     expect(refusal(result)).toContain("worktree.status")
     expect(refusal(result)).toContain("only deleted tracked files")
     expect(refusal(result)).toContain("another process")
+    // A cause is named, never a command an agent could take as its next step.
+    expect(refusal(result)).toContain("another tool that removes worktrees without the delivery lock")
+    expect(refusal(result)).not.toContain("wt remove")
     expect(mutationCalls(calls)).toEqual([])
     expect(existsSync(f.linked)).toBe(true)
   })

@@ -938,8 +938,8 @@ function worktreePathState(path: string): "directory" | "absent" | "unsafe" {
 /** Why a tree with only deleted tracked files is refused, and what to do: see {@link verifyCleanTarget}. */
 const removalElsewhere = (path: string) =>
   "the tree has only deleted tracked files: a removal is running or stopped part-way (another process outside " +
-  "the delivery worktree lock, such as another harness's delivery plugin or `wt remove`, or an earlier cleanup " +
-  `that failed); this call removed nothing; inspect ${path} and save any changes in it`
+  "the delivery worktree lock, such as another harness's delivery plugin or another tool that removes worktrees " +
+  `without the delivery lock, or an earlier cleanup that failed); this call removed nothing; inspect ${path} and save any changes in it`
 
 function dirtyPaths(output: string): string[] {
   return output
