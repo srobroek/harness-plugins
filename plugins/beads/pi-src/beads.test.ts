@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent"
+import { piAgentDir, withPiAgentDir } from "@srobroek/opencode-lib/testing"
 import { setBdShowRunForTests } from "../opencode/src/bd-close-gate.ts"
 import type { BdRun } from "../opencode/src/gate-admission.ts"
 import { commandResult, type PreflightDeps } from "../shared/preflight.ts"
@@ -94,7 +95,7 @@ function setup(table: Record<string, Bead> = {}, deps: BeadsPiDeps = {}) {
     run: fakeBd(table, calls),
     pinFor: () => undefined,
     readHeader: (file) => headers[file],
-    optionsPath: join(root, "missing.json"),
+    settingsPath: join(root, "missing", "settings.json"),
     ...deps,
   })
   const bash = async (command: string, session: Session = ROOT) => {
@@ -159,22 +160,49 @@ describe("bash gate", () => {
     expect(calls).toEqual([])
   })
 
-  test("beads.json gitWrappers lets close evidence cite a listed wrapper", async () => {
+  test("gitWrappers under the beads key lets close evidence cite a listed wrapper", async () => {
     const table = { "ab-2": { status: "in_progress", assignee: "pi/root" } }
     const close = 'bd close ab-2 --reason "dgit push origin topic"'
     expect((await setup(table).bash(close)).result?.reason).toContain("(beads gate bd-close-evidence-gate)")
-    const optionsPath = join(root, "beads.json")
-    writeFileSync(optionsPath, JSON.stringify({ gitWrappers: ["git", "dgit"] }))
-    expect((await setup(table, { optionsPath }).bash(close)).result).toBeUndefined()
+    const settingsPath = join(piAgentDir(root, { defaultModel: "m", beads: { gitWrappers: ["git", "dgit"] } }), "settings.json")
+    expect((await setup(table, { settingsPath }).bash(close)).result).toBeUndefined()
   })
 
-  test("a malformed beads.json warns at session start", async () => {
-    const optionsPath = join(root, "bad-beads.json")
-    writeFileSync(optionsPath, "{")
-    const { emit } = setup({}, { optionsPath })
+  test("reads <agentDir>/settings.json alone: a stale beads.json and a project's .pi/settings.json are ignored", async () => {
+    const table = { "ab-2": { status: "in_progress", assignee: "pi/root" } }
+    const close = (wrapper: string) => `bd close ab-2 --reason "${wrapper} push origin topic"`
+    const dir = piAgentDir(root, { beads: { gitWrappers: ["git", "dgit"] } })
+    writeFileSync(join(dir, "beads.json"), JSON.stringify({ gitWrappers: ["git", "hgit"] }))
+    const project = join(root, "project")
+    mkdirSync(join(project, ".pi"), { recursive: true })
+    writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({ beads: { gitWrappers: ["git", "xgit"] } }))
+    const fake = fakePi()
+    withPiAgentDir(dir, () => setupBeadsPi(fake.pi, { env: {}, run: fakeBd(table), pinFor: () => undefined, readHeader: () => undefined }))
+    const bash = async (command: string) => {
+      const event = { type: "tool_call", toolName: "bash", toolCallId: `call-${callNumber++}`, input: { command } }
+      return (await fake.emit("tool_call", event, ctxFor({ ...ROOT, cwd: project }))) as { reason?: string } | undefined
+    }
+    expect(await bash(close("dgit"))).toBeUndefined()
+    expect((await bash(close("hgit")))?.reason).toContain("(beads gate bd-close-evidence-gate)")
+    expect((await bash(close("xgit")))?.reason).toContain("(beads gate bd-close-evidence-gate)")
+  })
+
+  test("a beads key that is not an object warns at session start", async () => {
+    const settingsPath = join(piAgentDir(root, { beads: ["git", "dgit"] }), "settings.json")
+    const { emit } = setup({}, { settingsPath })
     const notes: string[] = []
     await emit("session_start", {}, { ...ctxFor(ROOT), hasUI: true, ui: { notify: (text: string) => notes.push(text) } })
-    expect(notes).toEqual([`beads: ${optionsPath} is not valid JSON; close evidence counts only \`git\` as git.`])
+    expect(notes).toEqual([`beads: the "beads" key in ${settingsPath} is not an object; close evidence counts only \`git\` as git.`])
+  })
+
+  test("a malformed settings.json warns at session start", async () => {
+    const settingsPath = join(piAgentDir(root, "{"), "settings.json")
+    const { emit } = setup({}, { settingsPath })
+    const notes: string[] = []
+    await emit("session_start", {}, { ...ctxFor(ROOT), hasUI: true, ui: { notify: (text: string) => notes.push(text) } })
+    expect(notes).toEqual([
+      `beads: ${settingsPath} is not valid JSON, so its "beads" key was not read; close evidence counts only \`git\` as git.`,
+    ])
   })
 
   test("the OpenCode shell gates run too", async () => {
@@ -186,7 +214,7 @@ describe("bash gate", () => {
 
   test("a call another instance already gated is left alone", async () => {
     const fake = fakePi()
-    const deps = { env: {}, run: fakeBd({}), pinFor: () => undefined, readHeader: () => undefined, optionsPath: join(root, "missing.json") }
+    const deps = { env: {}, run: fakeBd({}), pinFor: () => undefined, readHeader: () => undefined, settingsPath: join(root, "missing", "settings.json") }
     setupBeadsPi(fake.pi, deps)
     setupBeadsPi(fake.pi, deps)
     const event = { type: "tool_call", toolName: "bash", toolCallId: "dup-1", input: { command: "ls" } }
