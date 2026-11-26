@@ -5256,6 +5256,31 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
+    // A deletion that could not be carried out is kept and retried; it is not a hold of its own (the report file still holds while its pid lives).
+    needsPermissions("a deletion that failed during a storage failure is retried by the next pass, which then removes the worktree", async () => {
+      const h = await harness("running-delete-retried")
+      await h.pending.record(h.f.receipt, "ses_lead")
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      expect(reportIds(h)).toEqual(["ses_a"])
+      const directory = runningDirectory(receiptDirectory(h.f.env))
+      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
+        await Bun.sleep(100)
+        expect(h.pending.pendingDeleteCount()).toBe(1)
+        expect(h.pending.unsettledCount()).toBe(0)
+      } finally {
+        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
+      }
+      expect(reportIds(h)).toEqual(["ses_a"]) // the file still holds, which fails closed
+      await h.idle("ses_lead")
+      expect(h.pending.pendingDeleteCount()).toBe(0)
+      expect(reportIds(h)).toEqual([])
+      expect(removed(h)).toBe(true)
+      await h.finish()
+    })
+
     // I8: nothing accumulates per session. Each idle hook also starts a serial pass, so the count is what
     // that costs (about 0.25 s a hook); twenty-five sessions, fired together, leak as visibly as a hundred.
     needsPermissions("after sessions whose reports failed are deleted, no failure is remembered", async () => {

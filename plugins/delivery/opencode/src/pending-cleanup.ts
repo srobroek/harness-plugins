@@ -320,6 +320,11 @@ export function createPendingCleanup(deps: PendingDeps) {
    * generation, or by the session's deletion. A failure sets the reason and keeps the entry.
    */
   const unsettled = new Map<string, UnsettledReport>()
+  /**
+   * Sessions deleted whose report could not be removed (no lease, a refused unlink). Retried by the triggers of
+   * `unsettled`. Not a hold: the report file itself holds while its pid lives, which fails closed.
+   */
+  const pendingDeletes = new Set<string>()
   /** Sessions whose stored snapshot is being written again; one retry at a time per session. */
   const retrying = new Set<string>()
   let generation = 0
@@ -1335,6 +1340,7 @@ export function createPendingCleanup(deps: PendingDeps) {
   /** Mark the session's report as not recorded, before anything is awaited; returns the mark's generation. */
   const beginReport = (sessionID: string, background: ReadonlyArray<BackgroundJob>): number => {
     const gen = ++generation
+    pendingDeletes.delete(sessionID) // the session is alive again
     unsettled.set(sessionID, { gen, at: stamp(), reason: "its report is still waiting to be written", failed: false, background })
     return gen
   }
@@ -1389,9 +1395,18 @@ export function createPendingCleanup(deps: PendingDeps) {
   const retryUnsettled = async (except?: string): Promise<void> => {
     const due = [...unsettled].filter(([id, entry]) => entry.failed && id !== except && !retrying.has(id))
     // Storage still refusing writes: a retry would only fail again, once per report.
-    if (due.length === 0 || !reportsWritable(receiptDirectory(env))) return
-    await Promise.all(
-      due.map(async ([id, entry]) => {
+    if ((due.length === 0 && pendingDeletes.size === 0) || !reportsWritable(receiptDirectory(env))) return
+    const deletes = [...pendingDeletes].map(async (id) => {
+      try {
+        await underStore(() => removeReport(receiptDirectory(env), id))
+        pendingDeletes.delete(id)
+      } catch (error) {
+        console.error(`delivery: could not remove the report of deleted session ${id}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    })
+    await Promise.all([
+      ...deletes,
+      ...due.map(async ([id, entry]) => {
         retrying.add(id)
         entry.failed = false
         entry.reason = "its report is being written again"
@@ -1401,14 +1416,16 @@ export function createPendingCleanup(deps: PendingDeps) {
           retrying.delete(id)
         }
       }),
-    )
+    ])
   }
 
   /** A deleted session runs nothing: its mark goes whether or not its file can be removed. A file left behind expires, or its owner is judged dead. */
   const forgetSession = async (sessionID: string): Promise<void> => {
     unsettled.delete(sessionID)
+    pendingDeletes.add(sessionID)
     try {
       await underStore(() => removeReport(receiptDirectory(env), sessionID))
+      pendingDeletes.delete(sessionID)
     } catch (error) {
       console.error(`delivery: could not remove the report of deleted session ${sessionID}: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -1469,6 +1486,8 @@ export function createPendingCleanup(deps: PendingDeps) {
     record,
     /** How many sessions have an unsettled report; for tests (it must not grow with deletions). */
     unsettledCount: () => unsettled.size,
+    /** How many deleted sessions still have a report to remove; for tests. */
+    pendingDeleteCount: () => pendingDeletes.size,
     deny: denyIn(own),
     arm: armIn(own),
     markNudged: (receiptId: string, worktree: string) => markNudged(receiptId, worktree),
