@@ -3528,13 +3528,16 @@ function loadPiPluginSettings(path, plugin, fallback) {
 // plugins/delivery/pi-src/host.ts
 function deliverySettings(path) {
   const loaded = loadPiPluginSettings(path, "delivery", "only the built-in GitLab hosts are recognized");
-  return { gitlabHosts: parseGitlabHosts(loaded.options.gitlabHosts), warning: loaded.warning };
+  return { gitlabHosts: parseGitlabHosts(loaded.options.gitlabHosts), confirm: loaded.options.confirm !== false, warning: loaded.warning };
 }
-function callGitlabHosts(ctx, path) {
+function callSettings(ctx, path) {
   const settings = deliverySettings(path ?? join8(getAgentDir(), PI_SETTINGS_FILE));
   if (settings.warning !== undefined && ctx.hasUI)
     ctx.ui.notify(settings.warning, "warning");
-  return settings.gitlabHosts;
+  return { gitlabHosts: settings.gitlabHosts, confirm: settings.confirm };
+}
+function callGitlabHosts(ctx, path) {
+  return callSettings(ctx, path).gitlabHosts;
 }
 function toToolResult(result) {
   return {
