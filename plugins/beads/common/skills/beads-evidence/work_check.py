@@ -27,6 +27,7 @@ def check(issue, bead, kind, actor, event, since, subject=None):
     if issue.get("id") != bead:
         return result(False, "wrong bead")
     matches = []
+    latest_unreadable = None
     for row in issue.get("comments", []):
         if not isinstance(row, dict) or row.get("author") != actor or row.get("issue_id") != bead:
             continue
@@ -39,13 +40,17 @@ def check(issue, bead, kind, actor, event, since, subject=None):
         try:
             record = json.loads(body[len(PREFIX):])
         except ValueError:
-            return result(False, "invalid marked comment from this actor")
+            if latest_unreadable is None or when > latest_unreadable:
+                latest_unreadable = when
+            continue
         if not isinstance(record, dict) or (record.get("kind"), record.get("event")) != (kind, event):
             continue
         matches.append((when, record))
     if not matches:
         return result(False, "no matching checkpoint after the supplied work boundary")
     latest = max(when for when, _ in matches)
+    if latest_unreadable is not None and latest_unreadable >= latest:
+        return result(False, "invalid marked comment at or after the latest checkpoint")
     records = [record for when, record in matches if when == latest]
     if any(record != records[0] for record in records):
         return result(False, "conflicting checkpoints at the latest timestamp")

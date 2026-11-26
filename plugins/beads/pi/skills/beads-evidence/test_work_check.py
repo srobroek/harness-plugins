@@ -53,6 +53,17 @@ class WorkCheckTests(unittest.TestCase):
         self.add(result="Done", evidence=["not a reference string"], next="review")
         self.assertFalse(self.verdict())
 
+    def test_corrected_checkpoint_supersedes_unreadable_earlier_comment(self):
+        self.add(when="2026-01-01T12:01:00Z")
+        self.issue["comments"][0]["text"] = "beads-work/v1 {"
+        self.add(when="2026-01-01T12:02:00Z", result="fixed", evidence="run 19", next="review")
+        self.assertTrue(self.verdict())
+        self.issue["comments"].reverse()
+        self.assertTrue(self.verdict())
+        for when in ("2026-01-01T12:02:00Z", "2026-01-01T12:03:00Z"):
+            self.issue["comments"][1]["created_at"] = when
+            self.assertFalse(self.verdict())
+
     def test_ambiguous_latest_receipts_fail_closed(self):
         self.add(result="Fixed", evidence="test run 15", next="review")
         self.add(result="Blocked", evidence="test run 16", next="retry")
