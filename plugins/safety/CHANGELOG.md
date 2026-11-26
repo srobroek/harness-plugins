@@ -1,3 +1,13 @@
+## safety [3.0.0](https://github.com/srobroek/harness-plugins/compare/safety--v2.0.1...safety--v3.0.0) (2026-11-26)
+
+### ⚠ BREAKING CHANGES
+
+* **safety:** on pi, commands that a check asks about (sudo-destructive, worktree-destruction, external-directory, a failed destruction review) are now refused by default instead of opening a dialog. Set `"approvals": "ask"` under the `safety` key, or run `/safety ask`, to keep the dialog.
+
+### Features
+
+* **safety:** refuse ask-rule commands by default on pi, with /safety to switch or allow once ([0df08c5](https://github.com/srobroek/harness-plugins/commit/0df08c5801a1719cfae326b5ede64e81ba893f3a))
+
 ## safety [2.0.1](https://github.com/srobroek/harness-plugins/compare/safety--v2.0.0...safety--v2.0.1) (2026-11-26)
 
 ### Bug Fixes

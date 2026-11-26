@@ -2344,7 +2344,7 @@
     },
     {
       "name": "safety",
-      "version": "2.0.1",
+      "version": "3.0.0",
       "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help and redaction of secret environment values from tool output.",
       "category": "development",
       "harnesses": {
