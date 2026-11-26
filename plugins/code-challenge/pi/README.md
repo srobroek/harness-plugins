@@ -25,6 +25,16 @@ A run stores its files in `<git-dir>/code-challenge/<run-id>/`: `intake.json`, `
 
 Thirteen lenses, one reference each: scope (the code against its design and docs: missing requirements, drift, unrequested features and features built beyond the design), simplification, over-engineering, optimisation, performance, efficiency, stability, hand-rolled code (standard library or framework), hand-rolled code (third-party library), dead code, observability, structure and tests. Each reference lists what to look for, the evidence it needs and the steering skills to load (`quality-profiling`, `lang-*-profiling`, `lang-*-libraries`, `lang-*-quality`, `toolchain-quality-observability`, `quality-code-policy`, `quality-test-audit`).
 
+## Delegation
+
+`code-challenger` keeps its own turns for judgement and hands bulk work to cheaper read-only helpers: trawling a directory, reading many files, listing call sites, counting and summarising. It fans large targets out to at most 4 helpers in parallel, and confirms every claim a finding rests on with its own tool result. It may spawn only these helpers:
+
+| Harness | Bulk reading | Outside questions (licence, CVE, alternatives) |
+| --- | --- | --- |
+| OpenCode | `explore`, on `tier: "cheap"` | `researcher` |
+| OMP | `scout` | `researcher` |
+| Pi | `scout`, with `model` set to the cheapest model the session offers | `researcher` (from `@srobroek/pi-agent-researcher`) |
+
 ## Pi subagent tools
 
 `code-challenger` adds `challenge_scan`, `challenge_lib_facts`, `symbol_search`, `module_report`, `project_report`, `read_symbol`, `read_enclosing`, `ast_grep_search`, `ast_grep_outline`, `lens_diagnostics`, `pi_lens_activate_tools`, `web_search`, `fetch_content`, `get_search_content`, `source_check`, `quality_test_summarize`, `quality_test_compare`, `repomix_pack`, `dep_scan`, `version_gap_scan`, and `mcp:context7` to its existing tools.
