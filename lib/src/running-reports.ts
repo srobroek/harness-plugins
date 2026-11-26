@@ -29,9 +29,11 @@ export const MAX_REPORT_BYTES = 1024 * 1024
 
 /**
  * One entry of the idle hook's `background` list. The host's list gives a shell its `command` and the
- * session that owns it, and nothing about where it runs; `cwd` is kept when a job carries one.
+ * session that owns it, and nothing about where it runs; `cwd` is kept when a job carries one. `endedAt` is set by the
+ * writer on a job that has left the session's job list but may still be running: the host marks a job cancelled before its
+ * shell exits, so the job stays in the report, ended, for a grace window.
  */
-export type ReportJob = { kind: string; sessionID?: string; childSessionID?: string; shellID?: string; command?: string; cwd?: string }
+export type ReportJob = { kind: string; sessionID?: string; childSessionID?: string; shellID?: string; command?: string; cwd?: string; endedAt?: number }
 
 /**
  * A session's last report from one server instance: its jobs, when it was written (`at`, for display and
@@ -57,9 +59,6 @@ const sessionKey = (sessionID: string) => createHash("sha1").update(sessionID).d
 /** The file of `sessionID`'s report from `instance`: one per session and instance, so no two writers share one. */
 export const reportFile = (receiptsRoot: string, sessionID: string, instance: string) =>
   join(runningDirectory(receiptsRoot), `${sessionKey(sessionID)}.${createHash("sha1").update(instance).digest("hex").slice(0, 16)}.json`)
-
-/** Where a report was kept before the instance joined the name. Still read; removed only by its own writer. */
-export const legacyReportFile = (receiptsRoot: string, sessionID: string) => join(runningDirectory(receiptsRoot), `${sessionKey(sessionID)}.json`)
 
 const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value)
 
@@ -88,6 +87,7 @@ export function parseReport(text: string): RunningReport | undefined {
     // A field that is present must be text: a report that says something else is not one.
     const fields = [job.sessionID, job.childSessionID, job.shellID, job.command, job.cwd]
     if (fields.some((field) => field !== undefined && typeof field !== "string")) return undefined
+    if (job.endedAt !== undefined && (typeof job.endedAt !== "number" || !Number.isFinite(job.endedAt))) return undefined
     const [sessionID, childSessionID, shellID, command, cwd] = fields.map(optionalString)
     jobs.push({
       kind: job.kind,
@@ -96,6 +96,7 @@ export function parseReport(text: string): RunningReport | undefined {
       ...(shellID === undefined ? {} : { shellID }),
       ...(command === undefined ? {} : { command }),
       ...(cwd === undefined ? {} : { cwd }),
+      ...(typeof job.endedAt === "number" ? { endedAt: job.endedAt } : {}),
     })
   }
   return { sessionID: raw.sessionID, jobs, at: raw.at, pid: raw.pid, host: raw.host, instance: raw.instance, gen: raw.gen ?? 0 }
@@ -149,15 +150,6 @@ export function removeReport(receiptsRoot: string, sessionID: string, instance: 
   if (stored.kind === "report" && stored.report.gen > maxGen) return "kept"
   rmSync(file, { force: true })
   return "removed"
-}
-
-/** Delete the un-suffixed file of `sessionID` when its pid and instance are the caller's; any other stays. Throws when it cannot delete. */
-export function removeLegacyReport(receiptsRoot: string, sessionID: string, instance: string, pid: number): boolean {
-  const file = legacyReportFile(receiptsRoot, sessionID)
-  const stored = readStored(file)
-  if (stored.kind !== "report" || stored.report.instance !== instance || stored.report.pid !== pid) return false
-  rmSync(file, { force: true })
-  return true
 }
 
 /** Every instance's report of every session (and legacy files). `unreadable` when the directory (other than absent) or any entry could not be read safely. */

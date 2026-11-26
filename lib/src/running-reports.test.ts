@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { execFileSync } from "node:child_process"
+import { createHash } from "node:crypto"
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   clearReport,
   type JobLookup,
-  legacyReportFile,
   MAX_REPORT_BYTES,
   neededLookups,
   parseReport,
@@ -14,7 +14,6 @@ import {
   type ReportJob,
   type RunningReport,
   readReports,
-  removeLegacyReport,
   removeReport,
   reportBlock,
   reportFile,
@@ -113,21 +112,9 @@ describe("writing and clearing: one file per session and instance", () => {
     expect(removeReport(root, "ses_a", INSTANCE_A, 5)).toBe("removed") // already gone
   })
 
-  test("a legacy un-suffixed file is removed only when its pid and instance are ours; any other stays", () => {
-    mkdirSync(runningDirectory(root), { recursive: true })
-    const legacy = legacyReportFile(root, "ses_a")
-    const text = JSON.stringify({ sessionID: "ses_a", jobs: [], at: 1, pid: 4242, host: "box", instance: INSTANCE_A })
-    writeFileSync(legacy, text)
-    expect(removeLegacyReport(root, "ses_a", INSTANCE_B, 4242)).toBe(false)
-    expect(removeLegacyReport(root, "ses_a", INSTANCE_A, 1)).toBe(false)
-    expect(files()).toHaveLength(1)
-    expect(removeLegacyReport(root, "ses_a", INSTANCE_A, 4242)).toBe(true)
-    expect(files()).toEqual([])
-  })
-
   test("a legacy file is read like any other report, with generation 0", () => {
     mkdirSync(runningDirectory(root), { recursive: true })
-    writeFileSync(legacyReportFile(root, "ses_a"), JSON.stringify({ sessionID: "ses_a", jobs: [{ kind: "shell", command: "cd /w/linked && make" }], at: 1, pid: 4242, host: "box", instance: "box:99:old" }))
+    writeFileSync(join(runningDirectory(root), `${createHash("sha1").update("ses_a").digest("hex")}.json`), JSON.stringify({ sessionID: "ses_a", jobs: [{ kind: "shell", command: "cd /w/linked && make" }], at: 1, pid: 4242, host: "box", instance: "box:99:old" }))
     writeReport(root, by(INSTANCE_A, "ses_a", 2, []))
     const read = readReports(root)
     expect(read.unreadable).toBe(false)
@@ -203,6 +190,8 @@ describe("reading", () => {
     ["jobs that are not a list", { sessionID: "s", jobs: {}, at: 1, pid: 1, host: "h", instance: "i" }],
     ["a job whose command is not text", { sessionID: "s", jobs: [{ kind: "shell", command: 5 }], at: 1, pid: 1, host: "h", instance: "i" }],
     ["a job whose cwd is not text", { sessionID: "s", jobs: [{ kind: "shell", cwd: [] }], at: 1, pid: 1, host: "h", instance: "i" }],
+    ["a job whose endedAt is not a number", { sessionID: "s", jobs: [{ kind: "shell", endedAt: "soon" }], at: 1, pid: 1, host: "h", instance: "i" }],
+    ["a job whose endedAt is not finite", { sessionID: "s", jobs: [{ kind: "shell", endedAt: null }], at: 1, pid: 1, host: "h", instance: "i" }],
     ["a job that is not an object", { sessionID: "s", jobs: ["shell"], at: 1, pid: 1, host: "h", instance: "i" }],
   ])("a report with %s does not parse", (_name, raw) => {
     expect(parseReport(JSON.stringify(raw))).toBeUndefined()
@@ -213,6 +202,13 @@ describe("reading", () => {
     rmSync(runningDirectory(root), { recursive: true, force: true })
     writeFileSync(runningDirectory(root), "")
     expect(reportsWritable(root)).toBe(false)
+  })
+
+  test("a job's endedAt is kept by the writer and the parser, and changes the report's version", () => {
+    const ended: ReportJob[] = [{ kind: "shell", shellID: "sh1", command: "make", endedAt: 7 }]
+    writeReport(root, by(INSTANCE_A, "ses_a", 1, ended))
+    expect(readReports(root).reports[0]?.jobs).toEqual(ended)
+    expect(reportVersion(report("ses_a", 1, ended))).not.toBe(reportVersion(report("ses_a", 1, [{ kind: "shell", shellID: "sh1", command: "make" }])))
   })
 
   test("a report's version changes when its time or its jobs do", () => {

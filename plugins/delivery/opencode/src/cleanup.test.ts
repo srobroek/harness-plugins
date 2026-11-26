@@ -24,7 +24,7 @@ import {
 } from "@srobroek/opencode-lib/worktree-locks"
 import { CleanupDeferred, cleanupText } from "./cleanup-tool.ts"
 import { addClone, MAX_CLONES, readClones, registryFile } from "./clone-registry.ts"
-import { authorizeExplicit, createPendingCleanup, partlyRemovedText } from "./pending-cleanup.ts"
+import { authorizeExplicit, createPendingCleanup, GRACE_MS, partlyRemovedText } from "./pending-cleanup.ts"
 
 // Fixture setup creates several real Git repositories and measured about 20s under full-suite load;
 // keep three times that headroom instead of letting Bun's 5s default kill a child process mid-fixture.
@@ -4374,6 +4374,7 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.pending.settle()
       expect(removed(h)).toBe(false)
       unlock(h)
+      await h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] } as never) // the job has ended: held for the grace window
       h.advance(60_000)
       await h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] } as never)
       await h.pending.settle()
@@ -4524,11 +4525,15 @@ describe("pending cleanup: one remover per worktree", () => {
       const answers: Record<string, () => Promise<unknown>> = {}
       session.get = (input) => (answers[input.sessionID] ?? (() => real(input)))()
       await h.pending.start()
-      const report = (child: string) =>
-        h.fake.fire.session("experimental.idle", { sessionID: "ses_x", background: [{ kind: "subagent", sessionID: "ses_x", childSessionID: child }] } as never)
+      const report = async (child: string) => {
+        // A report of nothing, then the grace window, then the next job: the earlier job's end mark would hold the worktree otherwise.
+        await h.fake.fire.session("experimental.idle", { sessionID: "ses_x", background: [] } as never)
+        h.advance(GRACE_MS)
+        await h.fake.fire.session("experimental.idle", { sessionID: "ses_x", background: [{ kind: "subagent", sessionID: "ses_x", childSessionID: child }] } as never)
+      }
       answers.ses_here = async () => ({ id: "ses_here", location: { directory: h.f.linked } })
       await report("ses_here")
-      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("runs in the worktree")
+      expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("running in the worktree")
       answers.ses_broken = () => Promise.reject(new Error("the host is down"))
       await report("ses_broken")
       expect(await h.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("could not be read")
@@ -4668,6 +4673,9 @@ describe("pending cleanup: one remover per worktree", () => {
       await idleHook(h, [{ kind: "shell", sessionID: "ses_x", shellID: "sh1", command: `cd ${h.f.linked}` }])
       await h.pending.settle()
       expect(removed(h)).toBe(false)
+      await idleHook(h, []) // the shell has left the list: held for the grace window
+      await h.pending.settle()
+      expect(removed(h)).toBe(false)
       h.advance(60_000)
       await idleHook(h, [])
       await h.pending.settle()
@@ -4697,6 +4705,9 @@ describe("pending cleanup: one remover per worktree", () => {
       expect(reportIds(h)).toEqual(["ses_a"])
       expect(await check(h)).toContain("names the worktree")
       await reportFrom(h, "ses_a", [])
+      expect(await check(h)).toContain("names the worktree") // ended, held for the grace window
+      h.advance(GRACE_MS)
+      await reportFrom(h, "ses_a", [])
       expect(reportIds(h)).toEqual([])
       expect(await check(h)).toBeUndefined()
       await h.finish()
@@ -4708,8 +4719,12 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.pending.start()
       await Promise.all([reportFrom(h, "ses_a", [shellIn(h, "one")]), reportFrom(h, "ses_a", [shellIn(h, "two")]), reportFrom(h, "ses_a", [elsewhere("three")])])
       const reports = readReports(receiptDirectory(h.f.env)).reports
-      expect(reports.map((report) => report.jobs.map((job) => job.shellID))).toEqual([["three"]])
-      // The last one names nothing in the worktree: so the earlier ones no longer hold it.
+      expect(reports.map((report) => report.jobs.filter((job) => job.endedAt === undefined).map((job) => job.shellID))).toEqual([["three"]])
+      // The earlier jobs are ended, but held for the grace window; once it is over a later snapshot leaves only the last.
+      expect(await check(h)).toContain("names the worktree")
+      h.advance(GRACE_MS)
+      await reportFrom(h, "ses_a", [elsewhere("three")])
+      expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.jobs.map((job) => job.shellID))).toEqual([["three"]])
       expect(await check(h)).toBeUndefined()
       await h.finish()
     })
@@ -4756,9 +4771,12 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.idle()
       expect(removed(h)).toBe(false)
       await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
-      expect(reportIds(h)).toEqual([])
+      expect(reportIds(h)).toEqual(["ses_a"]) // its shell may still be stopping: held for the grace window
+      await h.idle()
+      expect(removed(h)).toBe(false)
       h.advance(60_000)
       await h.idle()
+      expect(reportIds(h)).toEqual([])
       expect(removed(h)).toBe(true)
       await h.finish()
     })
@@ -4855,7 +4873,7 @@ describe("pending cleanup: one remover per worktree", () => {
       await newer
       queue.waits[0]?.() // ... and the older, stamped before it, comes last
       await older
-      expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.jobs.map((job) => job.shellID))).toEqual([["newer"]])
+      expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.jobs.filter((job) => job.endedAt === undefined).map((job) => job.shellID))).toEqual([["newer"]])
       await h.finish()
     })
 
@@ -4863,8 +4881,8 @@ describe("pending cleanup: one remover per worktree", () => {
     test("a report that changes between the first read and the final one is judged by fresh lookups", async () => {
       const h = await harness("running-fresh-lookups", { list: async () => ({ data: [] }) })
       await h.pending.start()
+      await reportFrom(h, "ses_a", [{ kind: "subagent", childSessionID: "ses_x" }]) // ses_x is not known yet: no directory is recorded
       h.fake.sessions.set("ses_x", { id: "ses_x", location: { directory: "/elsewhere" } })
-      await reportFrom(h, "ses_a", [{ kind: "subagent", childSessionID: "ses_x" }])
       const session = h.fake.context.session as unknown as { get: (input: { sessionID: string }) => Promise<unknown> }
       const real = session.get.bind(session)
       let lookups = 0
@@ -4888,7 +4906,7 @@ describe("pending cleanup: one remover per worktree", () => {
       await reportFrom(h, "ses_a", [{ kind: "subagent", childSessionID: "ses_x" }, { kind: "shell", shellID: "extra", command: "sleep 1" }])
       gate.resolve()
       await removal
-      expect(reason).toContain("runs in the worktree")
+      expect(reason).toContain("running in the worktree")
       await h.finish()
     })
 
@@ -4896,16 +4914,18 @@ describe("pending cleanup: one remover per worktree", () => {
     test("an idle hook that fires while the final lookups are pending refuses the removal", async () => {
       const h = await harness("running-unsettled-during-lookups", { list: async () => ({ data: [] }) })
       await h.pending.start()
+      await reportFrom(h, "ses_a", [{ kind: "subagent", childSessionID: "ses_x" }]) // ses_x is not known yet: no directory is recorded
       h.fake.sessions.set("ses_x", { id: "ses_x", location: { directory: "/elsewhere" } })
-      await reportFrom(h, "ses_a", [{ kind: "subagent", childSessionID: "ses_x" }])
       const session = h.fake.context.session as unknown as { get: (input: { sessionID: string }) => Promise<unknown> }
       const real = session.get.bind(session)
       let lookups = 0
+      let recording = false // while a report records where its jobs run, ses_x cannot be placed: the removal still has to look it up
       const first = { arrived: Promise.withResolvers<void>(), go: Promise.withResolvers<void>() }
       const last = { arrived: Promise.withResolvers<void>(), go: Promise.withResolvers<void>() }
       // The lookups of ses_x: the section's pre-check (1), the check's first (2) and, for the changed report, its last (3, under the lease).
       session.get = async (input) => {
         if (input.sessionID !== "ses_x") return real(input)
+        if (recording) throw new Error("not placed now")
         const n = ++lookups
         const where = await real(input)
         const gate = n === 2 ? first : n === 3 ? last : undefined
@@ -4918,7 +4938,9 @@ describe("pending cleanup: one remover per worktree", () => {
         reason = found
       })
       await first.arrived.promise
+      recording = true
       await reportFrom(h, "ses_a", [{ kind: "subagent", childSessionID: "ses_x" }, { kind: "shell", shellID: "extra", command: "sleep 1" }])
+      recording = false
       first.go.resolve()
       await last.arrived.promise
       const late = outsideLocks(() => reportFrom(h, "ses_b", [elsewhere()]))
@@ -5085,7 +5107,9 @@ describe("pending cleanup: one remover per worktree", () => {
         instance: "another-server",
       })
       expect(readReports(receiptDirectory(h.f.env)).reports).toHaveLength(2)
-      await reportFrom(h, "ses_a", []) // this instance clears
+      await reportFrom(h, "ses_a", []) // this instance's job has ended
+      h.advance(GRACE_MS)
+      await reportFrom(h, "ses_a", []) // and this instance clears
       expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.instance)).toEqual(["another-server"])
       expect(await check(h)).toContain("names the worktree")
       await h.finish()
@@ -5115,7 +5139,8 @@ describe("pending cleanup: one remover per worktree", () => {
     })
 
     // The report identity is per activation of the plugin. A disposed activation's queued work does nothing, and disposal removes no report.
-    test("a write a disposed activation had queued on the lease does nothing when it gets the lease", async () => {
+    // A hold written late is harmless (it expires with the pid); a clear, an empty write or a delete after disposal could lift a hold, so they do nothing.
+    test("a non-empty write a disposed activation had queued on the lease is still published", async () => {
       const gate = Promise.withResolvers<void>()
       let slept = 0
       const h = await harness("running-disposed-write", { idlePassMs: 50, disposeWaitMs: 100, lock: { waitMs: 60_000, sleep: (): Promise<void> => (++slept === 1 ? gate.promise : Bun.sleep(5)) } })
@@ -5128,7 +5153,27 @@ describe("pending cleanup: one remover per worktree", () => {
       await lease.release()
       gate.resolve() // the write takes the lease now, after disposal
       await writing
-      expect(reportIds(h)).toEqual([])
+      expect(reportIds(h)).toEqual(["ses_a"])
+      await h.finish()
+    })
+
+    test("a clear a disposed activation had queued on the lease does nothing when it gets the lease", async () => {
+      const gate = Promise.withResolvers<void>()
+      let slept = 0
+      const h = await harness("running-disposed-clear", { idlePassMs: 50, disposeWaitMs: 100, lock: { waitMs: 60_000, sleep: (): Promise<void> => (++slept === 1 ? gate.promise : Bun.sleep(5)) } })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await reportFrom(h, "ses_a", [])
+      h.advance(GRACE_MS) // the ended job's window is over: the next snapshot clears
+      const lease = await holdLease(runningLeaseFile(receiptDirectory(h.f.env)), { owner: "test" })
+      if (lease.kind !== "held") throw new Error("test could not take the lease")
+      const clearing = reportFrom(h, "ses_a", []) // waits on the lease, sleeping on the gate
+      while (slept < 1) await Bun.sleep(2)
+      await h.pending.dispose()
+      await lease.release()
+      gate.resolve()
+      await clearing
+      expect(reportIds(h)).toEqual(["ses_a"])
       await h.finish()
     })
 
@@ -5138,6 +5183,27 @@ describe("pending cleanup: one remover per worktree", () => {
       await reportFrom(h, "ses_a", [shellIn(h)])
       await h.pending.dispose()
       expect(reportIds(h)).toEqual(["ses_a"])
+      await h.finish()
+    })
+
+    test("concurrent disposals dispose each registration once", async () => {
+      const h = await harness("running-dispose-memo")
+      const session = h.fake.context.session as unknown as { hook: (name: string, callback: unknown) => Promise<{ dispose: () => Promise<void> }> }
+      const original = session.hook.bind(session)
+      let disposals = 0
+      session.hook = async (name, callback) => {
+        const registration = await original(name, callback)
+        return {
+          ...registration,
+          dispose: async () => {
+            disposals += 1
+            await registration.dispose()
+          },
+        }
+      }
+      await h.pending.start()
+      await Promise.all([h.pending.dispose(), h.pending.dispose()])
+      expect(disposals).toBe(1)
       await h.finish()
     })
 
@@ -5157,11 +5223,13 @@ describe("pending cleanup: one remover per worktree", () => {
       const h = await harness("running-no-supersede")
       await h.pending.start()
       const next = h.reactivate()
+      await next.pending.prime()
       await next.pending.start()
       await reportFrom(h, "ses_a", [shellIn(h)])
       await next.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [] } as never)
       expect(reportIds(h)).toEqual(["ses_a"])
-      expect(await check(h)).toContain("names the worktree")
+      // The refusal comes from the second activation's own cleanup, which reads its sibling's file.
+      expect(await next.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("names the worktree")
       await next.pending.dispose()
       await h.finish()
     })
@@ -5170,6 +5238,7 @@ describe("pending cleanup: one remover per worktree", () => {
       const h = await harness("running-own-files")
       await h.pending.start()
       const next = h.reactivate()
+      await next.pending.prime()
       await next.pending.start()
       await reportFrom(h, "ses_a", [shellIn(h, "sh-first")])
       await next.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [{ sessionID: "ses_a", ...shellIn(h, "sh-second") }] } as never)
@@ -5178,7 +5247,12 @@ describe("pending cleanup: one remover per worktree", () => {
       expect(new Set(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.instance)).size).toBe(2)
       await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } }) // only the first activation hears it
       await Bun.sleep(100)
+      expect(shellIds()).toEqual(["sh-first", "sh-second"]) // the first's job is ended, held for the grace window
+      h.advance(GRACE_MS)
+      await check(h)
       expect(shellIds()).toEqual(["sh-second"])
+      // The second activation still refuses on its own file, and the first's is gone.
+      expect(await next.pending.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("names the worktree")
       await next.pending.dispose()
       await h.finish()
     })
@@ -5199,6 +5273,76 @@ describe("pending cleanup: one remover per worktree", () => {
       gate.resolve() // the delete takes the lease now, after disposal
       while (h.pending.pendingDeleteCount() !== 0) await Bun.sleep(5)
       expect(reportIds(h)).toEqual(["ses_a"])
+      await h.finish()
+    })
+
+    // The host marks a job cancelled before its shell exits (SIGTERM, then SIGKILL after 3 s), so a job that leaves the list may still run.
+    test("an empty snapshot right after a running one still holds; after the grace window the next snapshot clears it", async () => {
+      const h = await harness("running-grace-snapshot")
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await reportFrom(h, "ses_a", [])
+      expect(reportIds(h)).toEqual(["ses_a"])
+      expect(readReports(receiptDirectory(h.f.env)).reports[0]?.jobs[0]?.endedAt).toBeDefined()
+      expect(await check(h)).toContain("names the worktree")
+      h.advance(GRACE_MS - 1)
+      await reportFrom(h, "ses_a", [])
+      expect(reportIds(h)).toEqual(["ses_a"])
+      h.advance(1)
+      await reportFrom(h, "ses_a", [])
+      expect(reportIds(h)).toEqual([])
+      expect(await check(h)).toBeUndefined()
+      await h.finish()
+    })
+
+    test("a retry, pass or check after the grace window clears the ended jobs without a new snapshot", async () => {
+      const h = await harness("running-grace-trigger", { retryAt: ["check"] })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await reportFrom(h, "ses_a", [])
+      expect(await check(h)).toContain("names the worktree")
+      h.advance(GRACE_MS)
+      expect(await check(h)).toBeUndefined()
+      expect(reportIds(h)).toEqual([])
+      await h.finish()
+    })
+
+    test("a job that comes back in a later snapshot is running again, with no end mark", async () => {
+      const h = await harness("running-grace-return")
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await reportFrom(h, "ses_a", [])
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      expect(readReports(receiptDirectory(h.f.env)).reports[0]?.jobs).toMatchObject([{ shellID: "sh1" }])
+      expect(readReports(receiptDirectory(h.f.env)).reports[0]?.jobs[0]?.endedAt).toBeUndefined()
+      await h.finish()
+    })
+
+    test("a session deleted while its shell runs keeps its report until the grace window ends, then removes it", async () => {
+      const h = await harness("running-grace-delete", { retryAt: ["check"] })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
+      await Bun.sleep(100)
+      expect(reportIds(h)).toEqual(["ses_a"])
+      expect(h.pending.pendingDeleteCount()).toBe(1)
+      expect(await check(h)).toContain("names the worktree")
+      h.advance(GRACE_MS)
+      expect(await check(h)).toBeUndefined()
+      expect(reportIds(h)).toEqual([])
+      expect(h.pending.pendingDeleteCount()).toBe(0)
+      await h.finish()
+    })
+
+    // OpenCode's job list gives a shell its owning session and no directory: the report records where that session works, at the time.
+    test("a job with no cwd is recorded with its owning session's directory, so it still holds after the session moves", async () => {
+      const h = await harness("running-cwd-recorded")
+      h.fake.sessions.set("ses_in", { id: "ses_in", location: { directory: h.f.linked } })
+      await h.pending.start()
+      await reportFrom(h, "ses_in", [{ kind: "shell", shellID: "sh3", command: "sleep 30" }])
+      expect(readReports(receiptDirectory(h.f.env)).reports[0]?.jobs[0]?.cwd).toBe(h.f.linked)
+      h.fake.sessions.set("ses_in", { id: "ses_in", location: { directory: join(h.f.root, "elsewhere") } })
+      expect(await check(h)).toContain("running in the worktree")
       await h.finish()
     })
 
@@ -5244,7 +5388,10 @@ describe("pending cleanup: one remover per worktree", () => {
         console.error = original
         chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
       }
-      await check(h) // the newer token is retried, and now succeeds
+      await check(h) // the newer token is retried: the session's job ends, held for the grace window
+      expect(h.pending.pendingDeleteCount()).toBe(1)
+      h.advance(GRACE_MS)
+      await check(h) // and now it succeeds
       expect(h.pending.pendingDeleteCount()).toBe(0)
       expect(reportIds(h)).toEqual([])
       await h.finish()
@@ -5305,7 +5452,7 @@ describe("pending cleanup: one remover per worktree", () => {
       queue.waits[0]?.() // the older then runs: it is not the session's current report, so it writes nothing
       await older
       // Storage is back: the pass the older hook started wrote the newer snapshot, and only that one.
-      expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.jobs.map((job) => job.shellID))).toEqual([["newer"]])
+      expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.jobs.filter((job) => job.endedAt === undefined).map((job) => job.shellID))).toEqual([["newer"]])
       expect(h.pending.unsettledCount()).toBe(0)
       await h.finish()
     })
@@ -5355,6 +5502,10 @@ describe("pending cleanup: one remover per worktree", () => {
       await reportFrom(h, "ses_a", [{ kind: "shell", shellID: "sh1", command: `make -C ${aliased}` }])
       await h.idle()
       expect(removed(h)).toBe(false)
+      await reportFrom(h, "ses_a", [])
+      await h.idle()
+      expect(removed(h)).toBe(false) // ended, held for the grace window
+      h.advance(GRACE_MS)
       await reportFrom(h, "ses_a", [])
       await h.idle()
       expect(removed(h)).toBe(true)
@@ -5529,6 +5680,10 @@ describe("pending cleanup: one remover per worktree", () => {
         chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
       }
       expect(reportIds(h)).toEqual(["ses_a"]) // the file still holds, which fails closed
+      await h.idle("ses_lead") // the retry ends the job, held for the grace window
+      expect(h.pending.pendingDeleteCount()).toBe(1)
+      expect(removed(h)).toBe(false)
+      h.advance(GRACE_MS)
       await h.idle("ses_lead")
       expect(h.pending.pendingDeleteCount()).toBe(0)
       expect(reportIds(h)).toEqual([])
