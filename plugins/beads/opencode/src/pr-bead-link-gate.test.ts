@@ -8,11 +8,18 @@ import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
 
 import {
   beadsActive,
+  controlFromTargetView,
   controlledByViewerPermission,
   decidePrBeadLink,
   type PrBeadLinkDeps,
+  type RepositoryControl,
   readBodyFile,
+  repositoryControlFor,
   repositoryControlled,
+  sameRepository,
+  type TargetLookups,
+  type TargetView,
+  targetRepositoryControl,
 } from "./pr-bead-link-gate.ts"
 import { ACCEPTED_FORMS, MAX_BODY_BYTES, TRAILER_RULE, validRepository } from "./pr-create-form.ts"
 
@@ -93,6 +100,96 @@ describe("repository control", () => {
     for (const permission of ["WRITE", "MAINTAIN", "ADMIN"]) expect(controlledByViewerPermission(permission)).toBe(true)
     for (const permission of ["READ", "TRIAGE", null, undefined, ""])
       expect(controlledByViewerPermission(permission)).toBe(false)
+  })
+})
+
+describe("a PR for another repository", () => {
+  const live = mkdtempSync(join(tmpdir(), "beads-live-"))
+  mkdirSync(join(live, ".beads"))
+  afterAll(() => rmSync(live, { recursive: true, force: true }))
+  const lookups = (checkout: string | null, target: (repo: string) => boolean | RepositoryControl) => {
+    const asked: string[] = []
+    return {
+      asked,
+      deps: {
+        checkout: () => checkout,
+        target: (repo: string) => {
+          asked.push(repo)
+          return target(repo)
+        },
+      } satisfies TargetLookups,
+    }
+  }
+
+  test("is judged by the target's own ledger, not the session directory's", () => {
+    const { asked, deps } = lookups("srobroek/harness-plugins", () => false)
+    expect(repositoryControlFor("srobroek/dotfiles", live, deps)).toBe(false)
+    expect(asked).toEqual(["srobroek/dotfiles"])
+  })
+
+  test("a live target ledger is still gated, and a failed lookup fails closed", () => {
+    expect(repositoryControlFor("other/repo", live, lookups("me/here", () => ({ kind: "controlled" })).deps)).toEqual({ kind: "controlled" })
+    const unknown = { kind: "unknown", reason: "lookup failed" } as const
+    expect(repositoryControlFor("other/repo", live, lookups("me/here", () => unknown).deps)).toEqual(unknown)
+  })
+
+  test("the checkout's own repository, in any spelling, keeps the session ledger", () => {
+    for (const repo of ["me/here", "ME/Here", "github.com/me/here"]) {
+      const { asked, deps } = lookups("me/here", () => false)
+      expect(repositoryControlFor(repo, mkdtempSync(join(tmpdir(), "beads-none-")), deps)).toBe(false)
+      expect(asked).toEqual([])
+    }
+  })
+
+  test("an unreadable checkout keeps the session ledger rather than trusting the named repository", () => {
+    const { asked, deps } = lookups(null, () => false)
+    repositoryControlFor("other/repo", live, deps)
+    expect(asked).toEqual([])
+  })
+
+  test("no ledger at the session directory is never gated, whatever the target", () => {
+    const none = mkdtempSync(join(tmpdir(), "beads-none-"))
+    try {
+      expect(repositoryControlFor("other/repo", none, lookups("me/here", () => ({ kind: "controlled" })).deps)).toBe(false)
+    } finally {
+      rmSync(none, { recursive: true, force: true })
+    }
+  })
+
+  test("reads the target view: no .beads, a RETIRED file, a live ledger, an unreadable repository", () => {
+    type Beads = NonNullable<NonNullable<TargetView["data"]>["repository"]>["object"]
+    const repo = (object: Beads, viewerPermission: unknown = "WRITE"): TargetView => ({ data: { repository: { viewerPermission, object } } })
+    expect(controlFromTargetView(repo(null))).toBe(false)
+    expect(controlFromTargetView(repo({ entries: [{ name: "RETIRED", type: "blob" }] }))).toBe(false)
+    expect(controlFromTargetView(repo({ entries: [{ name: "RETIRED", type: "tree" }] }))).toEqual({ kind: "controlled" })
+    expect(controlFromTargetView(repo({ entries: [{ name: "config.yaml", type: "blob" }] }, "READ"))).toEqual({ kind: "uncontrolled" })
+    expect(controlFromTargetView({ data: { repository: null } })).toMatchObject({ kind: "unknown" })
+  })
+
+  test("asks GitHub for the target's permission and .beads tree in one graphql call", () => {
+    const dir = mkdtempSync(join(tmpdir(), "beads-gh-target-"))
+    const args = join(dir, "args")
+    const view = JSON.stringify({ data: { repository: { viewerPermission: "WRITE", object: { entries: [{ name: "RETIRED", type: "blob" }] } } } })
+    writeExecutable(join(dir, "gh"), `#!/bin/sh\nprintf "%s\\n" "$@" > '${args}'\nprintf '%s' '${view}'\n`)
+    const previousPath = process.env.PATH
+    process.env.PATH = `${dir}:${previousPath ?? ""}`
+    try {
+      expect(targetRepositoryControl("ghe.example.com/owner/repo")).toBe(false)
+      const argv = readFileSync(args, "utf8").trim().split("\n")
+      expect(argv.slice(0, 4)).toEqual(["api", "graphql", "--hostname", "ghe.example.com"])
+      expect(argv).toContain("owner=owner")
+      expect(argv).toContain("name=repo")
+      expect(targetRepositoryControl("-R/x")).toMatchObject({ kind: "unknown" })
+    } finally {
+      process.env.PATH = previousPath
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("sameRepository ignores case and the default host only", () => {
+    expect(sameRepository("A/B", "github.com/a/b")).toBe(true)
+    expect(sameRepository("ghe.example.com/a/b", "a/b")).toBe(false)
+    expect(sameRepository("a/b", "a/c")).toBe(false)
   })
 })
 

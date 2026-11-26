@@ -13,13 +13,13 @@
 | ast-grep | 1.3.2 | development | global | opencode, claude |
 | autopilot | 1.4.3 | development | global | opencode, pi |
 | aws | 0.10.1 | development | global | opencode, claude, omp, pi |
-| beads | 1.2.0 | development | project | opencode, claude, pi |
+| beads | 1.3.1 | development | project | opencode, claude, pi |
 | build | 0.11.1 | development | project | opencode, omp, pi |
 | chezmoi | 0.7.2 | development | global | opencode, claude, pi |
 | claude-compat | 0.5.4 | development | project | opencode |
 | code-challenge | 2.2.1 | development | global | opencode, omp, pi |
 | debate | 1.1.0 | productivity | global | opencode, claude, omp, pi |
-| delivery | 0.16.2 | development | global | opencode, pi |
+| delivery | 0.17.0 | development | global | opencode, pi |
 | dep-update | 0.7.1 | development | global | opencode, pi |
 | design | 0.11.0 | development | project | opencode, claude, pi |
 | docs | 0.5.1 | development | global | opencode, omp, pi |

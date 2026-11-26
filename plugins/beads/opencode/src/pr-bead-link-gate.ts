@@ -121,10 +121,80 @@ export function repositoryControlled(repo: string | null): RepositoryControl {
  * Whether the `gh pr create` that `repo` names (or the checkout at `cwd`, when it names none) is
  * subject to the gate: a live ledger and a repository the viewer can write. Resolved only when
  * the command does not already prove a bead, because it reaches the network.
+ *
+ * The ledger is the one at `cwd`, unless the command names a repository other than the checkout:
+ * a PR for another repository is judged by that repository's own committed `.beads` (its default
+ * branch), so a retired or absent ledger there is not overridden by the session's directory.
  */
-export function repositoryControlFor(repo: string | null, cwd: string): boolean | RepositoryControl {
+export function repositoryControlFor(repo: string | null, cwd: string, lookups: TargetLookups = systemLookups): boolean | RepositoryControl {
   if (!beadsActive(cwd)) return false
-  return repositoryControlled(repo ?? repositoryFromCurrentCheckout(cwd))
+  if (repo === null) return repositoryControlled(lookups.checkout(cwd))
+  const checkout = lookups.checkout(cwd)
+  if (checkout !== null && sameRepository(repo, checkout)) return repositoryControlled(repo)
+  if (checkout === null) return repositoryControlled(repo)
+  return lookups.target(repo)
+}
+
+export type TargetLookups = {
+  /** The repository of the checkout at `cwd`, a fork's parent, or null when it cannot be read. */
+  checkout: (cwd: string) => string | null
+  /** Control of another repository, judged by its own committed ledger. */
+  target: (repo: string) => boolean | RepositoryControl
+}
+
+const systemLookups: TargetLookups = { checkout: repositoryFromCurrentCheckout, target: targetRepositoryControl }
+
+/** `OWNER/REPO` and `github.com/OWNER/REPO` name the same repository; names compare case-insensitively. */
+export function sameRepository(a: string, b: string): boolean {
+  const key = (value: string) => {
+    const parts = value.toLowerCase().split("/")
+    return (parts.length === 3 && parts[0] === "github.com" ? parts.slice(1) : parts).join("/")
+  }
+  return key(a) === key(b)
+}
+
+export type TargetView = {
+  data?: {
+    repository?: {
+      viewerPermission?: unknown
+      object?: { entries?: { name?: unknown; type?: unknown }[] } | null
+    } | null
+  }
+}
+
+/**
+ * Reads another repository's ledger from its default branch: no `.beads` tree is no ledger, a
+ * `.beads/RETIRED` file is a retired one, and a live one is gated by the viewer's permission.
+ * A view without a repository is unknown, so the gate fails closed.
+ */
+export function controlFromTargetView(view: TargetView): boolean | RepositoryControl {
+  const repository = view.data?.repository
+  if (!repository) return { kind: "unknown", reason: "Repository permission could not be determined because the repository could not be read" }
+  const beads = repository.object
+  if (!beads || !Array.isArray(beads.entries)) return false
+  if (beads.entries.some((entry) => entry.name === "RETIRED" && entry.type === "blob")) return false
+  return controlledByViewerPermission(repository.viewerPermission) ? { kind: "controlled" } : { kind: "uncontrolled" }
+}
+
+const TARGET_QUERY =
+  'query($owner:String!,$name:String!){repository(owner:$owner,name:$name){viewerPermission object(expression:"HEAD:.beads"){... on Tree{entries{name type}}}}}'
+
+export function targetRepositoryControl(repo: string): boolean | RepositoryControl {
+  if (!validRepository(repo))
+    return { kind: "unknown", reason: "Repository permission could not be determined because the repository name is not OWNER/REPO or HOST/OWNER/REPO" }
+  const parts = repo.split("/")
+  const [host, owner, name] = parts.length === 3 ? parts : [undefined, ...parts]
+  try {
+    const raw = execFileSync(
+      "gh",
+      ["api", "graphql", ...(host === undefined ? [] : ["--hostname", host]), "-f", `query=${TARGET_QUERY}`, "-f", `owner=${owner}`, "-f", `name=${name}`],
+      { encoding: "utf8", timeout: GH_TIMEOUT_MS, stdio: ["ignore", "pipe", "pipe"] },
+    )
+    return controlFromTargetView(JSON.parse(raw) as TargetView)
+  } catch (error) {
+    const failure = error instanceof Error ? error.message : String(error)
+    return { kind: "unknown", reason: `Repository permission could not be determined: ${failure}` }
+  }
 }
 
 /**

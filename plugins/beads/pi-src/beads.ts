@@ -147,7 +147,8 @@ export function setupBeadsPi(pi: ExtensionAPI, deps: BeadsPiDeps = {}): void {
   const registry = globalThis as typeof globalThis & { [handoffKey]?: Map<string, Assignment> }
   registry[handoffKey] ??= new Map<string, Assignment>()
   const handoffs = registry[handoffKey]
-  const verify = deps.verifyProgress ?? verifyWithHelper(join(EXTENSION_DIR, "../skills/beads-evidence/work_check.py"))
+  const helper = join(EXTENSION_DIR, "../skills/beads-evidence/work_check.py")
+  const verify = deps.verifyProgress ?? verifyWithHelper(helper)
 
   const cachedPinFor = (cwd: string): string | undefined => {
     const hit = pins.get(cwd)
@@ -241,7 +242,7 @@ export function setupBeadsPi(pi: ExtensionAPI, deps: BeadsPiDeps = {}): void {
         cwd: ctx.cwd,
         store: bdStoreDir(ctx.cwd, pinnedEnvironment(ctx.cwd, baseEnv(), cachedPinFor)),
         parent: ctx.sessionManager.getSessionFile(), actor: identityOf(ctx).actor, now: now(),
-      }))
+      }), helper)
       if (typeof binding === "string") return { block: true, reason: binding }
       if (binding) handoffs.set(key, binding)
       return undefined
@@ -265,7 +266,12 @@ export function setupBeadsPi(pi: ExtensionAPI, deps: BeadsPiDeps = {}): void {
       if (event.isError) return undefined
       const task = (event.input as { task?: unknown } | undefined)?.task
       if (!binding && !(typeof task === "string" && task.split("\n", 1)[0]?.trim().startsWith("Bead:"))) return undefined
-      if (binding && await handoffVerified(binding, event.details, readHeader, verify, baseEnv())) return undefined
+      if (binding?.background) {
+        const receipt = event.details as { mode?: string; asyncId?: string; runId?: string; results?: unknown[] } | undefined
+        if (receipt?.mode === "single" && receipt.asyncId && receipt.asyncId === receipt.runId && Array.isArray(receipt.results) && receipt.results.length === 0) {
+          return { content: event.content, details: receipt, structuredContent: { handoff: "pending", runId: receipt.asyncId, bead: binding.bead } }
+        }
+      } else if (binding && await handoffVerified(binding, event.details, readHeader, verify, baseEnv())) return undefined
       const failure: Record<string, string> = binding ? { handoff: "unverified", bead: binding.bead, event: binding.event } : { handoff: "unverified" }
       const why = binding ? `for ${binding.bead} (event ${binding.event})` : "because the dispatch binding is missing"
       return { isError: true, details: { ...failure, results: [] }, structuredContent: failure, content: [{ type: "text" as const,

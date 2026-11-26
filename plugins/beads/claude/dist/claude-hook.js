@@ -5014,10 +5014,50 @@ function repositoryControlled(repo) {
     return { kind: "unknown", reason: `Repository permission could not be determined: ${failure}` };
   }
 }
-function repositoryControlFor(repo, cwd) {
+function repositoryControlFor(repo, cwd, lookups = systemLookups) {
   if (!beadsActive(cwd))
     return false;
-  return repositoryControlled(repo ?? repositoryFromCurrentCheckout(cwd));
+  if (repo === null)
+    return repositoryControlled(lookups.checkout(cwd));
+  const checkout = lookups.checkout(cwd);
+  if (checkout !== null && sameRepository(repo, checkout))
+    return repositoryControlled(repo);
+  if (checkout === null)
+    return repositoryControlled(repo);
+  return lookups.target(repo);
+}
+var systemLookups = { checkout: repositoryFromCurrentCheckout, target: targetRepositoryControl };
+function sameRepository(a, b) {
+  const key = (value) => {
+    const parts = value.toLowerCase().split("/");
+    return (parts.length === 3 && parts[0] === "github.com" ? parts.slice(1) : parts).join("/");
+  };
+  return key(a) === key(b);
+}
+function controlFromTargetView(view) {
+  const repository = view.data?.repository;
+  if (!repository)
+    return { kind: "unknown", reason: "Repository permission could not be determined because the repository could not be read" };
+  const beads = repository.object;
+  if (!beads || !Array.isArray(beads.entries))
+    return false;
+  if (beads.entries.some((entry) => entry.name === "RETIRED" && entry.type === "blob"))
+    return false;
+  return controlledByViewerPermission(repository.viewerPermission) ? { kind: "controlled" } : { kind: "uncontrolled" };
+}
+var TARGET_QUERY = 'query($owner:String!,$name:String!){repository(owner:$owner,name:$name){viewerPermission object(expression:"HEAD:.beads"){... on Tree{entries{name type}}}}}';
+function targetRepositoryControl(repo) {
+  if (!validRepository(repo))
+    return { kind: "unknown", reason: "Repository permission could not be determined because the repository name is not OWNER/REPO or HOST/OWNER/REPO" };
+  const parts = repo.split("/");
+  const [host, owner, name] = parts.length === 3 ? parts : [undefined, ...parts];
+  try {
+    const raw = execFileSync("gh", ["api", "graphql", ...host === undefined ? [] : ["--hostname", host], "-f", `query=${TARGET_QUERY}`, "-f", `owner=${owner}`, "-f", `name=${name}`], { encoding: "utf8", timeout: GH_TIMEOUT_MS, stdio: ["ignore", "pipe", "pipe"] });
+    return controlFromTargetView(JSON.parse(raw));
+  } catch (error) {
+    const failure = error instanceof Error ? error.message : String(error);
+    return { kind: "unknown", reason: `Repository permission could not be determined: ${failure}` };
+  }
 }
 function readBodyFile(cwd) {
   return (path) => {
