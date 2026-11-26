@@ -33,8 +33,16 @@ export const MAX_REPORT_BYTES = 1024 * 1024
  */
 export type ReportJob = { kind: string; sessionID?: string; childSessionID?: string; shellID?: string; command?: string; cwd?: string }
 
-/** A session's last report: its jobs, when it was written, and by which server (host, pid and instance). */
-export type RunningReport = { sessionID: string; jobs: ReportJob[]; at: number; pid: number; host: string; instance: string }
+/**
+ * A session's last report from one server instance: its jobs, when it was written (`at`, for display and
+ * versioning only), by which server (host, pid and instance), and the instance's local generation of the
+ * report (`gen`), which orders that instance's own writes. Each instance writes only its own file for a
+ * session, so no ordering between instances is needed. A file written before `gen` existed reads as 0.
+ */
+export type RunningReport = { sessionID: string; jobs: ReportJob[]; at: number; pid: number; host: string; instance: string; gen: number }
+
+/** What a writer hands over: `gen` defaults to 0. */
+export type NewReport = Omit<RunningReport, "gen"> & { gen?: number }
 
 /** A report as read: with the file's mtime, which is what expiry is measured against. */
 export type StoredReport = RunningReport & { mtimeMs: number }
@@ -44,14 +52,24 @@ export type JobLookup = { state: "at"; directory: string | undefined } | { state
 
 export const runningDirectory = (receiptsRoot: string) => join(receiptsRoot, ".running")
 
-export const reportFile = (receiptsRoot: string, sessionID: string) =>
-  join(runningDirectory(receiptsRoot), `${createHash("sha1").update(sessionID).digest("hex")}.json`)
+const sessionKey = (sessionID: string) => createHash("sha1").update(sessionID).digest("hex")
+
+/** The file of `sessionID`'s report from `instance`: one per session and instance, so no two writers share one. */
+export const reportFile = (receiptsRoot: string, sessionID: string, instance: string) =>
+  join(runningDirectory(receiptsRoot), `${sessionKey(sessionID)}.${createHash("sha1").update(instance).digest("hex").slice(0, 16)}.json`)
+
+/** Where a report was kept before the instance joined the name. Still read; removed only by its own writer. */
+export const legacyReportFile = (receiptsRoot: string, sessionID: string) => join(runningDirectory(receiptsRoot), `${sessionKey(sessionID)}.json`)
 
 const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value)
 
 const optionalString = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined)
 
-/** A report from its file's text, or undefined when it is not one. Pure. */
+/**
+ * A report from its file's text; undefined when it is not one. This, with the exported
+ * {@link RunningReport} type, is the one schema of what delivery persists here: every read goes through
+ * it and a type or shape that does not match makes the file unreadable. Pure.
+ */
 export function parseReport(text: string): RunningReport | undefined {
   let raw: unknown
   try {
@@ -63,6 +81,7 @@ export function parseReport(text: string): RunningReport | undefined {
   if (typeof raw.at !== "number" || !Number.isFinite(raw.at)) return undefined
   if (typeof raw.pid !== "number" || !Number.isInteger(raw.pid) || raw.pid < 1) return undefined
   if (typeof raw.host !== "string" || raw.host === "" || typeof raw.instance !== "string" || !Array.isArray(raw.jobs)) return undefined
+  if (raw.gen !== undefined && (typeof raw.gen !== "number" || !Number.isInteger(raw.gen) || raw.gen < 0)) return undefined
   const jobs: ReportJob[] = []
   for (const job of raw.jobs) {
     if (!isObject(job) || typeof job.kind !== "string") return undefined
@@ -79,60 +98,69 @@ export function parseReport(text: string): RunningReport | undefined {
       ...(cwd === undefined ? {} : { cwd }),
     })
   }
-  return { sessionID: raw.sessionID, jobs, at: raw.at, pid: raw.pid, host: raw.host, instance: raw.instance }
+  return { sessionID: raw.sessionID, jobs, at: raw.at, pid: raw.pid, host: raw.host, instance: raw.instance, gen: raw.gen ?? 0 }
 }
 
+type Stored = { kind: "report"; report: StoredReport } | { kind: "absent" } | { kind: "unreadable" }
+
 /** The file at `path`: a report, nothing, or something that is not a small regular file holding one. Never blocks on a FIFO. */
-export function readStored(path: string): { kind: "report"; report: StoredReport } | { kind: "absent" } | { kind: "unreadable" } {
+export function readStored(path: string): Stored {
   const read = readBoundedBytes(path, MAX_REPORT_BYTES)
   if (read.kind === "absent") return { kind: "absent" }
   if (read.kind === "unreadable") return { kind: "unreadable" }
-  const report = parseReport(read.bytes.toString("utf8"))
-  if (report === undefined) return { kind: "unreadable" }
+  const parsed = parseReport(read.bytes.toString("utf8"))
+  if (parsed === undefined) return { kind: "unreadable" }
   try {
-    return { kind: "report", report: { ...report, mtimeMs: statSync(path).mtimeMs } }
+    return { kind: "report", report: { ...parsed, mtimeMs: statSync(path).mtimeMs } }
   } catch {
     return { kind: "unreadable" }
   }
 }
 
-/** Whether `sessionID`'s report on disk is newer than `at`; only a readable report of that session counts. */
-function supersededOnDisk(file: string, sessionID: string, at: number): boolean {
-  const stored = readStored(file)
-  return stored.kind === "report" && stored.report.sessionID === sessionID && stored.report.at > at
-}
-
 /**
- * Record `report` as its session's one report: a temp file and a rename. Returns `"superseded"` and
- * writes nothing when the session's report on disk is newer. Throws when it cannot write. Not atomic
- * with the compare: the caller holds the store's lease.
+ * Record `report` as its instance's one report of the session: a temp file and a rename. The caller holds
+ * the store's lease and decides, by its own generation, that this write is the session's current one.
+ * Throws when it cannot write.
  */
-export function writeReport(receiptsRoot: string, report: RunningReport): "written" | "superseded" {
-  const file = reportFile(receiptsRoot, report.sessionID)
-  if (supersededOnDisk(file, report.sessionID, report.at)) return "superseded"
-  const text = JSON.stringify(report)
+export function writeReport(receiptsRoot: string, report: NewReport): void {
+  const full: RunningReport = { ...report, gen: report.gen ?? 0 }
+  const text = JSON.stringify(full)
   if (Buffer.byteLength(text) > MAX_REPORT_BYTES) throw new Error(`the report of ${report.sessionID} is larger than ${MAX_REPORT_BYTES} bytes`)
   mkdirSync(runningDirectory(receiptsRoot), { recursive: true })
+  const file = reportFile(receiptsRoot, report.sessionID, report.instance)
   const temp = `${file}.${randomUUID()}.tmp`
   writeFileSync(temp, text)
   renameSync(temp, file)
-  return "written"
 }
 
-/** Delete `sessionID`'s report unless the session's report on disk is newer than `at`. Throws when it cannot. */
-export function clearReport(receiptsRoot: string, sessionID: string, at: number): "cleared" | "superseded" {
-  const file = reportFile(receiptsRoot, sessionID)
-  if (supersededOnDisk(file, sessionID, at)) return "superseded"
+/** The instance's clear of its own report: its file is deleted, and no other instance's is touched. Throws when it cannot. */
+export function clearReport(receiptsRoot: string, sessionID: string, instance: string): void {
+  rmSync(reportFile(receiptsRoot, sessionID, instance), { force: true })
+}
+
+/**
+ * The instance's removal of its report for a deleted session, unless the file on disk carries a generation
+ * above `maxGen` (a newer incarnation of the session wrote it). A file that cannot be read is the
+ * instance's own and goes. Throws when it cannot delete.
+ */
+export function removeReport(receiptsRoot: string, sessionID: string, instance: string, maxGen: number = Number.POSITIVE_INFINITY): "removed" | "kept" {
+  const file = reportFile(receiptsRoot, sessionID, instance)
+  const stored = readStored(file)
+  if (stored.kind === "report" && stored.report.gen > maxGen) return "kept"
   rmSync(file, { force: true })
-  return "cleared"
+  return "removed"
 }
 
-/** Delete `sessionID`'s report whatever its age: the session itself is gone. Throws when it cannot. */
-export function removeReport(receiptsRoot: string, sessionID: string): void {
-  rmSync(reportFile(receiptsRoot, sessionID), { force: true })
+/** Delete the un-suffixed file of `sessionID` when its pid and instance are the caller's; any other stays. Throws when it cannot delete. */
+export function removeLegacyReport(receiptsRoot: string, sessionID: string, instance: string, pid: number): boolean {
+  const file = legacyReportFile(receiptsRoot, sessionID)
+  const stored = readStored(file)
+  if (stored.kind !== "report" || stored.report.instance !== instance || stored.report.pid !== pid) return false
+  rmSync(file, { force: true })
+  return true
 }
 
-/** Every session's report. `unreadable` when the directory (other than absent) or any entry could not be read safely. */
+/** Every instance's report of every session (and legacy files). `unreadable` when the directory (other than absent) or any entry could not be read safely. */
 export function readReports(receiptsRoot: string): { reports: StoredReport[]; unreadable: boolean } {
   const directory = runningDirectory(receiptsRoot)
   let names: string[]
@@ -166,7 +194,7 @@ export function reportsWritable(receiptsRoot: string): boolean {
 }
 
 /** What a report's version is: it changes when the session writes it again. */
-export const reportVersion = (report: RunningReport): string => `${report.at}:${report.instance}:${JSON.stringify(report.jobs)}`
+export const reportVersion = (report: RunningReport): string => `${report.sessionID}:${report.at}:${report.instance}:${report.gen}:${JSON.stringify(report.jobs)}`
 
 /**
  * What decides whether a report still counts: the reader's clock (against the file's mtime), who the

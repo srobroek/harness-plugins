@@ -39,6 +39,7 @@ import {
   type ReportClock,
   type ReportJob,
   readReports,
+  removeLegacyReport,
   removeReport,
   reportBlock,
   reportsWritable,
@@ -270,6 +271,10 @@ export type PendingDeps = {
   idlePassMs?: number
   /** How long disposal waits for the passes still running (default {@link DISPOSE_WAIT_MS}). */
   disposeWaitMs?: number
+  /** Test seam: a bound that ends when the test says, in place of a timer of `ms` (default: a real timer). */
+  bound?: (ms: number) => Promise<void>
+  /** Test seam: which triggers write failed reports and deletions again (default all three). */
+  retryAt?: ReadonlyArray<RetryTrigger>
   /** Test seam: the clock reports expire on, against the files' mtime (default: the real clock). */
   fileNow?: () => number
   /** Test seam: the backoff clock of the event watch. */
@@ -290,6 +295,9 @@ type StoreHold = { active: boolean; lease: { release: () => Promise<void> } | un
  * refused), and the job list the session reported, so any later pass can write it again.
  */
 type UnsettledReport = { gen: number; at: number; reason: string; failed: boolean; background: ReadonlyArray<BackgroundJob> }
+
+/** What writes a failed report again: the start of a pass, a removal's final check, any session's idle hook. */
+export type RetryTrigger = "pass" | "check" | "idle"
 
 /** The default bound on one session lookup in the idle hook. */
 export const SESSION_LOOKUP_MS = 5_000
@@ -319,8 +327,19 @@ export function createPendingCleanup(deps: PendingDeps) {
    * generation, or by the session's deletion. A failure sets the reason and keeps the entry.
    */
   const unsettled = new Map<string, UnsettledReport>()
+  /**
+   * Sessions deleted whose report could not be removed (no lease, a refused unlink), with the session's generation
+   * at the deletion. Retried by the triggers of `unsettled`, under the lease, and only while no newer incarnation of
+   * the session has begun and the file on disk is not of a newer generation. Not a hold: the report file itself holds while its pid lives, which fails closed.
+   */
+  const pendingDeletes = new Map<string, number>()
+  /** The latest generation each live session's report has had here: a deletion's token is compared with it. */
+  const lastGen = new Map<string, number>()
+  /** Sessions whose legacy (un-suffixed) report file this instance has already looked for. */
+  const legacyChecked = new Set<string>()
   /** Sessions whose stored snapshot is being written again; one retry at a time per session. */
   const retrying = new Set<string>()
+  const retryOn = (trigger: RetryTrigger): boolean => (deps.retryAt ?? ["pass", "check", "idle"]).includes(trigger)
   let generation = 0
   /** Each report of this server takes a number above the last one, so equal clock readings still order. */
   let lastAt = 0
@@ -1201,9 +1220,11 @@ export function createPendingCleanup(deps: PendingDeps) {
   /** `work`, or undefined once `ms` have passed: the hook returns, and the pass goes on in the chain. */
   const boundedBy = async (work: Promise<unknown>, ms: number): Promise<void> => {
     let timer: ReturnType<typeof setTimeout> | undefined
-    const bound = new Promise<void>((done) => {
-      timer = setTimeout(done, ms)
-    })
+    const bound =
+      deps.bound?.(ms) ??
+      new Promise<void>((done) => {
+        timer = setTimeout(done, ms)
+      })
     try {
       await Promise.race([work, bound])
     } finally {
@@ -1215,7 +1236,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     disposed
       ? Promise.resolve()
       : serial(async () => {
-          await retryUnsettled()
+          if (retryOn("pass")) await retryUnsettled()
           return run(sessionID, idle)
         }).catch((error) => console.error("delivery: pending cleanup failed", error))
 
@@ -1284,14 +1305,15 @@ export function createPendingCleanup(deps: PendingDeps) {
     const unreadable = "the running-work reports cannot be read, so running work cannot be ruled out"
     const root = receiptDirectory(env)
     // A report whose write was refused is written again first: storage may be back.
-    if (hold?.lease === undefined) await retryUnsettled()
+    if (hold?.lease === undefined && retryOn("check")) await retryUnsettled()
     const early = stuck()
     if (early !== undefined) return early
     if (!reportsWritable(root)) return "the running-work store is not writable, so running work cannot be ruled out"
     const forms = [...new Set([worktree, canonicalDirectory(worktree), ...spellings, ...spellings.map(canonicalDirectory)])]
     const first = readReports(root)
     if (first.unreadable) return unreadable
-    const seen = new Map(first.reports.map((report) => [report.sessionID, reportVersion(report)]))
+    const seenKey = (report: { sessionID: string; instance: string }) => `${report.sessionID}\0${report.instance}`
+    const seen = new Map(first.reports.map((report) => [seenKey(report), reportVersion(report)]))
     const cache = new Map<string, JobLookup>()
     const lookUp = async (ids: readonly string[]) => {
       await Promise.all(ids.map(async (id) => void cache.set(id, await sessionState(id))))
@@ -1315,7 +1337,7 @@ export function createPendingCleanup(deps: PendingDeps) {
       // decision come after every await, with nothing awaited between them.
       if (leased) {
         const peek = readReports(root)
-        if (!peek.unreadable) await lookUp(neededLookups(peek.reports.filter((report) => seen.get(report.sessionID) !== reportVersion(report)), forms, reportClock()))
+        if (!peek.unreadable) await lookUp(neededLookups(peek.reports.filter((report) => seen.get(seenKey(report)) !== reportVersion(report)), forms, reportClock()))
       }
       const again = stuck()
       if (again !== undefined) return await refuse(again)
@@ -1334,6 +1356,7 @@ export function createPendingCleanup(deps: PendingDeps) {
   /** Mark the session's report as not recorded, before anything is awaited; returns the mark's generation. */
   const beginReport = (sessionID: string, background: ReadonlyArray<BackgroundJob>): number => {
     const gen = ++generation
+    lastGen.set(sessionID, gen)
     unsettled.set(sessionID, { gen, at: stamp(), reason: "its report is still waiting to be written", failed: false, background })
     return gen
   }
@@ -1363,8 +1386,14 @@ export function createPendingCleanup(deps: PendingDeps) {
         // Only the session's current report is written: a deleted session (no entry) has nothing to record, and
         // an older one is replaced by the newer one's own write.
         if (unsettled.get(sessionID)?.gen !== gen) return
-        if (background.length === 0) clearReport(root, sessionID, at)
-        else writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname(), instance: SERVER_INSTANCE })
+        // A file this instance kept under the old, un-suffixed name goes with the first write of the session.
+        if (!legacyChecked.has(sessionID)) {
+          legacyChecked.add(sessionID)
+          removeLegacyReport(root, sessionID, SERVER_INSTANCE, process.pid)
+        }
+        // Only this instance's own file: the current generation writes or clears it, and no other instance's file is touched.
+        if (background.length === 0) clearReport(root, sessionID, SERVER_INSTANCE)
+        else writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname(), instance: SERVER_INSTANCE, gen })
       })
       if (unsettled.get(sessionID)?.gen === gen) unsettled.delete(sessionID)
     } catch (error) {
@@ -1386,9 +1415,19 @@ export function createPendingCleanup(deps: PendingDeps) {
   const retryUnsettled = async (except?: string): Promise<void> => {
     const due = [...unsettled].filter(([id, entry]) => entry.failed && id !== except && !retrying.has(id))
     // Storage still refusing writes: a retry would only fail again, once per report.
-    if (due.length === 0 || !reportsWritable(receiptDirectory(env))) return
-    await Promise.all(
-      due.map(async ([id, entry]) => {
+    if ((due.length === 0 && pendingDeletes.size === 0) || !reportsWritable(receiptDirectory(env))) return
+    const deletes = [...pendingDeletes].map(async ([id, token]) => {
+      try {
+        await underStore(() => removeDeleted(id, token))
+        pendingDeletes.delete(id)
+        if (lastGen.get(id) === token) lastGen.delete(id)
+      } catch (error) {
+        console.error(`delivery: could not remove the report of deleted session ${id}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    })
+    await Promise.all([
+      ...deletes,
+      ...due.map(async ([id, entry]) => {
         retrying.add(id)
         entry.failed = false
         entry.reason = "its report is being written again"
@@ -1398,14 +1437,29 @@ export function createPendingCleanup(deps: PendingDeps) {
           retrying.delete(id)
         }
       }),
-    )
+    ])
   }
 
-  /** A deleted session runs nothing: its mark goes whether or not its file can be removed. A file left behind expires, or its owner is judged dead. */
+  /**
+   * Remove this instance's report of a deleted session, under the lease: not when a newer incarnation of the
+   * session has begun here (it owns the file now), and not when the file on disk is of a newer generation.
+   */
+  const removeDeleted = (sessionID: string, token: number): void => {
+    if ((lastGen.get(sessionID) ?? 0) > token) return
+    removeReport(receiptDirectory(env), sessionID, SERVER_INSTANCE, token)
+    removeLegacyReport(receiptDirectory(env), sessionID, SERVER_INSTANCE, process.pid)
+    legacyChecked.delete(sessionID)
+  }
+
+  /** A deleted session runs nothing: its mark goes at once. Its file goes under the lease, or is retried with the session's generation as the token. */
   const forgetSession = async (sessionID: string): Promise<void> => {
     unsettled.delete(sessionID)
+    const token = lastGen.get(sessionID) ?? 0
+    pendingDeletes.set(sessionID, token)
     try {
-      await underStore(() => removeReport(receiptDirectory(env), sessionID))
+      await underStore(() => removeDeleted(sessionID, token))
+      if (pendingDeletes.get(sessionID) === token) pendingDeletes.delete(sessionID)
+      if (lastGen.get(sessionID) === token) lastGen.delete(sessionID)
     } catch (error) {
       console.error(`delivery: could not remove the report of deleted session ${sessionID}: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -1433,7 +1487,7 @@ export function createPendingCleanup(deps: PendingDeps) {
             // Marked before anything is awaited, written first, before any git, registry or receipt work; never throws: an unsettled report is a hold, never a removal.
             const gen = beginReport(input.sessionID, input.background ?? [])
             await recordHolds(input.sessionID, gen)
-            await retryUnsettled(input.sessionID)
+            if (retryOn("idle")) await retryUnsettled(input.sessionID)
             await boundedBy(retryNow(input.sessionID, true), deps.idlePassMs ?? IDLE_PASS_MS)
           }) as never,
         ),
@@ -1466,6 +1520,8 @@ export function createPendingCleanup(deps: PendingDeps) {
     record,
     /** How many sessions have an unsettled report; for tests (it must not grow with deletions). */
     unsettledCount: () => unsettled.size,
+    /** How many deleted sessions still have a report to remove; for tests. */
+    pendingDeleteCount: () => pendingDeletes.size,
     deny: denyIn(own),
     arm: armIn(own),
     markNudged: (receiptId: string, worktree: string) => markNudged(receiptId, worktree),

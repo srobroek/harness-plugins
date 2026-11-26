@@ -638,6 +638,8 @@ function parseReport(text) {
     return;
   if (typeof raw.host !== "string" || raw.host === "" || typeof raw.instance !== "string" || !Array.isArray(raw.jobs))
     return;
+  if (raw.gen !== undefined && (typeof raw.gen !== "number" || !Number.isInteger(raw.gen) || raw.gen < 0))
+    return;
   const jobs = [];
   for (const job of raw.jobs) {
     if (!isObject3(job) || typeof job.kind !== "string")
@@ -655,7 +657,7 @@ function parseReport(text) {
       ...cwd === undefined ? {} : { cwd }
     });
   }
-  return { sessionID: raw.sessionID, jobs, at: raw.at, pid: raw.pid, host: raw.host, instance: raw.instance };
+  return { sessionID: raw.sessionID, jobs, at: raw.at, pid: raw.pid, host: raw.host, instance: raw.instance, gen: raw.gen ?? 0 };
 }
 function readStored(path) {
   const read = readBoundedBytes(path, MAX_REPORT_BYTES);
@@ -663,11 +665,11 @@ function readStored(path) {
     return { kind: "absent" };
   if (read.kind === "unreadable")
     return { kind: "unreadable" };
-  const report = parseReport(read.bytes.toString("utf8"));
-  if (report === undefined)
+  const parsed = parseReport(read.bytes.toString("utf8"));
+  if (parsed === undefined)
     return { kind: "unreadable" };
   try {
-    return { kind: "report", report: { ...report, mtimeMs: statSync3(path).mtimeMs } };
+    return { kind: "report", report: { ...parsed, mtimeMs: statSync3(path).mtimeMs } };
   } catch {
     return { kind: "unreadable" };
   }

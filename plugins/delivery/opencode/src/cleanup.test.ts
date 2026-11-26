@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { outsideLocks, withLease } from "@srobroek/opencode-lib/lease-lock"
-import { readReports, reportFile, runningDirectory, runningLeaseFile, writeReport } from "@srobroek/opencode-lib/running-reports"
+import { readReports, runningDirectory, runningLeaseFile, writeReport } from "@srobroek/opencode-lib/running-reports"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import {
   claimFile,
@@ -2103,21 +2103,6 @@ describe("delivery_cleanup beside another remover", () => {
     expect(readdirSync(dirname(f.receiptPath)).sort()).toEqual(before)
   })
 
-  test("a refusal from the check made right before the dispatch removes nothing", async () => {
-    const f = await fixture("before-removal")
-    const scripted = runner(f)
-    const result = await cleanupDelivery({ receipt: f.receiptPath }, f.main, {
-      run: scripted.run,
-      now: () => NOW + 10,
-      env: f.env,
-      bounds: HEAVY_FIXTURE_BOUNDS,
-      beforeRemoval: () => "a report was marked after the final check",
-    })
-    expect(refusal(result)).toContain("a report was marked after the final check")
-    expect(existsSync(f.linked)).toBe(true)
-    expect(scripted.calls.some(isWorktreeRemove)).toBe(false)
-  })
-
   test("the final check is given the receipt's own spelling of the worktree beside git's", async () => {
     const f = await fixture("final-check-spellings")
     const seen: Array<readonly string[] | undefined> = []
@@ -3575,6 +3560,8 @@ describe("pending cleanup: one remover per worktree", () => {
       sessionLookupMs?: number
       idlePassMs?: number
       disposeWaitMs?: number
+      bound?: (ms: number) => Promise<void>
+      retryAt?: ReadonlyArray<"pass" | "check" | "idle">
       /** The host's worktree registry (default: none, so git removes). */
       host?: HostWorktrees
       /** Prime the repository cache as `setupDelivery` does (default); false leaves it cold. */
@@ -3611,6 +3598,8 @@ describe("pending cleanup: one remover per worktree", () => {
       ...(over.sessionLookupMs === undefined ? {} : { sessionLookupMs: over.sessionLookupMs }),
       ...(over.idlePassMs === undefined ? {} : { idlePassMs: over.idlePassMs }),
       ...(over.disposeWaitMs === undefined ? {} : { disposeWaitMs: over.disposeWaitMs }),
+      ...(over.bound === undefined ? {} : { bound: over.bound }),
+      ...(over.retryAt === undefined ? {} : { retryAt: over.retryAt }),
     })
     if (over.prime !== false) await pending.prime()
     const common = (await repositoryContext(f.main))?.commonDir as string
@@ -4932,15 +4921,80 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
-    test("the check made right before the removal is dispatched sees a session marked since the final check", async () => {
-      const h = await harness("running-unsettled-before-dispatch")
+    /**
+     * The real `cleanupDelivery`, with the real coordination of a pending cleanup and a host registry that
+     * names the worktree. `stages` wraps the final check and the last check before the dispatch.
+     */
+    const endToEnd = async (
+      h: Harness,
+      stages: {
+        afterFinalCheck?: () => void
+        afterBeforeRemoval?: () => void
+        /** Read when the host removal is dispatched. */
+        probe?: () => boolean
+      } = {},
+    ) => {
       await h.pending.start()
+      let dispatched = false
+      let probed: boolean | undefined
+      const host: HostWorktrees = {
+        list: async () => [{ directory: h.f.linked }],
+        remove: async () => {
+          dispatched = true
+          probed = stages.probe?.()
+        },
+      }
       const removal = h.pending.removalFor("ses_lead")
-      expect(await removal.finalCheck(h.f.linked)).toBeUndefined()
-      expect(removal.beforeRemoval()).toBeUndefined()
-      const late = outsideLocks(() => reportFrom(h, "ses_b", [elsewhere()]))
-      expect(removal.beforeRemoval()).toContain("ses_b")
+      const result = await cleanupDelivery({ receipt: h.f.receiptPath }, h.f.main, {
+        run: h.scripted.run,
+        now: () => NOW + 10,
+        env: h.f.env,
+        bounds: HEAVY_FIXTURE_BOUNDS,
+        host,
+        proofSection: removal.proofSection,
+        removalSection: removal.removalSection,
+        finalCheck: async (worktree, spellings) => {
+          const reason = await removal.finalCheck(worktree, spellings)
+          stages.afterFinalCheck?.() // after the check's last await
+          return reason
+        },
+        beforeRemoval: () => {
+          const reason = removal.beforeRemoval()
+          stages.afterBeforeRemoval?.()
+          return reason
+        },
+      })
+      return { result, dispatched: () => dispatched, probed: () => probed }
+    }
+
+    test("a session marked after the final check's last await refuses the removal: the host removal is never dispatched", async () => {
+      const h = await harness("running-mark-before-dispatch")
+      let late: Promise<void> | undefined
+      const run = await endToEnd(h, {
+        afterFinalCheck: () => {
+          late = outsideLocks(() => reportFrom(h, "ses_b", [elsewhere()]))
+        },
+      })
+      expect(run.dispatched()).toBe(false)
+      expect(refusal(run.result)).toContain("ses_b")
+      expect(removed(h)).toBe(false)
       await late
+      await h.finish()
+    })
+
+    test("nothing is awaited between the last check and the host removal's dispatch", async () => {
+      const h = await harness("running-no-await-before-dispatch")
+      let marked = false
+      // A microtask queued by the last check runs at the first await after it, and so before a later dispatch.
+      const run = await endToEnd(h, {
+        afterBeforeRemoval: () =>
+          queueMicrotask(() => {
+            marked = true
+          }),
+        probe: () => marked,
+      })
+      expect(run.dispatched()).toBe(true)
+      expect(run.probed()).toBe(false)
       await h.finish()
     })
 
@@ -5009,31 +5063,46 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
-    // A write that finds the session's own newer report already there is not a failure; another session's file is no such report.
-    needsPermissions("a write superseded by the session's newer report clears its unrecorded mark; another session's file does not", async () => {
-      const h = await harness("running-superseded")
+    // Two server instances for one session: each writes and clears only its own file, so one's clear never hides the other's report.
+    test("another instance's report of the same session still holds after this instance clears its own, whatever the clocks say", async () => {
+      const h = await harness("running-two-instances")
       await h.pending.start()
-      const root = receiptDirectory(h.f.env)
-      const directory = runningDirectory(root)
-      mkdirSync(directory, { recursive: true })
-      const failing = async (work: () => Promise<void>) => {
-        chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
-        try {
-          await work()
-        } finally {
-          chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
-        }
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      writeReport(receiptDirectory(h.f.env), {
+        sessionID: "ses_a",
+        jobs: [{ kind: "shell", sessionID: "ses_a", shellID: "sh9", command: `cd ${h.f.linked} && make` }],
+        at: 1, // an earlier clock than this instance's
+        pid: process.pid,
+        host: hostname(),
+        instance: "another-server",
+      })
+      expect(readReports(receiptDirectory(h.f.env)).reports).toHaveLength(2)
+      await reportFrom(h, "ses_a", []) // this instance clears
+      expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.instance)).toEqual(["another-server"])
+      expect(await check(h)).toContain("names the worktree")
+      await h.finish()
+    })
+
+    // A deletion that could not be carried out is retried with a token: a new incarnation of the session that wrote meanwhile is not undone.
+    needsPermissions("a pending delete retried after the session's new incarnation wrote leaves the live report", async () => {
+      const h = await harness("running-delete-new-incarnation")
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      const directory = runningDirectory(receiptDirectory(h.f.env))
+      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
+        await Bun.sleep(100)
+        expect(h.pending.pendingDeleteCount()).toBe(1)
+      } finally {
+        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
       }
-      await failing(() => reportFrom(h, "ses_a", [elsewhere()]))
-      expect(h.pending.unsettledCount()).toBe(1)
-      // A file at ses_a's path that belongs to another session, newer than the write: not a report of ses_a.
-      writeFileSync(reportFile(root, "ses_a"), JSON.stringify({ sessionID: "ses_other", jobs: [], at: NOW + 1e9, pid: 1, host: "x", instance: "y" }))
-      await failing(() => reportFrom(h, "ses_a", [elsewhere()]))
-      expect(h.pending.unsettledCount()).toBe(1)
-      // The session's own newer report: the write has nothing to do.
-      writeReport(root, { sessionID: "ses_a", jobs: [], at: NOW + 1e9, pid: 1, host: "x", instance: "y" })
-      await failing(() => reportFrom(h, "ses_a", [elsewhere()]))
-      expect(h.pending.unsettledCount()).toBe(0)
+      // The new incarnation takes the lease and writes; the retry of the old deletion runs after it.
+      await reportFrom(h, "ses_a", [shellIn(h, "sh2")])
+      await reportFrom(h, "ses_b", [])
+      expect(h.pending.pendingDeleteCount()).toBe(0)
+      expect(reportIds(h)).toEqual(["ses_a"])
+      expect(await check(h)).toContain("names the worktree")
       await h.finish()
     })
 
@@ -5161,83 +5230,114 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
-    // The host's removal takes no AbortSignal, so a removal that never answers keeps the lease: writers and other removals wait a bounded time and give up.
-    test("a host removal that never answers neither blocks an idle hook indefinitely nor lets another removal proceed", async () => {
+    /**
+     * Bounds the test ends by hand, in place of wall-clock timers, so these tests do not depend on how loaded the machine is.
+     * `end(ms)` ends every bound that was asked for `ms` milliseconds.
+     */
+    const handBounds = () => {
+      const open: Array<{ ms: number; ended: boolean; end: () => void }> = []
+      return {
+        bound: (ms: number) => new Promise<void>((done) => open.push({ ms, ended: false, end: done })),
+        /** Waits until a bound of `ms` has been asked for, then ends every such bound. */
+        end: async (ms: number) => {
+          while (!open.some((candidate) => candidate.ms === ms && !candidate.ended)) await Bun.sleep(2)
+          for (const entry of open.filter((candidate) => candidate.ms === ms && !candidate.ended)) {
+            entry.ended = true
+            entry.end()
+          }
+        },
+      }
+    }
+    const IDLE_BOUND = 1_111
+    const DISPOSE_BOUND = 2_222
+    /** A host registry whose removal of the worktree never answers until `release` is called. */
+    const hungHost = () => {
       const removing = Promise.withResolvers<void>()
       const never = Promise.withResolvers<void>()
+      const state = { directory: "" }
       const host: HostWorktrees = {
-        list: async () => [{ directory: "PLACEHOLDER" }],
+        list: async () => [{ directory: state.directory }],
         remove: async () => {
           removing.resolve()
           await never.promise
         },
       }
-      const h = await harness("running-hung-removal", { lock: { waitMs: 300 }, host, idlePassMs: 500 })
-      ;(host as { list: unknown }).list = async () => [{ directory: h.f.linked }]
-      await h.pending.record(h.f.receipt, "ses_lead")
-      await h.pending.start()
-      // The host's own idle hook, not the event helper: its pass reaches the hung removal.
-      const hook = outsideLocks(() => h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] } as never))
-      await Promise.race([removing.promise, Bun.sleep(10_000).then(() => Promise.reject(new Error("the host removal was never called")))])
-      // The hook returns while the removal is still hung (it waits for its pass at most idlePassMs).
-      expect(await Promise.race([hook.then(() => "returned"), Bun.sleep(5_000).then(() => "blocked")])).toBe("returned")
-      // Another session's idle hook returns, with its report not recorded.
-      const second = await Promise.race([outsideLocks(() => reportFrom(h, "ses_b", [elsewhere()])).then(() => "returned"), Bun.sleep(5_000).then(() => "blocked")])
-      expect(second).toBe("returned")
-      expect(h.pending.unsettledCount()).toBe(1)
-      expect(reportIds(h)).toEqual([])
-      // With that session gone nothing is unsettled, so the next removal is stopped by the lease alone.
-      await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_b" } })
-      await Bun.sleep(100)
-      expect(h.pending.unsettledCount()).toBe(0)
-      // Another removal, of another worktree, gives up on the lease and refuses.
-      const other = join(h.f.root, "another worktree")
-      mkdirSync(other)
-      let reason: string | undefined
-      let ran = false
-      const removal = h.pending.removalFor("ses_lead")
-      await removal.removalSection(other, async () => {
-        reason = await removal.finalCheck(other)
-        ran = reason === undefined
-        return { ok: false, reason: "test: nothing is removed" } as never
-      })
-      expect(ran).toBe(false)
-      expect(reason).toContain("lease could not be taken")
-      never.resolve()
-      await h.finish()
+      return { host, state, removing: removing.promise, release: () => never.resolve() }
+    }
+
+    // The host's removal takes no AbortSignal, so a removal that never answers keeps the lease: writers and other removals give up at once (waitMs 0).
+    test("a host removal that never answers neither blocks an idle hook indefinitely nor lets another removal proceed", async () => {
+      const hung = hungHost()
+      const bounds = handBounds()
+      const h = await harness("running-hung-removal", { lock: { waitMs: 0 }, host: hung.host, idlePassMs: IDLE_BOUND, bound: bounds.bound })
+      try {
+        hung.state.directory = h.f.linked
+        await h.pending.record(h.f.receipt, "ses_lead")
+        await h.pending.start()
+        // The host's own idle hook, not the event helper: its pass reaches the hung removal.
+        const hook = outsideLocks(() => h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] } as never))
+        await hung.removing
+        // The hook returns once its bound ends, with the removal still hung.
+        await bounds.end(IDLE_BOUND)
+        await hook
+        // Another session's idle hook cannot take the lease: its report stays unsettled, a hold, and the hook returns.
+        const second = outsideLocks(() => reportFrom(h, "ses_b", [elsewhere()]))
+        await bounds.end(IDLE_BOUND)
+        await second
+        expect(h.pending.unsettledCount()).toBe(1)
+        expect(reportIds(h)).toEqual([])
+        // With that session gone nothing is unsettled, so the next removal is stopped by the lease alone.
+        await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_b" } })
+        while (h.pending.unsettledCount() !== 0) await Bun.sleep(5)
+        // Another removal, of another worktree, gives up on the lease and refuses.
+        const other = join(h.f.root, "another worktree")
+        mkdirSync(other)
+        let reason: string | undefined
+        let ran = false
+        const removal = h.pending.removalFor("ses_lead")
+        await removal.removalSection(other, async () => {
+          reason = await removal.finalCheck(other)
+          ran = reason === undefined
+          return { ok: false, reason: "test: nothing is removed" } as never
+        })
+        expect(ran).toBe(false)
+        expect(reason).toContain("lease could not be taken")
+      } finally {
+        hung.release()
+        await h.finish()
+      }
     })
 
     test("disposal waits a bounded time for a hung host removal and leaves its lease in place", async () => {
-      const removing = Promise.withResolvers<void>()
-      const never = Promise.withResolvers<void>()
-      const host: HostWorktrees = {
-        list: async () => [],
-        remove: async () => {
-          removing.resolve()
-          await never.promise
-        },
+      const hung = hungHost()
+      const bounds = handBounds()
+      const h = await harness("running-hung-dispose", { lock: { waitMs: 0 }, host: hung.host, idlePassMs: IDLE_BOUND, disposeWaitMs: DISPOSE_BOUND, bound: bounds.bound })
+      try {
+        hung.state.directory = h.f.linked
+        await h.pending.record(h.f.receipt, "ses_lead")
+        await h.pending.start()
+        void outsideLocks(() => h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] } as never))
+        await hung.removing
+        const disposing = h.pending.dispose()
+        // Disposal is still waiting for the chain until its bound ends; ending it lets disposal return with the removal hung.
+        await bounds.end(DISPOSE_BOUND)
+        await disposing
+        // The removal is still running, so disposal let go of nothing: its lease stays for the pid and stale rules to reclaim.
+        expect(existsSync(runningLeaseFile(receiptDirectory(h.f.env)))).toBe(true)
+      } finally {
+        hung.release()
+        await h.finish()
       }
-      const h = await harness("running-hung-dispose", { lock: { waitMs: 300 }, host, idlePassMs: 500, disposeWaitMs: 300 })
-      ;(host as { list: unknown }).list = async () => [{ directory: h.f.linked }]
-      await h.pending.record(h.f.receipt, "ses_lead")
-      await h.pending.start()
-      void outsideLocks(() => h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] } as never))
-      await Promise.race([removing.promise, Bun.sleep(10_000).then(() => Promise.reject(new Error("the host removal was never called")))])
-      const disposed = await Promise.race([h.pending.dispose().then(() => "disposed"), Bun.sleep(5_000).then(() => "hung")])
-      expect(disposed).toBe("disposed")
-      // The removal is still running, so disposal let go of nothing: its lease stays for the pid and stale rules to reclaim.
-      expect(existsSync(runningLeaseFile(receiptDirectory(h.f.env)))).toBe(true)
-      never.resolve()
-      await h.finish()
     })
 
-    // A write that failed is retried from its stored snapshot, by the next pass or by any session's idle hook, not only by its own session's.
+    // A write that failed is written again from its stored snapshot by each of three triggers. Each runs here alone, the others
+    // switched off, and the report must be on disk when it returns, before any fallback could have run.
     needsPermissions.each([
-      ["another session's idle hook", (h: Harness) => reportFrom(h, "ses_b", [])],
-      ["a cleanup pass", (h: Harness) => h.idle("ses_lead")],
-    ] as const)("a report whose write failed is settled once storage recovers, by %s", async (_name, trigger) => {
-      const h = await harness("running-unsettled-retry")
-      await h.pending.record(h.f.receipt, "ses_lead")
+      ["the start of a pass", "pass", (h: Harness) => h.idle("ses_lead")],
+      ["a removal's final check", "check", (h: Harness) => h.pending.removalFor("ses_lead").finalCheck(h.f.linked)],
+      ["another session's idle hook", "idle", (h: Harness) => reportFrom(h, "ses_b", [])],
+    ] as const)("a report whose write failed is written again by %s alone", async (_name, trigger, fire) => {
+      const h = await harness("running-unsettled-retry", { retryAt: [trigger] })
       await h.pending.start()
       const directory = runningDirectory(receiptDirectory(h.f.env))
       mkdirSync(directory, { recursive: true })
@@ -5248,10 +5348,34 @@ describe("pending cleanup: one remover per worktree", () => {
       } finally {
         chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
       }
-      await trigger(h)
-      await h.idle()
-      expect(h.pending.unsettledCount()).toBe(0)
+      expect(reportIds(h)).toEqual([])
+      await fire(h)
       expect(reportIds(h)).toContain("ses_a")
+      expect(h.pending.unsettledCount()).toBe(0)
+      await h.finish()
+    })
+
+    // A deletion that could not be carried out is kept and retried; it is not a hold of its own (the report file still holds while its pid lives).
+    needsPermissions("a deletion that failed during a storage failure is retried by the next pass, which then removes the worktree", async () => {
+      const h = await harness("running-delete-retried")
+      await h.pending.record(h.f.receipt, "ses_lead")
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      expect(reportIds(h)).toEqual(["ses_a"])
+      const directory = runningDirectory(receiptDirectory(h.f.env))
+      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
+        await Bun.sleep(100)
+        expect(h.pending.pendingDeleteCount()).toBe(1)
+        expect(h.pending.unsettledCount()).toBe(0)
+      } finally {
+        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
+      }
+      expect(reportIds(h)).toEqual(["ses_a"]) // the file still holds, which fails closed
+      await h.idle("ses_lead")
+      expect(h.pending.pendingDeleteCount()).toBe(0)
+      expect(reportIds(h)).toEqual([])
       expect(removed(h)).toBe(true)
       await h.finish()
     })
