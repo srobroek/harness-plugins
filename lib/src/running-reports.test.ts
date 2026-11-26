@@ -16,6 +16,7 @@ import {
   readReports,
   removeLegacyReport,
   removeReport,
+  removeReportsWhere,
   reportBlock,
   reportFile,
   reportLive,
@@ -147,6 +148,16 @@ describe("writing and clearing: one file per session and instance", () => {
     expect(holds(read.reports)).toContain("names the worktree")
     // Each instance's report holds on its own: with only one of the two, the worktree is still held.
     for (const instance of [INSTANCE_A, INSTANCE_B]) expect(holds(read.reports.filter((r) => r.instance === instance && r.sessionID === "ses_a"))).toContain("names the worktree")
+  })
+
+  test("removeReportsWhere deletes the files whose report matches and leaves the others and unreadable files", () => {
+    writeReport(root, by(INSTANCE_A, "ses_a", 1))
+    writeReport(root, by(INSTANCE_B, "ses_a", 1))
+    writeReport(root, by(INSTANCE_B, "ses_b", 1))
+    writeFileSync(join(runningDirectory(root), "bad.json"), "{not json")
+    expect(removeReportsWhere(root, (r) => r.instance === INSTANCE_B)).toBe(2)
+    expect(readReports(root).reports.map((r) => r.instance)).toEqual([INSTANCE_A])
+    expect(readdirSync(runningDirectory(root)).includes("bad.json")).toBe(true)
   })
 
   test("a write leaves no temporary file behind", () => {

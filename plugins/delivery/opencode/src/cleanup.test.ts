@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { outsideLocks, withLease } from "@srobroek/opencode-lib/lease-lock"
+import { holdLease, outsideLocks, withLease } from "@srobroek/opencode-lib/lease-lock"
 import { readReports, runningDirectory, runningLeaseFile, writeReport } from "@srobroek/opencode-lib/running-reports"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import {
@@ -3581,7 +3581,8 @@ describe("pending cleanup: one remover per worktree", () => {
         hookName === "experimental.idle" ? Promise.reject(new Error("unknown hook")) : original(hookName, callback)
     }
     let clock = NOW + 10
-    const pending = createPendingCleanup({
+    /** One activation of the plugin over this fixture; `again` builds another, as a reload in the same process does. */
+    const make = (again: { lock?: Record<string, unknown>; disposeWaitMs?: number } = {}) => createPendingCleanup({
       ctx: fake.context,
       cwd: f.main,
       env: f.env,
@@ -3594,13 +3595,14 @@ describe("pending cleanup: one remover per worktree", () => {
       // Reports expire on their files' real mtimes; `advance` moves this clock the same way it moves `now`.
       fileNow: () => Date.now() + (clock - (NOW + 10)),
       ...(over.observe === undefined ? {} : { observe: over.observe }),
-      ...(over.lock === undefined ? {} : { lock: over.lock }),
+      ...(again.lock ?? over.lock ? { lock: again.lock ?? over.lock } : {}),
       ...(over.sessionLookupMs === undefined ? {} : { sessionLookupMs: over.sessionLookupMs }),
       ...(over.idlePassMs === undefined ? {} : { idlePassMs: over.idlePassMs }),
-      ...(over.disposeWaitMs === undefined ? {} : { disposeWaitMs: over.disposeWaitMs }),
+      ...((again.disposeWaitMs ?? over.disposeWaitMs) === undefined ? {} : { disposeWaitMs: again.disposeWaitMs ?? over.disposeWaitMs }),
       ...(over.bound === undefined ? {} : { bound: over.bound }),
       ...(over.retryAt === undefined ? {} : { retryAt: over.retryAt }),
     })
+    const pending = make()
     if (over.prime !== false) await pending.prime()
     const common = (await repositoryContext(f.main))?.commonDir as string
     const advance = (ms: number) => {
@@ -3616,7 +3618,8 @@ describe("pending cleanup: one remover per worktree", () => {
       await pending.dispose()
       rmSync(f.root, { recursive: true, force: true })
     }
-    return { f, options, scripted, fake, pending, common, advance, idle, claim, finish }
+    const reactivate = (again: { lock?: Record<string, unknown>; disposeWaitMs?: number } = {}) => make(again)
+    return { f, options, scripted, fake, pending, common, advance, idle, claim, finish, reactivate }
   }
   const removed = (h: Harness) => !existsSync(h.f.linked)
   const synthetic = (h: Harness) => h.fake.calls.filter((entry) => entry.method === "session.synthetic")
@@ -5103,6 +5106,98 @@ describe("pending cleanup: one remover per worktree", () => {
       expect(h.pending.pendingDeleteCount()).toBe(0)
       expect(reportIds(h)).toEqual(["ses_a"])
       expect(await check(h)).toContain("names the worktree")
+      await h.finish()
+    })
+
+    // The report identity is per activation of the plugin: a reload in the same process (same pid, same server instance) is a new one.
+    needsPermissions("a delete that failed before a new activation's first write leaves no stale hold once the new activation is set up", async () => {
+      const h = await harness("running-reactivate-sweep")
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      const directory = runningDirectory(receiptDirectory(h.f.env))
+      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
+        await Bun.sleep(100)
+        expect(h.pending.pendingDeleteCount()).toBe(1)
+        await h.pending.dispose() // its own best-effort clear is refused too
+      } finally {
+        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
+      }
+      expect(reportIds(h)).toEqual(["ses_a"]) // the stale hold is still on disk
+      const next = h.reactivate()
+      await next.start()
+      expect(reportIds(h)).toEqual([])
+      await next.dispose()
+      await h.finish()
+    })
+
+    test("an old activation's delete that waits on the lease outlives its dispose and does nothing; the new activation's report survives", async () => {
+      const gate = Promise.withResolvers<void>()
+      let slept = 0
+      const h = await harness("running-reactivate-delete", { lock: { waitMs: 60_000, sleep: (): Promise<void> => (++slept === 1 ? gate.promise : Bun.sleep(5)) }, disposeWaitMs: 100 })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      const lease = await holdLease(runningLeaseFile(receiptDirectory(h.f.env)), { owner: "test" })
+      if (lease.kind !== "held") throw new Error("test could not take the lease")
+      void h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
+      while (slept < 1) await Bun.sleep(2) // the old delete waits for the lease, sleeping on the gate
+      await h.pending.dispose()
+      await lease.release()
+      const next = h.reactivate({ lock: { waitMs: 60_000 } })
+      await next.start()
+      await h.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [{ sessionID: "ses_a", ...shellIn(h) }] } as never)
+      gate.resolve() // the old delete takes the lease now, after the new activation wrote
+      while (h.pending.pendingDeleteCount() !== 0) await Bun.sleep(5)
+      expect(reportIds(h)).toEqual(["ses_a"])
+      expect(await next.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("names the worktree")
+      await next.dispose()
+      await h.finish()
+    })
+
+    // A retry that was in flight when the session was deleted again must not drop the newer deletion's token.
+    needsPermissions("a delete retry that finishes after the session was deleted again leaves the newer deletion pending, then it is retried", async () => {
+      const gate = Promise.withResolvers<void>()
+      let slept = 0
+      const h = await harness("running-delete-token", { retryAt: ["check"], idlePassMs: 50, lock: { waitMs: 60_000, sleep: (): Promise<void> => (++slept === 1 ? gate.promise : Bun.sleep(5)) } })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      const root = receiptDirectory(h.f.env)
+      const directory = runningDirectory(root)
+      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
+        await Bun.sleep(100)
+        expect(h.pending.pendingDeleteCount()).toBe(1)
+      } finally {
+        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
+      }
+      const lease = await holdLease(runningLeaseFile(root), { owner: "test" })
+      if (lease.kind !== "held") throw new Error("test could not take the lease")
+      const checking = check(h) // the retry of the first deletion waits for the lease, sleeping on the gate
+      while (slept < 1) await Bun.sleep(2)
+      const reused = reportFrom(h, "ses_a", [shellIn(h)]) // the session is reused
+      const failed = Promise.withResolvers<void>()
+      const original = console.error
+      console.error = (...args: unknown[]) => {
+        if (String(args[0]).includes("could not remove the report of deleted session ses_a")) failed.resolve()
+      }
+      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        void h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } }) // the new deletion fails too
+        await lease.release()
+        await failed.promise
+      } finally {
+        console.error = original
+        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
+      }
+      gate.resolve() // now the old retry finishes
+      await checking
+      await reused
+      expect(h.pending.pendingDeleteCount()).toBe(1)
+      await check(h) // the newer token is retried, and now succeeds
+      expect(h.pending.pendingDeleteCount()).toBe(0)
+      expect(reportIds(h)).toEqual([])
       await h.finish()
     })
 

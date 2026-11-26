@@ -151,6 +151,29 @@ export function removeReport(receiptsRoot: string, sessionID: string, instance: 
   return "removed"
 }
 
+/**
+ * Delete every report file whose parsed report satisfies `doomed`, files that cannot be read left alone;
+ * returns how many went. Used under the lease to sweep the reports of activations that are over.
+ * Throws when it cannot delete.
+ */
+export function removeReportsWhere(receiptsRoot: string, doomed: (report: RunningReport) => boolean): number {
+  const directory = runningDirectory(receiptsRoot)
+  let names: string[]
+  try {
+    names = readdirSync(directory).filter((name) => name.endsWith(".json"))
+  } catch {
+    return 0
+  }
+  let removed = 0
+  for (const name of names) {
+    const stored = readStored(join(directory, name))
+    if (stored.kind !== "report" || !doomed(stored.report)) continue
+    rmSync(join(directory, name), { force: true })
+    removed += 1
+  }
+  return removed
+}
+
 /** Delete the un-suffixed file of `sessionID` when its pid and instance are the caller's; any other stays. Throws when it cannot delete. */
 export function removeLegacyReport(receiptsRoot: string, sessionID: string, instance: string, pid: number): boolean {
   const file = legacyReportFile(receiptsRoot, sessionID)

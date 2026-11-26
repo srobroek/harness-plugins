@@ -26,6 +26,7 @@
  * carries it out.
  */
 
+import { randomUUID } from "node:crypto"
 import { existsSync, mkdirSync, readdirSync } from "node:fs"
 import { hostname } from "node:os"
 import { join, resolve } from "node:path"
@@ -41,6 +42,7 @@ import {
   readReports,
   removeLegacyReport,
   removeReport,
+  removeReportsWhere,
   reportBlock,
   reportsWritable,
   reportVersion,
@@ -332,6 +334,11 @@ export function createPendingCleanup(deps: PendingDeps) {
    * at the deletion. Retried by the triggers of `unsettled`, under the lease, and only while no newer incarnation of
    * the session has begun and the file on disk is not of a newer generation. Not a hold: the report file itself holds while its pid lives, which fails closed.
    */
+  /**
+   * This activation's identity in report files: the server instance plus a nonce made here. A reload in the same
+   * process is a new activation with its own generations, so its files never collide with an earlier one's.
+   */
+  const activation = `${SERVER_INSTANCE}:${randomUUID().slice(0, 8)}`
   const pendingDeletes = new Map<string, number>()
   /** The latest generation each live session's report has had here: a deletion's token is compared with it. */
   const lastGen = new Map<string, number>()
@@ -1289,7 +1296,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     return first === undefined ? undefined : `the running work of ${first[0]} could not be recorded (${first[1].reason}); held until it reports again or is deleted`
   }
 
-  const reportClock = (): ReportClock => ({ now: (deps.fileNow ?? Date.now)(), host: hostname(), instance: SERVER_INSTANCE, alive: processAlive })
+  const reportClock = (): ReportClock => ({ now: (deps.fileNow ?? Date.now)(), host: hostname(), instance: activation, alive: processAlive })
 
   /**
    * What the sessions reported as running keeps `worktree`, or undefined. The reports are read, the
@@ -1385,15 +1392,15 @@ export function createPendingCleanup(deps: PendingDeps) {
       await underStore(() => {
         // Only the session's current report is written: a deleted session (no entry) has nothing to record, and
         // an older one is replaced by the newer one's own write.
-        if (unsettled.get(sessionID)?.gen !== gen) return
+        if (disposed || unsettled.get(sessionID)?.gen !== gen) return
         // A file this instance kept under the old, un-suffixed name goes with the first write of the session.
         if (!legacyChecked.has(sessionID)) {
           legacyChecked.add(sessionID)
           removeLegacyReport(root, sessionID, SERVER_INSTANCE, process.pid)
         }
         // Only this instance's own file: the current generation writes or clears it, and no other instance's file is touched.
-        if (background.length === 0) clearReport(root, sessionID, SERVER_INSTANCE)
-        else writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname(), instance: SERVER_INSTANCE, gen })
+        if (background.length === 0) clearReport(root, sessionID, activation)
+        else writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname(), instance: activation, gen })
       })
       if (unsettled.get(sessionID)?.gen === gen) unsettled.delete(sessionID)
     } catch (error) {
@@ -1419,7 +1426,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     const deletes = [...pendingDeletes].map(async ([id, token]) => {
       try {
         await underStore(() => removeDeleted(id, token))
-        pendingDeletes.delete(id)
+        if (pendingDeletes.get(id) === token) pendingDeletes.delete(id)
         if (lastGen.get(id) === token) lastGen.delete(id)
       } catch (error) {
         console.error(`delivery: could not remove the report of deleted session ${id}: ${error instanceof Error ? error.message : String(error)}`)
@@ -1445,8 +1452,8 @@ export function createPendingCleanup(deps: PendingDeps) {
    * session has begun here (it owns the file now), and not when the file on disk is of a newer generation.
    */
   const removeDeleted = (sessionID: string, token: number): void => {
-    if ((lastGen.get(sessionID) ?? 0) > token) return
-    removeReport(receiptDirectory(env), sessionID, SERVER_INSTANCE, token)
+    if (disposed || (lastGen.get(sessionID) ?? 0) > token) return
+    removeReport(receiptDirectory(env), sessionID, activation, token)
     removeLegacyReport(receiptDirectory(env), sessionID, SERVER_INSTANCE, process.pid)
     legacyChecked.delete(sessionID)
   }
@@ -1468,7 +1475,21 @@ export function createPendingCleanup(deps: PendingDeps) {
   const registrations: Array<{ dispose: () => Promise<void> }> = []
   let watching: { stop: () => void } | undefined
 
+  /**
+   * At setup, under the lease: remove the reports of earlier activations in this process (same host and pid, another
+   * activation). They were disposed, so they run nothing, and their files would hold removals for good.
+   */
+  const sweepEarlierActivations = async (): Promise<void> => {
+    try {
+      const host = hostname()
+      await underStore(() => removeReportsWhere(receiptDirectory(env), (report) => report.host === host && report.pid === process.pid && report.instance !== activation))
+    } catch (error) {
+      console.error(`delivery: could not remove the reports of earlier activations: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   const start = async () => {
+    await sweepEarlierActivations()
     watching = watchEvents<unknown>({
       subscribe: (signal) =>
         ctx.event
@@ -1497,14 +1518,29 @@ export function createPendingCleanup(deps: PendingDeps) {
     }
   }
 
-  const dispose = async () => {
-    disposed = true
-    watching?.stop()
-    for (const timer of timers.values()) clearTimeout(timer)
-    timers.clear()
-    for (const registration of registrations.reverse()) await registration.dispose()
-    await boundedBy(chain, deps.disposeWaitMs ?? DISPOSE_WAIT_MS)
+  /** Best effort, under the lease: this activation's own report files go with it. */
+  const clearOwnReports = async (): Promise<void> => {
+    try {
+      await underStore(() => removeReportsWhere(receiptDirectory(env), (report) => report.instance === activation))
+    } catch (error) {
+      console.error(`delivery: could not remove this activation's reports: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
+
+  let disposal: Promise<void> | undefined
+  /** Once only. Every queued retry and delete of this activation sees `disposed` under the lease and does nothing. */
+  const dispose = (): Promise<void> =>
+    (disposal ??= (async () => {
+      disposed = true
+      watching?.stop()
+      for (const timer of timers.values()) clearTimeout(timer)
+      timers.clear()
+      for (const registration of registrations.reverse()) await registration.dispose()
+      await boundedBy(
+        chain.catch(() => {}).then(clearOwnReports),
+        deps.disposeWaitMs ?? DISPOSE_WAIT_MS,
+      )
+    })())
 
   /** Wait for scheduled and running passes; for tests. */
   const settle = async () => {
