@@ -3574,6 +3574,7 @@ describe("pending cleanup: one remover per worktree", () => {
       lock?: Record<string, unknown>
       sessionLookupMs?: number
       idlePassMs?: number
+      disposeWaitMs?: number
       /** The host's worktree registry (default: none, so git removes). */
       host?: HostWorktrees
       /** Prime the repository cache as `setupDelivery` does (default); false leaves it cold. */
@@ -3609,6 +3610,7 @@ describe("pending cleanup: one remover per worktree", () => {
       ...(over.lock === undefined ? {} : { lock: over.lock }),
       ...(over.sessionLookupMs === undefined ? {} : { sessionLookupMs: over.sessionLookupMs }),
       ...(over.idlePassMs === undefined ? {} : { idlePassMs: over.idlePassMs }),
+      ...(over.disposeWaitMs === undefined ? {} : { disposeWaitMs: over.disposeWaitMs }),
     })
     if (over.prime !== false) await pending.prime()
     const common = (await repositoryContext(f.main))?.commonDir as string
@@ -5173,8 +5175,11 @@ describe("pending cleanup: one remover per worktree", () => {
       ;(host as { list: unknown }).list = async () => [{ directory: h.f.linked }]
       await h.pending.record(h.f.receipt, "ses_lead")
       await h.pending.start()
-      const first = outsideLocks(() => h.idle())
+      // The host's own idle hook, not the event helper: its pass reaches the hung removal.
+      const hook = outsideLocks(() => h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] } as never))
       await Promise.race([removing.promise, Bun.sleep(10_000).then(() => Promise.reject(new Error("the host removal was never called")))])
+      // The hook returns while the removal is still hung (it waits for its pass at most idlePassMs).
+      expect(await Promise.race([hook.then(() => "returned"), Bun.sleep(5_000).then(() => "blocked")])).toBe("returned")
       // Another session's idle hook returns, with its report not recorded.
       const second = await Promise.race([outsideLocks(() => reportFrom(h, "ses_b", [elsewhere()])).then(() => "returned"), Bun.sleep(5_000).then(() => "blocked")])
       expect(second).toBe("returned")
@@ -5198,7 +5203,30 @@ describe("pending cleanup: one remover per worktree", () => {
       expect(ran).toBe(false)
       expect(reason).toContain("lease could not be taken")
       never.resolve()
-      await first
+      await h.finish()
+    })
+
+    test("disposal waits a bounded time for a hung host removal and leaves its lease in place", async () => {
+      const removing = Promise.withResolvers<void>()
+      const never = Promise.withResolvers<void>()
+      const host: HostWorktrees = {
+        list: async () => [],
+        remove: async () => {
+          removing.resolve()
+          await never.promise
+        },
+      }
+      const h = await harness("running-hung-dispose", { lock: { waitMs: 300 }, host, idlePassMs: 500, disposeWaitMs: 300 })
+      ;(host as { list: unknown }).list = async () => [{ directory: h.f.linked }]
+      await h.pending.record(h.f.receipt, "ses_lead")
+      await h.pending.start()
+      void outsideLocks(() => h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] } as never))
+      await Promise.race([removing.promise, Bun.sleep(10_000).then(() => Promise.reject(new Error("the host removal was never called")))])
+      const disposed = await Promise.race([h.pending.dispose().then(() => "disposed"), Bun.sleep(5_000).then(() => "hung")])
+      expect(disposed).toBe("disposed")
+      // The removal is still running, so disposal let go of nothing: its lease stays for the pid and stale rules to reclaim.
+      expect(existsSync(runningLeaseFile(receiptDirectory(h.f.env)))).toBe(true)
+      never.resolve()
       await h.finish()
     })
 

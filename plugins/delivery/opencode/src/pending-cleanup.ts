@@ -268,6 +268,8 @@ export type PendingDeps = {
   sessionLookupMs?: number
   /** How long the idle hook waits for the pass it starts (default {@link IDLE_PASS_MS}); the pass goes on without it. */
   idlePassMs?: number
+  /** How long disposal waits for the passes still running (default {@link DISPOSE_WAIT_MS}). */
+  disposeWaitMs?: number
   /** Test seam: the clock reports expire on, against the files' mtime (default: the real clock). */
   fileNow?: () => number
   /** Test seam: the backoff clock of the event watch. */
@@ -294,6 +296,13 @@ export const SESSION_LOOKUP_MS = 5_000
 
 /** How long an idle hook waits for its pass, which queues behind every other pass and may wait on a removal that never answers. */
 export const IDLE_PASS_MS = 60_000
+
+/**
+ * How long disposal waits for a running pass. A host removal that never answers keeps the pass, and so
+ * the chain, from ending; disposal then returns without letting go of the removal's lease, which the
+ * pid and stale rules of `lease-lock` reclaim once this process is gone.
+ */
+export const DISPOSE_WAIT_MS = 10_000
 
 export function createPendingCleanup(deps: PendingDeps) {
   const { ctx, cwd, env } = deps
@@ -1440,7 +1449,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     for (const timer of timers.values()) clearTimeout(timer)
     timers.clear()
     for (const registration of registrations.reverse()) await registration.dispose()
-    await chain
+    await boundedBy(chain, deps.disposeWaitMs ?? DISPOSE_WAIT_MS)
   }
 
   /** Wait for scheduled and running passes; for tests. */
