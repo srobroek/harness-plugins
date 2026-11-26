@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { outsideLocks, withLease } from "@srobroek/opencode-lib/lease-lock"
-import { readReports, reportFile, runningDirectory, writeReport } from "@srobroek/opencode-lib/running-reports"
+import { readReports, reportFile, runningDirectory, runningLeaseFile, writeReport } from "@srobroek/opencode-lib/running-reports"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import {
   claimFile,
@@ -4783,7 +4783,7 @@ describe("pending cleanup: one remover per worktree", () => {
     })
 
     // The store's lease: every write, and a removal from its last read to its end, holds it.
-    const lockPath = (h: Harness) => join(receiptDirectory(h.f.env), ".running.lock")
+    const lockPath = (h: Harness) => runningLeaseFile(receiptDirectory(h.f.env))
     /** Another process takes the store's lease and keeps it until `release`. */
     const takeLease = async (h: Harness) => {
       mkdirSync(receiptDirectory(h.f.env), { recursive: true })

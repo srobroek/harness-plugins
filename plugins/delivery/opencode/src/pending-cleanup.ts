@@ -43,6 +43,7 @@ import {
   reportBlock,
   reportsWritable,
   reportVersion,
+  runningLeaseFile,
   writeReport,
 } from "@srobroek/opencode-lib/running-reports"
 import { canonicalCheckout } from "@srobroek/opencode-lib/session-eviction"
@@ -311,7 +312,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     return lastAt
   }
   /** The lease every write to the running-reports store, and a removal from its last read to its end, holds. */
-  const leaseFile = () => join(receiptDirectory(env), ".running.lock")
+  const leaseFile = () => runningLeaseFile(receiptDirectory(env))
   const leaseOptions = (): LeaseOptions => ({
     owner: "delivery running reports",
     ...(deps.lock?.waitMs === undefined ? {} : { waitMs: deps.lock.waitMs }),
