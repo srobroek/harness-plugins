@@ -1,6 +1,6 @@
 {
   "name": "code-challenge",
-  "version": "2.1.3",
+  "version": "2.2.0",
   "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure: one skill, a /code-challenge command, phase formulas and two read-only challenger agents.",
   "private": true,
   "type": "module",

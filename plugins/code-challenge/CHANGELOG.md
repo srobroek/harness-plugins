@@ -1,3 +1,9 @@
+## code-challenge [2.2.0](https://github.com/srobroek/harness-plugins/compare/code-challenge--v2.1.3...code-challenge--v2.2.0) (2026-11-26)
+
+### Features
+
+* challenger delegation, model families in the guard, one Pi adversarial-challenger ([#207](https://github.com/srobroek/harness-plugins/issues/207)) ([deb6d8e](https://github.com/srobroek/harness-plugins/commit/deb6d8e2a52dbe431ab4b256b8a53289bd418645))
+
 ## code-challenge [2.1.3](https://github.com/srobroek/harness-plugins/compare/code-challenge--v2.1.2...code-challenge--v2.1.3) (2026-11-25)
 
 ### Bug Fixes
