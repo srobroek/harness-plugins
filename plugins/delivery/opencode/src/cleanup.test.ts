@@ -5027,12 +5027,10 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
-    needsPermissions("a write that fails after its session was deleted leaves no file and no hold", async () => {
+    test("a report still queued for the lease when its session is deleted writes no file and leaves no hold", async () => {
       const queue = queuedWaits()
       const h = await harness("running-unsettled-deleted", { lock: queue.lock })
       await h.pending.start()
-      const directory = runningDirectory(receiptDirectory(h.f.env))
-      mkdirSync(directory, { recursive: true })
       const holder = await takeLease(h)
       const waiting = outsideLocks(() => reportFrom(h, "ses_a", [elsewhere()]))
       await queue.reached(1)
@@ -5040,17 +5038,12 @@ describe("pending cleanup: one remover per worktree", () => {
       await queue.reached(2)
       holder.release()
       await holder.done
-      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
-      try {
-        queue.waits[0]?.()
-        await waiting
-        queue.waits[1]?.()
-        await deleting
-      } finally {
-        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
-      }
-      expect(h.pending.unsettledCount()).toBe(0)
+      queue.waits[1]?.() // the deletion's file removal runs first ...
+      await deleting
+      queue.waits[0]?.() // ... and the queued report only after it
+      await waiting
       expect(reportIds(h)).toEqual([])
+      expect(h.pending.unsettledCount()).toBe(0)
       expect(await check(h)).toBeUndefined()
       await h.finish()
     })
