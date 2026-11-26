@@ -1,3 +1,9 @@
+## delivery [0.17.1](https://github.com/srobroek/harness-plugins/compare/delivery--v0.17.0...delivery--v0.17.1) (2026-11-26)
+
+### Bug Fixes
+
+* **delivery:** per-instance running reports and review fixes missed by [#223](https://github.com/srobroek/harness-plugins/issues/223) ([#228](https://github.com/srobroek/harness-plugins/issues/228)) ([26def86](https://github.com/srobroek/harness-plugins/commit/26def86e43f17ace2d740b26577c6bdbe61fe19d))
+
 ## delivery [0.17.0](https://github.com/srobroek/harness-plugins/compare/delivery--v0.16.3...delivery--v0.17.0) (2026-11-26)
 
 ### Features
