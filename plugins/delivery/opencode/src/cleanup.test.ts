@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { outsideLocks, withLease } from "@srobroek/opencode-lib/lease-lock"
-import { readReports, reportFile, runningDirectory, runningLeaseFile, writeReport } from "@srobroek/opencode-lib/running-reports"
+import { readReports, runningDirectory, runningLeaseFile, writeReport } from "@srobroek/opencode-lib/running-reports"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import {
   claimFile,
@@ -5061,31 +5061,46 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
-    // A write that finds the session's own newer report already there is not a failure; another session's file is no such report.
-    needsPermissions("a write superseded by the session's newer report clears its unrecorded mark; another session's file does not", async () => {
-      const h = await harness("running-superseded")
+    // Two server instances for one session: each writes and clears only its own file, so one's clear never hides the other's report.
+    test("another instance's report of the same session still holds after this instance clears its own, whatever the clocks say", async () => {
+      const h = await harness("running-two-instances")
       await h.pending.start()
-      const root = receiptDirectory(h.f.env)
-      const directory = runningDirectory(root)
-      mkdirSync(directory, { recursive: true })
-      const failing = async (work: () => Promise<void>) => {
-        chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
-        try {
-          await work()
-        } finally {
-          chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
-        }
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      writeReport(receiptDirectory(h.f.env), {
+        sessionID: "ses_a",
+        jobs: [{ kind: "shell", sessionID: "ses_a", shellID: "sh9", command: `cd ${h.f.linked} && make` }],
+        at: 1, // an earlier clock than this instance's
+        pid: process.pid,
+        host: hostname(),
+        instance: "another-server",
+      })
+      expect(readReports(receiptDirectory(h.f.env)).reports).toHaveLength(2)
+      await reportFrom(h, "ses_a", []) // this instance clears
+      expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.instance)).toEqual(["another-server"])
+      expect(await check(h)).toContain("names the worktree")
+      await h.finish()
+    })
+
+    // A deletion that could not be carried out is retried with a token: a new incarnation of the session that wrote meanwhile is not undone.
+    needsPermissions("a pending delete retried after the session's new incarnation wrote leaves the live report", async () => {
+      const h = await harness("running-delete-new-incarnation")
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      const directory = runningDirectory(receiptDirectory(h.f.env))
+      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
+        await Bun.sleep(100)
+        expect(h.pending.pendingDeleteCount()).toBe(1)
+      } finally {
+        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
       }
-      await failing(() => reportFrom(h, "ses_a", [elsewhere()]))
-      expect(h.pending.unsettledCount()).toBe(1)
-      // A file at ses_a's path that belongs to another session, newer than the write: not a report of ses_a.
-      writeFileSync(reportFile(root, "ses_a"), JSON.stringify({ sessionID: "ses_other", jobs: [], at: NOW + 1e9, pid: 1, host: "x", instance: "y" }))
-      await failing(() => reportFrom(h, "ses_a", [elsewhere()]))
-      expect(h.pending.unsettledCount()).toBe(1)
-      // The session's own newer report: the write has nothing to do.
-      writeReport(root, { sessionID: "ses_a", jobs: [], at: NOW + 1e9, pid: 1, host: "x", instance: "y" })
-      await failing(() => reportFrom(h, "ses_a", [elsewhere()]))
-      expect(h.pending.unsettledCount()).toBe(0)
+      // The new incarnation takes the lease and writes; the retry of the old deletion runs after it.
+      await reportFrom(h, "ses_a", [shellIn(h, "sh2")])
+      await reportFrom(h, "ses_b", [])
+      expect(h.pending.pendingDeleteCount()).toBe(0)
+      expect(reportIds(h)).toEqual(["ses_a"])
+      expect(await check(h)).toContain("names the worktree")
       await h.finish()
     })
 
