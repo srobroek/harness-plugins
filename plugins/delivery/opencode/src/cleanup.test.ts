@@ -4863,9 +4863,9 @@ describe("pending cleanup: one remover per worktree", () => {
       chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
       try {
         await reportFrom(h, "ses_a", [elsewhere("again")])
-        expect(h.pending.unrecordedCount()).toBe(1)
+        expect(h.pending.unsettledCount()).toBe(1)
         await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
-        expect(h.pending.unrecordedCount()).toBe(0)
+        expect(h.pending.unsettledCount()).toBe(0)
       } finally {
         chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
       }
@@ -4888,15 +4888,15 @@ describe("pending cleanup: one remover per worktree", () => {
         }
       }
       await failing(() => reportFrom(h, "ses_a", [elsewhere()]))
-      expect(h.pending.unrecordedCount()).toBe(1)
+      expect(h.pending.unsettledCount()).toBe(1)
       // A file at ses_a's path that belongs to another session, newer than the write: not a report of ses_a.
       writeFileSync(reportFile(root, "ses_a"), JSON.stringify({ sessionID: "ses_other", jobs: [], at: NOW + 1e9, pid: 1, host: "x", instance: "y" }))
       await failing(() => reportFrom(h, "ses_a", [elsewhere()]))
-      expect(h.pending.unrecordedCount()).toBe(1)
+      expect(h.pending.unsettledCount()).toBe(1)
       // The session's own newer report: the write has nothing to do.
       writeReport(root, { sessionID: "ses_a", jobs: [], at: NOW + 1e9, pid: 1, host: "x", instance: "y" })
       await failing(() => reportFrom(h, "ses_a", [elsewhere()]))
-      expect(h.pending.unrecordedCount()).toBe(0)
+      expect(h.pending.unsettledCount()).toBe(0)
       await h.finish()
     })
 
@@ -4911,6 +4911,80 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
+    // A report waiting on the lease is a report not yet recorded: removal holds meanwhile.
+    test("a removal is refused while a session's report waits on the lease", async () => {
+      const queue = queuedWaits()
+      const h = await harness("running-unsettled-waiting", { lock: queue.lock })
+      await h.pending.start()
+      const holder = await takeLease(h)
+      const waiting = outsideLocks(() => reportFrom(h, "ses_a", [elsewhere()]))
+      await queue.reached(1)
+      const verdict = await Promise.race([check(h), Bun.sleep(1_500).then(() => "the check hung")])
+      expect(verdict).toContain("ses_a")
+      expect(h.pending.unsettledCount()).toBe(1)
+      holder.release()
+      await holder.done
+      queue.waits[0]?.()
+      await waiting
+      expect(h.pending.unsettledCount()).toBe(0)
+      await h.finish()
+    })
+
+    needsPermissions("an older write that succeeds after a newer one failed does not clear the hold", async () => {
+      const queue = queuedWaits()
+      const h = await harness("running-unsettled-order", { lock: queue.lock })
+      await h.pending.start()
+      const directory = runningDirectory(receiptDirectory(h.f.env))
+      mkdirSync(directory, { recursive: true })
+      const holder = await takeLease(h)
+      const older = outsideLocks(() => reportFrom(h, "ses_a", [elsewhere("older")]))
+      await queue.reached(1)
+      const newer = outsideLocks(() => reportFrom(h, "ses_a", [elsewhere("newer")]))
+      await queue.reached(2)
+      holder.release()
+      await holder.done
+      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        queue.waits[1]?.() // the newer takes the lease first and fails to write
+        await newer
+      } finally {
+        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
+      }
+      queue.waits[0]?.() // the older then succeeds
+      await older
+      expect(h.pending.unsettledCount()).toBe(1)
+      expect(await check(h)).toContain("ses_a")
+      await h.finish()
+    })
+
+    needsPermissions("a write that fails after its session was deleted leaves no file and no hold", async () => {
+      const queue = queuedWaits()
+      const h = await harness("running-unsettled-deleted", { lock: queue.lock })
+      await h.pending.start()
+      const directory = runningDirectory(receiptDirectory(h.f.env))
+      mkdirSync(directory, { recursive: true })
+      const holder = await takeLease(h)
+      const waiting = outsideLocks(() => reportFrom(h, "ses_a", [elsewhere()]))
+      await queue.reached(1)
+      const deleting = outsideLocks(() => h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } }))
+      await queue.reached(2)
+      holder.release()
+      await holder.done
+      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        queue.waits[0]?.()
+        await waiting
+        queue.waits[1]?.()
+        await deleting
+      } finally {
+        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
+      }
+      expect(h.pending.unsettledCount()).toBe(0)
+      expect(reportIds(h)).toEqual([])
+      expect(await check(h)).toBeUndefined()
+      await h.finish()
+    })
+
     // I8: nothing accumulates per session.
     needsPermissions("after a hundred sessions whose reports failed are deleted, no failure is remembered", async () => {
       const h = await harness("running-unrecorded-drained")
@@ -4920,12 +4994,12 @@ describe("pending cleanup: one remover per worktree", () => {
       chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
       try {
         for (let index = 0; index < 100; index++) await reportFrom(h, `ses_${index}`, [elsewhere()])
-        expect(h.pending.unrecordedCount()).toBe(100)
+        expect(h.pending.unsettledCount()).toBe(100)
       } finally {
         chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
       }
       for (let index = 0; index < 100; index++) await h.fake.emit({ type: "session.deleted", data: { sessionID: `ses_${index}` } })
-      expect(h.pending.unrecordedCount()).toBe(0)
+      expect(h.pending.unsettledCount()).toBe(0)
       await h.finish()
     })
   })
