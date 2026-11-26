@@ -42,7 +42,6 @@ import {
   readReports,
   removeLegacyReport,
   removeReport,
-  removeReportsWhere,
   reportBlock,
   reportsWritable,
   reportVersion,
@@ -1401,11 +1400,6 @@ export function createPendingCleanup(deps: PendingDeps) {
         // Only this instance's own file: the current generation writes or clears it, and no other instance's file is touched.
         if (background.length === 0) clearReport(root, sessionID, activation)
         else writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname(), instance: activation, gen })
-        // The job list a session's idle hook receives is the server's for that session (process-wide, not per Location), so
-        // this snapshot supersedes the session's files of other activations in this process (a session that moved Location):
-        // same hold, same host and pid only. Other processes' files are never touched.
-        const host = hostname()
-        removeReportsWhere(root, (report) => report.sessionID === sessionID && report.host === host && report.pid === process.pid && report.instance !== activation)
       })
       if (unsettled.get(sessionID)?.gen === gen) unsettled.delete(sessionID)
     } catch (error) {

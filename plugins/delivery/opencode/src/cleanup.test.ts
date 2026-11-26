@@ -5152,48 +5152,53 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
-    // A session that moves Location reports to another activation in this process. The job list its idle hook receives is the
-    // server's for that session (process-wide), so a successful snapshot supersedes the session's files of this process's other activations.
-    test("a session's empty report in a second activation removes the first activation's file, and the removal proceeds", async () => {
-      const h = await harness("running-supersede-empty")
+    // No activation touches another's file, so what a session reports in one Location never lifts or replaces what it reports in another.
+    test("a second activation's empty report for a session leaves the first activation's file in place, still holding", async () => {
+      const h = await harness("running-no-supersede")
       await h.pending.start()
       const next = h.reactivate()
       await next.pending.start()
       await reportFrom(h, "ses_a", [shellIn(h)])
-      expect(await check(h)).toContain("names the worktree")
       await next.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [] } as never)
-      expect(reportIds(h)).toEqual([])
-      expect(await check(h)).toBeUndefined()
-      await next.pending.dispose()
-      await h.finish()
-    })
-
-    test("a live job reported in one activation and again in a non-empty report of another still holds, from one file", async () => {
-      const h = await harness("running-supersede-nonempty")
-      await h.pending.start()
-      const next = h.reactivate()
-      await next.pending.start()
-      await reportFrom(h, "ses_a", [shellIn(h)])
-      await next.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [{ sessionID: "ses_a", ...shellIn(h) }] } as never)
-      expect(readReports(receiptDirectory(h.f.env)).reports).toHaveLength(1)
+      expect(reportIds(h)).toEqual(["ses_a"])
       expect(await check(h)).toContain("names the worktree")
       await next.pending.dispose()
       await h.finish()
     })
 
-    test("a snapshot supersedes only this process's files: another process's report of the same session stays", async () => {
-      const h = await harness("running-supersede-foreign")
+    test("each activation's file keeps its own snapshot, and one activation's delete leaves the other's file untouched", async () => {
+      const h = await harness("running-own-files")
       await h.pending.start()
-      writeReport(receiptDirectory(h.f.env), {
-        sessionID: "ses_a",
-        jobs: [{ kind: "shell", sessionID: "ses_a", shellID: "sh9", command: `cd ${h.f.linked} && make` }],
-        at: 1,
-        pid: process.ppid, // a live process that is not this one
-        host: hostname(),
-        instance: "another-process",
-      })
-      await reportFrom(h, "ses_a", [])
-      expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.instance)).toEqual(["another-process"])
+      const next = h.reactivate()
+      await next.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h, "sh-first")])
+      await next.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [{ sessionID: "ses_a", ...shellIn(h, "sh-second") }] } as never)
+      const shellIds = () => readReports(receiptDirectory(h.f.env)).reports.map((report) => report.jobs.map((job) => job.shellID).join(",")).sort()
+      expect(shellIds()).toEqual(["sh-first", "sh-second"])
+      expect(new Set(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.instance)).size).toBe(2)
+      await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } }) // only the first activation hears it
+      await Bun.sleep(100)
+      expect(shellIds()).toEqual(["sh-second"])
+      await next.pending.dispose()
+      await h.finish()
+    })
+
+    // A delete queued on the lease before disposal does nothing when it gets the lease: the work may still be running.
+    test("a delete a disposed activation had queued on the lease does nothing when it gets the lease", async () => {
+      const gate = Promise.withResolvers<void>()
+      let slept = 0
+      const h = await harness("running-disposed-delete", { disposeWaitMs: 100, lock: { waitMs: 60_000, sleep: (): Promise<void> => (++slept === 1 ? gate.promise : Bun.sleep(5)) } })
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      const lease = await holdLease(runningLeaseFile(receiptDirectory(h.f.env)), { owner: "test" })
+      if (lease.kind !== "held") throw new Error("test could not take the lease")
+      void h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } }) // the delete waits on the lease, sleeping on the gate
+      while (slept < 1) await Bun.sleep(2)
+      await h.pending.dispose()
+      await lease.release()
+      gate.resolve() // the delete takes the lease now, after disposal
+      while (h.pending.pendingDeleteCount() !== 0) await Bun.sleep(5)
+      expect(reportIds(h)).toEqual(["ses_a"])
       await h.finish()
     })
 

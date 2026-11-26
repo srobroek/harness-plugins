@@ -151,30 +151,6 @@ export function removeReport(receiptsRoot: string, sessionID: string, instance: 
   return "removed"
 }
 
-/**
- * Delete every report file whose parsed report satisfies `doomed`, files that cannot be read left alone;
- * returns how many went. A store that does not exist has none; any other failure to list it or delete a file throws.
- */
-export function removeReportsWhere(receiptsRoot: string, doomed: (report: RunningReport) => boolean): number {
-  const directory = runningDirectory(receiptsRoot)
-  let names: string[]
-  try {
-    names = readdirSync(directory).filter((name) => name.endsWith(".json"))
-  } catch (error) {
-    // Only a store that does not exist is empty; any other failure to list it is the caller's to report.
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0
-    throw error
-  }
-  let removed = 0
-  for (const name of names) {
-    const stored = readStored(join(directory, name))
-    if (stored.kind !== "report" || !doomed(stored.report)) continue
-    rmSync(join(directory, name), { force: true })
-    removed += 1
-  }
-  return removed
-}
-
 /** Delete the un-suffixed file of `sessionID` when its pid and instance are the caller's; any other stays. Throws when it cannot delete. */
 export function removeLegacyReport(receiptsRoot: string, sessionID: string, instance: string, pid: number): boolean {
   const file = legacyReportFile(receiptsRoot, sessionID)
