@@ -124,9 +124,9 @@ export function externalMessage(external: readonly ExternalDirectory[]): string 
     .join(", ")}). Approve only if you meant to work there.`
 }
 
-/** The question for relative flag directories after a leading `cd` whose directory cannot be read. */
+/** The question for relative flag directories whose base is unknown: after a leading `cd` it cannot read, or a later directory change. */
 export function unresolvedMessage(unresolved: readonly string[]): string {
-  return `safety (external-directory): this command starts with a cd this guard cannot read (a quoted, expanded, \`..\` or redirected directory), so it cannot tell where ${unresolved
+  return `safety (external-directory): this command changes directory in a way this guard cannot follow (a quoted, expanded, \`..\` or redirected leading cd, or a later cd, pushd, popd or env -C), so it cannot tell where ${unresolved
     .map((value) => `\`${value}\``)
     .join(", ")} points. Approve only if you meant to work there.`
 }

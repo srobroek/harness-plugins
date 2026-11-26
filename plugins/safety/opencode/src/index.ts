@@ -163,13 +163,14 @@ function safely<T>(run: () => T): T | undefined {
 }
 
 /**
- * The refusal for relative flag directories after a leading `cd` this plugin cannot read. OpenCode's
- * `external_directory` question needs an absolute resource to show and save, which such a flag lacks.
+ * The refusal for relative flag directories whose base is unknown: after a leading `cd` this plugin cannot read,
+ * or a later directory change. OpenCode's `external_directory` question needs an absolute resource to show and
+ * save, which such a flag lacks.
  */
 export function unresolvedFlagRefusal(unresolved: readonly string[]): string {
-  return `Blocked by safety (external-directory): this command starts with a cd this guard cannot read (a quoted, expanded, \`..\` or redirected directory), so it cannot tell where ${unresolved
+  return `Blocked by safety (external-directory): this command changes directory in a way this guard cannot follow (a quoted, expanded, \`..\` or redirected leading cd, or a later cd, pushd, popd or env -C), so it cannot tell where ${unresolved
     .map((value) => `\`${value}\``)
-    .join(", ")} points. Give the flag an absolute path, use the shell tool's workdir, or start with \`cd <literal path> &&\`.`
+    .join(", ")} points. Give the flag an absolute path, use the shell tool's workdir, or start with \`cd <literal path> &&\` and change directory nowhere else.`
 }
 
 /**

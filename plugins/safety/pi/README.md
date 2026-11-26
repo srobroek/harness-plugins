@@ -80,11 +80,14 @@ A relative flag value resolves against the directory that a leading `cd` moves t
 is `<dir>`. After `cd <dir>;` the rest runs in `<dir>` when the `cd` succeeds, and in the session directory
 when it fails. So each relative value must pass from both bases.
 
-The check cannot follow some leading `cd` forms. After one of them, a relative value stays unresolved:
+The check follows only that leading `cd`. A relative value stays unresolved after these forms:
 
-- a quoted directory, or one with `~`, `$`, `..` or a leading `-`
-- a redirection or `||` after the `cd`
-- `pushd`
+- a leading `cd` to a quoted directory, or to one with `~`, `$`, `..` or a leading `-`
+- a leading `cd` with a redirection or `||` after it, or a leading `pushd`
+- any later `cd`, `pushd` or `popd`, from that command on, also inside a subshell, group or function
+- a wrapper's directory (`env -C`, `sudo -D`), for that command only
+
+A `cd` in a command substitution moves only that subshell, so it leaves the commands around it alone.
 
 pi asks about an unresolved value, and OpenCode refuses the call.
 

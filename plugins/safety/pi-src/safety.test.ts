@@ -286,6 +286,21 @@ describe("gateBash directory flags in the session repository's worktrees", () =>
     expect(await gateBash('cd "$X"; bun install --cwd x', main, config())).toEqual({ kind: "ask", message: unresolvedMessage(["x"]) })
   })
 
+  test("a later directory change leaves the flag directories after it unresolved", async () => {
+    for (const command of [
+      `cd ${sink}; cd ${outside}; git -C infra status`,
+      `cd ${sink}; pushd ${outside}; bun install --cwd infra`,
+      `cd ${sink}; (cd ${outside} && bun install --cwd infra)`,
+      `cd ${sink} && cd ${outside} && git -C infra status`,
+    ]) {
+      expect({ command, verdict: await gateBash(command, main, config()) }).toEqual({
+        command,
+        verdict: { kind: "ask", message: unresolvedMessage(["infra"]) },
+      })
+    }
+    expect(await gateBash(`cd ${sink}; git -C infra status; cd ${outside}`, main, config())).toEqual({ kind: "run" })
+  })
+
   test("worktreeRoots takes a linked worktree of another repository under a root as inside", async () => {
     const other = join(root, "other-repo")
     const rooted = join(root, "rooted")

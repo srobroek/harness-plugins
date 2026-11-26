@@ -139,10 +139,41 @@ export function flagDirectoryReport(
   cwd: string | undefined,
   gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS,
 ): FlagDirectoryReport {
+  return readFlags(walkShell(source).commands, cwd === undefined ? [] : [cwd], gitWrappers)
+}
+
+/** Builtins that move the shell itself, and with it every command after them. */
+const DIRECTORY_CHANGES: ReadonlySet<string> = new Set(["cd", "pushd", "popd"])
+
+function changesShellDirectory(command: Command): boolean {
+  const [name, next] = command.argv
+  return DIRECTORY_CHANGES.has(base(name)) || (name === "builtin" && next !== undefined && DIRECTORY_CHANGES.has(next))
+}
+
+/**
+ * The flag directories of `commands`, in walk order, with relative values resolved against each of `bases`; with
+ * no base they go to `unresolved`. From the first `cd`, `pushd` or `popd` on (also `builtin cd`, and one inside a
+ * subshell, group, function body, `eval` or nested shell the walk reaches), every command has no base: the check
+ * does not follow where a later change lands or whether it succeeds. A wrapper's directory (`env -C`, `sudo -D`)
+ * takes the base of its own command only. The walk reads a command substitution after the commands around it, so
+ * a `cd` inside one, which moves only that subshell, leaves those commands their bases.
+ */
+function readFlags(commands: readonly Command[], bases: readonly string[], gitWrappers: readonly string[]): FlagDirectoryReport {
   const dirs = new Set<string>()
   const unresolved: string[] = []
-  for (const command of walkShell(source).commands) for (const dir of flagDirectories(command, cwd, gitWrappers, unresolved)) dirs.add(dir)
+  let known = bases
+  for (const command of commands) {
+    if (changesShellDirectory(command)) known = []
+    const here = command.directories.length > 0 || known.length === 0 ? [undefined] : known
+    for (const cwd of here) for (const dir of flagDirectories(command, cwd, gitWrappers, unresolved)) dirs.add(dir)
+  }
   return { dirs: [...dirs], unresolved: [...new Set(unresolved)] }
+}
+
+/** `commands` without the leading `cd` the bases stand for; whole when the walk does not start with it. */
+function afterLeadingCd(commands: readonly Command[]): readonly Command[] {
+  const [first] = commands
+  return first?.context === "top" && first.argv[0] === "cd" ? commands.slice(1) : commands
 }
 
 /**
@@ -155,22 +186,23 @@ export function flagDirectoryReport(
  *   pass the roots on its own.
  *
  * After any other leading directory change (one `leadingCd` rejects for its form: quoted, `~`, `$`, `..`, `-`,
- * a redirection, `||`, `pushd`, …) relative values go to `unresolved`.
+ * a redirection, `||`, `pushd`, …) relative values go to `unresolved`, and so do those from the first later
+ * directory change on (`readFlags`).
  */
 export function callFlagDirectoryReport(
   command: string,
   cwd: string,
   gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS,
 ): FlagDirectoryReport {
+  const commands = walkShell(command).commands
   const lead = leadingCd(command, cwd)
-  if (lead.kind !== "rejected") return flagDirectoryReport(command, lead.kind === "dir" ? lead.dir : cwd, gitWrappers)
+  if (lead.kind === "none") return readFlags(commands, [cwd], gitWrappers)
+  if (lead.kind === "dir") return readFlags(afterLeadingCd(commands), [lead.dir], gitWrappers)
   // The words before the first `;` or newline, read as a call that is only a `cd`.
   const first = /^[^;\n]*/.exec(command)?.[0] ?? command
   const sequenced = first.length < command.length ? leadingCd(first, cwd) : lead
-  if (sequenced.kind !== "dir") return flagDirectoryReport(command, undefined, gitWrappers)
-  const moved = flagDirectoryReport(command, sequenced.dir, gitWrappers)
-  const stayed = flagDirectoryReport(command, cwd, gitWrappers)
-  return { dirs: [...new Set([...moved.dirs, ...stayed.dirs])], unresolved: [] }
+  if (sequenced.kind !== "dir") return readFlags(commands, [], gitWrappers)
+  return readFlags(afterLeadingCd(commands), [sequenced.dir, cwd], gitWrappers)
 }
 
 /** `path` as a real path, or `undefined` when a link loops. */

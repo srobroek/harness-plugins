@@ -4002,24 +4002,43 @@ function shellFlagDirectories(source, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS) {
   return flagDirectoryReport(source, cwd, gitWrappers).dirs;
 }
 function flagDirectoryReport(source, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS) {
+  return readFlags(walkShell(source).commands, cwd === undefined ? [] : [cwd], gitWrappers);
+}
+var DIRECTORY_CHANGES = new Set(["cd", "pushd", "popd"]);
+function changesShellDirectory(command) {
+  const [name, next] = command.argv;
+  return DIRECTORY_CHANGES.has(base(name)) || name === "builtin" && next !== undefined && DIRECTORY_CHANGES.has(next);
+}
+function readFlags(commands, bases, gitWrappers) {
   const dirs = new Set;
   const unresolved = [];
-  for (const command of walkShell(source).commands)
-    for (const dir of flagDirectories(command, cwd, gitWrappers, unresolved))
-      dirs.add(dir);
+  let known = bases;
+  for (const command of commands) {
+    if (changesShellDirectory(command))
+      known = [];
+    const here = command.directories.length > 0 || known.length === 0 ? [undefined] : known;
+    for (const cwd of here)
+      for (const dir of flagDirectories(command, cwd, gitWrappers, unresolved))
+        dirs.add(dir);
+  }
   return { dirs: [...dirs], unresolved: [...new Set(unresolved)] };
 }
+function afterLeadingCd(commands) {
+  const [first] = commands;
+  return first?.context === "top" && first.argv[0] === "cd" ? commands.slice(1) : commands;
+}
 function callFlagDirectoryReport(command, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS) {
+  const commands = walkShell(command).commands;
   const lead = leadingCd(command, cwd);
-  if (lead.kind !== "rejected")
-    return flagDirectoryReport(command, lead.kind === "dir" ? lead.dir : cwd, gitWrappers);
+  if (lead.kind === "none")
+    return readFlags(commands, [cwd], gitWrappers);
+  if (lead.kind === "dir")
+    return readFlags(afterLeadingCd(commands), [lead.dir], gitWrappers);
   const first = /^[^;\n]*/.exec(command)?.[0] ?? command;
   const sequenced = first.length < command.length ? leadingCd(first, cwd) : lead;
   if (sequenced.kind !== "dir")
-    return flagDirectoryReport(command, undefined, gitWrappers);
-  const moved = flagDirectoryReport(command, sequenced.dir, gitWrappers);
-  const stayed = flagDirectoryReport(command, cwd, gitWrappers);
-  return { dirs: [...new Set([...moved.dirs, ...stayed.dirs])], unresolved: [] };
+    return readFlags(commands, [], gitWrappers);
+  return readFlags(afterLeadingCd(commands), [sequenced.dir, cwd], gitWrappers);
 }
 function real(path) {
   try {
@@ -5452,7 +5471,7 @@ function segments(command) {
 }
 var RESERVED2 = new Set(["!", "{", "}", "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "time"]);
 var PASSTHROUGH = new Set(["sudo", "doas", "env", "nohup", "command", "exec", "nice", "time"]);
-var DIRECTORY_CHANGES = new Set(["cd", "pushd", "popd"]);
+var DIRECTORY_CHANGES2 = new Set(["cd", "pushd", "popd"]);
 var INERT = new Set(["cd", "pushd", "echo", "printf", "true", ":", "pwd", "ls", "cat", "test", "[", "sleep"]);
 var INERT_GIT = new Set(["status", "log", "show", "diff", "rev-parse", "for-each-ref", "ls-files"]);
 var GIT_FLAGS2 = new Set([
@@ -5670,7 +5689,7 @@ function deleteRequests(command, cwd) {
     const line = commandLine(segment.words);
     if (!line)
       continue;
-    if (DIRECTORY_CHANGES.has(line.name)) {
+    if (DIRECTORY_CHANGES2.has(line.name)) {
       const operator = segment.gap.at(-1);
       const target = directoryTarget(line, here);
       dir = operator === "||" || operator === "|" ? null : target;
@@ -6894,7 +6913,7 @@ function safely(run) {
   }
 }
 function unresolvedFlagRefusal(unresolved) {
-  return `Blocked by safety (external-directory): this command starts with a cd this guard cannot read (a quoted, expanded, \`..\` or redirected directory), so it cannot tell where ${unresolved.map((value) => `\`${value}\``).join(", ")} points. Give the flag an absolute path, use the shell tool's workdir, or start with \`cd <literal path> &&\`.`;
+  return `Blocked by safety (external-directory): this command changes directory in a way this guard cannot follow (a quoted, expanded, \`..\` or redirected leading cd, or a later cd, pushd, popd or env -C), so it cannot tell where ${unresolved.map((value) => `\`${value}\``).join(", ")} points. Give the flag an absolute path, use the shell tool's workdir, or start with \`cd <literal path> &&\` and change directory nowhere else.`;
 }
 async function review(command, cwd, options, warn = () => {}) {
   try {
