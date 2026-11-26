@@ -6304,26 +6304,6 @@ function removeReport(receiptsRoot, sessionID, instance, maxGen = Number.POSITIV
   rmSync5(file, { force: true });
   return "removed";
 }
-function removeReportsWhere(receiptsRoot, doomed) {
-  const directory = runningDirectory(receiptsRoot);
-  let names;
-  try {
-    names = readdirSync4(directory).filter((name) => name.endsWith(".json"));
-  } catch (error) {
-    if (error.code === "ENOENT")
-      return 0;
-    throw error;
-  }
-  let removed = 0;
-  for (const name of names) {
-    const stored = readStored(join8(directory, name));
-    if (stored.kind !== "report" || !doomed(stored.report))
-      continue;
-    rmSync5(join8(directory, name), { force: true });
-    removed += 1;
-  }
-  return removed;
-}
 function removeLegacyReport(receiptsRoot, sessionID, instance, pid) {
   const file = legacyReportFile(receiptsRoot, sessionID);
   const stored = readStored(file);
@@ -7663,8 +7643,6 @@ function createPendingCleanup(deps) {
           clearReport(root, sessionID, activation);
         else
           writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname2(), instance: activation, gen });
-        const host = hostname2();
-        removeReportsWhere(root, (report) => report.sessionID === sessionID && report.host === host && report.pid === process.pid && report.instance !== activation);
       });
       if (unsettled.get(sessionID)?.gen === gen)
         unsettled.delete(sessionID);
