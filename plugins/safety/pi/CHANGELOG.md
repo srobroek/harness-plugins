@@ -1,3 +1,9 @@
+## safety [3.0.3](https://github.com/srobroek/harness-plugins/compare/safety--v3.0.2...safety--v3.0.3) (2026-11-26)
+
+### Bug Fixes
+
+* **safety:** stop refusing read-only git over a quoted regex anchor; drop clone-to-temp guidance ([#216](https://github.com/srobroek/harness-plugins/issues/216)) ([a33afd8](https://github.com/srobroek/harness-plugins/commit/a33afd853a55d047fa64409058da684564b3e264))
+
 ## safety [3.0.2](https://github.com/srobroek/harness-plugins/compare/safety--v3.0.1...safety--v3.0.2) (2026-11-26)
 
 ### Bug Fixes
