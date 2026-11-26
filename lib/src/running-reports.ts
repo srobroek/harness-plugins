@@ -175,15 +175,15 @@ export const reportVersion = (report: RunningReport): string => `${report.at}:${
 export type ReportClock = { now: number; host: string; instance: string; alive: (pid: number) => boolean; expiryMs?: number }
 
 /**
- * A report counts until its file is older than the expiry on the reader's clock. One from another host
- * counts until then, whatever its pid says. One from this host's other server counts while its pid is
- * alive; from this server, always (its session lookups below can say more). Pure.
+ * Whether a report still counts. On this host the reporter's process decides, and its age does not: a
+ * report of this server counts (its process is this one), and one of another server on this host counts
+ * while its pid is alive, however old its file is. A report from another host cannot be judged by pid, so
+ * it counts until its file is older than the expiry on the reader's clock. Pure.
  */
 export function reportLive(report: StoredReport, clock: ReportClock): boolean {
-  if (clock.now - report.mtimeMs >= (clock.expiryMs ?? HOLD_EXPIRY_MS)) return false
   if (report.instance === clock.instance) return true
   if (report.host === clock.host) return clock.alive(report.pid)
-  return true
+  return clock.now - report.mtimeMs < (clock.expiryMs ?? HOLD_EXPIRY_MS)
 }
 
 const sameServer = (report: RunningReport, clock: ReportClock): boolean => report.instance === clock.instance

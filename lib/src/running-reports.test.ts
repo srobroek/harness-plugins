@@ -156,8 +156,10 @@ describe("which reports count", () => {
   const DAY = 24 * 3_600_000
   test.each([
     ["this server, fresh", { instance: "box:4242:a" }, 1_000 + 10, true, true],
-    ["this server, file older than the expiry on the reader's clock", { instance: "box:4242:a" }, 1_000 + DAY, true, false],
-    ["this server's old `at` does not expire it: only the file's mtime does", { instance: "box:4242:a", at: 0 }, 1_000 + 10, true, true],
+    ["this server, file older than the expiry: its own process is alive, so it holds", { instance: "box:4242:a" }, 1_000 + DAY, true, true],
+    ["this server's old `at` is not its age", { instance: "box:4242:a", at: 0 }, 1_000 + 10, true, true],
+    ["another server on this host, file older than the expiry, its pid alive: pid decides, so it holds", { instance: "box:99:b" }, 1_000 + DAY, true, true],
+    ["another server on this host, file older than the expiry, its pid gone", { instance: "box:99:b" }, 1_000 + DAY, false, false],
     ["another server on this host, its pid alive", { instance: "box:99:b" }, 1_000 + 10, true, true],
     ["another server on this host, its pid gone", { instance: "box:99:b" }, 1_000 + 10, false, false],
     ["another host, whatever its pid says", { instance: "far:1:c", host: "far" }, 1_000 + 10, false, true],
@@ -232,8 +234,8 @@ describe("what a removal needs, and what a report blocks", () => {
     expect(reportBlock(job, forms, lookups({ ses_x: { state: "missing" } }), clock(), identity)).toContain("another server")
   })
 
-  test("a report that has expired on the reader's clock blocks nothing", () => {
-    const old = [stored("ses_a", [{ kind: "shell", command: "cd /w/linked && make" }], { mtimeMs: 0 })]
+  test("a report of another host that has expired on the reader's clock blocks nothing", () => {
+    const old = [stored("ses_a", [{ kind: "shell", command: "cd /w/linked && make" }], { mtimeMs: 0, host: "far", instance: "far:1:c" })]
     expect(reportBlock(old, forms, () => undefined, clock(24 * 3_600_000), identity)).toBeUndefined()
   })
 
@@ -244,8 +246,8 @@ describe("what a removal needs, and what a report blocks", () => {
     expect(reportBlock(reports, forms, found, clock(), canonical)).toContain("runs in the worktree")
   })
 
-  test("a file's mtime is what expiry reads: a fresh file with an old `at` counts, an old file does not", () => {
-    writeReport(root, report("ses_a", 0, [{ kind: "shell", command: "cd /w/linked && make" }]))
+  test("a file's mtime is what expiry reads for another host: a fresh file with an old `at` counts, an old file does not", () => {
+    writeReport(root, { ...report("ses_a", 0, [{ kind: "shell", command: "cd /w/linked && make" }]), host: "far", instance: "far:1:c" })
     const file = reportFile(root, "ses_a")
     const fresh = readReports(root).reports
     expect(reportBlock(fresh, forms, () => undefined, clock(Date.now()), identity)).toContain("names the worktree")
