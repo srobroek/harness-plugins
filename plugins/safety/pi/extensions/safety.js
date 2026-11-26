@@ -6289,6 +6289,115 @@ function createRedactor(env, options = DEFAULT_REDACT) {
   };
 }
 
+// plugins/safety/pi-src/approvals.ts
+import { randomInt } from "crypto";
+var PERMIT_MS = 30 * 60 * 1000;
+function readApprovalMode(value) {
+  return value === "ask" ? "ask" : "deny";
+}
+var ID_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
+var SUBCOMMANDS = ["ask", "deny", "allow"];
+var COMMAND_DESCRIPTION = "Show or switch safety approvals (ask|deny), or allow one refused command once";
+var NO_UI_COMMAND = "safety: /safety does nothing in a session without a UI (print or JSON mode, or a subagent child). There every command a check asks about is refused.";
+var NOTHING_TO_ALLOW = "safety: no refused command in the last 30 minutes is waiting to be allowed.";
+var USAGE = "safety: use /safety to show the approval mode, /safety ask or /safety deny to switch it, /safety allow to list refused commands, or /safety allow <id> to permit one once.";
+var MODE_EFFECT = {
+  deny: "a command a check asks about is refused under an ID, and /safety allow <id> permits that command once.",
+  ask: "a command a check asks about opens a dialog."
+};
+var minutes = (ms) => ms < 60000 ? "under a minute" : `${Math.floor(ms / 60000)} min`;
+function createApprovals(configured, now = Date.now) {
+  let mode = configured;
+  const refusals = new Map;
+  const pending = (refusal) => refusal.state === "refused" && now() < refusal.refusedAt + PERMIT_MS;
+  const allowed = (refusal) => refusal.state === "allowed" && now() < refusal.allowedUntil;
+  const matches = (refusal, call) => refusal.command === call.command && refusal.cwd === call.cwd;
+  const find = (test) => [...refusals.values()].find(test);
+  const newId = () => {
+    for (;; ) {
+      const id = Array.from({ length: 4 }, () => ID_ALPHABET[randomInt(ID_ALPHABET.length)]).join("");
+      if (!refusals.has(id))
+        return id;
+    }
+  };
+  const status = () => {
+    const lines = [`safety: approvals are ${mode} in this session (settings: ${configured}): ${MODE_EFFECT[mode]}`];
+    for (const refusal of refusals.values())
+      if (allowed(refusal))
+        lines.push(`Allowed once (${refusal.id}), expiring in ${minutes(refusal.allowedUntil - now())}, in ${refusal.cwd}:
+${refusal.command}`);
+    return { text: lines.join(`
+`), level: "info" };
+  };
+  const list = () => {
+    const open = [...refusals.values()].filter(pending);
+    if (open.length === 0)
+      return { text: NOTHING_TO_ALLOW, level: "warning" };
+    const lines = open.map((refusal) => `${refusal.id}, refused ${minutes(now() - refusal.refusedAt)} ago, in ${refusal.cwd}:
+${refusal.command}`);
+    return { text: ["safety: refused commands; /safety allow <id> permits one once:", ...lines].join(`
+`), level: "info" };
+  };
+  const allow = (given) => {
+    const id = given.toLowerCase();
+    const refusal = refusals.get(id);
+    if (refusal === undefined)
+      return { text: `safety: no refusal ${given} in this session; /safety allow lists them.`, level: "error" };
+    if (refusal.state === "spent")
+      return { text: `safety: refusal ${id} was allowed once already, and its command ran.`, level: "error" };
+    if (allowed(refusal))
+      return { text: `safety: refusal ${id} is allowed already and waits for its command.`, level: "info" };
+    if (!pending(refusal))
+      return { text: `safety: refusal ${id} expired after 30 minutes; let the agent run the command again for a new ID.`, level: "error" };
+    refusal.state = "allowed";
+    refusal.allowedUntil = now() + PERMIT_MS;
+    return { text: `safety: allowing ${id} once, within 30 minutes, in ${refusal.cwd}:
+${refusal.command}`, level: "info" };
+  };
+  return {
+    get mode() {
+      return mode;
+    },
+    refuse(call) {
+      const known = find((refusal) => pending(refusal) && matches(refusal, call));
+      if (known !== undefined) {
+        known.refusedAt = now();
+        return known.id;
+      }
+      const id = newId();
+      refusals.set(id, { ...call, id, refusedAt: now(), state: "refused", allowedUntil: 0 });
+      return id;
+    },
+    spend(call) {
+      const permit = find((refusal) => allowed(refusal) && matches(refusal, call));
+      if (permit === undefined)
+        return false;
+      permit.state = "spent";
+      return true;
+    },
+    command(args, hasUI) {
+      if (!hasUI)
+        return { text: NO_UI_COMMAND, level: "error" };
+      const [verb = "", ...rest] = args.trim().split(/\s+/);
+      if (verb === "" && rest.length === 0)
+        return status();
+      if ((verb === "ask" || verb === "deny") && rest.length === 0) {
+        mode = verb;
+        return { text: `safety: approvals are ${mode} for this session: ${MODE_EFFECT[mode]}`, level: "info" };
+      }
+      if (verb === "allow" && rest.length === 0)
+        return list();
+      if (verb === "allow" && rest.length === 1)
+        return allow(rest[0]);
+      return { text: USAGE, level: "error" };
+    },
+    reset() {
+      mode = configured;
+      refusals.clear();
+    }
+  };
+}
+
 // plugins/safety/pi-src/system-gates.ts
 import { homedir as homedir6 } from "os";
 import { join as join11 } from "path";
@@ -6429,7 +6538,8 @@ function readPiOptions(raw) {
     opAllow: allow.filter((entry) => typeof entry === "string"),
     redact: readRedactOptions(options),
     gitWrappers: readGitWrappers(options),
-    worktreeRoots: readWorktreeRoots(options.worktreeRoots)
+    worktreeRoots: readWorktreeRoots(options.worktreeRoots),
+    approvals: readApprovalMode(options.approvals)
   };
 }
 function loadPiOptions(path) {
@@ -6520,22 +6630,41 @@ async function gateWrite(tool, input, cwd, config) {
   });
   return reason ? { kind: "block", reason } : RUN;
 }
-var NO_UI_REFUSAL = "Blocked by safety: this call needs the user's approval, and this pi session cannot show a dialog (print or JSON mode, or a subagent child). Hand the command to the user, or run it from an interactive session.";
+var NO_UI_REFUSAL = "Blocked by safety: this call needs the user's approval, and this pi session cannot show a dialog (print or JSON mode, or a subagent child), so it is refused, and /safety allow cannot permit it here. Hand the command and your reason to the user or the parent session, which can run it.";
 var DECLINED = "Blocked by safety: the user declined this call.";
-async function settle(verdict, asker) {
+var DENIED = "Blocked by safety: this call needs the user's approval, and safety approvals are set to deny, so it is refused without a dialog.";
+var STOP = "Stop and tell the user what you wanted to run and why.";
+function allowHint(id) {
+  return `${STOP} Give them the refusal ID ${id}. The user can run \`/safety allow ${id}\` to permit exactly this command, unchanged and in this directory, once; after they do, run it again. Do not try another form of it.`;
+}
+function refusal(head, message, call, id) {
+  const shown = call === undefined ? [] : [`${id === undefined ? "Command" : `Refusal ${id}: command`}, in ${call.cwd}:
+${call.command}`];
+  const tail = id === undefined ? [] : [allowHint(id)];
+  return [head, ...shown, message, ...tail].join(`
+
+`);
+}
+async function settle(verdict, asker, approvals, call) {
+  const permitted = call !== undefined && asker.hasUI && approvals.spend(call);
   if (verdict.kind === "run")
     return;
   if (verdict.kind === "block")
     return { block: true, reason: verdict.reason };
-  if (!asker.hasUI)
-    return { block: true, reason: `${NO_UI_REFUSAL}
-
-${verdict.message}` };
-  if (await asker.ui.confirm("safety: approve this command?", verdict.message))
+  if (permitted)
     return;
-  return { block: true, reason: `${DECLINED}
+  if (!asker.hasUI)
+    return { block: true, reason: refusal(NO_UI_REFUSAL, verdict.message, call) };
+  if (approvals.mode === "ask") {
+    if (await asker.ui.confirm("safety: approve this command?", verdict.message))
+      return;
+    return { block: true, reason: refusal(DECLINED, verdict.message, call) };
+  }
+  if (call === undefined)
+    return { block: true, reason: [DENIED, verdict.message, STOP].join(`
 
-${verdict.message}` };
+`) };
+  return { block: true, reason: refusal(DENIED, verdict.message, call, approvals.refuse(call)) };
 }
 function resultPatch(event, notice, redactor) {
   const appended = notice === undefined ? event.content : [...event.content, { type: "text", text: notice }];
@@ -6568,11 +6697,25 @@ function createSafetyExtension(overrides = {}) {
     const advisor = createPackageAdvisor();
     const redactor = options.redact.enabled ? createRedactor(() => env, options.redact) : undefined;
     const warning = loaded.warning;
+    const approvals = createApprovals(options.approvals, overrides.now);
     if (warning !== undefined)
       pi.on("session_start", (_event, ctx) => {
         if (ctx.hasUI)
           ctx.ui.notify(warning, "warning");
       });
+    pi.on("session_shutdown", () => approvals.reset());
+    pi.registerCommand("safety", {
+      description: COMMAND_DESCRIPTION,
+      getArgumentCompletions: (prefix) => {
+        const items = SUBCOMMANDS.filter((verb) => verb.startsWith(prefix.trim())).map((value) => ({ value, label: value }));
+        return items.length > 0 ? items : null;
+      },
+      handler: async (args, ctx) => {
+        const notice = approvals.command(args, ctx.hasUI);
+        if (ctx.hasUI)
+          ctx.ui.notify(notice.text, notice.level);
+      }
+    });
     pi.on("tool_call", async (event, ctx) => {
       if (isToolCallEventType("bash", event)) {
         if (event.input.command.trim() === "")
@@ -6582,10 +6725,11 @@ function createSafetyExtension(overrides = {}) {
           if (rewritten !== undefined)
             event.input.command = rewritten;
         }
-        return settle(await gateBash(event.input.command, ctx.cwd, config), ctx);
+        const call = { command: event.input.command, cwd: ctx.cwd };
+        return settle(await gateBash(call.command, call.cwd, config), ctx, approvals, call);
       }
       if (isToolCallEventType("edit", event) || isToolCallEventType("write", event))
-        return settle(await gateWrite(event.toolName, event.input, ctx.cwd, config), ctx);
+        return settle(await gateWrite(event.toolName, event.input, ctx.cwd, config), ctx, approvals);
       return;
     });
     pi.on("tool_result", (event, ctx) => {
@@ -6599,9 +6743,12 @@ function createSafetyExtension(overrides = {}) {
 var safety_default = createSafetyExtension();
 export {
   DECLINED,
+  DENIED,
   NO_UI_REFUSAL,
   PI_FEATURE_IDS,
   REVIEW_FAILED,
+  STOP,
+  allowHint,
   createSafetyExtension,
   safety_default as default,
   externalMessage,

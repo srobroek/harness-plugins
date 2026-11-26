@@ -11,7 +11,9 @@
  *
  * The `safety_secret_store` tool ships in the secret-store plugin.
  *
- * A check that asks opens `ctx.ui.confirm`; a session without dialogs (print, JSON, a subagent child) blocks the call.
+ * A check that asks refuses the call in `deny` mode (the default), naming `/safety allow`, and opens
+ * `ctx.ui.confirm` in `ask` mode (`approvals.ts`). A session without dialogs (print, JSON, a subagent
+ * child) refuses it in either mode. A block is never affected by the mode or `/safety allow`.
  */
 
 import { join } from "node:path"
@@ -35,6 +37,7 @@ import { decideToolCall, type MigrationOptions, migrationOverride } from "../sha
 import { createPackageAdvisor } from "../shared/package-investigate.ts"
 import { type DecisionID, type ReviewOptions, reviewPermission } from "../shared/permission.ts"
 import { createRedactor, type RedactOptions, type Redactor, readRedactOptions } from "../shared/redact.ts"
+import { type ApprovalMode, type Approvals, type Call, COMMAND_DESCRIPTION, createApprovals, readApprovalMode, SUBCOMMANDS } from "./approvals.ts"
 import { SYSTEM_GATE_IDS, type SystemGateID, type SystemGateOptions, systemGate } from "./system-gates.ts"
 
 export type PiFeatureID =
@@ -67,9 +70,11 @@ export type PiOptions = {
   gitWrappers: readonly string[]
   /** Folders whose linked worktrees, of any repository, the directory-flag check takes as inside; `~` expanded. */
   worktreeRoots: readonly string[]
+  /** How a check that asks is settled; `deny` by default. */
+  approvals: ApprovalMode
 }
 
-/** `{ disable, opAllow, gitWrappers, worktreeRoots, redactSecrets, redactNames, redactExclude }`, read as the OpenCode options are. */
+/** `{ disable, opAllow, gitWrappers, worktreeRoots, approvals, redactSecrets, redactNames, redactExclude }`, read as the OpenCode options are. */
 export function readPiOptions(raw: unknown): PiOptions {
   const options = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
   const disable: unknown[] = Array.isArray(options.disable) ? options.disable : []
@@ -80,6 +85,7 @@ export function readPiOptions(raw: unknown): PiOptions {
     redact: readRedactOptions(options),
     gitWrappers: readGitWrappers(options),
     worktreeRoots: readWorktreeRoots(options.worktreeRoots),
+    approvals: readApprovalMode(options.approvals),
   }
 }
 
@@ -209,17 +215,44 @@ export async function gateWrite(tool: string, input: unknown, cwd: string, confi
 export type Asker = { hasUI: boolean; ui: { confirm(title: string, message: string): Promise<boolean> } }
 
 export const NO_UI_REFUSAL =
-  "Blocked by safety: this call needs the user's approval, and this pi session cannot show a dialog (print or JSON mode, or a subagent child). Hand the command to the user, or run it from an interactive session."
+  "Blocked by safety: this call needs the user's approval, and this pi session cannot show a dialog (print or JSON mode, or a subagent child), so it is refused, and /safety allow cannot permit it here. Hand the command and your reason to the user or the parent session, which can run it."
 
 export const DECLINED = "Blocked by safety: the user declined this call."
 
-/** The `tool_call` result for a verdict: a question is confirmed, and blocks without a dialog. */
-export async function settle(verdict: Verdict, asker: Asker): Promise<ToolCallEventResult | undefined> {
+export const DENIED = "Blocked by safety: this call needs the user's approval, and safety approvals are set to deny, so it is refused without a dialog."
+
+export const STOP = "Stop and tell the user what you wanted to run and why."
+
+/** The end of a `deny`-mode refusal: how the user permits refusal `id`. */
+export function allowHint(id: string): string {
+  return `${STOP} Give them the refusal ID ${id}. The user can run \`/safety allow ${id}\` to permit exactly this command, unchanged and in this directory, once; after they do, run it again. Do not try another form of it.`
+}
+
+function refusal(head: string, message: string, call: Call | undefined, id?: string): string {
+  const shown = call === undefined ? [] : [`${id === undefined ? "Command" : `Refusal ${id}: command`}, in ${call.cwd}:\n${call.command}`]
+  const tail = id === undefined ? [] : [allowHint(id)]
+  return [head, ...shown, message, ...tail].join("\n\n")
+}
+
+/**
+ * The `tool_call` result for a verdict on `call` (a `bash` call; none for the file tools). A block
+ * stands. A question passes when `/safety allow <id>` permitted this exact call, which spends the
+ * permit. Otherwise a session without a UI refuses it, `ask` mode confirms it, and `deny` mode
+ * refuses it under a refusal ID the user can allow.
+ */
+export async function settle(verdict: Verdict, asker: Asker, approvals: Approvals, call?: Call): Promise<ToolCallEventResult | undefined> {
+  const permitted = call !== undefined && asker.hasUI && approvals.spend(call)
   if (verdict.kind === "run") return undefined
   if (verdict.kind === "block") return { block: true, reason: verdict.reason }
-  if (!asker.hasUI) return { block: true, reason: `${NO_UI_REFUSAL}\n\n${verdict.message}` }
-  if (await asker.ui.confirm("safety: approve this command?", verdict.message)) return undefined
-  return { block: true, reason: `${DECLINED}\n\n${verdict.message}` }
+  if (permitted) return undefined
+  if (!asker.hasUI) return { block: true, reason: refusal(NO_UI_REFUSAL, verdict.message, call) }
+  if (approvals.mode === "ask") {
+    if (await asker.ui.confirm("safety: approve this command?", verdict.message)) return undefined
+    return { block: true, reason: refusal(DECLINED, verdict.message, call) }
+  }
+  // A file tool's call is no command, so nothing can allow it.
+  if (call === undefined) return { block: true, reason: [DENIED, verdict.message, STOP].join("\n\n") }
+  return { block: true, reason: refusal(DENIED, verdict.message, call, approvals.refuse(call)) }
 }
 
 /**
@@ -253,6 +286,8 @@ export type Overrides = {
   review?: ReviewOptions
   migrations?: MigrationOptions
   system?: GateConfig["system"]
+  /** The clock `/safety allow` permits expire by. */
+  now?: () => number
 }
 
 export function createSafetyExtension(overrides: Overrides = {}) {
@@ -272,11 +307,27 @@ export function createSafetyExtension(overrides: Overrides = {}) {
     const advisor = createPackageAdvisor()
     const redactor = options.redact.enabled ? createRedactor(() => env, options.redact) : undefined
     const warning = loaded.warning
+    // One per extension instance: pi starts a new one for each session, so a permit stays in it.
+    const approvals = createApprovals(options.approvals, overrides.now)
 
     if (warning !== undefined)
       pi.on("session_start", (_event, ctx) => {
         if (ctx.hasUI) ctx.ui.notify(warning, "warning")
       })
+    pi.on("session_shutdown", () => approvals.reset())
+
+    // Only the user runs a command: typed, or a `prompt` over RPC. No tool call or file reaches it.
+    pi.registerCommand("safety", {
+      description: COMMAND_DESCRIPTION,
+      getArgumentCompletions: (prefix) => {
+        const items = SUBCOMMANDS.filter((verb) => verb.startsWith(prefix.trim())).map((value) => ({ value, label: value }))
+        return items.length > 0 ? items : null
+      },
+      handler: async (args, ctx) => {
+        const notice = approvals.command(args, ctx.hasUI)
+        if (ctx.hasUI) ctx.ui.notify(notice.text, notice.level)
+      },
+    })
 
     pi.on("tool_call", async (event, ctx) => {
       if (isToolCallEventType("bash", event)) {
@@ -285,10 +336,11 @@ export function createSafetyExtension(overrides: Overrides = {}) {
           const rewritten = rewriteCloseKeywords(event.input.command)
           if (rewritten !== undefined) event.input.command = rewritten
         }
-        return settle(await gateBash(event.input.command, ctx.cwd, config), ctx)
+        const call = { command: event.input.command, cwd: ctx.cwd }
+        return settle(await gateBash(call.command, call.cwd, config), ctx, approvals, call)
       }
       if (isToolCallEventType("edit", event) || isToolCallEventType("write", event))
-        return settle(await gateWrite(event.toolName, event.input, ctx.cwd, config), ctx)
+        return settle(await gateWrite(event.toolName, event.input, ctx.cwd, config), ctx, approvals)
       return undefined
     })
 
