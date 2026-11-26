@@ -1,19 +1,20 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { execFileSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   clearReport,
-  collectTombstones,
   type JobLookup,
   MAX_REPORT_BYTES,
   neededLookups,
+  legacyReportFile,
   parseReport,
   type ReportClock,
   type ReportJob,
   type RunningReport,
   readReports,
+  removeLegacyReport,
   removeReport,
   reportBlock,
   reportFile,
@@ -35,6 +36,7 @@ const report = (sessionID: string, at: number, jobs: ReportJob[] = [{ kind: "she
   sessionID,
   jobs,
   at,
+  gen: 0,
   pid: 4242,
   host: "box",
   instance: "box:4242:a",
@@ -48,10 +50,15 @@ const alive = () => true
 const clock = (now = 1_500, over: Partial<ReportClock> = {}): ReportClock => ({ now, host: "box", instance: "box:4242:a", alive, ...over })
 const identity = (path: string) => path
 
-describe("writing and clearing", () => {
+const INSTANCE_A = "box:4242:a"
+const INSTANCE_B = "box:99:b"
+const by = (instance: string, sessionID: string, at: number, jobs?: ReportJob[], gen = 0): RunningReport => ({ ...report(sessionID, at, jobs), instance, gen })
+const files = () => readdirSync(runningDirectory(root)).filter((name) => name.endsWith(".json")).sort()
+
+describe("writing and clearing: one file per session and instance", () => {
   test("a written report reads back as it was given, whole, with the file's mtime", () => {
-    const written = report("ses_a", 10, [{ kind: "subagent", sessionID: "ses_x", childSessionID: "ses_y", shellID: "sh1", command: "tail -f /w/log", cwd: "/w" }])
-    expect(writeReport(root, written)).toBe("written")
+    const written = { ...report("ses_a", 10, [{ kind: "subagent", sessionID: "ses_x", childSessionID: "ses_y", shellID: "sh1", command: "tail -f /w/log", cwd: "/w" }]), gen: 7 }
+    writeReport(root, written)
     const read = readReports(root)
     expect(read.unreadable).toBe(false)
     expect(read.reports).toHaveLength(1)
@@ -59,69 +66,80 @@ describe("writing and clearing", () => {
     expect(Math.abs((read.reports[0]?.mtimeMs ?? 0) - Date.now())).toBeLessThan(60_000)
   })
 
-  test("a write does not replace the session's report on disk that has an `at` as new or newer, and replaces one that is older", () => {
-    writeReport(root, report("ses_a", 20, [{ kind: "shell", command: "newer" }]))
-    expect(writeReport(root, report("ses_a", 10, [{ kind: "shell", command: "older" }]))).toBe("superseded")
-    expect(readReports(root).reports[0]?.jobs[0]?.command).toBe("newer")
-    expect(writeReport(root, report("ses_a", 20, [{ kind: "shell", command: "same" }]))).toBe("superseded")
-    expect(writeReport(root, report("ses_a", 21, [{ kind: "shell", command: "later" }]))).toBe("written")
-    expect(readReports(root).reports[0]?.jobs[0]?.command).toBe("later")
+  test("two instances' reports for one session are two files, and each rewrites only its own", () => {
+    writeReport(root, by(INSTANCE_A, "ses_a", 10, [{ kind: "shell", command: "from a" }]))
+    writeReport(root, by(INSTANCE_B, "ses_a", 5, [{ kind: "shell", command: "from b" }]))
+    expect(files()).toHaveLength(2)
+    writeReport(root, by(INSTANCE_A, "ses_a", 11, [{ kind: "shell", command: "from a again" }]))
+    const commands = readReports(root).reports.map((r) => r.jobs[0]?.command).sort()
+    expect(commands).toEqual(["from a again", "from b"])
   })
 
-  test("a clear deletes the session's report unless the report on disk is newer", () => {
-    writeReport(root, report("ses_a", 20))
-    writeReport(root, report("ses_b", 20))
-    expect(clearReport(root, "ses_a", 10)).toBe("superseded")
-    expect(readReports(root).reports.map((r) => r.sessionID).sort()).toEqual(["ses_a", "ses_b"])
-    expect(clearReport(root, "ses_a", 20)).toBe("cleared")
-    expect(readReports(root).reports.map((r) => r.sessionID)).toEqual(["ses_b"])
+  test("a clear removes the instance's own file and no other: B's report survives A's clear, whatever the clocks say", () => {
+    // B reports later than A's clear by sequence, but with an equal or earlier clock reading.
+    for (const bAt of [20, 15, 3]) {
+      writeReport(root, by(INSTANCE_A, "ses_a", 20, [{ kind: "shell", command: "cd /w/linked && make" }]))
+      clearReport(root, "ses_a", INSTANCE_A)
+      writeReport(root, by(INSTANCE_B, "ses_a", bAt, [{ kind: "shell", command: "cd /w/linked && make" }]))
+      const read = readReports(root)
+      expect(read.reports.map((r) => r.instance)).toEqual([INSTANCE_B])
+      expect(reportBlock(read.reports, ["/w/linked"], () => undefined, clock(), identity)).toContain("names the worktree")
+      clearReport(root, "ses_a", INSTANCE_B)
+      expect(files()).toEqual([])
+    }
   })
 
-  test("a clear leaves a tombstone, which holds nothing, and a late older snapshot from another instance cannot bring the report back", () => {
-    // Instance A writes and clears; instance B, which failed to write earlier, retries its older snapshot.
-    writeReport(root, report("ses_a", 10, [{ kind: "shell", command: "cd /w/linked && make" }]))
-    expect(clearReport(root, "ses_a", 20)).toBe("cleared")
-    expect(readReports(root)).toEqual({ reports: [], unreadable: false })
-    expect(readdirSync(runningDirectory(root)).filter((name) => name.endsWith(".json"))).toHaveLength(1)
-    expect(writeReport(root, { ...report("ses_a", 15, [{ kind: "shell", command: "cd /w/linked && make" }]), instance: "box:99:b" })).toBe("superseded")
-    const read = readReports(root)
-    expect(read.reports).toEqual([])
-    expect(reportBlock(read.reports, ["/w/linked"], () => undefined, clock(), identity)).toBeUndefined()
-    // A newer report of the session replaces the tombstone.
-    expect(writeReport(root, report("ses_a", 30))).toBe("written")
-    expect(readReports(root).reports.map((r) => r.sessionID)).toEqual(["ses_a"])
+  test("a clear leaves no file behind, and clearing what is not there is not an error", () => {
+    writeReport(root, report("ses_a", 1))
+    clearReport(root, "ses_a", INSTANCE_A)
+    clearReport(root, "ses_a", INSTANCE_A)
+    expect(files()).toEqual([])
   })
 
-  test("a tombstone is collected once its file is older than the expiry, a report and a fresh tombstone are not", () => {
-    clearReport(root, "ses_old", 5)
-    clearReport(root, "ses_new", 5)
-    writeReport(root, report("ses_live", 5))
-    const aged = new Date(1_000)
-    utimesSync(reportFile(root, "ses_old"), aged, aged)
-    utimesSync(reportFile(root, "ses_live"), aged, aged)
-    expect(collectTombstones(root, 1_000 + 24 * 3_600_000)).toBe(1)
-    expect(readdirSync(runningDirectory(root)).filter((name) => name.endsWith(".json")).sort()).toEqual([reportFile(root, "ses_live"), reportFile(root, "ses_new")].map((path) => path.split("/").pop() as string).sort())
-  })
-
-  test("a session's removal deletes its tombstone too", () => {
-    clearReport(root, "ses_a", 5)
-    removeReport(root, "ses_a")
-    expect(readdirSync(runningDirectory(root)).filter((name) => name.endsWith(".json"))).toEqual([])
-  })
-
-  test("a file at the session's path that is not that session's report is replaced by a write, whatever its `at`", () => {
-    mkdirSync(runningDirectory(root), { recursive: true })
-    writeFileSync(reportFile(root, "ses_a"), JSON.stringify({ ...report("ses_other", 999) }))
-    expect(writeReport(root, report("ses_a", 1))).toBe("written")
-    expect(readReports(root).reports.map((r) => r.sessionID)).toEqual(["ses_a"])
-  })
-
-  test("one session's clear and removal touch no other session's report", () => {
+  test("one session's clear touches no other session's report", () => {
     writeReport(root, report("ses_a", 1))
     writeReport(root, report("ses_b", 1))
-    removeReport(root, "ses_a")
+    clearReport(root, "ses_a", INSTANCE_A)
     expect(readReports(root).reports.map((r) => r.sessionID)).toEqual(["ses_b"])
-    removeReport(root, "ses_a") // already gone: not an error
+  })
+
+  test("a removal that names the generation of a deleted incarnation keeps a newer incarnation's report", () => {
+    writeReport(root, by(INSTANCE_A, "ses_a", 1, undefined, 5))
+    expect(removeReport(root, "ses_a", INSTANCE_A, 4)).toBe("kept") // the report on disk is generation 5
+    expect(files()).toHaveLength(1)
+    expect(removeReport(root, "ses_a", INSTANCE_A, 5)).toBe("removed")
+    expect(files()).toEqual([])
+    expect(removeReport(root, "ses_a", INSTANCE_A, 5)).toBe("removed") // already gone
+  })
+
+  test("a legacy un-suffixed file is removed only when its pid and instance are ours; any other stays", () => {
+    mkdirSync(runningDirectory(root), { recursive: true })
+    const legacy = legacyReportFile(root, "ses_a")
+    const text = JSON.stringify({ sessionID: "ses_a", jobs: [], at: 1, pid: 4242, host: "box", instance: INSTANCE_A })
+    writeFileSync(legacy, text)
+    expect(removeLegacyReport(root, "ses_a", INSTANCE_B, 4242)).toBe(false)
+    expect(removeLegacyReport(root, "ses_a", INSTANCE_A, 1)).toBe(false)
+    expect(files()).toHaveLength(1)
+    expect(removeLegacyReport(root, "ses_a", INSTANCE_A, 4242)).toBe(true)
+    expect(files()).toEqual([])
+  })
+
+  test("a legacy file is read like any other report, with generation 0", () => {
+    mkdirSync(runningDirectory(root), { recursive: true })
+    writeFileSync(legacyReportFile(root, "ses_a"), JSON.stringify({ sessionID: "ses_a", jobs: [{ kind: "shell", command: "cd /w/linked && make" }], at: 1, pid: 4242, host: "box", instance: "box:99:old" }))
+    writeReport(root, by(INSTANCE_A, "ses_a", 2, []))
+    const read = readReports(root)
+    expect(read.unreadable).toBe(false)
+    expect(read.reports.map((r) => [r.instance, r.gen]).sort()).toEqual([[INSTANCE_A, 0], ["box:99:old", 0]])
+  })
+
+  test("a reader that scans the directory for `.json` and parses each file sees every per-instance file", () => {
+    writeReport(root, by(INSTANCE_A, "ses_a", 1))
+    writeReport(root, by(INSTANCE_B, "ses_a", 1))
+    for (const name of files()) {
+      expect(name).toMatch(/^[0-9a-f]{40}\.[0-9a-f]+\.json$/)
+      expect(parseReport(readFileSync(join(runningDirectory(root), name), "utf8"))).toMatchObject({ sessionID: "ses_a" })
+    }
   })
 
   test("a write leaves no temporary file behind", () => {
@@ -153,14 +171,15 @@ describe("reading", () => {
     expect(readReports(root).unreadable).toBe(true)
   })
 
-  test("a FIFO at a session's own report path does not stop a write or a clear: the report replaces it", () => {
+  test("a FIFO at an instance's own report path does not stop a write or a clear: the report replaces it", () => {
     mkdirSync(runningDirectory(root), { recursive: true })
-    execFileSync("mkfifo", [reportFile(root, "ses_a")])
-    expect(writeReport(root, report("ses_a", 1))).toBe("written")
+    execFileSync("mkfifo", [reportFile(root, "ses_a", INSTANCE_A)])
+    writeReport(root, report("ses_a", 1))
     expect(readReports(root)).toMatchObject({ unreadable: false, reports: [{ sessionID: "ses_a" }] })
-    rmSync(reportFile(root, "ses_a"))
-    execFileSync("mkfifo", [reportFile(root, "ses_a")])
-    expect(clearReport(root, "ses_a", 1)).toBe("cleared")
+    rmSync(reportFile(root, "ses_a", INSTANCE_A))
+    execFileSync("mkfifo", [reportFile(root, "ses_a", INSTANCE_A)])
+    clearReport(root, "ses_a", INSTANCE_A)
+    expect(files()).toEqual([])
   })
 
   test.each([
@@ -168,9 +187,9 @@ describe("reading", () => {
     ["a job without a kind", { sessionID: "s", jobs: [{}], at: 1, pid: 1, host: "h", instance: "i" }],
     ["a non-numeric time", { sessionID: "s", jobs: [], at: "now", pid: 1, host: "h", instance: "i" }],
     ["no server instance", { sessionID: "s", jobs: [], at: 1, pid: 1, host: "h" }],
-    ["a tombstone that is not cleared", { sessionID: "s", cleared: false, at: 1, pid: 1, host: "h" }],
-    ["a tombstone that carries jobs", { sessionID: "s", cleared: true, jobs: [], at: 1, pid: 1, host: "h" }],
-    ["a tombstone with no host", { sessionID: "s", cleared: true, at: 1, pid: 1 }],
+    ["a tombstone, which is no longer a shape", { sessionID: "s", cleared: true, at: 1, pid: 1, host: "h" }],
+    ["a negative generation", { sessionID: "s", jobs: [], at: 1, pid: 1, host: "h", instance: "i", gen: -1 }],
+    ["a fractional generation", { sessionID: "s", jobs: [], at: 1, pid: 1, host: "h", instance: "i", gen: 1.5 }],
     ["a pid that is not a positive integer", { sessionID: "s", jobs: [], at: 1, pid: 0, host: "h", instance: "i" }],
     ["a fractional pid", { sessionID: "s", jobs: [], at: 1, pid: 1.5, host: "h", instance: "i" }],
     ["an empty host", { sessionID: "s", jobs: [], at: 1, pid: 1, host: "", instance: "i" }],
@@ -292,7 +311,7 @@ describe("what a removal needs, and what a report blocks", () => {
 
   test("a file's mtime is what expiry reads for another host: a fresh file with an old `at` counts, an old file does not", () => {
     writeReport(root, { ...report("ses_a", 0, [{ kind: "shell", command: "cd /w/linked && make" }]), host: "far", instance: "far:1:c" })
-    const file = reportFile(root, "ses_a")
+    const file = reportFile(root, "ses_a", "far:1:c")
     const fresh = readReports(root).reports
     expect(reportBlock(fresh, forms, () => undefined, clock(Date.now()), identity)).toContain("names the worktree")
     utimesSync(file, new Date(0), new Date(0))
