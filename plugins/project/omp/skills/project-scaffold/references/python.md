@@ -20,7 +20,7 @@ workspace (`[tool.uv.workspace] members = ["packages/*"]`, `lang-python-packagin
 | Need | Pick |
 | --- | --- |
 | Packages / venv | `uv` (not pip, poetry) |
-| Lint + format | `ruff` (`ruff check`, `ruff format`); selected rules at least `E F I N W UP B SIM TC ANN RUF PERF C4 PT S`; per-file ignore `assert` and `ANN` in `tests/**` |
+| Lint + format | `ruff` (`ruff check`, `ruff format`); selected rules at least `E F I N W UP B SIM TC ANN RUF PERF C4 PT S`; ignore `E501` (the formatter owns line length); per-file ignore `assert` and `ANN` in `tests/**` |
 | Types | `pyright` strict is the preference; keep configured mypy (`lang-python-types`). `ty` is beta with no stable API: opt-in pilot, not the default gate |
 | Tests | `pytest` (`--strict-markers --strict-config`, `filterwarnings = error`); `hypothesis` for properties |
 | Mutation | `mutmut` on selected critical modules (POSIX or WSL) |
