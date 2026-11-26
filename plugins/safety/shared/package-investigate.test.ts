@@ -76,3 +76,26 @@ describe("package advisory", () => {
     expect(advisor.notice("s", "bun add sharp")).toBeDefined()
   })
 })
+
+describe("flag values name no package", () => {
+  for (const command of [
+    "bun install --cwd infra --frozen-lockfile --dry-run",
+    "bun install --cwd=infra",
+    "npm install --prefix infra",
+    "npm i -C infra",
+    "pnpm --dir infra install --frozen-lockfile",
+    "yarn --cwd infra install",
+  ]) {
+    test(`silent: ${command}`, () => expect(shouldInvestigate(command)).toBe(false))
+  }
+
+  test("operands after a valued flag are still named", () => {
+    expect(packagesToInvestigate("pnpm --dir infra add zod")).toEqual(["zod"])
+    expect(packagesToInvestigate("bun add --cwd infra zod")).toEqual(["zod"])
+    expect(packagesToInvestigate("npm install zod --prefix infra")).toEqual(["zod"])
+    expect(packagesToInvestigate("uv --directory infra add httpx")).toEqual(["httpx"])
+    expect(packagesToInvestigate("cargo add --manifest-path app/Cargo.toml serde")).toEqual(["serde"])
+    expect(packagesToInvestigate("pip install -t vendor requests")).toEqual(["requests"])
+    expect(packagesToInvestigate("npm install -- zod")).toEqual(["zod"])
+  })
+})
