@@ -3560,6 +3560,7 @@ describe("pending cleanup: one remover per worktree", () => {
       sessionLookupMs?: number
       idlePassMs?: number
       disposeWaitMs?: number
+      bound?: (ms: number) => Promise<void>
       retryAt?: ReadonlyArray<"pass" | "check" | "idle">
       /** The host's worktree registry (default: none, so git removes). */
       host?: HostWorktrees
@@ -3597,6 +3598,7 @@ describe("pending cleanup: one remover per worktree", () => {
       ...(over.sessionLookupMs === undefined ? {} : { sessionLookupMs: over.sessionLookupMs }),
       ...(over.idlePassMs === undefined ? {} : { idlePassMs: over.idlePassMs }),
       ...(over.disposeWaitMs === undefined ? {} : { disposeWaitMs: over.disposeWaitMs }),
+      ...(over.bound === undefined ? {} : { bound: over.bound }),
       ...(over.retryAt === undefined ? {} : { retryAt: over.retryAt }),
     })
     if (over.prime !== false) await pending.prime()
@@ -5228,74 +5230,104 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
-    // The host's removal takes no AbortSignal, so a removal that never answers keeps the lease: writers and other removals wait a bounded time and give up.
-    test("a host removal that never answers neither blocks an idle hook indefinitely nor lets another removal proceed", async () => {
+    /**
+     * Bounds the test ends by hand, in place of wall-clock timers, so these tests do not depend on how loaded the machine is.
+     * `end(ms)` ends every bound that was asked for `ms` milliseconds.
+     */
+    const handBounds = () => {
+      const open: Array<{ ms: number; ended: boolean; end: () => void }> = []
+      return {
+        bound: (ms: number) => new Promise<void>((done) => open.push({ ms, ended: false, end: done })),
+        /** Waits until a bound of `ms` has been asked for, then ends every such bound. */
+        end: async (ms: number) => {
+          while (!open.some((candidate) => candidate.ms === ms && !candidate.ended)) await Bun.sleep(2)
+          for (const entry of open.filter((candidate) => candidate.ms === ms && !candidate.ended)) {
+            entry.ended = true
+            entry.end()
+          }
+        },
+      }
+    }
+    const IDLE_BOUND = 1_111
+    const DISPOSE_BOUND = 2_222
+    /** A host registry whose removal of the worktree never answers until `release` is called. */
+    const hungHost = () => {
       const removing = Promise.withResolvers<void>()
       const never = Promise.withResolvers<void>()
+      const state = { directory: "" }
       const host: HostWorktrees = {
-        list: async () => [{ directory: "PLACEHOLDER" }],
+        list: async () => [{ directory: state.directory }],
         remove: async () => {
           removing.resolve()
           await never.promise
         },
       }
-      const h = await harness("running-hung-removal", { lock: { waitMs: 300 }, host, idlePassMs: 500 })
-      ;(host as { list: unknown }).list = async () => [{ directory: h.f.linked }]
-      await h.pending.record(h.f.receipt, "ses_lead")
-      await h.pending.start()
-      // The host's own idle hook, not the event helper: its pass reaches the hung removal.
-      const hook = outsideLocks(() => h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] } as never))
-      await Promise.race([removing.promise, Bun.sleep(25_000).then(() => Promise.reject(new Error("the host removal was never called")))])
-      // The hook returns while the removal is still hung (it waits for its pass at most idlePassMs).
-      expect(await Promise.race([hook.then(() => "returned"), Bun.sleep(20_000).then(() => "blocked")])).toBe("returned")
-      // Another session's idle hook returns, with its report not recorded.
-      const second = await Promise.race([outsideLocks(() => reportFrom(h, "ses_b", [elsewhere()])).then(() => "returned"), Bun.sleep(20_000).then(() => "blocked")])
-      expect(second).toBe("returned")
-      expect(h.pending.unsettledCount()).toBe(1)
-      expect(reportIds(h)).toEqual([])
-      // With that session gone nothing is unsettled, so the next removal is stopped by the lease alone.
-      await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_b" } })
-      await Bun.sleep(100)
-      expect(h.pending.unsettledCount()).toBe(0)
-      // Another removal, of another worktree, gives up on the lease and refuses.
-      const other = join(h.f.root, "another worktree")
-      mkdirSync(other)
-      let reason: string | undefined
-      let ran = false
-      const removal = h.pending.removalFor("ses_lead")
-      await removal.removalSection(other, async () => {
-        reason = await removal.finalCheck(other)
-        ran = reason === undefined
-        return { ok: false, reason: "test: nothing is removed" } as never
-      })
-      expect(ran).toBe(false)
-      expect(reason).toContain("lease could not be taken")
-      never.resolve()
-      await h.finish()
+      return { host, state, removing: removing.promise, release: () => never.resolve() }
+    }
+
+    // The host's removal takes no AbortSignal, so a removal that never answers keeps the lease: writers and other removals give up at once (waitMs 0).
+    test("a host removal that never answers neither blocks an idle hook indefinitely nor lets another removal proceed", async () => {
+      const hung = hungHost()
+      const bounds = handBounds()
+      const h = await harness("running-hung-removal", { lock: { waitMs: 0 }, host: hung.host, idlePassMs: IDLE_BOUND, bound: bounds.bound })
+      try {
+        hung.state.directory = h.f.linked
+        await h.pending.record(h.f.receipt, "ses_lead")
+        await h.pending.start()
+        // The host's own idle hook, not the event helper: its pass reaches the hung removal.
+        const hook = outsideLocks(() => h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] } as never))
+        await hung.removing
+        // The hook returns once its bound ends, with the removal still hung.
+        await bounds.end(IDLE_BOUND)
+        await hook
+        // Another session's idle hook cannot take the lease: its report stays unsettled, a hold, and the hook returns.
+        const second = outsideLocks(() => reportFrom(h, "ses_b", [elsewhere()]))
+        await bounds.end(IDLE_BOUND)
+        await second
+        expect(h.pending.unsettledCount()).toBe(1)
+        expect(reportIds(h)).toEqual([])
+        // With that session gone nothing is unsettled, so the next removal is stopped by the lease alone.
+        await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_b" } })
+        while (h.pending.unsettledCount() !== 0) await Bun.sleep(5)
+        // Another removal, of another worktree, gives up on the lease and refuses.
+        const other = join(h.f.root, "another worktree")
+        mkdirSync(other)
+        let reason: string | undefined
+        let ran = false
+        const removal = h.pending.removalFor("ses_lead")
+        await removal.removalSection(other, async () => {
+          reason = await removal.finalCheck(other)
+          ran = reason === undefined
+          return { ok: false, reason: "test: nothing is removed" } as never
+        })
+        expect(ran).toBe(false)
+        expect(reason).toContain("lease could not be taken")
+      } finally {
+        hung.release()
+        await h.finish()
+      }
     })
 
     test("disposal waits a bounded time for a hung host removal and leaves its lease in place", async () => {
-      const removing = Promise.withResolvers<void>()
-      const never = Promise.withResolvers<void>()
-      const host: HostWorktrees = {
-        list: async () => [],
-        remove: async () => {
-          removing.resolve()
-          await never.promise
-        },
+      const hung = hungHost()
+      const bounds = handBounds()
+      const h = await harness("running-hung-dispose", { lock: { waitMs: 0 }, host: hung.host, idlePassMs: IDLE_BOUND, disposeWaitMs: DISPOSE_BOUND, bound: bounds.bound })
+      try {
+        hung.state.directory = h.f.linked
+        await h.pending.record(h.f.receipt, "ses_lead")
+        await h.pending.start()
+        void outsideLocks(() => h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] } as never))
+        await hung.removing
+        const disposing = h.pending.dispose()
+        // Disposal is still waiting for the chain until its bound ends; ending it lets disposal return with the removal hung.
+        await bounds.end(DISPOSE_BOUND)
+        await disposing
+        // The removal is still running, so disposal let go of nothing: its lease stays for the pid and stale rules to reclaim.
+        expect(existsSync(runningLeaseFile(receiptDirectory(h.f.env)))).toBe(true)
+      } finally {
+        hung.release()
+        await h.finish()
       }
-      const h = await harness("running-hung-dispose", { lock: { waitMs: 300 }, host, idlePassMs: 500, disposeWaitMs: 300 })
-      ;(host as { list: unknown }).list = async () => [{ directory: h.f.linked }]
-      await h.pending.record(h.f.receipt, "ses_lead")
-      await h.pending.start()
-      void outsideLocks(() => h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] } as never))
-      await Promise.race([removing.promise, Bun.sleep(25_000).then(() => Promise.reject(new Error("the host removal was never called")))])
-      const disposed = await Promise.race([h.pending.dispose().then(() => "disposed"), Bun.sleep(20_000).then(() => "hung")])
-      expect(disposed).toBe("disposed")
-      // The removal is still running, so disposal let go of nothing: its lease stays for the pid and stale rules to reclaim.
-      expect(existsSync(runningLeaseFile(receiptDirectory(h.f.env)))).toBe(true)
-      never.resolve()
-      await h.finish()
     })
 
     // A write that failed is written again from its stored snapshot by each of three triggers. Each runs here alone, the others

@@ -271,6 +271,8 @@ export type PendingDeps = {
   idlePassMs?: number
   /** How long disposal waits for the passes still running (default {@link DISPOSE_WAIT_MS}). */
   disposeWaitMs?: number
+  /** Test seam: a bound that ends when the test says, in place of a timer of `ms` (default: a real timer). */
+  bound?: (ms: number) => Promise<void>
   /** Test seam: which triggers write failed reports and deletions again (default all three). */
   retryAt?: ReadonlyArray<RetryTrigger>
   /** Test seam: the clock reports expire on, against the files' mtime (default: the real clock). */
@@ -1218,9 +1220,11 @@ export function createPendingCleanup(deps: PendingDeps) {
   /** `work`, or undefined once `ms` have passed: the hook returns, and the pass goes on in the chain. */
   const boundedBy = async (work: Promise<unknown>, ms: number): Promise<void> => {
     let timer: ReturnType<typeof setTimeout> | undefined
-    const bound = new Promise<void>((done) => {
-      timer = setTimeout(done, ms)
-    })
+    const bound =
+      deps.bound?.(ms) ??
+      new Promise<void>((done) => {
+        timer = setTimeout(done, ms)
+      })
     try {
       await Promise.race([work, bound])
     } finally {

@@ -6,9 +6,9 @@ import { join } from "node:path"
 import {
   clearReport,
   type JobLookup,
+  legacyReportFile,
   MAX_REPORT_BYTES,
   neededLookups,
-  legacyReportFile,
   parseReport,
   type ReportClock,
   type ReportJob,
