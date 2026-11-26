@@ -364,6 +364,10 @@ The OpenCode plugin and the Claude Code hook do not run these three gates.
    child claimed, but the child cannot close the parent's. Name the ids as literal words. The
    gate reads the claim with `bd show --json` from the store the write lands in. It refuses
    the command when bd cannot answer.
+
+   To reopen a blocked bead you still own, use this exact form with the full ID and your literal actor:
+   `bd update FULL_ID --status open --if-status blocked --if-assignee ACTOR`.
+   Both guards must still match when `bd` writes. Claim the open bead before doing more work.
 2. `bd-close-evidence-gate`: a close needs `--reason` (or `-r`, or a readable `--reason-file`)
    that names checkable evidence, as `rule://beads-evidence` asks. The gate accepts any of
    these:

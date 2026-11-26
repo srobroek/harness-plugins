@@ -302,6 +302,17 @@ export type WorkGateDeps = {
   gitWrappers?: readonly string[]
 }
 
+function isGuardedOwnerUnblock(site: WorkSite, actor: string, rows: readonly IssueRow[]): boolean {
+  const [id] = site.ids
+  if (!actor || !id || site.ids.length !== 1 || site.verb !== "update" || site.shape.globals.length !== 0) return false
+  const expected = [id, "--status", "open", "--if-status", "blocked", "--if-assignee", actor]
+  return (
+    site.shape.args.length === expected.length &&
+    expected.every((word, index) => site.shape.args[index] === word) &&
+    rows.some((row) => row.id === id && row.status === "blocked" && row.assignee === actor)
+  )
+}
+
 /** Decide the claim and evidence gates for one bash command; `undefined` lets it through. */
 export async function decideBeadWork(command: string, cwd: string, deps: WorkGateDeps): Promise<WorkRefusal | undefined> {
   const sites = workSites(command)
@@ -354,13 +365,16 @@ export async function decideBeadWork(command: string, cwd: string, deps: WorkGat
         cause: `bd show printed no issue list for ${site.ids.join(", ")}, so the claim cannot be checked`,
         resolution: "retry once bd answers; the command was refused without proof of the claim",
       }
+    if (isGuardedOwnerUnblock(site, deps.actor, rows)) continue
     const refused = unclaimedBeads(deps.actor, site.ids, rows)
     if (refused.length > 0)
       return {
         gate: CLAIM_GATE,
         cause: `${named} works on ${refused.join(", ")}, which this session (${deps.actor}) has not claimed`,
         resolution:
-          "claim the bead first with `bd update ID --claim`; a bead another session holds is worked and closed by that session or a session above it",
+          site.verb === "update" && rows.some((row) => row.status === "blocked" && row.assignee === deps.actor)
+            ? `to unblock your bead, run bd update FULL_ID --status open --if-status blocked --if-assignee ${deps.actor}; claim it before other updates`
+            : "claim the bead first with `bd update ID --claim`; a bead another session holds is worked and closed by that session or a session above it",
       }
   }
   return undefined
