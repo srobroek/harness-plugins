@@ -12,12 +12,17 @@
 // Only types come from the host package, so the bundle imports nothing from pi or OMP at runtime.
 // OMP loads the bundle unchanged.
 
+import { mkdirSync } from "node:fs"
+import { hostname } from "node:os"
 import type { AgentToolResult, ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent"
-import { ownershipOf, readClaim } from "@srobroek/opencode-lib/worktree-claims"
+import { withLease } from "@srobroek/opencode-lib/lease-lock"
+import { blockWithoutSessionLookup, runningLeaseFile } from "@srobroek/opencode-lib/running-reports"
+import { processAlive } from "@srobroek/opencode-lib/subprocess"
+import { canonicalDirectory, ownershipOf, readClaim } from "@srobroek/opencode-lib/worktree-claims"
 import { holdsState, type LockOptions, lockedWorktreeRead, lockedWorktreeRemoval } from "@srobroek/opencode-lib/worktree-locks"
 import type { TSchema } from "typebox"
 import { ownershipDeferral } from "../opencode/src/auto-cleanup.ts"
-import { type CleanupDeps, cleanupDelivery, type DeliveryCleanupParams } from "../opencode/src/cleanup.ts"
+import { type CleanupDeps, type CleanupFailure, cleanupDelivery, type DeliveryCleanupParams, type RemovalFacts } from "../opencode/src/cleanup.ts"
 import {
   CLEANUP_ACTION,
   CLEANUP_INPUT,
@@ -28,7 +33,7 @@ import {
   deferredToolResult,
   explicitDeferral,
 } from "../opencode/src/cleanup-tool.ts"
-import { type GitRunner, repositoryContext } from "../opencode/src/landing-receipt.ts"
+import { type GitRunner, receiptDirectory, repositoryContext } from "../opencode/src/landing-receipt.ts"
 
 /** The lease owner written into the lock record. Diagnostic only: the lock is the same one every remover takes. */
 const LOCK_OWNER = "delivery (pi)"
@@ -68,7 +73,7 @@ export type PiCleanupDeps = {
   now?: () => number
 }
 
-type SessionCoordination = Required<Pick<CleanupDeps, "proofSection" | "removalSection" | "authorize" | "coordinate">>
+type SessionCoordination = Required<Pick<CleanupDeps, "proofSection" | "removalSection" | "finalCheck" | "authorize" | "coordinate">>
 
 /**
  * The coordination of a cleanup in the session's repository at `cwd`. The proofs and the removal run
@@ -76,12 +81,27 @@ type SessionCoordination = Required<Pick<CleanupDeps, "proofSection" | "removalS
  * removal, the lane claim and the background-work records are read fresh. `authorize` prompts
  * nobody: it defers a worktree a lane owns to that owner. Another repository is refused.
  */
-export function sessionCoordination(cwd: string, deps: Pick<PiCleanupDeps, "lock" | "observe" | "now"> = {}): SessionCoordination {
+export function sessionCoordination(cwd: string, deps: Pick<PiCleanupDeps, "lock" | "observe" | "now" | "cleanup"> = {}): SessionCoordination {
   const now = deps.now ?? Date.now
   const lock: LockOptions = { sessionID: LOCK_OWNER, now, ...deps.lock }
   // Observed on every use, like the OpenCode plugin's: a checkout can move between calls.
   const common = async (): Promise<string | null> => (await repositoryContext(cwd, deps.observe))?.commonDir ?? null
+  // The other verified spellings of the worktree (the receipt's own), handed over by the final check.
+  let spellings: readonly string[] = []
+  const receiptsRoot = () => receiptDirectory(deps.cleanup?.env ?? process.env)
+  /**
+   * What the OpenCode servers' running reports say about `worktree`, or undefined. Pi has no session
+   * lookup: a job whose location cannot be established holds, and a report is live by its pid on this host.
+   */
+  const runningBlock = (worktree: string): string | undefined => {
+    const forms = [...new Set([worktree, canonicalDirectory(worktree), ...spellings, ...spellings.map(canonicalDirectory)])]
+    return blockWithoutSessionLookup(receiptsRoot(), forms, { now: now(), host: hostname(), alive: processAlive }, canonicalDirectory)
+  }
   return {
+    finalCheck: async (_worktree, others = []) => {
+      spellings = others
+      return undefined
+    },
     proofSection: async (worktree, read) => {
       const dir = await common()
       if (dir === null) return { ok: false, reason: UNRESOLVED_COMMON }
@@ -94,7 +114,17 @@ export function sessionCoordination(cwd: string, deps: Pick<PiCleanupDeps, "lock
       if (dir === null) return { ok: false, reason: UNRESOLVED_COMMON }
       const outcome = await lockedWorktreeRemoval(dir, worktree, lock, {
         recheck: async () => removalBlock(dir, worktree, now()),
-        remove: run,
+        // Under the worktree lock, the store's lease from the last read of the reports to the end of the removal:
+        // a report an OpenCode server writes meanwhile waits for it (the order is always worktree lock, then lease).
+        remove: async (): Promise<CleanupFailure | RemovalFacts> => {
+          mkdirSync(receiptsRoot(), { recursive: true })
+          const held = await withLease(runningLeaseFile(receiptsRoot()), { owner: LOCK_OWNER, now, ...(deps.lock?.waitMs === undefined ? {} : { waitMs: deps.lock.waitMs }) }, async () => {
+            const blocked = runningBlock(worktree)
+            return blocked === undefined ? run() : ({ ok: false, reason: `worktree.held: observed ${blocked}, expected no running work; nothing was removed` } satisfies CleanupFailure)
+          })
+          if (held.kind === "failed") return { ok: false, reason: `the running-work store lease could not be taken (${held.reason}), so running work cannot be ruled out` }
+          return held.value
+        },
       })
       if (outcome.removed) return outcome.value
       return { ok: false, reason: `worktree.held: observed ${outcome.reason}, expected no owner, hold or competing remover; nothing was removed` }

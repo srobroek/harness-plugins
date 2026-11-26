@@ -261,3 +261,25 @@ export function reportBlock(
   }
   return undefined
 }
+
+/** The store's lease file: every writer of a report, and every remover from its last read to its end, holds it. */
+export const runningLeaseFile = (receiptsRoot: string) => join(receiptsRoot, ".running.lock")
+
+/**
+ * Why the reports hold a removal of `forms` for a remover with no session lookup (pi, OMP): nothing
+ * about where a job's session works can be learned, so a job that records no cwd and does not name the
+ * worktree in its command holds. A store that cannot be read or written holds too. Liveness is by pid
+ * on this host and by expiry otherwise. Read under the store's lease. Pure apart from reading the store.
+ */
+export function blockWithoutSessionLookup(
+  receiptsRoot: string,
+  forms: readonly string[],
+  clock: Pick<ReportClock, "now" | "host" | "alive">,
+  canonical: (path: string) => string,
+): string | undefined {
+  if (!reportsWritable(receiptsRoot)) return "the running-work store is not writable, so running work cannot be ruled out"
+  const read = readReports(receiptsRoot)
+  if (read.unreadable) return "the running-work reports cannot be read, so running work cannot be ruled out"
+  // No instance of a server matches this one, so no report is judged dead by what a session lookup says.
+  return reportBlock(read.reports, forms, () => ({ state: "unknown" }), { ...clock, instance: "" }, canonical)
+}

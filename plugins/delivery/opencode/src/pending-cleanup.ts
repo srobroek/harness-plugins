@@ -32,6 +32,19 @@ import { join, resolve } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import { type EventWatchDeps, watchEvents } from "@srobroek/opencode-lib/event-watch"
 import { type LeaseOptions, withLease } from "@srobroek/opencode-lib/lease-lock"
+import {
+  clearReport,
+  type JobLookup,
+  neededLookups,
+  type ReportClock,
+  type ReportJob,
+  readReports,
+  removeReport,
+  reportBlock,
+  reportsWritable,
+  reportVersion,
+  writeReport,
+} from "@srobroek/opencode-lib/running-reports"
 import { canonicalCheckout } from "@srobroek/opencode-lib/session-eviction"
 import { isSessionNotFound } from "@srobroek/opencode-lib/session-lanes"
 import { processAlive } from "@srobroek/opencode-lib/subprocess"
@@ -77,19 +90,6 @@ import {
   repositoryContext,
 } from "./landing-receipt.ts"
 import { type LaneClient, laneSessionsIn, moveLaneHome } from "./lane-move.ts"
-import {
-  clearReport,
-  type JobLookup,
-  neededLookups,
-  type ReportClock,
-  type ReportJob,
-  readReports,
-  removeReport,
-  reportBlock,
-  reportsWritable,
-  reportVersion,
-  writeReport,
-} from "./running-reports.ts"
 
 /** A receipt file's name: `<epoch>-<merge oid prefix>.json` (see `receiptId`). */
 const RECEIPT_FILE = /^\d+-(?:[0-9a-f]{12}|nomerge)\.json$/
