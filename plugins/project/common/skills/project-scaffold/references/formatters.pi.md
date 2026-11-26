@@ -18,6 +18,7 @@ docstring-code-format = true
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "TC", "ANN", "RUF", "PERF", "C4", "PT", "S"]
+ignore = ["E501"]          # ruff format owns line length
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "ANN"]
@@ -26,6 +27,9 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "TC", "ANN", "RUF", "PERF",
 - Greenfield: use Ruff's default line length (88) unless the user picks another.
 - Existing code: measure rather than imposing 88. Run `ruff format --diff --line-length <n> .` at a few widths and pick the smallest diff, or read the longest common line length. Copy the quote style the code already uses.
 - `lint.select` lists the rules the project enforces; for existing code, start with CI.
+- `ignore = ["E501"]`: `ruff format` sets line length. E501 only flags lines the formatter cannot split (long strings, comments, URLs), and pi-lens reports each one as a blocker.
+- pi-lens prefers the project's own linter and falls back to the one on `PATH` from the global mise config.
+  The project's `mise.toml` pins only what `just check` runs.
 
 ## JavaScript and TypeScript: Biome or oxfmt
 
