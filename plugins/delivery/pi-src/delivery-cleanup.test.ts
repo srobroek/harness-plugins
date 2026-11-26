@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, 
 import { devNull, hostname, tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent"
-import { runningDirectory, writeReport } from "@srobroek/opencode-lib/running-reports"
+import { withLease } from "@srobroek/opencode-lib/lease-lock"
+import { readReports, runningDirectory, runningLeaseFile, writeReport } from "@srobroek/opencode-lib/running-reports"
 import { writeClaim } from "@srobroek/opencode-lib/worktree-claims"
 import { setHold } from "@srobroek/opencode-lib/worktree-locks"
 import { TOOL_FIRST_LINE } from "../../../scripts/check-descriptions.ts"
@@ -268,25 +269,31 @@ describe("an explicit cleanup in the session's repository", () => {
     expect(branchExists(f)).toBe(true)
   })
 
+  const reportOf = (command: string, sessionID = "ses_a") => ({
+    sessionID,
+    jobs: [{ kind: "shell", sessionID, shellID: "sh1", command }],
+    at: Date.now(),
+    pid: process.pid,
+    host: hostname(),
+    instance: "opencode-server",
+  })
+
+  /** What an OpenCode server's idle hook does: its report through the real writer API, under the store's lease. */
+  const writeUnderLease = (f: Landed, report: ReturnType<typeof reportOf>) =>
+    withLease(runningLeaseFile(receiptDirectory(f.env)), { owner: "opencode writer", waitMs: 10_000 }, () => writeReport(receiptDirectory(f.env), report))
+
   // The reports are read at the final check, after the proofs: a report written while the proofs run is seen.
   test("a report written during the proofs refuses the removal", async () => {
     const f = await landed("opencode-report-during-proofs")
     const real = forge(f)
     let written = false
     let statuses = 0
-    const run: CliRunner = (argv, options) => {
+    const run: CliRunner = async (argv, options) => {
       const git = argv[0] === "git" ? argv.slice(1 + SAFE_GIT_ARGS.length) : []
       // The first status is the proofs outside the removal section; the second is its own, inside it.
       if (git.includes("status") && ++statuses === 2) {
+        await writeUnderLease(f, reportOf(`tail -f ${f.linked}/log`, "ses_late"))
         written = true
-        writeReport(receiptDirectory(f.env), {
-          sessionID: "ses_late",
-          jobs: [{ kind: "shell", sessionID: "ses_late", shellID: "sh1", command: `tail -f ${f.linked}/log` }],
-          at: Date.now(),
-          pid: process.pid,
-          host: hostname(),
-          instance: "opencode-server",
-        })
       }
       return real(argv, options)
     }
@@ -296,33 +303,47 @@ describe("an explicit cleanup in the session's repository", () => {
     expect(existsSync(f.linked)).toBe(true)
   })
 
-  test("a report that names only git's spelling of a worktree the receipt spells through a symlink refuses the removal", async () => {
-    const f = await landed("opencode-report-alias")
-    const home = join(scratch("opencode-report-alias-home"), "home")
+  // The lease is Pi's from the final check to the end of the removal: a writer that starts meanwhile waits for it.
+  test("a writer that starts while the worktree is being removed waits for the lease until the removal ends", async () => {
+    const f = await landed("opencode-report-during-removal")
+    const real = forge(f)
+    let writer: Promise<unknown> | undefined
+    let settled = false
+    let settledDuringRemoval: boolean | undefined
+    const run: CliRunner = async (argv, options) => {
+      const git = argv[0] === "git" ? argv.slice(1 + SAFE_GIT_ARGS.length) : []
+      if (git.includes("worktree") && git.includes("remove")) {
+        writer = writeUnderLease(f, reportOf("sleep 60", "ses_late")).then(() => {
+          settled = true
+        })
+        await Bun.sleep(500)
+        settledDuringRemoval = settled
+      }
+      return real(argv, options)
+    }
+    const result = await call(cleanupTool({ ...deps(f), cleanup: { run, env: f.env } }), { receipt: f.receiptPath }, context(f.main, false))
+    await writer
+    expect(result.output).toMatchObject({ ok: true })
+    expect(existsSync(f.linked)).toBe(false)
+    expect(settledDuringRemoval).toBe(false)
+    expect(readReports(receiptDirectory(f.env)).reports.map((report) => report.sessionID)).toEqual(["ses_late"])
+  })
+
+  // Git registers the worktree by one spelling (here a path through a symlinked parent), the receipt by another.
+  test("a report that names only the spelling git registered refuses the removal", async () => {
+    const f = await landed("opencode-report-git-spelling")
+    const home = join(scratch("opencode-report-git-spelling-home"), "home")
     symlinkSync(f.root, home, "dir")
-    const aliased = join(home, "linked")
-    const receipt = buildReceipt({
-      now: Date.parse(f.receipt.emittedAt) + 1,
-      emitter: f.receipt.emitter,
-      repo: f.receipt.repo,
-      pr: f.receipt.pr,
-      branch: f.receipt.branch,
-      worktree: { ...f.receipt.worktree, path: aliased },
-      beads: f.receipt.beads,
-      proof: f.receipt.proof,
-      outcome: "landed",
-    })
-    rmSync(f.receiptPath)
-    const receiptPath = writeReceipt(receipt, receiptDirectory(f.env, f.receipt.repo.key))
-    writeReport(receiptDirectory(f.env), {
-      sessionID: "ses_a",
-      jobs: [{ kind: "shell", sessionID: "ses_a", shellID: "sh1", command: `tail -f ${f.linked}/log` }],
-      at: Date.now(),
-      pid: process.pid,
-      host: hostname(),
-      instance: "opencode-server",
-    })
-    const result = await call(cleanupTool(deps(f)), { receipt: receiptPath }, context(f.main, false))
+    const registered = join(home, "linked")
+    const real = forge(f)
+    // `git worktree list` names the worktree through the symlinked parent; the receipt keeps the canonical path.
+    const run: CliRunner = async (argv, options) => {
+      const result = await real(argv, options)
+      const git = argv[0] === "git" ? argv.slice(1 + SAFE_GIT_ARGS.length) : []
+      return git[0] === "worktree" && git[1] === "list" ? { ...result, stdout: result.stdout.replaceAll(f.linked, registered) } : result
+    }
+    writeReport(receiptDirectory(f.env), reportOf(`tail -f ${registered}/log`))
+    const result = await call(cleanupTool({ ...deps(f), cleanup: { run, env: f.env } }), { receipt: f.receiptPath }, context(f.main, false))
     expect(result.text).toContain("names the worktree")
     expect(existsSync(f.linked)).toBe(true)
   })
