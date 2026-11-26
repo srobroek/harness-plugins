@@ -933,6 +933,8 @@ export function createPendingCleanup(deps: PendingDeps) {
         forms = [...new Set([worktree, canonicalDirectory(worktree), ...spellings, ...spellings.map(canonicalDirectory)])]
         return undefined
       },
+      // The check made synchronously right before the removal is dispatched, with nothing awaited between it and the call.
+      beforeRemoval: (): string | undefined => stuck(),
       afterRemoval: async (worktree: string): Promise<string[]> => {
         const lane = await laneSessionsIn(client, roots, forms.length === 0 ? [worktree] : forms)
         return moveLaneHome(client, lane, canonicalCheckout((await commonOf(repo)) ?? undefined, repo.cwd))
@@ -1270,6 +1272,12 @@ export function createPendingCleanup(deps: PendingDeps) {
     return Promise.race([lookup, bound]).finally(() => clearTimeout(timer))
   }
 
+  /** Why a removal must wait for a session whose report is not on disk, or undefined. Synchronous. */
+  const stuck = (): string | undefined => {
+    const first = unsettled.entries().next().value
+    return first === undefined ? undefined : `the running work of ${first[0]} could not be recorded (${first[1].reason}); held until it reports again or is deleted`
+  }
+
   const reportClock = (): ReportClock => ({ now: (deps.fileNow ?? Date.now)(), host: hostname(), instance: SERVER_INSTANCE, alive: processAlive })
 
   /**
@@ -1283,10 +1291,6 @@ export function createPendingCleanup(deps: PendingDeps) {
    * made again for each report that changed since the first read, so the decision uses fresh ones.
    */
   const runningBlock = async (worktree: string, hold?: StoreHold, spellings: readonly string[] = []): Promise<string | undefined> => {
-    const stuck = (): string | undefined => {
-      const first = unsettled.entries().next().value
-      return first === undefined ? undefined : `the running work of ${first[0]} could not be recorded (${first[1].reason}); held until it reports again or is deleted`
-    }
     const unreadable = "the running-work reports cannot be read, so running work cannot be ruled out"
     const root = receiptDirectory(env)
     // A report whose write was refused is written again first: storage may be back.
@@ -1316,12 +1320,17 @@ export function createPendingCleanup(deps: PendingDeps) {
       return why
     }
     try {
-      // The last read: nothing awaited after it unless the lease is held.
+      // Under the lease no report is written, so the reports that changed since the first read are looked up now; the sessions
+      // are awaited here, and an idle hook may mark one `unsettled` meanwhile (it needs no lease). So the last read and the
+      // decision come after every await, with nothing awaited between them.
+      if (leased) {
+        const peek = readReports(root)
+        if (!peek.unreadable) await lookUp(neededLookups(peek.reports.filter((report) => seen.get(report.sessionID) !== reportVersion(report)), forms, reportClock()))
+      }
       const again = stuck()
       if (again !== undefined) return await refuse(again)
       const last = readReports(root)
       if (last.unreadable) return await refuse(unreadable)
-      if (leased) await lookUp(neededLookups(last.reports.filter((report) => seen.get(report.sessionID) !== reportVersion(report)), forms, reportClock()))
       const blocked = reportBlock(last.reports, forms, (id) => cache.get(id), reportClock(), canonicalDirectory)
       if (blocked === undefined) return undefined
       console.error(`delivery: cleanup of ${worktree} is held: ${blocked}`)

@@ -163,6 +163,11 @@ export type CleanupDeps = {
   /** `spellings`: every other verified spelling of the worktree (the receipt's own and its physical path). */
   finalCheck?: (worktree: string, spellings?: readonly string[]) => Promise<string | undefined>
   /**
+   * Asked synchronously right before the removal is dispatched, after the last proof, with no await between
+   * the question and the call: a reason refuses the removal. For what can change while `finalCheck` awaits.
+   */
+  beforeRemoval?: () => string | undefined
+  /**
    * Called once the worktree is removed and its absence proven, outside the removal section, even
    * when a later step (branch deletion, a ref probe) then refuses. It returns notes for what it
    * could not finish (shown among the skipped items, or appended to a refusal); it never fails the
@@ -188,7 +193,7 @@ export type CleanupDeps = {
 export type RepositoryIdentity = { common: string; root: string }
 
 /** What {@link CleanupDeps.coordinate} binds to one repository. */
-export type Coordination = Pick<CleanupDeps, "proofSection" | "removalSection" | "finalCheck" | "afterRemoval" | "host" | "authorize">
+export type Coordination = Pick<CleanupDeps, "proofSection" | "removalSection" | "finalCheck" | "beforeRemoval" | "afterRemoval" | "host" | "authorize">
 
 /**
  * What the removal section did once its removal command ran, for the result and the continuation
@@ -1541,6 +1546,7 @@ export async function cleanupDelivery(
     proofSection: coordination.proofSection,
     removalSection: coordination.removalSection,
     finalCheck: coordination.finalCheck,
+    beforeRemoval: coordination.beforeRemoval,
     afterRemoval: coordination.afterRemoval,
     host: coordination.host,
     authorize: coordination.authorize ?? deps.authorize,
@@ -1762,6 +1768,10 @@ async function cleanupInRepository(
     // proved again here, synchronously, so no wait sits between this proof and the removal call.
     const rebound = markersStillBound(boundary, executionDir, executionPin)
     if (rebound !== null) return rebound
+    const late = deps.beforeRemoval?.()
+    if (late !== undefined) {
+      return refuse("worktree.held", late, "no owner, hold, denial or competing remover at the moment of removal; nothing was removed")
+    }
     // The removal call. A failure refuses only while the target is untouched: git refuses a dirty or
     // locked tree before deleting anything, but a removal that stops part-way (a file it cannot delete,
     // a kill at the bound) has deleted files, and possibly the registration, so a refusal would be false.

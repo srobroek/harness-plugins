@@ -2103,6 +2103,21 @@ describe("delivery_cleanup beside another remover", () => {
     expect(readdirSync(dirname(f.receiptPath)).sort()).toEqual(before)
   })
 
+  test("a refusal from the check made right before the dispatch removes nothing", async () => {
+    const f = await fixture("before-removal")
+    const scripted = runner(f)
+    const result = await cleanupDelivery({ receipt: f.receiptPath }, f.main, {
+      run: scripted.run,
+      now: () => NOW + 10,
+      env: f.env,
+      bounds: HEAVY_FIXTURE_BOUNDS,
+      beforeRemoval: () => "a report was marked after the final check",
+    })
+    expect(refusal(result)).toContain("a report was marked after the final check")
+    expect(existsSync(f.linked)).toBe(true)
+    expect(scripted.calls.some(isWorktreeRemove)).toBe(false)
+  })
+
   test("the final check is given the receipt's own spelling of the worktree beside git's", async () => {
     const f = await fixture("final-check-spellings")
     const seen: Array<readonly string[] | undefined> = []
@@ -4874,6 +4889,55 @@ describe("pending cleanup: one remover per worktree", () => {
       gate.resolve()
       await removal
       expect(reason).toContain("runs in the worktree")
+      await h.finish()
+    })
+
+    // The final lookups, made under the lease for a report that changed, are awaited: an idle hook that fires meanwhile marks its session unsettled at once.
+    test("an idle hook that fires while the final lookups are pending refuses the removal", async () => {
+      const h = await harness("running-unsettled-during-lookups", { list: async () => ({ data: [] }) })
+      await h.pending.start()
+      h.fake.sessions.set("ses_x", { id: "ses_x", location: { directory: "/elsewhere" } })
+      await reportFrom(h, "ses_a", [{ kind: "subagent", childSessionID: "ses_x" }])
+      const session = h.fake.context.session as unknown as { get: (input: { sessionID: string }) => Promise<unknown> }
+      const real = session.get.bind(session)
+      let lookups = 0
+      const first = { arrived: Promise.withResolvers<void>(), go: Promise.withResolvers<void>() }
+      const last = { arrived: Promise.withResolvers<void>(), go: Promise.withResolvers<void>() }
+      // The lookups of ses_x: the section's pre-check (1), the check's first (2) and, for the changed report, its last (3, under the lease).
+      session.get = async (input) => {
+        if (input.sessionID !== "ses_x") return real(input)
+        const n = ++lookups
+        const where = await real(input)
+        const gate = n === 2 ? first : n === 3 ? last : undefined
+        gate?.arrived.resolve()
+        await gate?.go.promise
+        return where
+      }
+      let reason: string | undefined
+      const removal = removalWith(h, async (found) => {
+        reason = found
+      })
+      await first.arrived.promise
+      await reportFrom(h, "ses_a", [{ kind: "subagent", childSessionID: "ses_x" }, { kind: "shell", shellID: "extra", command: "sleep 1" }])
+      first.go.resolve()
+      await last.arrived.promise
+      const late = outsideLocks(() => reportFrom(h, "ses_b", [elsewhere()]))
+      last.go.resolve()
+      await removal
+      expect(reason).toContain("ses_b")
+      await late
+      await h.finish()
+    })
+
+    test("the check made right before the removal is dispatched sees a session marked since the final check", async () => {
+      const h = await harness("running-unsettled-before-dispatch")
+      await h.pending.start()
+      const removal = h.pending.removalFor("ses_lead")
+      expect(await removal.finalCheck(h.f.linked)).toBeUndefined()
+      expect(removal.beforeRemoval()).toBeUndefined()
+      const late = outsideLocks(() => reportFrom(h, "ses_b", [elsewhere()]))
+      expect(removal.beforeRemoval()).toContain("ses_b")
+      await late
       await h.finish()
     })
 
