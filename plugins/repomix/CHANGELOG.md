@@ -1,3 +1,9 @@
+## repomix [0.7.0](https://github.com/srobroek/harness-plugins/compare/repomix--v0.6.3...repomix--v0.7.0) (2026-11-26)
+
+### Features
+
+* **repomix:** pack on pi without asking by default ([7359d5c](https://github.com/srobroek/harness-plugins/commit/7359d5cc7d50242adf2d96e5ef5c09dd68e4f228))
+
 ## repomix [0.6.3](https://github.com/srobroek/harness-plugins/compare/repomix--v0.6.2...repomix--v0.6.3) (2026-11-24)
 
 ## repomix [0.6.2](https://github.com/srobroek/harness-plugins/compare/repomix--v0.6.1...repomix--v0.6.2) (2026-11-24)
