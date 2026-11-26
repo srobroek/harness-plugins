@@ -433,7 +433,9 @@ The pi tools differ from the OpenCode tools in these ways:
   a merge or `setupAutoDelete`. The dialog names the request, the head and the method.
   A session without a UI (a subagent, `pi -p`) cannot answer, so the tool refuses the
   call there and writes nothing. Proof of an already MERGED request writes only the
-  local receipt and asks nothing.
+  local receipt and asks nothing. Set `"delivery": {"confirm": false}` in the user
+  `settings.json` to skip the dialog and the refusal: every land then writes unasked,
+  also from a session without a UI.
 - The OMP approval mode gates both tools as `exec`, so OMP can also ask before a call.
 - No cleanup runs after a land, and nothing retries one. Call `delivery_cleanup` while
   `next` lists it.
