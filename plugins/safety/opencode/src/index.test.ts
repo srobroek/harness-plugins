@@ -249,6 +249,8 @@ describe("external-directory", () => {
       await before("c4", `cd ${root}/elsewhere; bun install --cwd x`)
       expect(fake.asserts.map((item) => item.resources)).toEqual([[`${root}/elsewhere/x/*`]])
       await expect(before("c5", 'cd "$X"; bun install --cwd x')).rejects.toThrow(unresolvedFlagRefusal(["x"]))
+      await expect(before("c6", `cd ${linked}; cd /tmp; git -C infra status`)).rejects.toThrow(unresolvedFlagRefusal(["infra"]))
+      await expect(before("c7", `cd ${linked}; pushd /tmp; bun install --cwd infra`)).rejects.toThrow(unresolvedFlagRefusal(["infra"]))
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

@@ -103,6 +103,38 @@ describe("callFlagDirectoryReport", () => {
   ])("unresolved: %s", (command) => {
     expect(callFlagDirectoryReport(command, CWD)).toEqual({ dirs: [], unresolved: ["x"] })
   })
+
+  // After a directory change past the leading `cd`, the shell's directory is unknown: relative values from that
+  // command on are unresolved, earlier ones keep their bases, and absolute ones are still read.
+  test.each([
+    ["cd /wt; cd /elsewhere; git -C infra status", [], ["infra"]],
+    ["cd /wt; cd sub; git -C infra status", [], ["infra"]],
+    ["cd /wt && cd /elsewhere && git -C infra status", [], ["infra"]],
+    ["cd /wt; true && cd /elsewhere && git -C infra status", [], ["infra"]],
+    ["cd /wt; false || cd /elsewhere; bun install --cwd infra", [], ["infra"]],
+    ["cd /wt; pushd /elsewhere; bun install --cwd infra", [], ["infra"]],
+    ["cd /wt; popd; bun install --cwd infra", [], ["infra"]],
+    ["cd /wt; (cd y && bun install --cwd z)", [], ["z"]],
+    ["cd /wt; { cd y; bun install --cwd z; }", [], ["z"]],
+    ["cd /wt; f() { cd /elsewhere; }; f; git -C infra status", [], ["infra"]],
+    ["cd /wt; eval 'cd /elsewhere'; git -C infra status", [], ["infra"]],
+    ["cd /wt; builtin cd /elsewhere; git -C infra status", [], ["infra"]],
+    ["cd /wt; if cd /elsewhere; then make -C build; fi", [], ["build"]],
+    ["cd /wt; env -C /elsewhere git -C infra status", [], ["infra"]],
+    ["cd /wt; bun install --cwd a; cd /elsewhere; git -C b status", ["/wt/a", "/work/repo/a"], ["b"]],
+    ["bun install --cwd a; cd /elsewhere; bun install --cwd b", ["/work/repo/a"], ["b"]],
+    ["cd /wt && bun install --cwd a && cd sub && make -C b", ["/wt/a"], ["b"]],
+    ["cd /wt; cd /elsewhere; git -C /abs status", ["/abs"], []],
+  ])("unresolved after a later directory change: %s", (command, dirs, unresolved) => {
+    expect(callFlagDirectoryReport(command, CWD)).toEqual({ dirs, unresolved })
+  })
+
+  test("a cd in a command substitution runs in a subshell and leaves the bases", () => {
+    expect(callFlagDirectoryReport("cd /wt; top=$(cd /elsewhere && pwd); git -C infra status", CWD)).toEqual({
+      dirs: ["/wt/infra", "/work/repo/infra"],
+      unresolved: [],
+    })
+  })
 })
 
 describe("flagCheckRoots and externalFlagDirectories", () => {
