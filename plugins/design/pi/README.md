@@ -209,7 +209,7 @@ as a Linux ARM server, it drives Playwright's Chromium. Install that Chromium on
 pinned Playwright:
 
 ```sh
-npx -y playwright-core@1.66.0-alpha-2026-11-22 install chromium chromium-headless-shell
+npx -y playwright-core@1.66.0-alpha-2026-11-23 install chromium chromium-headless-shell
 ```
 
 ### Scan tool
