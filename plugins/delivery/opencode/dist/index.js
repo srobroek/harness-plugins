@@ -6228,7 +6228,6 @@ var MAX_REPORT_BYTES = 1024 * 1024;
 var runningDirectory = (receiptsRoot) => join8(receiptsRoot, ".running");
 var sessionKey = (sessionID) => createHash4("sha1").update(sessionID).digest("hex");
 var reportFile = (receiptsRoot, sessionID, instance) => join8(runningDirectory(receiptsRoot), `${sessionKey(sessionID)}.${createHash4("sha1").update(instance).digest("hex").slice(0, 16)}.json`);
-var legacyReportFile = (receiptsRoot, sessionID) => join8(runningDirectory(receiptsRoot), `${sessionKey(sessionID)}.json`);
 var isObject3 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 var optionalString = (value) => typeof value === "string" ? value : undefined;
 function parseReport(text) {
@@ -6255,6 +6254,8 @@ function parseReport(text) {
     const fields = [job.sessionID, job.childSessionID, job.shellID, job.command, job.cwd];
     if (fields.some((field) => field !== undefined && typeof field !== "string"))
       return;
+    if (job.endedAt !== undefined && (typeof job.endedAt !== "number" || !Number.isFinite(job.endedAt)))
+      return;
     const [sessionID, childSessionID, shellID, command, cwd] = fields.map(optionalString);
     jobs.push({
       kind: job.kind,
@@ -6262,7 +6263,8 @@ function parseReport(text) {
       ...childSessionID === undefined ? {} : { childSessionID },
       ...shellID === undefined ? {} : { shellID },
       ...command === undefined ? {} : { command },
-      ...cwd === undefined ? {} : { cwd }
+      ...cwd === undefined ? {} : { cwd },
+      ...typeof job.endedAt === "number" ? { endedAt: job.endedAt } : {}
     });
   }
   return { sessionID: raw.sessionID, jobs, at: raw.at, pid: raw.pid, host: raw.host, instance: raw.instance, gen: raw.gen ?? 0 };
@@ -6303,14 +6305,6 @@ function removeReport(receiptsRoot, sessionID, instance, maxGen = Number.POSITIV
     return "kept";
   rmSync5(file, { force: true });
   return "removed";
-}
-function removeLegacyReport(receiptsRoot, sessionID, instance, pid) {
-  const file = legacyReportFile(receiptsRoot, sessionID);
-  const stored = readStored(file);
-  if (stored.kind !== "report" || stored.report.instance !== instance || stored.report.pid !== pid)
-    return false;
-  rmSync5(file, { force: true });
-  return true;
 }
 function readReports(receiptsRoot) {
   const directory = runningDirectory(receiptsRoot);
@@ -6806,7 +6800,10 @@ async function authorizeExplicit(pending, ask, sessionID, request) {
   if (deferred !== undefined)
     throw new CleanupDeferred(deferred);
 }
+var STOP_GRACE_MS = 3000;
+var GRACE_MS = Math.max(1e4, STOP_GRACE_MS + 7000);
 var SERVER_INSTANCE = `${hostname2()}:${process.pid}:${Date.now().toString(36)}`;
+var jobKey = (job) => [job.kind, job.sessionID, job.childSessionID, job.shellID, job.command].join("\x00");
 var SESSION_LOOKUP_MS = 5000;
 var IDLE_PASS_MS = 60000;
 var DISPOSE_WAIT_MS = 1e4;
@@ -6820,8 +6817,8 @@ function createPendingCleanup(deps) {
   const unsettled = new Map;
   const activation = `${SERVER_INSTANCE}:${randomUUID4().slice(0, 8)}`;
   const pendingDeletes = new Map;
+  const reported = new Map;
   const lastGen = new Map;
-  const legacyChecked = new Set;
   const retrying = new Set;
   const retryOn = (trigger) => (deps.retryAt ?? ["pass", "check", "idle"]).includes(trigger);
   let generation = 0;
@@ -7613,17 +7610,8 @@ function createPendingCleanup(deps) {
   };
   const beginReport = (sessionID, background) => {
     const gen = ++generation;
-    lastGen.set(sessionID, gen);
-    unsettled.set(sessionID, { gen, at: stamp(), reason: "its report is still waiting to be written", failed: false, background });
-    return gen;
-  };
-  const recordHolds = async (sessionID, gen) => {
-    const entry = unsettled.get(sessionID);
-    if (entry === undefined || entry.gen !== gen)
-      return;
-    const root = receiptDirectory(env);
-    const { at, background } = entry;
-    const jobs = background.map((job) => ({
+    const at = now();
+    const current = background.map((job) => ({
       kind: job.kind,
       ...job.sessionID === undefined ? {} : { sessionID: job.sessionID },
       ...job.childSessionID === undefined ? {} : { childSessionID: job.childSessionID },
@@ -7631,17 +7619,44 @@ function createPendingCleanup(deps) {
       ...job.command === undefined ? {} : { command: job.command },
       ...typeof job.cwd === "string" ? { cwd: canonicalDirectory(job.cwd) } : {}
     }));
+    const present = new Set(current.map(jobKey));
+    const kept = (reported.get(sessionID) ?? []).filter((job) => !present.has(jobKey(job))).map((job) => job.endedAt === undefined ? { ...job, endedAt: at } : job).filter((job) => at - (job.endedAt ?? at) < GRACE_MS);
+    const jobs = [...current, ...kept];
+    if (jobs.length === 0)
+      reported.delete(sessionID);
+    else
+      reported.set(sessionID, jobs);
+    lastGen.set(sessionID, gen);
+    unsettled.set(sessionID, { gen, at: stamp(), reason: "its report is still waiting to be written", failed: false, jobs });
+    return gen;
+  };
+  const withDirectories = async (jobs) => await Promise.all(jobs.map(async (job) => {
+    const owner = job.childSessionID ?? job.sessionID;
+    if (job.cwd !== undefined || job.endedAt !== undefined || owner === undefined)
+      return job;
+    const found = await sessionState(owner);
+    return found.state === "at" && typeof found.directory === "string" ? { ...job, cwd: canonicalDirectory(found.directory) } : job;
+  }));
+  const recordHolds = async (sessionID, gen) => {
+    const entry = unsettled.get(sessionID);
+    if (entry === undefined || entry.gen !== gen)
+      return;
+    const root = receiptDirectory(env);
+    const { at } = entry;
     try {
+      const jobs = await withDirectories(entry.jobs);
+      if (unsettled.get(sessionID)?.gen === gen) {
+        entry.jobs = jobs;
+        if (jobs.length > 0)
+          reported.set(sessionID, jobs);
+      }
       await underStore(() => {
-        if (disposed || unsettled.get(sessionID)?.gen !== gen)
+        if (unsettled.get(sessionID)?.gen !== gen)
           return;
-        if (!legacyChecked.has(sessionID)) {
-          legacyChecked.add(sessionID);
-          removeLegacyReport(root, sessionID, SERVER_INSTANCE, process.pid);
-        }
-        if (background.length === 0)
-          clearReport(root, sessionID, activation);
-        else
+        if (jobs.length === 0) {
+          if (!disposed)
+            clearReport(root, sessionID, activation);
+        } else
           writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname2(), instance: activation, gen });
       });
       if (unsettled.get(sessionID)?.gen === gen)
@@ -7658,14 +7673,16 @@ function createPendingCleanup(deps) {
   };
   const retryUnsettled = async (except) => {
     const due = [...unsettled].filter(([id, entry]) => entry.failed && id !== except && !retrying.has(id));
-    if (due.length === 0 && pendingDeletes.size === 0 || !reportsWritable(receiptDirectory(env)))
+    const t = now();
+    const lapsed = [...reported].filter(([id, jobs]) => id !== except && !unsettled.has(id) && !pendingDeletes.has(id) && !retrying.has(id) && jobs.length > 0 && jobs.every((job) => job.endedAt !== undefined && t - job.endedAt >= GRACE_MS)).map(([id]) => id);
+    if (due.length === 0 && lapsed.length === 0 && pendingDeletes.size === 0 || !reportsWritable(receiptDirectory(env)))
       return;
     const deletes = [...pendingDeletes].map(async ([id, token]) => {
       try {
-        await underStore(() => removeDeleted(id, token));
-        if (pendingDeletes.get(id) === token)
+        const done = await underStore(() => removeDeleted(id, token));
+        if (done && pendingDeletes.get(id) === token)
           pendingDeletes.delete(id);
-        if (lastGen.get(id) === token)
+        if (done && lastGen.get(id) === token)
           lastGen.delete(id);
       } catch (error) {
         console.error(`delivery: could not remove the report of deleted session ${id}: ${error instanceof Error ? error.message : String(error)}`);
@@ -7673,6 +7690,14 @@ function createPendingCleanup(deps) {
     });
     await Promise.all([
       ...deletes,
+      ...lapsed.map(async (id) => {
+        retrying.add(id);
+        try {
+          await recordHolds(id, beginReport(id, []));
+        } finally {
+          retrying.delete(id);
+        }
+      }),
       ...due.map(async ([id, entry]) => {
         retrying.add(id);
         entry.failed = false;
@@ -7687,20 +7712,30 @@ function createPendingCleanup(deps) {
   };
   const removeDeleted = (sessionID, token) => {
     if (disposed || (lastGen.get(sessionID) ?? 0) > token)
-      return;
-    removeReport(receiptDirectory(env), sessionID, activation, token);
-    removeLegacyReport(receiptDirectory(env), sessionID, SERVER_INSTANCE, process.pid);
-    legacyChecked.delete(sessionID);
+      return true;
+    const t = now();
+    const root = receiptDirectory(env);
+    const stored = readStored(reportFile(root, sessionID, activation));
+    const before = stored.kind === "report" && stored.report.gen <= token ? stored.report.jobs : [];
+    const jobs = before.map((job) => job.endedAt === undefined ? { ...job, endedAt: t } : job);
+    if (jobs.some((job) => t - (job.endedAt ?? t) < GRACE_MS)) {
+      if (jobs.some((job, index) => job !== before[index]))
+        writeReport(root, { sessionID, jobs, at: stamp(), pid: process.pid, host: hostname2(), instance: activation, gen: token });
+      return false;
+    }
+    removeReport(root, sessionID, activation, token);
+    reported.delete(sessionID);
+    return true;
   };
   const forgetSession = async (sessionID) => {
     unsettled.delete(sessionID);
     const token = lastGen.get(sessionID) ?? 0;
     pendingDeletes.set(sessionID, token);
     try {
-      await underStore(() => removeDeleted(sessionID, token));
-      if (pendingDeletes.get(sessionID) === token)
+      const done = await underStore(() => removeDeleted(sessionID, token));
+      if (done && pendingDeletes.get(sessionID) === token)
         pendingDeletes.delete(sessionID);
-      if (lastGen.get(sessionID) === token)
+      if (done && lastGen.get(sessionID) === token)
         lastGen.delete(sessionID);
     } catch (error) {
       console.error(`delivery: could not remove the report of deleted session ${sessionID}: ${error instanceof Error ? error.message : String(error)}`);

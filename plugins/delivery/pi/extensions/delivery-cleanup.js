@@ -647,6 +647,8 @@ function parseReport(text) {
     const fields = [job.sessionID, job.childSessionID, job.shellID, job.command, job.cwd];
     if (fields.some((field) => field !== undefined && typeof field !== "string"))
       return;
+    if (job.endedAt !== undefined && (typeof job.endedAt !== "number" || !Number.isFinite(job.endedAt)))
+      return;
     const [sessionID, childSessionID, shellID, command, cwd] = fields.map(optionalString);
     jobs.push({
       kind: job.kind,
@@ -654,7 +656,8 @@ function parseReport(text) {
       ...childSessionID === undefined ? {} : { childSessionID },
       ...shellID === undefined ? {} : { shellID },
       ...command === undefined ? {} : { command },
-      ...cwd === undefined ? {} : { cwd }
+      ...cwd === undefined ? {} : { cwd },
+      ...typeof job.endedAt === "number" ? { endedAt: job.endedAt } : {}
     });
   }
   return { sessionID: raw.sessionID, jobs, at: raw.at, pid: raw.pid, host: raw.host, instance: raw.instance, gen: raw.gen ?? 0 };
