@@ -160,6 +160,12 @@ describe("writing and clearing: one file per session and instance", () => {
     expect(readdirSync(runningDirectory(root)).includes("bad.json")).toBe(true)
   })
 
+  test("removeReportsWhere treats a missing store as empty but reports any other failure to list it", () => {
+    expect(removeReportsWhere(root, () => true)).toBe(0) // no .running directory yet
+    writeFileSync(runningDirectory(root), "not a directory")
+    expect(() => removeReportsWhere(root, () => true)).toThrow()
+  })
+
   test("a write leaves no temporary file behind", () => {
     writeReport(root, report("ses_a", 1))
     expect(readdirSync(runningDirectory(root)).filter((name) => name.endsWith(".tmp"))).toEqual([])
