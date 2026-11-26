@@ -112,6 +112,59 @@ function setup(table: Record<string, Bead> = {}, deps: BeadsPiDeps = {}) {
 
 const EVIDENCE = '--reason "bun test x.test.ts: 3 pass"'
 
+describe("tracked foreground handoff", () => {
+  const store = join(root, "tracked-store")
+  mkdirSync(store)
+  const details = { results: [{ exitCode: 0, sessionFile: CHILD.file }] }
+  const childHeader = { id: CHILD.id, parentSession: ROOT.file }
+
+  for (const verified of [true, false]) test(`checkpoint verified=${verified}`, async () => {
+    const seen: string[][] = []
+    const f = setup({}, { pinFor: () => store, readHeader: () => childHeader,
+      verifyProgress: async (assignment, actor) => { seen.push([assignment.bead, assignment.store, actor, assignment.event]); return verified } })
+    const input = { agent: "worker", async: false, task: "Bead: proj-123\nFix it" }
+    const event = { toolName: "subagent", toolCallId: `ho-${verified}`, input }
+    expect(await f.emit("tool_call", event, ctxFor(ROOT))).toBeUndefined()
+    const result = await f.emit("tool_result", { ...event, details, content: [{ type: "text", text: "DONE" }] }, ctxFor(ROOT))
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.slice(0, 3)).toEqual(["proj-123", store, "pi/root/child"])
+    expect(input.task).toContain(seen[0]?.[3] ?? "unreachable")
+    if (verified) expect(result).toBeUndefined()
+    else expect(result).toMatchObject({ isError: true, details: { handoff: "unverified" } })
+  })
+
+  test("a marked result without a dispatch binding cannot pass after reload", async () => {
+    const { emit } = setup()
+    const result = await emit("tool_result", { toolName: "subagent", toolCallId: "lost-binding", input: {task:"Bead: proj-123\nDo it"}, details }, ctxFor(ROOT))
+    expect(result).toMatchObject({isError:true, details:{results:[]}, structuredContent:{handoff:"unverified"}})
+  })
+
+  test("an unrelated session, detached result or failed verification cannot produce success", async () => {
+    let reads = 0
+    const f = setup({}, { pinFor: () => store, readHeader: file => file === CHILD.file ? childHeader : undefined,
+      verifyProgress: async () => { reads++; throw new Error("ledger unavailable") } })
+    for (const [i, row] of [ {sessionFile: "/other.jsonl", exitCode: 0}, {sessionFile: CHILD.file, exitCode: 0, detached: true},
+      {sessionFile: CHILD.file, exitCode: 0}, {exitCode: 1} ].entries()) {
+      const input = { agent: "worker", async: false, task: "Bead: proj-123\nDo it" }
+      const event = { toolName: "subagent", toolCallId: `err-${i}`, input }
+      await f.emit("tool_call", event, ctxFor(ROOT))
+      const result = await f.emit("tool_result", {...event, details: {results:[row]}, structuredContent: {ok:true}}, ctxFor(ROOT))
+      expect(result).toMatchObject({isError:true, structuredContent:{handoff:"unverified"}})
+    }
+    expect(reads).toBe(1)
+  })
+
+  test("ledger-free research passes; marked async and malformed assignments do not launch", async () => {
+    const f = setup()
+    for (const [task, blocked] of [["Investigate proj-123", false], ["Bead: proj-123\nInvestigate", true], ["Bead: ???", true]] as const) {
+      const event = { toolName: "subagent", toolCallId: `ho-${task}`, input: { agent: "researcher", async: true, task } }
+      const result = await f.emit("tool_call", event, ctxFor(ROOT))
+      if (blocked) expect(result).toMatchObject({ block: true })
+      else expect(result).toBeUndefined()
+    }
+  })
+})
+
 describe("bash gate", () => {
   test("every bash call starts with this session's actor", async () => {
     const { bash } = setup()

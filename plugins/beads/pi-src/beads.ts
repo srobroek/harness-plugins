@@ -33,6 +33,7 @@ import {
 } from "../shared/claim-gate.ts"
 import { isSubagentChild, piActor, sessionLineage } from "../shared/pi-session.ts"
 import { APPLY_NOTE, optionsError, type PreflightDeps, runPreflight, systemDeps } from "../shared/preflight.ts"
+import { type Assignment, bindHandoff, handoffVerified, type VerifyProgress, verifyWithHelper } from "./handoff.ts"
 
 /** How long a store pin lookup (a `git rev-parse`) is reused. */
 const PIN_CACHE_MS = 5_000
@@ -115,6 +116,7 @@ export type BeadsPiDeps = {
   repositoryControl?: ShellGateDeps["repositoryControl"]
   preflight?: (env: NodeJS.ProcessEnv, cwd: string, signal?: AbortSignal) => PreflightDeps
   now?: () => number
+  verifyProgress?: VerifyProgress
   /** Replaces `<agentDir>/settings.json`. */
   settingsPath?: string
 }
@@ -141,6 +143,11 @@ export function setupBeadsPi(pi: ExtensionAPI, deps: BeadsPiDeps = {}): void {
   const identities = new Map<string, SessionIdentity>()
   const pending = new Map<string, Pending>()
   const held = new Map<string, number>()
+  const handoffKey = Symbol.for("com.srobroek.beads.pi.handoffs.v1")
+  const registry = globalThis as typeof globalThis & { [handoffKey]?: Map<string, Assignment> }
+  registry[handoffKey] ??= new Map<string, Assignment>()
+  const handoffs = registry[handoffKey]
+  const verify = deps.verifyProgress ?? verifyWithHelper(join(EXTENSION_DIR, "../skills/beads-evidence/work_check.py"))
 
   const cachedPinFor = (cwd: string): string | undefined => {
     const hit = pins.get(cwd)
@@ -227,6 +234,18 @@ export function setupBeadsPi(pi: ExtensionAPI, deps: BeadsPiDeps = {}): void {
   })
 
   pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName === "subagent") {
+      const key = `${ctx.sessionManager.getSessionId()}\0${event.toolCallId}`
+      if (!claimCall(calls, key)) return undefined
+      const binding = bindHandoff(event.input as Record<string, unknown>, () => ({
+        cwd: ctx.cwd,
+        store: bdStoreDir(ctx.cwd, pinnedEnvironment(ctx.cwd, baseEnv(), cachedPinFor)),
+        parent: ctx.sessionManager.getSessionFile(), actor: identityOf(ctx).actor, now: now(),
+      }))
+      if (typeof binding === "string") return { block: true, reason: binding }
+      if (binding) handoffs.set(key, binding)
+      return undefined
+    }
     const isBash = event.toolName === "bash"
     const isWrite = event.toolName === "edit" || event.toolName === "write"
     if (!isBash && !isWrite) return undefined
@@ -236,7 +255,23 @@ export function setupBeadsPi(pi: ExtensionAPI, deps: BeadsPiDeps = {}): void {
     return keptAlive(() => (isBash ? gateBash(input, event.toolCallId, ctx) : gateWrite(input, ctx)))
   })
 
-  pi.on("tool_result", (event) => {
+  pi.on("tool_execution_end", (event, ctx) => {
+    if (event.toolName === "subagent") handoffs.delete(`${ctx.sessionManager.getSessionId()}\0${event.toolCallId}`)
+  })
+  pi.on("tool_result", async (event, ctx) => {
+    if (event.toolName === "subagent") {
+      const key = `${ctx.sessionManager.getSessionId()}\0${event.toolCallId}`
+      const binding = handoffs.get(key)
+      if (event.isError) return undefined
+      const task = (event.input as { task?: unknown } | undefined)?.task
+      if (!binding && !(typeof task === "string" && task.split("\n", 1)[0]?.trim().startsWith("Bead:"))) return undefined
+      if (binding && await handoffVerified(binding, event.details, readHeader, verify, baseEnv())) return undefined
+      const failure: Record<string, string> = binding ? { handoff: "unverified", bead: binding.bead, event: binding.event } : { handoff: "unverified" }
+      const why = binding ? `for ${binding.bead} (event ${binding.event})` : "because the dispatch binding is missing"
+      return { isError: true, details: { ...failure, results: [] }, structuredContent: failure, content: [{ type: "text" as const,
+        text: `Handoff unverified ${why}. Do not mark it complete. Inspect the worker session and bead comments; recover the checkpoint before retrying.`,
+      }] }
+    }
     if (event.toolName !== "bash") return undefined
     const call = pending.get(event.toolCallId)
     if (call === undefined) return undefined
