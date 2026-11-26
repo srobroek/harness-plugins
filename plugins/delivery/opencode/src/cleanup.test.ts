@@ -2103,21 +2103,6 @@ describe("delivery_cleanup beside another remover", () => {
     expect(readdirSync(dirname(f.receiptPath)).sort()).toEqual(before)
   })
 
-  test("a refusal from the check made right before the dispatch removes nothing", async () => {
-    const f = await fixture("before-removal")
-    const scripted = runner(f)
-    const result = await cleanupDelivery({ receipt: f.receiptPath }, f.main, {
-      run: scripted.run,
-      now: () => NOW + 10,
-      env: f.env,
-      bounds: HEAVY_FIXTURE_BOUNDS,
-      beforeRemoval: () => "a report was marked after the final check",
-    })
-    expect(refusal(result)).toContain("a report was marked after the final check")
-    expect(existsSync(f.linked)).toBe(true)
-    expect(scripted.calls.some(isWorktreeRemove)).toBe(false)
-  })
-
   test("the final check is given the receipt's own spelling of the worktree beside git's", async () => {
     const f = await fixture("final-check-spellings")
     const seen: Array<readonly string[] | undefined> = []
@@ -4934,15 +4919,70 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
-    test("the check made right before the removal is dispatched sees a session marked since the final check", async () => {
-      const h = await harness("running-unsettled-before-dispatch")
+    /**
+     * The real `cleanupDelivery`, with the real coordination of a pending cleanup and a host registry that
+     * names the worktree. `stages` wraps the final check and the last check before the dispatch.
+     */
+    const endToEnd = async (
+      h: Harness,
+      stages: {
+        afterFinalCheck?: () => void
+        afterBeforeRemoval?: () => void
+        /** Read when the host removal is dispatched. */
+        probe?: () => boolean
+      } = {},
+    ) => {
       await h.pending.start()
+      let dispatched = false
+      let probed: boolean | undefined
+      const host: HostWorktrees = {
+        list: async () => [{ directory: h.f.linked }],
+        remove: async () => {
+          dispatched = true
+          probed = stages.probe?.()
+        },
+      }
       const removal = h.pending.removalFor("ses_lead")
-      expect(await removal.finalCheck(h.f.linked)).toBeUndefined()
-      expect(removal.beforeRemoval()).toBeUndefined()
-      const late = outsideLocks(() => reportFrom(h, "ses_b", [elsewhere()]))
-      expect(removal.beforeRemoval()).toContain("ses_b")
+      const result = await cleanupDelivery({ receipt: h.f.receiptPath }, h.f.main, {
+        run: h.scripted.run,
+        now: () => NOW + 10,
+        env: h.f.env,
+        bounds: HEAVY_FIXTURE_BOUNDS,
+        host,
+        proofSection: removal.proofSection,
+        removalSection: removal.removalSection,
+        finalCheck: async (worktree, spellings) => {
+          const reason = await removal.finalCheck(worktree, spellings)
+          stages.afterFinalCheck?.() // after the check's last await
+          return reason
+        },
+        beforeRemoval: () => {
+          const reason = removal.beforeRemoval()
+          stages.afterBeforeRemoval?.()
+          return reason
+        },
+      })
+      return { result, dispatched: () => dispatched, probed: () => probed }
+    }
+
+    test("a session marked after the final check's last await refuses the removal: the host removal is never dispatched", async () => {
+      const h = await harness("running-mark-before-dispatch")
+      let late: Promise<void> | undefined
+      const run = await endToEnd(h, { afterFinalCheck: () => void (late = outsideLocks(() => reportFrom(h, "ses_b", [elsewhere()]))) })
+      expect(run.dispatched()).toBe(false)
+      expect(refusal(run.result)).toContain("ses_b")
+      expect(removed(h)).toBe(false)
       await late
+      await h.finish()
+    })
+
+    test("nothing is awaited between the last check and the host removal's dispatch", async () => {
+      const h = await harness("running-no-await-before-dispatch")
+      let marked = false
+      // A microtask queued by the last check runs at the first await after it, and so before a later dispatch.
+      const run = await endToEnd(h, { afterBeforeRemoval: () => queueMicrotask(() => void (marked = true)), probe: () => marked })
+      expect(run.dispatched()).toBe(true)
+      expect(run.probed()).toBe(false)
       await h.finish()
     })
 
