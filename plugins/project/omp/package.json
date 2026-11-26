@@ -1,6 +1,6 @@
 {
   "name": "@agent-plugins/project",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
   "private": true,
   "omp": {}
