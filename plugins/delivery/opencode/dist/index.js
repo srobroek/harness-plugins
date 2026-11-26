@@ -891,6 +891,24 @@ var FORGE_HOSTS = Object.freeze(Object.assign(Object.create(null), {
   "gitlab.example.com": GITLAB_CUSTOM_TARGET,
   "ssh.gitlab.example.com": GITLAB_CUSTOM_TARGET
 }));
+var HOST_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+function parseGitlabHosts(value) {
+  if (!Array.isArray(value))
+    return [];
+  const hosts = new Set;
+  for (const entry of value) {
+    if (typeof entry !== "string")
+      continue;
+    const host = entry.trim().toLowerCase();
+    if (HOST_NAME.test(host))
+      hosts.add(host);
+  }
+  return [...hosts];
+}
+function configuredGitlabTarget(host, gitlabHosts) {
+  const name = gitlabHosts.find((known) => HOST_NAME.test(known) && (host === known || host === `ssh.${known}`));
+  return name === undefined ? null : { forge: "gitlab", canonicalHost: name };
+}
 var ALLOWED_SCHEME = /^(?:https|ssh):\/\//i;
 var ANY_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
 var SCP_LIKE = /^(?:[^@/:]+@)?([^@/:]+):(?!\/)/;
@@ -1055,14 +1073,16 @@ var runCli = async (argv, options) => {
     return failed(`${argv[0]} was terminated by ${result.signalCode}`);
   return { ok: true, exitCode: result.exitCode, stdout: out, stderr: err };
 };
-function forgeTarget(remoteUrl) {
+function forgeTarget(remoteUrl, gitlabHosts) {
   if (remoteUrl === null)
     return null;
   const host = hostOf(remoteUrl);
   if (host === null)
     return null;
   const descriptor = Object.getOwnPropertyDescriptor(FORGE_HOSTS, host);
-  if (descriptor === undefined || !("value" in descriptor))
+  if (descriptor === undefined)
+    return configuredGitlabTarget(host, gitlabHosts);
+  if (!("value" in descriptor))
     return null;
   const target = descriptor.value;
   if (target === GITHUB_TARGET)
@@ -1130,12 +1150,9 @@ function describeFailure(argv, result) {
 function supportedForge(forge) {
   return forge === "github" || forge === "gitlab" ? forge : null;
 }
-var GITLAB_HOSTS = Object.freeze([
-  GITLAB_TARGET.canonicalHost,
-  GITLAB_CUSTOM_TARGET.canonicalHost
-]);
-function supportedGitlabHost(host) {
-  return GITLAB_HOSTS.find((known) => known === host) ?? null;
+function supportedGitlabHost(host, gitlabHosts) {
+  const known = [GITLAB_TARGET.canonicalHost, GITLAB_CUSTOM_TARGET.canonicalHost, ...gitlabHosts];
+  return known.find((name) => name === host) ?? null;
 }
 function removeSourceBranchAfterMerge(payload) {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload))
@@ -1146,14 +1163,14 @@ function removeSourceBranchAfterMerge(payload) {
   const value = descriptor.value;
   return typeof value === "boolean" ? value : null;
 }
-async function autoDeleteSetting(forge, repo, run = runCli, gitlabHost = "gitlab.com") {
+async function autoDeleteSetting(forge, repo, run = runCli, gitlabHost = "gitlab.com", gitlabHosts = []) {
   const supported = supportedForge(forge);
   if (supported === null)
     return "unknown";
   const path = normalizeRepoPath(supported, repo);
   if (path === null)
     return "unknown";
-  const host = supportedGitlabHost(gitlabHost);
+  const host = supportedGitlabHost(gitlabHost, gitlabHosts);
   if (supported === "gitlab" && host === null)
     return "unknown";
   const argv = supported === "github" ? ["gh", "api", `repos/${path}`, "--jq", ".delete_branch_on_merge"] : ["glab", "api", `projects/${encodeURIComponent(path)}`, "--hostname", host ?? GITLAB_TARGET.canonicalHost];
@@ -1176,7 +1193,7 @@ async function autoDeleteSetting(forge, repo, run = runCli, gitlabHost = "gitlab
     return "off";
   return "unknown";
 }
-async function enableAutoDelete(forge, repo, run = runCli, gitlabHost = "gitlab.com") {
+async function enableAutoDelete(forge, repo, run = runCli, gitlabHost = "gitlab.com", gitlabHosts = []) {
   const supported = supportedForge(forge);
   if (supported === null) {
     return {
@@ -1189,11 +1206,11 @@ async function enableAutoDelete(forge, repo, run = runCli, gitlabHost = "gitlab.
     const expected = supported === "github" ? '"<owner>/<name>"' : '"<group>/<project>", optionally with nested groups';
     return { ok: false, reason: `repo is ${JSON.stringify(repo)}, expected ${expected}` };
   }
-  const host = supportedGitlabHost(gitlabHost);
+  const host = supportedGitlabHost(gitlabHost, gitlabHosts);
   if (supported === "gitlab" && host === null) {
     return {
       ok: false,
-      reason: `gitlabHost is ${JSON.stringify(gitlabHost)}, expected one of ${GITLAB_HOSTS.map((value) => JSON.stringify(value)).join(", ")}`
+      reason: `gitlabHost is ${JSON.stringify(gitlabHost)}, expected a bare GitLab host name`
     };
   }
   const argv = supported === "github" ? ["gh", "api", "-X", "PATCH", `repos/${path}`, "-F", "delete_branch_on_merge=true"] : [
@@ -1622,11 +1639,11 @@ function urlProbeEnvironment(source, url, probeDirectory, gitDir) {
   env.GIT_DIR = gitDir;
   return env;
 }
-function absenceProbe(remoteOrUrl, branch, cwd, environment) {
+function absenceProbe(remoteOrUrl, branch, cwd, environment, gitlabHosts) {
   if (!isSafeArgument(remoteOrUrl) || !isValidBranchName(branch))
     return null;
   const ref = `refs/heads/${branch}`;
-  if (forgeTarget(remoteOrUrl) !== null) {
+  if (forgeTarget(remoteOrUrl, gitlabHosts) !== null) {
     let neutral;
     try {
       neutral = realpathSync(mkdtempSync(join2(tmpdir(), "forge-ls-remote-")));
@@ -1665,8 +1682,8 @@ function absenceProbe(remoteOrUrl, branch, cwd, environment) {
     }
   };
 }
-async function remoteBranchAbsent(remoteOrUrl, branch, cwd, run = runCli, environment = process.env) {
-  const probe = absenceProbe(remoteOrUrl, branch, cwd, environment);
+async function remoteBranchAbsent(remoteOrUrl, branch, cwd, run = runCli, environment = process.env, gitlabHosts = []) {
+  const probe = absenceProbe(remoteOrUrl, branch, cwd, environment, gitlabHosts);
   if (probe === null)
     return "unknown";
   try {
@@ -2403,7 +2420,7 @@ function selectRemoteForRepo(remotes, repo) {
   const matching = remotes.filter((remote) => remote.path !== null && remote.path === repo);
   return matching.find((remote) => remote.name === "origin")?.name ?? matching[0]?.name ?? null;
 }
-async function remotePaths(read, cwd) {
+async function remotePaths(read, cwd, gitlabHosts) {
   const listed = await read(cwd, ["remote"]);
   if (listed === null)
     return [];
@@ -2412,7 +2429,7 @@ async function remotePaths(read, cwd) {
 `).filter((line) => REMOTE_NAME.test(line))) {
     const printed = await read(cwd, ["remote", "get-url", name]);
     const url = printed === null ? null : singleRemoteRecord(printed);
-    const target = url === null ? null : forgeTarget(url);
+    const target = url === null ? null : forgeTarget(url, gitlabHosts);
     const raw = url === null ? null : repoPathFromRemote(url);
     remotes.push({ name, path: target === null || raw === null ? null : normalizeRepoPath(target.forge, raw) });
   }
@@ -2437,13 +2454,13 @@ function cloneMismatchReason(repo, field, path, remotes) {
 function notACloneReason(field, path) {
   return `${field}: observed ${JSON.stringify(path)}, expected the path of an existing Git checkout of the requested repo; nothing was merged or written`;
 }
-async function retargetRepository(input, sessionCwd, read) {
+async function retargetRepository(input, sessionCwd, read, gitlabHosts) {
   const raw = input.repo?.trim() ?? "";
   const repo = raw === "" ? null : normalizeRepoPath("gitlab", raw);
   if (repo === null) {
     return input.repoPath?.trim() ? { reason: `repoPath: observed ${JSON.stringify(input.repoPath)} without repo, expected repo as "<owner>/<name>" of that checkout` } : { cwd: sessionCwd, retargeted: false };
   }
-  const session = await remotePaths(read, sessionCwd);
+  const session = await remotePaths(read, sessionCwd, gitlabHosts);
   if (session.some((remote) => remote.path === repo))
     return { cwd: sessionCwd, retargeted: false };
   const clone = cloneInput(input);
@@ -2456,7 +2473,7 @@ async function retargetRepository(input, sessionCwd, read) {
   const context = printed === null ? null : await repositoryContext(dir, (argv) => argv.length === REPOSITORY_OBSERVATION_ARGS.length && argv.every((part, index) => part === REPOSITORY_OBSERVATION_ARGS[index]) ? printed : null);
   if (context === null)
     return { reason: notACloneReason(clone.field, dir) };
-  const remotes = await remotePaths(read, dir);
+  const remotes = await remotePaths(read, dir, gitlabHosts);
   if (!remotes.some((remote) => remote.path === repo)) {
     return { reason: cloneMismatchReason(repo, clone.field, dir, remotes) };
   }
@@ -2661,7 +2678,7 @@ function normalizedOid(value) {
   const oid = value.trim().toLowerCase();
   return oid === "" ? null : oid;
 }
-async function resolveRemoteIdentity(receipt, run, cwd, forgeEnv, env, refReadMs, pin) {
+async function resolveRemoteIdentity(receipt, run, cwd, forgeEnv, env, refReadMs, gitlabHosts, pin) {
   const remote = receipt.repo.remote;
   if (!REMOTE_NAME.test(remote))
     return refuse2("repo.remote", remote, "a git remote name");
@@ -2673,7 +2690,7 @@ async function resolveRemoteIdentity(receipt, run, cwd, forgeEnv, env, refReadMs
   const remoteText = singleRemoteRecord(result.stdout);
   if (remoteText === null)
     return refuse2("repo.remote", "malformed Git remote output", expected);
-  const target = forgeTarget(remoteText);
+  const target = forgeTarget(remoteText, gitlabHosts);
   const remoteUrl = redactRemote(remoteText);
   if (target === null) {
     return refuse2("repo.forge", `"unknown" for remote ${remote} at ${show2(remoteUrl)}`, '"github" or "gitlab"');
@@ -2738,8 +2755,8 @@ async function gitlabObservation(receipt, identity, run) {
     method
   };
 }
-async function observePullRequest(receipt, run = runCli, cwd = receipt.repo.canonicalRoot, env = process.env, refReadMs = CLEANUP_BOUNDS.refReadMs, pin) {
-  const identity = await resolveRemoteIdentity(receipt, run, cwd, forgeEnvironment(env), env, refReadMs, pin);
+async function observePullRequest(receipt, run = runCli, cwd = receipt.repo.canonicalRoot, env = process.env, refReadMs = CLEANUP_BOUNDS.refReadMs, gitlabHosts = [], pin) {
+  const identity = await resolveRemoteIdentity(receipt, run, cwd, forgeEnvironment(env), env, refReadMs, gitlabHosts, pin);
   if (isFailure(identity))
     return identity;
   const pr = identity.forge === "github" ? await githubObservation(receipt, identity, run) : await gitlabObservation(receipt, identity, run);
@@ -3274,7 +3291,7 @@ async function cleanupDelivery(params, sessionCwd, deps = {}) {
     const result = await runGit(run, at, [...argv], refReadMs);
     return completed(result) ? result.stdout : null;
   };
-  const target = await retargetRepository({ repo, repoPath, worktree: rest.worktree }, sessionCwd, read);
+  const target = await retargetRepository({ repo, repoPath, worktree: rest.worktree }, sessionCwd, read, deps.gitlabHosts ?? []);
   if ("reason" in target)
     return { ok: false, reason: target.reason };
   if (!target.retargeted)
@@ -3307,6 +3324,7 @@ async function cleanupInRepository(params, cwd, deps) {
   const git = (argv, at, timeoutMs) => observe(argv, at, timeoutMs, signal);
   const now = deps.now ?? Date.now;
   const env = deps.env ?? process.env;
+  const gitlabHosts = deps.gitlabHosts ?? [];
   const worktreeHead = async () => {
     if (params.receipt !== undefined || params.worktree === undefined || params.worktree.trim() === "")
       return;
@@ -3388,7 +3406,7 @@ async function cleanupInRepository(params, cwd, deps) {
     const identity = await verifyTargetIdentity(receipt, cwd, run, bounds.refReadMs, git);
     if (isFailure(identity))
       return identity;
-    const observed = await observePullRequest(receipt, run, identity.cwd, env, bounds.refReadMs, identity.pin);
+    const observed = await observePullRequest(receipt, run, identity.cwd, env, bounds.refReadMs, gitlabHosts, identity.pin);
     if (isFailure(observed))
       return observed;
     const observedFailure = verifyObservation(receipt, observed.pr);
@@ -3542,7 +3560,7 @@ async function cleanupInRepository(params, cwd, deps) {
   });
   if (!absenceProven)
     return withoutContinuation(receipt.branch.deletedRemote ? "absent" : "unknown", []);
-  const remoteAbsence = observed.identity.forge === "github" ? (await observeGithubBranch(observed.identity.nameWithOwner, receipt.branch.name, commit, env)).verdict : await remoteBranchAbsent(observed.identity.remoteUrl, receipt.branch.name, executionDir, commit);
+  const remoteAbsence = observed.identity.forge === "github" ? (await observeGithubBranch(observed.identity.nameWithOwner, receipt.branch.name, commit, env)).verdict : await remoteBranchAbsent(observed.identity.remoteUrl, receipt.branch.name, executionDir, commit, process.env, gitlabHosts);
   const issuedAt = nextReceiptEpoch(receipt, now);
   const verifiedAt = new Date(issuedAt).toISOString();
   const continued = buildReceipt({
@@ -4802,7 +4820,7 @@ function inferWorktree(records, branch, head) {
   const found = records.slice(1).find((record) => !record.prunable && !record.detached && record.branch === `refs/heads/${branch}` && record.head.toLowerCase() === head.toLowerCase());
   return found?.path ?? null;
 }
-async function resolveLandingTarget(params, git, cwd, forgeEnv) {
+async function resolveLandingTarget(params, git, cwd, forgeEnv, gitlabHosts) {
   const explicitRepo = params.repo === undefined || params.repo.trim() === "" ? null : params.repo.trim();
   if (explicitRepo !== null && normalizeRepoPath("gitlab", explicitRepo) === null) {
     return {
@@ -4814,7 +4832,7 @@ async function resolveLandingTarget(params, git, cwd, forgeEnv) {
     return { reason: `remote: observed ${show3(params.remote)}, expected a git remote name` };
   if (explicitRepo !== null && (params.remote === undefined || params.remote.trim() === "")) {
     const wanted = normalizeRepoPath("gitlab", explicitRepo);
-    const picked = wanted === null ? null : selectRemoteForRepo(await remotePaths((_cwd, argv) => git(argv), cwd), wanted);
+    const picked = wanted === null ? null : selectRemoteForRepo(await remotePaths((_cwd, argv) => git(argv), cwd, gitlabHosts), wanted);
     if (picked !== null)
       remote = picked;
   }
@@ -4829,7 +4847,7 @@ async function resolveLandingTarget(params, git, cwd, forgeEnv) {
       reason: `git remote get-url ${remote}: observed ${observed}, expected exactly one URL record for a configured remote in ${cwd}`
     };
   }
-  const target = forgeTarget(remoteText);
+  const target = forgeTarget(remoteText, gitlabHosts);
   const remoteUrl = redactRemote(remoteText);
   if (target === null) {
     return {
@@ -4884,6 +4902,7 @@ async function landPullRequest(params, deps = {}) {
   const run = (argv, options) => baseRun(argv, { ...options, signal: merging ? undefined : signal });
   const sessionCwd = deps.cwd ?? process.cwd();
   const env = deps.env ?? process.env;
+  const gitlabHosts = deps.gitlabHosts ?? [];
   const forgeEnv = forgeEnvironment(env);
   const gitEnv = gitObservationEnvironment(env);
   const explicitWorktree = params.worktree === undefined || params.worktree.trim() === "" ? null : resolve5(sessionCwd, params.worktree.trim());
@@ -4910,12 +4929,12 @@ async function landPullRequest(params, deps = {}) {
   if (!Number.isSafeInteger(requested)) {
     return refuse(`pr: observed ${show3(params.pr)}, expected a positive integer of at most ${Number.MAX_SAFE_INTEGER}`);
   }
-  const retargeted = await retargetRepository(params, sessionCwd, readAt);
+  const retargeted = await retargetRepository(params, sessionCwd, readAt, gitlabHosts);
   if ("reason" in retargeted)
     return refuse(retargeted.reason);
   const cwd = retargeted.cwd;
   const git = (argv, input) => gitOutput(run, cwd, argv, gitEnv, input);
-  const resolved = await resolveLandingTarget(params, git, cwd, forgeEnv);
+  const resolved = await resolveLandingTarget(params, git, cwd, forgeEnv, gitlabHosts);
   if ("reason" in resolved)
     return refuse(resolved.reason);
   const oldGit = gitVersionFailure(await git(["--version"]));
@@ -5373,11 +5392,11 @@ async function landPullRequest(params, deps = {}) {
   const unproven = missingBeadIdentity(proven.ids, proved.headRefName, repository.ledger);
   if (unproven !== null)
     return refuseMerged(unproven);
-  const verdict = github ? (await observeGithubBranch(nameWithOwner, proved.headRefName, run, env)).verdict : await remoteBranchAbsent(remote, proved.headRefName, cwd, forgeRun, env);
+  const verdict = github ? (await observeGithubBranch(nameWithOwner, proved.headRefName, run, env)).verdict : await remoteBranchAbsent(remote, proved.headRefName, cwd, forgeRun, env, gitlabHosts);
   if (verdict !== "absent") {
     notes.push(`The remote branch ${proved.headRefName} on ${remote} is ${verdict}, not proved absent, so branch.deletedRemote stays false and remoteAbsenceVerifiedAt stays null.`);
   }
-  const observedAutoDelete = await autoDeleteSetting(forge, nameWithOwner, boundForgeRun, gitlabHost);
+  const observedAutoDelete = await autoDeleteSetting(forge, nameWithOwner, boundForgeRun, gitlabHost, gitlabHosts);
   const observingArgv = rereadArgv ?? first.argv;
   const evidence = {
     remote,
@@ -5460,7 +5479,7 @@ async function landPullRequest(params, deps = {}) {
       if ("reason" in composed)
         return refuseMerged(composed.reason);
     } else {
-      const enabled = await enableAutoDelete(forge, nameWithOwner, boundForgeRun, gitlabHost);
+      const enabled = await enableAutoDelete(forge, nameWithOwner, boundForgeRun, gitlabHost, gitlabHosts);
       composed = compose(enabled.ok ? `setupAutoDelete: the forge accepted a deletion-on-merge write; the setting observed before the request was ${observedAutoDelete}, which is what this receipt records because acceptance is not a re-read.` : `setupAutoDelete: the deletion-on-merge write was refused: ${enabled.reason ?? "no reason reported"}. The setting observed before the request was ${observedAutoDelete}.`);
       if ("reason" in composed)
         return refuseMerged(composed.reason);
@@ -7310,9 +7329,16 @@ function createPendingCleanup(deps) {
         try {
           result = repo.foreign ? await cleanupDelivery({ receipt: path, repo: receipt.repo.nameWithOwner, repoPath: repo.cwd }, cwd, {
             env,
+            gitlabHosts: deps.gitlabHosts,
             coordinate: coordinateWith([sessionID, meta?.sessionID]),
             ...deps.cleanup
-          }) : await cleanupDelivery({ receipt: path }, cwd, { env, host: deps.host(), ...removalIn(own, sessionID, meta?.sessionID), ...deps.cleanup });
+          }) : await cleanupDelivery({ receipt: path }, cwd, {
+            env,
+            gitlabHosts: deps.gitlabHosts,
+            host: deps.host(),
+            ...removalIn(own, sessionID, meta?.sessionID),
+            ...deps.cleanup
+          });
         } catch {
           continue;
         }
@@ -7636,7 +7662,8 @@ function parseOptions(raw) {
     models,
     fanOut: options.fanOut !== false,
     verdicts: options.verdicts !== false,
-    autoCleanup: options.autoCleanup !== false
+    autoCleanup: options.autoCleanup !== false,
+    gitlabHosts: parseGitlabHosts(options.gitlabHosts)
   };
 }
 function confirmDelivery(evaluation, subagent = false) {
@@ -7778,6 +7805,7 @@ async function setupDelivery(ctx, overrides = {}) {
     ctx,
     cwd: directory,
     env: environment(options),
+    gitlabHosts: options.gitlabHosts,
     host: () => hostWorktrees(ctx),
     hostFor: () => worktreeRegistry(ctx),
     ...overrides
@@ -7794,6 +7822,7 @@ async function setupDelivery(ctx, overrides = {}) {
         const outcome = await landPullRequest(input, {
           cwd: directory,
           env: environment(options),
+          gitlabHosts: options.gitlabHosts,
           signal: context.signal,
           authorize: (request) => ask(request.resource, { ...request })
         });
@@ -7809,6 +7838,7 @@ async function setupDelivery(ctx, overrides = {}) {
           const askCleanup = asserter(ctx, context, CLEANUP_ACTION);
           return cleanupDelivery(params, directory, {
             env: environment(options),
+            gitlabHosts: options.gitlabHosts,
             signal: context.signal,
             authorize: async (request) => {
               try {
@@ -7844,6 +7874,7 @@ async function setupDelivery(ctx, overrides = {}) {
         try {
           result = await cleanupDelivery(input, directory, {
             env: environment(options),
+            gitlabHosts: options.gitlabHosts,
             signal: context.signal,
             ...pending.explicit((req) => ask(req.worktree, { ...req }), context.sessionID),
             host: hostWorktrees(ctx)

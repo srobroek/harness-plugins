@@ -264,6 +264,8 @@ export type LandDeps = {
   signal?: AbortSignal
   /** The wait between attempts to fetch landed commits; tests replace it to observe the schedule. */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>
+  /** The operator's GitLab hosts (`gitlabHosts`), parsed by `parseGitlabHosts`; absent, only the built-in hosts are recognized. */
+  gitlabHosts?: readonly string[]
 }
 
 export type LandOutcome =
@@ -1189,6 +1191,7 @@ export async function resolveLandingTarget(
   git: GitRead,
   cwd: string,
   forgeEnv: Readonly<Record<string, string>>,
+  gitlabHosts: readonly string[],
 ): Promise<LandingTarget | { reason: string }> {
   // Before reading any repository state, reject an explicit identity that cannot
   // be valid for either supported forge. GitLab's bounded nested-group form is
@@ -1209,7 +1212,7 @@ export async function resolveLandingTarget(
   // remote chosen here, so the repository verified is always the one `repo` names.
   if (explicitRepo !== null && (params.remote === undefined || params.remote.trim() === "")) {
     const wanted = normalizeRepoPath("gitlab", explicitRepo)
-    const picked = wanted === null ? null : selectRemoteForRepo(await remotePaths((_cwd, argv) => git(argv), cwd), wanted)
+    const picked = wanted === null ? null : selectRemoteForRepo(await remotePaths((_cwd, argv) => git(argv), cwd, gitlabHosts), wanted)
     if (picked !== null) remote = picked
   }
 
@@ -1233,7 +1236,7 @@ export async function resolveLandingTarget(
       reason: `git remote get-url ${remote}: observed ${observed}, expected exactly one URL record for a configured remote in ${cwd}`,
     }
   }
-  const target = forgeTarget(remoteText)
+  const target = forgeTarget(remoteText, gitlabHosts)
   // The URL is classified before it is redacted: `forgeTarget` owns that
   // judgement and must see the spelling Git will actually contact.
   const remoteUrl = redactRemote(remoteText)
@@ -1325,6 +1328,7 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
   const run: CliRunner = (argv, options) => baseRun(argv, { ...options, signal: merging ? undefined : signal })
   const sessionCwd = deps.cwd ?? process.cwd()
   const env = deps.env ?? process.env
+  const gitlabHosts = deps.gitlabHosts ?? []
   const forgeEnv = forgeEnvironment(env)
   const gitEnv = gitObservationEnvironment(env)
   // Every local Git read, fetch and remote probe runs in the session directory: a
@@ -1362,12 +1366,12 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
 
   // A pull request of another repository runs in the clone the caller named, once that
   // clone's remotes are proved to name `repo`; otherwise this is the session directory.
-  const retargeted = await retargetRepository(params, sessionCwd, readAt)
+  const retargeted = await retargetRepository(params, sessionCwd, readAt, gitlabHosts)
   if ("reason" in retargeted) return refuse(retargeted.reason)
   const cwd = retargeted.cwd
   const git: GitRead = (argv, input) => gitOutput(run, cwd, argv, gitEnv, input)
 
-  const resolved = await resolveLandingTarget(params, git, cwd, forgeEnv)
+  const resolved = await resolveLandingTarget(params, git, cwd, forgeEnv, gitlabHosts)
   if ("reason" in resolved) return refuse(resolved.reason)
   const oldGit = gitVersionFailure(await git(["--version"]))
   if (oldGit !== null) return refuse(`${oldGit}; no merge was issued and no receipt was written`)
@@ -1985,7 +1989,7 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
   // repository that owns it.
   const verdict = github
     ? (await observeGithubBranch(nameWithOwner, proved.headRefName, run, env)).verdict
-    : await remoteBranchAbsent(remote, proved.headRefName, cwd, forgeRun, env)
+    : await remoteBranchAbsent(remote, proved.headRefName, cwd, forgeRun, env, gitlabHosts)
   if (verdict !== "absent") {
     notes.push(
       `The remote branch ${proved.headRefName} on ${remote} is ${verdict}, not proved absent, so branch.deletedRemote stays false and remoteAbsenceVerifiedAt stays null.`,
@@ -1995,7 +1999,7 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
   // Read only now that the landing is proved, and written below only once its receipt
   // has passed the validator: the setting governs every later merge by every
   // contributor, so a landing that refused anywhere above leaves it as it was.
-  const observedAutoDelete: ReceiptAutoDelete = await autoDeleteSetting(forge, nameWithOwner, boundForgeRun, gitlabHost)
+  const observedAutoDelete: ReceiptAutoDelete = await autoDeleteSetting(forge, nameWithOwner, boundForgeRun, gitlabHost, gitlabHosts)
 
   // The proof of the landing is the read that observed it: the re-read when a merge
   // was issued here, the first read when the forge had already merged it.
@@ -2106,7 +2110,7 @@ export async function landPullRequest(params: LandParams, deps: LandDeps = {}): 
       )
       if ("reason" in composed) return refuseMerged(composed.reason)
     } else {
-    const enabled = await enableAutoDelete(forge, nameWithOwner, boundForgeRun, gitlabHost)
+    const enabled = await enableAutoDelete(forge, nameWithOwner, boundForgeRun, gitlabHost, gitlabHosts)
     composed = compose(
       enabled.ok
         ? `setupAutoDelete: the forge accepted a deletion-on-merge write; the setting observed before the request was ${observedAutoDelete}, which is what this receipt records because acceptance is not a re-read.`

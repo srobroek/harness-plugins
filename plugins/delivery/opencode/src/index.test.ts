@@ -101,11 +101,13 @@ describe("setup", () => {
       fanOut: true,
       verdicts: true,
       autoCleanup: true,
+      gitlabHosts: [],
     })
     expect(parseOptions({ models: { implementer: "a/b#high", operator: false, bad: 1 } }).models).toEqual({
       implementer: "a/b#high",
       operator: false,
     })
+    expect(parseOptions({ gitlabHosts: ["gitlab.example.org", "Bad Host", 3] }).gitlabHosts).toEqual(["gitlab.example.org"])
   })
 })
 

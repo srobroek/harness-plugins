@@ -47,8 +47,8 @@ import { supervise } from "@srobroek/opencode-lib/subprocess"
 export { SAFE_GIT_ARGS }
 
 export type Forge = "github" | "gitlab" | "unknown"
-/** The GitLab instances whose API this adapter addresses, by canonical API host. */
-export type GitlabHost = "gitlab.com" | "gitlab.example.com"
+/** A GitLab API host: a built-in one, or a configured host that passed {@link parseGitlabHosts}. */
+export type GitlabHost = string
 export type ForgeTarget =
   | Readonly<{ forge: "github"; canonicalHost: "github.com" }>
   | Readonly<{ forge: "gitlab"; canonicalHost: GitlabHost }>
@@ -131,8 +131,8 @@ const GITLAB_MAX_PATH_SEGMENTS = 21
  * host. `gitlab.example.com` is the neutral hostname used for the self-hosted
  * GitLab fixture; its git-over-SSH endpoint `ssh.gitlab.example.com` serves no
  * API, so a remote on either host addresses the API at `gitlab.example.com`.
- * Other self-hosted instances are not recognized because their API dialect is
- * not verified here.
+ * Other self-hosted instances are recognized only when the operator names them
+ * (`gitlabHosts`, see {@link parseGitlabHosts}): the adapter cannot verify their API.
  *
  * A host is attacker-influenced input. The allowlist therefore has a null
  * prototype, is frozen, and is read through an own-property descriptor rather
@@ -151,6 +151,37 @@ const FORGE_HOSTS: Readonly<Record<string, ForgeTarget>> = Object.freeze(
     "ssh.gitlab.example.com": GITLAB_CUSTOM_TARGET,
   }),
 )
+
+/**
+ * A bare DNS name, lowercase: no scheme, userinfo, port, path or leading dash. A configured
+ * host becomes a URL host and an argv element, so only this shape ever reaches either.
+ */
+const HOST_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/
+
+/**
+ * The GitLab hosts an operator names in configuration: trimmed, lowercase, de-duplicated and
+ * each a bare name. Anything else is dropped rather than refused, so the remote it would have
+ * named stays `unknown`, and an `unknown` forge refuses.
+ */
+export function parseGitlabHosts(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) return []
+  const hosts = new Set<string>()
+  for (const entry of value) {
+    if (typeof entry !== "string") continue
+    const host = entry.trim().toLowerCase()
+    if (HOST_NAME.test(host)) hosts.add(host)
+  }
+  return [...hosts]
+}
+
+/**
+ * A configured GitLab host answers on its web name and on its `ssh.` transport name, the same
+ * split the built-in fixture makes. The canonical host is the web name, where the API lives.
+ */
+function configuredGitlabTarget(host: string, gitlabHosts: readonly string[]): ForgeTarget | null {
+  const name = gitlabHosts.find((known) => HOST_NAME.test(known) && (host === known || host === `ssh.${known}`))
+  return name === undefined ? null : { forge: "gitlab", canonicalHost: name }
+}
 
 /**
  * The only transports whose host this module will trust.
@@ -488,13 +519,16 @@ export const runCli: CliRunner = async (argv, options) => {
 /**
  * Resolve an allowlisted remote to the forge and canonical host its CLI/API
  * must target. Alternate SSH transport hosts never escape into forge commands.
+ * `gitlabHosts` are the operator's GitLab hosts, parsed by {@link parseGitlabHosts};
+ * a built-in host always decides before a configured one is consulted.
  */
-export function forgeTarget(remoteUrl: string | null): ForgeTarget | null {
+export function forgeTarget(remoteUrl: string | null, gitlabHosts: readonly string[]): ForgeTarget | null {
   if (remoteUrl === null) return null
   const host = hostOf(remoteUrl)
   if (host === null) return null
   const descriptor = Object.getOwnPropertyDescriptor(FORGE_HOSTS, host)
-  if (descriptor === undefined || !("value" in descriptor)) return null
+  if (descriptor === undefined) return configuredGitlabTarget(host, gitlabHosts)
+  if (!("value" in descriptor)) return null
   const target: unknown = descriptor.value
   if (target === GITHUB_TARGET) return GITHUB_TARGET
   if (target === GITLAB_TARGET) return GITLAB_TARGET
@@ -503,8 +537,8 @@ export function forgeTarget(remoteUrl: string | null): ForgeTarget | null {
 }
 
 /** Classify a remote URL. An unverified remote has no adapter. */
-export function detectForge(remoteUrl: string | null): Forge {
-  return forgeTarget(remoteUrl)?.forge ?? "unknown"
+export function detectForge(remoteUrl: string | null, gitlabHosts: readonly string[]): Forge {
+  return forgeTarget(remoteUrl, gitlabHosts)?.forge ?? "unknown"
 }
 
 /**
@@ -629,14 +663,10 @@ function supportedForge(forge: Forge): "github" | "gitlab" | null {
   return forge === "github" || forge === "gitlab" ? forge : null
 }
 
-const GITLAB_HOSTS: readonly GitlabHost[] = Object.freeze([
-  GITLAB_TARGET.canonicalHost,
-  GITLAB_CUSTOM_TARGET.canonicalHost,
-] as GitlabHost[])
-
-/** The GitLab API host, tested positively for the same reason {@link supportedForge} is: it becomes an argv element. */
-function supportedGitlabHost(host: unknown): GitlabHost | null {
-  return GITLAB_HOSTS.find((known) => known === host) ?? null
+/** The GitLab API host, tested positively for the same reason {@link supportedForge} is: it becomes an argv element. Only a built-in host or one the operator configured passes. */
+function supportedGitlabHost(host: unknown, gitlabHosts: readonly string[]): GitlabHost | null {
+  const known: readonly string[] = [GITLAB_TARGET.canonicalHost, GITLAB_CUSTOM_TARGET.canonicalHost, ...gitlabHosts]
+  return known.find((name) => name === host) ?? null
 }
 
 /**
@@ -697,12 +727,13 @@ export async function autoDeleteSetting(
   repo: string,
   run: CliRunner = runCli,
   gitlabHost: GitlabHost = "gitlab.com",
+  gitlabHosts: readonly string[] = [],
 ): Promise<"on" | "off" | "unknown"> {
   const supported = supportedForge(forge)
   if (supported === null) return "unknown"
   const path = normalizeRepoPath(supported, repo)
   if (path === null) return "unknown"
-  const host = supportedGitlabHost(gitlabHost)
+  const host = supportedGitlabHost(gitlabHost, gitlabHosts)
   if (supported === "gitlab" && host === null) return "unknown"
   const argv =
     supported === "github"
@@ -746,6 +777,7 @@ export async function enableAutoDelete(
   repo: string,
   run: CliRunner = runCli,
   gitlabHost: GitlabHost = "gitlab.com",
+  gitlabHosts: readonly string[] = [],
 ): Promise<{ ok: boolean; reason?: string }> {
   const supported = supportedForge(forge)
   if (supported === null) {
@@ -759,11 +791,11 @@ export async function enableAutoDelete(
     const expected = supported === "github" ? '"<owner>/<name>"' : '"<group>/<project>", optionally with nested groups'
     return { ok: false, reason: `repo is ${JSON.stringify(repo)}, expected ${expected}` }
   }
-  const host = supportedGitlabHost(gitlabHost)
+  const host = supportedGitlabHost(gitlabHost, gitlabHosts)
   if (supported === "gitlab" && host === null) {
     return {
       ok: false,
-      reason: `gitlabHost is ${JSON.stringify(gitlabHost)}, expected one of ${GITLAB_HOSTS.map((value) => JSON.stringify(value)).join(", ")}`,
+      reason: `gitlabHost is ${JSON.stringify(gitlabHost)}, expected a bare GitLab host name`,
     }
   }
   const argv =
@@ -1528,6 +1560,7 @@ function absenceProbe(
   branch: string,
   cwd: string,
   environment: NodeJS.ProcessEnv,
+  gitlabHosts: readonly string[],
 ): AbsenceProbe | null {
   if (!isSafeArgument(remoteOrUrl) || !isValidBranchName(branch)) return null
   const ref = `refs/heads/${branch}`
@@ -1548,7 +1581,7 @@ function absenceProbe(
   // through {@link urlProbeEnvironment}, and argv names {@link PROBE_REMOTE}: `ps`
   // shows argv to every user on the host, so a `user:token@` or `?token=` URL on a
   // command line is a credential published to the machine.
-  if (forgeTarget(remoteOrUrl) !== null) {
+  if (forgeTarget(remoteOrUrl, gitlabHosts) !== null) {
     let neutral: string
     try {
       // Resolved to its physical path: `os.tmpdir()` answers from ambient TMPDIR and
@@ -1641,8 +1674,9 @@ export async function remoteBranchAbsent(
   cwd: string,
   run: CliRunner = runCli,
   environment: NodeJS.ProcessEnv = process.env,
+  gitlabHosts: readonly string[] = [],
 ): Promise<"absent" | "present" | "unknown"> {
-  const probe = absenceProbe(remoteOrUrl, branch, cwd, environment)
+  const probe = absenceProbe(remoteOrUrl, branch, cwd, environment, gitlabHosts)
   if (probe === null) return "unknown"
   try {
     return absenceVerdict(await run(probe.argv, probe.options), probe.ref)
