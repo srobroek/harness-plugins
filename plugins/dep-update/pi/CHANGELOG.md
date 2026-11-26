@@ -1,3 +1,9 @@
+## dep-update [0.8.0](https://github.com/srobroek/harness-plugins/compare/dep-update--v0.7.1...dep-update--v0.8.0) (2026-11-26)
+
+### Features
+
+* **dep-update:** apply a bump on pi without asking by default ([c643f28](https://github.com/srobroek/harness-plugins/commit/c643f283dce8e3c8d86bf1efe6acf41549a567ab))
+
 ## dep-update [0.7.1](https://github.com/srobroek/harness-plugins/compare/dep-update--v0.7.0...dep-update--v0.7.1) (2026-11-24)
 
 ## dep-update [0.7.0](https://github.com/srobroek/harness-plugins/compare/dep-update--v0.6.1...dep-update--v0.7.0) (2026-11-23)
