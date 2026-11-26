@@ -1,3 +1,10 @@
+## safety [2.0.1](https://github.com/srobroek/harness-plugins/compare/safety--v2.0.0...safety--v2.0.1) (2026-11-26)
+
+### Bug Fixes
+
+* **safety:** take linked worktrees under worktreeRoots as inside for directory flags ([e40e8da](https://github.com/srobroek/harness-plugins/commit/e40e8dafa37a62d62ebf462798bc23ec21d9e062))
+* **safety:** treat the session repository's worktrees as inside for directory flags ([20df239](https://github.com/srobroek/harness-plugins/commit/20df239b41697e4cae47a7ad2665b3777f23d9db))
+
 ## safety [2.0.0](https://github.com/srobroek/harness-plugins/compare/safety--v1.0.1...safety--v2.0.0) (2026-11-25)
 
 ### ⚠ BREAKING CHANGES
