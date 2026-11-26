@@ -34,6 +34,7 @@ import { type EventWatchDeps, watchEvents } from "@srobroek/opencode-lib/event-w
 import { holdLease, type LeaseOptions, withLease } from "@srobroek/opencode-lib/lease-lock"
 import {
   clearReport,
+  collectTombstones,
   type JobLookup,
   neededLookups,
   type ReportClock,
@@ -1363,6 +1364,8 @@ export function createPendingCleanup(deps: PendingDeps) {
         // Only the session's current report is written: a deleted session (no entry) has nothing to record, and
         // an older one is replaced by the newer one's own write.
         if (unsettled.get(sessionID)?.gen !== gen) return
+        // Tombstones of cleared sessions that have outlived the expiry go, under the same lease.
+        collectTombstones(root, (deps.fileNow ?? Date.now)())
         if (background.length === 0) clearReport(root, sessionID, at)
         else writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname(), instance: SERVER_INSTANCE })
       })

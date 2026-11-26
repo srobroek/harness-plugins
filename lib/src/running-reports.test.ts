@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   clearReport,
+  collectTombstones,
   type JobLookup,
   MAX_REPORT_BYTES,
   neededLookups,
@@ -58,12 +59,13 @@ describe("writing and clearing", () => {
     expect(Math.abs((read.reports[0]?.mtimeMs ?? 0) - Date.now())).toBeLessThan(60_000)
   })
 
-  test("a write does not replace the session's report on disk that has a newer `at`, and replaces one that is as new or older", () => {
+  test("a write does not replace the session's report on disk that has an `at` as new or newer, and replaces one that is older", () => {
     writeReport(root, report("ses_a", 20, [{ kind: "shell", command: "newer" }]))
     expect(writeReport(root, report("ses_a", 10, [{ kind: "shell", command: "older" }]))).toBe("superseded")
     expect(readReports(root).reports[0]?.jobs[0]?.command).toBe("newer")
-    expect(writeReport(root, report("ses_a", 20, [{ kind: "shell", command: "same" }]))).toBe("written")
-    expect(readReports(root).reports[0]?.jobs[0]?.command).toBe("same")
+    expect(writeReport(root, report("ses_a", 20, [{ kind: "shell", command: "same" }]))).toBe("superseded")
+    expect(writeReport(root, report("ses_a", 21, [{ kind: "shell", command: "later" }]))).toBe("written")
+    expect(readReports(root).reports[0]?.jobs[0]?.command).toBe("later")
   })
 
   test("a clear deletes the session's report unless the report on disk is newer", () => {
@@ -73,6 +75,38 @@ describe("writing and clearing", () => {
     expect(readReports(root).reports.map((r) => r.sessionID).sort()).toEqual(["ses_a", "ses_b"])
     expect(clearReport(root, "ses_a", 20)).toBe("cleared")
     expect(readReports(root).reports.map((r) => r.sessionID)).toEqual(["ses_b"])
+  })
+
+  test("a clear leaves a tombstone, which holds nothing, and a late older snapshot from another instance cannot bring the report back", () => {
+    // Instance A writes and clears; instance B, which failed to write earlier, retries its older snapshot.
+    writeReport(root, report("ses_a", 10, [{ kind: "shell", command: "cd /w/linked && make" }]))
+    expect(clearReport(root, "ses_a", 20)).toBe("cleared")
+    expect(readReports(root)).toEqual({ reports: [], unreadable: false })
+    expect(readdirSync(runningDirectory(root)).filter((name) => name.endsWith(".json"))).toHaveLength(1)
+    expect(writeReport(root, { ...report("ses_a", 15, [{ kind: "shell", command: "cd /w/linked && make" }]), instance: "box:99:b" })).toBe("superseded")
+    const read = readReports(root)
+    expect(read.reports).toEqual([])
+    expect(reportBlock(read.reports, ["/w/linked"], () => undefined, clock(), identity)).toBeUndefined()
+    // A newer report of the session replaces the tombstone.
+    expect(writeReport(root, report("ses_a", 30))).toBe("written")
+    expect(readReports(root).reports.map((r) => r.sessionID)).toEqual(["ses_a"])
+  })
+
+  test("a tombstone is collected once its file is older than the expiry, a report and a fresh tombstone are not", () => {
+    clearReport(root, "ses_old", 5)
+    clearReport(root, "ses_new", 5)
+    writeReport(root, report("ses_live", 5))
+    const aged = new Date(1_000)
+    utimesSync(reportFile(root, "ses_old"), aged, aged)
+    utimesSync(reportFile(root, "ses_live"), aged, aged)
+    expect(collectTombstones(root, 1_000 + 24 * 3_600_000)).toBe(1)
+    expect(readdirSync(runningDirectory(root)).filter((name) => name.endsWith(".json")).sort()).toEqual([reportFile(root, "ses_live"), reportFile(root, "ses_new")].map((path) => path.split("/").pop() as string).sort())
+  })
+
+  test("a session's removal deletes its tombstone too", () => {
+    clearReport(root, "ses_a", 5)
+    removeReport(root, "ses_a")
+    expect(readdirSync(runningDirectory(root)).filter((name) => name.endsWith(".json"))).toEqual([])
   })
 
   test("a file at the session's path that is not that session's report is replaced by a write, whatever its `at`", () => {
@@ -134,6 +168,9 @@ describe("reading", () => {
     ["a job without a kind", { sessionID: "s", jobs: [{}], at: 1, pid: 1, host: "h", instance: "i" }],
     ["a non-numeric time", { sessionID: "s", jobs: [], at: "now", pid: 1, host: "h", instance: "i" }],
     ["no server instance", { sessionID: "s", jobs: [], at: 1, pid: 1, host: "h" }],
+    ["a tombstone that is not cleared", { sessionID: "s", cleared: false, at: 1, pid: 1, host: "h" }],
+    ["a tombstone that carries jobs", { sessionID: "s", cleared: true, jobs: [], at: 1, pid: 1, host: "h" }],
+    ["a tombstone with no host", { sessionID: "s", cleared: true, at: 1, pid: 1 }],
     ["a pid that is not a positive integer", { sessionID: "s", jobs: [], at: 1, pid: 0, host: "h", instance: "i" }],
     ["a fractional pid", { sessionID: "s", jobs: [], at: 1, pid: 1.5, host: "h", instance: "i" }],
     ["an empty host", { sessionID: "s", jobs: [], at: 1, pid: 1, host: "", instance: "i" }],
