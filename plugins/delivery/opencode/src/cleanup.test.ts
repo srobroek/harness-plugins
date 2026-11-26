@@ -4700,7 +4700,7 @@ describe("pending cleanup: one remover per worktree", () => {
     })
 
     // I4: a failed write is a hold until the session's next successful write.
-    needsPermissions("a report that cannot be written refuses removal until the session's next successful write", async () => {
+    needsPermissions("a report that cannot be written refuses removal until storage recovers and a pass writes it again", async () => {
       const h = await harness("running-write-fails")
       await h.pending.start()
       const directory = runningDirectory(receiptDirectory(h.f.env))
@@ -4712,10 +4712,10 @@ describe("pending cleanup: one remover per worktree", () => {
       } finally {
         chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
       }
-      // Another session's success does not lift it.
+      // With storage back, any session's idle hook writes the report again from its snapshot.
       await reportFrom(h, "ses_b", [elsewhere("other")])
-      expect(await check(h)).toContain("the running work of ses_a could not be recorded")
-      await reportFrom(h, "ses_a", [elsewhere()])
+      expect(h.pending.unsettledCount()).toBe(0)
+      expect(reportIds(h).sort()).toEqual(["ses_a", "ses_b"])
       expect(await check(h)).toBeUndefined()
       await h.finish()
     })
@@ -5000,7 +5000,7 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
-    needsPermissions("an older write that succeeds after a newer one failed does not clear the hold", async () => {
+    needsPermissions("an older write that completes after a newer one failed neither clears the hold nor replaces the newer report", async () => {
       const queue = queuedWaits()
       const h = await harness("running-unsettled-order", { lock: queue.lock })
       await h.pending.start()
@@ -5017,13 +5017,16 @@ describe("pending cleanup: one remover per worktree", () => {
       try {
         queue.waits[1]?.() // the newer takes the lease first and fails to write
         await newer
+        expect(h.pending.unsettledCount()).toBe(1)
+        expect(await check(h)).toContain("ses_a")
       } finally {
         chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
       }
-      queue.waits[0]?.() // the older then succeeds
+      queue.waits[0]?.() // the older then runs: it is not the session's current report, so it writes nothing
       await older
-      expect(h.pending.unsettledCount()).toBe(1)
-      expect(await check(h)).toContain("ses_a")
+      // Storage is back: the pass the older hook started wrote the newer snapshot, and only that one.
+      expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.jobs.map((job) => job.shellID))).toEqual([["newer"]])
+      expect(h.pending.unsettledCount()).toBe(0)
       await h.finish()
     })
 
@@ -5135,21 +5138,50 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
-    // I8: nothing accumulates per session.
-    needsPermissions("after a hundred sessions whose reports failed are deleted, no failure is remembered", async () => {
-      const h = await harness("running-unrecorded-drained")
+    // A write that failed is retried from its stored snapshot, by the next pass or by any session's idle hook, not only by its own session's.
+    needsPermissions.each([
+      ["another session's idle hook", (h: Harness) => reportFrom(h, "ses_b", [])],
+      ["a cleanup pass", (h: Harness) => h.idle("ses_lead")],
+    ] as const)("a report whose write failed is settled once storage recovers, by %s", async (_name, trigger) => {
+      const h = await harness("running-unsettled-retry")
+      await h.pending.record(h.f.receipt, "ses_lead")
       await h.pending.start()
       const directory = runningDirectory(receiptDirectory(h.f.env))
       mkdirSync(directory, { recursive: true })
       chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
       try {
-        for (let index = 0; index < 100; index++) await reportFrom(h, `ses_${index}`, [elsewhere()])
-        expect(h.pending.unsettledCount()).toBe(100)
+        await reportFrom(h, "ses_a", [elsewhere()])
+        expect(h.pending.unsettledCount()).toBe(1)
       } finally {
         chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
       }
-      for (let index = 0; index < 100; index++) await h.fake.emit({ type: "session.deleted", data: { sessionID: `ses_${index}` } })
+      await trigger(h)
+      await h.idle()
       expect(h.pending.unsettledCount()).toBe(0)
+      expect(reportIds(h)).toContain("ses_a")
+      expect(removed(h)).toBe(true)
+      await h.finish()
+    })
+
+    // I8: nothing accumulates per session. Each idle hook also starts a serial pass, so the count is what
+    // that costs (about 0.25 s a hook); twenty-five sessions, fired together, leak as visibly as a hundred.
+    needsPermissions("after sessions whose reports failed are deleted, no failure is remembered", async () => {
+      const SESSIONS = 25
+      const ids = Array.from({ length: SESSIONS }, (_unused, index) => `ses_${index}`)
+      const h = await harness("running-unrecorded-drained", { idlePassMs: 1 })
+      await h.pending.start()
+      const directory = runningDirectory(receiptDirectory(h.f.env))
+      mkdirSync(directory, { recursive: true })
+      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
+      try {
+        await Promise.all(ids.map((id) => reportFrom(h, id, [elsewhere()])))
+        expect(h.pending.unsettledCount()).toBe(SESSIONS)
+        // Deleted while storage still refuses writes: no pass can settle them first, so only the deletion empties the map.
+        await Promise.all(ids.map((id) => h.fake.emit({ type: "session.deleted", data: { sessionID: id } })))
+        expect(h.pending.unsettledCount()).toBe(0)
+      } finally {
+        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
+      }
       await h.finish()
     })
   })

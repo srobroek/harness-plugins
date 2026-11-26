@@ -647,9 +647,11 @@ test("a report that cannot be written while the final check lists sessions refus
         return FAILED
       })()) as never
     await s.cleanup({ receipt: join(receiptDirectory(env(), (await repositoryContext(repoB))?.key as string), `${receiptId}.json`), repo: "o/b", repoPath: repoB })
-    expect(refused).toContain("the running work of a could not be recorded")
-    // The session's next successful write lifts it.
-    expect(await (await lastCoordination()).finalCheck(worktree)).toContain("the running work of a could not be recorded")
+    // Refused either way: the report is still unwritten, or the pass that wrote it again found the shell it names.
+    expect(refused).toMatch(/the running work of a could not be recorded|session a has a shell running that names the worktree/)
+    // Storage is back: the check writes the report again from its snapshot, and the shell it names holds.
+    expect(await (await lastCoordination()).finalCheck(worktree)).toContain("session a has a shell running that names the worktree")
+    // The session's next report lifts it.
     await s.fake.fire.session("experimental.idle", { sessionID: "a", background: [] })
     expect(await (await lastCoordination()).finalCheck(worktree)).toBeUndefined()
   } finally {
