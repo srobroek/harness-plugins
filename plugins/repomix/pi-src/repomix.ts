@@ -1,5 +1,8 @@
 import { statSync } from "node:fs";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { loadPiPluginSettings, PI_SETTINGS_FILE } from "@srobroek/opencode-lib/pi-settings";
 import { Type } from "typebox";
 import {
     chooseRunner,
@@ -13,7 +16,15 @@ import {
     targetResource,
 } from "../shared/pack.ts";
 
-export type RepomixOverrides = PackDeps & { which?: (bin: string) => string | null; isDirectory?: (path: string) => boolean }
+export type RepomixOverrides = PackDeps & { which?: (bin: string) => string | null; isDirectory?: (path: string) => boolean; settingsPath?: string }
+
+/**
+ * Whether repomix_pack asks before a pack: `"repomix": {"confirmPack": true}` in the user settings
+ * file, as the OpenCode option. Absent, unusable or any other value, it packs without asking.
+ */
+export function confirmPackSetting(path: string = join(getAgentDir(), PI_SETTINGS_FILE)): boolean {
+  return loadPiPluginSettings(path, "repomix", "repomix_pack packs without asking").options.confirmPack === true
+}
 
 const properties = PACK_INPUT.properties
 const parameters = Type.Object({
@@ -53,9 +64,10 @@ export function registerRepomix(pi: ExtensionAPI, overrides: RepomixOverrides = 
 
       const runner = chooseRunner(which)
       const resource = targetResource(target)
-      if (!ctx.hasUI)
+      const confirm = confirmPackSetting(overrides.settingsPath)
+      if (confirm && !ctx.hasUI)
         return { content: [{ type: "text", text: `${PACK_TOOL}: write refused because confirmation UI is unavailable for ${resource}` }], details: { ok: false } }
-      if (!(await ctx.ui.confirm("Confirm repository pack", `Run ${runner.kind === "npx" ? `npx repomix@1.19.0` : "repomix"} to pack ${resource}? The pack will be written to a temporary file.`)))
+      if (confirm && !(await ctx.ui.confirm("Confirm repository pack", `Run ${runner.kind === "npx" ? `npx repomix@1.19.0` : "repomix"} to pack ${resource}? The pack will be written to a temporary file.`)))
         return { content: [{ type: "text", text: `${PACK_TOOL}: pack cancelled` }], details: { ok: false } }
 
       try {

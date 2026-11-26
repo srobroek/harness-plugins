@@ -66,7 +66,7 @@ is a prompt unless you configure otherwise. The shipped allowlist agents deny it
 a pack in slices, and when `compress` loses information. It also carries a CLI recipe,
 so it is exported to Claude Code.
 
-The npm package exposes `repomix_pack` as a Pi tool. It confirms before packing; the pack is written under a temp directory, and only the path and metrics are returned.
+The npm package exposes `repomix_pack` as a Pi tool. It packs without asking; set `"repomix": {"confirmPack": true}` in `~/.pi/agent/settings.json` to confirm every pack, which a session without a UI then refuses. The pack is written under a temp directory, and only the path and metrics are returned.
 
 ## Optional: the repomix MCP server
 
