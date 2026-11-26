@@ -1,6 +1,8 @@
-import { isAbsolute, resolve } from "node:path"
+import { isAbsolute, join, resolve } from "node:path"
 import type { ExtensionAPI, ToolResultEvent } from "@earendil-works/pi-coding-agent"
+import { getAgentDir } from "@earendil-works/pi-coding-agent"
 import { applyBump, researchProject, validOperands } from "@srobroek/opencode-lib/dep-bump"
+import { loadPiPluginSettings, PI_SETTINGS_FILE } from "@srobroek/opencode-lib/pi-settings"
 import { appendResultText } from "@srobroek/opencode-lib/shell-result"
 import { shellCommand } from "@srobroek/opencode-lib/tool-targets"
 import { Type } from "typebox"
@@ -28,12 +30,26 @@ const applyParameters = Type.Object(
 
 export type ApplyContext = { cwd: string; hasUI: boolean; ui: { confirm: (title: string, message: string, options?: { signal?: AbortSignal }) => Promise<boolean> } }
 
-export async function applyApprovedBump(params: { ecosystem: string; name: string; version: string; path?: string }, signal: AbortSignal | undefined, ctx: ApplyContext) {
+/**
+ * Whether dep_apply asks before a bump: `"dep-update": {"confirm": true}` in the user settings file.
+ * Absent, unusable or any other value, it applies without asking.
+ */
+export function confirmSetting(path: string = join(getAgentDir(), PI_SETTINGS_FILE)): boolean {
+  return loadPiPluginSettings(path, "dep-update", "dep_apply applies without asking").options.confirm === true
+}
+
+export async function applyApprovedBump(
+  params: { ecosystem: string; name: string; version: string; path?: string },
+  signal: AbortSignal | undefined,
+  ctx: ApplyContext,
+  confirm = false,
+) {
   const root = projectDir(ctx.cwd, params.path)
   if (!validOperands(params.ecosystem, params.name, params.version)) {
     return { text: "dep_apply: unsupported ecosystem, package name, or exact version; no process started", exit: 2 }
   }
   if (signal?.aborted) return { text: "dep_apply stopped before it started; no changes made.", exit: 1 }
+  if (!confirm) return applyBump(params.ecosystem, params.name, params.version, root, { signal })
   if (!ctx.hasUI) return { text: "dep_apply requires an interactive UI to approve this exact bump; no changes made.", exit: 1 }
   const resource = `${params.name}@${params.version}`
   const approved = await ctx.ui.confirm(
@@ -77,10 +93,10 @@ export default function (pi: ExtensionAPI): void {
     name: "dep_apply",
     label: "Apply Dependency Bump",
     description:
-      "Apply one exact dependency bump with the ecosystem package manager after explicit user approval. The run is bounded to 10 minutes; failure or cancellation can leave partial changes.",
+      "Apply one exact dependency bump with the ecosystem package manager; asks first only when the dep-update setting confirm is true. The run is bounded to 10 minutes; failure or cancellation can leave partial changes.",
     parameters: applyParameters,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const result = await applyApprovedBump(params, signal, ctx)
+      const result = await applyApprovedBump(params, signal, ctx, confirmSetting())
       return { content: [{ type: "text", text: result.text }], details: { exit: result.exit } }
     },
   })

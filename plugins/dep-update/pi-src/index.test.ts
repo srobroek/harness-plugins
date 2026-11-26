@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExtensionAPI, ToolResultEvent } from "@earendil-works/pi-coding-agent"
 import { formatScan } from "../shared/scan.ts"
-import { default as extension, scannerInstallResult } from "./index.ts"
+import { applyApprovedBump, confirmSetting, default as extension, scannerInstallResult } from "./index.ts"
 
 function tmp(): string {
   return mkdtempSync(join(tmpdir(), "pi-dep-update-"))
@@ -48,40 +48,42 @@ describe("dep-update pi extension", () => {
     }
   })
 
-  test("apply fails closed without UI and does not change a manifest", async () => {
+  test("confirm is on only when the dep-update setting sets it to true", () => {
+    const dir = tmp()
+    const path = join(dir, "settings.json")
+    try {
+      expect(confirmSetting(path)).toBe(false)
+      writeFileSync(path, JSON.stringify({ "dep-update": { confirm: true } }))
+      expect(confirmSetting(path)).toBe(true)
+      writeFileSync(path, JSON.stringify({ "dep-update": { confirm: "yes" } }))
+      expect(confirmSetting(path)).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("with confirm on, apply fails closed without UI and does not change a manifest", async () => {
     const project = tmp()
     const manifest = join(project, "package.json")
     const original = JSON.stringify({ dependencies: { leftpad: "1.3.0" } }, null, 2)
     writeFileSync(manifest, original)
     try {
-      const pi = fakePi()
-      extension(pi.api)
-      const apply = pi.tools[1]
-      expect(apply).toBeDefined()
-      if (!apply) throw new Error("dep_apply was not registered")
-      const result = await apply.execute(
-        "call",
-        { ecosystem: "npm", name: "leftpad", version: "1.3.1" },
-        undefined,
-        undefined,
-        { cwd: project, hasUI: false },
-      )
-      expect(result.content.at(0)?.text).toContain("requires an interactive UI")
+      const ui = { confirm: async () => true }
+      const result = await applyApprovedBump({ ecosystem: "npm", name: "leftpad", version: "1.3.1" }, undefined, { cwd: project, hasUI: false, ui }, true)
+      expect(result.text).toContain("requires an interactive UI")
       expect(readFileSync(manifest, "utf8")).toBe(original)
     } finally {
       rmSync(project, { recursive: true, force: true })
     }
   })
 
-  test("approval names the exact bump and decline leaves the manifest unchanged", async () => {
+  test("with confirm on, approval names the exact bump and decline leaves the manifest unchanged", async () => {
     const project = tmp()
     const manifest = join(project, "package.json")
     const original = JSON.stringify({ dependencies: { leftpad: "1.3.0" } }, null, 2)
     writeFileSync(manifest, original)
     let prompt = ""
     const controller = new AbortController()
-    const pi = fakePi()
-    extension(pi.api)
     const context = {
       cwd: project,
       hasUI: true,
@@ -94,18 +96,9 @@ describe("dep-update pi extension", () => {
       },
     }
     try {
-      const apply = pi.tools[1]
-      expect(apply).toBeDefined()
-      if (!apply) throw new Error("dep_apply was not registered")
-      const result = await apply.execute(
-        "call",
-        { ecosystem: "npm", name: "leftpad", version: "1.3.1" },
-        controller.signal,
-        undefined,
-        context,
-      )
+      const result = await applyApprovedBump({ ecosystem: "npm", name: "leftpad", version: "1.3.1" }, controller.signal, context, true)
       expect(prompt).toContain("npm bump leftpad@1.3.1")
-      expect(result.content.at(0)?.text).toContain("leftpad@1.3.1 was not applied")
+      expect(result.text).toContain("leftpad@1.3.1 was not applied")
       expect(readFileSync(manifest, "utf8")).toBe(original)
     } finally {
       rmSync(project, { recursive: true, force: true })
