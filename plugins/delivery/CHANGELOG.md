@@ -1,3 +1,32 @@
+## delivery [0.15.0](https://github.com/srobroek/harness-plugins/compare/delivery--v0.14.0...delivery--v0.15.0) (2026-11-26)
+
+### Features
+
+* **delivery:** running reports, one raw report per session on disk ([c2029bd](https://github.com/srobroek/harness-plugins/commit/c2029bddce4ca7687f8c3d0b5ef635fee7be4453))
+
+### Bug Fixes
+
+* **delivery:** count landing records a parent's permissions hide as unreadable; test eviction through delivery's own registration ([24e628f](https://github.com/srobroek/harness-plugins/commit/24e628fc41bfafd5e579f91da3c76519e6211334))
+* **delivery:** drop stale reports after deletion, filter fake events by type, count only ENOENT as no landing records, test eviction after collection ([8424188](https://github.com/srobroek/harness-plugins/commit/8424188702ea028b81f4d3c49456e4bfd39a9859))
+* **delivery:** gate the report-ordering tests at the lock wait instead of polling ([5200463](https://github.com/srobroek/harness-plugins/commit/520046318eae1c98ac8e278c4f04045c21a55570))
+* **delivery:** keep a clone registered under registry pressure until its landing records are collected ([708c695](https://github.com/srobroek/harness-plugins/commit/708c6950d1c122917b66f2576cdb79a69099c7c8))
+* **delivery:** keep the registry parse error as cause; test lease causes for every update ([006d067](https://github.com/srobroek/harness-plugins/commit/006d067971cf1a3cb8b603561eaf8dc0fba44e85))
+* **delivery:** lift an unsafe mark only after a write that landed; acknowledge pending fake emits on close; drop the intermediate report-count assertion ([92a9e5e](https://github.com/srobroek/harness-plugins/commit/92a9e5e5ea8b7f7410bf35d426ecf771982fadc6))
+* **delivery:** no vetoes from empty reports, clear them on deletion or for left-out clones, log the blocking session, reread the registry after the session listing ([8a76e12](https://github.com/srobroek/harness-plugins/commit/8a76e12638b8dedddfbb41ef3912636c7b8f1ccf))
+* **delivery:** one ordered store for every veto: clears leave a tombstone, clone vetoes keyed by the registry's repository identity ([f866ed9](https://github.com/srobroek/harness-plugins/commit/f866ed946316d9003567cee0b891895f611e7ae6))
+* **delivery:** one ordered store for every veto: clears leave a tombstone, clone vetoes keyed by the registry's repository identity (restore the ordered raise) ([bf19370](https://github.com/srobroek/harness-plugins/commit/bf193705f0bef08bda0f0cb7b5235657fb762a85))
+* **delivery:** one report-ordered rule for every veto and unsafe mark ([50dc6c3](https://github.com/srobroek/harness-plugins/commit/50dc6c395a33da5c4e5c7bc540ed23096f094659))
+* **delivery:** order veto clears and holds by report, keep report state only while reports are in flight ([a7773e9](https://github.com/srobroek/harness-plugins/commit/a7773e9c028576ef26697c0fc1ba19a6f4b67086))
+* **delivery:** read a registry under a non-directory as absent ([94fa449](https://github.com/srobroek/harness-plugins/commit/94fa449e5ec02e2b113f0880d633e7b1476a7d3d))
+* **delivery:** rebuild the bundle ([624da1b](https://github.com/srobroek/harness-plugins/commit/624da1ba16e0d92f8d772c330483cb30ba056735))
+* **delivery:** rebuild the bundle ([a213689](https://github.com/srobroek/harness-plugins/commit/a213689ec6764caf73e13cfcac4edd83fd62e0a7))
+* **delivery:** rebuild the bundle ([6e436bc](https://github.com/srobroek/harness-plugins/commit/6e436bc11b4f8cb1f0d5d970764dca94af514867))
+* **delivery:** rebuild the bundle; fix a lint error in the clone gate ([489f90c](https://github.com/srobroek/harness-plugins/commit/489f90c7312a2313521ae97f903df0ecaafefdec))
+* **delivery:** rebuild the bundle; type the receipts helper's work as any promise ([a69b1cc](https://github.com/srobroek/harness-plugins/commit/a69b1cccb084650ad23fa5591a22abb65ecc7702))
+* **delivery:** run clone discovery before removal, keep hold vetoes per reporting session until reconciled, recheck them after the session listing ([6cbbad2](https://github.com/srobroek/harness-plugins/commit/6cbbad2267fb358868411cd04ea745f40df2dbd0))
+* **delivery:** the running-reports store takes a lease, tells servers apart, reads files bounded, and judges a job's cwd ([448f0a3](https://github.com/srobroek/harness-plugins/commit/448f0a354aacdbbea31f71df586959519500638b))
+* **delivery:** veto removal when holds or the clone registry are unknown, surface registry errors ([828b5bb](https://github.com/srobroek/harness-plugins/commit/828b5bb3a6409842e148d7247d8341f4abcbb97a))
+
 ## delivery [0.14.0](https://github.com/srobroek/harness-plugins/compare/delivery--v0.13.1...delivery--v0.14.0) (2026-11-25)
 
 ### Features
