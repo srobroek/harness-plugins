@@ -1691,8 +1691,8 @@ Create migrations/0003_c.sql with CREATE TABLE c (id INTEGER); then use the edit
 Run exactly: git -C /tmp status
 ```
 
-**Expect:** a permission prompt for `external_directory` on the `/tmp` directory, as for a `cd /tmp`. Reject it. `git -C . status` runs without a prompt.
-**If not:** `plugins/safety/opencode/src/flag-directories.ts`.
+**Expect:** a permission prompt for `external_directory` on the `/tmp` directory, as for a `cd /tmp`. Reject it. `git -C . status` runs without a prompt, and so does `git -C <linked worktree> status` for a linked worktree of the session's repository.
+**If not:** `plugins/safety/shared/flag-directories.ts`.
 
 ### Rewrite `close-keywords` (needs a GitHub repo)
 

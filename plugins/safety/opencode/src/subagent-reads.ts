@@ -8,7 +8,8 @@
 import { statSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, isAbsolute, join } from "node:path"
-import { inside, resolved } from "./scratch-dirs.ts"
+import { resolved } from "../../shared/resolved-path.ts"
+import { inside } from "./scratch-dirs.ts"
 import { READ_ONLY_TOOLS } from "./skill-references.ts"
 
 type Evaluation = { readonly action: string; readonly resources: ReadonlyArray<string>; effect: string }

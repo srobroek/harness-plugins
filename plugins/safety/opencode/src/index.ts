@@ -2,12 +2,12 @@ import { isAbsolute, resolve } from "node:path"
 import { Plugin } from "@opencode/plugin"
 import type { Tool } from "@opencode/plugin/effect"
 import { appendResultText, isShellTool, leadingCd, shellCall, WRITE_TOOLS } from "@srobroek/opencode-lib"
-import { externalDirectories, sessionRoots } from "@srobroek/opencode-lib/external-directories"
+import { sessionRoots } from "@srobroek/opencode-lib/external-directories"
 import { readProviderTypes } from "@srobroek/opencode-lib/fnox-config"
 import { readGitWrappers } from "@srobroek/opencode-lib/git-wrappers"
 import { hostWarn, type Warn } from "@srobroek/opencode-lib/host-log"
 import { rewriteCloseKeywords } from "../../shared/close-keywords.ts"
-import { flagDirectoryReport } from "../../shared/flag-directories.ts"
+import { callFlagDirectoryReport, externalFlagDirectories } from "../../shared/flag-directories.ts"
 import { GUARD_IDS, type GuardID, type GuardOptions, hardGate } from "../../shared/guards.ts"
 import { decideToolCall, type MigrationOptions, migrationOverride } from "../../shared/migrations.ts"
 import { createPackageAdvisor } from "../../shared/package-investigate.ts"
@@ -295,9 +295,9 @@ export function createPlugin(overrides: Overrides = {}) {
         if (on("external-directory")) {
           const sessionDir = await sessionDirectory(event.sessionID)
           // After a leading cd this plugin cannot read, a relative flag directory has no known base.
-          const flags = safely(() => flagDirectoryReport(command, lead.kind === "rejected" ? undefined : gateCwd, gitWrappers))
+          const flags = safely(() => callFlagDirectoryReport(command, cwd, gitWrappers))
           if (flags !== undefined && flags.unresolved.length > 0) throw new Error(unresolvedFlagRefusal(flags.unresolved))
-          const external = flags === undefined ? [] : (safely(() => externalDirectories(flags.dirs, sessionRoots(sessionDir))) ?? [])
+          const external = flags === undefined ? [] : (safely(() => externalFlagDirectories(flags.dirs, sessionDir)) ?? [])
           if (external.length > 0)
             await ctx.permission.assert({
               sessionID: event.sessionID,

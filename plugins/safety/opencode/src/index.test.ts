@@ -225,6 +225,31 @@ describe("external-directory", () => {
     expect(fake.asserts).toHaveLength(0)
   })
 
+  test("a linked worktree of the session repository is inside, also after `cd <dir>;`; other cds keep their verdict", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "flag-worktrees-")))
+    try {
+      const main = join(root, "main")
+      const linked = join(root, "worktrees", "linked")
+      const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" }
+      for (const args of [
+        ["init", "-q", "-b", "main", main],
+        ["-C", main, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"],
+        ["-C", main, "worktree", "add", "-q", "-b", "linked", linked],
+      ]) {
+        expect(Bun.spawnSync(["git", ...args], { cwd: root, env, stdout: "ignore", stderr: "ignore" }).exitCode).toBe(0)
+      }
+      const { fake, before } = await load({}, { directory: main })
+      await before("c1", `cd ${linked}; timeout 300 bun install --cwd infra --frozen-lockfile 2>&1 | tail -2`)
+      await before("c2", `git -C ${linked} status`)
+      expect(fake.asserts).toHaveLength(0)
+      await before("c3", `cd ${root}/elsewhere; bun install --cwd x`)
+      expect(fake.asserts.map((item) => item.resources)).toEqual([[`${root}/elsewhere/x/*`]])
+      await expect(before("c4", 'cd "$X"; bun install --cwd x')).rejects.toThrow(unresolvedFlagRefusal(["x"]))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   test("can be disabled", async () => {
     const { fake, before } = await load({ disable: ["external-directory"] })
     await before("c1", "git -C /elsewhere status")
