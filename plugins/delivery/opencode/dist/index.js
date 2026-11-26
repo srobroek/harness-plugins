@@ -7642,14 +7642,8 @@ function createPendingCleanup(deps) {
     if (entry === undefined || entry.gen !== gen)
       return;
     const root = receiptDirectory(env);
-    const { at } = entry;
+    const { at, jobs } = entry;
     try {
-      const jobs = await withDirectories(entry.jobs);
-      if (unsettled.get(sessionID)?.gen === gen) {
-        entry.jobs = jobs;
-        if (jobs.length > 0)
-          reported.set(sessionID, jobs);
-      }
       await underStore(() => {
         if (unsettled.get(sessionID)?.gen !== gen)
           return;
@@ -7669,6 +7663,25 @@ function createPendingCleanup(deps) {
         mark.failed = true;
       }
       console.error(`delivery: could not record the running work of ${sessionID}: ${why}`);
+      return;
+    }
+    await recordDirectories(sessionID, gen, at, jobs);
+  };
+  const recordDirectories = async (sessionID, gen, at, jobs) => {
+    if (jobs.length === 0)
+      return;
+    try {
+      const withCwd = await withDirectories(jobs);
+      if (withCwd.every((job, index) => job === jobs[index]))
+        return;
+      await underStore(() => {
+        if (lastGen.get(sessionID) !== gen || unsettled.has(sessionID) || pendingDeletes.has(sessionID))
+          return;
+        writeReport(receiptDirectory(env), { sessionID, jobs: withCwd, at, pid: process.pid, host: hostname2(), instance: activation, gen });
+        reported.set(sessionID, withCwd);
+      });
+    } catch (error) {
+      console.error(`delivery: could not record where the running work of ${sessionID} runs: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
   const retryUnsettled = async (except) => {
