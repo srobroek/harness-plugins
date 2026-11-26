@@ -1,3 +1,9 @@
+## beads [1.2.0](https://github.com/srobroek/harness-plugins/compare/beads--v1.1.1...beads--v1.2.0) (2026-11-26)
+
+### Features
+
+* **beads:** verify tracked Pi foreground handoffs ([#221](https://github.com/srobroek/harness-plugins/issues/221)) ([55549f3](https://github.com/srobroek/harness-plugins/commit/55549f3b842020835ab40f74a2b7ea41379fd60a))
+
 ## beads [1.1.1](https://github.com/srobroek/harness-plugins/compare/beads--v1.1.0...beads--v1.1.1) (2026-11-26)
 
 ### Bug Fixes
