@@ -249,7 +249,11 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
 
 Supported forges: `github.com` (including `ssh.github.com`), `gitlab.com`
 (`altssh.gitlab.com`) and self-hosted GitLab at `gitlab.example.com`
-(`ssh.gitlab.example.com`). Other unconfigured hosts are refused.
+(`ssh.gitlab.example.com`). Any other self-hosted GitLab is refused as
+`repo.forge "unknown"` unless it is named in the `gitlabHosts` option: a list of bare host
+names, for example `["gitlab.example.org"]`. A listed host is GitLab on its own name and on
+its `ssh.` name, and its API is addressed at the name itself. Land and cleanup read the same
+list. Entries that are not bare host names are ignored, which leaves their remotes refused.
 
 ### delivery_cleanup
 
@@ -407,31 +411,68 @@ per repository.
 
 ## pi and OMP
 
-The pi package (`@srobroek/pi-delivery`, `plugins/delivery/pi`) ships one tool:
-`delivery_cleanup`, for an explicit call. It takes the same input and returns the
-same text as the OpenCode tool, and runs the same `cleanupDelivery`. It holds the
-same worktree lock as every other delivery remover and as `subagent-worktree`. Under
-that lock it reads the lane claim and the background-work records.
+The pi package (`@srobroek/pi-delivery`, `plugins/delivery/pi`) ships these parts:
 
-It differs from the OpenCode tool in these ways:
+- `delivery_land`, in `extensions/delivery-land.js`. It runs the same
+  `landPullRequest` as the OpenCode tool, with the same input, output and text.
+- `delivery_cleanup`, in `extensions/delivery-cleanup.js`, for an explicit call. It
+  runs the same `cleanupDelivery` as the OpenCode tool, with the same input and text.
+  It holds the worktree lock that every delivery remover and `subagent-worktree` take.
+  Under that lock it reads the lane claim and the background-work records.
+- The `delivery-git-workflow` skill.
 
-- It cleans up only the session's own repository. It refuses a `repo` and `repoPath`
-  that name another clone, and a receipt or worktree of another repository.
-- It has no retry and no background cleanup. It does not clean up after a land and
-  keeps no clone registry. It does not see OpenCode sessions running in the worktree.
-- Its `authorize` step defers a lane-owned worktree and calls no UI, so a session
-  without a UI (a subagent) runs it the same way. The OMP approval mode gates it as
-  an `exec` tool.
-- The pi package ships neither `delivery_land` nor the hygiene report. The agents and
-  the two skills are OpenCode variants (`<id>.opencode.md`, `SKILL.opencode.md`),
-  because they name tools and agents that pi lacks, so pi gets none of them.
+Both tools write and read receipts in the directory from [Receipts](#receipts):
+`DELIVERY_RECEIPTS_DIR`, then `~/.omp/receipts`. Pi has no `receiptsDirectory`
+option. Both tools read `gitlabHosts` from the `delivery` key of the user
+`settings.json`. That file is `~/.pi/agent/settings.json`, or the one under
+`PI_CODING_AGENT_DIR`.
 
-OMP loads pi extensions unchanged. To load this tool in OMP, add the bundle's file
-path (`plugins/delivery/pi/extensions/delivery-cleanup.js`) to `extensions:` in
-`~/.omp/agent/config.yml`. A file entry loads no sibling skills or agents. Only one
-`delivery_cleanup` may load, so disable any other one. For the omp-plugins `delivery`
-package, add `extension-module:delivery-cleanup-tool` to `disabledExtensions`. Its
-`delivery_land` and hygiene report stay loaded.
+The pi tools differ from the OpenCode tools in these ways:
+
+- Before `delivery_land` writes to the forge, it asks the user to confirm. A write is
+  a merge or `setupAutoDelete`. The dialog names the request, the head and the method.
+  A session without a UI (a subagent, `pi -p`) cannot answer, so the tool refuses the
+  call there and writes nothing. Proof of an already MERGED request writes only the
+  local receipt and asks nothing.
+- The OMP approval mode gates both tools as `exec`, so OMP can also ask before a call.
+- No cleanup runs after a land, and nothing retries one. Call `delivery_cleanup` while
+  `next` lists it.
+- Pi keeps no clone registry. The tools do not see OpenCode sessions in a worktree.
+- `delivery_cleanup` cleans up only the session's own repository. It refuses a `repo`
+  and `repoPath` that name another clone. It also refuses a receipt or worktree of
+  another repository.
+- `delivery_land` can land a PR of another repository through `repoPath` or a
+  `worktree` of that repository. Clean up that landing from a session in that clone.
+- The `authorize` step of `delivery_cleanup` defers a lane-owned worktree and calls no
+  UI. A session without a UI runs it the same way.
+
+These parts stay OpenCode only:
+
+- The seven agents:
+  - `pr-reviewer` and `researcher` already ship on pi, from `agent-reviewer` and
+    `agent-researcher`. A test keeps two pi packages from shipping different agents
+    of one name.
+  - `shepherd` and `orchestrator` land PRs from a subagent. Pi's `delivery_land`
+    refuses to merge there.
+  - On pi, `coder` and `mechanic` fill the roles of `implementer`,
+    `implementer-high` and `operator`.
+- The `delivery-fan-out` skill and its instructions. They dispatch to `implementer`
+  and `implementer-high`. They also read verdicts from `metadata.delivery`, which
+  only the OpenCode plugin fills.
+
+No harness got a port of the hygiene report (see the top of this file). The
+omp-plugins `delivery` package (1.4.5) is the only implementation left.
+
+OMP loads pi extensions unchanged. To load these tools in OMP, add the bundle paths
+to `extensions:` in `~/.omp/agent/config.yml`:
+
+- `plugins/delivery/pi/extensions/delivery-land.js`
+- `plugins/delivery/pi/extensions/delivery-cleanup.js`
+
+A file entry loads no sibling skills or agents. Only one tool of each name may load,
+so disable any other one. For the omp-plugins `delivery` package, add
+`extension-module:delivery-land-tool` and `extension-module:delivery-cleanup-tool` to
+`disabledExtensions`. Its hygiene report stays loaded.
 
 ## Agents
 

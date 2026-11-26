@@ -14,7 +14,7 @@ description: Use for PRs, merge methods, delivery_land landing and cleanup, or a
 
 ## Automated review loop
 
-GW-4: the agent that creates a PR owns its automated-review loop until landing or explicit human escalation. It may hand landing to a `shepherd`, but never to a watcher that polls while holding a session open. Workers a lead dispatched never request or act on review rounds for the lead's PR.
+GW-4: the agent that creates a PR owns its automated-review loop until landing or explicit human escalation. In OpenCode it may hand landing to a `shepherd`, but never to a watcher that polls while holding a session open. Workers a lead dispatched never request or act on review rounds for the lead's PR.
 
 1. Keep the draft until local review passes, then mark it ready so CI and the configured automated reviewers (CodeRabbit, Codex, Copilot review, Greptile, repository-configured ones) run on the exact head.
 2. Park pending waits and continue unrelated work; read the review state later.
@@ -39,9 +39,11 @@ An ambiguous or contradictory policy is a hold, not permission to guess. Pass th
 
 ## Land and clean up
 
-1. `delivery_land` with `pr`, `expectHeadSha` (the reviewed head; required whenever it would merge), `worktree` (the PR-head worktree, recorded for cleanup), and `merge_method`. A refusal with `mergeIssued: true` means that the PR merged: re-run with the same inputs to write the receipt without merging again. For a PR of another repository, also pass `repo` (`<owner>/<name>`) and `repoPath` (or that repository's `worktree`). Delivery cleans up in that clone and honors that repository's claims and denials. Run the close-out commands in `next` as given, in that clone. To clean up by hand, pass `delivery_cleanup` the `repo` and `repoPath` from `next`.
+1. `delivery_land` with `pr`, `expectHeadSha` (the reviewed head; required whenever it would merge), `worktree` (the PR-head worktree, recorded for cleanup), and `merge_method`. A refusal with `mergeIssued: true` means that the PR merged: re-run with the same inputs to write the receipt without merging again. For a PR of another repository, also pass `repo` (`<owner>/<name>`) and `repoPath` (or that repository's `worktree`). Run the close-out commands in `next` as given, in that clone. In pi, `delivery_land` asks the user to confirm a merge. It refuses the merge in a session without a UI (a subagent, print mode), so land from the interactive session. Proof of an already MERGED PR asks nothing.
 2. When the receipt's `beads.ledgerActive` is true, run the `bd update` and `bd close` commands from the result's `next`, children before parents (a merge-queue bead first).
-3. `delivery_land` already runs cleanup when the ledger is inactive (result `cleanup.ok`). Call `delivery_cleanup` only while `next` still lists it; with an active ledger delivery retries it when your turn ends once the beads are closed, so close them before you stop. Never remove a worktree or delete a branch by hand.
+3. Close the beads first. Then call `delivery_cleanup` while `next` still lists it. Never remove a worktree or delete a branch by hand.
+   - In OpenCode, `delivery_land` already runs cleanup when the ledger is inactive (result `cleanup.ok`). With an active ledger, delivery retries it when your turn ends once the beads are closed, so close them before you stop. Delivery cleans up a landing of another repository in that clone and honors that repository's claims and denials. To clean up by hand, pass `delivery_cleanup` the `repo` and `repoPath` from `next`.
+   - In pi, no cleanup runs after the land, and nothing retries it. Pi's `delivery_cleanup` cleans up only the session's repository. Clean up a landing of another repository from a session in that clone.
 
 - WH-1: cleanup of a landed branch belongs to the agent that merged it; with no merging agent live, the main agent owns it.
 - A receipt for a branch whose worktree still exists means cleanup has not finished: call `delivery_cleanup`. When other landings are open in the repository, pass `pr` or `worktree`: cleanup refuses an ambiguous choice and lists the candidates. It accepts a worktree at the reviewed head whatever its branch is called, and counts a worktree that is already gone as cleaned.

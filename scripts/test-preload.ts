@@ -23,10 +23,20 @@
  * same transform for the same files and imports it on the first file that needs it.
  */
 
-import { devNull } from "node:os"
+import * as fs from "node:fs"
+import { devNull, tmpdir } from "node:os"
+import { join } from "node:path"
 import { isBeadsEnvKey } from "@srobroek/opencode-lib/testing"
 import { type OnLoadArgs, type OnLoadResult, plugin } from "bun"
 
+// Delivery: the receipts root holds the running reports of every OpenCode server on the machine. A test
+// that does not name its own root would read the live ones of the developer's servers, and a running
+// session there would hold its removals. A process that was given no root gets an empty one of its own.
+if (process.env.DELIVERY_RECEIPTS_DIR === undefined) {
+  const own = fs.mkdtempSync(join(tmpdir(), "delivery-receipts-test-"))
+  process.env.DELIVERY_RECEIPTS_DIR = own
+  process.on("exit", () => fs.rmSync(own, { recursive: true, force: true }))
+}
 process.env.GIT_CONFIG_GLOBAL = devNull
 process.env.GIT_CONFIG_NOSYSTEM = "1"
 for (const key of Object.keys(process.env)) if (isBeadsEnvKey(key)) delete process.env[key]

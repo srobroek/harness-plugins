@@ -1,3 +1,5 @@
+## project [1.0.3](https://github.com/srobroek/harness-plugins/compare/project--v1.0.2...project--v1.0.3) (2026-11-26)
+
 ## project [1.0.2](https://github.com/srobroek/harness-plugins/compare/project--v1.0.1...project--v1.0.2) (2026-11-25)
 
 ### Bug Fixes

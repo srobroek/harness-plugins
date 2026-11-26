@@ -12,10 +12,10 @@ import plugin, {
   FAN_OUT_SKILL_PATH,
   hostWorktrees,
   LAND_ACTION,
-  landOutput,
   parseOptions,
   SKILL_PATH,
 } from "./index.ts"
+import { landOutput } from "./land-tool.ts"
 
 type Result = { output?: Record<string, unknown>; content: string; metadata: Record<string, unknown> }
 type Execute = (input: unknown, context: unknown) => Promise<Result>
@@ -101,11 +101,13 @@ describe("setup", () => {
       fanOut: true,
       verdicts: true,
       autoCleanup: true,
+      gitlabHosts: [],
     })
     expect(parseOptions({ models: { implementer: "a/b#high", operator: false, bad: 1 } }).models).toEqual({
       implementer: "a/b#high",
       operator: false,
     })
+    expect(parseOptions({ gitlabHosts: ["gitlab.example.org", "Bad Host", 3] }).gitlabHosts).toEqual(["gitlab.example.org"])
   })
 })
 

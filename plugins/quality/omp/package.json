@@ -1,6 +1,6 @@
 {
   "name": "@agent-plugins/quality",
-  "version": "0.19.0",
+  "version": "0.20.1",
   "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
   "private": true,
   "omp": {

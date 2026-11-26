@@ -2,12 +2,12 @@ import { isAbsolute, resolve } from "node:path"
 import { Plugin } from "@opencode/plugin"
 import type { Tool } from "@opencode/plugin/effect"
 import { appendResultText, isShellTool, leadingCd, shellCall, WRITE_TOOLS } from "@srobroek/opencode-lib"
-import { externalDirectories, sessionRoots } from "@srobroek/opencode-lib/external-directories"
+import { sessionRoots } from "@srobroek/opencode-lib/external-directories"
 import { readProviderTypes } from "@srobroek/opencode-lib/fnox-config"
 import { readGitWrappers } from "@srobroek/opencode-lib/git-wrappers"
 import { hostWarn, type Warn } from "@srobroek/opencode-lib/host-log"
 import { rewriteCloseKeywords } from "../../shared/close-keywords.ts"
-import { flagDirectoryReport } from "../../shared/flag-directories.ts"
+import { callFlagDirectoryReport, externalFlagDirectories, readWorktreeRoots } from "../../shared/flag-directories.ts"
 import { GUARD_IDS, type GuardID, type GuardOptions, hardGate } from "../../shared/guards.ts"
 import { decideToolCall, type MigrationOptions, migrationOverride } from "../../shared/migrations.ts"
 import { createPackageAdvisor } from "../../shared/package-investigate.ts"
@@ -84,6 +84,8 @@ export type SafetyOptions = {
   secretPaths: string[]
   /** Command names the gates read as git; only `git` by default. */
   gitWrappers: readonly string[]
+  /** Folders whose linked worktrees, of any repository, the directory-flag check takes as inside; `~` expanded. */
+  worktreeRoots: readonly string[]
 }
 
 /**
@@ -101,6 +103,8 @@ export type SafetyOptions = {
  * `disable: ["subagent-prompts"]` lets a subagent session's asks prompt instead of failing at once.
  * `redactSecrets`, `redactNames` and `redactExclude` configure secret redaction.
  * `gitWrappers` lists the command names the gates read as git, matched on the basename (default `["git"]`).
+ * `worktreeRoots` lists folders whose linked worktrees of any repository the directory-flag check takes as inside
+ * (default `["~/tmp/worktrees"]`; a list replaces the default).
  */
 export function readOptions(options: Readonly<Record<string, unknown>> | undefined): SafetyOptions {
   const raw = options?.disable
@@ -117,6 +121,7 @@ export function readOptions(options: Readonly<Record<string, unknown>> | undefin
     steeringDirs: readSteeringDirs(options?.steeringDirs),
     secretPaths,
     gitWrappers: readGitWrappers(options),
+    worktreeRoots: readWorktreeRoots(options?.worktreeRoots),
   }
 }
 
@@ -158,13 +163,14 @@ function safely<T>(run: () => T): T | undefined {
 }
 
 /**
- * The refusal for relative flag directories after a leading `cd` this plugin cannot read. OpenCode's
- * `external_directory` question needs an absolute resource to show and save, which such a flag lacks.
+ * The refusal for relative flag directories whose base is unknown: after a leading `cd` this plugin cannot read,
+ * or a later directory change. OpenCode's `external_directory` question needs an absolute resource to show and
+ * save, which such a flag lacks.
  */
 export function unresolvedFlagRefusal(unresolved: readonly string[]): string {
-  return `Blocked by safety (external-directory): this command starts with a cd this guard cannot read (a quoted, expanded, \`..\` or redirected directory), so it cannot tell where ${unresolved
+  return `Blocked by safety (external-directory): this command changes directory in a way this guard cannot follow (a quoted, expanded, \`..\` or redirected leading cd, or a later cd, pushd, popd or env -C), so it cannot tell where ${unresolved
     .map((value) => `\`${value}\``)
-    .join(", ")} points. Give the flag an absolute path, use the shell tool's workdir, or start with \`cd <literal path> &&\`.`
+    .join(", ")} points. Give the flag an absolute path, use the shell tool's workdir, or start with \`cd <literal path> &&\` and change directory nowhere else.`
 }
 
 /**
@@ -225,7 +231,8 @@ export function createPlugin(overrides: Overrides = {}) {
     async setup(ctx) {
       // Bound before the first await, while the fiber still carries the host's logger.
       const warn = overrides.warn ?? hostWarn("srobroek.safety")
-      const { disabled, redact, opAllow, scratchDirs, steeringDirs, secretPaths, gitWrappers } = readOptions(ctx.options)
+      const { disabled, redact, opAllow, scratchDirs, steeringDirs, secretPaths, gitWrappers, worktreeRoots: flagWorktreeRoots } =
+        readOptions(ctx.options)
       const on = (id: FeatureID) => !disabled.has(id)
       const guardOptions = {
         env: overrides.env ?? process.env,
@@ -295,9 +302,10 @@ export function createPlugin(overrides: Overrides = {}) {
         if (on("external-directory")) {
           const sessionDir = await sessionDirectory(event.sessionID)
           // After a leading cd this plugin cannot read, a relative flag directory has no known base.
-          const flags = safely(() => flagDirectoryReport(command, lead.kind === "rejected" ? undefined : gateCwd, gitWrappers))
+          const flags = safely(() => callFlagDirectoryReport(command, cwd, gitWrappers))
           if (flags !== undefined && flags.unresolved.length > 0) throw new Error(unresolvedFlagRefusal(flags.unresolved))
-          const external = flags === undefined ? [] : (safely(() => externalDirectories(flags.dirs, sessionRoots(sessionDir))) ?? [])
+          const external =
+            flags === undefined ? [] : (safely(() => externalFlagDirectories(flags.dirs, sessionDir, flagWorktreeRoots)) ?? [])
           if (external.length > 0)
             await ctx.permission.assert({
               sessionID: event.sessionID,

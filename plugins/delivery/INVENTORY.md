@@ -5,20 +5,20 @@ Pull-request landing with merge proof and receipts, receipt-driven worktree clea
 
 | Kind | opencode | pi |
 | --- | --- | --- |
-| skills | delivery-fan-out, delivery-git-workflow | - |
+| skills | delivery-fan-out, delivery-git-workflow | delivery-git-workflow |
 | agents | implementer, implementer-high, operator, orchestrator, pr-reviewer, researcher, shepherd | - |
 | commands | - | - |
 | rules | - | - |
 | hooks | - | - |
 | tools | - | - |
-| extensions | index | delivery-cleanup |
+| extensions | index | delivery-cleanup, delivery-land |
 | mcp | - | - |
 
 ## Prerequisites
 
 | Tool | Required | Version | For | Install |
 | --- | --- | --- | --- | --- |
-| git | yes | any | delivery_cleanup's worktree, ref and remote proofs, git worktree remove and git branch -d | see https://git-scm.com/downloads |
-| gh | no | any | delivery_cleanup's pull-request read (gh pr view) for a GitHub receipt | mise use -g aqua:cli/cli, or see https://cli.github.com |
-| glab | no | any | delivery_cleanup's merge-request read (glab mr view) for a GitLab receipt | see https://gitlab.com/gitlab-org/cli#installation |
+| git | yes | any | delivery_land's landing proofs (git merge-tree --write-tree, Git 2.38 or newer) and delivery_cleanup's worktree, ref and remote proofs, git worktree remove and git branch -d | see https://git-scm.com/downloads |
+| gh | no | any | delivery_land's pull-request reads and merge (gh pr view, gh pr merge, gh api) and delivery_cleanup's pull-request read for a GitHub repository | mise use -g aqua:cli/cli, or see https://cli.github.com |
+| glab | no | any | delivery_land's merge-request reads and merge (glab mr view, glab mr merge, glab api) and delivery_cleanup's merge-request read for a GitLab repository | see https://gitlab.com/gitlab-org/cli#installation |
 | bd | no | any | delivery_cleanup's read-only bd show of a receipt's beads when the repository's Beads ledger is active | mise use -g aqua:gastownhall/beads, or see https://github.com/gastownhall/beads/blob/main/docs/getting-started/installation.md |

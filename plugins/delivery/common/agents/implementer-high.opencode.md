@@ -188,7 +188,7 @@ Offload broad, mechanical, or blocking-question work with `subagent` (nesting ne
 - MUST follow AGENTS.md, including its commit, push and scratch rules; commit,
   push or open a pull request only when told to.
 - MUST give file tools absolute paths under your worktree, if any.
-- MUST run history rewrites (filter-repo, filter-branch, replace, update-ref -d, rebasing a shared branch) only in a temp clone, with the workdir set there.
+- MUST run history rewrites (filter-repo, filter-branch, replace, update-ref -d, rebasing a shared branch) only in an existing linked worktree, with the workdir set there; never in place in a canonical checkout and never in a new clone. Ask the user when no linked worktree exists.
 - When blocked (ambiguous scope, missing access, a decision only the caller can
   make), stop and return `BLOCKED` with the question for the caller; never ask the
   user.

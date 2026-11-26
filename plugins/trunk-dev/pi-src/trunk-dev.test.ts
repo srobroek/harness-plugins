@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import type { ExtensionAPI, ExtensionContext, ToolCallEvent, ToolResultEvent } from "@earendil-works/pi-coding-agent"
+import { piAgentDir, withPiAgentDir } from "@srobroek/opencode-lib/testing"
 import { decideCommitGate, MESSAGES } from "../shared/commit-gate.ts"
 import type { MergeRequest } from "../shared/flag-cleanup.ts"
 import { SKIP_CI_ADVISORY } from "../shared/skip-ci.ts"
@@ -15,18 +16,21 @@ afterAll(() => rmSync(root, { recursive: true, force: true }))
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown
 
-/** Load the extension into a fake pi; returns its `tool_call` and `tool_result` handlers. */
-function load(overrides: Overrides = {}) {
+/** Load the extension into a fake pi; returns its `tool_call` and `tool_result` handlers, run in `cwd`. */
+function load(overrides: Overrides = {}, cwd = "/repo") {
   const handlers = new Map<string, Handler>()
   const pi = { on: (name: string, handler: Handler) => handlers.set(name, handler) } as unknown as ExtensionAPI
-  createExtension({ optionsPath: join(root, "missing.json"), ...overrides })(pi)
+  createExtension({ settingsPath: join(root, "missing", "settings.json"), ...overrides })(pi)
   expect([...handlers.keys()].sort()).toEqual(["tool_call", "tool_result"])
-  const ctx = { cwd: "/repo" } as ExtensionContext
+  const ctx = { cwd } as ExtensionContext
   return {
     call: (event: ToolCallEvent) => handlers.get("tool_call")?.(event, ctx),
     result: (event: ToolResultEvent) => handlers.get("tool_result")?.(event, ctx),
   }
 }
+
+/** A fresh agent directory under `root` whose `settings.json` holds `settings`. */
+const agentDir = (settings: unknown) => piAgentDir(root, settings)
 
 /** A release repository at `/repo` on branch `topic`, without touching disk. */
 const releaseGate = (command: string, cwd: string) =>
@@ -137,30 +141,41 @@ describe("trunk-dev pi tool_result advisories", () => {
   })
 })
 
-describe("trunk-dev pi options file", () => {
-  const skipCommit = bashResult("dgit commit -m 'fix: x [skip ci]'")
+describe("trunk-dev pi settings", () => {
+  const skipCommit = (wrapper: string) => bashResult(`${wrapper} commit -m 'fix: x [skip ci]'`)
+  const advised = {
+    content: [
+      { type: "text", text: "ok" },
+      { type: "text", text: SKIP_CI_ADVISORY },
+    ],
+  }
 
-  test("gitWrappers in the options file makes the advisories read a listed wrapper as git", async () => {
-    expect(await load({ advise: () => [] }).result(skipCommit)).toBeUndefined()
-    const optionsPath = join(root, "wrappers.json")
-    writeFileSync(optionsPath, JSON.stringify({ gitWrappers: ["git", "dgit"] }))
-    expect(await load({ advise: () => [], optionsPath }).result(skipCommit)).toEqual({
-      content: [
-        { type: "text", text: "ok" },
-        { type: "text", text: SKIP_CI_ADVISORY },
-      ],
-    })
+  test("gitWrappers under the trunk-dev key makes the advisories read a listed wrapper as git", async () => {
+    expect(await load({ advise: () => [] }).result(skipCommit("dgit"))).toBeUndefined()
+    const settingsPath = join(agentDir({ defaultModel: "m", "trunk-dev": { gitWrappers: ["git", "dgit"] } }), "settings.json")
+    expect(await load({ advise: () => [], settingsPath }).result(skipCommit("dgit"))).toEqual(advised)
   })
 
-  test("a malformed options file warns at session start", () => {
-    const optionsPath = join(root, "bad.json")
-    writeFileSync(optionsPath, "{")
+  test("reads <agentDir>/settings.json alone: a stale trunk-dev.json and a project's .pi/settings.json are ignored", async () => {
+    const dir = agentDir({ "trunk-dev": { gitWrappers: ["git", "dgit"] } })
+    writeFileSync(join(dir, "trunk-dev.json"), JSON.stringify({ gitWrappers: ["git", "hgit"] }))
+    const project = join(root, "project")
+    mkdirSync(join(project, ".pi"), { recursive: true })
+    writeFileSync(join(project, ".pi", "settings.json"), JSON.stringify({ "trunk-dev": { gitWrappers: ["git", "xgit"] } }))
+    const loaded = withPiAgentDir(dir, () => load({ advise: () => [], settingsPath: undefined }, project))
+    expect(await loaded.result(skipCommit("dgit"))).toEqual(advised)
+    expect(await loaded.result(skipCommit("hgit"))).toBeUndefined()
+    expect(await loaded.result(skipCommit("xgit"))).toBeUndefined()
+  })
+
+  test("a trunk-dev key that is not an object warns at session start", () => {
+    const settingsPath = join(agentDir({ "trunk-dev": ["git", "dgit"] }), "settings.json")
     const handlers = new Map<string, Handler>()
     const pi = { on: (name: string, handler: Handler) => handlers.set(name, handler) } as unknown as ExtensionAPI
-    createExtension({ optionsPath })(pi)
+    createExtension({ settingsPath })(pi)
     const notify: string[] = []
     const ctx = { hasUI: true, ui: { notify: (text: string) => notify.push(text) } } as unknown as ExtensionContext
     handlers.get("session_start")?.({}, ctx)
-    expect(notify).toEqual([`trunk-dev: ${optionsPath} is not valid JSON; only \`git\` is read as git.`])
+    expect(notify).toEqual([`trunk-dev: the "trunk-dev" key in ${settingsPath} is not an object; only \`git\` is read as git.`])
   })
 })

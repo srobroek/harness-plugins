@@ -226,6 +226,29 @@ describe("unclaimedBeads", () => {
 })
 
 describe("decideBeadWork", () => {
+  test("only the blocked bead's exact owner may perform a guarded unblock", async () => {
+    const table = { "p-1": { status: "blocked", assignee: ACTOR } }
+    const command = `bd update p-1 --status open --if-status blocked --if-assignee ${ACTOR}`
+    expect(await decide(command, table)).toBeUndefined()
+    for (const changed of [
+      command.replace("--if-status blocked ", ""),
+      command.replace(` --if-assignee ${ACTOR}`, ""),
+      command.replace("--status open", "--status deferred"),
+      command.replace(ACTOR, `${ACTOR}/child`),
+      `${command} --title changed`,
+      command.replace("bd update", "bd --db /other update"),
+      command.replace("bd update", "bd --database other update"),
+      `${command} --status deferred`,
+      command.replace("p-1", "p-1 p-2"),
+    ]) expect((await decide(changed, table))?.gate).toBe(CLAIM_GATE)
+    expect((await decide(command, {}))?.cause).toContain("could not be read")
+    for (const row of [
+      { status: "deferred", assignee: ACTOR },
+      { status: "blocked", assignee: "" },
+      { status: "blocked", assignee: `${ACTOR}/child` },
+    ]) expect((await decide(command, { "p-1": row }))?.gate).toBe(CLAIM_GATE)
+  })
+
   test("an unclaimed close is refused", async () => {
     const refusal = await decide(`bd close p-ab-1 ${EVIDENCE}`, { "p-ab-1": { status: "open" } })
     expect(refusal?.gate).toBe(CLAIM_GATE)

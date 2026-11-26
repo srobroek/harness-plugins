@@ -1,3 +1,48 @@
+## safety [3.0.3](https://github.com/srobroek/harness-plugins/compare/safety--v3.0.2...safety--v3.0.3) (2026-11-26)
+
+### Bug Fixes
+
+* **safety:** stop refusing read-only git over a quoted regex anchor; drop clone-to-temp guidance ([#216](https://github.com/srobroek/harness-plugins/issues/216)) ([a33afd8](https://github.com/srobroek/harness-plugins/commit/a33afd853a55d047fa64409058da684564b3e264))
+
+## safety [3.0.2](https://github.com/srobroek/harness-plugins/compare/safety--v3.0.1...safety--v3.0.2) (2026-11-26)
+
+### Bug Fixes
+
+* **safety:** skip flag values in package-investigate ([63d66b2](https://github.com/srobroek/harness-plugins/commit/63d66b2143649126309a03c91b2f6f9bb6a89ce4))
+
+## safety [3.0.1](https://github.com/srobroek/harness-plugins/compare/safety--v3.0.0...safety--v3.0.1) (2026-11-26)
+
+### Bug Fixes
+
+* **safety:** leave flag directories unresolved after a later directory change ([5c6520b](https://github.com/srobroek/harness-plugins/commit/5c6520b19515ec08f3e5b9c1b3f5776fe11820c8))
+
+## safety [3.0.0](https://github.com/srobroek/harness-plugins/compare/safety--v2.0.1...safety--v3.0.0) (2026-11-26)
+
+### ⚠ BREAKING CHANGES
+
+* **safety:** on pi, commands that a check asks about (sudo-destructive, worktree-destruction, external-directory, a failed destruction review) are now refused by default instead of opening a dialog. Set `"approvals": "ask"` under the `safety` key, or run `/safety ask`, to keep the dialog.
+
+### Features
+
+* **safety:** refuse ask-rule commands by default on pi, with /safety to switch or allow once ([0df08c5](https://github.com/srobroek/harness-plugins/commit/0df08c5801a1719cfae326b5ede64e81ba893f3a))
+
+## safety [2.0.1](https://github.com/srobroek/harness-plugins/compare/safety--v2.0.0...safety--v2.0.1) (2026-11-26)
+
+### Bug Fixes
+
+* **safety:** take linked worktrees under worktreeRoots as inside for directory flags ([e40e8da](https://github.com/srobroek/harness-plugins/commit/e40e8dafa37a62d62ebf462798bc23ec21d9e062))
+* **safety:** treat the session repository's worktrees as inside for directory flags ([20df239](https://github.com/srobroek/harness-plugins/commit/20df239b41697e4cae47a7ad2665b3777f23d9db))
+
+## safety [2.0.0](https://github.com/srobroek/harness-plugins/compare/safety--v1.0.1...safety--v2.0.0) (2026-11-25)
+
+### ⚠ BREAKING CHANGES
+
+* **safety:** pi reads the safety key of `<agentDir>/settings.json`; `<agentDir>/safety.json` is no longer read. Move its object under the key.
+
+### Features
+
+* **safety:** read settings from pi settings.json ([79f2a1a](https://github.com/srobroek/harness-plugins/commit/79f2a1a1152601379e62b21cecc4efe15a12170b))
+
 ## safety [1.0.1](https://github.com/srobroek/harness-plugins/compare/safety--v1.0.0...safety--v1.0.1) (2026-11-25)
 
 ### Bug Fixes

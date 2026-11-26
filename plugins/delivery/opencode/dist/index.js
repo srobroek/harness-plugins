@@ -634,7 +634,7 @@ function stashesOnBranch(subjects, branch) {
 // plugins/delivery/package.json
 var package_default = {
   name: "delivery",
-  version: "0.14.0",
+  version: "0.16.1",
   description: "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
   private: true,
   type: "module",
@@ -647,11 +647,11 @@ var package_default = {
     ],
     scope: "global",
     piAgents: false,
-    discrepancies: "pi (and OMP, which loads the pi bundle) gets only an explicit delivery_cleanup for the session's repository: no delivery_land, automatic cleanup or clone registry.",
+    discrepancies: "pi (and OMP, which loads the pi bundles) gets delivery_land, an explicit delivery_cleanup for the session's repository and the delivery-git-workflow skill: a merge asks the user first and is refused without a UI, no cleanup runs after a land, and there is no retry or clone registry. The agents and delivery-fan-out are OpenCode only.",
     prerequisites: [
       {
         bin: "git",
-        for: "delivery_cleanup's worktree, ref and remote proofs, git worktree remove and git branch -d",
+        for: "delivery_land's landing proofs (git merge-tree --write-tree, Git 2.38 or newer) and delivery_cleanup's worktree, ref and remote proofs, git worktree remove and git branch -d",
         required: true,
         install: {
           url: "https://git-scm.com/downloads"
@@ -659,7 +659,7 @@ var package_default = {
       },
       {
         bin: "gh",
-        for: "delivery_cleanup's pull-request read (gh pr view) for a GitHub receipt",
+        for: "delivery_land's pull-request reads and merge (gh pr view, gh pr merge, gh api) and delivery_cleanup's pull-request read for a GitHub repository",
         install: {
           mise: "aqua:cli/cli",
           url: "https://cli.github.com"
@@ -667,7 +667,7 @@ var package_default = {
       },
       {
         bin: "glab",
-        for: "delivery_cleanup's merge-request read (glab mr view) for a GitLab receipt",
+        for: "delivery_land's merge-request reads and merge (glab mr view, glab mr merge, glab api) and delivery_cleanup's merge-request read for a GitLab repository",
         install: {
           url: "https://gitlab.com/gitlab-org/cli#installation"
         }
@@ -685,7 +685,8 @@ var package_default = {
       index: "index"
     },
     piEntries: {
-      "delivery-cleanup": "delivery-cleanup"
+      "delivery-cleanup": "delivery-cleanup",
+      "delivery-land": "delivery-land"
     }
   }
 };
@@ -891,6 +892,24 @@ var FORGE_HOSTS = Object.freeze(Object.assign(Object.create(null), {
   "gitlab.example.com": GITLAB_CUSTOM_TARGET,
   "ssh.gitlab.example.com": GITLAB_CUSTOM_TARGET
 }));
+var HOST_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/;
+function parseGitlabHosts(value) {
+  if (!Array.isArray(value))
+    return [];
+  const hosts = new Set;
+  for (const entry of value) {
+    if (typeof entry !== "string")
+      continue;
+    const host = entry.trim().toLowerCase();
+    if (HOST_NAME.test(host))
+      hosts.add(host);
+  }
+  return [...hosts];
+}
+function configuredGitlabTarget(host, gitlabHosts) {
+  const name = gitlabHosts.find((known) => HOST_NAME.test(known) && (host === known || host === `ssh.${known}`));
+  return name === undefined ? null : { forge: "gitlab", canonicalHost: name };
+}
 var ALLOWED_SCHEME = /^(?:https|ssh):\/\//i;
 var ANY_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
 var SCP_LIKE = /^(?:[^@/:]+@)?([^@/:]+):(?!\/)/;
@@ -1055,14 +1074,16 @@ var runCli = async (argv, options) => {
     return failed(`${argv[0]} was terminated by ${result.signalCode}`);
   return { ok: true, exitCode: result.exitCode, stdout: out, stderr: err };
 };
-function forgeTarget(remoteUrl) {
+function forgeTarget(remoteUrl, gitlabHosts) {
   if (remoteUrl === null)
     return null;
   const host = hostOf(remoteUrl);
   if (host === null)
     return null;
   const descriptor = Object.getOwnPropertyDescriptor(FORGE_HOSTS, host);
-  if (descriptor === undefined || !("value" in descriptor))
+  if (descriptor === undefined)
+    return configuredGitlabTarget(host, gitlabHosts);
+  if (!("value" in descriptor))
     return null;
   const target = descriptor.value;
   if (target === GITHUB_TARGET)
@@ -1130,12 +1151,9 @@ function describeFailure(argv, result) {
 function supportedForge(forge) {
   return forge === "github" || forge === "gitlab" ? forge : null;
 }
-var GITLAB_HOSTS = Object.freeze([
-  GITLAB_TARGET.canonicalHost,
-  GITLAB_CUSTOM_TARGET.canonicalHost
-]);
-function supportedGitlabHost(host) {
-  return GITLAB_HOSTS.find((known) => known === host) ?? null;
+function supportedGitlabHost(host, gitlabHosts) {
+  const known = [GITLAB_TARGET.canonicalHost, GITLAB_CUSTOM_TARGET.canonicalHost, ...gitlabHosts];
+  return known.find((name) => name === host) ?? null;
 }
 function removeSourceBranchAfterMerge(payload) {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload))
@@ -1146,14 +1164,14 @@ function removeSourceBranchAfterMerge(payload) {
   const value = descriptor.value;
   return typeof value === "boolean" ? value : null;
 }
-async function autoDeleteSetting(forge, repo, run = runCli, gitlabHost = "gitlab.com") {
+async function autoDeleteSetting(forge, repo, run = runCli, gitlabHost = "gitlab.com", gitlabHosts = []) {
   const supported = supportedForge(forge);
   if (supported === null)
     return "unknown";
   const path = normalizeRepoPath(supported, repo);
   if (path === null)
     return "unknown";
-  const host = supportedGitlabHost(gitlabHost);
+  const host = supportedGitlabHost(gitlabHost, gitlabHosts);
   if (supported === "gitlab" && host === null)
     return "unknown";
   const argv = supported === "github" ? ["gh", "api", `repos/${path}`, "--jq", ".delete_branch_on_merge"] : ["glab", "api", `projects/${encodeURIComponent(path)}`, "--hostname", host ?? GITLAB_TARGET.canonicalHost];
@@ -1176,7 +1194,7 @@ async function autoDeleteSetting(forge, repo, run = runCli, gitlabHost = "gitlab
     return "off";
   return "unknown";
 }
-async function enableAutoDelete(forge, repo, run = runCli, gitlabHost = "gitlab.com") {
+async function enableAutoDelete(forge, repo, run = runCli, gitlabHost = "gitlab.com", gitlabHosts = []) {
   const supported = supportedForge(forge);
   if (supported === null) {
     return {
@@ -1189,11 +1207,11 @@ async function enableAutoDelete(forge, repo, run = runCli, gitlabHost = "gitlab.
     const expected = supported === "github" ? '"<owner>/<name>"' : '"<group>/<project>", optionally with nested groups';
     return { ok: false, reason: `repo is ${JSON.stringify(repo)}, expected ${expected}` };
   }
-  const host = supportedGitlabHost(gitlabHost);
+  const host = supportedGitlabHost(gitlabHost, gitlabHosts);
   if (supported === "gitlab" && host === null) {
     return {
       ok: false,
-      reason: `gitlabHost is ${JSON.stringify(gitlabHost)}, expected one of ${GITLAB_HOSTS.map((value) => JSON.stringify(value)).join(", ")}`
+      reason: `gitlabHost is ${JSON.stringify(gitlabHost)}, expected a bare GitLab host name`
     };
   }
   const argv = supported === "github" ? ["gh", "api", "-X", "PATCH", `repos/${path}`, "-F", "delete_branch_on_merge=true"] : [
@@ -1622,11 +1640,11 @@ function urlProbeEnvironment(source, url, probeDirectory, gitDir) {
   env.GIT_DIR = gitDir;
   return env;
 }
-function absenceProbe(remoteOrUrl, branch, cwd, environment) {
+function absenceProbe(remoteOrUrl, branch, cwd, environment, gitlabHosts) {
   if (!isSafeArgument(remoteOrUrl) || !isValidBranchName(branch))
     return null;
   const ref = `refs/heads/${branch}`;
-  if (forgeTarget(remoteOrUrl) !== null) {
+  if (forgeTarget(remoteOrUrl, gitlabHosts) !== null) {
     let neutral;
     try {
       neutral = realpathSync(mkdtempSync(join2(tmpdir(), "forge-ls-remote-")));
@@ -1665,8 +1683,8 @@ function absenceProbe(remoteOrUrl, branch, cwd, environment) {
     }
   };
 }
-async function remoteBranchAbsent(remoteOrUrl, branch, cwd, run = runCli, environment = process.env) {
-  const probe = absenceProbe(remoteOrUrl, branch, cwd, environment);
+async function remoteBranchAbsent(remoteOrUrl, branch, cwd, run = runCli, environment = process.env, gitlabHosts = []) {
+  const probe = absenceProbe(remoteOrUrl, branch, cwd, environment, gitlabHosts);
   if (probe === null)
     return "unknown";
   try {
@@ -2403,7 +2421,7 @@ function selectRemoteForRepo(remotes, repo) {
   const matching = remotes.filter((remote) => remote.path !== null && remote.path === repo);
   return matching.find((remote) => remote.name === "origin")?.name ?? matching[0]?.name ?? null;
 }
-async function remotePaths(read, cwd) {
+async function remotePaths(read, cwd, gitlabHosts) {
   const listed = await read(cwd, ["remote"]);
   if (listed === null)
     return [];
@@ -2412,7 +2430,7 @@ async function remotePaths(read, cwd) {
 `).filter((line) => REMOTE_NAME.test(line))) {
     const printed = await read(cwd, ["remote", "get-url", name]);
     const url = printed === null ? null : singleRemoteRecord(printed);
-    const target = url === null ? null : forgeTarget(url);
+    const target = url === null ? null : forgeTarget(url, gitlabHosts);
     const raw = url === null ? null : repoPathFromRemote(url);
     remotes.push({ name, path: target === null || raw === null ? null : normalizeRepoPath(target.forge, raw) });
   }
@@ -2437,13 +2455,13 @@ function cloneMismatchReason(repo, field, path, remotes) {
 function notACloneReason(field, path) {
   return `${field}: observed ${JSON.stringify(path)}, expected the path of an existing Git checkout of the requested repo; nothing was merged or written`;
 }
-async function retargetRepository(input, sessionCwd, read) {
+async function retargetRepository(input, sessionCwd, read, gitlabHosts) {
   const raw = input.repo?.trim() ?? "";
   const repo = raw === "" ? null : normalizeRepoPath("gitlab", raw);
   if (repo === null) {
     return input.repoPath?.trim() ? { reason: `repoPath: observed ${JSON.stringify(input.repoPath)} without repo, expected repo as "<owner>/<name>" of that checkout` } : { cwd: sessionCwd, retargeted: false };
   }
-  const session = await remotePaths(read, sessionCwd);
+  const session = await remotePaths(read, sessionCwd, gitlabHosts);
   if (session.some((remote) => remote.path === repo))
     return { cwd: sessionCwd, retargeted: false };
   const clone = cloneInput(input);
@@ -2456,7 +2474,7 @@ async function retargetRepository(input, sessionCwd, read) {
   const context = printed === null ? null : await repositoryContext(dir, (argv) => argv.length === REPOSITORY_OBSERVATION_ARGS.length && argv.every((part, index) => part === REPOSITORY_OBSERVATION_ARGS[index]) ? printed : null);
   if (context === null)
     return { reason: notACloneReason(clone.field, dir) };
-  const remotes = await remotePaths(read, dir);
+  const remotes = await remotePaths(read, dir, gitlabHosts);
   if (!remotes.some((remote) => remote.path === repo)) {
     return { reason: cloneMismatchReason(repo, clone.field, dir, remotes) };
   }
@@ -2661,7 +2679,7 @@ function normalizedOid(value) {
   const oid = value.trim().toLowerCase();
   return oid === "" ? null : oid;
 }
-async function resolveRemoteIdentity(receipt, run, cwd, forgeEnv, env, refReadMs, pin) {
+async function resolveRemoteIdentity(receipt, run, cwd, forgeEnv, env, refReadMs, gitlabHosts, pin) {
   const remote = receipt.repo.remote;
   if (!REMOTE_NAME.test(remote))
     return refuse2("repo.remote", remote, "a git remote name");
@@ -2673,7 +2691,7 @@ async function resolveRemoteIdentity(receipt, run, cwd, forgeEnv, env, refReadMs
   const remoteText = singleRemoteRecord(result.stdout);
   if (remoteText === null)
     return refuse2("repo.remote", "malformed Git remote output", expected);
-  const target = forgeTarget(remoteText);
+  const target = forgeTarget(remoteText, gitlabHosts);
   const remoteUrl = redactRemote(remoteText);
   if (target === null) {
     return refuse2("repo.forge", `"unknown" for remote ${remote} at ${show2(remoteUrl)}`, '"github" or "gitlab"');
@@ -2738,8 +2756,8 @@ async function gitlabObservation(receipt, identity, run) {
     method
   };
 }
-async function observePullRequest(receipt, run = runCli, cwd = receipt.repo.canonicalRoot, env = process.env, refReadMs = CLEANUP_BOUNDS.refReadMs, pin) {
-  const identity = await resolveRemoteIdentity(receipt, run, cwd, forgeEnvironment(env), env, refReadMs, pin);
+async function observePullRequest(receipt, run = runCli, cwd = receipt.repo.canonicalRoot, env = process.env, refReadMs = CLEANUP_BOUNDS.refReadMs, gitlabHosts = [], pin) {
+  const identity = await resolveRemoteIdentity(receipt, run, cwd, forgeEnvironment(env), env, refReadMs, gitlabHosts, pin);
   if (isFailure(identity))
     return identity;
   const pr = identity.forge === "github" ? await githubObservation(receipt, identity, run) : await gitlabObservation(receipt, identity, run);
@@ -3274,7 +3292,7 @@ async function cleanupDelivery(params, sessionCwd, deps = {}) {
     const result = await runGit(run, at, [...argv], refReadMs);
     return completed(result) ? result.stdout : null;
   };
-  const target = await retargetRepository({ repo, repoPath, worktree: rest.worktree }, sessionCwd, read);
+  const target = await retargetRepository({ repo, repoPath, worktree: rest.worktree }, sessionCwd, read, deps.gitlabHosts ?? []);
   if ("reason" in target)
     return { ok: false, reason: target.reason };
   if (!target.retargeted)
@@ -3307,6 +3325,7 @@ async function cleanupInRepository(params, cwd, deps) {
   const git = (argv, at, timeoutMs) => observe(argv, at, timeoutMs, signal);
   const now = deps.now ?? Date.now;
   const env = deps.env ?? process.env;
+  const gitlabHosts = deps.gitlabHosts ?? [];
   const worktreeHead = async () => {
     if (params.receipt !== undefined || params.worktree === undefined || params.worktree.trim() === "")
       return;
@@ -3388,7 +3407,7 @@ async function cleanupInRepository(params, cwd, deps) {
     const identity = await verifyTargetIdentity(receipt, cwd, run, bounds.refReadMs, git);
     if (isFailure(identity))
       return identity;
-    const observed = await observePullRequest(receipt, run, identity.cwd, env, bounds.refReadMs, identity.pin);
+    const observed = await observePullRequest(receipt, run, identity.cwd, env, bounds.refReadMs, gitlabHosts, identity.pin);
     if (isFailure(observed))
       return observed;
     const observedFailure = verifyObservation(receipt, observed.pr);
@@ -3440,7 +3459,8 @@ async function cleanupInRepository(params, cwd, deps) {
     }
     if (signal?.aborted === true)
       return refuse2("signal", "an abort", "no interrupt before the worktree removal; nothing was removed");
-    const held = await deps.finalCheck?.(targetPath);
+    const receiptPath = receipt.worktree.path;
+    const held = await deps.finalCheck?.(targetPath, [...new Set([receiptPath, physicalPath(receiptPath) ?? receiptPath])]);
     if (held !== undefined) {
       return refuse2("worktree.held", held, "no owner, hold, denial or competing remover at the moment of removal; nothing was removed");
     }
@@ -3542,7 +3562,7 @@ async function cleanupInRepository(params, cwd, deps) {
   });
   if (!absenceProven)
     return withoutContinuation(receipt.branch.deletedRemote ? "absent" : "unknown", []);
-  const remoteAbsence = observed.identity.forge === "github" ? (await observeGithubBranch(observed.identity.nameWithOwner, receipt.branch.name, commit, env)).verdict : await remoteBranchAbsent(observed.identity.remoteUrl, receipt.branch.name, executionDir, commit);
+  const remoteAbsence = observed.identity.forge === "github" ? (await observeGithubBranch(observed.identity.nameWithOwner, receipt.branch.name, commit, env)).verdict : await remoteBranchAbsent(observed.identity.remoteUrl, receipt.branch.name, executionDir, commit, process.env, gitlabHosts);
   const issuedAt = nextReceiptEpoch(receipt, now);
   const verifiedAt = new Date(issuedAt).toISOString();
   const continued = buildReceipt({
@@ -4802,7 +4822,7 @@ function inferWorktree(records, branch, head) {
   const found = records.slice(1).find((record) => !record.prunable && !record.detached && record.branch === `refs/heads/${branch}` && record.head.toLowerCase() === head.toLowerCase());
   return found?.path ?? null;
 }
-async function resolveLandingTarget(params, git, cwd, forgeEnv) {
+async function resolveLandingTarget(params, git, cwd, forgeEnv, gitlabHosts) {
   const explicitRepo = params.repo === undefined || params.repo.trim() === "" ? null : params.repo.trim();
   if (explicitRepo !== null && normalizeRepoPath("gitlab", explicitRepo) === null) {
     return {
@@ -4814,7 +4834,7 @@ async function resolveLandingTarget(params, git, cwd, forgeEnv) {
     return { reason: `remote: observed ${show3(params.remote)}, expected a git remote name` };
   if (explicitRepo !== null && (params.remote === undefined || params.remote.trim() === "")) {
     const wanted = normalizeRepoPath("gitlab", explicitRepo);
-    const picked = wanted === null ? null : selectRemoteForRepo(await remotePaths((_cwd, argv) => git(argv), cwd), wanted);
+    const picked = wanted === null ? null : selectRemoteForRepo(await remotePaths((_cwd, argv) => git(argv), cwd, gitlabHosts), wanted);
     if (picked !== null)
       remote = picked;
   }
@@ -4829,7 +4849,7 @@ async function resolveLandingTarget(params, git, cwd, forgeEnv) {
       reason: `git remote get-url ${remote}: observed ${observed}, expected exactly one URL record for a configured remote in ${cwd}`
     };
   }
-  const target = forgeTarget(remoteText);
+  const target = forgeTarget(remoteText, gitlabHosts);
   const remoteUrl = redactRemote(remoteText);
   if (target === null) {
     return {
@@ -4884,6 +4904,7 @@ async function landPullRequest(params, deps = {}) {
   const run = (argv, options) => baseRun(argv, { ...options, signal: merging ? undefined : signal });
   const sessionCwd = deps.cwd ?? process.cwd();
   const env = deps.env ?? process.env;
+  const gitlabHosts = deps.gitlabHosts ?? [];
   const forgeEnv = forgeEnvironment(env);
   const gitEnv = gitObservationEnvironment(env);
   const explicitWorktree = params.worktree === undefined || params.worktree.trim() === "" ? null : resolve5(sessionCwd, params.worktree.trim());
@@ -4910,12 +4931,12 @@ async function landPullRequest(params, deps = {}) {
   if (!Number.isSafeInteger(requested)) {
     return refuse(`pr: observed ${show3(params.pr)}, expected a positive integer of at most ${Number.MAX_SAFE_INTEGER}`);
   }
-  const retargeted = await retargetRepository(params, sessionCwd, readAt);
+  const retargeted = await retargetRepository(params, sessionCwd, readAt, gitlabHosts);
   if ("reason" in retargeted)
     return refuse(retargeted.reason);
   const cwd = retargeted.cwd;
   const git = (argv, input) => gitOutput(run, cwd, argv, gitEnv, input);
-  const resolved = await resolveLandingTarget(params, git, cwd, forgeEnv);
+  const resolved = await resolveLandingTarget(params, git, cwd, forgeEnv, gitlabHosts);
   if ("reason" in resolved)
     return refuse(resolved.reason);
   const oldGit = gitVersionFailure(await git(["--version"]));
@@ -5373,11 +5394,11 @@ async function landPullRequest(params, deps = {}) {
   const unproven = missingBeadIdentity(proven.ids, proved.headRefName, repository.ledger);
   if (unproven !== null)
     return refuseMerged(unproven);
-  const verdict = github ? (await observeGithubBranch(nameWithOwner, proved.headRefName, run, env)).verdict : await remoteBranchAbsent(remote, proved.headRefName, cwd, forgeRun, env);
+  const verdict = github ? (await observeGithubBranch(nameWithOwner, proved.headRefName, run, env)).verdict : await remoteBranchAbsent(remote, proved.headRefName, cwd, forgeRun, env, gitlabHosts);
   if (verdict !== "absent") {
     notes.push(`The remote branch ${proved.headRefName} on ${remote} is ${verdict}, not proved absent, so branch.deletedRemote stays false and remoteAbsenceVerifiedAt stays null.`);
   }
-  const observedAutoDelete = await autoDeleteSetting(forge, nameWithOwner, boundForgeRun, gitlabHost);
+  const observedAutoDelete = await autoDeleteSetting(forge, nameWithOwner, boundForgeRun, gitlabHost, gitlabHosts);
   const observingArgv = rereadArgv ?? first.argv;
   const evidence = {
     remote,
@@ -5460,7 +5481,7 @@ async function landPullRequest(params, deps = {}) {
       if ("reason" in composed)
         return refuseMerged(composed.reason);
     } else {
-      const enabled = await enableAutoDelete(forge, nameWithOwner, boundForgeRun, gitlabHost);
+      const enabled = await enableAutoDelete(forge, nameWithOwner, boundForgeRun, gitlabHost, gitlabHosts);
       composed = compose(enabled.ok ? `setupAutoDelete: the forge accepted a deletion-on-merge write; the setting observed before the request was ${observedAutoDelete}, which is what this receipt records because acceptance is not a re-read.` : `setupAutoDelete: the deletion-on-merge write was refused: ${enabled.reason ?? "no reason reported"}. The setting observed before the request was ${observedAutoDelete}.`);
       if ("reason" in composed)
         return refuseMerged(composed.reason);
@@ -5494,6 +5515,93 @@ ${next.slice(0, -1).map((step) => `  ${step}`).join(`
   ].join(`
 `);
   return { ok: true, receipt, receiptPath, text, next };
+}
+
+// plugins/delivery/opencode/src/land-tool.ts
+var LAND_ACTION = "delivery_land";
+var LAND_INPUT = {
+  type: "object",
+  properties: {
+    pr: { type: ["integer", "string"], description: "PR or MR number" },
+    merge_method: { type: "string", enum: [...MERGE_METHODS], description: "default squash" },
+    repo: { type: "string", description: '"<owner>/<name>"; defaults to the remote URL path' },
+    remote: { type: "string", description: 'Forge remote; default "origin"' },
+    expectHeadSha: {
+      type: "string",
+      description: "The reviewed head; required to merge, optional when proving an already MERGED PR"
+    },
+    requireApproval: {
+      type: "boolean",
+      description: "Require an APPROVED review or a 'VERDICT: APPROVE' author comment for the exact head"
+    },
+    requireGreenChecks: { type: "boolean", description: "Require every check on the head to pass" },
+    queueWaitSeconds: { type: "integer", description: "Merge queue: seconds to wait for the merge, 0-3600; default 600" },
+    setupAutoDelete: { type: "boolean", description: "Enable deletion-on-merge after the landing is proved" },
+    worktree: { type: "string", description: "Landed worktree for cleanup (HEAD = PR head); inferred if omitted" },
+    repoPath: { type: "string", description: "Checkout of repo on this machine; needed when repo is not the session's" },
+    beadId: {
+      type: "string",
+      description: "Bead this closes when the branch is not <omp|opencode>/agent/<bead-id>; required then on a ledger"
+    }
+  },
+  required: ["pr"],
+  additionalProperties: false
+};
+var LAND_OUTPUT = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    receiptPath: { type: "string" },
+    mergeSha: { type: "string" },
+    pr: { type: "integer" },
+    repo: { type: "string" },
+    next: { type: "array", items: { type: "string" } },
+    reason: { type: "string" },
+    mergeIssued: { type: "boolean" },
+    queued: { type: "boolean" },
+    receipt: { type: "object" },
+    cleanup: {
+      type: "object",
+      properties: {
+        ok: { type: "boolean" },
+        reason: { type: "string" },
+        removed: { type: "string" },
+        partlyRemoved: { type: "string" },
+        localRefDeleted: { type: "boolean" },
+        skipped: { type: "boolean" },
+        deferred: { type: "string" },
+        denied: { type: "boolean" }
+      },
+      required: ["ok"]
+    }
+  },
+  required: ["ok"]
+};
+var LAND_CONTRACT = `Merge a reviewed pull request at most once, prove it landed, and write one landing receipt.
+` + "Refuses unless expectHeadSha names the PR head (required whenever the call would merge) " + "and, when worktree is given, it is a worktree of the repository landed whose HEAD is that head. A repo other than the session's needs worktree or repoPath, a local clone whose remote names it. With requireApproval/requireGreenChecks it also requires an approval artifact on the PR for that exact head " + "and green checks before merging. Merges at most once (an already MERGED request is proved, not re-merged) with merge_method (squash by default, PR title as subject), " + "binds the merge to the head, re-reads it, fetches the landed commits and checks the method's commit shape, observes the remote branch, then writes the receipt. " + "Writes no Beads ledger: when beads.ledgerActive, run the returned next steps child-before-parent, then delivery_cleanup. ";
+var LAND_RERUNS = "A base branch with a GitHub merge queue is landed by enqueuing the head (never --auto): queued true means still queued, call again. " + "A refusal with mergeIssued true means the PR is merged: re-run with the same pr and expectHeadSha to write the receipt.";
+function landDescription(host) {
+  return `${LAND_CONTRACT}${host} ${LAND_RERUNS}`;
+}
+function landOutput(outcome, cleanup) {
+  if (!outcome.ok) {
+    return {
+      ok: false,
+      reason: outcome.reason,
+      ...outcome.mergeIssued === true ? { mergeIssued: true } : {},
+      ...outcome.queued === true ? { queued: true } : {}
+    };
+  }
+  return {
+    ok: true,
+    receiptPath: outcome.receiptPath,
+    mergeSha: outcome.receipt.pr.mergeCommitOid ?? "",
+    pr: outcome.receipt.pr.number,
+    repo: outcome.receipt.repo.nameWithOwner,
+    next: nextAfterCleanup(outcome.next, cleanup),
+    ...cleanup === undefined ? {} : { cleanup },
+    receipt: outcome.receipt
+  };
 }
 
 // plugins/delivery/opencode/src/pending-cleanup.ts
@@ -5801,133 +5909,15 @@ async function withLease(lockPath, options, work) {
   }
 }
 
-// lib/src/session-eviction.ts
-import { basename as basename4, dirname as dirname5 } from "path";
-function canonicalCheckout(commonDir, fallback) {
-  if (commonDir !== undefined && basename4(commonDir) === ".git")
-    return dirname5(commonDir);
-  return fallback;
-}
+// lib/src/running-reports.ts
+import { createHash as createHash4, randomUUID as randomUUID3 } from "crypto";
+import { mkdirSync as mkdirSync6, readdirSync as readdirSync4, renameSync as renameSync3, rmSync as rmSync5, statSync as statSync3, writeFileSync as writeFileSync6 } from "fs";
+import { join as join8, sep as sep3 } from "path";
 
-// lib/src/session-lanes.ts
-function insideDirectory(path, directory) {
-  const root = directory.replace(/\/+$/, "");
-  return path === root || path.startsWith(`${root}/`);
-}
-var MAX_LANE_DEPTH = 8;
-var LANE_CALL_TIMEOUT_MS = 1e4;
-var MAX_PAGES = 20;
-function isSessionNotFound(error, sessionID) {
-  if (typeof error !== "object" || error === null)
-    return false;
-  const fields = error;
-  for (const status of [fields.status, fields.statusCode])
-    if (status !== undefined && status !== 404)
-      return false;
-  const message = typeof fields.message === "string" ? fields.message : "";
-  if (/\b(location|service|directory|project|worktree|agent)\b/i.test(message))
-    return false;
-  const kind = [fields.name, fields._tag].filter((value) => typeof value === "string");
-  if (kind.some((value) => /^session.?not.?found/i.test(value)))
-    return fields.sessionID === undefined || fields.sessionID === sessionID;
-  const named = fields.sessionID === sessionID || message.includes(sessionID);
-  if (!named)
-    return false;
-  return kind.some((value) => /not.?found/i.test(value)) || /not found|no session|no such session|does not exist/i.test(message);
-}
-async function within2(work, ms) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error("timed out")), ms);
-  });
-  try {
-    return await Promise.race([work, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-async function children(client, parentID, ms) {
-  const ids = [];
-  let complete = true;
-  let cursor;
-  try {
-    for (let pages = 0;pages < MAX_PAGES; pages++) {
-      const query = cursor === undefined ? { parentID, limit: 100 } : { parentID, limit: 100, cursor };
-      const page = await within2(Promise.resolve().then(() => client.list(query)), ms);
-      if (!page || !Array.isArray(page.data))
-        return { ids, complete: false };
-      for (const raw of page.data) {
-        const id = raw?.id;
-        if (typeof id === "string")
-          ids.push(id);
-        else
-          complete = false;
-      }
-      const next = page.cursor?.next;
-      if (next === undefined || next === null)
-        return { ids, complete };
-      if (typeof next !== "string" || next === "")
-        return { ids, complete: false };
-      cursor = next;
-    }
-  } catch {
-    return { ids, complete: false };
-  }
-  return { ids, complete: false };
-}
-async function laneSessions(client, rootID, options = {}) {
-  const maxDepth = options.maxDepth ?? MAX_LANE_DEPTH;
-  const timeoutMs = options.timeoutMs ?? LANE_CALL_TIMEOUT_MS;
-  const seen = new Set([rootID]);
-  const ids = [rootID];
-  let level = [rootID];
-  let complete = true;
-  for (let depth = 1;level.length > 0; depth++) {
-    const next = [];
-    for (const parent of level) {
-      const kids = await children(client, parent, timeoutMs);
-      if (!kids.complete)
-        complete = false;
-      for (const id of kids.ids) {
-        if (seen.has(id))
-          continue;
-        seen.add(id);
-        next.push(id);
-      }
-    }
-    if (depth > maxDepth) {
-      if (next.length > 0)
-        complete = false;
-      break;
-    }
-    ids.push(...next);
-    level = next;
-  }
-  return { ids, complete };
-}
-var FIXED_REASON = "move failed";
-function classify(error, id) {
-  try {
-    if (isSessionNotFound(error, id))
-      return { id, status: "not-found" };
-    const text = error instanceof Error ? error.message : String(error);
-    return { id, status: "error", reason: text === "" ? FIXED_REASON : text };
-  } catch {
-    return { id, status: "error", reason: FIXED_REASON };
-  }
-}
-async function moveSessionsHome(client, ids, destination) {
-  const results = [];
-  for (const id of ids) {
-    try {
-      await client.move({ sessionID: id, directory: destination });
-      results.push({ id, status: "moved" });
-    } catch (error) {
-      results.push(classify(error, id));
-    }
-  }
-  return results;
-}
+// lib/src/worktree-locks.ts
+import { createHash as createHash3, randomUUID as randomUUID2 } from "crypto";
+import { mkdirSync as mkdirSync5, readdirSync as readdirSync3, readFileSync as readFileSync6, renameSync as renameSync2, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "fs";
+import { join as join7 } from "path";
 
 // lib/src/worktree-claims.ts
 import { createHash as createHash2 } from "crypto";
@@ -6061,9 +6051,6 @@ function ownershipOf(read) {
 }
 
 // lib/src/worktree-locks.ts
-import { createHash as createHash3, randomUUID as randomUUID2 } from "crypto";
-import { mkdirSync as mkdirSync5, readdirSync as readdirSync3, readFileSync as readFileSync6, renameSync as renameSync2, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "fs";
-import { join as join7 } from "path";
 var HOLD_EXPIRY_MS = 24 * 3600000;
 var sha1 = (text) => createHash3("sha1").update(text).digest("hex");
 var isObject2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -6205,16 +6192,325 @@ function lockedWrite(commonDir, directory, options, write) {
   return withDiskLock(commonDir, directory, { waitMs: 1e4, ...options }, async () => write());
 }
 
+// lib/src/running-reports.ts
+var MAX_REPORT_BYTES = 1024 * 1024;
+var runningDirectory = (receiptsRoot) => join8(receiptsRoot, ".running");
+var reportFile = (receiptsRoot, sessionID) => join8(runningDirectory(receiptsRoot), `${createHash4("sha1").update(sessionID).digest("hex")}.json`);
+var isObject3 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var optionalString = (value) => typeof value === "string" ? value : undefined;
+function parseReport(text) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return;
+  }
+  if (!isObject3(raw) || typeof raw.sessionID !== "string" || raw.sessionID === "")
+    return;
+  if (typeof raw.at !== "number" || !Number.isFinite(raw.at) || typeof raw.pid !== "number")
+    return;
+  if (typeof raw.host !== "string" || typeof raw.instance !== "string" || !Array.isArray(raw.jobs))
+    return;
+  const jobs = [];
+  for (const job of raw.jobs) {
+    if (!isObject3(job) || typeof job.kind !== "string")
+      return;
+    const sessionID = optionalString(job.sessionID);
+    const childSessionID = optionalString(job.childSessionID);
+    const shellID = optionalString(job.shellID);
+    const command = optionalString(job.command);
+    const cwd = optionalString(job.cwd);
+    jobs.push({
+      kind: job.kind,
+      ...sessionID === undefined ? {} : { sessionID },
+      ...childSessionID === undefined ? {} : { childSessionID },
+      ...shellID === undefined ? {} : { shellID },
+      ...command === undefined ? {} : { command },
+      ...cwd === undefined ? {} : { cwd }
+    });
+  }
+  return { sessionID: raw.sessionID, jobs, at: raw.at, pid: raw.pid, host: raw.host, instance: raw.instance };
+}
+function readStored(path) {
+  const read = readBoundedBytes(path, MAX_REPORT_BYTES);
+  if (read.kind === "absent")
+    return { kind: "absent" };
+  if (read.kind === "unreadable")
+    return { kind: "unreadable" };
+  const report = parseReport(read.bytes.toString("utf8"));
+  if (report === undefined)
+    return { kind: "unreadable" };
+  try {
+    return { kind: "report", report: { ...report, mtimeMs: statSync3(path).mtimeMs } };
+  } catch {
+    return { kind: "unreadable" };
+  }
+}
+function supersededOnDisk(file, sessionID, at) {
+  const stored = readStored(file);
+  return stored.kind === "report" && stored.report.sessionID === sessionID && stored.report.at > at;
+}
+function writeReport(receiptsRoot, report) {
+  const file = reportFile(receiptsRoot, report.sessionID);
+  if (supersededOnDisk(file, report.sessionID, report.at))
+    return "superseded";
+  const text = JSON.stringify(report);
+  if (Buffer.byteLength(text) > MAX_REPORT_BYTES)
+    throw new Error(`the report of ${report.sessionID} is larger than ${MAX_REPORT_BYTES} bytes`);
+  mkdirSync6(runningDirectory(receiptsRoot), { recursive: true });
+  const temp = `${file}.${randomUUID3()}.tmp`;
+  writeFileSync6(temp, text);
+  renameSync3(temp, file);
+  return "written";
+}
+function clearReport(receiptsRoot, sessionID, at) {
+  const file = reportFile(receiptsRoot, sessionID);
+  if (supersededOnDisk(file, sessionID, at))
+    return "superseded";
+  rmSync5(file, { force: true });
+  return "cleared";
+}
+function removeReport(receiptsRoot, sessionID) {
+  rmSync5(reportFile(receiptsRoot, sessionID), { force: true });
+}
+function readReports(receiptsRoot) {
+  const directory = runningDirectory(receiptsRoot);
+  let names;
+  try {
+    names = readdirSync4(directory).filter((name) => name.endsWith(".json"));
+  } catch (error) {
+    return { reports: [], unreadable: error.code !== "ENOENT" };
+  }
+  const reports = [];
+  let unreadable = false;
+  for (const name of names) {
+    const stored = readStored(join8(directory, name));
+    if (stored.kind === "report")
+      reports.push(stored.report);
+    else if (stored.kind === "unreadable")
+      unreadable = true;
+  }
+  return { reports, unreadable };
+}
+function reportsWritable(receiptsRoot) {
+  const directory = runningDirectory(receiptsRoot);
+  try {
+    mkdirSync6(directory, { recursive: true });
+    const probe = join8(directory, `.probe.${randomUUID3()}`);
+    writeFileSync6(probe, "");
+    rmSync5(probe, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+var reportVersion = (report) => `${report.at}:${report.instance}:${JSON.stringify(report.jobs)}`;
+function reportLive(report, clock) {
+  if (clock.now - report.mtimeMs >= (clock.expiryMs ?? HOLD_EXPIRY_MS))
+    return false;
+  if (report.instance === clock.instance)
+    return true;
+  if (report.host === clock.host)
+    return clock.alive(report.pid);
+  return true;
+}
+var sameServer = (report, clock) => report.instance === clock.instance;
+var namesWorktree = (command, forms) => command !== undefined && forms.some((form) => command.includes(form));
+var jobSessions = (job) => [job.sessionID, job.childSessionID].filter((id) => typeof id === "string");
+var within2 = (directory, forms) => forms.some((form) => directory === form || directory.startsWith(form.endsWith(sep3) ? form : `${form}${sep3}`));
+function neededLookups(reports, forms, clock) {
+  const ids = new Set;
+  for (const report of reports) {
+    if (!reportLive(report, clock) || report.jobs.length === 0)
+      continue;
+    if (sameServer(report, clock))
+      ids.add(report.sessionID);
+    for (const job of report.jobs) {
+      if (namesWorktree(job.command, forms) || job.cwd !== undefined)
+        continue;
+      for (const id of jobSessions(job))
+        ids.add(id);
+    }
+  }
+  return [...ids];
+}
+function reportBlock(reports, forms, lookup, clock, canonical) {
+  for (const report of reports) {
+    if (!reportLive(report, clock) || report.jobs.length === 0)
+      continue;
+    const ours = sameServer(report, clock);
+    if (ours && lookup(report.sessionID)?.state === "missing")
+      continue;
+    for (const job of report.jobs) {
+      if (namesWorktree(job.command, forms))
+        return `session ${report.sessionID} has a ${job.kind} running that names the worktree`;
+      if (job.cwd !== undefined) {
+        if (within2(canonical(job.cwd), forms))
+          return `session ${report.sessionID} has a ${job.kind} running in the worktree`;
+        continue;
+      }
+      const owners = jobSessions(job);
+      if (owners.length === 0)
+        return `session ${report.sessionID} has a ${job.kind} whose working directory is unknown`;
+      for (const id of owners) {
+        const found = lookup(id);
+        if (found === undefined)
+          return `session ${report.sessionID} reported work in session ${id}, which has not been looked up`;
+        if (found.state === "unknown")
+          return `session ${report.sessionID} reported work in session ${id}, whose location could not be read`;
+        if (found.state === "missing") {
+          if (ours)
+            continue;
+          return `session ${report.sessionID} (another server) reported work in session ${id}, which this server cannot place`;
+        }
+        if (found.directory === undefined)
+          return `session ${report.sessionID} reported work in session ${id}, which has no working directory`;
+        if (within2(canonical(found.directory), forms))
+          return `session ${report.sessionID} has work in session ${id}, which runs in the worktree`;
+      }
+    }
+  }
+  return;
+}
+
+// lib/src/session-eviction.ts
+import { basename as basename4, dirname as dirname5 } from "path";
+function canonicalCheckout(commonDir, fallback) {
+  if (commonDir !== undefined && basename4(commonDir) === ".git")
+    return dirname5(commonDir);
+  return fallback;
+}
+
+// lib/src/session-lanes.ts
+function insideDirectory(path, directory) {
+  const root = directory.replace(/\/+$/, "");
+  return path === root || path.startsWith(`${root}/`);
+}
+var MAX_LANE_DEPTH = 8;
+var LANE_CALL_TIMEOUT_MS = 1e4;
+var MAX_PAGES = 20;
+function isSessionNotFound(error, sessionID) {
+  if (typeof error !== "object" || error === null)
+    return false;
+  const fields = error;
+  for (const status of [fields.status, fields.statusCode])
+    if (status !== undefined && status !== 404)
+      return false;
+  const message = typeof fields.message === "string" ? fields.message : "";
+  if (/\b(location|service|directory|project|worktree|agent)\b/i.test(message))
+    return false;
+  const kind = [fields.name, fields._tag].filter((value) => typeof value === "string");
+  if (kind.some((value) => /^session.?not.?found/i.test(value)))
+    return fields.sessionID === undefined || fields.sessionID === sessionID;
+  const named = fields.sessionID === sessionID || message.includes(sessionID);
+  if (!named)
+    return false;
+  return kind.some((value) => /not.?found/i.test(value)) || /not found|no session|no such session|does not exist/i.test(message);
+}
+async function within3(work, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timed out")), ms);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function children(client, parentID, ms) {
+  const ids = [];
+  let complete = true;
+  let cursor;
+  try {
+    for (let pages = 0;pages < MAX_PAGES; pages++) {
+      const query = cursor === undefined ? { parentID, limit: 100 } : { parentID, limit: 100, cursor };
+      const page = await within3(Promise.resolve().then(() => client.list(query)), ms);
+      if (!page || !Array.isArray(page.data))
+        return { ids, complete: false };
+      for (const raw of page.data) {
+        const id = raw?.id;
+        if (typeof id === "string")
+          ids.push(id);
+        else
+          complete = false;
+      }
+      const next = page.cursor?.next;
+      if (next === undefined || next === null)
+        return { ids, complete };
+      if (typeof next !== "string" || next === "")
+        return { ids, complete: false };
+      cursor = next;
+    }
+  } catch {
+    return { ids, complete: false };
+  }
+  return { ids, complete: false };
+}
+async function laneSessions(client, rootID, options = {}) {
+  const maxDepth = options.maxDepth ?? MAX_LANE_DEPTH;
+  const timeoutMs = options.timeoutMs ?? LANE_CALL_TIMEOUT_MS;
+  const seen = new Set([rootID]);
+  const ids = [rootID];
+  let level = [rootID];
+  let complete = true;
+  for (let depth = 1;level.length > 0; depth++) {
+    const next = [];
+    for (const parent of level) {
+      const kids = await children(client, parent, timeoutMs);
+      if (!kids.complete)
+        complete = false;
+      for (const id of kids.ids) {
+        if (seen.has(id))
+          continue;
+        seen.add(id);
+        next.push(id);
+      }
+    }
+    if (depth > maxDepth) {
+      if (next.length > 0)
+        complete = false;
+      break;
+    }
+    ids.push(...next);
+    level = next;
+  }
+  return { ids, complete };
+}
+var FIXED_REASON = "move failed";
+function classify(error, id) {
+  try {
+    if (isSessionNotFound(error, id))
+      return { id, status: "not-found" };
+    const text = error instanceof Error ? error.message : String(error);
+    return { id, status: "error", reason: text === "" ? FIXED_REASON : text };
+  } catch {
+    return { id, status: "error", reason: FIXED_REASON };
+  }
+}
+async function moveSessionsHome(client, ids, destination) {
+  const results = [];
+  for (const id of ids) {
+    try {
+      await client.move({ sessionID: id, directory: destination });
+      results.push({ id, status: "moved" });
+    } catch (error) {
+      results.push(classify(error, id));
+    }
+  }
+  return results;
+}
+
 // plugins/delivery/opencode/src/clone-registry.ts
-import { mkdirSync as mkdirSync6, readFileSync as readFileSync7, renameSync as renameSync3, writeFileSync as writeFileSync6 } from "fs";
-import { isAbsolute as isAbsolute3, join as join8 } from "path";
+import { mkdirSync as mkdirSync7, readFileSync as readFileSync7, renameSync as renameSync4, writeFileSync as writeFileSync7 } from "fs";
+import { isAbsolute as isAbsolute3, join as join9 } from "path";
 var MAX_CLONES = 32;
 var KEY = /^[0-9a-f]{16}$/;
 var LOCK_WAIT_MS = 1e4;
 function registryFile(env, sessionKey) {
   if (!KEY.test(sessionKey))
     throw new Error(`repo.key: observed ${JSON.stringify(sessionKey)}, expected 16 hex characters`);
-  return join8(receiptDirectory(env), ".clones", `${sessionKey}.json`);
+  return join9(receiptDirectory(env), ".clones", `${sessionKey}.json`);
 }
 function entriesOf(text) {
   let raw;
@@ -6315,16 +6611,16 @@ function entriesIn(file, text, note) {
 }
 async function addClone(env, sessionKey, entry, pending, options = {}) {
   const file = registryFile(env, sessionKey);
-  mkdirSync6(join8(receiptDirectory(env), ".clones"), { recursive: true });
+  mkdirSync7(join9(receiptDirectory(env), ".clones"), { recursive: true });
   const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: options.waitMs ?? LOCK_WAIT_MS }, () => {
     const current = loadForUpdate(file);
     const merged = mergeClone(current[0]?.key === entry.key ? current[0] : undefined, entry);
     if (current[0]?.key === entry.key && JSON.stringify(current[0]) === JSON.stringify(merged))
       return;
     const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync6(temporary, `${JSON.stringify(withClone(current, entry, pending))}
+    writeFileSync7(temporary, `${JSON.stringify(withClone(current, entry, pending))}
 `, { mode: 384 });
-    renameSync3(temporary, file);
+    renameSync4(temporary, file);
   });
   if (result.kind === "failed")
     throw leaseFailure(file, result);
@@ -6340,9 +6636,9 @@ async function settleReceipts(env, sessionKey, key, ids, options = {}) {
     if (JSON.stringify(next) === JSON.stringify(current))
       return;
     const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync6(temporary, `${JSON.stringify(next)}
+    writeFileSync7(temporary, `${JSON.stringify(next)}
 `, { mode: 384 });
-    renameSync3(temporary, file);
+    renameSync4(temporary, file);
   });
   if (result.kind === "failed")
     throw leaseFailure(file, result);
@@ -6399,190 +6695,6 @@ async function moveLaneHome(client, lane, destination) {
   if (!lane.complete)
     notes.push("the lane's sessions were listed incompletely; some may still point at the removed worktree");
   return notes;
-}
-
-// plugins/delivery/opencode/src/running-reports.ts
-import { createHash as createHash4, randomUUID as randomUUID3 } from "crypto";
-import { mkdirSync as mkdirSync7, readdirSync as readdirSync4, renameSync as renameSync4, rmSync as rmSync6, statSync as statSync3, writeFileSync as writeFileSync7 } from "fs";
-import { join as join9, sep as sep3 } from "path";
-var MAX_REPORT_BYTES = 1024 * 1024;
-var runningDirectory = (receiptsRoot) => join9(receiptsRoot, ".running");
-var reportFile = (receiptsRoot, sessionID) => join9(runningDirectory(receiptsRoot), `${createHash4("sha1").update(sessionID).digest("hex")}.json`);
-var isObject3 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-var optionalString = (value) => typeof value === "string" ? value : undefined;
-function parseReport(text) {
-  let raw;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    return;
-  }
-  if (!isObject3(raw) || typeof raw.sessionID !== "string" || raw.sessionID === "")
-    return;
-  if (typeof raw.at !== "number" || !Number.isFinite(raw.at) || typeof raw.pid !== "number")
-    return;
-  if (typeof raw.host !== "string" || typeof raw.instance !== "string" || !Array.isArray(raw.jobs))
-    return;
-  const jobs = [];
-  for (const job of raw.jobs) {
-    if (!isObject3(job) || typeof job.kind !== "string")
-      return;
-    const sessionID = optionalString(job.sessionID);
-    const childSessionID = optionalString(job.childSessionID);
-    const shellID = optionalString(job.shellID);
-    const command = optionalString(job.command);
-    const cwd = optionalString(job.cwd);
-    jobs.push({
-      kind: job.kind,
-      ...sessionID === undefined ? {} : { sessionID },
-      ...childSessionID === undefined ? {} : { childSessionID },
-      ...shellID === undefined ? {} : { shellID },
-      ...command === undefined ? {} : { command },
-      ...cwd === undefined ? {} : { cwd }
-    });
-  }
-  return { sessionID: raw.sessionID, jobs, at: raw.at, pid: raw.pid, host: raw.host, instance: raw.instance };
-}
-function readStored(path) {
-  const read = readBoundedBytes(path, MAX_REPORT_BYTES);
-  if (read.kind === "absent")
-    return { kind: "absent" };
-  if (read.kind === "unreadable")
-    return { kind: "unreadable" };
-  const report = parseReport(read.bytes.toString("utf8"));
-  if (report === undefined)
-    return { kind: "unreadable" };
-  try {
-    return { kind: "report", report: { ...report, mtimeMs: statSync3(path).mtimeMs } };
-  } catch {
-    return { kind: "unreadable" };
-  }
-}
-function supersededOnDisk(file, sessionID, at) {
-  const stored = readStored(file);
-  return stored.kind === "report" && stored.report.sessionID === sessionID && stored.report.at > at;
-}
-function writeReport(receiptsRoot, report) {
-  const file = reportFile(receiptsRoot, report.sessionID);
-  if (supersededOnDisk(file, report.sessionID, report.at))
-    return "superseded";
-  const text = JSON.stringify(report);
-  if (Buffer.byteLength(text) > MAX_REPORT_BYTES)
-    throw new Error(`the report of ${report.sessionID} is larger than ${MAX_REPORT_BYTES} bytes`);
-  mkdirSync7(runningDirectory(receiptsRoot), { recursive: true });
-  const temp = `${file}.${randomUUID3()}.tmp`;
-  writeFileSync7(temp, text);
-  renameSync4(temp, file);
-  return "written";
-}
-function clearReport(receiptsRoot, sessionID, at) {
-  const file = reportFile(receiptsRoot, sessionID);
-  if (supersededOnDisk(file, sessionID, at))
-    return "superseded";
-  rmSync6(file, { force: true });
-  return "cleared";
-}
-function removeReport(receiptsRoot, sessionID) {
-  rmSync6(reportFile(receiptsRoot, sessionID), { force: true });
-}
-function readReports(receiptsRoot) {
-  const directory = runningDirectory(receiptsRoot);
-  let names;
-  try {
-    names = readdirSync4(directory).filter((name) => name.endsWith(".json"));
-  } catch (error) {
-    return { reports: [], unreadable: error.code !== "ENOENT" };
-  }
-  const reports = [];
-  let unreadable = false;
-  for (const name of names) {
-    const stored = readStored(join9(directory, name));
-    if (stored.kind === "report")
-      reports.push(stored.report);
-    else if (stored.kind === "unreadable")
-      unreadable = true;
-  }
-  return { reports, unreadable };
-}
-function reportsWritable(receiptsRoot) {
-  const directory = runningDirectory(receiptsRoot);
-  try {
-    mkdirSync7(directory, { recursive: true });
-    const probe = join9(directory, `.probe.${randomUUID3()}`);
-    writeFileSync7(probe, "");
-    rmSync6(probe, { force: true });
-    return true;
-  } catch {
-    return false;
-  }
-}
-var reportVersion = (report) => `${report.at}:${report.instance}:${JSON.stringify(report.jobs)}`;
-function reportLive(report, clock) {
-  if (clock.now - report.mtimeMs >= (clock.expiryMs ?? HOLD_EXPIRY_MS))
-    return false;
-  if (report.instance === clock.instance)
-    return true;
-  if (report.host === clock.host)
-    return clock.alive(report.pid);
-  return true;
-}
-var sameServer = (report, clock) => report.instance === clock.instance;
-var namesWorktree = (command, forms) => command !== undefined && forms.some((form) => command.includes(form));
-var jobSessions = (job) => [job.sessionID, job.childSessionID].filter((id) => typeof id === "string");
-var within3 = (directory, forms) => forms.some((form) => directory === form || directory.startsWith(form.endsWith(sep3) ? form : `${form}${sep3}`));
-function neededLookups(reports, forms, clock) {
-  const ids = new Set;
-  for (const report of reports) {
-    if (!reportLive(report, clock) || report.jobs.length === 0)
-      continue;
-    if (sameServer(report, clock))
-      ids.add(report.sessionID);
-    for (const job of report.jobs) {
-      if (namesWorktree(job.command, forms) || job.cwd !== undefined)
-        continue;
-      for (const id of jobSessions(job))
-        ids.add(id);
-    }
-  }
-  return [...ids];
-}
-function reportBlock(reports, forms, lookup, clock, canonical) {
-  for (const report of reports) {
-    if (!reportLive(report, clock) || report.jobs.length === 0)
-      continue;
-    const ours = sameServer(report, clock);
-    if (ours && lookup(report.sessionID)?.state === "missing")
-      continue;
-    for (const job of report.jobs) {
-      if (namesWorktree(job.command, forms))
-        return `session ${report.sessionID} has a ${job.kind} running that names the worktree`;
-      if (job.cwd !== undefined) {
-        if (within3(canonical(job.cwd), forms))
-          return `session ${report.sessionID} has a ${job.kind} running in the worktree`;
-        continue;
-      }
-      const owners = jobSessions(job);
-      if (owners.length === 0)
-        return `session ${report.sessionID} has a ${job.kind} whose working directory is unknown`;
-      for (const id of owners) {
-        const found = lookup(id);
-        if (found === undefined)
-          return `session ${report.sessionID} reported work in session ${id}, which has not been looked up`;
-        if (found.state === "unknown")
-          return `session ${report.sessionID} reported work in session ${id}, whose location could not be read`;
-        if (found.state === "missing") {
-          if (ours)
-            continue;
-          return `session ${report.sessionID} (another server) reported work in session ${id}, which this server cannot place`;
-        }
-        if (found.directory === undefined)
-          return `session ${report.sessionID} reported work in session ${id}, which has no working directory`;
-        if (within3(canonical(found.directory), forms))
-          return `session ${report.sessionID} has work in session ${id}, which runs in the worktree`;
-      }
-    }
-  }
-  return;
 }
 
 // plugins/delivery/opencode/src/pending-cleanup.ts
@@ -6658,6 +6770,7 @@ async function authorizeExplicit(pending, ask, sessionID, request) {
 }
 var SERVER_INSTANCE = `${hostname2()}:${process.pid}:${Date.now().toString(36)}`;
 var SESSION_LOOKUP_MS = 5000;
+var IDLE_PASS_MS = 60000;
 function createPendingCleanup(deps) {
   const { ctx, cwd, env } = deps;
   const now = deps.now ?? Date.now;
@@ -6665,7 +6778,8 @@ function createPendingCleanup(deps) {
   const limit = deps.maxPerPass ?? MAX_PER_PASS;
   const observationMs = deps.cleanup?.bounds?.refReadMs ?? CLEANUP_BOUNDS.refReadMs;
   const sessionLookupMs = deps.sessionLookupMs ?? SESSION_LOOKUP_MS;
-  const unrecorded = new Map;
+  const unsettled = new Map;
+  let generation = 0;
   let lastAt = 0;
   const stamp = () => {
     lastAt = Math.max(now(), lastAt + 1);
@@ -7076,7 +7190,7 @@ function createPendingCleanup(deps) {
     }
     return;
   };
-  const holdCheckAt = async (repo, common, worktree, hold) => await holdAtBase(repo, common, worktree) ?? landingBlockAt(common, worktree) ?? await runningBlock(worktree, hold);
+  const holdCheckAt = async (repo, common, worktree, hold, spellings = []) => await holdAtBase(repo, common, worktree) ?? landingBlockAt(common, worktree) ?? await runningBlock(worktree, hold, spellings);
   const holdCheck = async (repo, worktree) => holdCheckAt(repo, await commonOf(repo), worktree);
   const proofIn = (repo) => async (worktree, read) => {
     const common = await commonOf(repo);
@@ -7119,14 +7233,14 @@ function createPendingCleanup(deps) {
     return {
       proofSection: proofIn(repo),
       removalSection: sectionIn(repo, hold),
-      finalCheck: async (worktree) => {
+      finalCheck: async (worktree, spellings = []) => {
         const common = await commonOf(repo);
-        const held = await holdCheckAt(repo, common, worktree, hold);
+        const held = await holdCheckAt(repo, common, worktree, hold, spellings);
         if (held !== undefined)
           return held;
         const recorded = common === null ? [] : landingsFor(listLandings(common).records, worktree).map((entry) => entry.sessionID);
         roots = [...new Set([...sessionIDs, ...recorded].filter((id) => typeof id === "string"))];
-        forms = [...new Set([worktree, canonicalDirectory(worktree)])];
+        forms = [...new Set([worktree, canonicalDirectory(worktree), ...spellings, ...spellings.map(canonicalDirectory)])];
         return;
       },
       afterRemoval: async (worktree) => {
@@ -7310,9 +7424,16 @@ function createPendingCleanup(deps) {
         try {
           result = repo.foreign ? await cleanupDelivery({ receipt: path, repo: receipt.repo.nameWithOwner, repoPath: repo.cwd }, cwd, {
             env,
+            gitlabHosts: deps.gitlabHosts,
             coordinate: coordinateWith([sessionID, meta?.sessionID]),
             ...deps.cleanup
-          }) : await cleanupDelivery({ receipt: path }, cwd, { env, host: deps.host(), ...removalIn(own, sessionID, meta?.sessionID), ...deps.cleanup });
+          }) : await cleanupDelivery({ receipt: path }, cwd, {
+            env,
+            gitlabHosts: deps.gitlabHosts,
+            host: deps.host(),
+            ...removalIn(own, sessionID, meta?.sessionID),
+            ...deps.cleanup
+          });
         } catch {
           continue;
         }
@@ -7351,6 +7472,17 @@ function createPendingCleanup(deps) {
     }
     await gcClones();
   };
+  const boundedBy = async (work, ms) => {
+    let timer;
+    const bound = new Promise((done) => {
+      timer = setTimeout(done, ms);
+    });
+    try {
+      await Promise.race([work, bound]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const retryNow = (sessionID, idle) => disposed ? Promise.resolve() : serial(() => run(sessionID, idle)).catch((error) => console.error("delivery: pending cleanup failed", error));
   const schedule = (sessionID, idle) => {
     if (disposed)
@@ -7386,10 +7518,10 @@ function createPendingCleanup(deps) {
     return Promise.race([lookup, bound]).finally(() => clearTimeout(timer));
   };
   const reportClock = () => ({ now: (deps.fileNow ?? Date.now)(), host: hostname2(), instance: SERVER_INSTANCE, alive: processAlive });
-  const runningBlock = async (worktree, hold) => {
+  const runningBlock = async (worktree, hold, spellings = []) => {
     const stuck = () => {
-      const first = unrecorded.entries().next().value;
-      return first === undefined ? undefined : `the running work of ${first[0]} could not be recorded (${first[1]}); held until it reports again or is deleted`;
+      const first = unsettled.entries().next().value;
+      return first === undefined ? undefined : `the running work of ${first[0]} could not be recorded (${first[1].reason}); held until it reports again or is deleted`;
     };
     const unreadable = "the running-work reports cannot be read, so running work cannot be ruled out";
     const root = receiptDirectory(env);
@@ -7398,7 +7530,7 @@ function createPendingCleanup(deps) {
       return early;
     if (!reportsWritable(root))
       return "the running-work store is not writable, so running work cannot be ruled out";
-    const forms = [...new Set([worktree, canonicalDirectory(worktree)])];
+    const forms = [...new Set([worktree, canonicalDirectory(worktree), ...spellings, ...spellings.map(canonicalDirectory)])];
     const first = readReports(root);
     if (first.unreadable)
       return unreadable;
@@ -7442,7 +7574,12 @@ function createPendingCleanup(deps) {
       throw error;
     }
   };
-  const recordHolds = async (sessionID, background) => {
+  const beginReport = (sessionID) => {
+    const gen = ++generation;
+    unsettled.set(sessionID, { gen, reason: "its report is still waiting to be written" });
+    return gen;
+  };
+  const recordHolds = async (sessionID, gen, background) => {
     const root = receiptDirectory(env);
     const at = stamp();
     const jobs = background.map((job) => ({
@@ -7454,17 +7591,26 @@ function createPendingCleanup(deps) {
       ...typeof job.cwd === "string" ? { cwd: canonicalDirectory(job.cwd) } : {}
     }));
     try {
-      await underStore(() => background.length === 0 ? clearReport(root, sessionID, at) : writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname2(), instance: SERVER_INSTANCE }));
-      unrecorded.delete(sessionID);
+      await underStore(() => {
+        if (!unsettled.has(sessionID))
+          return;
+        if (background.length === 0)
+          clearReport(root, sessionID, at);
+        else
+          writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname2(), instance: SERVER_INSTANCE });
+      });
+      if (unsettled.get(sessionID)?.gen === gen)
+        unsettled.delete(sessionID);
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error);
-      if (background.length > 0)
-        unrecorded.set(sessionID, why);
+      const mark = unsettled.get(sessionID);
+      if (mark !== undefined && mark.gen === gen)
+        mark.reason = why;
       console.error(`delivery: could not record the running work of ${sessionID}: ${why}`);
     }
   };
   const forgetSession = async (sessionID) => {
-    unrecorded.delete(sessionID);
+    unsettled.delete(sessionID);
     try {
       await underStore(() => removeReport(receiptDirectory(env), sessionID));
     } catch (error) {
@@ -7483,8 +7629,9 @@ function createPendingCleanup(deps) {
     });
     try {
       registrations.push(await ctx.session.hook("experimental.idle", async (input) => {
-        await recordHolds(input.sessionID, input.background ?? []);
-        await retryNow(input.sessionID, true);
+        const gen = beginReport(input.sessionID);
+        await recordHolds(input.sessionID, gen, input.background ?? []);
+        await boundedBy(retryNow(input.sessionID, true), deps.idlePassMs ?? IDLE_PASS_MS);
       }));
     } catch {}
   };
@@ -7509,7 +7656,7 @@ function createPendingCleanup(deps) {
     dispose,
     prime,
     record,
-    unrecordedCount: () => unrecorded.size,
+    unsettledCount: () => unsettled.size,
     deny: denyIn(own),
     arm: armIn(own),
     markNudged: (receiptId, worktree) => markNudged(receiptId, worktree),
@@ -7608,7 +7755,6 @@ function malformedNote(verdict, sessionID) {
 }
 
 // plugins/delivery/opencode/src/index.ts
-var LAND_ACTION = "delivery_land";
 var SKILL_PATH = fileURLToPath2(new URL("../skills/delivery-git-workflow/SKILL.md", import.meta.url));
 var FAN_OUT_SKILL_PATH = fileURLToPath2(new URL("../skills/delivery-fan-out/SKILL.md", import.meta.url));
 var FAN_OUT_PATH = fileURLToPath2(new URL("../instructions/delivery-fan-out.md", import.meta.url));
@@ -7636,7 +7782,8 @@ function parseOptions(raw) {
     models,
     fanOut: options.fanOut !== false,
     verdicts: options.verdicts !== false,
-    autoCleanup: options.autoCleanup !== false
+    autoCleanup: options.autoCleanup !== false,
+    gitlabHosts: parseGitlabHosts(options.gitlabHosts)
   };
 }
 function confirmDelivery(evaluation, subagent = false) {
@@ -7650,88 +7797,9 @@ function confirmDelivery(evaluation, subagent = false) {
     evaluation.message = `Remove worktree ${evaluation.resources.join(", ")} and delete its local branch?`;
   }
 }
-var LAND_INPUT = {
-  type: "object",
-  properties: {
-    pr: { type: ["integer", "string"], description: "PR or MR number" },
-    merge_method: { type: "string", enum: [...MERGE_METHODS], description: "default squash" },
-    repo: { type: "string", description: '"<owner>/<name>"; defaults to the remote URL path' },
-    remote: { type: "string", description: 'Forge remote; default "origin"' },
-    expectHeadSha: {
-      type: "string",
-      description: "The reviewed head; required to merge, optional when proving an already MERGED PR"
-    },
-    requireApproval: {
-      type: "boolean",
-      description: "Require an APPROVED review or a 'VERDICT: APPROVE' author comment for the exact head"
-    },
-    requireGreenChecks: { type: "boolean", description: "Require every check on the head to pass" },
-    queueWaitSeconds: { type: "integer", description: "Merge queue: seconds to wait for the merge, 0-3600; default 600" },
-    setupAutoDelete: { type: "boolean", description: "Enable deletion-on-merge after the landing is proved" },
-    worktree: { type: "string", description: "Landed worktree for cleanup (HEAD = PR head); inferred if omitted" },
-    repoPath: { type: "string", description: "Checkout of repo on this machine; needed when repo is not the session's" },
-    beadId: {
-      type: "string",
-      description: "Bead this closes when the branch is not <omp|opencode>/agent/<bead-id>; required then on a ledger"
-    }
-  },
-  required: ["pr"],
-  additionalProperties: false
-};
-var LAND_OUTPUT = {
-  type: "object",
-  properties: {
-    ok: { type: "boolean" },
-    receiptPath: { type: "string" },
-    mergeSha: { type: "string" },
-    pr: { type: "integer" },
-    repo: { type: "string" },
-    next: { type: "array", items: { type: "string" } },
-    reason: { type: "string" },
-    mergeIssued: { type: "boolean" },
-    queued: { type: "boolean" },
-    receipt: { type: "object" },
-    cleanup: {
-      type: "object",
-      properties: {
-        ok: { type: "boolean" },
-        reason: { type: "string" },
-        removed: { type: "string" },
-        partlyRemoved: { type: "string" },
-        localRefDeleted: { type: "boolean" },
-        skipped: { type: "boolean" },
-        deferred: { type: "string" },
-        denied: { type: "boolean" }
-      },
-      required: ["ok"]
-    }
-  },
-  required: ["ok"]
-};
-var LAND_DESCRIPTION = `Merge a reviewed pull request at most once, prove it landed, and write one landing receipt.
-` + "Refuses unless expectHeadSha names the PR head (required whenever the call would merge) " + "and, when worktree is given, it is a worktree of the repository landed whose HEAD is that head. A repo other than the session's needs worktree or repoPath, a local clone whose remote names it. With requireApproval/requireGreenChecks it also requires an approval artifact on the PR for that exact head " + "and green checks before merging. Merges at most once (an already MERGED request is proved, not re-merged) with merge_method (squash by default, PR title as subject), " + "binds the merge to the head, re-reads it, fetches the landed commits and checks the method's commit shape, observes the remote branch, then writes the receipt. " + "Writes no Beads ledger: when beads.ledgerActive, run the returned next steps child-before-parent, then delivery_cleanup. A landing of another repository is cleaned up in that clone, under its lane claims, holds and denials. " + "A base branch with a GitHub merge queue is landed by enqueuing the head (never --auto): queued true means still queued, call again. " + "A refusal with mergeIssued true means the PR is merged: re-run with the same pr and expectHeadSha to write the receipt.";
+var LAND_DESCRIPTION = landDescription("A landing of another repository is cleaned up in that clone, under its lane claims, holds and denials.");
 var CLEANUP_DESCRIPTION = `Remove a landed PR's worktree and local branch after proving the landing receipt, and write a continuation receipt.
 ` + "Recomputes the ledger classification at the canonical root, proves the PR merged at the recorded head from the receipt's own remote, " + "checks every receipt bead is closed with metadata.merge_sha equal to the merge (read-only bd show at the repository root, session bead pins removed), refuses to remove the worktree it runs from, a dirty tree or unpushed commits, and a receipt or worktree of another repository unless repo and repoPath name that clone (it then runs there, under that repository's claims, holds and denials), " + "then removes the worktree (no force; through OpenCode when it tracks it, else git worktree remove) and runs git branch -d and verifies four absences.";
-function landOutput(outcome, cleanup) {
-  if (!outcome.ok) {
-    return {
-      ok: false,
-      reason: outcome.reason,
-      ...outcome.mergeIssued === true ? { mergeIssued: true } : {},
-      ...outcome.queued === true ? { queued: true } : {}
-    };
-  }
-  return {
-    ok: true,
-    receiptPath: outcome.receiptPath,
-    mergeSha: outcome.receipt.pr.mergeCommitOid ?? "",
-    pr: outcome.receipt.pr.number,
-    repo: outcome.receipt.repo.nameWithOwner,
-    next: nextAfterCleanup(outcome.next, cleanup),
-    ...cleanup === undefined ? {} : { cleanup },
-    receipt: outcome.receipt
-  };
-}
 function worktreeRegistry(ctx) {
   const worktree = ctx.worktree;
   if (typeof worktree?.list !== "function" || typeof worktree.remove !== "function")
@@ -7778,6 +7846,7 @@ async function setupDelivery(ctx, overrides = {}) {
     ctx,
     cwd: directory,
     env: environment(options),
+    gitlabHosts: options.gitlabHosts,
     host: () => hostWorktrees(ctx),
     hostFor: () => worktreeRegistry(ctx),
     ...overrides
@@ -7794,6 +7863,7 @@ async function setupDelivery(ctx, overrides = {}) {
         const outcome = await landPullRequest(input, {
           cwd: directory,
           env: environment(options),
+          gitlabHosts: options.gitlabHosts,
           signal: context.signal,
           authorize: (request) => ask(request.resource, { ...request })
         });
@@ -7809,6 +7879,7 @@ async function setupDelivery(ctx, overrides = {}) {
           const askCleanup = asserter(ctx, context, CLEANUP_ACTION);
           return cleanupDelivery(params, directory, {
             env: environment(options),
+            gitlabHosts: options.gitlabHosts,
             signal: context.signal,
             authorize: async (request) => {
               try {
@@ -7844,6 +7915,7 @@ async function setupDelivery(ctx, overrides = {}) {
         try {
           result = await cleanupDelivery(input, directory, {
             env: environment(options),
+            gitlabHosts: options.gitlabHosts,
             signal: context.signal,
             ...pending.explicit((req) => ask(req.worktree, { ...req }), context.sessionID),
             host: hostWorktrees(ctx)
@@ -7977,7 +8049,6 @@ export {
   fallbackModel,
   hasModelRoles,
   hostWorktrees,
-  landOutput,
   landPullRequest,
   parseAgentFile,
   parseModel,

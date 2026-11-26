@@ -1118,6 +1118,17 @@ async function withTimeout(work, ms) {
 }
 var isRecord3 = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 var strings2 = (value) => Array.isArray(value) ? value.filter((v) => typeof v === "string" && v.trim() !== "").map((v) => v.trim()) : [];
+function agentLists(value) {
+  const out = {};
+  if (!isRecord3(value))
+    return out;
+  for (const [agent, entries] of Object.entries(value)) {
+    const list = strings2(entries);
+    if (agent.trim() !== "" && list.length > 0)
+      out[agent.trim()] = list;
+  }
+  return out;
+}
 function parseGuard(raw) {
   if (raw === undefined || raw === false || raw === null)
     return;
@@ -1131,6 +1142,7 @@ function parseGuard(raw) {
     expensive,
     allowInherit: strings2(input.allowInherit),
     allowModels: strings2(input.allowModels),
+    allowAgentModels: agentLists(input.allowAgentModels),
     mode,
     requireExplicit: input.requireExplicit === true,
     lookupTimeoutMs: typeof input.lookupTimeoutMs === "number" && Number.isFinite(input.lookupTimeoutMs) && input.lookupTimeoutMs > 0 ? input.lookupTimeoutMs : GUARD_LOOKUP_TIMEOUT_MS
@@ -1145,17 +1157,42 @@ function inputCost(ref, available) {
   const base = costs.find((c) => c.tier === undefined) ?? costs[0];
   return typeof base?.input === "number" ? base.input : undefined;
 }
+function familyWords(id) {
+  return canonical(id).key.split(/[-_]/).map((word) => word.replace(/\d+(?:\.\d+)*$/, "")).filter((word) => word !== "" && !/^v?\d/.test(word));
+}
+var globToRegExp2 = (glob) => new RegExp(`^${glob.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`, "i");
+function entryMatches(entry, ref) {
+  const text = entry.trim();
+  if (text === "" || text.startsWith("@"))
+    return false;
+  const hash = text.lastIndexOf("#");
+  const base = hash < 0 ? text : text.slice(0, hash);
+  const variant = hash < 0 ? undefined : text.slice(hash + 1);
+  if (base === "" || variant === "")
+    return false;
+  if (variant !== undefined && variant !== ref.variant)
+    return false;
+  if (base.includes("*"))
+    return globToRegExp2(base).test(key(ref));
+  if (base.includes("/")) {
+    const candidate = parseCandidate(base);
+    return candidate?.kind === "model" && key(candidate.ref) === key(ref);
+  }
+  const want = familyWords(base);
+  const have = familyWords(ref.id);
+  if (want.length === 0)
+    return false;
+  for (let start = 0;start + want.length <= have.length; start++)
+    if (want.every((word, i) => have[start + i] === word))
+      return true;
+  return false;
+}
+var listed = (ref, entries) => entries.some((entry) => entryMatches(entry, ref));
+var agentEntries = (guard, agent) => agent !== undefined && Object.hasOwn(guard.allowAgentModels, agent) ? guard.allowAgentModels[agent] ?? [] : [];
 function isExpensive(ref, guard, classes) {
   if (guard.expensive === "auto")
     return isExpensiveClass(ref, classes);
-  return guard.expensive.some((entry) => {
-    const candidate = parseCandidate(entry);
-    if (candidate?.kind !== "model")
-      return false;
-    if (key(candidate.ref) !== key(ref))
-      return false;
-    return candidate.ref.variant === undefined || candidate.ref.variant === ref.variant;
-  });
+  return listed(ref, guard.expensive);
 }
 function pinnedModel(agent, facts) {
   if (agent.model !== undefined)
@@ -1237,6 +1274,8 @@ function judgeSpawn(facts) {
     return { allow: true };
   if (!isExpensive(facts.sessionModel, facts.guard, facts.options.classes))
     return { allow: true };
+  if (listed(facts.sessionModel, agentEntries(facts.guard, facts.target)))
+    return { allow: true };
   const { agents, roles } = cheaperAlternatives(facts);
   const lines = [
     `Subagent '${facts.target}' has no model and no resolvable tier, so it would inherit this session's expensive model ${label2(facts.sessionModel)}.`
@@ -1252,20 +1291,12 @@ function judgeSpawn(facts) {
   const more = agents.length > hinted.length ? `; ${agents.length - hinted.length} more` : "";
   if (hinted.length > 0)
     lines.push(`Or spawn an agent that pins a cheaper model: ${hinted.map((a) => agentText(a, cheapest === undefined)).join("; ")}${more}`);
-  lines.push(`If '${facts.target}' should run on the session model, add it to the srobroek.model-roles option guard.allowInherit.`);
+  lines.push(`If '${facts.target}' should run on the session model, add it to the srobroek.model-roles option guard.allowInherit, or the model to guard.allowAgentModels.${facts.target}.`);
   return { allow: false, reason: lines.join(`
 `) };
 }
-var listed = (ref, entries) => entries.some((entry) => {
-  const candidate = parseCandidate(entry);
-  if (candidate?.kind !== "model" || key(candidate.ref) !== key(ref))
-    return false;
-  return candidate.ref.variant === undefined || candidate.ref.variant === ref.variant;
-});
 function judgeModelOverride(facts) {
-  if (!isExpensive(facts.model, facts.guard, facts.options.classes))
-    return { allow: true };
-  if (listed(facts.model, facts.guard.allowModels))
+  if (allowsChosenModel(facts.guard, facts.options, facts.model, facts.target))
     return { allow: true };
   const target = facts.agents.find((agent) => agent.id === facts.target);
   const pinned = target === undefined ? undefined : pinnedModel(target, facts);
@@ -1282,11 +1313,11 @@ function judgeModelOverride(facts) {
   });
   if (matching.length > 0)
     lines.push(`If the task needs ${label2(facts.model)}, pass tier: "${matching[0]}" instead; it resolves to that model.`);
-  lines.push(`If the user asked for ${label2(facts.model)}, add it to the srobroek.model-roles option guard.allowModels.`);
+  lines.push(`If the user asked for ${label2(facts.model)}, add it to the srobroek.model-roles option guard.allowModels, or to guard.allowAgentModels.${facts.target} for this agent only.`);
   return { allow: false, reason: lines.join(`
 `) };
 }
-var allowsChosenModel = (guard, options, model) => !isExpensive(model, guard, options.classes) || listed(model, guard.allowModels);
+var allowsChosenModel = (guard, options, model, agent) => !isExpensive(model, guard, options.classes) || listed(model, guard.allowModels) || listed(model, agentEntries(guard, agent));
 
 // plugins/model-roles/opencode/src/spawn-role.ts
 var TIER_PARAM = "tier";

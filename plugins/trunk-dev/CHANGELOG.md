@@ -1,3 +1,13 @@
+## trunk-dev [1.0.0](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.12.3...trunk-dev--v1.0.0) (2026-11-25)
+
+### ⚠ BREAKING CHANGES
+
+* **trunk-dev:** pi reads the trunk-dev key of `<agentDir>/settings.json`; `<agentDir>/trunk-dev.json` is no longer read. Move its object under the key.
+
+### Features
+
+* **trunk-dev:** read settings from pi settings.json ([0083540](https://github.com/srobroek/harness-plugins/commit/00835407340a74f24a3dc1de40451d3e0b72a7cc))
+
 ## trunk-dev [0.12.3](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.12.2...trunk-dev--v0.12.3) (2026-11-24)
 
 ## trunk-dev [0.12.2](https://github.com/srobroek/harness-plugins/compare/trunk-dev--v0.12.1...trunk-dev--v0.12.2) (2026-11-24)

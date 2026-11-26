@@ -115,6 +115,8 @@ export type CleanupDeps = {
   run?: CliRunner
   now?: () => number
   env?: NodeJS.ProcessEnv
+  /** The operator's GitLab hosts (`gitlabHosts`), parsed by `parseGitlabHosts`; absent, only the built-in hosts are recognized. */
+  gitlabHosts?: readonly string[]
   /** Overrides for {@link CLEANUP_BOUNDS}; tests inject short ones. */
   bounds?: Partial<CleanupBounds>
   /**
@@ -608,6 +610,7 @@ async function resolveRemoteIdentity(
   forgeEnv: Readonly<Record<string, string>>,
   env: NodeJS.ProcessEnv,
   refReadMs: number,
+  gitlabHosts: readonly string[],
   pin?: GitPin,
 ): Promise<RemoteIdentity | CleanupFailure> {
   // Tested exactly as recorded, not trimmed first: `" origin"` is not the name of a
@@ -634,7 +637,7 @@ async function resolveRemoteIdentity(
   if (remoteText === null) return refuse("repo.remote", "malformed Git remote output", expected)
   // Classified before it is redacted: `forgeTarget` owns that judgement and must
   // see the spelling Git will actually contact.
-  const target = forgeTarget(remoteText)
+  const target = forgeTarget(remoteText, gitlabHosts)
   const remoteUrl = redactRemote(remoteText)
   if (target === null) {
     return refuse("repo.forge", `"unknown" for remote ${remote} at ${show(remoteUrl)}`, '"github" or "gitlab"')
@@ -726,9 +729,10 @@ export async function observePullRequest(
   cwd: string = receipt.repo.canonicalRoot,
   env: NodeJS.ProcessEnv = process.env,
   refReadMs: number = CLEANUP_BOUNDS.refReadMs,
+  gitlabHosts: readonly string[] = [],
   pin?: GitPin,
 ): Promise<Observation | CleanupFailure> {
-  const identity = await resolveRemoteIdentity(receipt, run, cwd, forgeEnvironment(env), env, refReadMs, pin)
+  const identity = await resolveRemoteIdentity(receipt, run, cwd, forgeEnvironment(env), env, refReadMs, gitlabHosts, pin)
   if (isFailure(identity)) return identity
   const pr =
     identity.forge === "github"
@@ -1523,7 +1527,7 @@ export async function cleanupDelivery(
     const result = await runGit(run, at, [...argv], refReadMs)
     return completed(result) ? result.stdout : null
   }
-  const target = await retargetRepository({ repo, repoPath, worktree: rest.worktree }, sessionCwd, read)
+  const target = await retargetRepository({ repo, repoPath, worktree: rest.worktree }, sessionCwd, read, deps.gitlabHosts ?? [])
   if ("reason" in target) return { ok: false, reason: target.reason }
   if (!target.retargeted) return cleanupInRepository({ ...rest, repo }, target.cwd, deps)
   // Lane claims, holds, denials and the removal lock belong to that repository. Without a
@@ -1564,6 +1568,7 @@ async function cleanupInRepository(
   const git: GitRunner = (argv, at, timeoutMs) => observe(argv, at, timeoutMs, signal)
   const now = deps.now ?? Date.now
   const env = deps.env ?? process.env
+  const gitlabHosts = deps.gitlabHosts ?? []
   // A target of another repository is refused from the session repository's own
   // worktree list and plain filesystem reads, before any Git process touches it. It is
   // only looked for when the selectors have already failed to name a receipt of this
@@ -1686,7 +1691,7 @@ async function cleanupInRepository(
   const proveTarget = async () => {
     const identity = await verifyTargetIdentity(receipt, cwd, run, bounds.refReadMs, git)
     if (isFailure(identity)) return identity
-    const observed = await observePullRequest(receipt, run, identity.cwd, env, bounds.refReadMs, identity.pin)
+    const observed = await observePullRequest(receipt, run, identity.cwd, env, bounds.refReadMs, gitlabHosts, identity.pin)
     if (isFailure(observed)) return observed
     const observedFailure = verifyObservation(receipt, observed.pr)
     if (observedFailure !== null) return observedFailure
@@ -1894,7 +1899,7 @@ async function cleanupInRepository(
   const remoteAbsence =
     observed.identity.forge === "github"
       ? (await observeGithubBranch(observed.identity.nameWithOwner, receipt.branch.name, commit, env)).verdict
-      : await remoteBranchAbsent(observed.identity.remoteUrl, receipt.branch.name, executionDir, commit)
+      : await remoteBranchAbsent(observed.identity.remoteUrl, receipt.branch.name, executionDir, commit, process.env, gitlabHosts)
   const issuedAt = nextReceiptEpoch(receipt, now)
   const verifiedAt = new Date(issuedAt).toISOString()
   const continued = buildReceipt({

@@ -1,3 +1,9 @@
+## model-roles [0.12.0](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.11.3...model-roles--v0.12.0) (2026-11-26)
+
+### Features
+
+* challenger delegation, model families in the guard, one Pi adversarial-challenger ([#207](https://github.com/srobroek/harness-plugins/issues/207)) ([deb6d8e](https://github.com/srobroek/harness-plugins/commit/deb6d8e2a52dbe431ab4b256b8a53289bd418645))
+
 ## model-roles [0.11.3](https://github.com/srobroek/harness-plugins/compare/model-roles--v0.11.2...model-roles--v0.11.3) (2026-11-25)
 
 ### Bug Fixes

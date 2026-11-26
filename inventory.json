@@ -2,7 +2,7 @@
   "plugins": [
     {
       "name": "agent-coder",
-      "version": "0.14.1",
+      "version": "0.14.2",
       "description": "coder subagent for any code development task (implement, fix, debug, test, build, profile, upgrade deps) with only coding tools and skills.",
       "category": "development",
       "harnesses": {
@@ -504,7 +504,7 @@
     },
     {
       "name": "autopilot",
-      "version": "1.4.2",
+      "version": "1.4.3",
       "description": "Unattended runs: /autopilot arms a no-questions session with a journal, a 4-minute tick and stop conditions.",
       "category": "development",
       "harnesses": {
@@ -630,7 +630,7 @@
     },
     {
       "name": "beads",
-      "version": "0.9.3",
+      "version": "1.1.1",
       "description": "Beads issue tracking: bd prime session context, shell gates on bd, git and gh commands, store pinning and the Beads skills.",
       "category": "development",
       "harnesses": {
@@ -840,7 +840,7 @@
     },
     {
       "name": "code-challenge",
-      "version": "2.1.3",
+      "version": "2.2.1",
       "description": "Challenge code for simplification, performance, stability, hand-rolled code and structure, with evidence for every finding.",
       "category": "development",
       "harnesses": {
@@ -1011,7 +1011,7 @@
     },
     {
       "name": "delivery",
-      "version": "0.14.0",
+      "version": "0.16.1",
       "description": "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
       "category": "development",
       "harnesses": {
@@ -1039,24 +1039,27 @@
           "mcp": []
         },
         "pi": {
-          "skills": [],
+          "skills": [
+            "delivery-git-workflow"
+          ],
           "agents": [],
           "commands": [],
           "rules": [],
           "hooks": [],
           "tools": [],
           "extensions": [
-            "delivery-cleanup"
+            "delivery-cleanup",
+            "delivery-land"
           ],
           "mcp": []
         }
       },
       "scope": "global",
-      "discrepancies": "pi (and OMP, which loads the pi bundle) gets only an explicit delivery_cleanup for the session's repository: no delivery_land, automatic cleanup or clone registry.",
+      "discrepancies": "pi (and OMP, which loads the pi bundles) gets delivery_land, an explicit delivery_cleanup for the session's repository and the delivery-git-workflow skill: a merge asks the user first and is refused without a UI, no cleanup runs after a land, and there is no retry or clone registry. The agents and delivery-fan-out are OpenCode only.",
       "prerequisites": [
         {
           "bin": "git",
-          "for": "delivery_cleanup's worktree, ref and remote proofs, git worktree remove and git branch -d",
+          "for": "delivery_land's landing proofs (git merge-tree --write-tree, Git 2.38 or newer) and delivery_cleanup's worktree, ref and remote proofs, git worktree remove and git branch -d",
           "required": true,
           "install": {
             "url": "https://git-scm.com/downloads"
@@ -1064,7 +1067,7 @@
         },
         {
           "bin": "gh",
-          "for": "delivery_cleanup's pull-request read (gh pr view) for a GitHub receipt",
+          "for": "delivery_land's pull-request reads and merge (gh pr view, gh pr merge, gh api) and delivery_cleanup's pull-request read for a GitHub repository",
           "required": false,
           "install": {
             "mise": "aqua:cli/cli",
@@ -1073,7 +1076,7 @@
         },
         {
           "bin": "glab",
-          "for": "delivery_cleanup's merge-request read (glab mr view) for a GitLab receipt",
+          "for": "delivery_land's merge-request reads and merge (glab mr view, glab mr merge, glab api) and delivery_cleanup's merge-request read for a GitLab repository",
           "required": false,
           "install": {
             "url": "https://gitlab.com/gitlab-org/cli#installation"
@@ -1886,7 +1889,7 @@
     },
     {
       "name": "model-roles",
-      "version": "0.11.3",
+      "version": "0.12.0",
       "description": "Give agents a model tier (cheap, standard, strong, reviewer) derived from the model catalog, and resolve each tier to the first available candidate.",
       "category": "development",
       "harnesses": {
@@ -2051,7 +2054,7 @@
     },
     {
       "name": "project",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "description": "Project lifecycle: scaffold a project with /new-project and pick an OSI-approved license.",
       "category": "productivity",
       "harnesses": {
@@ -2189,7 +2192,7 @@
     },
     {
       "name": "quality",
-      "version": "0.19.0",
+      "version": "0.20.1",
       "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
       "category": "development",
       "harnesses": {
@@ -2265,9 +2268,7 @@
             "quality-test-audit",
             "quality-testing"
           ],
-          "agents": [
-            "adversarial-challenger"
-          ],
+          "agents": [],
           "commands": [],
           "rules": [],
           "hooks": [],
@@ -2279,19 +2280,7 @@
         }
       },
       "scope": "global",
-      "piName": "pi-code-quality",
-      "companions": [
-        {
-          "package": "pi-lens",
-          "for": "code-intelligence and AST search tools for the adversarial challenger",
-          "required": true
-        },
-        {
-          "package": "pi-web-access",
-          "for": "web research tools for the adversarial challenger",
-          "required": true
-        }
-      ]
+      "piName": "pi-code-quality"
     },
     {
       "name": "repomix",
@@ -2344,7 +2333,7 @@
     },
     {
       "name": "safety",
-      "version": "1.0.1",
+      "version": "3.0.3",
       "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help and redaction of secret environment values from tool output.",
       "category": "development",
       "harnesses": {
@@ -2440,7 +2429,7 @@
     },
     {
       "name": "speckit-beads",
-      "version": "1.0.1",
+      "version": "2.0.0",
       "description": "SpecKit on Beads: a tasks.md guard, setup, ledger and bugfix skills, formulas, and the speckit-sync and speckit-verify subagents.",
       "category": "development",
       "harnesses": {
@@ -2551,7 +2540,7 @@
     },
     {
       "name": "subagent-worktree",
-      "version": "0.9.4",
+      "version": "0.9.5",
       "description": "Runs opted-in subagents in their own git worktree and merges their branch back with wt merge.",
       "category": "development",
       "harnesses": {
@@ -2691,7 +2680,7 @@
     },
     {
       "name": "trunk-dev",
-      "version": "0.12.3",
+      "version": "1.0.0",
       "description": "Trunk-based delivery for OpenCode, Claude Code, and pi: Conventional Commit and main-push gates, skip-CI and MR/PR advisories, feature-flag cleanup beads, and release-setup skills.",
       "category": "development",
       "harnesses": {

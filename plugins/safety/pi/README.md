@@ -41,12 +41,55 @@ list replaces it. Each entry matches the command word's basename.
 | `remote-exec` | A fetch (`curl`, `wget`, `fetch`, `http`, `xh`) piped into `sh`/`bash`/`zsh`/… at any later pipeline stage. A shell, `source`, `.` or `eval` running a fetch's output (`bash -c "$(curl …)"`, `bash <(curl …)`, `eval "$(curl …)"`). `nc`/`ncat` with `-e`, `--exec` or `--sh-exec`. |
 | `attribution` | `git commit` whose `-m`, `--message`, `--trailer` or `-F`/`--file` message names an AI assistant. That covers a `Co-authored-by` trailer naming Claude, Codex, GPT, Copilot, Cursor, Devin, Gemini, Anthropic or OpenAI, a `Generated with …` line, and an `@anthropic.com`/`@openai.com` noreply address. A `-F` file is read from disk, and the gate also reads what earlier commands in the same call wrote into it. `-F -` reads the command's here-document. |
 | `worktree-tmp` | `git worktree add` with a path under `/tmp` or `/private/tmp`. Relative paths resolve against the call's directory. Also `wt switch\|new\|co\|agent` naming such a path. |
-| `history-rewrite` | History rewrites that do not provably run in a linked worktree or temp clone. The guard fails closed and models neither the shell nor git's repository selection. It covers `git filter-repo` / `git-filter-repo` (also through `uvx`, `uv tool run`, `uv run`, `pipx run`, `pipenv run`, `python -m git_filter_repo`, with `@version` / `==version` qualifiers), `git filter-branch`, `git replace` (not `--list`), and `git update-ref` that deletes a branch (`-d`, a zero or empty new value, or an `--stdin` transaction that is not a sole literal here-document or here-string: a pipe, a file, `<&`, `-z`, two stdin redirections, an expansion, a quoted field). A rewrite is refused when the same shell command also contains `cd`, `pushd`, `popd`, `builtin`, `command`, any `env` wrapper, a wrapper's `-C`/`--chdir`/`-D`, `git --exec-path`, a nested shell (`sh -c`, `bash -c`, a script run by a shell), `eval`, `source`, `.`, `xargs`, `exec`, or a function or alias definition; or anything that selects a repository: `--git-dir`, `--work-tree`, `--config-env`, `-c core.worktree`, `-c core.bare`, `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY` in any position (options, assignments, exports, env wrappers). It is also refused when the session's own environment sets `GIT_DIR`, `GIT_WORK_TREE` or `GIT_COMMON_DIR`; the refusal names the variable, never its value. Otherwise only the workdir, `-C` and filter-repo's `--target` are judged: each must resolve to a real directory the same way logically (`..` removes the previous component) and physically (symlinks first), and the result must be a temp clone (under the OS temp folder) or a verified linked worktree (a regular `.git` file naming a `worktrees/<name>` directory with `commondir` and a `gitdir` file pointing back at it; submodules, separate git directories, symlinked or FIFO metadata do not count). Metadata is read with `lstat`, a non-blocking no-follow open and a bounded read, so a FIFO cannot hang the guard. A directory outside any repository passes. `filter-repo --force` is refused everywhere. As a text-level fallback, a command that names `filter-repo`, `filter-branch`, `update-ref` or `replace` next to `git` (or `git-filter-repo`) is refused when the walker did not judge it as a rewrite (`builtin eval '…'`, `python -c`, a git alias, any unrecognised wrapper); arguments of `grep`, `rg`, `echo`, `printf`, `cat`, `bd`, `pip`, and of `git log`/`commit`/`show`/`diff`/`grep`/`status`/`add`/`blame`/`shortlog` are data only in a positional, `-e`, `-m`, `--grep` or `--message` position, and never alongside an option that runs a program (`-O`, `--open-files-in-pager`, `--ext-diff`, `--textconv`, `--pager`, `rg --pre`). A launcher whose arguments mention a rewrite passes only when it directly launches a filter-repo that the guard judged and allowed, or when it installs or lists packages; any other launcher (launched `git`, a nested launcher, a shell, an interpreter, a script) is refused. A repeated filter-repo `--target` or `--source` (including argparse abbreviations such as `--targ`) is refused, and `git --config-env <value>` consumes its value. A false refusal costs one retry: clone into a temp directory and run the command there with the tool's workdir set to the clone. |
+| `history-rewrite` | History rewrites that do not provably run in a linked worktree or temp clone. The guard fails closed and models neither the shell nor git's repository selection. It covers `git filter-repo` / `git-filter-repo` (also through `uvx`, `uv tool run`, `uv run`, `pipx run`, `pipenv run`, `python -m git_filter_repo`, with `@version` / `==version` qualifiers), `git filter-branch`, `git replace` (not `--list`), and `git update-ref` that deletes a branch (`-d`, a zero or empty new value, or an `--stdin` transaction that is not a sole literal here-document or here-string: a pipe, a file, `<&`, `-z`, two stdin redirections, an expansion, a quoted field). A rewrite is refused when the same shell command also contains `cd`, `pushd`, `popd`, `builtin`, `command`, any `env` wrapper, a wrapper's `-C`/`--chdir`/`-D`, `git --exec-path`, a nested shell (`sh -c`, `bash -c`, a script run by a shell), `eval`, `source`, `.`, `xargs`, `exec`, or a function or alias definition; or anything that selects a repository: `--git-dir`, `--work-tree`, `--config-env`, `-c core.worktree`, `-c core.bare`, `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY` in any position (options, assignments, exports, env wrappers). It is also refused when the session's own environment sets `GIT_DIR`, `GIT_WORK_TREE` or `GIT_COMMON_DIR`; the refusal names the variable, never its value. Otherwise only the workdir, `-C` and filter-repo's `--target` are judged: each must resolve to a real directory the same way logically (`..` removes the previous component) and physically (symlinks first), and the result must be a temp clone (under the OS temp folder) or a verified linked worktree (a regular `.git` file naming a `worktrees/<name>` directory with `commondir` and a `gitdir` file pointing back at it; submodules, separate git directories, symlinked or FIFO metadata do not count). Metadata is read with `lstat`, a non-blocking no-follow open and a bounded read, so a FIFO cannot hang the guard. A directory outside any repository passes. `filter-repo --force` is refused everywhere. As a text-level fallback, a command that names `filter-repo`, `filter-branch`, `update-ref` or `replace` next to `git` (or `git-filter-repo`) is refused when the walker did not judge it as a rewrite (`builtin eval '…'`, `python -c`, a git alias, any unrecognised wrapper); arguments of `grep`, `rg`, `echo`, `printf`, `cat`, `bd`, `pip`, and of `git log`/`commit`/`show`/`diff`/`grep`/`status`/`add`/`blame`/`shortlog` are data only in a positional, `-e`, `-m`, `--grep` or `--message` position, and never alongside an option that runs a program (`-O`, `--open-files-in-pager`, `--ext-diff`, `--textconv`, `--pager`, `rg --pre`). A launcher whose arguments mention a rewrite passes only when it directly launches a filter-repo that the guard judged and allowed, or when it installs or lists packages; any other launcher (launched `git`, a nested launcher, a shell, an interpreter, a script) is refused. A repeated filter-repo `--target` or `--source` (including argparse abbreviations such as `--targ`) is refused, and `git --config-env <value>` consumes its value. A false refusal costs one retry: write the command without the construct the guard cannot verify. For a real rewrite the refusal points to an existing linked git worktree or to asking the user; it never suggests cloning. A `$` is read as `$'…'` or `$"…"` quoting only when it is unquoted, so a regex end anchor inside single quotes (`grep -E '(a|b)$'`) is not refused, and a line whose git subcommands all only read (`rev-parse`, `ls-files`, `log`, `status`, `diff`, `show` and the like, spelled literally) is not refused for an escape word elsewhere on it. |
 | `op-guard` | The 1Password CLI `op` (also `op.exe` or a path ending in `/op`) in any command position, with any subcommand except `op whoami`, `op --version`, `--help`, `op vault create <name>`, `op vault list` (names and ids only) and the `opAllow` prefixes. Each direct call opens a new 1Password session and prompts the user, so the refusal points to `fnox exec -- <cmd>` and `fnox provider discover <provider> --tags project/<name>`. `op item create` and `op item edit` pass only when they carry no value from the shell: `--generate-password`, or literal fields of the `[text]`, `[url]`, `[email]`, `[date]`, `[monthYear]` and `[phone]` types and the built-in `username`, `url` and `notesPlain`. Every value source is refused and points to [`safety_secret_store`](#secret-store-tool): stdin (`-`, a pipe, an input redirect, a here-document or here-string, or stdin a `sh -c` script, a here-document script or `fnox exec` passes down), a `--template` file, and any expanded word (`"credential=$TOKEN"`, `--vault "$V"`). A literal for an untyped field, `[password]`, `[concealed]`, `password` or `credential`, a literal here-document or here-string, or a pipe whose feeding stage writes a literal (`echo`, `printf`, `jq --arg` with a literal value, `cat` of a literal here-document) gets the literal-secret message. `--reveal` is refused. |
 | `op-guard` (fnox) | `fnox get`, `fnox export`, `fnox env`, `fnox list --values` (`-V`), and `fnox exec` running `env`, `printenv`, `export -p`, a bare `set` or `declare -x`. They print secret values into the transcript. Also `fnox set` with a value, for every provider: stdin (a pipe, redirect, here-document or here-string, or stdin a script or `fnox exec` passes down), a `-` value, an expanded value or `--default`, a process substitution, `--generate` or `--from-file`. The refusal points to [`safety_secret_store`](#secret-store-tool). The reference form passes: `fnox set NAME '<item>/<field>' --provider <op-provider>`, a literal with no expansion. So does `fnox set NAME` with no value, which prompts the user. The provider type still picks the message, and a literal value or `--default` for a value-store provider is refused as a literal secret. A provider counts as a store only when every definition marks it as one. The guard reads every fnox config file on the path from the call's directory to the filesystem root (`fnox.toml`, `.fnox.toml`, their `.local` and profile files, all profiles whether active or not, and a `root = true` does not stop the search) plus `~/.config/fnox/config.toml`. A provider's name never counts. It is not a store when any definition has another type or none, no definition exists, a file does not parse or uses `import`, `-c`/`--config` names an expanded path, a missing or unparsable file, a file with `import`, or more than one file, or the command could change the directory fnox runs in (`cd`, `pushd`, `popd`, `env -C`, `sudo -D`, `chroot`, a `-C`/`--chdir`/`--directory`-style flag, or a command name made of an expansion); only a command with no directory change uses the call's directory. A literal `-c <file>` (not one of the searched names `fnox.toml`, `fnox.local.toml` and the like, which resolve as above) is read together with the global config, and every definition in those two must be a store. The executor and config-write rules run on the top-level command and on everything `fnox exec` or `sh -c` runs, with the same pipe, redirect and write-target analysis. `-P`/`--profile` and `FNOX_PROFILE` change nothing, since every profile is already read. |
 
 `op-guard` covers the two secret backends this plugin supports, the 1Password CLI and fnox.
 It does not check other secret managers.
+
+## Directory flags
+
+The `external-directory` check reads the directory flags that the host's `cd` check misses:
+
+- `git`: `-C`, `--git-dir`, `--work-tree`, and the `GIT_DIR` and `GIT_WORK_TREE` assignments
+- `make`, `cargo` and `go`: `-C`, and `cargo --manifest-path`
+- `npm --prefix`, `pnpm --dir`, `yarn --cwd` and `bun --cwd`
+- `uv`: `--directory` and `--project`
+
+A flag directory needs no approval when it lies in one of these:
+
+- the session directory or its repository root
+- the main checkout of that repository
+- a linked worktree of that repository whose `.git` file names the repository back
+- a linked worktree of any repository under a `worktreeRoots` folder
+
+A worktree under `worktreeRoots` counts only when the nearest `.git` above the directory, inside the folder,
+is a file that names `<common dir>/worktrees/<name>`. The check also requires the `gitdir` file in that folder
+to name the `.git` file back. A plain directory, a main checkout or a submodule under the folder still asks.
+
+`worktreeRoots` defaults to `["~/tmp/worktrees"]`. A list replaces the default, and `~` expands to the home
+folder. Set it in the plugin options on OpenCode, and in the `safety` key of the user settings on pi
+([Options on pi](#options-on-pi)).
+
+The check reads the worktrees from disk and runs no git. It compares real paths. So `/home/u/x` matches
+`/local/home/u/x` when one links to the other, and a symlink that leads out of a worktree counts as outside.
+Any other flag directory asks. On OpenCode that is an `external_directory` ask, as for a `cd`.
+
+A relative flag value resolves against the directory that a leading `cd` moves to. After `cd <dir> &&` that
+is `<dir>`. After `cd <dir>;` the rest runs in `<dir>` when the `cd` succeeds, and in the session directory
+when it fails. So each relative value must pass from both bases.
+
+The check follows only that leading `cd`. A relative value stays unresolved after these forms:
+
+- a leading `cd` to a quoted directory, or to one with `~`, `$`, `..` or a leading `-`
+- a leading `cd` with a redirection or `||` after it, or a leading `pushd`
+- any later `cd`, `pushd` or `popd`, from that command on, also inside a subshell, group or function
+- a wrapper's directory (`env -C`, `sudo -D`), for that command only
+
+A `cd` in a command substitution moves only that subshell, so it leaves the commands around it alone.
+
+pi asks about an unresolved value, and OpenCode refuses the call.
 
 ## Subagent prompts and skill references
 
@@ -174,7 +217,7 @@ extension's asks.
 | History rewrites in place | None | Blocks (`history-rewrite`) |
 | Direct `op` calls and value-carrying `fnox` commands | None | Blocks (`op-guard`) |
 | A write to a shipped migration through `edit`, `write` or a shell redirect | None | Blocks (`migration-edit`) |
-| A directory flag outside the session (`git -C`, `--prefix`, …) | None | Asks (`external-directory`) |
+| A directory flag outside the session's repository and its worktrees (`git -C`, `--prefix`, …) | None | Asks (`external-directory`) |
 | A close-keyword list in `gh pr create\|edit --body` | None | Rewrites it in `event.input.command` (`close-keywords`) |
 | A package add or install | None | Appends the vetting advisory to the result (`package-investigate`) |
 | Secret environment values in any tool result | None | Redacts them in `tool_result` |
@@ -184,20 +227,71 @@ extension's asks.
 | A `tee`, `dd of=`, `cp` or redirect write to `/dev/diskN` or `/dev/rdiskN` | Blocks `dd` and redirects | Blocks (`disk-write`) |
 | `halt`, `reboot` and `poweroff`, with or without arguments | None | Blocks (`power`) |
 
-### Asks
+### Blocks and asks
 
-When a check asks, pi opens `ctx.ui.confirm` with the evidence, and declining blocks the call. Some
-sessions cannot show a dialog (`ctx.hasUI` is false):
+Each check either blocks a call or asks about it. A block is final: no mode and no command lets the
+call through, and only `disable` turns the check off. cc-safety-net's blocks are final too. These
+checks ask:
+
+- `sudo-destructive`: a destructive command under `sudo`.
+- `worktree-destruction`, when git cannot prove that the command loses nothing:
+  - a branch force-delete or a worktree removal
+  - `reset --hard`, `stash drop`, `stash clear` or `clean -f`
+  - `reflog expire|delete` or `wt remove --force`
+
+  It blocks instead when it cannot read the call's targets, or when a worktree removal would orphan
+  a detached commit.
+- `external-directory`: a directory flag outside the places [Directory flags](#directory-flags)
+  takes as inside, or one after a `cd` it cannot read.
+- A destruction review that fails, because pi has no permission rules to defer to.
+
+Every other check in the table blocks. A check that fails internally lets the call through, as on
+OpenCode, except the op-guard, which refuses.
+
+### Approvals
+
+The `approvals` option decides what happens when a check asks:
+
+- `"deny"`, the default: safety refuses the call without a dialog. The refusal tells the agent to
+  stop and tell you what it wanted to run and why. It shows:
+  - the rule
+  - the exact command and its directory
+  - a four-character refusal ID
+- `"ask"`: pi opens `ctx.ui.confirm` with the evidence, and declining refuses the call.
+
+The `/safety` command changes this for the current session:
+
+| Command | Effect |
+| --- | --- |
+| `/safety` | Shows the mode, and each allowed command that has not run yet. |
+| `/safety ask`, `/safety deny` | Switches the mode until the session ends. It does not write `settings.json`. |
+| `/safety allow` | Lists the refusals of the last 30 minutes. It permits nothing. |
+| `/safety allow <id>` | Permits that refusal's command, in its directory, once. The reply shows what it permits. |
+
+A permit lets the next call with that exact command string, in that directory, skip the checks that
+ask. The call spends it. It lapses 30 minutes after `/safety allow <id>`, or when the session ends
+(quit, `/new`, `/resume`, `/fork`, `/reload`). A refusal stays open to `/safety allow <id>` for 30
+minutes. `/safety allow <id>` rejects an unknown, spent or expired ID. The gates still run on a
+permitted call, and a call they block stays blocked.
+
+Only you can create a permit. pi runs an extension command from these sources:
+
+- typed input
+- an RPC `prompt`
+- another extension that sends a user message with template expansion on
+
+A tool call, a file and the model's own text never run one. In an RPC session, whoever drives the
+RPC client is the user.
+
+A session without a UI refuses each call that a check asks about, in either mode, and `/safety`
+changes nothing there:
 
 - print mode
 - JSON mode
-- a child session without a UI
+- a pi-subagents child, which pi-subagents binds in print mode
 
-There the call is blocked with the reason instead.
-
-A check that fails internally lets the call through, as on OpenCode, with two exceptions. The
-op-guard refuses. A destruction review that fails asks, because pi has no permission rules to defer
-to.
+A child's prompt comes from its parent agent, so a child must not take `/safety allow`. Each
+session has its own extension instance, so a permit in the parent never reaches a child.
 
 ### Hand the six asks to this extension
 
@@ -225,20 +319,28 @@ the six rules off in the cc-safety-net user policy, `~/.cc-safety-net/policy.jso
 
 ### Options on pi
 
-pi passes no options to an extension, so this one reads `safety.json` in pi's agent directory
-(`~/.pi/agent/safety.json`, or the same file under `PI_CODING_AGENT_DIR`). It takes the OpenCode keys
-that apply on pi:
+pi passes no options to an extension, so this one reads the `safety` key of pi's user settings,
+`~/.pi/agent/settings.json` (or `settings.json` under `PI_CODING_AGENT_DIR`). The extension
+ignores a project's `.pi/settings.json`, so a repository cannot switch a check off. The key takes
+the OpenCode keys that apply on pi, plus `approvals`, which only pi has:
 
 ```json
 {
-  "disable": ["package-investigate"],
-  "opAllow": ["vault list"],
-  "gitWrappers": ["git"],
-  "redactSecrets": true,
-  "redactNames": [],
-  "redactExclude": []
+  "safety": {
+    "disable": ["package-investigate"],
+    "opAllow": ["vault list"],
+    "gitWrappers": ["git"],
+    "worktreeRoots": ["~/tmp/worktrees"],
+    "approvals": "deny",
+    "redactSecrets": true,
+    "redactNames": [],
+    "redactExclude": []
+  }
 }
 ```
+
+`worktreeRoots` names the folders whose linked worktrees, of any repository, the directory-flag check
+takes as inside ([Directory flags](#directory-flags)).
 
 `disable` takes these ids:
 
@@ -248,8 +350,11 @@ that apply on pi:
 - `migration-edit` and `external-directory`
 - `close-keywords` and `package-investigate`
 
-Without the file, every check runs. An unreadable or malformed file gives the
-same defaults and a warning at session start.
+`approvals` is `"deny"` (the default) or `"ask"`. Any other value counts as `"deny"`. See
+[Approvals](#approvals).
+
+Without the key, every check runs. A `safety` value that is not an object gives the same defaults
+and a warning at session start. So does a `settings.json` that is unreadable or not valid JSON.
 
 pi has no `external_directory` permission, so the OpenCode features that tune it have no pi
 counterpart. Their ids are not accepted on pi:

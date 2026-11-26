@@ -364,6 +364,10 @@ The OpenCode plugin and the Claude Code hook do not run these three gates.
    child claimed, but the child cannot close the parent's. Name the ids as literal words. The
    gate reads the claim with `bd show --json` from the store the write lands in. It refuses
    the command when bd cannot answer.
+
+   To reopen a blocked bead you still own, use this exact form with the full ID and your literal actor:
+   `bd update FULL_ID --status open --if-status blocked --if-assignee ACTOR`.
+   Both guards must still match when `bd` writes. Claim the open bead before doing more work.
 2. `bd-close-evidence-gate`: a close needs `--reason` (or `-r`, or a readable `--reason-file`)
    that names checkable evidence, as `rule://beads-evidence` asks. The gate accepts any of
    these:
@@ -376,11 +380,13 @@ The OpenCode plugin and the Claude Code hook do not run these three gates.
 
    A reason such as `done` or `N/A` fails this gate.
 
-   pi passes no options to an extension, so this gate reads `gitWrappers` from `beads.json`
-   in pi's agent directory (`~/.pi/agent/beads.json`, or the same file under
-   `PI_CODING_AGENT_DIR`): `{ "gitWrappers": ["git", "<wrapper>"] }`. The default is
-   `["git"]` and a list replaces it. It is the only option pi reads; an unreadable or
-   malformed file leaves only `git` and warns at session start.
+   pi passes no options to an extension. This gate reads `gitWrappers`, the only beads option on
+   pi, from the `beads` key of pi's user settings, `~/.pi/agent/settings.json` (or
+   `settings.json` under `PI_CODING_AGENT_DIR`), for example
+   `{ "beads": { "gitWrappers": ["git", "<wrapper>"] } }`. The gate ignores a project's
+   `.pi/settings.json`, so a repository cannot widen what counts as evidence. The default is
+   `["git"]` and a list replaces it. A `beads` value that is not an object leaves only `git` and
+   warns at session start. So does a `settings.json` that is unreadable or not valid JSON.
 3. `write-claim-gate`: in a pi-subagents child, `edit` and `write` need a claim. The rule
    covers a file in a checkout with a Beads store: the child must hold at least one
    `in_progress` claim in that store. The gate asks

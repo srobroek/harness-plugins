@@ -36,14 +36,14 @@ export function selectRemoteForRepo(remotes: readonly RemotePath[], repo: string
 }
 
 /** The remotes of the repository `read` reads in `cwd`, each with the normalized path its URL names. */
-export async function remotePaths(read: GitReadAt, cwd: string): Promise<RemotePath[]> {
+export async function remotePaths(read: GitReadAt, cwd: string, gitlabHosts: readonly string[]): Promise<RemotePath[]> {
   const listed = await read(cwd, ["remote"])
   if (listed === null) return []
   const remotes: RemotePath[] = []
   for (const name of listed.split("\n").filter((line) => REMOTE_NAME.test(line))) {
     const printed = await read(cwd, ["remote", "get-url", name])
     const url = printed === null ? null : singleRemoteRecord(printed)
-    const target = url === null ? null : forgeTarget(url)
+    const target = url === null ? null : forgeTarget(url, gitlabHosts)
     const raw = url === null ? null : repoPathFromRemote(url)
     remotes.push({ name, path: target === null || raw === null ? null : normalizeRepoPath(target.forge, raw) })
   }
@@ -97,6 +97,7 @@ export async function retargetRepository(
   input: TargetInput,
   sessionCwd: string,
   read: GitReadAt,
+  gitlabHosts: readonly string[],
 ): Promise<Retargeted> {
   const raw = input.repo?.trim() ?? ""
   const repo = raw === "" ? null : normalizeRepoPath("gitlab", raw)
@@ -105,7 +106,7 @@ export async function retargetRepository(
       ? { reason: `repoPath: observed ${JSON.stringify(input.repoPath)} without repo, expected repo as "<owner>/<name>" of that checkout` }
       : { cwd: sessionCwd, retargeted: false }
   }
-  const session = await remotePaths(read, sessionCwd)
+  const session = await remotePaths(read, sessionCwd, gitlabHosts)
   if (session.some((remote) => remote.path === repo)) return { cwd: sessionCwd, retargeted: false }
 
   const clone = cloneInput(input)
@@ -125,7 +126,7 @@ export async function retargetRepository(
             : null,
         )
   if (context === null) return { reason: notACloneReason(clone.field, dir) }
-  const remotes = await remotePaths(read, dir)
+  const remotes = await remotePaths(read, dir, gitlabHosts)
   if (!remotes.some((remote) => remote.path === repo)) {
     return { reason: cloneMismatchReason(repo, clone.field, dir, remotes) }
   }

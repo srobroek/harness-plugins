@@ -1,3 +1,31 @@
+## beads [1.1.1](https://github.com/srobroek/harness-plugins/compare/beads--v1.1.0...beads--v1.1.1) (2026-11-26)
+
+### Bug Fixes
+
+* **beads:** allow an owner to unblock their guarded bead ([#218](https://github.com/srobroek/harness-plugins/issues/218)) ([a20da5c](https://github.com/srobroek/harness-plugins/commit/a20da5c2a044b0f1acf9b842d183fb3ed8122913))
+
+## beads [1.1.0](https://github.com/srobroek/harness-plugins/compare/beads--v1.0.0...beads--v1.1.0) (2026-11-26)
+
+### Features
+
+* **beads:** check recorded progress and acceptance at handoff ([#214](https://github.com/srobroek/harness-plugins/issues/214)) ([f462144](https://github.com/srobroek/harness-plugins/commit/f462144524aeb31bf110291370099c9073da0fb2))
+
+## beads [1.0.0](https://github.com/srobroek/harness-plugins/compare/beads--v0.9.4...beads--v1.0.0) (2026-11-25)
+
+### ⚠ BREAKING CHANGES
+
+* **beads:** pi reads the beads key of `<agentDir>/settings.json`; `<agentDir>/beads.json` is no longer read. Move its object under the key.
+
+### Features
+
+* **beads:** read settings from pi settings.json ([3a7ed55](https://github.com/srobroek/harness-plugins/commit/3a7ed55617c75df76cf1a8134b0f5fb370bedee3))
+
+## beads [0.9.4](https://github.com/srobroek/harness-plugins/compare/beads--v0.9.3...beads--v0.9.4) (2026-11-25)
+
+### Bug Fixes
+
+* **beads:** accept dotted child bead ids in the PR trailer ([#202](https://github.com/srobroek/harness-plugins/issues/202)) ([6c9464e](https://github.com/srobroek/harness-plugins/commit/6c9464e6158af172b1ba21f1fe050f51f0e01446))
+
 ## beads [0.9.3](https://github.com/srobroek/harness-plugins/compare/beads--v0.9.2...beads--v0.9.3) (2026-11-24)
 
 ## beads [0.9.2](https://github.com/srobroek/harness-plugins/compare/beads--v0.9.1...beads--v0.9.2) (2026-11-24)

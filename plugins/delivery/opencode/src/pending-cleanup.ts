@@ -257,6 +257,8 @@ export type PendingDeps = {
   maxPerPass?: number
   /** Test seam: the runner, bounds and clock the cleanup proofs use. */
   cleanup?: Pick<CleanupDeps, "run" | "bounds" | "now">
+  /** The operator's GitLab hosts (`gitlabHosts`) for the remote reads; absent, only the built-in hosts are recognized. */
+  gitlabHosts?: readonly string[]
   /** Test seam: the git runner the repository observations use. */
   observe?: GitRunner
   /** Test seam: the on-disk lock (attempts, ttl, clock, liveness). */
@@ -1142,10 +1144,17 @@ export function createPendingCleanup(deps: PendingDeps) {
           result = repo.foreign
             ? await cleanupDelivery({ receipt: path, repo: receipt.repo.nameWithOwner, repoPath: repo.cwd }, cwd, {
                 env,
+                gitlabHosts: deps.gitlabHosts,
                 coordinate: coordinateWith([sessionID, meta?.sessionID]),
                 ...deps.cleanup,
               })
-            : await cleanupDelivery({ receipt: path }, cwd, { env, host: deps.host(), ...removalIn(own, sessionID, meta?.sessionID), ...deps.cleanup })
+            : await cleanupDelivery({ receipt: path }, cwd, {
+                env,
+                gitlabHosts: deps.gitlabHosts,
+                host: deps.host(),
+                ...removalIn(own, sessionID, meta?.sessionID),
+                ...deps.cleanup,
+              })
         } catch {
           continue
         }

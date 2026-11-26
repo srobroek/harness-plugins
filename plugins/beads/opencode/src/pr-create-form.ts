@@ -46,7 +46,7 @@ export type PrCreateRead =
     }
   | { kind: "refused"; rule: string; cause?: unknown }
 
-const BEAD_LINE = /^[ \t]*(?:Bead|Closes-Bead|Bead-Id):[ \t]*([A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9]+)[ \t]*$/i
+const BEAD_LINE = /^[ \t]*(?:Bead|Closes-Bead|Bead-Id):[ \t]*([A-Za-z][A-Za-z0-9_-]*-[A-Za-z0-9]+(?:\.[0-9]+)*)[ \t]*$/i
 
 /**
  * The bead a body names: the first line that is only a `Bead:`, `Closes-Bead:` or `Bead-Id:` key

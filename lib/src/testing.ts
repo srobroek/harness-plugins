@@ -15,6 +15,8 @@
  * ```
  */
 
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import { insideDirectory } from "./session-lanes.ts"
 
@@ -540,4 +542,26 @@ export function scrubbedBeadsEnv(extra: Record<string, string | undefined> = {})
   for (const key of Object.keys(env)) if (isBeadsEnvKey(key)) delete env[key]
   Object.assign(env, extra)
   return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined))
+}
+
+/**
+ * A fresh pi agent directory under `parent` whose `settings.json` holds `settings`: a string is
+ * written as it is, anything else as JSON. Returns the directory.
+ */
+export function piAgentDir(parent: string, settings: unknown): string {
+  const dir = mkdtempSync(join(parent, "agent-"))
+  writeFileSync(join(dir, "settings.json"), typeof settings === "string" ? settings : JSON.stringify(settings))
+  return dir
+}
+
+/** Run `body` with `PI_CODING_AGENT_DIR` set to `dir`, so pi's `getAgentDir()` returns it, then restore the old value. */
+export function withPiAgentDir<T>(dir: string, body: () => T): T {
+  const before = process.env.PI_CODING_AGENT_DIR
+  process.env.PI_CODING_AGENT_DIR = dir
+  try {
+    return body()
+  } finally {
+    if (before === undefined) delete process.env.PI_CODING_AGENT_DIR
+    else process.env.PI_CODING_AGENT_DIR = before
+  }
 }

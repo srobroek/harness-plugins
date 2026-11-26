@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/pi-safety",
-  "version": "1.0.1",
+  "version": "3.0.3",
   "description": "Hard gates and permission checks for destructive, indirect, remote-exec and attributed shell commands, shipped-migration edits and external directory flags, plus close-keyword and package-vetting help and redaction of secret environment values from tool output.",
   "keywords": [
     "pi-package"

@@ -967,6 +967,53 @@ describe("delivery_cleanup irreversible boundary", () => {
   }, 60_000)
 
   /**
+   * An operator-named GitLab host is GitLab for every spelling Git may contact it by: the
+   * web host, its `ssh.` transport host and the scp form. Cleanup classifies it through the
+   * `forgeTarget` landing uses and addresses the API at the canonical host, never the SSH
+   * one. A host the operator did not name stays `unknown` and refuses before any forge read.
+   */
+  test("a configured GitLab host resolves as gitlab in every spelling; an unlisted host refuses", async () => {
+    const gitlabHosts = ["gitlab.example.org"]
+    const spellings = [
+      "git@ssh.gitlab.example.org:group/project.git",
+      "ssh://git@ssh.gitlab.example.org/group/project.git",
+      "https://gitlab.example.org/group/project.git",
+    ]
+    for (const [i, remote] of spellings.entries()) {
+      const f = await fixture(`configured-host-${i}`, `feat/configured-host-${i}`, "retired")
+      const receipt = buildReceipt({
+        ...f.receipt,
+        now: NOW + 1,
+        continues: f.receipt,
+        repo: { ...f.receipt.repo, forge: "gitlab", nameWithOwner: "group/project" },
+        pr: { ...f.receipt.pr, url: "https://gitlab.example.org/group/project/-/merge_requests/17", state: "merged" },
+        proof: { ...f.receipt.proof, method: "glab mr view" },
+      })
+      f.receipt = receipt
+      f.receiptPath = writeReceipt(receipt, receiptDirectory(f.env, receipt.repo.key))
+      const { result, details } = await invoke(f, { receipt: f.receiptPath }, { remotes: { origin: remote } }, { gitlabHosts })
+      expect(removal(result).receipt.repo.forge).toBe("gitlab")
+      const mr = details.find((call) => call.argv[0] === "glab")
+      expect(mr?.argv).toEqual(["glab", "mr", "view", "17", "--repo", "gitlab.example.org/group/project", "--output", "json"])
+      expect(mr?.env?.GITLAB_HOST).toBe("gitlab.example.org")
+      expect(mr?.env?.GITLAB_API_HOST).toBe("gitlab.example.org")
+    }
+    const f = await fixture("configured-host-unlisted", "feat/configured-host-unlisted", "retired")
+    const { result, calls } = await invoke(
+      f,
+      { receipt: f.receiptPath },
+      { remotes: { origin: "git@ssh.gitlab.example.net:group/project.git" } },
+      { gitlabHosts },
+    )
+    expect(refusal(result)).toContain("repo.forge: observed")
+    expect(refusal(result)).toContain('expected "github" or "gitlab"')
+    expect(calls).toEqual([
+      ["git", "worktree", "list", "--porcelain"],
+      ["git", "remote", "get-url", "origin"],
+    ])
+  }, 120_000)
+
+  /**
    * The finding this pins: a checkout whose `origin` is a contributor fork and
    * whose `upstream` is the remote the landing was run with. `gh repo view` and
    * `glab repo view` answer for `origin`, so the observation came out of the fork

@@ -1,3 +1,11 @@
+## subagent-worktree [0.9.5](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.9.4...subagent-worktree--v0.9.5) (2026-11-26)
+
+### Bug Fixes
+
+* **delivery:** rebuild the bundles ([9b92ab9](https://github.com/srobroek/harness-plugins/commit/9b92ab9f613c0ee1bade2f59d663dac3865fdcf4))
+* **delivery:** rebuild the bundles ([8af04e5](https://github.com/srobroek/harness-plugins/commit/8af04e55cc721ced2076a851206413c692aae24c))
+* **delivery:** veto removal when holds or the clone registry are unknown, surface registry errors ([828b5bb](https://github.com/srobroek/harness-plugins/commit/828b5bb3a6409842e148d7247d8341f4abcbb97a))
+
 ## subagent-worktree [0.9.4](https://github.com/srobroek/harness-plugins/compare/subagent-worktree--v0.9.3...subagent-worktree--v0.9.4) (2026-11-25)
 
 ### Bug Fixes

@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test"
+import { mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { getAgentDir } from "@earendil-works/pi-coding-agent"
 import { Plugin } from "@opencode/plugin"
 
-import { createFakeContext, isBeadsEnvKey, scrubbedBeadsEnv } from "./testing.ts"
+import { createFakeContext, isBeadsEnvKey, piAgentDir, scrubbedBeadsEnv, withPiAgentDir } from "./testing.ts"
 
 const plugin = Plugin.define({
   id: "srobroek.lib-test",
@@ -334,5 +338,32 @@ describe("scrubbedBeadsEnv", () => {
       for (const key of [...leaked, ...kept]) delete process.env[key]
       Object.assign(process.env, saved)
     }
+  })
+})
+
+describe("piAgentDir and withPiAgentDir", () => {
+  test("writes settings.json as JSON or as given text, in a fresh directory each time", () => {
+    const parent = mkdtempSync(join(tmpdir(), "pi-agent-dir-"))
+    try {
+      const json = piAgentDir(parent, { beads: { gitWrappers: ["git"] } })
+      const text = piAgentDir(parent, "{")
+      expect(json).not.toBe(text)
+      expect(JSON.parse(readFileSync(join(json, "settings.json"), "utf8"))).toEqual({ beads: { gitWrappers: ["git"] } })
+      expect(readFileSync(join(text, "settings.json"), "utf8")).toBe("{")
+    } finally {
+      rmSync(parent, { recursive: true, force: true })
+    }
+  })
+
+  test("points pi's getAgentDir at the directory only while the body runs", () => {
+    const before = process.env.PI_CODING_AGENT_DIR
+    expect(withPiAgentDir("/tmp/pi-agent-x", () => getAgentDir())).toBe("/tmp/pi-agent-x")
+    expect(process.env.PI_CODING_AGENT_DIR).toBe(before)
+    expect(() =>
+      withPiAgentDir("/tmp/pi-agent-y", () => {
+        throw new Error("boom")
+      }),
+    ).toThrow("boom")
+    expect(process.env.PI_CODING_AGENT_DIR).toBe(before)
   })
 })

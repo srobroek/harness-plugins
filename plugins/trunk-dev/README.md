@@ -133,7 +133,9 @@ One extension, `pi/extensions/trunk-dev.js` (source `pi-src/trunk-dev.ts`), carr
 
 The gate never asks: it refuses as the OpenCode gate does, so print, JSON and RPC modes, where pi has no dialog, behave the same as the TUI.
 
-Not on pi: the `delivery_land` merge source, session reminders, and the `disable` option (including the Conventional Commit title toggle). pi passes no options to an extension. This one reads only `gitWrappers`, from `trunk-dev.json` in pi's agent directory (`~/.pi/agent/trunk-dev.json`, or the same file under `PI_CODING_AGENT_DIR`). An unreadable or malformed file leaves only `git` and warns at session start.
+Not on pi: the `delivery_land` merge source, session reminders, and the `disable` option (including the Conventional Commit title toggle).
+
+pi passes no options to an extension. This one reads only `gitWrappers`, from the `trunk-dev` key of pi's user settings, `~/.pi/agent/settings.json` (or `settings.json` under `PI_CODING_AGENT_DIR`), for example `{ "trunk-dev": { "gitWrappers": ["git", "<wrapper>"] } }`. The extension ignores a project's `.pi/settings.json`, so a repository cannot change which commands the gate treats as git. Without the key, the gate treats only `git` as git. A `trunk-dev` value that is not an object leaves only `git` and warns at session start. So does a `settings.json` that is unreadable or not valid JSON.
 
 pi-subagents' foreground children do not load the parent's extensions ([required host extensions](https://github.com/nicobailon/pi-subagents/blob/main/docs/agents.md#required-host-extensions)). List this extension for every child in `~/.pi/agent/settings.json`, with the path where pi installed this repository:
 

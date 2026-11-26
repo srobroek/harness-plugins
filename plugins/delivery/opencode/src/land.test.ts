@@ -2285,7 +2285,7 @@ describe("choosing the remote and worktree of a landing", () => {
       if (command === "remote get-url upstream") return `${REMOTE_URL}\n`
       return null
     }
-    const resolved = await resolveLandingTarget({ repo: "srobroek/omp-plugins" }, git, canonical, {})
+    const resolved = await resolveLandingTarget({ repo: "srobroek/omp-plugins" }, git, canonical, {}, [])
     if ("reason" in resolved) throw new Error(resolved.reason)
     expect(resolved).toMatchObject({ remote: "upstream", nameWithOwner: "srobroek/omp-plugins" })
   })
@@ -2297,7 +2297,7 @@ describe("choosing the remote and worktree of a landing", () => {
       if (argv.join(" ") === "remote get-url origin") return "https://github.com/srobroek/slopvac.git\n"
       return null
     }
-    const resolved = await resolveLandingTarget({ repo: "srobroek/omp-plugins", remote: "origin" }, git, canonical, {})
+    const resolved = await resolveLandingTarget({ repo: "srobroek/omp-plugins", remote: "origin" }, git, canonical, {}, [])
     expect("reason" in resolved && resolved.reason).toContain("from remote origin")
   })
 
@@ -2569,7 +2569,7 @@ describe("landing target resolution", () => {
 
   test("refuses an explicit identity before reading any repository state", async () => {
     const { git, reads, cwd } = gitAnswering(REMOTE_URL)
-    const resolved = await resolveLandingTarget({ repo: "https://github.com/x/y" }, git, cwd, {})
+    const resolved = await resolveLandingTarget({ repo: "https://github.com/x/y" }, git, cwd, {}, [])
     expect(resolved).toEqual({
       reason:
         'repo: observed "https://github.com/x/y", expected an unqualified "<owner>/<name>" or bounded GitLab "<group>/.../<project>" path',
@@ -2579,7 +2579,7 @@ describe("landing target resolution", () => {
 
   test("refuses a repo override that disagrees with the remote, naming both", async () => {
     const { git, cwd } = gitAnswering(REMOTE_URL)
-    const resolved = await resolveLandingTarget({ repo: "someone/else" }, git, cwd, {})
+    const resolved = await resolveLandingTarget({ repo: "someone/else" }, git, cwd, {}, [])
     expect("reason" in resolved && resolved.reason).toBe(
       'repo: observed "someone/else", expected "srobroek/omp-plugins" from remote origin; the branch absence is verified against origin, so both must name one repository; to land a pull request of another repository, pass a worktree or repoPath of that repository, or run delivery_land from a session in it',
     )
@@ -2587,7 +2587,7 @@ describe("landing target resolution", () => {
 
   test("binds every forge command to the canonical host the remote names", async () => {
     const { git, reads, cwd } = gitAnswering("ssh://git@altssh.gitlab.com:443/group/sub/project.git")
-    const resolved = await resolveLandingTarget({}, git, cwd, { PATH: "/bin" })
+    const resolved = await resolveLandingTarget({}, git, cwd, { PATH: "/bin" }, [])
     if ("reason" in resolved) throw new Error(resolved.reason)
     expect(resolved).toMatchObject({
       remote: "origin",

@@ -1,5 +1,6 @@
 /**
- * Refuse history-rewriting commands unless they provably run in a linked worktree or temp clone.
+ * Refuse history-rewriting commands unless they provably run in a linked worktree or temp clone
+ * (a clone already under the OS temp folder; the guard never tells anyone to make one).
  *
  * `git filter-repo` writes to the current directory unless `--target` says otherwise, so a run
  * meant for a temp clone but started from the main checkout rewrote its `main` and every tag.
@@ -15,7 +16,7 @@
  * that select a repository. Otherwise only the tool call's workdir and `-C` (and filter-repo's
  * `--target`) are judged. The directory must resolve to a real directory the same way logically
  * and physically, and be a temp clone (under the OS temp folder) or a verified linked worktree. A false refusal costs one retry
- * in a temp clone. `filter-repo --force` is refused everywhere. A directory outside any git
+ * after the command is rewritten without the construct. `filter-repo --force` is refused everywhere. A directory outside any git
  * repository passes: there is nothing to rewrite.
  */
 
@@ -149,6 +150,34 @@ const dynamic = (word: string): boolean => /[$`]/.test(word) || word.startsWith(
 const unreadable = (word: string): boolean => dynamic(word) || /[\\*?[{]/.test(word)
 
 /**
+ * Whether the source text of one word has an unquoted `$'` or `$"`, the only places bash reads ANSI-C or
+ * locale quoting. A `$` inside single quotes is literal (`'(a|b)$'` is a regex end anchor), and inside double
+ * quotes `$'` is literal and `$"` is a `$` followed by the closing quote. A substitution or `${\u2026}` (unquoted or
+ * in double quotes) hides its own quoting, so the rest of the word is judged by the cautious spelling test.
+ */
+export function opensAnsiQuote(text: string): boolean {
+  let quote: "'" | '"' | undefined
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i] as string
+    if (quote === "'") {
+      if (char === "'") quote = undefined
+      continue
+    }
+    if (char === "\\") {
+      i++
+      continue
+    }
+    if (quote === '"') {
+      if (char === '"') quote = undefined
+    } else if (char === "'" || char === '"') quote = char
+    if (char === "`" || (char === "$" && (text[i + 1] === "(" || text[i + 1] === "{")))
+      return /\$['"]/.test(text.slice(i + 1))
+    if (char === "$" && quote === undefined && (text[i + 1] === "'" || text[i + 1] === '"')) return true
+  }
+  return quote === "'" // an unterminated single quote: the shell would not run it, so stay cautious
+}
+
+/**
  * Whether a word is spelled with ANSI-C (`$'…'`) or locale (`$"…"`) quoting. The guard never decodes
  * either: the scanner keeps the escapes of `$'…'` as written, and every decoder it could have would
  * have to match bash exactly (NUL truncation, `\c@`, per-fragment concatenation). Instead a line that
@@ -159,7 +188,7 @@ const unreadable = (word: string): boolean => dynamic(word) || /[\\*?[{]/.test(w
 const ansiQuoted = (command: Command): boolean =>
   command.words === undefined
     ? /\$['"]/.test(command.source)
-    : command.words.some((word) => /\$['"]/.test(command.source.slice(word.start, word.end)))
+    : command.words.some((word) => opensAnsiQuote(command.source.slice(word.start, word.end)))
 
 const abbreviatesTarget = (arg: string): boolean => {
   const name = arg.split("=")[0] as string
@@ -177,11 +206,29 @@ const quotedProgram = (command: Command): boolean => {
   const word = command.words?.[0]
   return word === undefined
     ? command.argv[0]?.includes("\\") === true || /\$['"]/.test(command.source)
-    : /\$['"]/.test(command.source.slice(word.start, word.end))
+    : opensAnsiQuote(command.source.slice(word.start, word.end))
 }
 
 const LOCALE_REASON =
   'a `$"…"` locale string is translated by bash when a message catalog is active, so a directory operand written that way cannot be verified, wherever it points'
+
+/** Git subcommands that only read: no ref, history or work-tree change whatever their arguments say. */
+const READ_ONLY_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  "rev-parse", "ls-files", "ls-tree", "ls-remote", "log", "status", "diff", "diff-tree", "diff-index", "diff-files",
+  "show", "show-ref", "for-each-ref", "rev-list", "cat-file", "blame", "shortlog", "describe", "name-rev", "merge-base",
+  "grep", "check-ignore", "count-objects", "whatchanged",
+])
+
+/**
+ * Whether `command` is git running a read-only subcommand that is spelled literally, with no global option the
+ * guard does not read. An escape or `$'\u2026'` word elsewhere on the line cannot make it a rewrite, so it does not
+ * count as a possible rewrite itself.
+ */
+function readOnlyGit(command: Command, wrappers: readonly string[]): boolean {
+  const git = gitInvocation(command.argv, wrappers)
+  if (git === undefined || git.overridden || !READ_ONLY_SUBCOMMANDS.has(git.subcommand)) return false
+  return !command.argv.slice(0, git.offset).some((word) => /[\\$`]/.test(word)) && !command.argv.slice(1, git.offset - 1).includes("-c")
+}
 
 /** A command that could be git, git-filter-repo or a launcher of either (a quoted program word counts). */
 const gitOrLauncher = (command: Command, wrappers: readonly string[]): boolean =>
@@ -396,7 +443,7 @@ function readSmallFile(path: string): string | undefined {
  * back at this very `.git` file. Submodules and `--separate-git-dir` checkouts also have a gitfile,
  * and fail this.
  */
-function linkedWorktree(gitFile: string): boolean {
+export function linkedWorktree(gitFile: string): boolean {
   const text = readSmallFile(gitFile)
   const match = text === undefined ? null : /^gitdir:[ \t]*(.+?)[ \t]*\r?\n?$/.exec(text)
   if (match === null) return false
@@ -618,7 +665,7 @@ function runnerCommand(command: Command, wrappers: readonly string[]): Runner | 
 }
 
 const GUIDANCE =
-  "Clone the repository into a temp directory (`git clone <repo> \"$TMPDIR/<name>\"`) and run the command there with the tool's workdir set to the clone; a false refusal costs one retry."
+  "If the command only looks like a rewrite, write it without the construct the guard cannot verify. For a real history rewrite, run it from an existing linked git worktree (the tool's workdir set there) or ask the user. Never clone the repository to get around this."
 
 const refused = (what: string, root: string): string =>
   `${PREFIX}: refused ${what}. ${root} is a canonical checkout (its .git is a directory), and this command rewrites or deletes history in place, which cannot be undone from the work tree. ${GUIDANCE}`
@@ -630,7 +677,7 @@ const uncertain = (what: string, why: string): string =>
   `${PREFIX}: refused ${what}. It rewrites or deletes history in place, and the guard cannot tell with certainty that it runs in a linked worktree or temp clone (${why}). ${GUIDANCE}`
 
 const withConstruct = (what: string, construct: string): string =>
-  `${PREFIX}: refused ${what}. The same shell command also contains ${construct}, which can change the directory the rewrite runs in, so the guard cannot tell where it runs. Set the shell tool's workdir to a temp clone or linked worktree, or run the rewrite on its own. ${GUIDANCE}`
+  `${PREFIX}: refused ${what}. The same shell command also contains ${construct}, which can change the directory the rewrite runs in, so the guard cannot tell where it runs. Run the rewrite on its own, with the shell tool's workdir set to an existing linked worktree. ${GUIDANCE}`
 
 /** The first option or variable in the shell command that selects a repository, by name only. */
 function repositorySelection(commands: readonly Command[]): string | undefined {
@@ -642,7 +689,7 @@ function repositorySelection(commands: readonly Command[]): string | undefined {
 }
 
 const withSelection = (what: string, selection: string): string =>
-  `${PREFIX}: refused ${what}. ${selection} can point git at a repository other than the one the directory implies, so the guard cannot tell which repository the rewrite changes. Run the rewrite on its own in a temp clone, with the shell tool's workdir set there and without these options. ${GUIDANCE}`
+  `${PREFIX}: refused ${what}. ${selection} can point git at a repository other than the one the directory implies, so the guard cannot tell which repository the rewrite changes. Run the rewrite on its own, with the shell tool's workdir set to an existing linked worktree and without these options. ${GUIDANCE}`
 
 /** Commands that only read or print their arguments: a rewrite word among them is data. */
 const NON_EXECUTING: ReadonlySet<string> = new Set(["grep", "rg", "echo", "printf", "cat", "bd", "head", "tail", "wc", "ls", "pip", "pip3"])
@@ -801,7 +848,7 @@ export function historyRewrite(
     if (quotedProgram(command)) return unverifiable(`\`${command.argv.slice(0, 4).join(" ")}\``)
   if (commands.some(ansiQuoted) && commands.some((command) => gitOrLauncher(command, wrappers))) {
     for (const command of commands) {
-      if (!gitOrLauncher(command, wrappers)) continue
+      if (!gitOrLauncher(command, wrappers) || readOnlyGit(command, wrappers)) continue
       const git = gitInvocation(command.argv, wrappers)
       const text = `\`${command.argv.slice(0, 4).join(" ")}\``
       // An escape may spell an option, a value or the program; only the git subcommand may carry one.
@@ -850,7 +897,7 @@ export function historyRewrite(
           return uncertain(text, "an earlier command may set uv's UV_WORKING_DIR or UV_PROJECT")
       }
       if (rewrite.args.some((arg) => arg === "-f" || spells(arg, "--force")))
-        return `${PREFIX}: refused ${text} with --force. filter-repo --force overwrites the repository's refs and history in the directory it runs in, wherever that is. Run it without --force in a fresh temp clone with the tool's workdir set there; a fresh clone needs no --force.`
+        return `${PREFIX}: refused ${text} with --force. filter-repo --force overwrites the repository's refs and history in the directory it runs in, wherever that is. Do not pass --force. ${GUIDANCE}`
       if (escapedSpelling(command.argv.slice(1)))
         return uncertain(text, "an option is spelled with a shell escape, so its name cannot be read")
       if (command.source.includes('$"')) return uncertain(text, LOCALE_REASON)

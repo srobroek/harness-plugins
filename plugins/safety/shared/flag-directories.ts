@@ -3,12 +3,19 @@
  * `external_directory` when a `cd`/`pushd` target lies outside the session, but a
  * tool's own directory flag (`git -C`, `make -C`, `npm --prefix`, …) moves the command
  * just as far without that check. This reads those flags so the plugin can ask the
- * same question.
+ * same question, against roots that also hold the session repository's worktrees.
  */
 
+import { lstatSync, readdirSync } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, isAbsolute, join, resolve } from "node:path"
+import { basename, dirname, isAbsolute, join, resolve } from "node:path"
+import { commondirValue, markedCommonDir, physical, readBounded, verifyCheckout } from "@srobroek/opencode-lib/checkout-marker"
+import { type ExternalDirectory, externalDirectories, sessionRoots } from "@srobroek/opencode-lib/external-directories"
 import { DEFAULT_GIT_WRAPPERS, isGitCommand } from "@srobroek/opencode-lib/git-wrappers"
+import { leadingCd } from "@srobroek/opencode-lib/shell-command"
+import { under } from "@srobroek/opencode-lib/shell-write-targets"
+import { linkedWorktree } from "./history-rewrite.ts"
+import { resolved } from "./resolved-path.ts"
 import { base, type Command, walkShell } from "./shell.ts"
 
 /**
@@ -132,8 +139,175 @@ export function flagDirectoryReport(
   cwd: string | undefined,
   gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS,
 ): FlagDirectoryReport {
+  return readFlags(walkShell(source).commands, cwd === undefined ? [] : [cwd], gitWrappers)
+}
+
+/** Builtins that move the shell itself, and with it every command after them. */
+const DIRECTORY_CHANGES: ReadonlySet<string> = new Set(["cd", "pushd", "popd"])
+
+function changesShellDirectory(command: Command): boolean {
+  const [name, next] = command.argv
+  return DIRECTORY_CHANGES.has(base(name)) || (name === "builtin" && next !== undefined && DIRECTORY_CHANGES.has(next))
+}
+
+/**
+ * The flag directories of `commands`, in walk order, with relative values resolved against each of `bases`; with
+ * no base they go to `unresolved`. From the first `cd`, `pushd` or `popd` on (also `builtin cd`, and one inside a
+ * subshell, group, function body, `eval` or nested shell the walk reaches), every command has no base: the check
+ * does not follow where a later change lands or whether it succeeds. A wrapper's directory (`env -C`, `sudo -D`)
+ * takes the base of its own command only. The walk reads a command substitution after the commands around it, so
+ * a `cd` inside one, which moves only that subshell, leaves those commands their bases.
+ */
+function readFlags(commands: readonly Command[], bases: readonly string[], gitWrappers: readonly string[]): FlagDirectoryReport {
   const dirs = new Set<string>()
   const unresolved: string[] = []
-  for (const command of walkShell(source).commands) for (const dir of flagDirectories(command, cwd, gitWrappers, unresolved)) dirs.add(dir)
+  let known = bases
+  for (const command of commands) {
+    if (changesShellDirectory(command)) known = []
+    const here = command.directories.length > 0 || known.length === 0 ? [undefined] : known
+    for (const cwd of here) for (const dir of flagDirectories(command, cwd, gitWrappers, unresolved)) dirs.add(dir)
+  }
   return { dirs: [...dirs], unresolved: [...new Set(unresolved)] }
+}
+
+/** `commands` without the leading `cd` the bases stand for; whole when the walk does not start with it. */
+function afterLeadingCd(commands: readonly Command[]): readonly Command[] {
+  const [first] = commands
+  return first?.context === "top" && first.argv[0] === "cd" ? commands.slice(1) : commands
+}
+
+/**
+ * A shell call's flag directories, with its leading `cd` read for this check alone; every other gate keeps
+ * `leadingCd`, which refuses `;`. Relative values resolve against:
+ * - `cwd`, when the call does not start with a directory change;
+ * - the target of `cd <dir> &&`, or of a call that is only `cd <dir>`, since nothing after a failed `cd` runs;
+ * - both the target and `cwd` for `cd <dir>;` (or `cd <dir>` and a newline): the rest runs in `<dir>` when the
+ *   `cd` succeeds and in `cwd` when it fails, so the directories from both bases are reported and each must
+ *   pass the roots on its own.
+ *
+ * After any other leading directory change (one `leadingCd` rejects for its form: quoted, `~`, `$`, `..`, `-`,
+ * a redirection, `||`, `pushd`, …) relative values go to `unresolved`, and so do those from the first later
+ * directory change on (`readFlags`).
+ */
+export function callFlagDirectoryReport(
+  command: string,
+  cwd: string,
+  gitWrappers: readonly string[] = DEFAULT_GIT_WRAPPERS,
+): FlagDirectoryReport {
+  const commands = walkShell(command).commands
+  const lead = leadingCd(command, cwd)
+  if (lead.kind === "none") return readFlags(commands, [cwd], gitWrappers)
+  if (lead.kind === "dir") return readFlags(afterLeadingCd(commands), [lead.dir], gitWrappers)
+  // The words before the first `;` or newline, read as a call that is only a `cd`.
+  const first = /^[^;\n]*/.exec(command)?.[0] ?? command
+  const sequenced = first.length < command.length ? leadingCd(first, cwd) : lead
+  if (sequenced.kind !== "dir") return readFlags(commands, [], gitWrappers)
+  return readFlags(afterLeadingCd(commands), [sequenced.dir, cwd], gitWrappers)
+}
+
+/** `path` as a real path, or `undefined` when a link loops. */
+function real(path: string): string | undefined {
+  try {
+    return resolved(path)
+  } catch {
+    return undefined
+  }
+}
+
+function entries(dir: string): string[] {
+  try {
+    return readdirSync(dir)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * The roots of the directory-flag check, as real paths: `sessionRoots` (the session directory and its
+ * repository root) and every worktree of that repository. The worktrees are read from disk the way Git
+ * records them, without running git: the main worktree when the common directory is a `.git` folder, and the
+ * worktree each `<common>/worktrees/<name>/gitdir` names. One counts only when its own `.git` names this
+ * repository back (`verifyCheckout`), so a stale entry or another checkout at a recorded path does not.
+ */
+export function flagCheckRoots(sessionDirectory: string): string[] {
+  const roots = new Set(sessionRoots(sessionDirectory).map((root) => real(root) ?? root))
+  const common = markedCommonDir(sessionDirectory)
+  if (common === null) return [...roots]
+  // `common` is physical, and so is every `.git` path `physical` returns: no candidate needs resolving again.
+  const candidates = basename(common) === ".git" ? [dirname(common)] : []
+  for (const name of entries(join(common, "worktrees"))) {
+    const admin = join(common, "worktrees", name)
+    const read = readBounded(join(admin, "gitdir"))
+    // The admin `gitdir` file is one line like `commondir`: the worktree's `.git`, absolute or relative to `admin`.
+    const value = read.kind === "text" ? commondirValue(read.text) : null
+    const dotGit = value === null ? null : physical(value.startsWith("/") ? value : `${admin}/${value}`)
+    if (dotGit !== null) candidates.push(dirname(dotGit))
+  }
+  for (const candidate of candidates) {
+    if (candidate !== "/" && verifyCheckout(candidate, common).state === "same") roots.add(candidate)
+  }
+  return [...roots]
+}
+
+export const DEFAULT_WORKTREE_ROOTS: readonly string[] = Object.freeze(["~/tmp/worktrees"])
+
+/**
+ * The `worktreeRoots` option with a leading `~` expanded against `home`. A list of strings replaces the
+ * default and anything else gives it; an entry that is not absolute after expansion is dropped.
+ */
+export function readWorktreeRoots(raw: unknown, home: string = homedir()): string[] {
+  const list: unknown[] = Array.isArray(raw) ? raw : [...DEFAULT_WORKTREE_ROOTS]
+  return list.flatMap((entry) => {
+    if (typeof entry !== "string") return []
+    const expanded = entry === "~" || entry.startsWith("~/") ? join(home, entry.slice(1)) : entry
+    return isAbsolute(expanded) ? [expanded] : []
+  })
+}
+
+/** Whether something is at `path` itself; an error other than a missing entry counts as something. */
+function present(path: string): boolean {
+  try {
+    lstatSync(path)
+    return true
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    return code !== "ENOENT" && code !== "ENOTDIR"
+  }
+}
+
+/**
+ * Whether the real path `path` lies in a linked worktree under the real directory `root`: the nearest `.git`
+ * at or above it, looked for no higher than `root`, is the gitfile of a linked worktree whose admin directory
+ * names it back (`linkedWorktree`). A plain directory, a main checkout or a submodule does not count.
+ */
+function inLinkedWorktreeUnder(path: string, root: string): boolean {
+  if (!under(path, root)) return false
+  for (let at = path; ; at = dirname(at)) {
+    const git = join(at, ".git")
+    if (present(git)) return linkedWorktree(git)
+    if (at === root || dirname(at) === at) return false
+  }
+}
+
+/**
+ * The `external_directory` resources for the flag directories outside {@link flagCheckRoots} and outside every
+ * linked worktree under `worktreeRoots` (any repository's), each named as the command spelled it. Directories
+ * compare by real path, so `/home/u/x` matches a root at `/local/home/u/x` when one links to the other, and a
+ * symlink out of a root counts as outside. One whose real path cannot be read (a link loop) counts as outside too.
+ */
+export function externalFlagDirectories(
+  dirs: readonly string[],
+  sessionDirectory: string,
+  worktreeRoots: readonly string[],
+): ExternalDirectory[] {
+  if (dirs.length === 0) return []
+  const roots = flagCheckRoots(sessionDirectory)
+  const rooted = worktreeRoots.flatMap((root) => real(root) ?? [])
+  const outside = dirs.filter((dir) => {
+    const path = real(dir)
+    if (path === undefined) return true
+    return !roots.some((root) => under(path, root)) && !rooted.some((root) => inLinkedWorktreeUnder(path, root))
+  })
+  // With no roots, `externalDirectories` builds the resources for exactly these directories.
+  return externalDirectories(outside, [])
 }

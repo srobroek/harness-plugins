@@ -24,6 +24,7 @@ docstring-code-format = true
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "TC", "ANN", "RUF", "PERF", "C4", "PT", "S"]
+ignore = ["E501"]          # ruff format owns line length
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "ANN"]
@@ -34,6 +35,7 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "TC", "ANN", "RUF", "PERF",
   at a few widths and pick the smallest diff, or read the longest common line length. Copy the
   quote style the code already uses.
 - `lint.select` lists the rules the project enforces; for existing code, start with CI.
+- `ignore = ["E501"]`: `ruff format` sets line length. E501 only flags lines the formatter cannot split (long strings, comments, URLs), and pi-lens reports each one as a blocker.
 
 ## JavaScript and TypeScript: Biome or oxfmt
 

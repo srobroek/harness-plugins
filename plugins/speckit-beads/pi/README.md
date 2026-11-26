@@ -35,9 +35,14 @@ On pi, a session start reports a missing or too-old tool with its install hint
 
 ## Options
 
-OpenCode takes them as the plugin's `options`. pi reads the same keys from
-`~/.pi/agent/speckit-beads.json` (`$PI_CODING_AGENT_DIR/speckit-beads.json`). Claude Code
-takes none.
+OpenCode takes them as the plugin's `options`, and Claude Code takes none.
+
+pi reads the same keys from the `speckit-beads` key of its user settings,
+`~/.pi/agent/settings.json` (`$PI_CODING_AGENT_DIR/settings.json`). For example,
+`{ "speckit-beads": { "tasksGuard": false } }` turns the tasks.md guard off. The extension ignores
+a project's `.pi/settings.json`, so a repository cannot switch a guard off. Without the key, the
+defaults below apply. A `speckit-beads` value that is not an object gives the defaults and a
+warning at session start. So does a `settings.json` that is unreadable or not valid JSON.
 
 | Option | Default | Effect |
 | --- | --- | --- |

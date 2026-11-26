@@ -3,7 +3,7 @@
 
 | Plugin | Version | Category | Scope | Harnesses |
 | --- | --- | --- | --- | --- |
-| agent-coder | 0.14.1 | development | global | opencode, pi |
+| agent-coder | 0.14.2 | development | global | opencode, pi |
 | agent-efficiency | 0.14.7 | development | global | opencode |
 | agent-mechanic | 0.9.1 | development | global | opencode, omp, pi |
 | agent-researcher | 0.12.2 | development | global | opencode, omp, pi |
@@ -11,15 +11,15 @@
 | agent-seance | 0.8.2 | development | global | opencode |
 | architecture | 0.13.1 | development | global | opencode, claude, omp, pi |
 | ast-grep | 1.3.2 | development | global | opencode, claude |
-| autopilot | 1.4.2 | development | global | opencode, pi |
+| autopilot | 1.4.3 | development | global | opencode, pi |
 | aws | 0.10.1 | development | global | opencode, claude, omp, pi |
-| beads | 0.9.3 | development | project | opencode, claude, pi |
+| beads | 1.1.1 | development | project | opencode, claude, pi |
 | build | 0.11.1 | development | project | opencode, omp, pi |
 | chezmoi | 0.7.2 | development | global | opencode, claude, pi |
 | claude-compat | 0.5.4 | development | project | opencode |
-| code-challenge | 2.1.3 | development | global | opencode, omp, pi |
+| code-challenge | 2.2.1 | development | global | opencode, omp, pi |
 | debate | 1.1.0 | productivity | global | opencode, claude, omp, pi |
-| delivery | 0.14.0 | development | global | opencode, pi |
+| delivery | 0.16.1 | development | global | opencode, pi |
 | dep-update | 0.7.1 | development | global | opencode, pi |
 | design | 0.11.0 | development | project | opencode, claude, pi |
 | docs | 0.5.1 | development | global | opencode, omp, pi |
@@ -31,22 +31,22 @@
 | lang-rust | 0.10.1 | development | global | opencode, claude, omp, pi |
 | lang-typescript | 0.11.1 | development | global | opencode, claude, omp, pi |
 | lsp | 0.5.0 | development | project | opencode |
-| model-roles | 0.11.3 | development | global | opencode |
+| model-roles | 0.12.0 | development | global | opencode |
 | modes | 1.4.1 | development | global | opencode, omp, pi |
 | parley | 0.5.1 | development | global | opencode, pi |
 | plugin-audit | 0.2.0 | development | project | opencode |
-| project | 1.0.2 | productivity | global | opencode, claude, omp, pi |
+| project | 1.0.3 | productivity | global | opencode, claude, omp, pi |
 | project-secrets | 1.0.3 | productivity | global | opencode, claude, omp, pi |
-| quality | 0.19.0 | development | global | opencode, claude, omp, pi |
+| quality | 0.20.1 | development | global | opencode, claude, omp, pi |
 | repomix | 0.6.3 | development | global | opencode, claude, pi |
-| safety | 1.0.1 | development | global | opencode, pi |
+| safety | 3.0.3 | development | global | opencode, pi |
 | secret-store | 1.0.2 | development | global | opencode, pi |
 | session | 0.4.2 | development | global | opencode |
-| speckit-beads | 1.0.1 | development | project | opencode, claude, pi |
+| speckit-beads | 2.0.0 | development | project | opencode, claude, pi |
 | statusline | 0.4.0 | development | global | opencode |
-| subagent-worktree | 0.9.4 | development | global | opencode |
+| subagent-worktree | 0.9.5 | development | global | opencode |
 | toolchain | 0.11.1 | development | global | opencode, claude, omp, pi |
-| trunk-dev | 0.12.3 | development | global | opencode, claude, pi |
+| trunk-dev | 1.0.0 | development | global | opencode, claude, pi |
 | whats-new | 0.5.4 | development | global | opencode, pi |
 | worktrunk | 0.7.3 | development | project | opencode, claude, pi |
 
@@ -54,4 +54,4 @@ Each plugin's own `INVENTORY.md` lists what it ships per harness.
 
 ## Harness discrepancies
 
-- delivery: pi (and OMP, which loads the pi bundle) gets only an explicit delivery_cleanup for the session's repository: no delivery_land, automatic cleanup or clone registry.
+- delivery: pi (and OMP, which loads the pi bundles) gets delivery_land, an explicit delivery_cleanup for the session's repository and the delivery-git-workflow skill: a merge asks the user first and is refused without a UI, no cleanup runs after a land, and there is no retry or clone registry. The agents and delivery-fan-out are OpenCode only.

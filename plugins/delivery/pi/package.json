@@ -1,6 +1,6 @@
 {
   "name": "@srobroek/pi-delivery",
-  "version": "0.14.0",
+  "version": "0.16.1",
   "description": "Pull-request landing with merge proof and receipts, receipt-driven worktree cleanup, delivery agents and fan-out instructions for OpenCode V2.",
   "keywords": [
     "pi-package"
@@ -16,16 +16,24 @@
     "LICENSE",
     "README.md",
     "_kit",
-    "extensions"
+    "extensions",
+    "skills"
   ],
   "publishConfig": {
     "access": "public",
     "provenance": true
   },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
   "pi": {
     "extensions": [
       "./extensions/delivery-cleanup.js",
+      "./extensions/delivery-land.js",
       "./_kit/prereqs.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   }
 }

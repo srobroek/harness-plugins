@@ -14,7 +14,7 @@ import {
 
 const ALL: SkillRouting = { implement: true, analyze: true, taskstoissues: true }
 const NONE: SkillRouting = { implement: false, analyze: false, taskstoissues: false }
-const REFUSAL = tasksToIssuesReason("/agent/speckit-beads.json")
+const REFUSAL = tasksToIssuesReason("/agent/settings.json")
 
 describe("routedCommand", () => {
   test("reads prompt templates and skill commands with their arguments", () => {
@@ -98,8 +98,8 @@ describe("paths", () => {
   })
 })
 
-test("pi's refusals name the options file that switches them off", () => {
-  expect(guardReason("/agent/speckit-beads.json")).toEndWith('Disable: set "tasksGuard": false in /agent/speckit-beads.json')
-  expect(REFUSAL).toEndWith('Disable: set "blockTasksToIssues": false in /agent/speckit-beads.json')
+test("pi's refusals name the settings key that switches them off", () => {
+  expect(guardReason("/agent/settings.json")).toEndWith('Disable: set "tasksGuard": false under the "speckit-beads" key of /agent/settings.json')
+  expect(REFUSAL).toEndWith('Disable: set "blockTasksToIssues": false under the "speckit-beads" key of /agent/settings.json')
   expect(REFUSAL).not.toContain("plugin option")
 })

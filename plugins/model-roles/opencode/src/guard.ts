@@ -3,6 +3,7 @@
  * whose target agent would silently inherit an expensive session model.
  */
 
+import { canonical } from "./catalog.ts"
 import {
   type AvailableModel,
   type HealthView,
@@ -31,6 +32,8 @@ export type GuardOptions = {
   allowInherit: string[]
   /** Expensive models a spawn may still name in its own `model` argument. */
   allowModels: string[]
+  /** Per agent id: expensive models a spawn of that agent may name, or inherit from the session. */
+  allowAgentModels: Record<string, string[]>
   /** `"auto"` routes a spawn it would refuse through the auto decider instead. */
   mode: "refuse" | "auto"
   /** Refuse any spawn that would inherit the session model, whatever its price. */
@@ -97,6 +100,17 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((v): v is string => typeof v === "string" && v.trim() !== "").map((v) => v.trim()) : []
 
+/** `{ agent: entries }`, keeping agents with at least one string entry. */
+function agentLists(value: unknown): Record<string, string[]> {
+  const out: Record<string, string[]> = {}
+  if (!isRecord(value)) return out
+  for (const [agent, entries] of Object.entries(value)) {
+    const list = strings(entries)
+    if (agent.trim() !== "" && list.length > 0) out[agent.trim()] = list
+  }
+  return out
+}
+
 /** Normalise the `guard` option. `undefined` means the guard is off; `true` means defaults. */
 export function parseGuard(raw: unknown): GuardOptions | undefined {
   if (raw === undefined || raw === false || raw === null) return undefined
@@ -105,7 +119,8 @@ export function parseGuard(raw: unknown): GuardOptions | undefined {
   const list = typeof input.expensive === "string" && input.expensive !== "auto" ? [input.expensive] : strings(input.expensive)
   const expensive = input.expensive === undefined || input.expensive === "auto" ? "auto" : list
   const mode = input.mode === "auto" ? "auto" : "refuse"
-  return { expensive, allowInherit: strings(input.allowInherit), allowModels: strings(input.allowModels), mode, requireExplicit: input.requireExplicit === true,
+  return { expensive, allowInherit: strings(input.allowInherit), allowModels: strings(input.allowModels),
+    allowAgentModels: agentLists(input.allowAgentModels), mode, requireExplicit: input.requireExplicit === true,
     lookupTimeoutMs:
       typeof input.lookupTimeoutMs === "number" && Number.isFinite(input.lookupTimeoutMs) && input.lookupTimeoutMs > 0
         ? input.lookupTimeoutMs
@@ -130,18 +145,66 @@ export function inputCost(ref: ModelRef, available: ReadonlyArray<GuardModel>): 
 }
 
 /**
+ * The words of a model id without region, vendor, versions and dates: `global.openai.gpt-6.2-astra`
+ * gives `gpt astra`, `us.anthropic.claude-opus-5-5-v1:0` gives `claude opus`, `qwen3-coder` gives
+ * `qwen coder`.
+ */
+export function familyWords(id: string): string[] {
+  return canonical(id)
+    .key.split(/[-_]/)
+    .map((word) => word.replace(/\d+(?:\.\d+)*$/, ""))
+    .filter((word) => word !== "" && !/^v?\d/.test(word))
+}
+
+const globToRegExp = (glob: string): RegExp =>
+  new RegExp(`^${glob.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`, "i")
+
+/**
+ * Whether one guard list entry names `ref`. Three forms, each with an optional `#variant` that then
+ * must match too:
+ * - `provider/model`: that exact model.
+ * - a glob with `*`, over `provider/model`, case-insensitive: `amazon-bedrock/*astra*`, `*opus*`.
+ * - a family, with no `/`: the entry's words appear in order, side by side, in the model's
+ *   `familyWords`. `astra` and `gpt-astra` name every astra release in every region; `claude-opus`
+ *   every Opus.
+ */
+export function entryMatches(entry: string, ref: ModelRef): boolean {
+  const text = entry.trim()
+  if (text === "" || text.startsWith("@")) return false
+  const hash = text.lastIndexOf("#")
+  const base = hash < 0 ? text : text.slice(0, hash)
+  const variant = hash < 0 ? undefined : text.slice(hash + 1)
+  if (base === "" || variant === "") return false
+  if (variant !== undefined && variant !== ref.variant) return false
+  if (base.includes("*")) return globToRegExp(base).test(key(ref))
+  if (base.includes("/")) {
+    const candidate = parseCandidate(base)
+    return candidate?.kind === "model" && key(candidate.ref) === key(ref)
+  }
+  const want = familyWords(base)
+  const have = familyWords(ref.id)
+  if (want.length === 0) return false
+  for (let start = 0; start + want.length <= have.length; start++)
+    if (want.every((word, i) => have[start + i] === word)) return true
+  return false
+}
+
+/** Whether any entry of `entries` names `ref` (see `entryMatches`). */
+export const listed = (ref: ModelRef, entries: ReadonlyArray<string>): boolean =>
+  entries.some((entry) => entryMatches(entry, ref))
+
+/** The entries `guard.allowAgentModels` lists for `agent`. */
+const agentEntries = (guard: GuardOptions, agent: string | undefined): string[] =>
+  agent !== undefined && Object.hasOwn(guard.allowAgentModels, agent) ? (guard.allowAgentModels[agent] ?? []) : []
+
+/**
  * Whether `ref` is in the expensive set. `"auto"` reads the derived classes: premium
- * models only, so strong models such as Opus are not guarded. A listed entry with a
- * variant matches only that variant.
+ * models only, so strong models such as Opus are not guarded. A listed entry is an exact
+ * model, a glob or a family (see `entryMatches`); one with a variant matches only that variant.
  */
 export function isExpensive(ref: ModelRef, guard: GuardOptions, classes: Readonly<Record<string, ModelClass>> | undefined): boolean {
   if (guard.expensive === "auto") return isExpensiveClass(ref, classes)
-  return guard.expensive.some((entry) => {
-    const candidate = parseCandidate(entry)
-    if (candidate?.kind !== "model") return false
-    if (key(candidate.ref) !== key(ref)) return false
-    return candidate.ref.variant === undefined || candidate.ref.variant === ref.variant
-  })
+  return listed(ref, guard.expensive)
 }
 
 /** The model an agent runs on without inheriting: its own, or the one its role resolves to. */
@@ -234,6 +297,7 @@ export function judgeSpawn(facts: GuardFacts): GuardDecision {
   if (facts.guard.requireExplicit) return { allow: false, reason: requireExplicitReason(facts) }
   if (facts.sessionModel === undefined) return { allow: true }
   if (!isExpensive(facts.sessionModel, facts.guard, facts.options.classes)) return { allow: true }
+  if (listed(facts.sessionModel, agentEntries(facts.guard, facts.target))) return { allow: true }
 
   const { agents, roles } = cheaperAlternatives(facts)
   const lines = [
@@ -255,26 +319,19 @@ export function judgeSpawn(facts: GuardFacts): GuardDecision {
       `Or spawn an agent that pins a cheaper model: ${hinted.map((a) => agentText(a, cheapest === undefined)).join("; ")}${more}`,
     )
   lines.push(
-    `If '${facts.target}' should run on the session model, add it to the srobroek.model-roles option guard.allowInherit.`,
+    `If '${facts.target}' should run on the session model, add it to the srobroek.model-roles option guard.allowInherit, or the model to guard.allowAgentModels.${facts.target}.`,
   )
   return { allow: false, reason: lines.join("\n") }
 }
 
-const listed = (ref: ModelRef, entries: ReadonlyArray<string>): boolean =>
-  entries.some((entry) => {
-    const candidate = parseCandidate(entry)
-    if (candidate?.kind !== "model" || key(candidate.ref) !== key(ref)) return false
-    return candidate.ref.variant === undefined || candidate.ref.variant === ref.variant
-  })
-
 /**
  * Judge a spawn that names its own `model` (not one a `role` filled in). An expensive
- * model is refused unless the target agent pins it anyway or `guard.allowModels`
- * lists it: models set `model` despite the tool description telling them not to.
+ * model is refused unless the target agent pins it anyway, `guard.allowModels` lists it,
+ * or `guard.allowAgentModels` lists it for the target: models set `model` despite the tool
+ * description telling them not to.
  */
 export function judgeModelOverride(facts: GuardFacts & { model: ModelRef }): GuardDecision {
-  if (!isExpensive(facts.model, facts.guard, facts.options.classes)) return { allow: true }
-  if (listed(facts.model, facts.guard.allowModels)) return { allow: true }
+  if (allowsChosenModel(facts.guard, facts.options, facts.model, facts.target)) return { allow: true }
   const target = facts.agents.find((agent) => agent.id === facts.target)
   const pinned = target === undefined ? undefined : pinnedModel(target, facts)
   if (pinned !== undefined && key(pinned) === key(facts.model)) return { allow: true }
@@ -288,14 +345,22 @@ export function judgeModelOverride(facts: GuardFacts & { model: ModelRef }): Gua
       return model !== undefined && key(model) === key(facts.model)
     })
   if (matching.length > 0) lines.push(`If the task needs ${label(facts.model)}, pass tier: "${matching[0]}" instead; it resolves to that model.`)
-  lines.push(`If the user asked for ${label(facts.model)}, add it to the srobroek.model-roles option guard.allowModels.`)
+  lines.push(
+    `If the user asked for ${label(facts.model)}, add it to the srobroek.model-roles option guard.allowModels, or to guard.allowAgentModels.${facts.target} for this agent only.`,
+  )
   return { allow: false, reason: lines.join("\n") }
 }
 
 /**
- * Whether the guard lets the plugin itself pick `model` for a spawn (an exploration arm). Unlike
- * `judgeModelOverride`, no pin exempts it: the model the plugin set on a tier's agent is not a
- * user's pin, so an expensive model passes only when `guard.allowModels` lists it.
+ * Whether the guard lets a spawn run on `model` without a pin backing it: the model is not expensive,
+ * `guard.allowModels` lists it, or `guard.allowAgentModels` lists it for `agent`. Also judges a model
+ * the plugin itself picks (an exploration arm): no pin exempts that, since the model the plugin set
+ * on a tier's agent is not a user's pin.
  */
-export const allowsChosenModel = (guard: GuardOptions, options: Pick<Options, "classes">, model: ModelRef): boolean =>
-  !isExpensive(model, guard, options.classes) || listed(model, guard.allowModels)
+export const allowsChosenModel = (
+  guard: GuardOptions,
+  options: Pick<Options, "classes">,
+  model: ModelRef,
+  agent?: string,
+): boolean =>
+  !isExpensive(model, guard, options.classes) || listed(model, guard.allowModels) || listed(model, agentEntries(guard, agent))
