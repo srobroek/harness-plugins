@@ -361,7 +361,7 @@ Bounded waits: the host's worktree removal takes no `AbortSignal`, so a removal 
 
 Pi and OMP: `delivery_cleanup` in `plugins/delivery/pi-src/delivery-cleanup.ts` reads the same reports under the same lease (`runningLeaseFile`), inside the worktree's removal lock and until the removal ends (lock order: worktree lock, then lease). It has no session lookup, so `blockWithoutSessionLookup` holds a job that records no cwd and does not name the worktree, whatever session it names. A report is live by its pid on this host and by expiry otherwise.
 
-No TypeSpec contracts exist in this repository (no `.tsp` files or `tspconfig`): the clone registry, the claims files and the running reports are JSON parsed by hand in their modules, so the report has no schema file.
+No TypeSpec contracts exist in this repository (no `.tsp` files or `tspconfig`). The schema of a running report is `parseReport` plus the exported `RunningReport` type in `lib/src/running-reports.ts`, and nothing else: every read in the OpenCode plugin and the pi/OMP extension goes through `readReports`, which parses each file with it. A file that is not a small regular file, or that does not parse (a wrong type, a non-positive or fractional pid, an empty host, a job field that is not text), makes the store unreadable, and an unreadable store holds every removal. The clone registry and the claims files are still hand-parsed in their own modules.
 
 Known gap: `subagent-worktree`'s lane owner does not read the reports. `running-reports` now lives in `lib/`, so it can import it and read them (bead `harness-plugins-ayy`); that change is not made here.
 

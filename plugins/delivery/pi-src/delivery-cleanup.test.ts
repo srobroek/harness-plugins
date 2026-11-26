@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { devNull, hostname, tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent"
-import { writeReport } from "@srobroek/opencode-lib/running-reports"
+import { runningDirectory, writeReport } from "@srobroek/opencode-lib/running-reports"
 import { writeClaim } from "@srobroek/opencode-lib/worktree-claims"
 import { setHold } from "@srobroek/opencode-lib/worktree-locks"
 import { TOOL_FIRST_LINE } from "../../../scripts/check-descriptions.ts"
@@ -266,6 +266,15 @@ describe("an explicit cleanup in the session's repository", () => {
     expect(result.text).toStartWith("delivery_cleanup refused: worktree.held")
     expect(existsSync(f.linked)).toBe(true)
     expect(branchExists(f)).toBe(true)
+  })
+
+  test("a malformed report file holds the removal", async () => {
+    const f = await landed("opencode-report-malformed")
+    mkdirSync(runningDirectory(receiptDirectory(f.env)), { recursive: true })
+    writeFileSync(join(runningDirectory(receiptDirectory(f.env)), "bad.json"), JSON.stringify({ sessionID: "ses_a", jobs: [], at: 1, pid: "x", host: "h", instance: "i" }))
+    const result = await call(cleanupTool(deps(f)), { receipt: f.receiptPath }, context(f.main, false))
+    expect(result.text).toContain("running-work reports cannot be read")
+    expect(existsSync(f.linked)).toBe(true)
   })
 
   test("a running report whose process is gone does not hold the removal", async () => {

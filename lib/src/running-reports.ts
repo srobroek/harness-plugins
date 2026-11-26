@@ -60,16 +60,16 @@ export function parseReport(text: string): RunningReport | undefined {
     return undefined
   }
   if (!isObject(raw) || typeof raw.sessionID !== "string" || raw.sessionID === "") return undefined
-  if (typeof raw.at !== "number" || !Number.isFinite(raw.at) || typeof raw.pid !== "number") return undefined
-  if (typeof raw.host !== "string" || typeof raw.instance !== "string" || !Array.isArray(raw.jobs)) return undefined
+  if (typeof raw.at !== "number" || !Number.isFinite(raw.at)) return undefined
+  if (typeof raw.pid !== "number" || !Number.isInteger(raw.pid) || raw.pid < 1) return undefined
+  if (typeof raw.host !== "string" || raw.host === "" || typeof raw.instance !== "string" || !Array.isArray(raw.jobs)) return undefined
   const jobs: ReportJob[] = []
   for (const job of raw.jobs) {
     if (!isObject(job) || typeof job.kind !== "string") return undefined
-    const sessionID = optionalString(job.sessionID)
-    const childSessionID = optionalString(job.childSessionID)
-    const shellID = optionalString(job.shellID)
-    const command = optionalString(job.command)
-    const cwd = optionalString(job.cwd)
+    // A field that is present must be text: a report that says something else is not one.
+    const fields = [job.sessionID, job.childSessionID, job.shellID, job.command, job.cwd]
+    if (fields.some((field) => field !== undefined && typeof field !== "string")) return undefined
+    const [sessionID, childSessionID, shellID, command, cwd] = fields.map(optionalString)
     jobs.push({
       kind: job.kind,
       ...(sessionID === undefined ? {} : { sessionID }),

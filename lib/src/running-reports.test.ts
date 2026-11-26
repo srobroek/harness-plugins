@@ -134,6 +134,13 @@ describe("reading", () => {
     ["a job without a kind", { sessionID: "s", jobs: [{}], at: 1, pid: 1, host: "h", instance: "i" }],
     ["a non-numeric time", { sessionID: "s", jobs: [], at: "now", pid: 1, host: "h", instance: "i" }],
     ["no server instance", { sessionID: "s", jobs: [], at: 1, pid: 1, host: "h" }],
+    ["a pid that is not a positive integer", { sessionID: "s", jobs: [], at: 1, pid: 0, host: "h", instance: "i" }],
+    ["a fractional pid", { sessionID: "s", jobs: [], at: 1, pid: 1.5, host: "h", instance: "i" }],
+    ["an empty host", { sessionID: "s", jobs: [], at: 1, pid: 1, host: "", instance: "i" }],
+    ["jobs that are not a list", { sessionID: "s", jobs: {}, at: 1, pid: 1, host: "h", instance: "i" }],
+    ["a job whose command is not text", { sessionID: "s", jobs: [{ kind: "shell", command: 5 }], at: 1, pid: 1, host: "h", instance: "i" }],
+    ["a job whose cwd is not text", { sessionID: "s", jobs: [{ kind: "shell", cwd: [] }], at: 1, pid: 1, host: "h", instance: "i" }],
+    ["a job that is not an object", { sessionID: "s", jobs: ["shell"], at: 1, pid: 1, host: "h", instance: "i" }],
   ])("a report with %s does not parse", (_name, raw) => {
     expect(parseReport(JSON.stringify(raw))).toBeUndefined()
   })
