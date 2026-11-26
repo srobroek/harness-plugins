@@ -1,3 +1,9 @@
+## quality [0.20.1](https://github.com/srobroek/harness-plugins/compare/quality--v0.20.0...quality--v0.20.1) (2026-11-26)
+
+### Bug Fixes
+
+* **safety:** stop refusing read-only git over a quoted regex anchor; drop clone-to-temp guidance ([#216](https://github.com/srobroek/harness-plugins/issues/216)) ([a33afd8](https://github.com/srobroek/harness-plugins/commit/a33afd853a55d047fa64409058da684564b3e264))
+
 ## quality [0.20.0](https://github.com/srobroek/harness-plugins/compare/quality--v0.19.0...quality--v0.20.0) (2026-11-26)
 
 ### Features

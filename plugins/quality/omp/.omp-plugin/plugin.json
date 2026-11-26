@@ -1,6 +1,6 @@
 {
   "name": "quality",
   "description": "Code design and review guidance, a code-quality policy, testing standards and a test audit, performance profiling, and throwaway logic prototypes.",
-  "version": "0.20.0",
+  "version": "0.20.1",
   "category": "development"
 }
