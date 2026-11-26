@@ -61,6 +61,7 @@ import {
   type CleanupResult,
   cleanupDelivery as cleanupDeliveryUnwrapped,
   type DeliveryCleanupParams,
+  type HostWorktrees,
   planLocalRef,
   type ReceiptCandidate,
   removalRoute,
@@ -3510,6 +3511,9 @@ describe("pending cleanup: one remover per worktree", () => {
       observe?: GitRunner
       lock?: Record<string, unknown>
       sessionLookupMs?: number
+      idlePassMs?: number
+      /** The host's worktree registry (default: none, so git removes). */
+      host?: HostWorktrees
       /** Prime the repository cache as `setupDelivery` does (default); false leaves it cold. */
       prime?: boolean
     } = {},
@@ -3531,7 +3535,7 @@ describe("pending cleanup: one remover per worktree", () => {
       ctx: fake.context,
       cwd: f.main,
       env: f.env,
-      host: () => undefined,
+      host: () => over.host,
       debounceMs: 1,
       watch: { sleep: async () => {} },
       ...(over.maxPerPass === undefined ? {} : { maxPerPass: over.maxPerPass }),
@@ -3542,6 +3546,7 @@ describe("pending cleanup: one remover per worktree", () => {
       ...(over.observe === undefined ? {} : { observe: over.observe }),
       ...(over.lock === undefined ? {} : { lock: over.lock }),
       ...(over.sessionLookupMs === undefined ? {} : { sessionLookupMs: over.sessionLookupMs }),
+      ...(over.idlePassMs === undefined ? {} : { idlePassMs: over.idlePassMs }),
     })
     if (over.prime !== false) await pending.prime()
     const common = (await repositoryContext(f.main))?.commonDir as string
@@ -5043,6 +5048,50 @@ describe("pending cleanup: one remover per worktree", () => {
       const removal = h.pending.removalFor("ses_lead")
       expect(await removal.finalCheck(h.f.linked)).toBeUndefined()
       expect(await removal.finalCheck(h.f.linked, [aliased])).toContain("names the worktree")
+      await h.finish()
+    })
+
+    // The host's removal takes no AbortSignal, so a removal that never answers keeps the lease: writers and other removals wait a bounded time and give up.
+    test("a host removal that never answers neither blocks an idle hook indefinitely nor lets another removal proceed", async () => {
+      const removing = Promise.withResolvers<void>()
+      const never = Promise.withResolvers<void>()
+      const host: HostWorktrees = {
+        list: async () => [{ directory: "PLACEHOLDER" }],
+        remove: async () => {
+          removing.resolve()
+          await never.promise
+        },
+      }
+      const h = await harness("running-hung-removal", { lock: { waitMs: 300 }, host, idlePassMs: 500 })
+      ;(host as { list: unknown }).list = async () => [{ directory: h.f.linked }]
+      await h.pending.record(h.f.receipt, "ses_lead")
+      await h.pending.start()
+      const first = outsideLocks(() => h.idle())
+      await Promise.race([removing.promise, Bun.sleep(10_000).then(() => Promise.reject(new Error("the host removal was never called")))])
+      // Another session's idle hook returns, with its report not recorded.
+      const second = await Promise.race([outsideLocks(() => reportFrom(h, "ses_b", [elsewhere()])).then(() => "returned"), Bun.sleep(5_000).then(() => "blocked")])
+      expect(second).toBe("returned")
+      expect(h.pending.unsettledCount()).toBe(1)
+      expect(reportIds(h)).toEqual([])
+      // With that session gone nothing is unsettled, so the next removal is stopped by the lease alone.
+      await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_b" } })
+      await Bun.sleep(100)
+      expect(h.pending.unsettledCount()).toBe(0)
+      // Another removal, of another worktree, gives up on the lease and refuses.
+      const other = join(h.f.root, "another worktree")
+      mkdirSync(other)
+      let reason: string | undefined
+      let ran = false
+      const removal = h.pending.removalFor("ses_lead")
+      await removal.removalSection(other, async () => {
+        reason = await removal.finalCheck(other)
+        ran = reason === undefined
+        return { ok: false, reason: "test: nothing is removed" } as never
+      })
+      expect(ran).toBe(false)
+      expect(reason).toContain("lease could not be taken")
+      never.resolve()
+      await first
       await h.finish()
     })
 

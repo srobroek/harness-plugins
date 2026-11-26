@@ -263,6 +263,8 @@ export type PendingDeps = {
   lock?: Partial<LockOptions>
   /** How long the idle hook waits for one session's location; a lookup that takes longer may match any worktree. */
   sessionLookupMs?: number
+  /** How long the idle hook waits for the pass it starts (default {@link IDLE_PASS_MS}); the pass goes on without it. */
+  idlePassMs?: number
   /** Test seam: the clock reports expire on, against the files' mtime (default: the real clock). */
   fileNow?: () => number
   /** Test seam: the backoff clock of the event watch. */
@@ -280,6 +282,9 @@ type StoreHold = { active: boolean; lease: { release: () => Promise<void> } | un
 
 /** The default bound on one session lookup in the idle hook. */
 export const SESSION_LOOKUP_MS = 5_000
+
+/** How long an idle hook waits for its pass, which queues behind every other pass and may wait on a removal that never answers. */
+export const IDLE_PASS_MS = 60_000
 
 export function createPendingCleanup(deps: PendingDeps) {
   const { ctx, cwd, env } = deps
@@ -1183,6 +1188,19 @@ export function createPendingCleanup(deps: PendingDeps) {
     await gcClones()
   }
 
+  /** `work`, or undefined once `ms` have passed: the hook returns, and the pass goes on in the chain. */
+  const boundedBy = async (work: Promise<unknown>, ms: number): Promise<void> => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const bound = new Promise<void>((done) => {
+      timer = setTimeout(done, ms)
+    })
+    try {
+      await Promise.race([work, bound])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   const retryNow = (sessionID: string, idle: boolean) =>
     disposed ? Promise.resolve() : serial(() => run(sessionID, idle)).catch((error) => console.error("delivery: pending cleanup failed", error))
 
@@ -1362,7 +1380,7 @@ export function createPendingCleanup(deps: PendingDeps) {
             // Marked before anything is awaited, written first, before any git, registry or receipt work; never throws: an unsettled report is a hold, never a removal.
             const gen = beginReport(input.sessionID)
             await recordHolds(input.sessionID, gen, input.background ?? [])
-            await retryNow(input.sessionID, true)
+            await boundedBy(retryNow(input.sessionID, true), deps.idlePassMs ?? IDLE_PASS_MS)
           }) as never,
         ),
       )
