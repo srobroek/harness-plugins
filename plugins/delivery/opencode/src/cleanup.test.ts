@@ -48,7 +48,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { devNull, hostname, tmpdir } from "node:os"
-import { basename, dirname, join, resolve } from "node:path"
+import { basename, dirname, join, relative, resolve } from "node:path"
 import { writeExecutable } from "@srobroek/opencode-lib/executable-fixture"
 import pkg from "../../package.json" with { type: "json" }
 import { reportFromCleanup, textAfterCleanup } from "./auto-cleanup.ts"
@@ -2053,6 +2053,24 @@ describe("delivery_cleanup beside another remover", () => {
     expect(done.localRefDeleted).toBe(false)
     expect(scripted.calls.some((argv) => argv[0] === "git" && argv[1] === "branch")).toBe(false)
     expect(readdirSync(dirname(f.receiptPath)).sort()).toEqual(before)
+  })
+
+  test("the final check is given the receipt's own spelling of the worktree beside git's", async () => {
+    const f = await fixture("final-check-spellings")
+    const seen: Array<readonly string[] | undefined> = []
+    const result = await cleanupDelivery({ receipt: f.receiptPath }, f.main, {
+      run: runner(f).run,
+      now: () => NOW + 10,
+      env: f.env,
+      bounds: HEAVY_FIXTURE_BOUNDS,
+      finalCheck: async (_worktree, spellings) => {
+        seen.push(spellings)
+        return undefined
+      },
+    })
+    expect(result.ok).toBe(true)
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toContain(f.linked)
   })
 
   /** Git stops part-way with the tree still registered and on disk: `before` deletes tracked files, then real git refuses the now-dirty tree, and `after` gives the command the reported shape. */
@@ -4982,6 +5000,49 @@ describe("pending cleanup: one remover per worktree", () => {
       expect(h.pending.unsettledCount()).toBe(0)
       expect(reportIds(h)).toEqual([])
       expect(await check(h)).toBeUndefined()
+      await h.finish()
+    })
+
+    // The receipt spells the worktree through a symlink; git registers the physical path. A shell that names only the receipt's spelling still holds.
+    test("a shell naming only the receipt's alternate spelling of the worktree holds the removal", async () => {
+      const h = await harness("running-alias-spelling")
+      const home = join(scratch("alias-spelling"), "home")
+      symlinkSync(h.f.root, home, "dir")
+      const aliased = join(home, relative(h.f.root, h.f.linked))
+      const receipt = buildReceipt({
+        now: NOW + 1,
+        emitter: h.f.receipt.emitter,
+        repo: h.f.receipt.repo,
+        pr: h.f.receipt.pr,
+        branch: h.f.receipt.branch,
+        worktree: { ...h.f.receipt.worktree, path: aliased },
+        beads: h.f.receipt.beads,
+        proof: h.f.receipt.proof,
+        outcome: "landed",
+      })
+      rmSync(h.f.receiptPath)
+      writeReceipt(receipt, receiptDirectory(h.f.env, h.f.receipt.repo.key))
+      await h.pending.record(receipt, "ses_lead")
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [{ kind: "shell", shellID: "sh1", command: `make -C ${aliased}` }])
+      await h.idle()
+      expect(removed(h)).toBe(false)
+      await reportFrom(h, "ses_a", [])
+      await h.idle()
+      expect(removed(h)).toBe(true)
+      await h.finish()
+    })
+
+    test("the final check holds for a shell that names only a spelling it is given besides git's path", async () => {
+      const h = await harness("running-final-spelling")
+      await h.pending.start()
+      const home = join(scratch("final-spelling"), "home")
+      symlinkSync(h.f.root, home, "dir")
+      const aliased = join(home, relative(h.f.root, h.f.linked))
+      await reportFrom(h, "ses_a", [{ kind: "shell", shellID: "sh1", command: `make -C ${aliased}` }])
+      const removal = h.pending.removalFor("ses_lead")
+      expect(await removal.finalCheck(h.f.linked)).toBeUndefined()
+      expect(await removal.finalCheck(h.f.linked, [aliased])).toContain("names the worktree")
       await h.finish()
     })
 

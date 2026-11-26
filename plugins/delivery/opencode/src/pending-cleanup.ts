@@ -836,8 +836,8 @@ export function createPendingCleanup(deps: PendingDeps) {
    * directory. What the sessions reported as running is read last, after the session listing, its own
    * lookups and a final synchronous re-read, with no wait after it.
    */
-  const holdCheckAt = async (repo: Repository, common: string | null, worktree: string, hold?: StoreHold): Promise<string | undefined> =>
-    (await holdAtBase(repo, common, worktree)) ?? landingBlockAt(common, worktree) ?? (await runningBlock(worktree, hold))
+  const holdCheckAt = async (repo: Repository, common: string | null, worktree: string, hold?: StoreHold, spellings: readonly string[] = []): Promise<string | undefined> =>
+    (await holdAtBase(repo, common, worktree)) ?? landingBlockAt(common, worktree) ?? (await runningBlock(worktree, hold, spellings))
 
   /**
    * The last look before the removal call itself (claims, holds, sessions, denials), read fresh. The
@@ -908,13 +908,13 @@ export function createPendingCleanup(deps: PendingDeps) {
     return {
       proofSection: proofIn(repo),
       removalSection: sectionIn(repo, hold),
-      finalCheck: async (worktree: string): Promise<string | undefined> => {
+      finalCheck: async (worktree: string, spellings: readonly string[] = []): Promise<string | undefined> => {
         const common = await commonOf(repo)
-        const held = await holdCheckAt(repo, common, worktree, hold)
+        const held = await holdCheckAt(repo, common, worktree, hold, spellings)
         if (held !== undefined) return held
         const recorded = common === null ? [] : landingsFor(listLandings(common).records, worktree).map((entry) => entry.sessionID)
         roots = [...new Set([...sessionIDs, ...recorded].filter((id): id is string => typeof id === "string"))]
-        forms = [...new Set([worktree, canonicalDirectory(worktree)])]
+        forms = [...new Set([worktree, canonicalDirectory(worktree), ...spellings, ...spellings.map(canonicalDirectory)])]
         return undefined
       },
       afterRemoval: async (worktree: string): Promise<string[]> => {
@@ -1241,7 +1241,7 @@ export function createPendingCleanup(deps: PendingDeps) {
    * the removal section ends: no report is written meanwhile (its writer waits), and the lookups are
    * made again for each report that changed since the first read, so the decision uses fresh ones.
    */
-  const runningBlock = async (worktree: string, hold?: StoreHold): Promise<string | undefined> => {
+  const runningBlock = async (worktree: string, hold?: StoreHold, spellings: readonly string[] = []): Promise<string | undefined> => {
     const stuck = (): string | undefined => {
       const first = unsettled.entries().next().value
       return first === undefined ? undefined : `the running work of ${first[0]} could not be recorded (${first[1].reason}); held until it reports again or is deleted`
@@ -1251,7 +1251,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     const early = stuck()
     if (early !== undefined) return early
     if (!reportsWritable(root)) return "the running-work store is not writable, so running work cannot be ruled out"
-    const forms = [...new Set([worktree, canonicalDirectory(worktree)])]
+    const forms = [...new Set([worktree, canonicalDirectory(worktree), ...spellings, ...spellings.map(canonicalDirectory)])]
     const first = readReports(root)
     if (first.unreadable) return unreadable
     const seen = new Map(first.reports.map((report) => [report.sessionID, reportVersion(report)]))

@@ -158,7 +158,8 @@ export type CleanupDeps = {
    * registry) and immediately before the removal call, so nothing that changed during those reads
    * can slip past it. A returned reason refuses the removal.
    */
-  finalCheck?: (worktree: string) => Promise<string | undefined>
+  /** `spellings`: every other verified spelling of the worktree (the receipt's own and its physical path). */
+  finalCheck?: (worktree: string, spellings?: readonly string[]) => Promise<string | undefined>
   /**
    * Called once the worktree is removed and its absence proven, outside the removal section, even
    * when a later step (branch deletion, a ref probe) then refuses. It returns notes for what it
@@ -1744,7 +1745,8 @@ async function cleanupInRepository(
     // with the worktree gone and no continuation receipt.
     if (signal?.aborted === true)
       return refuse("signal", "an abort", "no interrupt before the worktree removal; nothing was removed")
-    const held = await deps.finalCheck?.(targetPath)
+    const receiptPath = receipt.worktree.path as string
+    const held = await deps.finalCheck?.(targetPath, [...new Set([receiptPath, physicalPath(receiptPath) ?? receiptPath])])
     if (held !== undefined) {
       return refuse("worktree.held", held, "no owner, hold, denial or competing remover at the moment of removal; nothing was removed")
     }
