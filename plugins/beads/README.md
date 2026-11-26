@@ -432,7 +432,13 @@ For work assigned to a bead, call one native Pi `subagent` with `async: false`. 
 
 The parent enforcer selects the ledger at dispatch and adds a fresh event ID and checkpoint instructions to the brief. Before returning, the worker records its result, evidence and next action on the assigned bead under its own actor. The parent checks the direct child's session identity and runs the packaged `beads-evidence/work_check.py progress` with `python3`. Missing proof produces a tool error. Inspect the session and ledger before retrying: the worker's changes may already exist. A verified progress record does not prove acceptance or authorize closure.
 
-The check covers the marked single-worker tool call and its result. It does not intercept background completion notices, workflow lanes, intercom messages, other hosts, or unmarked calls. Tracked single-worker calls must request foreground execution. Worker errors remain errors.
+#### Verify a tracked background handoff
+
+For one local native worker on POSIX, set `async: true`, start the brief with the same marker and supply `options.acceptance: { level: "verified", verify: [...] }`. Include the worker's required verification commands in that list. The enforcer appends a required `beads-progress` command; it does not replace those commands. The worker must satisfy the runner's verified acceptance policy as well as post the progress checkpoint.
+
+The launch receipt means pending, not verified. Before reporting successful completion, pi-subagents runs the command against the dispatch ledger and event. The verifier reads the direct child's session header from a fresh assignment directory under the parent session directory. Missing, ambiguous or mismatched identity fails verification. Inspect the worker output and ledger before retrying a failed run.
+
+This path requires fresh context and the local single-worker session layout used by pi-subagents 0.90.0. Custom session directories, separate agent contracts, workflows, remote execution and other hosts are outside this check. The enforcer does not parse completion notices or count a progress checkpoint as permission to close a bead. Unmarked calls keep their existing behavior.
 
 These parts stay OpenCode-only:
 

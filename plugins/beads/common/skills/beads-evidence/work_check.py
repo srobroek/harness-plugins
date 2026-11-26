@@ -2,9 +2,11 @@
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime
+from pathlib import Path
 
 PREFIX = "beads-work/v1 "
 
@@ -75,19 +77,54 @@ def check(issue, bead, kind, actor, event, since, subject=None):
     return result(True, "acceptance attested for this subject; delivery not checked")
 
 
+def background_actor(root, parent, parent_actor):
+    """Read the native runner's one fresh run-0 header, never a path in worker output."""
+    root = Path(root)
+    if not root.is_absolute() or root.is_symlink():
+        raise ValueError("invalid assignment session root")
+    runs = list(root.iterdir())
+    if len(runs) != 1:
+        raise ValueError("expected one run")
+    run = runs[0]
+    child = run / "run-0"
+    session = child / "session.jsonl"
+    if run.is_symlink() or child.is_symlink() or session.is_symlink() or not session.is_file():
+        raise ValueError("expected native session file")
+    with session.open("rb") as source:
+        line = source.readline(65537)
+    if len(line) > 65536:
+        raise ValueError("oversized header")
+    try:
+        header = json.loads(line)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("invalid child session header") from error
+    if (not isinstance(header, dict) or header.get("type") != "session" or header.get("parentSession") != parent
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", header.get("id", ""))):
+        raise ValueError("not the assigned direct child")
+    return f'{parent_actor}/{header["id"]}'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_subparsers(dest="kind", required=True)
-    for kind in ("progress", "acceptance"):
+    for kind in ("progress", "acceptance", "background-progress"):
         mode = modes.add_parser(kind)
         mode.add_argument("bead", help="full issue ID in the active ledger")
-        mode.add_argument("--actor", required=True)
+        if kind == "background-progress":
+            mode.add_argument("--session-root", required=True)
+            mode.add_argument("--parent", required=True)
+            mode.add_argument("--parent-actor", required=True)
+        else:
+            mode.add_argument("--actor", required=True)
         mode.add_argument("--event", required=True)
         mode.add_argument("--since", required=True, type=timestamp)
         if kind == "acceptance":
             mode.add_argument("--subject", required=True, help="expected revision or artifact digest")
     args = parser.parse_args()
     try:
+        if args.kind == "background-progress":
+            args.actor = background_actor(args.session_root, args.parent, args.parent_actor)
+            args.kind = "progress"
         raw = subprocess.run(["bd", "--readonly", "show", "--include-comments", "--json", "--", args.bead],
                              check=True, capture_output=True, timeout=30)
         rows = json.loads(raw.stdout)
