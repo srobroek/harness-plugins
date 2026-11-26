@@ -1,3 +1,9 @@
+## beads [1.1.1](https://github.com/srobroek/harness-plugins/compare/beads--v1.1.0...beads--v1.1.1) (2026-11-26)
+
+### Bug Fixes
+
+* **beads:** allow an owner to unblock their guarded bead ([#218](https://github.com/srobroek/harness-plugins/issues/218)) ([a20da5c](https://github.com/srobroek/harness-plugins/commit/a20da5c2a044b0f1acf9b842d183fb3ed8122913))
+
 ## beads [1.1.0](https://github.com/srobroek/harness-plugins/compare/beads--v1.0.0...beads--v1.1.0) (2026-11-26)
 
 ### Features
