@@ -5610,6 +5610,7 @@ function landOutput(outcome, cleanup) {
 }
 
 // plugins/delivery/opencode/src/pending-cleanup.ts
+import { randomUUID as randomUUID4 } from "crypto";
 import { existsSync as existsSync3, mkdirSync as mkdirSync8, readdirSync as readdirSync5 } from "fs";
 import { hostname as hostname2 } from "os";
 import { join as join10, resolve as resolve7 } from "path";
@@ -6303,6 +6304,24 @@ function removeReport(receiptsRoot, sessionID, instance, maxGen = Number.POSITIV
   rmSync5(file, { force: true });
   return "removed";
 }
+function removeReportsWhere(receiptsRoot, doomed) {
+  const directory = runningDirectory(receiptsRoot);
+  let names;
+  try {
+    names = readdirSync4(directory).filter((name) => name.endsWith(".json"));
+  } catch {
+    return 0;
+  }
+  let removed = 0;
+  for (const name of names) {
+    const stored = readStored(join8(directory, name));
+    if (stored.kind !== "report" || !doomed(stored.report))
+      continue;
+    rmSync5(join8(directory, name), { force: true });
+    removed += 1;
+  }
+  return removed;
+}
 function removeLegacyReport(receiptsRoot, sessionID, instance, pid) {
   const file = legacyReportFile(receiptsRoot, sessionID);
   const stored = readStored(file);
@@ -6817,6 +6836,7 @@ function createPendingCleanup(deps) {
   const observationMs = deps.cleanup?.bounds?.refReadMs ?? CLEANUP_BOUNDS.refReadMs;
   const sessionLookupMs = deps.sessionLookupMs ?? SESSION_LOOKUP_MS;
   const unsettled = new Map;
+  const activation = `${SERVER_INSTANCE}:${randomUUID4().slice(0, 8)}`;
   const pendingDeletes = new Map;
   const lastGen = new Map;
   const legacyChecked = new Set;
@@ -7550,7 +7570,7 @@ function createPendingCleanup(deps) {
     const first = unsettled.entries().next().value;
     return first === undefined ? undefined : `the running work of ${first[0]} could not be recorded (${first[1].reason}); held until it reports again or is deleted`;
   };
-  const reportClock = () => ({ now: (deps.fileNow ?? Date.now)(), host: hostname2(), instance: SERVER_INSTANCE, alive: processAlive });
+  const reportClock = () => ({ now: (deps.fileNow ?? Date.now)(), host: hostname2(), instance: activation, alive: processAlive });
   const runningBlock = async (worktree, hold, spellings = []) => {
     const unreadable = "the running-work reports cannot be read, so running work cannot be ruled out";
     const root = receiptDirectory(env);
@@ -7631,16 +7651,16 @@ function createPendingCleanup(deps) {
     }));
     try {
       await underStore(() => {
-        if (unsettled.get(sessionID)?.gen !== gen)
+        if (disposed || unsettled.get(sessionID)?.gen !== gen)
           return;
         if (!legacyChecked.has(sessionID)) {
           legacyChecked.add(sessionID);
           removeLegacyReport(root, sessionID, SERVER_INSTANCE, process.pid);
         }
         if (background.length === 0)
-          clearReport(root, sessionID, SERVER_INSTANCE);
+          clearReport(root, sessionID, activation);
         else
-          writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname2(), instance: SERVER_INSTANCE, gen });
+          writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname2(), instance: activation, gen });
       });
       if (unsettled.get(sessionID)?.gen === gen)
         unsettled.delete(sessionID);
@@ -7661,7 +7681,8 @@ function createPendingCleanup(deps) {
     const deletes = [...pendingDeletes].map(async ([id, token]) => {
       try {
         await underStore(() => removeDeleted(id, token));
-        pendingDeletes.delete(id);
+        if (pendingDeletes.get(id) === token)
+          pendingDeletes.delete(id);
         if (lastGen.get(id) === token)
           lastGen.delete(id);
       } catch (error) {
@@ -7683,9 +7704,9 @@ function createPendingCleanup(deps) {
     ]);
   };
   const removeDeleted = (sessionID, token) => {
-    if ((lastGen.get(sessionID) ?? 0) > token)
+    if (disposed || (lastGen.get(sessionID) ?? 0) > token)
       return;
-    removeReport(receiptDirectory(env), sessionID, SERVER_INSTANCE, token);
+    removeReport(receiptDirectory(env), sessionID, activation, token);
     removeLegacyReport(receiptDirectory(env), sessionID, SERVER_INSTANCE, process.pid);
     legacyChecked.delete(sessionID);
   };
@@ -7705,7 +7726,16 @@ function createPendingCleanup(deps) {
   };
   const registrations = [];
   let watching;
+  const sweepEarlierActivations = async () => {
+    try {
+      const host = hostname2();
+      await underStore(() => removeReportsWhere(receiptDirectory(env), (report) => report.host === host && report.pid === process.pid && report.instance !== activation));
+    } catch (error) {
+      console.error(`delivery: could not remove the reports of earlier activations: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   const start = async () => {
+    await sweepEarlierActivations();
     watching = watchEvents({
       subscribe: (signal) => ctx.event.subscribe({ types: ["session.execution.succeeded", "session.execution.failed", "session.idle", "session.deleted"], signal })[Symbol.asyncIterator](),
       handle: handleEvent,
@@ -7723,7 +7753,15 @@ function createPendingCleanup(deps) {
       }));
     } catch {}
   };
-  const dispose = async () => {
+  const clearOwnReports = async () => {
+    try {
+      await underStore(() => removeReportsWhere(receiptDirectory(env), (report) => report.instance === activation));
+    } catch (error) {
+      console.error(`delivery: could not remove this activation's reports: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  let disposal;
+  const dispose = () => disposal ??= (async () => {
     disposed = true;
     watching?.stop();
     for (const timer of timers.values())
@@ -7731,8 +7769,8 @@ function createPendingCleanup(deps) {
     timers.clear();
     for (const registration of registrations.reverse())
       await registration.dispose();
-    await boundedBy(chain, deps.disposeWaitMs ?? DISPOSE_WAIT_MS);
-  };
+    await boundedBy(chain.catch(() => {}).then(clearOwnReports), deps.disposeWaitMs ?? DISPOSE_WAIT_MS);
+  })();
   const settle = async () => {
     await new Promise((done) => setTimeout(done, 0));
     while (timers.size > 0)
