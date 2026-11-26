@@ -224,20 +224,71 @@ extension's asks.
 | A `tee`, `dd of=`, `cp` or redirect write to `/dev/diskN` or `/dev/rdiskN` | Blocks `dd` and redirects | Blocks (`disk-write`) |
 | `halt`, `reboot` and `poweroff`, with or without arguments | None | Blocks (`power`) |
 
-### Asks
+### Blocks and asks
 
-When a check asks, pi opens `ctx.ui.confirm` with the evidence, and declining blocks the call. Some
-sessions cannot show a dialog (`ctx.hasUI` is false):
+Each check either blocks a call or asks about it. A block is final: no mode and no command lets the
+call through, and only `disable` turns the check off. cc-safety-net's blocks are final too. These
+checks ask:
+
+- `sudo-destructive`: a destructive command under `sudo`.
+- `worktree-destruction`, when git cannot prove that the command loses nothing:
+  - a branch force-delete or a worktree removal
+  - `reset --hard`, `stash drop`, `stash clear` or `clean -f`
+  - `reflog expire|delete` or `wt remove --force`
+
+  It blocks instead when it cannot read the call's targets, or when a worktree removal would orphan
+  a detached commit.
+- `external-directory`: a directory flag outside the places [Directory flags](#directory-flags)
+  takes as inside, or one after a `cd` it cannot read.
+- A destruction review that fails, because pi has no permission rules to defer to.
+
+Every other check in the table blocks. A check that fails internally lets the call through, as on
+OpenCode, except the op-guard, which refuses.
+
+### Approvals
+
+The `approvals` option decides what happens when a check asks:
+
+- `"deny"`, the default: safety refuses the call without a dialog. The refusal tells the agent to
+  stop and tell you what it wanted to run and why. It shows:
+  - the rule
+  - the exact command and its directory
+  - a four-character refusal ID
+- `"ask"`: pi opens `ctx.ui.confirm` with the evidence, and declining refuses the call.
+
+The `/safety` command changes this for the current session:
+
+| Command | Effect |
+| --- | --- |
+| `/safety` | Shows the mode, and each allowed command that has not run yet. |
+| `/safety ask`, `/safety deny` | Switches the mode until the session ends. It does not write `settings.json`. |
+| `/safety allow` | Lists the refusals of the last 30 minutes. It permits nothing. |
+| `/safety allow <id>` | Permits that refusal's command, in its directory, once. The reply shows what it permits. |
+
+A permit lets the next call with that exact command string, in that directory, skip the checks that
+ask. The call spends it. It lapses 30 minutes after `/safety allow <id>`, or when the session ends
+(quit, `/new`, `/resume`, `/fork`, `/reload`). A refusal stays open to `/safety allow <id>` for 30
+minutes. `/safety allow <id>` rejects an unknown, spent or expired ID. The gates still run on a
+permitted call, and a call they block stays blocked.
+
+Only you can create a permit. pi runs an extension command from these sources:
+
+- typed input
+- an RPC `prompt`
+- another extension that sends a user message with template expansion on
+
+A tool call, a file and the model's own text never run one. In an RPC session, whoever drives the
+RPC client is the user.
+
+A session without a UI refuses each call that a check asks about, in either mode, and `/safety`
+changes nothing there:
 
 - print mode
 - JSON mode
-- a child session without a UI
+- a pi-subagents child, which pi-subagents binds in print mode
 
-There the call is blocked with the reason instead.
-
-A check that fails internally lets the call through, as on OpenCode, with two exceptions. The
-op-guard refuses. A destruction review that fails asks, because pi has no permission rules to defer
-to.
+A child's prompt comes from its parent agent, so a child must not take `/safety allow`. Each
+session has its own extension instance, so a permit in the parent never reaches a child.
 
 ### Hand the six asks to this extension
 
@@ -268,7 +319,7 @@ the six rules off in the cc-safety-net user policy, `~/.cc-safety-net/policy.jso
 pi passes no options to an extension, so this one reads the `safety` key of pi's user settings,
 `~/.pi/agent/settings.json` (or `settings.json` under `PI_CODING_AGENT_DIR`). The extension
 ignores a project's `.pi/settings.json`, so a repository cannot switch a check off. The key takes
-the OpenCode keys that apply on pi:
+the OpenCode keys that apply on pi, plus `approvals`, which only pi has:
 
 ```json
 {
@@ -277,6 +328,7 @@ the OpenCode keys that apply on pi:
     "opAllow": ["vault list"],
     "gitWrappers": ["git"],
     "worktreeRoots": ["~/tmp/worktrees"],
+    "approvals": "deny",
     "redactSecrets": true,
     "redactNames": [],
     "redactExclude": []
@@ -294,6 +346,9 @@ takes as inside ([Directory flags](#directory-flags)).
 - `force-push`, `sudo-destructive` and `worktree-destruction`
 - `migration-edit` and `external-directory`
 - `close-keywords` and `package-investigate`
+
+`approvals` is `"deny"` (the default) or `"ask"`. Any other value counts as `"deny"`. See
+[Approvals](#approvals).
 
 Without the key, every check runs. A `safety` value that is not an object gives the same defaults
 and a warning at session start. So does a `settings.json` that is unreadable or not valid JSON.
