@@ -25,6 +25,7 @@ import {
   type StoredReport,
   writeReport,
 } from "./running-reports.ts"
+import { readReports as v1ReadReports, reportBlock as v1ReportBlock } from "./testdata/running-reports-v1.ts"
 
 let root = ""
 beforeEach(() => {
@@ -133,13 +134,19 @@ describe("writing and clearing: one file per session and instance", () => {
     expect(read.reports.map((r) => [r.instance, r.gen]).sort()).toEqual([[INSTANCE_A, 0], ["box:99:old", 0]])
   })
 
-  test("a reader that scans the directory for `.json` and parses each file sees every per-instance file", () => {
-    writeReport(root, by(INSTANCE_A, "ses_a", 1))
-    writeReport(root, by(INSTANCE_B, "ses_a", 1))
-    for (const name of files()) {
-      expect(name).toMatch(/^[0-9a-f]{40}\.[0-9a-f]+\.json$/)
-      expect(parseReport(readFileSync(join(runningDirectory(root), name), "utf8"))).toMatchObject({ sessionID: "ses_a" })
-    }
+  // The reader older installs still run (frozen from 3e4afbbe) against what the current writer produces.
+  test("the frozen round-1 reader reads every per-instance file and treats both reports as holding", () => {
+    const job: ReportJob[] = [{ kind: "shell", command: "cd /w/linked && make" }]
+    writeReport(root, by(INSTANCE_A, "ses_a", 1, job, 3))
+    writeReport(root, by(INSTANCE_B, "ses_a", 1, job, 1))
+    writeReport(root, by(INSTANCE_B, "ses_other", 1, [{ kind: "shell", command: "sleep 9" }]))
+    const read = v1ReadReports(root)
+    expect(read.unreadable).toBe(false)
+    expect(read.reports.map((r) => `${r.sessionID}/${r.instance}`).sort()).toEqual([`ses_a/${INSTANCE_A}`, `ses_a/${INSTANCE_B}`, `ses_other/${INSTANCE_B}`])
+    const holds = (reports: typeof read.reports) => v1ReportBlock(reports, ["/w/linked"], () => undefined, clock(), identity)
+    expect(holds(read.reports)).toContain("names the worktree")
+    // Each instance's report holds on its own: with only one of the two, the worktree is still held.
+    for (const instance of [INSTANCE_A, INSTANCE_B]) expect(holds(read.reports.filter((r) => r.instance === instance && r.sessionID === "ses_a"))).toContain("names the worktree")
   })
 
   test("a write leaves no temporary file behind", () => {
