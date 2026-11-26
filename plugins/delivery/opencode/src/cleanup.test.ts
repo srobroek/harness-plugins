@@ -4567,7 +4567,8 @@ describe("pending cleanup: one remover per worktree", () => {
         chmodSync(reports, 0o755) // check-test-executables: directory permission, not a script
       }
       listing.resolve()
-      expect(await check).toContain("could not be recorded")
+      // Refused either way: the report is still unwritten, or the pass that wrote it again found the shell it names.
+      expect(await check).toMatch(/could not be recorded|has a shell running that names the worktree/)
       await h.finish()
     })
   })
