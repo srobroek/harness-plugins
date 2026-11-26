@@ -1,3 +1,9 @@
+## beads [1.3.0](https://github.com/srobroek/harness-plugins/compare/beads--v1.2.0...beads--v1.3.0) (2026-11-26)
+
+### Features
+
+* **beads:** verify marked Pi background handoffs ([#224](https://github.com/srobroek/harness-plugins/issues/224)) ([6cf47e4](https://github.com/srobroek/harness-plugins/commit/6cf47e4684a1f039fc334752b9f3297a4aa4f712))
+
 ## beads [1.2.0](https://github.com/srobroek/harness-plugins/compare/beads--v1.1.1...beads--v1.2.0) (2026-11-26)
 
 ### Features
