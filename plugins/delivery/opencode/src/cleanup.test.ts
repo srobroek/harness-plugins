@@ -5238,6 +5238,10 @@ describe("pending cleanup: one remover per worktree", () => {
       const open: Array<{ ms: number; ended: boolean; end: () => void }> = []
       return {
         bound: (ms: number) => new Promise<void>((done) => open.push({ ms, ended: false, end: done })),
+        /** Waits until a bound of `ms` has been asked for. */
+        asked: async (ms: number) => {
+          while (!open.some((candidate) => candidate.ms === ms)) await Bun.sleep(2)
+        },
         /** Waits until a bound of `ms` has been asked for, then ends every such bound. */
         end: async (ms: number) => {
           while (!open.some((candidate) => candidate.ms === ms && !candidate.ended)) await Bun.sleep(2)
@@ -5318,10 +5322,18 @@ describe("pending cleanup: one remover per worktree", () => {
         await h.pending.start()
         void outsideLocks(() => h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] } as never))
         await hung.removing
-        const disposing = h.pending.dispose()
-        // Disposal is still waiting for the chain until its bound ends; ending it lets disposal return with the removal hung.
+        let disposed = false
+        const disposing = h.pending.dispose().then(() => {
+          disposed = true
+        })
+        // Disposal is still waiting for the chain until its bound ends: it has asked for the bound and has not returned.
+        await bounds.asked(DISPOSE_BOUND)
+        await Bun.sleep(50)
+        expect(disposed).toBe(false)
+        // Ending the bound lets disposal return with the removal hung.
         await bounds.end(DISPOSE_BOUND)
         await disposing
+        expect(disposed).toBe(true)
         // The removal is still running, so disposal let go of nothing: its lease stays for the pid and stale rules to reclaim.
         expect(existsSync(runningLeaseFile(receiptDirectory(h.f.env)))).toBe(true)
       } finally {
