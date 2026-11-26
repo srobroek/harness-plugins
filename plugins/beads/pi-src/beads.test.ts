@@ -133,6 +133,12 @@ describe("tracked foreground handoff", () => {
     else expect(result).toMatchObject({ isError: true, details: { handoff: "unverified" } })
   })
 
+  test("a marked result without a dispatch binding cannot pass after reload", async () => {
+    const { emit } = setup()
+    const result = await emit("tool_result", { toolName: "subagent", toolCallId: "lost-binding", input: {task:"Bead: proj-123\nDo it"}, details }, ctxFor(ROOT))
+    expect(result).toMatchObject({isError:true, details:{results:[]}, structuredContent:{handoff:"unverified"}})
+  })
+
   test("an unrelated session, detached result or failed verification cannot produce success", async () => {
     let reads = 0
     const f = setup({}, { pinFor: () => store, readHeader: file => file === CHILD.file ? childHeader : undefined,

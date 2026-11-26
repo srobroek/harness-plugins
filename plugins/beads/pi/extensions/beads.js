@@ -6011,7 +6011,10 @@ function setupBeadsPi(pi, deps = {}) {
   const identities = new Map;
   const pending = new Map;
   const held = new Map;
-  const handoffs = new Map;
+  const handoffKey = Symbol.for("com.srobroek.beads.pi.handoffs.v1");
+  const registry = globalThis;
+  registry[handoffKey] ??= new Map;
+  const handoffs = registry[handoffKey];
   const verify = deps.verifyProgress ?? verifyWithHelper(join7(EXTENSION_DIR, "../skills/beads-evidence/work_check.py"));
   const cachedPinFor = (cwd) => {
     const hit = pins.get(cwd);
@@ -6138,17 +6141,19 @@ function setupBeadsPi(pi, deps = {}) {
     if (event.toolName === "subagent") {
       const key = `${ctx.sessionManager.getSessionId()}\x00${event.toolCallId}`;
       const binding = handoffs.get(key);
-      if (!binding)
-        return;
-      handoffs.delete(key);
       if (event.isError)
         return;
-      if (await handoffVerified(binding, event.details, readHeader, verify, baseEnv()))
+      const task = event.input?.task;
+      if (!binding && !(typeof task === "string" && task.split(`
+`, 1)[0]?.trim().startsWith("Bead:")))
         return;
-      const failure = { handoff: "unverified", bead: binding.bead, event: binding.event };
-      return { isError: true, details: failure, structuredContent: failure, content: [{
+      if (binding && await handoffVerified(binding, event.details, readHeader, verify, baseEnv()))
+        return;
+      const failure = binding ? { handoff: "unverified", bead: binding.bead, event: binding.event } : { handoff: "unverified" };
+      const why = binding ? `for ${binding.bead} (event ${binding.event})` : "because the dispatch binding is missing";
+      return { isError: true, details: { ...failure, results: [] }, structuredContent: failure, content: [{
         type: "text",
-        text: `Handoff unverified for ${binding.bead} (event ${binding.event}). Do not mark it complete. Inspect the worker session and bead comments; recover the checkpoint before retrying.`
+        text: `Handoff unverified ${why}. Do not mark it complete. Inspect the worker session and bead comments; recover the checkpoint before retrying.`
       }] };
     }
     if (event.toolName !== "bash")

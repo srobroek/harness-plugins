@@ -143,7 +143,10 @@ export function setupBeadsPi(pi: ExtensionAPI, deps: BeadsPiDeps = {}): void {
   const identities = new Map<string, SessionIdentity>()
   const pending = new Map<string, Pending>()
   const held = new Map<string, number>()
-  const handoffs = new Map<string, Assignment>()
+  const handoffKey = Symbol.for("com.srobroek.beads.pi.handoffs.v1")
+  const registry = globalThis as typeof globalThis & { [handoffKey]?: Map<string, Assignment> }
+  registry[handoffKey] ??= new Map<string, Assignment>()
+  const handoffs = registry[handoffKey]
   const verify = deps.verifyProgress ?? verifyWithHelper(join(EXTENSION_DIR, "../skills/beads-evidence/work_check.py"))
 
   const cachedPinFor = (cwd: string): string | undefined => {
@@ -259,13 +262,14 @@ export function setupBeadsPi(pi: ExtensionAPI, deps: BeadsPiDeps = {}): void {
     if (event.toolName === "subagent") {
       const key = `${ctx.sessionManager.getSessionId()}\0${event.toolCallId}`
       const binding = handoffs.get(key)
-      if (!binding) return undefined
-      handoffs.delete(key)
       if (event.isError) return undefined
-      if (await handoffVerified(binding, event.details, readHeader, verify, baseEnv())) return undefined
-      const failure = { handoff: "unverified", bead: binding.bead, event: binding.event }
-      return { isError: true, details: failure, structuredContent: failure, content: [{ type: "text" as const,
-        text: `Handoff unverified for ${binding.bead} (event ${binding.event}). Do not mark it complete. Inspect the worker session and bead comments; recover the checkpoint before retrying.`,
+      const task = (event.input as { task?: unknown } | undefined)?.task
+      if (!binding && !(typeof task === "string" && task.split("\n", 1)[0]?.trim().startsWith("Bead:"))) return undefined
+      if (binding && await handoffVerified(binding, event.details, readHeader, verify, baseEnv())) return undefined
+      const failure: Record<string, string> = binding ? { handoff: "unverified", bead: binding.bead, event: binding.event } : { handoff: "unverified" }
+      const why = binding ? `for ${binding.bead} (event ${binding.event})` : "because the dispatch binding is missing"
+      return { isError: true, details: { ...failure, results: [] }, structuredContent: failure, content: [{ type: "text" as const,
+        text: `Handoff unverified ${why}. Do not mark it complete. Inspect the worker session and bead comments; recover the checkpoint before retrying.`,
       }] }
     }
     if (event.toolName !== "bash") return undefined
