@@ -396,7 +396,7 @@ function readSmallFile(path: string): string | undefined {
  * back at this very `.git` file. Submodules and `--separate-git-dir` checkouts also have a gitfile,
  * and fail this.
  */
-function linkedWorktree(gitFile: string): boolean {
+export function linkedWorktree(gitFile: string): boolean {
   const text = readSmallFile(gitFile)
   const match = text === undefined ? null : /^gitdir:[ \t]*(.+?)[ \t]*\r?\n?$/.exec(text)
   if (match === null) return false

@@ -225,7 +225,7 @@ describe("external-directory", () => {
     expect(fake.asserts).toHaveLength(0)
   })
 
-  test("a linked worktree of the session repository is inside, also after `cd <dir>;`; other cds keep their verdict", async () => {
+  test("the session repository's worktrees and linked worktrees under worktreeRoots are inside, also after `cd <dir>;`", async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "flag-worktrees-")))
     try {
       const main = join(root, "main")
@@ -235,16 +235,20 @@ describe("external-directory", () => {
         ["init", "-q", "-b", "main", main],
         ["-C", main, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"],
         ["-C", main, "worktree", "add", "-q", "-b", "linked", linked],
+        ["init", "-q", "-b", "main", join(root, "other")],
+        ["-C", join(root, "other"), "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"],
+        ["-C", join(root, "other"), "worktree", "add", "-q", "-b", "lane", join(root, "rooted", "lane")],
       ]) {
         expect(Bun.spawnSync(["git", ...args], { cwd: root, env, stdout: "ignore", stderr: "ignore" }).exitCode).toBe(0)
       }
-      const { fake, before } = await load({}, { directory: main })
+      const { fake, before } = await load({ worktreeRoots: [join(root, "rooted")] }, { directory: main })
       await before("c1", `cd ${linked}; timeout 300 bun install --cwd infra --frozen-lockfile 2>&1 | tail -2`)
       await before("c2", `git -C ${linked} status`)
+      await before("c3", `cd ${join(root, "rooted", "lane")}; bun install --cwd infra`)
       expect(fake.asserts).toHaveLength(0)
-      await before("c3", `cd ${root}/elsewhere; bun install --cwd x`)
+      await before("c4", `cd ${root}/elsewhere; bun install --cwd x`)
       expect(fake.asserts.map((item) => item.resources)).toEqual([[`${root}/elsewhere/x/*`]])
-      await expect(before("c4", 'cd "$X"; bun install --cwd x')).rejects.toThrow(unresolvedFlagRefusal(["x"]))
+      await expect(before("c5", 'cd "$X"; bun install --cwd x')).rejects.toThrow(unresolvedFlagRefusal(["x"]))
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -801,6 +805,11 @@ describe("helpers", () => {
   test("gitWrappers defaults to git and accepts configured executable basenames", () => {
     expect(readOptions(undefined).gitWrappers).toEqual(["git"])
     expect(readOptions({ gitWrappers: ["git", "dgit", 3] }).gitWrappers).toEqual(["git", "dgit"])
+  })
+
+  test("worktreeRoots defaults to ~/tmp/worktrees and keeps a configured list, `~` expanded", () => {
+    expect(readOptions(undefined).worktreeRoots).toEqual([join(homedir(), "tmp", "worktrees")])
+    expect(readOptions({ worktreeRoots: ["~/lanes", "rel", 3] }).worktreeRoots).toEqual([join(homedir(), "lanes")])
   })
 
   test("readOptions keeps known feature ids only", () => {

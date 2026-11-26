@@ -2669,9 +2669,9 @@ function rewriteCloseKeywords(command) {
 }
 
 // plugins/safety/shared/flag-directories.ts
-import { readdirSync as readdirSync2 } from "fs";
+import { lstatSync as lstatSync5, readdirSync as readdirSync2 } from "fs";
 import { homedir as homedir3 } from "os";
-import { basename as basename3, dirname as dirname5, isAbsolute as isAbsolute4, join as join6, resolve as resolve4 } from "path";
+import { basename as basename4, dirname as dirname6, isAbsolute as isAbsolute5, join as join7, resolve as resolve5 } from "path";
 
 // lib/src/checkout-marker.ts
 import { lstatSync as lstatSync2, readlinkSync } from "fs";
@@ -2874,32 +2874,10 @@ function externalDirectories(dirs, roots) {
   return [...out.values()];
 }
 
-// plugins/safety/shared/resolved-path.ts
-import { existsSync as existsSync3, lstatSync as lstatSync3, readlinkSync as readlinkSync2, realpathSync as realpathSync2 } from "fs";
-import { basename as basename2, dirname as dirname4, isAbsolute as isAbsolute3, join as join5 } from "path";
-var MAX_LINKS2 = 40;
-function resolved(path, links = 0) {
-  const missing = [];
-  let at = path;
-  while (!present(at) && dirname4(at) !== at) {
-    missing.unshift(basename2(at));
-    at = dirname4(at);
-  }
-  if (existsSync3(at))
-    return join5(realpathSync2(at), ...missing);
-  if (links >= MAX_LINKS2)
-    throw new Error(`too many symbolic links: ${path}`);
-  const target = readlinkSync2(at);
-  return join5(resolved(isAbsolute3(target) ? target : join5(dirname4(at), target), links + 1), ...missing);
-}
-function present(path) {
-  try {
-    lstatSync3(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
+// plugins/safety/shared/history-rewrite.ts
+import { closeSync as closeSync2, constants as constants3, fstatSync as fstatSync2, lstatSync as lstatSync3, openSync as openSync2, readSync as readSync2, realpathSync as realpathSync2, statSync as statSync2 } from "fs";
+import { tmpdir } from "os";
+import { basename as basename2, dirname as dirname4, isAbsolute as isAbsolute3, join as join5, resolve as resolve4 } from "path";
 
 // plugins/safety/shared/shell.ts
 var SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "ash", "mksh"]);
@@ -3143,186 +3121,7 @@ function positionals(args, valued = new Set) {
   return found;
 }
 
-// plugins/safety/shared/flag-directories.ts
-function literalDir(raw, cwd, unresolved) {
-  const value = raw.replace(/^\$\{?HOME\}?(?=\/|$)/, homedir3());
-  if (value === "" || /[$`]/.test(value))
-    return;
-  if (value === "~" || value.startsWith("~/"))
-    return join6(homedir3(), value.slice(1));
-  if (isAbsolute4(value))
-    return resolve4(value);
-  if (cwd === undefined) {
-    unresolved.push(raw);
-    return;
-  }
-  return resolve4(cwd, value);
-}
-var FLAGS = {
-  make: [{ names: ["-C", "--directory"], attached: true }],
-  gmake: [{ names: ["-C", "--directory"], attached: true }],
-  npm: [{ names: ["-C", "--prefix"] }],
-  pnpm: [{ names: ["-C", "--dir"] }],
-  yarn: [{ names: ["--cwd"] }],
-  bun: [{ names: ["--cwd"] }],
-  cargo: [{ names: ["-C"], attached: true }, { names: ["--manifest-path"], file: true }],
-  go: [{ names: ["-C", "--C"] }],
-  uv: [{ names: ["--directory", "--project"] }]
-};
-var GIT_VALUED2 = new Set(["-c", "--namespace", "--config-env", "--super-prefix"]);
-function gitDirectories(command, cwd, unresolved) {
-  const out = [];
-  for (const assignment of command.assignments) {
-    const match = /^(GIT_DIR|GIT_WORK_TREE)=(.*)$/.exec(assignment);
-    const dir = match?.[2] === undefined ? undefined : literalDir(match[2], cwd, unresolved);
-    if (dir !== undefined)
-      out.push(dir);
-  }
-  let at = cwd;
-  const argv = command.argv;
-  for (let i = 1;i < argv.length; i++) {
-    const word = argv[i];
-    if (!word.startsWith("-"))
-      break;
-    const [flag] = word.split("=", 1);
-    const value = word.includes("=") ? word.slice(flag.length + 1) : undefined;
-    if (flag === "-C") {
-      const next = literalDir(argv[++i] ?? "", at, unresolved);
-      if (next === undefined)
-        return out;
-      at = next;
-      out.push(at);
-    } else if (flag === "--git-dir" || flag === "--work-tree") {
-      const dir = literalDir(value ?? argv[++i] ?? "", at, unresolved);
-      if (dir !== undefined)
-        out.push(dir);
-    } else if (GIT_VALUED2.has(flag) && value === undefined) {
-      i++;
-    }
-  }
-  return out;
-}
-function toolDirectories(name, argv, cwd, unresolved) {
-  if (!Object.hasOwn(FLAGS, name))
-    return [];
-  const flags = FLAGS[name];
-  const out = [];
-  let at = cwd;
-  for (let i = 1;i < argv.length; i++) {
-    const word = argv[i];
-    if (word === "--")
-      break;
-    for (const flag of flags) {
-      let value;
-      const named = flag.names.find((option) => word === option || word.startsWith(`${option}=`));
-      if (named !== undefined)
-        value = word === named ? argv[++i] : word.slice(named.length + 1);
-      else if (flag.attached) {
-        const short = flag.names.find((option) => /^-[A-Za-z]$/.test(option) && word.startsWith(option));
-        if (short !== undefined)
-          value = word.slice(short.length);
-      }
-      if (value === undefined)
-        continue;
-      const path = literalDir(value, at, unresolved);
-      if (path === undefined)
-        break;
-      if (flag.file)
-        out.push(dirname5(path));
-      else {
-        if (name === "make" || name === "gmake")
-          at = path;
-        out.push(path);
-      }
-      break;
-    }
-  }
-  return out;
-}
-function flagDirectories(command, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS, unresolved = []) {
-  if (isGitCommand(command.argv[0], gitWrappers))
-    return gitDirectories(command, cwd, unresolved);
-  return toolDirectories(base(command.argv[0]), command.argv, cwd, unresolved);
-}
-function flagDirectoryReport(source, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS) {
-  const dirs = new Set;
-  const unresolved = [];
-  for (const command of walkShell(source).commands)
-    for (const dir of flagDirectories(command, cwd, gitWrappers, unresolved))
-      dirs.add(dir);
-  return { dirs: [...dirs], unresolved: [...new Set(unresolved)] };
-}
-function callFlagDirectoryReport(command, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS) {
-  const lead = leadingCd(command, cwd);
-  if (lead.kind !== "rejected")
-    return flagDirectoryReport(command, lead.kind === "dir" ? lead.dir : cwd, gitWrappers);
-  const first = /^[^;\n]*/.exec(command)?.[0] ?? command;
-  const sequenced = first.length < command.length ? leadingCd(first, cwd) : lead;
-  if (sequenced.kind !== "dir")
-    return flagDirectoryReport(command, undefined, gitWrappers);
-  const moved = flagDirectoryReport(command, sequenced.dir, gitWrappers);
-  const stayed = flagDirectoryReport(command, cwd, gitWrappers);
-  return { dirs: [...new Set([...moved.dirs, ...stayed.dirs])], unresolved: [] };
-}
-function real(path) {
-  try {
-    return resolved(path);
-  } catch {
-    return;
-  }
-}
-function entries(dir) {
-  try {
-    return readdirSync2(dir);
-  } catch {
-    return [];
-  }
-}
-function flagCheckRoots(sessionDirectory) {
-  const roots = new Set(sessionRoots(sessionDirectory).map((root) => real(root) ?? root));
-  const common = markedCommonDir(sessionDirectory);
-  if (common === null)
-    return [...roots];
-  const candidates = basename3(common) === ".git" ? [dirname5(common)] : [];
-  for (const name of entries(join6(common, "worktrees"))) {
-    const admin = join6(common, "worktrees", name);
-    const read = readBounded(join6(admin, "gitdir"));
-    const value = read.kind === "text" ? commondirValue(read.text) : null;
-    const dotGit = value === null ? null : physical(value.startsWith("/") ? value : `${admin}/${value}`);
-    if (dotGit !== null)
-      candidates.push(dirname5(dotGit));
-  }
-  for (const candidate of candidates) {
-    if (candidate !== "/" && verifyCheckout(candidate, common).state === "same")
-      roots.add(candidate);
-  }
-  return [...roots];
-}
-function externalFlagDirectories(dirs, sessionDirectory) {
-  if (dirs.length === 0)
-    return [];
-  const roots = flagCheckRoots(sessionDirectory);
-  const outside = dirs.filter((dir) => {
-    const path = real(dir);
-    return path === undefined || !roots.some((root) => under(path, root));
-  });
-  return externalDirectories(outside, []);
-}
-
-// plugins/safety/shared/guards.ts
-import { readFileSync as readFileSync3 } from "fs";
-import { isAbsolute as isAbsolute6, resolve as resolve6 } from "path";
-
-// plugins/safety/shared/attribution.ts
-var ATTRIBUTION = /co-authored-by:[^\n]{0,120}(?:claude|codex|gpt|copilot|cursor|devin|anthropic|openai|gemini)|generated (?:with|by) [[(]?(?:claude|codex|copilot|opencode|gemini)|noreply@(?:anthropic|openai)\.com/i;
-function hasAttribution(text) {
-  return ATTRIBUTION.test(text);
-}
-
 // plugins/safety/shared/history-rewrite.ts
-import { closeSync as closeSync2, constants as constants3, fstatSync as fstatSync2, lstatSync as lstatSync4, openSync as openSync2, readSync as readSync2, realpathSync as realpathSync3, statSync as statSync2 } from "fs";
-import { tmpdir } from "os";
-import { basename as basename4, dirname as dirname6, isAbsolute as isAbsolute5, join as join7, resolve as resolve5 } from "path";
 var PREFIX = "Blocked by safety (history-rewrite-guard)";
 var FILTER_REPO_NAME = /^git[-_]filter[-_]repo(?:\.py)?$/;
 var MENTIONS_FILTER_REPO = /git[-_]filter[-_]repo/;
@@ -3559,7 +3358,7 @@ function optionValue(args, name) {
 }
 function realOrUndefined(path) {
   try {
-    return realpathSync3(path);
+    return realpathSync2(path);
   } catch {
     return;
   }
@@ -3583,10 +3382,10 @@ function enter(at, operand) {
     if (part === "" || part === ".")
       continue;
     if (part === "..") {
-      here = dirname6(here);
+      here = dirname4(here);
       continue;
     }
-    const next = realOrUndefined(join7(here, part));
+    const next = realOrUndefined(join5(here, part));
     if (next === undefined)
       return;
     here = next;
@@ -3597,12 +3396,12 @@ function step(at, operand) {
   const physical = enter(at, operand);
   if (physical === undefined || !isDirectory2(physical))
     return;
-  return realOrUndefined(resolve5(at, operand)) === physical ? physical : undefined;
+  return realOrUndefined(resolve4(at, operand)) === physical ? physical : undefined;
 }
 function readSmallFile(path) {
   let fd;
   try {
-    if (!lstatSync4(path).isFile())
+    if (!lstatSync3(path).isFile())
       return;
     fd = openSync2(path, constants3.O_RDONLY | constants3.O_NONBLOCK | constants3.O_NOFOLLOW);
     const info = fstatSync2(fd);
@@ -3623,29 +3422,29 @@ function linkedWorktree(gitFile) {
   const match = text === undefined ? null : /^gitdir:[ \t]*(.+?)[ \t]*\r?\n?$/.exec(text);
   if (match === null)
     return false;
-  const adminDir = realOrUndefined(isAbsolute5(match[1]) ? match[1] : resolve5(dirname6(gitFile), match[1]));
-  if (adminDir === undefined || !isDirectory2(adminDir) || basename4(dirname6(adminDir)) !== "worktrees")
+  const adminDir = realOrUndefined(isAbsolute3(match[1]) ? match[1] : resolve4(dirname4(gitFile), match[1]));
+  if (adminDir === undefined || !isDirectory2(adminDir) || basename2(dirname4(adminDir)) !== "worktrees")
     return false;
-  if (readSmallFile(join7(adminDir, "commondir")) === undefined)
+  if (readSmallFile(join5(adminDir, "commondir")) === undefined)
     return false;
-  const back = readSmallFile(join7(adminDir, "gitdir"))?.trim();
+  const back = readSmallFile(join5(adminDir, "gitdir"))?.trim();
   if (back === undefined || back === "")
     return false;
-  return realOrUndefined(isAbsolute5(back) ? back : resolve5(adminDir, back)) === realOrUndefined(gitFile);
+  return realOrUndefined(isAbsolute3(back) ? back : resolve4(adminDir, back)) === realOrUndefined(gitFile);
 }
 function classify(dir, tempRoots) {
   if (underTemp(dir, tempRoots))
     return { safe: true };
   let at = dir;
   for (;; ) {
-    const git = join7(at, ".git");
+    const git = join5(at, ".git");
     try {
       const info = statSync2(git);
       if (info.isDirectory())
         return { safe: false, root: at, kind: "canonical" };
       return linkedWorktree(git) ? { safe: true } : { safe: false, root: at, kind: "gitfile" };
     } catch {}
-    const parent = dirname6(at);
+    const parent = dirname4(at);
     if (parent === at)
       return { safe: true };
     at = parent;
@@ -3958,7 +3757,7 @@ function historyRewrite(commands, cwd, tempRoots = defaultTempRoots(), env = pro
     let dir = start;
     for (const [at, operand] of moves.entries()) {
       const held = fileLast && at === moves.length - 1 ? enter(dir, operand) : undefined;
-      const move = held !== undefined && !isDirectory2(held) ? dirname6(operand) : operand;
+      const move = held !== undefined && !isDirectory2(held) ? dirname4(operand) : operand;
       const next = step(dir, move);
       if (next === undefined)
         return uncertain(what, `\`${move}\` is not a directory that resolves the same way logically and physically`);
@@ -4066,6 +3865,242 @@ function historyRewrite(commands, cwd, tempRoots = defaultTempRoots(), env = pro
       return reason;
   }
   return;
+}
+
+// plugins/safety/shared/resolved-path.ts
+import { existsSync as existsSync3, lstatSync as lstatSync4, readlinkSync as readlinkSync2, realpathSync as realpathSync3 } from "fs";
+import { basename as basename3, dirname as dirname5, isAbsolute as isAbsolute4, join as join6 } from "path";
+var MAX_LINKS2 = 40;
+function resolved(path, links = 0) {
+  const missing = [];
+  let at = path;
+  while (!present(at) && dirname5(at) !== at) {
+    missing.unshift(basename3(at));
+    at = dirname5(at);
+  }
+  if (existsSync3(at))
+    return join6(realpathSync3(at), ...missing);
+  if (links >= MAX_LINKS2)
+    throw new Error(`too many symbolic links: ${path}`);
+  const target = readlinkSync2(at);
+  return join6(resolved(isAbsolute4(target) ? target : join6(dirname5(at), target), links + 1), ...missing);
+}
+function present(path) {
+  try {
+    lstatSync4(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// plugins/safety/shared/flag-directories.ts
+function literalDir(raw, cwd, unresolved) {
+  const value = raw.replace(/^\$\{?HOME\}?(?=\/|$)/, homedir3());
+  if (value === "" || /[$`]/.test(value))
+    return;
+  if (value === "~" || value.startsWith("~/"))
+    return join7(homedir3(), value.slice(1));
+  if (isAbsolute5(value))
+    return resolve5(value);
+  if (cwd === undefined) {
+    unresolved.push(raw);
+    return;
+  }
+  return resolve5(cwd, value);
+}
+var FLAGS = {
+  make: [{ names: ["-C", "--directory"], attached: true }],
+  gmake: [{ names: ["-C", "--directory"], attached: true }],
+  npm: [{ names: ["-C", "--prefix"] }],
+  pnpm: [{ names: ["-C", "--dir"] }],
+  yarn: [{ names: ["--cwd"] }],
+  bun: [{ names: ["--cwd"] }],
+  cargo: [{ names: ["-C"], attached: true }, { names: ["--manifest-path"], file: true }],
+  go: [{ names: ["-C", "--C"] }],
+  uv: [{ names: ["--directory", "--project"] }]
+};
+var GIT_VALUED2 = new Set(["-c", "--namespace", "--config-env", "--super-prefix"]);
+function gitDirectories(command, cwd, unresolved) {
+  const out = [];
+  for (const assignment of command.assignments) {
+    const match = /^(GIT_DIR|GIT_WORK_TREE)=(.*)$/.exec(assignment);
+    const dir = match?.[2] === undefined ? undefined : literalDir(match[2], cwd, unresolved);
+    if (dir !== undefined)
+      out.push(dir);
+  }
+  let at = cwd;
+  const argv = command.argv;
+  for (let i = 1;i < argv.length; i++) {
+    const word = argv[i];
+    if (!word.startsWith("-"))
+      break;
+    const [flag] = word.split("=", 1);
+    const value = word.includes("=") ? word.slice(flag.length + 1) : undefined;
+    if (flag === "-C") {
+      const next = literalDir(argv[++i] ?? "", at, unresolved);
+      if (next === undefined)
+        return out;
+      at = next;
+      out.push(at);
+    } else if (flag === "--git-dir" || flag === "--work-tree") {
+      const dir = literalDir(value ?? argv[++i] ?? "", at, unresolved);
+      if (dir !== undefined)
+        out.push(dir);
+    } else if (GIT_VALUED2.has(flag) && value === undefined) {
+      i++;
+    }
+  }
+  return out;
+}
+function toolDirectories(name, argv, cwd, unresolved) {
+  if (!Object.hasOwn(FLAGS, name))
+    return [];
+  const flags = FLAGS[name];
+  const out = [];
+  let at = cwd;
+  for (let i = 1;i < argv.length; i++) {
+    const word = argv[i];
+    if (word === "--")
+      break;
+    for (const flag of flags) {
+      let value;
+      const named = flag.names.find((option) => word === option || word.startsWith(`${option}=`));
+      if (named !== undefined)
+        value = word === named ? argv[++i] : word.slice(named.length + 1);
+      else if (flag.attached) {
+        const short = flag.names.find((option) => /^-[A-Za-z]$/.test(option) && word.startsWith(option));
+        if (short !== undefined)
+          value = word.slice(short.length);
+      }
+      if (value === undefined)
+        continue;
+      const path = literalDir(value, at, unresolved);
+      if (path === undefined)
+        break;
+      if (flag.file)
+        out.push(dirname6(path));
+      else {
+        if (name === "make" || name === "gmake")
+          at = path;
+        out.push(path);
+      }
+      break;
+    }
+  }
+  return out;
+}
+function flagDirectories(command, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS, unresolved = []) {
+  if (isGitCommand(command.argv[0], gitWrappers))
+    return gitDirectories(command, cwd, unresolved);
+  return toolDirectories(base(command.argv[0]), command.argv, cwd, unresolved);
+}
+function flagDirectoryReport(source, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS) {
+  const dirs = new Set;
+  const unresolved = [];
+  for (const command of walkShell(source).commands)
+    for (const dir of flagDirectories(command, cwd, gitWrappers, unresolved))
+      dirs.add(dir);
+  return { dirs: [...dirs], unresolved: [...new Set(unresolved)] };
+}
+function callFlagDirectoryReport(command, cwd, gitWrappers = DEFAULT_GIT_WRAPPERS) {
+  const lead = leadingCd(command, cwd);
+  if (lead.kind !== "rejected")
+    return flagDirectoryReport(command, lead.kind === "dir" ? lead.dir : cwd, gitWrappers);
+  const first = /^[^;\n]*/.exec(command)?.[0] ?? command;
+  const sequenced = first.length < command.length ? leadingCd(first, cwd) : lead;
+  if (sequenced.kind !== "dir")
+    return flagDirectoryReport(command, undefined, gitWrappers);
+  const moved = flagDirectoryReport(command, sequenced.dir, gitWrappers);
+  const stayed = flagDirectoryReport(command, cwd, gitWrappers);
+  return { dirs: [...new Set([...moved.dirs, ...stayed.dirs])], unresolved: [] };
+}
+function real(path) {
+  try {
+    return resolved(path);
+  } catch {
+    return;
+  }
+}
+function entries(dir) {
+  try {
+    return readdirSync2(dir);
+  } catch {
+    return [];
+  }
+}
+function flagCheckRoots(sessionDirectory) {
+  const roots = new Set(sessionRoots(sessionDirectory).map((root) => real(root) ?? root));
+  const common = markedCommonDir(sessionDirectory);
+  if (common === null)
+    return [...roots];
+  const candidates = basename4(common) === ".git" ? [dirname6(common)] : [];
+  for (const name of entries(join7(common, "worktrees"))) {
+    const admin = join7(common, "worktrees", name);
+    const read = readBounded(join7(admin, "gitdir"));
+    const value = read.kind === "text" ? commondirValue(read.text) : null;
+    const dotGit = value === null ? null : physical(value.startsWith("/") ? value : `${admin}/${value}`);
+    if (dotGit !== null)
+      candidates.push(dirname6(dotGit));
+  }
+  for (const candidate of candidates) {
+    if (candidate !== "/" && verifyCheckout(candidate, common).state === "same")
+      roots.add(candidate);
+  }
+  return [...roots];
+}
+var DEFAULT_WORKTREE_ROOTS = Object.freeze(["~/tmp/worktrees"]);
+function readWorktreeRoots(raw, home = homedir3()) {
+  const list = Array.isArray(raw) ? raw : [...DEFAULT_WORKTREE_ROOTS];
+  return list.flatMap((entry) => {
+    if (typeof entry !== "string")
+      return [];
+    const expanded = entry === "~" || entry.startsWith("~/") ? join7(home, entry.slice(1)) : entry;
+    return isAbsolute5(expanded) ? [expanded] : [];
+  });
+}
+function present2(path) {
+  try {
+    lstatSync5(path);
+    return true;
+  } catch (error) {
+    const code = error.code;
+    return code !== "ENOENT" && code !== "ENOTDIR";
+  }
+}
+function inLinkedWorktreeUnder(path, root) {
+  if (!under(path, root))
+    return false;
+  for (let at = path;; at = dirname6(at)) {
+    const git = join7(at, ".git");
+    if (present2(git))
+      return linkedWorktree(git);
+    if (at === root || dirname6(at) === at)
+      return false;
+  }
+}
+function externalFlagDirectories(dirs, sessionDirectory, worktreeRoots) {
+  if (dirs.length === 0)
+    return [];
+  const roots = flagCheckRoots(sessionDirectory);
+  const rooted = worktreeRoots.flatMap((root) => real(root) ?? []);
+  const outside = dirs.filter((dir) => {
+    const path = real(dir);
+    if (path === undefined)
+      return true;
+    return !roots.some((root) => under(path, root)) && !rooted.some((root) => inLinkedWorktreeUnder(path, root));
+  });
+  return externalDirectories(outside, []);
+}
+
+// plugins/safety/shared/guards.ts
+import { readFileSync as readFileSync3 } from "fs";
+import { isAbsolute as isAbsolute6, resolve as resolve6 } from "path";
+
+// plugins/safety/shared/attribution.ts
+var ATTRIBUTION = /co-authored-by:[^\n]{0,120}(?:claude|codex|gpt|copilot|cursor|devin|anthropic|openai|gemini)|generated (?:with|by) [[(]?(?:claude|codex|copilot|opencode|gemini)|noreply@(?:anthropic|openai)\.com/i;
+function hasAttribution(text) {
+  return ATTRIBUTION.test(text);
 }
 
 // plugins/safety/shared/op-guard.ts
@@ -6393,7 +6428,8 @@ function readPiOptions(raw) {
     disabled: new Set(disable.filter((id) => PI_FEATURE_IDS.includes(id))),
     opAllow: allow.filter((entry) => typeof entry === "string"),
     redact: readRedactOptions(options),
-    gitWrappers: readGitWrappers(options)
+    gitWrappers: readGitWrappers(options),
+    worktreeRoots: readWorktreeRoots(options.worktreeRoots)
   };
 }
 function loadPiOptions(path) {
@@ -6466,7 +6502,7 @@ async function gateBash(command, cwd, config) {
   }
   if (!disabled.has("external-directory")) {
     const flags = attempt(() => callFlagDirectoryReport(command, cwd, config.options.gitWrappers));
-    const external = flags === undefined ? [] : attempt(() => externalFlagDirectories(flags.dirs, cwd)) ?? [];
+    const external = flags === undefined ? [] : attempt(() => externalFlagDirectories(flags.dirs, cwd, config.options.worktreeRoots)) ?? [];
     if (external.length > 0)
       asks.push(externalMessage(external));
     if (flags !== undefined && flags.unresolved.length > 0)

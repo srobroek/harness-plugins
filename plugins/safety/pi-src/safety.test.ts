@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, mock, setDefaultTimeout, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { piAgentDir, withPiAgentDir } from "@srobroek/opencode-lib/testing"
@@ -92,6 +92,11 @@ describe("readPiOptions and loadPiOptions", () => {
   test("gitWrappers defaults to git and keeps a configured list", () => {
     expect(readPiOptions({}).gitWrappers).toEqual(["git"])
     expect(readPiOptions({ gitWrappers: ["git", "dgit"] }).gitWrappers).toEqual(["git", "dgit"])
+  })
+
+  test("worktreeRoots defaults to ~/tmp/worktrees and keeps a configured list, `~` expanded", () => {
+    expect(readPiOptions({}).worktreeRoots).toEqual([join(homedir(), "tmp", "worktrees")])
+    expect(readPiOptions({ worktreeRoots: ["~/lanes", "/abs", 3] }).worktreeRoots).toEqual([join(homedir(), "lanes"), "/abs"])
   })
 
   test("a missing file or key is the defaults without a warning", () => {
@@ -269,6 +274,26 @@ describe("gateBash directory flags in the session repository's worktrees", () =>
       message: externalMessage([{ resource: `${repo}/x/*`, save: `${repo}/*` }]),
     })
     expect(await gateBash('cd "$X"; bun install --cwd x', main, config())).toEqual({ kind: "ask", message: unresolvedMessage(["x"]) })
+  })
+
+  test("worktreeRoots takes a linked worktree of another repository under a root as inside", async () => {
+    const other = join(root, "other-repo")
+    const rooted = join(root, "rooted")
+    mkdirSync(other)
+    git(other, "init", "-q", "-b", "main")
+    git(other, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base")
+    git(other, "worktree", "add", "-q", "-b", "lane", join(rooted, "lane"))
+    mkdirSync(join(rooted, "plain"))
+    const into = (dir: string) => `cd ${dir}; bun install --cwd infra`
+    expect(await gateBash(into(join(rooted, "lane")), main, config({ worktreeRoots: [rooted] }))).toEqual({ kind: "run" })
+    expect(await gateBash(into(join(rooted, "lane")), main, config())).toEqual({
+      kind: "ask",
+      message: externalMessage([{ resource: `${rooted}/lane/infra/*`, save: `${rooted}/lane/*` }]),
+    })
+    expect(await gateBash(into(join(rooted, "plain")), main, config({ worktreeRoots: [rooted] }))).toEqual({
+      kind: "ask",
+      message: externalMessage([{ resource: `${rooted}/plain/infra/*`, save: `${rooted}/plain/infra/*` }]),
+    })
   })
 })
 

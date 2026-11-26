@@ -1,10 +1,17 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
-import { callFlagDirectoryReport, externalFlagDirectories, flagCheckRoots, shellFlagDirectories } from "./flag-directories.ts"
+import {
+  callFlagDirectoryReport,
+  DEFAULT_WORKTREE_ROOTS,
+  externalFlagDirectories,
+  flagCheckRoots,
+  readWorktreeRoots,
+  shellFlagDirectories,
+} from "./flag-directories.ts"
 
-// The worktree fixture runs git eight times: the file took 1.4 s alone, so 30 s leaves headroom on a loaded machine.
+// The worktree fixtures run git sixteen times: the file took 1 s alone, so 30 s leaves headroom on a loaded machine.
 setDefaultTimeout(30_000)
 
 const CWD = "/work/repo"
@@ -131,12 +138,44 @@ describe("flagCheckRoots and externalFlagDirectories", () => {
     symlinkSync(root, alias)
     symlinkSync(outside, join(main, "out"))
     symlinkSync(join(main, "loop"), join(main, "loop"))
-    expect(externalFlagDirectories([join(alias, "worktrees", "linked", "infra"), join(relative, "not", "yet")], main)).toEqual([])
-    expect(externalFlagDirectories([join(main, "out", "x"), join(main, "loop"), join(replaced, "x"), join(outside, "y")], main)).toEqual([
+    expect(externalFlagDirectories([join(alias, "worktrees", "linked", "infra"), join(relative, "not", "yet")], main, [])).toEqual([])
+    expect(externalFlagDirectories([join(main, "out", "x"), join(main, "loop"), join(replaced, "x"), join(outside, "y")], main, [])).toEqual([
       { resource: `${main}/out/x/*`, save: `${main}/*` },
       { resource: `${main}/loop/*`, save: `${main}/*` },
       { resource: `${replaced}/x/*`, save: `${replaced}/*` },
       { resource: `${outside}/y/*`, save: `${outside}/y/*` },
     ])
+  })
+
+  test("worktreeRoots: a linked worktree of any repository under a root is inside; nothing else under it is", () => {
+    const rooted = join(root, "rooted")
+    const other = join(root, "other")
+    mkdirSync(join(rooted, "plain"), { recursive: true })
+    mkdirSync(other)
+    git(other, "init", "-q", "-b", "main")
+    git(other, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base")
+    git(other, "worktree", "add", "-q", "-b", "lane", join(rooted, "lane"))
+    git(other, "worktree", "add", "-q", "-b", "away", join(root, "away"))
+    // Moved without `git worktree repair`: its admin `gitdir` still names the old place.
+    git(other, "worktree", "add", "-q", "-b", "moved", join(rooted, "moved-from"))
+    renameSync(join(rooted, "moved-from"), join(rooted, "moved"))
+    mkdirSync(join(rooted, "clone"))
+    git(join(rooted, "clone"), "init", "-q")
+    symlinkSync(rooted, join(root, "rooted-alias"))
+
+    for (const roots of [[rooted], [join(root, "rooted-alias")]]) {
+      expect(externalFlagDirectories([join(rooted, "lane", "infra"), join(rooted, "lane"), join(linked, "x")], main, roots)).toEqual([])
+    }
+    const asks = [join(rooted, "plain", "x"), join(rooted, "clone", "x"), join(rooted, "moved", "x"), join(root, "away", "x"), rooted]
+    expect(externalFlagDirectories(asks, main, [rooted]).map((item) => item.resource)).toEqual(asks.map((dir) => `${dir}/*`))
+    expect(externalFlagDirectories([join(rooted, "lane", "infra")], main, [])).toHaveLength(1)
+  })
+
+  test("readWorktreeRoots expands `~`, keeps absolute entries, and a list replaces the default", () => {
+    expect(DEFAULT_WORKTREE_ROOTS).toEqual(["~/tmp/worktrees"])
+    expect(readWorktreeRoots(undefined, "/h")).toEqual(["/h/tmp/worktrees"])
+    expect(readWorktreeRoots("~/w", "/h")).toEqual(["/h/tmp/worktrees"])
+    expect(readWorktreeRoots(["~/w", "~", "/abs", "rel", "~x", 3], "/h")).toEqual(["/h/w", "/h", "/abs"])
+    expect(readWorktreeRoots([], "/h")).toEqual([])
   })
 })

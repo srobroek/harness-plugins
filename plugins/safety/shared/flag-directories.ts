@@ -6,7 +6,7 @@
  * same question, against roots that also hold the session repository's worktrees.
  */
 
-import { readdirSync } from "node:fs"
+import { lstatSync, readdirSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
 import { commondirValue, markedCommonDir, physical, readBounded, verifyCheckout } from "@srobroek/opencode-lib/checkout-marker"
@@ -14,6 +14,7 @@ import { type ExternalDirectory, externalDirectories, sessionRoots } from "@srob
 import { DEFAULT_GIT_WRAPPERS, isGitCommand } from "@srobroek/opencode-lib/git-wrappers"
 import { leadingCd } from "@srobroek/opencode-lib/shell-command"
 import { under } from "@srobroek/opencode-lib/shell-write-targets"
+import { linkedWorktree } from "./history-rewrite.ts"
 import { resolved } from "./resolved-path.ts"
 import { base, type Command, walkShell } from "./shell.ts"
 
@@ -216,18 +217,64 @@ export function flagCheckRoots(sessionDirectory: string): string[] {
   return [...roots]
 }
 
+export const DEFAULT_WORKTREE_ROOTS: readonly string[] = Object.freeze(["~/tmp/worktrees"])
+
 /**
- * The `external_directory` resources for the flag directories outside {@link flagCheckRoots}, each named as the
- * command spelled it. Directories compare by real path, so `/home/u/x` matches a root at `/local/home/u/x` when
- * one links to the other, and a symlink out of a root counts as outside. One whose real path cannot be read (a
- * link loop) counts as outside too.
+ * The `worktreeRoots` option with a leading `~` expanded against `home`. A list of strings replaces the
+ * default and anything else gives it; an entry that is not absolute after expansion is dropped.
  */
-export function externalFlagDirectories(dirs: readonly string[], sessionDirectory: string): ExternalDirectory[] {
+export function readWorktreeRoots(raw: unknown, home: string = homedir()): string[] {
+  const list: unknown[] = Array.isArray(raw) ? raw : [...DEFAULT_WORKTREE_ROOTS]
+  return list.flatMap((entry) => {
+    if (typeof entry !== "string") return []
+    const expanded = entry === "~" || entry.startsWith("~/") ? join(home, entry.slice(1)) : entry
+    return isAbsolute(expanded) ? [expanded] : []
+  })
+}
+
+/** Whether something is at `path` itself; an error other than a missing entry counts as something. */
+function present(path: string): boolean {
+  try {
+    lstatSync(path)
+    return true
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    return code !== "ENOENT" && code !== "ENOTDIR"
+  }
+}
+
+/**
+ * Whether the real path `path` lies in a linked worktree under the real directory `root`: the nearest `.git`
+ * at or above it, looked for no higher than `root`, is the gitfile of a linked worktree whose admin directory
+ * names it back (`linkedWorktree`). A plain directory, a main checkout or a submodule does not count.
+ */
+function inLinkedWorktreeUnder(path: string, root: string): boolean {
+  if (!under(path, root)) return false
+  for (let at = path; ; at = dirname(at)) {
+    const git = join(at, ".git")
+    if (present(git)) return linkedWorktree(git)
+    if (at === root || dirname(at) === at) return false
+  }
+}
+
+/**
+ * The `external_directory` resources for the flag directories outside {@link flagCheckRoots} and outside every
+ * linked worktree under `worktreeRoots` (any repository's), each named as the command spelled it. Directories
+ * compare by real path, so `/home/u/x` matches a root at `/local/home/u/x` when one links to the other, and a
+ * symlink out of a root counts as outside. One whose real path cannot be read (a link loop) counts as outside too.
+ */
+export function externalFlagDirectories(
+  dirs: readonly string[],
+  sessionDirectory: string,
+  worktreeRoots: readonly string[],
+): ExternalDirectory[] {
   if (dirs.length === 0) return []
   const roots = flagCheckRoots(sessionDirectory)
+  const rooted = worktreeRoots.flatMap((root) => real(root) ?? [])
   const outside = dirs.filter((dir) => {
     const path = real(dir)
-    return path === undefined || !roots.some((root) => under(path, root))
+    if (path === undefined) return true
+    return !roots.some((root) => under(path, root)) && !rooted.some((root) => inLinkedWorktreeUnder(path, root))
   })
   // With no roots, `externalDirectories` builds the resources for exactly these directories.
   return externalDirectories(outside, [])

@@ -62,6 +62,15 @@ A flag directory needs no approval when it lies in one of these:
 - the session directory or its repository root
 - the main checkout of that repository
 - a linked worktree of that repository whose `.git` file names the repository back
+- a linked worktree of any repository under a `worktreeRoots` folder
+
+A worktree under `worktreeRoots` counts only when the nearest `.git` above the directory, inside the folder,
+is a file that names `<common dir>/worktrees/<name>`. The check also requires the `gitdir` file in that folder
+to name the `.git` file back. A plain directory, a main checkout or a submodule under the folder still asks.
+
+`worktreeRoots` defaults to `["~/tmp/worktrees"]`. A list replaces the default, and `~` expands to the home
+folder. Set it in the plugin options on OpenCode, and in the `safety` key of the user settings on pi
+([Options on pi](#options-on-pi)).
 
 The check reads the worktrees from disk and runs no git. It compares real paths. So `/home/u/x` matches
 `/local/home/u/x` when one links to the other, and a symlink that leads out of a worktree counts as outside.
@@ -267,12 +276,16 @@ the OpenCode keys that apply on pi:
     "disable": ["package-investigate"],
     "opAllow": ["vault list"],
     "gitWrappers": ["git"],
+    "worktreeRoots": ["~/tmp/worktrees"],
     "redactSecrets": true,
     "redactNames": [],
     "redactExclude": []
   }
 }
 ```
+
+`worktreeRoots` names the folders whose linked worktrees, of any repository, the directory-flag check
+takes as inside ([Directory flags](#directory-flags)).
 
 `disable` takes these ids:
 

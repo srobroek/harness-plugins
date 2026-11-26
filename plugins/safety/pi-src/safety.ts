@@ -29,7 +29,7 @@ import { type ProviderTypes, readProviderTypes } from "@srobroek/opencode-lib/fn
 import { readGitWrappers } from "@srobroek/opencode-lib/git-wrappers"
 import { loadPiPluginSettings, PI_SETTINGS_FILE } from "@srobroek/opencode-lib/pi-settings"
 import { rewriteCloseKeywords } from "../shared/close-keywords.ts"
-import { callFlagDirectoryReport, externalFlagDirectories } from "../shared/flag-directories.ts"
+import { callFlagDirectoryReport, externalFlagDirectories, readWorktreeRoots } from "../shared/flag-directories.ts"
 import { GUARD_IDS, type GuardID, type GuardOptions, hardGate } from "../shared/guards.ts"
 import { decideToolCall, type MigrationOptions, migrationOverride } from "../shared/migrations.ts"
 import { createPackageAdvisor } from "../shared/package-investigate.ts"
@@ -65,9 +65,11 @@ export type PiOptions = {
   redact: RedactOptions
   /** Command names the gates read as git; only `git` by default. */
   gitWrappers: readonly string[]
+  /** Folders whose linked worktrees, of any repository, the directory-flag check takes as inside; `~` expanded. */
+  worktreeRoots: readonly string[]
 }
 
-/** `{ disable, opAllow, gitWrappers, redactSecrets, redactNames, redactExclude }`, read as the OpenCode options are. */
+/** `{ disable, opAllow, gitWrappers, worktreeRoots, redactSecrets, redactNames, redactExclude }`, read as the OpenCode options are. */
 export function readPiOptions(raw: unknown): PiOptions {
   const options = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
   const disable: unknown[] = Array.isArray(options.disable) ? options.disable : []
@@ -77,6 +79,7 @@ export function readPiOptions(raw: unknown): PiOptions {
     opAllow: allow.filter((entry): entry is string => typeof entry === "string"),
     redact: readRedactOptions(options),
     gitWrappers: readGitWrappers(options),
+    worktreeRoots: readWorktreeRoots(options.worktreeRoots),
   }
 }
 
@@ -187,7 +190,8 @@ export async function gateBash(command: string, cwd: string, config: GateConfig)
   }
   if (!disabled.has("external-directory")) {
     const flags = attempt(() => callFlagDirectoryReport(command, cwd, config.options.gitWrappers))
-    const external = flags === undefined ? [] : (attempt(() => externalFlagDirectories(flags.dirs, cwd)) ?? [])
+    const external =
+      flags === undefined ? [] : (attempt(() => externalFlagDirectories(flags.dirs, cwd, config.options.worktreeRoots)) ?? [])
     if (external.length > 0) asks.push(externalMessage(external))
     if (flags !== undefined && flags.unresolved.length > 0) asks.push(unresolvedMessage(flags.unresolved))
   }
