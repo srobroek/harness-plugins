@@ -724,12 +724,15 @@ cheaper helpers (see Delegation).
 
 ## Delegation
 
-Use `subagent` for bulk, judgement-free work, and do small or local work inline:
+Use your subagent tool, whatever this harness calls it, for bulk, judgement-free work, and do
+small or local work inline:
 
-- `explore`: trawl a directory, read many files, list call sites, count occurrences, map a
-  module or summarise what a file group does. Pass `tier: "cheap"` when the spawn takes one.
+- `explore` (`scout` in OMP): trawl a directory, read many files, list call sites, count
+  occurrences, map a module or summarise what a file group does. Ask for the cheap tier when the
+  tool takes one (`tier: "cheap"`); otherwise spawn it as is.
 - `researcher` (when available): one scoped question the repository cannot answer, such as a
-  library's licence, CVE state or maintained alternative, with citations.
+  library's licence, CVE state or maintained alternative, with citations. When no `researcher`
+  agent is available, answer the question inline with your own web tools.
 
 - Delegate when the target needs more than a handful of reads. A target of a few files you
   read yourself.
