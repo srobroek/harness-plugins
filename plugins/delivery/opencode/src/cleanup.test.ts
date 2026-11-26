@@ -5080,7 +5080,7 @@ describe("pending cleanup: one remover per worktree", () => {
         sessionID: "ses_a",
         jobs: [{ kind: "shell", sessionID: "ses_a", shellID: "sh9", command: `cd ${h.f.linked} && make` }],
         at: 1, // an earlier clock than this instance's
-        pid: process.pid,
+        pid: process.ppid, // another process: a snapshot supersedes only this process's files
         host: hostname(),
         instance: "another-server",
       })

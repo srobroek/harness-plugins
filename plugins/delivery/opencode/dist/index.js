@@ -6309,8 +6309,10 @@ function removeReportsWhere(receiptsRoot, doomed) {
   let names;
   try {
     names = readdirSync4(directory).filter((name) => name.endsWith(".json"));
-  } catch {
-    return 0;
+  } catch (error) {
+    if (error.code === "ENOENT")
+      return 0;
+    throw error;
   }
   let removed = 0;
   for (const name of names) {
@@ -7661,6 +7663,8 @@ function createPendingCleanup(deps) {
           clearReport(root, sessionID, activation);
         else
           writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname2(), instance: activation, gen });
+        const host = hostname2();
+        removeReportsWhere(root, (report) => report.sessionID === sessionID && report.host === host && report.pid === process.pid && report.instance !== activation);
       });
       if (unsettled.get(sessionID)?.gen === gen)
         unsettled.delete(sessionID);
@@ -7726,16 +7730,7 @@ function createPendingCleanup(deps) {
   };
   const registrations = [];
   let watching;
-  const sweepEarlierActivations = async () => {
-    try {
-      const host = hostname2();
-      await underStore(() => removeReportsWhere(receiptDirectory(env), (report) => report.host === host && report.pid === process.pid && report.instance !== activation));
-    } catch (error) {
-      console.error(`delivery: could not remove the reports of earlier activations: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
   const start = async () => {
-    await sweepEarlierActivations();
     watching = watchEvents({
       subscribe: (signal) => ctx.event.subscribe({ types: ["session.execution.succeeded", "session.execution.failed", "session.idle", "session.deleted"], signal })[Symbol.asyncIterator](),
       handle: handleEvent,
@@ -7753,13 +7748,6 @@ function createPendingCleanup(deps) {
       }));
     } catch {}
   };
-  const clearOwnReports = async () => {
-    try {
-      await underStore(() => removeReportsWhere(receiptDirectory(env), (report) => report.instance === activation));
-    } catch (error) {
-      console.error(`delivery: could not remove this activation's reports: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  };
   let disposal;
   const dispose = () => disposal ??= (async () => {
     disposed = true;
@@ -7769,7 +7757,7 @@ function createPendingCleanup(deps) {
     timers.clear();
     for (const registration of registrations.reverse())
       await registration.dispose();
-    await boundedBy(chain.catch(() => {}).then(clearOwnReports), deps.disposeWaitMs ?? DISPOSE_WAIT_MS);
+    await boundedBy(chain, deps.disposeWaitMs ?? DISPOSE_WAIT_MS);
   })();
   const settle = async () => {
     await new Promise((done) => setTimeout(done, 0));
