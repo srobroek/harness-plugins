@@ -1,3 +1,9 @@
+## delivery [0.16.0](https://github.com/srobroek/harness-plugins/compare/delivery--v0.15.1...delivery--v0.16.0) (2026-11-26)
+
+### Features
+
+* **delivery:** ship delivery_land and the git-workflow skill on pi ([46eb74e](https://github.com/srobroek/harness-plugins/commit/46eb74e3066c203b412db9995ae0462b29daa5c9))
+
 ## delivery [0.15.1](https://github.com/srobroek/harness-plugins/compare/delivery--v0.15.0...delivery--v0.15.1) (2026-11-26)
 
 ### Bug Fixes
