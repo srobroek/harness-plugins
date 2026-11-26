@@ -271,6 +271,8 @@ export type PendingDeps = {
   idlePassMs?: number
   /** How long disposal waits for the passes still running (default {@link DISPOSE_WAIT_MS}). */
   disposeWaitMs?: number
+  /** Test seam: which triggers write failed reports and deletions again (default all three). */
+  retryAt?: ReadonlyArray<RetryTrigger>
   /** Test seam: the clock reports expire on, against the files' mtime (default: the real clock). */
   fileNow?: () => number
   /** Test seam: the backoff clock of the event watch. */
@@ -291,6 +293,9 @@ type StoreHold = { active: boolean; lease: { release: () => Promise<void> } | un
  * refused), and the job list the session reported, so any later pass can write it again.
  */
 type UnsettledReport = { gen: number; at: number; reason: string; failed: boolean; background: ReadonlyArray<BackgroundJob> }
+
+/** What writes a failed report again: the start of a pass, a removal's final check, any session's idle hook. */
+export type RetryTrigger = "pass" | "check" | "idle"
 
 /** The default bound on one session lookup in the idle hook. */
 export const SESSION_LOOKUP_MS = 5_000
@@ -327,6 +332,7 @@ export function createPendingCleanup(deps: PendingDeps) {
   const pendingDeletes = new Set<string>()
   /** Sessions whose stored snapshot is being written again; one retry at a time per session. */
   const retrying = new Set<string>()
+  const retryOn = (trigger: RetryTrigger): boolean => (deps.retryAt ?? ["pass", "check", "idle"]).includes(trigger)
   let generation = 0
   /** Each report of this server takes a number above the last one, so equal clock readings still order. */
   let lastAt = 0
@@ -1221,7 +1227,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     disposed
       ? Promise.resolve()
       : serial(async () => {
-          await retryUnsettled()
+          if (retryOn("pass")) await retryUnsettled()
           return run(sessionID, idle)
         }).catch((error) => console.error("delivery: pending cleanup failed", error))
 
@@ -1290,7 +1296,7 @@ export function createPendingCleanup(deps: PendingDeps) {
     const unreadable = "the running-work reports cannot be read, so running work cannot be ruled out"
     const root = receiptDirectory(env)
     // A report whose write was refused is written again first: storage may be back.
-    if (hold?.lease === undefined) await retryUnsettled()
+    if (hold?.lease === undefined && retryOn("check")) await retryUnsettled()
     const early = stuck()
     if (early !== undefined) return early
     if (!reportsWritable(root)) return "the running-work store is not writable, so running work cannot be ruled out"
@@ -1453,7 +1459,7 @@ export function createPendingCleanup(deps: PendingDeps) {
             // Marked before anything is awaited, written first, before any git, registry or receipt work; never throws: an unsettled report is a hold, never a removal.
             const gen = beginReport(input.sessionID, input.background ?? [])
             await recordHolds(input.sessionID, gen)
-            await retryUnsettled(input.sessionID)
+            if (retryOn("idle")) await retryUnsettled(input.sessionID)
             await boundedBy(retryNow(input.sessionID, true), deps.idlePassMs ?? IDLE_PASS_MS)
           }) as never,
         ),

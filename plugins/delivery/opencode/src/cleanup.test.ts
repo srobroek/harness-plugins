@@ -3575,6 +3575,7 @@ describe("pending cleanup: one remover per worktree", () => {
       sessionLookupMs?: number
       idlePassMs?: number
       disposeWaitMs?: number
+      retryAt?: ReadonlyArray<"pass" | "check" | "idle">
       /** The host's worktree registry (default: none, so git removes). */
       host?: HostWorktrees
       /** Prime the repository cache as `setupDelivery` does (default); false leaves it cold. */
@@ -3611,6 +3612,7 @@ describe("pending cleanup: one remover per worktree", () => {
       ...(over.sessionLookupMs === undefined ? {} : { sessionLookupMs: over.sessionLookupMs }),
       ...(over.idlePassMs === undefined ? {} : { idlePassMs: over.idlePassMs }),
       ...(over.disposeWaitMs === undefined ? {} : { disposeWaitMs: over.disposeWaitMs }),
+      ...(over.retryAt === undefined ? {} : { retryAt: over.retryAt }),
     })
     if (over.prime !== false) await pending.prime()
     const common = (await repositoryContext(f.main))?.commonDir as string
@@ -5231,13 +5233,14 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
-    // A write that failed is retried from its stored snapshot, by the next pass or by any session's idle hook, not only by its own session's.
+    // A write that failed is written again from its stored snapshot by each of three triggers. Each runs here alone, the others
+    // switched off, and the report must be on disk when it returns, before any fallback could have run.
     needsPermissions.each([
-      ["another session's idle hook", (h: Harness) => reportFrom(h, "ses_b", [])],
-      ["a cleanup pass", (h: Harness) => h.idle("ses_lead")],
-    ] as const)("a report whose write failed is settled once storage recovers, by %s", async (_name, trigger) => {
-      const h = await harness("running-unsettled-retry")
-      await h.pending.record(h.f.receipt, "ses_lead")
+      ["the start of a pass", "pass", (h: Harness) => h.idle("ses_lead")],
+      ["a removal's final check", "check", (h: Harness) => h.pending.removalFor("ses_lead").finalCheck(h.f.linked)],
+      ["another session's idle hook", "idle", (h: Harness) => reportFrom(h, "ses_b", [])],
+    ] as const)("a report whose write failed is written again by %s alone", async (_name, trigger, fire) => {
+      const h = await harness("running-unsettled-retry", { retryAt: [trigger] })
       await h.pending.start()
       const directory = runningDirectory(receiptDirectory(h.f.env))
       mkdirSync(directory, { recursive: true })
@@ -5248,11 +5251,10 @@ describe("pending cleanup: one remover per worktree", () => {
       } finally {
         chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
       }
-      await trigger(h)
-      await h.idle()
-      expect(h.pending.unsettledCount()).toBe(0)
+      expect(reportIds(h)).toEqual([])
+      await fire(h)
       expect(reportIds(h)).toContain("ses_a")
-      expect(removed(h)).toBe(true)
+      expect(h.pending.unsettledCount()).toBe(0)
       await h.finish()
     })
 
