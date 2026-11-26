@@ -3459,7 +3459,8 @@ async function cleanupInRepository(params, cwd, deps) {
     }
     if (signal?.aborted === true)
       return refuse2("signal", "an abort", "no interrupt before the worktree removal; nothing was removed");
-    const held = await deps.finalCheck?.(targetPath);
+    const receiptPath = receipt.worktree.path;
+    const held = await deps.finalCheck?.(targetPath, [...new Set([receiptPath, physicalPath(receiptPath) ?? receiptPath])]);
     if (held !== undefined) {
       return refuse2("worktree.held", held, "no owner, hold, denial or competing remover at the moment of removal; nothing was removed");
     }
@@ -5908,133 +5909,15 @@ async function withLease(lockPath, options, work) {
   }
 }
 
-// lib/src/session-eviction.ts
-import { basename as basename4, dirname as dirname5 } from "path";
-function canonicalCheckout(commonDir, fallback) {
-  if (commonDir !== undefined && basename4(commonDir) === ".git")
-    return dirname5(commonDir);
-  return fallback;
-}
+// lib/src/running-reports.ts
+import { createHash as createHash4, randomUUID as randomUUID3 } from "crypto";
+import { mkdirSync as mkdirSync6, readdirSync as readdirSync4, renameSync as renameSync3, rmSync as rmSync5, statSync as statSync3, writeFileSync as writeFileSync6 } from "fs";
+import { join as join8, sep as sep3 } from "path";
 
-// lib/src/session-lanes.ts
-function insideDirectory(path, directory) {
-  const root = directory.replace(/\/+$/, "");
-  return path === root || path.startsWith(`${root}/`);
-}
-var MAX_LANE_DEPTH = 8;
-var LANE_CALL_TIMEOUT_MS = 1e4;
-var MAX_PAGES = 20;
-function isSessionNotFound(error, sessionID) {
-  if (typeof error !== "object" || error === null)
-    return false;
-  const fields = error;
-  for (const status of [fields.status, fields.statusCode])
-    if (status !== undefined && status !== 404)
-      return false;
-  const message = typeof fields.message === "string" ? fields.message : "";
-  if (/\b(location|service|directory|project|worktree|agent)\b/i.test(message))
-    return false;
-  const kind = [fields.name, fields._tag].filter((value) => typeof value === "string");
-  if (kind.some((value) => /^session.?not.?found/i.test(value)))
-    return fields.sessionID === undefined || fields.sessionID === sessionID;
-  const named = fields.sessionID === sessionID || message.includes(sessionID);
-  if (!named)
-    return false;
-  return kind.some((value) => /not.?found/i.test(value)) || /not found|no session|no such session|does not exist/i.test(message);
-}
-async function within2(work, ms) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error("timed out")), ms);
-  });
-  try {
-    return await Promise.race([work, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-async function children(client, parentID, ms) {
-  const ids = [];
-  let complete = true;
-  let cursor;
-  try {
-    for (let pages = 0;pages < MAX_PAGES; pages++) {
-      const query = cursor === undefined ? { parentID, limit: 100 } : { parentID, limit: 100, cursor };
-      const page = await within2(Promise.resolve().then(() => client.list(query)), ms);
-      if (!page || !Array.isArray(page.data))
-        return { ids, complete: false };
-      for (const raw of page.data) {
-        const id = raw?.id;
-        if (typeof id === "string")
-          ids.push(id);
-        else
-          complete = false;
-      }
-      const next = page.cursor?.next;
-      if (next === undefined || next === null)
-        return { ids, complete };
-      if (typeof next !== "string" || next === "")
-        return { ids, complete: false };
-      cursor = next;
-    }
-  } catch {
-    return { ids, complete: false };
-  }
-  return { ids, complete: false };
-}
-async function laneSessions(client, rootID, options = {}) {
-  const maxDepth = options.maxDepth ?? MAX_LANE_DEPTH;
-  const timeoutMs = options.timeoutMs ?? LANE_CALL_TIMEOUT_MS;
-  const seen = new Set([rootID]);
-  const ids = [rootID];
-  let level = [rootID];
-  let complete = true;
-  for (let depth = 1;level.length > 0; depth++) {
-    const next = [];
-    for (const parent of level) {
-      const kids = await children(client, parent, timeoutMs);
-      if (!kids.complete)
-        complete = false;
-      for (const id of kids.ids) {
-        if (seen.has(id))
-          continue;
-        seen.add(id);
-        next.push(id);
-      }
-    }
-    if (depth > maxDepth) {
-      if (next.length > 0)
-        complete = false;
-      break;
-    }
-    ids.push(...next);
-    level = next;
-  }
-  return { ids, complete };
-}
-var FIXED_REASON = "move failed";
-function classify(error, id) {
-  try {
-    if (isSessionNotFound(error, id))
-      return { id, status: "not-found" };
-    const text = error instanceof Error ? error.message : String(error);
-    return { id, status: "error", reason: text === "" ? FIXED_REASON : text };
-  } catch {
-    return { id, status: "error", reason: FIXED_REASON };
-  }
-}
-async function moveSessionsHome(client, ids, destination) {
-  const results = [];
-  for (const id of ids) {
-    try {
-      await client.move({ sessionID: id, directory: destination });
-      results.push({ id, status: "moved" });
-    } catch (error) {
-      results.push(classify(error, id));
-    }
-  }
-  return results;
-}
+// lib/src/worktree-locks.ts
+import { createHash as createHash3, randomUUID as randomUUID2 } from "crypto";
+import { mkdirSync as mkdirSync5, readdirSync as readdirSync3, readFileSync as readFileSync6, renameSync as renameSync2, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "fs";
+import { join as join7 } from "path";
 
 // lib/src/worktree-claims.ts
 import { createHash as createHash2 } from "crypto";
@@ -6168,9 +6051,6 @@ function ownershipOf(read) {
 }
 
 // lib/src/worktree-locks.ts
-import { createHash as createHash3, randomUUID as randomUUID2 } from "crypto";
-import { mkdirSync as mkdirSync5, readdirSync as readdirSync3, readFileSync as readFileSync6, renameSync as renameSync2, rmSync as rmSync4, writeFileSync as writeFileSync5 } from "fs";
-import { join as join7 } from "path";
 var HOLD_EXPIRY_MS = 24 * 3600000;
 var sha1 = (text) => createHash3("sha1").update(text).digest("hex");
 var isObject2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -6312,16 +6192,325 @@ function lockedWrite(commonDir, directory, options, write) {
   return withDiskLock(commonDir, directory, { waitMs: 1e4, ...options }, async () => write());
 }
 
+// lib/src/running-reports.ts
+var MAX_REPORT_BYTES = 1024 * 1024;
+var runningDirectory = (receiptsRoot) => join8(receiptsRoot, ".running");
+var reportFile = (receiptsRoot, sessionID) => join8(runningDirectory(receiptsRoot), `${createHash4("sha1").update(sessionID).digest("hex")}.json`);
+var isObject3 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var optionalString = (value) => typeof value === "string" ? value : undefined;
+function parseReport(text) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return;
+  }
+  if (!isObject3(raw) || typeof raw.sessionID !== "string" || raw.sessionID === "")
+    return;
+  if (typeof raw.at !== "number" || !Number.isFinite(raw.at) || typeof raw.pid !== "number")
+    return;
+  if (typeof raw.host !== "string" || typeof raw.instance !== "string" || !Array.isArray(raw.jobs))
+    return;
+  const jobs = [];
+  for (const job of raw.jobs) {
+    if (!isObject3(job) || typeof job.kind !== "string")
+      return;
+    const sessionID = optionalString(job.sessionID);
+    const childSessionID = optionalString(job.childSessionID);
+    const shellID = optionalString(job.shellID);
+    const command = optionalString(job.command);
+    const cwd = optionalString(job.cwd);
+    jobs.push({
+      kind: job.kind,
+      ...sessionID === undefined ? {} : { sessionID },
+      ...childSessionID === undefined ? {} : { childSessionID },
+      ...shellID === undefined ? {} : { shellID },
+      ...command === undefined ? {} : { command },
+      ...cwd === undefined ? {} : { cwd }
+    });
+  }
+  return { sessionID: raw.sessionID, jobs, at: raw.at, pid: raw.pid, host: raw.host, instance: raw.instance };
+}
+function readStored(path) {
+  const read = readBoundedBytes(path, MAX_REPORT_BYTES);
+  if (read.kind === "absent")
+    return { kind: "absent" };
+  if (read.kind === "unreadable")
+    return { kind: "unreadable" };
+  const report = parseReport(read.bytes.toString("utf8"));
+  if (report === undefined)
+    return { kind: "unreadable" };
+  try {
+    return { kind: "report", report: { ...report, mtimeMs: statSync3(path).mtimeMs } };
+  } catch {
+    return { kind: "unreadable" };
+  }
+}
+function supersededOnDisk(file, sessionID, at) {
+  const stored = readStored(file);
+  return stored.kind === "report" && stored.report.sessionID === sessionID && stored.report.at > at;
+}
+function writeReport(receiptsRoot, report) {
+  const file = reportFile(receiptsRoot, report.sessionID);
+  if (supersededOnDisk(file, report.sessionID, report.at))
+    return "superseded";
+  const text = JSON.stringify(report);
+  if (Buffer.byteLength(text) > MAX_REPORT_BYTES)
+    throw new Error(`the report of ${report.sessionID} is larger than ${MAX_REPORT_BYTES} bytes`);
+  mkdirSync6(runningDirectory(receiptsRoot), { recursive: true });
+  const temp = `${file}.${randomUUID3()}.tmp`;
+  writeFileSync6(temp, text);
+  renameSync3(temp, file);
+  return "written";
+}
+function clearReport(receiptsRoot, sessionID, at) {
+  const file = reportFile(receiptsRoot, sessionID);
+  if (supersededOnDisk(file, sessionID, at))
+    return "superseded";
+  rmSync5(file, { force: true });
+  return "cleared";
+}
+function removeReport(receiptsRoot, sessionID) {
+  rmSync5(reportFile(receiptsRoot, sessionID), { force: true });
+}
+function readReports(receiptsRoot) {
+  const directory = runningDirectory(receiptsRoot);
+  let names;
+  try {
+    names = readdirSync4(directory).filter((name) => name.endsWith(".json"));
+  } catch (error) {
+    return { reports: [], unreadable: error.code !== "ENOENT" };
+  }
+  const reports = [];
+  let unreadable = false;
+  for (const name of names) {
+    const stored = readStored(join8(directory, name));
+    if (stored.kind === "report")
+      reports.push(stored.report);
+    else if (stored.kind === "unreadable")
+      unreadable = true;
+  }
+  return { reports, unreadable };
+}
+function reportsWritable(receiptsRoot) {
+  const directory = runningDirectory(receiptsRoot);
+  try {
+    mkdirSync6(directory, { recursive: true });
+    const probe = join8(directory, `.probe.${randomUUID3()}`);
+    writeFileSync6(probe, "");
+    rmSync5(probe, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+var reportVersion = (report) => `${report.at}:${report.instance}:${JSON.stringify(report.jobs)}`;
+function reportLive(report, clock) {
+  if (clock.now - report.mtimeMs >= (clock.expiryMs ?? HOLD_EXPIRY_MS))
+    return false;
+  if (report.instance === clock.instance)
+    return true;
+  if (report.host === clock.host)
+    return clock.alive(report.pid);
+  return true;
+}
+var sameServer = (report, clock) => report.instance === clock.instance;
+var namesWorktree = (command, forms) => command !== undefined && forms.some((form) => command.includes(form));
+var jobSessions = (job) => [job.sessionID, job.childSessionID].filter((id) => typeof id === "string");
+var within2 = (directory, forms) => forms.some((form) => directory === form || directory.startsWith(form.endsWith(sep3) ? form : `${form}${sep3}`));
+function neededLookups(reports, forms, clock) {
+  const ids = new Set;
+  for (const report of reports) {
+    if (!reportLive(report, clock) || report.jobs.length === 0)
+      continue;
+    if (sameServer(report, clock))
+      ids.add(report.sessionID);
+    for (const job of report.jobs) {
+      if (namesWorktree(job.command, forms) || job.cwd !== undefined)
+        continue;
+      for (const id of jobSessions(job))
+        ids.add(id);
+    }
+  }
+  return [...ids];
+}
+function reportBlock(reports, forms, lookup, clock, canonical) {
+  for (const report of reports) {
+    if (!reportLive(report, clock) || report.jobs.length === 0)
+      continue;
+    const ours = sameServer(report, clock);
+    if (ours && lookup(report.sessionID)?.state === "missing")
+      continue;
+    for (const job of report.jobs) {
+      if (namesWorktree(job.command, forms))
+        return `session ${report.sessionID} has a ${job.kind} running that names the worktree`;
+      if (job.cwd !== undefined) {
+        if (within2(canonical(job.cwd), forms))
+          return `session ${report.sessionID} has a ${job.kind} running in the worktree`;
+        continue;
+      }
+      const owners = jobSessions(job);
+      if (owners.length === 0)
+        return `session ${report.sessionID} has a ${job.kind} whose working directory is unknown`;
+      for (const id of owners) {
+        const found = lookup(id);
+        if (found === undefined)
+          return `session ${report.sessionID} reported work in session ${id}, which has not been looked up`;
+        if (found.state === "unknown")
+          return `session ${report.sessionID} reported work in session ${id}, whose location could not be read`;
+        if (found.state === "missing") {
+          if (ours)
+            continue;
+          return `session ${report.sessionID} (another server) reported work in session ${id}, which this server cannot place`;
+        }
+        if (found.directory === undefined)
+          return `session ${report.sessionID} reported work in session ${id}, which has no working directory`;
+        if (within2(canonical(found.directory), forms))
+          return `session ${report.sessionID} has work in session ${id}, which runs in the worktree`;
+      }
+    }
+  }
+  return;
+}
+
+// lib/src/session-eviction.ts
+import { basename as basename4, dirname as dirname5 } from "path";
+function canonicalCheckout(commonDir, fallback) {
+  if (commonDir !== undefined && basename4(commonDir) === ".git")
+    return dirname5(commonDir);
+  return fallback;
+}
+
+// lib/src/session-lanes.ts
+function insideDirectory(path, directory) {
+  const root = directory.replace(/\/+$/, "");
+  return path === root || path.startsWith(`${root}/`);
+}
+var MAX_LANE_DEPTH = 8;
+var LANE_CALL_TIMEOUT_MS = 1e4;
+var MAX_PAGES = 20;
+function isSessionNotFound(error, sessionID) {
+  if (typeof error !== "object" || error === null)
+    return false;
+  const fields = error;
+  for (const status of [fields.status, fields.statusCode])
+    if (status !== undefined && status !== 404)
+      return false;
+  const message = typeof fields.message === "string" ? fields.message : "";
+  if (/\b(location|service|directory|project|worktree|agent)\b/i.test(message))
+    return false;
+  const kind = [fields.name, fields._tag].filter((value) => typeof value === "string");
+  if (kind.some((value) => /^session.?not.?found/i.test(value)))
+    return fields.sessionID === undefined || fields.sessionID === sessionID;
+  const named = fields.sessionID === sessionID || message.includes(sessionID);
+  if (!named)
+    return false;
+  return kind.some((value) => /not.?found/i.test(value)) || /not found|no session|no such session|does not exist/i.test(message);
+}
+async function within3(work, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timed out")), ms);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function children(client, parentID, ms) {
+  const ids = [];
+  let complete = true;
+  let cursor;
+  try {
+    for (let pages = 0;pages < MAX_PAGES; pages++) {
+      const query = cursor === undefined ? { parentID, limit: 100 } : { parentID, limit: 100, cursor };
+      const page = await within3(Promise.resolve().then(() => client.list(query)), ms);
+      if (!page || !Array.isArray(page.data))
+        return { ids, complete: false };
+      for (const raw of page.data) {
+        const id = raw?.id;
+        if (typeof id === "string")
+          ids.push(id);
+        else
+          complete = false;
+      }
+      const next = page.cursor?.next;
+      if (next === undefined || next === null)
+        return { ids, complete };
+      if (typeof next !== "string" || next === "")
+        return { ids, complete: false };
+      cursor = next;
+    }
+  } catch {
+    return { ids, complete: false };
+  }
+  return { ids, complete: false };
+}
+async function laneSessions(client, rootID, options = {}) {
+  const maxDepth = options.maxDepth ?? MAX_LANE_DEPTH;
+  const timeoutMs = options.timeoutMs ?? LANE_CALL_TIMEOUT_MS;
+  const seen = new Set([rootID]);
+  const ids = [rootID];
+  let level = [rootID];
+  let complete = true;
+  for (let depth = 1;level.length > 0; depth++) {
+    const next = [];
+    for (const parent of level) {
+      const kids = await children(client, parent, timeoutMs);
+      if (!kids.complete)
+        complete = false;
+      for (const id of kids.ids) {
+        if (seen.has(id))
+          continue;
+        seen.add(id);
+        next.push(id);
+      }
+    }
+    if (depth > maxDepth) {
+      if (next.length > 0)
+        complete = false;
+      break;
+    }
+    ids.push(...next);
+    level = next;
+  }
+  return { ids, complete };
+}
+var FIXED_REASON = "move failed";
+function classify(error, id) {
+  try {
+    if (isSessionNotFound(error, id))
+      return { id, status: "not-found" };
+    const text = error instanceof Error ? error.message : String(error);
+    return { id, status: "error", reason: text === "" ? FIXED_REASON : text };
+  } catch {
+    return { id, status: "error", reason: FIXED_REASON };
+  }
+}
+async function moveSessionsHome(client, ids, destination) {
+  const results = [];
+  for (const id of ids) {
+    try {
+      await client.move({ sessionID: id, directory: destination });
+      results.push({ id, status: "moved" });
+    } catch (error) {
+      results.push(classify(error, id));
+    }
+  }
+  return results;
+}
+
 // plugins/delivery/opencode/src/clone-registry.ts
-import { mkdirSync as mkdirSync6, readFileSync as readFileSync7, renameSync as renameSync3, writeFileSync as writeFileSync6 } from "fs";
-import { isAbsolute as isAbsolute3, join as join8 } from "path";
+import { mkdirSync as mkdirSync7, readFileSync as readFileSync7, renameSync as renameSync4, writeFileSync as writeFileSync7 } from "fs";
+import { isAbsolute as isAbsolute3, join as join9 } from "path";
 var MAX_CLONES = 32;
 var KEY = /^[0-9a-f]{16}$/;
 var LOCK_WAIT_MS = 1e4;
 function registryFile(env, sessionKey) {
   if (!KEY.test(sessionKey))
     throw new Error(`repo.key: observed ${JSON.stringify(sessionKey)}, expected 16 hex characters`);
-  return join8(receiptDirectory(env), ".clones", `${sessionKey}.json`);
+  return join9(receiptDirectory(env), ".clones", `${sessionKey}.json`);
 }
 function entriesOf(text) {
   let raw;
@@ -6422,16 +6611,16 @@ function entriesIn(file, text, note) {
 }
 async function addClone(env, sessionKey, entry, pending, options = {}) {
   const file = registryFile(env, sessionKey);
-  mkdirSync6(join8(receiptDirectory(env), ".clones"), { recursive: true });
+  mkdirSync7(join9(receiptDirectory(env), ".clones"), { recursive: true });
   const result = await withLease(`${file}.lock`, { owner: "delivery clone registry", waitMs: options.waitMs ?? LOCK_WAIT_MS }, () => {
     const current = loadForUpdate(file);
     const merged = mergeClone(current[0]?.key === entry.key ? current[0] : undefined, entry);
     if (current[0]?.key === entry.key && JSON.stringify(current[0]) === JSON.stringify(merged))
       return;
     const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync6(temporary, `${JSON.stringify(withClone(current, entry, pending))}
+    writeFileSync7(temporary, `${JSON.stringify(withClone(current, entry, pending))}
 `, { mode: 384 });
-    renameSync3(temporary, file);
+    renameSync4(temporary, file);
   });
   if (result.kind === "failed")
     throw leaseFailure(file, result);
@@ -6447,9 +6636,9 @@ async function settleReceipts(env, sessionKey, key, ids, options = {}) {
     if (JSON.stringify(next) === JSON.stringify(current))
       return;
     const temporary = `${file}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync6(temporary, `${JSON.stringify(next)}
+    writeFileSync7(temporary, `${JSON.stringify(next)}
 `, { mode: 384 });
-    renameSync3(temporary, file);
+    renameSync4(temporary, file);
   });
   if (result.kind === "failed")
     throw leaseFailure(file, result);
@@ -6506,190 +6695,6 @@ async function moveLaneHome(client, lane, destination) {
   if (!lane.complete)
     notes.push("the lane's sessions were listed incompletely; some may still point at the removed worktree");
   return notes;
-}
-
-// plugins/delivery/opencode/src/running-reports.ts
-import { createHash as createHash4, randomUUID as randomUUID3 } from "crypto";
-import { mkdirSync as mkdirSync7, readdirSync as readdirSync4, renameSync as renameSync4, rmSync as rmSync6, statSync as statSync3, writeFileSync as writeFileSync7 } from "fs";
-import { join as join9, sep as sep3 } from "path";
-var MAX_REPORT_BYTES = 1024 * 1024;
-var runningDirectory = (receiptsRoot) => join9(receiptsRoot, ".running");
-var reportFile = (receiptsRoot, sessionID) => join9(runningDirectory(receiptsRoot), `${createHash4("sha1").update(sessionID).digest("hex")}.json`);
-var isObject3 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-var optionalString = (value) => typeof value === "string" ? value : undefined;
-function parseReport(text) {
-  let raw;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    return;
-  }
-  if (!isObject3(raw) || typeof raw.sessionID !== "string" || raw.sessionID === "")
-    return;
-  if (typeof raw.at !== "number" || !Number.isFinite(raw.at) || typeof raw.pid !== "number")
-    return;
-  if (typeof raw.host !== "string" || typeof raw.instance !== "string" || !Array.isArray(raw.jobs))
-    return;
-  const jobs = [];
-  for (const job of raw.jobs) {
-    if (!isObject3(job) || typeof job.kind !== "string")
-      return;
-    const sessionID = optionalString(job.sessionID);
-    const childSessionID = optionalString(job.childSessionID);
-    const shellID = optionalString(job.shellID);
-    const command = optionalString(job.command);
-    const cwd = optionalString(job.cwd);
-    jobs.push({
-      kind: job.kind,
-      ...sessionID === undefined ? {} : { sessionID },
-      ...childSessionID === undefined ? {} : { childSessionID },
-      ...shellID === undefined ? {} : { shellID },
-      ...command === undefined ? {} : { command },
-      ...cwd === undefined ? {} : { cwd }
-    });
-  }
-  return { sessionID: raw.sessionID, jobs, at: raw.at, pid: raw.pid, host: raw.host, instance: raw.instance };
-}
-function readStored(path) {
-  const read = readBoundedBytes(path, MAX_REPORT_BYTES);
-  if (read.kind === "absent")
-    return { kind: "absent" };
-  if (read.kind === "unreadable")
-    return { kind: "unreadable" };
-  const report = parseReport(read.bytes.toString("utf8"));
-  if (report === undefined)
-    return { kind: "unreadable" };
-  try {
-    return { kind: "report", report: { ...report, mtimeMs: statSync3(path).mtimeMs } };
-  } catch {
-    return { kind: "unreadable" };
-  }
-}
-function supersededOnDisk(file, sessionID, at) {
-  const stored = readStored(file);
-  return stored.kind === "report" && stored.report.sessionID === sessionID && stored.report.at > at;
-}
-function writeReport(receiptsRoot, report) {
-  const file = reportFile(receiptsRoot, report.sessionID);
-  if (supersededOnDisk(file, report.sessionID, report.at))
-    return "superseded";
-  const text = JSON.stringify(report);
-  if (Buffer.byteLength(text) > MAX_REPORT_BYTES)
-    throw new Error(`the report of ${report.sessionID} is larger than ${MAX_REPORT_BYTES} bytes`);
-  mkdirSync7(runningDirectory(receiptsRoot), { recursive: true });
-  const temp = `${file}.${randomUUID3()}.tmp`;
-  writeFileSync7(temp, text);
-  renameSync4(temp, file);
-  return "written";
-}
-function clearReport(receiptsRoot, sessionID, at) {
-  const file = reportFile(receiptsRoot, sessionID);
-  if (supersededOnDisk(file, sessionID, at))
-    return "superseded";
-  rmSync6(file, { force: true });
-  return "cleared";
-}
-function removeReport(receiptsRoot, sessionID) {
-  rmSync6(reportFile(receiptsRoot, sessionID), { force: true });
-}
-function readReports(receiptsRoot) {
-  const directory = runningDirectory(receiptsRoot);
-  let names;
-  try {
-    names = readdirSync4(directory).filter((name) => name.endsWith(".json"));
-  } catch (error) {
-    return { reports: [], unreadable: error.code !== "ENOENT" };
-  }
-  const reports = [];
-  let unreadable = false;
-  for (const name of names) {
-    const stored = readStored(join9(directory, name));
-    if (stored.kind === "report")
-      reports.push(stored.report);
-    else if (stored.kind === "unreadable")
-      unreadable = true;
-  }
-  return { reports, unreadable };
-}
-function reportsWritable(receiptsRoot) {
-  const directory = runningDirectory(receiptsRoot);
-  try {
-    mkdirSync7(directory, { recursive: true });
-    const probe = join9(directory, `.probe.${randomUUID3()}`);
-    writeFileSync7(probe, "");
-    rmSync6(probe, { force: true });
-    return true;
-  } catch {
-    return false;
-  }
-}
-var reportVersion = (report) => `${report.at}:${report.instance}:${JSON.stringify(report.jobs)}`;
-function reportLive(report, clock) {
-  if (clock.now - report.mtimeMs >= (clock.expiryMs ?? HOLD_EXPIRY_MS))
-    return false;
-  if (report.instance === clock.instance)
-    return true;
-  if (report.host === clock.host)
-    return clock.alive(report.pid);
-  return true;
-}
-var sameServer = (report, clock) => report.instance === clock.instance;
-var namesWorktree = (command, forms) => command !== undefined && forms.some((form) => command.includes(form));
-var jobSessions = (job) => [job.sessionID, job.childSessionID].filter((id) => typeof id === "string");
-var within3 = (directory, forms) => forms.some((form) => directory === form || directory.startsWith(form.endsWith(sep3) ? form : `${form}${sep3}`));
-function neededLookups(reports, forms, clock) {
-  const ids = new Set;
-  for (const report of reports) {
-    if (!reportLive(report, clock) || report.jobs.length === 0)
-      continue;
-    if (sameServer(report, clock))
-      ids.add(report.sessionID);
-    for (const job of report.jobs) {
-      if (namesWorktree(job.command, forms) || job.cwd !== undefined)
-        continue;
-      for (const id of jobSessions(job))
-        ids.add(id);
-    }
-  }
-  return [...ids];
-}
-function reportBlock(reports, forms, lookup, clock, canonical) {
-  for (const report of reports) {
-    if (!reportLive(report, clock) || report.jobs.length === 0)
-      continue;
-    const ours = sameServer(report, clock);
-    if (ours && lookup(report.sessionID)?.state === "missing")
-      continue;
-    for (const job of report.jobs) {
-      if (namesWorktree(job.command, forms))
-        return `session ${report.sessionID} has a ${job.kind} running that names the worktree`;
-      if (job.cwd !== undefined) {
-        if (within3(canonical(job.cwd), forms))
-          return `session ${report.sessionID} has a ${job.kind} running in the worktree`;
-        continue;
-      }
-      const owners = jobSessions(job);
-      if (owners.length === 0)
-        return `session ${report.sessionID} has a ${job.kind} whose working directory is unknown`;
-      for (const id of owners) {
-        const found = lookup(id);
-        if (found === undefined)
-          return `session ${report.sessionID} reported work in session ${id}, which has not been looked up`;
-        if (found.state === "unknown")
-          return `session ${report.sessionID} reported work in session ${id}, whose location could not be read`;
-        if (found.state === "missing") {
-          if (ours)
-            continue;
-          return `session ${report.sessionID} (another server) reported work in session ${id}, which this server cannot place`;
-        }
-        if (found.directory === undefined)
-          return `session ${report.sessionID} reported work in session ${id}, which has no working directory`;
-        if (within3(canonical(found.directory), forms))
-          return `session ${report.sessionID} has work in session ${id}, which runs in the worktree`;
-      }
-    }
-  }
-  return;
 }
 
 // plugins/delivery/opencode/src/pending-cleanup.ts
@@ -6765,6 +6770,7 @@ async function authorizeExplicit(pending, ask, sessionID, request) {
 }
 var SERVER_INSTANCE = `${hostname2()}:${process.pid}:${Date.now().toString(36)}`;
 var SESSION_LOOKUP_MS = 5000;
+var IDLE_PASS_MS = 60000;
 function createPendingCleanup(deps) {
   const { ctx, cwd, env } = deps;
   const now = deps.now ?? Date.now;
@@ -6772,7 +6778,8 @@ function createPendingCleanup(deps) {
   const limit = deps.maxPerPass ?? MAX_PER_PASS;
   const observationMs = deps.cleanup?.bounds?.refReadMs ?? CLEANUP_BOUNDS.refReadMs;
   const sessionLookupMs = deps.sessionLookupMs ?? SESSION_LOOKUP_MS;
-  const unrecorded = new Map;
+  const unsettled = new Map;
+  let generation = 0;
   let lastAt = 0;
   const stamp = () => {
     lastAt = Math.max(now(), lastAt + 1);
@@ -7183,7 +7190,7 @@ function createPendingCleanup(deps) {
     }
     return;
   };
-  const holdCheckAt = async (repo, common, worktree, hold) => await holdAtBase(repo, common, worktree) ?? landingBlockAt(common, worktree) ?? await runningBlock(worktree, hold);
+  const holdCheckAt = async (repo, common, worktree, hold, spellings = []) => await holdAtBase(repo, common, worktree) ?? landingBlockAt(common, worktree) ?? await runningBlock(worktree, hold, spellings);
   const holdCheck = async (repo, worktree) => holdCheckAt(repo, await commonOf(repo), worktree);
   const proofIn = (repo) => async (worktree, read) => {
     const common = await commonOf(repo);
@@ -7226,14 +7233,14 @@ function createPendingCleanup(deps) {
     return {
       proofSection: proofIn(repo),
       removalSection: sectionIn(repo, hold),
-      finalCheck: async (worktree) => {
+      finalCheck: async (worktree, spellings = []) => {
         const common = await commonOf(repo);
-        const held = await holdCheckAt(repo, common, worktree, hold);
+        const held = await holdCheckAt(repo, common, worktree, hold, spellings);
         if (held !== undefined)
           return held;
         const recorded = common === null ? [] : landingsFor(listLandings(common).records, worktree).map((entry) => entry.sessionID);
         roots = [...new Set([...sessionIDs, ...recorded].filter((id) => typeof id === "string"))];
-        forms = [...new Set([worktree, canonicalDirectory(worktree)])];
+        forms = [...new Set([worktree, canonicalDirectory(worktree), ...spellings, ...spellings.map(canonicalDirectory)])];
         return;
       },
       afterRemoval: async (worktree) => {
@@ -7465,6 +7472,17 @@ function createPendingCleanup(deps) {
     }
     await gcClones();
   };
+  const boundedBy = async (work, ms) => {
+    let timer;
+    const bound = new Promise((done) => {
+      timer = setTimeout(done, ms);
+    });
+    try {
+      await Promise.race([work, bound]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const retryNow = (sessionID, idle) => disposed ? Promise.resolve() : serial(() => run(sessionID, idle)).catch((error) => console.error("delivery: pending cleanup failed", error));
   const schedule = (sessionID, idle) => {
     if (disposed)
@@ -7500,10 +7518,10 @@ function createPendingCleanup(deps) {
     return Promise.race([lookup, bound]).finally(() => clearTimeout(timer));
   };
   const reportClock = () => ({ now: (deps.fileNow ?? Date.now)(), host: hostname2(), instance: SERVER_INSTANCE, alive: processAlive });
-  const runningBlock = async (worktree, hold) => {
+  const runningBlock = async (worktree, hold, spellings = []) => {
     const stuck = () => {
-      const first = unrecorded.entries().next().value;
-      return first === undefined ? undefined : `the running work of ${first[0]} could not be recorded (${first[1]}); held until it reports again or is deleted`;
+      const first = unsettled.entries().next().value;
+      return first === undefined ? undefined : `the running work of ${first[0]} could not be recorded (${first[1].reason}); held until it reports again or is deleted`;
     };
     const unreadable = "the running-work reports cannot be read, so running work cannot be ruled out";
     const root = receiptDirectory(env);
@@ -7512,7 +7530,7 @@ function createPendingCleanup(deps) {
       return early;
     if (!reportsWritable(root))
       return "the running-work store is not writable, so running work cannot be ruled out";
-    const forms = [...new Set([worktree, canonicalDirectory(worktree)])];
+    const forms = [...new Set([worktree, canonicalDirectory(worktree), ...spellings, ...spellings.map(canonicalDirectory)])];
     const first = readReports(root);
     if (first.unreadable)
       return unreadable;
@@ -7556,7 +7574,12 @@ function createPendingCleanup(deps) {
       throw error;
     }
   };
-  const recordHolds = async (sessionID, background) => {
+  const beginReport = (sessionID) => {
+    const gen = ++generation;
+    unsettled.set(sessionID, { gen, reason: "its report is still waiting to be written" });
+    return gen;
+  };
+  const recordHolds = async (sessionID, gen, background) => {
     const root = receiptDirectory(env);
     const at = stamp();
     const jobs = background.map((job) => ({
@@ -7568,17 +7591,26 @@ function createPendingCleanup(deps) {
       ...typeof job.cwd === "string" ? { cwd: canonicalDirectory(job.cwd) } : {}
     }));
     try {
-      await underStore(() => background.length === 0 ? clearReport(root, sessionID, at) : writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname2(), instance: SERVER_INSTANCE }));
-      unrecorded.delete(sessionID);
+      await underStore(() => {
+        if (!unsettled.has(sessionID))
+          return;
+        if (background.length === 0)
+          clearReport(root, sessionID, at);
+        else
+          writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname2(), instance: SERVER_INSTANCE });
+      });
+      if (unsettled.get(sessionID)?.gen === gen)
+        unsettled.delete(sessionID);
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error);
-      if (background.length > 0)
-        unrecorded.set(sessionID, why);
+      const mark = unsettled.get(sessionID);
+      if (mark !== undefined && mark.gen === gen)
+        mark.reason = why;
       console.error(`delivery: could not record the running work of ${sessionID}: ${why}`);
     }
   };
   const forgetSession = async (sessionID) => {
-    unrecorded.delete(sessionID);
+    unsettled.delete(sessionID);
     try {
       await underStore(() => removeReport(receiptDirectory(env), sessionID));
     } catch (error) {
@@ -7597,8 +7629,9 @@ function createPendingCleanup(deps) {
     });
     try {
       registrations.push(await ctx.session.hook("experimental.idle", async (input) => {
-        await recordHolds(input.sessionID, input.background ?? []);
-        await retryNow(input.sessionID, true);
+        const gen = beginReport(input.sessionID);
+        await recordHolds(input.sessionID, gen, input.background ?? []);
+        await boundedBy(retryNow(input.sessionID, true), deps.idlePassMs ?? IDLE_PASS_MS);
       }));
     } catch {}
   };
@@ -7623,7 +7656,7 @@ function createPendingCleanup(deps) {
     dispose,
     prime,
     record,
-    unrecordedCount: () => unrecorded.size,
+    unsettledCount: () => unsettled.size,
     deny: denyIn(own),
     arm: armIn(own),
     markNudged: (receiptId, worktree) => markNudged(receiptId, worktree),

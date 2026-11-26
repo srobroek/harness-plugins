@@ -1,9 +1,10 @@
 import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { execFileSync } from "node:child_process"
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
-import { devNull, tmpdir } from "node:os"
+import { devNull, hostname, tmpdir } from "node:os"
 import { join } from "node:path"
 import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent"
+import { writeReport } from "@srobroek/opencode-lib/running-reports"
 import { writeClaim } from "@srobroek/opencode-lib/worktree-claims"
 import { setHold } from "@srobroek/opencode-lib/worktree-locks"
 import { TOOL_FIRST_LINE } from "../../../scripts/check-descriptions.ts"
@@ -252,6 +253,35 @@ describe("an explicit cleanup in the session's repository", () => {
     expect(result.text).toStartWith("delivery_cleanup refused: worktree.held: observed session s1 has 1 background job(s) running (bash b1)")
     expect(existsSync(f.linked)).toBe(true)
     expect(branchExists(f)).toBe(true)
+  })
+
+  // An OpenCode server's idle hook wrote the report; Pi has no session lookup, so a job it cannot place holds.
+  test.each([
+    ["a shell whose command names the worktree", (f: Landed) => ({ kind: "shell", sessionID: "ses_a", shellID: "sh1", command: `tail -f ${f.linked}/log` })],
+    ["a job whose session location cannot be resolved", () => ({ kind: "subagent", sessionID: "ses_a", childSessionID: "ses_child" })],
+  ])("a running report of an OpenCode server holds the removal: %s", async (_name, job) => {
+    const f = await landed("opencode-report")
+    writeReport(receiptDirectory(f.env), { sessionID: "ses_a", jobs: [job(f)], at: Date.now(), pid: process.pid, host: hostname(), instance: "opencode-server" })
+    const result = await call(cleanupTool(deps(f)), { receipt: f.receiptPath }, context(f.main, false))
+    expect(result.text).toStartWith("delivery_cleanup refused: worktree.held")
+    expect(existsSync(f.linked)).toBe(true)
+    expect(branchExists(f)).toBe(true)
+  })
+
+  test("a running report whose process is gone does not hold the removal", async () => {
+    const f = await landed("opencode-report-dead")
+    const dead = Number(execFileSync("sh", ["-c", "echo $$"], { encoding: "utf8" }).trim())
+    writeReport(receiptDirectory(f.env), {
+      sessionID: "ses_a",
+      jobs: [{ kind: "shell", sessionID: "ses_a", shellID: "sh1", command: `tail -f ${f.linked}/log` }],
+      at: Date.now(),
+      pid: dead,
+      host: hostname(),
+      instance: "opencode-server",
+    })
+    const result = await call(cleanupTool(deps(f)), { receipt: f.receiptPath }, context(f.main, false))
+    expect(result.output).toMatchObject({ ok: true })
+    expect(existsSync(f.linked)).toBe(false)
   })
 
   test("a second call reports the worktree already cleaned and writes nothing", async () => {

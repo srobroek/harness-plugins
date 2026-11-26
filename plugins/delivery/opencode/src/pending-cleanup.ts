@@ -32,6 +32,19 @@ import { join, resolve } from "node:path"
 import type { Context } from "@opencode/plugin/promise/plugin"
 import { type EventWatchDeps, watchEvents } from "@srobroek/opencode-lib/event-watch"
 import { type LeaseOptions, withLease } from "@srobroek/opencode-lib/lease-lock"
+import {
+  clearReport,
+  type JobLookup,
+  neededLookups,
+  type ReportClock,
+  type ReportJob,
+  readReports,
+  removeReport,
+  reportBlock,
+  reportsWritable,
+  reportVersion,
+  writeReport,
+} from "@srobroek/opencode-lib/running-reports"
 import { canonicalCheckout } from "@srobroek/opencode-lib/session-eviction"
 import { isSessionNotFound } from "@srobroek/opencode-lib/session-lanes"
 import { processAlive } from "@srobroek/opencode-lib/subprocess"
@@ -77,19 +90,6 @@ import {
   repositoryContext,
 } from "./landing-receipt.ts"
 import { type LaneClient, laneSessionsIn, moveLaneHome } from "./lane-move.ts"
-import {
-  clearReport,
-  type JobLookup,
-  neededLookups,
-  type ReportClock,
-  type ReportJob,
-  readReports,
-  removeReport,
-  reportBlock,
-  reportsWritable,
-  reportVersion,
-  writeReport,
-} from "./running-reports.ts"
 
 /** A receipt file's name: `<epoch>-<merge oid prefix>.json` (see `receiptId`). */
 const RECEIPT_FILE = /^\d+-(?:[0-9a-f]{12}|nomerge)\.json$/
@@ -265,6 +265,8 @@ export type PendingDeps = {
   lock?: Partial<LockOptions>
   /** How long the idle hook waits for one session's location; a lookup that takes longer may match any worktree. */
   sessionLookupMs?: number
+  /** How long the idle hook waits for the pass it starts (default {@link IDLE_PASS_MS}); the pass goes on without it. */
+  idlePassMs?: number
   /** Test seam: the clock reports expire on, against the files' mtime (default: the real clock). */
   fileNow?: () => number
   /** Test seam: the backoff clock of the event watch. */
@@ -283,6 +285,9 @@ type StoreHold = { active: boolean; lease: { release: () => Promise<void> } | un
 /** The default bound on one session lookup in the idle hook. */
 export const SESSION_LOOKUP_MS = 5_000
 
+/** How long an idle hook waits for its pass, which queues behind every other pass and may wait on a removal that never answers. */
+export const IDLE_PASS_MS = 60_000
+
 export function createPendingCleanup(deps: PendingDeps) {
   const { ctx, cwd, env } = deps
   const now = deps.now ?? Date.now
@@ -292,10 +297,13 @@ export function createPendingCleanup(deps: PendingDeps) {
   const observationMs = deps.cleanup?.bounds?.refReadMs ?? CLEANUP_BOUNDS.refReadMs
   const sessionLookupMs = deps.sessionLookupMs ?? SESSION_LOOKUP_MS
   /**
-   * Sessions whose last non-empty report could not be written to disk, by reason: their running work is
-   * unknown, so nothing is removed until the session's next successful write or delete, or its deletion.
+   * Sessions whose last report is not on disk yet, or could not be put there: their running work is
+   * unknown, so nothing is removed meanwhile. One record per session, set synchronously when the idle hook
+   * fires (reason `waiting`, with a new generation) and deleted only by a success or clear of that same
+   * generation, or by the session's deletion. A failure sets the reason and keeps the entry.
    */
-  const unrecorded = new Map<string, string>()
+  const unsettled = new Map<string, { gen: number; reason: string }>()
+  let generation = 0
   /** Each report of this server takes a number above the last one, so equal clock readings still order. */
   let lastAt = 0
   const stamp = (): number => {
@@ -835,8 +843,8 @@ export function createPendingCleanup(deps: PendingDeps) {
    * directory. What the sessions reported as running is read last, after the session listing, its own
    * lookups and a final synchronous re-read, with no wait after it.
    */
-  const holdCheckAt = async (repo: Repository, common: string | null, worktree: string, hold?: StoreHold): Promise<string | undefined> =>
-    (await holdAtBase(repo, common, worktree)) ?? landingBlockAt(common, worktree) ?? (await runningBlock(worktree, hold))
+  const holdCheckAt = async (repo: Repository, common: string | null, worktree: string, hold?: StoreHold, spellings: readonly string[] = []): Promise<string | undefined> =>
+    (await holdAtBase(repo, common, worktree)) ?? landingBlockAt(common, worktree) ?? (await runningBlock(worktree, hold, spellings))
 
   /**
    * The last look before the removal call itself (claims, holds, sessions, denials), read fresh. The
@@ -907,13 +915,13 @@ export function createPendingCleanup(deps: PendingDeps) {
     return {
       proofSection: proofIn(repo),
       removalSection: sectionIn(repo, hold),
-      finalCheck: async (worktree: string): Promise<string | undefined> => {
+      finalCheck: async (worktree: string, spellings: readonly string[] = []): Promise<string | undefined> => {
         const common = await commonOf(repo)
-        const held = await holdCheckAt(repo, common, worktree, hold)
+        const held = await holdCheckAt(repo, common, worktree, hold, spellings)
         if (held !== undefined) return held
         const recorded = common === null ? [] : landingsFor(listLandings(common).records, worktree).map((entry) => entry.sessionID)
         roots = [...new Set([...sessionIDs, ...recorded].filter((id): id is string => typeof id === "string"))]
-        forms = [...new Set([worktree, canonicalDirectory(worktree)])]
+        forms = [...new Set([worktree, canonicalDirectory(worktree), ...spellings, ...spellings.map(canonicalDirectory)])]
         return undefined
       },
       afterRemoval: async (worktree: string): Promise<string[]> => {
@@ -1189,6 +1197,19 @@ export function createPendingCleanup(deps: PendingDeps) {
     await gcClones()
   }
 
+  /** `work`, or undefined once `ms` have passed: the hook returns, and the pass goes on in the chain. */
+  const boundedBy = async (work: Promise<unknown>, ms: number): Promise<void> => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const bound = new Promise<void>((done) => {
+      timer = setTimeout(done, ms)
+    })
+    try {
+      await Promise.race([work, bound])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   const retryNow = (sessionID: string, idle: boolean) =>
     disposed ? Promise.resolve() : serial(() => run(sessionID, idle)).catch((error) => console.error("delivery: pending cleanup failed", error))
 
@@ -1241,23 +1262,23 @@ export function createPendingCleanup(deps: PendingDeps) {
    * What the sessions reported as running keeps `worktree`, or undefined. The reports are read, the
    * sessions they name looked up, and the reports read again after the lookups, with those same lookups:
    * a report that arrived meanwhile and names a session not looked up holds. A session that could not
-   * record its last report (`unrecorded`), or a store that cannot be read or written, holds too.
+   * record its last report (`unsettled`), or a store that cannot be read or written, holds too.
    *
    * With a removal's `hold` the last read is taken under the store's lease, which `hold` keeps until
    * the removal section ends: no report is written meanwhile (its writer waits), and the lookups are
    * made again for each report that changed since the first read, so the decision uses fresh ones.
    */
-  const runningBlock = async (worktree: string, hold?: StoreHold): Promise<string | undefined> => {
+  const runningBlock = async (worktree: string, hold?: StoreHold, spellings: readonly string[] = []): Promise<string | undefined> => {
     const stuck = (): string | undefined => {
-      const first = unrecorded.entries().next().value
-      return first === undefined ? undefined : `the running work of ${first[0]} could not be recorded (${first[1]}); held until it reports again or is deleted`
+      const first = unsettled.entries().next().value
+      return first === undefined ? undefined : `the running work of ${first[0]} could not be recorded (${first[1].reason}); held until it reports again or is deleted`
     }
     const unreadable = "the running-work reports cannot be read, so running work cannot be ruled out"
     const root = receiptDirectory(env)
     const early = stuck()
     if (early !== undefined) return early
     if (!reportsWritable(root)) return "the running-work store is not writable, so running work cannot be ruled out"
-    const forms = [...new Set([worktree, canonicalDirectory(worktree)])]
+    const forms = [...new Set([worktree, canonicalDirectory(worktree), ...spellings, ...spellings.map(canonicalDirectory)])]
     const first = readReports(root)
     if (first.unreadable) return unreadable
     const seen = new Map(first.reports.map((report) => [report.sessionID, reportVersion(report)]))
@@ -1295,15 +1316,21 @@ export function createPendingCleanup(deps: PendingDeps) {
     }
   }
 
+  /** Mark the session's report as not recorded, before anything is awaited; returns the mark's generation. */
+  const beginReport = (sessionID: string): number => {
+    const gen = ++generation
+    unsettled.set(sessionID, { gen, reason: "its report is still waiting to be written" })
+    return gen
+  }
+
   /**
    * The idle hook's `background` list, kept as the session's one report on disk. The write is the
-   * hook's first step, under the store's lease (a file lock, taken at once when nothing holds it): no
-   * git, registry or receipt work comes before it. An empty list is the session's own word that nothing
-   * of it runs: its report is deleted. A write that fails marks the session `unrecorded` (a hold on every
-   * removal) until its next write or delete that succeeds, or finds a newer report of the session
-   * already there; a lease that cannot be taken is a failed write.
+   * hook's first step, under the store's lease: no git, registry or receipt work comes before it. An
+   * empty list is the session's own word that nothing of it runs: its report is deleted. The session's
+   * `unsettled` entry, set by {@link beginReport}, goes only when this generation's write or clear
+   * succeeds; a failure (a lease that cannot be taken included) sets its reason and keeps it.
    */
-  const recordHolds = async (sessionID: string, background: ReadonlyArray<BackgroundJob>): Promise<void> => {
+  const recordHolds = async (sessionID: string, gen: number, background: ReadonlyArray<BackgroundJob>): Promise<void> => {
     const root = receiptDirectory(env)
     const at = stamp()
     const jobs: ReportJob[] = background.map((job) => ({
@@ -1315,23 +1342,24 @@ export function createPendingCleanup(deps: PendingDeps) {
       ...(typeof job.cwd === "string" ? { cwd: canonicalDirectory(job.cwd) } : {}),
     }))
     try {
-      await underStore(() =>
-        background.length === 0 ? clearReport(root, sessionID, at) : writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname(), instance: SERVER_INSTANCE }),
-      )
-      unrecorded.delete(sessionID)
+      await underStore(() => {
+        // A deleted session (no mark left) has nothing to record: no file, no mark.
+        if (!unsettled.has(sessionID)) return
+        if (background.length === 0) clearReport(root, sessionID, at)
+        else writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname(), instance: SERVER_INSTANCE })
+      })
+      if (unsettled.get(sessionID)?.gen === gen) unsettled.delete(sessionID)
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error)
-      if (background.length > 0) unrecorded.set(sessionID, why)
+      const mark = unsettled.get(sessionID)
+      if (mark !== undefined && mark.gen === gen) mark.reason = why
       console.error(`delivery: could not record the running work of ${sessionID}: ${why}`)
     }
   }
 
-  /**
-   * A deleted session runs nothing: the failure to record its report is forgotten whether or not the
-   * file can be removed. A file left behind expires, or its owner is judged dead.
-   */
+  /** A deleted session runs nothing: its mark goes whether or not its file can be removed. A file left behind expires, or its owner is judged dead. */
   const forgetSession = async (sessionID: string): Promise<void> => {
-    unrecorded.delete(sessionID)
+    unsettled.delete(sessionID)
     try {
       await underStore(() => removeReport(receiptDirectory(env), sessionID))
     } catch (error) {
@@ -1358,9 +1386,10 @@ export function createPendingCleanup(deps: PendingDeps) {
         await ctx.session.hook(
           "experimental.idle" as never,
           (async (input: { sessionID: string; background?: ReadonlyArray<BackgroundJob> }) => {
-            // Written first, before any git, registry or receipt work; never throws: a failed write is a hold, never a removal.
-            await recordHolds(input.sessionID, input.background ?? [])
-            await retryNow(input.sessionID, true)
+            // Marked before anything is awaited, written first, before any git, registry or receipt work; never throws: an unsettled report is a hold, never a removal.
+            const gen = beginReport(input.sessionID)
+            await recordHolds(input.sessionID, gen, input.background ?? [])
+            await boundedBy(retryNow(input.sessionID, true), deps.idlePassMs ?? IDLE_PASS_MS)
           }) as never,
         ),
       )
@@ -1390,8 +1419,8 @@ export function createPendingCleanup(deps: PendingDeps) {
     dispose,
     prime,
     record,
-    /** How many sessions have an unrecorded report; for tests (it must not grow with deletions). */
-    unrecordedCount: () => unrecorded.size,
+    /** How many sessions have an unsettled report; for tests (it must not grow with deletions). */
+    unsettledCount: () => unsettled.size,
     deny: denyIn(own),
     arm: armIn(own),
     markNudged: (receiptId: string, worktree: string) => markNudged(receiptId, worktree),

@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process"
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { readReports, runningDirectory } from "@srobroek/opencode-lib/running-reports"
 import { createFakeContext } from "@srobroek/opencode-lib/testing"
 import { landingFile, readLanding, removeClaim, writeClaim } from "@srobroek/opencode-lib/worktree-claims"
 import type { CleanupDeps, CleanupResult } from "./cleanup.ts"
@@ -11,7 +12,6 @@ import { registryFile } from "./clone-registry.ts"
 import { type CliRunner, runCli } from "./forge-adapter.ts"
 import * as realLand from "./land.ts"
 import { buildReceipt, type GitRunner, type LandingReceipt, listReceipts, receiptDirectory, repositoryContext, writeReceipt } from "./landing-receipt.ts"
-import { readReports, runningDirectory } from "./running-reports.ts"
 
 // Landing needs a forge and cleanup needs a real remote; both are replaced so the test sees only how
 // the registered tools and the turn-end retry chain them across two real repositories: the session's
