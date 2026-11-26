@@ -30,7 +30,7 @@ returns `complete: false` and marks every dependency it did not query `UNCHECKED
 
 Load `plugins/dep-update/pi/extensions/index.js` as a pi extension. It registers `dep_scan` and `dep_apply` with the existing names and input schemas.
 
-`dep_apply` asks `ctx.ui.confirm` to approve the exact bump. In print or JSON mode, where no UI is available, it refuses without changing files.
+`dep_apply` applies the exact bump without asking, as on OpenCode. Set `"dep-update": {"confirm": true}` in `~/.pi/agent/settings.json` to approve each bump with `ctx.ui.confirm`; in print or JSON mode, where no UI is available, it then refuses without changing files.
 
 To load this extension in foreground pi-subagents, add its path to `subagents.defaultSubagentOnlyExtensions` or an agent's `subagentOnlyExtensions` setting.
 
