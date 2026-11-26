@@ -154,7 +154,32 @@ describe("tracked foreground handoff", () => {
     expect(reads).toBe(1)
   })
 
-  test("ledger-free research passes; marked async and malformed assignments do not launch", async () => {
+  test("marked background dispatch preserves explicit gates and returns only a pending receipt", async () => {
+    const f = setup({}, { pinFor: () => store })
+    const existing = {id:"unit", command:"bun test"}
+    const options = { acceptance: { level:"verified", verify:[existing] }, sessionDir: undefined }
+    const input = { agent:"worker", async:true, task:"Bead: proj-123\nImplement", options }
+    const event = { toolName:"subagent", toolCallId:"background-tracked", input }
+    expect(await f.emit("tool_call", event, ctxFor(ROOT))).toBeUndefined()
+    expect(input.options.acceptance.verify[0]).toEqual(existing)
+    expect(input.options.acceptance.verify[1]).toMatchObject({id:"beads-progress", cwd:repo, env:{BEADS_DIR:store}})
+    expect(input.options.sessionDir).toBeTruthy()
+    const result = await f.emit("tool_result", {...event, details:{mode:"single", asyncId:"run", runId:"run", results:[]}}, ctxFor(ROOT))
+    expect(result).toMatchObject({structuredContent:{handoff:"pending",runId:"run"}})
+  })
+
+  test("tracked async refuses contract overrides and conflicting checks", async () => {
+    const f = setup({}, { pinFor: () => store })
+    for (const [index, extra] of [
+      { agentContract: { version: 1 } }, { context: "fork" }, { sessionDir: "/other" },
+      { gate: "another-command" }, { acceptance: { level: "verified", verify: [{id:"beads-progress",command:"other"}] } },
+    ].entries()) {
+      const input = { agent: "worker", async: true, task: "Bead: proj-123", options: { acceptance:{ level:"verified",verify:[] }, ...extra } }
+      expect(await f.emit("tool_call", {toolName:"subagent",toolCallId:`bad-async-${index}`,input}, ctxFor(ROOT))).toMatchObject({block:true})
+    }
+  })
+
+  test("ledger-free research passes; unconfigured async and malformed assignments do not launch", async () => {
     const f = setup()
     for (const [task, blocked] of [["Investigate proj-123", false], ["Bead: proj-123\nInvestigate", true], ["Bead: ???", true]] as const) {
       const event = { toolName: "subagent", toolCallId: `ho-${task}`, input: { agent: "researcher", async: true, task } }

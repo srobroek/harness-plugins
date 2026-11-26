@@ -46,7 +46,7 @@ measured session issued 37 separate `bd create` calls and 27 separate
 
 # AD HOC WORK AND HANDOFF
 
-On Pi, when dispatching a single foreground worker assigned to a bead, set `async: false` and put `Bead: FULL_ID` on the first line of the worker brief. Use the actual ID. With the Beads enforcer loaded, the coordinator receives an error instead of a successful result if the worker does not leave a matching progress checkpoint. Do not rerun a worker just because its checkpoint is missing; check for work already done. For async workers and other hosts, check the handoff yourself with `beads-evidence`.
+On Pi, when dispatching a single foreground worker assigned to a bead, set `async: false` and put `Bead: FULL_ID` on the first line of the worker brief. Use the actual ID. With the Beads enforcer loaded, the coordinator receives an error instead of a successful result if the worker does not leave a matching progress checkpoint. Do not rerun a worker just because its checkpoint is missing; check for work already done. For a local native background worker on POSIX, use the same marker with `async: true` and explicit `options.acceptance` at level `verified`. Include the required verification commands; the enforcer appends the checkpoint check. Wait for completion: the launch receipt is only pending. For workflows and other hosts, check the handoff yourself with `beads-evidence`.
 
 When creating or refining a work bead, name its delivery requirement in the description, separate from the acceptance criteria: PR merge, an accepted result without a PR, deployment, or sign-off. If several steps are required, list them all. The coordinator uses this requirement to decide when to close; see `beads-evidence`.
 

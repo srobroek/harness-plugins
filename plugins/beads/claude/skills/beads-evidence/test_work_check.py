@@ -1,7 +1,9 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
-from work_check import check, timestamp
+from work_check import background_actor, check, timestamp
 
 
 class WorkCheckTests(unittest.TestCase):
@@ -16,6 +18,23 @@ class WorkCheckTests(unittest.TestCase):
 
     def verdict(self, kind="progress", author="worker", subject=None):
         return check(self.issue, "proj-1", kind, author, "job-1", self.start, subject)["ok"]
+
+    def test_background_actor_requires_one_direct_native_child(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            file = root / 'run-id' / 'run-0' / 'session.jsonl'
+            file.parent.mkdir(parents=True)
+            def header(parent):
+                file.write_text(json.dumps({'type': 'session', 'id': 'child', 'parentSession': parent}) + '\n')
+            header('/p.jsonl')
+            self.assertEqual(background_actor(root, '/p.jsonl', 'pi/p'), 'pi/p/child')
+            header('/elsewhere')
+            with self.assertRaises(ValueError):
+                background_actor(root, '/p.jsonl', 'pi/p')
+            header('/p.jsonl')
+            (root / 'another').symlink_to(root / 'run-id', target_is_directory=True)
+            with self.assertRaises(ValueError):
+                background_actor(root, '/p.jsonl', 'pi/p')
 
     def test_requires_matching_new_work_checkpoint(self):
         for field in ("author", "when", "event", "next", "result", "evidence"):
