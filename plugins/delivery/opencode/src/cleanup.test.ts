@@ -5942,6 +5942,7 @@ describe("cleanup of another repository's landing runs against that repository",
     const fake = createFakeContext({ directory: s.main, projectID: "prj_session", sessions: over.sessions?.(f) ?? [] })
     hostHasReporters(fake, s.main)
     const hostRemoved: Array<{ projectID: string; directory: string }> = []
+    let clock = NOW + 10
     const make = () => createPendingCleanup({
       ctx: fake.context,
       cwd: s.main,
@@ -5960,10 +5961,13 @@ describe("cleanup of another repository's landing runs against that repository",
           }),
       debounceMs: 1,
       cleanup: { run: stripped(run), now: () => NOW + 10, bounds: HEAVY_FIXTURE_BOUNDS },
-      now: () => NOW + 10,
+      now: () => clock,
       ...(over.observe === undefined ? {} : { observe: over.observe }),
       ...(over.lock === undefined ? {} : { lock: over.lock }),
     })
+    const advance = (ms: number) => {
+      clock += ms
+    }
     const pending = make()
     await pending.prime()
     const targetCommon = (await repositoryContext(f.main))?.commonDir as string
@@ -5986,7 +5990,7 @@ describe("cleanup of another repository's landing runs against that repository",
       rmSync(f.root, { recursive: true, force: true })
       rmSync(s.root, { recursive: true, force: true })
     }
-    return { f, s, run, scripted, fake, pending, another: make, targetCommon, sessionCommon, sessionKey, explicit, idle, hostRemoved, finish }
+    return { f, s, run, scripted, fake, pending, another: make, targetCommon, sessionCommon, sessionKey, explicit, idle, hostRemoved, advance, finish }
   }
   const idleSession = (id: string, projectID: string, directory: string) => ({ id, projectID, location: { directory }, time: { updated: 1 } })
 
@@ -6314,7 +6318,11 @@ describe("cleanup of another repository's landing runs against that repository",
     // The report is kept whole, whatever could be listed when it came: nothing is removed under it.
     await h.idle()
     expect(existsSync(h.f.linked)).toBe(true)
-    // The session's own report of nothing running lifts it.
+    // The session's own report of nothing running ends the job, held for the grace window; the next one after it lifts the hold.
+    await h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] })
+    await h.idle()
+    expect(existsSync(h.f.linked)).toBe(true)
+    h.advance(GRACE_MS)
     await h.fake.fire.session("experimental.idle", { sessionID: "ses_lead", background: [] })
     await h.idle()
     expect(existsSync(h.f.linked)).toBe(false)

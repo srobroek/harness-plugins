@@ -1426,14 +1426,8 @@ export function createPendingCleanup(deps: PendingDeps) {
     const entry = unsettled.get(sessionID)
     if (entry === undefined || entry.gen !== gen) return
     const root = receiptDirectory(env)
-    const { at } = entry
+    const { at, jobs } = entry
     try {
-      // Where each job runs is read before the lease (a bounded lookup), and kept with the snapshot for the retries.
-      const jobs = await withDirectories(entry.jobs)
-      if (unsettled.get(sessionID)?.gen === gen) {
-        entry.jobs = jobs
-        if (jobs.length > 0) reported.set(sessionID, jobs)
-      }
       await underStore(() => {
         // Only the session's current report is written: a deleted session (no entry) has nothing to record, and
         // an older one is replaced by the newer one's own write.
@@ -1453,6 +1447,29 @@ export function createPendingCleanup(deps: PendingDeps) {
         mark.failed = true
       }
       console.error(`delivery: could not record the running work of ${sessionID}: ${why}`)
+      return
+    }
+    await recordDirectories(sessionID, gen, at, jobs)
+  }
+
+  /**
+   * After the report is on disk: record where each job runs (its owning session's directory now; a bounded lookup) and
+   * write the report again with it, so a report that outlives its session's move still holds its old worktree. Best
+   * effort: the report without directories already holds, judged by where the owners work when a removal asks.
+   */
+  const recordDirectories = async (sessionID: string, gen: number, at: number, jobs: ReportJob[]): Promise<void> => {
+    if (jobs.length === 0) return
+    try {
+      const withCwd = await withDirectories(jobs)
+      if (withCwd.every((job, index) => job === jobs[index])) return
+      await underStore(() => {
+        // Only while this is still the session's current snapshot and the session was not deleted meanwhile.
+        if (lastGen.get(sessionID) !== gen || unsettled.has(sessionID) || pendingDeletes.has(sessionID)) return
+        writeReport(receiptDirectory(env), { sessionID, jobs: withCwd, at, pid: process.pid, host: hostname(), instance: activation, gen })
+        reported.set(sessionID, withCwd)
+      })
+    } catch (error) {
+      console.error(`delivery: could not record where the running work of ${sessionID} runs: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
