@@ -13,22 +13,28 @@ import { parseGitlabHosts } from "../opencode/src/forge-adapter.ts"
 export type NeutralToolResult = { output: Record<string, unknown>; content: string; metadata: Record<string, unknown> }
 
 /**
- * The GitLab hosts named under the `delivery` key of pi's settings file, and the warning when that key
- * could not be read. Absent or unusable, only the built-in hosts are recognized.
+ * The GitLab hosts named under the `delivery` key of pi's settings file, whether `delivery_land` asks
+ * before a forge write (`confirm`, on unless the key sets it to `false`), and the warning when that key
+ * could not be read. Absent or unusable, only the built-in hosts are recognized and the land asks.
  */
-export function deliverySettings(path: string): { gitlabHosts: readonly string[]; warning?: string } {
+export function deliverySettings(path: string): { gitlabHosts: readonly string[]; confirm: boolean; warning?: string } {
   const loaded = loadPiPluginSettings(path, "delivery", "only the built-in GitLab hosts are recognized")
-  return { gitlabHosts: parseGitlabHosts(loaded.options.gitlabHosts), warning: loaded.warning }
+  return { gitlabHosts: parseGitlabHosts(loaded.options.gitlabHosts), confirm: loaded.options.confirm !== false, warning: loaded.warning }
 }
 
 /**
- * The GitLab hosts for one call, read fresh from `path` (default: the user settings file), with the
+ * The settings for one call, read fresh from `path` (default: the user settings file), with the
  * warning about an unusable `delivery` key shown when the session has a UI to show it.
  */
-export function callGitlabHosts(ctx: Pick<ExtensionContext, "hasUI" | "ui">, path?: string): readonly string[] {
+export function callSettings(ctx: Pick<ExtensionContext, "hasUI" | "ui">, path?: string): { gitlabHosts: readonly string[]; confirm: boolean } {
   const settings = deliverySettings(path ?? join(getAgentDir(), PI_SETTINGS_FILE))
   if (settings.warning !== undefined && ctx.hasUI) ctx.ui.notify(settings.warning, "warning")
-  return settings.gitlabHosts
+  return { gitlabHosts: settings.gitlabHosts, confirm: settings.confirm }
+}
+
+/** The GitLab hosts for one call; see `callSettings`. */
+export function callGitlabHosts(ctx: Pick<ExtensionContext, "hasUI" | "ui">, path?: string): readonly string[] {
+  return callSettings(ctx, path).gitlabHosts
 }
 
 /** The host form of a result: the text as one block, the metadata as `details`, the output as `structuredContent`. */

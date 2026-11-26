@@ -8,7 +8,7 @@ import { TOOL_FIRST_LINE } from "../../../scripts/check-descriptions.ts"
 import { type CliResult, type CliRunner, runCli, SAFE_GIT_ARGS } from "../opencode/src/forge-adapter.ts"
 import { LAND_INPUT, LAND_OUTPUT, landDescription } from "../opencode/src/land-tool.ts"
 import { type LandingReceipt, readReceipt } from "../opencode/src/landing-receipt.ts"
-import deliveryLand, { DESCRIPTION, type LandTool, landTool, type PiLandDeps } from "./delivery-land.ts"
+import deliveryLand, { authorizer, DESCRIPTION, type LandTool, landTool, type PiLandDeps } from "./delivery-land.ts"
 
 // Each test builds real Git repositories (a bare remote, a checkout, a linked worktree, a squash
 // merge) and runs real git for everything but the forge reads: 1.1-3.4 s per test, 27-34 s for the
@@ -308,6 +308,22 @@ describe("merging an open PR", () => {
 })
 
 describe("settings", () => {
+  test("confirm false lets a forge write through without asking, also without a UI", async () => {
+    let asked = 0
+    const ui = {
+      confirm: async () => {
+        asked++
+        return false
+      },
+    } as unknown as ExtensionToolContext["ui"]
+    const request = { resource: "o/r#1", head: "abc", merge: "squash", setupAutoDelete: false, forge: "github" } as unknown as Parameters<ReturnType<typeof authorizer>>[0]
+    await expect(authorizer({ hasUI: true, ui }, undefined, false)(request)).resolves.toBeUndefined()
+    await expect(authorizer({ hasUI: false, ui }, undefined, false)(request)).resolves.toBeUndefined()
+    expect(asked).toBe(0)
+    await expect(authorizer({ hasUI: true, ui }, undefined)(request)).rejects.toThrow(/declined/)
+    await expect(authorizer({ hasUI: false, ui }, undefined)(request)).rejects.toThrow(/no UI/)
+    expect(asked).toBe(1)
+  })
   test("the delivery key's gitlabHosts reach the landing: a remote on that host is read with glab", async () => {
     const f = squashMerged("gitlab-host")
     const hosted = join(f.root, "gitlab-settings.json")

@@ -3907,13 +3907,13 @@ function loadPiPluginSettings(path, plugin, fallback) {
 // plugins/delivery/pi-src/host.ts
 function deliverySettings(path) {
   const loaded = loadPiPluginSettings(path, "delivery", "only the built-in GitLab hosts are recognized");
-  return { gitlabHosts: parseGitlabHosts(loaded.options.gitlabHosts), warning: loaded.warning };
+  return { gitlabHosts: parseGitlabHosts(loaded.options.gitlabHosts), confirm: loaded.options.confirm !== false, warning: loaded.warning };
 }
-function callGitlabHosts(ctx, path) {
+function callSettings(ctx, path) {
   const settings = deliverySettings(path ?? join5(getAgentDir(), PI_SETTINGS_FILE));
   if (settings.warning !== undefined && ctx.hasUI)
     ctx.ui.notify(settings.warning, "warning");
-  return settings.gitlabHosts;
+  return { gitlabHosts: settings.gitlabHosts, confirm: settings.confirm };
 }
 function toToolResult(result) {
   return {
@@ -3925,7 +3925,7 @@ function toToolResult(result) {
 var schema = (value) => value;
 
 // plugins/delivery/pi-src/delivery-land.ts
-var DESCRIPTION = landDescription("On pi a merge or setupAutoDelete asks the user first and is refused in a session without a UI; proving an already MERGED request asks nothing. " + "No cleanup runs after the land: call delivery_cleanup once next lists it; a landing of another repository is cleaned up from a session in that clone.");
+var DESCRIPTION = landDescription("On pi a merge or setupAutoDelete asks the user first (unless the delivery setting confirm is false) and is refused in a session without a UI; proving an already MERGED request asks nothing. " + "No cleanup runs after the land: call delivery_cleanup once next lists it; a landing of another repository is cleaned up from a session in that clone.");
 
 class LandUnconfirmed extends Error {
   reason;
@@ -3947,10 +3947,10 @@ function confirmation(request, writes) {
     message: `delivery_land will ${writes} on ${request.forge}, then prove the landing and write a landing receipt.`
   };
 }
-function authorizer(ctx, signal) {
+function authorizer(ctx, signal, confirm = true) {
   return async (request) => {
     const writes = forgeWrites(request);
-    if (writes === null)
+    if (writes === null || !confirm)
       return;
     if (!ctx.hasUI) {
       throw new LandUnconfirmed(`confirmation: observed no UI to ask whether to ${writes}, expected a session that can ask the user; pi's delivery_land writes to the forge only after the user confirms, so land it from an interactive session; nothing was merged or written`);
@@ -3965,10 +3965,10 @@ function authorizer(ctx, signal) {
     }
   };
 }
-async function runLand(params, ctx, signal, deps = {}, gitlabHosts = []) {
+async function runLand(params, ctx, signal, deps = {}, gitlabHosts = [], confirm = true) {
   let outcome;
   try {
-    outcome = await landPullRequest(params, { ...deps.land, cwd: ctx.cwd, gitlabHosts, signal, authorize: authorizer(ctx, signal) });
+    outcome = await landPullRequest(params, { ...deps.land, cwd: ctx.cwd, gitlabHosts, signal, authorize: authorizer(ctx, signal, confirm) });
   } catch (error) {
     if (!(error instanceof LandUnconfirmed))
       throw error;
@@ -3985,7 +3985,10 @@ function landTool(deps = {}) {
     parameters: schema(LAND_INPUT),
     outputSchema: schema(LAND_OUTPUT),
     approval: "exec",
-    execute: async (_id, params, signal, _onUpdate, ctx) => toToolResult(await runLand(params, ctx, signal, deps, callGitlabHosts(ctx, deps.settingsPath)))
+    execute: async (_id, params, signal, _onUpdate, ctx) => {
+      const settings = callSettings(ctx, deps.settingsPath);
+      return toToolResult(await runLand(params, ctx, signal, deps, settings.gitlabHosts, settings.confirm));
+    }
   };
 }
 function deliveryLand(pi) {

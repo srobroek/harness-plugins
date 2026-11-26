@@ -7,7 +7,8 @@
 //
 // Before a write to the forge (a merge, or the deletion-on-merge setting) it asks the user to
 // confirm, naming the request, the head and the method. A session without a UI (a subagent, print
-// mode) cannot be asked, so that write is refused instead, with nothing merged or written. Proving
+// mode) cannot be asked, so that write is refused instead, with nothing merged or written. The user
+// settings' `"delivery": {"confirm": false}` turns both off: every write goes ahead unasked. Proving
 // an already MERGED request writes only the local receipt and asks nothing. No cleanup runs after a
 // land: the result's `next` names `delivery_cleanup`. OMP's approval mode may ask before the call too.
 
@@ -15,10 +16,10 @@ import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-w
 import { metadataOf } from "../opencode/src/cleanup-tool.ts"
 import { type LandAuthorization, type LandDeps, type LandOutcome, type LandParams, landPullRequest } from "../opencode/src/land.ts"
 import { LAND_ACTION, LAND_INPUT, LAND_OUTPUT, landDescription, landOutput } from "../opencode/src/land-tool.ts"
-import { callGitlabHosts, type NeutralToolResult, schema, toToolResult } from "./host.ts"
+import { callSettings, type NeutralToolResult, schema, toToolResult } from "./host.ts"
 
 export const DESCRIPTION = landDescription(
-  "On pi a merge or setupAutoDelete asks the user first and is refused in a session without a UI; proving an already MERGED request asks nothing. " +
+  "On pi a merge or setupAutoDelete asks the user first (unless the delivery setting confirm is false) and is refused in a session without a UI; proving an already MERGED request asks nothing. " +
     "No cleanup runs after the land: call delivery_cleanup once next lists it; a landing of another repository is cleaned up from a session in that clone.",
 )
 
@@ -56,12 +57,13 @@ export function confirmation(request: LandAuthorization, writes: string): { titl
 
 /**
  * The authorization of one call: a forge write goes ahead only once the user confirms it; without a
- * UI to ask, or when the user declines or the call is stopped while asking, it is refused.
+ * UI to ask, or when the user declines or the call is stopped while asking, it is refused. With
+ * `confirm` off (`"delivery": {"confirm": false}` in the user settings) every write goes ahead unasked.
  */
-export function authorizer(ctx: Pick<ExtensionContext, "hasUI" | "ui">, signal: AbortSignal | undefined) {
+export function authorizer(ctx: Pick<ExtensionContext, "hasUI" | "ui">, signal: AbortSignal | undefined, confirm = true) {
   return async (request: LandAuthorization): Promise<void> => {
     const writes = forgeWrites(request)
-    if (writes === null) return
+    if (writes === null || !confirm) return
     if (!ctx.hasUI) {
       throw new LandUnconfirmed(
         `confirmation: observed no UI to ask whether to ${writes}, expected a session that can ask the user; pi's delivery_land writes to the forge only after the user confirms, so land it from an interactive session; nothing was merged or written`,
@@ -85,10 +87,11 @@ export async function runLand(
   signal: AbortSignal | undefined,
   deps: PiLandDeps = {},
   gitlabHosts: readonly string[] = [],
+  confirm = true,
 ): Promise<NeutralToolResult> {
   let outcome: LandOutcome
   try {
-    outcome = await landPullRequest(params, { ...deps.land, cwd: ctx.cwd, gitlabHosts, signal, authorize: authorizer(ctx, signal) })
+    outcome = await landPullRequest(params, { ...deps.land, cwd: ctx.cwd, gitlabHosts, signal, authorize: authorizer(ctx, signal, confirm) })
   } catch (error) {
     if (!(error instanceof LandUnconfirmed)) throw error
     outcome = { ok: false, reason: error.reason, text: `delivery_land refused: ${error.reason}` }
@@ -109,8 +112,10 @@ export function landTool(deps: PiLandDeps = {}): LandTool {
     outputSchema: schema(LAND_OUTPUT),
     // It runs git, gh and glab and may merge a pull request, so OMP's approval mode governs it as exec.
     approval: "exec",
-    execute: async (_id, params, signal, _onUpdate, ctx) =>
-      toToolResult(await runLand(params as LandParams, ctx, signal, deps, callGitlabHosts(ctx, deps.settingsPath))),
+    execute: async (_id, params, signal, _onUpdate, ctx) => {
+      const settings = callSettings(ctx, deps.settingsPath)
+      return toToolResult(await runLand(params as LandParams, ctx, signal, deps, settings.gitlabHosts, settings.confirm))
+    },
   }
 }
 
