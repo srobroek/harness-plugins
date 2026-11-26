@@ -1,7 +1,7 @@
 {
   "name": "beads",
   "description": "Beads issue tracking: bd prime session context, shell gates on bd, git and gh commands, store pinning and the Beads skills.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": {
     "name": "Sjors Robroek",
     "url": "https://github.com/srobroek"

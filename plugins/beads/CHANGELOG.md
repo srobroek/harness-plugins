@@ -1,3 +1,9 @@
+## beads [1.1.0](https://github.com/srobroek/harness-plugins/compare/beads--v1.0.0...beads--v1.1.0) (2026-11-26)
+
+### Features
+
+* **beads:** check recorded progress and acceptance at handoff ([#214](https://github.com/srobroek/harness-plugins/issues/214)) ([f462144](https://github.com/srobroek/harness-plugins/commit/f462144524aeb31bf110291370099c9073da0fb2))
+
 ## beads [1.0.0](https://github.com/srobroek/harness-plugins/compare/beads--v0.9.4...beads--v1.0.0) (2026-11-25)
 
 ### ⚠ BREAKING CHANGES
