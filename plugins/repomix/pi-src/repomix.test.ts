@@ -58,3 +58,46 @@ test("repomix_pack executes against a fixture directory without returning its pa
     rmSync(fixture, { recursive: true, force: true })
   }
 })
+
+test("repomix_pack packs without asking unless the repomix setting confirmPack is true", async () => {
+  const fixture = mkdtempSync(join(tmpdir(), "repomix-pi-confirm-"))
+  const source = join(fixture, "repo")
+  mkdirSync(source)
+  const settingsPath = join(fixture, "settings.json")
+  let runs = 0
+  const exec = async (argv: string[]): Promise<SupervisedRun> => {
+    runs++
+    const output = (argv.find((arg) => arg.startsWith("--output=")) ?? "").slice("--output=".length)
+    writeFileSync(output, "<files></files>")
+    return { kind: "exited", exitCode: 0, signalCode: null, stdout: "Total Files: 0 files\nTotal Tokens: 0 tokens\n", stderr: "" }
+  }
+  const run = async (hasUI: boolean, answer: boolean) => {
+    const registered: Tool[] = []
+    registerRepomix({ registerTool: (tool: Tool) => registered.push(tool) } as unknown as ExtensionAPI, {
+      root: join(fixture, "packs"),
+      exec,
+      which: () => "/bin/repomix",
+      settingsPath,
+    })
+    let asked = 0
+    const ui = {
+      confirm: async () => {
+        asked++
+        return answer
+      },
+    }
+    const execute = registered[0]?.execute as Execute
+    const result = await execute("call", { directory: source }, undefined, () => {}, { cwd: fixture, hasUI, ui } as never)
+    return { asked, text: result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n") }
+  }
+  try {
+    expect(await run(false, false)).toMatchObject({ asked: 0 })
+    expect(runs).toBe(1)
+    writeFileSync(settingsPath, JSON.stringify({ repomix: { confirmPack: true } }))
+    expect((await run(false, true)).text).toContain("confirmation UI is unavailable")
+    expect(await run(true, false)).toMatchObject({ asked: 1, text: expect.stringContaining("pack cancelled") })
+    expect(runs).toBe(1)
+  } finally {
+    rmSync(fixture, { recursive: true, force: true })
+  }
+})
