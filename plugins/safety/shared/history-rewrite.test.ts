@@ -21,6 +21,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { hardGate } from "./guards.ts"
+import { opensAnsiQuote } from "./history-rewrite.ts"
 
 let root: string
 let where: Record<string, string>
@@ -663,8 +664,7 @@ describe("a shell escape in a spelling the guard validates is refused", () => {
     ["an escaped program that is not a rewrite", String.raw`uvx $'ru\146f' check .`],
     ["an escaped uv option name that is not a rewrite", String.raw`uvx $'--quie\164' ruff check .`],
     ["an escaped tag delete", String.raw`git update-ref -d $'refs/tags/v\061'`],
-    ["a plain ANSI-C word", "git log $'--oneline'"],
-    ["a locale string", 'git log $"--oneline"'],
+    ["a plain ANSI-C word before update-ref", "git update-ref $'--stdin' -d refs/heads/x"],
   ] as const
   test.each(harmless)("refuses %s in a canonical checkout, because it cannot be verified", (_name, command) => {
     const refusal = run(command, "canonical")
@@ -1158,6 +1158,68 @@ describe("a rewrite the walker cannot fully parse is refused", () => {
     "rg -gf git-filter-repo .",
   ])("allows the mention in %s", (command) => {
     expect(run(command, "canonical")).toBeUndefined()
+  })
+})
+
+describe("read-only commands with a `$` before a closing quote are not ANSI-C quoting", () => {
+  const repoRoot = (command: string) => `cd {canonical} && ${command}`
+  test.each([
+    ["rev-parse, ls-files and a regex end anchor", repoRoot("git rev-parse --show-toplevel && git ls-files | grep -E '(pyproject.toml|ruff.toml)$' | head")],
+    ["ls-files and a regex end anchor", repoRoot("git ls-files | grep -E '(pyproject.toml|ruff.toml)$'")],
+    ["an anchor in a git grep pattern", repoRoot("git grep -E 'toml$' -- '*.toml'")],
+    ["an anchor in double quotes", repoRoot('git ls-files | grep -E "toml$"')],
+    ["a quoted dollar and a quote", repoRoot("git ls-files | grep -E '^a$' | grep -v 'b$'")],
+  ])("allows %s in a canonical checkout", (_name, command) => {
+    expect(run(command, "canonical")).toBeUndefined()
+  })
+
+  test.each([
+    ["a read-only git next to an unrelated escape word", "git status && echo $'a\\tb'"],
+    ["an ANSI-C argument of a read-only git", "git log $'--oneline'"],
+    ["a locale argument of a read-only git", 'git log $"--oneline"'],
+  ])("allows %s: no rewriting subcommand is present", (_name, command) => {
+    expect(run(command, "canonical")).toBeUndefined()
+  })
+
+  test.each([
+    ["an escaped subcommand next to a read-only git", String.raw`git status && git $'filter-bran\143h' --env-filter true`],
+    ["an escaped program next to a read-only git", String.raw`git status && $'g\151t' filter-branch --env-filter true`],
+    ["an unquoted ANSI-C word beside a rewrite", String.raw`git status && git filter-branch --env-filter $'true'`],
+  ])("still refuses %s", (_name, command) => {
+    expect(run(command, "canonical")?.guard).toBe("history-rewrite")
+  })
+
+  test.each([
+    ["'(a|b)$'", false],
+    ['"a$"', false],
+    ["\"it's $'x\"", false],
+    ["a\\$'b'", false],
+    ["$'a'", true],
+    ['$"a"', true],
+    ["'x'$'y'", true],
+    ['"x"$"y"', true],
+    ["--flag=$'a\\tb'", true],
+    ["$(echo $'a')", true],
+    ["'unterminated$", true],
+  ])("opensAnsiQuote(%s) is %p", (text, expected) => {
+    expect(opensAnsiQuote(text)).toBe(expected)
+  })
+})
+
+describe("a refusal never tells the agent to clone", () => {
+  const messages = [
+    ["filter-branch in place", "git filter-branch --env-filter true", "canonical"],
+    ["filter-branch after cd", "cd {canonical} && git filter-branch --env-filter true", "linked"],
+    ["filter-repo --force", "git filter-repo --force --path a", "linked"],
+    ["an unverifiable word", String.raw`$'g\151t' filter-branch`, "linked"],
+    ["a repository selection", "git --git-dir=x filter-branch --env-filter true", "linked"],
+    ["an unverified gitfile", "git filter-branch --env-filter true", "submodule"],
+  ] as const
+  test.each(messages)("%s", (_name, command, cwd) => {
+    const refusal = run(command, cwd)
+    expect(refusal?.guard).toBe("history-rewrite")
+    expect(refusal?.reason).toContain("existing linked git worktree")
+    expect(refusal?.reason).not.toMatch(/git clone|TMPDIR|temp clone|temp directory/)
   })
 })
 

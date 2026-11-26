@@ -56,7 +56,7 @@ export const MESSAGES: Record<GuardID, string> = {
   "worktree-tmp":
     "Blocked by safety (worktree-tmp-guard): do not create a worktree under /tmp or /private/tmp, where a container bind mount cannot see it. Use a persistent directory outside the system temp dir (for example one your worktree tool manages).",
   "history-rewrite":
-    "Blocked by safety (history-rewrite-guard): history-rewriting commands (`git filter-repo`, `git filter-branch`, `git replace`, `git update-ref -d` on a branch) must not run in place in a canonical checkout, and `filter-repo --force` must not run at all. Clone the repository into a temp directory and run the command there with the tool's workdir set to the clone.",
+    "Blocked by safety (history-rewrite-guard): history-rewriting commands (`git filter-repo`, `git filter-branch`, `git replace`, `git update-ref -d` on a branch) must not run in place in a canonical checkout, and `filter-repo --force` must not run at all. If the command only looks like a rewrite, write it without the construct the guard cannot verify. For a real rewrite, use an existing linked git worktree as the tool's workdir or ask the user. Never clone the repository.",
   "op-guard": OP_MESSAGE,
 }
 

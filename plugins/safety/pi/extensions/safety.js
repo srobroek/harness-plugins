@@ -3227,7 +3227,32 @@ var REPOSITORY_SELECTION = /(?<![\w-])(?:--git-dir|--work-tree|--config-env)(?![
 var INHERITED_SELECTION = ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR"];
 var dynamic = (word) => /[$`]/.test(word) || word.startsWith("~");
 var unreadable = (word) => dynamic(word) || /[\\*?[{]/.test(word);
-var ansiQuoted = (command) => command.words === undefined ? /\$['"]/.test(command.source) : command.words.some((word) => /\$['"]/.test(command.source.slice(word.start, word.end)));
+function opensAnsiQuote(text) {
+  let quote;
+  for (let i = 0;i < text.length; i++) {
+    const char = text[i];
+    if (quote === "'") {
+      if (char === "'")
+        quote = undefined;
+      continue;
+    }
+    if (char === "\\") {
+      i++;
+      continue;
+    }
+    if (quote === '"') {
+      if (char === '"')
+        quote = undefined;
+    } else if (char === "'" || char === '"')
+      quote = char;
+    if (char === "`" || char === "$" && (text[i + 1] === "(" || text[i + 1] === "{"))
+      return /\$['"]/.test(text.slice(i + 1));
+    if (char === "$" && quote === undefined && (text[i + 1] === "'" || text[i + 1] === '"'))
+      return true;
+  }
+  return quote === "'";
+}
+var ansiQuoted = (command) => command.words === undefined ? /\$['"]/.test(command.source) : command.words.some((word) => opensAnsiQuote(command.source.slice(word.start, word.end)));
 var abbreviatesTarget = (arg) => {
   const name = arg.split("=")[0];
   return name.length >= 3 && "--target".startsWith(name);
@@ -3236,9 +3261,41 @@ var quotedProgram = (command) => {
   if (command.argv.length === 0)
     return false;
   const word = command.words?.[0];
-  return word === undefined ? command.argv[0]?.includes("\\") === true || /\$['"]/.test(command.source) : /\$['"]/.test(command.source.slice(word.start, word.end));
+  return word === undefined ? command.argv[0]?.includes("\\") === true || /\$['"]/.test(command.source) : opensAnsiQuote(command.source.slice(word.start, word.end));
 };
 var LOCALE_REASON = 'a `$"\u2026"` locale string is translated by bash when a message catalog is active, so a directory operand written that way cannot be verified, wherever it points';
+var READ_ONLY_SUBCOMMANDS = new Set([
+  "rev-parse",
+  "ls-files",
+  "ls-tree",
+  "ls-remote",
+  "log",
+  "status",
+  "diff",
+  "diff-tree",
+  "diff-index",
+  "diff-files",
+  "show",
+  "show-ref",
+  "for-each-ref",
+  "rev-list",
+  "cat-file",
+  "blame",
+  "shortlog",
+  "describe",
+  "name-rev",
+  "merge-base",
+  "grep",
+  "check-ignore",
+  "count-objects",
+  "whatchanged"
+]);
+function readOnlyGit(command, wrappers) {
+  const git = gitInvocation(command.argv, wrappers);
+  if (git === undefined || git.overridden || !READ_ONLY_SUBCOMMANDS.has(git.subcommand))
+    return false;
+  return !command.argv.slice(0, git.offset).some((word) => /[\\$`]/.test(word)) && !command.argv.slice(1, git.offset - 1).includes("-c");
+}
 var gitOrLauncher = (command, wrappers) => quotedProgram(command) || FILTER_REPO_NAME.test(base(command.argv[0])) || gitInvocation(command.argv, wrappers) !== undefined || launched(command.argv) !== undefined;
 function skipOptions(argv, at, valued) {
   let i = at;
@@ -3638,11 +3695,11 @@ function runnerCommand(command, wrappers) {
   }
   return;
 }
-var GUIDANCE = 'Clone the repository into a temp directory (`git clone <repo> "$TMPDIR/<name>"`) and run the command there with the tool\'s workdir set to the clone; a false refusal costs one retry.';
+var GUIDANCE = "If the command only looks like a rewrite, write it without the construct the guard cannot verify. For a real history rewrite, run it from an existing linked git worktree (the tool's workdir set there) or ask the user. Never clone the repository to get around this.";
 var refused = (what, root) => `${PREFIX}: refused ${what}. ${root} is a canonical checkout (its .git is a directory), and this command rewrites or deletes history in place, which cannot be undone from the work tree. ${GUIDANCE}`;
 var unverified = (what, root) => `${PREFIX}: refused ${what}. ${root} has a .git file that is not a verified linked worktree (a submodule, a separate git directory, or unreadable metadata), and this command rewrites or deletes history in place. ${GUIDANCE}`;
 var uncertain = (what, why) => `${PREFIX}: refused ${what}. It rewrites or deletes history in place, and the guard cannot tell with certainty that it runs in a linked worktree or temp clone (${why}). ${GUIDANCE}`;
-var withConstruct = (what, construct) => `${PREFIX}: refused ${what}. The same shell command also contains ${construct}, which can change the directory the rewrite runs in, so the guard cannot tell where it runs. Set the shell tool's workdir to a temp clone or linked worktree, or run the rewrite on its own. ${GUIDANCE}`;
+var withConstruct = (what, construct) => `${PREFIX}: refused ${what}. The same shell command also contains ${construct}, which can change the directory the rewrite runs in, so the guard cannot tell where it runs. Run the rewrite on its own, with the shell tool's workdir set to an existing linked worktree. ${GUIDANCE}`;
 function repositorySelection(commands) {
   for (const source of new Set(commands.map((command) => command.source))) {
     const found = REPOSITORY_SELECTION.exec(source);
@@ -3651,7 +3708,7 @@ function repositorySelection(commands) {
   }
   return;
 }
-var withSelection = (what, selection) => `${PREFIX}: refused ${what}. ${selection} can point git at a repository other than the one the directory implies, so the guard cannot tell which repository the rewrite changes. Run the rewrite on its own in a temp clone, with the shell tool's workdir set there and without these options. ${GUIDANCE}`;
+var withSelection = (what, selection) => `${PREFIX}: refused ${what}. ${selection} can point git at a repository other than the one the directory implies, so the guard cannot tell which repository the rewrite changes. Run the rewrite on its own, with the shell tool's workdir set to an existing linked worktree and without these options. ${GUIDANCE}`;
 var NON_EXECUTING = new Set(["grep", "rg", "echo", "printf", "cat", "bd", "head", "tail", "wc", "ls", "pip", "pip3"]);
 var GIT_DATA_SUBCOMMANDS = new Set(["log", "commit", "show", "diff", "grep", "status", "add", "blame", "shortlog"]);
 var DESCENDED = new Set(["eval", "xargs"]);
@@ -3774,7 +3831,7 @@ function historyRewrite(commands, cwd, tempRoots = defaultTempRoots(), env = pro
       return unverifiable(`\`${command.argv.slice(0, 4).join(" ")}\``);
   if (commands.some(ansiQuoted) && commands.some((command) => gitOrLauncher(command, wrappers))) {
     for (const command of commands) {
-      if (!gitOrLauncher(command, wrappers))
+      if (!gitOrLauncher(command, wrappers) || readOnlyGit(command, wrappers))
         continue;
       const git = gitInvocation(command.argv, wrappers);
       const text = `\`${command.argv.slice(0, 4).join(" ")}\``;
@@ -3820,7 +3877,7 @@ function historyRewrite(commands, cwd, tempRoots = defaultTempRoots(), env = pro
           return uncertain(text, "an earlier command may set uv's UV_WORKING_DIR or UV_PROJECT");
       }
       if (rewrite.args.some((arg) => arg === "-f" || spells(arg, "--force")))
-        return `${PREFIX}: refused ${text} with --force. filter-repo --force overwrites the repository's refs and history in the directory it runs in, wherever that is. Run it without --force in a fresh temp clone with the tool's workdir set there; a fresh clone needs no --force.`;
+        return `${PREFIX}: refused ${text} with --force. filter-repo --force overwrites the repository's refs and history in the directory it runs in, wherever that is. Do not pass --force. ${GUIDANCE}`;
       if (escapedSpelling(command.argv.slice(1)))
         return uncertain(text, "an option is spelled with a shell escape, so its name cannot be read");
       if (command.source.includes('$"'))
@@ -4698,7 +4755,7 @@ var MESSAGES2 = {
   "remote-exec": "Blocked by safety (remote-exec-guard): this command would execute content fetched from the network without review: a download piped into a shell, a shell or `eval` running a fetch's output, or a netcat invocation with an exec flag. Download to a file, inspect it, and run only an explicitly reviewed script.",
   attribution: "Blocked by safety (attribution-guard): this commit message carries AI-assistant attribution (a Co-authored-by trailer naming an assistant, a 'Generated with' line, or an assistant noreply address). Rewrite the `-m`/`--message` text, the `--trailer`, or the file supplied to `-F`/`--file`, so the commit names only the human author.",
   "worktree-tmp": "Blocked by safety (worktree-tmp-guard): do not create a worktree under /tmp or /private/tmp, where a container bind mount cannot see it. Use a persistent directory outside the system temp dir (for example one your worktree tool manages).",
-  "history-rewrite": "Blocked by safety (history-rewrite-guard): history-rewriting commands (`git filter-repo`, `git filter-branch`, `git replace`, `git update-ref -d` on a branch) must not run in place in a canonical checkout, and `filter-repo --force` must not run at all. Clone the repository into a temp directory and run the command there with the tool's workdir set to the clone.",
+  "history-rewrite": "Blocked by safety (history-rewrite-guard): history-rewriting commands (`git filter-repo`, `git filter-branch`, `git replace`, `git update-ref -d` on a branch) must not run in place in a canonical checkout, and `filter-repo --force` must not run at all. If the command only looks like a rewrite, write it without the construct the guard cannot verify. For a real rewrite, use an existing linked git worktree as the tool's workdir or ask the user. Never clone the repository.",
   "op-guard": OP_MESSAGE
 };
 var DESTRUCTIVE = new Set(["rm", "rmdir", "dd", "shred", "truncate", "unlink", "wipefs"]);
