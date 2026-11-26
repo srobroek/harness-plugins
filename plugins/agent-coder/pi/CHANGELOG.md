@@ -1,3 +1,9 @@
+## agent-coder [0.14.2](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.14.1...agent-coder--v0.14.2) (2026-11-26)
+
+### Bug Fixes
+
+* **safety:** stop refusing read-only git over a quoted regex anchor; drop clone-to-temp guidance ([#216](https://github.com/srobroek/harness-plugins/issues/216)) ([a33afd8](https://github.com/srobroek/harness-plugins/commit/a33afd853a55d047fa64409058da684564b3e264))
+
 ## agent-coder [0.14.1](https://github.com/srobroek/harness-plugins/compare/agent-coder--v0.14.0...agent-coder--v0.14.1) (2026-11-25)
 
 ### Bug Fixes
