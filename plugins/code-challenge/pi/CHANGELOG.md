@@ -1,3 +1,9 @@
+## code-challenge [2.2.1](https://github.com/srobroek/harness-plugins/compare/code-challenge--v2.2.0...code-challenge--v2.2.1) (2026-11-26)
+
+### Bug Fixes
+
+* **code-challenge:** make the challenger's delegation section harness-neutral ([#212](https://github.com/srobroek/harness-plugins/issues/212)) ([c4020d9](https://github.com/srobroek/harness-plugins/commit/c4020d98d273517a78f3bdfbb650ee55b6618657))
+
 ## code-challenge [2.2.0](https://github.com/srobroek/harness-plugins/compare/code-challenge--v2.1.3...code-challenge--v2.2.0) (2026-11-26)
 
 ### Features
