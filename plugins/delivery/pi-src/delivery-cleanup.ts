@@ -9,10 +9,13 @@
 // worktree of another repository is refused. Nothing here prompts, so a session without a UI (a
 // subagent) runs it the same way; OMP's approval mode decides whether to ask before the call.
 //
-// Only types come from the host package, so the bundle imports nothing from pi or OMP at runtime.
-// OMP loads the bundle unchanged.
+// Only types and `getAgentDir` come from the host package, so the bundle imports nothing else from pi or OMP
+// at runtime. `getAgentDir` locates the user's settings file for the `delivery` key. OMP loads the bundle unchanged.
 
+import { join } from "node:path"
 import type { AgentToolResult, ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent"
+import { getAgentDir } from "@earendil-works/pi-coding-agent"
+import { loadPiPluginSettings, PI_SETTINGS_FILE } from "@srobroek/opencode-lib/pi-settings"
 import { ownershipOf, readClaim } from "@srobroek/opencode-lib/worktree-claims"
 import { holdsState, type LockOptions, lockedWorktreeRead, lockedWorktreeRemoval } from "@srobroek/opencode-lib/worktree-locks"
 import type { TSchema } from "typebox"
@@ -28,6 +31,7 @@ import {
   deferredToolResult,
   explicitDeferral,
 } from "../opencode/src/cleanup-tool.ts"
+import { parseGitlabHosts } from "../opencode/src/forge-adapter.ts"
 import { type GitRunner, repositoryContext } from "../opencode/src/landing-receipt.ts"
 
 /** The lease owner written into the lock record. Diagnostic only: the lock is the same one every remover takes. */
@@ -66,6 +70,8 @@ export type PiCleanupDeps = {
   /** The Git reader behind the session repository's common directory. */
   observe?: GitRunner
   now?: () => number
+  /** The user settings file whose `delivery` key may name GitLab hosts; a host passes none, so the default path is read. */
+  settingsPath?: string
 }
 
 type SessionCoordination = Required<Pick<CleanupDeps, "proofSection" | "removalSection" | "authorize" | "coordinate">>
@@ -109,15 +115,25 @@ export function sessionCoordination(cwd: string, deps: Pick<PiCleanupDeps, "lock
   }
 }
 
+/**
+ * The GitLab hosts named under the `delivery` key of pi's settings file, and the warning when that key
+ * could not be read. Absent or unusable, only the built-in hosts are recognized.
+ */
+export function deliverySettings(path: string): { gitlabHosts: readonly string[]; warning?: string } {
+  const loaded = loadPiPluginSettings(path, "delivery", "only the built-in GitLab hosts are recognized")
+  return { gitlabHosts: parseGitlabHosts(loaded.options.gitlabHosts), warning: loaded.warning }
+}
+
 /** One explicit cleanup in the session's repository at `cwd`, in the host-neutral result form. */
 export async function runCleanup(
   params: DeliveryCleanupParams,
   cwd: string,
   signal: AbortSignal | undefined,
   deps: PiCleanupDeps = {},
+  gitlabHosts: readonly string[] = [],
 ): Promise<CleanupToolResult> {
   try {
-    const result = await cleanupDelivery(params, cwd, { ...deps.cleanup, signal, ...sessionCoordination(cwd, deps) })
+    const result = await cleanupDelivery(params, cwd, { ...deps.cleanup, gitlabHosts, signal, ...sessionCoordination(cwd, deps) })
     return cleanupToolResult(result)
   } catch (error) {
     if (error instanceof CleanupDeferred) return deferredToolResult(error.deferred)
@@ -149,7 +165,11 @@ export function cleanupTool(deps: PiCleanupDeps = {}): CleanupTool {
     outputSchema: schema(CLEANUP_OUTPUT),
     // It runs git, gh, glab and bd and removes a worktree, so OMP's approval mode governs it as exec.
     approval: "exec",
-    execute: async (_id, params, signal, _onUpdate, ctx) => toToolResult(await runCleanup(params as DeliveryCleanupParams, ctx.cwd, signal, deps)),
+    execute: async (_id, params, signal, _onUpdate, ctx) => {
+      const settings = deliverySettings(deps.settingsPath ?? join(getAgentDir(), PI_SETTINGS_FILE))
+      if (settings.warning !== undefined && ctx.hasUI) ctx.ui.notify(settings.warning, "warning")
+      return toToolResult(await runCleanup(params as DeliveryCleanupParams, ctx.cwd, signal, deps, settings.gitlabHosts))
+    },
   }
 }
 

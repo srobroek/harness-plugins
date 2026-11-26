@@ -27,6 +27,7 @@ import {
   forgeTarget,
   mergeArgs,
   normalizeRepoPath,
+  parseGitlabHosts,
   REMOTE_NAME,
   redactRemote,
   remoteBranchAbsent,
@@ -172,44 +173,44 @@ describe("forgeEnvironment", () => {
 
 describe("detectForge", () => {
   test("https remotes", () => {
-    expect(detectForge("https://github.com/srobroek/omp-plugins.git")).toBe("github")
-    expect(detectForge("https://gitlab.com/group/project.git")).toBe("gitlab")
+    expect(detectForge("https://github.com/srobroek/omp-plugins.git", [])).toBe("github")
+    expect(detectForge("https://gitlab.com/group/project.git", [])).toBe("gitlab")
   })
 
   test("scp-like ssh remotes", () => {
-    expect(detectForge("git@github.com:srobroek/omp-plugins.git")).toBe("github")
-    expect(detectForge("git@gitlab.com:group/project.git")).toBe("gitlab")
+    expect(detectForge("git@github.com:srobroek/omp-plugins.git", [])).toBe("github")
+    expect(detectForge("git@gitlab.com:group/project.git", [])).toBe("gitlab")
   })
 
   test("ssh:// remotes, including an explicit port", () => {
-    expect(detectForge("ssh://git@github.com/srobroek/omp-plugins.git")).toBe("github")
-    expect(detectForge("ssh://git@gitlab.com:2222/group/project.git")).toBe("gitlab")
+    expect(detectForge("ssh://git@github.com/srobroek/omp-plugins.git", [])).toBe("github")
+    expect(detectForge("ssh://git@gitlab.com:2222/group/project.git", [])).toBe("gitlab")
   })
 
   test("embedded credentials do not hide the host", () => {
-    expect(detectForge("https://someone:ghp_token@github.com/o/r")).toBe("github")
-    expect(detectForge("https://oauth2:glpat-token@gitlab.com/g/p")).toBe("gitlab")
+    expect(detectForge("https://someone:ghp_token@github.com/o/r", [])).toBe("github")
+    expect(detectForge("https://oauth2:glpat-token@gitlab.com/g/p", [])).toBe("gitlab")
   })
 
   test("host comparison is case-insensitive", () => {
-    expect(detectForge("https://GitHub.COM/o/r")).toBe("github")
+    expect(detectForge("https://GitHub.COM/o/r", [])).toBe("github")
   })
 
   test("documented alternate ssh endpoints are the same forge", () => {
-    expect(detectForge("ssh://git@ssh.github.com:443/o/r.git")).toBe("github")
-    expect(detectForge("ssh://git@altssh.gitlab.com:443/g/p.git")).toBe("gitlab")
+    expect(detectForge("ssh://git@ssh.github.com:443/o/r.git", [])).toBe("github")
+    expect(detectForge("ssh://git@altssh.gitlab.com:443/g/p.git", [])).toBe("gitlab")
   })
 
   test("alternate transport hosts resolve to canonical CLI and API hosts", () => {
-    expect(forgeTarget("ssh://git@ssh.github.com:443/o/r.git")).toEqual({
+    expect(forgeTarget("ssh://git@ssh.github.com:443/o/r.git", [])).toEqual({
       forge: "github",
       canonicalHost: "github.com",
     })
-    expect(forgeTarget("ssh://git@altssh.gitlab.com:443/g/p.git")).toEqual({
+    expect(forgeTarget("ssh://git@altssh.gitlab.com:443/g/p.git", [])).toEqual({
       forge: "gitlab",
       canonicalHost: "gitlab.com",
     })
-    expect(forgeTarget("ssh://git@evil.example:443/g/p.git")).toBeNull()
+    expect(forgeTarget("ssh://git@evil.example:443/g/p.git", [])).toBeNull()
   })
 
   test("the gitlab.example.com instance is GitLab, and its SSH-only host addresses the API host", () => {
@@ -220,108 +221,108 @@ describe("detectForge", () => {
       "ssh://git@ssh.gitlab.example.com/example-org/example-repo.git",
       "https://gitlab.example.com/example-org/example-repo.git",
     ]) {
-      expect(forgeTarget(url)).toEqual({ forge: "gitlab", canonicalHost: "gitlab.example.com" })
+      expect(forgeTarget(url, [])).toEqual({ forge: "gitlab", canonicalHost: "gitlab.example.com" })
       expect(repoPathFromRemote(url)).toBe("example-org/example-repo")
     }
-    expect(forgeTarget("git@ssh.gitlab.example.com.evil.example:example-org/p.git")).toBeNull()
-    expect(forgeTarget("git@example.com:example-org/p.git")).toBeNull()
+    expect(forgeTarget("git@ssh.gitlab.example.com.evil.example:example-org/p.git", [])).toBeNull()
+    expect(forgeTarget("git@example.com:example-org/p.git", [])).toBeNull()
   })
   test("a lookalike host is not the forge", () => {
-    expect(detectForge("https://github.com.evil.example/o/r")).toBe("unknown")
-    expect(detectForge("git@notgithub.com:o/r.git")).toBe("unknown")
-    expect(detectForge("https://gitlab.company.example/g/p.git")).toBe("unknown")
+    expect(detectForge("https://github.com.evil.example/o/r", [])).toBe("unknown")
+    expect(detectForge("git@notgithub.com:o/r.git", [])).toBe("unknown")
+    expect(detectForge("https://gitlab.company.example/g/p.git", [])).toBe("unknown")
   })
 
   test("a query or fragment containing @forge cannot become the authority", () => {
     // The defect this pins: a delimiter scan that stops at `/` and `:` but not at
     // `?` or `#` reads the `@` in a query as userinfo and hands back github.com.
-    expect(detectForge("https://evil.example?@github.com/")).toBe("unknown")
-    expect(detectForge("https://evil.example#@github.com/")).toBe("unknown")
-    expect(detectForge("https://evil.example?x=@github.com")).toBe("unknown")
-    expect(detectForge("https://evil.example#x@github.com")).toBe("unknown")
-    expect(detectForge("ssh://evil.example?@github.com/")).toBe("unknown")
-    expect(detectForge("ssh://evil.example#@gitlab.com/")).toBe("unknown")
-    expect(detectForge("https://evil.example?@gitlab.com:443/g/p")).toBe("unknown")
+    expect(detectForge("https://evil.example?@github.com/", [])).toBe("unknown")
+    expect(detectForge("https://evil.example#@github.com/", [])).toBe("unknown")
+    expect(detectForge("https://evil.example?x=@github.com", [])).toBe("unknown")
+    expect(detectForge("https://evil.example#x@github.com", [])).toBe("unknown")
+    expect(detectForge("ssh://evil.example?@github.com/", [])).toBe("unknown")
+    expect(detectForge("ssh://evil.example#@gitlab.com/", [])).toBe("unknown")
+    expect(detectForge("https://evil.example?@gitlab.com:443/g/p", [])).toBe("unknown")
   })
 
   test("a path, ref, or userinfo containing the forge host cannot spoof it", () => {
-    expect(detectForge("https://evil.example/github.com/o/r")).toBe("unknown")
-    expect(detectForge("https://evil.example/o/r@github.com")).toBe("unknown")
+    expect(detectForge("https://evil.example/github.com/o/r", [])).toBe("unknown")
+    expect(detectForge("https://evil.example/o/r@github.com", [])).toBe("unknown")
     // Here github.com:443 is userinfo, and evil.example is the real authority.
-    expect(detectForge("https://github.com:443@evil.example/o/r")).toBe("unknown")
-    expect(detectForge("https://github.com@evil.example/o/r")).toBe("unknown")
-    expect(detectForge("ssh://gitlab.com@evil.example/g/p")).toBe("unknown")
+    expect(detectForge("https://github.com:443@evil.example/o/r", [])).toBe("unknown")
+    expect(detectForge("https://github.com@evil.example/o/r", [])).toBe("unknown")
+    expect(detectForge("ssh://gitlab.com@evil.example/g/p", [])).toBe("unknown")
   })
 
   test("a backslash is refused, because URL and RFC 3986 disagree about the host", () => {
     // WHATWG URL folds `\` to `/` and answers github.com; RFC 3986, which curl
     // and therefore Git follow, reads the authority as github.com\@evil.example.
-    expect(detectForge("https://github.com\\@evil.example/o/r")).toBe("unknown")
-    expect(detectForge("https://evil.example\\@github.com/o/r")).toBe("unknown")
-    expect(detectForge("https://github.com\\.evil.example/o/r")).toBe("unknown")
-    expect(detectForge("git@github.com:o\\r")).toBe("unknown")
+    expect(detectForge("https://github.com\\@evil.example/o/r", [])).toBe("unknown")
+    expect(detectForge("https://evil.example\\@github.com/o/r", [])).toBe("unknown")
+    expect(detectForge("https://github.com\\.evil.example/o/r", [])).toBe("unknown")
+    expect(detectForge("git@github.com:o\\r", [])).toBe("unknown")
   })
 
   test("a homoglyph host is punycoded and fails the allowlist", () => {
     // Cyrillic i in "github", Cyrillic a in "gitlab".
-    expect(detectForge("https://gіthub.com/o/r")).toBe("unknown")
-    expect(detectForge("https://gitlаb.com/g/p")).toBe("unknown")
+    expect(detectForge("https://gіthub.com/o/r", [])).toBe("unknown")
+    expect(detectForge("https://gitlаb.com/g/p", [])).toBe("unknown")
   })
 
   test("an authority that is not a hostname is unknown", () => {
-    expect(detectForge("https://[::1]/o/r")).toBe("unknown")
-    expect(detectForge("https://127.0.0.1/o/r")).toBe("unknown")
-    expect(detectForge("https://")).toBe("unknown")
-    expect(detectForge("https:///o/r")).toBe("unknown")
-    expect(detectForge("ssh://@github.com/o/r")).toBe("github")
+    expect(detectForge("https://[::1]/o/r", [])).toBe("unknown")
+    expect(detectForge("https://127.0.0.1/o/r", [])).toBe("unknown")
+    expect(detectForge("https://", [])).toBe("unknown")
+    expect(detectForge("https:///o/r", [])).toBe("unknown")
+    expect(detectForge("ssh://@github.com/o/r", [])).toBe("github")
   })
 
   test("a query or fragment on a real forge remote is still that forge", () => {
-    expect(detectForge("https://github.com/o/r?x=1#y")).toBe("github")
-    expect(detectForge("https://gitlab.com/g/p#frag")).toBe("gitlab")
-    expect(detectForge("https://user:pass@github.com:443/o/r?x=1")).toBe("github")
+    expect(detectForge("https://github.com/o/r?x=1#y", [])).toBe("github")
+    expect(detectForge("https://gitlab.com/g/p#frag", [])).toBe("gitlab")
+    expect(detectForge("https://user:pass@github.com:443/o/r?x=1", [])).toBe("github")
   })
 
   test("null, empty, and local remotes are unknown", () => {
-    expect(detectForge(null)).toBe("unknown")
-    expect(detectForge("")).toBe("unknown")
-    expect(detectForge("   ")).toBe("unknown")
-    expect(detectForge("/Users/example/dev/omp-plugins")).toBe("unknown")
-    expect(detectForge("./omp-plugins")).toBe("unknown")
-    expect(detectForge("../omp-plugins")).toBe("unknown")
-    expect(detectForge("~/dev/omp-plugins")).toBe("unknown")
-    expect(detectForge("C:\\dev\\omp-plugins")).toBe("unknown")
+    expect(detectForge(null, [])).toBe("unknown")
+    expect(detectForge("", [])).toBe("unknown")
+    expect(detectForge("   ", [])).toBe("unknown")
+    expect(detectForge("/Users/example/dev/omp-plugins", [])).toBe("unknown")
+    expect(detectForge("./omp-plugins", [])).toBe("unknown")
+    expect(detectForge("../omp-plugins", [])).toBe("unknown")
+    expect(detectForge("~/dev/omp-plugins", [])).toBe("unknown")
+    expect(detectForge("C:\\dev\\omp-plugins", [])).toBe("unknown")
   })
 
   test("only https, ssh, and scp-like spellings are trusted transports", () => {
-    expect(detectForge("file:///Users/example/dev/omp-plugins")).toBe("unknown")
-    expect(detectForge("git://github.com/o/r.git")).toBe("unknown")
-    expect(detectForge("git+ssh://git@github.com/o/r.git")).toBe("unknown")
-    expect(detectForge("ftp://github.com/o/r")).toBe("unknown")
-    expect(detectForge("forge://github.com/o/r")).toBe("unknown")
+    expect(detectForge("file:///Users/example/dev/omp-plugins", [])).toBe("unknown")
+    expect(detectForge("git://github.com/o/r.git", [])).toBe("unknown")
+    expect(detectForge("git+ssh://git@github.com/o/r.git", [])).toBe("unknown")
+    expect(detectForge("ftp://github.com/o/r", [])).toBe("unknown")
+    expect(detectForge("forge://github.com/o/r", [])).toBe("unknown")
     // Plain HTTP is not a transport either vendor serves; unknown is the safe answer.
-    expect(detectForge("http://github.com/o/r")).toBe("unknown")
-    expect(detectForge("http://gitlab.com/g/p")).toBe("unknown")
+    expect(detectForge("http://github.com/o/r", [])).toBe("unknown")
+    expect(detectForge("http://gitlab.com/g/p", [])).toBe("unknown")
   })
 
   test("a bare host with no scheme names no verified transport", () => {
-    expect(detectForge("github.com/srobroek/omp-plugins")).toBe("unknown")
-    expect(detectForge("gitlab.com/group/project")).toBe("unknown")
-    expect(detectForge("github.com")).toBe("unknown")
-    expect(detectForge("git@github.com")).toBe("unknown")
+    expect(detectForge("github.com/srobroek/omp-plugins", [])).toBe("unknown")
+    expect(detectForge("gitlab.com/group/project", [])).toBe("unknown")
+    expect(detectForge("github.com", [])).toBe("unknown")
+    expect(detectForge("git@github.com", [])).toBe("unknown")
   })
 
   test("an unverified scheme is refused, never re-read as scp-like", () => {
     // `git://github.com:9418/o/r` has a colon before a slash, so a parser that
     // fell back to the scp-like branch would happily call this GitHub.
-    expect(detectForge("git://github.com:9418/o/r")).toBe("unknown")
-    expect(detectForge("http://github.com:8080/o/r")).toBe("unknown")
+    expect(detectForge("git://github.com:9418/o/r", [])).toBe("unknown")
+    expect(detectForge("http://github.com:8080/o/r", [])).toBe("unknown")
   })
 
   test("a prototype key is not a forge", () => {
-    expect(detectForge("https://constructor/o/r")).toBe("unknown")
-    expect(detectForge("https://__proto__/o/r")).toBe("unknown")
-    expect(detectForge("https://toString/o/r")).toBe("unknown")
+    expect(detectForge("https://constructor/o/r", [])).toBe("unknown")
+    expect(detectForge("https://__proto__/o/r", [])).toBe("unknown")
+    expect(detectForge("https://toString/o/r", [])).toBe("unknown")
   })
 
   test("a polluted prototype cannot add a forge host", () => {
@@ -333,7 +334,7 @@ describe("detectForge", () => {
       writable: true,
     })
     try {
-      expect(detectForge(`https://${pollutedHost}/o/r`)).toBe("unknown")
+      expect(detectForge(`https://${pollutedHost}/o/r`, [])).toBe("unknown")
     } finally {
       Reflect.deleteProperty(Object.prototype, pollutedHost)
     }
@@ -360,7 +361,7 @@ describe("normalizeRepoPath", () => {
       "https://github.com/acme/project\0",
       "https://github.com/acme/project\u007f",
     ]) {
-      expect(forgeTarget(remote)).toBeNull()
+      expect(forgeTarget(remote, [])).toBeNull()
     }
   })
 })
@@ -516,6 +517,33 @@ describe("autoDeleteSetting", () => {
       "--hostname",
       "gitlab.example.com",
     ])
+  })
+
+  test("configured GitLab hosts are parsed, validated, and matched on web and ssh. names only", () => {
+    const hosts = parseGitlabHosts(["Gitlab.Example.org", " gitlab.example.org ", "bad host", "https://x.example.org", 7, "-x.example.org", "localhost"])
+    expect(hosts).toEqual(["gitlab.example.org"])
+    expect(parseGitlabHosts("gitlab.example.org")).toEqual([])
+    for (const url of [
+      "git@ssh.gitlab.example.org:group/p.git",
+      "ssh://git@ssh.gitlab.example.org/group/p.git",
+      "https://gitlab.example.org/group/p.git",
+    ]) {
+      expect(forgeTarget(url, hosts)).toEqual({ forge: "gitlab", canonicalHost: "gitlab.example.org" })
+      expect(detectForge(url, hosts)).toBe("gitlab")
+    }
+    expect(forgeTarget("https://gitlab.example.org/group/p.git", [])).toBeNull()
+    expect(forgeTarget("git@ssh.gitlab.example.net:group/p.git", hosts)).toBeNull()
+    expect(forgeTarget("git@ssh.gitlab.example.org.evil.example:group/p.git", hosts)).toBeNull()
+    expect(forgeTarget("https://gitlab.com/group/p.git", hosts)).toEqual({ forge: "gitlab", canonicalHost: "gitlab.com" })
+  })
+
+  test("a configured host reaches the GitLab API only as its canonical web host", async () => {
+    const configured = spy(completed(0, gitlabProject(true)))
+    expect(await autoDeleteSetting("gitlab", "g/p", configured.run, "gitlab.example.org", ["gitlab.example.org"])).toBe("on")
+    expect(configured.calls[0]?.argv.slice(-2)).toEqual(["--hostname", "gitlab.example.org"])
+    const unlisted = spy(completed(0, gitlabProject(true)))
+    expect(await autoDeleteSetting("gitlab", "g/p", unlisted.run, "gitlab.example.net", ["gitlab.example.org"])).toBe("unknown")
+    expect(unlisted.calls).toHaveLength(0)
   })
 
   test("an API host outside the allowlist is never put on a command line", async () => {
@@ -780,7 +808,7 @@ describe("enableAutoDelete", () => {
     for (const forge of forges) {
       await autoDeleteSetting(forge, "group/project", run)
       await remoteBranchAbsent("origin", "omp/agent/omp-plugins-9ej3.4", REPO_CWD, run)
-      detectForge("https://github.com/group/project.git")
+      detectForge("https://github.com/group/project.git", [])
       try {
         mergeArgs(forge, 42)
       } catch {
@@ -1307,6 +1335,7 @@ describe("every issued command", () => {
       "mergeArgs",
       "normalizeRepoPath",
       "observeGithubBranch",
+      "parseGitlabHosts",
       "readCheckoutObjects",
       "redactRemote",
       "remoteBranchAbsent",

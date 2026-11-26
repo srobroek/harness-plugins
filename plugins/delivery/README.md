@@ -249,7 +249,11 @@ Requires Git 2.38 or newer: the content proof compares the landed tree with
 
 Supported forges: `github.com` (including `ssh.github.com`), `gitlab.com`
 (`altssh.gitlab.com`) and self-hosted GitLab at `gitlab.example.com`
-(`ssh.gitlab.example.com`). Other unconfigured hosts are refused.
+(`ssh.gitlab.example.com`). Any other self-hosted GitLab is refused as
+`repo.forge "unknown"` unless it is named in the `gitlabHosts` option: a list of bare host
+names, for example `["gitlab.example.org"]`. A listed host is GitLab on its own name and on
+its `ssh.` name, and its API is addressed at the name itself. Land and cleanup read the same
+list. Entries that are not bare host names are ignored, which leaves their remotes refused.
 
 ### delivery_cleanup
 

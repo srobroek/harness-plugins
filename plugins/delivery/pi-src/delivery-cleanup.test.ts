@@ -11,7 +11,7 @@ import { CLEANUP_INPUT, CLEANUP_OUTPUT } from "../opencode/src/cleanup-tool.ts"
 import { type CliResult, type CliRunner, runCli, SAFE_GIT_ARGS } from "../opencode/src/forge-adapter.ts"
 import { buildReceipt, type LandingReceipt, receiptDirectory, repoKey, repositoryContext, writeReceipt } from "../opencode/src/landing-receipt.ts"
 import pkg from "../package.json" with { type: "json" }
-import delivery, { type CleanupTool, cleanupTool, DESCRIPTION, otherRepositoryReason, type PiCleanupDeps } from "./delivery-cleanup.ts"
+import delivery, { type CleanupTool, cleanupTool, DESCRIPTION, deliverySettings, otherRepositoryReason, type PiCleanupDeps } from "./delivery-cleanup.ts"
 
 // Each test builds real Git repositories (a bare remote, a checkout, a linked worktree, a merge)
 // and runs real git for everything but the forge reads: 2.3-5.8 s per test, 46 s for the file, on
@@ -292,4 +292,15 @@ describe("another repository is refused", () => {
     expect(existsSync(foreign)).toBe(true)
     expect(existsSync(f.linked)).toBe(true)
   })
+})
+
+test("deliverySettings reads the delivery key's gitlabHosts and warns when that key is unusable", () => {
+  const path = join(scratch("settings"), "settings.json")
+  writeFileSync(path, JSON.stringify({ delivery: { gitlabHosts: ["gitlab.example.org", "not a host"] } }))
+  expect(deliverySettings(path)).toEqual({ gitlabHosts: ["gitlab.example.org"], warning: undefined })
+  writeFileSync(path, JSON.stringify({ delivery: "yes" }))
+  const unusable = deliverySettings(path)
+  expect(unusable.gitlabHosts).toEqual([])
+  expect(unusable.warning).toContain('the "delivery" key')
+  expect(deliverySettings(join(scratch("absent"), "settings.json"))).toEqual({ gitlabHosts: [], warning: undefined })
 })

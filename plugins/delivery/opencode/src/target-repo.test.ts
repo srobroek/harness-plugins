@@ -49,7 +49,7 @@ describe("remotePaths", () => {
     const { read } = reader({
       [dir]: { origin: "https://github.com/acme/widgets.git", odd: "/some/local/path" },
     })
-    expect(await remotePaths(read, dir)).toEqual([
+    expect(await remotePaths(read, dir, [])).toEqual([
       { name: "origin", path: "acme/widgets" },
       { name: "odd", path: null },
     ])
@@ -66,14 +66,14 @@ describe("retargetRepository", () => {
   ] as const)("keeps the session directory for %s", async (_name, input) => {
     const session = checkout()
     const { read } = reader({ [session]: SESSION })
-    expect(await retargetRepository(input, session, read)).toEqual({ cwd: session, retargeted: false })
+    expect(await retargetRepository(input, session, read, [])).toEqual({ cwd: session, retargeted: false })
   })
 
   test("runs in the canonical root of the clone whose remote names repo", async () => {
     const session = checkout()
     const target = checkout()
     const { read } = reader({ [session]: SESSION, [target]: { upstream: "git@github.com:acme/widgets.git" } })
-    expect(await retargetRepository({ repo: "acme/widgets", repoPath: target }, session, read)).toEqual({
+    expect(await retargetRepository({ repo: "acme/widgets", repoPath: target }, session, read, [])).toEqual({
       cwd: target,
       retargeted: true,
       commonDir: realpathSync(join(target, ".git")),
@@ -85,7 +85,7 @@ describe("retargetRepository", () => {
     const target = join(session, "nested")
     mkdirSync(join(target, ".git"), { recursive: true })
     const { read } = reader({ [session]: SESSION, [target]: { origin: "https://github.com/acme/widgets.git" } })
-    expect(await retargetRepository({ repo: "acme/widgets", worktree: "nested" }, session, read)).toEqual({
+    expect(await retargetRepository({ repo: "acme/widgets", worktree: "nested" }, session, read, [])).toEqual({
       cwd: target,
       retargeted: true,
       commonDir: realpathSync(join(target, ".git")),
@@ -100,7 +100,7 @@ describe("retargetRepository", () => {
     const session = checkout()
     const { read } = reader({ [session]: SESSION })
     const input = "repo" in extra ? extra : { repo: "acme/widgets", ...extra }
-    const outcome = await retargetRepository(input, session, read)
+    const outcome = await retargetRepository(input, session, read, [])
     if (!("reason" in outcome)) throw new Error("expected a refusal")
     for (const fragment of fragments) expect(outcome.reason).toContain(fragment)
   })
@@ -109,7 +109,7 @@ describe("retargetRepository", () => {
     const session = checkout()
     const target = checkout()
     const { read } = reader({ [session]: SESSION, [target]: { origin: "https://github.com/acme/other.git" } })
-    const outcome = await retargetRepository({ repo: "acme/widgets", repoPath: target }, session, read)
+    const outcome = await retargetRepository({ repo: "acme/widgets", repoPath: target }, session, read, [])
     if (!("reason" in outcome)) throw new Error("expected a refusal")
     expect(outcome.reason).toContain("origin=acme/other")
     expect(outcome.reason).toContain('expected one naming "acme/widgets"')

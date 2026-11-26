@@ -38,7 +38,7 @@ import {
   deferredToolResult,
   metadataOf,
 } from "./cleanup-tool.ts"
-import { MERGE_METHODS } from "./forge-adapter.ts"
+import { MERGE_METHODS, parseGitlabHosts } from "./forge-adapter.ts"
 import { type LandOutcome, type LandParams, landPullRequest } from "./land.ts"
 import { createPendingCleanup, type PendingDeps } from "./pending-cleanup.ts"
 import { malformedNote, parseVerdict } from "./verdict.ts"
@@ -81,6 +81,8 @@ export type DeliveryOptions = {
   verdicts: boolean
   /** Run the cleanup in-process after a successful land. Default true. */
   autoCleanup: boolean
+  /** GitLab hosts beyond the built-in ones, as bare names; a remote on `<host>` or `ssh.<host>` is then GitLab. Default none. */
+  gitlabHosts: readonly string[]
 }
 
 /** `plugin.list` during setup must not hold up startup; a slow answer counts as "not installed". */
@@ -110,6 +112,7 @@ export function parseOptions(raw: Record<string, unknown> | undefined): Delivery
     fanOut: options.fanOut !== false,
     verdicts: options.verdicts !== false,
     autoCleanup: options.autoCleanup !== false,
+    gitlabHosts: parseGitlabHosts(options.gitlabHosts),
   }
 }
 
@@ -294,6 +297,7 @@ export async function setupDelivery(
     ctx,
     cwd: directory,
     env: environment(options),
+    gitlabHosts: options.gitlabHosts,
     host: () => hostWorktrees(ctx),
     hostFor: () => worktreeRegistry(ctx),
     ...overrides,
@@ -312,6 +316,7 @@ export async function setupDelivery(
         const outcome = await landPullRequest(input as LandParams, {
           cwd: directory,
           env: environment(options),
+          gitlabHosts: options.gitlabHosts,
           signal: context.signal,
           authorize: (request) => ask(request.resource, { ...request }),
         })
@@ -335,6 +340,7 @@ export async function setupDelivery(
               const askCleanup = asserter(ctx, context, CLEANUP_ACTION)
               return cleanupDelivery(params, directory, {
                 env: environment(options),
+                gitlabHosts: options.gitlabHosts,
                 signal: context.signal,
                 authorize: async (request) => {
                   try {
@@ -375,6 +381,7 @@ export async function setupDelivery(
         try {
           result = await cleanupDelivery(input as DeliveryCleanupParams, directory, {
             env: environment(options),
+            gitlabHosts: options.gitlabHosts,
             signal: context.signal,
             ...pending.explicit((req) => ask(req.worktree, { ...req }), context.sessionID),
             host: hostWorktrees(ctx),
