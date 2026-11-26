@@ -92,6 +92,10 @@ It pins no model and declares the `reviewer` tier through the
 `x-opencode-model-role` request header; without model-roles it inherits the caller's
 model. Set `agent.adversarial-challenger.model` to pin one.
 
+On Pi, quality ships no agent: `pi-agent-reviewer` ships `adversarial-challenger`.
+pi-subagents keeps the first package's copy of an agent name and skips the rest, so a
+second copy in `pi-code-quality` never ran.
+
 ## MCP tools
 
 The `adversarial-challenger` fallback copy (agent-reviewer's copy takes over when that plugin is installed, and uses its own `tools` option) cannot call MCP tools unless a rule allows them. The `tools` option adds allow rules for MCP tool patterns after the agent's own rules. OpenCode names an MCP tool's permission action `<server>_<tool>`, so `context7_*` allows every tool of the `context7` server and `context7_query-docs` allows one. Characters outside letters, digits, `_` and `-` become `_`.

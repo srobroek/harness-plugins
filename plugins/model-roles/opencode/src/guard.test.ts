@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test"
 import {
   allowsChosenModel,
   cheaperAlternatives,
+  entryMatches,
+  familyWords,
   type GuardFacts,
   type GuardModel,
   inputCost,
@@ -58,9 +60,14 @@ describe("parseGuard", () => {
     expect(parseGuard({ enabled: false })).toBeUndefined()
   })
 
+  test("reads allowAgentModels, dropping junk", () => {
+    expect(parseGuard({ allowAgentModels: { a: ["astra", 1], b: [], " ": ["x"], c: "no" } })?.allowAgentModels).toEqual({ a: ["astra"] })
+    expect(parseGuard({ allowAgentModels: ["astra"] })?.allowAgentModels).toEqual({})
+  })
+
   test("true and {} mean auto", () => {
-    expect(parseGuard(true)).toEqual({ expensive: "auto", allowInherit: [], allowModels: [], mode: "refuse", requireExplicit: false, lookupTimeoutMs: 5000 })
-    expect(parseGuard({})).toEqual({ expensive: "auto", allowInherit: [], allowModels: [], mode: "refuse", requireExplicit: false, lookupTimeoutMs: 5000 })
+    expect(parseGuard(true)).toEqual({ expensive: "auto", allowInherit: [], allowModels: [], allowAgentModels: {}, mode: "refuse", requireExplicit: false, lookupTimeoutMs: 5000 })
+    expect(parseGuard({})).toEqual({ expensive: "auto", allowInherit: [], allowModels: [], allowAgentModels: {}, mode: "refuse", requireExplicit: false, lookupTimeoutMs: 5000 })
   })
 
   test("reads a list and allowInherit, dropping junk", () => {
@@ -68,6 +75,7 @@ describe("parseGuard", () => {
       expensive: ["a/b"],
       allowInherit: ["x"],
       allowModels: ["c/d"],
+      allowAgentModels: {},
       mode: "refuse",
       requireExplicit: false,
       lookupTimeoutMs: 5000,
@@ -198,6 +206,19 @@ describe("judgeSpawn", () => {
       ReturnType<typeof parseGuard>
     >
     expect(judgeModelOverride({ ...facts({ guard }), model: { ...opus, variant: "max" } }).allow).toBe(true)
+    const family = parseGuard({ allowModels: ["claude-opus"] }) as NonNullable<ReturnType<typeof parseGuard>>
+    expect(judgeModelOverride({ ...facts({ guard: family }), model: opus }).allow).toBe(true)
+    const scoped = parseGuard({ allowAgentModels: { general: ["opus"] } }) as NonNullable<ReturnType<typeof parseGuard>>
+    expect(judgeModelOverride({ ...facts({ guard: scoped }), model: opus }).allow).toBe(true)
+    expect(judgeModelOverride({ ...facts({ guard: scoped, target: "explore" }), model: opus }).allow).toBe(false)
+    expect(decision.reason).toContain("guard.allowAgentModels.general")
+  })
+
+  test("allowAgentModels lets an agent inherit a listed session model", () => {
+    const scoped = parseGuard({ allowAgentModels: { general: ["claude-opus"] } }) as NonNullable<ReturnType<typeof parseGuard>>
+    expect(judgeSpawn(facts({ guard: scoped })).allow).toBe(true)
+    const other = parseGuard({ allowAgentModels: { general: ["claude-sonnet"], explore: ["claude-opus"] } }) as NonNullable<ReturnType<typeof parseGuard>>
+    expect(judgeSpawn(facts({ guard: other })).allow).toBe(false)
   })
 
   test("alternatives are bounded and sorted", () => {
@@ -226,7 +247,7 @@ describe("judgeSpawn", () => {
 })
 
 describe("allowsChosenModel", () => {
-  const guard = { expensive: "auto" as const, allowInherit: [], allowModels: ["anthropic/claude-haiku"], mode: "refuse" as const, requireExplicit: false, lookupTimeoutMs: 5000 }
+  const guard = { expensive: "auto" as const, allowInherit: [], allowModels: ["anthropic/claude-haiku"], allowAgentModels: {}, mode: "refuse" as const, requireExplicit: false, lookupTimeoutMs: 5000 }
   const options = withClasses(parseOptions({}))
 
   test("an expensive model is refused even when it is the agent's own tier model", () => {
@@ -237,6 +258,56 @@ describe("allowsChosenModel", () => {
   test("a cheap model, or an expensive one on allowModels, passes", () => {
     expect(allowsChosenModel(guard, options, sonnet)).toBe(true)
     expect(allowsChosenModel({ ...guard, allowModels: [`${opus.providerID}/${opus.id}`] }, options, opus)).toBe(true)
+  })
+
+  test("allowAgentModels allows a model for its agent only", () => {
+    const scoped = { ...guard, allowAgentModels: { "code-challenger": ["claude-opus"] } }
+    expect(allowsChosenModel(scoped, options, opus, "code-challenger")).toBe(true)
+    expect(allowsChosenModel(scoped, options, opus, "general")).toBe(false)
+    expect(allowsChosenModel(scoped, options, opus)).toBe(false)
+  })
+})
+
+describe("entryMatches", () => {
+  const astra = (id: string, variant?: string) => ({ providerID: "amazon-bedrock", id, ...(variant ? { variant } : {}) })
+
+  test("family words drop region, vendor, versions and dates", () => {
+    expect(familyWords("global.openai.gpt-6.2-astra")).toEqual(["gpt", "astra"])
+    expect(familyWords("us.anthropic.claude-opus-5-5-v1:0")).toEqual(["claude", "opus"])
+    expect(familyWords("qwen.qwen3-coder-next")).toEqual(["qwen", "coder", "next"])
+  })
+
+  test("a family names every release in every region", () => {
+    for (const id of ["global.openai.gpt-6.2-astra", "us.openai.gpt-6.2-astra", "eu.openai.gpt-7-astra"]) {
+      expect(entryMatches("astra", astra(id))).toBe(true)
+      expect(entryMatches("gpt-astra", astra(id))).toBe(true)
+    }
+    expect(entryMatches("astra", astra("global.openai.gpt-6.2-sol"))).toBe(false)
+    expect(entryMatches("astra-gpt", astra("global.openai.gpt-6.2-astra"))).toBe(false)
+    expect(entryMatches("claude-opus", opus)).toBe(true)
+    expect(entryMatches("opus", sonnet)).toBe(false)
+    expect(entryMatches("ast", astra("global.openai.gpt-6.2-astra"))).toBe(false)
+  })
+
+  test("globs match provider/model, case-insensitively", () => {
+    expect(entryMatches("amazon-bedrock/*astra*", astra("us.openai.gpt-6.2-astra"))).toBe(true)
+    expect(entryMatches("*ASTRA*", astra("us.openai.gpt-6.2-astra"))).toBe(true)
+    expect(entryMatches("openai/*astra*", astra("us.openai.gpt-6.2-astra"))).toBe(false)
+  })
+
+  test("exact refs and variants keep their meaning", () => {
+    expect(entryMatches("amazon-bedrock/global.openai.gpt-6.2-astra", astra("global.openai.gpt-6.2-astra", "xhigh"))).toBe(true)
+    expect(entryMatches("amazon-bedrock/us.openai.gpt-6.2-astra", astra("global.openai.gpt-6.2-astra"))).toBe(false)
+    expect(entryMatches("astra#xhigh", astra("global.openai.gpt-6.2-astra", "xhigh"))).toBe(true)
+    expect(entryMatches("astra#xhigh", astra("global.openai.gpt-6.2-astra", "high"))).toBe(false)
+    expect(entryMatches("astra#xhigh", astra("global.openai.gpt-6.2-astra"))).toBe(false)
+    for (const junk of ["", "@reviewer", "#xhigh", "astra#"]) expect(entryMatches(junk, astra("global.openai.gpt-6.2-astra"))).toBe(false)
+  })
+
+  test("expensive lists take families too", () => {
+    const guard = parseGuard({ expensive: ["claude-opus"] }) as NonNullable<ReturnType<typeof parseGuard>>
+    expect(isExpensive(opus, guard, undefined)).toBe(true)
+    expect(isExpensive(sonnet, guard, undefined)).toBe(false)
   })
 })
 
