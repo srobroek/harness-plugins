@@ -1,3 +1,9 @@
+## delivery [0.16.2](https://github.com/srobroek/harness-plugins/compare/delivery--v0.16.1...delivery--v0.16.2) (2026-11-26)
+
+### Bug Fixes
+
+* **delivery:** round-10 running-reports fixes missed by [#131](https://github.com/srobroek/harness-plugins/issues/131) ([#222](https://github.com/srobroek/harness-plugins/issues/222)) ([3e4afbb](https://github.com/srobroek/harness-plugins/commit/3e4afbbe93e29ba9aed931d64546cc9ac34d62a2))
+
 ## delivery [0.16.1](https://github.com/srobroek/harness-plugins/compare/delivery--v0.16.0...delivery--v0.16.1) (2026-11-26)
 
 ### Bug Fixes
