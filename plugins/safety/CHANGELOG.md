@@ -1,3 +1,9 @@
+## safety [3.0.1](https://github.com/srobroek/harness-plugins/compare/safety--v3.0.0...safety--v3.0.1) (2026-11-26)
+
+### Bug Fixes
+
+* **safety:** leave flag directories unresolved after a later directory change ([5c6520b](https://github.com/srobroek/harness-plugins/commit/5c6520b19515ec08f3e5b9c1b3f5776fe11820c8))
+
 ## safety [3.0.0](https://github.com/srobroek/harness-plugins/compare/safety--v2.0.1...safety--v3.0.0) (2026-11-26)
 
 ### ⚠ BREAKING CHANGES
