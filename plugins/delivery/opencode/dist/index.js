@@ -647,11 +647,11 @@ var package_default = {
     ],
     scope: "global",
     piAgents: false,
-    discrepancies: "pi (and OMP, which loads the pi bundle) gets only an explicit delivery_cleanup for the session's repository: no delivery_land, automatic cleanup or clone registry.",
+    discrepancies: "pi (and OMP, which loads the pi bundles) gets delivery_land, an explicit delivery_cleanup for the session's repository and the delivery-git-workflow skill: a merge asks the user first and is refused without a UI, no cleanup runs after a land, and there is no retry or clone registry. The agents and delivery-fan-out are OpenCode only.",
     prerequisites: [
       {
         bin: "git",
-        for: "delivery_cleanup's worktree, ref and remote proofs, git worktree remove and git branch -d",
+        for: "delivery_land's landing proofs (git merge-tree --write-tree, Git 2.38 or newer) and delivery_cleanup's worktree, ref and remote proofs, git worktree remove and git branch -d",
         required: true,
         install: {
           url: "https://git-scm.com/downloads"
@@ -659,7 +659,7 @@ var package_default = {
       },
       {
         bin: "gh",
-        for: "delivery_cleanup's pull-request read (gh pr view) for a GitHub receipt",
+        for: "delivery_land's pull-request reads and merge (gh pr view, gh pr merge, gh api) and delivery_cleanup's pull-request read for a GitHub repository",
         install: {
           mise: "aqua:cli/cli",
           url: "https://cli.github.com"
@@ -667,7 +667,7 @@ var package_default = {
       },
       {
         bin: "glab",
-        for: "delivery_cleanup's merge-request read (glab mr view) for a GitLab receipt",
+        for: "delivery_land's merge-request reads and merge (glab mr view, glab mr merge, glab api) and delivery_cleanup's merge-request read for a GitLab repository",
         install: {
           url: "https://gitlab.com/gitlab-org/cli#installation"
         }
@@ -685,7 +685,8 @@ var package_default = {
       index: "index"
     },
     piEntries: {
-      "delivery-cleanup": "delivery-cleanup"
+      "delivery-cleanup": "delivery-cleanup",
+      "delivery-land": "delivery-land"
     }
   }
 };
@@ -5515,6 +5516,93 @@ ${next.slice(0, -1).map((step) => `  ${step}`).join(`
   return { ok: true, receipt, receiptPath, text, next };
 }
 
+// plugins/delivery/opencode/src/land-tool.ts
+var LAND_ACTION = "delivery_land";
+var LAND_INPUT = {
+  type: "object",
+  properties: {
+    pr: { type: ["integer", "string"], description: "PR or MR number" },
+    merge_method: { type: "string", enum: [...MERGE_METHODS], description: "default squash" },
+    repo: { type: "string", description: '"<owner>/<name>"; defaults to the remote URL path' },
+    remote: { type: "string", description: 'Forge remote; default "origin"' },
+    expectHeadSha: {
+      type: "string",
+      description: "The reviewed head; required to merge, optional when proving an already MERGED PR"
+    },
+    requireApproval: {
+      type: "boolean",
+      description: "Require an APPROVED review or a 'VERDICT: APPROVE' author comment for the exact head"
+    },
+    requireGreenChecks: { type: "boolean", description: "Require every check on the head to pass" },
+    queueWaitSeconds: { type: "integer", description: "Merge queue: seconds to wait for the merge, 0-3600; default 600" },
+    setupAutoDelete: { type: "boolean", description: "Enable deletion-on-merge after the landing is proved" },
+    worktree: { type: "string", description: "Landed worktree for cleanup (HEAD = PR head); inferred if omitted" },
+    repoPath: { type: "string", description: "Checkout of repo on this machine; needed when repo is not the session's" },
+    beadId: {
+      type: "string",
+      description: "Bead this closes when the branch is not <omp|opencode>/agent/<bead-id>; required then on a ledger"
+    }
+  },
+  required: ["pr"],
+  additionalProperties: false
+};
+var LAND_OUTPUT = {
+  type: "object",
+  properties: {
+    ok: { type: "boolean" },
+    receiptPath: { type: "string" },
+    mergeSha: { type: "string" },
+    pr: { type: "integer" },
+    repo: { type: "string" },
+    next: { type: "array", items: { type: "string" } },
+    reason: { type: "string" },
+    mergeIssued: { type: "boolean" },
+    queued: { type: "boolean" },
+    receipt: { type: "object" },
+    cleanup: {
+      type: "object",
+      properties: {
+        ok: { type: "boolean" },
+        reason: { type: "string" },
+        removed: { type: "string" },
+        partlyRemoved: { type: "string" },
+        localRefDeleted: { type: "boolean" },
+        skipped: { type: "boolean" },
+        deferred: { type: "string" },
+        denied: { type: "boolean" }
+      },
+      required: ["ok"]
+    }
+  },
+  required: ["ok"]
+};
+var LAND_CONTRACT = `Merge a reviewed pull request at most once, prove it landed, and write one landing receipt.
+` + "Refuses unless expectHeadSha names the PR head (required whenever the call would merge) " + "and, when worktree is given, it is a worktree of the repository landed whose HEAD is that head. A repo other than the session's needs worktree or repoPath, a local clone whose remote names it. With requireApproval/requireGreenChecks it also requires an approval artifact on the PR for that exact head " + "and green checks before merging. Merges at most once (an already MERGED request is proved, not re-merged) with merge_method (squash by default, PR title as subject), " + "binds the merge to the head, re-reads it, fetches the landed commits and checks the method's commit shape, observes the remote branch, then writes the receipt. " + "Writes no Beads ledger: when beads.ledgerActive, run the returned next steps child-before-parent, then delivery_cleanup. ";
+var LAND_RERUNS = "A base branch with a GitHub merge queue is landed by enqueuing the head (never --auto): queued true means still queued, call again. " + "A refusal with mergeIssued true means the PR is merged: re-run with the same pr and expectHeadSha to write the receipt.";
+function landDescription(host) {
+  return `${LAND_CONTRACT}${host} ${LAND_RERUNS}`;
+}
+function landOutput(outcome, cleanup) {
+  if (!outcome.ok) {
+    return {
+      ok: false,
+      reason: outcome.reason,
+      ...outcome.mergeIssued === true ? { mergeIssued: true } : {},
+      ...outcome.queued === true ? { queued: true } : {}
+    };
+  }
+  return {
+    ok: true,
+    receiptPath: outcome.receiptPath,
+    mergeSha: outcome.receipt.pr.mergeCommitOid ?? "",
+    pr: outcome.receipt.pr.number,
+    repo: outcome.receipt.repo.nameWithOwner,
+    next: nextAfterCleanup(outcome.next, cleanup),
+    ...cleanup === undefined ? {} : { cleanup },
+    receipt: outcome.receipt
+  };
+}
+
 // plugins/delivery/opencode/src/pending-cleanup.ts
 import { existsSync as existsSync3, mkdirSync as mkdirSync8, readdirSync as readdirSync5 } from "fs";
 import { hostname as hostname2 } from "os";
@@ -7634,7 +7722,6 @@ function malformedNote(verdict, sessionID) {
 }
 
 // plugins/delivery/opencode/src/index.ts
-var LAND_ACTION = "delivery_land";
 var SKILL_PATH = fileURLToPath2(new URL("../skills/delivery-git-workflow/SKILL.md", import.meta.url));
 var FAN_OUT_SKILL_PATH = fileURLToPath2(new URL("../skills/delivery-fan-out/SKILL.md", import.meta.url));
 var FAN_OUT_PATH = fileURLToPath2(new URL("../instructions/delivery-fan-out.md", import.meta.url));
@@ -7677,88 +7764,9 @@ function confirmDelivery(evaluation, subagent = false) {
     evaluation.message = `Remove worktree ${evaluation.resources.join(", ")} and delete its local branch?`;
   }
 }
-var LAND_INPUT = {
-  type: "object",
-  properties: {
-    pr: { type: ["integer", "string"], description: "PR or MR number" },
-    merge_method: { type: "string", enum: [...MERGE_METHODS], description: "default squash" },
-    repo: { type: "string", description: '"<owner>/<name>"; defaults to the remote URL path' },
-    remote: { type: "string", description: 'Forge remote; default "origin"' },
-    expectHeadSha: {
-      type: "string",
-      description: "The reviewed head; required to merge, optional when proving an already MERGED PR"
-    },
-    requireApproval: {
-      type: "boolean",
-      description: "Require an APPROVED review or a 'VERDICT: APPROVE' author comment for the exact head"
-    },
-    requireGreenChecks: { type: "boolean", description: "Require every check on the head to pass" },
-    queueWaitSeconds: { type: "integer", description: "Merge queue: seconds to wait for the merge, 0-3600; default 600" },
-    setupAutoDelete: { type: "boolean", description: "Enable deletion-on-merge after the landing is proved" },
-    worktree: { type: "string", description: "Landed worktree for cleanup (HEAD = PR head); inferred if omitted" },
-    repoPath: { type: "string", description: "Checkout of repo on this machine; needed when repo is not the session's" },
-    beadId: {
-      type: "string",
-      description: "Bead this closes when the branch is not <omp|opencode>/agent/<bead-id>; required then on a ledger"
-    }
-  },
-  required: ["pr"],
-  additionalProperties: false
-};
-var LAND_OUTPUT = {
-  type: "object",
-  properties: {
-    ok: { type: "boolean" },
-    receiptPath: { type: "string" },
-    mergeSha: { type: "string" },
-    pr: { type: "integer" },
-    repo: { type: "string" },
-    next: { type: "array", items: { type: "string" } },
-    reason: { type: "string" },
-    mergeIssued: { type: "boolean" },
-    queued: { type: "boolean" },
-    receipt: { type: "object" },
-    cleanup: {
-      type: "object",
-      properties: {
-        ok: { type: "boolean" },
-        reason: { type: "string" },
-        removed: { type: "string" },
-        partlyRemoved: { type: "string" },
-        localRefDeleted: { type: "boolean" },
-        skipped: { type: "boolean" },
-        deferred: { type: "string" },
-        denied: { type: "boolean" }
-      },
-      required: ["ok"]
-    }
-  },
-  required: ["ok"]
-};
-var LAND_DESCRIPTION = `Merge a reviewed pull request at most once, prove it landed, and write one landing receipt.
-` + "Refuses unless expectHeadSha names the PR head (required whenever the call would merge) " + "and, when worktree is given, it is a worktree of the repository landed whose HEAD is that head. A repo other than the session's needs worktree or repoPath, a local clone whose remote names it. With requireApproval/requireGreenChecks it also requires an approval artifact on the PR for that exact head " + "and green checks before merging. Merges at most once (an already MERGED request is proved, not re-merged) with merge_method (squash by default, PR title as subject), " + "binds the merge to the head, re-reads it, fetches the landed commits and checks the method's commit shape, observes the remote branch, then writes the receipt. " + "Writes no Beads ledger: when beads.ledgerActive, run the returned next steps child-before-parent, then delivery_cleanup. A landing of another repository is cleaned up in that clone, under its lane claims, holds and denials. " + "A base branch with a GitHub merge queue is landed by enqueuing the head (never --auto): queued true means still queued, call again. " + "A refusal with mergeIssued true means the PR is merged: re-run with the same pr and expectHeadSha to write the receipt.";
+var LAND_DESCRIPTION = landDescription("A landing of another repository is cleaned up in that clone, under its lane claims, holds and denials.");
 var CLEANUP_DESCRIPTION = `Remove a landed PR's worktree and local branch after proving the landing receipt, and write a continuation receipt.
 ` + "Recomputes the ledger classification at the canonical root, proves the PR merged at the recorded head from the receipt's own remote, " + "checks every receipt bead is closed with metadata.merge_sha equal to the merge (read-only bd show at the repository root, session bead pins removed), refuses to remove the worktree it runs from, a dirty tree or unpushed commits, and a receipt or worktree of another repository unless repo and repoPath name that clone (it then runs there, under that repository's claims, holds and denials), " + "then removes the worktree (no force; through OpenCode when it tracks it, else git worktree remove) and runs git branch -d and verifies four absences.";
-function landOutput(outcome, cleanup) {
-  if (!outcome.ok) {
-    return {
-      ok: false,
-      reason: outcome.reason,
-      ...outcome.mergeIssued === true ? { mergeIssued: true } : {},
-      ...outcome.queued === true ? { queued: true } : {}
-    };
-  }
-  return {
-    ok: true,
-    receiptPath: outcome.receiptPath,
-    mergeSha: outcome.receipt.pr.mergeCommitOid ?? "",
-    pr: outcome.receipt.pr.number,
-    repo: outcome.receipt.repo.nameWithOwner,
-    next: nextAfterCleanup(outcome.next, cleanup),
-    ...cleanup === undefined ? {} : { cleanup },
-    receipt: outcome.receipt
-  };
-}
 function worktreeRegistry(ctx) {
   const worktree = ctx.worktree;
   if (typeof worktree?.list !== "function" || typeof worktree.remove !== "function")
@@ -8008,7 +8016,6 @@ export {
   fallbackModel,
   hasModelRoles,
   hostWorktrees,
-  landOutput,
   landPullRequest,
   parseAgentFile,
   parseModel,

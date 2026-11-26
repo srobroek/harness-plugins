@@ -16,7 +16,8 @@
     "LICENSE",
     "README.md",
     "_kit",
-    "extensions"
+    "extensions",
+    "skills"
   ],
   "publishConfig": {
     "access": "public",
@@ -28,7 +29,11 @@
   "pi": {
     "extensions": [
       "./extensions/delivery-cleanup.js",
+      "./extensions/delivery-land.js",
       "./_kit/prereqs.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   }
 }

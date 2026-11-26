@@ -16,13 +16,7 @@ import {
   loadAgents,
   shapeAgent,
 } from "./agents.ts"
-import {
-  type CleanupReport,
-  inlineCleanupDecision,
-  nextAfterCleanup,
-  runInlineCleanup,
-  textAfterCleanup,
-} from "./auto-cleanup.ts"
+import { type CleanupReport, inlineCleanupDecision, runInlineCleanup, textAfterCleanup } from "./auto-cleanup.ts"
 import {
   type CleanupResult,
   cleanupDelivery,
@@ -38,8 +32,9 @@ import {
   deferredToolResult,
   metadataOf,
 } from "./cleanup-tool.ts"
-import { MERGE_METHODS, parseGitlabHosts } from "./forge-adapter.ts"
-import { type LandOutcome, type LandParams, landPullRequest } from "./land.ts"
+import { parseGitlabHosts } from "./forge-adapter.ts"
+import { type LandParams, landPullRequest } from "./land.ts"
+import { LAND_ACTION, LAND_INPUT, LAND_OUTPUT, landDescription, landOutput } from "./land-tool.ts"
 import { createPendingCleanup, type PendingDeps } from "./pending-cleanup.ts"
 import { malformedNote, parseVerdict } from "./verdict.ts"
 
@@ -56,9 +51,9 @@ export {
 export { cleanupDelivery } from "./cleanup.ts"
 export { CLEANUP_ACTION } from "./cleanup-tool.ts"
 export { landPullRequest } from "./land.ts"
+export { LAND_ACTION } from "./land-tool.ts"
 export { AGENT_VERDICTS, parseVerdict } from "./verdict.ts"
 
-export const LAND_ACTION = "delivery_land"
 export const SKILL_PATH = fileURLToPath(new URL("../skills/delivery-git-workflow/SKILL.md", import.meta.url))
 export const FAN_OUT_SKILL_PATH = fileURLToPath(new URL("../skills/delivery-fan-out/SKILL.md", import.meta.url))
 export const FAN_OUT_PATH = fileURLToPath(new URL("../instructions/delivery-fan-out.md", import.meta.url))
@@ -138,102 +133,15 @@ export function confirmDelivery(evaluation: Evaluation, subagent = false): void 
   }
 }
 
-const LAND_INPUT = {
-  type: "object",
-  properties: {
-    pr: { type: ["integer", "string"], description: "PR or MR number" },
-    merge_method: { type: "string", enum: [...MERGE_METHODS], description: "default squash" },
-    repo: { type: "string", description: '"<owner>/<name>"; defaults to the remote URL path' },
-    remote: { type: "string", description: 'Forge remote; default "origin"' },
-    expectHeadSha: {
-      type: "string",
-      description: "The reviewed head; required to merge, optional when proving an already MERGED PR",
-    },
-    requireApproval: {
-      type: "boolean",
-      description: "Require an APPROVED review or a 'VERDICT: APPROVE' author comment for the exact head",
-    },
-    requireGreenChecks: { type: "boolean", description: "Require every check on the head to pass" },
-    queueWaitSeconds: { type: "integer", description: "Merge queue: seconds to wait for the merge, 0-3600; default 600" },
-    setupAutoDelete: { type: "boolean", description: "Enable deletion-on-merge after the landing is proved" },
-    worktree: { type: "string", description: "Landed worktree for cleanup (HEAD = PR head); inferred if omitted" },
-    repoPath: { type: "string", description: "Checkout of repo on this machine; needed when repo is not the session's" },
-    beadId: {
-      type: "string",
-      description: "Bead this closes when the branch is not <omp|opencode>/agent/<bead-id>; required then on a ledger",
-    },
-  },
-  required: ["pr"],
-  additionalProperties: false,
-} as const
-
-const LAND_OUTPUT = {
-  type: "object",
-  properties: {
-    ok: { type: "boolean" },
-    receiptPath: { type: "string" },
-    mergeSha: { type: "string" },
-    pr: { type: "integer" },
-    repo: { type: "string" },
-    next: { type: "array", items: { type: "string" } },
-    reason: { type: "string" },
-    mergeIssued: { type: "boolean" },
-    queued: { type: "boolean" },
-    receipt: { type: "object" },
-    cleanup: {
-      type: "object",
-      properties: {
-        ok: { type: "boolean" },
-        reason: { type: "string" },
-        removed: { type: "string" },
-        partlyRemoved: { type: "string" },
-        localRefDeleted: { type: "boolean" },
-        skipped: { type: "boolean" },
-        deferred: { type: "string" },
-        denied: { type: "boolean" },
-      },
-      required: ["ok"],
-    },
-  },
-  required: ["ok"],
-} as const
-
-const LAND_DESCRIPTION =
-  "Merge a reviewed pull request at most once, prove it landed, and write one landing receipt.\n" +
-  "Refuses unless expectHeadSha names the PR head (required whenever the call would merge) " +
-  "and, when worktree is given, it is a worktree of the repository landed whose HEAD is that head. A repo other than the session's needs worktree or repoPath, a local clone whose remote names it. With requireApproval/requireGreenChecks it also requires an approval artifact on the PR for that exact head " +
-  "and green checks before merging. Merges at most once (an already MERGED request is proved, not re-merged) with merge_method (squash by default, PR title as subject), " +
-  "binds the merge to the head, re-reads it, fetches the landed commits and checks the method's commit shape, observes the remote branch, then writes the receipt. " +
-  "Writes no Beads ledger: when beads.ledgerActive, run the returned next steps child-before-parent, then delivery_cleanup. A landing of another repository is cleaned up in that clone, under its lane claims, holds and denials. " +
-  "A base branch with a GitHub merge queue is landed by enqueuing the head (never --auto): queued true means still queued, call again. " +
-  "A refusal with mergeIssued true means the PR is merged: re-run with the same pr and expectHeadSha to write the receipt."
+const LAND_DESCRIPTION = landDescription(
+  "A landing of another repository is cleaned up in that clone, under its lane claims, holds and denials.",
+)
 
 const CLEANUP_DESCRIPTION =
   "Remove a landed PR's worktree and local branch after proving the landing receipt, and write a continuation receipt.\n" +
   "Recomputes the ledger classification at the canonical root, proves the PR merged at the recorded head from the receipt's own remote, " +
   "checks every receipt bead is closed with metadata.merge_sha equal to the merge (read-only bd show at the repository root, session bead pins removed), refuses to remove the worktree it runs from, a dirty tree or unpushed commits, and a receipt or worktree of another repository unless repo and repoPath name that clone (it then runs there, under that repository's claims, holds and denials), " +
   "then removes the worktree (no force; through OpenCode when it tracks it, else git worktree remove) and runs git branch -d and verifies four absences."
-
-export function landOutput(outcome: LandOutcome, cleanup?: CleanupReport) {
-  if (!outcome.ok) {
-    return {
-      ok: false as const,
-      reason: outcome.reason,
-      ...(outcome.mergeIssued === true ? { mergeIssued: true } : {}),
-      ...(outcome.queued === true ? { queued: true } : {}),
-    }
-  }
-  return {
-    ok: true as const,
-    receiptPath: outcome.receiptPath,
-    mergeSha: outcome.receipt.pr.mergeCommitOid ?? "",
-    pr: outcome.receipt.pr.number,
-    repo: outcome.receipt.repo.nameWithOwner,
-    next: nextAfterCleanup(outcome.next, cleanup),
-    ...(cleanup === undefined ? {} : { cleanup }),
-    receipt: outcome.receipt as Record<string, unknown>,
-  }
-}
 
 /**
  * OpenCode's worktree registry, per project. Undefined when an older host has no `worktree`

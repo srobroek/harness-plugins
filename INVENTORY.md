@@ -54,4 +54,4 @@ Each plugin's own `INVENTORY.md` lists what it ships per harness.
 
 ## Harness discrepancies
 
-- delivery: pi (and OMP, which loads the pi bundle) gets only an explicit delivery_cleanup for the session's repository: no delivery_land, automatic cleanup or clone registry.
+- delivery: pi (and OMP, which loads the pi bundles) gets delivery_land, an explicit delivery_cleanup for the session's repository and the delivery-git-workflow skill: a merge asks the user first and is refused without a UI, no cleanup runs after a land, and there is no retry or clone registry. The agents and delivery-fan-out are OpenCode only.

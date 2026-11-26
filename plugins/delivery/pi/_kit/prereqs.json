@@ -3,7 +3,7 @@
   "prerequisites": [
     {
       "bin": "git",
-      "for": "delivery_cleanup's worktree, ref and remote proofs, git worktree remove and git branch -d",
+      "for": "delivery_land's landing proofs (git merge-tree --write-tree, Git 2.38 or newer) and delivery_cleanup's worktree, ref and remote proofs, git worktree remove and git branch -d",
       "required": true,
       "install": {
         "url": "https://git-scm.com/downloads"
@@ -11,7 +11,7 @@
     },
     {
       "bin": "gh",
-      "for": "delivery_cleanup's pull-request read (gh pr view) for a GitHub receipt",
+      "for": "delivery_land's pull-request reads and merge (gh pr view, gh pr merge, gh api) and delivery_cleanup's pull-request read for a GitHub repository",
       "required": false,
       "install": {
         "mise": "aqua:cli/cli",
@@ -20,7 +20,7 @@
     },
     {
       "bin": "glab",
-      "for": "delivery_cleanup's merge-request read (glab mr view) for a GitLab receipt",
+      "for": "delivery_land's merge-request reads and merge (glab mr view, glab mr merge, glab api) and delivery_cleanup's merge-request read for a GitLab repository",
       "required": false,
       "install": {
         "url": "https://gitlab.com/gitlab-org/cli#installation"

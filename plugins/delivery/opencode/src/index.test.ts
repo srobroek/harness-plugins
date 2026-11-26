@@ -12,10 +12,10 @@ import plugin, {
   FAN_OUT_SKILL_PATH,
   hostWorktrees,
   LAND_ACTION,
-  landOutput,
   parseOptions,
   SKILL_PATH,
 } from "./index.ts"
+import { landOutput } from "./land-tool.ts"
 
 type Result = { output?: Record<string, unknown>; content: string; metadata: Record<string, unknown> }
 type Execute = (input: unknown, context: unknown) => Promise<Result>
