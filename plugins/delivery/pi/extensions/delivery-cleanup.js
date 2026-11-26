@@ -386,6 +386,31 @@ async function withLease(lockPath, options, work) {
     }
   }
 }
+async function holdLease(lockPath, options) {
+  let release = () => {};
+  const held = new Promise((done) => {
+    release = done;
+  });
+  let entered = () => {};
+  const inside = new Promise((done) => {
+    entered = done;
+  });
+  const running = withLease(lockPath, options, () => {
+    entered("held");
+    return held;
+  });
+  const first = await Promise.race([inside, running]);
+  if (first === "held") {
+    return {
+      kind: "held",
+      release: async () => {
+        release();
+        await running;
+      }
+    };
+  }
+  return first.kind === "failed" ? first : { kind: "failed", reason: "the lease was not entered" };
+}
 
 // lib/src/running-reports.ts
 import { createHash as createHash3, randomUUID as randomUUID3 } from "crypto";
@@ -607,19 +632,20 @@ function parseReport(text) {
   }
   if (!isObject3(raw) || typeof raw.sessionID !== "string" || raw.sessionID === "")
     return;
-  if (typeof raw.at !== "number" || !Number.isFinite(raw.at) || typeof raw.pid !== "number")
+  if (typeof raw.at !== "number" || !Number.isFinite(raw.at))
     return;
-  if (typeof raw.host !== "string" || typeof raw.instance !== "string" || !Array.isArray(raw.jobs))
+  if (typeof raw.pid !== "number" || !Number.isInteger(raw.pid) || raw.pid < 1)
+    return;
+  if (typeof raw.host !== "string" || raw.host === "" || typeof raw.instance !== "string" || !Array.isArray(raw.jobs))
     return;
   const jobs = [];
   for (const job of raw.jobs) {
     if (!isObject3(job) || typeof job.kind !== "string")
       return;
-    const sessionID = optionalString(job.sessionID);
-    const childSessionID = optionalString(job.childSessionID);
-    const shellID = optionalString(job.shellID);
-    const command = optionalString(job.command);
-    const cwd = optionalString(job.cwd);
+    const fields = [job.sessionID, job.childSessionID, job.shellID, job.command, job.cwd];
+    if (fields.some((field) => field !== undefined && typeof field !== "string"))
+      return;
+    const [sessionID, childSessionID, shellID, command, cwd] = fields.map(optionalString);
     jobs.push({
       kind: job.kind,
       ...sessionID === undefined ? {} : { sessionID },
@@ -678,13 +704,11 @@ function reportsWritable(receiptsRoot) {
   }
 }
 function reportLive(report, clock) {
-  if (clock.now - report.mtimeMs >= (clock.expiryMs ?? HOLD_EXPIRY_MS))
-    return false;
   if (report.instance === clock.instance)
     return true;
   if (report.host === clock.host)
     return clock.alive(report.pid);
-  return true;
+  return clock.now - report.mtimeMs < (clock.expiryMs ?? HOLD_EXPIRY_MS);
 }
 var sameServer = (report, clock) => report.instance === clock.instance;
 var namesWorktree = (command, forms) => command !== undefined && forms.some((form) => command.includes(form));
@@ -3047,6 +3071,7 @@ async function cleanupDelivery(params, sessionCwd, deps = {}) {
     proofSection: coordination.proofSection,
     removalSection: coordination.removalSection,
     finalCheck: coordination.finalCheck,
+    beforeRemoval: coordination.beforeRemoval,
     afterRemoval: coordination.afterRemoval,
     host: coordination.host,
     authorize: coordination.authorize ?? deps.authorize
@@ -3208,6 +3233,10 @@ async function cleanupInRepository(params, cwd, deps) {
     const rebound = markersStillBound(boundary, executionDir, executionPin);
     if (rebound !== null)
       return rebound;
+    const late = deps.beforeRemoval?.();
+    if (late !== undefined) {
+      return refuse2("worktree.held", late, "no owner, hold, denial or competing remover at the moment of removal; nothing was removed");
+    }
     let failure = null;
     let stopped = false;
     let refusedClean = false;
@@ -3533,14 +3562,31 @@ function sessionCoordination(cwd, deps = {}) {
   const common = async () => (await repositoryContext(cwd, deps.observe))?.commonDir ?? null;
   let spellings = [];
   const receiptsRoot = () => receiptDirectory(deps.cleanup?.env ?? process.env);
+  let inRemoval = false;
+  let lease;
+  const releaseLease = async () => {
+    const held = lease;
+    lease = undefined;
+    await held?.release();
+  };
   const runningBlock = (worktree) => {
     const forms = [...new Set([worktree, canonicalDirectory(worktree), ...spellings, ...spellings.map(canonicalDirectory)])];
     return blockWithoutSessionLookup(receiptsRoot(), forms, { now: now(), host: hostname2(), alive: processAlive }, canonicalDirectory);
   };
   return {
-    finalCheck: async (_worktree, others = []) => {
+    finalCheck: async (worktree, others = []) => {
       spellings = others;
-      return;
+      if (inRemoval && lease === undefined) {
+        mkdirSync6(receiptsRoot(), { recursive: true });
+        const taken = await holdLease(runningLeaseFile(receiptsRoot()), { owner: LOCK_OWNER, now, ...deps.lock?.waitMs === undefined ? {} : { waitMs: deps.lock.waitMs } });
+        if (taken.kind === "failed")
+          return `the running-work store lease could not be taken (${taken.reason}), so running work cannot be ruled out`;
+        lease = taken;
+      }
+      const blocked = runningBlock(worktree);
+      if (blocked !== undefined)
+        await releaseLease();
+      return blocked;
     },
     proofSection: async (worktree, read) => {
       const dir = await common();
@@ -3558,14 +3604,13 @@ function sessionCoordination(cwd, deps = {}) {
       const outcome = await lockedWorktreeRemoval(dir, worktree, lock, {
         recheck: async () => removalBlock(dir, worktree, now()),
         remove: async () => {
-          mkdirSync6(receiptsRoot(), { recursive: true });
-          const held = await withLease(runningLeaseFile(receiptsRoot()), { owner: LOCK_OWNER, now, ...deps.lock?.waitMs === undefined ? {} : { waitMs: deps.lock.waitMs } }, async () => {
-            const blocked = runningBlock(worktree);
-            return blocked === undefined ? run() : { ok: false, reason: `worktree.held: observed ${blocked}, expected no running work; nothing was removed` };
-          });
-          if (held.kind === "failed")
-            return { ok: false, reason: `the running-work store lease could not be taken (${held.reason}), so running work cannot be ruled out` };
-          return held.value;
+          inRemoval = true;
+          try {
+            return await run();
+          } finally {
+            inRemoval = false;
+            await releaseLease();
+          }
         }
       });
       if (outcome.removed)
