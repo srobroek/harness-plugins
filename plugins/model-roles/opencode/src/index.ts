@@ -1444,8 +1444,8 @@ export default Plugin.define({
     ): Promise<string | undefined> => {
       if (guard === undefined) return undefined
       if (override !== undefined) {
-        // A model that is not expensive, or that allowModels lists, needs no agent lookup to be allowed.
-        if (allowsChosenModel(guard, options, override)) return undefined
+        // A model that is not expensive, or that allowModels or allowAgentModels lists, needs no agent lookup to be allowed.
+        if (allowsChosenModel(guard, options, override, target)) return undefined
         try {
           const agents = await bounded(listAgents(), "agent")
           const decision = judgeModelOverride({ options, available, health: view(), guard, target, agents, sessionModel: undefined, model: override })

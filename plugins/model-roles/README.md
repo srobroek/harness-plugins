@@ -616,7 +616,8 @@ is cheaper.
 "guard": {
   "expensive": "auto",
   "allowInherit": ["fork"],
-  "allowModels": []
+  "allowModels": [],
+  "allowAgentModels": { "code-challenger": ["astra"] }
 }
 ```
 
@@ -627,7 +628,7 @@ is cheaper.
   guarded. A subscription model is priced by its models.dev list price. It can
   also be a list such as `["amazon-bedrock/global.anthropic.claude-opus-5-5"]`,
   which replaces the premium rule. An entry with a `#variant` matches only that
-  variant.
+  variant. Entries take three forms (see [Model entries](#guard-model-entries)).
 - `allowInherit`: agent ids that may inherit the session model.
 - `requireExplicit`: `false` by default. When `true`, the guard refuses any
   spawn whose child would inherit the session model, at any price and also
@@ -651,6 +652,10 @@ is cheaper.
   spawn with no concrete model is refused instead of inheriting.
 - `allowModels`: expensive models a spawn may name in its own `model`
   argument. Same format as `expensive`.
+- `allowAgentModels`: per agent id, expensive models a spawn of that agent may
+  name in its own `model` argument, or inherit from the session. Same format as
+  `expensive`. `{ "code-challenger": ["astra"] }` lets `code-challenger` run on
+  any GPT Astra release without opening Astra to every agent.
 - `mode`: `"refuse"` (default) refuses the spawn. `"auto"` asks the
   [auto decider](#auto-routing) for a tier instead, offering only tiers whose
   model is not expensive, and refuses only when none resolves. It uses the
@@ -660,10 +665,29 @@ A spawn is allowed if it passes a `tier` that resolves, or if the target agent
 has a model, or a tier that resolves (through the `agents` option, the header,
 the built-in defaults or its classification).
 
+### Guard model entries
+
+`expensive`, `allowModels` and `allowAgentModels` take the same entries. Each
+form takes an optional `#variant`, and then matches only that variant.
+
+| Form | Example | Matches |
+| --- | --- | --- |
+| `provider/model` | `amazon-bedrock/global.openai.gpt-6.2-astra` | that model only |
+| glob with `*`, over `provider/model`, case-insensitive | `amazon-bedrock/*astra*` | every matching id on that provider |
+| family, with no `/` | `astra`, `gpt-astra`, `claude-opus` | every release in every region |
+
+A family entry is compared with the model id after the Bedrock region
+(`global.`, `us.`, `eu.` and so on), the vendor prefix, versions and dates are
+removed: `us.openai.gpt-6.2-astra` becomes the words `gpt astra`, and
+`global.anthropic.claude-opus-5-5` becomes `claude opus`. The entry's words must
+appear in that order, side by side, so `astra` and `gpt-astra` match every Astra
+and `gpt` matches every GPT model.
+
 Models often set the `subagent` tool's `model` argument even though its
 description says not to. So a spawn that names an expensive `model` itself
 (not one filled in from `tier`) is refused too, unless the target agent pins
-that model or `allowModels` lists it. The refusal asks for the cheapest tier
+that model or `allowModels` lists it, or `allowAgentModels` lists it for that
+agent. The refusal asks for the cheapest tier
 instead, and names the tier that resolves to the requested model, if there is
 one. The session model is
 `session.model`, else the calling agent's model, else the parent session's
