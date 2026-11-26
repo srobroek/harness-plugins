@@ -36,11 +36,17 @@
 - **Cause:** Another `delivery_land` call is deciding or sending the enqueue for this head, or clearing its record, or a call that was killed left its `pending-queue-<pr>-<head>.lock`. No call removes another call's lock.
 - **Fix:** Wait and call again with the same `pr` and `expectHeadSha`. If the refusal says the holder `has ended without releasing it`, or no `delivery_land` call is running, check the merge queue on GitHub, delete the lock the refusal names, and call again.
 
+## `delivery_land` in pi refuses to merge
+
+- **Symptom:** `confirmation: observed no UI to ask whether to` or `confirmation: observed the user declined to`
+- **Cause:** In pi, `delivery_land` asks the user before it merges or sets deletion-on-merge. A subagent or a print-mode session has no UI to ask, so the tool refuses the call. It also refuses when the user declines the dialog. The tool merged and wrote nothing.
+- **Fix:** Land from the interactive session and confirm the dialog. A session without a UI can still prove an already MERGED PR, and that proof asks nothing.
+
 ## `delivery_cleanup` refuses another repository or a changed worktree
 
-- **Symptom:** `worktree.owner: observed "a receipt or worktree of a repository other than this session's"` or `worktree.marker: observed`
+- **Symptom:** `worktree.owner: observed "a receipt or worktree of a repository other than this session's"`, `a checkout of a repository other than this session's` (pi) or `worktree.marker: observed`
 - **Cause:** The receipt or worktree belongs to a different repository, or the registered worktree's `.git` is now a symlink, FIFO or a file naming another repository. No Git ran in it.
-- **Fix:** Pass `repo` and `repoPath` (the receipt's `repo.canonicalRoot`) so cleanup runs in that clone, or run `delivery_cleanup` from a session there. For `worktree.marker`, inspect the worktree's `.git` by hand and do not run Git in it until it names this repository's `worktrees/` directory.
+- **Fix:** In OpenCode, pass `repo` and `repoPath` (the receipt's `repo.canonicalRoot`) so cleanup runs in that clone. In either harness, you can run `delivery_cleanup` from a session there. Pi's tool cleans up only the session's repository. For `worktree.marker`, inspect the worktree's `.git` by hand and do not run Git in it until it names this repository's `worktrees/` directory.
 
 ## `delivery_cleanup` in another repository refuses on its project
 
@@ -72,13 +78,13 @@
 - **Cause:** The base branch requires a GitHub merge queue. `delivery_land` enqueues on such a branch itself (see the `queued: true` entry); an installed delivery plugin older than merge-queue support merges directly and fails. `gh pr merge` on a queue branch is not safe: with checks still pending it silently enables auto-merge without `--auto`, and that stays armed across pushes.
 - **Fix:** Land with `delivery_land`; update the delivery plugin if it does not enqueue. Only when the tool cannot be used, wait until the required checks are green on the reviewed head and enqueue with GraphQL, which refuses a different head: `gh api graphql -f query='mutation($id:ID!,$oid:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$oid}){mergeQueueEntry{state}}}' -f id="$(gh pr view <n> --json id -q .id)" -f oid=<reviewed-sha>`, watch `gh pr view <n> --json state,mergeCommit,headRefOid` until MERGED with `headRefOid` equal to the reviewed SHA, and close the bead by hand with the PR number and merge SHA. Never pass `--auto`.
 
-## A restart did not pick up a merged plugin fix
+## An OpenCode restart did not pick up a merged plugin fix
 
 - **Symptom:** `opencode plugin check` lists a plugin as `(update available)` after OpenCode restarted
 - **Cause:** Server startup only checks unpinned npm and git plugins for updates; it does not change the installed package.
 - **Fix:** Run `opencode plugin update`, and run it again with the project directory as `workdir` for plugins a project's `.opencode/opencode.json` loads. If the update times out, update one plugin at a time with `opencode plugin update <id>`. Then confirm `opencode plugin check` shows `(current)`. A running server keeps the plugin code it loaded until a reload.
 
-## Two sessions editing one worktree after a restart
+## Two sessions editing one worktree after an OpenCode restart
 
 - **Symptom:** `already has a live writer session ses_` from subagent-worktree, or two writers committing to the same branch and worktree after OpenCode restarted
 - **Cause:** After a restart OpenCode resumes interrupted subagents on its own, and they show as running. Re-spawning a writer for the same branch then adds a second live session to that worktree. A writer whose server died and that never ran again also shows as running, so the guard refuses every new writer in its worktree.

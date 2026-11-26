@@ -9,16 +9,12 @@
 // worktree of another repository is refused. Nothing here prompts, so a session without a UI (a
 // subagent) runs it the same way; OMP's approval mode decides whether to ask before the call.
 //
-// Only types and `getAgentDir` come from the host package, so the bundle imports nothing else from pi or OMP
-// at runtime. `getAgentDir` locates the user's settings file for the `delivery` key. OMP loads the bundle unchanged.
+// The settings, the result form and the schema cast come from `./host.ts`, which `delivery_land`
+// shares; only types and `getAgentDir` come from the host package.
 
-import { join } from "node:path"
-import type { AgentToolResult, ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent"
-import { getAgentDir } from "@earendil-works/pi-coding-agent"
-import { loadPiPluginSettings, PI_SETTINGS_FILE } from "@srobroek/opencode-lib/pi-settings"
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent"
 import { ownershipOf, readClaim } from "@srobroek/opencode-lib/worktree-claims"
 import { holdsState, type LockOptions, lockedWorktreeRead, lockedWorktreeRemoval } from "@srobroek/opencode-lib/worktree-locks"
-import type { TSchema } from "typebox"
 import { ownershipDeferral } from "../opencode/src/auto-cleanup.ts"
 import { type CleanupDeps, cleanupDelivery, type DeliveryCleanupParams } from "../opencode/src/cleanup.ts"
 import {
@@ -31,8 +27,8 @@ import {
   deferredToolResult,
   explicitDeferral,
 } from "../opencode/src/cleanup-tool.ts"
-import { parseGitlabHosts } from "../opencode/src/forge-adapter.ts"
 import { type GitRunner, repositoryContext } from "../opencode/src/landing-receipt.ts"
+import { callGitlabHosts, schema, toToolResult } from "./host.ts"
 
 /** The lease owner written into the lock record. Diagnostic only: the lock is the same one every remover takes. */
 const LOCK_OWNER = "delivery (pi)"
@@ -115,15 +111,6 @@ export function sessionCoordination(cwd: string, deps: Pick<PiCleanupDeps, "lock
   }
 }
 
-/**
- * The GitLab hosts named under the `delivery` key of pi's settings file, and the warning when that key
- * could not be read. Absent or unusable, only the built-in hosts are recognized.
- */
-export function deliverySettings(path: string): { gitlabHosts: readonly string[]; warning?: string } {
-  const loaded = loadPiPluginSettings(path, "delivery", "only the built-in GitLab hosts are recognized")
-  return { gitlabHosts: parseGitlabHosts(loaded.options.gitlabHosts), warning: loaded.warning }
-}
-
 /** One explicit cleanup in the session's repository at `cwd`, in the host-neutral result form. */
 export async function runCleanup(
   params: DeliveryCleanupParams,
@@ -141,20 +128,8 @@ export async function runCleanup(
   }
 }
 
-/** The host form of a result: the text as one block, the metadata as `details`, the output as `structuredContent`. */
-export function toToolResult(result: CleanupToolResult): AgentToolResult<Record<string, unknown>> {
-  return {
-    content: [{ type: "text", text: result.content }],
-    details: result.metadata,
-    structuredContent: result.output as AgentToolResult["structuredContent"],
-  }
-}
-
 /** OMP's approval tier for a tool (omp://approval-mode.md); pi ignores the key. */
 export type CleanupTool = ToolDefinition & { approval: "exec" }
-
-// The schemas are the OpenCode tool's JSON Schemas; pi and OMP both take a plain JSON Schema object.
-const schema = (value: object) => value as unknown as TSchema
 
 export function cleanupTool(deps: PiCleanupDeps = {}): CleanupTool {
   return {
@@ -165,11 +140,8 @@ export function cleanupTool(deps: PiCleanupDeps = {}): CleanupTool {
     outputSchema: schema(CLEANUP_OUTPUT),
     // It runs git, gh, glab and bd and removes a worktree, so OMP's approval mode governs it as exec.
     approval: "exec",
-    execute: async (_id, params, signal, _onUpdate, ctx) => {
-      const settings = deliverySettings(deps.settingsPath ?? join(getAgentDir(), PI_SETTINGS_FILE))
-      if (settings.warning !== undefined && ctx.hasUI) ctx.ui.notify(settings.warning, "warning")
-      return toToolResult(await runCleanup(params as DeliveryCleanupParams, ctx.cwd, signal, deps, settings.gitlabHosts))
-    },
+    execute: async (_id, params, signal, _onUpdate, ctx) =>
+      toToolResult(await runCleanup(params as DeliveryCleanupParams, ctx.cwd, signal, deps, callGitlabHosts(ctx, deps.settingsPath))),
   }
 }
 

@@ -11,7 +11,8 @@ import { CLEANUP_INPUT, CLEANUP_OUTPUT } from "../opencode/src/cleanup-tool.ts"
 import { type CliResult, type CliRunner, runCli, SAFE_GIT_ARGS } from "../opencode/src/forge-adapter.ts"
 import { buildReceipt, type LandingReceipt, receiptDirectory, repoKey, repositoryContext, writeReceipt } from "../opencode/src/landing-receipt.ts"
 import pkg from "../package.json" with { type: "json" }
-import delivery, { type CleanupTool, cleanupTool, DESCRIPTION, deliverySettings, otherRepositoryReason, type PiCleanupDeps } from "./delivery-cleanup.ts"
+import delivery, { type CleanupTool, cleanupTool, DESCRIPTION, otherRepositoryReason, type PiCleanupDeps } from "./delivery-cleanup.ts"
+import { deliverySettings } from "./host.ts"
 
 // Each test builds real Git repositories (a bare remote, a checkout, a linked worktree, a merge)
 // and runs real git for everything but the forge reads: 2.3-5.8 s per test, 46 s for the file, on
