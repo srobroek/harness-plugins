@@ -1,3 +1,10 @@
+## autopilot [1.4.3](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.4.2...autopilot--v1.4.3) (2026-11-26)
+
+### Bug Fixes
+
+* **autopilot:** rebuild the bundle ([a0e045b](https://github.com/srobroek/harness-plugins/commit/a0e045b2151cb056848cbc1ca5f425f5d153a2e9))
+* **delivery:** veto removal when holds or the clone registry are unknown, surface registry errors ([828b5bb](https://github.com/srobroek/harness-plugins/commit/828b5bb3a6409842e148d7247d8341f4abcbb97a))
+
 ## autopilot [1.4.2](https://github.com/srobroek/harness-plugins/compare/autopilot--v1.4.1...autopilot--v1.4.2) (2026-11-25)
 
 ### Bug Fixes

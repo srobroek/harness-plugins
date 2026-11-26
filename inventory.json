@@ -504,7 +504,7 @@
     },
     {
       "name": "autopilot",
-      "version": "1.4.2",
+      "version": "1.4.3",
       "description": "Unattended runs: /autopilot arms a no-questions session with a journal, a 4-minute tick and stop conditions.",
       "category": "development",
       "harnesses": {
