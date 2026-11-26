@@ -1,3 +1,9 @@
+## safety [3.0.2](https://github.com/srobroek/harness-plugins/compare/safety--v3.0.1...safety--v3.0.2) (2026-11-26)
+
+### Bug Fixes
+
+* **safety:** skip flag values in package-investigate ([63d66b2](https://github.com/srobroek/harness-plugins/commit/63d66b2143649126309a03c91b2f6f9bb6a89ce4))
+
 ## safety [3.0.1](https://github.com/srobroek/harness-plugins/compare/safety--v3.0.0...safety--v3.0.1) (2026-11-26)
 
 ### Bug Fixes
