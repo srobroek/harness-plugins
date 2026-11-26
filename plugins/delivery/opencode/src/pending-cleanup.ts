@@ -1401,6 +1401,11 @@ export function createPendingCleanup(deps: PendingDeps) {
         // Only this instance's own file: the current generation writes or clears it, and no other instance's file is touched.
         if (background.length === 0) clearReport(root, sessionID, activation)
         else writeReport(root, { sessionID, jobs, at, pid: process.pid, host: hostname(), instance: activation, gen })
+        // The job list a session's idle hook receives is the server's for that session (process-wide, not per Location), so
+        // this snapshot supersedes the session's files of other activations in this process (a session that moved Location):
+        // same hold, same host and pid only. Other processes' files are never touched.
+        const host = hostname()
+        removeReportsWhere(root, (report) => report.sessionID === sessionID && report.host === host && report.pid === process.pid && report.instance !== activation)
       })
       if (unsettled.get(sessionID)?.gen === gen) unsettled.delete(sessionID)
     } catch (error) {
@@ -1475,21 +1480,7 @@ export function createPendingCleanup(deps: PendingDeps) {
   const registrations: Array<{ dispose: () => Promise<void> }> = []
   let watching: { stop: () => void } | undefined
 
-  /**
-   * At setup, under the lease: remove the reports of earlier activations in this process (same host and pid, another
-   * activation). They were disposed, so they run nothing, and their files would hold removals for good.
-   */
-  const sweepEarlierActivations = async (): Promise<void> => {
-    try {
-      const host = hostname()
-      await underStore(() => removeReportsWhere(receiptDirectory(env), (report) => report.host === host && report.pid === process.pid && report.instance !== activation))
-    } catch (error) {
-      console.error(`delivery: could not remove the reports of earlier activations: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
-
   const start = async () => {
-    await sweepEarlierActivations()
     watching = watchEvents<unknown>({
       subscribe: (signal) =>
         ctx.event
@@ -1518,17 +1509,11 @@ export function createPendingCleanup(deps: PendingDeps) {
     }
   }
 
-  /** Best effort, under the lease: this activation's own report files go with it. */
-  const clearOwnReports = async (): Promise<void> => {
-    try {
-      await underStore(() => removeReportsWhere(receiptDirectory(env), (report) => report.instance === activation))
-    } catch (error) {
-      console.error(`delivery: could not remove this activation's reports: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
-
   let disposal: Promise<void> | undefined
-  /** Once only. Every queued retry and delete of this activation sees `disposed` under the lease and does nothing. */
+  /**
+   * Once only. Every queued write, retry and delete of this activation sees `disposed` under the lease and does
+   * nothing. Disposal removes no report: background work outlives the plugin, and its files expire by their own rules.
+   */
   const dispose = (): Promise<void> =>
     (disposal ??= (async () => {
       disposed = true
@@ -1536,10 +1521,7 @@ export function createPendingCleanup(deps: PendingDeps) {
       for (const timer of timers.values()) clearTimeout(timer)
       timers.clear()
       for (const registration of registrations.reverse()) await registration.dispose()
-      await boundedBy(
-        chain.catch(() => {}).then(clearOwnReports),
-        deps.disposeWaitMs ?? DISPOSE_WAIT_MS,
-      )
+      await boundedBy(chain, deps.disposeWaitMs ?? DISPOSE_WAIT_MS)
     })())
 
   /** Wait for scheduled and running passes; for tests. */

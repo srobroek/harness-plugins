@@ -3582,8 +3582,8 @@ describe("pending cleanup: one remover per worktree", () => {
     }
     let clock = NOW + 10
     /** One activation of the plugin over this fixture; `again` builds another, as a reload in the same process does. */
-    const make = (again: { lock?: Record<string, unknown>; disposeWaitMs?: number } = {}) => createPendingCleanup({
-      ctx: fake.context,
+    const make = (again: { lock?: Record<string, unknown>; disposeWaitMs?: number; ctx?: typeof fake.context } = {}) => createPendingCleanup({
+      ctx: again.ctx ?? fake.context,
       cwd: f.main,
       env: f.env,
       host: () => over.host,
@@ -3618,7 +3618,12 @@ describe("pending cleanup: one remover per worktree", () => {
       await pending.dispose()
       rmSync(f.root, { recursive: true, force: true })
     }
-    const reactivate = (again: { lock?: Record<string, unknown>; disposeWaitMs?: number } = {}) => make(again)
+    /** Another activation in this process, as OpenCode's other Locations make: its own host context, the same store. */
+    const reactivate = (again: { lock?: Record<string, unknown>; disposeWaitMs?: number } = {}) => {
+      const other = createFakeContext({ directory: f.main })
+      hostHasReporters(other, f.main)
+      return { fake: other, pending: make({ ...again, ctx: other.context }) }
+    }
     return { f, options, scripted, fake, pending, common, advance, idle, claim, finish, reactivate }
   }
   const removed = (h: Harness) => !existsSync(h.f.linked)
@@ -5109,49 +5114,86 @@ describe("pending cleanup: one remover per worktree", () => {
       await h.finish()
     })
 
-    // The report identity is per activation of the plugin: a reload in the same process (same pid, same server instance) is a new one.
-    needsPermissions("a delete that failed before a new activation's first write leaves no stale hold once the new activation is set up", async () => {
-      const h = await harness("running-reactivate-sweep")
+    // The report identity is per activation of the plugin. A disposed activation's queued work does nothing, and disposal removes no report.
+    test("a write a disposed activation had queued on the lease does nothing when it gets the lease", async () => {
+      const gate = Promise.withResolvers<void>()
+      let slept = 0
+      const h = await harness("running-disposed-write", { idlePassMs: 50, disposeWaitMs: 100, lock: { waitMs: 60_000, sleep: (): Promise<void> => (++slept === 1 ? gate.promise : Bun.sleep(5)) } })
       await h.pending.start()
-      await reportFrom(h, "ses_a", [shellIn(h)])
-      const directory = runningDirectory(receiptDirectory(h.f.env))
-      chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
-      try {
-        await h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
-        await Bun.sleep(100)
-        expect(h.pending.pendingDeleteCount()).toBe(1)
-        await h.pending.dispose() // its own best-effort clear is refused too
-      } finally {
-        chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
-      }
-      expect(reportIds(h)).toEqual(["ses_a"]) // the stale hold is still on disk
-      const next = h.reactivate()
-      await next.start()
+      const lease = await holdLease(runningLeaseFile(receiptDirectory(h.f.env)), { owner: "test" })
+      if (lease.kind !== "held") throw new Error("test could not take the lease")
+      const writing = reportFrom(h, "ses_a", [shellIn(h)]) // waits on the lease, sleeping on the gate
+      while (slept < 1) await Bun.sleep(2)
+      await h.pending.dispose()
+      await lease.release()
+      gate.resolve() // the write takes the lease now, after disposal
+      await writing
       expect(reportIds(h)).toEqual([])
-      await next.dispose()
       await h.finish()
     })
 
-    test("an old activation's delete that waits on the lease outlives its dispose and does nothing; the new activation's report survives", async () => {
-      const gate = Promise.withResolvers<void>()
-      let slept = 0
-      const h = await harness("running-reactivate-delete", { lock: { waitMs: 60_000, sleep: (): Promise<void> => (++slept === 1 ? gate.promise : Bun.sleep(5)) }, disposeWaitMs: 100 })
+    test("disposal removes no report: the work it reported may still be running", async () => {
+      const h = await harness("running-dispose-keeps")
       await h.pending.start()
       await reportFrom(h, "ses_a", [shellIn(h)])
-      const lease = await holdLease(runningLeaseFile(receiptDirectory(h.f.env)), { owner: "test" })
-      if (lease.kind !== "held") throw new Error("test could not take the lease")
-      void h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } })
-      while (slept < 1) await Bun.sleep(2) // the old delete waits for the lease, sleeping on the gate
       await h.pending.dispose()
-      await lease.release()
-      const next = h.reactivate({ lock: { waitMs: 60_000 } })
-      await next.start()
-      await h.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [{ sessionID: "ses_a", ...shellIn(h) }] } as never)
-      gate.resolve() // the old delete takes the lease now, after the new activation wrote
-      while (h.pending.pendingDeleteCount() !== 0) await Bun.sleep(5)
       expect(reportIds(h)).toEqual(["ses_a"])
-      expect(await next.removalFor("ses_lead").finalCheck(h.f.linked)).toContain("names the worktree")
-      await next.dispose()
+      await h.finish()
+    })
+
+    test("starting an activation removes no report an earlier activation left", async () => {
+      const h = await harness("running-start-keeps")
+      await h.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      const next = h.reactivate()
+      await next.pending.start()
+      expect(reportIds(h)).toEqual(["ses_a"])
+      await next.pending.dispose()
+      await h.finish()
+    })
+
+    // A session that moves Location reports to another activation in this process. The job list its idle hook receives is the
+    // server's for that session (process-wide), so a successful snapshot supersedes the session's files of this process's other activations.
+    test("a session's empty report in a second activation removes the first activation's file, and the removal proceeds", async () => {
+      const h = await harness("running-supersede-empty")
+      await h.pending.start()
+      const next = h.reactivate()
+      await next.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      expect(await check(h)).toContain("names the worktree")
+      await next.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [] } as never)
+      expect(reportIds(h)).toEqual([])
+      expect(await check(h)).toBeUndefined()
+      await next.pending.dispose()
+      await h.finish()
+    })
+
+    test("a live job reported in one activation and again in a non-empty report of another still holds, from one file", async () => {
+      const h = await harness("running-supersede-nonempty")
+      await h.pending.start()
+      const next = h.reactivate()
+      await next.pending.start()
+      await reportFrom(h, "ses_a", [shellIn(h)])
+      await next.fake.fire.session("experimental.idle", { sessionID: "ses_a", background: [{ sessionID: "ses_a", ...shellIn(h) }] } as never)
+      expect(readReports(receiptDirectory(h.f.env)).reports).toHaveLength(1)
+      expect(await check(h)).toContain("names the worktree")
+      await next.pending.dispose()
+      await h.finish()
+    })
+
+    test("a snapshot supersedes only this process's files: another process's report of the same session stays", async () => {
+      const h = await harness("running-supersede-foreign")
+      await h.pending.start()
+      writeReport(receiptDirectory(h.f.env), {
+        sessionID: "ses_a",
+        jobs: [{ kind: "shell", sessionID: "ses_a", shellID: "sh9", command: `cd ${h.f.linked} && make` }],
+        at: 1,
+        pid: process.ppid, // a live process that is not this one
+        host: hostname(),
+        instance: "another-process",
+      })
+      await reportFrom(h, "ses_a", [])
+      expect(readReports(receiptDirectory(h.f.env)).reports.map((report) => report.instance)).toEqual(["another-process"])
       await h.finish()
     })
 
@@ -5182,19 +5224,21 @@ describe("pending cleanup: one remover per worktree", () => {
       console.error = (...args: unknown[]) => {
         if (String(args[0]).includes("could not remove the report of deleted session ses_a")) failed.resolve()
       }
+      // The store stays read-only until the assertion, so no automatic pass the reused idle hook starts can retry (and so consume) the newer token.
       chmodSync(directory, 0o555) // check-test-executables: directory permission, not a script
       try {
         void h.fake.emit({ type: "session.deleted", data: { sessionID: "ses_a" } }) // the new deletion fails too
         await lease.release()
         await failed.promise
+        console.error = original
+        gate.resolve() // now the old retry finishes
+        await checking
+        await reused
+        expect(h.pending.pendingDeleteCount()).toBe(1)
       } finally {
         console.error = original
         chmodSync(directory, 0o755) // check-test-executables: directory permission, not a script
       }
-      gate.resolve() // now the old retry finishes
-      await checking
-      await reused
-      expect(h.pending.pendingDeleteCount()).toBe(1)
       await check(h) // the newer token is retried, and now succeeds
       expect(h.pending.pendingDeleteCount()).toBe(0)
       expect(reportIds(h)).toEqual([])
